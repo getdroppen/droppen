@@ -82,6 +82,7 @@ pub mod attention;
 pub mod auth;
 pub mod chats;
 pub mod claude_roots;
+pub mod cloud;
 pub mod config;
 pub mod db;
 pub mod desktop_app;

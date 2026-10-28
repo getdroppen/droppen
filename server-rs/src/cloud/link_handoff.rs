@@ -15,7 +15,7 @@
 //! droppen.app seals the enrollment code to the key (`rh_proto::link_return`)
 //! and sends the browser to `<origin>/link/return#droppen-return=<attempt>.<sealed>`;
 //! that page (the web app's, standalone) posts it to `POST
-//! /api/cloud/link/return` ([`super::cloud::post_return`]), which opens it and
+//! /api/cloud/link/return` ([`super::post_return`]), which opens it and
 //! enrolls exactly as the popup's `finish` does. The secret half of the key
 //! never leaves this process and goes with the attempt, so what the browser's
 //! history keeps of the return address is ciphertext nobody can open.

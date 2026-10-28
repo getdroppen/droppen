@@ -200,7 +200,7 @@ struct Armed {
     url: String,
     /// What the commands it suggests need before them to reach this instance
     /// (`APP_INSTANCE=bob `), or nothing
-    /// ([`crate::program::command_prefix`]).
+    /// ([`crate::paths::command_prefix`]).
     env: String,
 }
 
@@ -284,7 +284,7 @@ impl Setup {
     /// [`Setup::arm`] for the instance `paths` names: its code file, and the
     /// commands it suggests made to reach it.
     pub fn arm_for(&self, paths: &Paths, url: String) {
-        self.arm_with(code_file(paths), url, crate::program::command_prefix(paths));
+        self.arm_with(code_file(paths), url, crate::paths::command_prefix(paths));
     }
 
     fn arm_with(&self, file: PathBuf, url: String, env: String) {

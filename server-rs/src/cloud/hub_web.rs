@@ -19,7 +19,7 @@
 //! Anything else — no such document (a hub from before it answers with the
 //! app's shell), an answer that is not one, a redirect, the hub out of reach —
 //! leaves today's address: the hub's own origin as `https://`
-//! ([`super::cloud::web_origin`]). The agent's own connection never changes:
+//! ([`super::web_origin`]). The agent's own connection never changes:
 //! it stays `wss://<hub>`.
 //!
 //! An answer is kept for [`ANSWER_TTL`], a failure for [`FAILURE_TTL`], per
@@ -38,7 +38,7 @@ use std::time::{Duration, Instant};
 use futures_util::future::{FutureExt, Shared};
 use serde_json::Value;
 
-use super::cloud::web_origin;
+use super::web_origin;
 
 /// Where a hub says which hosts it serves.
 pub const DISCOVERY_PATH: &str = "/.well-known/droppen-hub";
@@ -81,7 +81,7 @@ struct Inner {
 }
 
 /// The hubs' app origins, as their discovery documents said them. One per
-/// server, in [`super::cloud::Cloud`].
+/// server, in [`super::Cloud`].
 pub struct HubWebs {
     inner: Arc<Inner>,
     /// Off in unit tests unless a test turns it on: they never reach the network.

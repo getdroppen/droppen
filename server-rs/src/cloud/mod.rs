@@ -50,10 +50,9 @@ use gotcha::axum::http::StatusCode;
 use gotcha::{api, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
-use super::hub_web::HubWebs;
-use super::{ApiRouter, AppState};
 use crate::agent::control::{machine_fingerprint, AgentStatus, Control, ControlError, Standing};
 use crate::aggregator::controller::AggregatorHost;
+use crate::api::{ApiRouter, AppState};
 use crate::auth::MaybeIdentity;
 use crate::http::error::ApiError;
 use crate::http::extract::ApiJson;
@@ -62,13 +61,16 @@ use crate::paths::Paths;
 
 mod access;
 mod file;
+pub mod hub_web;
 mod link;
+pub mod link_handoff;
 
 pub use access::remote_viewer;
 pub use file::{file_path, hand_over_from_local_owner};
 pub use link::{post_cancel, post_finish, post_link, post_return, web_origin, ATTEMPT_TTL_MS, DEFAULT_HUB};
 
 use access::*;
+use hub_web::HubWebs;
 use link::*;
 
 /// The link's local state: the hub link itself, the attempt in flight, and
@@ -954,7 +956,7 @@ pub fn describe(reg: &mut ExtraResponses) {
 mod tests {
     use std::collections::BTreeMap;
 
-    use crate::api::link_handoff::{self, Handoff, PageOrigin};
+    use crate::cloud::link_handoff::{self, Handoff, PageOrigin};
     use super::file::CloudFile;
 
     use super::*;
@@ -1555,11 +1557,11 @@ mod tests {
 
         let reply = serde_json::json!({"code": valid_code(), "email": "me@example.com"});
         // The first attempt is gone: its answer finds nothing.
-        let (_, sealed) = crate::api::link_handoff::tests::answer(&url, &reply, None);
+        let (_, sealed) = crate::cloud::link_handoff::tests::answer(&url, &reply, None);
         let res = give_back(first, sealed.clone()).await.unwrap();
         assert_eq!(res.status(), 404);
         // A page that never saw the address cannot answer for it (login CSRF), and uses nothing up.
-        let (_, forged) = crate::api::link_handoff::tests::answer(&url, &reply, Some([0; 16]));
+        let (_, forged) = crate::cloud::link_handoff::tests::answer(&url, &reply, Some([0; 16]));
         let res = give_back(attempt.clone(), forged).await.unwrap();
         assert_eq!(res.status(), 403);
         assert_eq!(error_of(res.json().await.unwrap()), "bad_reply");
@@ -1666,7 +1668,7 @@ mod tests {
     /// from — while the agent keeps signing in to the hub itself.
     #[tokio::test]
     async fn the_sign_in_opens_the_app_origin_the_hub_names() {
-        use crate::api::hub_web::tests::{hub_answering, port};
+        use crate::cloud::hub_web::tests::{hub_answering, port};
         let (hub, asked) = hub_answering(|hub| {
             let doc = serde_json::json!({"origin": hub, "app": format!("http://my.localhost:{}", port(hub))});
             (200, None, doc.to_string())
@@ -1684,7 +1686,7 @@ mod tests {
         // The answer through the browser is bound to the page's origin, not
         // to the host droppen.app's page was on: it opens as before.
         let reply = serde_json::json!({"code": valid_code()});
-        let (attempt, sealed) = crate::api::link_handoff::tests::answer(&url, &reply, None);
+        let (attempt, sealed) = crate::cloud::link_handoff::tests::answer(&url, &reply, None);
         let held = state.cloud.live_attempt().expect("the attempt");
         assert_eq!(attempt, held.id);
         assert!(held.handoff.as_ref().unwrap().open(&attempt, &link_handoff::sealed_bytes(&sealed).unwrap()).is_ok());
@@ -1705,7 +1707,7 @@ mod tests {
         let (state, opened) = opened_from_a_page(home.path(), Some(hub), false).await;
         let url = opened.handoff_url.clone().expect("opened from a page");
         let reply = serde_json::json!({"code": valid_code()});
-        let (_, sealed) = crate::api::link_handoff::tests::answer(&url, &reply, None);
+        let (_, sealed) = crate::cloud::link_handoff::tests::answer(&url, &reply, None);
         let before = status_for(&state, Some("alice")).await;
         assert!(before.attempt.is_some() && before.handoff.is_none());
 
@@ -1761,11 +1763,11 @@ mod tests {
             )
         };
 
-        let (_, forged) = crate::api::link_handoff::tests::answer(&url, &reply, Some([0; 16]));
+        let (_, forged) = crate::cloud::link_handoff::tests::answer(&url, &reply, Some([0; 16]));
         assert_eq!(code_of(give_back(forged).await.unwrap_err()), (403, "bad_reply".into()));
         assert!(state.cloud.live_attempt().is_some(), "a refusal leaves the attempt be");
 
-        let (_, sealed) = crate::api::link_handoff::tests::answer(&url, &reply, None);
+        let (_, sealed) = crate::cloud::link_handoff::tests::answer(&url, &reply, None);
         assert_eq!(code_of(give_back(sealed).await.unwrap_err()), (409, "already_enrolled".into()));
         assert!(state.cloud.live_attempt().is_none(), "used up");
         let seen = status_for(&state, Some("alice")).await.handoff.expect("an outcome");
@@ -1779,7 +1781,7 @@ mod tests {
     /// takes none, is refused — and a refusal leaves the attempt be.
     #[test]
     fn an_answer_through_the_browser_is_refused_once_the_attempt_expired() {
-        let machine = crate::api::link_handoff::HandoffMachine {
+        let machine = crate::cloud::link_handoff::HandoffMachine {
             hostname: "laptop".into(),
             sign_key: [1; 32],
             dh_key: [2; 32],
@@ -1787,7 +1789,7 @@ mod tests {
         };
         let handoff = Handoff::new("https://droppen.app", "a1", 1_000, "http://127.0.0.1:8700", &machine);
         let reply = serde_json::json!({"code": valid_code()});
-        let (_, sealed) = crate::api::link_handoff::tests::answer(handoff.url(), &reply, None);
+        let (_, sealed) = crate::cloud::link_handoff::tests::answer(handoff.url(), &reply, None);
         let sealed = link_handoff::sealed_bytes(&sealed).unwrap();
         let with = |handoff: Option<Handoff>| attempt("alice", 1_000).map(|a| Attempt { handoff, ..a });
         let mut slot = with(Some(handoff.clone()));

@@ -637,7 +637,7 @@ pub async fn open(args: &[String]) -> Result<(), String> {
         #[cfg(not(target_os = "macos"))]
         say!(
             "If the browser shows nothing, run `{}remote-hand-server open --print` and open the link it prints instead.",
-            crate::program::command_prefix(&paths)
+            crate::paths::command_prefix(&paths)
         );
         return Ok(());
     }

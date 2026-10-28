@@ -45,10 +45,6 @@ pub const LOCAL_OPEN_PATH: &str = "/api/auth/local-open";
 /// Where the desktop app asks for a local-open token with its own login.
 pub const LOCAL_OPEN_GRANT_PATH: &str = "/api/auth/local-open/grant";
 
-/// The security scheme name the guarded operations reference, and the key it is
-/// registered under in `components/securitySchemes`.
-pub const BEARER_SCHEME: &str = "bearerAuth";
-
 /// Longest client label kept from a `User-Agent`.
 const MAX_LABEL: usize = 120;
 

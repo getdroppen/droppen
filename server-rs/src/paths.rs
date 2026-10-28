@@ -6,12 +6,15 @@
 //! depends only on [`crate::env`] and [`crate::instance`]: naming a path must not
 //! pull in the code of the subsystem that happens to define it. A subsystem adds
 //! the paths of its own files in an `impl Paths` block next to the code that
-//! reads them.
+//! reads them. [`Paths::droppen_env`] is how a command typed on this device
+//! finds the same instance and files.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use gotcha::Schematic;
 use serde::{Deserialize, Serialize};
+
+use crate::program::{abbreviate_home, shell_word};
 
 /// Which Claude config root a session file lives in.
 ///
@@ -242,6 +245,62 @@ impl Paths {
     }
 }
 
+impl Paths {
+    /// What a command typed on this device needs in its environment to act on
+    /// the instance this `Paths` names, as `(name, value)` pairs to put before
+    /// [`droppen_path`](crate::program::droppen_path): `APP_INSTANCE` for any instance but `default`, and
+    /// `DROPPEN_DATA_DIR` / `DROPPEN_CONFIG_DIR` when this server keeps its files
+    /// elsewhere than `~/.local/share/remote-hand` / `~/.config/remote-hand` (a
+    /// second install beside the first). Nothing for the usual install. Paths
+    /// have the home directory as `~`, for the reason [`droppen_path`](crate::program::droppen_path) does.
+    ///
+    /// Each directory under its old name too, `REMOTE_HAND_DATA_DIR` /
+    /// `REMOTE_HAND_CONFIG_DIR`, with the same value: the `droppen` a person's
+    /// shell finds may be another install's pre-rename binary, which reads only
+    /// the old names and would act on its own files instead
+    /// ([`crate::env`]).
+    ///
+    /// Without these, `open`, `setup-code` and `user add` typed as the page says
+    /// would act on the default instance of the default install: another
+    /// server's setup code, typed here, is a wrong one that counts against the
+    /// limit.
+    pub fn droppen_env(&self) -> Vec<(String, String)> {
+        let home = std::env::var_os("HOME").filter(|home| !home.is_empty()).map(PathBuf::from);
+        droppen_env_for(self, home.as_deref())
+    }
+}
+
+/// [`Paths::droppen_env`] as a person types it before a command: `NAME=value `
+/// for each, the values made shell words ([`shell_word`]); empty for the usual
+/// install.
+pub fn command_prefix(paths: &Paths) -> String {
+    paths.droppen_env()
+        .into_iter()
+        .map(|(name, value)| format!("{name}={} ", shell_word(&value)))
+        .collect()
+}
+
+/// [`Paths::droppen_env`], with the home directory supplied.
+pub fn droppen_env_for(paths: &Paths, home: Option<&Path>) -> Vec<(String, String)> {
+    let mut env = Vec::new();
+    if paths.instance() != crate::instance::DEFAULT_INSTANCE {
+        env.push(("APP_INSTANCE".to_string(), paths.instance().to_string()));
+    }
+    let usual = |rest: &[&str]| home.map(|home| rest.iter().fold(home.to_path_buf(), |path, part| path.join(part)));
+    let (data, config) = (paths.data_dir(), paths.config_dir());
+    let mut both = |name: &'static str, path: &Path| {
+        let value = abbreviate_home(path, home);
+        env.extend(crate::env::with_old_name(name).map(|name| (name.to_string(), value.clone())));
+    };
+    if usual(&[".local", "share", "remote-hand"]).as_deref() != Some(data.as_path()) {
+        both("DROPPEN_DATA_DIR", &data);
+    }
+    if usual(&[".config", "remote-hand"]).as_deref() != Some(config.as_path()) {
+        both("DROPPEN_CONFIG_DIR", &config);
+    }
+    env
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -251,5 +310,41 @@ mod tests {
         assert_eq!(override_dir(None), None);
         assert_eq!(override_dir(Some("")), None, "`process.env.X || fallback` treats \"\" as absent");
         assert_eq!(override_dir(Some("/scratch")), Some(PathBuf::from("/scratch")));
+    }
+
+    #[test]
+    fn a_command_names_the_instance_and_the_files_of_a_server_that_is_not_the_usual_one() {
+        let home = Path::new("/home/ada");
+        let pair = |name: &str, value: &str| (name.to_string(), value.to_string());
+        let usual = crate::paths::Paths::new(home.to_path_buf());
+        assert_eq!(droppen_env_for(&usual, Some(home)), Vec::<(String, String)>::new(), "the usual install needs nothing");
+
+        let other_instance = crate::paths::Paths::for_instance(home.to_path_buf(), "bob");
+        assert_eq!(droppen_env_for(&other_instance, Some(home)), vec![pair("APP_INSTANCE", "bob")]);
+
+        // A second install, its files under another root.
+        // Under both names: the `droppen` a shell finds may be a pre-rename
+        // binary, which reads only the old ones.
+        let second = crate::paths::Paths::for_instance(home.join("bob"), "default");
+        let (data, config) = (crate::env::old_name("DROPPEN_DATA_DIR").unwrap(), crate::env::old_name("DROPPEN_CONFIG_DIR").unwrap());
+        assert_eq!(
+            droppen_env_for(&second, Some(home)),
+            vec![
+                pair("DROPPEN_DATA_DIR", "~/bob/.local/share/remote-hand"),
+                pair(data, "~/bob/.local/share/remote-hand"),
+                pair("DROPPEN_CONFIG_DIR", "~/bob/.config/remote-hand"),
+                pair(config, "~/bob/.config/remote-hand"),
+            ]
+        );
+        // With no home directory to compare with, the files are named outright.
+        assert_eq!(
+            droppen_env_for(&usual, None),
+            vec![
+                pair("DROPPEN_DATA_DIR", "/home/ada/.local/share/remote-hand"),
+                pair(data, "/home/ada/.local/share/remote-hand"),
+                pair("DROPPEN_CONFIG_DIR", "/home/ada/.config/remote-hand"),
+                pair(config, "/home/ada/.config/remote-hand"),
+            ]
+        );
     }
 }

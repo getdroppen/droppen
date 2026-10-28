@@ -15,18 +15,15 @@
 //!   there — changing a password nobody has, and signing out of a login the
 //!   app restores at once — and signs in to Droppen through the system browser
 //!   instead of a popup its window cannot have (the browser hand-off,
-//!   [`crate::api::link_handoff`]).
+//!   [`crate::cloud::link_handoff`]).
 //!
 //! Read once, at boot, into [`crate::api::AppState::desktop_app`], so a test
 //! sets the field instead of the process environment every test shares.
-
-/// The environment variable the app sets (under its old name too).
-pub const ENV: &str = "DROPPEN_DESKTOP_APP";
 
 /// Whether this process was started by the desktop app.
 ///
 /// The spellings are [`crate::env::flag`]'s, like every other switch: `1`,
 /// `true`, `yes`, `on` (any case) turn it on, and nothing else does.
 pub fn from_env() -> bool {
-    crate::env::flag(ENV)
+    crate::env::flag(crate::process_env::DESKTOP_APP_ENV)
 }

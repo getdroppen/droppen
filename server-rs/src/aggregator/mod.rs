@@ -377,7 +377,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths::for_instance(dir.path().to_path_buf(), "wanttest");
         std::fs::create_dir_all(paths.instance_dir()).unwrap();
-        let file = crate::api::cloud::file_path(&paths);
+        let file = crate::cloud::file_path(&paths);
         // Enrolled from the command line: no file, on.
         assert!(paths.wants_aggregator());
         let write = |v: serde_json::Value| std::fs::write(&file, v.to_string()).unwrap();
