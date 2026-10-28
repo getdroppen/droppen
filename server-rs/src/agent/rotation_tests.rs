@@ -771,11 +771,11 @@ async fn a_renewal_request_is_checked_and_a_high_assurance_one_shows_its_code() 
         Assurance::OnDevice,
     );
     let st = AgentState::load(&a.files).unwrap().unwrap();
-    let shown = a.paths.rotation_status(Some(&st), now_ms_u64());
+    let shown = a.files.rotation_status(Some(&st), now_ms_u64());
     assert_eq!(shown.state, "staged");
     assert_eq!(shown.code.as_deref(), Some(rh_proto::chain::rotate_sas(&body).as_str()));
     assert!(shown.code_expires_ms.is_some_and(|t| t <= now_ms_u64() + rotation::CODE_FOR_MS));
-    let later = a.paths.rotation_status(Some(&st), now_ms_u64() + rotation::CODE_FOR_MS + 1);
+    let later = a.files.rotation_status(Some(&st), now_ms_u64() + rotation::CODE_FOR_MS + 1);
     assert_eq!((later.state.as_str(), later.code), ("staged", None), "ten minutes, then no code");
     shared.cancel.cancel();
     let _ = task.await;
@@ -905,7 +905,7 @@ async fn a_committed_renewal_is_taken_after_signing_in_with_the_new_key() {
     assert!(st.rotation.renewed_ms.is_some());
     assert!(st.rotation.push_renew, "the push keys are renewed with it at the restart (R6 review)");
     assert_eq!(st.rotation.previous_fingerprint.as_deref(), Some(super::control::machine_fingerprint(&old).as_str()));
-    let shown = a.paths.rotation_status(Some(&st), now_ms_u64());
+    let shown = a.files.rotation_status(Some(&st), now_ms_u64());
     assert_eq!(shown.state, "renewed");
     assert!(st.alarms.is_empty(), "no alarm for its own renewal");
     // Its own renewal is disputed by nobody — no statement
@@ -957,7 +957,7 @@ async fn a_renewed_key_is_taken_only_once_the_state_naming_it_is_saved() {
     crate::fsutil::write_private_reporting_path(&state_file, &on_disk).unwrap();
     // The next start does not take the key in use for one renewed away.
     assert!(
-        !a.paths.seed_retired(&a.seed_in_use()),
+        !a.files.seed_retired(&a.seed_in_use()),
         "the next start takes this device's own renewal for one made elsewhere ({promoted:?})"
     );
     assert!(promoted.is_err(), "not taken while the state naming it is not saved");
@@ -969,7 +969,7 @@ async fn a_renewed_key_is_taken_only_once_the_state_naming_it_is_saved() {
     rotation::promote(&shared, &second).unwrap();
     assert_eq!(a.seed_in_use().sign_public(), second.sign_public());
     assert_eq!(restarts.load(Ordering::SeqCst), 1);
-    assert!(!a.paths.seed_retired(&second));
+    assert!(!a.files.seed_retired(&second));
     let st = AgentState::load(&a.files).unwrap().unwrap();
     assert_eq!(rotation::named_keys(&st), Some((second.sign_public(), second.dh_public())));
     assert!(st.rotation.push_renew);
@@ -1398,7 +1398,7 @@ async fn a_staging_answered_late_is_kept_and_taken_and_one_never_answered_goes_w
     let kept = a.staged().expect("kept for the attempt");
     assert!(kept.accepted_ms.is_none());
     let st = AgentState::load(&a.files).unwrap().unwrap();
-    let shown = a.paths.rotation_status(Some(&st), now_ms_u64());
+    let shown = a.files.rotation_status(Some(&st), now_ms_u64());
     assert_eq!((shown.state.as_str(), shown.code), ("idle", None), "not shown, no code");
     // Asked to confirm it on this connection: confirmed, not unknown.
     let new = kept.identity();
@@ -1413,7 +1413,7 @@ async fn a_staging_answered_late_is_kept_and_taken_and_one_never_answered_goes_w
     // The late answer: one the hub took now, shown with its code.
     hub.send_json(json!({"t": "rotation_staged", "nonce_hash": hex(&Sha256::digest([7u8; 16])), "ready_ms": 5}));
     until("the late answer", || a.staged().is_some_and(|s| s.accepted_ms.is_some())).await;
-    let shown = a.paths.rotation_status(Some(&st), now_ms_u64());
+    let shown = a.files.rotation_status(Some(&st), now_ms_u64());
     assert_eq!(shown.state, "staged");
     assert!(shown.code.is_some(), "high assurance: its code now");
     // A late refusal forgets one never answered.
@@ -1433,7 +1433,7 @@ async fn a_staging_answered_late_is_kept_and_taken_and_one_never_answered_goes_w
         .unwrap()
         .created_ms;
     let named = rotation::named_keys(&shared.state.lock().unwrap());
-    a.paths.set_aside_expired_stagings(named, &machine(), made + rotation::ATTEMPT_MS + 1);
+    a.files.set_aside_expired_stagings(named, &machine(), made + rotation::ATTEMPT_MS + 1);
     assert_eq!(a.nonces(), vec![[7; 16]]);
     let aside: Vec<[u8; 16]> = FileSeedStore::for_instance(&a.files).expired().iter().map(|s| s.nonce).collect();
     assert_eq!(aside, vec![[9; 16]], "set aside, never deleted (R6 review)");
@@ -1499,7 +1499,7 @@ async fn a_renewal_to_keys_this_device_does_not_hold_is_alarmed_and_stops_the_li
     until("the file gone once delivered", || !file.exists()).await;
     let st = AgentState::load(&a.files).unwrap().unwrap();
     assert!(st.alarms.iter().any(|al| al.what.contains("replaced elsewhere")), "{:?}", st.alarms);
-    let shown = a.paths.rotation_status(Some(&st), now_ms_u64());
+    let shown = a.files.rotation_status(Some(&st), now_ms_u64());
     assert_eq!((shown.state.as_str(), shown.reason.as_deref()), ("foreign", Some(rotation::FOREIGN_RENEWED_ELSEWHERE)));
     assert_eq!(
         rotation::verdict(&st, &old, &[], false),
@@ -1591,11 +1591,11 @@ async fn a_hub_saying_rotated_is_believed_only_with_a_verified_renewal() {
         let st = shared.state.lock().unwrap();
         assert!(st.rotation.refused_ms.is_some() && st.rotation.foreign_ms.is_none());
         assert!(st.alarms.is_empty(), "no alarm on the hub's word");
-        assert_eq!(a.paths.rotation_status(Some(&st), now_ms_u64()).state, "refused");
+        assert_eq!(a.files.rotation_status(Some(&st), now_ms_u64()).state, "refused");
     }
     assert_eq!(a.seed_in_use().sign_public(), old.sign_public(), "no fresh seed");
-    assert!(!a.paths.seed_archived(&old));
-    assert!(!a.paths.seed_retired(&old));
+    assert!(!a.files.seed_archived(&old));
+    assert!(!a.files.seed_retired(&old));
     assert!(shared.health.lock().unwrap().refused.is_some());
     shared.cancel.cancel();
     let _ = task.await;
@@ -1638,8 +1638,8 @@ async fn a_hub_saying_rotated_is_believed_only_with_a_verified_renewal() {
     assert_eq!(b.seed_in_use().sign_public(), old.sign_public(), "the seed stays until a person adds it again");
     assert_eq!(restarts.load(Ordering::SeqCst), 0);
     // Only now is the seed retired, and the next sign-up uses a fresh one.
-    assert!(b.paths.seed_retired(&old));
-    let fresh = b.paths.identity_for_enrolling().unwrap();
+    assert!(b.files.seed_retired(&old));
+    let fresh = rotation::identity_for_enrolling(&b.paths).unwrap();
     assert_ne!(fresh.sign_public(), old.sign_public());
 }
 
@@ -1795,8 +1795,8 @@ async fn an_unreadable_staged_key_stops_the_link_and_is_not_taken_for_a_replacem
     assert!(st.rotation.foreign_ms.is_none() && st.rotation.evidence_ms.is_none());
     assert!(st.alarms.iter().any(|al| al.what.contains("Staged key unreadable")), "{:?}", st.alarms);
     assert!(!st.alarms.iter().any(|al| al.what.contains("replaced elsewhere")));
-    assert_eq!(a.paths.rotation_status(Some(&st), now_ms_u64()).state, "unreadable");
-    assert!(!a.paths.seed_retired(&old));
+    assert_eq!(a.files.rotation_status(Some(&st), now_ms_u64()).state, "unreadable");
+    assert!(!a.files.seed_retired(&old));
     assert_eq!(a.seed_in_use().sign_public(), old.sign_public());
     assert_eq!(restarts.load(Ordering::SeqCst), 0);
 }

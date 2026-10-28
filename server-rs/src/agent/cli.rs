@@ -193,8 +193,9 @@ pub(super) fn unenroll_instance(paths: &Paths) -> Result<Option<state::AgentStat
 
 /// `agent status`: where this instance stands, from its files.
 pub(super) fn print_status(paths: &Paths) {
-    let status = match state::AgentState::load(&AgentFiles::of(paths)) {
-        Ok(Some(st)) => control::AgentStatus::of_instance(paths, &st),
+    let files = AgentFiles::of(paths);
+    let status = match state::AgentState::load(&files) {
+        Ok(Some(st)) => control::AgentStatus::of_instance(&files, &st),
         Ok(None) => {
             println!("instance {}: not enrolled (a server on its own)", paths.instance());
             return;
@@ -328,7 +329,7 @@ pub(super) async fn enroll_cli(paths: &Paths, code: &EnrollCode, hub: &str) -> R
         .flatten()
         .map(|s| MachineIdentity::from_seed(&s.seed).sign_public());
     // A seed a renewal retired (or one archived) never signs up again.
-    let identity = paths.identity_for_enrolling()?;
+    let identity = rotation::identity_for_enrolling(paths)?;
     let created = before != Some(identity.sign_public());
     describe(paths, &identity, created);
     println!(

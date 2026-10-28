@@ -410,7 +410,7 @@ pub fn load_or_create(paths: &Paths) -> Result<(MachineIdentity, bool), String> 
     let (identity, created) = load_or_create_in(&FileSeedStore::for_instance(&files), &uuid)?;
     // A seed this device archived as retired (a crash, or a copy put back)
     // is never used again (`docs/host-identity-rotation.md` §3.8).
-    if !created && paths.seed_archived(&identity) {
+    if !created && files.seed_archived(&identity) {
         return Err(format!(
             "{} is an archived (retired) identity key and is never used again: add this device again under a new identity",
             files.machine_key().display()

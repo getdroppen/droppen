@@ -723,7 +723,7 @@ mod tests {
         let files = AgentFiles::of(&paths);
         let s = statement(&st, &k0, now_ms_u64()).unwrap();
         files.keep_dispute(&s).unwrap();
-        let fresh = paths.re_enroll_fresh(99).unwrap();
+        let fresh = crate::agent::rotation::re_enroll_fresh(&paths, 99).unwrap();
         assert_ne!(fresh.sign_public(), k0.sign_public());
         assert!(!files.has_state(), "the enrollment is forgotten");
         assert_eq!(files.kept_disputes(), vec![(s.path(&files), s.clone())], "the statement is not");
