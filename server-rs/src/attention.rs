@@ -29,7 +29,7 @@ pub async fn mark_seen(State(state): State<AppState>, ApiPath((source, id)): Api
     // The badge lives on the session-list rows, and those only change when the
     // feed re-lists — without this the badge would linger for up to the poll
     // interval after the user has plainly already looked at the session.
-    state.global.request_refresh(None);
+    state.refresh.request_refresh(None);
     Ok(Json(SeenResult {
         accepted: true,
         previous_read_at: Nullable(previous),
@@ -53,7 +53,7 @@ pub async fn mark_agent_seen(
     let previous = seen::mark(state.paths.as_ref(), source, &crate::sessions::subagents::agent_seen_id(&id, &agent_id))
         .await
         .map_err(|error| ApiError::internal(format!("failed to record seen: {error}")))?;
-    state.global.request_refresh(None);
+    state.refresh.request_refresh(None);
     Ok(Json(SeenResult {
         accepted: true,
         previous_read_at: Nullable(previous),

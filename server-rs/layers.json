@@ -494,11 +494,9 @@
       ]
     },
     {
-      "why": "inject attaches each run to the feeds (FeedRegistry, GlobalFeed), and plugins and screens tell the global feed to refresh. They go when runs broadcast RunEvent for the feeds to subscribe to, and the refresh is a Refresh sender.",
+      "why": "inject attaches each run to the feeds (FeedRegistry, GlobalFeed). It goes when runs broadcast RunEvent for the feeds to subscribe to.",
       "edges": [
-        "inject -> feed",
-        "plugins -> feed",
-        "screens -> feed"
+        "inject -> feed"
       ]
     },
     {

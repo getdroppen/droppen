@@ -315,7 +315,7 @@ pub async fn put_prefs(State(state): State<AppState>, ApiJson(prefs): ApiJson<Pr
     // The one setting the server itself acts on: every open list is re-sent,
     // with the subagents or without them.
     if before.subagent_tree != prefs.subagent_tree {
-        state.global.request_refresh(None);
+        state.refresh.request_refresh(None);
     }
     Ok(Json(prefs))
 }

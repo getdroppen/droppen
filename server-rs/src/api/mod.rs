@@ -54,6 +54,9 @@ pub struct AppState {
     pub feeds: Arc<feed::FeedRegistry>,
     /// The shared session-list feed behind `GET /api/events`.
     pub global: Arc<feed::global::GlobalFeed>,
+    /// The same feed's inputs, for the subsystems that sit below it and so
+    /// may not name it.
+    pub refresh: crate::http::refresh::Refresh,
     /// Cancelled by the shutdown supervisor; live sockets close on it.
     pub cancel: CancellationToken,
     /// Accounts, injections, quota and composer preferences — the one field the

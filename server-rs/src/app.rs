@@ -125,12 +125,13 @@ impl GotchaApp for RemoteHandApp {
             // account rotation above all — and has to be able to say so to the
             // two feeds that would otherwise only notice on their next poll.
             drive.injections.attach_listeners(feeds.clone(), global.clone());
+            let refresh = crate::http::refresh::Refresh::new(global.clone());
             Ok(AppState {
                 cloud: crate::cloud::Cloud::new(paths.as_ref().clone()),
                 // Touches nothing yet: the installed packages are read by the
                 // first status, the instance database by the first switch or
                 // store, and `boot` below.
-                plugins: crate::plugins::Plugins::load(&paths, &plugins_config, Some(global.clone())),
+                plugins: crate::plugins::Plugins::load(&paths, &plugins_config, Some(refresh.clone())),
                 chats: crate::chats::Chats::new(paths.clone()),
                 drive,
                 terminals: crate::terminals::Registry::new(paths.clone(), instance.clone()),
@@ -141,6 +142,7 @@ impl GotchaApp for RemoteHandApp {
                 started_at: Arc::from(iso8601(std::time::SystemTime::now()).as_str()),
                 feeds,
                 global,
+                refresh,
                 cancel: CancellationToken::new(),
                 lock: Arc::new(std::sync::OnceLock::new()),
                 desktop_app: self.desktop_app_override.unwrap_or_else(crate::desktop_app::from_env),

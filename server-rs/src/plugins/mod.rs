@@ -67,7 +67,7 @@ use droppen_plugin_sdk::{sdk_version, valid_id, Doc, DocMeta, DocWrite, Manifest
 use serde::{Deserialize, Serialize};
 
 use crate::db::scope;
-use crate::feed::global::GlobalFeed;
+use crate::http::refresh::Refresh;
 use crate::paths::Paths;
 use install::{Installed, InstallError};
 pub use store::{Store, StoreError};
@@ -147,7 +147,7 @@ pub struct Plugins {
     instance_db: PathBuf,
     force_on: BTreeSet<String>,
     force_off: BTreeSet<String>,
-    feed: Option<Arc<GlobalFeed>>,
+    feed: Option<Refresh>,
     stores: Mutex<HashMap<String, Arc<Store>>>,
     /// The capability key, once this process has read or made it.
     asset_key: Mutex<Option<String>>,
@@ -192,7 +192,7 @@ impl Plugins {
         instance_dir: impl Into<PathBuf>,
         instance_db: impl Into<PathBuf>,
         config: &crate::config::PluginSettings,
-        feed: Option<Arc<GlobalFeed>>,
+        feed: Option<Refresh>,
     ) -> Self {
         Self {
             instance_dir: instance_dir.into(),
@@ -206,7 +206,7 @@ impl Plugins {
     }
 
     /// The host of the instance `paths` names.
-    pub fn load(paths: &Paths, config: &crate::config::PluginSettings, feed: Option<Arc<GlobalFeed>>) -> Arc<Self> {
+    pub fn load(paths: &Paths, config: &crate::config::PluginSettings, feed: Option<Refresh>) -> Arc<Self> {
         Arc::new(Self::new(paths.instance_dir(), paths.instance_db(), config, feed))
     }
 
@@ -762,6 +762,7 @@ fn valid_key(key: &str) -> bool {
 pub(crate) mod tests {
     use super::*;
     use crate::config::PluginSettings;
+    use crate::feed::global::GlobalFeed;
     use crate::plugins::testing::{package, tarball};
     use serde_json::json;
 
@@ -773,12 +774,12 @@ pub(crate) mod tests {
         )
     }
 
-    pub(crate) fn host(dir: &Path, config: PluginSettings, feed: Option<Arc<GlobalFeed>>) -> Plugins {
+    pub(crate) fn host(dir: &Path, config: PluginSettings, feed: Option<Refresh>) -> Plugins {
         let instance = dir.join("instances").join("t");
         Plugins::new(instance.clone(), instance.join("state.db"), &config, feed)
     }
 
-    pub(crate) fn installed_host(dir: &Path, ids: &[&str], config: PluginSettings, feed: Option<Arc<GlobalFeed>>) -> Plugins {
+    pub(crate) fn installed_host(dir: &Path, ids: &[&str], config: PluginSettings, feed: Option<Refresh>) -> Plugins {
         let plugins = host(dir, config, feed);
         for id in ids {
             plugins.install(&package_bytes(id, "0.1.0"), None).expect("installs");
@@ -791,7 +792,7 @@ pub(crate) mod tests {
         let dir = tempfile::tempdir().unwrap();
         let feed = GlobalFeed::new();
         let mut rx = feed.listen();
-        let plugins = host(dir.path(), PluginSettings::default(), Some(feed.clone()));
+        let plugins = host(dir.path(), PluginSettings::default(), Some(Refresh::new(feed.clone())));
         let status = plugins.install(&package_bytes("tasks", "0.1.0"), Some("ada")).unwrap();
         assert!(status.enabled && status.compatible && !status.forced);
         assert_eq!(status.version.to_string(), "0.1.0");
@@ -862,7 +863,7 @@ pub(crate) mod tests {
         let plugins = installed_host(dir.path(), &["notes"], PluginSettings::default(), None);
         plugins.set_enabled("notes", false, Some("ada"), DecisionReason::Settings).unwrap();
         let mut rx = feed.listen();
-        let switched = installed_host(dir.path(), &[], PluginSettings::default(), Some(feed.clone()));
+        let switched = installed_host(dir.path(), &[], PluginSettings::default(), Some(Refresh::new(feed.clone())));
         // The same instance directory, the switch the first host wrote.
         let store = switched.store_path("notes");
         assert!(matches!(switched.get("notes", "state"), Err(PluginError::Disabled { .. })));
