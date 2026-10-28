@@ -252,6 +252,17 @@ test("with the hub's answer, every download button is a plain link to the file i
   assert.match(guide, /<a \{\.\.\.fileLink\(latest\?\.files\.macos\)\} data-testid="add-app-download"/);
 });
 
+test("a page a static host serves asks the hub at the marker's HTTP origin, and links its counted files there", async () => {
+  const asked: { url: string; init?: RequestInit }[] = [];
+  const release = await fetchLatestRelease(fakeFetch(200, COUNTED_ANSWER, asked), "https://api.droppen.app");
+  assert.equal(asked[0]!.url, "https://api.droppen.app/v1/releases/latest", "not the static host, which has no /v1/");
+  assert.equal(release?.files.macos?.href, "https://api.droppen.app/dl/macos");
+  assert.equal(release?.files["linux-aarch64"]?.href, "https://api.droppen.app/dl/linux-aarch64");
+  assert.equal(release?.files.macos?.url, `${DL}Droppen-0.2.129.dmg`);
+  // A file the hub does not count stays the file on GitHub, wherever the hub is.
+  assert.equal((await fetchLatestRelease(fakeFetch(200, ANSWER), "https://api.droppen.app"))?.files.macos?.href, `${DL}Droppen-0.2.129.dmg`);
+});
+
 test("a hub that counts downloads: each button links its /dl/<platform> on this page's origin, with the same name, version and size; without it, the file on GitHub", () => {
   // Taken only as this page would make it.
   assert.equal(COUNTED.files.macos?.href, "/dl/macos");
@@ -347,9 +358,10 @@ test("droppen.app's CSP stays as it is: nothing in the web app asks GitHub for a
     // A request (fetch, XHR, EventSource, a beacon, a WebSocket) to GitHub would need connect-src: the downloads are links.
     assert.doesNotMatch(source, /(fetch|XMLHttpRequest|EventSource|sendBeacon|WebSocket)\([^)]*github/i, file);
   }
-  // The one request for the files: the hub's route, on the page's own origin.
+  // The one request for the files: the hub's route, at the hub's HTTP origin (the page's own without a marker).
   const releases = readFileSync(new URL("../src/lib/hub/releases.ts", import.meta.url), "utf8");
-  assert.deepEqual([...releases.matchAll(/fetcher\(([^,]+),/g)].map((m) => m[1]), ["LATEST_RELEASE_PATH"]);
+  assert.deepEqual([...releases.matchAll(/fetcher\(([^,]+),/g)].map((m) => m[1]), ["`${base}${LATEST_RELEASE_PATH}`"]);
+  assert.match(releases, /base = hubHttpOrigin\(\) \?\? ""/);
   assert.match(releases, /export const LATEST_RELEASE_PATH = "\/v1\/releases\/latest";/);
   const detect = readFileSync(new URL("../src/features/landing/detect.ts", import.meta.url), "utf8");
   assert.doesNotMatch(detect, /\bfetch\(|XMLHttpRequest/, "detection asks nobody");

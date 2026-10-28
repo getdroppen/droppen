@@ -11,6 +11,7 @@
  */
 import { DEVICE_KEYS_PREFIX, KEY_STORE_DB } from "@/lib/e2e/keystore";
 import { clearSession, loadSession } from "@/lib/hub/api";
+import { hubHttpOrigin } from "@/lib/hub/config";
 import { LOCAL_CACHE_DB, LOCAL_CACHE_STORE } from "@/lib/local-cache";
 import { seenKey } from "@/lib/hub/seen-store";
 import { PUSH_RECORD_KEY, PUSH_RENEW_KEY, readPushRecord } from "@/lib/push";
@@ -116,7 +117,7 @@ export async function wipeHere(env: MoveEnv): Promise<string[]> {
     }
   }
   await Promise.all([
-    session?.token ? capped(env.fetch("/v1/logout", { method: "POST", headers: { authorization: `Bearer ${session.token}` } }), AFTER_MS) : undefined,
+    session?.token ? capped(env.fetch(`${hubHttpOrigin() ?? ""}/v1/logout`, { method: "POST", headers: { authorization: `Bearer ${session.token}` } }), AFTER_MS) : undefined,
     capped(env.dropPushSubscription(), AFTER_MS),
   ]);
   return failures;

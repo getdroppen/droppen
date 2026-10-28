@@ -134,8 +134,8 @@ the same.
 each platform `{name, url, size, download_path?}`. This is the latest public release of
 `getdroppen/droppen`, for the download buttons. The hub reads it from
 GitHub's API itself, once at start and then every 15 minutes, so the page
-asks GitHub for nothing: its CSP's `connect-src` stays the hub and the
-relays.
+asks GitHub for nothing: its CSP's `connect-src` names the hub, never
+GitHub.
 
 The hub takes only a release that is published, not a prerelease, and
 tagged `vX.Y.Z` (`version` is `X.Y.Z`). It takes only these files, under
@@ -158,10 +158,11 @@ answer that names an older version than its last good one. The route is
 limited like `/healthz` (the static routes' share per address).
 
 `download_path`, on a hub that counts downloads, is `/dl/<platform>` for
-the file's own platform: the hub's `GET /dl/{platform}` below. It is a path,
-relative to the host the page is on: the hub serves `/dl/*` on every host
-it serves pages on, so a page links it on its own host. Hubs before it name
-none.
+the file's own platform: the hub's `GET /dl/{platform}` below. It is a path
+on the hub that answered, and a page links it there: on the origin it asked
+(the `https://` form of its `rh-hub` marker, else its own), since a static
+host that serves the page has no `/dl/*`. The hub serves `/dl/*` on every
+host it serves. Hubs before it name none.
 
 A client links the files: a plain `<a href>`, which downloads in place —
 `download_path` when the hub names exactly `/dl/<platform>` for that file

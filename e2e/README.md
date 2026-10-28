@@ -15,7 +15,7 @@ against real hosts; see the repository README's scripts or run
 | host | served | what the specs prove |
 |---|---|---|
 | `my.droppen.test` | the real app-role cloud build | marker `wss://api.droppen.test`, cross-origin sign-up config, device session, `/v1/me`, `/v1/client` socket, the real service worker |
-| `www.droppen.test` | the real site-role cloud build | hub marker but site host mode, no API in `connect-src`, `Permissions-Policy` denies WebAuthn, no keys/worker, app links absolute to `my.` |
+| `www.droppen.test` | the real site-role cloud build | hub marker but site host mode, only the HTTP API in `connect-src` (no socket), the latest release asked of the API, `Permissions-Policy` denies WebAuthn, no keys/worker, app links absolute to `my.` |
 | `droppen.test` | the same site-role build, `apex_mode: move` | no device here: sent on to the app; a device here: the move notice, no keys/worker; a machine handshake naming the apex accepted by the hub (the temporary alias) |
 | `api.droppen.test` | the fake hub | CORS allowlist, `/v1/signup/config`, `/v1/session/challenge`, `/v1/session`, `/v1/me`, `wss://…/v1/client`, `wss://…/v1/agent` |
 | `evil.test` | an unrelated page | an authenticated response is not readable there |

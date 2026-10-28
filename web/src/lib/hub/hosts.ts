@@ -23,9 +23,9 @@
  *   notice (`features/hosts/legacy.tsx`), which offers a browser that holds a
  *   device here to move it, and sends any other on to the app host.
  *
- * The answer only picks which of the build's own pages run where: every
- * request still goes to the page's own host, and the hub it signs in to is
- * still the shell's marker (`config.ts`).
+ * The answer only picks which of the build's own pages run where: it moves
+ * no request. The hub a page asks and signs in to is the shell's marker
+ * (`config.ts`) on every host, and its API is the marker's `https://` form.
  */
 import { hubOrigin } from "./config";
 

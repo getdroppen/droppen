@@ -175,6 +175,46 @@ test("a failed verify: my. takes back what it wrote, droppen.app removes nothing
   await finish(w);
 });
 
+test("a session my. made for keys it then cannot prove ends at the hub with them", async () => {
+  const { w, legacy, app, legacyTab } = setUp();
+  await seedDevice(w);
+  const before = stateOf(legacy);
+  w.hub.forgetful = true;
+  const out = await startMove({ origins: ORIGINS, env: w.env(legacyTab) });
+  assert.equal(out.kind, "verifyFailed");
+  assert.match(out.kind === "verifyFailed" ? out.reason : "", /does not list this device/);
+  assert.deepEqual(stateOf(legacy), before, "everything still at droppen.app");
+  assert.equal(w.hub.signIns.length, 1, "my. signed in");
+  assert.equal(w.hub.loggedOut.length, 1, "and that session ended");
+  assert.equal(w.hub.tokens.size, 1, "only droppen.app's own session is left");
+  assert.deepEqual(stateOf(app), { keys: [], seen: [], local: {} });
+  await finish(w);
+});
+
+test("pages a static host serves (the hub's marker on both origins): the move asks only the hub's API, and the session it ends ends there", async () => {
+  const marker = "wss://api.droppen.test";
+  const shell = { querySelector: (q: string) => (q === 'meta[name="rh-hub"]' ? { getAttribute: (name: string) => (name === "content" ? marker : null) } : null) } as unknown as Document;
+  const previous = globalThis.document;
+  Object.defineProperty(globalThis, "document", { value: shell, configurable: true });
+  try {
+    for (const forgetful of [false, true]) {
+      const { w, legacyTab } = setUp();
+      w.marker = marker;
+      await seedDevice(w);
+      w.hub.forgetful = forgetful;
+      const out = await startMove({ origins: ORIGINS, env: w.env(legacyTab) });
+      assert.equal(out.kind, forgetful ? "verifyFailed" : "moved");
+      assert.equal(w.hub.loggedOut.length, 1);
+      assert.equal(w.hub.loggedOut[0] === "old-token", !forgetful, forgetful ? "the session my. made for keys it could not prove" : "droppen.app's old session");
+      // A static host answers a page's own /v1/ with the shell.
+      assert.deepEqual([...new Set(w.hub.asked)], ["api.droppen.test"], "never a page's own origin");
+      await finish(w);
+    }
+  } finally {
+    Object.defineProperty(globalThis, "document", { value: previous, configurable: true });
+  }
+});
+
 test("interrupted while my. signs in: nothing removed; the move started again finishes it (resumed)", async () => {
   const { w, legacy, app, legacyTab, views } = setUp();
   const { signPublic } = await seedDevice(w);

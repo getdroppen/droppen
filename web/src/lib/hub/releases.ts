@@ -1,15 +1,17 @@
 /*
  * The latest public release's files, as the hub names them
  * (`GET /v1/releases/latest`, docs/hub-api/http.md): the hub reads GitHub's
- * API itself and checks what it says, and the page asks the hub, on its own
- * origin. So the page asks GitHub for nothing (its CSP's `connect-src` stays
- * the hub and the relays), and its download buttons go straight to the files
- * themselves, which are links: a plain `<a href>`, where nothing is fetched
- * by the page. A hub that counts downloads names, for each file, its own
- * `download_path`, `/dl/<platform>`: a `302` to the file on GitHub that counts
- * one download of that platform for the day, and nothing about who asked.
- * Then the button links that, on this page's origin (the hub it asked);
- * without it (a hub before it, a self-hosted one), the file on GitHub.
+ * API itself and checks what it says, and the page asks the hub — at the
+ * marker's HTTP origin (`hubHttpOrigin()`: `https://api.droppen.app` from a
+ * page a static host serves, which has no `/v1/`), else on its own origin. So
+ * the page asks GitHub for nothing (its CSP's `connect-src` names the hub,
+ * never GitHub), and its download buttons go straight to the files themselves,
+ * which are links: a plain `<a href>`, where nothing is fetched by the page.
+ * A hub that counts downloads names, for each file, its own `download_path`,
+ * `/dl/<platform>`: a `302` to the file on GitHub that counts one download of
+ * that platform for the day, and nothing about who asked. Then the button
+ * links that, on the hub it asked; without it (a hub before it, a self-hosted
+ * one), the file on GitHub.
  *
  * What the hub says is checked again here, as strictly: a tag `vX.Y.Z`, and
  * each file under its exact name at exactly
@@ -18,6 +20,8 @@
  * 503 before it has read GitHub, a network failure, an answer that does not
  * check out) is `null`, and the buttons link the release page instead.
  */
+
+import { hubHttpOrigin } from "./config";
 
 /** The route. */
 export const LATEST_RELEASE_PATH = "/v1/releases/latest";
@@ -73,7 +77,8 @@ export function releaseFileName(platform: ReleasePlatform, tag: string): string 
 /**
  * Where a hub that counts downloads sends a platform's on to its file:
  * `/dl/<platform>`, on the hub's own origin (docs/hub-api/http.md
- * `GET /dl/{platform}`). Taken only when the hub's answer names exactly this.
+ * `GET /dl/{platform}`). Taken only when the hub's answer names exactly this,
+ * and linked on the origin that answered.
  */
 export function downloadPath(platform: ReleasePlatform): string {
   return `/dl/${platform}`;
@@ -83,8 +88,12 @@ const PLATFORMS: ReleasePlatform[] = ["macos", "linux-x86_64", "linux-aarch64"];
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
-/** The hub's answer, checked ({@link LatestRelease}); `null` when it does not check out or names no file. */
-export function parseLatestRelease(body: unknown): LatestRelease | null {
+/**
+ * The hub's answer, checked ({@link LatestRelease}); `null` when it does not
+ * check out or names no file. `base` is the origin that answered (`""`: this
+ * page's own), where a counted link goes.
+ */
+export function parseLatestRelease(body: unknown, base = ""): LatestRelease | null {
   if (!isRecord(body)) return null;
   const { tag, version, published_at: publishedAt, platforms } = body;
   if (typeof tag !== "string" || !/^v\d{1,9}\.\d{1,9}\.\d{1,9}$/.test(tag)) return null;
@@ -99,23 +108,23 @@ export function parseLatestRelease(body: unknown): LatestRelease | null {
     if (typeof size !== "number" || !Number.isSafeInteger(size) || size <= 0) continue;
     // The hub's counted link, only as this page would make it: never an address taken on trust.
     const counted = file.download_path === downloadPath(platform);
-    files[platform] = { name, url, size, href: counted ? downloadPath(platform) : url };
+    files[platform] = { name, url, size, href: counted ? `${base}${downloadPath(platform)}` : url };
   }
   if (Object.keys(files).length === 0) return null;
   // Made from the tag, as the hub makes it: never an address taken on trust.
   return { version, tag, publishedAt, releasesPage: `${RELEASE_PAGE_PREFIX}${tag}`, files };
 }
 
-/** Ask this page's hub, same-origin; `null` on any failure. */
-export async function fetchLatestRelease(fetcher: typeof fetch = fetch): Promise<LatestRelease | null> {
+/** Ask this page's hub, at `base` (the marker's HTTP origin, else this page's own); `null` on any failure. */
+export async function fetchLatestRelease(fetcher: typeof fetch = fetch, base = hubHttpOrigin() ?? ""): Promise<LatestRelease | null> {
   try {
-    const response = await fetcher(LATEST_RELEASE_PATH, {
+    const response = await fetcher(`${base}${LATEST_RELEASE_PATH}`, {
       credentials: "omit",
       headers: { accept: "application/json" },
       signal: typeof AbortSignal !== "undefined" && "timeout" in AbortSignal ? AbortSignal.timeout(10_000) : undefined,
     });
     if (!response.ok) return null;
-    return parseLatestRelease(await response.json());
+    return parseLatestRelease(await response.json(), base);
   } catch {
     return null;
   }

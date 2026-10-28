@@ -23,8 +23,11 @@ import { inlineScriptSources } from "./service-worker";
  *   static host, with the shell's inline scripts allowed by the hash routine
  *   the build already uses for the service worker. `DROPPEN_WEB_ROLE` picks
  *   the host's role: `app` (the default, `my.`) allows WebAuthn on itself,
- *   frames Turnstile and calls the API cross-origin; `site` (`www.`/apex)
- *   allows no WebAuthn, frames nothing and calls only itself. The site role
+ *   frames Turnstile and calls the API and the relays cross-origin; `site`
+ *   (`www.`/apex) allows no WebAuthn, frames nothing and calls only itself
+ *   and the HTTP API, which its pages need for the latest release, the
+ *   waitlist and the apex's move notice (`/v1/me`, `/v1/logout`): no socket,
+ *   no relay. The site role
  *   also replaces `dist/sw.js` with the retiring worker, so a site host never
  *   installs the app's worker; `_headers` and `sw.js` are the only differences
  *   between the two roles' dists.
@@ -51,9 +54,10 @@ export interface CloudConfig {
   relays: string[];
   /**
    * Which host this dist is deployed as: `app` (`my.`, WebAuthn and the
-   * Turnstile frame, cross-origin API) or `site` (`www.`/apex: no WebAuthn, no
-   * frame, no API calls — only this host's own files). Everything but
-   * `_headers` is the same in both.
+   * Turnstile frame, cross-origin API and its socket) or `site` (`www.`/apex:
+   * no WebAuthn, no frame, and only the HTTP API — the latest release and the
+   * waitlist — never its socket or a relay). Everything but `_headers` is the
+   * same in both.
    */
   role: "app" | "site";
 }
@@ -146,8 +150,8 @@ export function hubDocument(config: CloudConfig): string {
  * The CSP a static host serves the shell with: the hub's own policy
  * (docs/hub-api/http.md, "Hosts") with the shell's inline scripts by hash.
  * The app role may dial the HTTP and socket API origins and the relays, and
- * frame the Turnstile page; the site role dials nothing but itself and frames
- * nothing (docs/hub-api/README.md, "Hosts").
+ * frame the Turnstile page; the site role dials only itself and the HTTP API
+ * origin, and frames nothing (docs/hub-api/README.md, "Hosts").
  */
 export function contentSecurityPolicy(html: string, config: CloudConfig): string {
   const scripts = inlineScriptSources(html);
@@ -158,7 +162,7 @@ export function contentSecurityPolicy(html: string, config: CloudConfig): string
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob:",
     "font-src 'self' data:",
-    app ? ["connect-src 'self'", httpOf(config.hubOrigin), config.hubOrigin, ...config.relays].join(" ") : "connect-src 'self'",
+    ["connect-src 'self'", httpOf(config.hubOrigin), ...(app ? [config.hubOrigin, ...config.relays] : [])].join(" "),
     "worker-src 'self' blob:",
     "manifest-src 'self'",
     `frame-src ${app ? config.turnstileOrigin : "'none'"}`,
