@@ -1,7 +1,8 @@
 //! The HTTP kit every route module builds on: the error body and its status
 //! codes ([`error`]), the extractors that answer a bad request with that body
 //! ([`extract`]), the `201`/`202` responses ([`created`]), the websocket
-//! keepalive and bounded sends, and the build's identity.
+//! keepalive and bounded sends, the build's identity, and `substate!`, which
+//! lets a subsystem's routes take a state of their own.
 //!
 //! It sits below the subsystems and the router alike, so a subsystem can
 //! answer a request without depending on the router that mounts it.
@@ -175,6 +176,30 @@ pub(crate) fn hostname() -> String {
     let end = buffer.iter().position(|&b| b == 0).unwrap_or(buffer.len());
     String::from_utf8_lossy(&buffer[..end]).into_owned()
 }
+
+/// Makes a subsystem's sub-state extractable as `State<XState>`, invoked next
+/// to the sub-state's definition: `substate!(XState)`.
+///
+/// gotcha hands handlers a `GotchaContext<S, AppConfig>`, so a sub-state needs
+/// `FromRef` from that context as well as the `FromRef<S>` the entry writes
+/// from `AppState`. A blanket impl for every `T: FromRef<S>` would overlap
+/// axum's `impl<T: Clone> FromRef<T> for T`. Once a subsystem is a crate of its
+/// own, the entry cannot write the impl per sub-state either: `GotchaContext`
+/// and the sub-state are both foreign there, which the orphan rule forbids. The
+/// sub-state's own crate may, so it generates the impl here, generic over `S`.
+macro_rules! substate {
+    ($t:ty) => {
+        impl<S: Clone + Send + Sync + 'static> ::gotcha::axum::extract::FromRef<::gotcha::GotchaContext<S, $crate::config::AppConfig>> for $t
+        where
+            $t: ::gotcha::axum::extract::FromRef<S>,
+        {
+            fn from_ref(context: &::gotcha::GotchaContext<S, $crate::config::AppConfig>) -> Self {
+                <$t as ::gotcha::axum::extract::FromRef<S>>::from_ref(&context.state)
+            }
+        }
+    };
+}
+pub(crate) use substate;
 
 #[cfg(test)]
 mod tests {

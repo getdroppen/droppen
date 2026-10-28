@@ -41,7 +41,7 @@ use gotcha::axum::body::Body;
 use gotcha::axum::http::{header, HeaderValue, Response, StatusCode};
 use gotcha::State;
 
-use crate::api::AppState;
+use super::routes::PluginsState;
 use crate::auth::MaybeIdentity;
 use crate::http::extract::ApiPath;
 
@@ -51,7 +51,7 @@ pub const ASSET_PATH: &str = "/plugins/{key}/{id}/{build}/{*path}";
 
 /// Serve one file of an installed plugin, or a `404`.
 pub async fn serve_asset(
-    State(state): State<AppState>,
+    State(state): State<PluginsState>,
     ApiPath((key, id, build, path)): ApiPath<(String, String, String, String)>,
     who: MaybeIdentity,
 ) -> Response<Body> {
