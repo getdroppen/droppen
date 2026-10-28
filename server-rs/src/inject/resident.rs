@@ -77,11 +77,11 @@ use crate::quota::readings::RateLimitWindows;
 use crate::process_env::Env;
 use crate::procs;
 use crate::record::{Recorder, SpawnSummary, Stage};
+use crate::sessions::delivery::{QuestionState, ReceiptStatus, SessionQuestion};
 use crate::sessions::{InjectionRunState, SessionStatus, Source};
 use crate::time::iso8601;
 
-use super::questions::{self, PermissionRequest, QuestionState, SessionQuestion, Stored};
-use super::receipts::ReceiptStatus;
+use super::questions::{self, PermissionRequest, Stored};
 use super::shim::{self, Link, Output, Sidecars, Spawn};
 use super::{lock, new_uuid, runs, InjectError, InjectionRegistry, Run, RunState};
 
@@ -12233,7 +12233,7 @@ done
             quota: Arc::new(crate::quota::QuotaCache::new(paths.clone())),
             models: Arc::new(crate::models::ClaudeModelCache::new(paths.clone())),
             composer: crate::drive::composer_prefs::ComposerPrefsStore::new(paths.clone()),
-            titles: crate::drive::titles::TitlesStore::new(paths.clone()),
+            titles: crate::sessions::titles::TitlesStore::new(paths.clone()),
             instance,
             paths,
         });

@@ -492,7 +492,7 @@ pub async fn claude_activity(file_path: &Path) -> ClaudeActivity {
 
 /// Ids the user archived out of the list.
 pub async fn archived_ids(paths: &Paths) -> HashSet<String> {
-    crate::drive::archive::archived_ids(paths)
+    super::archive::archived_ids(paths)
 }
 
 /// Every `<uuid>.jsonl` under one root's projects directory.

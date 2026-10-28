@@ -50,16 +50,16 @@
 //! who answered it and when, rather than sending a second answer into a turn
 //! that has moved on.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
-use gotcha::Schematic;
 use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
 use crate::db::Db;
 use crate::openapi_ext::Nullable;
+use crate::sessions::delivery::{QuestionState, SessionQuestion};
 use crate::sessions::util::QuestionEntry;
 
 /// How long a question is remembered once it is no longer waiting.
@@ -77,35 +77,7 @@ pub const DISMISSED: &str = "The user chose not to answer this question. Use you
 /// still waiting on it after all — see [`crate::inject`]'s replay.
 pub const ANSWERED_ELSEWHERE: &str = "The user answered this question in a separate message; read it and carry on.";
 
-/// Where a question is in its life.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Schematic)]
-#[serde(rename_all = "lowercase")]
-pub enum QuestionState {
-    /// claude is blocked on it, and it can be answered.
-    Pending,
-    /// The user answered it.
-    Answered,
-    /// The user declined to answer; the agent was told to use its judgement.
-    Dismissed,
-    /// The turn it belonged to was stopped, or claude withdrew it.
-    Cancelled,
-    /// The process that asked it is gone. Still answerable: the answer goes to
-    /// the session as an ordinary message instead.
-    Expired,
-}
-
 impl QuestionState {
-    /// The word the table stores.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            QuestionState::Pending => "pending",
-            QuestionState::Answered => "answered",
-            QuestionState::Dismissed => "dismissed",
-            QuestionState::Cancelled => "cancelled",
-            QuestionState::Expired => "expired",
-        }
-    }
-
     /// A stored word, read back. Anything unrecognised is a question nobody can
     /// do anything with any more, which is what `cancelled` says.
     fn from_stored(stored: &str) -> QuestionState {
@@ -117,32 +89,6 @@ impl QuestionState {
             _ => QuestionState::Cancelled,
         }
     }
-}
-
-/// One question an agent asked, as a session's state carries it.
-#[derive(Debug, Clone, Serialize, Deserialize, Schematic)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionQuestion {
-    /// The CLI's id for the request, which the answer routes are addressed by.
-    pub request_id: String,
-    /// The `tool_use` the question is, as the transcript's item names it.
-    pub tool_use_id: Nullable<String>,
-    /// What was asked.
-    pub questions: Vec<QuestionEntry>,
-    /// Where it is in its life.
-    pub state: QuestionState,
-    /// What was chosen, keyed by the exact question text; multi-select answers
-    /// are joined with `", "`. `null` until answered.
-    pub answers: Nullable<HashMap<String, String>>,
-    /// Free text sent with the answer, or instead of one.
-    pub response: Nullable<String>,
-    /// Who answered or dismissed it, when the server knows; `null` with
-    /// authentication off.
-    pub answered_by: Nullable<String>,
-    /// When it was answered or dismissed, ISO-8601.
-    pub answered_at: Nullable<String>,
-    /// When claude asked it, ISO-8601.
-    pub created_at: String,
 }
 
 /// What the user chose, as it is kept and as it is written to the CLI.

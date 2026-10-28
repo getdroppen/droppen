@@ -12,7 +12,7 @@
 //! and it is worth being concrete about which bug each one closes:
 //!
 //! * `archived.json` is read-modify-written with **no lock at all**
-//!   (`crate::drive::archive`), so two archives in flight lose one. An `UPSERT`
+//!   (`crate::sessions::archive`), so two archives in flight lose one. An `UPSERT`
 //!   of one row cannot lose the other.
 //! * `titles.json`, `prefs.json` and `composer-prefs.json` are written **in
 //!   place** — `tokio::fs::write` straight over the live file — so a crash mid

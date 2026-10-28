@@ -589,7 +589,7 @@ impl Driver {
                 let dropped = self.state.queue.remove(index).expect("an index the queue just gave");
                 self.publish();
                 self.registry
-                    .note_receipt(Source::Acp, &self.id, &dropped.id, crate::inject::receipts::ReceiptStatus::Failed);
+                    .note_receipt(Source::Acp, &self.id, &dropped.id, crate::sessions::delivery::ReceiptStatus::Failed);
                 let _ = reply.send(QueueOutcome::Done);
             }
             Cmd::Stop(_) => unreachable!("handled by the loop"),
@@ -608,7 +608,7 @@ impl Driver {
             // The turn never starts: the session would have run on a model or
             // at an effort nobody asked for.
             self.registry
-                .note_receipt(Source::Acp, &self.id, &message.id, crate::inject::receipts::ReceiptStatus::Failed);
+                .note_receipt(Source::Acp, &self.id, &message.id, crate::sessions::delivery::ReceiptStatus::Failed);
             return match unset {
                 Unset::Refused(reason) => {
                     let said = self.redact(&reason);
@@ -628,7 +628,7 @@ impl Driver {
         self.record_choice().await;
         self.conn.prompt(&self.agent_session, message.prompt).await?;
         self.registry
-            .note_receipt(Source::Acp, &self.id, &message.id, crate::inject::receipts::ReceiptStatus::Sent);
+            .note_receipt(Source::Acp, &self.id, &message.id, crate::sessions::delivery::ReceiptStatus::Sent);
         self.start_turn();
         Ok(())
     }
@@ -800,7 +800,7 @@ impl Driver {
         self.transcript.append(&records).await;
         for dropped in std::mem::take(&mut self.state.queue) {
             self.registry
-                .note_receipt(Source::Acp, &self.id, &dropped.id, crate::inject::receipts::ReceiptStatus::Failed);
+                .note_receipt(Source::Acp, &self.id, &dropped.id, crate::sessions::delivery::ReceiptStatus::Failed);
         }
         if self.state.active {
             let interrupted = self.interrupted;

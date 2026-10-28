@@ -14,7 +14,7 @@
 //! It is deliberately *not* a subsystem with its own state struct. There is
 //! nothing to cache: the store is a few hundred bytes, every reader wants the
 //! newest value, and a write-through cache is one more thing that can disagree
-//! with what was committed. The same reasoning [`crate::drive::titles`] gives
+//! with what was committed. The same reasoning [`crate::sessions::titles`] gives
 //! for going straight to the store applies here, only more so — this one is
 //! written on every tab focus.
 //!

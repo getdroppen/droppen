@@ -387,12 +387,12 @@ pub struct SessionState {
     /// The receipts of the messages clients named for this session, from the
     /// last two hours; see [`crate::inject::receipts`]. Always present, like
     /// `rotation`, so an absent field means a server too old to send it.
-    pub receipts: Vec<crate::inject::receipts::MessageReceipt>,
+    pub receipts: Vec<crate::sessions::delivery::MessageReceipt>,
     /// The questions the agent stopped to ask, oldest first: the one it is
     /// blocked on (`pending`), and the recent ones with what became of them —
     /// who answered, and when. See [`crate::inject::questions`]. Always
     /// present; empty for codex, which never asks.
-    pub questions: Vec<crate::inject::questions::SessionQuestion>,
+    pub questions: Vec<crate::sessions::delivery::SessionQuestion>,
 }
 
 /// Read one session's live state, or `None` when it no longer exists.
