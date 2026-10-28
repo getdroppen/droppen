@@ -195,7 +195,7 @@ fn drop_redundant_default(rows: Vec<ModelInfo>) -> Vec<ModelInfo> {
 ///
 /// `config_dir` `None` means the user's own login (whatever the CLI picks up by
 /// itself); anything else is an account's probe directory, asked for exactly the
-/// way [`crate::accounts::quota::QuotaProbe::claude_usage`] asks it — `CLAUDE_CONFIG_DIR` set
+/// way [`crate::accounts::quota::ProbeRoots::claude_usage`] asks it — `CLAUDE_CONFIG_DIR` set
 /// *and* the directory as the cwd, so the child adopts no project of the user's.
 /// Without the variable the child falls back to `$HOME/.claude` and answers for
 /// the wrong login, which is the whole bug this argument exists for.

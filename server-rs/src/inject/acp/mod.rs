@@ -76,14 +76,6 @@ const INSTALL_HINT: &str = "Check its executable and arguments in Settings";
 /// How long a check waits for `initialize` to be answered.
 const CHECK_TIMEOUT: Duration = Duration::from_secs(30);
 
-impl AcpAgentRegistry {
-    /// The configured agent `id`, or why a new session cannot run on it.
-    fn configured(&self, id: &str) -> Result<AcpAgent, InjectError> {
-        self.get(id)
-            .ok_or_else(|| InjectError::message(format!("no ACP agent \"{id}\" is configured; add it in Settings")))
-    }
-}
-
 /// A session this server already has a transcript for.
 struct Recorded {
     /// Its transcript.
@@ -483,7 +475,9 @@ impl InjectionRegistry {
         // The agent is read under the gate, which its removal holds too
         // ([`InjectionRegistry::remove_acp_agent`]).
         let gate = self.spawn_gate.lock().await;
-        let agent = AcpAgentRegistry::of(&self.paths).configured(agent)?;
+        let agent = AcpAgentRegistry::of(&self.paths)
+            .get(agent)
+            .ok_or_else(|| InjectError::message(format!("no ACP agent \"{agent}\" is configured; add it in Settings")))?;
         check_options(&agent, options)?;
         let message = message(text, options);
         // Checked before anything starts, against what the agent last offered:
