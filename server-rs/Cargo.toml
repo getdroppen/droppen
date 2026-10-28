@@ -1,6 +1,6 @@
 [package]
 name = "remote-hand-server"
-version = "0.2.133"
+version = "0.2.134"
 edition = "2021"
 publish = false
 description = "Droppen local server"
