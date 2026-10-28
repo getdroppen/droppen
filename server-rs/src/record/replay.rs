@@ -35,7 +35,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use clap::{CommandFactory, FromArgMatches, Parser};
+use clap::Args;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
 use super::{Event, Line};
@@ -48,147 +48,7 @@ const DEFAULT_MAX_GAP: Duration = Duration::from_secs(3);
 /// How often the progress line is printed, at most.
 const PROGRESS_EVERY: Duration = Duration::from_millis(500);
 
-/// What a replay was asked for.
-#[derive(Debug, Clone)]
-pub struct Options {
-    /// The recording to read.
-    pub log: PathBuf,
-    /// The scratch `$HOME` to rebuild under. `APP_HOME_DIR` for the server that
-    /// is then pointed at it.
-    pub home: PathBuf,
-    /// Which instance's managed root a `managed` file is written to; it has to
-    /// match the `APP_INSTANCE` the replaying server runs under, which is why
-    /// it defaults to the same thing that does.
-    pub instance: String,
-    /// How much faster than life.
-    pub speed: f64,
-    /// The longest silence that is replayed in full.
-    pub max_gap: Duration,
-    /// Write everything at once, with no clock at all.
-    pub instant: bool,
-}
-
-impl Default for Options {
-    fn default() -> Self {
-        Self {
-            log: PathBuf::new(),
-            home: PathBuf::new(),
-            instance: DEFAULT_INSTANCE.to_string(),
-            speed: 1.0,
-            max_gap: DEFAULT_MAX_GAP,
-            instant: false,
-        }
-    }
-}
-
-/// Read the command line, or say what is wrong with it.
-///
-/// Every occurrence of `--speed`/`--max-gap` is validated in the order written,
-/// not just the last: the old parser refused a bad value before it could see a
-/// later good one, and a repeated option takes the last *valid* one.
-pub fn parse(argv: &[String]) -> Result<Options, String> {
-    if let Some(token) = refused_spelling(argv) {
-        return Err(format!("unknown option {token:?}\n\n{USAGE}"));
-    }
-    let cli = replay_command()
-        .try_get_matches_from(std::iter::once("replay".to_string()).chain(argv.iter().cloned()))
-        .map_err(|error| format!("{error}\n\n{USAGE}"))?;
-    let cli = ReplayCli::from_arg_matches(&cli).map_err(|error| format!("{error}\n\n{USAGE}"))?;
-    let mut options = Options::default();
-    if let Some(raw) = cli.log.last() {
-        options.log = PathBuf::from(raw);
-    }
-    if let Some(raw) = cli.home.last() {
-        options.home = PathBuf::from(raw);
-    }
-    if let Some(instance) = cli.instance.last() {
-        options.instance = instance.clone();
-    }
-    for raw in &cli.speed {
-        options.speed = raw.parse::<f64>().map_err(|_| format!("--speed wants a number, not {raw:?}"))?;
-        if !(options.speed.is_finite() && options.speed > 0.0) {
-            return Err("--speed must be greater than zero".to_string());
-        }
-    }
-    for raw in &cli.max_gap {
-        let secs = raw.parse::<f64>().map_err(|_| format!("--max-gap wants seconds, not {raw:?}"))?;
-        if !(secs.is_finite() && secs >= 0.0) {
-            return Err("--max-gap must not be negative".to_string());
-        }
-        options.max_gap = Duration::from_secs_f64(secs);
-    }
-    options.instant = cli.instant > 0;
-    if options.log.as_os_str().is_empty() {
-        return Err(format!("--log is required\n\n{USAGE}"));
-    }
-    if options.home.as_os_str().is_empty() {
-        return Err(format!("--home is required\n\n{USAGE}"));
-    }
-    Ok(options)
-}
-
-/// The spellings this command refused before clap: `--flag=value` was an
-/// unknown option, and a bare `--` not consumed as an option's value was one
-/// too (clap would take it as a terminator and run). The token after a
-/// value-taking option is skipped: it was that option's value, whatever it
-/// looked like.
-fn refused_spelling(argv: &[String]) -> Option<&str> {
-    let mut iter = argv.iter();
-    while let Some(arg) = iter.next() {
-        match arg.as_str() {
-            "--log" | "--home" | "--instance" | "--speed" | "--max-gap" => {
-                iter.next();
-            }
-            "--instant" => {}
-            "--" => return Some(arg),
-            other if is_attached(other) => return Some(other),
-            _ => {}
-        }
-    }
-    None
-}
-
-/// A value-taking option and its value in one word.
-fn is_attached(arg: &str) -> bool {
-    ["--log=", "--home=", "--instance=", "--speed=", "--max-gap=", "--instant="]
-        .iter()
-        .any(|prefix| arg.starts_with(prefix))
-}
-
-/// `replay`'s command tree, shown under the name this binary was run as.
-fn replay_command() -> clap::Command {
-    let name = crate::program::Name::invoked();
-    ReplayCli::command()
-        .bin_name(format!("{} replay", name.command()))
-        .after_long_help(name.rewrite(USAGE).into_owned())
-}
-
-/// `replay`'s command line. The options take the next token as their value,
-/// even one that looks like a flag, as the hand parser did.
-#[derive(Debug, Parser)]
-#[command(
-    name = "replay",
-    disable_help_flag = true,
-    disable_version_flag = true,
-    disable_help_subcommand = true,
-    args_override_self = true
-)]
-struct ReplayCli {
-    #[arg(long, allow_hyphen_values = true)]
-    log: Vec<String>,
-    #[arg(long, allow_hyphen_values = true)]
-    home: Vec<String>,
-    #[arg(long, allow_hyphen_values = true)]
-    instance: Vec<String>,
-    #[arg(long, allow_hyphen_values = true)]
-    speed: Vec<String>,
-    #[arg(long, allow_hyphen_values = true)]
-    max_gap: Vec<String>,
-    #[arg(long, action = clap::ArgAction::Count)]
-    instant: u8,
-}
-
-/// What `--help` and every refusal print.
+/// The rest of `replay --help`, after the options clap lists.
 pub const USAGE: &str = "\
 USAGE:
     remote-hand-server replay --log <recording.ndjson> --home <scratch-home>
@@ -203,94 +63,141 @@ at the pace they were originally written. Then:
 …renders them through the real pipeline. Recordings live in
 <data>/instances/<name>/session-logs/<session-id>.ndjson.";
 
-/// One file being rebuilt, held open for the whole replay.
-struct Sink {
-    file: tokio::fs::File,
+/// The `replay` command line.
+#[derive(Debug, PartialEq, Args)]
+#[command(disable_help_subcommand = true, args_override_self = true)]
+pub struct ReplayArgs {
+    /// The recording to read.
+    #[arg(long, allow_hyphen_values = true)]
+    pub log: PathBuf,
+    /// The scratch `$HOME` to rebuild under (`APP_HOME_DIR` for the server).
+    #[arg(long, allow_hyphen_values = true)]
+    pub home: PathBuf,
+    /// Which instance's managed root a `managed` file is written to.
+    #[arg(long, default_value = DEFAULT_INSTANCE, allow_hyphen_values = true)]
+    pub instance: String,
+    /// How much faster than life.
+    #[arg(long, default_value_t = 1.0, value_parser = speed_value, allow_hyphen_values = true)]
+    pub speed: f64,
+    /// The longest silence replayed in full, in seconds.
+    #[arg(long, default_value_t = 3.0, value_parser = max_gap_value, allow_hyphen_values = true)]
+    pub max_gap: f64,
+    /// Write everything at once, with no clock.
+    #[arg(long, action = clap::ArgAction::Count)]
+    pub instant: u8,
 }
 
-/// Replay `options.log` into `options.home`.
-pub async fn run(options: Options) -> Result<(), String> {
-    let paths = Paths::for_instance(options.home.clone(), &options.instance);
-    let plan = survey(&options.log).await?;
-    if plan.acts == 0 {
-        println!("replay: nothing to rebuild — this recording has no transcript lines");
-        return Ok(());
+/// `--speed`: a finite number greater than zero.
+fn speed_value(raw: &str) -> Result<f64, String> {
+    let value: f64 = raw.parse().map_err(|_| format!("--speed wants a number, not {raw:?}"))?;
+    if !(value.is_finite() && value > 0.0) {
+        return Err("--speed must be greater than zero".to_string());
     }
-    println!(
-        "replay: {} transcript events over {} of session time, into {}",
-        plan.acts,
-        span(plan.span_ms),
-        options.home.display()
-    );
-    if options.instant {
-        println!("replay: --instant, so the clock is skipped entirely");
-    } else {
+    Ok(value)
+}
+
+/// `--max-gap`: a finite number of seconds, not negative.
+fn max_gap_value(raw: &str) -> Result<f64, String> {
+    let secs: f64 = raw.parse().map_err(|_| format!("--max-gap wants seconds, not {raw:?}"))?;
+    if !(secs.is_finite() && secs >= 0.0) {
+        return Err("--max-gap must not be negative".to_string());
+    }
+    Ok(secs)
+}
+
+impl ReplayArgs {
+    /// Play the recording back into the scratch home.
+    pub async fn run(self) -> Result<(), String> {
+        let max_gap = Duration::from_secs_f64(self.max_gap);
+        let instant = self.instant > 0;
+
+        let paths = Paths::for_instance(self.home.clone(), &self.instance);
+        let plan = survey(&self.log).await?;
+        if plan.acts == 0 {
+            println!("replay: nothing to rebuild — this recording has no transcript lines");
+            return Ok(());
+        }
         println!(
-            "replay: at {}x, with silences longer than {:?} compressed to it",
-            options.speed, options.max_gap
+            "replay: {} transcript events over {} of session time, into {}",
+            plan.acts,
+            span(plan.span_ms),
+            self.home.display()
         );
-    }
+        if instant {
+            println!("replay: --instant, so the clock is skipped entirely");
+        } else {
+            println!(
+                "replay: at {}x, with silences longer than {:?} compressed to it",
+                self.speed, max_gap
+            );
+        }
 
-    let mut sinks: HashMap<PathBuf, Sink> = HashMap::new();
-    let mut clock: Option<(i64, tokio::time::Instant)> = None;
-    let mut done = 0u64;
-    let mut first: Option<i64> = None;
-    let mut printed = tokio::time::Instant::now();
+        let mut sinks: HashMap<PathBuf, Sink> = HashMap::new();
+        let mut clock: Option<(i64, tokio::time::Instant)> = None;
+        let mut done = 0u64;
+        let mut first: Option<i64> = None;
+        let mut printed = tokio::time::Instant::now();
 
-    let mut lines = open(&options.log).await?;
-    while let Some(line) = next_line(&mut lines).await {
-        let (root, rel, payload) = match &line.event {
-            Event::Transcript { root, path, line, .. } => (root, path, Payload::Line(line)),
-            Event::Sidecar { root, path, content, .. } => (root, path, Payload::Whole(content)),
-            // Everything else is the session's own life — stdio, lifecycle, the
-            // recorder's notes — and rebuilding a filesystem has no use for it.
-            // It stays in the recording because reading a recording by hand is
-            // the other half of what one is for.
-            _ => continue,
-        };
-        let Some(target) = target_of(&paths, root, rel) else {
-            eprintln!("replay: skipping a line whose path is not one this tool will write: {rel}");
-            continue;
-        };
+        let mut lines = open(&self.log).await?;
+        while let Some(line) = next_line(&mut lines).await {
+            let (root, rel, payload) = match &line.event {
+                Event::Transcript { root, path, line, .. } => (root, path, Payload::Line(line)),
+                Event::Sidecar { root, path, content, .. } => (root, path, Payload::Whole(content)),
+                // Everything else is the session's own life — stdio, lifecycle, the
+                // recorder's notes — and rebuilding a filesystem has no use for it.
+                // It stays in the recording because reading a recording by hand is
+                // the other half of what one is for.
+                _ => continue,
+            };
+            let Some(target) = target_of(&paths, root, rel) else {
+                eprintln!("replay: skipping a line whose path is not one this tool will write: {rel}");
+                continue;
+            };
 
-        // The clock, before the write: a line is due at the moment it was
-        // recorded, not the moment after it lands.
-        let stamp = parse_iso8601(&line.at);
-        if let Some(stamp) = stamp {
-            first.get_or_insert(stamp);
-            if !options.instant {
-                let due = match clock {
-                    Some((previous, at)) => at + scaled(stamp - previous, options.speed, options.max_gap),
-                    None => tokio::time::Instant::now(),
-                };
-                tokio::time::sleep_until(due).await;
-                clock = Some((stamp, due));
-            } else {
-                clock = Some((stamp, tokio::time::Instant::now()));
+            // The clock, before the write: a line is due at the moment it was
+            // recorded, not the moment after it lands.
+            let stamp = parse_iso8601(&line.at);
+            if let Some(stamp) = stamp {
+                first.get_or_insert(stamp);
+                if !instant {
+                    let due = match clock {
+                        Some((previous, at)) => at + scaled(stamp - previous, self.speed, max_gap),
+                        None => tokio::time::Instant::now(),
+                    };
+                    tokio::time::sleep_until(due).await;
+                    clock = Some((stamp, due));
+                } else {
+                    clock = Some((stamp, tokio::time::Instant::now()));
+                }
+            }
+
+            write(&mut sinks, &target, payload).await?;
+            done += 1;
+
+            let now = tokio::time::Instant::now();
+            if now.duration_since(printed) >= PROGRESS_EVERY {
+                printed = now;
+                let at = stamp.zip(first).map(|(now, first)| now - first).unwrap_or(0);
+                println!("replay: t+{} · {done}/{} events · {} files", span(at), plan.acts, sinks.len());
             }
         }
 
-        write(&mut sinks, &target, payload).await?;
-        done += 1;
-
-        let now = tokio::time::Instant::now();
-        if now.duration_since(printed) >= PROGRESS_EVERY {
-            printed = now;
-            let at = stamp.zip(first).map(|(now, first)| now - first).unwrap_or(0);
-            println!("replay: t+{} · {done}/{} events · {} files", span(at), plan.acts, sinks.len());
+        for sink in sinks.values_mut() {
+            let _ = sink.file.flush().await;
         }
+        println!("replay: done — {done} events into {} files under {}", sinks.len(), self.home.display());
+        let next = format!(
+            "replay: now run  APP_HOME_DIR={} APP_SERVER__PORT=8701 remote-hand-server serve",
+            self.home.display()
+        );
+        println!("{}", crate::program::Name::invoked().rewrite(&next));
+        Ok(())
     }
+}
 
-    for sink in sinks.values_mut() {
-        let _ = sink.file.flush().await;
-    }
-    println!("replay: done — {done} events into {} files under {}", sinks.len(), options.home.display());
-    let next = format!(
-        "replay: now run  APP_HOME_DIR={} APP_SERVER__PORT=8701 remote-hand-server serve",
-        options.home.display()
-    );
-    println!("{}", crate::program::Name::invoked().rewrite(&next));
-    Ok(())
+/// One file being rebuilt, held open for the whole replay.
+struct Sink {
+    file: tokio::fs::File,
 }
 
 /// What is being written to a file.
@@ -456,9 +363,18 @@ pub use crate::time::parse_iso_ms as parse_iso8601;
 
 #[cfg(test)]
 mod tests {
+    use clap::error::ErrorKind;
+
     use super::*;
     use crate::time::iso8601;
     use std::time::SystemTime;
+
+    fn parse_args(argv: &[String]) -> Result<ReplayArgs, clap::Error> {
+        match crate::cli::tests::parse_words("replay", argv)? {
+            crate::cli::Command::Replay(parsed) => Ok(parsed),
+            other => panic!("{argv:?} parsed as {other:?}"),
+        }
+    }
 
     #[test]
     fn the_command_line_is_read_or_refused_with_a_reason() {
@@ -476,27 +392,24 @@ mod tests {
         .iter()
         .map(|s| s.to_string())
         .collect();
-        let options = parse(&argv).expect("a valid command line");
+        let options = parse_args(&argv).expect("a valid command line");
         assert_eq!(options.log, PathBuf::from("/tmp/a.ndjson"));
         assert_eq!(options.home, PathBuf::from("/tmp/home"));
         assert_eq!(options.speed, 4.0);
-        assert_eq!(options.max_gap, Duration::from_millis(500));
-        assert!(options.instant);
+        assert_eq!(options.max_gap, 0.5);
+        assert_eq!(options.instant, 1);
         assert_eq!(options.instance, DEFAULT_INSTANCE, "the default matches the server's own");
 
-        let bare = |args: &[&str]| parse(&args.iter().map(|s| s.to_string()).collect::<Vec<_>>()).expect_err("must be refused");
-        assert!(bare(&["--home", "/tmp"]).contains("--log is required"));
-        assert!(bare(&["--log", "/tmp/a"]).contains("--home is required"));
+        let bare = |args: &[&str]| parse_args(&args.iter().map(|s| s.to_string()).collect::<Vec<_>>()).expect_err("must be refused").to_string();
+        assert!(bare(&["--home", "/tmp"]).contains("--log"));
+        assert!(bare(&["--log", "/tmp/a"]).contains("--home"));
         assert!(bare(&["--log", "/tmp/a", "--home", "/tmp", "--speed", "0"]).contains("greater than zero"));
         assert!(bare(&["--log", "/tmp/a", "--home", "/tmp", "--speed", "fast"]).contains("wants a number"));
         assert!(
             bare(&["--log", "/tmp/a", "--home", "/tmp", "--nope"]).contains("unexpected argument '--nope'"),
             "unknown option"
         );
-        assert!(
-            bare(&["--log"]).contains("a value is required for '--log <LOG>'"),
-            "needs a value"
-        );
+        assert!(bare(&["--log"]).contains("a value is required for '--log <LOG>'"), "needs a value");
     }
 
     /// The two knobs that make a six-hour session watchable in five minutes.
@@ -605,12 +518,15 @@ mod tests {
         ));
         std::fs::write(&log, &recording).expect("write the recording");
 
-        run(Options {
+        ReplayArgs {
             log: log.clone(),
             home: home.clone(),
-            instant: true,
-            ..Options::default()
-        })
+            instance: DEFAULT_INSTANCE.to_string(),
+            speed: 1.0,
+            max_gap: 3.0,
+            instant: 1,
+        }
+        .run()
         .await
         .expect("replay");
 
@@ -672,22 +588,24 @@ mod tests {
         )
         .expect("write");
 
-        let options = Options {
-            log,
+        let args = || ReplayArgs {
+            log: log.clone(),
             home: home.clone(),
-            instant: true,
-            ..Options::default()
+            instance: DEFAULT_INSTANCE.to_string(),
+            speed: 1.0,
+            max_gap: 3.0,
+            instant: 1,
         };
-        run(options.clone()).await.expect("first replay");
-        run(options).await.expect("second replay");
+        args().run().await.expect("first replay");
+        args().run().await.expect("second replay");
 
         let file = Paths::new(home).claude_root(ClaudeRoot::Managed).join("projects/-w/abc.jsonl");
         let content = std::fs::read_to_string(&file).expect("the transcript");
         assert_eq!(content, "{\"n\":1}\n", "the second replay replaced the first: {content:?}");
     }
-    /// The replay command lines, pinned so the hand parser and clap answer
-    /// alike. A value-taking option consumes the next token whatever it looks
-    /// like, `--flag=value` is not a spelling here, and repeats take the last.
+    /// The replay command lines. A value-taking option consumes the next token
+    /// whatever it looks like, `--flag=value` is now a clap spelling, a bare
+    /// `--` is clap's terminator, and repeats take the last. Help is clap's.
     #[test]
     fn the_replay_argument_table() {
         let words = |line: &[&str]| -> Vec<String> { line.iter().map(|word| (*word).to_string()).collect() };
@@ -699,47 +617,52 @@ mod tests {
             &["--log", "--", "--home", "b"],
             &["--log", "a", "--home", "--"],
             &["--log", "a", "--home", "b", "--instant", "--instant"],
+            &["--log=a", "--home", "b"],
+            &["--log", "a", "--home", "b", "--"],
         ]
         .into_iter()
         .map(words)
         .collect();
         for argv in &accepted {
-            assert!(parse(argv).is_ok(), "{argv:?} must parse: {:?}", parse(argv).err());
+            assert!(parse_args(argv).is_ok(), "{argv:?} must parse: {:?}", parse_args(argv).err());
         }
-        let parsed = parse(&words(&["--log", "a", "--log", "c", "--home", "b"])).expect("parsed");
+        let parsed = parse_args(&words(&["--log", "a", "--log", "c", "--home", "b"])).expect("parsed");
         assert_eq!(parsed.log, PathBuf::from("c"), "the last --log wins");
         assert_eq!(parsed.home, PathBuf::from("b"));
-        assert_eq!(parse(&words(&["--log", "--", "--home", "b"])).expect("parsed").log, PathBuf::from("--"));
+        assert_eq!(parse_args(&words(&["--log", "--", "--home", "b"])).expect("parsed").log, PathBuf::from("--"));
+        assert_eq!(parse_args(&words(&["--log=a", "--home", "b"])).expect("parsed").log, PathBuf::from("a"));
 
-        let refused: Vec<Vec<String>> = [
-            &[][..],
-            &["--log", "a"],
-            &["--home", "b"],
-            &["--log"],
-            &["--log", "a", "--home", "b", "--nope"],
-            &["--log=a", "--home", "b"],
-            &["--instant"],
-            &["--log", "a", "--home", "b", "--speed"],
-            &["--log", "a", "--home", "b", "--speed", "fast"],
-            &["--log", "a", "--home", "b", "--speed", "0"],
-            &["--log", "a", "--home", "b", "--speed", "-1"],
-            &["--log", "a", "--home", "b", "--speed", "inf"],
-            &["--log", "a", "--home", "b", "--speed", "infinity"],
-            &["--log", "a", "--home", "b", "--max-gap", "x"],
-            &["--log", "a", "--home", "b", "--max-gap", "-2"],
-            &["--log", "a", "--home", "b", "--max-gap", "NaN"],
-            &["--log", "a", "--home", "b", "extra"],
-            &["--log", "a", "--home", "b", "--"],
-            &["--log", "a", "--home", "b", "--", "x"],
+        for (argv, expected) in [
+            (&[][..], ErrorKind::MissingRequiredArgument),
+            (&["--log", "a"], ErrorKind::MissingRequiredArgument),
+            (&["--home", "b"], ErrorKind::MissingRequiredArgument),
+            (&["--log"], ErrorKind::InvalidValue),
+            (&["--log", "a", "--home", "b", "--nope"], ErrorKind::UnknownArgument),
+            (&["--instant"], ErrorKind::MissingRequiredArgument),
+            (&["--log", "a", "--home", "b", "--speed"], ErrorKind::InvalidValue),
+            (&["--log", "a", "--home", "b", "--speed", "fast"], ErrorKind::ValueValidation),
+            (&["--log", "a", "--home", "b", "--speed", "0"], ErrorKind::ValueValidation),
+            (&["--log", "a", "--home", "b", "--speed", "-1"], ErrorKind::ValueValidation),
+            (&["--log", "a", "--home", "b", "--speed", "inf"], ErrorKind::ValueValidation),
+            (&["--log", "a", "--home", "b", "--speed", "infinity"], ErrorKind::ValueValidation),
+            (&["--log", "a", "--home", "b", "--max-gap", "x"], ErrorKind::ValueValidation),
+            (&["--log", "a", "--home", "b", "--max-gap", "-2"], ErrorKind::ValueValidation),
+            (&["--log", "a", "--home", "b", "--max-gap", "NaN"], ErrorKind::ValueValidation),
+            (&["--log", "a", "--home", "b", "extra"], ErrorKind::UnknownArgument),
+            (&["--log", "a", "--home", "b", "--", "x"], ErrorKind::UnknownArgument),
             // A value-taking option before --instance takes it as its value;
-            // the word after it is then an unknown argument, as before.
-            &["--log", "--instance", "x", "--home", "y"],
-        ]
-        .into_iter()
-        .map(words)
-        .collect();
-        for argv in &refused {
-            assert!(parse(argv).is_err(), "{argv:?} must be refused");
+            // the word after it is then an unknown argument.
+            (&["--log", "--instance", "x", "--home", "y"], ErrorKind::UnknownArgument),
+        ] {
+            assert_eq!(parse_args(&words(argv)).unwrap_err().kind(), expected, "{argv:?}");
+        }
+    }
+
+    #[test]
+    fn help_is_claps() {
+        for argv in [vec!["--help"], vec!["-h"], vec!["--log", "a", "--help"], vec!["--help", "junk"]] {
+            let argv: Vec<String> = argv.iter().map(|word| (*word).to_string()).collect();
+            assert_eq!(parse_args(&argv).unwrap_err().kind(), clap::error::ErrorKind::DisplayHelp, "{argv:?}");
         }
     }
 

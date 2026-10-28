@@ -4,20 +4,18 @@ use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand};
 
-const USAGE: &str = "\
-USAGE:
-    droppen-relay [serve]               relay (registers with the Hub on its first start)
-    droppen-relay keygen                print a new key as DROPPEN_RELAY_KEY=… (the public key goes to stderr)
-    droppen-relay deregister [--reason TEXT]
-                                        retire this relay at the Hub (its key is void afterwards)
-    droppen-relay rotate-key            have the Hub pin a new key; prints it as DROPPEN_RELAY_KEY=…
-
+/// What the relay reads instead of options, shown under its help.
+const CONFIGURATION: &str = "\
 Configuration is environment only: DROPPEN_RELAY_HUB, DROPPEN_RELAY_ORIGIN, DROPPEN_RELAY_KEY,
 DROPPEN_RELAY_REGISTRATION_TOKEN, PORT, … (see rh_relay::config). The old names,
 RH_RELAY_*, are deprecated and stop working in v0.2.135: set the DROPPEN_RELAY_* name instead
 (each old name used is logged once).";
 
+/// The reason `deregister` gives the Hub when the operator names none.
+const DEFAULT_REASON: &str = "deregistered by its operator";
+
 fn main() -> ExitCode {
+    let command = RelayCli::parse().into_command();
     // The websocket library logs whole frames at trace level: never, here,
     // whatever RUST_LOG says (a relay logs a frame's type, ch and length only).
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
@@ -31,7 +29,6 @@ fn main() -> ExitCode {
         .with_writer(std::io::stderr)
         .init();
     rh_relay::uplink::tls_provider();
-    let args: Vec<String> = std::env::args().skip(1).collect();
     let runtime = match tokio::runtime::Runtime::new() {
         Ok(r) => r,
         Err(e) => {
@@ -39,7 +36,7 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    match runtime.block_on(run(args)) {
+    match runtime.block_on(command.run()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("droppen-relay: {e}");
@@ -48,136 +45,123 @@ fn main() -> ExitCode {
     }
 }
 
-/// What the command line asked for.
-#[derive(Debug, PartialEq, Eq)]
-enum Invocation {
-    Help,
-    Serve,
-    Keygen,
-    Deregister,
-    RotateKey,
-}
-
-async fn run(args: Vec<String>) -> Result<(), String> {
-    match parse(&args)? {
-        Invocation::Help => {
-            println!("{USAGE}");
-            Ok(())
-        }
-        Invocation::Serve => {
-            let config = rh_relay::Config::from_env()?;
-            let listener = tokio::net::TcpListener::bind(config.bind)
-                .await
-                .map_err(|e| format!("bind {}: {e}", config.bind))?;
-            tracing::info!(id = %config.id, origin = %config.origin, hub = ?config.hub, addr = %config.bind, "droppen-relay listening");
-            let server = rh_relay::Server::new(config);
-            rh_relay::run(server, listener, signal()).await
-        }
-        Invocation::Keygen => {
-            let key = ed25519_dalek::SigningKey::generate(&mut rand::rngs::OsRng);
-            eprintln!(
-                "public key {} — keep DROPPEN_RELAY_KEY secret (a secret env var, or DROPPEN_RELAY_STATE_DIR on a volume)",
-                rh_relay::config::hex(&key.verifying_key().to_bytes())
-            );
-            println!("DROPPEN_RELAY_KEY={}", rh_relay::config::hex(key.as_bytes()));
-            Ok(())
-        }
-        Invocation::Deregister => {
-            let config = rh_relay::Config::from_env()?;
-            let reason = reason(&args);
-            rh_relay::uplink::deregister(&config, &reason).await?;
-            eprintln!(
-                "relay {} is retired: it leaves the directory and every account's set; a running process drains and stops",
-                config.id
-            );
-            Ok(())
-        }
-        Invocation::RotateKey => {
-            let config = rh_relay::Config::from_env()?;
-            let new = ed25519_dalek::SigningKey::generate(&mut rand::rngs::OsRng);
-            rh_relay::uplink::rotate(&config, &new).await?;
-            if rh_relay::config::env("DROPPEN_RELAY_KEY").is_none() {
-                if let Some(dir) = &config.state_dir {
-                    rh_relay::config::write_private(&dir.join("relay.key"), &rh_relay::config::hex(new.as_bytes()))?;
-                    eprintln!("the Hub pinned the new key; {} has it", dir.join("relay.key").display());
-                    return Ok(());
-                }
-            }
-            eprintln!("the Hub pinned the new key: set DROPPEN_RELAY_KEY to it and restart the relay");
-            println!("DROPPEN_RELAY_KEY={}", rh_relay::config::hex(new.as_bytes()));
-            Ok(())
-        }
-    }
-}
-
-/// The command, or the usage. Help is the exact first argument, as it always
-/// was; every command ignores a tail it does not read, which is what deployed
-/// relays start with.
-fn parse(args: &[String]) -> Result<Invocation, String> {
-    if let Some(first) = args.first() {
-        match first.as_str() {
-            "--help" | "-h" => return Ok(Invocation::Help),
-            // clap reads a leading `--` as its terminator, leaving no command
-            // and so meaning `serve`; this binary has always called it unknown.
-            "--" => return Err(format!("unknown command {first:?}\n\n{USAGE}")),
-            _ => {}
-        }
-    }
-    let cli = RelayCli::try_parse_from(std::iter::once("droppen-relay".to_string()).chain(args.iter().cloned()))
-        .map_err(|error| format!("{error}\n\n{USAGE}"))?;
-    Ok(match cli.command {
-        None | Some(RelayCommand::Serve(_)) => Invocation::Serve,
-        Some(RelayCommand::Keygen(_)) => Invocation::Keygen,
-        Some(RelayCommand::Deregister(_)) => Invocation::Deregister,
-        Some(RelayCommand::RotateKey(_)) => Invocation::RotateKey,
-    })
-}
-
-/// `droppen-relay`'s command tree. Every command carries a hidden, ignored
-/// tail: a relay's start command is fixed and deployed, so an argument a
-/// command never read must keep being accepted and ignored.
-#[derive(Debug, Parser)]
-#[command(
-    name = "droppen-relay",
-    disable_help_flag = true,
-    disable_version_flag = true,
-    disable_help_subcommand = true,
-    args_override_self = true
-)]
+/// Droppen's relay. Without a command, it serves.
+#[derive(Debug, PartialEq, Eq, Parser)]
+#[command(name = "droppen-relay", disable_help_subcommand = true, after_help = CONFIGURATION)]
 struct RelayCli {
     #[command(subcommand)]
     command: Option<RelayCommand>,
 }
 
-#[derive(Debug, Subcommand)]
+impl RelayCli {
+    /// The command asked for; none is `serve`.
+    fn into_command(self) -> RelayCommand {
+        self.command.unwrap_or_else(|| RelayCommand::Serve(ServeArgs::default()))
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Subcommand)]
 enum RelayCommand {
-    #[command(disable_help_flag = true, disable_version_flag = true)]
-    Serve(RelayTail),
-    #[command(disable_help_flag = true, disable_version_flag = true)]
-    Keygen(RelayTail),
-    #[command(disable_help_flag = true, disable_version_flag = true)]
-    Deregister(RelayTail),
-    #[command(disable_help_flag = true, disable_version_flag = true)]
-    RotateKey(RelayTail),
+    /// Run the relay (it registers with the Hub on its first start)
+    Serve(ServeArgs),
+    /// Print a new key as DROPPEN_RELAY_KEY=… (the public key goes to stderr)
+    Keygen(KeygenArgs),
+    /// Retire this relay at the Hub (its key is void afterwards)
+    #[command(args_override_self = true)]
+    Deregister(DeregisterArgs),
+    /// Have the Hub pin a new key; prints it as DROPPEN_RELAY_KEY=…
+    RotateKey(RotateKeyArgs),
 }
 
-/// The arguments the command does not read. Declared so clap accepts them;
-/// `deregister` scans the original tail for `--reason`.
-#[derive(Debug, Args)]
-struct RelayTail {
-    #[arg(trailing_var_arg = true, allow_hyphen_values = true, num_args = 0.., hide = true)]
-    args: Vec<String>,
+impl RelayCommand {
+    async fn run(self) -> Result<(), String> {
+        match self {
+            RelayCommand::Serve(serve) => serve.run().await,
+            RelayCommand::Keygen(keygen) => keygen.run(),
+            RelayCommand::Deregister(deregister) => deregister.run().await,
+            RelayCommand::RotateKey(rotate) => rotate.run().await,
+        }
+    }
 }
 
-/// The first exact `--reason` anywhere and the token after it, as the hand
-/// parser read it; every other argument is ignored. `--reason=…` is not that
-/// word, and `--reason` with nothing after it keeps the default.
-fn reason(args: &[String]) -> String {
-    args.iter()
-        .position(|a| a == "--reason")
-        .and_then(|i| args.get(i + 1))
-        .cloned()
-        .unwrap_or_else(|| "deregistered by its operator".into())
+#[derive(Debug, Default, PartialEq, Eq, Args)]
+struct ServeArgs {}
+
+impl ServeArgs {
+    async fn run(self) -> Result<(), String> {
+        let config = rh_relay::Config::from_env()?;
+        let listener = tokio::net::TcpListener::bind(config.bind)
+            .await
+            .map_err(|e| format!("bind {}: {e}", config.bind))?;
+        tracing::info!(id = %config.id, origin = %config.origin, hub = ?config.hub, addr = %config.bind, "droppen-relay listening");
+        let server = rh_relay::Server::new(config);
+        rh_relay::run(server, listener, signal()).await
+    }
+}
+
+#[derive(Debug, Default, PartialEq, Eq, Args)]
+struct KeygenArgs {}
+
+impl KeygenArgs {
+    fn run(self) -> Result<(), String> {
+        let key = ed25519_dalek::SigningKey::generate(&mut rand::rngs::OsRng);
+        eprintln!(
+            "public key {} — keep DROPPEN_RELAY_KEY secret (a secret env var, or DROPPEN_RELAY_STATE_DIR on a volume)",
+            rh_relay::config::hex(&key.verifying_key().to_bytes())
+        );
+        println!("DROPPEN_RELAY_KEY={}", rh_relay::config::hex(key.as_bytes()));
+        Ok(())
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Args)]
+struct DeregisterArgs {
+    /// Why the relay is retired, as the Hub records it
+    // The word after `--reason` is its value even when it looks like an option,
+    // and `--reason` with nothing after it keeps the default: an operator's
+    // script that passes either still retires the relay.
+    #[arg(
+        long,
+        value_name = "TEXT",
+        num_args = 0..=1,
+        default_value = DEFAULT_REASON,
+        default_missing_value = DEFAULT_REASON,
+        allow_hyphen_values = true
+    )]
+    reason: String,
+}
+
+impl DeregisterArgs {
+    async fn run(self) -> Result<(), String> {
+        let config = rh_relay::Config::from_env()?;
+        rh_relay::uplink::deregister(&config, &self.reason).await?;
+        eprintln!(
+            "relay {} is retired: it leaves the directory and every account's set; a running process drains and stops",
+            config.id
+        );
+        Ok(())
+    }
+}
+
+#[derive(Debug, Default, PartialEq, Eq, Args)]
+struct RotateKeyArgs {}
+
+impl RotateKeyArgs {
+    async fn run(self) -> Result<(), String> {
+        let config = rh_relay::Config::from_env()?;
+        let new = ed25519_dalek::SigningKey::generate(&mut rand::rngs::OsRng);
+        rh_relay::uplink::rotate(&config, &new).await?;
+        if rh_relay::config::env("DROPPEN_RELAY_KEY").is_none() {
+            if let Some(dir) = &config.state_dir {
+                rh_relay::config::write_private(&dir.join("relay.key"), &rh_relay::config::hex(new.as_bytes()))?;
+                eprintln!("the Hub pinned the new key; {} has it", dir.join("relay.key").display());
+                return Ok(());
+            }
+        }
+        eprintln!("the Hub pinned the new key: set DROPPEN_RELAY_KEY to it and restart the relay");
+        println!("DROPPEN_RELAY_KEY={}", rh_relay::config::hex(new.as_bytes()));
+        Ok(())
+    }
 }
 
 async fn signal() {
@@ -195,48 +179,71 @@ async fn signal() {
 
 #[cfg(test)]
 mod tests {
+    use clap::error::ErrorKind;
+
     use super::*;
 
-    fn args(words: &[&str]) -> Vec<String> {
-        words.iter().map(|word| (*word).to_string()).collect()
+    fn parse(argv: &[&str]) -> Result<RelayCommand, clap::Error> {
+        RelayCli::try_parse_from(std::iter::once("droppen-relay").chain(argv.iter().copied())).map(RelayCli::into_command)
     }
 
-    /// Every command keeps accepting the tail a deployed relay may carry; help is the first token only.
+    fn deregister(reason: &str) -> RelayCommand {
+        RelayCommand::Deregister(DeregisterArgs { reason: reason.to_string() })
+    }
+
+    /// The argv other programs start the relay with, and what each must mean:
+    /// the image's `CMD` and `cloud-dev.sh` (`serve`), the tests and
+    /// `rh-devkit` (no arguments), and the README and `docs/relay-and-plans.md`.
+    #[test]
+    fn the_callers_argv() {
+        assert_eq!(parse(&[]).unwrap(), RelayCommand::Serve(ServeArgs::default()));
+        assert_eq!(parse(&["serve"]).unwrap(), RelayCommand::Serve(ServeArgs::default()));
+        assert_eq!(parse(&["keygen"]).unwrap(), RelayCommand::Keygen(KeygenArgs::default()));
+        assert_eq!(parse(&["deregister"]).unwrap(), deregister(DEFAULT_REASON));
+        assert_eq!(parse(&["rotate-key"]).unwrap(), RelayCommand::RotateKey(RotateKeyArgs::default()));
+    }
+
+    /// The commands take no words beyond their options; help is clap's.
     #[test]
     fn the_relay_argument_table() {
-        assert_eq!(parse(&args(&[])).unwrap(), Invocation::Serve);
-        assert_eq!(parse(&args(&["serve"])).unwrap(), Invocation::Serve);
-        assert_eq!(parse(&args(&["serve", "junk", "--x"])).unwrap(), Invocation::Serve);
-        assert_eq!(parse(&args(&["keygen", "--help"])).unwrap(), Invocation::Keygen);
-        assert_eq!(parse(&args(&["deregister", "--reason", "x"])).unwrap(), Invocation::Deregister);
-        assert_eq!(parse(&args(&["deregister", "junk", "--x"])).unwrap(), Invocation::Deregister);
-        assert_eq!(parse(&args(&["rotate-key", "--x"])).unwrap(), Invocation::RotateKey);
-        assert_eq!(parse(&args(&["--help"])).unwrap(), Invocation::Help);
-        assert_eq!(parse(&args(&["-h", "junk"])).unwrap(), Invocation::Help, "the first token only");
-        for argv in [
-            vec!["bogus"],
-            vec!["--"],
-            vec!["--", "serve"],
-            vec!["--version"],
-            vec!["-V"],
-            vec!["--help=x"],
+        assert_eq!(parse(&["deregister", "--reason", "x"]).unwrap(), deregister("x"));
+        assert_eq!(parse(&["--"]).unwrap(), RelayCommand::Serve(ServeArgs::default()), "a bare -- is clap's terminator");
+        for argv in [&["--help"][..], &["-h"], &["--help", "junk"], &["keygen", "--help"], &["serve", "--help"]] {
+            assert_eq!(parse(argv).unwrap_err().kind(), ErrorKind::DisplayHelp, "{argv:?} must answer help");
+        }
+        for (argv, kind) in [
+            (&["bogus"][..], ErrorKind::InvalidSubcommand),
+            (&["--", "serve"], ErrorKind::UnknownArgument),
+            (&["--version"], ErrorKind::UnknownArgument),
+            (&["-V"], ErrorKind::UnknownArgument),
+            (&["--help=x"], ErrorKind::TooManyValues),
+            (&["serve", "junk", "--x"], ErrorKind::UnknownArgument),
+            (&["keygen", "junk"], ErrorKind::UnknownArgument),
+            (&["deregister", "junk", "--x"], ErrorKind::UnknownArgument),
+            (&["rotate-key", "--x"], ErrorKind::UnknownArgument),
         ] {
-            assert!(parse(&args(&argv)).is_err(), "{argv:?} must be refused");
+            assert_eq!(parse(argv).unwrap_err().kind(), kind, "{argv:?} must be refused");
         }
     }
 
     #[test]
-    fn deregister_reads_the_first_exact_reason() {
-        assert_eq!(reason(&args(&["deregister"])), "deregistered by its operator");
-        assert_eq!(reason(&args(&["deregister", "--reason"])), "deregistered by its operator");
-        assert_eq!(reason(&args(&["deregister", "--reason", "x"])), "x");
-        assert_eq!(reason(&args(&["deregister", "--reason=x", "--reason", "y"])), "y", "the exact word only");
-        assert_eq!(reason(&args(&["deregister", "--reason", "--reason", "x"])), "--reason", "the next token is the value");
+    fn deregister_reads_its_reason() {
+        assert_eq!(parse(&["deregister"]).unwrap(), deregister(DEFAULT_REASON));
+        assert_eq!(parse(&["deregister", "--reason"]).unwrap(), deregister(DEFAULT_REASON), "no value keeps the default");
+        assert_eq!(parse(&["deregister", "--reason", "x"]).unwrap(), deregister("x"));
+        assert_eq!(parse(&["deregister", "--reason=x", "--reason", "y"]).unwrap(), deregister("y"), "the last one wins");
+        assert_eq!(parse(&["deregister", "--reason", "--reason"]).unwrap(), deregister("--reason"), "the next token is the value");
         assert_eq!(
-            reason(&args(&["deregister", "--reason", "--instance", "x"])),
-            "--instance",
+            parse(&["deregister", "--reason", "--instance"]).unwrap(),
+            deregister("--instance"),
             "even a word that looks like an option is the value"
         );
-        assert_eq!(reason(&args(&["deregister", "junk", "--reason", "x", "junk"])), "x");
+        for argv in [
+            &["deregister", "--reason", "--reason", "x"][..],
+            &["deregister", "--reason", "--instance", "x"],
+            &["deregister", "junk", "--reason", "x", "junk"],
+        ] {
+            assert_eq!(parse(argv).unwrap_err().kind(), ErrorKind::UnknownArgument, "{argv:?}");
+        }
     }
 }

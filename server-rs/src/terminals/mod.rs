@@ -1527,7 +1527,7 @@ async fn reap_killed(registry: Weak<Registry>, entry: Arc<Entry>) {
     }
     // The tombstone is the shim's first act on the way out, not its last: the
     // `x` frame follows it once the shim's reader has drained the pty
-    // (`pty_shim::child::run`, steps 1 and 2). Cancelling `detach` as soon as
+    // (`pty_shim::child::Args::run`, steps 1 and 2). Cancelling `detach` as soon as
     // the tombstone appears would beat that frame on a busy machine, and the
     // link task, which checks `detach` first, would stop without noting the
     // exit. So the link task is given time to carry the frame itself and is

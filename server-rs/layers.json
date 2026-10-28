@@ -67,9 +67,10 @@
     },
     {
       "name": "entry",
-      "about": "What assembles and serves the subsystems: the router, the app, the web files, the desktop app's settings, shutdown, and the binary.",
+      "about": "What assembles and serves the subsystems: the router, the app, the web files, the desktop app's settings, shutdown, the command line, and the binary.",
       "modules": [
         "api",
+        "cli",
         "app",
         "static_files",
         "desktop_app",

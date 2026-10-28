@@ -1,13 +1,13 @@
 use rh_proto::identity::{display_fingerprint, fingerprint_text, EnrollCode, MachineIdentity};
 
-use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
+use clap::{Args, Subcommand};
 
 use super::seed::{load_or_create, FileSeedStore};
 use super::{control, enroll, hub, rotation, state, AgentFiles};
 use crate::paths::Paths;
 use crate::time::now_ms_u64;
 
-/// What to print when the subcommand does not parse.
+/// The rest of `agent --help`, after the options clap lists.
 pub const USAGE: &str = "\
 USAGE:
     remote-hand-server agent enroll <code> --hub <wss-url> [--instance <instance>]
@@ -36,126 +36,132 @@ again; remove the machine on droppen.app too — and needs the instance's server
 stopped (or use the local settings, which do it live). An instance that is
 never enrolled serves exactly as before.";
 
-#[derive(Debug, PartialEq, Eq)]
-pub(super) enum Action {
-    Enroll(EnrollCode),
-    /// `enroll -`: the code is on the first line of stdin.
-    EnrollFromStdin,
-    Run,
-    Status,
-    Unenroll,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub(super) struct Invocation {
-    pub(super) action: Action,
-    /// The hub's origin (`enroll` only).
-    pub(super) hub: Option<String>,
-    /// `--instance`, already validated as a name.
-    pub(super) instance: Option<String>,
-}
-
-pub(super) fn parse(args: &[String]) -> Result<Invocation, String> {
-    // `--instance` comes out of the whole argv first, exactly as it always did:
-    // every occurrence is validated (an invalid earlier one is a refusal even if
-    // a later one is good), and the flag is gone before `--hub` can take it as a
-    // value.
-    let (args, instance) = crate::auth::cli::take_instance(args)?;
-    // clap reserves `--` as an option terminator; this grammar never did. After
-    // `--instance` is gone, `--` can only be the value of --hub, which clap also
-    // takes as the value; a bare one was never part of an accepted command line.
-    if has_bare_separator(&args) {
-        return Err(USAGE.to_string());
-    }
-    let cli = cli_command()
-        .try_get_matches_from(std::iter::once("agent".to_string()).chain(args.iter().cloned()))
-        .map_err(|error| format!("{error}\n\n{USAGE}"))?;
-    let cli = AgentCli::from_arg_matches(&cli).map_err(|error| format!("{error}\n\n{USAGE}"))?;
-    let hub = cli.hub.map(|url| hub::origin(&url)).transpose()?;
-    let action = match cli.command {
-        Some(AgentCommand::Enroll { code }) if code == "-" => Action::EnrollFromStdin,
-        Some(AgentCommand::Enroll { code }) => {
-            Action::Enroll(code.parse().map_err(|e: &str| format!("{e}\n\n{USAGE}"))?)
-        }
-        Some(AgentCommand::Run) => Action::Run,
-        Some(AgentCommand::Status) => Action::Status,
-        Some(AgentCommand::Unenroll) => Action::Unenroll,
-        None => return Err(USAGE.to_string()),
-    };
-    let enrolling = matches!(action, Action::Enroll(_) | Action::EnrollFromStdin);
-    if enrolling && hub.is_none() {
-        return Err(format!("enroll needs the hub: --hub wss://<hub>\n\n{USAGE}"));
-    }
-    if !enrolling && hub.is_some() {
-        return Err("--hub is only for enroll: the other subcommands use the hub this instance enrolled with".into());
-    }
-    Ok(Invocation { action, hub, instance })
-}
-
-/// `agent`'s command tree, shown under the name this binary was run as.
-fn cli_command() -> clap::Command {
-    let name = crate::program::Name::invoked();
-    AgentCli::command()
-        .bin_name(format!("{} agent", name.command()))
-        .after_long_help(name.rewrite(USAGE).into_owned())
-}
-
-/// Whether `args` holds a `--` that the old parser would have seen as an
-/// ordinary word. The value after `--hub` is skipped: that token may be `--`
-/// and is an option value, not a word.
-fn has_bare_separator(args: &[String]) -> bool {
-    let mut iter = args.iter();
-    while let Some(arg) = iter.next() {
-        match arg.as_str() {
-            "--hub" => {
-                iter.next();
-            }
-            "--" => return true,
-            _ => {}
-        }
-    }
-    false
-}
-
-/// `agent`'s flags and subcommands.
-///
-/// Help and version are not flags: this subcommand has always answered both
-/// with its usage and exit 1, so clap's are disabled here (as on every
-/// subcommand that never had them).
-#[derive(Debug, Parser)]
-#[command(
-    name = "agent",
-    disable_help_flag = true,
-    disable_version_flag = true,
-    disable_help_subcommand = true,
-    args_override_self = true
-)]
-struct AgentCli {
+/// The cloud agent's command line.
+#[derive(Debug, PartialEq, Eq, Args)]
+#[command(args_override_self = true)]
+pub struct AgentArgs {
     /// The hub's origin (`enroll` only).
     #[arg(long, global = true, allow_hyphen_values = true)]
-    hub: Option<String>,
+    pub hub: Option<String>,
+    /// The instance, wherever among the arguments it is written.
+    #[arg(long, global = true, action = clap::ArgAction::Append, value_parser = crate::auth::cli::instance_name, allow_hyphen_values = true)]
+    pub instance: Vec<String>,
+    /// The action to take.
     #[command(subcommand)]
-    command: Option<AgentCommand>,
+    pub command: AgentCommand,
 }
 
-#[derive(Debug, Subcommand)]
-enum AgentCommand {
+/// The agent's actions.
+#[derive(Debug, PartialEq, Eq, Subcommand)]
+pub enum AgentCommand {
     /// Join this instance to an account with a code a device issued.
-    #[command(disable_help_flag = true, disable_version_flag = true)]
     Enroll {
+        /// The code, or `-` to read it from standard input.
         #[arg(value_name = "code", allow_hyphen_values = true)]
         code: String,
     },
     /// Serve with this instance's hub connection.
-    #[command(disable_help_flag = true, disable_version_flag = true)]
     Run,
     /// Say where this instance stands.
-    #[command(disable_help_flag = true, disable_version_flag = true)]
     Status,
     /// Leave the account and delete what the agent kept.
-    #[command(disable_help_flag = true, disable_version_flag = true)]
     Unenroll,
 }
+
+impl AgentArgs {
+    /// The hub's origin, the checked code and the enrol/other invariant,
+    /// before any file or network work.
+    pub(super) fn checked(&self) -> Result<(Option<String>, Option<EnrollCode>), String> {
+        let hub = self.hub.as_deref().map(hub::origin).transpose()?;
+        let code = match &self.command {
+            AgentCommand::Enroll { code } if code != "-" => {
+                Some(code.parse::<EnrollCode>().map_err(|error: &str| error.to_string())?)
+            }
+            _ => None,
+        };
+        let enrolling = matches!(self.command, AgentCommand::Enroll { .. });
+        if enrolling && hub.is_none() {
+            return Err("enroll needs the hub: --hub wss://<hub>".into());
+        }
+        if !enrolling && hub.is_some() {
+            return Err("--hub is only for enroll: the other subcommands use the hub this instance enrolled with".into());
+        }
+        Ok((hub, code))
+    }
+
+    /// Run the chosen action.
+    pub async fn run(self) -> Result<(), String> {
+        let (hub, code) = self.checked()?;
+        let enrolling = matches!(self.command, AgentCommand::Enroll { .. });
+        let paths = crate::auth::cli::home_paths(self.instance.last().map(String::as_str))?;
+        if enrolling {
+            let config = crate::config::load(std::env::var("GOTCHA_ACTIVE_PROFILE").ok()).map_err(|error| error.to_string())?;
+            if let Some(refusal) = refuse_enroll(&paths, config.app.auth.enabled()).await {
+                return Err(refusal);
+            }
+        }
+        match self.command {
+            AgentCommand::Enroll { code } if code == "-" => {
+                let code = read_code_from_stdin()?;
+                enroll_cli(&paths, &code, hub.as_deref().expect("enrolling requires a hub")).await
+            }
+            AgentCommand::Enroll { .. } => {
+                enroll_cli(&paths, code.as_ref().expect("parsed above"), hub.as_deref().expect("enrolling requires a hub")).await
+            }
+            AgentCommand::Status => {
+                print_status(&paths);
+                Ok(())
+            }
+            AgentCommand::Unenroll => {
+                // A running server holds the link and its files open, and would
+                // write them back: it is stopped first, or the local settings do it.
+                let dirs = crate::instance::InstanceDirs::new(&paths.data_dir(), paths.instance()).map_err(|e| e.to_string())?;
+                let _lock = crate::instance::InstanceLock::acquire(&dirs).map_err(|e| {
+                    format!("{e}\nStop the instance's server first, or disconnect it from its settings (Droppen → Disconnect this device).")
+                })?;
+                let before = unenroll_instance(&paths)?;
+                match before {
+                    Some(st) => println!(
+                        "unenrolled instance {}: it was machine {} in account {} at {}; everything under {}, its aggregator \
+                         key and cloud.json are gone.\n\
+                         Remove the machine on droppen.app too, if it is still listed there.",
+                        paths.instance(),
+                        st.machine,
+                        st.account,
+                        st.hub,
+                        AgentFiles::of(&paths).0.display()
+                    ),
+                    None => println!("instance {} was not enrolled; nothing under agent/ now", paths.instance()),
+                }
+                Ok(())
+            }
+            AgentCommand::Run => {
+                let enrolled = state::AgentState::load(&AgentFiles::of(&paths))?;
+                let Some(state) = enrolled else {
+                    return Err(format!(
+                        "instance {} is not enrolled; run `remote-hand-server agent enroll <code> --hub <url>` first",
+                        paths.instance()
+                    ));
+                };
+                println!(
+                    "serving instance {} with its link to {} (device {}, account {})",
+                    paths.instance(),
+                    state.hub,
+                    state.machine,
+                    state.account
+                );
+                crate::app::RemoteHandApp {
+                    instance_override: Some(paths.instance().to_string()),
+                    ..Default::default()
+                }
+                .run_server()
+                .await
+                .map_err(|e| e.to_string())
+            }
+        }
+    }
+}
+
 pub(super) fn describe(paths: &Paths, identity: &MachineIdentity, created: bool) {
     println!("Droppen agent — instance {}", paths.instance());
     println!(
@@ -382,78 +388,25 @@ pub(super) async fn refuse_enroll(paths: &Paths, auth_enabled: Option<bool>) -> 
     ))
 }
 
-/// Run an `agent` subcommand. `args` is everything after `agent`.
-pub async fn run(args: &[String]) -> Result<(), String> {
-    let invocation = parse(args)?;
-    let paths = crate::auth::cli::home_paths(invocation.instance.as_deref())?;
-    if matches!(invocation.action, Action::Enroll(_) | Action::EnrollFromStdin) {
-        let config = crate::config::load(std::env::var("GOTCHA_ACTIVE_PROFILE").ok()).map_err(|error| error.to_string())?;
-        if let Some(refusal) = refuse_enroll(&paths, config.app.auth.enabled()).await {
-            return Err(refusal);
-        }
-    }
-    match invocation.action {
-        Action::EnrollFromStdin => {
-            let code = read_code_from_stdin()?;
-            enroll_cli(&paths, &code, invocation.hub.as_deref().expect("parse requires it")).await
-        }
-        Action::Enroll(code) => enroll_cli(&paths, &code, invocation.hub.as_deref().expect("parse requires it")).await,
-        Action::Status => {
-            print_status(&paths);
-            Ok(())
-        }
-        Action::Unenroll => {
-            // A running server holds the link and its files open, and would
-            // write them back: it is stopped first, or the local settings do it.
-            let dirs = crate::instance::InstanceDirs::new(&paths.data_dir(), paths.instance()).map_err(|e| e.to_string())?;
-            let _lock = crate::instance::InstanceLock::acquire(&dirs).map_err(|e| {
-                format!("{e}\nStop the instance's server first, or disconnect it from its settings (Droppen → Disconnect this device).")
-            })?;
-            let before = unenroll_instance(&paths)?;
-            match before {
-                Some(st) => println!(
-                    "unenrolled instance {}: it was machine {} in account {} at {}; everything under {}, its aggregator \
-                     key and cloud.json are gone.\n\
-                     Remove the machine on droppen.app too, if it is still listed there.",
-                    paths.instance(),
-                    st.machine,
-                    st.account,
-                    st.hub,
-                    paths.instance_dir().join("agent").display()
-                ),
-                None => println!("instance {} was not enrolled; nothing under agent/ now", paths.instance()),
-            }
-            Ok(())
-        }
-        Action::Run => {
-            let enrolled = state::AgentState::load(&AgentFiles::of(&paths))?;
-            let Some(state) = enrolled else {
-                return Err(format!(
-                    "instance {} is not enrolled; run `remote-hand-server agent enroll <code> --hub <url>` first",
-                    paths.instance()
-                ));
-            };
-            println!(
-                "serving instance {} with its link to {} (device {}, account {})",
-                paths.instance(),
-                state.hub,
-                state.machine,
-                state.account
-            );
-            crate::app::RemoteHandApp {
-                instance_override: Some(paths.instance().to_string()),
-                ..Default::default()
-            }
-            .run_server()
-            .await
-            .map_err(|e| e.to_string())
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use clap::error::ErrorKind;
+
     use super::*;
+
+    fn parse(words: &[String]) -> Result<AgentArgs, clap::Error> {
+        match crate::cli::tests::parse_words("agent", words)? {
+            crate::cli::Command::Agent(parsed) => Ok(parsed),
+            other => panic!("{words:?} parsed as {other:?}"),
+        }
+    }
+
+    /// Parsing and the meaning checks the command applies before it runs.
+    fn checked(words: &[String]) -> Result<AgentArgs, String> {
+        let args = parse(words).map_err(|error| error.to_string())?;
+        args.checked()?;
+        Ok(args)
+    }
 
     fn args(words: &[&str]) -> Vec<String> {
         words.iter().map(|word| (*word).to_string()).collect()
@@ -464,7 +417,7 @@ mod tests {
         EnrollCode::generate([0x11; 16], &mut rand::thread_rng()).to_string()
     }
 
-    /// The accepted and refused command lines, pinned so the hand parser and clap answer alike.
+    /// The accepted command lines; the refused ones are a separate list in `the_refusals`.
     #[test]
     fn the_agent_argument_table() {
         let code = code();
@@ -491,89 +444,133 @@ mod tests {
             args(&["--instance=probe", "status"]),
             args(&["--instance", "probe", "enroll", "-", "--hub", "wss://hub.example"]),
             args(&["enroll", "-", "--hub", "wss://hub.example", "--instance", "probe"]),
+            vec!["enroll".into(), "--hub".into(), "wss://hub.example".into(), "--".into(), code.clone()],
+            args(&["status", "--instance", "--"]),
+            args(&["status", "--instance", "--instance"]),
+            args(&["enroll", "-", "--hub", "wss://hub.example", "--instance", "--hub"]),
         ];
         for argv in &accepted {
-            let parsed = parse(argv);
-            assert!(parsed.is_ok(), "{argv:?} must parse: {:?}", parsed.err());
-            assert_eq!(parsed.unwrap().instance.is_some(), argv.iter().any(|w| w.starts_with("--instance")), "{argv:?}");
+            assert!(checked(argv).is_ok(), "{argv:?} must parse: {:?}", checked(argv).err());
         }
-
-        let refused: Vec<Vec<String>> = vec![
-            args(&[]),
-            args(&["--help"]),
-            args(&["-h"]),
-            args(&["bogus"]),
-            args(&["enroll"]),
-            vec!["enroll".into(), code.clone(), "--hub".into()],
-            vec!["enroll".into(), code.clone(), "--hub=".into()],
-            args(&["enroll", "nonsense", "--hub", "wss://hub.example"]),
-            args(&["enroll", "nonsense"]),
-            args(&["enroll", "--", "-"]),
-            args(&["enroll", "-", "--", "--hub", "wss://hub.example"]),
-            args(&["enroll", "-", "extra", "--hub", "wss://hub.example"]),
-            args(&["status", "extra"]),
-            args(&["status", "--hub", "wss://hub.example"]),
-            args(&["run", "--hub=wss://hub.example"]),
-            args(&["--hub", "wss://hub.example"]),
-            args(&["status", "--instance"]),
-            args(&["status", "--instance", "Bad Name"]),
-            args(&["--instance", "Bad Name", "status"]),
-            args(&["enroll", "-", "--hub", "ftp://hub.example"]),
-            args(&["enroll", "-", "--hub", "http://hub.example"]),
-        ];
-        for argv in &refused {
-            assert!(parse(argv).is_err(), "{argv:?} must be refused");
-        }
+        let parsed = parse(&args(&["status"])).expect("parsed");
+        assert!(matches!(parsed.command, AgentCommand::Status));
+        let parsed = parse(&args(&["enroll", "-", "--hub", "wss://hub.example", "--instance", "probe"])).expect("parsed");
+        assert!(matches!(parsed.command, AgentCommand::Enroll { .. }));
+        assert_eq!(parsed.hub.as_deref(), Some("wss://hub.example"));
+        assert_eq!(parsed.instance.last().map(String::as_str), Some("probe"));
     }
 
-    /// `--instance` is taken out of the whole argv first: every occurrence is validated (a bad earlier
-    /// one is a refusal even when a good one follows), and a value-taking option after it sees its URL
-    /// rather than being taken for the instance.
     #[test]
-    fn every_instance_is_validated_and_the_hub_still_gets_its_url() {
-        for argv in [
-            args(&["status", "--instance", "Bad", "--instance", "probe"]),
-            args(&["--instance", "Bad", "--instance", "probe", "status"]),
-            args(&["status", "--instance=Bad", "--instance=probe"]),
-            args(&["status", "--instance=", "--instance", "probe"]),
-            args(&["status", "--instance", "", "--instance", "probe"]),
-            args(&["status", "--instance", "a b", "--instance", "probe"]),
-            vec!["enroll".into(), "-".into(), "--instance".into(), "Bad".into(), "--instance".into(), "probe".into(), "--hub".into(), "wss://hub.example".into()],
-            args(&["enroll", "-", "--hub", "--instance", "Bad", "wss://hub.example"]),
+    fn the_refusals() {
+        let code = code();
+        // clap's refusals.
+        for (argv, expected) in [
+            (args(&[]), ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand),
+            (args(&["--"]), ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand),
+            (args(&["bogus"]), ErrorKind::InvalidSubcommand),
+            (args(&["enroll"]), ErrorKind::MissingRequiredArgument),
+            (vec!["enroll".into(), code.clone(), "--hub".into()], ErrorKind::InvalidValue),
+            (args(&["enroll", "-", "--", "--hub", "wss://hub.example"]), ErrorKind::UnknownArgument),
+            (args(&["enroll", "--", "-", "--hub", "wss://hub.example"]), ErrorKind::UnknownArgument),
+            (args(&["enroll", "-", "extra", "--hub", "wss://hub.example"]), ErrorKind::UnknownArgument),
+            (args(&["status", "extra"]), ErrorKind::UnknownArgument),
+            (args(&["status", "--instance"]), ErrorKind::InvalidValue),
+            (args(&["status", "--instance", "Bad Name"]), ErrorKind::ValueValidation),
+            (args(&["--instance", "Bad Name", "status"]), ErrorKind::ValueValidation),
+            // `--hub` takes the next word, `--instance` included.
+            (args(&["enroll", "-", "--hub", "--instance", "probe", "wss://hub.example"]), ErrorKind::UnknownArgument),
+            (args(&["enroll", "-", "--hub", "--instance=probe", "wss://hub.example"]), ErrorKind::UnknownArgument),
+            (args(&["--hub", "--instance", "probe", "wss://hub.example", "enroll", "-"]), ErrorKind::InvalidSubcommand),
+            (args(&["--hub", "--instance=probe", "wss://hub.example", "enroll", "-"]), ErrorKind::InvalidSubcommand),
+            (args(&["enroll", "-", "--hub", "--instance", "Bad", "wss://hub.example"]), ErrorKind::UnknownArgument),
+            (args(&["enroll", "-", "--hub", "--instance", "other", "ws://127.0.0.1:1"]), ErrorKind::UnknownArgument),
+            (args(&["--hub", "wss://hub.example"]), ErrorKind::MissingSubcommand),
         ] {
-            assert!(parse(&argv).is_err(), "{argv:?} must be refused");
+            assert_eq!(parse(&argv).unwrap_err().kind(), expected, "{argv:?}");
         }
-
-        for (argv, hub, instance) in [
-            (args(&["enroll", "-", "--hub", "--instance", "probe", "wss://hub.example"]), "wss://hub.example", "probe"),
-            (args(&["enroll", "-", "--hub", "--instance=probe", "wss://hub.example"]), "wss://hub.example", "probe"),
-            (args(&["--hub", "--instance", "probe", "wss://hub.example", "enroll", "-"]), "wss://hub.example", "probe"),
-            (args(&["--hub", "--instance=probe", "wss://hub.example", "enroll", "-"]), "wss://hub.example", "probe"),
-            (args(&["enroll", "-", "--hub", "--instance", "other", "ws://127.0.0.1:1"]), "ws://127.0.0.1:1", "other"),
+        // The refusals of a parsed command line, before any file or network work.
+        for (argv, expected) in [
+            (vec!["enroll".into(), code.clone(), "--hub=".into()], hub::origin("").unwrap_err()),
+            (
+                args(&["enroll", "nonsense", "--hub", "wss://hub.example"]),
+                "nonsense".parse::<EnrollCode>().unwrap_err().to_string(),
+            ),
+            (args(&["enroll", "nonsense"]), "nonsense".parse::<EnrollCode>().unwrap_err().to_string()),
+            (args(&["enroll", "-", "--hub", "ftp://hub.example"]), hub::origin("ftp://hub.example").unwrap_err()),
+            (args(&["enroll", "-", "--hub", "http://hub.example"]), hub::origin("http://hub.example").unwrap_err()),
         ] {
-            let parsed = parse(&argv).unwrap_or_else(|error| panic!("{argv:?} must parse: {error}"));
-            assert_eq!(parsed.hub.as_deref(), Some(hub), "{argv:?}");
-            assert_eq!(parsed.instance.as_deref(), Some(instance), "{argv:?}");
+            assert_eq!(checked(&argv).unwrap_err(), expected, "{argv:?}");
         }
+        let refused = checked(&args(&["enroll", "-", "--hub", "ftp://hub.example"])).unwrap_err();
+        assert!(refused.contains("a hub is reached over wss://"), "{refused}");
     }
 
+    /// `--instance` and `--hub` are read wherever they are written, and the
+    /// last of each is the one used.
     #[test]
     fn the_instance_and_the_hub_are_wherever_they_were_written() {
-        let code = code();
-        let parsed = parse(&args(&["--instance=bob", "status"])).expect("parsed");
-        assert_eq!(parsed.instance.as_deref(), Some("bob"));
-        assert_eq!(parsed.action, Action::Status);
+        for (argv, hub, instance) in [
+            (args(&["enroll", "-", "--hub", "wss://hub.example", "--instance", "probe"]), "wss://hub.example", "probe"),
+            (args(&["enroll", "-", "--instance", "probe", "--hub", "wss://hub.example"]), "wss://hub.example", "probe"),
+            (args(&["--hub", "wss://hub.example", "--instance", "probe", "enroll", "-"]), "wss://hub.example", "probe"),
+            (args(&["--instance=probe", "enroll", "-", "--hub", "wss://hub.example"]), "wss://hub.example", "probe"),
+            (args(&["enroll", "-", "--hub", "ws://127.0.0.1:1", "--instance", "other"]), "ws://127.0.0.1:1", "other"),
+        ] {
+            let parsed = checked(&argv).unwrap_or_else(|error| panic!("{argv:?} must parse: {error}"));
+            assert_eq!(parsed.checked().expect("checked").0.as_deref(), Some(hub), "{argv:?}");
+            assert_eq!(parsed.instance.last().map(String::as_str), Some(instance), "{argv:?}");
+            assert_eq!(parsed.command, AgentCommand::Enroll { code: "-".to_string() }, "{argv:?}");
+        }
 
-        let parsed = parse(&vec![
-            "enroll".into(),
-            code,
-            "--hub".into(),
-            "wss://a.example".into(),
-            "--hub".into(),
-            "wss://b.example".into(),
+        let parsed = parse(&args(&["--instance=bob", "status"])).expect("parsed");
+        assert_eq!(parsed.instance.last().map(String::as_str), Some("bob"));
+        assert_eq!(parsed.command, AgentCommand::Status);
+
+        let code = code();
+        let parsed = parse(&[
+            "enroll".to_string(),
+            code.clone(),
+            "--hub".to_string(),
+            "wss://a.example".to_string(),
+            "--hub".to_string(),
+            "wss://b.example".to_string(),
         ])
         .expect("parsed");
         assert_eq!(parsed.hub.as_deref(), Some("wss://b.example"), "the last --hub wins");
-        assert!(matches!(parsed.action, Action::Enroll(_)));
+        assert_eq!(parsed.command, AgentCommand::Enroll { code });
+    }
+
+    /// Help is clap's; `--help` and `-h` are the DisplayHelp exit, not a parse error of the grammar.
+    #[test]
+    fn help_is_claps() {
+        for argv in [vec!["--help"], vec!["-h"], vec!["--help", "junk"], vec!["enroll", "--help"], vec!["status", "-h"]] {
+            assert_eq!(parse(&args(&argv)).unwrap_err().kind(), ErrorKind::DisplayHelp, "{argv:?}");
+        }
+    }
+
+    /// Every `--instance` is validated (an invalid earlier one is refused even
+    /// when a good one follows) and the last one is used. A value may start
+    /// with a hyphen, because instance names may.
+    #[test]
+    fn every_instance_is_validated_and_the_last_is_used() {
+        for (argv, expected) in [
+            (args(&["status", "--instance", "Bad", "--instance", "probe"]), ErrorKind::ValueValidation),
+            (args(&["--instance", "Bad", "--instance", "probe", "status"]), ErrorKind::ValueValidation),
+            (args(&["status", "--instance=Bad", "--instance=probe"]), ErrorKind::ValueValidation),
+            (args(&["status", "--instance=", "--instance", "probe"]), ErrorKind::ValueValidation),
+            (args(&["status", "--instance", "", "--instance", "probe"]), ErrorKind::ValueValidation),
+            (args(&["status", "--instance", "a b", "--instance", "probe"]), ErrorKind::ValueValidation),
+            (args(&["status", "--instance"]), ErrorKind::InvalidValue),
+            (
+                args(&["enroll", "-", "--instance", "Bad", "--instance", "probe", "--hub", "wss://hub.example"]),
+                ErrorKind::ValueValidation,
+            ),
+        ] {
+            assert_eq!(parse(&argv).unwrap_err().kind(), expected, "{argv:?}");
+        }
+        let parsed = parse(&args(&["status", "--instance", "bob", "--instance", "carol"])).expect("parsed");
+        assert_eq!(parsed.instance.last().map(String::as_str), Some("carol"));
+        let parsed = parse(&args(&["status", "--instance", "--hub"])).expect("parsed");
+        assert_eq!(parsed.instance.last().map(String::as_str), Some("--hub"));
     }
 }
