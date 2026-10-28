@@ -814,28 +814,31 @@ pub fn resolve_safe(paths: &Paths, requested: Option<&str>) -> Result<PathBuf, F
     Ok(target)
 }
 
-/// Prove that `requested` sits **under** the uploads directory, or fail.
-///
-/// This is a security gate rather than a convenience: the paths a client
-/// attaches to a message are handed to the CLI as arguments (`--add-dir`, image
-/// arguments), so a path that escaped the uploads directory would hand the CLI
-/// read access to anything the user can read. Callers must therefore use the
-/// returned, resolved path rather than the one they passed in.
-///
-/// The failure is the send routes' `409`; they are its only callers.
-///
-/// Resolution is lexical, as in [`resolve`]: a symlink inside the uploads
-/// directory is accepted on the strength of its path. Only this server writes
-/// into that directory, so nothing can plant one without already having
-/// filesystem access.
-pub fn assert_under_uploads(paths: &Paths, requested: &Path) -> Result<PathBuf, ApiError> {
-    let uploads = paths.uploads_dir();
-    let target = resolve(requested);
-    // `starts_with` is true for the directory itself, which is no attachment.
-    if target == uploads || !target.starts_with(&uploads) {
-        return Err(ApiError::new(StatusCode::CONFLICT, "attachment paths must come from /api/uploads"));
+impl Paths {
+    /// Prove that `requested` sits **under** the uploads directory, or fail.
+    ///
+    /// This is a security gate rather than a convenience: the paths a client
+    /// attaches to a message are handed to the CLI as arguments (`--add-dir`,
+    /// image arguments), so a path that escaped the uploads directory would hand
+    /// the CLI read access to anything the user can read. Callers must therefore
+    /// use the returned, resolved path rather than the one they passed in.
+    ///
+    /// The failure is the send routes' `409`; they are its only callers.
+    ///
+    /// Resolution is lexical, as in [`resolve`]: a symlink inside the uploads
+    /// directory is accepted on the strength of its path. Only this server
+    /// writes into that directory, so nothing can plant one without already
+    /// having filesystem access.
+    pub fn assert_under_uploads(&self, requested: &Path) -> Result<PathBuf, ApiError> {
+        let uploads = self.uploads_dir();
+        let target = resolve(requested);
+        // `starts_with` is true for the directory itself, which is no
+        // attachment.
+        if target == uploads || !target.starts_with(&uploads) {
+            return Err(ApiError::new(StatusCode::CONFLICT, "attachment paths must come from /api/uploads"));
+        }
+        Ok(target)
     }
-    Ok(target)
 }
 
 // ---------------------------------------------------------------------------
@@ -913,7 +916,7 @@ struct UploadedFile {
 }
 
 /// Taking the `file` field out of a multipart body.
-trait MultipartExt {
+trait FileFieldExt {
     /// Take the `file` field out, buffered.
     ///
     /// A missing field is [`FsError::Other`], so the route answers with its
@@ -921,7 +924,7 @@ trait MultipartExt {
     async fn take_file_field(self) -> Result<UploadedFile, FsError>;
 }
 
-impl MultipartExt for Multipart {
+impl FileFieldExt for Multipart {
     async fn take_file_field(mut self) -> Result<UploadedFile, FsError> {
         while let Some(field) = self.next_field().await.map_err(|_| FsError::Other)? {
             if field.name() != Some("file") {
@@ -1192,10 +1195,10 @@ mod tests {
     fn upload_containment_excludes_the_directory_itself() {
         let paths = paths();
         let uploads = paths.uploads_dir();
-        assert!(assert_under_uploads(&paths, &uploads.join("abc/x.png")).is_ok());
-        assert!(assert_under_uploads(&paths, &uploads).is_err(), "the uploads directory is not itself an attachment");
-        assert!(assert_under_uploads(&paths, Path::new("/etc/passwd")).is_err());
-        assert!(assert_under_uploads(&paths, &uploads.join("../../../etc/passwd")).is_err());
+        assert!(paths.assert_under_uploads(&uploads.join("abc/x.png")).is_ok());
+        assert!(paths.assert_under_uploads(&uploads).is_err(), "the uploads directory is not itself an attachment");
+        assert!(paths.assert_under_uploads(Path::new("/etc/passwd")).is_err());
+        assert!(paths.assert_under_uploads(&uploads.join("../../../etc/passwd")).is_err());
     }
 
     #[test]
