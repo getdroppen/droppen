@@ -34,7 +34,7 @@
 //! `/tmp` fallback's name is predictable, and somebody else could make it
 //! first — and the answer has to be a loopback page on the port this instance
 //! recorded, a link to it, and a redirect page that is this user's own file in
-//! [`Paths::control_dir`]. The page's address is the listener's bound address
+//! [`ControlSocket::dir`]. The page's address is the listener's bound address
 //! as a literal, never a configured host name the local network could answer
 //! for.
 //!
@@ -81,22 +81,37 @@ const READ_TIMEOUT: Duration = Duration::from_secs(5);
 /// The fragment key the page reads the token from (`web/src/lib/auth.ts`).
 pub const FRAGMENT_KEY: &str = "local-open";
 
-impl Paths {
+/// An instance's control socket and the directory it sits in: what
+/// `remote-hand-server open` asks, and the server answers on.
+///
+/// Its own type rather than methods on [`Paths`], so that where the socket is,
+/// and who may trust it, is this module's business alone.
+#[derive(Debug, Clone)]
+pub struct ControlSocket(Paths);
+
+impl ControlSocket {
+    /// The control socket of the instance `paths` names.
+    pub fn of(paths: &Paths) -> Self {
+        Self(paths.clone())
+    }
+}
+
+impl ControlSocket {
     /// `<instance>/control/`: the socket and the redirect pages, `0700`.
-    pub fn control_dir(&self) -> PathBuf {
-        self.instance_dir().join("control")
+    pub fn dir(&self) -> PathBuf {
+        self.0.instance_dir().join("control")
     }
 
-    /// Where the control socket is: in [`Paths::control_dir`] when the address
+    /// Where the control socket is: in [`ControlSocket::dir`] when the address
     /// fits a `sun_path`, else in the instance's `0700` directory under `/tmp`
     /// ([`crate::pty_shim::sidecar::socket_path`]).
-    pub fn control_socket(&self) -> PathBuf {
-        crate::pty_shim::sidecar::socket_path(&self.control_dir(), "local-open")
+    pub fn path(&self) -> PathBuf {
+        crate::pty_shim::sidecar::socket_path(&self.dir(), "local-open")
     }
 
     /// The port this instance's server recorded when it bound.
     fn recorded_port(&self) -> Option<u16> {
-        let dirs = crate::instance::InstanceDirs::new(&self.data_dir(), self.instance()).ok()?;
+        let dirs = crate::instance::InstanceDirs::new(&self.0.data_dir(), self.0.instance()).ok()?;
         std::fs::read_to_string(dirs.port_file()).ok()?.trim().parse().ok()
     }
 }
@@ -106,15 +121,16 @@ impl Paths {
 /// that said.
 ///
 /// The socket can sit in a `/tmp` directory whose name anybody can predict
-/// ([`Paths::control_socket`]); another user who makes it first keeps the real
+/// ([`ControlSocket::path`]); another user who makes it first keeps the real
 /// server from listening there and can listen there instead. So: the socket's
 /// directory must be this user's own `0700` one, the peer at the other end this
 /// user, and the answer one this instance's server could give — a loopback page
 /// on the port it recorded, a link to that page, and a redirect page directly
-/// in [`Paths::control_dir`], ours and no symlink. Anything else is a refusal,
+/// in [`ControlSocket::dir`], ours and no symlink. Anything else is a refusal,
 /// never something handed to a browser.
 pub async fn ask(paths: &Paths) -> Result<OpenAnswer, String> {
-    let socket = paths.control_socket();
+    let control = ControlSocket::of(paths);
+    let socket = control.path();
     if let Some(dir) = socket.parent() {
         private_to_me(dir).map_err(|why| {
             format!(
@@ -148,30 +164,30 @@ pub async fn ask(paths: &Paths) -> Result<OpenAnswer, String> {
         return Err("the server refused the request".into());
     }
     let answer: OpenAnswer = serde_json::from_str(line.trim()).map_err(|e| format!("the server's answer does not read: {e}"))?;
-    let port = paths
+    let port = control
         .recorded_port()
         .ok_or_else(|| format!("instance {} has no recorded port: is its server running?", paths.instance()))?;
-    answer.check(port, &paths.control_dir())?;
+    answer.check(port, &control.dir())?;
     Ok(answer)
 }
 
-impl Paths {
+impl ControlSocket {
     /// Listen on the control socket until `cancel`, answering for `auth`;
     /// `page` is this server's address. Only the server that owns its instance
     /// calls this ([`crate::app::RemoteHandApp::prepare`]).
     ///
     /// On a server the desktop app runs (`desktop_app`), the socket refuses
     /// every request: see the module notes.
-    pub fn serve_local_open(
+    pub fn serve(
         &self,
         auth: Arc<Auth>,
         page: String,
         desktop_app: bool,
         cancel: CancellationToken,
     ) -> std::io::Result<PathBuf> {
-        let dir = self.control_dir();
+        let dir = self.dir();
         private_dir(&dir)?;
-        let socket = self.control_socket();
+        let socket = self.path();
         crate::pty_shim::sidecar::ensure_socket_dir(&socket, &dir)?;
         // A socket left by a server that did not get to remove its own: this
         // one owns the instance now, so nobody is listening on it.
@@ -632,7 +648,8 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let home = tempfile::tempdir().unwrap();
         let paths = Paths::for_instance(home.path().to_path_buf(), "fake");
-        let socket = paths.control_socket();
+        let control = ControlSocket::of(&paths);
+        let socket = control.path();
         let dir = socket.parent().unwrap().to_path_buf();
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -648,7 +665,7 @@ mod tests {
         let refusal = ask(&paths).await.expect_err("refused");
         assert!(refusal.contains("others can reach it"), "{refusal}");
         let _ = std::fs::remove_file(&socket);
-        if dir != paths.control_dir() {
+        if dir != control.dir() {
             let _ = std::fs::remove_dir(&dir);
         }
     }
@@ -662,9 +679,10 @@ mod tests {
         let dirs = crate::instance::InstanceDirs::new(&paths.data_dir(), paths.instance()).unwrap();
         dirs.create().unwrap();
         dirs.write_port(8700);
-        let dir = paths.control_dir();
+        let control = ControlSocket::of(&paths);
+        let dir = control.dir();
         private_dir(&dir).unwrap();
-        let socket = paths.control_socket();
+        let socket = control.path();
         crate::pty_shim::sidecar::ensure_socket_dir(&socket, &dir).unwrap();
         let _ = std::fs::remove_file(&socket);
         let listener = tokio::net::UnixListener::bind(&socket).unwrap();
@@ -690,8 +708,8 @@ mod tests {
         let state = crate::api::test_support::state(home.path()).await;
         let auth = state.drive.auth.clone();
         let cancel = CancellationToken::new();
-        let socket = state.paths.serve_local_open(auth.clone(), "http://127.0.0.1:9/".into(), false, cancel.clone()).expect("serve");
-        let dir = state.paths.control_dir();
+        let socket = ControlSocket::of(&state.paths).serve(auth.clone(), "http://127.0.0.1:9/".into(), false, cancel.clone()).expect("serve");
+        let dir = ControlSocket::of(&state.paths).dir();
         assert_eq!(std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777, 0o700);
         assert_eq!(std::fs::metadata(&socket).unwrap().permissions().mode() & 0o777, 0o600);
         if let Some(parent) = socket.parent().filter(|p| *p != dir) {
@@ -738,7 +756,7 @@ mod tests {
         let state = crate::api::test_support::state(home.path()).await;
         let auth = state.drive.auth.clone();
         let cancel = CancellationToken::new();
-        paths.serve_local_open(auth.clone(), "http://127.0.0.1:9/".into(), true, cancel.clone()).expect("serve");
+        ControlSocket::of(&paths).serve(auth.clone(), "http://127.0.0.1:9/".into(), true, cancel.clone()).expect("serve");
         crate::instance::InstanceDirs::new(&paths.data_dir(), paths.instance()).unwrap().write_port(9);
         let answer = ask(&paths).await.expect("an answer");
         assert_eq!(answer.error.as_deref(), Some(DESKTOP_APP_REFUSAL));

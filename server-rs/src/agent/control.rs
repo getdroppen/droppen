@@ -796,7 +796,7 @@ mod tests {
         let paths = Paths::for_instance(dir.path().to_path_buf(), "ctlsweep");
         std::fs::create_dir_all(paths.instance_dir()).unwrap();
         std::fs::write(crate::cloud::file_path(&paths), br#"{"aggregatorOff": true}"#).unwrap();
-        assert!(!paths.wants_aggregator());
+        assert!(!crate::cloud::wants_aggregator(&paths));
         let left = paths.instance_dir().join(".aggregator-deleted-1-2-3");
         std::fs::create_dir_all(&left).unwrap();
         std::fs::write(left.join("copies.db"), b"STARTUP-SWEEP-CANARY").unwrap();

@@ -103,7 +103,7 @@ pub async fn apply(paths: &Paths, sessions: &mut [SessionSummary]) {
     }
     // Opt-in (`subagentTree` in the prefs): until it is on, nothing is looked
     // for, and every row goes out with no children, as before the tree.
-    if crate::prefs::read_prefs(paths).await.subagent_tree != crate::prefs::SubagentTree::On {
+    if crate::prefs::PrefsStore::of(paths).read().await.subagent_tree != crate::prefs::SubagentTree::On {
         return;
     }
     let marks = seen::read(paths).await;

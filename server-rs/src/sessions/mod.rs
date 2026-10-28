@@ -918,11 +918,6 @@ impl Paths {
         self.config_dir().join("titles.json")
     }
 
-    /// UI preferences.
-    pub fn prefs_file(&self) -> PathBuf {
-        self.config_dir().join("prefs.json")
-    }
-
     /// `<data>/instances/<name>/scheduled-tasks.json` — the cron tasks this
     /// server runs.
     ///

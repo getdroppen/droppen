@@ -521,7 +521,7 @@ async fn capped(pipe: Option<impl tokio::io::AsyncRead + Unpin>) -> String {
     String::from_utf8_lossy(&kept).into_owned()
 }
 
-impl Paths {
+impl BinStore {
     /// Seed `<data>/bin` from the running binary, so a supervisor has one to
     /// run.
     ///
@@ -530,8 +530,8 @@ impl Paths {
     /// sense that a failure is reported and not fatal: a supervisor with no
     /// writable data directory should still run the baked binary rather than
     /// refuse to start.
-    pub fn seed_binary_store(&self, from: &Path) -> BinStore {
-        let store = BinStore::new(self);
+    pub fn seeded(paths: &Paths, from: &Path) -> BinStore {
+        let store = BinStore::new(paths);
         // Before anything else: a previous boot may have died mid-upload, and a
         // staging file is the size of a server binary.
         store.sweep_staging();
@@ -543,15 +543,6 @@ impl Paths {
         store
     }
 
-    /// Remove any staged binary an unfinished upgrade left in `<data>/bin`.
-    ///
-    /// Called at boot as well as before each upgrade, because the two catch
-    /// different things: the boot sweep is what clears a file left by a process
-    /// that was killed outright, and the per-request one keeps a server that is
-    /// never restarted from accumulating them.
-    pub fn sweep_staging_binaries(&self) {
-        BinStore::new(self).sweep_staging();
-    }
 }
 
 /// Register this subsystem's routes.

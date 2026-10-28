@@ -145,7 +145,7 @@ pub fn run(child_args: Vec<String>) -> Result<i32, String> {
 
     let baked = std::env::current_exe().map_err(|error| format!("cannot find this executable: {error}"))?;
     let paths = load_paths()?;
-    let store = paths.seed_binary_store(&baked);
+    let store = crate::selfupdate::store::BinStore::seeded(&paths, &baked);
 
     say(&format!(
         "supervising `{}` from {} (baked: {})",

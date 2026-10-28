@@ -17,6 +17,8 @@
 //! it costs nothing, and it is the cheapest way to seed a database that has to be
 //! rebuilt from scratch.
 
+use std::path::PathBuf;
+
 use gotcha::{api, Json, Schematic, State};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -200,10 +202,36 @@ impl PrefsValueExt for Value {
     }
 }
 
-impl Paths {
+/// The UI preferences: rows in the machine-wide state database, and the
+/// `prefs.json` they were imported from once.
+///
+/// Its own type rather than methods on [`Paths`], so that reading and
+/// writing the preferences goes through this module.
+#[derive(Debug, Clone)]
+pub struct PrefsStore {
+    db: PathBuf,
+    file: PathBuf,
+}
+
+impl PrefsStore {
+    /// The preferences of the machine `paths` names.
+    pub fn of(paths: &Paths) -> Self {
+        Self {
+            db: paths.config_db(),
+            file: paths.config_dir().join("prefs.json"),
+        }
+    }
+
+    /// `prefs.json`, the file the first read imports, if it is there.
+    pub fn file(&self) -> PathBuf {
+        self.file.clone()
+    }
+}
+
+impl PrefsStore {
     /// The database, with `prefs.json` drained into it if nobody has yet.
     fn store(&self) -> std::sync::Arc<crate::db::Db> {
-        let db = crate::db::at(self.config_db());
+        let db = crate::db::at(&self.db);
         db.import_once(scope::PREFS, || {
             // Only string values cross: a field of the wrong JSON type would read
             // as its default anyway, and importing it would put a value in the
@@ -220,23 +248,25 @@ impl Paths {
 
     /// The file, parsed. Read exactly once per install, by the import.
     fn parse_file(&self) -> Value {
-        std::fs::read_to_string(self.prefs_file())
+        std::fs::read_to_string(&self.file)
             .ok()
             .and_then(|text| serde_json::from_str(&text).ok())
             .unwrap_or(Value::Null)
     }
 }
 
-/// The stored preferences; an empty store reads as the defaults.
-///
-/// The rows are reassembled into the object [`prefs_from_value`] already knows
-/// how to read, rather than parsed field by field here. That keeps the fallback
-/// rule and the recognised spellings in exactly one place — a setting saved by a
-/// newer client and a setting hand-edited into nonsense degrade identically.
-pub async fn read_prefs(paths: &Paths) -> Prefs {
-    let stored = paths.store().kv_scope(scope::PREFS);
-    let raw = Value::Object(stored.into_iter().map(|(key, value)| (key, Value::String(value))).collect());
-    raw.prefs_from_value()
+impl PrefsStore {
+    /// The stored preferences; an empty store reads as the defaults.
+    ///
+    /// The rows are reassembled into the object [`prefs_from_value`] already knows
+    /// how to read, rather than parsed field by field here. That keeps the fallback
+    /// rule and the recognised spellings in exactly one place — a setting saved by a
+    /// newer client and a setting hand-edited into nonsense degrade identically.
+    pub async fn read(&self) -> Prefs {
+        let stored = self.store().kv_scope(scope::PREFS);
+        let raw = Value::Object(stored.into_iter().map(|(key, value)| (key, Value::String(value))).collect());
+        raw.prefs_from_value()
+    }
 }
 
 /// Persist the preferences, in one transaction.
@@ -245,14 +275,14 @@ pub async fn read_prefs(paths: &Paths) -> Prefs {
 /// `500` and that path is part of the contract. Only the encode of a struct of
 /// enums can fail, which is to say nothing can; the commit itself logs rather
 /// than returns, as every other store's does.
-impl Paths {
+impl PrefsStore {
     /// Persist the preferences, in one transaction.
     ///
     /// Still `io::Result` because [`put_prefs`] turns its error into the route's
     /// `500` and that path is part of the contract. Only the encode of a struct
     /// of enums can fail, which is to say nothing can; the commit itself logs
     /// rather than returns, as every other store's does.
-    pub async fn write_prefs(&self, prefs: &Prefs) -> std::io::Result<()> {
+    pub async fn write(&self, prefs: &Prefs) -> std::io::Result<()> {
         let encoded = serde_json::to_value(prefs).map_err(std::io::Error::other)?;
         let rows: Vec<(String, String)> = encoded
             .as_object()
@@ -271,14 +301,15 @@ impl Paths {
 /// The stored UI preferences.
 #[api(id = "get_prefs", group = "prefs", summary = "UI preferences")]
 pub async fn get_prefs(State(state): State<AppState>) -> Json<Prefs> {
-    Json(read_prefs(state.paths.as_ref()).await)
+    Json(PrefsStore::of(&state.paths).read().await)
 }
 
 /// Persist the UI preferences and hand them straight back.
 #[api(id = "put_prefs", group = "prefs", summary = "Update UI preferences")]
 pub async fn put_prefs(State(state): State<AppState>, ApiJson(prefs): ApiJson<Prefs>) -> Result<Json<Prefs>, ApiError> {
-    let before = read_prefs(state.paths.as_ref()).await;
-    state.paths.write_prefs(&prefs)
+    let store = PrefsStore::of(&state.paths);
+    let before = store.read().await;
+    store.write(&prefs)
         .await
         .map_err(|error| ApiError::internal(format!("failed to write prefs: {error}")))?;
     // The one setting the server itself acts on: every open list is re-sent,
@@ -452,25 +483,27 @@ mod tests {
     #[tokio::test]
     async fn a_save_round_trips_and_writes_no_file() {
         let (_dir, paths) = paths();
-        assert_eq!(read_prefs(&paths).await, Prefs::default(), "an empty store is the defaults");
+        let store = PrefsStore::of(&paths);
+        assert_eq!(store.read().await, Prefs::default(), "an empty store is the defaults");
 
-        (&paths).write_prefs(&saved()).await.expect("write");
-        assert_eq!(read_prefs(&paths).await, saved());
-        assert!(!paths.prefs_file().exists(), "no file is created where there was none");
+        store.write(&saved()).await.expect("write");
+        assert_eq!(store.read().await, saved());
+        assert!(!store.file().exists(), "no file is created where there was none");
     }
 
     #[tokio::test]
     async fn a_pre_existing_file_is_read_and_then_left_untouched() {
         let (_dir, paths) = paths();
+        let store = PrefsStore::of(&paths);
         std::fs::create_dir_all(paths.config_dir()).expect("config dir");
         let before = "{\n  \"language\": \"ja\"\n}\n";
-        std::fs::write(paths.prefs_file(), before).expect("seed");
+        std::fs::write(store.file(), before).expect("seed");
 
-        assert_eq!(read_prefs(&paths).await.language, Language::Ja, "the import read it");
-        (&paths).write_prefs(&Prefs::default()).await.expect("write");
-        assert_eq!(read_prefs(&paths).await.language, Language::Auto, "and the save took");
+        assert_eq!(store.read().await.language, Language::Ja, "the import read it");
+        store.write(&Prefs::default()).await.expect("write");
+        assert_eq!(store.read().await.language, Language::Auto, "and the save took");
         assert_eq!(
-            std::fs::read_to_string(paths.prefs_file()).expect("read"),
+            std::fs::read_to_string(store.file()).expect("read"),
             before,
             "byte for byte as it was found, import and save notwithstanding"
         );
@@ -482,10 +515,11 @@ mod tests {
     #[tokio::test]
     async fn the_file_is_imported_once_and_then_stops_being_the_truth() {
         let (_dir, paths) = paths();
+        let store = PrefsStore::of(&paths);
         std::fs::create_dir_all(paths.config_dir()).expect("config dir");
-        std::fs::write(paths.prefs_file(), r#"{"language":"ja","fontSize":42}"#).expect("seed");
+        std::fs::write(store.file(), r#"{"language":"ja","fontSize":42}"#).expect("seed");
 
-        let prefs = read_prefs(&paths).await;
+        let prefs = store.read().await;
         assert_eq!(prefs.language, Language::Ja, "what was in the file is in the store");
         assert_eq!(
             prefs.font_size,
@@ -493,8 +527,8 @@ mod tests {
             "and a field of the wrong type still costs only itself"
         );
 
-        std::fs::write(paths.prefs_file(), r#"{"language":"en"}"#).expect("re-seed");
-        assert_eq!(read_prefs(&paths).await.language, Language::Ja, "the import does not run a second time");
+        std::fs::write(store.file(), r#"{"language":"en"}"#).expect("re-seed");
+        assert_eq!(store.read().await.language, Language::Ja, "the import does not run a second time");
     }
 
     #[test]
@@ -510,7 +544,8 @@ mod tests {
     #[tokio::test]
     async fn a_setting_is_still_there_through_a_fresh_connection() {
         let (_dir, paths) = paths();
-        (&paths).write_prefs(&saved()).await.expect("write");
+        let store = PrefsStore::of(&paths);
+        store.write(&saved()).await.expect("write");
 
         let reopened = crate::db::Db::open(paths.config_db());
         assert_eq!(reopened.kv_scope(scope::PREFS).get("language").map(String::as_str), Some("ja"));

@@ -636,7 +636,7 @@ mod tests {
         assert_ne!(a.scheduled_tasks_file(), b.scheduled_tasks_file());
 
         // And the sidecars that are shared by design did not move with them.
-        assert_eq!(a.prefs_file(), b.prefs_file());
+        assert_eq!(crate::prefs::PrefsStore::of(&a).file(), crate::prefs::PrefsStore::of(&b).file());
         assert_eq!(a.titles_file(), b.titles_file());
         assert_eq!(a.seen_file(), b.seen_file());
         assert_eq!(a.archived_file(), b.archived_file());

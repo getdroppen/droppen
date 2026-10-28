@@ -45,7 +45,7 @@ use tokio::process::{ChildStdin, ChildStdout};
 
 use super::{window, QuotaWindow, USAGE_TTL};
 use crate::openapi_ext::Nullable;
-use crate::paths::Paths;
+use super::QuotaProbe;
 use crate::process_env::{apply_env, clean_env_bare};
 use crate::record::replay::parse_iso8601;
 use crate::sessions::util::{read_tail_lines, try_parse};
@@ -265,7 +265,7 @@ impl WindowValue for Option<&Value> {
 
 // ------------------------------------------------------------------ the probe
 
-impl Paths {
+impl QuotaProbe {
     /// Start a `codex app-server`, ask it the one question, and take the windows
     /// out of its answer.
     ///
@@ -281,7 +281,7 @@ impl Paths {
     /// that never answers, an answer that is not JSON, an error reply, a reply with
     /// no windows in it. The caller falls back to the session logs, so none of them
     /// need telling apart.
-    async fn probe_app_server(&self) -> Option<CodexQuota> {
+    async fn app_server(&self) -> Option<CodexQuota> {
     // The user's own home, exactly as the Claude probes are spawned: the app
     // server reads the login this machine's `codex` would use, which is the
     // login whose windows the panel is about.
@@ -304,7 +304,7 @@ impl Paths {
 /// `codex` for the probe and the binary the guide found for the guide;
 /// `timeout` bounds the conversation, not the exit grace after it.
 ///
-/// `None` for every failure, as [`Paths::probe_app_server`] describes, and an `error`
+/// `None` for every failure, as [`QuotaProbe::app_server`] describes, and an `error`
 /// reply is one of them: its message describes the account and is not ours to
 /// quote (see the module's security note).
 pub(crate) async fn app_server_call(program: &Path, cwd: &Path, env: &crate::process_env::Env, method: &str, timeout: Duration) -> Option<Value> {
@@ -451,12 +451,12 @@ async fn file_reading(path: &Path, floor_ms: i64) -> Option<(i64, CodexQuota)> {
     None
 }
 
-impl Paths {
+impl QuotaProbe {
     /// The newest rollout files under the date-partitioned sessions tree, freshest
     /// mtime first.
     async fn newest_codex_files(&self, keep: usize) -> Vec<PathBuf> {
     let mut found: Vec<(PathBuf, f64)> = Vec::new();
-    let mut stack = vec![self.codex_sessions()];
+    let mut stack = vec![self.codex_sessions.clone()];
     while let Some(dir) = stack.pop() {
         let Ok(mut entries) = tokio::fs::read_dir(&dir).await else { continue };
         while let Ok(Some(entry)) = entries.next_entry().await {
@@ -480,7 +480,7 @@ impl Paths {
     }
 }
 
-impl Paths {
+impl QuotaProbe {
     /// The newest reading the session logs can still vouch for.
     ///
     /// Newest by *timestamp* across the [`LOG_FILES`] newest files, not the newest
@@ -530,16 +530,16 @@ struct CacheEntry {
 /// Claude cache next door, which is keyed per login. Concurrent callers
 /// collapse onto the one probe in flight.
 pub struct CodexQuotaCache {
-    paths: Arc<Paths>,
+    probe: QuotaProbe,
     entry: Mutex<Option<CacheEntry>>,
     in_flight: Mutex<Option<Pending>>,
 }
 
 impl CodexQuotaCache {
     /// An empty cache for one server instance.
-    pub fn new(paths: Arc<Paths>) -> Self {
+    pub fn new(probe: QuotaProbe) -> Self {
         Self {
-            paths,
+            probe,
             entry: Mutex::new(None),
             in_flight: Mutex::new(None),
         }
@@ -569,7 +569,7 @@ impl CodexQuotaCache {
 
         let cache = self.clone();
         let pending: Pending = async move {
-            let quota = cache.paths.probe_codex().await;
+            let quota = cache.probe.codex().await;
             cache.store(quota);
             *cache.in_flight.lock().expect("codex quota probe poisoned") = None;
         }
@@ -594,11 +594,11 @@ impl CodexQuotaCache {
     }
 }
 
-impl Paths {
+impl QuotaProbe {
     /// The live reading if the app server can be reached, the session logs if
     /// not.
-    async fn probe_codex(&self) -> Option<CodexQuota> {
-        if let Some(live) = self.probe_app_server().await {
+    async fn codex(&self) -> Option<CodexQuota> {
+        if let Some(live) = self.app_server().await {
             return Some(live);
         }
         self.log_reading(SystemTime::now()).await
@@ -608,6 +608,7 @@ impl Paths {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::paths::Paths;
 
     /// `2026-09-20T12:00:00Z` — a fixed "now" for the readings below.
     const NOW_MS: u64 = 1_790_078_400_000;
@@ -793,7 +794,7 @@ mod tests {
         ])
         .await;
 
-        let quota = paths.log_reading(now()).await.expect("a reading");
+        let quota = QuotaProbe::of(&paths).log_reading(now()).await.expect("a reading");
         assert_eq!(quota.source, CodexQuotaSource::SessionLog);
         assert_eq!(quota.windows[0].used_percent, 100.0, "the newest numbers, not the newest file's");
         assert_eq!(quota.updated_at, Nullable(Some(stamp(60 * 60 * 1000))));
@@ -808,11 +809,11 @@ mod tests {
         let limits = json!({"plan_type": "pro", "primary": {"used_percent": 30.0, "window_minutes": 10080}});
 
         let (_home, paths) = sessions(&[("old.jsonl", format!("{}\n", log_line(&stamp(just_outside), limits.clone())))]).await;
-        assert!(paths.log_reading(now()).await.is_none(), "three days of drift must not read as current");
+        assert!(QuotaProbe::of(&paths).log_reading(now()).await.is_none(), "three days of drift must not read as current");
 
         let (_home, paths) = sessions(&[("recent.jsonl", format!("{}\n", log_line(&stamp(just_inside), limits)))]).await;
         assert!(
-            paths.log_reading(now()).await.is_some(),
+            QuotaProbe::of(&paths).log_reading(now()).await.is_some(),
             "and the cutoff is a floor, not a freshness rule"
         );
     }
@@ -837,7 +838,7 @@ mod tests {
         )])
         .await;
 
-        let quota = paths.log_reading(now()).await.expect("a reading");
+        let quota = QuotaProbe::of(&paths).log_reading(now()).await.expect("a reading");
         assert_eq!(quota.plan, Nullable(Some("pro".to_string())));
         assert_eq!(quota.source, CodexQuotaSource::SessionLog);
         assert_eq!(quota.blocked, Nullable(None), "the logs never say whether usage is blocked");
@@ -853,14 +854,14 @@ mod tests {
     #[tokio::test]
     async fn no_sessions_at_all_is_no_reading() {
         let home = tempfile::tempdir().expect("tempdir");
-        assert!(Paths::new(home.path().to_path_buf()).log_reading(now()).await.is_none());
+        assert!(QuotaProbe::of(&Paths::new(home.path().to_path_buf())).log_reading(now()).await.is_none());
     }
 
     // --------------------------------------------------------------- the cache
 
     fn cache() -> (tempfile::TempDir, Arc<CodexQuotaCache>) {
         let home = tempfile::tempdir().expect("tempdir");
-        let cache = Arc::new(CodexQuotaCache::new(Arc::new(Paths::new(home.path().to_path_buf()))));
+        let cache = Arc::new(CodexQuotaCache::new(QuotaProbe::of(&Paths::new(home.path().to_path_buf()))));
         (home, cache)
     }
 
@@ -895,7 +896,7 @@ mod tests {
     #[ignore = "spawns the real codex CLI"]
     async fn the_installed_app_server_answers_with_live_windows() {
         let paths = Paths::new(dirs_home());
-        let quota = paths.probe_app_server().await.expect("the app server answered");
+        let quota = QuotaProbe::of(&paths).app_server().await.expect("the app server answered");
         println!("{quota:?}");
         assert_eq!(quota.source, CodexQuotaSource::AppServer);
         assert!(!quota.windows.is_empty());
