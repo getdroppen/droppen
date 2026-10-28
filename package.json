@@ -20,6 +20,8 @@
     "check:machines": "node scripts/check-machine-keys.mjs",
     "check:boundary": "node scripts/check-open-boundary.mjs",
     "test:boundary": "node --test scripts/check-open-boundary.test.mjs",
+    "check:layers": "node scripts/check-module-layers.mjs",
+    "test:layers": "node --test scripts/check-module-layers.test.mjs",
     "test:verify-web": "node --test scripts/verify-web.test.mjs",
     "test:publish-release": "node --test scripts/publish-release.test.mjs",
     "test:release-notes": "node --test scripts/release-notes.test.mjs",

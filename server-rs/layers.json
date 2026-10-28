@@ -1,0 +1,132 @@
+{
+  "layers": [
+    {
+      "name": "base",
+      "about": "Helpers that know nothing of the server's subsystems: the clock, text, private files, processes, outbound requests, the environment, the config, the program's name, the instance's name and lock.",
+      "modules": [
+        "time",
+        "text",
+        "fsutil",
+        "procs",
+        "outbound",
+        "env",
+        "process_env",
+        "config",
+        "program",
+        "instance"
+      ]
+    },
+    {
+      "name": "platform",
+      "about": "What the subsystems stand on: where the instance keeps its files, the HTTP kit and the origins it answers, the databases, the instance's identity, the OpenAPI extensions, the Claude roots, the supervisor and self-update.",
+      "modules": [
+        "paths",
+        "http",
+        "origin",
+        "db",
+        "identity",
+        "openapi_ext",
+        "claude_roots",
+        "supervisor",
+        "selfupdate"
+      ]
+    },
+    {
+      "name": "domain",
+      "about": "The subsystems. They may use one another.",
+      "modules": [
+        "accounts",
+        "acp",
+        "acp_agent",
+        "agent",
+        "aggregator",
+        "apps",
+        "attention",
+        "auth",
+        "chats",
+        "cloud",
+        "drive",
+        "feed",
+        "files",
+        "inject",
+        "media",
+        "models",
+        "notify",
+        "plugins",
+        "prefs",
+        "pty_shim",
+        "push",
+        "quota",
+        "record",
+        "schedule",
+        "screens",
+        "sessions",
+        "setup",
+        "stats",
+        "terminals"
+      ]
+    },
+    {
+      "name": "entry",
+      "about": "What assembles and serves the subsystems: the router, the app, the web files, the desktop app's settings, shutdown, and the binary.",
+      "modules": [
+        "api",
+        "app",
+        "static_files",
+        "desktop_app",
+        "shutdown",
+        "export",
+        "main"
+      ]
+    }
+  ],
+  "allowed": [
+    {
+      "why": "A subsystem's routes are typed on api::ApiRouter and read api::AppState, which holds every subsystem's service (and SendResult / SendMessageResult, api's plain answers, sit next to them). They go once each subsystem's routes take an axum FromRef sub-state of their own.",
+      "edges": [
+        "accounts -> api",
+        "acp_agent -> api",
+        "aggregator -> api",
+        "apps -> api",
+        "attention -> api",
+        "auth -> api",
+        "chats -> api",
+        "cloud -> api",
+        "drive -> api",
+        "feed -> api",
+        "files -> api",
+        "media -> api",
+        "models -> api",
+        "notify -> api",
+        "plugins -> api",
+        "prefs -> api",
+        "push -> api",
+        "quota -> api",
+        "schedule -> api",
+        "screens -> api",
+        "selfupdate -> api",
+        "setup -> api",
+        "stats -> api",
+        "terminals -> api"
+      ]
+    },
+    {
+      "why": "`agent run` serves the whole server (app::RemoteHandApp) from the agent's command line.",
+      "edges": [
+        "agent -> app"
+      ]
+    },
+    {
+      "why": "db::index keys its summary cache by sessions::Source.",
+      "edges": [
+        "db -> sessions"
+      ]
+    },
+    {
+      "why": "identity names this server with sessions::ServerId.",
+      "edges": [
+        "identity -> sessions"
+      ]
+    }
+  ]
+}

@@ -262,6 +262,12 @@ jobs:
       # leaves the repository, and the open crates and web/src name none of
       # the hub's code or environment (docs/local-aggregator.md §2.1).
       - run: node ../scripts/check-open-boundary.mjs
+      # The server's layers (`pnpm check:layers`): a module of server-rs/src
+      # uses its own layer of server-rs/layers.json or one below, so the
+      # subsystems do not grow back into one dependency cycle. The exceptions
+      # listed there, each with its reason, may only shrink.
+      - run: node --test ../scripts/check-module-layers.test.mjs
+      - run: node ../scripts/check-module-layers.mjs
       # No `cargo fmt --check` or clippy gate while the product is young:
       # development speed first; bring them back once it settles.
       # The tests run under cargo-nextest, which runs every test in its own
