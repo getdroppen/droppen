@@ -17,8 +17,8 @@
 //!   [`scope::ACP_AGENTS`], one per id, holding `name`, `command`, `args` and
 //!   `env` as JSON. One with a built-in's id is that agent as the user set it
 //!   up (a name left empty is the built-in's); any other id is the user's own.
-//!   These are the agents sessions run on ([`Paths::acp_agents`],
-//!   [`Paths::acp_agent`]).
+//!   These are the agents sessions run on ([`AcpAgentRegistry::list`],
+//!   [`AcpAgentRegistry::get`]).
 //!
 //! The id is a short slug ([`valid_id`]): it names the directory an agent's
 //! transcripts are kept in ([`crate::sessions::acp_transcript`]) and is
@@ -187,9 +187,9 @@ impl AcpAgent {
     /// Keep `check` as this agent's last, unless its command line or
     /// environment changed while it ran: then it describes nothing that is
     /// configured, and is dropped. `false` when it was not kept.
-    pub fn record_check(&self, paths: &Paths, check: &AcpCheck) -> bool {
+    pub fn record_check(&self, agents: &AcpAgentRegistry, check: &AcpCheck) -> bool {
         let _writing = WRITES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let db = crate::db::at(paths.config_db());
+        let db = crate::db::at(&agents.0);
         let Some(mut stored) = db.kv_get(scope::ACP_AGENTS, &self.id).and_then(|raw| serde_json::from_str::<Stored>(&raw).ok()) else {
             return false;
         };
@@ -272,11 +272,25 @@ pub fn removed(id: &str) -> String {
 /// One write at a time: an update reads the row it replaces.
 static WRITES: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-/// The configured agents, kept in the machine-wide state database.
-impl Paths {
+/// The configured agents, kept in the machine-wide state database
+/// ([`Paths::config_db`]).
+///
+/// Its own type rather than methods on [`Paths`], so that every read and
+/// write of an agent's launch settings goes through this module.
+#[derive(Debug, Clone)]
+pub struct AcpAgentRegistry(PathBuf);
+
+impl AcpAgentRegistry {
+    /// The agents of the machine `paths` names.
+    pub fn of(paths: &Paths) -> Self {
+        Self(paths.config_db())
+    }
+}
+
+impl AcpAgentRegistry {
     /// Every configured agent, in id order.
-    pub fn acp_agents(&self) -> Vec<AcpAgent> {
-        crate::db::at(self.config_db())
+    pub fn list(&self) -> Vec<AcpAgent> {
+        crate::db::at(&self.0)
             .kv_scope(scope::ACP_AGENTS)
             .into_iter()
             .filter(|(id, _)| valid_id(id))
@@ -285,11 +299,11 @@ impl Paths {
     }
 
     /// The configured agent `id`, or `None` when there is none.
-    pub fn acp_agent(&self, id: &str) -> Option<AcpAgent> {
+    pub fn get(&self, id: &str) -> Option<AcpAgent> {
         if !valid_id(id) {
             return None;
         }
-        let raw = crate::db::at(self.config_db()).kv_get(scope::ACP_AGENTS, id)?;
+        let raw = crate::db::at(&self.0).kv_get(scope::ACP_AGENTS, id)?;
         parse(id, &raw)
     }
 
@@ -299,12 +313,12 @@ impl Paths {
     ///
     /// The session itself stays as it was — listed, readable, archivable — and an
     /// agent configured again under the same id picks it up where it stopped.
-    pub fn acp_send_block(&self, summary: &SessionSummary) -> Option<String> {
+    pub fn send_block(&self, summary: &SessionSummary) -> Option<String> {
         if summary.source != Source::Acp {
             return None;
         }
         match summary.acp_agent.as_deref() {
-            Some(id) if self.acp_agent(id).is_some() => None,
+            Some(id) if self.get(id).is_some() => None,
             Some(id) => Some(removed(id)),
             None => Some("this ACP session does not say which agent it ran on".into()),
         }
@@ -313,14 +327,14 @@ impl Paths {
     /// Apply a patch to the agent `id`, adding it when there is none, and persist
     /// it; or say why it was refused. A new agent with a built-in's id starts from
     /// that description.
-    pub fn update_acp_agent(&self, id: &str, patch: &AcpAgentUpdate) -> Result<AcpAgent, String> {
+    pub fn update(&self, id: &str, patch: &AcpAgentUpdate) -> Result<AcpAgent, String> {
         if !valid_id(id) {
             return Err(format!(
                 "an agent id is at most {MAX_ID} lowercase letters, digits and dashes, starting with a letter or digit"
             ));
         }
         let _writing = WRITES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let db = crate::db::at(self.config_db());
+        let db = crate::db::at(&self.0);
         let rows = db.kv_scope(scope::ACP_AGENTS);
         let mut next = match rows.get(id).and_then(|raw| serde_json::from_str::<Stored>(raw).ok()) {
             Some(stored) => stored,
@@ -370,12 +384,12 @@ impl Paths {
     }
 
     /// Forget the agent `id`; `false` when there was none. Its sessions stay.
-    pub fn remove_acp_agent(&self, id: &str) -> bool {
+    pub fn remove(&self, id: &str) -> bool {
         if !valid_id(id) {
             return false;
         }
         let _writing = WRITES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let db = crate::db::at(self.config_db());
+        let db = crate::db::at(&self.0);
         if db.kv_get(scope::ACP_AGENTS, id).is_none() {
             return false;
         }
@@ -651,7 +665,7 @@ pub struct AcpAgentUpdate {
 pub async fn acp_agents(State(state): State<AppState>) -> Json<AcpAgentList> {
     let env = clean_env_bare();
     Json(AcpAgentList {
-        agents: state.paths.acp_agents().iter().map(AcpAgent::info).collect(),
+        agents: AcpAgentRegistry::of(&state.paths).list().iter().map(AcpAgent::info).collect(),
         presets: presets().iter().map(|preset| preset.looked_up(&env)).collect(),
     })
 }
@@ -682,7 +696,7 @@ pub async fn put_acp_agent(
 /// one.
 #[api(id = "delete_acp_agent", group = "acp", summary = "Remove an ACP agent")]
 pub async fn delete_acp_agent(State(state): State<AppState>, ApiPath(id): ApiPath<String>) -> Result<Json<SendResult>, ApiError> {
-    let Some(agent) = state.paths.acp_agent(&id) else {
+    let Some(agent) = AcpAgentRegistry::of(&state.paths).get(&id) else {
         return Err(ApiError::not_found("no such ACP agent"));
     };
     match state.drive.injections.remove_acp_agent(&agent).await {
@@ -697,9 +711,9 @@ pub async fn delete_acp_agent(State(state): State<AppState>, ApiPath(id): ApiPat
 /// answer is kept as the agent's `lastCheck`.
 #[api(id = "check_acp_agent", group = "acp", summary = "Check an ACP agent")]
 pub async fn check_acp_agent(State(state): State<AppState>, ApiPath(id): ApiPath<String>) -> Result<Json<AcpCheck>, ApiError> {
-    let agent = state.paths.acp_agent(&id).ok_or_else(|| ApiError::not_found("no such ACP agent"))?;
+    let agent = AcpAgentRegistry::of(&state.paths).get(&id).ok_or_else(|| ApiError::not_found("no such ACP agent"))?;
     let check = state.drive.injections.check_acp_agent(&agent).await;
-    agent.record_check(&state.paths, &check);
+    agent.record_check(&AcpAgentRegistry::of(&state.paths), &check);
     Ok(Json(check))
 }
 
@@ -708,7 +722,7 @@ pub async fn check_acp_agent(State(state): State<AppState>, ApiPath(id): ApiPath
 /// own so that the list, which every device reads, never carries it.
 #[api(id = "last_acp_check", group = "acp", summary = "The last check of an ACP agent")]
 pub async fn last_acp_check(State(state): State<AppState>, ApiPath(id): ApiPath<String>) -> Result<Json<AcpCheck>, ApiError> {
-    let agent = state.paths.acp_agent(&id).ok_or_else(|| ApiError::not_found("no such ACP agent"))?;
+    let agent = AcpAgentRegistry::of(&state.paths).get(&id).ok_or_else(|| ApiError::not_found("no such ACP agent"))?;
     agent
         .last_check
         .map(Json)
@@ -809,15 +823,17 @@ mod tests {
     #[test]
     fn nothing_stored_is_no_agent() {
         let (_home, paths) = paths();
-        assert!(paths.acp_agents().is_empty());
-        assert!(paths.acp_agent("bub").is_none(), "a built-in is offered, not run");
+        let agents = AcpAgentRegistry::of(&paths);
+        assert!(agents.list().is_empty());
+        assert!(agents.get("bub").is_none(), "a built-in is offered, not run");
     }
 
     #[test]
     fn values_are_kept_and_never_reported() {
         let (_home, paths) = paths();
-        paths
-            .update_acp_agent(
+        let agents = AcpAgentRegistry::of(&paths);
+        agents
+            .update(
                 "mine",
                 &AcpAgentUpdate {
                     name: Some(" My agent ".to_string()).into(),
@@ -829,7 +845,7 @@ mod tests {
                 },
             )
             .expect("saved");
-        let stored = paths.acp_agent("mine").expect("configured");
+        let stored = agents.get("mine").expect("configured");
         assert_eq!(stored.name, "My agent");
         assert_eq!(stored.program(), PathBuf::from("/opt/agent/bin/agent"));
         assert_eq!(stored.args, vec!["acp", "--stdio"]);
@@ -844,95 +860,100 @@ mod tests {
     #[test]
     fn two_agents_are_kept_apart() {
         let (_home, paths) = paths();
-        paths.update_acp_agent("one", &patch(Some("/x/one"), Some(&["acp"]), Some("A=1"))).expect("saved");
-        paths.update_acp_agent("two", &patch(Some("/x/two"), None, Some("B=2"))).expect("saved");
-        let listed: Vec<(String, String)> = paths.acp_agents().into_iter().map(|agent| (agent.id, agent.command)).collect();
+        let agents = AcpAgentRegistry::of(&paths);
+        agents.update("one", &patch(Some("/x/one"), Some(&["acp"]), Some("A=1"))).expect("saved");
+        agents.update("two", &patch(Some("/x/two"), None, Some("B=2"))).expect("saved");
+        let listed: Vec<(String, String)> = agents.list().into_iter().map(|agent| (agent.id, agent.command)).collect();
         assert_eq!(listed, vec![("one".into(), "/x/one".into()), ("two".into(), "/x/two".into())]);
-        assert_eq!(paths.acp_agent("one").unwrap().info().env_names, vec!["A"]);
-        assert_eq!(paths.acp_agent("two").unwrap().info().env_names, vec!["B"]);
-        assert_eq!(paths.acp_agent("two").unwrap().name, "two", "a name left empty is the id");
-        assert!(paths.remove_acp_agent("one"));
-        assert!(!paths.remove_acp_agent("one"), "gone already");
-        assert!(paths.acp_agent("one").is_none());
-        assert!(paths.acp_agent("two").is_some(), "the other stays");
+        assert_eq!(agents.get("one").unwrap().info().env_names, vec!["A"]);
+        assert_eq!(agents.get("two").unwrap().info().env_names, vec!["B"]);
+        assert_eq!(agents.get("two").unwrap().name, "two", "a name left empty is the id");
+        assert!(agents.remove("one"));
+        assert!(!agents.remove("one"), "gone already");
+        assert!(agents.get("one").is_none());
+        assert!(agents.get("two").is_some(), "the other stays");
     }
 
     #[test]
     fn a_built_in_is_added_from_its_description() {
         let (_home, paths) = paths();
+        let agents = AcpAgentRegistry::of(&paths);
         let bub = presets().iter().find(|preset| preset.id == "bub").expect("bub is built in");
-        let added = paths.update_acp_agent("bub", &patch(None, None, Some("BUB_MODEL=x"))).expect("saved");
+        let added = agents.update("bub", &patch(None, None, Some("BUB_MODEL=x"))).expect("saved");
         assert_eq!((added.name.as_str(), added.command.as_str()), (bub.name.as_str(), bub.command.as_str()));
         assert_eq!(added.args, bub.args);
         assert_eq!(added.info().homepage, bub.homepage);
         // Its own name and command line, once changed, are the user's.
-        paths.update_acp_agent("bub", &patch(Some("/home/me/.venv/bin/bub"), None, None)).expect("saved");
-        assert_eq!(paths.acp_agent("bub").unwrap().command, "/home/me/.venv/bin/bub");
-        assert_eq!(paths.acp_agent("bub").unwrap().info().env_names, vec!["BUB_MODEL"]);
+        agents.update("bub", &patch(Some("/home/me/.venv/bin/bub"), None, None)).expect("saved");
+        assert_eq!(agents.get("bub").unwrap().command, "/home/me/.venv/bin/bub");
+        assert_eq!(agents.get("bub").unwrap().info().env_names, vec!["BUB_MODEL"]);
     }
 
     #[test]
     fn an_absent_field_is_left_alone_and_an_empty_one_clears() {
         let (_home, paths) = paths();
-        paths.update_acp_agent("x", &patch(Some("/x/agent"), Some(&["acp"]), Some("A=1"))).expect("saved");
-        paths.update_acp_agent("x", &patch(None, None, None)).expect("saved");
-        let stored = paths.acp_agent("x").unwrap();
+        let agents = AcpAgentRegistry::of(&paths);
+        agents.update("x", &patch(Some("/x/agent"), Some(&["acp"]), Some("A=1"))).expect("saved");
+        agents.update("x", &patch(None, None, None)).expect("saved");
+        let stored = agents.get("x").unwrap();
         assert_eq!((stored.command.as_str(), stored.args.clone(), stored.info().env_names), ("/x/agent", vec!["acp".to_string()], vec!["A".to_string()]));
-        paths.update_acp_agent("x", &patch(None, Some(&[]), Some("  \n# nothing\n"))).expect("saved");
-        let stored = paths.acp_agent("x").unwrap();
+        agents.update("x", &patch(None, Some(&[]), Some("  \n# nothing\n"))).expect("saved");
+        let stored = agents.get("x").unwrap();
         assert!(stored.args.is_empty() && stored.env.is_empty());
     }
 
     #[test]
     fn what_cannot_run_or_would_move_the_child_is_refused() {
         let (_home, paths) = paths();
-        assert!(paths.update_acp_agent("x", &patch(None, None, None)).is_err(), "a new agent needs an executable");
-        assert!(paths.update_acp_agent("x", &patch(Some(" "), None, None)).is_err());
-        assert!(paths.update_acp_agent("../x", &patch(Some("/x"), None, None)).is_err());
-        assert!(paths.update_acp_agent("X", &patch(Some("/x"), None, None)).is_err());
-        assert!(paths.update_acp_agent("x", &patch(Some("/x"), None, Some("PATH=/tmp"))).is_err());
-        assert!(paths.update_acp_agent("x", &patch(Some("/x"), None, Some("not a pair"))).is_err());
-        assert!(paths.update_acp_agent("x", &patch(Some("agent\nrm -rf /"), None, None)).is_err());
-        assert!(paths.update_acp_agent("x", &patch(Some("/x"), Some(&["a\nb"]), None)).is_err());
+        let agents = AcpAgentRegistry::of(&paths);
+        assert!(agents.update("x", &patch(None, None, None)).is_err(), "a new agent needs an executable");
+        assert!(agents.update("x", &patch(Some(" "), None, None)).is_err());
+        assert!(agents.update("../x", &patch(Some("/x"), None, None)).is_err());
+        assert!(agents.update("X", &patch(Some("/x"), None, None)).is_err());
+        assert!(agents.update("x", &patch(Some("/x"), None, Some("PATH=/tmp"))).is_err());
+        assert!(agents.update("x", &patch(Some("/x"), None, Some("not a pair"))).is_err());
+        assert!(agents.update("x", &patch(Some("agent\nrm -rf /"), None, None)).is_err());
+        assert!(agents.update("x", &patch(Some("/x"), Some(&["a\nb"]), None)).is_err());
         for relative in ["bin/agent", "./agent", "~/bin/agent"] {
-            assert!(paths.update_acp_agent("x", &patch(Some(relative), None, None)).is_err(), "{relative}");
+            assert!(agents.update("x", &patch(Some(relative), None, None)).is_err(), "{relative}");
         }
-        assert!(paths.acp_agents().is_empty(), "a refusal stores nothing");
-        paths.update_acp_agent("y", &patch(Some("agent"), None, None)).expect("a command name is looked up on PATH");
-        assert!(paths.remove_acp_agent("y"));
-        paths.update_acp_agent("x", &patch(Some("/x"), None, None)).expect("saved");
-        assert!(paths.update_acp_agent("x", &patch(Some(""), None, None)).is_err(), "removing is a delete, not an empty executable");
-        assert_eq!(paths.acp_agent("x").unwrap().command, "/x");
+        assert!(agents.list().is_empty(), "a refusal stores nothing");
+        agents.update("y", &patch(Some("agent"), None, None)).expect("a command name is looked up on PATH");
+        assert!(agents.remove("y"));
+        agents.update("x", &patch(Some("/x"), None, None)).expect("saved");
+        assert!(agents.update("x", &patch(Some(""), None, None)).is_err(), "removing is a delete, not an empty executable");
+        assert_eq!(agents.get("x").unwrap().command, "/x");
     }
 
     #[test]
     fn a_check_is_kept_until_the_command_line_or_environment_changes() {
         let (_home, paths) = paths();
-        paths.update_acp_agent("x", &patch(Some("/x/agent"), Some(&["acp"]), Some("KEY=a-long-secret"))).expect("saved");
-        let configured = paths.acp_agent("x").unwrap();
+        let agents = AcpAgentRegistry::of(&paths);
+        agents.update("x", &patch(Some("/x/agent"), Some(&["acp"]), Some("KEY=a-long-secret"))).expect("saved");
+        let configured = agents.get("x").unwrap();
         assert!(configured.last_check.is_none(), "nothing checked yet");
         let found = AcpCheck::ended(AcpCheckState::NotFound, Some("gone".into()));
-        assert!(configured.record_check(&paths, &found));
-        assert_eq!(agent_check(&paths, "x"), Some(AcpCheckState::NotFound));
-        assert_eq!(paths.acp_agent("x").unwrap().last_check.and_then(|check| check.error.0), Some("gone".into()));
-        assert_eq!(paths.acp_agent("x").unwrap().info().last_check.0.map(|check| check.error.0), Some(None), "a listing leaves it out");
+        assert!(configured.record_check(&agents, &found));
+        assert_eq!(agent_check(&agents, "x"), Some(AcpCheckState::NotFound));
+        assert_eq!(agents.get("x").unwrap().last_check.and_then(|check| check.error.0), Some("gone".into()));
+        assert_eq!(agents.get("x").unwrap().info().last_check.0.map(|check| check.error.0), Some(None), "a listing leaves it out");
 
         // A new name is the same process: the check stands.
-        paths.update_acp_agent("x", &AcpAgentUpdate { name: Some("Renamed".into()).into(), ..AcpAgentUpdate::default() }).expect("saved");
-        assert_eq!(agent_check(&paths, "x"), Some(AcpCheckState::NotFound));
+        agents.update("x", &AcpAgentUpdate { name: Some("Renamed".into()).into(), ..AcpAgentUpdate::default() }).expect("saved");
+        assert_eq!(agent_check(&agents, "x"), Some(AcpCheckState::NotFound));
         // Another environment is another process: it is forgotten.
-        paths.update_acp_agent("x", &patch(None, None, Some("KEY=other"))).expect("saved");
-        assert_eq!(agent_check(&paths, "x"), None);
+        agents.update("x", &patch(None, None, Some("KEY=other"))).expect("saved");
+        assert_eq!(agent_check(&agents, "x"), None);
 
         // A check of what was configured before an edit is not kept after it.
-        let before = paths.acp_agent("x").unwrap();
-        paths.update_acp_agent("x", &patch(Some("/y/agent"), None, None)).expect("saved");
-        assert!(!before.record_check(&paths, &found), "it describes a command line that is gone");
-        assert_eq!(agent_check(&paths, "x"), None);
+        let before = agents.get("x").unwrap();
+        agents.update("x", &patch(Some("/y/agent"), None, None)).expect("saved");
+        assert!(!before.record_check(&agents, &found), "it describes a command line that is gone");
+        assert_eq!(agent_check(&agents, "x"), None);
     }
 
-    fn agent_check(paths: &Paths, id: &str) -> Option<AcpCheckState> {
-        paths.acp_agent(id).and_then(|agent| agent.last_check).map(|check| check.state)
+    fn agent_check(agents: &AcpAgentRegistry, id: &str) -> Option<AcpCheckState> {
+        agents.get(id).and_then(|agent| agent.last_check).map(|check| check.state)
     }
 
     #[test]
@@ -1002,9 +1023,10 @@ mod tests {
 
         let home = tempfile::tempdir().expect("tempdir");
         let (state, mut router) = crate::api::test_support::guarded_router(home.path(), Some(false)).await;
-        state.paths.update_acp_agent("x", &patch(Some("/x/agent"), None, None)).expect("saved");
+        let agents = AcpAgentRegistry::of(&state.paths);
+        agents.update("x", &patch(Some("/x/agent"), None, None)).expect("saved");
         let failed = AcpCheck::ended(AcpCheckState::Failed, Some("the agent's own words".into()));
-        assert!(state.paths.acp_agent("x").unwrap().record_check(&state.paths, &failed));
+        assert!(agents.get("x").unwrap().record_check(&agents, &failed));
         let credential = state.drive.auth.internal_credential().to_string();
         let device = [
             (crate::agent::bridge::CREDENTIAL_HEADER, credential.as_str()),
@@ -1035,7 +1057,7 @@ mod tests {
         let (status, check) = get(&mut router, "/api/acp/agents/x/check", &device).await;
         assert_eq!((status, check["error"].as_str()), (200, Some("the agent's own words")), "{check:#}");
 
-        state.paths.update_acp_agent("y", &patch(Some("/y/agent"), None, None)).expect("saved");
+        agents.update("y", &patch(Some("/y/agent"), None, None)).expect("saved");
         assert_eq!(get(&mut router, "/api/acp/agents/y/check", &[]).await.0, 404, "never checked");
         assert_eq!(get(&mut router, "/api/acp/agents/z/check", &[]).await.0, 404, "no such agent");
     }

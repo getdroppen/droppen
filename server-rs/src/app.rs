@@ -114,8 +114,8 @@ impl GotchaApp for RemoteHandApp {
             // ones once at boot, off the startup path so a slow disk cannot
             // delay the listener.
             tokio::spawn({
-                let paths = paths.clone();
-                async move { paths.sweep_uploads().await }
+                let roots = crate::files::FileRoots::of(&paths);
+                async move { roots.sweep_uploads().await }
             });
             let auth = crate::auth::Auth::new(&paths, &instance, &auth_settings, auth_disabled);
             let drive = crate::drive::Drive::new(paths.clone(), &instance, auth);

@@ -492,7 +492,7 @@ fn validate_acp_agent(state: &AppState, source: Source, agent: Option<&str>) -> 
     match (source, agent) {
         (Source::Acp, None) => Err(ApiError::bad_request("an ACP session needs acpAgent: the agent it runs on")),
         (Source::Acp, Some(id)) if !crate::acp_agent::valid_id(id) => Err(ApiError::bad_request(format!("invalid ACP agent id: {id}"))),
-        (Source::Acp, Some(id)) if state.paths.acp_agent(id).is_none() => {
+        (Source::Acp, Some(id)) if crate::acp_agent::AcpAgentRegistry::of(&state.paths).get(id).is_none() => {
             Err(ApiError::bad_request(format!("no ACP agent \"{id}\" is configured")))
         }
         (Source::Acp, Some(_)) | (_, None) => Ok(()),
@@ -675,7 +675,7 @@ async fn deliver_message(
     // flight ends. See [`sendability`] for why the live-process arm is lifted
     // too — the live process the probe can see is ours. An ACP session whose
     // agent was removed is refused whatever is running.
-    let (can_send, reason) = match drive.paths.acp_send_block(&summary) {
+    let (can_send, reason) = match crate::acp_agent::AcpAgentRegistry::of(&drive.paths).send_block(&summary) {
         Some(reason) => (false, Some(reason)),
         None => sendability(
             source,

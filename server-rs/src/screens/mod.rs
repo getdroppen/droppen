@@ -45,6 +45,7 @@
 //! should look again.
 
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::LazyLock;
 use std::time::SystemTime;
 
@@ -699,7 +700,7 @@ trait ScreenReads {
     /// A row that will not parse is dropped rather than fatal and an empty
     /// store reads as an empty list: nothing here may lock the user out of
     /// making new screens. `ordinal` is the list's order: a create appends at
-    /// the end and [`Paths::reorder_screens`] rewrites it; `rowid` breaks the
+    /// the end and [`ScreenStore::reorder`] rewrites it; `rowid` breaks the
     /// tie two rows written by an older build could share.
     fn screens_in(&self) -> rusqlite::Result<Vec<Screen>>;
 
@@ -771,14 +772,29 @@ impl ScreenWrite for Transaction<'_> {
     }
 }
 
-impl Paths {
+/// The saved screens: rows in the instance's state database
+/// ([`Paths::instance_db`]).
+///
+/// Its own type rather than methods on [`Paths`], so that every read and
+/// write of a screen goes through this module.
+#[derive(Debug, Clone)]
+pub struct ScreenStore(PathBuf);
+
+impl ScreenStore {
+    /// The screens of the instance `paths` names.
+    pub fn of(paths: &Paths) -> Self {
+        Self(paths.instance_db())
+    }
+}
+
+impl ScreenStore {
     /// Every saved screen, in order.
-    pub async fn read_screens(&self) -> Vec<Screen> {
-        self.read_screen_list().await.screens
+    pub async fn read(&self) -> Vec<Screen> {
+        self.read_list().await.screens
     }
     /// Every saved screen and the list's revision, from one read.
-    pub async fn read_screen_list(&self) -> ScreenList {
-        let db = crate::db::at(self.instance_db());
+    pub async fn read_list(&self) -> ScreenList {
+        let db = crate::db::at(&self.0);
         db.read(|conn| conn.list_in()).unwrap_or(ScreenList {
             screens: vec![],
             list_revision: 1,
@@ -786,8 +802,8 @@ impl Paths {
     }
     /// Create a screen holding one empty pane: one row inserted, nothing else
     /// rewritten.
-    async fn create_screen(&self, feed: &GlobalFeed, body: ScreenCreate) -> Result<Screen, ApiError> {
-        let db = crate::db::at(self.instance_db());
+    async fn create(&self, feed: &GlobalFeed, body: ScreenCreate) -> Result<Screen, ApiError> {
+        let db = crate::db::at(&self.0);
         let (screen, list_revision) = db
             .write(|tx| {
                 if let Some(stale) = tx.stale_list(body.base_list_revision.0)? {
@@ -820,9 +836,9 @@ impl Paths {
         Ok(screen)
     }
     /// Patch one screen, if the client's `baseRevision` is still its revision.
-    async fn update_screen(&self, feed: &GlobalFeed, id: &str, body: ScreenUpdate) -> Result<Screen, ApiError> {
+    async fn update(&self, feed: &GlobalFeed, id: &str, body: ScreenUpdate) -> Result<Screen, ApiError> {
         let emoji = body.emoji.as_deref().map(parse_emoji).transpose().map_err(ApiError::bad_request)?;
-        let db = crate::db::at(self.instance_db());
+        let db = crate::db::at(&self.0);
         // A layout autosave and an icon change can arrive together. Read and patch
         // this row in one transaction so neither rewrites the other's old value —
         // and refuse either one that was made against a revision since replaced.
@@ -866,8 +882,8 @@ impl Paths {
         Ok(next)
     }
     /// Delete one screen: one row removed, nothing else rewritten.
-    async fn delete_screen(&self, feed: &GlobalFeed, id: &str, base_list_revision: Option<u64>) -> Result<(), ApiError> {
-        let db = crate::db::at(self.instance_db());
+    async fn delete(&self, feed: &GlobalFeed, id: &str, base_list_revision: Option<u64>) -> Result<(), ApiError> {
+        let db = crate::db::at(&self.0);
         let (revision, list_revision) = db
             .write(|tx| {
                 if let Some(stale) = tx.stale_list(base_list_revision)? {
@@ -887,8 +903,8 @@ impl Paths {
         Ok(())
     }
     /// Move screens' positions, in one transaction, without touching any payload.
-    async fn reorder_screens(&self, feed: &GlobalFeed, body: ScreenOrder) -> Result<ScreenList, ApiError> {
-        let db = crate::db::at(self.instance_db());
+    async fn reorder(&self, feed: &GlobalFeed, body: ScreenOrder) -> Result<ScreenList, ApiError> {
+        let db = crate::db::at(&self.0);
         let (list, moved) = db
             .write(|tx| {
                 if let Some(stale) = tx.stale_list(body.base_list_revision.0)? {
@@ -992,13 +1008,13 @@ fn merged_order(existing: &[String], wanted: &[String]) -> Vec<String> {
 /// Persistent screens, saved pane layouts.
 #[api(id = "list_screens", group = "screens", summary = "List screens")]
 pub async fn list_screens(State(state): State<AppState>) -> Json<ScreenList> {
-    Json(state.paths.read_screen_list().await)
+    Json(ScreenStore::of(&state.paths).read_list().await)
 }
 
 /// Create a screen holding one empty pane.
 #[api(id = "create_screen", group = "screens", summary = "Create a screen")]
 pub async fn create_screen(State(state): State<AppState>, ApiJson(body): ApiJson<ScreenCreate>) -> Result<Json<Screen>, ApiError> {
-    state.paths.create_screen(&state.global, body).await.map(Json)
+    ScreenStore::of(&state.paths).create(&state.global, body).await.map(Json)
 }
 
 /// Update a screen's name, emoji, and/or layout without touching omitted fields.
@@ -1011,7 +1027,7 @@ pub async fn update_screen(
     ApiPath(id): ApiPath<String>,
     ApiJson(body): ApiJson<ScreenUpdate>,
 ) -> Result<Json<Screen>, ApiError> {
-    state.paths.update_screen(&state.global, &id, body).await.map(Json)
+    ScreenStore::of(&state.paths).update(&state.global, &id, body).await.map(Json)
 }
 
 /// Delete a screen. The resources its leaves reference are left untouched.
@@ -1021,7 +1037,7 @@ pub async fn delete_screen(
     ApiPath(id): ApiPath<String>,
     ApiQuery(query): ApiQuery<ScreenDeleteQuery>,
 ) -> Result<Json<SendResult>, ApiError> {
-    state.paths.delete_screen(&state.global, &id, query.base_list_revision).await?;
+    ScreenStore::of(&state.paths).delete(&state.global, &id, query.base_list_revision).await?;
     Ok(Json(SendResult { accepted: true }))
 }
 
@@ -1029,7 +1045,7 @@ pub async fn delete_screen(
 /// relative order after the ones it does.
 #[api(id = "reorder_screens", group = "screens", summary = "Reorder screens")]
 pub async fn reorder_screens(State(state): State<AppState>, ApiJson(body): ApiJson<ScreenOrder>) -> Result<Json<ScreenList>, ApiError> {
-    state.paths.reorder_screens(&state.global, body).await.map(Json)
+    ScreenStore::of(&state.paths).reorder(&state.global, body).await.map(Json)
 }
 
 /// Register this subsystem's routes.
@@ -1270,11 +1286,12 @@ mod tests {
     async fn a_corrupt_row_costs_only_itself() {
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(home.path().to_path_buf());
+        let store = ScreenStore::of(&paths);
         seed_payload(&paths, "truncated", 0, "{\"id\":");
         seed_payload(&paths, "empty", 1, "");
         seed_payload(&paths, "good", 2, &screen("good").payload());
 
-        let screens = (&paths).read_screens().await;
+        let screens = store.read().await;
         assert_eq!(ids(&screens), vec!["good"], "a row that will not parse is dropped");
     }
 
@@ -1286,6 +1303,7 @@ mod tests {
     async fn a_save_writes_only_the_table() {
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(home.path().to_path_buf());
+        let store = ScreenStore::of(&paths);
         let screen = Screen {
             id: "screen-1".into(),
             title: "work".into(),
@@ -1302,12 +1320,12 @@ mod tests {
         assert!(!file.exists(), "a save writes the table and creates no file");
         assert!(!file.with_extension("json.tmp").exists());
 
-        let screens = (&paths).read_screens().await;
+        let screens = store.read().await;
         assert_eq!(screens.len(), 1, "the layouts are in the database");
         assert_eq!(screens[0], screen);
 
         // And the next save leaves the table as the only place a layout lives.
-        (&paths).update_screen(&GlobalFeed::default(),
+        store.update(&GlobalFeed::default(),
             "screen-1",
             ScreenUpdate {
                 title: Some("again".to_string()).into(),
@@ -1315,7 +1333,7 @@ mod tests {
             },)
         .await
         .expect("save again");
-        assert_eq!((&paths).read_screens().await[0].title, "again");
+        assert_eq!(store.read().await[0].title, "again");
         assert!(!file.exists(), "a save never creates a file");
         assert!(
             !paths.config_dir().join("screens.json").exists(),
@@ -1331,6 +1349,7 @@ mod tests {
     async fn an_instance_screens_file_seeds_nothing() {
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(home.path().to_path_buf());
+        let store = ScreenStore::of(&paths);
         let file = paths.instance_dir().join("screens.json");
         std::fs::create_dir_all(paths.instance_dir()).expect("instance dir");
         std::fs::write(
@@ -1339,7 +1358,7 @@ mod tests {
         )
         .expect("what an install that booted 0.2.125 but never opened the SPA still has");
 
-        assert!((&paths).read_screens().await.is_empty(), "the file seeds nothing");
+        assert!(store.read().await.is_empty(), "the file seeds nothing");
         assert_eq!(
             std::fs::read_to_string(&file).expect("read"),
             r#"{"version":1,"screens":[{"id":"from-the-file","title":"work"}]}"#,
@@ -1353,6 +1372,7 @@ mod tests {
     async fn a_layout_survives_the_database_being_reopened() {
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(home.path().to_path_buf());
+        let store = ScreenStore::of(&paths);
         seed(
             &paths,
             &[Screen {
@@ -1380,7 +1400,7 @@ mod tests {
         assert_eq!(stored["emoji"], "👩🏽‍💻");
         assert_eq!(stored["layout"]["content"], json!({ "kind": "tasks" }));
         assert_eq!(revision, 4);
-        let screens = (&paths).read_screens().await;
+        let screens = store.read().await;
         assert_eq!(screens[0].emoji.as_deref(), Some("👩🏽‍💻"));
         assert_eq!(screens[0].revision, 4);
         assert_eq!(screens[0].layout.0["content"], json!({ "kind": "tasks" }));
@@ -1392,6 +1412,7 @@ mod tests {
     async fn a_screen_missing_its_metadata_is_filled_in_by_position() {
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(home.path().to_path_buf());
+        let store = ScreenStore::of(&paths);
         seed_payload(&paths, "a", 0, r#"{"id":"a"}"#);
         seed_payload(
             &paths,
@@ -1400,7 +1421,7 @@ mod tests {
             r#"{"id":"b","title":"named","createdAt":"then","updatedAt":"then"}"#,
         );
 
-        let screens = (&paths).read_screens().await;
+        let screens = store.read().await;
         assert_eq!(screens.len(), 2);
         assert_eq!(screens[0].title, "screen 1", "a missing title is numbered by position");
         assert!(screens[0].emoji.is_none(), "a screen with no icon keeps the default one");
@@ -1438,6 +1459,7 @@ mod tests {
     async fn a_legacy_browser_leaf_round_trips_unchanged() {
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(dir.path().to_path_buf());
+        let store = ScreenStore::of(&paths);
         let layout = json!({
             "type": "split",
             "id": "s1",
@@ -1457,11 +1479,11 @@ mod tests {
         });
         seed_payload(&paths, "screen-1", 0, &seeded.to_string());
 
-        let screens = (&paths).read_screens().await;
+        let screens = store.read().await;
         assert_eq!(screens.len(), 1);
         assert_eq!(screens[0].layout.0, layout, "the browser leaf must survive the sanitizer");
 
-        let saved = (&paths).update_screen(&GlobalFeed::default(),
+        let saved = store.update(&GlobalFeed::default(),
             "screen-1",
             ScreenUpdate {
                 layout: Optional(Some(screens[0].layout.clone())),
@@ -1470,7 +1492,7 @@ mod tests {
         .await
         .expect("save");
         assert_eq!(saved.layout.0, layout);
-        let round_tripped = (&paths).read_screens().await;
+        let round_tripped = store.read().await;
         assert_eq!(round_tripped[0].layout.0, layout, "and survive a save");
     }
 
@@ -1543,11 +1565,12 @@ mod tests {
     async fn a_save_bumps_the_revision_and_a_stale_base_is_refused_with_the_current_screen() {
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(home.path().to_path_buf());
+        let store = ScreenStore::of(&paths);
         let feed = GlobalFeed::default();
-        let created = (&paths).create_screen(&feed, ScreenCreate::default()).await.expect("create");
+        let created = store.create(&feed, ScreenCreate::default()).await.expect("create");
         assert_eq!(created.revision, 1);
 
-        let laptop = (&paths).update_screen(&feed,
+        let laptop = store.update(&feed,
             &created.id,
             ScreenUpdate {
                 layout: Optional(Some(terminal("laptop"))),
@@ -1557,7 +1580,7 @@ mod tests {
         .expect("the first save lands");
         assert_eq!(laptop.revision, 2, "a successful write moves the revision on");
 
-        let refused = (&paths).update_screen(&feed,
+        let refused = store.update(&feed,
             &created.id,
             ScreenUpdate {
                 layout: Optional(Some(terminal("phone"))),
@@ -1570,12 +1593,12 @@ mod tests {
         let current: Screen = serde_json::from_value(refused.body()["screen"].clone()).expect("the current screen");
         assert_eq!(current, laptop, "the 409 carries the screen exactly as it now is");
 
-        let stored = (&paths).read_screens().await;
+        let stored = store.read().await;
         assert_eq!(stored[0].layout.0["content"]["id"], "laptop", "the refused save wrote nothing");
         assert_eq!(stored[0].revision, 2);
 
         // Adopting what the 409 said and saving again is the way through.
-        let phone = (&paths).update_screen(&feed,
+        let phone = store.update(&feed,
             &created.id,
             ScreenUpdate {
                 layout: Optional(Some(terminal("phone"))),
@@ -1586,7 +1609,7 @@ mod tests {
         assert_eq!(phone.revision, 3);
 
         // A rename or an icon change is a write too, and numbered as one.
-        let renamed = (&paths).update_screen(&feed,
+        let renamed = store.update(&feed,
             &created.id,
             ScreenUpdate {
                 title: Some("renamed".to_string()).into(),
@@ -1597,7 +1620,7 @@ mod tests {
         assert_eq!((renamed.revision, renamed.title.as_str()), (4, "renamed"));
         assert_eq!(renamed.layout.0["content"]["id"], "phone", "an omitted layout is left alone");
 
-        let missing = (&paths).update_screen(&feed, "nope", patch(1)).await.expect_err("no such screen");
+        let missing = store.update(&feed, "nope", patch(1)).await.expect_err("no such screen");
         assert_eq!(missing.status(), StatusCode::NOT_FOUND);
     }
 
@@ -1608,14 +1631,15 @@ mod tests {
     async fn interleaved_creates_and_deletes_from_two_devices_keep_each_others_rows() {
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(home.path().to_path_buf());
+        let store = ScreenStore::of(&paths);
         let feed = GlobalFeed::default();
         seed(&paths, &[screen("a"), screen("b")]).await;
 
         // The laptop deletes `a` while the phone creates a screen; neither has
         // seen the other's change and neither names a list revision.
         let (deleted, created) = tokio::join!(
-            (&paths).delete_screen(&feed, "a", None),
-            (&paths).create_screen(&feed,
+            store.delete(&feed, "a", None),
+            store.create(&feed,
                 ScreenCreate {
                     title: Some("phone".to_string()).into(),
                     ..Default::default()
@@ -1623,12 +1647,12 @@ mod tests {
         );
         deleted.expect("delete");
         let created = created.expect("create");
-        assert_eq!(ids(&(&paths).read_screens().await), vec!["b", created.id.as_str()]);
+        assert_eq!(ids(&store.read().await), vec!["b", created.id.as_str()]);
 
         // Many devices creating at once: every one of them gets a row.
-        let made = futures_util::future::join_all((0..8).map(|_| (&paths).create_screen(&feed, ScreenCreate::default()))).await;
+        let made = futures_util::future::join_all((0..8).map(|_| store.create(&feed, ScreenCreate::default()))).await;
         let made: Vec<Screen> = made.into_iter().map(|made| made.expect("create")).collect();
-        let stored = (&paths).read_screens().await;
+        let stored = store.read().await;
         assert_eq!(stored.len(), 10);
         for screen in &made {
             assert!(stored.iter().any(|stored| stored.id == screen.id), "{} survived", screen.id);
@@ -1636,9 +1660,9 @@ mod tests {
 
         // Deleting one screen leaves every other row exactly as it was.
         let before: Vec<Screen> = stored.iter().filter(|screen| screen.id != "b").cloned().collect();
-        (&paths).delete_screen(&feed, "b", None).await.expect("delete b");
-        assert_eq!((&paths).read_screens().await, before);
-        let gone = (&paths).delete_screen(&feed, "b", None).await.expect_err("already gone");
+        store.delete(&feed, "b", None).await.expect("delete b");
+        assert_eq!(store.read().await, before);
+        let gone = store.delete(&feed, "b", None).await.expect_err("already gone");
         assert_eq!(gone.status(), StatusCode::NOT_FOUND);
     }
 
@@ -1648,26 +1672,27 @@ mod tests {
     async fn a_reorder_from_a_device_that_missed_a_create_keeps_the_new_screen() {
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(home.path().to_path_buf());
+        let store = ScreenStore::of(&paths);
         let feed = GlobalFeed::default();
         seed(&paths, &[screen("a"), screen("b"), screen("c")]).await;
 
         let (reordered, created) = tokio::join!(
-            (&paths).reorder_screens(&feed,
+            store.reorder(&feed,
                 ScreenOrder {
                     ids: vec!["c".into(), "a".into(), "b".into()],
                     ..Default::default()
                 }),
-            (&paths).create_screen(&feed, ScreenCreate::default()),
+            store.create(&feed, ScreenCreate::default()),
         );
         reordered.expect("reorder");
         let created = created.expect("create");
-        let stored = (&paths).read_screens().await;
+        let stored = store.read().await;
         assert_eq!(stored.len(), 4, "nobody's screen was lost");
         let order: Vec<&str> = ids(&stored).into_iter().filter(|id| *id != created.id).collect();
         assert_eq!(order, vec!["c", "a", "b"]);
 
         // Unknown and repeated ids are ignored; unnamed screens follow in order.
-        let list = (&paths).reorder_screens(&feed,
+        let list = store.reorder(&feed,
             ScreenOrder {
                 ids: vec!["b".into(), "ghost".into(), "b".into()],
                 ..Default::default()
@@ -1678,7 +1703,7 @@ mod tests {
         let tail: Vec<&str> = ids(&stored).into_iter().filter(|id| !["a", "b", "c"].contains(id)).collect();
         expected.extend(tail);
         assert_eq!(ids(&list.screens), expected);
-        assert_eq!(ids(&(&paths).read_screens().await), expected, "and it is what the store now says");
+        assert_eq!(ids(&store.read().await), expected, "and it is what the store now says");
         assert!(
             list.screens.iter().all(|screen| screen.revision == 1),
             "a move is not an edit to any screen"
@@ -1691,17 +1716,18 @@ mod tests {
     async fn a_stale_list_revision_refuses_create_delete_and_reorder_with_the_current_list() {
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(home.path().to_path_buf());
+        let store = ScreenStore::of(&paths);
         let feed = GlobalFeed::default();
-        assert_eq!((&paths).read_screen_list().await.list_revision, 1, "an untouched list is at revision 1");
+        assert_eq!(store.read_list().await.list_revision, 1, "an untouched list is at revision 1");
 
-        let first = (&paths).create_screen(&feed,
+        let first = store.create(&feed,
             ScreenCreate {
                 base_list_revision: Optional(Some(1)),
                 ..Default::default()
             },)
         .await
         .expect("a current base is accepted");
-        let list = (&paths).read_screen_list().await;
+        let list = store.read_list().await;
         assert_eq!(list.list_revision, 2);
 
         let check = |error: ApiError, what: &str| {
@@ -1712,7 +1738,7 @@ mod tests {
             assert_eq!(ids(&screens), vec![first.id.as_str()], "{what}");
         };
         check(
-            (&paths).create_screen(&feed,
+            store.create(&feed,
                 ScreenCreate {
                     base_list_revision: Optional(Some(1)),
                     ..Default::default()
@@ -1721,9 +1747,9 @@ mod tests {
             .expect_err("stale create"),
             "create",
         );
-        check((&paths).delete_screen(&feed, &first.id, Some(1)).await.expect_err("stale delete"), "delete");
+        check(store.delete(&feed, &first.id, Some(1)).await.expect_err("stale delete"), "delete");
         check(
-            (&paths).reorder_screens(&feed,
+            store.reorder(&feed,
                 ScreenOrder {
                     ids: vec![first.id.clone()],
                     base_list_revision: Optional(Some(1)),
@@ -1732,11 +1758,11 @@ mod tests {
             .expect_err("stale reorder"),
             "reorder",
         );
-        assert_eq!((&paths).read_screen_list().await, list, "a refused list operation changes nothing");
+        assert_eq!(store.read_list().await, list, "a refused list operation changes nothing");
 
         // A layout save does not move the list revision; only membership and
         // order do.
-        (&paths).update_screen(&feed,
+        store.update(&feed,
             &first.id,
             ScreenUpdate {
                 layout: Optional(Some(terminal("t"))),
@@ -1744,9 +1770,9 @@ mod tests {
             },)
         .await
         .expect("save");
-        assert_eq!((&paths).read_screen_list().await.list_revision, 2);
-        (&paths).delete_screen(&feed, &first.id, Some(2)).await.expect("a current base is accepted");
-        assert_eq!((&paths).read_screen_list().await.list_revision, 3);
+        assert_eq!(store.read_list().await.list_revision, 2);
+        store.delete(&feed, &first.id, Some(2)).await.expect("a current base is accepted");
+        assert_eq!(store.read_list().await.list_revision, 3);
     }
 
     /// Every successful write tells the global feed, so another device's open
@@ -1756,10 +1782,11 @@ mod tests {
     async fn every_write_is_announced_on_the_global_feed() {
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(home.path().to_path_buf());
+        let store = ScreenStore::of(&paths);
         let feed = GlobalFeed::default();
         let mut rx = feed.listen();
 
-        let a = (&paths).create_screen(&feed, ScreenCreate::default()).await.expect("create a");
+        let a = store.create(&feed, ScreenCreate::default()).await.expect("create a");
         assert_eq!(
             drain(&mut rx),
             vec![
@@ -1767,10 +1794,10 @@ mod tests {
                 json!({ "type": "screens:list", "listRevision": 2 }),
             ]
         );
-        let b = (&paths).create_screen(&feed, ScreenCreate::default()).await.expect("create b");
+        let b = store.create(&feed, ScreenCreate::default()).await.expect("create b");
         drain(&mut rx);
 
-        (&paths).update_screen(&feed,
+        store.update(&feed,
             &a.id,
             ScreenUpdate {
                 layout: Optional(Some(terminal("t"))),
@@ -1780,8 +1807,8 @@ mod tests {
         .expect("save");
         assert_eq!(drain(&mut rx), vec![json!({ "type": "screens:changed", "id": a.id, "revision": 2 })]);
 
-        (&paths).update_screen(&feed, &a.id, patch(1)).await.expect_err("stale");
-        (&paths).reorder_screens(&feed,
+        store.update(&feed, &a.id, patch(1)).await.expect_err("stale");
+        store.reorder(&feed,
             ScreenOrder {
                 ids: vec![a.id.clone(), b.id.clone()],
                 ..Default::default()
@@ -1790,7 +1817,7 @@ mod tests {
         .expect("an order that is already so");
         assert_eq!(drain(&mut rx), Vec::<Value>::new(), "a refusal or a no-op announces nothing");
 
-        (&paths).reorder_screens(&feed,
+        store.reorder(&feed,
             ScreenOrder {
                 ids: vec![b.id.clone(), a.id.clone()],
                 ..Default::default()
@@ -1799,7 +1826,7 @@ mod tests {
         .expect("reorder");
         assert_eq!(drain(&mut rx), vec![json!({ "type": "screens:list", "listRevision": 4 })]);
 
-        (&paths).delete_screen(&feed, &a.id, None).await.expect("delete");
+        store.delete(&feed, &a.id, None).await.expect("delete");
         assert_eq!(
             drain(&mut rx),
             vec![
@@ -1816,6 +1843,7 @@ mod tests {
     async fn a_database_without_the_revision_column_reads_every_screen_at_revision_one() {
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(home.path().to_path_buf());
+        let store = ScreenStore::of(&paths);
         std::fs::create_dir_all(paths.instance_db().parent().expect("parent")).expect("instance dir");
         {
             let conn = Connection::open(paths.instance_db()).expect("open");
@@ -1832,12 +1860,12 @@ mod tests {
             }
         }
 
-        let list = (&paths).read_screen_list().await;
+        let list = store.read_list().await;
         assert_eq!(ids(&list.screens), vec!["old-1", "old-2"], "the migration moved nothing");
         assert!(list.screens.iter().all(|screen| screen.revision == 1));
         assert_eq!(list.list_revision, 1);
 
-        let saved = (&paths).update_screen(&GlobalFeed::default(),
+        let saved = store.update(&GlobalFeed::default(),
             "old-2",
             ScreenUpdate {
                 layout: Optional(Some(terminal("t"))),
