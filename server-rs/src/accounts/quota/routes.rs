@@ -1,21 +1,39 @@
 //! `GET /api/stats/quota`.
 
-use gotcha::{api, GotchaContext, GotchaRouter, Json, State};
+use std::sync::Arc;
 
-use super::Quota;
-use crate::api::AppState;
-use crate::config::AppConfig;
+use gotcha::axum::extract::FromRef;
+use gotcha::{api, GotchaRouter, Json, State};
+
+use super::{Quota, QuotaCache};
+use crate::accounts::store::AccountsStore;
 use crate::openapi_ext::ExtraResponses;
+
+/// What the quota route uses of the server's state.
+#[derive(Clone)]
+pub struct QuotaState {
+    /// The cached readings.
+    pub quota: Arc<QuotaCache>,
+    /// The stored accounts, whose readings are collected.
+    pub accounts: Arc<AccountsStore>,
+}
+crate::http::substate!(QuotaState);
 
 /// Subscription quota: Codex rolling-window usage and the Claude plan.
 #[api(id = "quota", group = "stats", summary = "Subscription quota")]
-pub async fn quota(State(state): State<AppState>) -> Json<Quota> {
-    Json(state.drive.quota.collect(&state.drive.accounts).await)
+pub async fn quota(State(state): State<QuotaState>) -> Json<Quota> {
+    Json(state.quota.collect(&state.accounts).await)
 }
 
-/// Register the quota routes.
-pub fn routes(router: GotchaRouter<GotchaContext<AppState, AppConfig>>) -> GotchaRouter<GotchaContext<AppState, AppConfig>> {
-    router.get("/api/stats/quota", quota)
+impl QuotaState {
+    /// Register the quota routes.
+    pub fn routes<S>(router: GotchaRouter<S>) -> GotchaRouter<S>
+    where
+        S: Clone + Send + Sync + 'static,
+        QuotaState: FromRef<S>,
+    {
+        router.get("/api/stats/quota", quota)
+    }
 }
 
 /// The response wordings the golden contract carries.

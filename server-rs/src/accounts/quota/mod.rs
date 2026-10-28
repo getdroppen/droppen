@@ -67,7 +67,7 @@ use droppen_base::time::{iso8601, now_ms};
 
 pub use codex::{CodexQuota, CodexQuotaCache, CodexQuotaSource};
 pub use readings::{QuotaReadingSource, RateLimitWindows, UsageLogin};
-pub use routes::{describe, routes};
+pub use routes::{describe, QuotaState};
 
 /// `/usage` is a local slash command: it queries the usage endpoint directly, so
 /// the run costs no tokens and takes ~1.5 s. `--no-session-persistence` keeps the

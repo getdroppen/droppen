@@ -18,17 +18,16 @@ pub mod store;
 pub mod usage_login;
 pub mod verify;
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::StreamExt;
 
 use gotcha::axum::extract::FromRef;
 use gotcha::axum::http::StatusCode;
-use gotcha::{api, GotchaContext, GotchaRouter, Json, Schematic, State};
+use gotcha::{api, GotchaRouter, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
-use crate::api::AppState;
-use crate::config::AppConfig;
 use crate::http::created::Created;
 use crate::http::error::ApiError;
 use crate::http::extract::{ApiJson, ApiPath, ApiQuery};
@@ -255,10 +254,28 @@ fn store_error(error: AccountError, fallback: &str) -> ApiError {
     }
 }
 
+/// What the account routes use of the server's state.
+#[derive(Clone)]
+pub struct AccountsState {
+    /// The stored accounts.
+    pub accounts: Arc<store::AccountsStore>,
+    /// The cached quota readings, which say where a start would run.
+    pub quota: Arc<quota::QuotaCache>,
+    /// The instance's paths, which a secret is verified under.
+    pub paths: Arc<crate::paths::Paths>,
+    /// What `model_ids` reads, for `GET /api/accounts/start`.
+    pub models: crate::models::ModelsState,
+    /// Re-checks the runs held for a usable account, after a write that may
+    /// have made one usable. The runs sit above accounts, so the entry hands
+    /// the call in.
+    pub recheck_holds: Arc<dyn Fn() + Send + Sync>,
+}
+crate::http::substate!(AccountsState);
+
 /// Stored Claude accounts (secrets never leave the server).
 #[api(id = "list_accounts", group = "accounts", summary = "List accounts")]
-pub async fn list_accounts(State(state): State<AppState>) -> Json<AccountList> {
-    Json(state.drive.accounts.account_list().await)
+pub async fn list_accounts(State(state): State<AccountsState>) -> Json<AccountList> {
+    Json(state.accounts.account_list().await)
 }
 
 /// `z.string().min(1).max(4096)` on a secret; the store checks the rest.
@@ -280,8 +297,8 @@ fn require_secret(secret: &str) -> Result<(), ApiError> {
 /// `Ok(Some(why))` is that third case: stored, but nobody has proved it works.
 /// It is returned rather than swallowed because the UI promises a check, and a
 /// promise kept silently only when convenient is not one.
-async fn require_working(state: &AppState, provider: AccountProvider, credential: &Credential) -> Result<Option<String>, ApiError> {
-    match verify::verify_secret(&state.drive.paths, provider, credential).await {
+async fn require_working(state: &AccountsState, provider: AccountProvider, credential: &Credential) -> Result<Option<String>, ApiError> {
+    match verify::verify_secret(&state.paths, provider, credential).await {
         verify::Verdict::Valid => Ok(None),
         verify::Verdict::Invalid(reason) => Err(ApiError::bad_request(reason)),
         verify::Verdict::Unverifiable(why) => {
@@ -321,7 +338,7 @@ fn touches_credential(body: &AccountUpdate) -> bool {
 
 /// Store a new Claude account.
 #[api(id = "create_account", group = "accounts", summary = "Add an account")]
-pub async fn create_account(State(state): State<AppState>, ApiJson(body): ApiJson<AccountCreate>) -> Result<Created<Account>, ApiError> {
+pub async fn create_account(State(state): State<AccountsState>, ApiJson(body): ApiJson<AccountCreate>) -> Result<Created<Account>, ApiError> {
     require_label(&body.label)?;
     let provider = body.provider.0.unwrap_or_default();
     // The shape is checked before a request is spent on the credential: a
@@ -330,13 +347,12 @@ pub async fn create_account(State(state): State<AppState>, ApiJson(body): ApiJso
     let credential = credential_of(body.kind, body.secret.as_deref(), body.env.as_deref())?;
     let unchecked = require_working(&state, provider, &credential).await?;
     state
-        .drive
         .accounts
         .create_with(&body.label, provider, credential, body.rotation.0)
         .await
         .inspect(|_| {
             // A new account may be where a held session can go.
-            state.drive.injections.recheck_holds();
+            (state.recheck_holds)();
         })
         .map(|account| {
             Created(Account {
@@ -350,7 +366,7 @@ pub async fn create_account(State(state): State<AppState>, ApiJson(body): ApiJso
 /// Rename an account, or re-authorize it with a pasted credential.
 #[api(id = "update_account", group = "accounts", summary = "Update an account")]
 pub async fn update_account(
-    State(state): State<AppState>,
+    State(state): State<AccountsState>,
     ApiPath(id): ApiPath<String>,
     ApiJson(body): ApiJson<AccountUpdate>,
 ) -> Result<Json<Account>, ApiError> {
@@ -361,7 +377,7 @@ pub async fn update_account(
     let mut unchecked = None;
     let mut credential = None;
     if touches_credential(&body) {
-        let Some(account) = state.drive.accounts.get(&id).await else {
+        let Some(account) = state.accounts.get(&id).await else {
             return Err(account_not_found());
         };
         // Read under the *account's* own kind, so a token posted at an env
@@ -380,11 +396,11 @@ pub async fn update_account(
         credential,
         ..Default::default()
     };
-    let updated = state.drive.accounts.update(&id, patch).await;
+    let updated = state.accounts.update(&id, patch).await;
     if matches!(updated, Ok(Some(_))) {
         // A re-authorized account, or one just put in the pool, may be where a
         // held session can go — or the very account it is held against.
-        state.drive.injections.recheck_holds();
+        (state.recheck_holds)();
     }
     match updated {
         Ok(Some(account)) => Ok(Json(Account {
@@ -403,9 +419,9 @@ pub async fn update_account(
 /// `GET /api/accounts` on purpose: a credential should leave the server when
 /// somebody asks for that account, not with every list a picker fetches.
 #[api(id = "get_account_env", group = "accounts", summary = "Get an account's environment block")]
-pub async fn get_account_env(State(state): State<AppState>, ApiPath(id): ApiPath<String>) -> Result<Json<AccountEnvBlock>, ApiError> {
+pub async fn get_account_env(State(state): State<AccountsState>, ApiPath(id): ApiPath<String>) -> Result<Json<AccountEnvBlock>, ApiError> {
     require_uuid(&id)?;
-    match state.drive.accounts.env_block(&id).await {
+    match state.accounts.env_block(&id).await {
         Ok(env) => Ok(Json(AccountEnvBlock { env })),
         Err(AccountError::NotFound(_)) => Err(account_not_found()),
         Err(error) => Err(store_error(error, "cannot read the environment block")),
@@ -414,10 +430,9 @@ pub async fn get_account_env(State(state): State<AppState>, ApiPath(id): ApiPath
 
 /// Delete an account, its session bindings and its probe login.
 #[api(id = "delete_account", group = "accounts", summary = "Delete an account")]
-pub async fn delete_account(State(state): State<AppState>, ApiPath(id): ApiPath<String>) -> Result<Json<SendResult>, ApiError> {
+pub async fn delete_account(State(state): State<AccountsState>, ApiPath(id): ApiPath<String>) -> Result<Json<SendResult>, ApiError> {
     require_uuid(&id)?;
     if !state
-        .drive
         .accounts
         .delete(&id)
         .await
@@ -430,7 +445,7 @@ pub async fn delete_account(State(state): State<AppState>, ApiPath(id): ApiPath<
 
 /// Point new sessions at an account, or back at the local login.
 #[api(id = "set_default_account", group = "accounts", summary = "Set the default account")]
-pub async fn set_default_account(State(state): State<AppState>, ApiJson(body): ApiJson<AccountDefault>) -> Result<Json<AccountList>, ApiError> {
+pub async fn set_default_account(State(state): State<AccountsState>, ApiJson(body): ApiJson<AccountDefault>) -> Result<Json<AccountList>, ApiError> {
     let account_id = body.account_id.0;
     let provider = body.provider.0.unwrap_or_default();
     if body.automatic.0 == Some(true) {
@@ -438,18 +453,16 @@ pub async fn set_default_account(State(state): State<AppState>, ApiJson(body): A
             return Err(ApiError::bad_request("automatic clears the default: it takes no accountId"));
         }
         state
-            .drive
             .accounts
             .clear_default(provider)
             .await
             .map_err(|e| store_error(e, "cannot clear the default account"))?;
-        return Ok(Json(state.drive.accounts.account_list().await));
+        return Ok(Json(state.accounts.account_list().await));
     }
     if let Some(id) = account_id.as_deref() {
         require_uuid(id)?;
     }
     if !state
-        .drive
         .accounts
         .set_default(account_id.as_deref(), provider)
         .await
@@ -457,7 +470,7 @@ pub async fn set_default_account(State(state): State<AppState>, ApiJson(body): A
     {
         return Err(account_not_found());
     }
-    Ok(Json(state.drive.accounts.account_list().await))
+    Ok(Json(state.accounts.account_list().await))
 }
 
 /// The login a start that names no account would run on now, and why.
@@ -477,10 +490,10 @@ pub async fn set_default_account(State(state): State<AppState>, ApiJson(body): A
 /// own login wins. A start sent with that model and no account lands there by
 /// the same rule the spawn applies.
 #[api(id = "account_start", group = "accounts", summary = "Where a start that names no account runs")]
-pub async fn account_start(State(state): State<AppState>, ApiQuery(query): ApiQuery<AccountStartQuery>) -> Json<rotation::AccountStart> {
+pub async fn account_start(State(state): State<AccountsState>, ApiQuery(query): ApiQuery<AccountStartQuery>) -> Json<rotation::AccountStart> {
     let provider = query.provider.unwrap_or_default();
     let model = query.model.filter(|model| !model.trim().is_empty());
-    let inputs = rotation::StartInputs::gather(&state.drive.accounts, &state.drive.quota, provider).await;
+    let inputs = rotation::StartInputs::gather(&state.accounts, &state.quota, provider).await;
     if model.is_some() || query.choose_model != Some(true) || !inputs.model_matters() {
         return Json(inputs.place(model.as_deref()));
     }
@@ -493,7 +506,7 @@ pub async fn account_start(State(state): State<AppState>, ApiQuery(query): ApiQu
     let state = &state;
     let mut lists = futures_util::stream::iter(inputs.start_order())
         .map(|login| async move {
-            let models = crate::models::model_ids(&crate::models::ModelsState::from_ref(state), source, login.as_deref()).await;
+            let models = crate::models::model_ids(&state.models, source, login.as_deref()).await;
             (login, models)
         })
         .buffered(START_PROBES);
@@ -557,9 +570,9 @@ async fn read_auth_status(config_dir: &std::path::Path, cwd: &std::path::Path) -
 /// Makes the stored account agree with the answer. Never fails on a CLI
 /// failure — an unusable login is a `false`, not a 500.
 #[api(id = "verify_usage_login", group = "accounts", summary = "Verify an account's usage login")]
-pub async fn verify_usage_login(State(state): State<AppState>, ApiPath(id): ApiPath<String>) -> Result<Json<UsageVerifyResult>, ApiError> {
+pub async fn verify_usage_login(State(state): State<AccountsState>, ApiPath(id): ApiPath<String>) -> Result<Json<UsageVerifyResult>, ApiError> {
     require_uuid(&id)?;
-    let accounts = &state.drive.accounts;
+    let accounts = &state.accounts;
     let Some(account) = accounts.get(&id).await else {
         return Err(account_not_found());
     };
@@ -626,12 +639,12 @@ pub async fn verify_usage_login(State(state): State<AppState>, ApiPath(id): ApiP
 
 /// Resolve the `{id}` of a limit route: a stored account, or the machine's
 /// own login under its `local:claude` / `local:codex` name.
-async fn limit_subject(state: &AppState, id: &str) -> Result<(), ApiError> {
+async fn limit_subject(state: &AccountsState, id: &str) -> Result<(), ApiError> {
     if rest::is_local(id) {
         return Ok(());
     }
     require_uuid(id)?;
-    match state.drive.accounts.get(id).await {
+    match state.accounts.get(id).await {
         Some(_) => Ok(()),
         None => Err(account_not_found()),
     }
@@ -643,37 +656,37 @@ async fn limit_subject(state: &AppState, id: &str) -> Result<(), ApiError> {
 /// that hit it was driven. Includes the machine's own login, whose events carry
 /// `accountId: null`.
 #[api(id = "list_account_limit_events", group = "accounts", summary = "List recent limit events")]
-pub async fn list_limit_events(State(state): State<AppState>, ApiQuery(query): ApiQuery<LimitEventsQuery>) -> Json<AccountLimitEventList> {
+pub async fn list_limit_events(State(state): State<AccountsState>, ApiQuery(query): ApiQuery<LimitEventsQuery>) -> Json<AccountLimitEventList> {
     let limit = query.limit.unwrap_or(100) as usize;
     Json(AccountLimitEventList {
-        events: state.drive.accounts.limit_log().events(None, limit),
+        events: state.accounts.limit_log().events(None, limit),
     })
 }
 
 /// One account's limit events, newest first.
 #[api(id = "list_account_limit_events_for", group = "accounts", summary = "List an account's limit events")]
 pub async fn list_account_limit_events(
-    State(state): State<AppState>,
+    State(state): State<AccountsState>,
     ApiPath(id): ApiPath<String>,
     ApiQuery(query): ApiQuery<LimitEventsQuery>,
 ) -> Result<Json<AccountLimitEventList>, ApiError> {
     limit_subject(&state, &id).await?;
     let limit = query.limit.unwrap_or(50) as usize;
     Ok(Json(AccountLimitEventList {
-        events: state.drive.accounts.limit_log().events(Some(&id), limit),
+        events: state.accounts.limit_log().events(Some(&id), limit),
     }))
 }
 
 /// End an account's rest — one scope, or all of them.
 #[api(id = "clear_account_rest", group = "accounts", summary = "Clear an account's rest")]
 pub async fn clear_account_rest(
-    State(state): State<AppState>,
+    State(state): State<AccountsState>,
     ApiPath(id): ApiPath<String>,
     ApiQuery(query): ApiQuery<RestClearQuery>,
 ) -> Result<Json<AccountList>, ApiError> {
     limit_subject(&state, &id).await?;
     let scope = query.scope.as_deref().map(str::trim).filter(|scope| !scope.is_empty());
-    match state.drive.accounts.limit_log().clear(&id, scope) {
+    match state.accounts.limit_log().clear(&id, scope) {
         Ok(cleared) => tracing::info!(account = %id, scope = ?scope, cleared, "account rest cleared by hand"),
         Err(error) => {
             tracing::warn!(account = %id, %error, "cannot clear an account's rest");
@@ -682,29 +695,37 @@ pub async fn clear_account_rest(
     }
     // Somebody says this account is usable again: a session held against it
     // lifts, and one held with nowhere to go may now have somewhere.
-    state.drive.injections.recheck_holds();
-    Ok(Json(state.drive.accounts.account_list().await))
+    (state.recheck_holds)();
+    Ok(Json(state.accounts.account_list().await))
 }
 
-/// Register the account routes.
-pub fn routes(router: GotchaRouter<GotchaContext<AppState, AppConfig>>) -> GotchaRouter<GotchaContext<AppState, AppConfig>> {
-    router
-        .get("/api/accounts", list_accounts)
-        .get("/api/accounts/limit-events", list_limit_events)
-        .get("/api/accounts/start", account_start)
-        .get("/api/accounts/{id}/env", get_account_env)
-        .get("/api/accounts/{id}/limit-events", list_account_limit_events)
-        .delete("/api/accounts/{id}/rest", clear_account_rest)
-        .post("/api/accounts", create_account)
-        .patch("/api/accounts/{id}", update_account)
-        .delete("/api/accounts/{id}", delete_account)
-        .put("/api/accounts/default", set_default_account)
-        .post("/api/accounts/{id}/usage-verify", verify_usage_login)
-        .post("/api/accounts/setup-token", setup_token::start_setup_token)
-        .get("/api/accounts/setup-token/{captureId}", setup_token::setup_token_status)
-        .post("/api/accounts/setup-token/{captureId}/code", setup_token::submit_setup_token_code)
-        .post("/api/accounts/{id}/setup-token", setup_token::reauth_account)
-        .post("/api/accounts/{id}/usage-login", usage_login::start_usage_login)
+impl AccountsState {
+    /// Register the account routes.
+    pub fn routes<S>(router: GotchaRouter<S>) -> GotchaRouter<S>
+    where
+        S: Clone + Send + Sync + 'static,
+        AccountsState: FromRef<S>,
+        setup_token::TokenWizardState: FromRef<S>,
+        usage_login::UsageLoginState: FromRef<S>,
+    {
+        router
+            .get("/api/accounts", list_accounts)
+            .get("/api/accounts/limit-events", list_limit_events)
+            .get("/api/accounts/start", account_start)
+            .get("/api/accounts/{id}/env", get_account_env)
+            .get("/api/accounts/{id}/limit-events", list_account_limit_events)
+            .delete("/api/accounts/{id}/rest", clear_account_rest)
+            .post("/api/accounts", create_account)
+            .patch("/api/accounts/{id}", update_account)
+            .delete("/api/accounts/{id}", delete_account)
+            .put("/api/accounts/default", set_default_account)
+            .post("/api/accounts/{id}/usage-verify", verify_usage_login)
+            .post("/api/accounts/setup-token", setup_token::start_setup_token)
+            .get("/api/accounts/setup-token/{captureId}", setup_token::setup_token_status)
+            .post("/api/accounts/setup-token/{captureId}/code", setup_token::submit_setup_token_code)
+            .post("/api/accounts/{id}/setup-token", setup_token::reauth_account)
+            .post("/api/accounts/{id}/usage-login", usage_login::start_usage_login)
+    }
 }
 
 /// Every status gotcha cannot derive, plus the golden contract's wordings.
@@ -818,6 +839,7 @@ pub fn describe(reg: &mut ExtraResponses) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::AppState;
     use crate::drive::routes::{bind_session_account, continue_session_on_account, ContinuedSession, SessionAccount, SessionContinue};
     use crate::paths::ClaudeRoot;
     use crate::sessions::{claude, Source};
@@ -1129,7 +1151,7 @@ mod tests {
         use crate::accounts::local_login::LocalLoginState;
         let home = tempfile::tempdir().expect("tempdir");
         let state = crate::api::test_support::state(home.path()).await;
-        let listed = list_accounts(State(state.clone())).await.0;
+        let listed = list_accounts(State(AccountsState::from_ref(&state))).await.0;
         assert_eq!(listed.local.claude.state, LocalLoginState::Unknown, "nothing known yet");
 
         state
@@ -1154,7 +1176,7 @@ mod tests {
                 rest::now_ms(),
             )
             .expect("record");
-        let listed = list_accounts(State(state.clone())).await.0;
+        let listed = list_accounts(State(AccountsState::from_ref(&state))).await.0;
         assert_eq!(listed.local.claude.state, LocalLoginState::SignedOut);
         assert_eq!(listed.local.claude.rest.len(), 1);
         assert_eq!(listed.local.codex.state, LocalLoginState::Unknown);
