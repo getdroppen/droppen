@@ -998,7 +998,7 @@ mod tests {
 
     async fn continue_on(state: &AppState, source: Source, id: &str, account_id: &str) -> Result<ContinuedSession, ApiError> {
         continue_session_on_account(
-            State(state.clone()),
+            State(crate::drive::DriveState::from_ref(state)),
             ApiPath((source, id.to_string())),
             ApiJson(SessionContinue {
                 account_id: account_id.to_string(),
@@ -1024,7 +1024,7 @@ mod tests {
 
         // Binding is still refused, and now says what to do instead.
         let refused = bind_session_account(
-            State(state.clone()),
+            State(crate::drive::DriveState::from_ref(&state)),
             ApiPath((Source::Claude, STUCK.to_string())),
             ApiJson(SessionAccount {
                 account_id: Nullable(Some(work.id.clone())),

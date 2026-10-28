@@ -43,13 +43,13 @@
 //! replaces the whole block or leaves it alone.
 
 use std::path::PathBuf;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
-use gotcha::{api, Json, Schematic, State};
+use gotcha::axum::extract::FromRef;
+use gotcha::{api, GotchaRouter, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
 use crate::accounts::store::{parse_env_block, EnvVar};
-use crate::api::{ApiRouter, AppState};
 use crate::db::scope;
 use crate::http::error::ApiError;
 use crate::http::extract::{ApiJson, ApiPath};
@@ -651,9 +651,19 @@ pub struct AcpAgentUpdate {
     pub env: Optional<String>,
 }
 
+/// What the ACP-agent routes use of the server's state.
+#[derive(Clone)]
+pub struct AcpAgentState {
+    /// Where the agents' configuration lives.
+    pub paths: Arc<crate::paths::Paths>,
+    /// The live runs, which check an agent and stop its sessions when it goes.
+    pub injections: Arc<crate::inject::InjectionRegistry>,
+}
+crate::http::substate!(AcpAgentState);
+
 /// The ACP agents configured on this machine, and the built-in descriptions.
 #[api(id = "acp_agents", group = "acp", summary = "ACP agents")]
-pub async fn acp_agents(State(state): State<AppState>) -> Json<AcpAgentList> {
+pub async fn acp_agents(State(state): State<AcpAgentState>) -> Json<AcpAgentList> {
     let env = clean_env_bare();
     Json(AcpAgentList {
         agents: AcpAgentRegistry::of(&state.paths).list().iter().map(AcpAgent::info).collect(),
@@ -667,12 +677,11 @@ pub async fn acp_agents(State(state): State<AppState>) -> Json<AcpAgentList> {
 /// each session's next message starts the agent as it is configured now.
 #[api(id = "put_acp_agent", group = "acp", summary = "Add or update an ACP agent")]
 pub async fn put_acp_agent(
-    State(state): State<AppState>,
+    State(state): State<AcpAgentState>,
     ApiPath(id): ApiPath<String>,
     ApiJson(body): ApiJson<AcpAgentUpdate>,
 ) -> Result<Json<AcpAgentInfo>, ApiError> {
     let agent = state
-        .drive
         .injections
         .reconfigure_acp_agent(&id, &body)
         .await
@@ -686,11 +695,11 @@ pub async fn put_acp_agent(
 /// Refused while a turn of the agent is running, or a message is waiting for
 /// one.
 #[api(id = "delete_acp_agent", group = "acp", summary = "Remove an ACP agent")]
-pub async fn delete_acp_agent(State(state): State<AppState>, ApiPath(id): ApiPath<String>) -> Result<Json<SendResult>, ApiError> {
+pub async fn delete_acp_agent(State(state): State<AcpAgentState>, ApiPath(id): ApiPath<String>) -> Result<Json<SendResult>, ApiError> {
     let Some(agent) = AcpAgentRegistry::of(&state.paths).get(&id) else {
         return Err(ApiError::not_found("no such ACP agent"));
     };
-    match state.drive.injections.remove_acp_agent(&agent).await {
+    match state.injections.remove_acp_agent(&agent).await {
         Ok(true) => Ok(Json(SendResult { accepted: true })),
         Ok(false) => Err(ApiError::not_found("no such ACP agent")),
         Err(busy) => Err(ApiError::conflict(busy)),
@@ -701,9 +710,9 @@ pub async fn delete_acp_agent(State(state): State<AppState>, ApiPath(id): ApiPat
 /// what it says it is and can do, and stop it. Nothing is sent to a model. The
 /// answer is kept as the agent's `lastCheck`.
 #[api(id = "check_acp_agent", group = "acp", summary = "Check an ACP agent")]
-pub async fn check_acp_agent(State(state): State<AppState>, ApiPath(id): ApiPath<String>) -> Result<Json<AcpCheck>, ApiError> {
+pub async fn check_acp_agent(State(state): State<AcpAgentState>, ApiPath(id): ApiPath<String>) -> Result<Json<AcpCheck>, ApiError> {
     let agent = AcpAgentRegistry::of(&state.paths).get(&id).ok_or_else(|| ApiError::not_found("no such ACP agent"))?;
-    let check = state.drive.injections.check_acp_agent(&agent).await;
+    let check = state.injections.check_acp_agent(&agent).await;
     agent.record_check(&AcpAgentRegistry::of(&state.paths), &check);
     Ok(Json(check))
 }
@@ -712,7 +721,7 @@ pub async fn check_acp_agent(State(state): State<AppState>, ApiPath(id): ApiPath
 /// is the agent's own words, the end of its stderr among them. A route of its
 /// own so that the list, which every device reads, never carries it.
 #[api(id = "last_acp_check", group = "acp", summary = "The last check of an ACP agent")]
-pub async fn last_acp_check(State(state): State<AppState>, ApiPath(id): ApiPath<String>) -> Result<Json<AcpCheck>, ApiError> {
+pub async fn last_acp_check(State(state): State<AcpAgentState>, ApiPath(id): ApiPath<String>) -> Result<Json<AcpCheck>, ApiError> {
     let agent = AcpAgentRegistry::of(&state.paths).get(&id).ok_or_else(|| ApiError::not_found("no such ACP agent"))?;
     agent
         .last_check
@@ -720,14 +729,20 @@ pub async fn last_acp_check(State(state): State<AppState>, ApiPath(id): ApiPath<
         .ok_or_else(|| ApiError::not_found("this ACP agent has not been checked"))
 }
 
-/// Register this module's routes.
-pub fn routes(router: ApiRouter) -> ApiRouter {
-    router
-        .get("/api/acp/agents", acp_agents)
-        .put("/api/acp/agents/{id}", put_acp_agent)
-        .delete("/api/acp/agents/{id}", delete_acp_agent)
-        .post("/api/acp/agents/{id}/check", check_acp_agent)
-        .get("/api/acp/agents/{id}/check", last_acp_check)
+impl AcpAgentState {
+    /// Register this module's routes.
+    pub fn routes<S>(router: GotchaRouter<S>) -> GotchaRouter<S>
+    where
+        S: Clone + Send + Sync + 'static,
+        AcpAgentState: FromRef<S>,
+    {
+        router
+            .get("/api/acp/agents", acp_agents)
+            .put("/api/acp/agents/{id}", put_acp_agent)
+            .delete("/api/acp/agents/{id}", delete_acp_agent)
+            .post("/api/acp/agents/{id}/check", check_acp_agent)
+            .get("/api/acp/agents/{id}/check", last_acp_check)
+    }
 }
 
 /// Everything gotcha cannot express about those routes.

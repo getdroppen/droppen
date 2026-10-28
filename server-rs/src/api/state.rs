@@ -14,10 +14,13 @@ use crate::accounts::quota::QuotaState;
 use crate::accounts::setup_token::TokenWizardState;
 use crate::accounts::usage_login::UsageLoginState;
 use crate::accounts::AccountsState;
+use crate::acp_agent::AcpAgentState;
 use crate::http::app_window::AppWindow;
 use crate::models::ModelsState;
 use crate::apps::AppsState;
 use crate::attention::AttentionState;
+use crate::chats::ChatsState;
+use crate::drive::DriveState;
 use crate::files::FilesState;
 use crate::notify::NotifyState;
 use crate::plugins::routes::PluginsState;
@@ -196,6 +199,37 @@ impl FromRef<AppState> for UsageLoginState {
         Self {
             drive: state.drive.clone(),
             terminals: state.terminals.clone(),
+        }
+    }
+}
+
+impl FromRef<AppState> for DriveState {
+    fn from_ref(state: &AppState) -> Self {
+        Self {
+            drive: state.drive.clone(),
+            paths: state.paths.clone(),
+            global: state.global.clone(),
+            refresh: state.refresh.clone(),
+        }
+    }
+}
+
+impl FromRef<AppState> for ChatsState {
+    fn from_ref(state: &AppState) -> Self {
+        Self {
+            chats: state.chats.clone(),
+            paths: state.paths.clone(),
+            drive: state.drive.clone(),
+            global: state.global.clone(),
+        }
+    }
+}
+
+impl FromRef<AppState> for AcpAgentState {
+    fn from_ref(state: &AppState) -> Self {
+        Self {
+            paths: state.paths.clone(),
+            injections: state.drive.injections.clone(),
         }
     }
 }

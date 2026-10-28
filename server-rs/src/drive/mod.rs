@@ -25,7 +25,7 @@ use crate::inject::InjectionRegistry;
 use crate::paths::Paths;
 use crate::sessions::titles;
 
-pub use routes::{describe, routes};
+pub use routes::{describe, DriveState};
 
 /// Everything needed to drive the local CLIs, as one piece of application state.
 pub struct Drive {
