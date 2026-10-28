@@ -140,7 +140,7 @@ pub(super) async fn may_manage(state: &AppState, file: &CloudFile, user: &str) -
 /// DNS-rebinds onto it — would count as the owner); a login that was signed
 /// out or revoked since its ticket was minted (401); anybody else (403
 /// `no_remote_access`). The local gateway asks this before every connection
-/// and again while it lasts ([`crate::aggregator::gateway`]).
+/// and again while it lasts ([`crate::cloud::gateway`]).
 pub async fn remote_viewer(state: &AppState, who: &MaybeIdentity) -> Result<String, ApiError> {
     let user = local_user(state, who).await?;
     let auth = &state.drive.auth;

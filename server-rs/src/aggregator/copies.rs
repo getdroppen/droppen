@@ -228,7 +228,7 @@ pub(super) fn followed(view: &View, ring: &KeyRing) -> Vec<Host> {
 }
 
 /// A copy being folded (also what the local gateway serves: [`super::live`]).
-pub(crate) enum Fold {
+pub(super) enum Fold {
     Index(IndexCopy),
     Status(Value),
     /// A session, and the size (bytes of JSON) of each of its items: it is

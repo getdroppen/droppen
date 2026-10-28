@@ -11,7 +11,7 @@
 //!   follows the other hosts' index, status and newest sessions ([`access`]
 //!   says which) over its own `/v1/client` connection, and keeps them in
 //!   [`store`] (`aggregator/copies.db`). S2 adds the channels.
-//! - [`gateway`] (S1-7) serves them to this computer's own pages —
+//! - [`crate::cloud::gateway`] (S1-7) serves them to this computer's own pages —
 //!   `GET /api/agg/ws`, only to the local accounts that may see other
 //!   devices — from memory ([`live`]): the copies task publishes every copy
 //!   it follows there, and follows the sessions a page opens.

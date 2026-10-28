@@ -547,11 +547,7 @@ mod tests {
         live.set_hosts(&["m-2".into()]);
         let mut index = rh_client::streams::IndexCopy::default();
         index.rows.insert("claude/q".into(), json!({"source": "claude", "id": "q"}));
-        let slot: crate::aggregator::live::Slot = Arc::new(std::sync::Mutex::new(crate::aggregator::live::Published::new(
-            crate::aggregator::copies::Fold::Index(index),
-            1,
-            1,
-        )));
+        let slot = crate::aggregator::live::index_slot(index, 1, 1);
         live.publish(&Key::new("m-2", Kind::Index, ""), 0, &slot);
         let (out, mut rx) = Outbox::new(16, OUTBOX_BYTES);
         let mut subs = HashMap::new();
@@ -649,11 +645,7 @@ mod tests {
         index
             .rows
             .insert("claude/q".into(), json!({"source": "claude", "id": "q", "asking": true}));
-        let slot: crate::aggregator::live::Slot = std::sync::Arc::new(std::sync::Mutex::new(crate::aggregator::live::Published::new(
-            crate::aggregator::copies::Fold::Index(index),
-            4,
-            1_700_000_000_000,
-        )));
+        let slot = crate::aggregator::live::index_slot(index, 4, 1_700_000_000_000);
         live.publish(&Key::new("m-2", Kind::Index, ""), 0, &slot);
         let dir = next(&mut a).await;
         assert_eq!(dir["machines"][0]["copyAsOfMs"], 1_700_000_000_000u64);
