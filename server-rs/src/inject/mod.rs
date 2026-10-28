@@ -491,12 +491,12 @@ impl SpawnDeps<'_> {
 /// [`SpawnDeps`] — a session's driver, rotating it onto another
 /// account.
 async fn managed_claude_env(paths: &Paths, accounts: &crate::accounts::store::AccountsStore, account_id: Option<&str>) -> Result<Env, InjectError> {
-    let dir = claude_roots::ensure_managed_root(paths)
+    let dir = claude_roots::ClaudeRoots::of(paths).ensure_managed()
         .await
         .map_err(|error| InjectError::Internal(format!("cannot create this instance's Claude root: {error}")))?;
     let mut vars = vec![("CLAUDE_CONFIG_DIR".to_string(), dir.to_string_lossy().into_owned())];
     if let Some(account_id) = account_id {
-        if let Some(path) = claude_roots::managed_root_file_credentials(paths).await {
+        if let Some(path) = claude_roots::ClaudeRoots::of(paths).managed_file_credentials().await {
             tracing::warn!(
                 path = %path.display(),
                 account = account_id,

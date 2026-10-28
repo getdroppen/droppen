@@ -581,7 +581,7 @@ fn is_jsonl(path: &Path) -> bool {
 /// both config roots contribute: usage is per machine, not per login.
 async fn claude_files(paths: &Paths, cutoff_ms: f64) -> Vec<FileRef> {
     let mut out = Vec::new();
-    for (_, projects) in crate::claude_roots::projects_dirs(&paths) {
+    for (_, projects) in crate::claude_roots::ClaudeRoots::of(&paths).projects_dirs() {
         let Ok(mut roots) = tokio::fs::read_dir(&projects).await else { continue };
         while let Ok(Some(project)) = roots.next_entry().await {
             let Ok(mut files) = tokio::fs::read_dir(project.path()).await else {

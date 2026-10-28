@@ -28,7 +28,7 @@ const PARTIAL_SUFFIX: &str = "jsonl.adopting";
 /// nothing to sweep as far as this is concerned, and a server that cannot tidy
 /// up still serves.
 pub fn sweep_partial_adoptions(paths: &Paths) {
-    let projects = claude_roots::projects_dir(paths, ClaudeRoot::Managed);
+    let projects = claude_roots::ClaudeRoots::of(paths).projects_dir(ClaudeRoot::Managed);
     let Ok(entries) = std::fs::read_dir(&projects) else {
         return;
     };
@@ -66,7 +66,7 @@ mod tests {
     fn a_half_copied_adoption_is_swept_at_boot() {
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(home.path().to_path_buf());
-        let project = claude_roots::projects_dir(&paths, ClaudeRoot::Managed).join("-w");
+        let project = claude_roots::ClaudeRoots::of(&paths).projects_dir(ClaudeRoot::Managed).join("-w");
         std::fs::create_dir_all(&project).expect("project dir");
         let partial = project.join(format!("s1.{PARTIAL_SUFFIX}"));
         std::fs::write(&partial, "{}\n").expect("half-copied transcript");

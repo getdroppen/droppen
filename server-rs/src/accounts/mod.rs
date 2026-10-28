@@ -1207,7 +1207,7 @@ mod tests {
     /// A claude session this server started on the local login, in the user's
     /// own `~/.claude`, with a subagent transcript beside it.
     async fn local_session(paths: &crate::paths::Paths, id: &str, recorded: bool) -> std::path::PathBuf {
-        let project = crate::claude_roots::projects_dir(paths, ClaudeRoot::Local).join("-w");
+        let project = crate::claude_roots::ClaudeRoots::of(paths).projects_dir(ClaudeRoot::Local).join("-w");
         std::fs::create_dir_all(project.join(id).join("subagents")).expect("sidecar");
         let path = project.join(format!("{id}.jsonl"));
         std::fs::write(
@@ -1385,7 +1385,7 @@ mod tests {
             assert_eq!(error.status().as_u16(), 404, "{id}");
         }
         assert!(
-            !crate::claude_roots::projects_dir(&paths, ClaudeRoot::Managed).join("-w").exists(),
+            !crate::claude_roots::ClaudeRoots::of(&paths).projects_dir(ClaudeRoot::Managed).join("-w").exists(),
             "not one copy was written"
         );
     }

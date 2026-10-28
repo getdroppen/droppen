@@ -30,44 +30,69 @@ use std::path::PathBuf;
 
 use crate::paths::{ClaudeRoot, Paths};
 
-/// The directory a root lives in, as `paths` resolved it when it was built.
-pub fn root_dir(paths: &Paths, root: ClaudeRoot) -> PathBuf {
-    paths.claude_root(root)
-}
-
-/// `<root>/projects` — one directory per project, each holding `<uuid>.jsonl`.
-pub fn projects_dir(paths: &Paths, root: ClaudeRoot) -> PathBuf {
-    root_dir(paths, root).join("projects")
-}
-
-/// `~/.claude/projects` — one directory per project, each holding `<uuid>.jsonl`.
+/// The two roots of one instance, as its [`Paths`] resolved them when it was
+/// built, and where Claude Code keeps things under them.
 ///
-/// The *local* root only; [`managed_projects`] is the managed one and
-/// [`projects_dirs`] the fan-out over both.
-pub fn local_projects(paths: &Paths) -> PathBuf {
-    projects_dir(paths, ClaudeRoot::Local)
+/// Its own type rather than functions of [`Paths`], so that the layout under a
+/// root is this module's to say; [`Paths::claude_root`] stays where a root
+/// itself is resolved.
+#[derive(Debug, Clone)]
+pub struct ClaudeRoots {
+    local: PathBuf,
+    managed: PathBuf,
 }
 
-/// The projects directory of the root remote-hand owns for account sessions.
-pub fn managed_projects(paths: &Paths) -> PathBuf {
-    projects_dir(paths, ClaudeRoot::Managed)
-}
+impl ClaudeRoots {
+    /// The roots of the instance `paths` names.
+    pub fn of(paths: &Paths) -> Self {
+        Self {
+            local: paths.claude_root(ClaudeRoot::Local),
+            managed: paths.claude_root(ClaudeRoot::Managed),
+        }
+    }
 
-/// Every projects directory a Claude session can live in, local first.
-pub fn projects_dirs(paths: &Paths) -> [(ClaudeRoot, PathBuf); 2] {
-    ClaudeRoot::ALL.map(|root| (root, projects_dir(paths, root)))
-}
+    /// The directory a root lives in.
+    pub fn dir(&self, root: ClaudeRoot) -> PathBuf {
+        match root {
+            ClaudeRoot::Local => self.local.clone(),
+            ClaudeRoot::Managed => self.managed.clone(),
+        }
+    }
 
-/// `<root>/sessions` — where a running CLI registers its pid.
-pub fn live_dir(paths: &Paths, root: ClaudeRoot) -> PathBuf {
-    root_dir(paths, root).join("sessions")
-}
+    /// `<root>/projects` — one directory per project, each holding `<uuid>.jsonl`.
+    pub fn projects_dir(&self, root: ClaudeRoot) -> PathBuf {
+        self.dir(root).join("projects")
+    }
 
-/// Create the managed root if it is missing, and return it.
-pub async fn ensure_managed_root(paths: &Paths) -> std::io::Result<PathBuf> {
-    let dir = root_dir(paths, ClaudeRoot::Managed);
-    tokio::fs::create_dir_all(&dir).await?;
-    Ok(dir)
+    /// `~/.claude/projects` — one directory per project, each holding `<uuid>.jsonl`.
+    ///
+    /// The *local* root only; [`ClaudeRoots::managed_projects`] is the managed one and
+    /// [`ClaudeRoots::projects_dirs`] the fan-out over both.
+    pub fn local_projects(&self) -> PathBuf {
+        self.projects_dir(ClaudeRoot::Local)
+    }
+
+    /// The projects directory of the root remote-hand owns for account sessions.
+    pub fn managed_projects(&self) -> PathBuf {
+        self.projects_dir(ClaudeRoot::Managed)
+    }
+
+    /// Every projects directory a Claude session can live in, local first.
+    pub fn projects_dirs(&self) -> [(ClaudeRoot, PathBuf); 2] {
+        ClaudeRoot::ALL.map(|root| (root, self.projects_dir(root)))
+    }
+
+    /// `<root>/sessions` — where a running CLI registers its pid.
+    pub fn live_dir(&self, root: ClaudeRoot) -> PathBuf {
+        self.dir(root).join("sessions")
+    }
+
+    /// Create the managed root if it is missing, and return it.
+    pub async fn ensure_managed(&self) -> std::io::Result<PathBuf> {
+        let dir = self.dir(ClaudeRoot::Managed);
+        tokio::fs::create_dir_all(&dir).await?;
+        Ok(dir)
+    }
 }
 
 /// What the boot-time claim of the pre-instance managed root did.
@@ -110,7 +135,7 @@ pub fn migrate_legacy_root(paths: &Paths) -> LegacyMigration {
     if !legacy.is_dir() {
         return LegacyMigration::Nothing;
     }
-    let owned = root_dir(paths, ClaudeRoot::Managed);
+    let owned = ClaudeRoots::of(paths).dir(ClaudeRoot::Managed);
     // An override points the managed root somewhere of the operator's
     // choosing; moving the legacy tree into it would be a surprise, and
     // `legacy == owned` (an override that names `<data>/claude`) would be a
@@ -162,21 +187,23 @@ pub fn migrate_legacy_root(paths: &Paths) -> LegacyMigration {
     }
 }
 
-/// The managed root's `.credentials.json`, when there is one.
-///
-/// Not a refusal: claude 2.1.266 reads the environment rather than the file
-/// (verified with a bogus file next to a valid `CLAUDE_CODE_OAUTH_TOKEN`), so
-/// the file is worth a log line and nothing more. An older claude lets the file
-/// outrank the injected token, so the log line names it. Refusing would only
-/// make the root's own login and account sessions mutually exclusive.
-pub async fn managed_root_file_credentials(paths: &Paths) -> Option<PathBuf> {
-    let path = root_dir(paths, ClaudeRoot::Managed).join(".credentials.json");
-    tokio::fs::metadata(&path).await.ok().map(|_| path)
-}
+impl ClaudeRoots {
+    /// The managed root's `.credentials.json`, when there is one.
+    ///
+    /// Not a refusal: claude 2.1.266 reads the environment rather than the file
+    /// (verified with a bogus file next to a valid `CLAUDE_CODE_OAUTH_TOKEN`), so
+    /// the file is worth a log line and nothing more. An older claude lets the file
+    /// outrank the injected token, so the log line names it. Refusing would only
+    /// make the root's own login and account sessions mutually exclusive.
+    pub async fn managed_file_credentials(&self) -> Option<PathBuf> {
+        let path = self.dir(ClaudeRoot::Managed).join(".credentials.json");
+        tokio::fs::metadata(&path).await.ok().map(|_| path)
+    }
 
-/// The local root's `.credentials.json`, read only for the plan label.
-pub fn local_credentials_path(paths: &Paths) -> PathBuf {
-    root_dir(paths, ClaudeRoot::Local).join(".credentials.json")
+    /// The local root's `.credentials.json`, read only for the plan label.
+    pub fn local_credentials(&self) -> PathBuf {
+        self.dir(ClaudeRoot::Local).join(".credentials.json")
+    }
 }
 
 #[cfg(test)]
@@ -190,14 +217,14 @@ mod tests {
     #[test]
     fn the_roots_default_under_the_home_directory() {
         let paths = paths();
-        assert_eq!(root_dir(&paths, ClaudeRoot::Local), PathBuf::from("/home/me/.claude"));
+        assert_eq!(ClaudeRoots::of(&paths).dir(ClaudeRoot::Local), PathBuf::from("/home/me/.claude"));
         assert_eq!(
-            root_dir(&paths, ClaudeRoot::Managed),
+            ClaudeRoots::of(&paths).dir(ClaudeRoot::Managed),
             PathBuf::from("/home/me/.local/share/remote-hand/instances/default/claude"),
             "the managed root lives inside the directory this instance owns"
         );
-        assert_eq!(projects_dir(&paths, ClaudeRoot::Local), PathBuf::from("/home/me/.claude/projects"));
-        assert_eq!(live_dir(&paths, ClaudeRoot::Local), PathBuf::from("/home/me/.claude/sessions"));
+        assert_eq!(ClaudeRoots::of(&paths).projects_dir(ClaudeRoot::Local), PathBuf::from("/home/me/.claude/projects"));
+        assert_eq!(ClaudeRoots::of(&paths).live_dir(ClaudeRoot::Local), PathBuf::from("/home/me/.claude/sessions"));
     }
 
     /// The point of the whole change: two servers on one machine have disjoint
@@ -206,10 +233,10 @@ mod tests {
     fn two_instances_have_disjoint_managed_roots() {
         let a = Paths::for_instance(PathBuf::from("/home/me"), "a");
         let b = Paths::for_instance(PathBuf::from("/home/me"), "b");
-        assert_ne!(root_dir(&a, ClaudeRoot::Managed), root_dir(&b, ClaudeRoot::Managed));
+        assert_ne!(ClaudeRoots::of(&a).dir(ClaudeRoot::Managed), ClaudeRoots::of(&b).dir(ClaudeRoot::Managed));
         assert_eq!(
-            root_dir(&a, ClaudeRoot::Local),
-            root_dir(&b, ClaudeRoot::Local),
+            ClaudeRoots::of(&a).dir(ClaudeRoot::Local),
+            ClaudeRoots::of(&b).dir(ClaudeRoot::Local),
             "the user's own root is shared: it is external to both"
         );
     }
@@ -232,7 +259,7 @@ mod tests {
         std::fs::write(legacy.join("projects").join("-w").join("s.jsonl"), "{}\n").expect("legacy session");
 
         assert_eq!(migrate_legacy_root(&paths), LegacyMigration::Claimed);
-        let owned = root_dir(&paths, ClaudeRoot::Managed);
+        let owned = ClaudeRoots::of(&paths).dir(ClaudeRoot::Managed);
         assert!(owned.join("projects").join("-w").join("s.jsonl").is_file(), "the sessions came with it");
         assert!(!legacy.exists(), "and the old name is gone, so no id lives in two roots");
 
@@ -249,7 +276,7 @@ mod tests {
 
         assert_eq!(migrate_legacy_root(&named), LegacyMigration::NotOurs);
         assert!(legacy.is_dir(), "it is left for `default`");
-        assert!(!root_dir(&named, ClaudeRoot::Managed).exists());
+        assert!(!ClaudeRoots::of(&named).dir(ClaudeRoot::Managed).exists());
 
         // And `default` can still claim it afterwards.
         let default = Paths::new(home.path().to_path_buf());
@@ -261,7 +288,7 @@ mod tests {
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(home.path().to_path_buf());
         std::fs::create_dir_all(paths.legacy_claude_managed()).expect("legacy tree");
-        std::fs::create_dir_all(root_dir(&paths, ClaudeRoot::Managed)).expect("own tree");
+        std::fs::create_dir_all(ClaudeRoots::of(&paths).dir(ClaudeRoot::Managed)).expect("own tree");
 
         assert_eq!(migrate_legacy_root(&paths), LegacyMigration::BothPresent);
         assert!(paths.legacy_claude_managed().is_dir(), "nothing is destroyed on this path");
