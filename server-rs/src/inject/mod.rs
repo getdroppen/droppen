@@ -1465,7 +1465,7 @@ impl InjectionRegistry {
     /// Cheap for a message nobody named — the update finds no row — and a
     /// poke of the session's feed for one somebody did, so the receipt reaches
     /// the page without waiting for the next poll.
-    pub(crate) fn note_receipt(&self, source: Source, session: &str, qid: &str, status: receipts::ReceiptStatus) {
+    pub(crate) fn note_receipt(&self, source: Source, session: &str, qid: &str, status: crate::sessions::delivery::ReceiptStatus) {
         if self.receipts.mark(qid, status, session, receipts::now_ms()) {
             self.poke_feed(source, session);
         }

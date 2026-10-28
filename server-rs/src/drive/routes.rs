@@ -9,7 +9,6 @@ use std::path::{Path, PathBuf};
 use gotcha::{api, GotchaContext, GotchaRouter, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
-use super::archive;
 use super::composer_prefs::{ComposerChoice, ComposerPrefs};
 use super::idempotent::{self, Begun, Key};
 use crate::api::{AppState, SendMessageResult, SendResult};
@@ -19,13 +18,14 @@ use crate::feed;
 use crate::files;
 use crate::http::error::ApiError;
 use crate::http::extract::{ApiJson, ApiPath, ApiQuery};
-use crate::inject::questions::{self, Answer, QuestionState, SessionQuestion};
-use crate::inject::receipts::{Kind, ReceiptLookup, LOOKUP_CAP};
+use crate::inject::questions::{self, Answer};
+use crate::inject::receipts::{Kind, LOOKUP_CAP};
 use crate::inject::{self, AccountChoice, AnswerOutcome, Reply, SendOptions};
 use crate::openapi_ext::{double_option, ExtraResponses, Nullable, Optional};
 use crate::sessions::checklist::{self, Checklist};
+use crate::sessions::delivery::{QuestionState, ReceiptLookup, ReceiptStatus, SessionQuestion};
 use crate::sessions::util::TranscriptItem;
-use crate::sessions::{chats_cwd, claude, codex, file_signature, sendability, transcript, SessionScope, Source};
+use crate::sessions::{archive, chats_cwd, claude, codex, file_signature, sendability, transcript, SessionScope, Source};
 
 /// `POST /api/sessions/{source}/{id}/message` body.
 #[derive(Debug, Clone, Serialize, Deserialize, Schematic)]
@@ -722,7 +722,7 @@ async fn deliver_message(
                 .await
             {
                 if let Some(qid) = &qid {
-                    drive.injections.note_receipt(source, &id, qid, inject::receipts::ReceiptStatus::Sent);
+                    drive.injections.note_receipt(source, &id, qid, ReceiptStatus::Sent);
                 }
                 return Ok(SendMessageResult {
                     accepted: true,

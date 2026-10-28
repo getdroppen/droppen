@@ -584,8 +584,8 @@ impl InjectionRegistry {
     ///
     /// Refused while a turn is running or a message is waiting, as the other
     /// archives are: the user is told rather than the work being dropped.
-    pub async fn archive_acp(&self, id: &str) -> Result<(), crate::drive::archive::ArchiveError> {
-        use crate::drive::archive::ArchiveError;
+    pub async fn archive_acp(&self, id: &str) -> Result<(), crate::sessions::archive::ArchiveError> {
+        use crate::sessions::archive::ArchiveError;
         let (agent_id, from) = locate(&self.paths, id)
             .await
             .ok_or_else(|| ArchiveError("cannot archive the ACP session: it is gone".to_string()))?;

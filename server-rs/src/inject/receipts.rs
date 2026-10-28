@@ -38,12 +38,11 @@
 
 use std::sync::Arc;
 
-use gotcha::Schematic;
 use rusqlite::OptionalExtension;
-use serde::{Deserialize, Serialize};
 
 use crate::db::Db;
 use crate::openapi_ext::Optional;
+use crate::sessions::delivery::{MessageReceipt, ReceiptLookup, ReceiptStatus};
 use crate::sessions::Source;
 
 /// How long a claim is remembered: a retry later than this is a new message.
@@ -69,28 +68,7 @@ pub const STALE_AFTER_MS: i64 = 30 * 60 * 1000;
 /// How often the seven-day prune runs, at most.
 const PRUNE_EVERY_MS: i64 = 10 * 60 * 1000;
 
-/// What became of a message, as far as this server knows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Schematic)]
-#[serde(rename_all = "lowercase")]
-pub enum ReceiptStatus {
-    /// Accepted, and waiting in the server's queue.
-    Queued,
-    /// Taken into a turn: handed to the CLI.
-    Sent,
-    /// Dropped by the server without being delivered.
-    Failed,
-}
-
 impl ReceiptStatus {
-    /// The word the table stores.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            ReceiptStatus::Queued => "queued",
-            ReceiptStatus::Sent => "sent",
-            ReceiptStatus::Failed => "failed",
-        }
-    }
-
     /// The receipt a stored status reads as. `pending` only ever reaches a
     /// reader for a row whose answer was written, which accepted it.
     fn from_stored(stored: &str) -> ReceiptStatus {
@@ -100,35 +78,6 @@ impl ReceiptStatus {
             _ => ReceiptStatus::Queued,
         }
     }
-}
-
-/// One message's receipt.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Schematic)]
-#[serde(rename_all = "camelCase")]
-pub struct MessageReceipt {
-    /// The id the client sent the message under.
-    pub client_message_id: String,
-    /// What became of it.
-    pub status: ReceiptStatus,
-    /// The queue id it travels under, as `resident.queuedMessages[].id` names it.
-    #[serde(default, skip_serializing_if = "Optional::is_none")]
-    pub qid: Optional<String>,
-    /// When the status last changed, ISO-8601.
-    pub at: String,
-}
-
-/// The answer to `GET /api/sessions/{source}/{id}/receipts`.
-///
-/// An id in neither list is one whose first attempt is still being accepted;
-/// ask again.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, Schematic)]
-#[serde(rename_all = "camelCase")]
-pub struct ReceiptLookup {
-    /// The ids this server accepted for this session.
-    pub receipts: Vec<MessageReceipt>,
-    /// The ids this server never saw: nothing was enqueued under them, so the
-    /// message is safe to send again — under the same id.
-    pub unknown: Vec<String>,
 }
 
 /// Which route a claim was made by. A retry must come back the same way.

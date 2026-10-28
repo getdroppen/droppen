@@ -294,7 +294,7 @@ impl InjectionRegistry {
             record.codex = Some(state.clone());
             self.journal.add(record);
         }
-        self.note_receipt(Source::Codex, id, qid, super::receipts::ReceiptStatus::Failed);
+        self.note_receipt(Source::Codex, id, qid, crate::sessions::delivery::ReceiptStatus::Failed);
         QueueOutcome::Done
     }
 
@@ -304,8 +304,8 @@ impl InjectionRegistry {
 
     /// A loaded thread's writer owns its archive operation too. A separate
     /// `codex archive` cannot acquire that writer lock, even between turns.
-    pub async fn archive_codex(self: &Arc<Self>, id: &str) -> Result<(), crate::drive::archive::ArchiveError> {
-        use crate::drive::archive::{archive_codex_session, ArchiveError};
+    pub async fn archive_codex(self: &Arc<Self>, id: &str) -> Result<(), crate::sessions::archive::ArchiveError> {
+        use crate::sessions::archive::{archive_codex_session, ArchiveError};
         // Match delivery's gate: no new resident or accepted message can slip
         // between selecting the archive path and committing its result.
         let _gate = self.spawn_gate.lock().await;
@@ -858,7 +858,7 @@ impl Driver {
                         Source::Codex,
                         &self.record.session_id,
                         &dropped.id,
-                        super::receipts::ReceiptStatus::Failed,
+                        crate::sessions::delivery::ReceiptStatus::Failed,
                     );
                     let _ = reply.send(QueueOutcome::Done);
                 } else {
@@ -950,7 +950,7 @@ impl Driver {
                 // Acknowledged: a turn started with it, or it was steered into
                 // the one running. Either way codex has it.
                 self.registry
-                    .note_receipt(Source::Codex, &self.record.session_id, &sent.id, super::receipts::ReceiptStatus::Sent);
+                    .note_receipt(Source::Codex, &self.record.session_id, &sent.id, crate::sessions::delivery::ReceiptStatus::Sent);
                 if request.starts_with("start:") {
                     if let Some(turn) = value["result"]["turn"]["id"].as_str() {
                         // A response may follow turn/completed; do not resurrect it.
@@ -1809,7 +1809,8 @@ mod tests {
     /// failed when it is withdrawn instead.
     #[tokio::test]
     async fn a_named_messages_receipt_follows_it_into_codex_and_out_of_the_queue() {
-        use crate::inject::receipts::{Claim, Kind, ReceiptStatus};
+        use crate::inject::receipts::{Claim, Kind};
+        use crate::sessions::delivery::ReceiptStatus;
         let mut h = Harness::new().await;
         let receipts = h.driver.registry.receipts().clone();
         let named = |text: &str| {

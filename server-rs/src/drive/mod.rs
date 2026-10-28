@@ -2,19 +2,18 @@
 //! composer preferences that decide what a spawn is asked for.
 //!
 //! The routes are ports of the session-driving half of the former TypeScript
-//! server's `app.ts`; the stores they sit on are ports of its `titles.ts`,
-//! `archive.ts` and `composer-prefs.ts`.
+//! server's `app.ts`; the composer preferences are a port of its
+//! `composer-prefs.ts`. The title and archive stores the routes write live in
+//! [`crate::sessions`], which reads them to build the session list.
 //!
 //! [`Drive`] is the one field this subsystem adds to `AppState`. It owns the
 //! account store, the setup-token captures, the injection registry, the quota
 //! cache and the composer preferences, so the merge surface in `api/mod.rs`
 //! stays a single line.
 
-pub mod archive;
 pub mod composer_prefs;
 pub(crate) mod idempotent;
 pub mod routes;
-pub mod titles;
 
 use std::sync::Arc;
 
@@ -24,6 +23,7 @@ use crate::auth::Auth;
 use crate::inject::InjectionRegistry;
 use crate::paths::Paths;
 use crate::quota::QuotaCache;
+use crate::sessions::titles;
 
 pub use routes::{describe, routes};
 

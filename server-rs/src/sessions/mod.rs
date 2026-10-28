@@ -5,6 +5,7 @@
 
 pub mod acp_transcript;
 pub mod adoption_leftovers;
+pub mod archive;
 pub mod checklist;
 pub mod claude;
 pub mod codex;
@@ -12,12 +13,14 @@ pub mod codex_claims;
 pub mod codex_tools;
 pub mod context;
 pub mod continuation;
+pub mod delivery;
 pub mod mentions;
 pub mod owned_sessions;
 pub mod pins;
 pub mod reference;
 pub mod repo;
 pub mod subagents;
+pub mod titles;
 pub mod tool_display;
 pub mod transcript;
 pub mod util;
@@ -773,11 +776,11 @@ pub struct SessionDetail {
     pub rotation: Option<crate::accounts::rotation::SessionRotation>,
     /// What became of the messages clients sent this session under a
     /// `clientMessageId`, over the last two hours (at most 100, oldest first).
-    pub receipts: Vec<crate::inject::receipts::MessageReceipt>,
+    pub receipts: Vec<delivery::MessageReceipt>,
     /// The questions the agent stopped to ask (`AskUserQuestion`), oldest
     /// first: the one it is blocked on, if any, and the recent ones with what
     /// became of them. At most 20, from the last week; empty for codex.
-    pub questions: Vec<crate::inject::questions::SessionQuestion>,
+    pub questions: Vec<delivery::SessionQuestion>,
     /// Opaque transcript signature; echo it back via `?sig=` to poll cheaply.
     pub sig: String,
     /// False when `sig` matched: `items` is empty and client state stays as-is.
@@ -1157,7 +1160,7 @@ pub fn sendability(source: Source, scope: SessionScope, status: SessionStatus, i
 /// same filter.
 async fn custom_titles(paths: &Paths, source: Source) -> HashMap<String, String> {
     let prefix = format!("{source}:");
-    crate::drive::titles::all(paths)
+    titles::all(paths)
         .into_iter()
         .filter_map(|(key, value)| {
             let id = key.strip_prefix(&prefix)?;
