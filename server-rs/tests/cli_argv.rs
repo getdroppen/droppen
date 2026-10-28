@@ -183,16 +183,16 @@ fn agent_argv_keeps_its_shape() {
     }
 
     // A bad code is refused; `--` is clap's terminator, so `--hub` after it is an extra word.
-    for (argv, expected) in [
-        (vec!["agent", "enroll", "nonsense", "--hub", "wss://hub.example"], 1),
-        (vec!["agent", "enroll", "--", "-", "--hub", "wss://hub.example"], 2),
-        (vec!["agent", "enroll", "-", "--", "--hub", "wss://hub.example"], 2),
-        (vec!["agent", "enroll", "--", "-"], 1),
+    for (argv, expected, says) in [
+        (vec!["agent", "enroll", "nonsense", "--hub", "wss://hub.example"], 1, "an enrollment code looks like"),
+        (vec!["agent", "enroll", "--", "-", "--hub", "wss://hub.example"], 2, "Usage:"),
+        (vec!["agent", "enroll", "-", "--", "--hub", "wss://hub.example"], 2, "Usage:"),
+        (vec!["agent", "enroll", "--", "-"], 1, "enroll needs the hub"),
     ] {
         let output = invocation.run(&argv);
         assert_eq!(code(&output), expected, "{argv:?}");
         assert!(stdout(&output).is_empty(), "{argv:?}");
-        assert!(!stderr(&output).is_empty(), "{argv:?}");
+        assert!(stderr(&output).contains(says), "{argv:?}: {}", stderr(&output));
     }
 
     // Every --instance is validated, and `--hub --instance …` is now refused (--hub takes --instance as
@@ -260,6 +260,15 @@ fn auth_argv_keeps_its_shape() {
         let output = invocation.run(&argv);
         assert_eq!(code(&output), 0, "{argv:?}: {}", stderr(&output));
     }
+
+    // A word that looks like a flag is a user name: `--help` here is not help, and with no
+    // password on stdin no account is made.
+    let output = invocation.run(&["user", "add", "--help"]);
+    assert_eq!(code(&output), 1, "{}", stderr(&output));
+    assert!(stderr(&output).contains("at least 12 characters"), "{}", stderr(&output));
+    let listed = invocation.run(&["user", "list"]);
+    assert_eq!(code(&listed), 0, "{}", stderr(&listed));
+    assert!(!stdout(&listed).contains("--help"), "no account was made: {}", stdout(&listed));
 
     // Flags are still only meaningful to the actions that read them.
     for (argv, expected) in [
@@ -433,7 +442,7 @@ fn replay_and_the_shims_keep_their_grammar() {
     ] {
         let output = invocation.run(&argv);
         assert_eq!(code(&output), 1, "{argv:?}");
-        assert!(!stderr(&output).contains("Usage:"), "{argv:?} was parsed: {}", stderr(&output));
+        assert!(!stderr(&output).to_lowercase().contains("usage"), "{argv:?} was parsed: {}", stderr(&output));
     }
     for argv in [
         vec!["replay", "--log", "a", "--home", "b", "--nope"],
