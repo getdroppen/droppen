@@ -129,7 +129,7 @@ pub fn start(
 ) -> Result<Running, String> {
     // Adding this device again under a new identity, interrupted by a crash:
     // finished first — it never starts as the old enrollment.
-    paths.finish_re_enroll()?;
+    super::rotation::finish_re_enroll(paths)?;
     let loaded = startable(paths)?;
     let identity = match super::load_or_create(paths)? {
         (identity, false) => identity,
@@ -442,7 +442,7 @@ pub(in crate::agent) async fn connection(shared: &Arc<Shared>) -> Result<(), Str
         }
         super::rotation::Verdict::Unchanged | super::rotation::Verdict::Renewed => {}
     }
-    let stagings = shared.paths.staged_seeds(&shared.identity);
+    let stagings = shared.files.staged_seeds(&shared.identity);
     // While any staged seed is kept, EVERY sign-in tries the staged keys first
     // (`docs/host-identity-rotation.md` §3.5 「不拿旧钥误伤自己」): a renewal may
     // have been committed while this device slept, its chain still stale. The
@@ -564,7 +564,7 @@ pub(in crate::agent) async fn connection(shared: &Arc<Shared>) -> Result<(), Str
         // before takes it again — and no staging that expired before now was
         // committed, nor should be (set aside, not deleted).
         let named = super::rotation::named_keys(&shared.state.lock().expect("agent state"));
-        shared.paths.set_aside_expired_stagings(named, &shared.identity, since);
+        shared.files.set_aside_expired_stagings(named, &shared.identity, since);
         let mut st = shared.state.lock().expect("agent state");
         if st.rotation.refused_ms.take().is_some() {
             tracing::info!("the hub takes this device's identity key again");

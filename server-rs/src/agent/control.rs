@@ -88,7 +88,7 @@ pub struct AgentStatus {
     pub changes: Vec<Alarm>,
     /// Renewing this machine's identity key: a staged key (and the code to
     /// type, for a high-assurance renewal), a renewal just taken, or one made
-    /// elsewhere ([`Paths::rotation_status`]).
+    /// elsewhere ([`AgentFiles::rotation_status`]).
     pub rotation: super::rotation::Status,
 }
 
@@ -121,10 +121,10 @@ impl AgentStatus {
     }
 
     /// [`AgentStatus::of`], with the identity renewal as this instance's
-    /// files say ([`Paths::rotation_status`]).
-    pub fn of_instance(paths: &Paths, st: &AgentState) -> Self {
+    /// files say ([`AgentFiles::rotation_status`]).
+    pub fn of_instance(files: &AgentFiles, st: &AgentState) -> Self {
         Self {
-            rotation: paths.rotation_status(Some(st), crate::time::now_ms_u64()),
+            rotation: files.rotation_status(Some(st), crate::time::now_ms_u64()),
             ..Self::of(st)
         }
     }
@@ -260,7 +260,7 @@ impl Control {
         crate::aggregator::sweep_deleted(&self.paths);
         // Adding this device again under a new identity, cut short by a
         // crash: finished before anything starts.
-        if let Err(error) = self.paths.finish_re_enroll() {
+        if let Err(error) = super::rotation::finish_re_enroll(&self.paths) {
             tracing::error!(%error, "cannot finish adding this device again under a new identity");
         }
         // A dispute statement the hub has not taken yet: delivered again
@@ -341,7 +341,7 @@ impl Control {
     pub fn status(&self) -> AgentStatus {
         let running = self.running.lock().expect("running");
         if let Some(run) = running.as_ref() {
-            let mut status = run.with_state(|st| AgentStatus::of_instance(&self.paths, st));
+            let mut status = run.with_state(|st| AgentStatus::of_instance(&self.files, st));
             let finished = run.finished();
             let Health {
                 connected,
@@ -358,7 +358,7 @@ impl Control {
         }
         drop(running);
         match AgentState::load(&self.files) {
-            Ok(Some(st)) => AgentStatus::of_instance(&self.paths, &st),
+            Ok(Some(st)) => AgentStatus::of_instance(&self.files, &st),
             Ok(None) => AgentStatus::none(),
             Err(error) => AgentStatus {
                 state: Standing::Broken,
@@ -397,7 +397,7 @@ impl Control {
         self.stop_locked().await;
         // A seed a renewal retired (or one archived) never signs up again:
         // a fresh one then (`docs/host-identity-rotation.md` §3.8).
-        let begun = match self.paths.identity_for_enrolling() {
+        let begun = match super::rotation::identity_for_enrolling(&self.paths) {
             Ok(identity) => self.files.begin_enrollment(&identity, code, hub_url)
                 .await
                 .map_err(ControlError::Begin),
@@ -494,7 +494,7 @@ impl Control {
 
     /// Before a sign-in shows this computer's keys: when the seed in use is
     /// one it must never use again — archived, or replaced elsewhere on the
-    /// chain it knows ([`Paths::seed_retired`]: never its own
+    /// chain it knows ([`AgentFiles::seed_retired`]: never its own
     /// renewal to a key it staged) — it never signs up again:
     /// the link stops, the seed is archived, the old enrollment forgotten and
     /// a fresh seed made ([`Control::re_enroll_fresh`]). `true` when that happened.
@@ -505,23 +505,23 @@ impl Control {
             Ok(None) => return Ok(false),
             Err(error) => return Err(ControlError::Failed(error)),
         };
-        if !self.paths.seed_retired(&current) {
+        if !self.files.seed_retired(&current) {
             return Ok(false);
         }
         self.stop_locked().await;
-        self.paths.re_enroll_fresh(crate::time::now_ms_u64()).map_err(ControlError::Failed)?;
+        super::rotation::re_enroll_fresh(&self.paths, crate::time::now_ms_u64()).map_err(ControlError::Failed)?;
         Ok(true)
     }
 
     /// "Add this device again with a new identity": for a device left holding
     /// only a retired identity key (`link.rotation.state` `foreign`), stop
     /// the link, archive the seed, forget the enrollment and make a fresh
-    /// seed ([`Paths::re_enroll_fresh`]). The new identity; the
+    /// seed ([`super::rotation::re_enroll_fresh`]). The new identity; the
     /// instance is then not enrolled, waiting for a registration code.
     pub async fn re_enroll_fresh(&self) -> Result<MachineIdentity, ControlError> {
         let _gate = self.gate.lock().await;
         self.stop_locked().await;
-        self.paths.re_enroll_fresh(crate::time::now_ms_u64()).map_err(ControlError::Failed)
+        super::rotation::re_enroll_fresh(&self.paths, crate::time::now_ms_u64()).map_err(ControlError::Failed)
     }
 
     /// Stop the link and delete everything under `agent/`: the state, the
@@ -977,13 +977,13 @@ mod tests {
         // What the crash left: the marker, the seed archived, the state kept.
         let agent = AgentFiles::of(&paths).machine_key().parent().unwrap().to_path_buf();
         crate::fsutil::write_private_reporting_path(&agent.join("re-enroll-fresh.json"), b"{}").unwrap();
-        std::fs::rename(AgentFiles::of(&paths).machine_key(), paths.archived_key_path(5)).unwrap();
+        std::fs::rename(AgentFiles::of(&paths).machine_key(), AgentFiles::of(&paths).archived_key(5)).unwrap();
         control.attach(link_env(&paths));
         assert!(!AgentFiles::of(&paths).has_state(), "the old enrollment is forgotten");
         assert!(!agent.join("re-enroll-fresh.json").exists());
         let fresh = control.identity().unwrap();
         assert_ne!(fresh.sign_public(), old.sign_public());
-        assert!(paths.seed_archived(&old));
+        assert!(AgentFiles::of(&paths).seed_archived(&old));
         assert!(!control.start_if_enrolled().await, "nothing to start");
         assert_eq!(control.status().state, Standing::None);
     }
