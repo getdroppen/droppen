@@ -9,9 +9,11 @@ use gotcha::axum::extract::FromRef;
 
 use super::AppState;
 use crate::apps::AppsState;
+use crate::files::FilesState;
 use crate::notify::NotifyState;
 use crate::plugins::routes::PluginsState;
 use crate::push::PushState;
+use crate::selfupdate::SelfUpdateState;
 use crate::stats::StatsState;
 
 impl FromRef<AppState> for PluginsState {
@@ -51,6 +53,25 @@ impl FromRef<AppState> for AppsState {
     fn from_ref(state: &AppState) -> Self {
         Self {
             apps: state.apps.clone(),
+        }
+    }
+}
+
+impl FromRef<AppState> for FilesState {
+    fn from_ref(state: &AppState) -> Self {
+        Self {
+            paths: state.paths.clone(),
+        }
+    }
+}
+
+impl FromRef<AppState> for SelfUpdateState {
+    fn from_ref(state: &AppState) -> Self {
+        Self {
+            desktop_app: state.desktop_app,
+            lock: state.lock.clone(),
+            paths: state.paths.clone(),
+            cancel: state.cancel.clone(),
         }
     }
 }

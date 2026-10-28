@@ -413,7 +413,7 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
     let router = crate::cloud::gateway::routes(router);
     let router = crate::drive::routes(router);
     let router = crate::feed::global::routes(router);
-    let router = crate::files::routes(router);
+    let router = crate::files::FilesState::routes(router);
     let router = crate::media::routes(router);
     let router = crate::models::routes(router);
     let router = crate::notify::NotifyState::routes(router);
@@ -423,7 +423,7 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
     let router = crate::accounts::quota::routes(router);
     let router = crate::schedule::routes(router);
     let router = crate::screens::routes(router);
-    let router = crate::selfupdate::routes(router);
+    let router = crate::selfupdate::SelfUpdateState::routes(router);
     let router = crate::setup::routes(router);
     let router = crate::stats::StatsState::routes(router);
     let router = crate::terminals::routes(router);
