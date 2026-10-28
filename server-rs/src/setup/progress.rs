@@ -30,8 +30,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use super::Setup;
-use crate::api::AppState;
+use super::{Setup, SetupState};
 use crate::claude_roots;
 use crate::db::scope;
 use crate::http::error::ApiError;
@@ -307,21 +306,21 @@ fn has_transcript(projects: &Path) -> bool {
 
 /// `progress` as answered: with `autoOpen` worked out. This instance's own
 /// records are only read when everything else already says yes.
-pub async fn answered(state: &AppState, progress: SetupProgress) -> SetupProgress {
-    let auto_open = state.desktop_app && progress.started_at.0.is_none() && !owns_sessions(&state.drive.paths).await;
+pub async fn answered(state: &SetupState, progress: SetupProgress) -> SetupProgress {
+    let auto_open = state.desktop_app && progress.started_at.0.is_none() && !owns_sessions(&state.paths).await;
     SetupProgress { auto_open, ..progress }
 }
 
 /// How far the first-run guide got on this instance.
 #[api(id = "setup_progress", group = "setup", summary = "Read the first-run guide's progress")]
-pub async fn get_progress(State(state): State<AppState>) -> Json<SetupProgress> {
+pub async fn get_progress(State(state): State<SetupState>) -> Json<SetupProgress> {
     let stored = state.setup.stored_progress();
     Json(answered(&state, stored).await)
 }
 
 /// Store how far the first-run guide got, and hand it back as stored.
 #[api(id = "setup_store_progress", group = "setup", summary = "Store the first-run guide's progress")]
-pub async fn put_progress(State(state): State<AppState>, ApiJson(body): ApiJson<SetupProgress>) -> Result<Json<SetupProgress>, ApiError> {
+pub async fn put_progress(State(state): State<SetupState>, ApiJson(body): ApiJson<SetupProgress>) -> Result<Json<SetupProgress>, ApiError> {
     let stored = state.setup.store_progress(&body);
     Ok(Json(answered(&state, stored).await))
 }
@@ -329,6 +328,7 @@ pub async fn put_progress(State(state): State<AppState>, ApiJson(body): ApiJson<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gotcha::axum::extract::FromRef;
 
     #[test]
     fn the_wire_shape_is_the_guide_s() {
@@ -482,15 +482,15 @@ mod tests {
         let home = tempfile::tempdir().expect("tempdir");
         let mut state = crate::api::test_support::state(home.path()).await;
         let fresh = SetupProgress::default();
-        assert!(!answered(&state, fresh.clone()).await.auto_open, "not run by the desktop app");
+        assert!(!answered(&SetupState::from_ref(&state), fresh.clone()).await.auto_open, "not run by the desktop app");
 
         state.desktop_app = true;
-        assert!(answered(&state, fresh.clone()).await.auto_open, "the app, never started, no sessions");
+        assert!(answered(&SetupState::from_ref(&state), fresh.clone()).await.auto_open, "the app, never started, no sessions");
         let started = SetupProgress {
             started_at: Nullable(Some("2026-10-19T09:12:00Z".into())),
             ..fresh.clone()
         };
-        assert!(!answered(&state, started).await.auto_open, "started once: never again by itself");
+        assert!(!answered(&SetupState::from_ref(&state), started).await.auto_open, "started once: never again by itself");
 
         // A transcript in the user's own ~/.claude is not this instance's.
         let theirs = claude_roots::ClaudeRoots::of(&state.drive.paths).projects_dir(ClaudeRoot::Local).join("-w");
@@ -500,7 +500,7 @@ mod tests {
             "{\"type\":\"user\",\"cwd\":\"/w\",\"message\":{\"role\":\"user\",\"content\":\"hello\"}}\n",
         )
         .expect("transcript");
-        assert!(answered(&state, fresh.clone()).await.auto_open, "an install that only sees the user's own sessions is new");
+        assert!(answered(&SetupState::from_ref(&state), fresh.clone()).await.auto_open, "an install that only sees the user's own sessions is new");
 
         // One of its own is an install in use (Q4).
         let ours = claude_roots::ClaudeRoots::of(&state.drive.paths).projects_dir(ClaudeRoot::Managed).join("-w");
@@ -510,7 +510,7 @@ mod tests {
             "{\"type\":\"user\",\"cwd\":\"/w\",\"message\":{\"role\":\"user\",\"content\":\"hello\"}}\n",
         )
         .expect("transcript");
-        assert!(!answered(&state, fresh).await.auto_open, "this instance has a session of its own");
+        assert!(!answered(&SetupState::from_ref(&state), fresh).await.auto_open, "this instance has a session of its own");
     }
 
     #[tokio::test]
@@ -534,19 +534,19 @@ mod tests {
             "{\"type\":\"user\",\"cwd\":\"/w\",\"message\":{\"role\":\"user\",\"content\":\"hello\"}}\n",
         )
         .expect("transcript");
-        assert!(answered(&state, fresh.clone()).await.auto_open, "the user's own, so far");
+        assert!(answered(&SetupState::from_ref(&state), fresh.clone()).await.auto_open, "the user's own, so far");
         owned_sessions::record(&state.drive.paths, Source::Claude, id).await.expect("record");
-        assert!(!answered(&state, fresh.clone()).await.auto_open, "started by this instance on the local login");
+        assert!(!answered(&SetupState::from_ref(&state), fresh.clone()).await.auto_open, "started by this instance on the local login");
 
         // A Codex thread it started, in the one ~/.codex.
         let home = tempfile::tempdir().expect("tempdir");
         let mut state = crate::api::test_support::state(home.path()).await;
         state.desktop_app = true;
-        assert!(answered(&state, fresh.clone()).await.auto_open);
+        assert!(answered(&SetupState::from_ref(&state), fresh.clone()).await.auto_open);
         owned_sessions::record(&state.drive.paths, Source::Codex, "0199a3b4-c5d6-7e8f-9a0b-1c2d3e4f5a6b")
             .await
             .expect("record");
-        assert!(!answered(&state, fresh).await.auto_open, "a Codex thread of its own");
+        assert!(!answered(&SetupState::from_ref(&state), fresh).await.auto_open, "a Codex thread of its own");
     }
 
     #[test]

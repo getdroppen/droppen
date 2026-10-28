@@ -1239,7 +1239,7 @@ mod tests {
         let mut state = crate::api::test_support::state(home.path()).await;
         state.drive.auth.users.add_app("droppen-app", PASSWORD).await.expect("app account");
         let who = |name: &str| {
-            Identity(super::super::AuthIdentity {
+            Identity(crate::http::identity::AuthIdentity {
                 username: name.into(),
                 token_sha256: None,
             })

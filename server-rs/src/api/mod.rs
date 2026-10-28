@@ -427,7 +427,7 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
     let router = crate::schedule::ScheduleState::routes(router);
     let router = crate::screens::ScreensState::routes(router);
     let router = crate::selfupdate::SelfUpdateState::routes(router);
-    let router = crate::setup::routes(router);
+    let router = crate::setup::SetupState::routes(router);
     let router = crate::stats::StatsState::routes(router);
     let router = crate::terminals::routes(router);
     router
@@ -590,7 +590,7 @@ mod tests {
         for device in ["agent-sync", "d-1"] {
             let bridged = settings(
                 State(state.clone()),
-                crate::auth::MaybeIdentity(Some(crate::auth::AuthIdentity {
+                crate::auth::MaybeIdentity(Some(crate::http::identity::AuthIdentity {
                     username: format!("cloud:{device}"),
                     token_sha256: None,
                 })),

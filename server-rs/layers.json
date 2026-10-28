@@ -55,9 +55,6 @@
           ],
           "mayUse": [
             "droppen-instance"
-          ],
-          "notes": [
-            "Gets desktop_app's AppWindow and Refresh: items, counted where they are until they move."
           ]
         },
         {
@@ -340,10 +337,7 @@
             "cli",
             "agent::cli"
           ],
-          "mayUse": "*",
-          "notes": [
-            "Gives desktop_app's AppWindow to droppen-http."
-          ]
+          "mayUse": "*"
         }
       ]
     }
@@ -372,7 +366,6 @@
         "drive -> api",
         "feed -> api",
         "models -> api",
-        "setup -> api",
         "terminals -> api"
       ]
     },
@@ -468,12 +461,6 @@
       "edges": [
         "acp_agent -> accounts",
         "inject::acp -> accounts"
-      ]
-    },
-    {
-      "why": "Claude Code's setup-token wizard is for the desktop app's window only, and asks setup's Caller and app_caller whether that is who calls. It goes when that gate is http's AppWindow.",
-      "edges": [
-        "accounts::setup_token -> setup"
       ]
     },
     {

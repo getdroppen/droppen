@@ -15,7 +15,7 @@
 //!   tests run none of them;
 //! * [`commands`] / [`tasks`] — the whitelisted installs, updates and
 //!   sign-ins, and the terminals they run in, for the desktop app only
-//!   ([`app_caller`]);
+//!   ([`AppWindow::app_caller`](crate::http::app_window::AppWindow::app_caller));
 //! * [`progress`] — where the guide stands, kept here rather than in the
 //!   page, whose origin moves with the port;
 //! * [`folders`] — step 03's folders: recent ones, and a practice folder.
@@ -52,21 +52,17 @@ pub mod runner;
 pub mod shell;
 pub mod tasks;
 
-use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use gotcha::axum::extract::FromRequestParts;
-use gotcha::axum::http::request::Parts;
-use gotcha::axum::http::{header, StatusCode};
-use gotcha::{api, Json, Schematic, State};
+use gotcha::axum::extract::FromRef;
+use gotcha::{api, GotchaRouter, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
-use crate::api::{ApiRouter, AppState};
-use crate::auth::AuthIdentity;
 use crate::db::scope;
+use crate::http::app_window::{AppWindow, Caller};
 use crate::http::created::Created;
 use crate::http::error::ApiError;
 use crate::http::extract::{ApiJson, ApiPath};
@@ -440,7 +436,8 @@ struct ShellState {
     adopted: Option<PathRead>,
 }
 
-/// The guide's state: one per server, on [`AppState::setup`].
+/// The guide's state: one per server, which its routes reach through
+/// [`SetupState`].
 pub struct Setup {
     paths: Arc<Paths>,
     runner: Arc<dyn Runner>,
@@ -464,8 +461,9 @@ pub struct Setup {
     /// The last sign-in poll per tool.
     logins: Mutex<tasks::LoginCache>,
     /// The port this server listens on, once it does: what a request from the
-    /// app's own window names as its `Host` and `Origin` ([`app_caller`]).
-    listen_port: OnceLock<u16>,
+    /// app's own window names as its `Host` and `Origin`
+    /// ([`AppWindow`](crate::http::app_window::AppWindow)).
+    listen_port: Arc<OnceLock<u16>>,
 }
 
 impl std::fmt::Debug for Setup {
@@ -506,7 +504,7 @@ impl Setup {
             generation: AtomicU64::new(0),
             tasks: Mutex::new(tasks::Tasks::default()),
             logins: Mutex::new(tasks::LoginCache::new()),
-            listen_port: OnceLock::new(),
+            listen_port: Arc::new(OnceLock::new()),
         })
     }
 
@@ -520,9 +518,10 @@ impl Setup {
         let _ = self.listen_port.set(port);
     }
 
-    /// The port this server listens on, if it has been recorded.
-    pub fn listen_port(&self) -> Option<u16> {
-        self.listen_port.get().copied()
+    /// The cell [`Self::set_listen_port`] fills, for the desktop-window gate
+    /// ([`AppWindow`](crate::http::app_window::AppWindow)) to read the port from.
+    pub fn listen_port_cell(&self) -> Arc<OnceLock<u16>> {
+        self.listen_port.clone()
     }
 
     /// The directories the user adopted, in the order they were adopted, as
@@ -651,7 +650,7 @@ impl Setup {
     }
 
     /// The whole report for one request.
-    pub async fn report(&self, state: &AppState, can_install: bool) -> ToolsReport {
+    pub async fn report(&self, state: &SetupState, can_install: bool) -> ToolsReport {
         let report = self.report_without_tasks(state, can_install).await;
         ToolsReport {
             tools: report
@@ -666,18 +665,18 @@ impl Setup {
         }
     }
 
-    async fn report_without_tasks(&self, state: &AppState, can_install: bool) -> ToolsReport {
+    async fn report_without_tasks(&self, state: &SetupState, can_install: bool) -> ToolsReport {
         if state.desktop_app {
             self.ensure_shell_read().await;
         }
         let detection = self.detection(false).await;
         let shell = self.shell_snapshot().unwrap_or_default();
-        let accounts = state.drive.accounts.list().await;
+        let accounts = state.accounts.list().await;
         let mut tools = Vec::with_capacity(detection.tools.len());
         for probe in &detection.tools {
             let provider = probe.id.provider();
             let mine: Vec<_> = accounts.iter().filter(|account| account.provider == provider).collect();
-            let default_id = state.drive.accounts.default_account_id(provider).await;
+            let default_id = state.accounts.default_account_id(provider).await;
             let default_label = default_id.and_then(|id| mine.iter().find(|account| account.id == id).map(|account| account.label.clone()));
             let droppen_accounts = DroppenAccounts {
                 total: mine.len() as u32,
@@ -712,115 +711,40 @@ impl Setup {
 
 // -------------------------------------------------------------------- routes
 
-/// Who sent a request and what it says about where it was made: what the
-/// gate on the app-only routes reads ([`app_caller`]).
-///
-/// Annotate the parameter `#[api(skip)]`: it contributes nothing to the
-/// OpenAPI document.
-#[derive(Debug, Clone, Default)]
-pub struct Caller {
-    /// The peer's address, when the listener recorded one (`crate::app`
-    /// serves with connect info; a router driven without a socket has none).
-    pub peer: Option<SocketAddr>,
-    /// Who it is signed in as, if anyone.
-    pub identity: Option<AuthIdentity>,
-    /// Its `Origin` header.
-    pub origin: Option<String>,
-    /// Its `Host` header (or the request target's authority).
-    pub host: Option<String>,
-}
-
-impl<S: Send + Sync> FromRequestParts<S> for Caller {
-    type Rejection = std::convert::Infallible;
-
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        let text = |name| parts.headers.get(name).and_then(|value: &header::HeaderValue| value.to_str().ok()).map(str::to_string);
-        Ok(Caller {
-            peer: parts
-                .extensions
-                .get::<gotcha::axum::extract::ConnectInfo<SocketAddr>>()
-                .map(|info| info.0),
-            identity: parts.extensions.get::<AuthIdentity>().cloned(),
-            origin: text(header::ORIGIN),
-            host: text(header::HOST).or_else(|| parts.uri.authority().map(|authority| authority.to_string())),
-        })
-    }
-}
-
-/// Whether a request is the desktop app's own window talking to its own
-/// server. Every one of these must hold:
-///
-/// * the app runs this server;
-/// * the peer is this device (loopback);
-/// * the caller is signed in — the app's window always is, with the login the
-///   app owns — and is not a device linked through the Droppen bridge
-///   (`cloud:<device>`, which also arrives over loopback);
-/// * it was addressed to `127.0.0.1:<this server's port>` (`Host`) and, when it
-///   says where it was made (`Origin`), was made by a page at exactly
-///   `http://127.0.0.1:<port>`, the address the app opens its window at.
-///
-/// The last one is what loopback alone cannot tell: a page on another site
-/// whose name was re-pointed at 127.0.0.1 (DNS rebinding) names its own host,
-/// and so does a browser elsewhere reaching this port through a tunnel or a
-/// reverse proxy (`tailscale serve`, `cloudflared`, `ssh -R`), whose requests
-/// arrive over loopback too. `require_origin` is for the routes that act: a
-/// browser always sends `Origin` on a `POST` from a page.
-fn from_app_window(state: &AppState, caller: &Caller, require_origin: bool) -> bool {
-    let Some(port) = state.setup.listen_port() else {
-        return false;
-    };
-    let local = caller.peer.is_some_and(|peer| match peer.ip() {
-        std::net::IpAddr::V4(ip) => ip.is_loopback(),
-        std::net::IpAddr::V6(ip) => ip.to_ipv4_mapped().map_or(ip.is_loopback(), |ip| ip.is_loopback()),
-    });
-    let signed_in = caller
-        .identity
-        .as_ref()
-        .is_some_and(|identity| !identity.username.starts_with("cloud:"));
-    let own = format!("127.0.0.1:{port}");
-    let addressed_here = caller.host.as_deref() == Some(own.as_str());
-    let made_here = match caller.origin.as_deref() {
-        Some(origin) => origin == format!("http://{own}"),
-        None => !require_origin,
-    };
-    state.desktop_app && local && signed_in && addressed_here && made_here
-}
-
-/// Whether this caller may install and sign in from here — what the tools
-/// report says as `canInstall`. A page's own `GET` carries no `Origin`, so
-/// one is not required here; the routes that act require it ([`app_caller`]).
-pub fn local_app_request(state: &AppState, caller: &Caller) -> bool {
-    from_app_window(state, caller, false)
-}
-
-/// The gate on every route that installs, updates, signs in or rewrites the
-/// `PATH`: `403 {"error":"app_only"}` unless the request is the app's own
-/// window, `Origin` included ([`from_app_window`]).
-///
-/// A browser on another device — a phone, a laptop on the LAN, a device linked
-/// through Droppen, a page reaching this port through a tunnel — must not be
-/// able to start an installer on this one. What this cannot yet tell apart is
-/// the app's window from another browser on the same Mac signed in to the same
-/// server at the same address. The local web access work adds the
-/// app-internal account (`user add --app`, `droppen-app`) the app signs in
-/// with, and once it exists this check also requires that identity.
-pub fn app_caller(state: &AppState, caller: &Caller) -> Result<(), ApiError> {
-    if from_app_window(state, caller, true) {
-        Ok(())
-    } else {
-        Err(ApiError::new(StatusCode::FORBIDDEN, "app_only"))
-    }
-}
-
 /// The tool a path segment names, or `400 {"error":"unknown_tool"}`.
 fn tool_of(raw: &str) -> Result<ToolId, ApiError> {
     ToolId::parse(raw).ok_or_else(|| ApiError::bad_request("unknown_tool"))
 }
 
+/// What the guide's routes use of the server's state.
+#[derive(Clone)]
+pub struct SetupState {
+    /// The guide: tool detection, the children's `PATH`, its tasks and the
+    /// port cell the desktop-window gate reads.
+    pub setup: Arc<Setup>,
+    /// Every live web terminal; an install or a sign-in runs in one.
+    pub terminals: Arc<crate::terminals::Registry>,
+    /// The stored accounts, which count as a tool's login.
+    pub accounts: Arc<crate::accounts::store::AccountsStore>,
+    /// The instance's paths: the home directory and the sessions it owns.
+    pub paths: Arc<Paths>,
+    /// Whether the Droppen desktop app runs this server.
+    pub desktop_app: bool,
+}
+crate::http::substate!(SetupState);
+
+impl SetupState {
+    /// The desktop app's window as this server knows it: the guide's port cell
+    /// and `desktop_app`.
+    fn window(&self) -> AppWindow {
+        AppWindow::new(self.setup.listen_port_cell(), self.desktop_app)
+    }
+}
+
 /// Which AI tools this device has, and whether each is ready.
 #[api(id = "setup_tools", group = "setup", summary = "Report which AI tools are ready")]
-pub async fn tools_report(State(state): State<AppState>, #[api(skip)] caller: Caller) -> Json<ToolsReport> {
-    let can_install = local_app_request(&state, &caller);
+pub async fn tools_report(State(state): State<SetupState>, #[api(skip)] caller: Caller) -> Json<ToolsReport> {
+    let can_install = state.window().local_app_request(&caller);
     Json(state.setup.report(&state, can_install).await)
 }
 
@@ -831,11 +755,11 @@ pub async fn tools_report(State(state): State<AppState>, #[api(skip)] caller: Ca
 /// but the app's own window to make.
 #[api(id = "setup_rescan_tools", group = "setup", summary = "Look for the AI tools again")]
 pub async fn rescan_tools(
-    State(state): State<AppState>,
+    State(state): State<SetupState>,
     #[api(skip)] caller: Caller,
     ApiJson(body): ApiJson<RescanRequest>,
 ) -> Result<Json<ToolsReport>, ApiError> {
-    app_caller(&state, &caller)?;
+    state.window().app_caller(&caller)?;
     state.setup.read_shell(body.patient.0.unwrap_or(false), true).await;
     state.setup.detection(true).await;
     Ok(Json(state.setup.report(&state, true).await))
@@ -843,12 +767,12 @@ pub async fn rescan_tools(
 
 /// Every command the guide can run, exactly as it would run it.
 #[api(id = "setup_commands", group = "setup", summary = "List the install and sign-in commands")]
-pub async fn list_commands(State(state): State<AppState>) -> Json<commands::SetupCommandList> {
+pub async fn list_commands(State(state): State<SetupState>) -> Json<commands::SetupCommandList> {
     Json(commands::list(&*state.setup.detection(false).await))
 }
 
 /// Start a whitelisted install or update in a terminal.
-async fn start_method(state: &AppState, tool: &str, kind: TaskKind, method: &str) -> Result<Created<SetupTask>, ApiError> {
+async fn start_method(state: &SetupState, tool: &str, kind: TaskKind, method: &str) -> Result<Created<SetupTask>, ApiError> {
     let tool = tool_of(tool)?;
     let entry = commands::find(tool.into(), kind, method).ok_or_else(|| ApiError::bad_request("unknown_method"))?;
     commands::availability(entry, &*state.setup.detection(false).await).map_err(tasks::unavailable)?;
@@ -858,24 +782,24 @@ async fn start_method(state: &AppState, tool: &str, kind: TaskKind, method: &str
 /// Install a tool: the whitelisted command for `method`, in a terminal.
 #[api(id = "setup_install_tool", group = "setup", summary = "Install an AI tool")]
 pub async fn install_tool(
-    State(state): State<AppState>,
+    State(state): State<SetupState>,
     #[api(skip)] caller: Caller,
     ApiPath(tool): ApiPath<String>,
     ApiJson(body): ApiJson<ToolMethodRequest>,
 ) -> Result<Created<SetupTask>, ApiError> {
-    app_caller(&state, &caller)?;
+    state.window().app_caller(&caller)?;
     start_method(&state, &tool, TaskKind::Install, &body.method).await
 }
 
 /// Update a tool: the whitelisted command for `method`, in a terminal.
 #[api(id = "setup_update_tool", group = "setup", summary = "Update an AI tool")]
 pub async fn update_tool(
-    State(state): State<AppState>,
+    State(state): State<SetupState>,
     #[api(skip)] caller: Caller,
     ApiPath(tool): ApiPath<String>,
     ApiJson(body): ApiJson<ToolMethodRequest>,
 ) -> Result<Created<SetupTask>, ApiError> {
-    app_caller(&state, &caller)?;
+    state.window().app_caller(&caller)?;
     start_method(&state, &tool, TaskKind::Update, &body.method).await
 }
 
@@ -883,12 +807,12 @@ pub async fn update_tool(
 /// `apikey` mode — with the key on its standard input.
 #[api(id = "setup_login_tool", group = "setup", summary = "Sign an AI tool in")]
 pub async fn login_tool(
-    State(state): State<AppState>,
+    State(state): State<SetupState>,
     #[api(skip)] caller: Caller,
     ApiPath(tool): ApiPath<String>,
     ApiJson(body): ApiJson<ToolLoginRequest>,
 ) -> Result<Created<SetupTask>, ApiError> {
-    app_caller(&state, &caller)?;
+    state.window().app_caller(&caller)?;
     let tool = tool_of(&tool)?;
     let entry = commands::find(tool.into(), TaskKind::Login, &body.mode).ok_or_else(|| ApiError::bad_request("unknown_method"))?;
     if entry.method == "apikey" {
@@ -902,17 +826,17 @@ pub async fn login_tool(
 
 /// Is it signed in yet? One cheap status check, for polling during a sign-in.
 #[api(id = "setup_tool_login", group = "setup", summary = "Check an AI tool's sign-in")]
-pub async fn tool_login(State(state): State<AppState>, ApiPath(tool): ApiPath<String>) -> Result<Json<ToolLogin>, ApiError> {
+pub async fn tool_login(State(state): State<SetupState>, ApiPath(tool): ApiPath<String>) -> Result<Json<ToolLogin>, ApiError> {
     Ok(Json(state.setup.poll_login(tool_of(&tool)?).await))
 }
 
 /// Ask macOS for its command line tools (git): Apple's own installer window.
 #[api(id = "setup_install_git", group = "setup", summary = "Install git (Apple's command line tools)")]
 pub async fn install_git(
-    State(state): State<AppState>,
+    State(state): State<SetupState>,
     #[api(skip)] caller: Caller,
 ) -> Result<Created<GitInstallStarted>, ApiError> {
-    app_caller(&state, &caller)?;
+    state.window().app_caller(&caller)?;
     let entry = commands::find(commands::CommandTool::Git, TaskKind::Install, "apple").expect("whitelisted");
     commands::availability(entry, &*state.setup.detection(false).await).map_err(tasks::unavailable)?;
     Ok(Created(GitInstallStarted {
@@ -924,33 +848,39 @@ pub async fn install_git(
 /// directory joins every child's `PATH`, now and after a restart.
 #[api(id = "setup_use_tool", group = "setup", summary = "Use an AI tool found elsewhere")]
 pub async fn use_tool(
-    State(state): State<AppState>,
+    State(state): State<SetupState>,
     #[api(skip)] caller: Caller,
     ApiPath(tool): ApiPath<String>,
     ApiJson(body): ApiJson<ToolUseRequest>,
 ) -> Result<Json<ToolsReport>, ApiError> {
-    app_caller(&state, &caller)?;
+    state.window().app_caller(&caller)?;
     state.setup.adopt(tool_of(&tool)?, &body.path)?;
     state.setup.detection(true).await;
     Ok(Json(state.setup.report(&state, true).await))
 }
 
-/// Register the guide's routes.
-pub fn routes(router: ApiRouter) -> ApiRouter {
-    router
-        .get("/api/setup/tools", tools_report)
-        .post("/api/setup/tools/rescan", rescan_tools)
-        .get("/api/setup/commands", list_commands)
-        .post("/api/setup/tools/{tool}/install", install_tool)
-        .post("/api/setup/tools/{tool}/update", update_tool)
-        .post("/api/setup/tools/{tool}/login", login_tool)
-        .get("/api/setup/tools/{tool}/login", tool_login)
-        .post("/api/setup/tools/{tool}/use", use_tool)
-        .post("/api/setup/git/install", install_git)
-        .get("/api/setup/progress", progress::get_progress)
-        .put("/api/setup/progress", progress::put_progress)
-        .get("/api/setup/projects/recent", folders::recent_folders)
-        .post("/api/setup/practice-folder", folders::practice_folder)
+impl SetupState {
+    /// Register the guide's routes.
+    pub fn routes<S>(router: GotchaRouter<S>) -> GotchaRouter<S>
+    where
+        S: Clone + Send + Sync + 'static,
+        SetupState: FromRef<S>,
+    {
+        router
+            .get("/api/setup/tools", tools_report)
+            .post("/api/setup/tools/rescan", rescan_tools)
+            .get("/api/setup/commands", list_commands)
+            .post("/api/setup/tools/{tool}/install", install_tool)
+            .post("/api/setup/tools/{tool}/update", update_tool)
+            .post("/api/setup/tools/{tool}/login", login_tool)
+            .get("/api/setup/tools/{tool}/login", tool_login)
+            .post("/api/setup/tools/{tool}/use", use_tool)
+            .post("/api/setup/git/install", install_git)
+            .get("/api/setup/progress", progress::get_progress)
+            .put("/api/setup/progress", progress::put_progress)
+            .get("/api/setup/projects/recent", folders::recent_folders)
+            .post("/api/setup/practice-folder", folders::practice_folder)
+    }
 }
 
 /// Everything gotcha cannot say about the guide's routes.
@@ -1075,6 +1005,9 @@ pub fn describe(reg: &mut ExtraResponses) {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::http::identity::AuthIdentity;
+    use gotcha::axum::http::StatusCode;
+    use std::net::SocketAddr;
     use droppen_base::process_env::Env;
     use runner::fixture::Fixture;
     use runner::RunOutput;
@@ -1191,7 +1124,7 @@ pub(crate) mod tests {
 
         let mut state = crate::api::test_support::state(home.path()).await;
         state.setup = guide(home.path(), fixture.clone(), Some(PathRead::Timeout));
-        let report = state.setup.report(&state, false).await;
+        let report = state.setup.report(&SetupState::from_ref(&state), false).await;
         assert_eq!(
             report.tools.iter().map(|tool| tool.id).collect::<Vec<_>>(),
             [ToolId::Claude, ToolId::Codex]
@@ -1230,14 +1163,14 @@ pub(crate) mod tests {
             .await
             .expect("default");
         state.desktop_app = true;
-        let report = state.setup.report(&state, false).await;
+        let report = state.setup.report(&SetupState::from_ref(&state), false).await;
         let claude = &report.tools[0];
         assert!(claude.ready, "a verified Droppen account is a way to be ready");
         assert_eq!(claude.droppen_accounts.total, 1);
         assert_eq!(claude.droppen_accounts.default_label.0.as_deref(), Some("work gateway"));
         assert!(claude.shell_key, "ANTHROPIC_API_KEY is set in the login shell");
         assert!(!report.tools[1].shell_key);
-        let _ = state.setup.report(&state, false).await;
+        let _ = state.setup.report(&SetupState::from_ref(&state), false).await;
         assert_eq!(
             fixture.lines().iter().filter(|line| line.starts_with("zsh")).count(),
             1,
@@ -1356,22 +1289,22 @@ pub(crate) mod tests {
         let home = tempfile::tempdir().expect("tempdir");
         let mut state = crate::api::test_support::state(home.path()).await;
         let port = 58123;
-        assert!(app_caller(&state, &window(port)).is_err(), "not run by the desktop app");
+        assert!(state.window().app_caller(&window(port)).is_err(), "not run by the desktop app");
         state.desktop_app = true;
-        assert!(app_caller(&state, &window(port)).is_err(), "before the server listens, nothing is its window");
+        assert!(state.window().app_caller(&window(port)).is_err(), "before the server listens, nothing is its window");
         state.setup.set_listen_port(port);
 
-        assert!(app_caller(&state, &window(port)).is_ok());
+        assert!(state.window().app_caller(&window(port)).is_ok());
         for peer in ["[::1]:50123", "[::ffff:127.0.0.1]:50123"] {
             let caller = Caller {
                 peer: Some(peer.parse().expect("address")),
                 ..window(port)
             };
-            assert!(app_caller(&state, &caller).is_ok(), "{peer}");
+            assert!(state.window().app_caller(&caller).is_ok(), "{peer}");
         }
 
         let refused = |caller: Caller, why: &str| {
-            let error = app_caller(&state, &caller).expect_err(why);
+            let error = state.window().app_caller(&caller).expect_err(why);
             assert_eq!(error.status(), StatusCode::FORBIDDEN, "{why}");
             assert_eq!(error.body()["error"], "app_only", "{why}");
         };
@@ -1429,16 +1362,15 @@ pub(crate) mod tests {
 
         // The report's `canInstall`: a page's own GET says no Origin, and
         // needs none; everything else still holds.
-        assert!(local_app_request(&state, &Caller { origin: None, ..window(port) }));
-        assert!(!local_app_request(
-            &state,
+        assert!(state.window().local_app_request(&Caller { origin: None, ..window(port) }));
+        assert!(!state.window().local_app_request(
             &Caller {
                 origin: None,
                 host: Some("evil.example:58123".into()),
                 ..window(port)
             }
         ));
-        assert!(!local_app_request(&state, &Caller { identity: None, ..window(port) }));
+        assert!(!state.window().local_app_request(&Caller { identity: None, ..window(port) }));
     }
 
     /// Through the real router and its guard, from a real loopback socket.

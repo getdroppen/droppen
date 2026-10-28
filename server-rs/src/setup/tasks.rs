@@ -84,8 +84,7 @@ use super::commands::{self, CommandTool, Entry};
 use super::detect::Detection;
 use super::runner::Invocation;
 use super::shell::{self, ShellSnapshot};
-use super::{Setup, SetupTask, TaskFailure, TaskKind, ToolId, ToolLogin};
-use crate::api::AppState;
+use super::{Setup, SetupState, SetupTask, TaskFailure, TaskKind, ToolId, ToolLogin};
 use crate::db::scope;
 use crate::http::error::ApiError;
 use crate::openapi_ext::Nullable;
@@ -711,7 +710,7 @@ fn resolve_executable(path: &Path) -> Option<&Path> {
 // ---------------------------------------------------------------- starting
 
 /// The CLI to run a sign-in with, or why there is none.
-fn found_cli(state: &AppState, tool: ToolId) -> Result<PathBuf, ApiError> {
+fn found_cli(state: &SetupState, tool: ToolId) -> Result<PathBuf, ApiError> {
     let probe = (state.setup.probe)(&state.setup.paths, state.setup.overlay());
     super::locate::locate(tool, &probe.search())
         .map(|found| PathBuf::from(found.path))
@@ -720,7 +719,7 @@ fn found_cli(state: &AppState, tool: ToolId) -> Result<PathBuf, ApiError> {
 
 /// Start an install, update or terminal sign-in for `tool` and return the
 /// running task.
-pub async fn start_in_terminal(state: &AppState, tool: ToolId, entry: &'static Entry) -> Result<SetupTask, ApiError> {
+pub async fn start_in_terminal(state: &SetupState, tool: ToolId, entry: &'static Entry) -> Result<SetupTask, ApiError> {
     let setup = state.setup.clone();
     let home = setup.paths.home.clone();
     let mut spec = match entry.kind {
@@ -751,7 +750,7 @@ pub async fn start_in_terminal(state: &AppState, tool: ToolId, entry: &'static E
     }));
     let (exited, on_exit) = tokio::sync::oneshot::channel::<()>();
     spec.on_exit = Some(Box::new({
-        let (setup, id, accounts) = (setup.clone(), id.clone(), state.drive.accounts.clone());
+        let (setup, id, accounts) = (setup.clone(), id.clone(), state.accounts.clone());
         move |code: i32| {
             let lines = redact(tail.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).lines(), &accounts);
             setup.record_exit(tool, &id, Some(code), lines);
@@ -846,7 +845,7 @@ impl Drop for SignInGuard {
 ///
 /// Run in a task of its own that the request only waits for (module docs):
 /// dropping the request drops the wait, not the sign-in.
-pub async fn login_with_api_key(state: &AppState, key: &str) -> Result<SetupTask, ApiError> {
+pub async fn login_with_api_key(state: &SetupState, key: &str) -> Result<SetupTask, ApiError> {
     let key = key.trim().to_string();
     if key.is_empty() || key.chars().count() > 512 || key.chars().any(|c| c.is_whitespace() || c.is_control()) {
         return Err(ApiError::bad_request("that does not look like an API key"));
@@ -858,7 +857,7 @@ pub async fn login_with_api_key(state: &AppState, key: &str) -> Result<SetupTask
     let id = record.id.clone();
     setup.begin(record, &state.terminals)?;
 
-    let accounts = state.drive.accounts.clone();
+    let accounts = state.accounts.clone();
     let run = tokio::spawn({
         let mut guard = SignInGuard {
             setup: setup.clone(),
@@ -895,7 +894,7 @@ pub async fn login_with_api_key(state: &AppState, key: &str) -> Result<SetupTask
 }
 
 /// `xcode-select --install`: Apple's own installer window, no terminal.
-pub async fn install_git(state: &AppState) -> bool {
+pub async fn install_git(state: &SetupState) -> bool {
     let invocation = Invocation::new("/usr/bin/xcode-select", &["--install"], super::detect::STEP_TIMEOUT);
     let output = state.setup.runner.run(invocation).await;
     state.setup.forget_detection();
@@ -905,6 +904,8 @@ pub async fn install_git(state: &AppState) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::AppState;
+    use gotcha::axum::extract::FromRef;
     use crate::setup::runner::fixture::Fixture;
     use crate::setup::runner::RunOutput;
     use crate::setup::tests::{guide, marker};
@@ -1055,7 +1056,7 @@ mod tests {
             .answer("claude auth status --json", RunOutput::exited(1, "{}", ""));
         let (home, state) = scene(fixture.clone()).await;
         let setup = state.setup.clone();
-        assert!(setup.report(&state, false).await.tools[0].found.0.is_none());
+        assert!(setup.report(&SetupState::from_ref(&state), false).await.tools[0].found.0.is_none());
 
         let record = running(ToolId::Claude, TaskKind::Install, "native");
         let id = record.id.clone();
@@ -1070,7 +1071,7 @@ mod tests {
         let settling = setup.task_view(ToolId::Claude, &state.terminals).expect("task");
         assert!(settling.running && !settling.failed, "an exit of 0 is not yet a success");
         setup.after_exit(ToolId::Claude, &id).await;
-        let report = setup.report(&state, false).await;
+        let report = setup.report(&SetupState::from_ref(&state), false).await;
         let claude = &report.tools[0];
         assert!(claude.found.0.is_some(), "found after the install");
         assert_eq!(claude.version.0.as_deref(), Some("2.1.300"));
@@ -1197,7 +1198,7 @@ mod tests {
         let (home, state) = scene(fixture.clone()).await;
         marker(&home.path().join("bin/codex"));
 
-        let task = login_with_api_key(&state, &format!("  {key}  ")).await.expect("ran");
+        let task = login_with_api_key(&SetupState::from_ref(&state), &format!("  {key}  ")).await.expect("ran");
         let login = fixture
             .asked()
             .into_iter()
@@ -1214,8 +1215,8 @@ mod tests {
         let serialized = serde_json::to_string(&task).unwrap();
         assert!(!serialized.contains("TESTKEY"), "the key is never echoed: {serialized}");
         assert!(task.tail.iter().any(|line| line.contains("[redacted]")), "{:?}", task.tail);
-        assert!(login_with_api_key(&state, "has a space").await.is_err());
-        assert!(login_with_api_key(&state, "").await.is_err());
+        assert!(login_with_api_key(&SetupState::from_ref(&state), "has a space").await.is_err());
+        assert!(login_with_api_key(&SetupState::from_ref(&state), "").await.is_err());
     }
 
     /// The request that carried the key goes away (the window closed, the
@@ -1234,7 +1235,7 @@ mod tests {
 
         let request = tokio::spawn({
             let state = state.clone();
-            async move { login_with_api_key(&state, "sk-proj-TESTKEY0123456789").await }
+            async move { login_with_api_key(&SetupState::from_ref(&state), "sk-proj-TESTKEY0123456789").await }
         });
         for _ in 0..200 {
             if fixture.lines().iter().any(|line| line.starts_with("codex login --with-api-key")) {
@@ -1437,7 +1438,7 @@ mod tests {
         } else {
             eprintln!("this disk tells case apart: the other-case spelling was not tried");
         }
-        let claude = &setup.report(&state, false).await.tools[0];
+        let claude = &setup.report(&SetupState::from_ref(&state), false).await.tools[0];
         assert_eq!(claude.found.0.as_ref().map(|found| found.via), Some(super::super::FoundVia::Picked));
     }
 
@@ -1467,7 +1468,7 @@ mod tests {
 
         let request = tokio::spawn({
             let state = state.clone();
-            async move { start_in_terminal(&state, ToolId::Claude, entry).await }
+            async move { start_in_terminal(&SetupState::from_ref(&state), ToolId::Claude, entry).await }
         });
         // Once the tool is claimed, the opening is under way: drop the request.
         for _ in 0..2000 {

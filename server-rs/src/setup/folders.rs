@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use gotcha::{api, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
-use crate::api::AppState;
+use super::SetupState;
 use crate::db::scope;
 use crate::http::created::Created;
 use crate::http::error::ApiError;
@@ -191,10 +191,10 @@ pub fn practice_folder_for(home: &Path, earlier: Option<&Path>) -> std::io::Resu
 
 /// The folders sessions ran in on this device, for step 03.
 #[api(id = "setup_recent_folders", group = "setup", summary = "List folders sessions ran in")]
-pub async fn recent_folders(State(state): State<AppState>) -> Json<RecentFolders> {
-    let bindings = state.drive.accounts.session_account_map().await;
+pub async fn recent_folders(State(state): State<SetupState>) -> Json<RecentFolders> {
+    let bindings = state.accounts.session_account_map().await;
     let sessions = crate::sessions::list_and_filter(
-        &state.drive.paths,
+        &state.paths,
         &bindings,
         &crate::sessions::DriverStates::default(),
         None,
@@ -210,8 +210,8 @@ pub async fn recent_folders(State(state): State<AppState>) -> Json<RecentFolders
 /// An empty practice folder for the first session: the one made last while it
 /// is still empty, else a new one.
 #[api(id = "setup_practice_folder", group = "setup", summary = "Make a practice folder")]
-pub async fn practice_folder(State(state): State<AppState>) -> Result<Created<PracticeFolder>, ApiError> {
-    let home = state.drive.paths.home.clone();
+pub async fn practice_folder(State(state): State<SetupState>) -> Result<Created<PracticeFolder>, ApiError> {
+    let home = state.paths.home.clone();
     let db = state.setup.db();
     let earlier = db.kv_get(scope::SETUP, PRACTICE_KEY).map(PathBuf::from);
     let made = tokio::task::spawn_blocking(move || practice_folder_for(&home, earlier.as_deref()))
@@ -226,6 +226,7 @@ pub async fn practice_folder(State(state): State<AppState>) -> Result<Created<Pr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gotcha::axum::extract::FromRef;
 
     fn session(cwd: &str, source: Source, scope: SessionScope, updated_at: &str) -> SessionSummary {
         let mut row: SessionSummary = serde_json::from_value(serde_json::json!({
@@ -323,11 +324,11 @@ mod tests {
     async fn the_route_remembers_the_practice_folder_it_made() {
         let home = tempfile::tempdir().expect("tempdir");
         let state = crate::api::test_support::state(home.path()).await;
-        let first = practice_folder(State(state.clone())).await.expect("made").0.path;
-        let again = practice_folder(State(state.clone())).await.expect("again").0.path;
+        let first = practice_folder(State(SetupState::from_ref(&state))).await.expect("made").0.path;
+        let again = practice_folder(State(SetupState::from_ref(&state))).await.expect("again").0.path;
         assert_eq!(again, first, "still empty: the same folder");
         std::fs::write(Path::new(&first).join("a.txt"), "x").expect("write");
-        let next = practice_folder(State(state)).await.expect("next").0.path;
+        let next = practice_folder(State(SetupState::from_ref(&state))).await.expect("next").0.path;
         assert_ne!(next, first);
         assert!(next.ends_with("first-session-2"), "{next}");
     }
