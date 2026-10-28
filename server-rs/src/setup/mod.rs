@@ -57,12 +57,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use gotcha::{api, Json, Schematic, State};
+use gotcha::axum::extract::FromRef;
+use gotcha::{api, GotchaRouter, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
-use crate::api::{ApiRouter, AppState};
 use crate::db::scope;
-use crate::http::app_window::Caller;
+use crate::http::app_window::{AppWindow, Caller};
 use crate::http::created::Created;
 use crate::http::error::ApiError;
 use crate::http::extract::{ApiJson, ApiPath};
@@ -436,7 +436,8 @@ struct ShellState {
     adopted: Option<PathRead>,
 }
 
-/// The guide's state: one per server, on [`AppState::setup`].
+/// The guide's state: one per server, which its routes reach through
+/// [`SetupState`].
 pub struct Setup {
     paths: Arc<Paths>,
     runner: Arc<dyn Runner>,
@@ -649,7 +650,7 @@ impl Setup {
     }
 
     /// The whole report for one request.
-    pub async fn report(&self, state: &AppState, can_install: bool) -> ToolsReport {
+    pub async fn report(&self, state: &SetupState, can_install: bool) -> ToolsReport {
         let report = self.report_without_tasks(state, can_install).await;
         ToolsReport {
             tools: report
@@ -664,18 +665,18 @@ impl Setup {
         }
     }
 
-    async fn report_without_tasks(&self, state: &AppState, can_install: bool) -> ToolsReport {
+    async fn report_without_tasks(&self, state: &SetupState, can_install: bool) -> ToolsReport {
         if state.desktop_app {
             self.ensure_shell_read().await;
         }
         let detection = self.detection(false).await;
         let shell = self.shell_snapshot().unwrap_or_default();
-        let accounts = state.drive.accounts.list().await;
+        let accounts = state.accounts.list().await;
         let mut tools = Vec::with_capacity(detection.tools.len());
         for probe in &detection.tools {
             let provider = probe.id.provider();
             let mine: Vec<_> = accounts.iter().filter(|account| account.provider == provider).collect();
-            let default_id = state.drive.accounts.default_account_id(provider).await;
+            let default_id = state.accounts.default_account_id(provider).await;
             let default_label = default_id.and_then(|id| mine.iter().find(|account| account.id == id).map(|account| account.label.clone()));
             let droppen_accounts = DroppenAccounts {
                 total: mine.len() as u32,
@@ -715,9 +716,34 @@ fn tool_of(raw: &str) -> Result<ToolId, ApiError> {
     ToolId::parse(raw).ok_or_else(|| ApiError::bad_request("unknown_tool"))
 }
 
+/// What the guide's routes use of the server's state.
+#[derive(Clone)]
+pub struct SetupState {
+    /// The guide: tool detection, the children's `PATH`, its tasks and the
+    /// port cell the desktop-window gate reads.
+    pub setup: Arc<Setup>,
+    /// Every live web terminal; an install or a sign-in runs in one.
+    pub terminals: Arc<crate::terminals::Registry>,
+    /// The stored accounts, which count as a tool's login.
+    pub accounts: Arc<crate::accounts::store::AccountsStore>,
+    /// The instance's paths: the home directory and the sessions it owns.
+    pub paths: Arc<Paths>,
+    /// Whether the Droppen desktop app runs this server.
+    pub desktop_app: bool,
+}
+crate::http::substate!(SetupState);
+
+impl SetupState {
+    /// The desktop app's window as this server knows it: the guide's port cell
+    /// and `desktop_app`.
+    fn window(&self) -> AppWindow {
+        AppWindow::new(self.setup.listen_port_cell(), self.desktop_app)
+    }
+}
+
 /// Which AI tools this device has, and whether each is ready.
 #[api(id = "setup_tools", group = "setup", summary = "Report which AI tools are ready")]
-pub async fn tools_report(State(state): State<AppState>, #[api(skip)] caller: Caller) -> Json<ToolsReport> {
+pub async fn tools_report(State(state): State<SetupState>, #[api(skip)] caller: Caller) -> Json<ToolsReport> {
     let can_install = state.window().local_app_request(&caller);
     Json(state.setup.report(&state, can_install).await)
 }
@@ -729,7 +755,7 @@ pub async fn tools_report(State(state): State<AppState>, #[api(skip)] caller: Ca
 /// but the app's own window to make.
 #[api(id = "setup_rescan_tools", group = "setup", summary = "Look for the AI tools again")]
 pub async fn rescan_tools(
-    State(state): State<AppState>,
+    State(state): State<SetupState>,
     #[api(skip)] caller: Caller,
     ApiJson(body): ApiJson<RescanRequest>,
 ) -> Result<Json<ToolsReport>, ApiError> {
@@ -741,12 +767,12 @@ pub async fn rescan_tools(
 
 /// Every command the guide can run, exactly as it would run it.
 #[api(id = "setup_commands", group = "setup", summary = "List the install and sign-in commands")]
-pub async fn list_commands(State(state): State<AppState>) -> Json<commands::SetupCommandList> {
+pub async fn list_commands(State(state): State<SetupState>) -> Json<commands::SetupCommandList> {
     Json(commands::list(&*state.setup.detection(false).await))
 }
 
 /// Start a whitelisted install or update in a terminal.
-async fn start_method(state: &AppState, tool: &str, kind: TaskKind, method: &str) -> Result<Created<SetupTask>, ApiError> {
+async fn start_method(state: &SetupState, tool: &str, kind: TaskKind, method: &str) -> Result<Created<SetupTask>, ApiError> {
     let tool = tool_of(tool)?;
     let entry = commands::find(tool.into(), kind, method).ok_or_else(|| ApiError::bad_request("unknown_method"))?;
     commands::availability(entry, &*state.setup.detection(false).await).map_err(tasks::unavailable)?;
@@ -756,7 +782,7 @@ async fn start_method(state: &AppState, tool: &str, kind: TaskKind, method: &str
 /// Install a tool: the whitelisted command for `method`, in a terminal.
 #[api(id = "setup_install_tool", group = "setup", summary = "Install an AI tool")]
 pub async fn install_tool(
-    State(state): State<AppState>,
+    State(state): State<SetupState>,
     #[api(skip)] caller: Caller,
     ApiPath(tool): ApiPath<String>,
     ApiJson(body): ApiJson<ToolMethodRequest>,
@@ -768,7 +794,7 @@ pub async fn install_tool(
 /// Update a tool: the whitelisted command for `method`, in a terminal.
 #[api(id = "setup_update_tool", group = "setup", summary = "Update an AI tool")]
 pub async fn update_tool(
-    State(state): State<AppState>,
+    State(state): State<SetupState>,
     #[api(skip)] caller: Caller,
     ApiPath(tool): ApiPath<String>,
     ApiJson(body): ApiJson<ToolMethodRequest>,
@@ -781,7 +807,7 @@ pub async fn update_tool(
 /// `apikey` mode — with the key on its standard input.
 #[api(id = "setup_login_tool", group = "setup", summary = "Sign an AI tool in")]
 pub async fn login_tool(
-    State(state): State<AppState>,
+    State(state): State<SetupState>,
     #[api(skip)] caller: Caller,
     ApiPath(tool): ApiPath<String>,
     ApiJson(body): ApiJson<ToolLoginRequest>,
@@ -800,14 +826,14 @@ pub async fn login_tool(
 
 /// Is it signed in yet? One cheap status check, for polling during a sign-in.
 #[api(id = "setup_tool_login", group = "setup", summary = "Check an AI tool's sign-in")]
-pub async fn tool_login(State(state): State<AppState>, ApiPath(tool): ApiPath<String>) -> Result<Json<ToolLogin>, ApiError> {
+pub async fn tool_login(State(state): State<SetupState>, ApiPath(tool): ApiPath<String>) -> Result<Json<ToolLogin>, ApiError> {
     Ok(Json(state.setup.poll_login(tool_of(&tool)?).await))
 }
 
 /// Ask macOS for its command line tools (git): Apple's own installer window.
 #[api(id = "setup_install_git", group = "setup", summary = "Install git (Apple's command line tools)")]
 pub async fn install_git(
-    State(state): State<AppState>,
+    State(state): State<SetupState>,
     #[api(skip)] caller: Caller,
 ) -> Result<Created<GitInstallStarted>, ApiError> {
     state.window().app_caller(&caller)?;
@@ -822,7 +848,7 @@ pub async fn install_git(
 /// directory joins every child's `PATH`, now and after a restart.
 #[api(id = "setup_use_tool", group = "setup", summary = "Use an AI tool found elsewhere")]
 pub async fn use_tool(
-    State(state): State<AppState>,
+    State(state): State<SetupState>,
     #[api(skip)] caller: Caller,
     ApiPath(tool): ApiPath<String>,
     ApiJson(body): ApiJson<ToolUseRequest>,
@@ -833,22 +859,28 @@ pub async fn use_tool(
     Ok(Json(state.setup.report(&state, true).await))
 }
 
-/// Register the guide's routes.
-pub fn routes(router: ApiRouter) -> ApiRouter {
-    router
-        .get("/api/setup/tools", tools_report)
-        .post("/api/setup/tools/rescan", rescan_tools)
-        .get("/api/setup/commands", list_commands)
-        .post("/api/setup/tools/{tool}/install", install_tool)
-        .post("/api/setup/tools/{tool}/update", update_tool)
-        .post("/api/setup/tools/{tool}/login", login_tool)
-        .get("/api/setup/tools/{tool}/login", tool_login)
-        .post("/api/setup/tools/{tool}/use", use_tool)
-        .post("/api/setup/git/install", install_git)
-        .get("/api/setup/progress", progress::get_progress)
-        .put("/api/setup/progress", progress::put_progress)
-        .get("/api/setup/projects/recent", folders::recent_folders)
-        .post("/api/setup/practice-folder", folders::practice_folder)
+impl SetupState {
+    /// Register the guide's routes.
+    pub fn routes<S>(router: GotchaRouter<S>) -> GotchaRouter<S>
+    where
+        S: Clone + Send + Sync + 'static,
+        SetupState: FromRef<S>,
+    {
+        router
+            .get("/api/setup/tools", tools_report)
+            .post("/api/setup/tools/rescan", rescan_tools)
+            .get("/api/setup/commands", list_commands)
+            .post("/api/setup/tools/{tool}/install", install_tool)
+            .post("/api/setup/tools/{tool}/update", update_tool)
+            .post("/api/setup/tools/{tool}/login", login_tool)
+            .get("/api/setup/tools/{tool}/login", tool_login)
+            .post("/api/setup/tools/{tool}/use", use_tool)
+            .post("/api/setup/git/install", install_git)
+            .get("/api/setup/progress", progress::get_progress)
+            .put("/api/setup/progress", progress::put_progress)
+            .get("/api/setup/projects/recent", folders::recent_folders)
+            .post("/api/setup/practice-folder", folders::practice_folder)
+    }
 }
 
 /// Everything gotcha cannot say about the guide's routes.
@@ -1092,7 +1124,7 @@ pub(crate) mod tests {
 
         let mut state = crate::api::test_support::state(home.path()).await;
         state.setup = guide(home.path(), fixture.clone(), Some(PathRead::Timeout));
-        let report = state.setup.report(&state, false).await;
+        let report = state.setup.report(&SetupState::from_ref(&state), false).await;
         assert_eq!(
             report.tools.iter().map(|tool| tool.id).collect::<Vec<_>>(),
             [ToolId::Claude, ToolId::Codex]
@@ -1131,14 +1163,14 @@ pub(crate) mod tests {
             .await
             .expect("default");
         state.desktop_app = true;
-        let report = state.setup.report(&state, false).await;
+        let report = state.setup.report(&SetupState::from_ref(&state), false).await;
         let claude = &report.tools[0];
         assert!(claude.ready, "a verified Droppen account is a way to be ready");
         assert_eq!(claude.droppen_accounts.total, 1);
         assert_eq!(claude.droppen_accounts.default_label.0.as_deref(), Some("work gateway"));
         assert!(claude.shell_key, "ANTHROPIC_API_KEY is set in the login shell");
         assert!(!report.tools[1].shell_key);
-        let _ = state.setup.report(&state, false).await;
+        let _ = state.setup.report(&SetupState::from_ref(&state), false).await;
         assert_eq!(
             fixture.lines().iter().filter(|line| line.starts_with("zsh")).count(),
             1,

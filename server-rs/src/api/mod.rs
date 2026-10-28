@@ -427,7 +427,7 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
     let router = crate::schedule::ScheduleState::routes(router);
     let router = crate::screens::ScreensState::routes(router);
     let router = crate::selfupdate::SelfUpdateState::routes(router);
-    let router = crate::setup::routes(router);
+    let router = crate::setup::SetupState::routes(router);
     let router = crate::stats::StatsState::routes(router);
     let router = crate::terminals::routes(router);
     router

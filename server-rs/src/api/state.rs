@@ -19,6 +19,7 @@ use crate::push::PushState;
 use crate::schedule::ScheduleState;
 use crate::screens::ScreensState;
 use crate::selfupdate::SelfUpdateState;
+use crate::setup::SetupState;
 use crate::stats::StatsState;
 
 impl AppState {
@@ -124,6 +125,18 @@ impl FromRef<AppState> for ScheduleState {
             drive: state.drive.clone(),
             global: state.global.clone(),
             cancel: state.cancel.clone(),
+        }
+    }
+}
+
+impl FromRef<AppState> for SetupState {
+    fn from_ref(state: &AppState) -> Self {
+        Self {
+            setup: state.setup.clone(),
+            terminals: state.terminals.clone(),
+            accounts: state.drive.accounts.clone(),
+            paths: state.drive.paths.clone(),
+            desktop_app: state.desktop_app,
         }
     }
 }
