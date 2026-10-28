@@ -7158,7 +7158,7 @@ mod tests {
             questions: Arc::new(crate::inject::questions::Questions::new(crate::db::at(paths.instance_db()))),
             accounts: Arc::new(crate::accounts::store::AccountsStore::new(paths.clone())),
             quota: Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone())),
-            server: crate::sessions::ServerId::local(&paths),
+            server: crate::identity::ServerId::local(&paths),
             codex_servers: Mutex::new(HashMap::new()),
             acp_servers: Mutex::new(HashMap::new()),
             acp_options: Mutex::new(HashMap::new()),

@@ -653,7 +653,7 @@ impl FinishExt for Vec<SessionSummary> {
 async fn apply_ownership(paths: &Paths, summaries: &mut Vec<SessionSummary>, claims: Claims) {
     let owned = owned_sessions::read(paths).await;
     let me = paths.instance();
-    let local = super::ServerId::local(paths);
+    let local = crate::identity::ServerId::local(paths);
     summaries.retain_mut(|summary| {
         // Named before the verdict, and for every row that survives it: a thread
         // this instance recorded says the server that recorded it, and the

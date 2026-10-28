@@ -1,6 +1,6 @@
 //! Who this server is, in a form a rename cannot change.
 //!
-//! A server is named by its instance ([`crate::sessions::ServerId`]), and a name
+//! A server is named by its instance ([`ServerId`]), and a name
 //! is the right handle for almost everything: it is a path segment, it is in
 //! `APP_INSTANCE`, and it is what a person says when they mean "the one on the
 //! laptop". What a name cannot do is *prove* anything. Two machines may both be
@@ -24,14 +24,60 @@
 //! database moves to a new machine with the user's home directory. The name is
 //! kept current, because it is the instance's name and the instance can be
 //! renamed; a stale one would be a second, worse answer to a question
-//! [`crate::sessions::ServerId::local`] already answers.
+//! [`ServerId::local`] already answers.
 //!
 //! Per instance, in [`crate::paths::Paths::instance_db`], because a server
 //! *is* an instance: two servers on one machine are two servers, and one row in
 //! the machine-wide database could not say that.
 
 use crate::paths::Paths;
-use crate::sessions::ServerId;
+
+/// The name of one remote-hand server.
+///
+/// A newtype rather than a `String` because the name is not free-form: it is
+/// the instance name, it becomes a path segment under the data directory, and
+/// [`crate::instance::valid_name`] is the one definition of what may be one.
+/// Validating on construction means every later use — a map key, a scoped
+/// session key, a field on `Settings` — is holding something that already
+/// passed.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ServerId(String);
+
+impl ServerId {
+    /// A server id, or `None` if [`crate::instance::valid_name`] refuses it.
+    pub fn new(name: &str) -> Option<Self> {
+        crate::instance::valid_name(name).then(|| Self(name.to_string()))
+    }
+
+    /// This process' own server, named by the instance its paths are rooted at.
+    ///
+    /// A running server's instance name has already been through
+    /// [`crate::instance::InstanceDirs`], so the validation here cannot fail in
+    /// production. The fallback exists for the synthetic `Paths` a unit test
+    /// builds, and names the default server rather than panicking — the keys it
+    /// would appear in are in-memory ones that die with the test.
+    pub fn local(paths: &Paths) -> Self {
+        Self::new(paths.instance()).unwrap_or_default()
+    }
+
+    /// The name, as it is spelled everywhere.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Default for ServerId {
+    /// The server a process with nothing to say about instances is.
+    fn default() -> Self {
+        Self(crate::instance::DEFAULT_INSTANCE.to_string())
+    }
+}
+
+impl std::fmt::Display for ServerId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
 
 /// One server's durable identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -161,5 +207,27 @@ mod tests {
         let a = ensure(&Paths::for_instance(dir.path().to_path_buf(), "a")).expect("minted");
         let b = ensure(&Paths::for_instance(dir.path().to_path_buf(), "b")).expect("minted");
         assert_ne!(a.uuid, b.uuid);
+    }
+
+    /// A server id is an instance name, and nothing else.
+    #[test]
+    fn a_server_id_admits_exactly_what_an_instance_name_does() {
+        for good in ["default", "alice", "a", "ci-2", "0", &"x".repeat(32)] {
+            assert_eq!(ServerId::new(good).as_ref().map(ServerId::as_str), Some(good), "{good:?}");
+            assert!(crate::instance::valid_name(good));
+        }
+        for bad in ["", "Default", "with space", ".", "..", "a/b", "under_score", &"x".repeat(33)] {
+            assert!(ServerId::new(bad).is_none(), "{bad:?} must be refused");
+            assert!(!crate::instance::valid_name(bad), "{bad:?}");
+        }
+    }
+
+    /// The local server is the instance its path set is rooted at.
+    #[test]
+    fn the_local_server_is_the_instance_the_paths_name() {
+        let home = std::path::PathBuf::from("/home/someone");
+        assert_eq!(ServerId::local(&Paths::for_instance(home.clone(), "ci-1")).as_str(), "ci-1");
+        assert_eq!(ServerId::local(&Paths::new(home)).as_str(), crate::instance::DEFAULT_INSTANCE);
+        assert_eq!(ServerId::default().as_str(), crate::instance::DEFAULT_INSTANCE);
     }
 }

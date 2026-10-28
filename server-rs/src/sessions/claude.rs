@@ -57,7 +57,7 @@ pub fn scope_of(root: ClaudeRoot) -> SessionScope {
 /// So there is no early return on an empty registry any more: the rows still
 /// have to be told which server is answering for them.
 pub(super) async fn mark_owned(paths: &Paths, summaries: &mut [SessionSummary]) {
-    let local = super::ServerId::local(paths);
+    let local = crate::identity::ServerId::local(paths);
     let owned = super::owned_sessions::read(paths).await;
     for summary in summaries {
         match owned.server_of(Source::Claude, &summary.id) {

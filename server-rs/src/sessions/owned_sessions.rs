@@ -63,8 +63,9 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use super::{ServerId, Source};
+use super::Source;
 use crate::db::Db;
+use crate::identity::ServerId;
 use crate::paths::{ClaudeRoot, Paths};
 
 /// The ids one instance claims, per CLI, each with the server that made it.

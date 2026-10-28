@@ -449,7 +449,7 @@ fn settings_frame(paths: &Paths, instance: &str, started_at: &str, plugins: &[dr
         "instance": instance,
         // The same name, as a session reference scopes it. See
         // `crate::sessions::Settings::server_id`.
-        "serverId": crate::sessions::ServerId::local(paths).to_string(),
+        "serverId": crate::identity::ServerId::local(paths).to_string(),
         "hostname": crate::http::hostname(),
         "platform": crate::http::node_platform(),
         "nodeVersion": crate::http::RUNTIME_VERSION,

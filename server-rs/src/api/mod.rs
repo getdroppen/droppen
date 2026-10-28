@@ -252,7 +252,7 @@ pub async fn settings(State(state): State<AppState>, #[api(skip)] who: crate::au
     };
     Json(Settings {
         instance: state.instance.name().to_string(),
-        server_id: crate::sessions::ServerId::local(paths).to_string(),
+        server_id: crate::identity::ServerId::local(paths).to_string(),
         hostname: hostname(),
         platform: node_platform().to_string(),
         // The field name is the contract's; the value is this server's runtime.

@@ -120,12 +120,6 @@
       "edges": [
         "db -> sessions"
       ]
-    },
-    {
-      "why": "identity names this server with sessions::ServerId.",
-      "edges": [
-        "identity -> sessions"
-      ]
     }
   ]
 }

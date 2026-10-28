@@ -848,7 +848,7 @@ pub async fn attach_session_feed_with(
     // The registry is this process' own memory, so the key carries the server:
     // see `crate::sessions::SessionRef::scoped_key`. Nothing here is written
     // down or sent anywhere — the frames a socket receives never contain it.
-    let key = crate::sessions::SessionRef::new(crate::sessions::ServerId::local(&drive.paths), source, id).scoped_key();
+    let key = crate::sessions::SessionRef::new(crate::identity::ServerId::local(&drive.paths), source, id).scoped_key();
 
     let (rx, latest, latest_draft) = {
         let mut feeds = registry.feeds.lock().expect("feed registry poisoned");
