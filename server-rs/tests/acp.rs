@@ -487,7 +487,11 @@ async fn models_and_efforts_come_from_the_agent_and_are_set_before_the_turn() {
             &json!({"text": "again", "model": "openrouter:vendor/big", "effort": "low"}),
         )
         .await;
-    let detail = wait_for(&server, &id, "the second turn", |d| texts(d).len() >= 4 && finished(d)).await;
+    // A detail reads the session's state, the choice with it, before its
+    // items: one answer can carry this turn's items and the first turn's end.
+    // Once this turn's items are in, a later answer's state is this turn's.
+    wait_for(&server, &id, "the second turn's items", |d| texts(d).len() == 10).await;
+    let detail = wait_for(&server, &id, "the second turn", finished).await;
     assert_eq!(detail["cliChoice"]["effort"], "low");
     assert_eq!(log_calls()[before..], ["session/set_config_option", "session/prompt"]);
     // A switched session is nobody else's default: a new one still starts on the agent's.
