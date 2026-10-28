@@ -370,7 +370,7 @@ pub(crate) async fn model_ids(state: &AppState, source: Source, account_id: Opti
 /// With the models, how many were left out: see [`ModelList::hidden`].
 async fn acp_models(state: &AppState, agent: &str) -> (Vec<ModelInfo>, ModelListSource, u32) {
     use crate::acp::{category, option_for};
-    let Some(agent) = state.paths.acp_agent(agent) else {
+    let Some(agent) = crate::acp_agent::AcpAgentRegistry::of(&state.paths).get(agent) else {
         return (Vec::new(), ModelListSource::Fallback, 0);
     };
     let options = match state.drive.injections.acp_options(&agent).await {

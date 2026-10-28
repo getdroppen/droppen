@@ -54,7 +54,7 @@ use std::process::Stdio;
 
 use super::*;
 use crate::acp::{category, option_for, ConfigOption, InitializeResponse};
-use crate::acp_agent::{AcpAgent, AcpCheck, AcpCheckState};
+use crate::acp_agent::{AcpAgent, AcpAgentRegistry, AcpCheck, AcpCheckState};
 use crate::sessions::acp_transcript::{agent_dir, has_conversation, locate, read_header, record, Translator};
 use client::Client;
 use conn::Conn;
@@ -76,10 +76,10 @@ const INSTALL_HINT: &str = "Check its executable and arguments in Settings";
 /// How long a check waits for `initialize` to be answered.
 const CHECK_TIMEOUT: Duration = Duration::from_secs(30);
 
-impl Paths {
+impl AcpAgentRegistry {
     /// The configured agent `id`, or why a new session cannot run on it.
-    fn configured_acp_agent(&self, id: &str) -> Result<AcpAgent, InjectError> {
-        self.acp_agent(id)
+    fn configured(&self, id: &str) -> Result<AcpAgent, InjectError> {
+        self.get(id)
             .ok_or_else(|| InjectError::message(format!("no ACP agent \"{id}\" is configured; add it in Settings")))
     }
 }
@@ -374,7 +374,7 @@ impl InjectionRegistry {
                 agent.name
             ));
         }
-        let removed = self.paths.remove_acp_agent(&agent.id);
+        let removed = AcpAgentRegistry::of(&self.paths).remove(&agent.id);
         // An agent configured again under this id is another program, maybe:
         // its sessions start it afresh, and what it offers is asked again.
         self.renew_acp_processes(&agent.id);
@@ -388,8 +388,9 @@ impl InjectionRegistry {
     /// a rotated key, say, reaches every session's next process.
     pub async fn reconfigure_acp_agent(&self, id: &str, patch: &crate::acp_agent::AcpAgentUpdate) -> Result<AcpAgent, String> {
         let _gate = self.spawn_gate.lock().await;
-        let before = self.paths.acp_agent(id);
-        let after = self.paths.update_acp_agent(id, patch)?;
+        let agents = AcpAgentRegistry::of(&self.paths);
+        let before = agents.get(id);
+        let after = agents.update(id, patch)?;
         if before.is_none_or(|before| !before.launches_like(&after)) {
             self.renew_acp_processes(id);
         }
@@ -482,7 +483,7 @@ impl InjectionRegistry {
         // The agent is read under the gate, which its removal holds too
         // ([`InjectionRegistry::remove_acp_agent`]).
         let gate = self.spawn_gate.lock().await;
-        let agent = self.paths.configured_acp_agent(agent)?;
+        let agent = AcpAgentRegistry::of(&self.paths).configured(agent)?;
         check_options(&agent, options)?;
         let message = message(text, options);
         // Checked before anything starts, against what the agent last offered:
@@ -507,9 +508,8 @@ impl InjectionRegistry {
             .await
             .ok_or_else(|| InjectError::message("ACP session not found"))?;
         let gate = self.spawn_gate.lock().await;
-        let agent = self
-            .paths
-            .acp_agent(&agent_id)
+        let agent = AcpAgentRegistry::of(&self.paths)
+            .get(&agent_id)
             .ok_or_else(|| InjectError::message(crate::acp_agent::removed(&agent_id)))?;
         check_options(&agent, options)?;
         let message = message(text, options);
@@ -589,7 +589,7 @@ impl InjectionRegistry {
         let (agent_id, from) = locate(&self.paths, id)
             .await
             .ok_or_else(|| ArchiveError("cannot archive the ACP session: it is gone".to_string()))?;
-        let name = self.paths.acp_agent(&agent_id).map_or(agent_id.clone(), |agent| agent.name);
+        let name = AcpAgentRegistry::of(&self.paths).get(&agent_id).map_or(agent_id.clone(), |agent| agent.name);
         let busy = || {
             ArchiveError(format!(
                 "{name} is running or has queued messages; stop it and clear the queue before archiving"
@@ -910,7 +910,7 @@ mod tests {
             args: Some(vec!["--acp".to_string(), "--stdio".to_string()]).into(),
             env: Some(env.to_string()).into(),
         };
-        paths.update_acp_agent(id, &patch).expect("configured");
+        AcpAgentRegistry::of(paths).update(id, &patch).expect("configured");
     }
 
     /// Whether the stand-in in `workdir` was sent `method`.
@@ -1024,7 +1024,7 @@ mod tests {
             .expect("not held up")
             .expect("sent");
 
-        let hangs = state.paths.acp_agent("hangs").expect("configured");
+        let hangs = AcpAgentRegistry::of(&state.paths).get("hangs").expect("configured");
         let refused = injections.remove_acp_agent(&hangs).await.expect_err("it is starting");
         assert!(refused.contains("running a turn or has a message waiting"), "{refused}");
         assert!(!starting.is_finished());

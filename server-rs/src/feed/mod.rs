@@ -420,7 +420,7 @@ pub async fn load_session_state(drive: &Arc<Drive>, source: Source, id: &str) ->
     crate::sessions::pins::apply(paths, std::slice::from_mut(&mut summary));
     // An ACP session whose agent was removed cannot be continued, whatever is
     // still running for it.
-    let (can_send, send_block_reason) = match paths.acp_send_block(&summary) {
+    let (can_send, send_block_reason) = match crate::acp_agent::AcpAgentRegistry::of(paths).send_block(&summary) {
         Some(reason) => (false, Some(reason)),
         None => sendability(source, summary.scope, summary.status, running, resident.is_some()),
     };
