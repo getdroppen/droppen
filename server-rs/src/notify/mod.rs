@@ -52,18 +52,18 @@ pub mod store;
 pub mod token;
 
 use std::collections::HashMap;
-use std::sync::{LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
-use gotcha::axum::extract::FromRequestParts;
+use gotcha::axum::extract::{FromRef, FromRequestParts};
 use gotcha::axum::http::request::Parts;
 use gotcha::axum::http::{header, HeaderMap, Method, StatusCode};
-use gotcha::{api, Json, Schematic, State};
+use gotcha::{api, GotchaRouter, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
-use crate::api::{ApiRouter, AppState, SendResult};
 use crate::http::error::ApiError;
 use crate::http::extract::ApiJson;
+use crate::http::SendResult;
 use crate::openapi_ext::{ExtraResponses, Optional};
 use crate::paths::Paths;
 use crate::sessions::{SessionSummary, Source};
@@ -342,16 +342,27 @@ fn tidy(raw: &str, cap: usize) -> String {
     flat.chars().take(cap.saturating_sub(1)).collect::<String>() + "\u{2026}"
 }
 
+/// What the notify routes use of the server's state: where the channel is
+/// stored, and the instance's name for the test message.
+#[derive(Clone)]
+pub struct NotifyState {
+    /// The instance's paths, under which the channel and the sessions live.
+    pub paths: Arc<Paths>,
+    /// The instance this server owns, whose name the test message carries.
+    pub instance: Arc<crate::instance::InstanceDirs>,
+}
+crate::http::substate!(NotifyState);
+
 /// Where the stored configuration currently points.
 #[api(id = "notify_config", group = "notify", summary = "Read the notification channel")]
-pub async fn notify_config(State(state): State<AppState>) -> Json<NotifyConfigInfo> {
+pub async fn notify_config(State(state): State<NotifyState>) -> Json<NotifyConfigInfo> {
     Json(store::read(state.paths.as_ref()).await.info())
 }
 
 /// Change it. Every field is optional; an empty string clears one.
 #[api(id = "update_notify_config", group = "notify", summary = "Configure the notification channel")]
 pub async fn update_notify_config(
-    State(state): State<AppState>,
+    State(state): State<NotifyState>,
     ApiJson(body): ApiJson<NotifyConfigUpdate>,
 ) -> Result<Json<NotifyConfigInfo>, ApiError> {
     // Normalised — and refused — before anything is written, so a mistyped
@@ -393,7 +404,7 @@ pub async fn update_notify_config(
 /// The only way to find out whether a device key is right is to use it, and
 /// finding out by waiting for an agent to be blocked is not finding out.
 #[api(id = "notify_test", group = "notify", summary = "Send a test notification")]
-pub async fn notify_test(State(state): State<AppState>) -> Result<Json<SendResult>, ApiError> {
+pub async fn notify_test(State(state): State<NotifyState>) -> Result<Json<SendResult>, ApiError> {
     let stored = store::read(state.paths.as_ref()).await;
     if stored.endpoint.is_empty() {
         return Err(ApiError::bad_request("no notification endpoint is configured"));
@@ -415,7 +426,7 @@ pub async fn notify_test(State(state): State<AppState>) -> Result<Json<SendResul
 /// The route an agent's `rh-notify` calls.
 #[api(id = "notify", group = "notify", summary = "Send a notification from a session")]
 pub async fn notify(
-    State(state): State<AppState>,
+    State(state): State<NotifyState>,
     // `#[api(skip)]` for [`crate::auth::Identity`]'s reason: the caller is
     // proved by a header the guard has already read, and gotcha would otherwise
     // ask this parameter for an OpenAPI contribution it has none of.
@@ -474,13 +485,19 @@ pub async fn notify(
     Ok(Json(SendResult { accepted: true }))
 }
 
-/// Register this subsystem's routes.
-pub fn routes(router: ApiRouter) -> ApiRouter {
-    router
-        .get("/api/notify/config", notify_config)
-        .put("/api/notify/config", update_notify_config)
-        .post("/api/notify/test", notify_test)
-        .post(NOTIFY_PATH, notify)
+impl NotifyState {
+    /// Register this subsystem's routes.
+    pub fn routes<S>(router: GotchaRouter<S>) -> GotchaRouter<S>
+    where
+        S: Clone + Send + Sync + 'static,
+        NotifyState: FromRef<S>,
+    {
+        router
+            .get("/api/notify/config", notify_config)
+            .put("/api/notify/config", update_notify_config)
+            .post("/api/notify/test", notify_test)
+            .post(NOTIFY_PATH, notify)
+    }
 }
 
 /// Everything gotcha cannot express about those routes.

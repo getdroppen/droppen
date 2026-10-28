@@ -44,14 +44,15 @@ use std::time::Duration;
 
 use gotcha::axum::body::Body;
 use gotcha::axum::http::{Request, StatusCode};
-use gotcha::{api, Json, Schematic, State};
+use gotcha::axum::extract::FromRef;
+use gotcha::{api, GotchaRouter, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 use tokio::sync::oneshot;
 
-use crate::api::{ApiRouter, AppState, SendResult};
 use crate::http::error::ApiError;
 use crate::http::extract::{ApiJson, ApiPath};
+use crate::http::SendResult;
 use crate::instance::InstanceDirs;
 use crate::openapi_ext::ExtraResponses;
 use crate::paths::Paths;
@@ -1018,15 +1019,23 @@ fn log_tail(path: &Path) -> String {
     characters[characters.len().saturating_sub(LOG_TAIL)..].iter().collect()
 }
 
+/// What the app routes use of the server's state: the registry of running apps.
+#[derive(Clone)]
+pub struct AppsState {
+    /// Every running embedded app.
+    pub apps: Arc<Registry>,
+}
+crate::http::substate!(AppsState);
+
 /// Running embedded app instances.
 #[api(id = "list_apps", group = "apps", summary = "List apps")]
-pub async fn list_apps(State(state): State<AppState>) -> Json<AppList> {
+pub async fn list_apps(State(state): State<AppsState>) -> Json<AppList> {
     Json(AppList { apps: state.apps.list() })
 }
 
 /// Start an app instance and wait for it to come up.
 #[api(id = "create_app", group = "apps", summary = "Create an app")]
-pub async fn create_app(State(state): State<AppState>, ApiJson(body): ApiJson<AppCreate>) -> Result<Json<AppInfo>, ApiError> {
+pub async fn create_app(State(state): State<AppsState>, ApiJson(body): ApiJson<AppCreate>) -> Result<Json<AppInfo>, ApiError> {
     state
         .apps
         .create_app(body.kind)
@@ -1037,7 +1046,7 @@ pub async fn create_app(State(state): State<AppState>, ApiJson(body): ApiJson<Ap
 
 /// Stop an app instance.
 #[api(id = "close_app", group = "apps", summary = "Close an app")]
-pub async fn close_app(State(state): State<AppState>, ApiPath(id): ApiPath<String>) -> Result<Json<SendResult>, ApiError> {
+pub async fn close_app(State(state): State<AppsState>, ApiPath(id): ApiPath<String>) -> Result<Json<SendResult>, ApiError> {
     if !state.apps.close_app(&id).await {
         return Err(ApiError::not_found("app not found"));
     }
@@ -1058,12 +1067,18 @@ pub fn describe(reg: &mut ExtraResponses) {
         .error("DELETE", "/api/apps/{id}", 404, "App not found");
 }
 
-/// Register every app route.
-pub fn routes(router: ApiRouter) -> ApiRouter {
-    router
-        .get("/api/apps", list_apps)
-        .post("/api/apps", create_app)
-        .delete("/api/apps/{id}", close_app)
+impl AppsState {
+    /// Register every app route.
+    pub fn routes<S>(router: GotchaRouter<S>) -> GotchaRouter<S>
+    where
+        S: Clone + Send + Sync + 'static,
+        AppsState: FromRef<S>,
+    {
+        router
+            .get("/api/apps", list_apps)
+            .post("/api/apps", create_app)
+            .delete("/api/apps/{id}", close_app)
+    }
 }
 
 #[cfg(test)]

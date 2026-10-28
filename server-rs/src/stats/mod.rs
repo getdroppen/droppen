@@ -6,12 +6,15 @@
 
 pub mod usage;
 
-use gotcha::{api, Json, Schematic, State};
+use std::sync::Arc;
+
+use gotcha::axum::extract::FromRef;
+use gotcha::{api, GotchaRouter, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
-use crate::api::{ApiRouter, AppState};
 use crate::http::extract::ApiQuery;
 use crate::openapi_ext::ExtraResponses;
+use crate::paths::Paths;
 use usage::UsageStats;
 
 /// Query for `GET /api/stats/usage`.
@@ -21,15 +24,30 @@ pub struct UsageQuery {
     pub days: Option<u32>,
 }
 
+/// What the stats routes use of the server's state: where the session files
+/// are.
+#[derive(Clone)]
+pub struct StatsState {
+    /// Where sessions are discovered.
+    pub paths: Arc<Paths>,
+}
+crate::http::substate!(StatsState);
+
 /// Token usage aggregated by day and model over the recent window.
 #[api(id = "usage_stats", group = "stats", summary = "Token usage")]
-pub async fn usage_stats(State(state): State<AppState>, ApiQuery(query): ApiQuery<UsageQuery>) -> Json<UsageStats> {
+pub async fn usage_stats(State(state): State<StatsState>, ApiQuery(query): ApiQuery<UsageQuery>) -> Json<UsageStats> {
     Json(usage::collect_usage(state.paths.as_ref(), query.days).await)
 }
 
-/// Register this subsystem's routes.
-pub fn routes(router: ApiRouter) -> ApiRouter {
-    router.get("/api/stats/usage", usage_stats)
+impl StatsState {
+    /// Register this subsystem's routes.
+    pub fn routes<S>(router: GotchaRouter<S>) -> GotchaRouter<S>
+    where
+        S: Clone + Send + Sync + 'static,
+        StatsState: FromRef<S>,
+    {
+        router.get("/api/stats/usage", usage_stats)
+    }
 }
 
 /// Everything gotcha cannot express about those routes.

@@ -42,11 +42,10 @@ use gotcha::axum::body::{Body, Bytes};
 use gotcha::axum::http::header::{CACHE_CONTROL, CONTENT_SECURITY_POLICY, CONTENT_TYPE, X_CONTENT_TYPE_OPTIONS};
 use gotcha::axum::http::StatusCode;
 use gotcha::axum::response::Response;
-use gotcha::{api, Schematic};
+use gotcha::{api, GotchaRouter, Schematic};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
 
-use crate::api::ApiRouter;
 use crate::files::{FileBytes, INLINE_CSP};
 use crate::http::error::ApiError;
 use crate::http::extract::ApiQuery;
@@ -640,7 +639,10 @@ pub async fn github_image(ApiQuery(query): ApiQuery<GithubMediaQuery>) -> Result
 }
 
 /// Register this subsystem's routes.
-pub fn routes(router: ApiRouter) -> ApiRouter {
+pub fn routes<S>(router: GotchaRouter<S>) -> GotchaRouter<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
     router.get(ROUTE, github_image)
 }
 

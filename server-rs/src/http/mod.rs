@@ -9,12 +9,28 @@
 
 use futures_util::SinkExt;
 use gotcha::axum::extract::ws::{Message, WebSocket};
+use gotcha::Schematic;
+use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 pub mod bridge;
 pub mod created;
 pub mod error;
 pub mod extract;
+
+// Defined here rather than in whichever subsystem needed it first, because
+// gotcha's component registry is flat and keyed by the Rust type name: two
+// `SendResult` types anywhere in the crate silently claim the one schema, and
+// the winner is whichever the spec walk reaches last — which made the exported
+// document flap between runs. The doc comment below becomes the component's
+// description in `openapi/openapi.json`, so it stays contract-facing and this
+// reasoning stays out of it.
+/// The answer to every route that only has to say "done".
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Schematic)]
+pub struct SendResult {
+    /// Always `true`; a refusal is an error status, not a `false`.
+    pub accepted: bool,
+}
 
 /// How often a live socket is pinged.
 const PING_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
