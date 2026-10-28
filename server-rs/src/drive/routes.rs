@@ -1393,7 +1393,7 @@ async fn whole_transcript(drive: &crate::drive::Drive, source: Source, id: &str)
 /// so the answer is about what was unread *before* the reader got there, and
 /// no later report can move it. Read-only and ungated like search, and answered
 /// over the same cached parse, so the index is one the history route can page
-/// to. See [`crate::attention::first_unread`].
+/// to. See [`crate::sessions::attention::first_unread`].
 #[api(id = "session_first_unread", group = "sessions", summary = "Where unread messages begin")]
 pub async fn session_first_unread(
     State(state): State<AppState>,

@@ -556,7 +556,7 @@ pub struct SessionSummary {
     /// Filled in by the ownership overlay — `claude::mark_owned` and
     /// `codex::apply_ownership` — alongside `scope`, because both can change
     /// without the transcript being touched and neither may be cached against
-    /// it. `#[serde(default)]` for the summaries [`crate::db::index`] cached
+    /// it. `#[serde(default)]` for the summaries [`crate::sessions::index`] cached
     /// before this field existed: they parse, and the overlay fills them in.
     #[serde(default)]
     pub server: String,
@@ -623,7 +623,7 @@ pub struct SessionSummary {
     pub account_id: Option<String>,
     /// When the assistant last spoke on the main chain, ISO-8601.
     ///
-    /// Derived from the transcript by [`crate::attention`], not stored; `null`
+    /// Derived from the transcript by [`crate::sessions::attention`], not stored; `null`
     /// for a session the assistant has not said anything in yet.
     pub attention_at: Nullable<String>,
     /// Whether the session is waiting on the user: the assistant has spoken
@@ -635,7 +635,7 @@ pub struct SessionSummary {
     /// CLI's own synthetic notices — counted from the start for a session never
     /// opened. Not suppressed while a turn runs, unlike `unread`: a working
     /// session can be holding answers nobody has read. `unread` is never true
-    /// with a count of zero. See [`crate::attention::unread`].
+    /// with a count of zero. See [`crate::sessions::attention::unread`].
     pub unread_count: u32,
     /// Whether the agent has stopped to ask the user something, and cannot go
     /// on without an answer.
@@ -652,7 +652,7 @@ pub struct SessionSummary {
     /// it runs with approvals off, and every interactive request its app server
     /// makes is refused, so it has no way to stop and ask.
     ///
-    /// `#[serde(default)]` for the summaries [`crate::db::index`] cached before
+    /// `#[serde(default)]` for the summaries [`crate::sessions::index`] cached before
     /// this field existed; the live overlay fills it in.
     #[serde(default)]
     pub asking: bool,

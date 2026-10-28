@@ -5371,11 +5371,11 @@
             "description": "Whether anything is in flight, and if not, what is holding it up.\n\nThe field a list row should render \"busy\" from. Unlike `status` it can\ntell a queued message from an idle session, and background work from\nnothing at all."
           },
           "asking": {
-            "description": "Whether the agent has stopped to ask the user something, and cannot go\non without an answer.\n\nMuch narrower than `status: waiting`, which only says a live process\nfinished its turn — and this server keeps a finished session's process\nalive, so that is true of nearly every session it drives. For a session\nthis server drives it is the resident's own word ([`ResidentInfo::asking`]):\ntrue from the moment claude's `AskUserQuestion` arrives until it is\nanswered, dismissed or withdrawn — mid-turn, so while `activity` says\n`working`. For any other live claude it is read off the transcript: a\ntail ending on an `AskUserQuestion` no result has answered yet, and never\nwhile [`apply_driver`] knows a turn is in flight. Always false for codex:\nit runs with approvals off, and every interactive request its app server\nmakes is refused, so it has no way to stop and ask.\n\n`#[serde(default)]` for the summaries [`crate::db::index`] cached before\nthis field existed; the live overlay fills it in.",
+            "description": "Whether the agent has stopped to ask the user something, and cannot go\non without an answer.\n\nMuch narrower than `status: waiting`, which only says a live process\nfinished its turn — and this server keeps a finished session's process\nalive, so that is true of nearly every session it drives. For a session\nthis server drives it is the resident's own word ([`ResidentInfo::asking`]):\ntrue from the moment claude's `AskUserQuestion` arrives until it is\nanswered, dismissed or withdrawn — mid-turn, so while `activity` says\n`working`. For any other live claude it is read off the transcript: a\ntail ending on an `AskUserQuestion` no result has answered yet, and never\nwhile [`apply_driver`] knows a turn is in flight. Always false for codex:\nit runs with approvals off, and every interactive request its app server\nmakes is refused, so it has no way to stop and ask.\n\n`#[serde(default)]` for the summaries [`crate::sessions::index`] cached before\nthis field existed; the live overlay fills it in.",
             "type": "boolean"
           },
           "attentionAt": {
-            "description": "When the assistant last spoke on the main chain, ISO-8601.\n\nDerived from the transcript by [`crate::attention`], not stored; `null`\nfor a session the assistant has not said anything in yet.",
+            "description": "When the assistant last spoke on the main chain, ISO-8601.\n\nDerived from the transcript by [`crate::sessions::attention`], not stored; `null`\nfor a session the assistant has not said anything in yet.",
             "nullable": true,
             "type": "string"
           },
@@ -5435,7 +5435,7 @@
             "description": "Whether this server made the session, or is only looking at it."
           },
           "server": {
-            "description": "Which remote-hand server this row came from, as [`ServerId`] spells it.\n\nIt answers two subtly different questions depending on `scope`, and the\ndifference is worth stating because a client will eventually route on\nthis:\n\n* **`owned`** — the server that *made* the session. Read from the\nsession's own ownership row ([`owned_sessions`]), so it survives a\nrestart and is a claim about history.\n* **`external`** — the server the session is *reachable through*. A\ndiscovered transcript (the user's own `~/.claude`, a codex thread\nstarted from a terminal) was made by nobody here; what is true of it\nis that this server can see the file and serve its contents, so this\nserver names itself.\n\nBoth answers are \"the server to ask about this row\", which is what makes\none field reasonable; neither is \"the machine the work happened on\", and\nnothing should read it as that.\n\nFilled in by the ownership overlay — `claude::mark_owned` and\n`codex::apply_ownership` — alongside `scope`, because both can change\nwithout the transcript being touched and neither may be cached against\nit. `#[serde(default)]` for the summaries [`crate::db::index`] cached\nbefore this field existed: they parse, and the overlay fills them in.",
+            "description": "Which remote-hand server this row came from, as [`ServerId`] spells it.\n\nIt answers two subtly different questions depending on `scope`, and the\ndifference is worth stating because a client will eventually route on\nthis:\n\n* **`owned`** — the server that *made* the session. Read from the\nsession's own ownership row ([`owned_sessions`]), so it survives a\nrestart and is a claim about history.\n* **`external`** — the server the session is *reachable through*. A\ndiscovered transcript (the user's own `~/.claude`, a codex thread\nstarted from a terminal) was made by nobody here; what is true of it\nis that this server can see the file and serve its contents, so this\nserver names itself.\n\nBoth answers are \"the server to ask about this row\", which is what makes\none field reasonable; neither is \"the machine the work happened on\", and\nnothing should read it as that.\n\nFilled in by the ownership overlay — `claude::mark_owned` and\n`codex::apply_ownership` — alongside `scope`, because both can change\nwithout the transcript being touched and neither may be cached against\nit. `#[serde(default)]` for the summaries [`crate::sessions::index`] cached\nbefore this field existed: they parse, and the overlay fills them in.",
             "type": "string"
           },
           "sizeBytes": {
@@ -5459,7 +5459,7 @@
             "type": "boolean"
           },
           "unreadCount": {
-            "description": "How many agent messages arrived since the user last looked, at most 99.\n\nAssistant text only — not tool calls or results, not thinking, not the\nCLI's own synthetic notices — counted from the start for a session never\nopened. Not suppressed while a turn runs, unlike `unread`: a working\nsession can be holding answers nobody has read. `unread` is never true\nwith a count of zero. See [`crate::attention::unread`].",
+            "description": "How many agent messages arrived since the user last looked, at most 99.\n\nAssistant text only — not tool calls or results, not thinking, not the\nCLI's own synthetic notices — counted from the start for a session never\nopened. Not suppressed while a turn runs, unlike `unread`: a working\nsession can be holding answers nobody has read. `unread` is never true\nwith a count of zero. See [`crate::sessions::attention::unread`].",
             "type": "integer"
           },
           "updatedAt": {
@@ -11875,7 +11875,7 @@
     "/api/sessions/{source}/{id}/first-unread": {
       "get": {
         "deprecated": false,
-        "description": "Where the messages a visit has not read yet begin.\n\nThe client asks once per arrival at a session, with the read marker its\narrival's seen report replaced (`previousReadAt` on that report's answer) —\nso the answer is about what was unread *before* the reader got there, and\nno later report can move it. Read-only and ungated like search, and answered\nover the same cached parse, so the index is one the history route can page\nto. See [`crate::attention::first_unread`].",
+        "description": "Where the messages a visit has not read yet begin.\n\nThe client asks once per arrival at a session, with the read marker its\narrival's seen report replaced (`previousReadAt` on that report's answer) —\nso the answer is about what was unread *before* the reader got there, and\nno later report can move it. Read-only and ungated like search, and answered\nover the same cached parse, so the index is one the history route can page\nto. See [`crate::sessions::attention::first_unread`].",
         "operationId": "session_first_unread",
         "parameters": [
           {
