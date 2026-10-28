@@ -636,7 +636,7 @@ impl AgentFiles {
     /// holding no secret, kept and still delivered until the hub has it. The
     /// link — and with it the streams' writer — must be stopped first; the
     /// process's connection to `streams.db` is dropped here, before the file.
-    pub(in crate::agent) fn unenroll(&self) -> Result<(), String> {
+    pub(crate) fn unenroll(&self) -> Result<(), String> {
         crate::db::forget(&self.streams_db());
         let dir = self.0.clone();
         let entries = match std::fs::read_dir(&dir) {

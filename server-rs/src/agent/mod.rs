@@ -83,10 +83,9 @@ use std::path::PathBuf;
 
 use crate::paths::Paths;
 
-mod cli;
+pub(crate) mod cli;
 mod seed;
 
-pub use cli::{AgentArgs, AgentCommand, ENROLL_PENDING_EXIT, USAGE};
 pub use seed::{load_or_create, load_or_create_in, StagedSeed, StoredSeed};
 pub(in crate::agent) use seed::FileSeedStore;
 pub(in crate::agent) use seed::sync_dir;
@@ -110,7 +109,7 @@ impl AgentFiles {
     }
 
     /// `<instance dir>/agent/` itself.
-    pub(in crate::agent) fn dir(&self) -> PathBuf {
+    pub(crate) fn dir(&self) -> PathBuf {
         self.0.clone()
     }
 }
@@ -164,6 +163,7 @@ pub async fn migrate_hub(paths: &Paths) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::cli::*;
+    use crate::cli::agent::*;
     use super::seed::*;
     use super::{rotation, state};
     use crate::paths::Paths;

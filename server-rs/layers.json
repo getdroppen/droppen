@@ -107,12 +107,6 @@
         "stats -> api",
         "terminals -> api"
       ]
-    },
-    {
-      "why": "`agent run` serves the whole server (app::RemoteHandApp) from the agent's command line.",
-      "edges": [
-        "agent -> app"
-      ]
     }
   ]
 }
