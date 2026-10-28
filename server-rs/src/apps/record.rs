@@ -27,8 +27,7 @@
 //! the WAL at `synchronous = FULL` buys what a hand-rolled tempfile / `rename` /
 //! directory-`fsync` dance would.
 //!
-//! Nothing reads `apps.json` any more, and nothing writes it; a file left on
-//! disk is inert.
+//! Nothing reads or writes `apps.json`; a file left on disk is inert.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -204,8 +203,8 @@ mod tests {
     }
 
     /// A save writes the table and nothing else: `apps.json` is neither read
-    /// nor written any more, so a file left beside the database is inert and a
-    /// save must not recreate one.
+    /// nor written, so a file left beside the database is inert and a save must
+    /// not recreate one.
     #[test]
     fn no_save_writes_the_file_back() {
         let dir = tempfile::tempdir().expect("tempdir");

@@ -1,8 +1,7 @@
 //! The `/embed/{id}/*` reverse proxy, for HTTP and for websockets.
 //!
-//! The proxy sits on the bare server rather than inside the API app: in front
-//! of the API listener for `web` requests and in front of the upgrade handler
-//! for `upgrade` ones. Nothing about it is in the OpenAPI document.
+//! The proxy is the router's fallback, composed in [`crate::app`] outside the
+//! gotcha app, so nothing about it is in the OpenAPI document.
 //!
 //! # Where it hangs
 //!
@@ -17,8 +16,9 @@
 //! path test in front of every `/api/*` request to serve a route that
 //! by definition never matches one.
 //!
-//! Sitting on the fallback also keeps `/embed/*` out of the `/api/*` origin
-//! guard for free: that layer is applied to the routes and not to the fallback.
+//! Sitting on the fallback also leaves `/embed/*` outside the `/api/*` origin
+//! guard; what guards it is the unguessable id ([`crate::auth`], "Who has to
+//! log in").
 //!
 //! # What it does to the traffic
 //!

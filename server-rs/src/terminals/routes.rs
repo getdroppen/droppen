@@ -1,14 +1,15 @@
 //! The terminal REST surface and the websocket the browser's xterm attaches to.
 //!
-//! The four documented routes are the REST surface. The socket is mounted
-//! outside the OpenAPI app and is therefore not documented.
+//! The four documented routes are the REST surface. The socket is on the same
+//! router but has no `#[api]` ([`terminal_ws`] says why), so it is not in the
+//! spec.
 //!
-//! The wire protocol, as `web/src/features/terminals/xterm-pane.tsx:46-65` reads
+//! The wire protocol, as `web/src/features/terminals/xterm-pane.tsx` reads
 //! and writes it:
 //!
 //! * **server -> client**: text frames of raw pty output, nothing wrapped around
 //!   them (`ws.onmessage` does `if (typeof e.data === "string") term.write(e.data)`,
-//!   `xterm-pane.tsx:53`). The first frame after a successful attach is the
+//!   `xterm-pane.tsx`). The first frame after a successful attach is the
 //!   replay buffer, sent whether or not there is anything in it; later frames
 //!   are the 16 ms-coalesced chunks. An unknown id gets
 //!   `"\r\n[terminal not found]\r\n"` and the socket closes.
@@ -143,9 +144,8 @@ async fn run_terminal_socket(socket: WebSocket, state: AppState, id: String, log
     // A terminal whose link is down still lists, still attaches and still hands
     // out a full replay, so the pane it paints looks exactly like a working one.
     // A screen frozen at the last adoption, with the server saying nothing about
-    // why, is the "I can see the terminal but I cannot type into it" report. It
-    // is said here, after the replay, so the user gets the frozen screen *and*
-    // the reason for it.
+    // why, is what the user sees. It is said here, after the replay, so the user
+    // gets the frozen screen *and* the reason for it.
     //
     // Subscribed before the health is read, not after: a link that came back in
     // between would otherwise leave this client holding a note about a problem
@@ -157,9 +157,8 @@ async fn run_terminal_socket(socket: WebSocket, state: AppState, id: String, log
     }
 
     // Output stops when the terminal finishes, but the socket does not: closing
-    // here would paint `[disconnected]` over the client's `[process exited]`,
-    // which has to stay on screen until the user navigates away
-    // (`xterm-pane.tsx:56`).
+    // would send the client into its reconnect loop; left open, `[process
+    // exited]` stays the last thing on screen.
     let mut live = true;
     let mut heartbeat = crate::api::Heartbeat::default();
     loop {
@@ -285,9 +284,9 @@ fn handle_control(attachment: &super::Attachment, text: &str) -> bool {
     match serde_json::from_str::<Control>(text) {
         Ok(Control::Input { data }) => !attachment.write(&data),
         Ok(Control::Resize { cols, rows }) => {
-            // A non-finite value casts to `0` and an out-of-range one wraps
-            // through `as u16`, so both are refused here; a fractional one is
-            // truncated, as a browser's fractional layout width always was.
+            // Refused before the cast; `as u16` saturates, so
+            // [`Attachment::resize`]'s `0 < n < 1000` guard would refuse these
+            // too. A fractional size is truncated.
             if cols.is_finite() && rows.is_finite() && (0.0..1000.0).contains(&cols) && (0.0..1000.0).contains(&rows) {
                 attachment.resize(cols as u16, rows as u16);
             }

@@ -2,8 +2,8 @@
 //!
 //! The supervision and the three `/api/apps` routes live here. The transport
 //! half — the `/embed/{id}/*` reverse proxy the iframe actually talks to — is
-//! [`embed`], and is deliberately not part of the API surface: it is mounted on
-//! the bare server rather than inside the API app, so it appears in no spec.
+//! [`embed`]: it is the router's fallback, composed in [`crate::app`] outside
+//! the gotcha app, so it appears in no spec.
 //!
 //! The shape here is one supervisor task per instance, owning the
 //! [`tokio::process::Child`], plus a [`std::sync::Mutex`]-guarded list that is

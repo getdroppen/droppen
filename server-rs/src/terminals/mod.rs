@@ -12,11 +12,12 @@
 //! thing it has to rebuild is state it can read off the instance directory.
 //!
 //! The wire the browser speaks is bare text frames of output out and
-//! `{"type":"input"|"resize"}` JSON in, plus the four REST routes, with two
-//! deliberate exceptions: where output was genuinely lost the client sees a
-//! counted [`crate::pty_shim::gap_note`] rather than a seamless-looking splice,
-//! and where the link to a shim is down it is told so rather than being left
-//! typing into a screen frozen at whenever that link last worked.
+//! `{"type":"input"|"resize"}` JSON in, plus the four REST routes; the shim is
+//! invisible on that wire except in two deliberate places: where output was
+//! genuinely lost the client sees a counted [`crate::pty_shim::gap_note`]
+//! rather than a seamless-looking splice, and where the link to a shim is down
+//! it is told so rather than being left typing into a screen frozen at whenever
+//! that link last worked.
 //!
 //! # Shape
 //!
@@ -298,7 +299,7 @@ struct Listeners {
 struct Entry {
     /// Creation order. A `HashMap` iterates arbitrarily and rehashes as it
     /// grows, while the web renders `terminals` unsorted
-    /// (`web/src/features/terminals/terminals-view.tsx:98`), so without this the
+    /// (`web/src/features/terminals/terminals-view.tsx`), so without this the
     /// user's tabs would reshuffle between polls — and after a restart, which is
     /// why it is also in the meta file.
     seq: u64,

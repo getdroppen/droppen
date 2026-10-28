@@ -89,7 +89,8 @@ pub const COLLECT_BUDGET: Duration = Duration::from_secs(3);
 /// reset and short enough that a user who fixes the problem is not left staring
 /// at a stale panel.
 pub const RATE_LIMIT_BACKOFF: Duration = Duration::from_secs(30 * 60);
-/// The most of a probe's stdout, or stderr, that is read before judging it.
+/// The most of a probe's stdout, or stderr, that is judged; `output()` has
+/// already read both in full.
 const MAX_PROBE_OUTPUT: usize = 1024 * 1024;
 
 /// One rolling window of a subscription.

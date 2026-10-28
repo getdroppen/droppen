@@ -196,13 +196,13 @@ impl Shim {
     /// The recorder, taken back from a panic rather than propagating it.
     ///
     /// The house pattern, for the house reason — `crate::db::Db::lock` states
-    /// it in full. A `vt100` parse can panic inside [`read_pty`] *while it holds
-    /// this lock*, and from then on every one of the five places that take it
-    /// panics in turn; the worst of them is the `HELLO` arm of [`mix`], which
-    /// takes it one line before it writes the reply, so every client that dials
-    /// afterwards has its task killed before a single byte goes out and nothing
-    /// gets past the handshake. The socket accepts connections the shim never
-    /// answers.
+    /// it in full. A `vt100` parse that panicked inside [`read_pty`] *while it
+    /// held this lock* would poison it: from then on every one of the five
+    /// places that take it would panic in turn, the worst being the `HELLO` arm
+    /// of [`mix`], which takes it one line before it writes the reply — so
+    /// every client that dialled would have its task killed before a single
+    /// byte went out, and nothing would get past the handshake, while the
+    /// socket kept accepting connections the shim never answered.
     ///
     /// What is behind the poison is usable — [`Recorder::append`] rebuilds
     /// whatever the panic left — and even if it were not, a stale screen is a
@@ -1242,9 +1242,9 @@ mod tests {
         assert_eq!(snapshot_frames(&[], MAX_SNAPSHOT_FRAME).len(), 1);
     }
 
-    /// The accept loop's task can go down with nothing noticing, because the
-    /// shim awaits an idle shell that will never exit. A loop that ends must be
-    /// seen to end and be put back.
+    /// A loop that went down with nothing noticing — while the shim awaits an
+    /// idle shell that will never exit — would leave a socket nobody accepts
+    /// on. A loop that ends must be seen to end and be put back.
     #[tokio::test]
     async fn an_accept_loop_that_goes_down_is_restarted_rather_than_abandoned() {
         let (exited_tx, exited_rx) = tokio::sync::oneshot::channel::<i32>();
@@ -1512,11 +1512,11 @@ mod tests {
         })
     }
 
-    /// A panic that killed the reader poisons the recorder's lock; from then on
-    /// the `HELLO` arm takes that lock one line before it sends its reply, so
-    /// every client that dials has its task killed before a byte goes out and
-    /// none gets past the handshake. A poisoned lock must cost nothing but the
-    /// panic that poisoned it.
+    /// A panic that killed the reader would poison the recorder's lock; from
+    /// then on the `HELLO` arm would take that lock one line before it sends
+    /// its reply, so every client that dialled would have its task killed
+    /// before a byte went out and none would get past the handshake. A
+    /// poisoned lock must cost nothing but the panic that poisoned it.
     #[tokio::test]
     async fn a_poisoned_recorder_still_lets_a_client_finish_the_handshake() {
         let dir = tempfile::tempdir().expect("tempdir");

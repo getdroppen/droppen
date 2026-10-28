@@ -200,12 +200,12 @@ impl Recorder {
     /// `vt100::Parser::process` is third-party code handed, by definition,
     /// whatever the shell decided to print — which is whatever the program the
     /// user ran decided to print, i.e. arbitrary bytes. A terminal emulator has
-    /// to survive that, and when it does not, the unwind goes straight through
-    /// the reader thread *while it holds this lock*. That kills the shim twice
-    /// over: nothing is left reading the pty, and the poisoned mutex makes every
-    /// later client's `HELLO` panic before its reply goes out. So the parse is
-    /// caught here, where the recorder's own invariants are the ones being put
-    /// back.
+    /// to survive that, and when it does not, the unwind would go straight
+    /// through the reader thread *while it held this lock*. That would kill the
+    /// shim twice over: nothing would be left reading the pty, and the poisoned
+    /// mutex would make every later client's `HELLO` panic before its reply
+    /// went out. So the parse is caught here, where the recorder's own
+    /// invariants are the ones being put back.
     ///
     /// What the recorder holds afterwards is a deliberate choice of three:
     ///

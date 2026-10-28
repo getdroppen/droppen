@@ -510,9 +510,9 @@ fn manifest_of(package: &serde_json::Value) -> Result<Manifest, String> {
     Ok(manifest)
 }
 
-/// The entry module's relative path, resolved by the npm rules:
-/// `exports["."]` (a string, or its `import`/`default`), else `module`, else
-/// `main`, else `index.js`; a relative `.js`/`.mjs` file that exists.
+/// The entry module's relative path: `exports["."]` (a string, or its
+/// `import`/`default`), else `module`, else `main`, else `index.js`; a
+/// relative `.js`/`.mjs` file that exists.
 fn entry_of(package: &serde_json::Value, dir: &Path) -> Result<String, String> {
     let rel = entry_field(package)?;
     resolve_entry(dir, &rel)

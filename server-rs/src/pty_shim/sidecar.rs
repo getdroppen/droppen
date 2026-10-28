@@ -225,8 +225,9 @@ impl Sidecars {
     ///
     /// `0o700`, and only ever under `/tmp`, so the `tmux`-style shared directory
     /// is readable by nobody but its owner. What is inside it is a socket that
-    /// hands whoever connects a shell, so this is the only thing standing
-    /// between another user of a shared machine and the user's whole account.
+    /// hands whoever connects a shell, or a claude with the user's credentials,
+    /// so this is the only thing standing between another user of a shared
+    /// machine and the user's whole account.
     ///
     /// The mode goes on at `mkdir` time rather than in a `chmod` afterwards:
     /// between the two there is a window, however short, in which the directory
@@ -525,9 +526,9 @@ mod tests {
     /// The directory's last user takes it with them, so a shim starting while
     /// one leaves can find it gone between `mkdir` saying it is already there
     /// and the check that it is ours. That is two processes behaving correctly
-    /// in an unlucky order, and it costs a whole session: a resident claude
-    /// restarted for a settings change is exactly the case where the outgoing
-    /// shim and the incoming one are the only two there are.
+    /// in an unlucky order, and it would cost a whole session: a resident
+    /// claude restarted for a settings change is exactly the case where the
+    /// outgoing shim and the incoming one are the only two there are.
     ///
     /// The removal is simulated rather than raced, because a test that raced it
     /// would fail only sometimes.
