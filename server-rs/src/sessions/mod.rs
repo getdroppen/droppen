@@ -3,6 +3,7 @@
 //! Mirrors the former TypeScript server's `schemas.ts` plus the discovery halves
 //! of its `claude.ts` and `session-feed.ts`.
 
+pub mod account;
 pub mod acp_transcript;
 pub mod adoption_leftovers;
 pub mod archive;
@@ -32,12 +33,12 @@ use std::path::{Path, PathBuf};
 use gotcha::Schematic;
 use serde::{Deserialize, Serialize};
 
-use crate::accounts::AccountRef;
 use crate::identity::ServerId;
 use crate::openapi_ext::{Nullable, Optional};
 use crate::paths::{ClaudeRoot, Paths};
 use crate::time::mtime_ms;
 pub use reference::SessionRef;
+use account::AccountRef;
 use util::TranscriptItem;
 
 /// Which CLI a session belongs to.
@@ -774,7 +775,7 @@ pub struct SessionDetail {
     pub account: Option<AccountRef>,
     /// The latest time this session was moved off an account that hit a limit,
     /// or tried to be; absent or `null` when it never was.
-    pub rotation: Option<crate::accounts::rotation::SessionRotation>,
+    pub rotation: Option<account::SessionRotation>,
     /// What became of the messages clients sent this session under a
     /// `clientMessageId`, over the last two hours (at most 100, oldest first).
     pub receipts: Vec<delivery::MessageReceipt>,

@@ -73,54 +73,10 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Datelike, NaiveDate, NaiveTime, TimeZone};
-use gotcha::Schematic;
 use regex::Regex;
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// What kind of limit a failure was.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Schematic)]
-#[serde(rename_all = "snake_case")]
-pub enum LimitClass {
-    /// The rolling five-hour window: "You've hit your session limit".
-    Session,
-    /// A weekly window, overall or for one model family.
-    Weekly,
-    /// A request-rate limit, or the vendor saying it is overloaded.
-    Rate,
-    /// Out of prepaid credit, or a billing problem.
-    Credit,
-    /// The credential itself was refused.
-    Auth,
-    /// Limit-shaped wording that nothing more specific matched.
-    Other,
-}
-
-impl LimitClass {
-    /// The name the tables and the API use.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            LimitClass::Session => "session",
-            LimitClass::Weekly => "weekly",
-            LimitClass::Rate => "rate",
-            LimitClass::Credit => "credit",
-            LimitClass::Auth => "auth",
-            LimitClass::Other => "other",
-        }
-    }
-
-    /// The inverse of [`LimitClass::as_str`]; a row nobody recognises is `other`.
-    pub fn parse(raw: &str) -> Self {
-        match raw {
-            "session" => LimitClass::Session,
-            "weekly" => LimitClass::Weekly,
-            "rate" => LimitClass::Rate,
-            "credit" => LimitClass::Credit,
-            "auth" => LimitClass::Auth,
-            _ => LimitClass::Other,
-        }
-    }
-}
+use crate::sessions::account::LimitClass;
 
 /// The scope of every limit that is not a per-model weekly window.
 pub const SCOPE_ALL: &str = "all";

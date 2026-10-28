@@ -632,7 +632,8 @@ mod tests {
     /// release wrote reads back as the limit it was.
     #[test]
     fn a_database_at_step_eight_gains_the_rotation_trigger_and_old_rows_read_as_limits() {
-        use crate::accounts::rotation::{RotationLog, RotationTrigger};
+        use crate::accounts::rotation::RotationLog;
+        use crate::sessions::account::RotationTrigger;
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("state.db");
         {

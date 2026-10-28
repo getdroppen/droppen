@@ -1008,7 +1008,7 @@ impl InjectionRegistry {
         // move ahead tends to come in a burst: N sessions from A to B within a
         // few minutes. One push per account pair per window says it; the rest
         // would only bury it. A limit-driven rotation always pushes.
-        let ahead_burst = decision.trigger == crate::accounts::rotation::RotationTrigger::Ahead
+        let ahead_burst = decision.trigger == crate::sessions::account::RotationTrigger::Ahead
             && !first_ahead_push(&decision.from.id, &decision.to.id, std::time::Instant::now());
         if !ahead_burst {
             crate::push::notify_rotation(
@@ -1074,7 +1074,7 @@ impl InjectionRegistry {
     /// signed-out local login hands every start that names no account to a
     /// stand-in ([`crate::accounts::rotation::start_choice`]).
     pub(crate) fn credential_accepted(&self, account_id: &str, session_id: &str) {
-        use crate::accounts::limits::LimitClass;
+        use crate::sessions::account::LimitClass;
         let log = self.accounts.limit_log();
         if log
             .active_observed_ms(account_id, LimitClass::Auth, crate::accounts::rest::now_ms())

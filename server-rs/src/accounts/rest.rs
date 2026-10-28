@@ -28,10 +28,11 @@ use gotcha::Schematic;
 use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 
-use super::limits::{self, LimitClass, Rest, Verdict};
+use super::limits::{self, Rest, Verdict};
 use super::store::AccountProvider;
 use crate::db::Db;
 use crate::openapi_ext::Nullable;
+use crate::sessions::account::LimitClass;
 use crate::time::iso8601;
 
 /// The rows for a claude session on the machine's own login.
