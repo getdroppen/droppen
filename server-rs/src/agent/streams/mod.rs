@@ -59,7 +59,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::drive::Drive;
-use crate::feed::{encode_fp, Transcript};
+use crate::sessions::loader::{encode_fp, Transcript};
 use crate::agent::AgentFiles;
 use crate::sessions::{SessionSummary, Source};
 use crate::time::now_ms_u64;
@@ -1191,7 +1191,7 @@ impl Sync {
         self.names.insert(stream, (summary.source, summary.id.clone()));
         let path = Path::new(&summary.file_path);
         let sig = crate::sessions::file_signature(path).await.ok_or("unreadable")?;
-        let transcript = crate::feed::load_transcript(&self.drive.paths, summary.source, path, &sig).await;
+        let transcript = crate::sessions::loader::load_transcript(&self.drive.paths, summary.source, path, &sig).await;
         self.rebuild_session(&row, &transcript, &sig, 0, true)
     }
 
@@ -1316,12 +1316,12 @@ impl Sync {
         let fresh = row.next_seq == 0 && row.manifest_upto.is_none() && row.cursor.is_empty();
         let transcript: Arc<Transcript> = if fresh {
             Arc::new(
-                crate::feed::read_transcript_uncached(&self.drive.paths, source, path)
+                crate::sessions::loader::read_transcript_uncached(&self.drive.paths, source, path)
                     .await
                     .ok_or("unreadable")?,
             )
         } else {
-            crate::feed::load_transcript(&self.drive.paths, source, path, sig).await
+            crate::sessions::loader::load_transcript(&self.drive.paths, source, path, sig).await
         };
         let chain = transcript.chain().clone();
         let len = transcript.len();
@@ -1435,7 +1435,7 @@ impl Sync {
                     .ok_or("the session is gone")?;
                 let path = Path::new(&summary.file_path);
                 let sig = crate::sessions::file_signature(path).await.ok_or("unreadable")?;
-                let transcript = crate::feed::load_transcript(&self.drive.paths, source, path, &sig).await;
+                let transcript = crate::sessions::loader::load_transcript(&self.drive.paths, source, path, &sig).await;
                 self.rebuild_session(&row, &transcript, &sig, upto, true)
             }
         }
@@ -1651,7 +1651,7 @@ impl Sync {
             .ok_or("the session is gone")?;
         let path = Path::new(&summary.file_path);
         let sig = crate::sessions::file_signature(path).await.ok_or("unreadable")?;
-        let transcript = crate::feed::load_transcript(&self.drive.paths, source, path, &sig).await;
+        let transcript = crate::sessions::loader::load_transcript(&self.drive.paths, source, path, &sig).await;
         let cursor = SessionCursor::parse(&row.cursor).ok_or("no cursor")?;
         // The pages must be exactly what the records fold to: the transcript
         // still agrees with the copy through its end, and the pages stop there.
@@ -1831,7 +1831,7 @@ fn session_plan(
     (plan, base)
 }
 
-fn session_steps(transcript: &Transcript, start: usize, from: usize, len: usize, chain: &[crate::feed::Fp], sig: &str) -> Vec<Step> {
+fn session_steps(transcript: &Transcript, start: usize, from: usize, len: usize, chain: &[crate::sessions::loader::Fp], sig: &str) -> Vec<Step> {
     content::session_bodies(&transcript.items, from, len, chain)
         .into_iter()
         .map(|(end, body)| Step {

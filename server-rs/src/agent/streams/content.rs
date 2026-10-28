@@ -20,7 +20,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::feed::{encode_fp, Fp, RESUME_OVERLAP};
+use crate::sessions::loader::{encode_fp, Fp, RESUME_OVERLAP};
 use crate::sessions::{SessionScope, SessionSummary};
 
 /// The most a body may be: under a record's and a page's largest body
@@ -525,7 +525,7 @@ pub fn status_fingerprint(body: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::feed::fingerprint_chain;
+    use crate::sessions::loader::fingerprint_chain;
     use crate::sessions::util::TranscriptItem;
 
     fn items(n: usize, text_len: usize) -> Vec<TranscriptItem> {
