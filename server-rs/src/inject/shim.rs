@@ -76,7 +76,6 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use clap::Parser;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
@@ -293,99 +292,54 @@ pub struct Args {
     pub args: Vec<String>,
 }
 
-/// Parse everything after the `session-shim` subcommand.
-///
-/// `--` is mandatory and is what separates the shim's own flags from the command
-/// it is to run. The separator is not a nicety: a command line assembled without
-/// one eventually gets a flag-shaped argument through to the wrong parser, and
-/// claude's own command line is nothing but flags.
-pub fn parse(argv: &[String]) -> Result<Args, String> {
-    if let Some(token) = refused_spelling(argv) {
-        return Err(format!("session-shim: unexpected argument {token:?}"));
-    }
-    let cli = SessionShimCli::try_parse_from(std::iter::once("session-shim".to_string()).chain(argv.iter().cloned()))
-        .map_err(|error| error.to_string())?;
-    let socket = cli.socket.ok_or_else(|| "session-shim: --socket is required".to_string())?;
-    let stderr_file = cli.stderr_file.ok_or_else(|| "session-shim: --stderr-file is required".to_string())?;
-    let exit_file = cli.exit_file.ok_or_else(|| "session-shim: --exit-file is required".to_string())?;
-    // Required by hand, in the old order and with the old words: clap would
-    // name the missing command first and say it differently. This is the
-    // server-spawned protocol form (`--command` after a mandatory `--`).
-    let mut rest = cli.command;
-    if rest.is_empty() {
-        return Err("session-shim: the command must follow `--`".to_string());
-    }
-    let command = rest.remove(0);
-    Ok(Args {
-        socket: PathBuf::from(socket),
-        stderr_file: PathBuf::from(stderr_file),
-        exit_file: PathBuf::from(exit_file),
-        // A value the old parser could not read as a number is the same as one
-        // that was not given.
-        buffer_bytes: cli
-            .buffer_bytes
+/// The `session-shim` command line: its flags, then the mandatory `--` and the
+/// command it runs. This is the argv the server spawns.
+#[derive(Debug, PartialEq, Eq, clap::Args)]
+#[command(name = "session-shim", disable_help_subcommand = true, args_override_self = true)]
+pub struct SessionShimArgs {
+    /// Where to bind the unix socket.
+    #[arg(long, allow_hyphen_values = true)]
+    pub socket: PathBuf,
+    /// Where to write claude's stderr tail.
+    #[arg(long, allow_hyphen_values = true)]
+    pub stderr_file: PathBuf,
+    /// Where to write the tombstone.
+    #[arg(long, allow_hyphen_values = true)]
+    pub exit_file: PathBuf,
+    /// How much stdout to keep for a client that is not attached.
+    #[arg(long, allow_hyphen_values = true)]
+    pub buffer_bytes: Option<String>,
+    /// The program and its arguments, after the mandatory `--`.
+    #[arg(last = true, num_args = 1.., required = true)]
+    pub command: Vec<String>,
+}
+
+impl SessionShimArgs {
+    /// The ring size the command line asked for; a value that cannot be read as
+    /// a number is the same as one that was not given.
+    fn buffer_bytes(&self) -> usize {
+        self.buffer_bytes
+            .as_deref()
             .and_then(|value| value.parse::<usize>().ok())
-            .unwrap_or(DEFAULT_BUFFER_BYTES),
-        command,
-        args: rest,
-    })
-}
-
-/// The spelling this shim refused before clap: `--flag=value` was an
-/// unexpected argument. The token after a value-taking flag is skipped: it was
-/// that flag's value, whatever it looked like. The first other `--` is the
-/// mandatory separator, where the command begins.
-///
-/// This pre-scan stays because this is a program-to-program command line: the
-/// server spawns `session-shim --socket … --stderr-file … --exit-file …
-/// [--buffer-bytes …] -- <program> …`, and an older server may spawn this shim
-/// across a self-update. Its accepted and refused forms are pinned below.
-fn refused_spelling(argv: &[String]) -> Option<&str> {
-    let mut iter = argv.iter();
-    while let Some(arg) = iter.next() {
-        match arg.as_str() {
-            "--" => return None,
-            "--socket" | "--stderr-file" | "--exit-file" | "--buffer-bytes" => {
-                iter.next();
-            }
-            other if is_attached(other) => return Some(other),
-            _ => {}
-        }
+            .unwrap_or(DEFAULT_BUFFER_BYTES)
     }
-    None
-}
 
-/// A flag and its value in one word.
-fn is_attached(arg: &str) -> bool {
-    ["--socket=", "--stderr-file=", "--exit-file=", "--buffer-bytes="]
-        .iter()
-        .any(|prefix| arg.starts_with(prefix))
-}
-
-/// `session-shim`'s command line: its flags, then the mandatory `--` and the
-/// command it runs. `last` is what makes the separator mandatory and keeps
-/// everything after it out of clap's flag parsing.
-#[derive(Debug, Parser)]
-#[command(
-    name = "session-shim",
-    disable_help_flag = true,
-    disable_version_flag = true,
-    disable_help_subcommand = true,
-    args_override_self = true
-)]
-struct SessionShimCli {
-    #[arg(long, allow_hyphen_values = true)]
-    socket: Option<String>,
-    #[arg(long, allow_hyphen_values = true)]
-    stderr_file: Option<String>,
-    #[arg(long, allow_hyphen_values = true)]
-    exit_file: Option<String>,
-    /// Undocumented, and here for the tests: overflowing a 100 MiB ring to
-    /// prove the gap line appears would take a hundred megabytes.
-    #[arg(long, allow_hyphen_values = true)]
-    buffer_bytes: Option<String>,
-    #[arg(last = true, num_args = 0..)]
-    command: Vec<String>,
+    /// Run the shim over the command this command line names.
+    pub async fn run(self) -> Result<(), String> {
+        let buffer_bytes = self.buffer_bytes();
+        let mut rest = self.command;
+        let command = rest.remove(0);
+        Args {
+            socket: self.socket,
+            stderr_file: self.stderr_file,
+            exit_file: self.exit_file,
+            buffer_bytes,
+            command,
+            args: rest,
+        }
+        .run()
+        .await
+    }
 }
 
 /// What one client's replay task is looking at.
@@ -545,8 +499,10 @@ impl Shim {
     }
 }
 
-/// Run one shim to completion: spawn claude, serve it, bury it.
-pub async fn run(args: Args) -> Result<(), String> {
+impl Args {
+    /// Run one shim to completion: spawn claude, serve it, bury it.
+    pub async fn run(self) -> Result<(), String> {
+    let args = self;
     // The environment and working directory are this process's, inherited:
     // whoever spawned the shim scrubbed them once, and a second copy of that
     // policy here could disagree with it after an upgrade.
@@ -638,6 +594,7 @@ pub async fn run(args: Args) -> Result<(), String> {
     accepting.abort();
     crate::pty_shim::child::unlink_if_ours(&args.socket, identity);
     Ok(())
+}
 }
 
 /// Bind the session socket, making its directory again if it has just gone.
@@ -1319,9 +1276,9 @@ mod tests {
             return;
         };
         let argv: Vec<String> = serde_json::from_str(&argv).expect("the shim's arguments");
-        let outcome = parse(&argv).and_then(|args| {
+        let outcome = parse(&argv).map_err(|error| error.to_string()).and_then(|args| {
             let runtime = tokio::runtime::Runtime::new().map_err(|error| format!("cannot start a runtime: {error}"))?;
-            runtime.block_on(run(args))
+            runtime.block_on(args.run())
         });
         std::process::exit(i32::from(outcome.is_err()));
     }
@@ -1353,7 +1310,7 @@ mod tests {
                 command: "/bin/sh".to_string(),
                 args: vec!["-c".to_string(), script.to_string()],
             };
-            let shim = tokio::spawn(run(args));
+            let shim = tokio::spawn(args.run());
             Harness { _dir: dir, sidecars, shim }
         }
 
@@ -1384,6 +1341,13 @@ mod tests {
 
     // ------------------------------------------------------------ the parser
 
+    fn parse(words: &[String]) -> Result<SessionShimArgs, clap::Error> {
+        match crate::cli::tests::parse_words("session-shim", words)? {
+            crate::cli::Command::SessionShim(parsed) => Ok(parsed),
+            other => panic!("{words:?} parsed as {other:?}"),
+        }
+    }
+
     #[test]
     fn the_command_line_needs_three_paths_and_a_separator() {
         let args = parse(&[
@@ -1401,12 +1365,15 @@ mod tests {
         assert_eq!(args.socket, PathBuf::from("/tmp/a.sock"));
         assert_eq!(args.stderr_file, PathBuf::from("/tmp/a.stderr"));
         assert_eq!(args.exit_file, PathBuf::from("/tmp/a.exit"));
-        assert_eq!(args.command, "claude");
-        assert_eq!(args.args, vec!["--verbose".to_string()]);
-        assert_eq!(args.buffer_bytes, DEFAULT_BUFFER_BYTES, "the ring has a default");
+        assert_eq!(args.command, vec!["claude".to_string(), "--verbose".to_string()]);
+        assert_eq!(args.buffer_bytes(), DEFAULT_BUFFER_BYTES, "the ring has a default");
 
         let missing = parse(&["--socket".into(), "/tmp/a.sock".into(), "--".into(), "claude".into()]);
-        assert!(missing.is_err(), "every path is required: {missing:?}");
+        assert_eq!(
+            missing.unwrap_err().kind(),
+            clap::error::ErrorKind::MissingRequiredArgument,
+            "every path is required"
+        );
 
         let no_command = parse(&[
             "--socket".into(),
@@ -1416,7 +1383,11 @@ mod tests {
             "--exit-file".into(),
             "/tmp/a.exit".into(),
         ]);
-        assert!(no_command.is_err(), "a shim with nothing to run is not a shim");
+        assert_eq!(
+            no_command.unwrap_err().kind(),
+            clap::error::ErrorKind::MissingRequiredArgument,
+            "a shim with nothing to run is not a shim"
+        );
     }
 
     // -------------------------------------------------------------- the ring
@@ -1725,58 +1696,51 @@ mod tests {
         );
         assert!(moved.exit().starts_with(&deep), "the files that say what a session is never move");
     }
-    /// The session shim command lines, pinned so the hand parser and clap answer
-    /// alike. `--buffer-bytes` is the undocumented test knob; a bad number is
-    /// ignored, as every shim number is.
+    /// The session shim command lines, pinned. `--buffer-bytes` is the
+    /// undocumented test knob; a bad number is ignored, as every shim number is.
     #[test]
     fn the_session_shim_argument_table() {
+        use clap::error::ErrorKind;
         let words = |line: &[&str]| -> Vec<String> { line.iter().map(|word| (*word).to_string()).collect() };
-        let accepted: Vec<Vec<String>> = [
-            &["--socket", "/s", "--stderr-file", "/err", "--exit-file", "/e", "--", "/bin/claude"][..],
-            &["--exit-file", "/e", "--stderr-file", "/err", "--socket", "/s", "--", "/bin/claude", "--flag"],
-            &["--socket", "/s", "--stderr-file", "/err", "--exit-file", "/e", "--buffer-bytes", "1024", "--", "/bin/claude"],
-            &["--socket", "/s", "--stderr-file", "/err", "--exit-file", "/e", "--buffer-bytes", "x", "--", "/bin/claude"],
-            &["--socket", "/s", "--stderr-file", "/err", "--exit-file", "/e", "--buffer-bytes", "1", "--buffer-bytes", "x", "--", "/bin/claude"],
-            &["--socket", "--", "--stderr-file", "/err", "--exit-file", "/e", "--", "/bin/claude"],
-        ]
-        .into_iter()
-        .map(words)
-        .collect();
-        for argv in &accepted {
-            assert!(parse(argv).is_ok(), "{argv:?} must parse: {:?}", parse(argv).err());
+        for (line, command) in [
+            (&["--socket", "/s", "--stderr-file", "/err", "--exit-file", "/e", "--", "/bin/claude"][..], &["/bin/claude"][..]),
+            (&["--exit-file", "/e", "--stderr-file", "/err", "--socket", "/s", "--", "/bin/claude", "--flag"], &["/bin/claude", "--flag"]),
+            (&["--socket=/s", "--stderr-file", "/err", "--exit-file", "/e", "--", "/bin/claude"], &["/bin/claude"]),
+            (&["--socket", "/s", "--stderr-file=/err", "--exit-file", "/e", "--", "/bin/claude"], &["/bin/claude"]),
+        ] {
+            let parsed = parse(&words(line)).expect("parsed");
+            assert_eq!(parsed.socket, PathBuf::from("/s"), "{line:?}");
+            assert_eq!(parsed.stderr_file, PathBuf::from("/err"), "{line:?}");
+            assert_eq!(parsed.exit_file, PathBuf::from("/e"), "{line:?}");
+            assert_eq!(parsed.command, words(command), "{line:?}");
         }
-        let parsed = parse(&words(&["--socket", "/s", "--stderr-file", "/err", "--exit-file", "/e", "--buffer-bytes", "1024", "--", "/bin/claude"])).expect("parsed");
-        assert_eq!(parsed.buffer_bytes, 1024);
-        let parsed = parse(&words(&["--socket", "/s", "--stderr-file", "/err", "--exit-file", "/e", "--buffer-bytes", "x", "--", "/bin/claude"])).expect("parsed");
-        assert_eq!(parsed.buffer_bytes, DEFAULT_BUFFER_BYTES);
+        for (line, buffer_bytes) in [
+            (&["--socket", "/s", "--stderr-file", "/err", "--exit-file", "/e", "--buffer-bytes", "1024", "--", "/bin/claude"][..], 1024),
+            (&["--socket", "/s", "--stderr-file", "/err", "--exit-file", "/e", "--buffer-bytes", "x", "--", "/bin/claude"], DEFAULT_BUFFER_BYTES),
+            (
+                &["--socket", "/s", "--stderr-file", "/err", "--exit-file", "/e", "--buffer-bytes", "1", "--buffer-bytes", "x", "--", "/bin/claude"],
+                DEFAULT_BUFFER_BYTES,
+            ),
+        ] {
+            assert_eq!(parse(&words(line)).expect("parsed").buffer_bytes(), buffer_bytes, "{line:?}");
+        }
+        let parsed = parse(&words(&["--socket", "--", "--stderr-file", "/err", "--exit-file", "/e", "--", "/bin/claude"])).expect("parsed");
+        assert_eq!(parsed.socket, PathBuf::from("--"), "a `--` value");
 
-        let refused: Vec<Vec<String>> = [
-            &[][..],
-            &["--socket", "/s", "--stderr-file", "/err", "--exit-file", "/e"],
-            &["--socket", "/s", "--stderr-file", "/err", "--exit-file", "/e", "--"],
-            &["--socket", "/s", "--stderr-file", "/err", "--exit-file", "/e", "/bin/claude"],
-            &["--socket=/s", "--stderr-file", "/err", "--exit-file", "/e", "--", "/bin/claude"],
-            &["--socket", "/s", "--stderr-file=/err", "--exit-file", "/e", "--", "/bin/claude"],
-            &["--exit-file", "/e", "--stderr-file", "/err", "--", "/bin/claude"],
-            &["--socket", "/s", "--exit-file", "/e", "--", "/bin/claude"],
-            &["--help"],
-        ]
-        .into_iter()
-        .map(words)
-        .collect();
-        for argv in &refused {
-            assert!(parse(argv).is_err(), "{argv:?} must be refused");
+        for (line, expected) in [
+            (&[][..], ErrorKind::MissingRequiredArgument),
+            (&["--socket", "/s"], ErrorKind::MissingRequiredArgument),
+            (&["--socket", "/s", "--stderr-file", "/err"], ErrorKind::MissingRequiredArgument),
+            (&["--socket", "/s", "--stderr-file", "/err", "--exit-file", "/e"], ErrorKind::MissingRequiredArgument),
+            (&["--socket", "/s", "--stderr-file", "/err", "--exit-file", "/e", "--"], ErrorKind::MissingRequiredArgument),
+            // The command is only ever after the `--`.
+            (&["--socket", "/s", "--stderr-file", "/err", "--exit-file", "/e", "/bin/claude"], ErrorKind::UnknownArgument),
+            (&["--exit-file", "/e", "--stderr-file", "/err", "--", "/bin/claude"], ErrorKind::MissingRequiredArgument),
+            (&["--socket", "/s", "--exit-file", "/e", "--", "/bin/claude"], ErrorKind::MissingRequiredArgument),
+            (&["--help"], ErrorKind::DisplayHelp),
+        ] {
+            assert_eq!(parse(&words(line)).unwrap_err().kind(), expected, "{line:?}");
         }
-        assert_eq!(parse(&words(&[])).unwrap_err(), "session-shim: --socket is required");
-        assert_eq!(parse(&words(&["--socket", "/s"])).unwrap_err(), "session-shim: --stderr-file is required");
-        assert_eq!(
-            parse(&words(&["--socket", "/s", "--stderr-file", "/err"])).unwrap_err(),
-            "session-shim: --exit-file is required"
-        );
-        assert_eq!(
-            parse(&words(&["--socket", "/s", "--stderr-file", "/err", "--exit-file", "/e"])).unwrap_err(),
-            "session-shim: the command must follow `--`"
-        );
     }
 
 }

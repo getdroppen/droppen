@@ -7712,14 +7712,15 @@ done
 
             let sidecars = Sidecars::new(registry.shim_dir.clone(), "resident-under-test");
             sidecars.prepare().expect("sidecars");
-            let shim = tokio::spawn(shim::run(shim::Args {
+            let shim = tokio::spawn(shim::Args {
                 socket: sidecars.socket().to_path_buf(),
                 stderr_file: sidecars.stderr(),
                 exit_file: sidecars.exit(),
                 buffer_bytes: ring.unwrap_or(shim::DEFAULT_BUFFER_BYTES),
                 command: "/bin/sh".to_string(),
                 args: vec!["-c".to_string(), script],
-            }));
+            }
+            .run());
             if attach.is_some() {
                 until("the history to be written", || marked.exists()).await;
             }

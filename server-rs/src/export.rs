@@ -13,45 +13,58 @@
 
 use std::path::PathBuf;
 
-use remote_hand_server::app::RemoteHandApp;
-use remote_hand_server::{GotchaError, GotchaResult};
+use clap::Args;
 
-/// Fetch `/openapi.json` from a throwaway in-process server and write it out.
-pub async fn export_openapi(out: Option<PathBuf>) -> GotchaResult<()> {
-    let app = RemoteHandApp {
-        port_override: Some(0),
-        // The export is a read of this process's own router, not a server: it
-        // must not refuse to run because a real server owns the instance, and it
-        // must not claim ownership itself.
-        skip_lock: true,
-        // Same shape, same reason: on a machine that has accounts, the guard
-        // would answer this process's own `GET /openapi.json` with a `401` and
-        // `pnpm gen:api` would fail on exactly the machines where the feature is
-        // switched on.
-        auth_disabled: true,
-        ..Default::default()
-    };
-    let prepared = app.prepare().await?;
-    let addr = prepared.addr;
-    let cancel = prepared.cancel();
-    let server = tokio::spawn(prepared.serve_task());
+use crate::app::RemoteHandApp;
+use crate::{GotchaError, GotchaResult};
 
-    let result = fetch_spec(addr).await;
-    cancel.cancel();
-    let _ = server.await;
+/// The `export-openapi` command line.
+#[derive(Debug, PartialEq, Eq, Args)]
+#[command(args_override_self = true)]
+pub struct ExportOpenapiArgs {
+    /// The file to write the spec to (stdout without it).
+    #[arg(long, allow_hyphen_values = true)]
+    pub out: Option<PathBuf>,
+}
 
-    let spec = result.map_err(GotchaError::message)?;
-    match out {
-        Some(path) => {
-            if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
-                tokio::fs::create_dir_all(parent).await.map_err(GotchaError::Io)?;
+impl ExportOpenapiArgs {
+    /// Fetch `/openapi.json` from a throwaway in-process server and write it out.
+    pub async fn run(self) -> GotchaResult<()> {
+        let app = RemoteHandApp {
+            port_override: Some(0),
+            // The export is a read of this process's own router, not a server: it
+            // must not refuse to run because a real server owns the instance, and it
+            // must not claim ownership itself.
+            skip_lock: true,
+            // Same shape, same reason: on a machine that has accounts, the guard
+            // would answer this process's own `GET /openapi.json` with a `401` and
+            // `pnpm gen:api` would fail on exactly the machines where the feature is
+            // switched on.
+            auth_disabled: true,
+            ..Default::default()
+        };
+        let prepared = app.prepare().await?;
+        let addr = prepared.addr;
+        let cancel = prepared.cancel();
+        let server = tokio::spawn(prepared.serve_task());
+
+        let result = fetch_spec(addr).await;
+        cancel.cancel();
+        let _ = server.await;
+
+        let spec = result.map_err(GotchaError::message)?;
+        match self.out {
+            Some(path) => {
+                if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+                    tokio::fs::create_dir_all(parent).await.map_err(GotchaError::Io)?;
+                }
+                tokio::fs::write(&path, &spec).await.map_err(GotchaError::Io)?;
+                tracing::info!(path = %path.display(), bytes = spec.len(), "wrote openapi spec");
             }
-            tokio::fs::write(&path, &spec).await.map_err(GotchaError::Io)?;
-            tracing::info!(path = %path.display(), bytes = spec.len(), "wrote openapi spec");
+            None => print!("{spec}"),
         }
-        None => print!("{spec}"),
+        Ok(())
     }
-    Ok(())
 }
 
 async fn fetch_spec(addr: std::net::SocketAddr) -> Result<String, String> {
@@ -107,7 +120,7 @@ mod tests {
         set("HTTP_PROXY", "http://127.0.0.1:1");
         set("ALL_PROXY", "http://127.0.0.1:1");
         set("NO_PROXY", "");
-        let exported = export_openapi(Some(out.clone())).await;
+        let exported = ExportOpenapiArgs { out: Some(out.clone()) }.run().await;
         for name in ["DROPPEN_CONFIG_DIR", "DROPPEN_DATA_DIR", "APP_HOME_DIR", "APP_INSTANCE", "HTTP_PROXY", "ALL_PROXY", "NO_PROXY"] {
             std::env::remove_var(name);
         }
