@@ -178,7 +178,7 @@ impl AgentLocal {
                     }
                     st.mk_epoch
                 };
-                if let Err(error) = shared.paths.store_machine_key(epoch, key.as_ref()) {
+                if let Err(error) = shared.files.store_machine_key(epoch, key.as_ref()) {
                     tracing::error!(%error, "cannot store a machine key");
                     return (500, json!({"error": "unavailable", "message": "cannot store the key"}));
                 }

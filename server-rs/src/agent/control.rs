@@ -4,7 +4,7 @@
 //! - at boot it starts the link when `agent/state.json` is there (an instance
 //!   that never enrolled starts nothing);
 //! - [`Control::enroll`] runs the same enrollment `agent enroll` does
-//!   ([`Paths::begin_enrollment`]) in this process and starts the link at once,
+//!   ([`AgentFiles::begin_enrollment`]) in this process and starts the link at once,
 //!   which then follows the chain until a device adds the machine;
 //! - the link stops itself when this machine is removed from the account
 //!   ([`super::link`]), and [`Control::status`] says so;
@@ -22,6 +22,7 @@ use serde::Serialize;
 use super::enroll::BeginError;
 use super::link::{Health, LinkEnv, Running};
 use super::state::{AgentState, Alarm};
+use super::AgentFiles;
 use crate::paths::Paths;
 
 /// Where this instance stands with a hub.
@@ -189,6 +190,7 @@ pub struct Control {
     /// identity key ([`Control::restart`]).
     me: std::sync::Weak<Control>,
     paths: Paths,
+    files: AgentFiles,
     /// Set once the server owns its instance and listens
     /// ([`crate::app::RemoteHandApp::prepare`]); a server without it (no
     /// lock: `export-openapi`, tests) never starts a link.
@@ -208,6 +210,7 @@ impl Control {
     pub fn new(paths: Paths) -> Arc<Self> {
         Arc::new_cyclic(|me| Self {
             me: me.clone(),
+            files: AgentFiles::of(&paths),
             paths,
             env: OnceLock::new(),
             running: Mutex::new(None),
@@ -262,7 +265,7 @@ impl Control {
         }
         // A dispute statement the hub has not taken yet: delivered again
         // (it outlives the enrollment it disputes).
-        self.paths.deliver_disputes();
+        self.files.deliver_disputes();
         let _ = self.env.set(env);
     }
 
@@ -280,7 +283,7 @@ impl Control {
     /// and not removed. `false`, and nothing started, otherwise — the server
     /// is then exactly the single-machine server.
     pub async fn start_if_enrolled(&self) -> bool {
-        if self.available().is_err() || !self.paths.has_agent_state() {
+        if self.available().is_err() || !self.files.has_state() {
             return false;
         }
         let _gate = self.gate.lock().await;
@@ -310,8 +313,8 @@ impl Control {
         }
         // An install still enrolled at the legacy apex hub moves to the
         // canonical `api.` origin once, if the hub takes its sign-in
-        // ([`Paths::migrate_hub`]).
-        self.paths.migrate_hub().await.map_err(ControlError::Failed)?;
+        // ([`super::migrate_hub`]).
+        super::migrate_hub(&self.paths).await.map_err(ControlError::Failed)?;
         let started = super::link::start(&self.paths, env, self.live.clone(), self.restart_hook()).map_err(ControlError::Failed)?;
         *self.running.lock().expect("running") = Some(started);
         Ok(())
@@ -354,7 +357,7 @@ impl Control {
             return status;
         }
         drop(running);
-        match AgentState::load(&self.paths) {
+        match AgentState::load(&self.files) {
             Ok(Some(st)) => AgentStatus::of_instance(&self.paths, &st),
             Ok(None) => AgentStatus::none(),
             Err(error) => AgentStatus {
@@ -395,7 +398,7 @@ impl Control {
         // A seed a renewal retired (or one archived) never signs up again:
         // a fresh one then (`docs/host-identity-rotation.md` §3.8).
         let begun = match self.paths.identity_for_enrolling() {
-            Ok(identity) => self.paths.begin_enrollment(&identity, code, hub_url)
+            Ok(identity) => self.files.begin_enrollment(&identity, code, hub_url)
                 .await
                 .map_err(ControlError::Begin),
             Err(error) => Err(ControlError::Failed(error)),
@@ -436,7 +439,7 @@ impl Control {
         if *self.generation.lock().expect("generation") != generation {
             return;
         }
-        let waiting = match AgentState::load(&self.paths) {
+        let waiting = match AgentState::load(&self.files) {
             Ok(Some(st)) => waiting_for_a_device(&st),
             _ => false,
         };
@@ -445,7 +448,7 @@ impl Control {
         }
         tracing::warn!("no device added this machine within the enrollment code's lifetime; forgetting the enrollment");
         self.stop_locked().await;
-        if let Err(error) = self.paths.forget_agent_enrollment() {
+        if let Err(error) = self.files.forget_enrollment() {
             tracing::error!(%error, "cannot forget the expired enrollment");
         }
     }
@@ -456,7 +459,7 @@ impl Control {
     /// removed state.
     pub async fn cancel_enrollment(&self) -> Result<bool, ControlError> {
         let _gate = self.gate.lock().await;
-        let waiting = match AgentState::load(&self.paths) {
+        let waiting = match AgentState::load(&self.files) {
             Ok(Some(st)) => waiting_for_a_device(&st),
             Ok(None) => return Ok(false),
             Err(error) => return Err(ControlError::Failed(error)),
@@ -465,7 +468,7 @@ impl Control {
             return Ok(false);
         }
         self.stop_locked().await;
-        self.paths.forget_agent_enrollment().map_err(ControlError::Failed)?;
+        self.files.forget_enrollment().map_err(ControlError::Failed)?;
         Ok(true)
     }
 
@@ -478,7 +481,7 @@ impl Control {
     pub async fn delete_copies(&self) -> Result<usize, ControlError> {
         let _gate = self.gate.lock().await;
         self.stop_locked().await;
-        let st = match AgentState::load(&self.paths) {
+        let st = match AgentState::load(&self.files) {
             Ok(Some(st)) if st.hosting() => st,
             Ok(_) => return Ok(0),
             Err(error) => return Err(ControlError::Failed(error)),
@@ -497,7 +500,7 @@ impl Control {
     /// a fresh seed made ([`Control::re_enroll_fresh`]). `true` when that happened.
     pub async fn renew_retired_seed(&self) -> Result<bool, ControlError> {
         let _gate = self.gate.lock().await;
-        let current = match super::FileSeedStore::for_instance(&self.paths).load() {
+        let current = match super::FileSeedStore::for_instance(&self.files).load() {
             Ok(Some(seed)) => MachineIdentity::from_seed(&seed.seed),
             Ok(None) => return Ok(false),
             Err(error) => return Err(ControlError::Failed(error)),
@@ -527,7 +530,7 @@ impl Control {
     pub async fn unenroll(&self) -> Result<(), ControlError> {
         let _gate = self.gate.lock().await;
         self.stop_locked().await;
-        self.paths.unenroll_agent_files().map_err(ControlError::Failed)
+        self.files.unenroll().map_err(ControlError::Failed)
     }
 }
 
@@ -614,11 +617,11 @@ fn waiting_for_a_device(st: &AgentState) -> bool {
     !st.enrolled() && !st.removed()
 }
 
-impl Paths {
+impl AgentFiles {
     /// Delete an enrollment's state (and what it left), keeping the machine key.
-    fn forget_agent_enrollment(&self) -> Result<(), String> {
+    fn forget_enrollment(&self) -> Result<(), String> {
         self.forget_enrollment_leftovers()?;
-        match std::fs::remove_file(self.agent_state_path()) {
+        match std::fs::remove_file(self.state()) {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(e) => Err(e.to_string()),
@@ -626,16 +629,16 @@ impl Paths {
     }
 }
 
-impl Paths {
+impl AgentFiles {
     /// Delete `agent/` and everything in it (no-op when it is not there) — but
     /// a dispute statement the hub has not taken yet ([`super::dispute`]): the
     /// only evidence that this device's key was replaced elsewhere, signed and
     /// holding no secret, kept and still delivered until the hub has it. The
     /// link — and with it the streams' writer — must be stopped first; the
     /// process's connection to `streams.db` is dropped here, before the file.
-    pub fn unenroll_agent_files(&self) -> Result<(), String> {
-        crate::db::forget(&self.streams_db_path());
-        let dir = self.instance_dir().join("agent");
+    pub fn unenroll(&self) -> Result<(), String> {
+        crate::db::forget(&self.streams_db());
+        let dir = self.0.clone();
         let entries = match std::fs::read_dir(&dir) {
             Ok(entries) => entries,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -716,14 +719,14 @@ mod tests {
         let control = Control::new(paths.clone());
         let identity = control.identity().unwrap();
         let mut st = AgentState::enrolling("wss://hub.example", "a-1", "m-1", [9; 16], 5_000);
-        st.save(&paths).unwrap();
-        paths.store_machine_key(0, &[7; 32]).unwrap();
+        st.save(&AgentFiles::of(&paths)).unwrap();
+        AgentFiles::of(&paths).store_machine_key(0, &[7; 32]).unwrap();
         let status = control.status();
         assert_eq!(status.state, Standing::Enrolling);
         assert_eq!(status.machine.as_deref(), Some("m-1"));
         assert!(!status.running);
         st.mark_removed(6_000);
-        st.save(&paths).unwrap();
+        st.save(&AgentFiles::of(&paths)).unwrap();
         assert_eq!(
             control.status().state,
             Standing::Enrolling,
@@ -749,22 +752,22 @@ mod tests {
         let paths = Paths::for_instance(dir.path().to_path_buf(), "ctlstore");
         let control = Control::new(paths.clone());
         let _ = control.identity().unwrap();
-        let old = crate::agent::streams::store::Store::open(&paths);
+        let old = crate::agent::streams::store::Store::open(&AgentFiles::of(&paths));
         old.set_kv("plan", "old-account-plan");
         drop(old);
         control.unenroll().await.unwrap();
-        let file = paths.streams_db_path();
+        let file = AgentFiles::of(&paths).streams_db();
         assert!(!file.exists(), "agent/ is gone on disk");
         let _ = control.identity().unwrap(); // a new machine key, as a new sign-in makes
-        let fresh = crate::agent::streams::store::Store::open(&paths);
+        let fresh = crate::agent::streams::store::Store::open(&AgentFiles::of(&paths));
         assert_eq!(fresh.get_kv("plan"), None, "the new enrollment starts from an empty store");
         fresh.set_kv("plan", "new-account-plan");
         assert!(file.exists(), "and it is the file on disk");
         drop(fresh);
 
         // The same for an enrollment that replaces one that never completed.
-        paths.forget_enrollment_leftovers().unwrap();
-        assert_eq!(crate::agent::streams::store::Store::open(&paths).get_kv("plan"), None);
+        AgentFiles::of(&paths).forget_enrollment_leftovers().unwrap();
+        assert_eq!(crate::agent::streams::store::Store::open(&AgentFiles::of(&paths)).get_kv("plan"), None);
     }
 
     /// What a link needs, for a server of these paths that listens nowhere.
@@ -817,7 +820,7 @@ mod tests {
         let control = Control::new(paths.clone());
         let _ = control.identity().unwrap();
         let hub = format!("ws://127.0.0.1:{}", closed_port());
-        AgentState::enrolling(&hub, "a-1", "m-1", [9; 16], 5_000).save(&paths).unwrap();
+        AgentState::enrolling(&hub, "a-1", "m-1", [9; 16], 5_000).save(&AgentFiles::of(&paths)).unwrap();
         control.attach(link_env(&paths));
         assert!(control.start_if_enrolled().await);
         assert!(control.status().running);
@@ -872,8 +875,8 @@ mod tests {
         );
         assert!(st.absorb(&entries, 5_000).error.is_none());
         assert!(st.enrolled() && st.not_hosting());
-        st.save(&paths).unwrap();
-        let state_file = paths.agent_state_path();
+        st.save(&AgentFiles::of(&paths)).unwrap();
+        let state_file = AgentFiles::of(&paths).state();
         assert_eq!(control.status().state, Standing::NotHosting, "not \"enrolling\"");
         assert!(!control.cancel_enrollment().await.unwrap(), "nothing to cancel");
         assert!(state_file.exists());
@@ -895,7 +898,7 @@ mod tests {
         let control = Control::new(paths.clone());
         let old = control.identity().unwrap();
         let hub = format!("ws://127.0.0.1:{}", closed_port());
-        AgentState::enrolling(&hub, "a-1", "m-1", [9; 16], 5_000).save(&paths).unwrap();
+        AgentState::enrolling(&hub, "a-1", "m-1", [9; 16], 5_000).save(&AgentFiles::of(&paths)).unwrap();
         let env = link_env(&paths);
         let server = env.cancel.clone();
         let session = server.child_token();
@@ -907,7 +910,7 @@ mod tests {
         };
         assert_eq!(key_in_use(&control), Some(old.sign_public()));
         // The renewed seed in place, as a promotion leaves it.
-        let store = FileSeedStore::for_instance(&paths);
+        let store = FileSeedStore::for_instance(&AgentFiles::of(&paths));
         store
             .stage(&StagedSeed {
                 uuid: crate::identity::ensure(&paths).unwrap().uuid,
@@ -946,7 +949,7 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
-        while AgentState::load(&paths).unwrap().unwrap().rotation.push_renew {
+        while AgentState::load(&AgentFiles::of(&paths)).unwrap().unwrap().rotation.push_renew {
             assert!(std::time::Instant::now() < deadline, "the restarted link renews the push keys");
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
@@ -970,13 +973,13 @@ mod tests {
         let paths = Paths::for_instance(dir.path().to_path_buf(), "ctlfresh");
         let control = Control::new(paths.clone());
         let old = control.identity().unwrap();
-        AgentState::enrolling("wss://hub.example", "a-1", "m-1", [9; 16], 5_000).save(&paths).unwrap();
+        AgentState::enrolling("wss://hub.example", "a-1", "m-1", [9; 16], 5_000).save(&AgentFiles::of(&paths)).unwrap();
         // What the crash left: the marker, the seed archived, the state kept.
-        let agent = paths.machine_key_path().parent().unwrap().to_path_buf();
+        let agent = AgentFiles::of(&paths).machine_key().parent().unwrap().to_path_buf();
         crate::fsutil::write_private_reporting_path(&agent.join("re-enroll-fresh.json"), b"{}").unwrap();
-        std::fs::rename(paths.machine_key_path(), paths.archived_key_path(5)).unwrap();
+        std::fs::rename(AgentFiles::of(&paths).machine_key(), paths.archived_key_path(5)).unwrap();
         control.attach(link_env(&paths));
-        assert!(!paths.has_agent_state(), "the old enrollment is forgotten");
+        assert!(!AgentFiles::of(&paths).has_state(), "the old enrollment is forgotten");
         assert!(!agent.join("re-enroll-fresh.json").exists());
         let fresh = control.identity().unwrap();
         assert_ne!(fresh.sign_public(), old.sign_public());
@@ -992,7 +995,7 @@ mod tests {
         let control = Control::new(paths.clone());
         let identity = control.identity().unwrap();
         AgentState::enrolling("wss://hub.example", "a-1", "m-1", [9; 16], 5_000)
-            .save(&paths)
+            .save(&AgentFiles::of(&paths))
             .unwrap();
         assert!(control.cancel_enrollment().await.unwrap());
         assert_eq!(control.status().state, Standing::None);

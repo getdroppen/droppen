@@ -45,7 +45,7 @@ use tokio_util::sync::CancellationToken;
 use lapse::ChannelLapse;
 use super::bridge::Loopback;
 use super::state::{self, AgentState};
-use super::{bridge, direct, hub, load_or_create, relays, rotation, streams, traffic, StagedSeed, CHAIN_V3_FEATURE, POLICY_FEATURE, ROTATE_FEATURE};
+use super::{bridge, direct, hub, load_or_create, relays, rotation, streams, traffic, AgentFiles, StagedSeed, CHAIN_V3_FEATURE, POLICY_FEATURE, ROTATE_FEATURE};
 use crate::paths::Paths;
 use crate::time::now_ms_u64;
 
@@ -82,6 +82,8 @@ const LAPSE_POLL: Duration = Duration::from_secs(10 * 60);
 pub const ROTATED: u16 = 4005;
 pub(super) struct Shared {
     pub(super) paths: Paths,
+    /// This instance's agent files, of `paths`.
+    pub(super) files: AgentFiles,
     /// Mailed machine keys this agent could not judge yet (the chain had not
     /// caught up with their commitment or sender): tried again as it does.
     deferred_mail: Mutex<Vec<Value>>,
@@ -152,7 +154,7 @@ impl Shared {
     /// on unless the state it relies on is on disk.
     pub(super) fn try_save(&self) -> Result<(), String> {
         let st = self.state.lock().expect("agent state");
-        st.save(&self.paths)
+        st.save(&self.files)
     }
 
     fn set_health(&self, connected: bool, error: Option<String>) {
@@ -274,6 +276,7 @@ mod tests {
         assert!(st.absorb(&entries, now_ms_u64()).error.is_none());
         let guard = st.replay_guard(now_ms_u64());
         let shared = Arc::new(Shared {
+            files: AgentFiles::of(&paths),
             paths,
             deferred_mail: Mutex::new(Vec::new()),
             identity: Arc::new(machine),
@@ -345,7 +348,7 @@ mod tests {
                 "device d-thief is coming back with the recovery words".to_string()
             ]
         );
-        let saved = AgentState::load(&a.shared.paths).unwrap().unwrap();
+        let saved = AgentState::load(&a.shared.files).unwrap().unwrap();
         let chain = saved.chain.as_ref().unwrap();
         assert_eq!(chain.seq(), 4, "saved through the join");
         assert!(chain.device_record("d-thief").is_some() && chain.device("d-2").is_none());
@@ -703,7 +706,7 @@ mod tests {
             "not tried again: the push key stays refused until the next start"
         );
         assert_ne!(crate::push::store::vapid_public(&paths).await.unwrap(), old, "a new push key");
-        assert!(!AgentState::load(&paths).unwrap().unwrap().rotation.push_renew, "saved");
+        assert!(!AgentState::load(&a.shared.files).unwrap().unwrap().rotation.push_renew, "saved");
         tokio::time::timeout(Duration::from_secs(1), task).await.expect("done").unwrap();
     }
 
@@ -738,7 +741,7 @@ mod tests {
 
         let _open = connect(&a, &a.d1, "d-1", 2, &mut routes).await.expect("an admin");
         assert_eq!(ids(&a), vec!["d-1".to_string()]);
-        let saved = AgentState::load(&a.shared.paths).unwrap().unwrap();
+        let saved = AgentState::load(&a.shared.files).unwrap().unwrap();
         assert_eq!(controller_ids(&saved), vec!["d-1".to_string()], "saved with the replay guard");
         let record = saved.controllers().unwrap();
         assert_eq!((record.from, record.seq), (0, 3), "whole since enrollment, at this agent's chain");
@@ -755,7 +758,7 @@ mod tests {
     /// Make the next save of `a`'s state fail (its file's place taken by a
     /// directory), or let it succeed again.
     fn break_saves(a: &Account, broken: bool) {
-        let path = a.shared.paths.agent_state_path();
+        let path = a.shared.files.state();
         if broken {
             let _ = std::fs::remove_file(&path);
             std::fs::create_dir_all(path.join("in-the-way")).unwrap();
@@ -789,7 +792,7 @@ mod tests {
         assert_eq!(told(&mut events), 0, "nothing new to say");
         break_saves(&a, false);
         let _open = connect(&a, &a.d1, "d-1", 2, &mut routes).await.expect("saved, let in");
-        assert_eq!(controller_ids(&AgentState::load(&a.shared.paths).unwrap().unwrap()), vec!["d-1".to_string()]);
+        assert_eq!(controller_ids(&AgentState::load(&a.shared.files).unwrap().unwrap()), vec!["d-1".to_string()]);
         assert_eq!(told(&mut events), 1, "the status is told once it is saved");
         break_saves(&a, true);
         let _again = connect(&a, &a.d1, "d-1", 3, &mut routes)
@@ -980,7 +983,7 @@ mod tests {
         let (bind, hello) = direct_hello(&a, &d2(), "d-2");
         assert!(matches!(admit.admit("d-2", &bind, &hello), Admission::Open { .. }), "an admin, saved");
         assert_eq!(
-            controller_ids(&AgentState::load(&a.shared.paths).unwrap().unwrap()),
+            controller_ids(&AgentState::load(&a.shared.files).unwrap().unwrap()),
             vec!["d-2".to_string()],
             "on disk by the time the reply is handed back"
         );
@@ -1660,7 +1663,7 @@ mod tests {
         attest(&a, "d-2", &d2(), 0);
         let refused = connect(&a, &a.d1, "d-1", 2, &mut routes).await.err().expect("no channel");
         assert_eq!(refused, vec![(2, 4401)]);
-        let saved = AgentState::load(&a.shared.paths).unwrap().expect("its state stays");
+        let saved = AgentState::load(&a.shared.files).unwrap().expect("its state stays");
         assert!(saved.not_hosting());
 
         let key = [7u8; 32];
@@ -2196,7 +2199,7 @@ mod tests {
         assert!(refused.load(std::sync::atomic::Ordering::SeqCst) >= 2, "it tries again");
         assert!(!a.shared.cancel.is_cancelled() && !task.is_finished(), "the link keeps running");
         assert!(!a.shared.state.lock().unwrap().removed(), "not removed on the hub's word");
-        let saved = AgentState::load(&a.shared.paths).unwrap();
+        let saved = AgentState::load(&a.shared.files).unwrap();
         assert!(saved.is_none_or(|st| !st.removed()), "nor saved as removed");
         let health = a.shared.health.lock().unwrap().clone();
         assert!(health.refused.as_deref().is_some_and(|r| r.contains("removed")), "{health:?}");
@@ -2226,7 +2229,7 @@ mod tests {
         on_frame(&a.shared, frame, &mut Routes::new(), &mut Pending::new(), &out_tx, &text_tx);
         assert!(a.shared.state.lock().unwrap().removed());
         assert!(a.shared.cancel.is_cancelled(), "the link stops");
-        assert!(AgentState::load(&a.shared.paths).unwrap().unwrap().removed(), "and stays stopped");
+        assert!(AgentState::load(&a.shared.files).unwrap().unwrap().removed(), "and stays stopped");
         assert!(!crate::aggregator::dir(&a.shared.paths).exists(), "the other devices' keys are gone");
     }
 
@@ -2291,7 +2294,7 @@ mod tests {
         a.shared.save();
         let mut keys = crate::aggregator::keys::HostKeys::load(&a.shared.paths, "a-1", "m-1").unwrap();
         keys.put("m-2", 0, &[2; 32]).unwrap();
-        let refused = a.shared.paths.startable().err().expect("a removed machine does not start");
+        let refused = startable(&a.shared.paths).err().expect("a removed machine does not start");
         assert!(refused.contains("removed"), "{refused}");
         assert!(!crate::aggregator::dir(&a.shared.paths).exists(), "the other devices' keys are gone");
     }

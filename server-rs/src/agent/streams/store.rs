@@ -25,7 +25,7 @@ use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 use crate::db::{Db, Durability};
-use crate::paths::Paths;
+use crate::agent::AgentFiles;
 
 pub const SCHEMA: &[&str] = &[
     "
@@ -95,10 +95,10 @@ pub const SCHEMA: &[&str] = &[
 ",
 ];
 
-impl Paths {
+impl AgentFiles {
     /// `<instance dir>/agent/streams.db`.
-    pub fn streams_db_path(&self) -> PathBuf {
-        self.instance_dir().join("agent").join("streams.db")
+    pub(in crate::agent) fn streams_db(&self) -> PathBuf {
+        self.0.join("streams.db")
     }
 }
 
@@ -277,8 +277,8 @@ pub struct Store {
 }
 
 impl Store {
-    pub fn open(paths: &Paths) -> Self {
-        Self::at(&paths.streams_db_path())
+    pub fn open(files: &AgentFiles) -> Self {
+        Self::at(&files.streams_db())
     }
 
     pub fn at(file: &Path) -> Self {

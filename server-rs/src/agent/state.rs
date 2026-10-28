@@ -24,20 +24,20 @@ use rh_proto::noise::ReplayGuard;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
-use crate::paths::Paths;
+use super::AgentFiles;
 use crate::text::{hex, unhex};
 
 const VERSION: u32 = 1;
 
-impl Paths {
+impl AgentFiles {
     /// `<instance dir>/agent/state.json`.
-    pub fn agent_state_path(&self) -> PathBuf {
-        self.instance_dir().join("agent").join("state.json")
+    pub(in crate::agent) fn state(&self) -> PathBuf {
+        self.0.join("state.json")
     }
 
     /// `<instance dir>/agent/machine-keys.json`.
-    pub fn agent_keys_path(&self) -> PathBuf {
-        self.instance_dir().join("agent").join("machine-keys.json")
+    pub(in crate::agent) fn keys(&self) -> PathBuf {
+        self.0.join("machine-keys.json")
     }
 }
 
@@ -396,13 +396,13 @@ impl AgentState {
     /// this state: what is in memory is only ever what was saved, so "on the
     /// record already" never means another handshake's note that is not on
     /// disk (concurrent hub, relay and direct admissions).
-    pub fn record_controller(&mut self, paths: &Paths, device: &str, now_ms: u64) -> Recorded {
+    pub fn record_controller(&mut self, files: &AgentFiles, device: &str, now_ms: u64) -> Recorded {
         let noted = self.note_controller(device, now_ms);
         #[cfg(test)]
         if let Some(hook) = self.between_note_and_save.clone() {
             hook();
         }
-        match (self.save(paths), noted) {
+        match (self.save(files), noted) {
             (Ok(()), Some(_)) => Recorded::New,
             (Ok(()), None) => Recorded::Known,
             (Err(error), Some(noted)) => {
@@ -616,8 +616,8 @@ impl AgentState {
     }
 
     /// The saved state, re-verified; `None` when this instance was never enrolled.
-    pub fn load(paths: &Paths) -> Result<Option<Self>, String> {
-        let path = paths.agent_state_path();
+    pub fn load(files: &AgentFiles) -> Result<Option<Self>, String> {
+        let path = files.state();
         let bytes = match std::fs::read(&path) {
             Ok(b) => b,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -703,7 +703,7 @@ impl AgentState {
     }
 
     /// Write the state (0600, atomically).
-    pub fn save(&self, paths: &Paths) -> Result<(), String> {
+    pub fn save(&self, files: &AgentFiles) -> Result<(), String> {
         let file = StateFile {
             version: VERSION,
             hub: self.hub.clone(),
@@ -729,7 +729,7 @@ impl AgentState {
             rotation: self.rotation.clone(),
         };
         let bytes = serde_json::to_vec_pretty(&file).map_err(|e| e.to_string())?;
-        crate::fsutil::write_private_reporting_path(&paths.agent_state_path(), &bytes)
+        crate::fsutil::write_private_reporting_path(&files.state(), &bytes)
     }
 }
 
@@ -739,10 +739,10 @@ struct KeysFile {
     epochs: BTreeMap<u32, String>,
 }
 
-impl Paths {
+impl AgentFiles {
     /// Store machine-key epoch `epoch`.
     pub fn store_machine_key(&self, epoch: u32, key: &[u8]) -> Result<(), String> {
-        let path = self.agent_keys_path();
+        let path = self.keys();
         let mut file: KeysFile = match std::fs::read(&path) {
             Ok(bytes) => {
                 crate::fsutil::check_private(&path)?;
@@ -758,7 +758,7 @@ impl Paths {
 
     /// Every machine-key epoch this agent holds (empty until a device delivered one).
     pub fn load_machine_keys(&self) -> Result<BTreeMap<u32, Zeroizing<[u8; 32]>>, String> {
-        let path = self.agent_keys_path();
+        let path = self.keys();
         let bytes = match std::fs::read(&path) {
             Ok(bytes) => Zeroizing::new(bytes),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
@@ -785,11 +785,11 @@ impl Paths {
     /// the old file's epochs must never be what the writer seals under.
     /// Gone files are fine.
     pub fn forget_enrollment_leftovers(&self) -> Result<(), String> {
-        let store = self.streams_db_path();
+        let store = self.streams_db();
         // The process's connection to the old store goes with it, or the next
         // open would hand it back (the file deleted, its rows not).
         crate::db::forget(&store);
-        let mut leftovers = vec![self.agent_keys_path(), store.clone()];
+        let mut leftovers = vec![self.keys(), store.clone()];
         for suffix in ["-wal", "-shm"] {
             let mut name = store.clone().into_os_string();
             name.push(suffix);
@@ -807,14 +807,15 @@ impl Paths {
 
     /// Whether this instance has agent state (`agent/state.json`): enrollment
     /// state is per instance.
-    pub fn has_agent_state(&self) -> bool {
-        self.agent_state_path().exists()
+    pub fn has_state(&self) -> bool {
+        self.state().exists()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::paths::Paths;
     use rh_proto::chain::{genesis_draft, Action, DeviceInfo, Signer};
     use rh_proto::identity::{fingerprint, MachineIdentity};
 
@@ -841,9 +842,9 @@ mod tests {
     #[test]
     fn an_enrolled_state_round_trips_and_is_re_verified_on_load() {
         let dir = tempfile::tempdir().unwrap();
-        let paths = Paths::for_instance(dir.path().to_path_buf(), "agentstate");
+        let files = AgentFiles::of(&Paths::for_instance(dir.path().to_path_buf(), "agentstate"));
         let (entries, fp, _) = chain();
-        assert!(AgentState::load(&paths).unwrap().is_none(), "never enrolled");
+        assert!(AgentState::load(&files).unwrap().is_none(), "never enrolled");
         let mut st = AgentState::enrolling("wss://hub.example", "a-1", "m-1", fp, 5_000);
         assert_eq!(st.absorb(&entries[..1], 5_000).applied, 1);
         assert!(
@@ -856,19 +857,19 @@ mod tests {
         let mut guard = st.replay_guard(6_000);
         guard.forget("nobody");
         st.save_guard(&guard);
-        st.save(&paths).unwrap();
-        let loaded = AgentState::load(&paths).unwrap().unwrap();
+        st.save(&files).unwrap();
+        let loaded = AgentState::load(&files).unwrap().unwrap();
         assert!(loaded.enrolled());
         assert_eq!(loaded.root, st.root);
         assert_eq!(loaded.clock.first_seen().get(&1), Some(&6_000), "the agent's own first sighting survives");
 
         // A saved chain that no longer verifies is refused, not trusted.
-        let path = paths.agent_state_path();
+        let path = files.state();
         let mut v: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         let tampered = v["chain"][1].as_str().unwrap().replacen('0', "1", 1);
         v["chain"][1] = serde_json::Value::String(tampered);
         crate::fsutil::write_private_reporting_path(&path, &serde_json::to_vec(&v).unwrap()).unwrap();
-        assert!(AgentState::load(&paths).is_err());
+        assert!(AgentState::load(&files).is_err());
     }
 
     #[test]
@@ -907,7 +908,7 @@ mod tests {
     fn a_batch_that_stops_short_still_reports_and_keeps_what_took_effect() {
         use rh_proto::chain::{recovery_keys, RecoveryKey};
         let dir = tempfile::tempdir().unwrap();
-        let paths = Paths::for_instance(dir.path().to_path_buf(), "agentpartial");
+        let files = AgentFiles::of(&Paths::for_instance(dir.path().to_path_buf(), "agentpartial"));
         let ak = MachineIdentity::from_seed(&[1; 32]);
         let device = MachineIdentity::from_seed(&[2; 32]);
         let machine = MachineIdentity::from_seed(&[3; 32]);
@@ -947,8 +948,8 @@ mod tests {
         assert_eq!(absorbed.applied, 1);
         assert_eq!(absorbed.news, vec![join], "the join is news to act on");
         assert!(matches!(absorbed.error, Some(rh_proto::chain::ChainError::BadSignature { seq: 3 })));
-        st.save(&paths).unwrap();
-        let loaded = AgentState::load(&paths).unwrap().unwrap();
+        st.save(&files).unwrap();
+        let loaded = AgentState::load(&files).unwrap().unwrap();
         assert!(loaded.chain.as_ref().unwrap().device_record("d-thief").is_some(), "kept");
         assert_eq!(loaded.clock.first_seen().get(&2), Some(&9_000), "first seen by this agent, then");
     }
@@ -963,7 +964,7 @@ mod tests {
     fn a_host_of_an_account_made_on_chain_v3_follows_it_and_admits_its_devices() {
         use rh_proto::chain::{genesis3_draft, machine_key_commit, user_key_commit, Accept, DeviceV3, Flags, KeyCommit, KeyCommits};
         let dir = tempfile::tempdir().unwrap();
-        let paths = Paths::for_instance(dir.path().to_path_buf(), "agentv3genesis");
+        let files = AgentFiles::of(&Paths::for_instance(dir.path().to_path_buf(), "agentv3genesis"));
         let ak = MachineIdentity::from_seed(&[1; 32]);
         let admin = MachineIdentity::from_seed(&[2; 32]);
         let machine = MachineIdentity::from_seed(&[3; 32]);
@@ -1035,8 +1036,8 @@ mod tests {
         chain.authorize_control("d-2", &phone.dh_public(), "m-1").expect("a device it accepts");
         assert!(chain.authorize_control("d-3", &other.dh_public(), "m-1").is_err(), "one it does not");
         assert!(chain.authorize_control("m-1", &machine.dh_public(), "m-1").is_err(), "never itself");
-        st.save(&paths).unwrap();
-        let loaded = AgentState::load(&paths).unwrap().unwrap();
+        st.save(&files).unwrap();
+        let loaded = AgentState::load(&files).unwrap().unwrap();
         assert!(loaded.enrolled() && loaded.hosting());
         assert_eq!(loaded.seq(), Some(entries.len() as u64 - 1));
     }
@@ -1044,7 +1045,7 @@ mod tests {
     #[test]
     fn alarms_are_kept_bounded_and_not_repeated_within_the_hour() {
         let dir = tempfile::tempdir().unwrap();
-        let paths = Paths::for_instance(dir.path().to_path_buf(), "agentalarms");
+        let files = AgentFiles::of(&Paths::for_instance(dir.path().to_path_buf(), "agentalarms"));
         let (entries, fp, _) = chain();
         let mut st = AgentState::enrolling("wss://hub.example", "a-1", "m-1", fp, 0);
         st.absorb(&entries, 0);
@@ -1062,8 +1063,8 @@ mod tests {
         }
         assert_eq!(st.alarms.len(), MAX_ALARMS);
         assert_eq!(st.alarms.last().unwrap().what, format!("alarm {}", MAX_ALARMS - 1));
-        st.save(&paths).unwrap();
-        assert_eq!(AgentState::load(&paths).unwrap().unwrap().alarms, st.alarms, "they survive a restart");
+        st.save(&files).unwrap();
+        assert_eq!(AgentState::load(&files).unwrap().unwrap().alarms, st.alarms, "they survive a restart");
     }
 
     /// Review D3: which devices ever opened a channel survives a restart, and
@@ -1071,7 +1072,7 @@ mod tests {
     #[test]
     fn the_devices_that_opened_a_channel_are_kept_and_survive_a_restart() {
         let dir = tempfile::tempdir().unwrap();
-        let paths = Paths::for_instance(dir.path().to_path_buf(), "agentcontrollers");
+        let files = AgentFiles::of(&Paths::for_instance(dir.path().to_path_buf(), "agentcontrollers"));
         let (entries, fp, _) = chain();
         let mut st = AgentState::enrolling("wss://hub.example", "a-1", "m-1", fp, 500);
         assert_eq!(st.controllers(), None, "nothing to say before a chain");
@@ -1085,8 +1086,8 @@ mod tests {
         assert!(st.note_controller("d-1", 7_000).is_some(), "news");
         assert!(st.note_controller("d-1", 8_000).is_none(), "seen before");
         assert!(st.note_controller("d-0", 9_000).is_some());
-        st.save(&paths).unwrap();
-        let loaded = AgentState::load(&paths).unwrap().unwrap();
+        st.save(&files).unwrap();
+        let loaded = AgentState::load(&files).unwrap().unwrap();
         let record = loaded.controllers().unwrap();
         assert_eq!((record.from, record.from_ms, record.seq), (0, 500, 1));
         let seen = |id: &str, first_ms| Controller { id: id.into(), first_ms };
@@ -1103,12 +1104,12 @@ mod tests {
     #[test]
     fn a_state_from_before_the_record_starts_it_at_the_seq_it_was_loaded_at() {
         let dir = tempfile::tempdir().unwrap();
-        let paths = Paths::for_instance(dir.path().to_path_buf(), "agentcontrollersold");
+        let files = AgentFiles::of(&Paths::for_instance(dir.path().to_path_buf(), "agentcontrollersold"));
         let (entries, fp, _) = chain();
         let mut st = AgentState::enrolling("wss://hub.example", "a-1", "m-1", fp, 0);
         st.absorb(&entries, 0);
-        st.save(&paths).unwrap();
-        let path = paths.agent_state_path();
+        st.save(&files).unwrap();
+        let path = files.state();
         let mut v: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         let map = v.as_object_mut().unwrap();
         for key in ["controllers", "controllers_from", "controllers_from_ms"] {
@@ -1116,13 +1117,13 @@ mod tests {
         }
         crate::fsutil::write_private_reporting_path(&path, &serde_json::to_vec(&v).unwrap()).unwrap();
         let before = crate::time::now_ms_u64();
-        let mut old = AgentState::load(&paths).unwrap().unwrap();
+        let mut old = AgentState::load(&files).unwrap().unwrap();
         let record = old.controllers().unwrap();
         assert_eq!((record.from, record.seq, record.devices.len()), (1, 1, 0), "complete from the upgrade on");
         assert!(record.from_ms >= before, "from the load, by this agent's clock");
         assert!(old.note_controller("d-1", 5).is_some());
-        old.save(&paths).unwrap();
-        let again = AgentState::load(&paths).unwrap().unwrap().controllers().unwrap();
+        old.save(&files).unwrap();
+        let again = AgentState::load(&files).unwrap().unwrap().controllers().unwrap();
         assert_eq!((again.from, again.from_ms), (1, record.from_ms), "kept where it started");
         assert_eq!(again.devices.iter().map(|d| d.id.as_str()).collect::<Vec<_>>(), vec!["d-1"]);
     }
@@ -1156,34 +1157,34 @@ mod tests {
     #[test]
     fn recording_a_device_saves_it_or_takes_it_back() {
         let dir = tempfile::tempdir().unwrap();
-        let paths = Paths::for_instance(dir.path().to_path_buf(), "agentrecord");
+        let files = AgentFiles::of(&Paths::for_instance(dir.path().to_path_buf(), "agentrecord"));
         let (entries, fp, _) = chain();
         let mut st = AgentState::enrolling("wss://hub.example", "a-1", "m-1", fp, 0);
         st.absorb(&entries, 0);
-        assert_eq!(st.record_controller(&paths, "d-1", 1_000), Recorded::New);
-        assert_eq!(st.record_controller(&paths, "d-1", 2_000), Recorded::Known);
+        assert_eq!(st.record_controller(&files, "d-1", 1_000), Recorded::New);
+        assert_eq!(st.record_controller(&files, "d-1", 2_000), Recorded::Known);
         let before = st.controllers().unwrap();
         // Saves fail: the file's place is taken.
-        let path = paths.agent_state_path();
+        let path = files.state();
         std::fs::remove_file(&path).unwrap();
         std::fs::create_dir_all(path.join("in-the-way")).unwrap();
-        assert!(matches!(st.record_controller(&paths, "d-2", 3_000), Recorded::Unsaved(_)));
+        assert!(matches!(st.record_controller(&files, "d-2", 3_000), Recorded::Unsaved(_)));
         assert_eq!(st.controllers().unwrap(), before, "taken back");
-        assert!(matches!(st.record_controller(&paths, "d-1", 4_000), Recorded::KnownUnsaved(_)));
+        assert!(matches!(st.record_controller(&files, "d-1", 4_000), Recorded::KnownUnsaved(_)));
         std::fs::remove_dir_all(&path).unwrap();
-        assert_eq!(st.record_controller(&paths, "d-2", 5_000), Recorded::New, "saved this time");
-        let ids: Vec<String> = AgentState::load(&paths).unwrap().unwrap().controllers().unwrap().devices.into_iter().map(|d| d.id).collect();
+        assert_eq!(st.record_controller(&files, "d-2", 5_000), Recorded::New, "saved this time");
+        let ids: Vec<String> = AgentState::load(&files).unwrap().unwrap().controllers().unwrap().devices.into_iter().map(|d| d.id).collect();
         assert_eq!(ids, vec!["d-1".to_string(), "d-2".to_string()]);
     }
 
     #[test]
     fn machine_keys_round_trip_by_epoch() {
         let dir = tempfile::tempdir().unwrap();
-        let paths = Paths::for_instance(dir.path().to_path_buf(), "agentkeys");
-        assert!(paths.load_machine_keys().unwrap().is_empty());
-        paths.store_machine_key(0, &[1; 32]).unwrap();
-        paths.store_machine_key(2, &[2; 32]).unwrap();
-        let keys = paths.load_machine_keys().unwrap();
+        let files = AgentFiles::of(&Paths::for_instance(dir.path().to_path_buf(), "agentkeys"));
+        assert!(files.load_machine_keys().unwrap().is_empty());
+        files.store_machine_key(0, &[1; 32]).unwrap();
+        files.store_machine_key(2, &[2; 32]).unwrap();
+        let keys = files.load_machine_keys().unwrap();
         assert_eq!(keys.keys().copied().collect::<Vec<_>>(), vec![0, 2]);
         assert_eq!(*keys[&2], [2; 32]);
     }
@@ -1194,16 +1195,16 @@ mod tests {
     #[test]
     fn a_new_enrollment_forgets_the_last_ones_keys_and_streams() {
         let dir = tempfile::tempdir().unwrap();
-        let paths = Paths::for_instance(dir.path().to_path_buf(), "agentreenroll");
-        paths.store_machine_key(7, &[7; 32]).unwrap();
-        let store = paths.streams_db_path();
+        let files = AgentFiles::of(&Paths::for_instance(dir.path().to_path_buf(), "agentreenroll"));
+        files.store_machine_key(7, &[7; 32]).unwrap();
+        let store = files.streams_db();
         std::fs::write(&store, b"old").unwrap();
         std::fs::write(format!("{}-wal", store.display()), b"old").unwrap();
-        paths.forget_enrollment_leftovers().unwrap();
-        assert!(paths.load_machine_keys().unwrap().is_empty());
+        files.forget_enrollment_leftovers().unwrap();
+        assert!(files.load_machine_keys().unwrap().is_empty());
         assert!(!store.exists());
         assert!(!std::path::Path::new(&format!("{}-wal", store.display())).exists());
-        paths.forget_enrollment_leftovers().unwrap();
+        files.forget_enrollment_leftovers().unwrap();
     }
 
     #[test]

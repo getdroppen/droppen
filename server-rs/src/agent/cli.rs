@@ -3,7 +3,7 @@ use rh_proto::identity::{display_fingerprint, fingerprint_text, EnrollCode, Mach
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use super::seed::{load_or_create, FileSeedStore};
-use super::{control, enroll, hub, rotation, state};
+use super::{control, enroll, hub, rotation, state, AgentFiles};
 use crate::paths::Paths;
 use crate::time::now_ms_u64;
 
@@ -161,7 +161,7 @@ pub(super) fn describe(paths: &Paths, identity: &MachineIdentity, created: bool)
     println!(
         "device identity {} {}",
         if created { "created at" } else { "loaded from" },
-        paths.machine_key_path().display()
+        AgentFiles::of(paths).machine_key().display()
     );
     println!(
         "  signing key    {}  (Ed25519: hub sign-in, stream manifests, push payloads)",
@@ -178,8 +178,9 @@ pub(super) fn describe(paths: &Paths, identity: &MachineIdentity, created: bool)
 /// local link's settings (`cloud.json`), as the local settings' "Disconnect"
 /// does. The state it had, if any.
 pub(super) fn unenroll_instance(paths: &Paths) -> Result<Option<state::AgentState>, String> {
-    let before = state::AgentState::load(paths).ok().flatten();
-    paths.unenroll_agent_files()?;
+    let files = AgentFiles::of(paths);
+    let before = state::AgentState::load(&files).ok().flatten();
+    files.unenroll()?;
     crate::aggregator::forget_all(paths)?;
     let cloud = crate::cloud::file_path(paths);
     match std::fs::remove_file(&cloud) {
@@ -192,7 +193,7 @@ pub(super) fn unenroll_instance(paths: &Paths) -> Result<Option<state::AgentStat
 
 /// `agent status`: where this instance stands, from its files.
 pub(super) fn print_status(paths: &Paths) {
-    let status = match state::AgentState::load(paths) {
+    let status = match state::AgentState::load(&AgentFiles::of(paths)) {
         Ok(Some(st)) => control::AgentStatus::of_instance(paths, &st),
         Ok(None) => {
             println!("instance {}: not enrolled (a server on its own)", paths.instance());
@@ -277,7 +278,7 @@ pub(super) fn rotation_lines(rotation: &rotation::Status, now: u64) -> Vec<Strin
 
 /// The machine identity if it exists (never made here).
 pub(super) fn load_or_create_existing(paths: &Paths) -> Result<(MachineIdentity, bool), String> {
-    if !paths.machine_key_path().exists() {
+    if !AgentFiles::of(paths).machine_key().exists() {
         return Err("no machine key".into());
     }
     load_or_create(paths)
@@ -320,7 +321,8 @@ pub const ENROLL_PENDING_EXIT: u8 = 76;
 
 /// `agent enroll`, the code given either way.
 pub(super) async fn enroll_cli(paths: &Paths, code: &EnrollCode, hub: &str) -> Result<(), String> {
-    let before = FileSeedStore::for_instance(paths)
+    let files = AgentFiles::of(paths);
+    let before = FileSeedStore::for_instance(&files)
         .load()
         .ok()
         .flatten()
@@ -333,7 +335,7 @@ pub(super) async fn enroll_cli(paths: &Paths, code: &EnrollCode, hub: &str) -> R
         "enrolling with account key {} (the code's secret never leaves this device)",
         display_fingerprint(&code.account_fingerprint)
     );
-    match paths.enroll(&identity, code, hub).await {
+    match files.enroll(&identity, code, hub).await {
         Ok(()) => Ok(()),
         Err(enroll::EnrollFailure::Failed(message)) => Err(message),
         Err(enroll::EnrollFailure::Pending(message)) => {
@@ -423,7 +425,7 @@ pub async fn run(args: &[String]) -> Result<(), String> {
             Ok(())
         }
         Action::Run => {
-            let enrolled = state::AgentState::load(&paths)?;
+            let enrolled = state::AgentState::load(&AgentFiles::of(&paths))?;
             let Some(state) = enrolled else {
                 return Err(format!(
                     "instance {} is not enrolled; run `remote-hand-server agent enroll <code> --hub <url>` first",

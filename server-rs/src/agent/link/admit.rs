@@ -113,7 +113,7 @@ pub(in crate::agent) fn admit<R>(
             // Who ever opened a channel, recorded as it opens and saved with
             // the guard (and any entries the hello taught) before the reply
             // leaves — in this one step under the lock.
-            recorded = Some(st.record_controller(&shared.paths, device, now));
+            recorded = Some(st.record_controller(&shared.files, device, now));
             opened = Some(after_open(st, accepted));
         }
     }

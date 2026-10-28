@@ -161,7 +161,7 @@ pub async fn post_link(
             None
         }
         Standing::Linked | Standing::NotHosting => {
-            let st = crate::agent::state::AgentState::load(&cloud.paths)
+            let st = crate::agent::state::AgentState::load(&crate::agent::AgentFiles::of(&cloud.paths))
                 .map_err(ApiError::internal)?
                 .ok_or_else(|| ApiError::internal("the agent state went away"))?;
             Some(LinkEnrolled {

@@ -19,6 +19,7 @@ use super::lapse::{drop_ended, drop_removed};
 use super::mail::{defer, evicted_message, open_mail, MailVerdict};
 use super::state::AgentState;
 use super::{Health, Pending, Routes, Shared, ROTATED};
+use crate::agent::AgentFiles;
 use crate::paths::Paths;
 use crate::time::now_ms_u64;
 
@@ -129,7 +130,7 @@ pub fn start(
     // Adding this device again under a new identity, interrupted by a crash:
     // finished first — it never starts as the old enrollment.
     paths.finish_re_enroll()?;
-    let loaded = paths.startable()?;
+    let loaded = startable(paths)?;
     let identity = match super::load_or_create(paths)? {
         (identity, false) => identity,
         (_, true) => return Err("this instance has agent state but its identity key was missing (a new one was made); re-enroll it".into()),
@@ -140,8 +141,9 @@ pub fn start(
     let loopback = Arc::new(Loopback::new(env.addr, env.credential.clone()));
     let (display_name, alarms, changes) = (loaded.display_name.clone(), loaded.alarms.clone(), loaded.changes.clone());
     let state = Arc::new(Mutex::new(loaded));
+    let files = AgentFiles::of(paths);
     let (sync, sync_task) = super::streams::spawn(
-        paths,
+        &files,
         env.drive.clone(),
         identity.signing_key().clone(),
         loopback.clone(),
@@ -156,6 +158,7 @@ pub fn start(
     );
     let shared = Arc::new(Shared {
         paths: paths.clone(),
+        files,
         deferred_mail: Mutex::new(Vec::new()),
         identity: Arc::new(identity),
         loopback,
@@ -292,6 +295,7 @@ pub(in crate::agent) fn test_shared(
     let guard = st.replay_guard(now_ms_u64());
     Arc::new(Shared {
         paths: paths.clone(),
+        files: AgentFiles::of(paths),
         deferred_mail: Mutex::new(Vec::new()),
         identity: Arc::new(identity),
         loopback: Arc::new(Loopback::new("127.0.0.1:9".parse().expect("an address"), "test".into())),
@@ -348,22 +352,20 @@ pub(in crate::agent) fn chain_resync(shared: &Arc<Shared>) -> Arc<dyn Fn() + Sen
     })
 }
 
-impl Paths {
-    /// The saved agent state a link may start from — none when this instance is
-    /// not enrolled, or its chain removed it. A removed one also loses what it
-    /// held to control the other devices (`aggregator/`): its removal may have
-    /// been learnt by a build that did not delete it, or by a run that stopped
-    /// before the delete.
-    pub(in crate::agent) fn startable(&self) -> Result<AgentState, String> {
-        let loaded = AgentState::load(self)?.ok_or("this instance is not enrolled")?;
-        if loaded.removed() {
-            if let Err(error) = crate::aggregator::forget_all(self) {
-                tracing::error!(%error, "cannot delete the other devices' keys of a removed machine");
-            }
-            return Err("this device was removed from the account; it does not connect again".into());
+/// The saved agent state a link may start from — none when this instance is
+/// not enrolled, or its chain removed it. A removed one also loses what it
+/// held to control the other devices (`aggregator/`): its removal may have
+/// been learnt by a build that did not delete it, or by a run that stopped
+/// before the delete. That is why it takes the whole [`Paths`].
+pub(in crate::agent) fn startable(paths: &Paths) -> Result<AgentState, String> {
+    let loaded = AgentState::load(&AgentFiles::of(paths))?.ok_or("this instance is not enrolled")?;
+    if loaded.removed() {
+        if let Err(error) = crate::aggregator::forget_all(paths) {
+            tracing::error!(%error, "cannot delete the other devices' keys of a removed machine");
         }
-        Ok(loaded)
+        return Err("this device was removed from the account; it does not connect again".into());
     }
+    Ok(loaded)
 }
 
 /// The writer's check of a machine key from `machine-keys.json`: exactly the
