@@ -214,11 +214,13 @@ impl StoreRead for rusqlite::Connection {
 
 /// Writing a document and keeping its history, inside a store transaction.
 trait StoreWrite {
-    /// Keep `old` as a past version, bounded by [`HISTORY_KEPT`] and
+    /// Keep `old` as a past version of `name`, and forget all but the newest
+    /// [`HISTORY_KEPT`] — and, of those, all but the newest that fit in
     /// [`MAX_HISTORY_BYTES_PER_DOC`].
     fn remember(&self, name: &str, old: &Row) -> rusqlite::Result<()>;
 
-    /// Forget the oldest past versions until the store fits `limit`.
+    /// Forget the oldest past versions, of any document, until the whole store
+    /// is within `limit`. The live documents are the caller's to have checked.
     fn fit_history(&self, limit: u64) -> rusqlite::Result<()>;
 
     /// Insert or replace one document row.

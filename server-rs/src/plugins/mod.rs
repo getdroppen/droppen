@@ -162,12 +162,12 @@ impl std::fmt::Debug for Plugins {
 }
 
 /// Taking a mutex back from a panic rather than propagating it.
-trait MutexExt<T> {
+trait LockRecoverExt<T> {
     /// Lock, recovering the guard a panic left poisoned.
     fn lock_or_recover(&self) -> MutexGuard<'_, T>;
 }
 
-impl<T> MutexExt<T> for Mutex<T> {
+impl<T> LockRecoverExt<T> for Mutex<T> {
     fn lock_or_recover(&self) -> MutexGuard<'_, T> {
         self.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
@@ -620,7 +620,7 @@ fn reset_store(dir: &Path) -> Option<PathBuf> {
 }
 
 /// Working out one plugin's switch.
-trait PluginManifestExt {
+pub trait PluginManifestExt {
     /// Configuration first, then the instance's decision, then off — and on
     /// only when compatible.
     fn effective(&self, force_on: bool, force_off: bool, decision: Option<&Decision>, build: &str) -> PluginStatus;

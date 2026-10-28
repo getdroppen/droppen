@@ -485,10 +485,13 @@ trait PackageJson {
     fn manifest_of(&self) -> Result<Manifest, String>;
 
     /// The entry a package names, before it is checked: `exports`, `module`
-    /// and `main`, nullish fallbacks and all.
+    /// and `main`, nullish fallbacks and all. A name that is there but not a
+    /// string is a refusal rather than a reason to fall through to `index.js`.
     fn entry_field(&self) -> Result<String, String>;
 
-    /// The entry module's relative path, resolved by the npm rules.
+    /// The entry module's relative path: `exports["."]` (a string, or its
+    /// `import`/`default`), else `module`, else `main`, else `index.js`; a
+    /// relative `.js`/`.mjs` file that exists.
     fn entry_of(&self, dir: &Path) -> Result<String, String>;
 }
 
