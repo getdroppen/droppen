@@ -274,6 +274,12 @@ mod tests {
         }
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths::for_instance(dir.path().to_path_buf(), "agentlink");
+        // Its databases exist, as a started server's do. An account change
+        // raises an alert whose task reads them on the runtime; creating them
+        // there, on first use, would hold up everything else on a test's one
+        // thread for as long as the disk takes to commit every schema step.
+        droppen_instance::db::at(paths.instance_db());
+        droppen_instance::db::at(paths.config_db());
         let mut st = AgentState::enrolling("wss://hub.example", "a-1", "m-1", fingerprint(&ak.sign_public()), now_ms_u64());
         assert!(st.absorb(&entries, now_ms_u64()).error.is_none());
         let guard = st.replay_guard(now_ms_u64());
