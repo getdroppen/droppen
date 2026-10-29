@@ -1,8 +1,7 @@
 //! A server run by the Droppen desktop app (`desktop/` in this repository).
 //!
-//! The app starts this binary as a sidecar with `DROPPEN_DESKTOP_APP=1` (and,
-//! for a pre-rename server, `RH_DESKTOP_APP=1`, which is still
-//! read: [`droppen_base::env`]), and two things are different about such a server:
+//! The app starts this binary as a sidecar with `DROPPEN_DESKTOP_APP=1`, and
+//! two things are different about such a server:
 //!
 //! * **It never replaces its binary.** The app runs the server it ships
 //!   inside its own bundle and is updated as a whole. `POST

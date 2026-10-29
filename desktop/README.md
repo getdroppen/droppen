@@ -95,7 +95,7 @@ app's first-run guide offers, does not run on anything older.
 ```
 Droppen (Tauri, the app)                     ~/Library/Logs/Droppen/desktop.log
  └─ remote-hand-server serve                 ~/Library/Logs/Droppen/server.log
-      APP_INSTANCE=droppen-app  APP_SERVER__HOST=127.0.0.1  APP_SERVER__PORT=<port>  DROPPEN_DESKTOP_APP=1  RH_DESKTOP_APP=1
+      APP_INSTANCE=droppen-app  APP_SERVER__HOST=127.0.0.1  APP_SERVER__PORT=<port>  DROPPEN_DESKTOP_APP=1
       PATH=<login shell's PATH>:~/.local/bin:~/.npm-global/bin:…:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
       ├─ claude / codex sessions, pty and session shims (the server's own)
 ```
@@ -146,17 +146,14 @@ Droppen (Tauri, the app)                     ~/Library/Logs/Droppen/desktop.log
   `REMOTE_HAND_*`, `DROPPEN_*`, `CLAUDE_CODE_*`, `PORT`, `HOST` and
   `CLAUDECODE` removed, so an app started from a shell inside another Droppen
   session does not inherit that session's instance or port. Then
-  `DROPPEN_DESKTOP_APP=1` (`server-rs/src/desktop_app.rs`), and `RH_DESKTOP_APP=1`,
-  its name before the rename to Droppen, which a server that old reads instead
-  (`server-rs/crates/droppen-base/src/env.rs`); the old name is deprecated and
-  stops working in v0.2.135. The server refuses
+  `DROPPEN_DESKTOP_APP=1` (`server-rs/src/desktop_app.rs`). The server refuses
   `POST /api/server/self-upgrade` with `403 self_upgrade_disabled` — it would
   replace the shared `<data>/bin`, not the app — and tells the web app it runs
   under the app (`GET /api/auth/status` → `desktopApp: true`), which then hides
   the password change and the sign-out, and signs in to Droppen through the
   system browser instead of a popup.
-  The server keeps `DROPPEN_DESKTOP_APP` (and, until v0.2.135, `RH_DESKTOP_APP`)
-  to itself: the terminals and CLIs it starts do not get it.
+  The server keeps `DROPPEN_DESKTOP_APP` to itself: the terminals and CLIs it
+  starts do not get it.
 - **Shared with other installs on the same Mac.** The app's server is an
   ordinary instance, so it shares the machine-wide files every instance shares:
   `~/.config/remote-hand/` (`state.db` — session titles, the seen and archived

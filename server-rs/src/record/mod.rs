@@ -352,7 +352,7 @@ pub struct SpawnSummary<'a> {
 /// Built once per server from the instance directory, and read from the
 /// environment there rather than per session: `DROPPEN_SESSION_LOG=0` turns
 /// the whole thing off, and `DROPPEN_SESSION_LOG_MAX_MB` moves the ceiling (`0`
-/// removes it). Their old names, `RH_SESSION_LOG*`, are still read.
+/// removes it).
 #[derive(Debug, Clone)]
 pub struct Recorders {
     /// `None` when recording is switched off.

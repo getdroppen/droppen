@@ -426,7 +426,7 @@ for arch in universal aarch64 x86_64; do
   case "$version" in *"+g$REV"*) ;; *) die "$arch --version says '$version', not the commit $REV" ;; esac
   # The server reads APP_* from the environment; a session's own must not leak in.
   env -u APP_INSTANCE -u APP_SERVER__PORT -u APP_SERVER__HOST -u APP_HOME_DIR \
-    -u DROPPEN_DATA_DIR -u DROPPEN_CONFIG_DIR -u REMOTE_HAND_DATA_DIR -u REMOTE_HAND_CONFIG_DIR \
+    -u DROPPEN_DATA_DIR -u DROPPEN_CONFIG_DIR \
     bash "$SRC/.github/scripts/smoke-macos.sh" "$bin"
 done
 if [ "$LINUX" = 1 ] && [ "$LINUX_SMOKE" = 1 ]; then
@@ -558,7 +558,7 @@ for arch in universal aarch64 x86_64; do
   # sed reads to the end, so the binary never writes into a closed pipe.
   case "$("$bin" --help | sed -n 1p)" in "Droppen server: \`$NEW_NAME\`"*) ;; *) die "$arch $NEW_NAME --help does not say $NEW_NAME" ;; esac
   env -u APP_INSTANCE -u APP_SERVER__PORT -u APP_SERVER__HOST -u APP_HOME_DIR \
-    -u DROPPEN_DATA_DIR -u DROPPEN_CONFIG_DIR -u REMOTE_HAND_DATA_DIR -u REMOTE_HAND_CONFIG_DIR \
+    -u DROPPEN_DATA_DIR -u DROPPEN_CONFIG_DIR \
     bash "$SRC/.github/scripts/smoke-macos.sh" "$bin"
 done
 if [ "$LINUX" = 1 ] && [ "$LINUX_SMOKE" = 1 ]; then

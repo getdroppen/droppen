@@ -37,13 +37,13 @@ export interface CommandEnv {
 
 /**
  * The variables a command may be shown with: which instance, and where its
- * files are — today's names, and the `DROPPEN_` ones the rename moves the
- * directories to (`APP_INSTANCE` is the
- * framework's and keeps its name). Anything else a server sends is dropped:
- * a page that shows another device's commands must not let that device put
- * `DYLD_INSERT_LIBRARIES` or `BASH_ENV` in front of one a person copies.
+ * files are (`APP_INSTANCE` is the framework's and keeps its name). Anything
+ * else a server sends is dropped: a page that shows another device's commands
+ * must not let that device put `DYLD_INSERT_LIBRARIES` or `BASH_ENV` in front
+ * of one a person copies. So are the older names an older server also sends
+ * for the same directories: every server reads these.
  */
-const COMMAND_ENV = new Set(["APP_INSTANCE", "REMOTE_HAND_DATA_DIR", "REMOTE_HAND_CONFIG_DIR", "DROPPEN_DATA_DIR", "DROPPEN_CONFIG_DIR"]);
+const COMMAND_ENV = new Set(["APP_INSTANCE", "DROPPEN_DATA_DIR", "DROPPEN_CONFIG_DIR"]);
 
 /** The command to show for a server, from its `/api/auth/status` answer. */
 export function droppenCommand(

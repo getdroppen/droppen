@@ -401,14 +401,8 @@ fn spawn(exe: &Path, args: &[String]) -> io::Result<i32> {
     let child = std::process::Command::new(exe)
         .args(args)
         // How the server knows it may restart itself; see
-        // [`crate::selfupdate::SUPERVISED_ENV`]. Under both names: after a
-        // rollback the child may be a pre-rename server, which
-        // reads only `RH_SUPERVISED`.
-        .envs(droppen_base::env::with_old_name(selfupdate::SUPERVISED_ENV).map(|name| (name, "1")))
-        // And every setting this `up` was given under a new name, under the
-        // old one too: such a child reads only `REMOTE_HAND_DATA_DIR`, and
-        // without it would run on the default install's files, not this one's.
-        .envs(droppen_base::env::settings_under_old_names())
+        // [`crate::selfupdate::SUPERVISED_ENV`].
+        .env(selfupdate::SUPERVISED_ENV, "1")
         .process_group(0)
         .spawn()?;
     let pid = child.id() as i32;

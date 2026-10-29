@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 /// The environment for a child process, ordered so a spawn is reproducible.
 pub type Env = BTreeMap<String, String>;
 
-/// The environment variable the desktop app sets (under its old name too).
+/// The environment variable the desktop app sets.
 pub const DESKTOP_APP_ENV: &str = "DROPPEN_DESKTOP_APP";
 
 /// The variable the desktop app reports its own login-shell read in:
@@ -26,16 +26,24 @@ fn is_harness_variable(key: &str) -> bool {
 
 /// Variables that describe *this server's* situation, not a child's.
 ///
-/// `DROPPEN_DESKTOP_APP` ([`DESKTOP_APP_ENV`]), or its old name
-/// `RH_DESKTOP_APP`, says the Droppen desktop app runs this server; a terminal
-/// or a CLI it starts is not run by the app, and a `remote-hand-server`
-/// somebody starts by hand from such a terminal must not believe it is (it
-/// would refuse to self-upgrade and hide its own login). Both names go.
+/// `DROPPEN_DESKTOP_APP` ([`DESKTOP_APP_ENV`]) says the Droppen desktop app
+/// runs this server; a terminal or a CLI it starts is not run by the app, and a
+/// `remote-hand-server` somebody starts by hand from such a terminal must not
+/// believe it is (it would refuse to self-upgrade and hide its own login).
 /// `DROPPEN_DESKTOP_SHELL_READ` ([`SHELL_READ_ENV`]) is the
 /// app's report on how *its* read of the login shell went; it describes how
 /// this server was started and means nothing to anything the server starts.
 fn is_server_only_variable(key: &str) -> bool {
-    crate::env::is(key, DESKTOP_APP_ENV) || key == SHELL_READ_ENV
+    key == DESKTOP_APP_ENV || key == SHELL_READ_ENV
+}
+
+/// Variables an older Droppen set for whoever started this server, under their
+/// names from before the rename ([`crate::env::OLDER_HANDOFFS`]): a session's
+/// notify channel and token, the desktop app's and `up`'s word to their
+/// server. None is a child's: the token is another session's capability, and
+/// an older `droppen-notify` or server a child runs would take them as its own.
+fn is_older_handoff(key: &str) -> bool {
+    crate::env::OLDER_HANDOFFS.contains(&key)
 }
 
 /// The `PATH` every child gets instead of the inherited one, once something has
@@ -101,7 +109,8 @@ pub fn child_path() -> String {
     child_path_override().unwrap_or_else(inherited_path)
 }
 
-/// The process environment minus the harness variables, plus `extra`.
+/// The process environment minus the harness variables, this server's own
+/// and an older Droppen's handoffs, plus `extra`.
 ///
 /// `extra` is applied *after* the strip, which is how the account token and
 /// `CLAUDE_CONFIG_DIR` get through: they are ours, not the harness's. The
@@ -114,8 +123,19 @@ where
     K: Into<String>,
     V: Into<String>,
 {
-    let mut env: Env = std::env::vars()
-        .filter(|(key, _)| !is_harness_variable(key) && !is_server_only_variable(key))
+    clean_env_from(std::env::vars(), extra)
+}
+
+/// [`clean_env`], with the inherited environment supplied.
+pub fn clean_env_from<I, K, V>(inherited: impl IntoIterator<Item = (String, String)>, extra: I) -> Env
+where
+    I: IntoIterator<Item = (K, V)>,
+    K: Into<String>,
+    V: Into<String>,
+{
+    let mut env: Env = inherited
+        .into_iter()
+        .filter(|(key, _)| !is_harness_variable(key) && !is_server_only_variable(key) && !is_older_handoff(key))
         .collect();
     if let Some(path) = child_path_override() {
         env.insert("PATH".to_string(), path);
@@ -326,14 +346,32 @@ mod tests {
     #[test]
     fn the_desktop_app_switch_stays_with_the_server() {
         assert!(is_server_only_variable("DROPPEN_DESKTOP_APP"));
-        let old = crate::env::old_name("DROPPEN_DESKTOP_APP").expect("an old name");
-        assert!(is_server_only_variable(old), "{old}, which an app from before the rename sets, goes too");
         assert!(
             is_server_only_variable("DROPPEN_DESKTOP_SHELL_READ"),
             "the app's report on its own shell read is the server's alone"
         );
         assert!(!is_server_only_variable("DROPPEN_NOTIFY_URL"), "what a child is meant to have stays");
         assert!(!is_server_only_variable("PATH"));
+    }
+
+    /// What an older Droppen hands its children never reaches one of ours: a
+    /// server started inside an older server's session keeps that session's
+    /// token, and its own children's environment, to itself.
+    #[test]
+    fn an_older_droppens_handoffs_stay_with_the_server() {
+        for name in crate::env::OLDER_HANDOFFS {
+            assert!(is_older_handoff(name), "{name}");
+        }
+        assert!(!is_older_handoff("DROPPEN_NOTIFY_TOKEN"), "what a child is meant to have stays");
+        let inherited = crate::env::OLDER_HANDOFFS
+            .iter()
+            .map(|name| (name.to_string(), "outer".to_string()))
+            .chain([("HOME".to_string(), "/home/ada".to_string())]);
+        let env = clean_env_from(inherited, std::iter::empty::<(String, String)>());
+        assert_eq!(env.get("HOME").map(String::as_str), Some("/home/ada"));
+        for name in crate::env::OLDER_HANDOFFS {
+            assert!(!env.contains_key(name), "{name} leaked through");
+        }
     }
 
     /// The root branch, proved without being root.

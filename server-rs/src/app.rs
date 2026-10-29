@@ -203,6 +203,9 @@ impl RemoteHandApp {
     /// keeps to itself.
     pub async fn prepare(self) -> GotchaResult<Prepared> {
         self.logger()?;
+        for line in droppen_base::env::unread_dirs() {
+            tracing::warn!("{line}");
+        }
         let config = self.config().await?;
 
         // Ownership first, before anything reads — let alone adopts — a shim

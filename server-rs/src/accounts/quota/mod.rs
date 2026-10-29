@@ -550,8 +550,7 @@ fn probe_logins(accounts: &[Account]) -> Vec<UsageLogin> {
         .collect()
 }
 
-/// `DROPPEN_USAGE_FALLBACK_MS` (or its old name, `RH_USAGE_FALLBACK_MS`), or
-/// [`readings::DEFAULT_FALLBACK_AFTER`].
+/// `DROPPEN_USAGE_FALLBACK_MS`, or [`readings::DEFAULT_FALLBACK_AFTER`].
 fn fallback_after_from_env() -> Duration {
     droppen_base::env::var("DROPPEN_USAGE_FALLBACK_MS")
         .and_then(|raw| raw.trim().parse::<u64>().ok())

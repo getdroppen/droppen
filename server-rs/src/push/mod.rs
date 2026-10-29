@@ -90,8 +90,7 @@ const TTL_SECONDS: &str = "86400";
 
 /// RFC 8292 §2.1's `sub`: who a push service contacts if this server misbehaves.
 /// It must be a `mailto:` or `https:` URI — Apple rejects anything else outright.
-/// A deployment with a real contact address sets `DROPPEN_PUSH_CONTACT` (before
-/// the rename, `REMOTE_HAND_PUSH_CONTACT`, still read).
+/// A deployment with a real contact address sets `DROPPEN_PUSH_CONTACT`.
 /// The product's public site, so a push service has somewhere real to look.
 const DEFAULT_CONTACT: &str = "https://droppen.app";
 

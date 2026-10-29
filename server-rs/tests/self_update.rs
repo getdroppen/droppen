@@ -657,10 +657,8 @@ impl Unsupervised {
             .env("APP_AUTH__ENABLED", "false")
             .env("APP_SERVER__PORT", "0")
             .env("APP_SERVER__HOST", "127.0.0.1")
-            // Deliberately *not* set, under either name: this is the whole
-            // point of the harness.
+            // Deliberately *not* set: this is the whole point of the harness.
             .env_remove("DROPPEN_SUPERVISED")
-            .env_remove("RH_SUPERVISED")
             .process_group(0)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())

@@ -50,8 +50,6 @@ interface Allowed {
 const ALLOWED: Allowed[] = [
   { file: "features/landing/get-droppen.ts", text: "~/.local/share/remote-hand/bin/remote-hand-server", why: "where the installer puts the server, in the command for a device that already runs one; the data directory is never moved (docs/local-aggregator.md §7.2)" },
   { file: "lib/droppen-command.ts", text: "remote-hand-server", why: "the command for a server too old to report droppenPath, which answers to its old name only (docs/local-aggregator.md §7.4)" },
-  { file: "lib/droppen-command.ts", text: "REMOTE_HAND_DATA_DIR", why: "the variable a second install's commands are shown with, until the rename moves it to DROPPEN_DATA_DIR" },
-  { file: "lib/droppen-command.ts", text: "REMOTE_HAND_CONFIG_DIR", why: "the variable a second install's commands are shown with, until the rename moves it to DROPPEN_CONFIG_DIR" },
   { file: "features/landing/security/security.tsx", text: "server-rs/crates/rh-", why: "where the protocol, relay and client crates are in the source tree, for a reader checking the code; renamed with the crates (docs/local-aggregator.md §7.2)" },
   ...(["zh-CN", "zh-TW", "ja"] as const).map((file) => ({
     file,
