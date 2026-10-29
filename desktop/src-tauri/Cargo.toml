@@ -15,6 +15,9 @@ crate-type = ["rlib"]
 tempfile = "3"
 # To make the updater's signature errors in `updater.rs`'s tests.
 minisign-verify = "0.3"
+# The crypto provider the updater plugin installs before it builds its client
+# (the version and feature it already links), for `updater.rs`'s client tests.
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 
 [build-dependencies]
 tauri-build = { version = "=2.7.3", features = [] }
