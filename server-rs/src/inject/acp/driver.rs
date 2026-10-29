@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
-use serde_json::{json, Value};
+use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Child;
 use tokio::sync::{mpsc, oneshot};
@@ -17,7 +17,7 @@ use super::conn::{Conn, Event};
 use crate::acp::{category, option_for, ConfigOption, SessionUpdate};
 use crate::acp_agent::AcpAgent;
 use crate::inject::{InjectError, InjectionRegistry, Phase, QueueOutcome, ResidentState, Sent};
-use crate::sessions::acp_transcript::{record, Translator};
+use crate::sessions::acp_transcript::{Record, Translator};
 use crate::sessions::{Injection, InjectionRunState, Source};
 use droppen_base::time::iso8601;
 
@@ -608,10 +608,12 @@ impl Driver {
 
     async fn submit(&mut self, message: Message) -> Result<(), InjectError> {
         self.transcript
-            .append(&[record(
-                "user",
-                json!({"text": message.text, "images": message.images, "files": message.files}),
-            )])
+            .append(&[Record::User {
+                text: &message.text,
+                images: &message.images,
+                files: &message.files,
+            }
+            .stamped()])
             .await;
         if let Err(unset) = self.configure(&message).await {
             // The turn never starts: the session would have run on a model or
@@ -621,7 +623,7 @@ impl Driver {
             return match unset {
                 Unset::Refused(reason) => {
                     let said = self.redact(&reason);
-                    self.transcript.append(&[record("error", json!({ "message": said }))]).await;
+                    self.transcript.append(&[Record::Error { message: &said }.stamped()]).await;
                     self.start_turn();
                     self.end_turn(Some(said), false);
                     Ok(())
@@ -724,7 +726,11 @@ impl Driver {
             return;
         }
         self.transcript
-            .append(&[record("config", json!({"model": choice.0, "effort": choice.1}))])
+            .append(&[Record::Config {
+                model: choice.0.as_deref(),
+                effort: choice.1.as_deref(),
+            }
+            .stamped()])
             .await;
         self.recorded_choice = Some(choice);
     }
@@ -738,12 +744,12 @@ impl Driver {
         let (error, cancelled) = match result {
             Ok(response) => {
                 let stop = response.stop_reason.as_str();
-                records.push(record("turn_end", json!({ "stopReason": stop })));
+                records.push(Record::TurnEnd { stop_reason: stop }.stamped());
                 (None, stop == "cancelled")
             }
             Err(error) => {
                 let message = self.redact(&error);
-                records.push(record("error", json!({ "message": message })));
+                records.push(Record::Error { message: &message }.stamped());
                 (Some(message), false)
             }
         };
@@ -806,7 +812,7 @@ impl Driver {
         tracing::warn!(session = %self.id, agent = %self.agent.id, error = %message, "the agent process for this session is gone");
         let mut records = self.translator.flush();
         if self.state.active || !self.state.queue.is_empty() {
-            records.push(record("error", json!({ "message": message })));
+            records.push(Record::Error { message: &message }.stamped());
         }
         self.transcript.append(&records).await;
         for dropped in std::mem::take(&mut self.state.queue) {

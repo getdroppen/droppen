@@ -51,7 +51,8 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 use futures_util::future::BoxFuture;
-use serde_json::{json, Map, Value};
+use serde::Serialize;
+use serde_json::{Map, Value};
 
 use super::util::{
     first_line_of, make_item, make_tool_item, read_head_lines, read_tail_lines, title_line, try_parse, FileRef, ItemKind, Role, ToolDisplay,
@@ -172,14 +173,100 @@ pub async fn read_header(file_path: &Path) -> Option<Header> {
 }
 
 /// A record, stamped now.
-pub fn record(kind: &str, fields: Value) -> Value {
+fn record(kind: &str, fields: Value) -> Value {
     let mut record = match fields {
         Value::Object(map) => map,
         _ => Map::new(),
     };
-    record.insert("type".into(), json!(kind));
-    record.insert("timestamp".into(), json!(iso8601(std::time::SystemTime::now())));
+    record.insert("type".into(), kind.into());
+    record.insert("timestamp".into(), iso8601(std::time::SystemTime::now()).into());
     Value::Object(record)
+}
+
+/// A record's own fields, one variant per record, as [`Record::stamped`]
+/// writes them.
+///
+/// Untagged, so that a variant writes its fields and nothing else: the `type`
+/// follows them, where [`record`] puts it, and a tag serde wrote would lead.
+/// Key order is part of a line, and other versions read these lines back.
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+pub(crate) enum Record<'a> {
+    /// `session`, the first line, which [`read_header`] reads back.
+    Session {
+        id: &'a str,
+        agent: &'a str,
+        #[serde(rename = "agentSessionId")]
+        agent_session_id: &'a str,
+        cwd: &'a str,
+    },
+    /// `user`, a message this server sent: its attachments are listed even
+    /// when there are none.
+    User {
+        text: &'a str,
+        images: &'a [String],
+        files: &'a [String],
+    },
+    /// `user`, as `session/load` replays it: the text alone, as a replay has
+    /// no attachment paths to list.
+    ReplayedUser { text: &'a str },
+    /// `delta`.
+    Delta { kind: &'a str, text: &'a str },
+    /// `assistant`.
+    Assistant { text: &'a str },
+    /// `thinking`.
+    Thinking { text: &'a str },
+    /// `tool_call`: `input` is the agent's own JSON as it came, `null` when
+    /// it sent none.
+    ToolCall {
+        id: &'a str,
+        title: &'a str,
+        kind: &'a str,
+        input: Option<&'a Value>,
+    },
+    /// `tool_result`.
+    ToolResult { id: &'a str, status: &'a str, output: &'a str },
+    /// `compact`. Braces, not a unit variant: an untagged unit is written as
+    /// `null`, not as an object.
+    Compact {},
+    /// `usage`.
+    Usage { used: u64, size: u64 },
+    /// `config`: both keys, a value left out written as `null`.
+    Config { model: Option<&'a str>, effort: Option<&'a str> },
+    /// `turn_end`.
+    TurnEnd {
+        #[serde(rename = "stopReason")]
+        stop_reason: &'a str,
+    },
+    /// `error`.
+    Error { message: &'a str },
+}
+
+impl Record<'_> {
+    /// Its `type`.
+    fn kind(&self) -> &'static str {
+        match self {
+            Record::Session { .. } => "session",
+            Record::User { .. } | Record::ReplayedUser { .. } => "user",
+            Record::Delta { .. } => "delta",
+            Record::Assistant { .. } => "assistant",
+            Record::Thinking { .. } => "thinking",
+            Record::ToolCall { .. } => "tool_call",
+            Record::ToolResult { .. } => "tool_result",
+            Record::Compact {} => "compact",
+            Record::Usage { .. } => "usage",
+            Record::Config { .. } => "config",
+            Record::TurnEnd { .. } => "turn_end",
+            Record::Error { .. } => "error",
+        }
+    }
+
+    /// The line it is written as, stamped now.
+    pub(crate) fn stamped(&self) -> Value {
+        // Strings, numbers and the agent's own JSON cannot fail to encode; a
+        // record that did must not be written down as some other line.
+        record(self.kind(), serde_json::to_value(self).expect("ACP transcript records encode"))
+    }
 }
 
 /// Turns ACP `session/update`s into transcript records.
@@ -206,15 +293,15 @@ impl Translator {
             SessionUpdate::ToolCall(call) => {
                 out.extend(self.flush());
                 if !is_compaction(call.meta.as_ref()) {
-                    out.push(record(
-                        "tool_call",
-                        json!({
-                            "id": call.tool_call_id,
-                            "title": call.title,
-                            "kind": kind_name(call.kind),
-                            "input": call.raw_input.clone().unwrap_or(Value::Null),
-                        }),
-                    ));
+                    out.push(
+                        Record::ToolCall {
+                            id: &call.tool_call_id,
+                            title: &call.title,
+                            kind: kind_name(call.kind),
+                            input: call.raw_input.as_ref(),
+                        }
+                        .stamped(),
+                    );
                 }
             }
             SessionUpdate::ToolCallUpdate(update) => {
@@ -225,7 +312,7 @@ impl Translator {
                 };
                 out.extend(self.flush());
                 if is_compaction(update.meta.as_ref()) {
-                    out.push(record("compact", json!({})));
+                    out.push(Record::Compact {}.stamped());
                     return out;
                 }
                 let mut output = update.content.as_deref().map(tool_content_text).unwrap_or_default();
@@ -236,12 +323,22 @@ impl Translator {
                         Some(other) => serde_json::to_string_pretty(other).unwrap_or_default(),
                     };
                 }
-                out.push(record(
-                    "tool_result",
-                    json!({"id": update.tool_call_id, "status": status, "output": output}),
-                ));
+                out.push(
+                    Record::ToolResult {
+                        id: &update.tool_call_id,
+                        status,
+                        output: &output,
+                    }
+                    .stamped(),
+                );
             }
-            SessionUpdate::UsageUpdate(usage) => out.push(record("usage", json!({"used": usage.used, "size": usage.size}))),
+            SessionUpdate::UsageUpdate(usage) => out.push(
+                Record::Usage {
+                    used: usage.used,
+                    size: usage.size,
+                }
+                .stamped(),
+            ),
             _ => {}
         }
         out
@@ -256,7 +353,7 @@ impl Translator {
             let text = content_text(&chunk.content);
             let mut out = self.flush();
             if !text.trim().is_empty() {
-                out.push(record("user", json!({ "text": text })));
+                out.push(Record::ReplayedUser { text: &text }.stamped());
             }
             return out;
         }
@@ -272,14 +369,20 @@ impl Translator {
             out.extend(self.flush());
         }
         self.run.get_or_insert((kind, String::new())).1.push_str(text);
-        out.push(record("delta", json!({"kind": kind, "text": text})));
+        out.push(Record::Delta { kind, text }.stamped());
     }
 
     /// The record that closes the run of deltas in progress, if there is one.
     pub fn flush(&mut self) -> Vec<Value> {
         match self.run.take() {
             Some((kind, text)) if !text.trim().is_empty() => {
-                vec![record(if kind == "text" { "assistant" } else { "thinking" }, json!({ "text": text }))]
+                let text = text.as_str();
+                let closing = if kind == "text" {
+                    Record::Assistant { text }
+                } else {
+                    Record::Thinking { text }
+                };
+                vec![closing.stamped()]
             }
             _ => Vec::new(),
         }
@@ -717,8 +820,9 @@ async fn summary_of(paths: &Paths, agent: &str, file_path: &Path, id: &str, titl
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+    use serde_json::json;
 
     /// A `session/update` as the wire spells it, read through its type.
     fn update(value: Value) -> SessionUpdate {
@@ -731,6 +835,158 @@ mod tests {
 
     fn lines(records: &[Value]) -> Vec<String> {
         records.iter().map(Value::to_string).collect()
+    }
+
+    /// A transcript line with its stamp written as `<timestamp>`, once the
+    /// stamp is seen to be one: the wall clock is the only part of a line
+    /// that differs from run to run, and every other byte, key order
+    /// included, is what this and other versions read back.
+    pub(crate) fn unstamped(line: &str) -> String {
+        const KEY: &str = r#""timestamp":""#;
+        assert_eq!(line.matches(KEY).count(), 1, "one stamp: {line}");
+        let start = line.find(KEY).expect("a stamp") + KEY.len();
+        let end = start + line[start..].find('"').expect("a closed stamp");
+        let stamp = &line[start..end];
+        assert_eq!(
+            stamp.replace(|c: char| c.is_ascii_digit(), "0"),
+            "0000-00-00T00:00:00.000Z",
+            "a UTC stamp to the millisecond: {line}"
+        );
+        format!("{}<timestamp>{}", &line[..start], &line[end..])
+    }
+
+    /// The lines `records` are written as, unstamped.
+    fn unstamped_lines(records: &[Value]) -> Vec<String> {
+        lines(records).iter().map(|line| unstamped(line)).collect()
+    }
+
+    #[test]
+    fn a_record_is_its_fields_in_their_order_then_its_type_and_stamp() {
+        let line = record("x", json!({"zeta": 1, "alpha": null, "mid": [""]})).to_string();
+        assert_eq!(
+            unstamped(&line),
+            r#"{"zeta":1,"alpha":null,"mid":[""],"type":"x","timestamp":"<timestamp>"}"#
+        );
+    }
+
+    #[test]
+    fn streamed_pieces_and_the_messages_they_close_keep_their_bytes() {
+        let mut translator = Translator::default();
+        let mut records = translator.update(&chunk("agent_thought_chunk", "let me "));
+        records.extend(translator.update(&chunk("agent_thought_chunk", "think")));
+        // A piece of the other kind closes the run before it.
+        records.extend(translator.update(&chunk("agent_message_chunk", "Hé said \"hi\"\n")));
+        records.extend(translator.update(&chunk("agent_message_chunk", "\tbye")));
+        records.extend(translator.flush());
+        assert_eq!(
+            unstamped_lines(&records),
+            [
+                r#"{"kind":"thinking","text":"let me ","type":"delta","timestamp":"<timestamp>"}"#,
+                r#"{"kind":"thinking","text":"think","type":"delta","timestamp":"<timestamp>"}"#,
+                r#"{"text":"let me think","type":"thinking","timestamp":"<timestamp>"}"#,
+                r#"{"kind":"text","text":"Hé said \"hi\"\n","type":"delta","timestamp":"<timestamp>"}"#,
+                r#"{"kind":"text","text":"\tbye","type":"delta","timestamp":"<timestamp>"}"#,
+                r#"{"text":"Hé said \"hi\"\n\tbye","type":"assistant","timestamp":"<timestamp>"}"#,
+            ]
+        );
+    }
+
+    #[test]
+    fn a_tool_call_keeps_the_agents_input_as_it_came() {
+        let mut translator = Translator::default();
+        let mut records = translator.update(&update(json!({
+            "sessionUpdate": "tool_call", "toolCallId": "call-1", "title": "ls -la", "kind": "execute",
+            "status": "in_progress", "rawInput": {"path": "/w", "cmd": ["ls", "-la"], "timeout": 1.5, "env": {"Z": "1", "A": null}},
+        })));
+        records.extend(translator.update(&update(
+            json!({"sessionUpdate": "tool_call", "toolCallId": "call-2", "kind": "read", "rawInput": "notes.txt"}),
+        )));
+        // No input, no title and no kind: an empty title, `other`, and a
+        // `null` input, never a missing key.
+        records.extend(translator.update(&update(json!({"sessionUpdate": "tool_call", "toolCallId": "call-3"}))));
+        records.extend(translator.update(&update(
+            json!({"sessionUpdate": "tool_call", "toolCallId": "call-4", "title": "x", "kind": "fetch", "rawInput": null}),
+        )));
+        assert_eq!(
+            unstamped_lines(&records),
+            [
+                r#"{"id":"call-1","title":"ls -la","kind":"execute","input":{"path":"/w","cmd":["ls","-la"],"timeout":1.5,"env":{"Z":"1","A":null}},"type":"tool_call","timestamp":"<timestamp>"}"#,
+                r#"{"id":"call-2","title":"","kind":"read","input":"notes.txt","type":"tool_call","timestamp":"<timestamp>"}"#,
+                r#"{"id":"call-3","title":"","kind":"other","input":null,"type":"tool_call","timestamp":"<timestamp>"}"#,
+                r#"{"id":"call-4","title":"x","kind":"fetch","input":null,"type":"tool_call","timestamp":"<timestamp>"}"#,
+            ]
+        );
+    }
+
+    #[test]
+    fn a_tool_result_keeps_its_bytes_whatever_its_output_came_as() {
+        let mut translator = Translator::default();
+        let result = |translator: &mut Translator, fields: Value| {
+            let mut body = json!({"sessionUpdate": "tool_call_update", "toolCallId": "call-1"});
+            body.as_object_mut().unwrap().extend(fields.as_object().unwrap().clone());
+            translator.update(&update(body))
+        };
+        let mut records = result(&mut translator, json!({"status": "in_progress", "rawOutput": "not yet"}));
+        assert!(records.is_empty(), "only an ended call has a result");
+        records.extend(result(
+            &mut translator,
+            json!({"status": "completed", "content": [
+                {"type": "content", "content": {"type": "text", "text": "done"}},
+                {"type": "diff", "path": "/w/a.rs", "oldText": "a", "newText": "b"},
+                {"type": "terminal", "terminalId": "t"},
+            ], "rawOutput": "not shown"}),
+        ));
+        records.extend(result(&mut translator, json!({"status": "failed", "content": [], "rawOutput": "exit 1"})));
+        records.extend(result(&mut translator, json!({"status": "completed", "rawOutput": {"z": 1, "a": [true]}})));
+        records.extend(result(&mut translator, json!({"status": "completed", "rawOutput": null})));
+        records.extend(result(&mut translator, json!({"status": "failed"})));
+        assert_eq!(
+            unstamped_lines(&records),
+            [
+                r#"{"id":"call-1","status":"completed","output":"done\nedited /w/a.rs","type":"tool_result","timestamp":"<timestamp>"}"#,
+                r#"{"id":"call-1","status":"failed","output":"exit 1","type":"tool_result","timestamp":"<timestamp>"}"#,
+                r#"{"id":"call-1","status":"completed","output":"{\n  \"z\": 1,\n  \"a\": [\n    true\n  ]\n}","type":"tool_result","timestamp":"<timestamp>"}"#,
+                r#"{"id":"call-1","status":"completed","output":"","type":"tool_result","timestamp":"<timestamp>"}"#,
+                r#"{"id":"call-1","status":"failed","output":"","type":"tool_result","timestamp":"<timestamp>"}"#,
+            ]
+        );
+    }
+
+    #[test]
+    fn a_compaction_and_a_usage_reading_keep_their_bytes() {
+        let mut translator = Translator::default();
+        let mut records = translator.update(&update(
+            json!({"sessionUpdate": "tool_call", "toolCallId": "t", "title": "Context compacting", "_meta": {"contextCompaction": true}}),
+        ));
+        records.extend(translator.update(&update(
+            json!({"sessionUpdate": "tool_call_update", "toolCallId": "t", "status": "completed", "_meta": {"contextCompaction": true}}),
+        )));
+        records.extend(translator.update(&update(json!({"sessionUpdate": "usage_update", "used": 4020, "size": 128000}))));
+        assert_eq!(
+            unstamped_lines(&records),
+            [
+                r#"{"type":"compact","timestamp":"<timestamp>"}"#,
+                r#"{"used":4020,"size":128000,"type":"usage","timestamp":"<timestamp>"}"#,
+            ]
+        );
+    }
+
+    #[test]
+    fn a_replayed_user_message_is_its_text_alone() {
+        let mut translator = Translator::default();
+        let mut records = translator.replayed(&chunk("user_message_chunk", "an old question"));
+        records.extend(translator.replayed(&chunk("agent_message_chunk", "an old answer")));
+        // The user's next message closes the answer before it.
+        records.extend(translator.replayed(&chunk("user_message_chunk", "and \"then\"?")));
+        assert_eq!(
+            unstamped_lines(&records),
+            [
+                r#"{"text":"an old question","type":"user","timestamp":"<timestamp>"}"#,
+                r#"{"kind":"text","text":"an old answer","type":"delta","timestamp":"<timestamp>"}"#,
+                r#"{"text":"an old answer","type":"assistant","timestamp":"<timestamp>"}"#,
+                r#"{"text":"and \"then\"?","type":"user","timestamp":"<timestamp>"}"#,
+            ]
+        );
     }
 
     fn parse(records: &[Value]) -> Vec<TranscriptItem> {
