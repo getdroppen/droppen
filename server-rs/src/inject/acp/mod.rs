@@ -356,6 +356,8 @@ impl InjectionRegistry {
 
     async fn probe(&self, agent: &AcpAgent, scratch: &Path) -> Result<Vec<ConfigOption>, InjectError> {
         let mut started = start(agent, scratch).await?;
+        #[cfg(test)]
+        self.step("agent probed", Source::Acp, None);
         // Only answers are read: what else the agent says is dropped as it
         // arrives rather than kept.
         started.conn.events.close();
@@ -499,6 +501,8 @@ impl InjectionRegistry {
             Ok(started) => started,
             Err(error) => return AcpCheck::ended(AcpCheckState::Failed, Some(redact(&format!("{error}\n{searched}")))),
         };
+        #[cfg(test)]
+        self.step("agent checked", Source::Acp, None);
         // Only the answer is read: what else the agent says is dropped as it
         // arrives rather than kept.
         started.conn.events.close();
@@ -548,6 +552,8 @@ impl InjectionRegistry {
         let name = agent.name.clone();
         let id = new_uuid();
         let (starting, delivery) = self.acp_starting(&agent, &id, message);
+        #[cfg(test)]
+        self.step("agent placeholder", Source::Acp, Some(&id));
         drop(gate);
         let open = self.acp_open(&agent, &id, None, Some(cwd)).await?;
         self.acp_attach(starting, agent, &id, open);
@@ -593,6 +599,8 @@ impl InjectionRegistry {
             return delivery.taken(&name).await;
         }
         let (starting, delivery) = self.acp_starting(&agent, id, message);
+        #[cfg(test)]
+        self.step("agent placeholder", Source::Acp, Some(id));
         drop(gate);
         // Written by this server when the session was created; a header
         // without the agent's id is from before this server minted its own,
@@ -659,6 +667,8 @@ impl InjectionRegistry {
             None => None,
         };
         drop(gate);
+        #[cfg(test)]
+        self.step("agent stopping", Source::Acp, Some(id));
         if let Some(stopping) = stopping {
             // No answer: the driver is gone, which is stopped too.
             if !stopping.await.unwrap_or(true) {
@@ -686,6 +696,8 @@ impl InjectionRegistry {
         // whatever directory the request names.
         let workdir = session_workdir(&self.paths, recorded.as_ref().and_then(|recorded| recorded.cwd.as_deref()).or(cwd));
         let mut started = start(agent, &workdir).await?;
+        #[cfg(test)]
+        self.step("agent started", Source::Acp, Some(id));
         let reopen = recorded.as_ref().map(|recorded| recorded.agent_session.as_str());
         let opened = match tokio::time::timeout(START_TIMEOUT, started.conn.open(reopen, &workdir)).await {
             Ok(Ok(opened)) => opened,
@@ -1147,5 +1159,63 @@ mod tests {
         let (scratch, helper) = recorded(record.path());
         assert!(!scratch.exists(), "{} is left behind", scratch.display());
         gone(helper).await;
+    }
+    /// A step of a spawn, as [`crate::inject::Step`] records it.
+    fn step(what: &'static str, gate: bool, claim: Option<bool>) -> crate::inject::Step {
+        crate::inject::Step { what, gate, claim }
+    }
+
+    /// An ACP start holds the spawn gate only to put the session's placeholder
+    /// in the map, and starts its agent outside it; a send that reopens a
+    /// session does the same. An archive asks for the stop under the gate and
+    /// waits for it outside. No ACP session is claimed.
+    #[tokio::test]
+    async fn acp_starts_and_archives_hold_the_gate_only_around_the_map() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let state = crate::api::test_support::state(home.path()).await;
+        let injections = state.drive.injections.clone();
+        configure_fake(&state.paths, home.path(), "fake", "");
+        let dir = workdirs(home.path(), &["work"]).remove(0);
+        let plain = SendOptions::default();
+
+        let id = injections.acp_start("fake", &dir.to_string_lossy(), "hello", &plain).await.expect("started");
+        assert_eq!(
+            injections.steps(),
+            [step("agent placeholder", true, Some(false)), step("agent started", false, Some(false))]
+        );
+        until("the first turn", || injections.acp_handle(&id).is_some_and(|handle| !handle.busy())).await;
+
+        if let Some(stopping) = injections.acp_handle(&id).expect("a handle").request_stop() {
+            let _ = stopping.await;
+        }
+        until("the process to go", || injections.acp_handle(&id).is_none_or(|handle| !handle.alive())).await;
+        injections.acp_send(&id, "again", &plain).await.expect("reopened");
+        assert_eq!(
+            injections.steps()[2..],
+            [step("agent placeholder", true, Some(false)), step("agent started", false, Some(false))]
+        );
+        until("the second turn", || injections.acp_handle(&id).is_some_and(|handle| !handle.busy())).await;
+
+        injections.archive_acp(&id).await.expect("archived");
+        assert_eq!(injections.steps()[4..], [step("agent stopping", false, Some(false))]);
+    }
+    /// Asking an agent what it offers, or checking that it answers, starts it
+    /// in a scratch directory and outside the spawn gate: neither runs a
+    /// session, and a slow agent must not hold up every send.
+    #[tokio::test]
+    async fn a_probe_and_a_check_start_their_agent_outside_the_gate() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let state = crate::api::test_support::state(home.path()).await;
+        let injections = state.drive.injections.clone();
+        configure_fake(&state.paths, home.path(), "fake", "");
+        let agent = AcpAgentRegistry::of(&state.paths).get("fake").expect("configured");
+
+        injections.acp_options(&agent).await.expect("its options");
+        let check = injections.check_acp_agent(&agent).await;
+        assert_eq!(check.state, AcpCheckState::Ready, "{check:?}");
+        assert_eq!(
+            injections.steps(),
+            [step("agent probed", false, None), step("agent checked", false, None)]
+        );
     }
 }

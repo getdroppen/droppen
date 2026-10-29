@@ -812,6 +812,8 @@ impl InjectionRegistry {
             // closed. Waiting for the journal under it would hold every other
             // session's sends behind one driver that is busy recovering.
             drop(gate);
+            #[cfg(test)]
+            self.step("posted to the resident", Source::Claude, Some(id));
             if wait_recorded(id, queued, recorded).await.is_ok() {
                 return Ok(Delivery { queued });
             }
@@ -897,6 +899,8 @@ impl InjectionRegistry {
                 shared: shared.clone(),
             },
         );
+        #[cfg(test)]
+        self.step("resident mapped", Source::Claude, Some(id));
         // The turn is visible from the moment the caller is told it was
         // accepted, and not from the moment claude gets around to saying it is
         // listening. Nothing may be written to a process before `system:init`,
@@ -1005,6 +1009,8 @@ impl InjectionRegistry {
         })
         .await
         .map_err(|error| InjectError::Message(format!("failed to launch claude: {error}")))?;
+        #[cfg(test)]
+        self.step("claude started", Source::Claude, Some(id));
 
         let record = new_uuid();
         // The outgoing record goes only once the incoming process exists, so a
@@ -2889,8 +2895,15 @@ impl Driver {
         if let Err(error) = crate::sessions::owned_sessions::record(&self.registry.paths, Source::Claude, id).await {
             tracing::error!(session = %id, %error, "cannot record the adopted claude session as ours; it will list as external");
         }
+        #[cfg(test)]
+        let old = self.id.clone();
         self.id = id.to_string();
         drop(std::mem::replace(&mut self.claim, claim));
+        #[cfg(test)]
+        {
+            self.registry.step("adopted: the new id", Source::Claude, Some(id));
+            self.registry.step("adopted: the old id", Source::Claude, Some(&old));
+        }
     }
 
     // ------------------------------------------------------------ limits
@@ -5688,6 +5701,8 @@ impl Driver {
         // The claim goes last, and outside every other lock: dropping it
         // unlinks a file, and until it is gone this session is still ours.
         drop(self.claim.take());
+        #[cfg(test)]
+        self.registry.step("resident ended", Source::Claude, Some(&self.id));
         let _ = std::fs::remove_file(self.sidecars.exit());
         let _ = std::fs::remove_file(self.sidecars.stderr());
     }
@@ -7075,6 +7090,7 @@ mod tests {
             absorb_poll,
             journal: runs::RunsFile::new(dirs.runs_file()),
             lock_dir: paths.data_dir().join("inject-locks"),
+            steps: Mutex::new(Vec::new()),
             // Recording on, into this test's own instance directory, for the
             // same reason the timings are set by hand: `Recorders::new` reads
             // the environment, and `a_session_records_its_whole_life` needs the
@@ -12194,6 +12210,115 @@ done
         assert!(
             ended_after < Duration::from_millis(1500),
             "the close took {ended_after:?} to reach the page"
+        );
+    }
+
+    // ------------------------------------------------ the gate and the claim
+
+    /// A step of a spawn, as [`crate::inject::Step`] records it.
+    fn step(what: &'static str, gate: bool, claim: Option<bool>) -> crate::inject::Step {
+        crate::inject::Step { what, gate, claim }
+    }
+
+    /// A new resident starts under the spawn gate and with its claim, and both
+    /// are held across the spawn and the map insert: until it is in the map, a
+    /// second send could start a second claude. The gate goes with the send
+    /// that started it and the claim stays with the driver. A message to the
+    /// resident starts nothing, and lets the gate go before it waits for the
+    /// journal.
+    #[tokio::test]
+    async fn a_claude_start_holds_the_gate_and_its_claim_until_the_resident_is_in_the_map() {
+        const OTHER: &str = "44444444-4444-4444-8444-444444444444";
+        let harness = Harness::ordinary().await;
+        until("the init", || harness.state().phase == Phase::Idle).await;
+        harness.plan_claude(&replacement_claude(OTHER, FORKED));
+        let registry = &harness.registry;
+
+        registry
+            .deliver(OTHER, "first", harness.recipe(Fingerprint::default()), None)
+            .await
+            .expect("a resident starts");
+        assert_eq!(
+            registry.steps(),
+            [step("claude started", true, Some(true)), step("resident mapped", true, Some(true))]
+        );
+        assert!(!registry.gate_held(), "the send that started it let the gate go");
+        assert!(registry.claim_held(Source::Claude, OTHER), "the driver holds the claim");
+
+        registry
+            .deliver(OTHER, "second", harness.recipe(Fingerprint::default()), None)
+            .await
+            .expect("the resident takes it");
+        assert_eq!(registry.steps()[2..], [step("posted to the resident", false, Some(true))]);
+        assert!(!registry.gate_held());
+    }
+
+    /// A resident's respawn takes no gate: its entry in the map already keeps a
+    /// second start away, and the claim it started with stays on. The claim
+    /// goes when the driver ends, after its entry and its journal row.
+    #[tokio::test]
+    async fn a_claude_respawn_takes_no_gate_and_the_claim_goes_when_the_driver_ends() {
+        const OTHER: &str = "55555555-5555-4555-8555-555555555555";
+        let harness = Harness::ordinary().await;
+        until("the init", || harness.state().phase == Phase::Idle).await;
+        harness.plan_claude(&replacement_claude(OTHER, FORKED));
+        let registry = &harness.registry;
+        registry
+            .deliver(OTHER, "first", harness.recipe(Fingerprint::default()), None)
+            .await
+            .expect("a resident starts");
+
+        // A message for another model: the driver replaces the process.
+        let other_model = Fingerprint {
+            model: Some("another-model".to_string()),
+            ..Fingerprint::default()
+        };
+        registry.deliver(OTHER, "second", harness.recipe(other_model), None).await.expect("taken");
+        until("the replacement to answer", || harness.after().iter().any(|line| line.contains("second"))).await;
+        assert_eq!(registry.steps()[3..], [step("claude started", false, Some(true))]);
+
+        // The process goes while idle, so the driver ends.
+        until("the replacement to go idle", || {
+            registry
+                .residents
+                .lock()
+                .expect("residents")
+                .get(OTHER)
+                .is_some_and(|handle| handle.state().phase == Phase::Idle)
+        })
+        .await;
+        let pid = registry
+            .journal
+            .read()
+            .into_iter()
+            .find(|record| record.session_id == OTHER)
+            .expect("its record")
+            .cli_pid;
+        super::super::signal(pid, libc::SIGKILL);
+        until("the driver to end", || registry.steps().len() == 5).await;
+        assert_eq!(registry.steps()[4..], [step("resident ended", false, Some(false))]);
+        assert!(!registry.residents.lock().expect("residents").contains_key(OTHER));
+    }
+
+    /// A resident that claude answers under another id follows it: the new id
+    /// is claimed without the gate, and the old one's claim goes after.
+    #[tokio::test]
+    async fn a_resident_claude_renames_claims_the_new_id_without_the_gate() {
+        const OTHER: &str = "66666666-6666-4666-8666-666666666666";
+        const RENAMED: &str = "77777777-7777-4777-8777-777777777777";
+        let harness = Harness::ordinary().await;
+        until("the init", || harness.state().phase == Phase::Idle).await;
+        harness.plan_claude(&replacement_claude(RENAMED, RENAMED));
+        let registry = &harness.registry;
+
+        registry
+            .deliver(OTHER, "first", harness.recipe(Fingerprint::default()), None)
+            .await
+            .expect("a resident starts");
+        until("the rename", || registry.steps().len() == 4).await;
+        assert_eq!(
+            registry.steps()[2..],
+            [step("adopted: the new id", false, Some(true)), step("adopted: the old id", false, Some(false))]
         );
     }
 }

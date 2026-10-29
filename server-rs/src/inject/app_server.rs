@@ -412,6 +412,8 @@ impl InjectionRegistry {
         }
         // Includes legacy or unreachable residents and other server instances.
         let _claim = claim_session(self, id).map_err(|error| ArchiveError(error.to_string()))?;
+        #[cfg(test)]
+        self.step("codex archive", Source::Codex, Some(id));
         archive_codex_session(&self.paths, id).await?;
         let (tx, rx) = mpsc::unbounded_channel();
         drop(rx);
@@ -525,6 +527,8 @@ impl InjectionRegistry {
         })
         .await
         .map_err(|e| InjectError::message(e.to_string()))?;
+        #[cfg(test)]
+        self.step("codex started", Source::Codex, id);
         let setup = async {
             rpc(
                 self,
@@ -559,6 +563,8 @@ impl InjectionRegistry {
                 Some(claim) => claim,
                 None => claim_session(self, &resolved)?,
             };
+            #[cfg(test)]
+            self.step("codex thread", Source::Codex, Some(&resolved));
             Ok::<_, InjectError>((resolved, result, claim))
         }
         .await;
@@ -628,6 +634,8 @@ impl InjectionRegistry {
             account: record.codex_account.clone(),
         };
         self.codex_servers.lock().unwrap().insert(record.session_id.clone(), handle.clone());
+        #[cfg(test)]
+        self.step("codex mapped", Source::Codex, Some(&record.session_id));
         let driver = Driver {
             registry: self.clone(),
             record,
@@ -914,6 +922,8 @@ impl Driver {
                 // Released before the reply, because the caller's very next move
                 // is to claim this session for the process it is about to start.
                 drop(self.claim.take());
+                #[cfg(test)]
+                self.registry.step("codex retired", Source::Codex, Some(&self.record.session_id));
                 let _ = reply.send(Ok(()));
             }
             Cmd::Interrupt => {
@@ -1947,5 +1957,114 @@ mod tests {
             .unwrap();
         assert_eq!(rx.await.unwrap(), QueueOutcome::Done);
         assert_eq!(status(&receipts, &second_id), Some(ReceiptStatus::Failed));
+    }
+    /// A step of a spawn, as [`crate::inject::Step`] records it.
+    fn step(what: &'static str, gate: bool, claim: Option<bool>) -> crate::inject::Step {
+        crate::inject::Step { what, gate, claim }
+    }
+
+    /// Codex's app server is started under the spawn gate. A thread this
+    /// server has no process for is claimed before the spawn, a new one once
+    /// the app server has named it, and both are in the map before the gate
+    /// goes. A process retired for another account lets its claim go before it
+    /// answers, while the send that retires it still holds the gate. An
+    /// unloaded session is archived with `codex archive` under the gate and its
+    /// claim, and the claim goes first.
+    #[tokio::test]
+    async fn codex_starts_retires_and_archives_under_the_gate_and_the_claim() {
+        const RESUMED: &str = "0199c1a1-0000-4000-8000-000000000001";
+        const UNLOADED: &str = "0199c1a1-0000-4000-8000-000000000002";
+        let _path = crate::setup::tests::ChildPathGuard::take();
+        let home = tempfile::tempdir().expect("tempdir");
+        // The stand-in app server runs only under a test root.
+        std::fs::write(home.path().join(".rh-test-root"), b"").expect("test root");
+        let bin = home.path().join("bin");
+        std::fs::create_dir_all(&bin).expect("bin");
+        let codex = bin.join("codex");
+        let fake = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/support/fake_codex.py");
+        std::fs::write(&codex, format!("#!/bin/sh\nexec python3 {fake} \"$@\"\n")).expect("codex");
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&codex, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        }
+        let path = format!("{}:{}", bin.display(), droppen_base::process_env::child_path());
+        droppen_base::process_env::set_child_path(Some(path));
+        let paths = Arc::new(Paths::new(home.path().into()));
+        let dirs = InstanceDirs::new(&paths.data_dir(), "codex-steps").unwrap();
+        dirs.create().unwrap();
+        let accounts = Arc::new(crate::accounts::store::AccountsStore::new(paths.clone()));
+        let quota = Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone()));
+        let registry = InjectionRegistry::new(paths, &dirs, accounts, quota);
+        let work = home.path().join("work");
+        std::fs::create_dir_all(&work).expect("work");
+        let work = work.to_string_lossy().into_owned();
+        let plain = SendOptions::default();
+
+        let (id, _) = registry.codex_deliver(None, Some(&work), "hello", &plain, None).await.expect("a new thread");
+        assert_eq!(
+            registry.steps(),
+            [
+                step("codex started", true, None),
+                step("codex thread", true, Some(true)),
+                step("codex mapped", true, Some(true)),
+            ]
+        );
+        assert!(!registry.gate_held());
+        assert!(registry.claim_held(Source::Codex, &id), "the driver holds the claim");
+
+        for _ in 0..500 {
+            if registry.codex_handle(&id).is_some_and(|handle| !handle.busy()) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let other = CodexAccount {
+            id: "another".to_string(),
+            launch: crate::accounts::store::AccountLaunch {
+                provider: AccountProvider::Codex,
+                env: vec![],
+                codex_args: vec![],
+            },
+        };
+        registry
+            .codex_deliver(Some(&id), Some(&work), "again", &plain, Some(other))
+            .await
+            .expect("resumed under the other account");
+        assert_eq!(
+            registry.steps()[3..],
+            [
+                step("codex retired", true, Some(false)),
+                step("codex started", true, Some(true)),
+                step("codex thread", true, Some(true)),
+                step("codex mapped", true, Some(true)),
+            ]
+        );
+
+        registry.codex_deliver(Some(RESUMED), Some(&work), "resume", &plain, None).await.expect("resumed");
+        assert_eq!(
+            registry.steps()[7..],
+            [
+                step("codex started", true, Some(true)),
+                step("codex thread", true, Some(true)),
+                step("codex mapped", true, Some(true)),
+            ]
+        );
+
+        registry.archive_codex(UNLOADED).await.expect("archived");
+        assert_eq!(registry.steps()[10..], [step("codex archive", true, Some(true))]);
+        assert!(!registry.gate_held());
+        assert!(!registry.claim_held(Source::Codex, UNLOADED), "the claim went with the archive");
+
+        for thread in [id.as_str(), RESUMED] {
+            if let Some(handle) = registry.codex_handle(thread) {
+                for _ in 0..500 {
+                    if !handle.busy() {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                retire(&handle).await.expect("retired");
+            }
+        }
     }
 }
