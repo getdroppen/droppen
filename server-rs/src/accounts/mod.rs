@@ -1,12 +1,11 @@
 //! Several Claude logins, one managed config root.
 //!
-//! Port of the account routes in the former TypeScript server's `app.ts`. Three
-//! of them are wizards the user drives in a terminal and live in their own
-//! modules: [`setup_token`] mints a token off `claude setup-token`'s own
-//! output, and [`usage_login`] puts `claude auth login` on screen against one
-//! account's probe directory. `POST /api/accounts/{id}/usage-verify` stays
-//! here, because it is a plain `claude auth status --json` with no PTY
-//! involved.
+//! Port of the account routes in the former TypeScript server's `app.ts`. The
+//! routes that drive `claude` against one account live with Claude Code's
+//! code and register themselves, because only that CLI has them:
+//! [`setup_token`] mints a token off `claude setup-token`'s own output, and
+//! [`usage_login`] puts `claude auth login` on screen against an account's
+//! probe directory and checks it with `claude auth status --json`.
 
 pub mod limits;
 pub mod local_login;
@@ -20,7 +19,6 @@ pub mod usage_login;
 pub mod verify;
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use futures_util::StreamExt;
 
@@ -34,7 +32,6 @@ use droppen_http::error::{ApiError, Hinted};
 use droppen_http::extract::{ApiJson, ApiPath, ApiQuery};
 use droppen_http::SendResult;
 use droppen_http::openapi_ext::{required_nullable, ExtraResponses, Nullable, Optional};
-use droppen_base::process_env::{apply_env, claude_env};
 use rest::AccountLimitEventList;
 use store::{Account, AccountError, AccountKind, AccountList, AccountPatch, AccountProvider, Credential};
 
@@ -124,17 +121,6 @@ pub struct AccountConflict {
     pub existing_label: String,
 }
 
-/// `POST /api/accounts/{id}/usage-verify` response.
-#[derive(Debug, Clone, Serialize, Deserialize, Schematic)]
-#[serde(rename_all = "camelCase")]
-pub struct UsageVerifyResult {
-    /// Whether the account's probe directory holds a live login.
-    pub logged_in: bool,
-    /// The address that login belongs to, when the CLI reported one.
-    #[serde(default, skip_serializing_if = "Optional::is_none")]
-    pub email: Optional<String>,
-}
-
 /// `GET /api/accounts/limit-events` and `GET /api/accounts/{id}/limit-events` query.
 #[derive(Debug, Clone, Serialize, Deserialize, Schematic)]
 #[serde(rename_all = "camelCase")]
@@ -188,26 +174,6 @@ pub(crate) fn provider_mismatch() -> ApiError {
             hint: "this account authenticates the other CLI; a codex session needs a codex account and a claude session a claude one",
         },
     )
-}
-
-/// Why this account cannot take part in a Claude OAuth flow, if it cannot.
-///
-/// Every wizard and login in this module drives `claude` against an account's
-/// own probe directory, and only an *OAuth* account has one to drive: a pasted
-/// key or bearer token authenticates per request, and a codex account holds a
-/// key for a different vendor's CLI entirely. The codex answer names codex
-/// rather than reusing `usage_not_supported`, because "this is the wrong CLI"
-/// and "this kind of credential has no login" are different things to fix.
-fn claude_oauth_refusal(account: &Account, verb: &str) -> Option<String> {
-    if account.provider == AccountProvider::Codex {
-        return Some(format!("codex accounts hold a local API key, so there is no login to {verb}"));
-    }
-    (account.kind != AccountKind::OauthToken).then(|| "usage_not_supported".to_string())
-}
-
-/// [`claude_oauth_refusal`] as the `409` the routes answer with.
-fn claude_oauth_only(account: &Account, verb: &str) -> Option<ApiError> {
-    claude_oauth_refusal(account, verb).map(ApiError::conflict)
 }
 
 /// An id that is not a uuid names no account, so it gets the same `404` a uuid
@@ -536,8 +502,6 @@ pub async fn account_start(State(state): State<AccountsState>, ApiQuery(query): 
 /// How many logins' model lists `GET /api/accounts/start` asks for at once.
 const START_PROBES: usize = 3;
 
-const STATUS_TIMEOUT: Duration = Duration::from_secs(20);
-
 /// `{"loggedIn": true, "email": "…"}`, with any banner around it tolerated.
 pub fn parse_auth_status(raw: &str) -> Option<serde_json::Map<String, serde_json::Value>> {
     let start = raw.find('{')?;
@@ -549,105 +513,6 @@ pub fn parse_auth_status(raw: &str) -> Option<serde_json::Map<String, serde_json
         Ok(serde_json::Value::Object(map)) => Some(map),
         _ => None,
     }
-}
-
-/// Ask the CLI whether an account's probe directory holds a live login.
-///
-/// A missing CLI, a non-zero exit and a timeout all mean the same thing to the
-/// caller: this config dir is not logged in.
-async fn read_auth_status(config_dir: &std::path::Path, cwd: &std::path::Path) -> Option<serde_json::Map<String, serde_json::Value>> {
-    let mut command = tokio::process::Command::new("claude");
-    command
-        .args(["auth", "status", "--json"])
-        .current_dir(cwd)
-        .stdin(std::process::Stdio::null())
-        // `execFile({timeout})` sends SIGTERM; dropping the future on timeout
-        // has to do the same, or the CLI outlives the request that started it.
-        .kill_on_drop(true);
-    apply_env(
-        &mut command,
-        &claude_env([("CLAUDE_CONFIG_DIR".to_string(), config_dir.to_string_lossy().into_owned())]),
-    );
-
-    let Ok(Ok(output)) = tokio::time::timeout(STATUS_TIMEOUT, command.output()).await else {
-        return None;
-    };
-    if !output.status.success() {
-        return None;
-    }
-    parse_auth_status(&String::from_utf8_lossy(&output.stdout))
-}
-
-/// Whether the account's probe directory holds a live login.
-///
-/// Makes the stored account agree with the answer. Never fails on a CLI
-/// failure — an unusable login is a `false`, not a 500.
-#[api(id = "verify_usage_login", group = "accounts", summary = "Verify an account's usage login")]
-pub async fn verify_usage_login(State(state): State<AccountsState>, ApiPath(id): ApiPath<String>) -> Result<Json<UsageVerifyResult>, ApiError> {
-    require_uuid(&id)?;
-    let accounts = &state.accounts;
-    let Some(account) = accounts.get(&id).await else {
-        return Err(account_not_found());
-    };
-    // A pasted key or bearer token authenticates per request, and a codex
-    // account has no Claude login at all; neither has a login to verify.
-    if let Some(refusal) = claude_oauth_only(&account, "verify") {
-        return Err(refusal);
-    }
-
-    let (Ok(config_dir), Ok(cwd)) = (accounts.usage_config_dir(&id), accounts.usage_cwd(&id)) else {
-        return Ok(Json(UsageVerifyResult {
-            logged_in: false,
-            email: Optional(None),
-        }));
-    };
-    // An unwritable probe directory is not a live login either.
-    if tokio::fs::create_dir_all(&config_dir).await.is_err() || tokio::fs::create_dir_all(&cwd).await.is_err() {
-        return Ok(Json(UsageVerifyResult {
-            logged_in: false,
-            email: Optional(None),
-        }));
-    }
-
-    let status = read_auth_status(&config_dir, &cwd).await;
-    let logged_in = status
-        .as_ref()
-        .and_then(|s| s.get("loggedIn"))
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(false);
-    if !logged_in {
-        let _ = accounts
-            .update(
-                &id,
-                AccountPatch {
-                    usage_enabled: Some(false),
-                    ..Default::default()
-                },
-            )
-            .await;
-        return Ok(Json(UsageVerifyResult {
-            logged_in: false,
-            email: Optional(None),
-        }));
-    }
-
-    let email = status
-        .and_then(|s| s.get("email").and_then(serde_json::Value::as_str).map(|e| e.trim().to_string()))
-        .unwrap_or_default();
-    let _ = accounts
-        .update(
-            &id,
-            AccountPatch {
-                usage_enabled: Some(true),
-                email: Some(email.clone()),
-                ..Default::default()
-            },
-        )
-        .await;
-    Ok(Json(UsageVerifyResult {
-        logged_in: true,
-        email: Optional((!email.is_empty()).then_some(email)),
-    }))
 }
 
 /// Resolve the `{id}` of a limit route: a stored account, or the machine's
@@ -718,8 +583,6 @@ impl AccountsState {
     where
         S: Clone + Send + Sync + 'static,
         AccountsState: FromRef<S>,
-        setup_token::TokenWizardState: FromRef<S>,
-        usage_login::UsageLoginState: FromRef<S>,
     {
         router
             .get("/api/accounts", list_accounts)
@@ -732,12 +595,6 @@ impl AccountsState {
             .patch("/api/accounts/{id}", update_account)
             .delete("/api/accounts/{id}", delete_account)
             .put("/api/accounts/default", set_default_account)
-            .post("/api/accounts/{id}/usage-verify", verify_usage_login)
-            .post("/api/accounts/setup-token", setup_token::start_setup_token)
-            .get("/api/accounts/setup-token/{captureId}", setup_token::setup_token_status)
-            .post("/api/accounts/setup-token/{captureId}/code", setup_token::submit_setup_token_code)
-            .post("/api/accounts/{id}/setup-token", setup_token::reauth_account)
-            .post("/api/accounts/{id}/usage-login", usage_login::start_usage_login)
     }
 }
 
@@ -789,64 +646,7 @@ pub fn describe(reg: &mut ExtraResponses) {
             "Default account for new sessions (null chooses the local login, signed out or not; automatic clears it)",
         )
         .error("PUT", "/api/accounts/default", 400, "An accountId sent with automatic")
-        .error("PUT", "/api/accounts/default", 404, "Account not found")
-        .describe(
-            "POST",
-            "/api/accounts/{id}/usage-verify",
-            200,
-            "Whether the account's probe directory holds a live login",
-        )
-        .error("POST", "/api/accounts/{id}/usage-verify", 404, "Account not found")
-        .error("POST", "/api/accounts/{id}/usage-verify", 409, "API-key accounts have no login to verify")
-        .restatus(
-            "POST",
-            "/api/accounts/setup-token",
-            200,
-            201,
-            "Wizard running; attach the terminal and poll the capture",
-        )
-        .error("POST", "/api/accounts/setup-token", 500, "The wizard could not be started")
-        .describe(
-            "GET",
-            "/api/accounts/setup-token/{captureId}",
-            200,
-            "Where the capture stands (never the token itself)",
-        )
-        .error("GET", "/api/accounts/setup-token/{captureId}", 404, "Unknown or expired capture")
-        .describe(
-            "POST",
-            "/api/accounts/setup-token/{captureId}/code",
-            200,
-            "The authorization code was typed into the wizard",
-        )
-        .error("POST", "/api/accounts/setup-token/{captureId}/code", 400, "Not an authorization code")
-        .error("POST", "/api/accounts/setup-token/{captureId}/code", 404, "Unknown or expired capture")
-        .error(
-            "POST",
-            "/api/accounts/setup-token/{captureId}/code",
-            409,
-            "This capture is no longer waiting for a code",
-        )
-        .restatus(
-            "POST",
-            "/api/accounts/{id}/setup-token",
-            200,
-            201,
-            "Wizard running for an account that already exists; its id and bindings are kept",
-        )
-        .error("POST", "/api/accounts/{id}/setup-token", 404, "Account not found")
-        .error("POST", "/api/accounts/{id}/setup-token", 409, "API-key accounts have no OAuth flow")
-        .error("POST", "/api/accounts/{id}/setup-token", 500, "The wizard could not be started")
-        .restatus(
-            "POST",
-            "/api/accounts/{id}/usage-login",
-            200,
-            201,
-            "Login wizard running in a terminal; verify when it finishes",
-        )
-        .error("POST", "/api/accounts/{id}/usage-login", 404, "Account not found")
-        .error("POST", "/api/accounts/{id}/usage-login", 409, "API-key accounts have no login to perform")
-        .error("POST", "/api/accounts/{id}/usage-login", 500, "The wizard could not be started");
+        .error("PUT", "/api/accounts/default", 404, "Account not found");
 }
 
 #[cfg(test)]
@@ -938,40 +738,6 @@ mod tests {
             "unused",
         );
         assert_eq!(format!("{from_store:?}"), rendered);
-    }
-
-    /// Only an OAuth account has a Claude login, and only a claude account has
-    /// a *Claude* one — two different refusals, because they are two different
-    /// things to fix.
-    #[test]
-    fn every_claude_wizard_refuses_a_codex_account_by_name() {
-        let account = |provider: AccountProvider, kind: AccountKind| Account {
-            id: "11111111-2222-3333-4444-555555555555".into(),
-            label: "Account".into(),
-            kind,
-            email: Optional(None),
-            usage_enabled: false,
-            created_at: String::new(),
-            updated_at: String::new(),
-            unverified: Optional(None),
-            provider,
-            env_keys: Optional((kind == AccountKind::Env).then(|| vec!["ANTHROPIC_API_KEY".to_string()])),
-            rest: Vec::new(),
-            rotation: false,
-        };
-
-        assert_eq!(
-            claude_oauth_refusal(&account(AccountProvider::Claude, AccountKind::OauthToken), "verify"),
-            None,
-            "the one account every wizard is for"
-        );
-        assert_eq!(
-            claude_oauth_refusal(&account(AccountProvider::Claude, AccountKind::Env), "verify").as_deref(),
-            Some("usage_not_supported"),
-            "the wording env-mode clients already handle: a block authenticates per request"
-        );
-        let codex = claude_oauth_refusal(&account(AccountProvider::Codex, AccountKind::Env), "perform").expect("refused");
-        assert!(codex.contains("codex"), "the refusal says which CLI it is about: {codex}");
     }
 
     #[test]

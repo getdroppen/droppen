@@ -68,7 +68,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
-use gotcha::{api, Schematic, State};
+use gotcha::axum::extract::FromRef;
+use gotcha::{api, GotchaRouter, Schematic, State};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
@@ -78,7 +79,7 @@ use droppen_http::error::ApiError;
 use droppen_http::extract::{ApiJson, ApiPath};
 use droppen_http::app_window::AppWindow;
 use droppen_http::SendResult;
-use droppen_http::openapi_ext::Optional;
+use droppen_http::openapi_ext::{ExtraResponses, Optional};
 use droppen_base::process_env::{claude_env, clean_env_bare, resolve_on_path};
 use crate::terminals::{CreateSpec, Registry};
 use droppen_base::text::strip_ansi;
@@ -1078,6 +1079,58 @@ pub async fn setup_token_status(
         .status(&capture_id)
         .map(gotcha::Json)
         .ok_or_else(|| ApiError::not_found("capture not found"))
+}
+
+impl TokenWizardState {
+    /// Register the token wizard's routes.
+    pub fn routes<S>(router: GotchaRouter<S>) -> GotchaRouter<S>
+    where
+        S: Clone + Send + Sync + 'static,
+        TokenWizardState: FromRef<S>,
+    {
+        router
+            .post("/api/accounts/setup-token", start_setup_token)
+            .get("/api/accounts/setup-token/{captureId}", setup_token_status)
+            .post("/api/accounts/setup-token/{captureId}/code", submit_setup_token_code)
+            .post("/api/accounts/{id}/setup-token", reauth_account)
+    }
+}
+
+/// The token wizard's statuses gotcha cannot derive.
+pub fn describe(reg: &mut ExtraResponses) {
+    reg.restatus("POST", "/api/accounts/setup-token", 200, 201, "Wizard running; attach the terminal and poll the capture")
+        .error("POST", "/api/accounts/setup-token", 500, "The wizard could not be started")
+        .describe(
+            "GET",
+            "/api/accounts/setup-token/{captureId}",
+            200,
+            "Where the capture stands (never the token itself)",
+        )
+        .error("GET", "/api/accounts/setup-token/{captureId}", 404, "Unknown or expired capture")
+        .describe(
+            "POST",
+            "/api/accounts/setup-token/{captureId}/code",
+            200,
+            "The authorization code was typed into the wizard",
+        )
+        .error("POST", "/api/accounts/setup-token/{captureId}/code", 400, "Not an authorization code")
+        .error("POST", "/api/accounts/setup-token/{captureId}/code", 404, "Unknown or expired capture")
+        .error(
+            "POST",
+            "/api/accounts/setup-token/{captureId}/code",
+            409,
+            "This capture is no longer waiting for a code",
+        )
+        .restatus(
+            "POST",
+            "/api/accounts/{id}/setup-token",
+            200,
+            201,
+            "Wizard running for an account that already exists; its id and bindings are kept",
+        )
+        .error("POST", "/api/accounts/{id}/setup-token", 404, "Account not found")
+        .error("POST", "/api/accounts/{id}/setup-token", 409, "API-key accounts have no OAuth flow")
+        .error("POST", "/api/accounts/{id}/setup-token", 500, "The wizard could not be started");
 }
 
 #[cfg(test)]
