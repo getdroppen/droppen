@@ -36,9 +36,10 @@ const fail = (what) => failures.push(what);
 // ------------------------------------------------------------ what is scanned
 
 /**
- * Where the open clients live, and the hub's own end-to-end and stress runs
- * (`rh-hub-tools`, which speak the same API; absent from the public
- * repository, and a root that is not there is skipped).
+ * Where the open clients live, the message types they share (WIRE), and the
+ * hub's own end-to-end and stress runs (`rh-hub-tools`, which speak the same
+ * API; absent from the public repository, and a root that is not there is
+ * skipped).
  */
 const ROOTS = [
   "web/src/lib/hub",
@@ -51,6 +52,7 @@ const ROOTS = [
   "server-rs/crates/rh-client/src",
   "server-rs/crates/rh-devkit/src",
   "server-rs/crates/rh-hub-tools/src",
+  "server-rs/crates/rh-proto/src/wire",
 ];
 
 /**
@@ -109,6 +111,24 @@ const IGNORE = [
   { file: "server-rs/crates/rh-devkit/src/bin/rh-p2p-probe.rs", t: true },
   // A unit test's placeholder message for the relay's connection writer.
   { file: "server-rs/crates/rh-relay/src/conn.rs", t: ["x"] },
+];
+
+/**
+ * The typed messages: rh-proto's `wire` modules, one per channel. Both ends
+ * of a channel use these types, so what a type derives says nothing about
+ * who sends it; its name does. A module may hold an enum tagged `t` under
+ * its two names only, and each variant must be in index.json under that
+ * channel and direction, whether or not open code uses it yet. A file
+ * elsewhere that names a variant (`RelayToPeer::Welcome`) uses that message:
+ * the file must speak the channel (SPEAKS), and is listed as sending or
+ * receiving it from its end.
+ */
+const WIRE_ROOT = "server-rs/crates/rh-proto/src/wire/";
+const WIRE = [
+  { file: `${WIRE_ROOT}connect.rs`, channel: "/v1/connect", c2s: "PeerToRelay", s2c: "RelayToPeer" },
+  { file: `${WIRE_ROOT}relay.rs`, channel: "/v1/relay", c2s: "RelayToHub", s2c: "HubToRelay" },
+  { file: `${WIRE_ROOT}client.rs`, channel: "/v1/client", c2s: "DeviceToHub", s2c: "HubToDevice" },
+  { file: `${WIRE_ROOT}agent.rs`, channel: "/v1/agent", c2s: "AgentToHub", s2c: "HubToAgent" },
 ];
 
 // ------------------------------------------------------------ a small lexer
@@ -488,17 +508,67 @@ function testModules(full, toks) {
 }
 
 /**
+ * The enums tagged `t` in Rust tokens, `#[derive(Serialize|Deserialize)]
+ * #[serde(tag = "t", rename_all = "snake_case")] enum E { A {…}, B, … }`:
+ * `{name, at, derives, snakeCase, variants: [{name, t, at}]}`, `derives`
+ * holding "S" and "D" as written and `at` being token indices.
+ */
+function taggedEnums(toks) {
+  const out = [];
+  for (let j = 0; j + 2 < toks.length; j++) {
+    if (!(is(toks[j], "id", "tag") && is(toks[j + 1], "p", "=") && is(toks[j + 2], "str", "t"))) continue;
+    // attributes hold no braces or semicolons: the item starts after the
+    // previous one's, and is an enum only if `enum` comes before a brace
+    let k = j;
+    while (k < toks.length && !is(toks[k], "id", "enum") && !is(toks[k], "p", "{") && !is(toks[k], "p", ";")) k++;
+    if (!is(toks[k], "id", "enum")) continue;
+    let from = j;
+    while (from > 0 && !is(toks[from - 1], "p", "}") && !is(toks[from - 1], "p", ";")) from--;
+    let derives = "";
+    let snakeCase = false;
+    for (let b = from; b < k; b++) {
+      if (is(toks[b], "id", "Serialize")) derives += "S";
+      if (is(toks[b], "id", "Deserialize")) derives += "D";
+      if (is(toks[b], "id", "rename_all") && is(toks[b + 1], "p", "=") && is(toks[b + 2], "str", "snake_case")) snakeCase = true;
+    }
+    const e = { name: toks[k + 1]?.v, at: k + 1, derives, snakeCase, variants: [] };
+    out.push(e);
+    const open = k + 2;
+    if (!is(toks[open], "p", "{")) continue;
+    const end = matching(toks, open);
+    let d = 0;
+    let rename = null;
+    for (let a = open; a <= end; a++) {
+      if (is(toks[a], "p", "{") || is(toks[a], "p", "(") || is(toks[a], "p", "[")) d++;
+      else if (is(toks[a], "p", "}") || is(toks[a], "p", ")") || is(toks[a], "p", "]")) d--;
+      // a variant's own `#[serde(rename = "x")]`: inside the enum's braces, its `[` and its `(`
+      if (d === 3 && is(toks[a], "id", "rename") && is(toks[a + 1], "p", "=") && is(toks[a + 2], "str")) rename = toks[a + 2].v;
+      if (d === 1 && is(toks[a], "id") && /^[A-Z]/.test(toks[a].v) && (is(toks[a - 1], "p", "{") || is(toks[a - 1], "p", ",") || is(toks[a - 1], "p", "]"))) {
+        e.variants.push({ name: toks[a].v, t: rename ?? snake(toks[a].v), at: a });
+        rename = null;
+      }
+    }
+  }
+  return out;
+}
+
+/**
  * Everything one file uses: `{routes: [{path, method, line}], ts: [{t, dir, line}]}`,
  * dir being "send", "recv" or "any" (unknown). `test`: the file is test code
- * as a whole ([`testModules`]).
+ * as a whole ([`testModules`]). `wire`: the file's WIRE entry, null for a
+ * file under WIRE_ROOT that has none, undefined elsewhere. A typed message
+ * there is `{t, dir: "c2s"|"s2c", typed: true}`; one named elsewhere
+ * carries its `channel`, `dir` being its direction on that channel.
+ * `problems`: `[{line, why}]`, findings of their own.
  */
-function extract(src, lang, test = false) {
+function extract(src, lang, test = false, wire = undefined) {
   const toks = lex(src, lang);
   const routes = [];
   const ts = [];
+  const problems = [];
   const wholeTest = lang === "rs" && (test || toks.some((_, j) => cfgTestAt(toks, j, true) >= 0));
   const inTest = wholeTest ? () => true : lang === "rs" ? testRanges(toks) : () => false;
-  const t = (value, dir, at) => ts.push({ t: value, dir: inTest(at) ? "any" : dir, line: toks[at].line });
+  const t = (value, dir, at, more = {}) => ts.push({ t: value, dir: inTest(at) ? "any" : dir, line: toks[at].line, ...more });
 
   for (let j = 0; j < toks.length; j++) {
     const tok = toks[j];
@@ -581,35 +651,34 @@ function extract(src, lang, test = false) {
           }
         }
       }
-      // #[derive(Serialize|Deserialize)] #[serde(tag = "t", rename_all = "snake_case")] enum E { A {…}, B, … }
-      if (is(tok, "id", "tag") && is(toks[j + 1], "p", "=") && is(toks[j + 2], "str", "t")) {
-        let k = j;
-        while (k < toks.length && !is(toks[k], "id", "enum")) k++;
-        let derive = "";
-        for (let b = j; b > Math.max(0, j - 40); b--) {
-          if (is(toks[b], "id", "Serialize")) derive += "S";
-          if (is(toks[b], "id", "Deserialize")) derive += "D";
-        }
-        const dir = derive.includes("S") && derive.includes("D") ? "any" : derive.includes("D") ? "recv" : "send";
-        const open = k + 2;
-        if (is(toks[open], "p", "{")) {
-          const end = matching(toks, open);
-          let d = 0;
-          let rename = null;
-          for (let a = open; a <= end; a++) {
-            if (is(toks[a], "p", "{") || is(toks[a], "p", "(") || is(toks[a], "p", "[")) d++;
-            else if (is(toks[a], "p", "}") || is(toks[a], "p", ")") || is(toks[a], "p", "]")) d--;
-            if (d === 2 && is(toks[a], "id", "rename") && is(toks[a + 1], "p", "=") && is(toks[a + 2], "str")) rename = toks[a + 2].v;
-            if (d === 1 && is(toks[a], "id") && /^[A-Z]/.test(toks[a].v) && (is(toks[a - 1], "p", "{") || is(toks[a - 1], "p", ",") || is(toks[a - 1], "p", "]"))) {
-              t(rename ?? snake(toks[a].v), dir, a);
-              rename = null;
-            }
-          }
+      // RelayToPeer::Welcome: a typed message (WIRE) named outside rh-proto
+      if (wire === undefined && tok.k === "id" && WIRE_TYPES.has(tok.v)) {
+        const w = WIRE_TYPES.get(tok.v);
+        const next = toks[j + 2];
+        if (is(toks[j + 1], "p", "::") && is(next, "id") && /^[A-Z]/.test(next.v)) {
+          t(w.variants.get(next.v) ?? snake(next.v), w.dir, j, { channel: w.channel });
+        } else if ((is(toks[j + 1], "p", "::") && (is(next, "p", "{") || is(next, "p", "*"))) || is(toks[j + 1], "id", "as")) {
+          problems.push({ line: tok.line, why: `imports or renames ${tok.v}: name each variant as ${tok.v}::Variant, so this check sees where it is used` });
         }
       }
     }
   }
-  return { routes, ts };
+  for (const e of lang === "rs" ? taggedEnums(toks) : []) {
+    if (!e.snakeCase) problems.push({ line: toks[e.at].line, why: `enum ${e.name} is tagged "t" without rename_all = "snake_case", which this check assumes` });
+    if (wire === undefined) {
+      const dir = e.derives.includes("S") && e.derives.includes("D") ? "any" : e.derives.includes("D") ? "recv" : "send";
+      for (const v of e.variants) t(v.t, dir, v.at);
+      continue;
+    }
+    const dir = wire && e.name === wire.c2s ? "c2s" : wire && e.name === wire.s2c ? "s2c" : null;
+    if (!dir) {
+      const names = wire ? `${wire.c2s} or ${wire.s2c}` : "no type for this file (add it to WIRE)";
+      problems.push({ line: toks[e.at].line, why: `enum ${e.name} is tagged "t" in rh-proto's wire, where WIRE names ${names}` });
+      continue;
+    }
+    for (const v of e.variants) t(v.t, dir, v.at, { typed: true });
+  }
+  return { routes, ts, problems };
 }
 
 // ------------------------------------------------------------ the index
@@ -631,7 +700,7 @@ function templateMatches(template, segments) {
 
 const routesFor = (path) => routes.filter((r) => templateMatches(r.segments, path.split("/").slice(1)));
 const shortName = (channel) => channel.replace(/^\/v1\//, "").replace(/^\//, "");
-const dirOf = (role, use) => (use === "any" ? null : (role === "client") === (use === "send") ? "c2s" : "s2c");
+const dirOf = (role, use) => (use === "any" ? null : use === "c2s" || use === "s2c" ? use : (role === "client") === (use === "send") ? "c2s" : "s2c");
 
 // ------------------------------------------------------------ scan
 
@@ -660,13 +729,32 @@ for (const root of ROOTS) {
     if (full.endsWith(".rs")) for (const t of testModules(full, lex(readFileSync(full, "utf8"), "rs"))) testFiles.add(t);
   }
 }
+// The typed messages, from rh-proto's wire modules first (the files naming
+// them come before those in the walk): type name -> `{channel, dir,
+// variants: Map(variant -> t)}`.
+const WIRE_TYPES = new Map();
+for (const w of WIRE) {
+  let src;
+  try {
+    src = readFileSync(join(repo, w.file), "utf8");
+  } catch {
+    continue;
+  }
+  for (const e of taggedEnums(lex(src, "rs"))) {
+    const dir = e.name === w.c2s ? "c2s" : e.name === w.s2c ? "s2c" : null;
+    if (dir) WIRE_TYPES.set(e.name, { channel: w.channel, dir, variants: new Map(e.variants.map((v) => [v.name, v.t])) });
+  }
+}
 for (const root of ROOTS) {
   for (const full of walk(join(repo, root), [])) {
     const file = relative(repo, full).split("\\").join("/");
     filesScanned++;
     const lang = file.endsWith(".rs") ? "rs" : "ts";
-    const { routes: usedRoutes, ts: usedTs } = extract(readFileSync(full, "utf8"), lang, testFiles.has(full));
-    const speaks = (SPEAKS.find(([prefix]) => file.startsWith(prefix)) ?? [null, []])[1];
+    const wire = file.startsWith(WIRE_ROOT) ? (WIRE.find((w) => w.file === file) ?? null) : undefined;
+    const { routes: usedRoutes, ts: usedTs, problems } = extract(readFileSync(full, "utf8"), lang, testFiles.has(full), wire);
+    for (const p of problems) fail(`${file}:${p.line}: ${p.why}`);
+    // A wire module is neither end of its channel: its types say the direction.
+    const speaks = wire ? [[wire.channel, null]] : wire === null ? [] : (SPEAKS.find(([prefix]) => file.startsWith(prefix)) ?? [null, []])[1];
     const hubSpeaks = speaks.filter(([channel]) => !LOCAL.has(channel));
     const onlyLocal = speaks.length > 0 && hubSpeaks.length === 0;
     const ignored = IGNORE.find((x) => x.file === file);
@@ -686,19 +774,31 @@ for (const root of ROOTS) {
     for (const use of usedTs) {
       if (Array.isArray(ignored?.t) && ignored.t.includes(use.t)) continue;
       const where = `${file}:${use.line}`;
+      // A typed message named here travels its own channel; this file's end
+      // of it says whether the file sends or receives it.
+      const on = use.channel ? hubSpeaks.filter(([channel]) => channel === use.channel) : hubSpeaks;
+      if (use.channel && on.length && use.dir !== "any") use.dir = (on[0][1] === "client") === (use.dir === "c2s") ? "send" : "recv";
       const key = `${use.t}`;
       const into = onlyLocal ? found.local : found.ts;
       if (!into.has(key)) into.set(key, []);
       into.get(key).push(`${where} (${use.dir}; ${speaks.map(([c]) => c).join(", ") || "no channel"})`);
+      if (use.channel && !on.length) {
+        fail(`control message t="${use.t}" (${use.channel} ${use.dir} at ${where}): the file names a ${use.channel} message and does not speak ${use.channel} (SPEAKS)`);
+        continue;
+      }
+      if (wire !== undefined && !use.typed && use.dir !== "any") {
+        fail(`control message t="${use.t}" at ${where}: rh-proto's wire holds message types only; build this one from them`);
+        continue;
+      }
       if (onlyLocal) continue;
-      const ok = hubSpeaks.some(([channel, role]) => {
+      const ok = on.some(([channel, role]) => {
         const c = index.channels[channel];
         if (!c) return false;
         const dir = dirOf(role, use.dir);
         return dir ? c[dir].includes(use.t) : c.c2s.includes(use.t) || c.s2c.includes(use.t);
       });
       if (!ok) {
-        const dirs = hubSpeaks.map(([channel, role]) => `${channel} ${dirOf(role, use.dir) ?? "c2s|s2c"}`).join(" or ");
+        const dirs = on.map(([channel, role]) => `${channel} ${dirOf(role, use.dir) ?? "c2s|s2c"}`).join(" or ");
         fail(`control message t="${use.t}" (${use.dir} at ${where}) is not in index.json under ${dirs || "any channel this file speaks (add it to SPEAKS)"}`);
       }
     }
