@@ -112,7 +112,8 @@ pub(super) struct Shared {
     /// attestation as it arrives ([`take_attestation`]), before a newer one
     /// from the same admin can replace it in the state.
     pub(super) lapses: Mutex<Vec<std::sync::Weak<Mutex<ChannelLapse>>>>,
-    /// The clock every channel's control lapse is judged by ([`Clock`]).
+    /// The clock every channel's control lapse, and a management request's
+    /// twelve hours, are judged by ([`Clock`]).
     pub(super) clock: Clock,
     /// A test's hook right after a handshake's admission, its state lock let
     /// go: where an attestation arriving then would have slipped past a
@@ -262,6 +263,14 @@ mod tests {
     /// moves that clock past it, however long the work before it took.
     fn clocked_account() -> Account {
         account_on(super::super::streams::Handle::detached(), "127.0.0.1:9".parse().unwrap(), Clock::tokio())
+    }
+
+    /// [`account`], its channels' control lapse judged by a clock the test
+    /// moves by hand ([`Clock::manual`]), and that clock's offset.
+    fn manual_account() -> (Account, Arc<std::sync::atomic::AtomicU64>) {
+        let offset = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let a = account_on(super::super::streams::Handle::detached(), "127.0.0.1:9".parse().unwrap(), Clock::manual(offset.clone()));
+        (a, offset)
     }
 
     /// [`account_at`], its channels' control lapse judged by `clock`.
@@ -1054,7 +1063,7 @@ mod tests {
             entries: Vec::new(),
             client: Vec::new(),
         };
-        (bind, initiator.write_hello(now_ms_u64(), &body.encode().unwrap()).unwrap())
+        (bind, initiator.write_hello(a.shared.clock.now_ms(), &body.encode().unwrap()).unwrap())
     }
 
     /// A device admitted on a DataChannel is
@@ -1468,6 +1477,10 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_renewal_replaced_before_the_channel_looked_still_keeps_it_open() {
         let mut a = clocked_account();
+        // The link's clock runs ahead of the wall's by more than an
+        // attestation's skew: the renewal, dated by it, counts only as that
+        // clock judges it ([`take_attestation`]).
+        tokio::time::advance(Duration::from_millis(2 * rh_proto::chain::ATTESTATION_SKEW_MS)).await;
         take(
             &mut a,
             vec![Action::SetAdmin {
@@ -1564,6 +1577,56 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(2_500)).await;
         assert_eq!(*a.heard_closes.lock().unwrap(), vec![(4, CHANNEL_STALE)]);
         assert!(a.shared.lapses.lock().unwrap().is_empty(), "gone with its channel");
+    }
+
+    /// A request's standing judges the channel's control lapse by the link's
+    /// clock ([`AgentLocal`]): past it, the device controls nothing.
+    #[test]
+    fn a_requests_standing_judges_the_lapse_by_the_links_clock() {
+        use super::super::bridge::Local;
+        let (a, offset) = manual_account();
+        attest(&a, "d-1", &a.d1, SEVEN_DAYS - 1_500);
+        let mut lapse = ChannelLapse::new("d-2");
+        assert!(lapse_at(&a, &mut lapse).is_some());
+        let local = AgentLocal::new(a.shared.clone(), Arc::new(Mutex::new(lapse)));
+        assert!(local.standing("d-2").controls, "1.5 s before its lapse");
+        offset.store(2_500, std::sync::atomic::Ordering::SeqCst);
+        assert!(!local.standing("d-2").controls, "1 s past it");
+    }
+
+    /// Each stream on an open channel is judged on its lapse by the link's
+    /// clock: one opened past it closes the channel (4412) before anything
+    /// answers it. On tokio's paused clock, which the link's does not follow:
+    /// the channel's own look at its lapse, a timer, comes due only once
+    /// nothing else is left to run, so it cannot be what closes the channel
+    /// first.
+    #[tokio::test(start_paused = true)]
+    async fn a_stream_opened_past_the_lapse_closes_the_channel() {
+        let (a, offset) = manual_account();
+        attest(&a, "d-1", &a.d1, SEVEN_DAYS - 1_500);
+        let mut routes = Routes::new();
+        let channel = connect(&a, &d2(), "d-2", 4, &mut routes).await.expect("fresh enough to open");
+        assert_eq!(served(&channel).await, Some(200));
+        // The link's clock moves on 2.5 s: past a lapse that was 1.5 s off.
+        offset.store(2_500, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(served(&channel).await, None, "nothing is served on it");
+        while a.heard_closes.lock().unwrap().is_empty() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert_eq!(*a.heard_closes.lock().unwrap(), vec![(4, CHANNEL_STALE)]);
+    }
+
+    /// A direct hello is admitted by the link's clock: with it ahead of the
+    /// wall's by more than an attestation's skew, an admin's word given by
+    /// it just now still lets a device in.
+    #[tokio::test]
+    async fn a_direct_hello_is_admitted_by_the_links_clock() {
+        let (a, offset) = manual_account();
+        offset.store(2 * rh_proto::chain::ATTESTATION_SKEW_MS, std::sync::atomic::Ordering::SeqCst);
+        attest(&a, "d-1", &a.d1, 0);
+        let admit = LinkAdmit { shared: a.shared.clone() };
+        let (bind, hello) = direct_hello(&a, &d2(), "d-2");
+        assert!(matches!(admit.admit("d-2", &bind, &hello), Admission::Open { .. }));
     }
 
     /// Third look (optional): who was the sole admin as of a seq is
@@ -1681,10 +1744,11 @@ mod tests {
 
     /// A management request is held to the twelve hours when
     /// it is dispatched, not only when its stream opened — a device could
-    /// hold back its `End` past them.
-    #[tokio::test]
+    /// hold back its `End` past them. On tokio's paused clock, so that its
+    /// stream opens inside them however slow the machine.
+    #[tokio::test(start_paused = true)]
     async fn a_management_request_is_judged_again_when_it_is_dispatched() {
-        let a = account();
+        let a = clocked_account();
         attest(&a, "d-1", &a.d1, rh_proto::chain::MANAGE_FRESHNESS_MS - 1_500);
         let mut routes = Routes::new();
         let channel = connect(&a, &d2(), "d-2", 4, &mut routes).await.expect("fresh");

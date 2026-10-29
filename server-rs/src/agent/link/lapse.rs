@@ -193,6 +193,8 @@ impl ChainStateExt for ChainState {
 
 /// The clock a channel's control lapse is judged by (local-aggregator §3.4):
 /// at the channel's admission, while it is open, and at each request on it.
+/// A management request's twelve hours are judged by it too
+/// ([`super::local::standing_with`]), on a channel and at `/rh/rotate`.
 /// The wall clock; a test brings one it can move on, so that it reaches a
 /// lapse without waiting for the wall clock to.
 #[derive(Clone)]
@@ -217,6 +219,13 @@ impl Clock {
     pub(in crate::agent) fn tokio() -> Self {
         let (wall, start) = (now_ms_u64(), tokio::time::Instant::now());
         Self(Arc::new(move || wall + start.elapsed().as_millis() as u64))
+    }
+
+    /// The wall clock as it stood when made, moved on by the milliseconds in
+    /// `offset` and by nothing else: no timer of tokio's comes due with it.
+    pub(in crate::agent) fn manual(offset: Arc<std::sync::atomic::AtomicU64>) -> Self {
+        let wall = now_ms_u64();
+        Self(Arc::new(move || wall + offset.load(std::sync::atomic::Ordering::SeqCst)))
     }
 }
 
