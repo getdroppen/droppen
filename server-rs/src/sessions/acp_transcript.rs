@@ -51,7 +51,8 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 use futures_util::future::BoxFuture;
-use serde_json::{json, Map, Value};
+use serde::Serialize;
+use serde_json::{Map, Value};
 
 use super::util::{
     first_line_of, make_item, make_tool_item, read_head_lines, read_tail_lines, title_line, try_parse, FileRef, ItemKind, Role, ToolDisplay,
@@ -172,14 +173,100 @@ pub async fn read_header(file_path: &Path) -> Option<Header> {
 }
 
 /// A record, stamped now.
-pub fn record(kind: &str, fields: Value) -> Value {
+fn record(kind: &str, fields: Value) -> Value {
     let mut record = match fields {
         Value::Object(map) => map,
         _ => Map::new(),
     };
-    record.insert("type".into(), json!(kind));
-    record.insert("timestamp".into(), json!(iso8601(std::time::SystemTime::now())));
+    record.insert("type".into(), kind.into());
+    record.insert("timestamp".into(), iso8601(std::time::SystemTime::now()).into());
     Value::Object(record)
+}
+
+/// A record's own fields, one variant per record, as [`Record::stamped`]
+/// writes them.
+///
+/// Untagged, so that a variant writes its fields and nothing else: the `type`
+/// follows them, where [`record`] puts it, and a tag serde wrote would lead.
+/// Key order is part of a line, and other versions read these lines back.
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+pub(crate) enum Record<'a> {
+    /// `session`, the first line, which [`read_header`] reads back.
+    Session {
+        id: &'a str,
+        agent: &'a str,
+        #[serde(rename = "agentSessionId")]
+        agent_session_id: &'a str,
+        cwd: &'a str,
+    },
+    /// `user`, a message this server sent: its attachments are listed even
+    /// when there are none.
+    User {
+        text: &'a str,
+        images: &'a [String],
+        files: &'a [String],
+    },
+    /// `user`, as `session/load` replays it: the text alone, as a replay has
+    /// no attachment paths to list.
+    ReplayedUser { text: &'a str },
+    /// `delta`.
+    Delta { kind: &'a str, text: &'a str },
+    /// `assistant`.
+    Assistant { text: &'a str },
+    /// `thinking`.
+    Thinking { text: &'a str },
+    /// `tool_call`: `input` is the agent's own JSON as it came, `null` when
+    /// it sent none.
+    ToolCall {
+        id: &'a str,
+        title: &'a str,
+        kind: &'a str,
+        input: Option<&'a Value>,
+    },
+    /// `tool_result`.
+    ToolResult { id: &'a str, status: &'a str, output: &'a str },
+    /// `compact`. Braces, not a unit variant: an untagged unit is written as
+    /// `null`, not as an object.
+    Compact {},
+    /// `usage`.
+    Usage { used: u64, size: u64 },
+    /// `config`: both keys, a value left out written as `null`.
+    Config { model: Option<&'a str>, effort: Option<&'a str> },
+    /// `turn_end`.
+    TurnEnd {
+        #[serde(rename = "stopReason")]
+        stop_reason: &'a str,
+    },
+    /// `error`.
+    Error { message: &'a str },
+}
+
+impl Record<'_> {
+    /// Its `type`.
+    fn kind(&self) -> &'static str {
+        match self {
+            Record::Session { .. } => "session",
+            Record::User { .. } | Record::ReplayedUser { .. } => "user",
+            Record::Delta { .. } => "delta",
+            Record::Assistant { .. } => "assistant",
+            Record::Thinking { .. } => "thinking",
+            Record::ToolCall { .. } => "tool_call",
+            Record::ToolResult { .. } => "tool_result",
+            Record::Compact {} => "compact",
+            Record::Usage { .. } => "usage",
+            Record::Config { .. } => "config",
+            Record::TurnEnd { .. } => "turn_end",
+            Record::Error { .. } => "error",
+        }
+    }
+
+    /// The line it is written as, stamped now.
+    pub(crate) fn stamped(&self) -> Value {
+        // Strings, numbers and the agent's own JSON cannot fail to encode; a
+        // record that did must not be written down as some other line.
+        record(self.kind(), serde_json::to_value(self).expect("ACP transcript records encode"))
+    }
 }
 
 /// Turns ACP `session/update`s into transcript records.
@@ -206,15 +293,15 @@ impl Translator {
             SessionUpdate::ToolCall(call) => {
                 out.extend(self.flush());
                 if !is_compaction(call.meta.as_ref()) {
-                    out.push(record(
-                        "tool_call",
-                        json!({
-                            "id": call.tool_call_id,
-                            "title": call.title,
-                            "kind": kind_name(call.kind),
-                            "input": call.raw_input.clone().unwrap_or(Value::Null),
-                        }),
-                    ));
+                    out.push(
+                        Record::ToolCall {
+                            id: &call.tool_call_id,
+                            title: &call.title,
+                            kind: kind_name(call.kind),
+                            input: call.raw_input.as_ref(),
+                        }
+                        .stamped(),
+                    );
                 }
             }
             SessionUpdate::ToolCallUpdate(update) => {
@@ -225,7 +312,7 @@ impl Translator {
                 };
                 out.extend(self.flush());
                 if is_compaction(update.meta.as_ref()) {
-                    out.push(record("compact", json!({})));
+                    out.push(Record::Compact {}.stamped());
                     return out;
                 }
                 let mut output = update.content.as_deref().map(tool_content_text).unwrap_or_default();
@@ -236,12 +323,22 @@ impl Translator {
                         Some(other) => serde_json::to_string_pretty(other).unwrap_or_default(),
                     };
                 }
-                out.push(record(
-                    "tool_result",
-                    json!({"id": update.tool_call_id, "status": status, "output": output}),
-                ));
+                out.push(
+                    Record::ToolResult {
+                        id: &update.tool_call_id,
+                        status,
+                        output: &output,
+                    }
+                    .stamped(),
+                );
             }
-            SessionUpdate::UsageUpdate(usage) => out.push(record("usage", json!({"used": usage.used, "size": usage.size}))),
+            SessionUpdate::UsageUpdate(usage) => out.push(
+                Record::Usage {
+                    used: usage.used,
+                    size: usage.size,
+                }
+                .stamped(),
+            ),
             _ => {}
         }
         out
@@ -256,7 +353,7 @@ impl Translator {
             let text = content_text(&chunk.content);
             let mut out = self.flush();
             if !text.trim().is_empty() {
-                out.push(record("user", json!({ "text": text })));
+                out.push(Record::ReplayedUser { text: &text }.stamped());
             }
             return out;
         }
@@ -272,14 +369,20 @@ impl Translator {
             out.extend(self.flush());
         }
         self.run.get_or_insert((kind, String::new())).1.push_str(text);
-        out.push(record("delta", json!({"kind": kind, "text": text})));
+        out.push(Record::Delta { kind, text }.stamped());
     }
 
     /// The record that closes the run of deltas in progress, if there is one.
     pub fn flush(&mut self) -> Vec<Value> {
         match self.run.take() {
             Some((kind, text)) if !text.trim().is_empty() => {
-                vec![record(if kind == "text" { "assistant" } else { "thinking" }, json!({ "text": text }))]
+                let text = text.as_str();
+                let closing = if kind == "text" {
+                    Record::Assistant { text }
+                } else {
+                    Record::Thinking { text }
+                };
+                vec![closing.stamped()]
             }
             _ => Vec::new(),
         }
@@ -719,6 +822,7 @@ async fn summary_of(paths: &Paths, agent: &str, file_path: &Path, id: &str, titl
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use serde_json::json;
 
     /// A `session/update` as the wire spells it, read through its type.
     fn update(value: Value) -> SessionUpdate {

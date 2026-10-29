@@ -59,7 +59,7 @@ use super::{AccountChoice, Capabilities, DriverStatesBuilder, InjectError, Injec
 use futures_util::future::BoxFuture;
 use crate::acp::{category, option_for, ConfigOption, InitializeResponse};
 use crate::acp_agent::{AcpAgent, AcpAgentRegistry, AcpCheck, AcpCheckState};
-use crate::sessions::acp_transcript::{has_conversation, read_header, record, AcpTranscripts, Translator};
+use crate::sessions::acp_transcript::{has_conversation, read_header, AcpTranscripts, Record, Translator};
 use crate::sessions::{Injection, SessionSummary, Source};
 use droppen_http::error::ApiError;
 use droppen_base::process_env::clean_env_bare;
@@ -67,7 +67,7 @@ use client::Client;
 use conn::Conn;
 pub(super) use driver::Handle;
 use driver::{Cmd, Delivery, Driver, Message, Process, State, StderrTail};
-use serde_json::{json, Value};
+use serde_json::Value;
 use tokio::sync::mpsc;
 
 /// How long an agent may take to start and open a session.
@@ -816,10 +816,13 @@ impl InjectionRegistry {
             .map_err(|error| InjectError::Internal(error.to_string()))?;
         if fresh {
             transcript
-                .append(&[record(
-                    "session",
-                    json!({"id": id, "agent": agent.id, "agentSessionId": opened.id, "cwd": workdir.to_string_lossy()}),
-                )])
+                .append(&[Record::Session {
+                    id,
+                    agent: &agent.id,
+                    agent_session_id: &opened.id,
+                    cwd: &workdir.to_string_lossy(),
+                }
+                .stamped()])
                 .await;
         }
         // The agent's own history, for a transcript this server does not have:
@@ -888,6 +891,7 @@ mod tests {
     use super::*;
     use crate::sessions::acp_transcript::tests::unstamped;
     use droppen_instance::paths::Paths;
+    use serde_json::json;
 
     #[test]
     fn attachments_reach_the_agent_as_paths() {
