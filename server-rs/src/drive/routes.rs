@@ -20,7 +20,7 @@ use crate::accounts::{account_not_found, provider_mismatch, require_uuid};
 use crate::auth::MaybeIdentity;
 use crate::feed;
 use crate::files;
-use droppen_http::error::ApiError;
+use droppen_http::error::{ApiError, Hinted};
 use droppen_http::SendResult;
 use droppen_http::extract::{ApiJson, ApiPath, ApiQuery};
 use crate::inject::questions::{self, Answer};
@@ -873,10 +873,22 @@ fn already_settled(question: SessionQuestion) -> ApiError {
         (QuestionState::Cancelled, _) => "the turn that asked it was stopped".to_string(),
         (QuestionState::Expired | QuestionState::Pending, _) => "it can no longer be answered".to_string(),
     };
-    ApiError::with_body(
+    ApiError::refusal(
         gotcha::axum::http::StatusCode::CONFLICT,
-        serde_json::json!({ "error": "question_settled", "hint": hint, "question": question }),
+        QuestionSettled {
+            error: "question_settled",
+            hint: &hint,
+            question,
+        },
     )
+}
+
+/// `question_settled`'s body: a refusal's code and hint, and the question.
+#[derive(Serialize)]
+struct QuestionSettled<'a> {
+    error: &'static str,
+    hint: &'a str,
+    question: SessionQuestion,
 }
 
 /// Answer or dismiss one question, wherever it stands.
@@ -1088,12 +1100,12 @@ fn spawn_refusal(error: inject::InjectError, fallback: &str) -> ApiError {
 /// an archive: the client turns `external_session` into the same read-only
 /// notice from any of them.
 pub(crate) fn external_session(hint: String) -> ApiError {
-    ApiError::with_body(
+    ApiError::refusal(
         gotcha::axum::http::StatusCode::CONFLICT,
-        serde_json::json!({
-            "error": crate::sessions::EXTERNAL_SESSION_ERROR,
-            "hint": hint,
-        }),
+        Hinted {
+            error: crate::sessions::EXTERNAL_SESSION_ERROR,
+            hint: &hint,
+        },
     )
 }
 
@@ -1194,15 +1206,15 @@ fn queue_result(outcome: inject::QueueOutcome) -> Result<Json<SendResult>, ApiEr
         // is in the way, so the driver's own comparison is carried through as
         // the hint. `error` keeps its exact sentence: it is what the schema
         // describes and what older clients display.
-        QueueOutcome::NeedsRestart { differences } => Err(ApiError::with_body(
+        QueueOutcome::NeedsRestart { differences } => Err(ApiError::refusal(
             gotcha::axum::http::StatusCode::CONFLICT,
-            serde_json::json!({
-                "error": "that message asks for different settings, so it needs a new process rather than a place in this one's queue",
-                "hint": format!(
+            Hinted {
+                error: "that message asks for different settings, so it needs a new process rather than a place in this one's queue",
+                hint: &format!(
                     "it wants {differences}, and a process is only replaced between turns. \
                      The session will restart for it when the turn in flight ends — or press Stop, and it will start sooner."
                 ),
-            }),
+            },
         )),
         QueueOutcome::Unreachable => Err(ApiError::conflict(
             "CLI delivery could not be confirmed; the message is retained in the queue",
@@ -1676,14 +1688,14 @@ pub async fn bind_session_account(
     // [`continue_session_on_account`] — that makes a *new* session and leaves
     // this one as it was.
     if account_id.is_some() && found.map(|f| f.root) == Some(ClaudeRoot::Local) {
-        return Err(ApiError::with_body(
+        return Err(ApiError::refusal(
             gotcha::axum::http::StatusCode::CONFLICT,
-            serde_json::json!({
-                "error": "local_session_cannot_use_account",
-                "hint": "this session runs on the local login and its transcript is in ~/.claude, \
-                         so it cannot move onto an account. Continue it on the account instead, \
-                         which copies the conversation into a new session.",
-            }),
+            Hinted {
+                error: "local_session_cannot_use_account",
+                hint: "this session runs on the local login and its transcript is in ~/.claude, \
+                       so it cannot move onto an account. Continue it on the account instead, \
+                       which copies the conversation into a new session.",
+            },
         ));
     }
     write_binding(&state, Source::Claude, &id, account_id).await
@@ -1712,12 +1724,12 @@ pub async fn continue_session_on_account(
     ApiJson(body): ApiJson<SessionContinue>,
 ) -> Result<Json<ContinuedSession>, ApiError> {
     if source != Source::Claude {
-        return Err(ApiError::with_body(
+        return Err(ApiError::refusal(
             StatusCode::BAD_REQUEST,
-            serde_json::json!({
-                "error": "continue_not_supported",
-                "hint": "a codex session switches accounts in place; bind it to the account instead",
-            }),
+            Hinted {
+                error: "continue_not_supported",
+                hint: "a codex session switches accounts in place; bind it to the account instead",
+            },
         ));
     }
     require_uuid(&body.account_id)?;
@@ -1731,12 +1743,12 @@ pub async fn continue_session_on_account(
     // were given: somebody else's session is not this server's to copy.
     let summary = crate::drive::routes::writable_session(&state.drive, Source::Claude, &id).await?;
     if summary.claude_root != Some(ClaudeRoot::Local) {
-        return Err(ApiError::with_body(
+        return Err(ApiError::refusal(
             StatusCode::CONFLICT,
-            serde_json::json!({
-                "error": "session_not_on_local_login",
-                "hint": "this session already runs in this server's own root; switch its account instead",
-            }),
+            Hinted {
+                error: "session_not_on_local_login",
+                hint: "this session already runs in this server's own root; switch its account instead",
+            },
         ));
     }
 
@@ -2157,6 +2169,47 @@ mod tests {
     use crate::drive::attachments::ATTACHMENT_MISSING;
     use crate::drive::Drive;
     use std::sync::Arc;
+
+    /// The routes' own refusals, byte for byte: clients act on `error`, show
+    /// `hint`, and the settled question's screen reads `question`.
+    #[test]
+    fn the_session_refusals_are_written_as_pinned() {
+        let external = external_session(crate::app::transcript_sources().external_reason(Source::Codex));
+        assert_eq!(external.status(), gotcha::axum::http::StatusCode::CONFLICT);
+        assert_eq!(
+            external.body().to_string(),
+            r#"{"error":"external_session","hint":"this codex session was started elsewhere; continue it where it was started"}"#
+        );
+
+        let question = SessionQuestion {
+            request_id: "r-1".into(),
+            tool_use_id: Nullable(None),
+            questions: Vec::new(),
+            state: QuestionState::Answered,
+            answers: Nullable(None),
+            response: Nullable(Some("yes".into())),
+            answered_by: Nullable(Some("alice".into())),
+            answered_at: Nullable(Some("2026-01-01T00:00:00.000Z".into())),
+            created_at: "2026-01-01T00:00:00.000Z".into(),
+        };
+        let row = serde_json::to_string(&question).expect("a question");
+        let settled = already_settled(question);
+        assert_eq!(settled.status(), gotcha::axum::http::StatusCode::CONFLICT);
+        assert_eq!(
+            settled.body().to_string(),
+            format!(r#"{{"error":"question_settled","hint":"alice already answered it","question":{row}}}"#)
+        );
+
+        let restart = queue_result(inject::QueueOutcome::NeedsRestart {
+            differences: "another model".into(),
+        })
+        .expect_err("a refusal");
+        assert_eq!(restart.status(), gotcha::axum::http::StatusCode::CONFLICT);
+        assert_eq!(
+            restart.body().to_string(),
+            r#"{"error":"that message asks for different settings, so it needs a new process rather than a place in this one's queue","hint":"it wants another model, and a process is only replaced between turns. The session will restart for it when the turn in flight ends — or press Stop, and it will start sooner."}"#
+        );
+    }
 
     fn drive() -> (tempfile::TempDir, Arc<Drive>) {
         let dir = tempfile::tempdir().expect("tempdir");

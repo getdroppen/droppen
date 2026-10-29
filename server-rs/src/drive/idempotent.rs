@@ -23,7 +23,7 @@ use tokio::time::Instant;
 use gotcha::axum::http::StatusCode;
 use serde_json::Value;
 
-use droppen_http::error::ApiError;
+use droppen_http::error::{ApiError, Hinted};
 use droppen_http::openapi_ext::Optional;
 use super::routes::{NewSessionResult, SendMessageResult};
 use crate::inject::receipts::{self, Claim, InFlight, Kind, Receipts};
@@ -95,12 +95,12 @@ pub(crate) async fn begin(receipts: &Receipts, key: Key<'_>, holds_queued: impl 
                     .map_err(|error| ApiError::internal(format!("cannot read the recorded answer: {error}")));
             }
             Claim::Mismatch => {
-                return Err(ApiError::with_body(
+                return Err(ApiError::refusal(
                     StatusCode::CONFLICT,
-                    serde_json::json!({
-                        "error": REUSED,
-                        "hint": "this clientMessageId was already used for a different session or route; mint a new one",
-                    }),
+                    Hinted {
+                        error: REUSED,
+                        hint: "this clientMessageId was already used for a different session or route; mint a new one",
+                    },
                 ));
             }
             Claim::InFlight(flight) if flight.stale => {
@@ -130,12 +130,12 @@ pub(crate) async fn begin(receipts: &Receipts, key: Key<'_>, holds_queued: impl 
 
 /// The `409` a retry gets while the first attempt is still running.
 pub(crate) fn in_progress() -> ApiError {
-    ApiError::with_body(
+    ApiError::refusal(
         StatusCode::CONFLICT,
-        serde_json::json!({
-            "error": IN_PROGRESS,
-            "hint": "an earlier attempt with this clientMessageId is still being accepted; ask again shortly",
-        }),
+        Hinted {
+            error: IN_PROGRESS,
+            hint: "an earlier attempt with this clientMessageId is still being accepted; ask again shortly",
+        },
     )
 }
 
@@ -408,6 +408,31 @@ mod tests {
         );
         assert_eq!(recorded(Kind::NewSession, flight("sent", None), false), None);
         assert_eq!(recorded(Kind::NewSession, flight("pending", Some("thread-0")), true), None);
+    }
+
+    /// The two refusals a retry can get, byte for byte: older clients tell
+    /// them apart by `error` and show `hint`.
+    #[tokio::test]
+    async fn a_reused_or_running_id_is_refused_as_pinned() {
+        let in_progress = in_progress();
+        assert_eq!(in_progress.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            in_progress.body().to_string(),
+            r#"{"error":"in_progress","hint":"an earlier attempt with this clientMessageId is still being accepted; ask again shortly"}"#
+        );
+
+        let (_dir, receipts) = store();
+        assert!(matches!(begin(&receipts, message_key(), |_| false).await, Ok(Begun::Owned { .. })));
+        let elsewhere = Key {
+            session: Some("55555555-5555-4555-8555-555555555555"),
+            ..message_key()
+        };
+        let reused = begin(&receipts, elsewhere, |_| false).await.expect_err("another session's id");
+        assert_eq!(reused.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            reused.body().to_string(),
+            r#"{"error":"client_message_id_reused","hint":"this clientMessageId was already used for a different session or route; mint a new one"}"#
+        );
     }
 
     #[test]
