@@ -59,7 +59,8 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::OnceLock;
 
-use serde_json::{json, Map, Value};
+use serde::Serialize;
+use serde_json::{Map, Value};
 
 use super::mentions::resolve_within_home;
 use super::tool_display::{
@@ -842,6 +843,22 @@ fn file_changes(changes: Option<&Value>) -> Vec<PatchFile> {
         .collect()
 }
 
+/// Claude's `MultiEdit` input, which a patch's several-hunk update is shown as,
+/// with its fields in Claude's order. The pretty text is hashed into the
+/// transcript's fingerprint chain, so moving a field moves a client's resume
+/// point.
+#[derive(Serialize)]
+struct MultiEditInput<'a> {
+    file_path: &'a str,
+    edits: Vec<MultiEditEdit<'a>>,
+}
+
+#[derive(Serialize)]
+struct MultiEditEdit<'a> {
+    old_string: &'a str,
+    new_string: &'a str,
+}
+
 /// One file of a patch, as the Claude tool that would have made the same
 /// change: `Write` for a new file, `Edit` for one hunk, `MultiEdit` for several.
 fn file_call(file: &PatchFile) -> ToolDisplay {
@@ -857,9 +874,18 @@ fn file_call(file: &PatchFile) -> ToolDisplay {
                 [] => ToolDisplay::call("Edit", text, None, None),
                 [(old, new)] => ToolDisplay::call("Edit", text, None, Some(diff_of(old, new))),
                 many => {
-                    let edits: Vec<Value> = many.iter().map(|(old, new)| json!({"old_string": old, "new_string": new})).collect();
-                    let input = json!({"file_path": file.path, "edits": edits});
-                    ToolDisplay::call("MultiEdit", text, None, input.as_object().map(pretty))
+                    let input = MultiEditInput {
+                        file_path: &file.path,
+                        edits: many
+                            .iter()
+                            .map(|(old, new)| MultiEditEdit {
+                                old_string: old,
+                                new_string: new,
+                            })
+                            .collect(),
+                    };
+                    let input = serde_json::to_string_pretty(&input).expect("MultiEdit input encode");
+                    ToolDisplay::call("MultiEdit", text, None, Some(input))
                 }
             }
         }

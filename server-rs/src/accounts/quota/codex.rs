@@ -39,7 +39,7 @@ use std::time::{Duration, Instant, SystemTime};
 use futures_util::future::{BoxFuture, FutureExt, Shared};
 use gotcha::Schematic;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{ChildStdin, ChildStdout};
 
@@ -349,23 +349,19 @@ pub(crate) async fn app_server_call(program: &Path, cwd: &Path, env: &droppen_ba
 /// the order [`crate::inject::app_server`] uses against the same protocol.
 async fn ask(mut stdin: ChildStdin, stdout: ChildStdout, method: &str) -> Option<Value> {
     let mut lines = BufReader::new(stdout.take(MAX_PROBE_OUTPUT)).lines();
-    send(
-        &mut stdin,
-        json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": {
-                "clientInfo": {"name": "remote_hand", "title": "remote-hand", "version": env!("CARGO_PKG_VERSION")},
-                "capabilities": {"experimentalApi": true},
-            },
-        }),
-    )
-    .await?;
+    let initialize = InitializeParams {
+        client_info: ClientInfo {
+            name: "remote_hand",
+            title: "remote-hand",
+            version: env!("CARGO_PKG_VERSION"),
+        },
+        capabilities: ClientCapabilities { experimental_api: true },
+    };
+    send(&mut stdin, &JsonRpc::request(1, "initialize", initialize)).await?;
     reply(&mut lines, 1).await?;
 
-    send(&mut stdin, json!({"jsonrpc": "2.0", "method": "initialized", "params": {}})).await?;
-    send(&mut stdin, json!({"jsonrpc": "2.0", "id": 2, "method": method, "params": {}})).await?;
+    send(&mut stdin, &JsonRpc::notification("initialized", NoParams {})).await?;
+    send(&mut stdin, &JsonRpc::request(2, method, NoParams {})).await?;
     let mut answer = reply(&mut lines, 2).await?;
     // An `error` member is a refusal; its message describes this account and is
     // not ours to quote. See the module's security note.
@@ -376,9 +372,66 @@ async fn ask(mut stdin: ChildStdin, stdout: ChildStdout, method: &str) -> Option
     answer.get_mut("result").map(Value::take)
 }
 
+/// A JSON-RPC 2.0 message to the app server: a request when it has an id, a
+/// notification when not. Unlike [`crate::inject::app_server`]'s, it names
+/// the protocol version.
+#[derive(Serialize)]
+struct JsonRpc<'a, P> {
+    jsonrpc: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id: Option<u64>,
+    method: &'a str,
+    params: P,
+}
+
+impl<'a, P> JsonRpc<'a, P> {
+    fn request(id: u64, method: &'a str, params: P) -> Self {
+        Self {
+            jsonrpc: "2.0",
+            id: Some(id),
+            method,
+            params,
+        }
+    }
+
+    fn notification(method: &'a str, params: P) -> Self {
+        Self {
+            jsonrpc: "2.0",
+            id: None,
+            method,
+            params,
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InitializeParams {
+    client_info: ClientInfo,
+    capabilities: ClientCapabilities,
+}
+
+#[derive(Serialize)]
+struct ClientInfo {
+    name: &'static str,
+    title: &'static str,
+    version: &'static str,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ClientCapabilities {
+    experimental_api: bool,
+}
+
+/// The params of a call that takes none, written `{}`.
+#[derive(Serialize)]
+struct NoParams {}
+
 /// One NDJSON line to the child.
-async fn send(stdin: &mut ChildStdin, message: Value) -> Option<()> {
-    stdin.write_all(message.to_string().as_bytes()).await.ok()?;
+async fn send(stdin: &mut ChildStdin, message: &impl Serialize) -> Option<()> {
+    let line = serde_json::to_string(message).expect("app server message encode");
+    stdin.write_all(line.as_bytes()).await.ok()?;
     stdin.write_all(b"\n").await.ok()?;
     stdin.flush().await.ok()
 }
@@ -609,6 +662,7 @@ impl ProbeRoots {
 mod tests {
     use super::*;
     use droppen_instance::paths::Paths;
+    use serde_json::json;
 
     /// `2026-09-20T12:00:00Z` — a fixed "now" for the readings below.
     const NOW_MS: u64 = 1_790_078_400_000;

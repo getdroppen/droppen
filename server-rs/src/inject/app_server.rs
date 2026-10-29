@@ -11,7 +11,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use futures_util::future::BoxFuture;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 #[cfg(test)]
 use tokio::io::AsyncBufReadExt;
 use tokio::sync::{mpsc, oneshot};
@@ -163,42 +163,198 @@ enum Cmd {
     Archive(oneshot::Sender<Result<(), InjectError>>),
 }
 
+/// A request to codex. Its app server speaks JSON-RPC 2.0 without the
+/// `jsonrpc` member on the wire.
+#[derive(Serialize)]
+struct Request<'a, P> {
+    id: &'a str,
+    method: &'a str,
+    params: P,
+}
+
+/// A notification to codex: a request without an id, which nothing answers.
+#[derive(Serialize)]
+struct Notification<'a, P> {
+    method: &'a str,
+    params: P,
+}
+
+/// The params of a call that takes none, written `{}`.
+#[derive(Serialize)]
+struct NoParams {}
+
+/// The answer to a request codex makes of us, with the request's id echoed in
+/// the type it came in.
+#[derive(Serialize)]
+struct ErrorResponse<'a> {
+    id: &'a Value,
+    error: RpcError,
+}
+
+#[derive(Serialize)]
+struct RpcError {
+    code: i64,
+    message: &'static str,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InitializeParams {
+    client_info: ClientInfo,
+}
+
+#[derive(Serialize)]
+struct ClientInfo {
+    name: &'static str,
+    title: &'static str,
+    version: &'static str,
+}
+
+/// Codex never stops a headless turn to ask; see [`reject_request`].
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+enum ApprovalPolicy {
+    Never,
+}
+
+/// The params of `thread/start`, and of `thread/resume` when they name the
+/// thread.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ThreadParams<'a> {
+    cwd: &'a str,
+    approval_policy: ApprovalPolicy,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thread_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model_provider: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    base_instructions: Option<&'static str>,
+}
+
+/// A thread answer's settings as [`State::settings`] keeps them: what codex
+/// said, and `null` for any it left out.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ThreadSettings<'a> {
+    model: &'a Value,
+    effort: &'a Value,
+    sandbox_policy: &'a Value,
+}
+
+/// A message's `turn/start` params as [`Message::params`] keeps them. The
+/// thread and the message's id are added when it is sent, by
+/// [`TurnStartOnThread`].
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TurnStartParams<'a> {
+    input: Vec<UserInput<'a>>,
+    approval_policy: ApprovalPolicy,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    effort: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sandbox_policy: Option<SandboxPolicy>,
+}
+
+/// One item of a turn's input.
+#[derive(Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+enum UserInput<'a> {
+    Text { text: String },
+    LocalImage { path: &'a str },
+}
+
+/// The sandbox a turn runs in. A turn that names none runs in the thread's.
+#[derive(Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+enum SandboxPolicy {
+    WorkspaceWrite,
+    ReadOnly,
+    DangerFullAccess,
+}
+
+/// `turn/start`'s params as sent: a queued message's params exactly as the
+/// journal holds them, whichever build wrote them, then the thread and the
+/// message they start.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TurnStartOnThread<'a> {
+    #[serde(flatten)]
+    params: &'a Value,
+    thread_id: &'a str,
+    client_user_message_id: &'a str,
+}
+
+/// `turn/steer`'s params: a queued message's input, into the turn it expects
+/// to be running.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TurnSteerParams<'a> {
+    thread_id: &'a str,
+    expected_turn_id: Option<&'a str>,
+    input: &'a Value,
+    client_user_message_id: &'a str,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TurnInterruptParams<'a> {
+    thread_id: &'a str,
+    turn_id: &'a str,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ThreadArchiveParams<'a> {
+    thread_id: &'a str,
+}
+
 fn message(text: &str, options: &SendOptions) -> Result<Message, InjectError> {
-    let mut input = vec![json!({"type":"text", "text":with_codex_files(text, options)})];
-    input.extend(options.images.iter().map(|path| json!({"type":"localImage","path":path})));
-    let mut params = json!({"input":input,"approvalPolicy":"never"});
-    if let Some(model) = &options.model {
-        params["model"] = json!(model);
-    }
-    if let Some(effort) = &options.effort {
-        params["effort"] = json!(effort);
-    }
+    let mut input = vec![UserInput::Text {
+        text: with_codex_files(text, options),
+    }];
+    input.extend(options.images.iter().map(|path| UserInput::LocalImage { path }));
     let permission = if options.chat {
         Some("read-only")
     } else {
         options.permission.as_deref()
     };
-    if let Some(permission) = permission {
-        codex_permission_flags(permission)?;
-        params["sandboxPolicy"] = match permission {
-            "auto" | "workspace-write" => json!({"type":"workspaceWrite"}),
-            "read-only" => json!({"type":"readOnly"}),
-            _ => json!({"type":"dangerFullAccess"}),
-        };
-    }
+    let sandbox_policy = match permission {
+        Some(permission) => {
+            codex_permission_flags(permission)?;
+            Some(match permission {
+                "auto" | "workspace-write" => SandboxPolicy::WorkspaceWrite,
+                "read-only" => SandboxPolicy::ReadOnly,
+                _ => SandboxPolicy::DangerFullAccess,
+            })
+        }
+        None => None,
+    };
+    let params = TurnStartParams {
+        input,
+        approval_policy: ApprovalPolicy::Never,
+        model: options.model.as_deref(),
+        effort: options.effort.as_deref(),
+        sandbox_policy,
+    };
     Ok(Message {
         // The send path's choice when a client named the message, so its
         // receipt can follow it; see [`super::receipts`].
         id: options.message_id.clone().unwrap_or_else(new_uuid),
         text: text.into(),
-        params,
+        // A stored value, because the journal reads back rows other builds
+        // wrote.
+        params: serde_json::to_value(params).expect("turn/start params encode"),
         request: None,
         uncertain: false,
     })
 }
 
-async fn write(link: &mut shim::Link, value: Value) -> Result<(), InjectError> {
-    tokio::time::timeout(RPC_TIMEOUT, link.send_line(&value.to_string()))
+async fn write(link: &mut shim::Link, message: &impl Serialize) -> Result<(), InjectError> {
+    let line = serde_json::to_string(message).expect("Codex App Server message encode");
+    tokio::time::timeout(RPC_TIMEOUT, link.send_line(&line))
         .await
         .map_err(|_| InjectError::message("Codex App Server write timed out"))?
         .map_err(|e| InjectError::Internal(e.to_string()))
@@ -207,16 +363,19 @@ async fn write(link: &mut shim::Link, value: Value) -> Result<(), InjectError> {
 // Headless permissions remain `never`. Unexpected interactive requests must get
 // an explicit error, not hang the CLI or silently approve a tool invocation.
 async fn reject_request(link: &mut shim::Link, value: &Value) -> Result<(), InjectError> {
-    write(
-        link,
-        json!({"id":value["id"],"error":{"code":-32601,"message":"interactive requests are not supported by Droppen"}}),
-    )
-    .await
+    let answer = ErrorResponse {
+        id: &value["id"],
+        error: RpcError {
+            code: -32601,
+            message: "interactive requests are not supported by Droppen",
+        },
+    };
+    write(link, &answer).await
 }
 
-async fn rpc(registry: &InjectionRegistry, link: &mut shim::Link, method: &str, params: Value) -> Result<Value, InjectError> {
+async fn rpc(registry: &InjectionRegistry, link: &mut shim::Link, method: &str, params: impl Serialize) -> Result<Value, InjectError> {
     let id = new_uuid();
-    write(link, json!({"id":id,"method":method,"params":params})).await?;
+    write(link, &Request { id: &id, method, params }).await?;
     tokio::time::timeout(RPC_TIMEOUT, async {
         while let Some(output) = link.recv().await {
             let shim::Output::Line(line) = output else {
@@ -636,6 +795,12 @@ impl InjectionRegistry {
         }
         let sidecars = shim::Sidecars::new(self.shim_dir.clone(), new_uuid());
         let cwd = session_workdir(&self.paths, cwd);
+        // The thread request names the directory as a JSON string, which a
+        // path that is not UTF-8 cannot be written as: refuse it before codex
+        // is started.
+        let Some(thread_cwd) = cwd.to_str() else {
+            return Err(InjectError::message("the session's working directory is not valid UTF-8"));
+        };
         // With no account, argv and environment are byte for byte what they
         // have always been: `codex app-server`, the process environment, and
         // whatever `~/.codex/auth.json` holds. An account adds a model
@@ -663,27 +828,32 @@ impl InjectionRegistry {
         #[cfg(test)]
         self.step("codex started", Source::Codex, id);
         let setup = async {
-            rpc(
-                self,
+            let client_info = ClientInfo {
+                name: "remote_hand",
+                title: "remote-hand",
+                version: env!("CARGO_PKG_VERSION"),
+            };
+            rpc(self, &mut link, "initialize", InitializeParams { client_info }).await?;
+            write(
                 &mut link,
-                "initialize",
-                json!({"clientInfo":{"name":"remote_hand","title":"remote-hand","version":env!("CARGO_PKG_VERSION")}}),
+                &Notification {
+                    method: "initialized",
+                    params: NoParams {},
+                },
             )
             .await?;
-            write(&mut link, json!({"method":"initialized","params":{}})).await?;
-            let mut params = json!({"cwd":cwd,"approvalPolicy":"never"});
-            if let Some(id) = id {
-                params["threadId"] = json!(id);
-            }
-            // Belt and braces with `-c model_provider=…` on the command line:
-            // the flag is what a `codex exec` probe proves works, and naming it
-            // on the thread as well costs nothing if the flag already took.
-            if launch.is_some_and(|launch| !launch.codex_args.is_empty()) {
-                params["modelProvider"] = json!(crate::accounts::login::codex::CODEX_PROVIDER_ID);
-            }
-            if options.chat {
-                params["baseInstructions"] = json!(CHAT_SYSTEM_PROMPT);
-            }
+            let params = ThreadParams {
+                cwd: thread_cwd,
+                approval_policy: ApprovalPolicy::Never,
+                thread_id: id,
+                // Belt and braces with `-c model_provider=…` on the command line:
+                // the flag is what a `codex exec` probe proves works, and naming it
+                // on the thread as well costs nothing if the flag already took.
+                model_provider: launch
+                    .is_some_and(|launch| !launch.codex_args.is_empty())
+                    .then_some(crate::accounts::login::codex::CODEX_PROVIDER_ID),
+                base_instructions: options.chat.then_some(CHAT_SYSTEM_PROMPT),
+            };
             let result = rpc(self, &mut link, if id.is_some() { "thread/resume" } else { "thread/start" }, params).await?;
             let resolved = result["thread"]["id"]
                 .as_str()
@@ -729,7 +899,12 @@ impl InjectionRegistry {
             .and_then(|turns| turns.iter().rev().find(|t| t["status"] == "inProgress"))
             .and_then(|t| t["id"].as_str())
             .map(str::to_owned);
-        state.settings = json!({"model":result["model"],"effort":result["reasoningEffort"],"sandboxPolicy":result["sandbox"]});
+        state.settings = serde_json::to_value(ThreadSettings {
+            model: &result["model"],
+            effort: &result["reasoningEffort"],
+            sandbox_policy: &result["sandbox"],
+        })
+        .expect("thread settings encode");
         state.paused = state.queue.iter().any(|m| m.uncertain);
         state.interrupt_requested = false;
         let record = runs::RunRecord {
@@ -912,23 +1087,39 @@ impl Driver {
     }
 
     async fn submit(&mut self, index: usize, steer: bool) -> Result<(), InjectError> {
-        let mut params = self.state.queue[index].params.clone();
         let id = format!("{}:{}", if steer { "steer" } else { "start" }, self.state.queue[index].id);
-        params["threadId"] = json!(self.record.session_id);
-        params["clientUserMessageId"] = json!(self.state.queue[index].id);
-        if steer {
-            params = json!({"threadId":self.record.session_id,"expectedTurnId":self.state.active,"input":params["input"],"clientUserMessageId":self.state.queue[index].id});
-        } else {
+        if !steer {
             self.running();
         }
         self.state.queue[index].request = Some(id.clone());
         self.pending_since = Instant::now();
         self.checkpoint();
-        write(
-            &mut self.link,
-            json!({"id":id,"method":if steer {"turn/steer"} else {"turn/start"},"params":params}),
-        )
-        .await
+        let message = &self.state.queue[index];
+        let thread_id = self.record.session_id.as_str();
+        if steer {
+            let request = Request {
+                id: &id,
+                method: "turn/steer",
+                params: TurnSteerParams {
+                    thread_id,
+                    expected_turn_id: self.state.active.as_deref(),
+                    input: &message.params["input"],
+                    client_user_message_id: &message.id,
+                },
+            };
+            write(&mut self.link, &request).await
+        } else {
+            let request = Request {
+                id: &id,
+                method: "turn/start",
+                params: TurnStartOnThread {
+                    params: &message.params,
+                    thread_id,
+                    client_user_message_id: &message.id,
+                },
+            };
+            write(&mut self.link, &request).await
+        }
     }
 
     async fn run(mut self) {
@@ -1021,11 +1212,14 @@ impl Driver {
                 self.archive_reply = Some(reply);
                 self.archive_since = Instant::now();
                 self.checkpoint();
-                write(
-                    &mut self.link,
-                    json!({"id":id,"method":"thread/archive","params":{"threadId":self.record.session_id}}),
-                )
-                .await?;
+                let request = Request {
+                    id: &id,
+                    method: "thread/archive",
+                    params: ThreadArchiveParams {
+                        thread_id: &self.record.session_id,
+                    },
+                };
+                write(&mut self.link, &request).await?;
             }
             Cmd::Deliver(message, reply) => {
                 if self.state.archived || self.state.archive_request.is_some() {
@@ -1431,11 +1625,15 @@ impl Driver {
             if let Some(turn) = self.state.active.clone() {
                 let id = new_uuid();
                 self.interrupt = Some((Some(turn.clone()), Instant::now(), 0));
-                write(
-                    &mut self.link,
-                    json!({"id":id,"method":"turn/interrupt","params":{"threadId":self.record.session_id,"turnId":turn}}),
-                )
-                .await?;
+                let request = Request {
+                    id: &id,
+                    method: "turn/interrupt",
+                    params: TurnInterruptParams {
+                        thread_id: &self.record.session_id,
+                        turn_id: &turn,
+                    },
+                };
+                write(&mut self.link, &request).await?;
             } else if self.interrupt.is_none() && self.state.queue.iter().any(|q| q.request.is_some()) {
                 self.interrupt = Some((None, Instant::now(), 0));
             }
@@ -1449,6 +1647,7 @@ mod tests {
     use super::*;
     use droppen_instance::instance::InstanceDirs;
     use droppen_instance::paths::Paths;
+    use serde_json::json;
     use tokio::io::{AsyncWriteExt, BufReader};
     use tokio::net::{
         unix::{OwnedReadHalf, OwnedWriteHalf},
