@@ -717,7 +717,7 @@ async fn summary_of(paths: &Paths, agent: &str, file_path: &Path, id: &str, titl
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// A `session/update` as the wire spells it, read through its type.
@@ -731,6 +731,158 @@ mod tests {
 
     fn lines(records: &[Value]) -> Vec<String> {
         records.iter().map(Value::to_string).collect()
+    }
+
+    /// A transcript line with its stamp written as `<timestamp>`, once the
+    /// stamp is seen to be one: the wall clock is the only part of a line
+    /// that differs from run to run, and every other byte, key order
+    /// included, is what this and other versions read back.
+    pub(crate) fn unstamped(line: &str) -> String {
+        const KEY: &str = r#""timestamp":""#;
+        assert_eq!(line.matches(KEY).count(), 1, "one stamp: {line}");
+        let start = line.find(KEY).expect("a stamp") + KEY.len();
+        let end = start + line[start..].find('"').expect("a closed stamp");
+        let stamp = &line[start..end];
+        assert_eq!(
+            stamp.replace(|c: char| c.is_ascii_digit(), "0"),
+            "0000-00-00T00:00:00.000Z",
+            "a UTC stamp to the millisecond: {line}"
+        );
+        format!("{}<timestamp>{}", &line[..start], &line[end..])
+    }
+
+    /// The lines `records` are written as, unstamped.
+    fn unstamped_lines(records: &[Value]) -> Vec<String> {
+        lines(records).iter().map(|line| unstamped(line)).collect()
+    }
+
+    #[test]
+    fn a_record_is_its_fields_in_their_order_then_its_type_and_stamp() {
+        let line = record("x", json!({"zeta": 1, "alpha": null, "mid": [""]})).to_string();
+        assert_eq!(
+            unstamped(&line),
+            r#"{"zeta":1,"alpha":null,"mid":[""],"type":"x","timestamp":"<timestamp>"}"#
+        );
+    }
+
+    #[test]
+    fn streamed_pieces_and_the_messages_they_close_keep_their_bytes() {
+        let mut translator = Translator::default();
+        let mut records = translator.update(&chunk("agent_thought_chunk", "let me "));
+        records.extend(translator.update(&chunk("agent_thought_chunk", "think")));
+        // A piece of the other kind closes the run before it.
+        records.extend(translator.update(&chunk("agent_message_chunk", "Hé said \"hi\"\n")));
+        records.extend(translator.update(&chunk("agent_message_chunk", "\tbye")));
+        records.extend(translator.flush());
+        assert_eq!(
+            unstamped_lines(&records),
+            [
+                r#"{"kind":"thinking","text":"let me ","type":"delta","timestamp":"<timestamp>"}"#,
+                r#"{"kind":"thinking","text":"think","type":"delta","timestamp":"<timestamp>"}"#,
+                r#"{"text":"let me think","type":"thinking","timestamp":"<timestamp>"}"#,
+                r#"{"kind":"text","text":"Hé said \"hi\"\n","type":"delta","timestamp":"<timestamp>"}"#,
+                r#"{"kind":"text","text":"\tbye","type":"delta","timestamp":"<timestamp>"}"#,
+                r#"{"text":"Hé said \"hi\"\n\tbye","type":"assistant","timestamp":"<timestamp>"}"#,
+            ]
+        );
+    }
+
+    #[test]
+    fn a_tool_call_keeps_the_agents_input_as_it_came() {
+        let mut translator = Translator::default();
+        let mut records = translator.update(&update(json!({
+            "sessionUpdate": "tool_call", "toolCallId": "call-1", "title": "ls -la", "kind": "execute",
+            "status": "in_progress", "rawInput": {"path": "/w", "cmd": ["ls", "-la"], "timeout": 1.5, "env": {"Z": "1", "A": null}},
+        })));
+        records.extend(translator.update(&update(
+            json!({"sessionUpdate": "tool_call", "toolCallId": "call-2", "kind": "read", "rawInput": "notes.txt"}),
+        )));
+        // No input, no title and no kind: an empty title, `other`, and a
+        // `null` input, never a missing key.
+        records.extend(translator.update(&update(json!({"sessionUpdate": "tool_call", "toolCallId": "call-3"}))));
+        records.extend(translator.update(&update(
+            json!({"sessionUpdate": "tool_call", "toolCallId": "call-4", "title": "x", "kind": "fetch", "rawInput": null}),
+        )));
+        assert_eq!(
+            unstamped_lines(&records),
+            [
+                r#"{"id":"call-1","title":"ls -la","kind":"execute","input":{"path":"/w","cmd":["ls","-la"],"timeout":1.5,"env":{"Z":"1","A":null}},"type":"tool_call","timestamp":"<timestamp>"}"#,
+                r#"{"id":"call-2","title":"","kind":"read","input":"notes.txt","type":"tool_call","timestamp":"<timestamp>"}"#,
+                r#"{"id":"call-3","title":"","kind":"other","input":null,"type":"tool_call","timestamp":"<timestamp>"}"#,
+                r#"{"id":"call-4","title":"x","kind":"fetch","input":null,"type":"tool_call","timestamp":"<timestamp>"}"#,
+            ]
+        );
+    }
+
+    #[test]
+    fn a_tool_result_keeps_its_bytes_whatever_its_output_came_as() {
+        let mut translator = Translator::default();
+        let result = |translator: &mut Translator, fields: Value| {
+            let mut body = json!({"sessionUpdate": "tool_call_update", "toolCallId": "call-1"});
+            body.as_object_mut().unwrap().extend(fields.as_object().unwrap().clone());
+            translator.update(&update(body))
+        };
+        let mut records = result(&mut translator, json!({"status": "in_progress", "rawOutput": "not yet"}));
+        assert!(records.is_empty(), "only an ended call has a result");
+        records.extend(result(
+            &mut translator,
+            json!({"status": "completed", "content": [
+                {"type": "content", "content": {"type": "text", "text": "done"}},
+                {"type": "diff", "path": "/w/a.rs", "oldText": "a", "newText": "b"},
+                {"type": "terminal", "terminalId": "t"},
+            ], "rawOutput": "not shown"}),
+        ));
+        records.extend(result(&mut translator, json!({"status": "failed", "content": [], "rawOutput": "exit 1"})));
+        records.extend(result(&mut translator, json!({"status": "completed", "rawOutput": {"z": 1, "a": [true]}})));
+        records.extend(result(&mut translator, json!({"status": "completed", "rawOutput": null})));
+        records.extend(result(&mut translator, json!({"status": "failed"})));
+        assert_eq!(
+            unstamped_lines(&records),
+            [
+                r#"{"id":"call-1","status":"completed","output":"done\nedited /w/a.rs","type":"tool_result","timestamp":"<timestamp>"}"#,
+                r#"{"id":"call-1","status":"failed","output":"exit 1","type":"tool_result","timestamp":"<timestamp>"}"#,
+                r#"{"id":"call-1","status":"completed","output":"{\n  \"z\": 1,\n  \"a\": [\n    true\n  ]\n}","type":"tool_result","timestamp":"<timestamp>"}"#,
+                r#"{"id":"call-1","status":"completed","output":"","type":"tool_result","timestamp":"<timestamp>"}"#,
+                r#"{"id":"call-1","status":"failed","output":"","type":"tool_result","timestamp":"<timestamp>"}"#,
+            ]
+        );
+    }
+
+    #[test]
+    fn a_compaction_and_a_usage_reading_keep_their_bytes() {
+        let mut translator = Translator::default();
+        let mut records = translator.update(&update(
+            json!({"sessionUpdate": "tool_call", "toolCallId": "t", "title": "Context compacting", "_meta": {"contextCompaction": true}}),
+        ));
+        records.extend(translator.update(&update(
+            json!({"sessionUpdate": "tool_call_update", "toolCallId": "t", "status": "completed", "_meta": {"contextCompaction": true}}),
+        )));
+        records.extend(translator.update(&update(json!({"sessionUpdate": "usage_update", "used": 4020, "size": 128000}))));
+        assert_eq!(
+            unstamped_lines(&records),
+            [
+                r#"{"type":"compact","timestamp":"<timestamp>"}"#,
+                r#"{"used":4020,"size":128000,"type":"usage","timestamp":"<timestamp>"}"#,
+            ]
+        );
+    }
+
+    #[test]
+    fn a_replayed_user_message_is_its_text_alone() {
+        let mut translator = Translator::default();
+        let mut records = translator.replayed(&chunk("user_message_chunk", "an old question"));
+        records.extend(translator.replayed(&chunk("agent_message_chunk", "an old answer")));
+        // The user's next message closes the answer before it.
+        records.extend(translator.replayed(&chunk("user_message_chunk", "and \"then\"?")));
+        assert_eq!(
+            unstamped_lines(&records),
+            [
+                r#"{"text":"an old question","type":"user","timestamp":"<timestamp>"}"#,
+                r#"{"kind":"text","text":"an old answer","type":"delta","timestamp":"<timestamp>"}"#,
+                r#"{"text":"an old answer","type":"assistant","timestamp":"<timestamp>"}"#,
+                r#"{"text":"and \"then\"?","type":"user","timestamp":"<timestamp>"}"#,
+            ]
+        );
     }
 
     fn parse(records: &[Value]) -> Vec<TranscriptItem> {

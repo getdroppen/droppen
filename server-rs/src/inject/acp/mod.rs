@@ -886,6 +886,7 @@ pub(super) type Replay = Vec<crate::acp::SessionUpdate>;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sessions::acp_transcript::tests::unstamped;
     use droppen_instance::paths::Paths;
 
     #[test]
@@ -1141,6 +1142,11 @@ mod tests {
         let (_, file) = AcpTranscripts::of(&state.paths).locate(&id).await.expect("its transcript");
         let transcript = std::fs::read_to_string(file).expect("transcript");
         assert_eq!(transcript.matches("did not answer a switch of its model").count(), 1, "{transcript}");
+        let said = transcript.lines().find(|line| line.contains("did not answer a switch")).expect("the error");
+        assert_eq!(
+            unstamped(said),
+            r#"{"message":"stuck did not answer a switch of its model to openrouter:vendor/big within 5s; it was stopped","type":"error","timestamp":"<timestamp>"}"#
+        );
     }
 
     /// An agent that hangs while it starts holds up nothing but its own
@@ -1210,6 +1216,116 @@ mod tests {
         let delivery = handle.deliver(message("after", &SendOptions::default()));
         assert!(!stopping.await.expect("answered"), "a message was on its way");
         assert!(delivery.taken("Fake").await.is_ok(), "and it was taken");
+    }
+
+    /// Every line of the session `id`'s transcript, unstamped: the bytes this
+    /// and other versions read back.
+    async fn transcript_lines(paths: &Paths, id: &str) -> Vec<String> {
+        let (_, file) = AcpTranscripts::of(paths).locate(id).await.expect("its transcript");
+        let text = std::fs::read_to_string(file).expect("transcript");
+        assert!(text.ends_with('\n'), "every line is ended: {text}");
+        text.lines().map(unstamped).collect()
+    }
+
+    /// Start a session on the stand-in, configured with `env`, with one
+    /// message, and wait for its turn to end; its id and working directory.
+    async fn one_turn(home: &Path, env: &str, text: &str, options: &SendOptions) -> (crate::api::AppState, String, PathBuf) {
+        let state = crate::api::test_support::state(home).await;
+        let injections = state.drive.injections.clone();
+        configure_fake(&state.paths, home, "fake", env);
+        let dir = workdirs(home, &["work"]).remove(0);
+        let id = injections.acp_start("fake", &dir.to_string_lossy(), text, options).await.expect("started");
+        until("the turn", || injections.acp_handle(&id).is_some_and(|handle| !handle.busy())).await;
+        (state, id, dir)
+    }
+
+    /// A session's first turn: its header, the message, the model and effort
+    /// it runs on, then the turn as it streamed, each run of deltas followed
+    /// by the record that closes it.
+    #[tokio::test]
+    async fn a_turn_is_written_down_line_for_line() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let (state, id, dir) = one_turn(home.path(), "", "hi there", &SendOptions::default()).await;
+        let lines = transcript_lines(&state.paths, &id).await;
+        let cwd = json!(dir.to_string_lossy()).to_string();
+        assert_eq!(
+            lines[0],
+            format!(r#"{{"id":"{id}","agent":"fake","agentSessionId":"f00dfeed0123456789abcdef01234567","cwd":{cwd},"type":"session","timestamp":"<timestamp>"}}"#)
+        );
+        assert_eq!(
+            lines[1..],
+            [
+                r#"{"text":"hi there","images":[],"files":[],"type":"user","timestamp":"<timestamp>"}"#,
+                r#"{"model":"fake:small","effort":"auto","type":"config","timestamp":"<timestamp>"}"#,
+                r#"{"kind":"thinking","text":"Thinking about ","type":"delta","timestamp":"<timestamp>"}"#,
+                r#"{"kind":"thinking","text":"hi there","type":"delta","timestamp":"<timestamp>"}"#,
+                r#"{"text":"Thinking about hi there","type":"thinking","timestamp":"<timestamp>"}"#,
+                r#"{"id":"call-1","title":"echo hi","kind":"execute","input":{"cmd":"echo hi"},"type":"tool_call","timestamp":"<timestamp>"}"#,
+                r#"{"id":"call-1","status":"completed","output":"hi","type":"tool_result","timestamp":"<timestamp>"}"#,
+                r#"{"kind":"text","text":"Hello ","type":"delta","timestamp":"<timestamp>"}"#,
+                r#"{"kind":"text","text":"from the agent","type":"delta","timestamp":"<timestamp>"}"#,
+                r#"{"used":4020,"size":128000,"type":"usage","timestamp":"<timestamp>"}"#,
+                r#"{"text":"Hello from the agent","type":"assistant","timestamp":"<timestamp>"}"#,
+                r#"{"stopReason":"end_turn","type":"turn_end","timestamp":"<timestamp>"}"#,
+            ]
+        );
+    }
+
+    /// A message's attachments are written down with it, and a model the
+    /// model list would leave out is written down as `null`, not left out.
+    #[tokio::test]
+    async fn attachments_and_a_hidden_model_are_written_down_as_they_are() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let options = SendOptions {
+            images: vec!["/u/a.png".into()],
+            files: vec!["/u/notes.txt".into(), "/u/b c.md".into()],
+            ..SendOptions::default()
+        };
+        let (state, id, _) = one_turn(home.path(), "FAKE_AGENT_FIRST_MODEL=sk-ant-model-like-a-key", "see these", &options).await;
+        assert_eq!(
+            transcript_lines(&state.paths, &id).await[1..3],
+            [
+                r#"{"text":"see these","images":["/u/a.png"],"files":["/u/notes.txt","/u/b c.md"],"type":"user","timestamp":"<timestamp>"}"#,
+                r#"{"model":null,"effort":"auto","type":"config","timestamp":"<timestamp>"}"#,
+            ]
+        );
+    }
+
+    /// A model the agent does not have fails the message before its turn: the
+    /// message is written down, then why, and nothing of a turn.
+    #[tokio::test]
+    async fn a_model_the_agent_does_not_have_is_written_down_as_an_error() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let picked = SendOptions {
+            model: Some("not-a-model".into()),
+            ..SendOptions::default()
+        };
+        let (state, id, _) = one_turn(home.path(), "", "hi", &picked).await;
+        assert_eq!(
+            transcript_lines(&state.paths, &id).await[1..],
+            [
+                r#"{"text":"hi","images":[],"files":[],"type":"user","timestamp":"<timestamp>"}"#,
+                r#"{"message":"fake has no model \"not-a-model\"","type":"error","timestamp":"<timestamp>"}"#,
+            ]
+        );
+    }
+
+    /// A turn the agent answers with an error ends with what it streamed,
+    /// closed, then the error in place of a `turn_end`.
+    #[tokio::test]
+    async fn a_turn_the_agent_fails_is_written_down_as_an_error() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let (state, id, _) = one_turn(home.path(), "", "fail", &SendOptions::default()).await;
+        assert_eq!(
+            transcript_lines(&state.paths, &id).await[1..],
+            [
+                r#"{"text":"fail","images":[],"files":[],"type":"user","timestamp":"<timestamp>"}"#,
+                r#"{"model":"fake:small","effort":"auto","type":"config","timestamp":"<timestamp>"}"#,
+                r#"{"kind":"text","text":"Trying","type":"delta","timestamp":"<timestamp>"}"#,
+                r#"{"text":"Trying","type":"assistant","timestamp":"<timestamp>"}"#,
+                r#"{"message":"the model is unavailable","type":"error","timestamp":"<timestamp>"}"#,
+            ]
+        );
     }
 
     #[tokio::test]

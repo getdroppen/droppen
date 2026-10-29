@@ -8,7 +8,8 @@ as real agents' do. Everything it is asked is appended to `agent-calls.jsonl` in
 working directory — or to `$FAKE_AGENT_LOG`, which a probe's scratch directory
 needs — so a test can read what it was sent; the arguments and environment it was
 started with go to `agent-spawn.json` in its working directory. A prompt containing "wait" holds
-its turn open until it is cancelled. `FAKE_AGENT_SLOW=<method>=<seconds>,...`
+its turn open until it is cancelled; one containing "fail" streams a little
+and is answered with an error. `FAKE_AGENT_SLOW=<method>=<seconds>,...`
 makes it take that long over a request, after writing it down, so a test can
 act while the request is in flight; `FAKE_AGENT_DEAF` the same, but after
 answering, without reading what it is sent meanwhile. `FAKE_AGENT_TITLE` is
@@ -100,6 +101,10 @@ def run_turn(request):
         update(session, chunk("agent_message_chunk", "Working on it"))
         done.wait(30)
         answer(request, {"stopReason": "cancelled"})
+        return
+    if "fail" in text:
+        update(session, chunk("agent_message_chunk", "Trying"))
+        emit({"jsonrpc": "2.0", "id": request["id"], "error": {"code": -32603, "message": "the model is unavailable"}})
         return
     update(session, chunk("agent_thought_chunk", "Thinking about "))
     update(session, chunk("agent_thought_chunk", text))
