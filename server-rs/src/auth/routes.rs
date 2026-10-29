@@ -20,7 +20,7 @@ use gotcha::axum::http::{header, StatusCode};
 use gotcha::{api, GotchaRouter, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
-use droppen_http::error::ApiError;
+use droppen_http::error::{ApiError, Hinted};
 use droppen_http::extract::{ApiJson, ApiPath};
 use droppen_http::SendResult;
 use droppen_http::openapi_ext::{ExtraResponses, Nullable, Optional};
@@ -276,7 +276,16 @@ impl<S: Send + Sync> FromRequestParts<S> for Peer {
 
 /// A refusal with a machine-readable `error` and a sentence for the person.
 fn refused(status: StatusCode, code: &str, hint: &str) -> ApiError {
-    ApiError::with_body(status, serde_json::json!({ "error": code, "hint": hint }))
+    ApiError::refusal(status, Hinted { error: code, hint })
+}
+
+/// The setup-code throttle's refusal: [`Hinted`], and when to try again.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Throttled<'a> {
+    error: &'a str,
+    hint: &'a str,
+    retry_after_seconds: u64,
 }
 
 /// What the `/api/auth/*` routes use of the server's state.
@@ -577,13 +586,14 @@ pub async fn setup(
         Ok(()) => {}
         Err(Refused::TooMany(wait)) => {
             let seconds = wait.as_secs().max(1);
-            return Err(ApiError::with_body(
+            let hint = format!("too many wrong setup codes: try again in {seconds} s, or create the account on the device with remote-hand-server user add");
+            return Err(ApiError::refusal(
                 StatusCode::TOO_MANY_REQUESTS,
-                serde_json::json!({
-                    "error": "too_many_attempts",
-                    "hint": format!("too many wrong setup codes: try again in {seconds} s, or create the account on the device with remote-hand-server user add"),
-                    "retryAfterSeconds": seconds,
-                }),
+                Throttled {
+                    error: "too_many_attempts",
+                    hint: &hint,
+                    retry_after_seconds: seconds,
+                },
             ));
         }
         Err(Refused::NoCode) => {
@@ -879,6 +889,13 @@ pub fn describe(reg: &mut ExtraResponses) {
 
 #[cfg(test)]
 mod tests {
+    /// A refusal's body, byte for byte: the code, then the sentence.
+    #[test]
+    fn a_refusal_is_a_code_and_a_hint() {
+        let refused = super::refused(StatusCode::CONFLICT, "no_setup_code", "start the server again");
+        assert_eq!(refused.body().to_string(), r#"{"error":"no_setup_code","hint":"start the server again"}"#);
+    }
+
     use super::*;
     use crate::api::AppState;
     use gotcha::axum::body::Body;

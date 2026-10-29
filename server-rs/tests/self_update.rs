@@ -957,6 +957,10 @@ async fn a_lost_instance_lock_refuses_the_upgrade_before_a_byte_is_staged() {
     let (status, body) = up.upload_binary(b"not a binary at all", None).await;
     assert_eq!(status, 409, "{body}");
     assert_eq!(body["error"], "instance_lock_lost", "{body}");
+    // Code, then the lock's own words (a parsed body keeps the written order).
+    let keys: Vec<&str> = body.as_object().expect("an object").keys().map(String::as_str).collect();
+    assert_eq!(keys, ["error", "detail"], "{body}");
+    assert!(body["detail"].is_string(), "{body}");
 
     // Nothing staged, nothing swapped, and no restart happened: a restarted
     // server would have re-acquired the lock and recreated the file.

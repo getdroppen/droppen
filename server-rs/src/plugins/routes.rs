@@ -29,7 +29,6 @@ use gotcha::axum::response::{IntoResponse, Response};
 use gotcha::oas::{Parameter, RequestBody};
 use gotcha::{api, Either, GotchaRouter, Json, ParameterProvider, State};
 use serde::de::DeserializeOwned;
-use serde_json::json;
 
 use super::install::{InstallError, MAX_TARBALL_BYTES};
 use super::store::{StoreError, MAX_REQUEST_BYTES};
@@ -39,7 +38,7 @@ use super::wire::{
 };
 use super::{DecisionReason, PluginError, Plugins};
 use crate::auth::MaybeIdentity;
-use droppen_http::error::ApiError;
+use droppen_http::error::{ApiError, Coded};
 use droppen_http::extract::{ApiJson, ApiPath, ApiQuery};
 use droppen_http::openapi_ext::ExtraResponses;
 use droppen_plugin_sdk::codes;
@@ -53,7 +52,8 @@ const HISTORY: &str = "/api/plugins/{id}/docs/{name}/history";
 const BATCH: &str = "/api/plugins/{id}/batch";
 
 fn coded(status: StatusCode, code: &str, message: impl Into<String>) -> ApiError {
-    ApiError::with_body(status, json!({ "error": code, "message": message.into() }))
+    let message = message.into();
+    ApiError::refusal(status, Coded { error: code, message: &message })
 }
 
 impl From<PluginError> for ApiError {
@@ -504,8 +504,16 @@ pub fn describe(reg: &mut ExtraResponses) {
 
 #[cfg(test)]
 mod tests {
+    /// A coded refusal's body, byte for byte.
+    #[test]
+    fn a_coded_refusal_is_a_code_and_a_message() {
+        let refused = super::coded(StatusCode::NOT_FOUND, "plugin_not_found", "no plugin \"x\"");
+        assert_eq!(refused.body().to_string(), r#"{"error":"plugin_not_found","message":"no plugin \"x\""}"#);
+    }
+
     use super::*;
     use gotcha::axum::body::Body;
+    use serde_json::json;
     use gotcha::axum::http::Request;
     use tower_service::Service;
 

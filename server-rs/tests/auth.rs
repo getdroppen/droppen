@@ -317,6 +317,10 @@ async fn wrong_setup_codes_are_rate_limited() {
     let (status, body) = set_up(&server, Some(&code), "ada", PASSWORD).await;
     assert_eq!((status, body["error"].as_str()), (429, Some("too_many_attempts")), "{body}");
     assert!(body["retryAfterSeconds"].as_u64().is_some_and(|s| s >= 1), "{body}");
+    // The whole body, in the order it is written (a parsed body keeps it).
+    let seconds = body["retryAfterSeconds"].as_u64().unwrap();
+    let hint = format!("too many wrong setup codes: try again in {seconds} s, or create the account on the device with remote-hand-server user add");
+    assert_eq!(body.to_string(), json!({"error": "too_many_attempts", "hint": hint, "retryAfterSeconds": seconds}).to_string());
     assert!(server.paths.instance_dir().join("setup-code").exists(), "waiting spends nothing");
     server.stop().await;
 }

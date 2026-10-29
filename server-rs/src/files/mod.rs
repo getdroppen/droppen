@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
 
 use crate::auth::MaybeIdentity;
-use droppen_http::error::ApiError;
+use droppen_http::error::{ApiError, Coded};
 use droppen_http::extract::ApiQuery;
 use droppen_http::openapi_ext::{ExtraResponses, Nullable};
 use droppen_instance::paths::Paths;
@@ -283,9 +283,12 @@ impl FsError {
     pub fn into_api(self, fallback: &'static str) -> ApiError {
         match self {
             FsError::Access(message) => ApiError::bad_request(message),
-            FsError::Private => ApiError::with_body(
+            FsError::Private => ApiError::refusal(
                 StatusCode::FORBIDDEN,
-                serde_json::json!({"error": "not_from_cloud", "message": PRIVATE_TO_THIS_COMPUTER}),
+                Coded {
+                    error: "not_from_cloud",
+                    message: PRIVATE_TO_THIS_COMPUTER,
+                },
             ),
             FsError::Other => ApiError::bad_request(fallback),
         }
@@ -1170,6 +1173,17 @@ const MULTIPART: &str = "multipart/form-data";
 
 #[cfg(test)]
 mod tests {
+    /// The refusal of a path private to this computer, byte for byte.
+    #[test]
+    fn a_private_path_is_refused_with_a_code_and_a_message() {
+        let refused = super::FsError::Private.into_api("unused");
+        assert_eq!(refused.status(), gotcha::axum::http::StatusCode::FORBIDDEN);
+        assert_eq!(
+            refused.body().to_string(),
+            r#"{"error":"not_from_cloud","message":"this device's Droppen data and settings directories are not reachable from another device"}"#
+        );
+    }
+
     use super::*;
 
     fn paths() -> Paths {

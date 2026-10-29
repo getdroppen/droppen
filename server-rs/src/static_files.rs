@@ -263,7 +263,7 @@ fn file_response(path: &str, body: Vec<u8>, versioned: bool, if_none_match: Opti
 }
 
 fn json_error(status: StatusCode, message: &str) -> Response<Body> {
-    let body = serde_json::json!({ "error": message }).to_string();
+    let body = serde_json::to_string(&droppen_http::error::Error { error: message.to_string() }).unwrap_or_default();
     let mut response = Response::new(Body::from(body));
     *response.status_mut() = status;
     response
@@ -326,6 +326,16 @@ mod assets {
 
 #[cfg(test)]
 mod tests {
+    /// The JSON error the static files answer with, byte for byte.
+    #[tokio::test]
+    async fn a_json_error_is_its_message() {
+        let response = super::json_error(StatusCode::NOT_FOUND, "not found");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(response.headers()[header::CONTENT_TYPE], "application/json");
+        let body = gotcha::axum::body::to_bytes(response.into_body(), usize::MAX).await.expect("body");
+        assert_eq!(std::str::from_utf8(&body).expect("utf-8"), r#"{"error":"not found"}"#);
+    }
+
     use super::*;
     use gotcha::axum::http::Method;
     use gotcha::axum::Router;
