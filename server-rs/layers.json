@@ -235,7 +235,7 @@
             "sessions::subagents",
             "sessions::checklist",
             "claude_roots",
-            "accounts::quota::readings",
+            "accounts::quota::claude",
             "accounts::setup_token",
             "accounts::usage_login",
             "accounts::local_login",
@@ -360,7 +360,6 @@
         "inject -> sessions::acp_transcript",
         "inject -> sessions::claude",
         "inject -> sessions::codex",
-        "models -> accounts::quota::readings",
         "models -> acp",
         "models -> acp_agent",
         "models -> sessions::acp_transcript",
@@ -372,7 +371,6 @@
       "edges": [
         "accounts -> accounts::local_login",
         "accounts -> accounts::quota::codex",
-        "accounts -> accounts::quota::readings",
         "accounts -> claude_roots",
         "setup -> accounts::quota::codex",
         "setup -> claude_roots"
