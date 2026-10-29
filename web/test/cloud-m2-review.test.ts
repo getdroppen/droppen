@@ -1603,3 +1603,280 @@ test("third review: a sync that takes in more entries than the record keeps hash
   hub.chainServed = null;
   assert.equal((JSON.parse(storage.getItem(key)!) as StoredSeen).seenThrough, a.chain!.seq, "the view that holds both proved them one chain");
 });
+
+test("pins: a fork stays latched on its page whatever the hub serves next; while the hub serves it, a reload and a second page find it again; the record keeps what was verified", async () => {
+  const { hub, a } = await setup();
+  await a.sync();
+  const seen = browserSeen(a.store);
+  const before = seenRecord(seen, a.account);
+  let told = 0;
+  a.onChange(() => void told++);
+  await latchAFork(hub, a);
+  assert.ok(told > 0, "the page is told of the alarm");
+  // The hub is honest again: the page that saw the fork stays latched.
+  await assert.rejects(a.attestation(), isFork);
+  assert.ok(a.forked);
+  hub.chainServed = async () => [];
+  await assert.rejects(hub.reload(a), isFork, "a reload, while the hub serves the fork");
+  await assert.rejects(openPage(hub, a, browserStorage(a.store)), isFork, "a second page of this browser");
+  hub.chainServed = null;
+  assert.deepEqual(seenRecord(seen, a.account), before, "the record keeps what was verified");
+  assert.equal((await hub.reload(a)).forked, null, "a page loading on the honest chain again verifies it afresh");
+});
+
+test("pins: the pin is written once and never moved — a hub serving another genesis is a fork, and the pin stays where the store and older pages keep it", async () => {
+  const { hub, a } = await setup();
+  await a.sync();
+  const seen = browserSeen(a.store);
+  const pinned = hex(a.chain!.hashAt(0)!);
+  assert.equal(storedGenesis(seen, a.account), pinned);
+  assert.equal(browserStorage(a.store).getItem(`rh.hub.genesis.${a.account}`), pinned);
+  const other = new FakeKeysHub();
+  await createV2Genesis(await other.device("tok"), true);
+  hub.chainServed = async () => other.chain;
+  await assert.rejects(hub.reload(a), isFork);
+  hub.chainServed = null;
+  assert.equal(storedGenesis(seen, a.account), pinned, "not moved in the store");
+  assert.equal(browserStorage(a.store).getItem(`rh.hub.genesis.${a.account}`), pinned, "nor where older pages read it");
+});
+
+test("pins: one page's turns at the seen record run one at a time, each under the account's Web Lock", async () => {
+  const { hub, a } = await setup();
+  await a.sync();
+  const order: string[] = [];
+  const locks: AccountLocks = {
+    request: async (name, options, callback) => {
+      order.push(`in ${name} ${options.mode}`);
+      await settle();
+      try {
+        return await callback();
+      } finally {
+        order.push("out");
+      }
+    },
+  };
+  const page = await openPage(hub, a, browserStorage(a.store), locks);
+  order.length = 0;
+  const documentLike = Object.assign(new EventTarget(), { visibilityState: "visible" });
+  // It looks as it starts watching, and twice more as it comes back into view at once.
+  page.watchSeenRecord({ visibility: documentLike });
+  documentLike.dispatchEvent(new Event("visibilitychange"));
+  documentLike.dispatchEvent(new Event("visibilitychange"));
+  await until(() => order.length >= 6, "three turns");
+  const turn = `in rh.hub.seen.${a.account} exclusive`;
+  assert.deepEqual(order, [turn, "out", turn, "out", turn, "out"], "never two at once");
+});
+
+test("pins: what older pages keep in localStorage is read as the store is — their pin counts where the store has none, and their record holds the view a hub serves", async () => {
+  const { hub, a } = await setup();
+  await a.sync();
+  const seen = browserSeen(a.store);
+  const storage = browserStorage(a.store);
+  const genesis = storage.getItem(`rh.hub.genesis.${a.account}`);
+  assert.ok(genesis && storage.getItem(`rh.hub.seen.${a.account}`), "written where older pages read them");
+  // The store holds nothing for the account (another browser profile's store, say): older pages' copies only.
+  seen.values.delete(a.account);
+  const page = await hub.reload(a);
+  assert.equal(page.pinned, true, "their pin counts");
+  assert.equal(storedGenesis(seen, a.account), genesis, "and is taken into the store");
+  seen.values.delete(a.account);
+  const full = hub.chain.slice();
+  hub.chainServed = async () => full.slice(0, -1);
+  await assert.rejects(hub.reload(a), isFork, "their record holds a hub that serves less than it");
+  hub.chainServed = null;
+});
+
+test("pins: stopping the session stops watching the seen record — another page's write, or coming back into view, puts nothing back after it", async () => {
+  const { hub, a } = await setup();
+  await a.sync();
+  await a.append({ type: "setRecoveryKey", key: null });
+  const seen = browserSeen(a.store);
+  const page = await hub.reload(a);
+  const seq = page.chain!.seq;
+  const lowered: StoredSeen = { v: 1, seenThrough: seq - 1, head: hex(page.chain!.hashAt(seq - 1)!), heads: [], firstSeen: [] };
+  const documentLike = Object.assign(new EventTarget(), { visibilityState: "visible" });
+  page.watchSeenRecord({ visibility: documentLike });
+  page.keepSessionFresh();
+  await settle();
+  page.stopSession();
+  await seen.update(a.account, (stored) => ({ ...(stored as object), seen: lowered }));
+  await settle();
+  assert.equal(seenRecord(seen, a.account).seenThrough, seq - 1, "another page's write: not looked at");
+  documentLike.dispatchEvent(new Event("visibilitychange"));
+  await settle();
+  assert.equal(seenRecord(seen, a.account).seenThrough, seq - 1, "back in view: not looked at");
+});
+
+test("pins: the pin is never moved by a page that pins another genesis, even where the store holds no record beside it", async () => {
+  const hub = new FakeKeysHub();
+  const tabA = await hub.device("tok");
+  const tabB = await hub.reload(tabA);
+  const storage = browserStorage(tabA.store);
+  const seen = browserSeen(tabA.store);
+  // A's genesis is held at the hub until B has made and pinned its own; then the hub takes A's too.
+  const held = holdFirst(
+    hub,
+    (r) => r === "POST /v1/chain",
+    () => {
+      hub.chain = [];
+      hub.state = null;
+    },
+  );
+  const settingUp = tabA.createGenesis(false);
+  await held.reached;
+  await tabB.createGenesis(false);
+  const pin = storedGenesis(seen, tabB.account);
+  assert.ok(pin);
+  // B's record goes (a wipe forgets it; the pin stays): nothing but the pin itself stands against A's.
+  seen.values.set(tabB.account, { v: 1, genesis: pin, seen: null });
+  storage.removeItem(`rh.hub.seen.${tabB.account}`);
+  held.release();
+  await assert.rejects(settingUp, isFork);
+  assert.equal(storedGenesis(seen, tabB.account), pin, "B's pin stands");
+  assert.equal(storage.getItem(`rh.hub.genesis.${tabB.account}`), pin);
+});
+
+test("pins: an open page that finds another genesis pinned under it latches a fork, and does not move the pin back to its own", async () => {
+  const { hub, a } = await setup();
+  await a.sync();
+  const seen = browserSeen(a.store);
+  const storage = browserStorage(a.store);
+  const page = await hub.reload(a);
+  const other = "00".repeat(32);
+  // Another genesis pinned under the open page, in the store and where older pages read it (code in this origin, say).
+  seen.values.set(a.account, { v: 1, genesis: other, seen: null });
+  storage.setItem(`rh.hub.genesis.${a.account}`, other);
+  page.watchSeenRecord({ visibility: Object.assign(new EventTarget(), { visibilityState: "visible" }) });
+  await until(() => page.forked !== null, "latched");
+  assert.equal(storedGenesis(seen, a.account), other, "the pin is not moved");
+  assert.equal(storage.getItem(`rh.hub.genesis.${a.account}`), other);
+});
+
+test("pins: an open page puts back a record lowered in the store and where older pages read it", async () => {
+  const { hub, a } = await setup();
+  await a.sync();
+  await a.append({ type: "setRecoveryKey", key: null });
+  const seen = browserSeen(a.store);
+  const storage = browserStorage(a.store);
+  const page = await hub.reload(a);
+  const seq = page.chain!.seq;
+  const lowered: StoredSeen = { v: 1, seenThrough: seq - 1, head: hex(page.chain!.hashAt(seq - 1)!), heads: [], firstSeen: [] };
+  setSeenRecord(seen, a.account, lowered);
+  storage.setItem(`rh.hub.seen.${a.account}`, JSON.stringify(lowered));
+  page.watchSeenRecord({ visibility: Object.assign(new EventTarget(), { visibilityState: "visible" }) });
+  await until(() => seenRecord(seen, a.account).seenThrough === seq, "put back in the store");
+  assert.equal((JSON.parse(storage.getItem(`rh.hub.seen.${a.account}`)!) as StoredSeen).seenThrough, seq, "and where older pages read it");
+});
+
+test("pins: a wipe forgets the seen record where older pages read it too; the pin stays", async () => {
+  const { a } = await setup();
+  await a.sync();
+  const storage = browserStorage(a.store);
+  const genesis = storage.getItem(`rh.hub.genesis.${a.account}`);
+  assert.ok(genesis && storage.getItem(`rh.hub.seen.${a.account}`));
+  const seen = browserSeen(a.store);
+  await a.wipe();
+  assert.equal((seen.values.get(a.account) as { seen?: unknown } | undefined)?.seen ?? null, null, "forgotten in the store");
+  assert.equal(storage.getItem(`rh.hub.seen.${a.account}`), null, "and where older pages read it");
+  assert.equal(storedGenesis(seen, a.account), genesis, "the pin stays in the store");
+  assert.equal(storage.getItem(`rh.hub.genesis.${a.account}`), genesis, "and where older pages read it");
+});
+
+test("pins: where the browser keeps the pin and no record (a wipe, or the founder's fallback pin), a hub serving another genesis is still a fork", async () => {
+  const { hub, a } = await setup();
+  await a.sync();
+  const seen = browserSeen(a.store);
+  const storage = browserStorage(a.store);
+  const pin = storedGenesis(seen, a.account)!;
+  seen.values.set(a.account, { v: 1, genesis: pin, seen: null });
+  storage.removeItem(`rh.hub.seen.${a.account}`);
+  // Another account's chain, made by a device whose id is not this one's: nothing but the pin stands against it.
+  const other = new FakeKeysHub();
+  other.nextDeviceId = "someone-else";
+  await createV2Genesis(await other.device("tok"), true);
+  hub.chainServed = async () => other.chain;
+  await assert.rejects(hub.reload(a), isFork);
+  hub.chainServed = null;
+  assert.equal(storedGenesis(seen, a.account), pin, "the pin stays");
+});
+
+test("pins: an older page's record kept apart after this page loaded still holds what the page vouches for — another head there is a fork", async () => {
+  const { a } = await setup();
+  await a.sync();
+  assert.ok(a.chain!.seq > 2);
+  const seen = browserSeen(a.store);
+  // The store's record at entry 2, with no heads that prove an older page's record one chain with it; an older page's at entry 1, with another head.
+  setSeenRecord(seen, a.account, { v: 1, seenThrough: 2, head: hex(a.chain!.hashAt(2)!), firstSeen: [] });
+  browserStorage(a.store).setItem(`rh.hub.seen.${a.account}`, JSON.stringify({ v: 1, seenThrough: 1, head: "ff".repeat(32), firstSeen: [] }));
+  await assert.rejects(a.attestation(), isFork);
+  assert.ok(a.forked);
+});
+
+test("pins: a page that saw no pin and reads another genesis pinned since is not pinned, and latches no fork for it", async () => {
+  const { hub, b } = await setup();
+  const seen = browserSeen(b.store);
+  const storage = browserStorage(b.store);
+  // b's browser keeps no pin (its store and older pages' copies gone): its page loads unpinned.
+  seen.values.delete(b.account);
+  storage.removeItem(`rh.hub.genesis.${b.account}`);
+  storage.removeItem(`rh.hub.seen.${b.account}`);
+  const page = await hub.reload(b);
+  assert.equal(page.pinned, false);
+  assert.equal(page.standing, "active");
+  // Another page of the browser pins another genesis.
+  seen.values.set(b.account, { v: 1, genesis: "00".repeat(32), seen: null });
+  assert.equal(await page.lacksKeys(), true, "no keys are taken under another pin");
+  assert.equal(page.pinned, false, "pinned is of this view's genesis");
+  assert.equal(page.forked, null, "and no fork is latched for it");
+});
+
+test("pins: keeping the session fresh starts watching the seen record — a record lowered under the page is put back", async (t) => {
+  const { hub, a } = await setup();
+  await a.sync();
+  await a.append({ type: "setRecoveryKey", key: null });
+  const seen = browserSeen(a.store);
+  const storage = browserStorage(a.store);
+  const page = await hub.reload(a);
+  const seq = page.chain!.seq;
+  const lowered: StoredSeen = { v: 1, seenThrough: seq - 1, head: hex(page.chain!.hashAt(seq - 1)!), heads: [], firstSeen: [] };
+  setSeenRecord(seen, a.account, lowered);
+  storage.setItem(`rh.hub.seen.${a.account}`, JSON.stringify(lowered));
+  page.keepSessionFresh();
+  t.after(() => page.stopSession());
+  await until(() => seenRecord(seen, a.account).seenThrough === seq, "put back");
+});
+
+test("pins: the pin, and a wipe forgetting the record, are written in the page's turn at the seen record, under the account's Web Lock", async () => {
+  const hub = new FakeKeysHub();
+  const fresh = await hub.device("tok");
+  const seen = browserSeen(fresh.store);
+  let held = 0;
+  const locks: AccountLocks = {
+    request: async (_name, _options, callback) => {
+      held++;
+      try {
+        return await callback();
+      } finally {
+        held--;
+      }
+    },
+  };
+  const page = await openPage(hub, fresh, browserStorage(fresh.store), locks);
+  const writes: { genesis: unknown; seen: unknown; locked: boolean }[] = [];
+  const update = seen.update.bind(seen);
+  seen.update = (account, change) =>
+    update(account, (stored) => {
+      const next = change(stored) as { genesis?: unknown; seen?: unknown } | undefined;
+      if (next !== undefined) writes.push({ genesis: next.genesis ?? null, seen: next.seen ?? null, locked: held > 0 });
+      return next;
+    });
+  await page.createGenesis(false);
+  const pinned = writes.find((w) => w.genesis !== null);
+  assert.ok(pinned, "the pin is written");
+  assert.equal(pinned.locked, true, "under the lock");
+  writes.length = 0;
+  await page.wipe();
+  const forgotten = writes.find((w) => w.seen === null);
+  assert.ok(forgotten, "the record is forgotten");
+  assert.equal(forgotten.locked, true, "under the lock");
+});
