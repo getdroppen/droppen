@@ -1054,7 +1054,5 @@ mod tests {
         let tail = "claude exited with code 1\nstarting up\n401 OAuth access token is invalid.";
         assert_eq!(reason_line(tail, LimitClass::Auth), "401 OAuth access token is invalid.");
         assert_eq!(reason_line("\n  first\nsecond", LimitClass::Rate), "first");
-        assert_eq!(clip("abcdef", 4), "abc…");
-        assert_eq!(clip("abc", 4), "abc");
     }
 }

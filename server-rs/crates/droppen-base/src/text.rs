@@ -112,4 +112,10 @@ mod tests {
         assert_eq!(strip_ansi(&format!("{ESC}[2J{ESC}[Hplain")), "  plain");
         assert_eq!(strip_ansi(&format!("{ESC}]0;a title\u{7}after")), " after");
     }
+
+    #[test]
+    fn a_clip_keeps_short_text_and_marks_a_cut() {
+        assert_eq!(clip("abcdef", 4), "abc…");
+        assert_eq!(clip("abc", 4), "abc");
+    }
 }

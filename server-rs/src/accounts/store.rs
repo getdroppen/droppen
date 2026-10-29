@@ -48,7 +48,7 @@ use droppen_instance::db::{self, Db};
 use droppen_http::openapi_ext::{Nullable, Optional};
 use droppen_instance::paths::Paths;
 use crate::sessions::account::{AccountRef, LimitClass};
-use droppen_base::env_block::{is_env_name, render_env_var, EnvVar, InvalidEnvBlock, DENIED_ENV_KEYS};
+use droppen_base::env_block::{is_env_name, EnvVar, InvalidEnvBlock, DENIED_ENV_KEYS};
 use droppen_base::time::iso8601;
 
 /// Where the one setting in this store that is not a row lives.
@@ -1220,7 +1220,7 @@ impl AccountsStore {
         if account.kind != AccountKind::Env {
             return Err(AccountError::Invalid("this account has no environment block".to_string()));
         }
-        Ok(account.env.iter().map(render_env_var).collect::<Vec<_>>().join("\n"))
+        Ok(account.env.iter().map(EnvVar::render).collect::<Vec<_>>().join("\n"))
     }
 
     /// The values of a few *named* variables of an env account's block.

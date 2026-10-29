@@ -1,6 +1,6 @@
 //! A block of `KEY=VALUE` lines, as a person types an environment for a CLI:
 //! an env-mode account's credential, and an ACP agent's own variables. Read
-//! with [`parse_env_block`], written back with [`render_env_var`].
+//! with [`parse_env_block`], written back with [`EnvVar::render`].
 //!
 //! A name in backticks such as `AccountsStore` in these docs is an item of
 //! the server, which this crate cannot link to.
@@ -121,17 +121,19 @@ pub fn parse_env_block(text: &str) -> Result<Vec<EnvVar>, InvalidEnvBlock> {
     Ok(parsed)
 }
 
-/// One stored variable as a line [`parse_env_block`] reads back unchanged.
-///
-/// A value with no surrounding whitespace needs no quoting. One that has it
-/// does: the parser trims a line's value, so an unquoted ` x ` would come back
-/// as `x`. Quoting only applies when both ends agree because that is the only
-/// shape [`unquote`] strips.
-pub fn render_env_var(var: &EnvVar) -> String {
-    if var.value.trim() != var.value {
-        format!("{}=\"{}\"", var.key, var.value)
-    } else {
-        format!("{}={}", var.key, var.value)
+impl EnvVar {
+    /// This variable as a line [`parse_env_block`] reads back unchanged.
+    ///
+    /// A value with no surrounding whitespace needs no quoting. One that has it
+    /// does: the parser trims a line's value, so an unquoted ` x ` would come back
+    /// as `x`. Quoting only applies when both ends agree because that is the only
+    /// shape [`unquote`] strips.
+    pub fn render(&self) -> String {
+        if self.value.trim() != self.value {
+            format!("{}=\"{}\"", self.key, self.value)
+        } else {
+            format!("{}={}", self.key, self.value)
+        }
     }
 }
 
@@ -232,13 +234,33 @@ mod tests {
         assert!(refused("").contains("empty"), "an empty box is not a credential");
         assert!(refused("# only a comment\n\n").contains("empty"));
 
-        for denied in DENIED_ENV_KEYS {
+        // The names and the limits are written out rather than read back from
+        // the constants, so a dropped name or a raised limit fails here.
+        for denied in [
+            "CLAUDE_CONFIG_DIR",
+            "CODEX_HOME",
+            "HOME",
+            "PATH",
+            "NODE_OPTIONS",
+            "LD_PRELOAD",
+            "LD_LIBRARY_PATH",
+            "DYLD_INSERT_LIBRARIES",
+            "DYLD_LIBRARY_PATH",
+            "DYLD_FRAMEWORK_PATH",
+        ] {
             let message = refused(&format!("OPENAI_API_KEY=k\n{denied}=/somewhere"));
             assert!(message.contains(denied), "the refusal names the key: {message}");
         }
+        assert_eq!(DENIED_ENV_KEYS.len(), 10, "and no other name is refused");
+        // A name matches as written: `ld_preload` is not the loader's variable.
+        assert_eq!(parse_env_block("ld_preload=x").expect("another name")[0].key, "ld_preload");
 
-        let many = (0..=MAX_ENV_VARS).map(|i| format!("K{i}=v")).collect::<Vec<_>>().join("\n");
-        assert!(refused(&many).contains("more than"));
-        assert!(refused(&format!("K=\"{}\"", "x".repeat(MAX_ENV_BYTES))).contains("KiB"));
+        let vars = |n: usize| (0..n).map(|i| format!("K{i}=v")).collect::<Vec<_>>().join("\n");
+        assert_eq!(parse_env_block(&vars(64)).expect("64 variables").len(), 64);
+        assert!(refused(&vars(65)).contains("more than 64"));
+        let sized = |n: usize| format!("K=\"{}\"", "x".repeat(n - 4));
+        assert_eq!(sized(8192).len(), 8192);
+        assert!(parse_env_block(&sized(8192)).is_ok(), "8192 bytes is the limit, not past it");
+        assert!(refused(&sized(8193)).contains("8 KiB"));
     }
 }
