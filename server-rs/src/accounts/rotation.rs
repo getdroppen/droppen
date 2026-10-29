@@ -1439,7 +1439,7 @@ mod tests {
 
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = Arc::new(Paths::new(dir.path().to_path_buf()));
-        let store = AccountsStore::new(paths.clone());
+        let store = AccountsStore::new(paths.clone(), crate::app::logins());
         let quota = QuotaCache::new(paths);
         let create = |label: &'static str| {
             let store = &store;
@@ -1677,7 +1677,7 @@ mod tests {
 
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = Arc::new(Paths::new(dir.path().to_path_buf()));
-        let store = AccountsStore::new(paths.clone());
+        let store = AccountsStore::new(paths.clone(), crate::app::logins());
         let quota = QuotaCache::new(paths);
         let start = |provider: AccountProvider, model: Option<&'static str>| {
             let (store, quota) = (&store, &quota);

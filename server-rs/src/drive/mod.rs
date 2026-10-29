@@ -18,6 +18,7 @@ pub mod routes;
 
 use std::sync::Arc;
 
+use crate::accounts::login::Logins;
 use crate::accounts::quota::QuotaCache;
 use crate::accounts::setup_token::Captures;
 use crate::accounts::store::AccountsStore;
@@ -86,15 +87,17 @@ impl Drive {
     /// find them again. `auth` is built by the caller rather than here, because
     /// the middleware needs the same handle and is mounted outside the router.
     /// `providers` is the entry's `crate::app::register_providers`, which
-    /// names every CLI.
+    /// names every CLI; `logins` likewise, each a CLI's own code, which only
+    /// the entry names.
     pub fn new(
         paths: Arc<Paths>,
         instance: &droppen_instance::instance::InstanceDirs,
         auth: Arc<Auth>,
         transcripts: TranscriptSources,
         providers: fn(&mut ProviderRegistry, &Arc<InjectionRegistry>),
+        logins: Logins,
     ) -> Arc<Self> {
-        let accounts = Arc::new(AccountsStore::new(paths.clone()));
+        let accounts = Arc::new(AccountsStore::new(paths.clone(), logins));
         let quota = Arc::new(QuotaCache::new(paths.clone()));
         let injections = InjectionRegistry::new(paths.clone(), instance, accounts.clone(), quota.clone());
         Arc::new(Self {

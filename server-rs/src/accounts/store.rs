@@ -42,6 +42,7 @@ use gotcha::Schematic;
 use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
+use super::login::Logins;
 use super::rest::{AccountRest, LimitLog};
 use droppen_instance::db::{self, Db};
 use droppen_http::openapi_ext::{Nullable, Optional};
@@ -70,46 +71,8 @@ const DEFAULT_CODEX_KEY: &str = "default-codex-account-id";
 /// from `default_account_id` like any value naming no account.
 const LOCAL_DEFAULT: &str = "local";
 
-/// The environment variable a codex account's key is read from.
-///
-/// Not `OPENAI_API_KEY` and not `CODEX_API_KEY`, because `codex app-server`
-/// reads neither: it authenticates from `CODEX_HOME/auth.json` and nothing
-/// else. The one lever left that keeps `~/.codex` — and therefore every session
-/// this server discovers — exactly where it is, is a *custom model provider*
-/// whose key comes from an environment variable of our choosing. This is that
-/// variable, and [`codex_provider_args`] is what tells codex to look at it.
-///
-/// `REMOTE_HAND_CODEX_API_KEY` before the rename to Droppen, and renamed
-/// outright, with no fallback: the spawn that sets it is the spawn that names
-/// it (`env_key`), so nothing else ever reads it, and a `codex` started under
-/// the old name keeps the configuration it was started with.
-pub const CODEX_API_KEY_ENV: &str = "DROPPEN_CODEX_API_KEY";
-/// The id the injected provider is registered under in codex's config.
-pub const CODEX_PROVIDER_ID: &str = "remote_hand";
-/// Where a codex account talks when it names no base URL of its own.
-pub const CODEX_DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
 /// What `ANTHROPIC_BASE_URL` is called, for a claude account that names one.
 pub const CLAUDE_BASE_URL_ENV: &str = "ANTHROPIC_BASE_URL";
-
-/// The `-c` overrides that point one `codex` spawn at an account's own key.
-///
-/// Inline TOML on the command line, which is why [`normalize_base_url`] refuses
-/// a quote, a backslash and anything that is not printable: the base URL is
-/// interpolated into the table below, and a value that could close the string
-/// would be an injection into the CLI's own configuration.
-///
-/// `wire_api = "responses"` because that is the API the OpenAI-compatible
-/// endpoints codex speaks to expose; `name` is only ever shown to a human.
-pub fn codex_provider_args(base_url: &str) -> Vec<String> {
-    vec![
-        "-c".to_string(),
-        format!(
-            "model_providers.{CODEX_PROVIDER_ID}={{name=\"remote-hand\",base_url=\"{base_url}\",env_key=\"{CODEX_API_KEY_ENV}\",wire_api=\"responses\"}}"
-        ),
-        "-c".to_string(),
-        format!("model_provider={CODEX_PROVIDER_ID}"),
-    ]
-}
 
 /// Which CLI an account's credential is for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Schematic)]
@@ -179,6 +142,18 @@ pub enum AccountKind {
     /// What every one of them has in common is that the answer is "these
     /// variables, in the child's environment", so that is what is stored.
     Env,
+}
+
+impl AccountKind {
+    /// The variables a credential of this kind is, as it stands: the token
+    /// under the variable an OAuth account is handed over in, or the block as
+    /// it was typed. What every CLI's [`super::login::Login`] starts from.
+    pub fn vars(self, secret: &str, env: &[EnvVar]) -> Vec<(String, String)> {
+        match self {
+            AccountKind::OauthToken => vec![(CLAUDE_OAUTH_ENV.to_string(), secret.to_string())],
+            AccountKind::Env => env.iter().map(|var| (var.key.clone(), var.value.clone())).collect(),
+        }
+    }
 }
 
 /// The variable a Claude OAuth account's token is handed over in.
@@ -345,32 +320,6 @@ pub fn validate_pairing(provider: AccountProvider, kind: AccountKind) -> Result<
     }
 }
 
-/// A base URL fit to be interpolated into codex's inline TOML, or a refusal.
-///
-/// The rules are narrow on purpose: this string is put inside a quoted TOML
-/// value on a command line, so a quote, a backslash or a control character in
-/// it is a way to say something to the child that nobody typed.
-pub fn normalize_base_url(raw: &str) -> Result<String, AccountError> {
-    let url = raw.trim();
-    if url.len() > MAX_BASE_URL_LENGTH {
-        return Err(AccountError::Invalid(format!("{CODEX_BASE_URL_VAR} is implausibly long")));
-    }
-    let Some(rest) = url.strip_prefix("https://").or_else(|| url.strip_prefix("http://")) else {
-        return Err(AccountError::Invalid(format!("{CODEX_BASE_URL_VAR} must start with http:// or https://")));
-    };
-    // `https:///v1` parses as a URL with no host, and a CLI pointed at one
-    // fails somewhere far away from the field that was typed wrong.
-    if rest.is_empty() || rest.starts_with('/') {
-        return Err(AccountError::Invalid(format!("{CODEX_BASE_URL_VAR} has no host")));
-    }
-    if url.chars().any(|c| c.is_whitespace() || c.is_control() || c == '"' || c == '\\') {
-        return Err(AccountError::Invalid(format!(
-            "{CODEX_BASE_URL_VAR} cannot contain whitespace, a quote or a backslash"
-        )));
-    }
-    Ok(url.to_string())
-}
-
 /// What the API is allowed to see: no secret, and no hash of one either.
 ///
 /// Named `Account` because that is the schema name in `openapi/openapi.json`.
@@ -449,7 +398,8 @@ pub struct AccountList {
     pub local: super::local_login::LocalLogins,
 }
 
-/// Everything one account contributes to a spawn.
+/// Everything one account contributes to a spawn, as its CLI's
+/// [`super::login::Login`] builds it.
 ///
 /// Two halves because the two CLIs take a credential differently. Claude reads
 /// it out of the environment, so an account is one or two variables and nothing
@@ -465,55 +415,6 @@ pub struct AccountLaunch {
     pub env: Vec<(String, String)>,
     /// Extra argv for a `codex` spawn; always empty for claude.
     pub codex_args: Vec<String>,
-}
-
-/// The launch one credential produces, without it having to be stored first.
-///
-/// Shared with [`super::verify`] on purpose: a check that ran with a different
-/// environment from the spawn would be a check of something else.
-///
-/// Fallible, and only ever on the codex side. A claude block is handed over as
-/// it stands — a token, a gateway's four variables, a Bedrock setup with no
-/// token at all: the CLI is the thing that knows which of those work, and
-/// second-guessing it here would refuse configurations that are fine. Codex
-/// cannot be handed a block as it stands, because `app-server` reads no key
-/// variable of its own, so the block has to be *translated* — and a translation
-/// needs something to translate.
-pub fn launch_for(provider: AccountProvider, kind: AccountKind, secret: &str, env: &[EnvVar]) -> Result<AccountLaunch, AccountError> {
-    let mut vars: Vec<(String, String)> = match kind {
-        AccountKind::OauthToken => vec![(CLAUDE_OAUTH_ENV.to_string(), secret.to_string())],
-        AccountKind::Env => env.iter().map(|var| (var.key.clone(), var.value.clone())).collect(),
-    };
-    let mut codex_args = Vec::new();
-    if provider == AccountProvider::Codex {
-        let key = CODEX_KEY_CANDIDATES
-            .iter()
-            .find_map(|name| env.iter().find(|var| &var.key == name))
-            .ok_or_else(|| {
-                AccountError::Invalid(format!(
-                    "a codex account needs {} (or {}) in its environment block: `codex app-server` reads neither, so Droppen has to hand the key to a model provider of its own",
-                    CODEX_KEY_CANDIDATES[0], CODEX_KEY_CANDIDATES[1]
-                ))
-            })?;
-        // On top of the block rather than instead of it: the variables the user
-        // typed still reach the child, and this is the one the injected provider
-        // is told to read.
-        vars.push((CODEX_API_KEY_ENV.to_string(), key.value.clone()));
-        // A blank one is "the vendor default", as it was when the base URL was
-        // a field of its own: `OPENAI_BASE_URL=` is how a pasted block says it
-        // is not overriding anything, and v0.2.58 read it that way.
-        let named = env.iter().find(|var| var.key == CODEX_BASE_URL_VAR && !var.value.trim().is_empty());
-        let base_url = match named {
-            Some(var) => normalize_base_url(&var.value)?,
-            None => CODEX_DEFAULT_BASE_URL.to_string(),
-        };
-        codex_args = codex_provider_args(&base_url);
-    }
-    Ok(AccountLaunch {
-        provider,
-        env: vars,
-        codex_args,
-    })
 }
 
 /// Everything that can go wrong in the store.
@@ -615,9 +516,9 @@ impl StoredAccount {
         self.rotation.unwrap_or_else(|| default_rotation(self.provider, self.kind))
     }
 
-    /// What this account puts into a spawn.
-    fn launch(&self) -> Result<AccountLaunch, AccountError> {
-        launch_for(self.provider, self.kind, &self.secret, &self.env)
+    /// What this account puts into a spawn of its CLI.
+    fn launch(&self, logins: &Logins) -> Result<AccountLaunch, AccountError> {
+        logins.of(self.provider).spawn_env(self.kind, &self.secret, &self.env)
     }
 
     /// Every value this account could see echoed back at it by a CLI.
@@ -666,11 +567,12 @@ impl Default for AccountsFile {
 pub struct AccountsStore {
     paths: Arc<Paths>,
     db: Arc<Db>,
+    /// How each CLI is started under one of these accounts.
+    logins: Logins,
 }
 
 const MAX_SECRET_LENGTH: usize = 4096;
 const MAX_LABEL_LENGTH: usize = 100;
-const MAX_BASE_URL_LENGTH: usize = 512;
 
 use droppen_base::text::sha256_hex;
 
@@ -854,7 +756,7 @@ fn read_env(raw: Option<&serde_json::Value>) -> Vec<EnvVar> {
 /// so an account that was working before the upgrade is working after it. The
 /// codex pair is the one that moves: v1 put the key straight into the variable
 /// the injected provider reads, and a block says what the user's key *is*
-/// (`OPENAI_API_KEY`) and lets [`launch_for`] do the translating.
+/// (`OPENAI_API_KEY`) and lets codex's [`super::login::Login`] do the translating.
 fn legacy_block(provider: AccountProvider, kind: &str, secret: &str, base_url: Option<&str>) -> Vec<EnvVar> {
     let (key_var, url_var) = match provider {
         AccountProvider::Claude if kind == "auth_token" => ("ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"),
@@ -875,10 +777,16 @@ fn legacy_block(provider: AccountProvider, kind: &str, secret: &str, base_url: O
 }
 
 impl AccountsStore {
-    /// A store rooted at the given path set, over the machine-wide database.
-    pub fn new(paths: Arc<Paths>) -> Self {
+    /// A store rooted at the given path set, over the machine-wide database,
+    /// starting each CLI the way its login says.
+    pub fn new(paths: Arc<Paths>, logins: Logins) -> Self {
         let db = db::at(paths.config_db());
-        Self { paths, db }
+        Self { paths, db, logins }
+    }
+
+    /// How each CLI is started under one of these accounts.
+    pub fn logins(&self) -> &Logins {
+        &self.logins
     }
 
     /// Per-account directory; only ever named after a validated uuid.
@@ -1044,7 +952,7 @@ impl AccountsStore {
         };
         // Proved to be spawnable before it is stored: a codex block with no key
         // variable in it is a row nothing could ever start.
-        launch_for(provider, kind, &secret, &env)?;
+        self.logins.of(provider).spawn_env(kind, &secret, &env)?;
         let hash = match kind {
             AccountKind::OauthToken => sha256_hex(&secret),
             AccountKind::Env => block_sha256(&env),
@@ -1130,7 +1038,7 @@ impl AccountsStore {
                         },
                         Credential::Env(env) => (String::new(), env),
                     };
-                    if let Err(error) = launch_for(account.provider, account.kind, &secret, &env) {
+                    if let Err(error) = self.logins.of(account.provider).spawn_env(account.kind, &secret, &env) {
                         return Ok(Err(error));
                     }
                     let hash = match account.kind {
@@ -1405,7 +1313,7 @@ impl AccountsStore {
     /// for it. The one other caller that reads the block itself is
     /// [`Self::env_block`], which hands it back to the person editing it.
     pub async fn account_env(&self, id: &str) -> Result<AccountLaunch, AccountError> {
-        self.stored(id).ok_or_else(|| AccountError::NotFound(id.to_string()))?.launch()
+        self.stored(id).ok_or_else(|| AccountError::NotFound(id.to_string()))?.launch(&self.logins)
     }
 
     /// An env account's whole block, as the text it was typed as.
@@ -1599,7 +1507,7 @@ mod tests {
     fn store() -> (tempfile::TempDir, AccountsStore) {
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = Arc::new(Paths::new(dir.path().to_path_buf()));
-        (dir, AccountsStore::new(paths))
+        (dir, AccountsStore::new(paths, crate::app::logins()))
     }
 
     /// Choosing the local login is a setting of its own, not the absence of a
@@ -2059,7 +1967,7 @@ mod tests {
     async fn an_account_survives_a_reopen_of_the_database() {
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = Arc::new(Paths::new(dir.path().to_path_buf()));
-        let store = AccountsStore::new(paths.clone());
+        let store = AccountsStore::new(paths.clone(), crate::app::logins());
         let account = store.create("Work", AccountProvider::Claude, oauth("sk-ant-one")).await.expect("create");
         store
             .bind_session_account("session-a", Some(&account.id), AccountProvider::Claude)
@@ -2103,7 +2011,7 @@ mod tests {
 
         // A second store proves the values are in the database rather than in
         // this store's head.
-        let reopened = AccountsStore::new(store.paths.clone());
+        let reopened = AccountsStore::new(store.paths.clone(), crate::app::logins());
         let reloaded = reopened.get(&account.id).await.expect("still there");
         assert_eq!(reloaded.email.as_deref(), Some("me@example.com"));
 
@@ -2274,7 +2182,7 @@ mod tests {
 
         // The codex pair is the one that moves: v1 stored the key under the
         // variable the *injected provider* reads, and a block says what the
-        // user's key is and lets `launch_for` do the translating.
+        // user's key is and lets codex's login do the translating.
         let codex = row("api_key", "codex", Some("https://relay/openai"));
         assert_eq!(
             pairs(&codex),
@@ -2326,116 +2234,6 @@ mod tests {
             parse(serde_json::json!({"id": id, "kind": "env", "provider": "claude", "env": []})).is_none(),
             "an env account with no variables is not an account"
         );
-    }
-
-    /// What each shape actually puts into a child process.
-    #[test]
-    fn a_launch_hands_claude_the_block_and_translates_it_for_codex() {
-        fn pairs(launch: &AccountLaunch) -> Vec<(&str, &str)> {
-            launch.env.iter().map(|(key, value)| (key.as_str(), value.as_str())).collect()
-        }
-        let block = |text: &str| parse_env_block(text).expect("block");
-
-        let oauth = launch_for(AccountProvider::Claude, AccountKind::OauthToken, "tok", &[]).expect("oauth");
-        assert_eq!(pairs(&oauth), vec![("CLAUDE_CODE_OAUTH_TOKEN", "tok")]);
-        assert!(oauth.codex_args.is_empty());
-
-        // Claude takes the block exactly as typed — including a setup with no
-        // recognisable credential variable in it at all, which is what Bedrock
-        // and a helper script look like. The CLI decides, not this.
-        let claude = launch_for(
-            AccountProvider::Claude,
-            AccountKind::Env,
-            "",
-            &block("ANTHROPIC_AUTH_TOKEN=bearer\nANTHROPIC_BASE_URL=https://gw/v1"),
-        )
-        .expect("claude env");
-        assert_eq!(
-            pairs(&claude),
-            vec![("ANTHROPIC_AUTH_TOKEN", "bearer"), ("ANTHROPIC_BASE_URL", "https://gw/v1")]
-        );
-        assert!(claude.codex_args.is_empty());
-        assert!(launch_for(
-            AccountProvider::Claude,
-            AccountKind::Env,
-            "",
-            &block("CLAUDE_CODE_USE_BEDROCK=1\nAWS_REGION=us-east-1")
-        )
-        .is_ok());
-
-        // Codex gets the block *and* the translation on top of it.
-        let codex = launch_for(AccountProvider::Codex, AccountKind::Env, "", &block("OPENAI_API_KEY=sk-codex")).expect("codex");
-        assert_eq!(
-            pairs(&codex),
-            vec![("OPENAI_API_KEY", "sk-codex"), ("DROPPEN_CODEX_API_KEY", "sk-codex")]
-        );
-        assert_eq!(
-            codex.codex_args,
-            vec![
-                "-c".to_string(),
-                "model_providers.remote_hand={name=\"remote-hand\",base_url=\"https://api.openai.com/v1\",env_key=\"DROPPEN_CODEX_API_KEY\",wire_api=\"responses\"}".to_string(),
-                "-c".to_string(),
-                "model_provider=remote_hand".to_string(),
-            ]
-        );
-        assert!(
-            !codex.codex_args.iter().any(|arg| arg.contains("sk-codex")),
-            "a command line is world-readable in `ps`"
-        );
-
-        // A blank base URL is not a broken one: it is the vendor default, as it
-        // was when the URL was a field that could be cleared.
-        let blank = launch_for(
-            AccountProvider::Codex,
-            AccountKind::Env,
-            "",
-            &block("OPENAI_API_KEY=sk-1\nOPENAI_BASE_URL=  "),
-        )
-        .expect("a block that overrides nothing");
-        assert!(
-            blank.codex_args[1].contains(&format!("base_url=\"{CODEX_DEFAULT_BASE_URL}\"")),
-            "{:?}",
-            blank.codex_args
-        );
-
-        // `CODEX_API_KEY` is the fallback, and `OPENAI_BASE_URL` moves the provider.
-        let relay = launch_for(
-            AccountProvider::Codex,
-            AccountKind::Env,
-            "",
-            &block("CODEX_API_KEY=sk-relay\nOPENAI_BASE_URL=https://relay.example.com/v1"),
-        )
-        .expect("codex relay");
-        assert_eq!(
-            relay.env.last().expect("translated"),
-            &("DROPPEN_CODEX_API_KEY".to_string(), "sk-relay".to_string())
-        );
-        assert!(
-            relay.codex_args[1].contains("base_url=\"https://relay.example.com/v1\""),
-            "{:?}",
-            relay.codex_args
-        );
-        // `OPENAI_API_KEY` wins when both are present.
-        let both = launch_for(
-            AccountProvider::Codex,
-            AccountKind::Env,
-            "",
-            &block("CODEX_API_KEY=second\nOPENAI_API_KEY=first"),
-        )
-        .expect("both");
-        assert_eq!(both.env.last().expect("translated").1, "first");
-
-        // Nothing to translate, and nothing a CLI could be pointed at.
-        let missing = launch_for(AccountProvider::Codex, AccountKind::Env, "", &block("SOME_OTHER_VAR=x")).expect_err("no key");
-        assert!(missing.to_string().contains("OPENAI_API_KEY"), "{missing}");
-        for bad in [
-            "OPENAI_BASE_URL=relay.example.com",
-            "OPENAI_BASE_URL=https:///v1",
-            "OPENAI_BASE_URL=https://a\"b",
-        ] {
-            let refused = launch_for(AccountProvider::Codex, AccountKind::Env, "", &block(&format!("OPENAI_API_KEY=k\n{bad}")));
-            assert!(matches!(refused, Err(AccountError::Invalid(_))), "{bad} must be refused");
-        }
     }
 
     /// Duplicates compare the whole block, order-independently, per CLI.
@@ -2709,7 +2507,7 @@ mod tests {
         assert_eq!(store.session_account_id("session-a").await.as_deref(), Some(account.id.as_str()));
 
         // A fresh store proves the swap reached disk, hash and all.
-        let reopened = AccountsStore::new(store.paths.clone());
+        let reopened = AccountsStore::new(store.paths.clone(), crate::app::logins());
         assert_eq!(reopened.account_env(&account.id).await.expect("env").env[0].1, "sk-ant-new");
         // The old token is gone, so it is free to be stored again elsewhere.
         reopened

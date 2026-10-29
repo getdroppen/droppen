@@ -41,7 +41,8 @@ use droppen_instance::paths::Paths;
 use droppen_base::process_env::{apply_env, claude_env, clean_env, clean_env_bare, redact_secrets, redact_values, resolve_on_path};
 
 use super::quota::{is_rate_limited, mentions_status};
-use super::store::{launch_for, AccountLaunch, AccountProvider, Credential, CLAUDE_BASE_URL_ENV};
+use super::login::Logins;
+use super::store::{AccountLaunch, AccountProvider, Credential, CLAUDE_BASE_URL_ENV};
 
 /// The prompt the probe sends. Short on purpose: it is billed like any other.
 const PROBE_PROMPT: &str = "ping";
@@ -172,7 +173,7 @@ impl Drop for Scratch {
 ///
 /// Never panics and never fails: everything that is not a clean run or a clean
 /// refusal comes back as [`Verdict::Unverifiable`].
-pub async fn verify_secret(paths: &Paths, provider: AccountProvider, credential: &Credential) -> Verdict {
+pub async fn verify_secret(logins: &Logins, paths: &Paths, provider: AccountProvider, credential: &Credential) -> Verdict {
     let (secret, env) = match credential {
         Credential::Oauth(secret) => (secret.as_str(), Vec::new()),
         Credential::Env(env) => ("", env.clone()),
@@ -180,7 +181,7 @@ pub async fn verify_secret(paths: &Paths, provider: AccountProvider, credential:
     // A block that cannot be turned into a spawn is refused outright rather
     // than probed: there is nothing to run. Only codex can say this, and only
     // about a block with no key variable in it.
-    let launch = match launch_for(provider, credential.kind(), secret, &env) {
+    let launch = match logins.of(provider).spawn_env(credential.kind(), secret, &env) {
         Ok(launch) => launch,
         Err(error) => return Verdict::Invalid(error.to_string()),
     };
@@ -285,7 +286,7 @@ async fn verify_claude(paths: &Paths, launch: &AccountLaunch, secrets: &[&str]) 
 ///   deleted afterwards rather than appearing in the session list — and so the
 ///   probe cannot fall back on the user's own `auth.json` and answer for a login
 ///   that is not the one being checked;
-/// * the provider override from [`crate::accounts::store::codex_provider_args`],
+/// * the provider override from [`crate::accounts::login::codex::codex_provider_args`],
 ///   which is the whole of how a key reaches codex: `app-server` reads neither
 ///   `OPENAI_API_KEY` nor `CODEX_API_KEY`, so a probe that only set a variable
 ///   would be checking nothing at all.

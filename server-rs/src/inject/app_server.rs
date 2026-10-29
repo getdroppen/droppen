@@ -512,7 +512,7 @@ impl InjectionRegistry {
         // whatever `~/.codex/auth.json` holds. An account adds a model
         // provider that reads its key from a variable of ours, because
         // `app-server` reads no key variable of codex's own — see
-        // [`crate::accounts::store::codex_provider_args`].
+        // [`crate::accounts::login::codex::codex_provider_args`].
         let launch = account.as_ref().map(|account| &account.launch);
         let mut args: Vec<String> = vec!["app-server".into()];
         args.extend(launch.into_iter().flat_map(|launch| launch.codex_args.iter().cloned()));
@@ -550,7 +550,7 @@ impl InjectionRegistry {
             // the flag is what a `codex exec` probe proves works, and naming it
             // on the thread as well costs nothing if the flag already took.
             if launch.is_some_and(|launch| !launch.codex_args.is_empty()) {
-                params["modelProvider"] = json!(crate::accounts::store::CODEX_PROVIDER_ID);
+                params["modelProvider"] = json!(crate::accounts::login::codex::CODEX_PROVIDER_ID);
             }
             if options.chat {
                 params["baseInstructions"] = json!(CHAT_SYSTEM_PROMPT);
@@ -1339,7 +1339,7 @@ mod tests {
             let paths = Arc::new(Paths::new(home.path().into()));
             let dirs = InstanceDirs::new(&paths.data_dir(), "codex-test").unwrap();
             dirs.create().unwrap();
-            let accounts = Arc::new(crate::accounts::store::AccountsStore::new(paths.clone()));
+            let accounts = Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins()));
             let quota = Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone()));
             let registry = InjectionRegistry::new(paths, &dirs, accounts, quota);
             let socket = home.path().join("mock.sock");
@@ -2034,7 +2034,7 @@ mod tests {
         let paths = Arc::new(Paths::new(home.path().into()));
         let dirs = InstanceDirs::new(&paths.data_dir(), "codex-steps").unwrap();
         dirs.create().unwrap();
-        let accounts = Arc::new(crate::accounts::store::AccountsStore::new(paths.clone()));
+        let accounts = Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins()));
         let quota = Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone()));
         let registry = InjectionRegistry::new(paths, &dirs, accounts, quota);
         let work = home.path().join("work");
