@@ -22,11 +22,11 @@ use std::path::Path;
 
 use serde_json::Value;
 
-use crate::sessions::util::{read_tail_lines, try_parse};
-use crate::sessions::{Source, TranscriptSources, Transcripts};
+use crate::util::{read_tail_lines, try_parse};
+use crate::{Source, TranscriptSources, Transcripts};
 
 /// How much of a transcript's end is read. `TAIL_BYTES` in
-/// [`crate::sessions::claude`] and [`crate::sessions::codex`], for the same
+/// `sessions::claude` and `sessions::codex`, for the same
 /// reason: it is comfortably more than one turn's worth of trailing entries.
 pub const TAIL_BYTES: u64 = 64 * 1024;
 
@@ -39,7 +39,7 @@ pub struct AssistantEcho {
     /// ISO-8601 timestamp of the transcript entry it came from, when the entry
     /// carried one. Both CLIs stamp every line in practice; a fixture may not,
     /// and a caller that needs a clock regardless falls back on the file's mtime
-    /// ([`crate::sessions::attention::apply`] does).
+    /// ([`crate::attention::apply`] does).
     pub at: Option<String>,
     /// The text itself, trimmed.
     pub text: String,
@@ -134,7 +134,7 @@ impl TranscriptSources {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sessions::sources::test_reader::TestReader;
+    use crate::sources::test_reader::TestReader;
 
     /// The echo of the core's test reader; each CLI's own is pinned next to
     /// its reader.

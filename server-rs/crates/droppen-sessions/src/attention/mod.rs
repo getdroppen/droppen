@@ -25,7 +25,7 @@
 //!
 //! # Where the work happens
 //!
-//! [`apply`] is called from [`crate::sessions::TranscriptSources::list_and_filter`], which is the
+//! [`apply`] is called from [`crate::TranscriptSources::list_and_filter`], which is the
 //! single place the session list is assembled — so `GET /api/sessions` and the
 //! websocket's `sessions:snapshot`/`sessions:delta` rows agree by construction
 //! rather than by two implementations happening to match.
@@ -39,6 +39,7 @@
 //! a scan. No `stat` is needed — both halves of the key are already in the row.
 
 pub mod derive;
+pub mod routes;
 pub mod seen;
 pub mod unread;
 
@@ -51,9 +52,9 @@ use serde::{Deserialize, Serialize};
 
 use droppen_http::openapi_ext::Nullable;
 use droppen_instance::paths::Paths;
-use crate::sessions::index::Index;
-use crate::sessions::util::{ItemKind, Role, TranscriptItem};
-use crate::sessions::{SessionStatus, SessionSummary, TranscriptSources};
+use crate::index::Index;
+use crate::util::{ItemKind, Role, TranscriptItem};
+use crate::{SessionStatus, SessionSummary, TranscriptSources};
 use unread::Ledger;
 
 /// Whether a session is waiting on the user.
@@ -97,7 +98,7 @@ pub struct FirstUnread {
 /// [`FirstUnread`] over one transcript's items.
 ///
 /// The messages are the ones `unreadCount` counts: an agent text item is
-/// exactly one of [`crate::sessions::Transcripts::spoken_texts`]' texts — a non-empty text block of a
+/// exactly one of [`crate::Transcripts::spoken_texts`]' texts — a non-empty text block of a
 /// main-chain claude `assistant` entry, a non-wrapper text part of a codex
 /// assistant `message` — stamped with its entry's timestamp. They are read off
 /// the feed's parse rather than the [`unread::Ledger`] for two reasons: the
@@ -307,7 +308,7 @@ pub async fn apply(paths: &Paths, transcripts: &TranscriptSources, sessions: &mu
         return;
     }
     let seen = seen::read(paths).await;
-    let index = crate::sessions::index::current();
+    let index = crate::index::current();
     for summary in sessions.iter_mut() {
         let read_at = seen.get(&seen::key_of(summary.source, &summary.id)).map(String::as_str);
         let ledger = ledger_for(index.as_ref(), transcripts, summary, read_at).await;
@@ -317,9 +318,9 @@ pub async fn apply(paths: &Paths, transcripts: &TranscriptSources, sessions: &mu
 
 /// When the assistant last spoke in one session, read from the same ledger
 /// [`apply`] fills the list row from — for a caller outside the list that must
-/// agree with the row's badge (the push gate in [`crate::push`]).
+/// agree with the row's badge (the push gate in `push`).
 pub async fn clock_of(summary: &SessionSummary, read_at: Option<&str>, transcripts: &TranscriptSources) -> Option<String> {
-    let index = crate::sessions::index::current();
+    let index = crate::index::current();
     let ledger = ledger_for(index.as_ref(), transcripts, summary, read_at).await?;
     ledger.newest().map(str::to_owned)
 }
@@ -335,8 +336,8 @@ fn fill(summary: &mut SessionSummary, ledger: Option<&Ledger>, read_at: Option<&
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sessions::sources::test_reader::TestReader;
-    use crate::sessions::Source;
+    use crate::sources::test_reader::TestReader;
+    use crate::Source;
 
     const OLD: &str = "2026-01-01T00:00:00.000Z";
     const NEW: &str = "2026-01-02T00:00:00.000Z";
@@ -411,7 +412,7 @@ mod tests {
             pinned: false,
             id: "s".into(),
             source: Source::Claude,
-            scope: crate::sessions::SessionScope::Owned,
+            scope: crate::SessionScope::Owned,
             server: "default".into(),
             title: "t".into(),
             cwd: Nullable(None),
@@ -422,7 +423,7 @@ mod tests {
             size_bytes: std::fs::metadata(file_path).map(|m| m.len()).unwrap_or(0),
             file_path: file_path.to_string_lossy().into_owned(),
             status,
-            activity: crate::sessions::SessionActivity::from_status(status),
+            activity: crate::SessionActivity::from_status(status),
             resident: Nullable(None),
             claude_root: None,
             acp_agent: None,
@@ -451,7 +452,7 @@ mod tests {
     #[tokio::test]
     async fn an_indexed_ledger_is_believed_without_reading_the_transcript() {
         let home = tempfile::tempdir().expect("tempdir");
-        let index = crate::sessions::index::open(&Paths::new(home.path().to_path_buf()));
+        let index = crate::index::open(&Paths::new(home.path().to_path_buf()));
         let file = home.path().join("quiet.jsonl");
         std::fs::write(&file, "{\"type\":\"user\"}\n").expect("write");
         let summary = row(&file, "2026-01-01T10:00:09.000Z", SessionStatus::Idle);
@@ -476,7 +477,7 @@ mod tests {
     #[tokio::test]
     async fn a_grown_transcript_resumes_from_its_indexed_ledger() {
         let home = tempfile::tempdir().expect("tempdir");
-        let index = crate::sessions::index::open(&Paths::new(home.path().to_path_buf()));
+        let index = crate::index::open(&Paths::new(home.path().to_path_buf()));
         let file = home.path().join("grown.jsonl");
         std::fs::write(&file, "{\"type\":\"user\"}\n").expect("write");
         let before = row(&file, "2026-01-01T10:00:05.000Z", SessionStatus::Idle);
@@ -543,7 +544,7 @@ mod tests {
     /// reader coming back to `99+` wants the first message they missed.
     #[test]
     fn the_first_unread_walks_past_the_cap() {
-        use crate::sessions::util::make_item;
+        use crate::util::make_item;
         let mut items = vec![make_item(Role::User, ItemKind::Text, "go", Some("2026-01-01T09:00:00.000Z"))];
         for n in 0..150 {
             let at = format!("2026-01-01T10:{:02}:{:02}.000Z", n / 60, n % 60);

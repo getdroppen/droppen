@@ -26,8 +26,8 @@ use crate::feed::FeedRegistry;
 use crate::inject::{InjectionRegistry, ProviderRegistry};
 use droppen_instance::instance::{InstanceDirs, InstanceLock};
 use droppen_instance::paths::Paths;
-use crate::sessions::account::{RotationOutcome, RotationTrigger};
-use crate::sessions::{DriverStates, InjectionRunState, Source, TranscriptSources};
+use droppen_sessions::account::{RotationOutcome, RotationTrigger};
+use droppen_sessions::{DriverStates, InjectionRunState, Source, TranscriptSources};
 use crate::shutdown::{self, Cleanups};
 use droppen_base::time::iso8601;
 
@@ -814,7 +814,7 @@ mod tests {
     /// writes one. Each reader's own `record_owned` is the same writer.
     #[tokio::test]
     async fn every_cli_records_ownership_with_its_own_step() {
-        use crate::sessions::owned_sessions::{self, OwnedSessions};
+        use droppen_sessions::owned_sessions::{self, OwnedSessions};
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(home.path().to_path_buf());
         let claimed = |id: &str| paths.codex_claims_dir().join(id).exists();
@@ -939,7 +939,7 @@ mod tests {
     /// each CLI's refusals are its own reader's ([`TranscriptSources::sendability`]).
     mod sendability {
         use super::*;
-        use crate::sessions::{SessionScope, SessionStatus};
+        use droppen_sessions::{SessionScope, SessionStatus};
 
         #[test]
         fn a_live_claude_session_cannot_be_sent_to() {

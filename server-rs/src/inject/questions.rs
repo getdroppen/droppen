@@ -59,8 +59,8 @@ use serde_json::{Map, Value};
 
 use droppen_instance::db::Db;
 use droppen_http::openapi_ext::Nullable;
-use crate::sessions::delivery::{QuestionState, SessionQuestion};
-use crate::sessions::util::QuestionEntry;
+use droppen_sessions::delivery::{QuestionState, SessionQuestion};
+use droppen_sessions::util::QuestionEntry;
 
 /// How long a question is remembered once it is no longer waiting.
 pub const KEEP_FOR_MS: i64 = 7 * 24 * 60 * 60 * 1000;
@@ -144,7 +144,7 @@ impl Stored {
 fn entries(questions: &Value) -> Vec<QuestionEntry> {
     let mut input = Map::new();
     input.insert("questions".to_string(), questions.clone());
-    crate::sessions::tool_display::extract_questions(&input).unwrap_or_default()
+    droppen_sessions::tool_display::extract_questions(&input).unwrap_or_default()
 }
 
 /// The question store, over the instance database.

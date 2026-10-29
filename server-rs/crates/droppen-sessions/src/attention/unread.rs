@@ -16,7 +16,7 @@
 //! The ledger is derived once per transcript and then kept up to date by
 //! reading only what was appended since. It lives in two places: a small
 //! in-memory memo ([`super`]) for the five-second re-list, and the
-//! per-instance `index.db` ([`crate::sessions::index`]) so a restart does not mean
+//! per-instance `index.db` ([`crate::index`]) so a restart does not mean
 //! re-reading every transcript — the largest of them run to a hundred
 //! megabytes.
 //!
@@ -48,8 +48,8 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 use super::derive::spoken;
-use crate::sessions::util::try_parse;
-use crate::sessions::Transcripts;
+use crate::util::try_parse;
+use crate::Transcripts;
 
 /// The most the count ever says. The client renders this as `99+`.
 pub const CAP: usize = 99;
@@ -295,7 +295,7 @@ const BACKWARD_MAX_CHUNK: usize = 4 * 1024 * 1024;
 
 /// Complete lines from `end` backwards, as raw bytes.
 ///
-/// [`crate::sessions::util::BackwardLines`] answers the same question with a
+/// [`crate::util::BackwardLines`] answers the same question with a
 /// decoded `String` per line, which is right for a walk that stops after a
 /// handful of entries and wrong for this one: a cold scan crosses megabytes of
 /// tool output to find a hundred messages, and decoding every line it steps
@@ -428,8 +428,8 @@ async fn complete_end(path: &Path) -> std::io::Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sessions::sources::test_reader::TestReader;
-    use crate::sessions::Source;
+    use crate::sources::test_reader::TestReader;
+    use crate::Source;
 
     /// The core's test reader; what each CLI counts is pinned next to its
     /// reader.

@@ -76,7 +76,7 @@ use chrono::{DateTime, Datelike, NaiveDate, NaiveTime, TimeZone};
 use regex::Regex;
 use serde_json::Value;
 
-use crate::sessions::account::LimitClass;
+use droppen_sessions::account::LimitClass;
 use droppen_base::text::clip;
 
 /// The scope of every limit that is not a per-model weekly window.

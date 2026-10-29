@@ -227,7 +227,7 @@ pub async fn annotate_mentioned_files(home: &Path, items: &mut [TranscriptItem],
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sessions::util::make_item;
+    use crate::util::make_item;
 
     #[test]
     fn code_spans_and_bare_paths_are_both_candidates() {

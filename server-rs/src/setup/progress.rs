@@ -29,7 +29,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use super::{Setup, SetupState};
-use crate::sessions::TranscriptSources;
+use droppen_sessions::TranscriptSources;
 use droppen_instance::db::scope;
 use droppen_http::error::ApiError;
 use droppen_http::extract::ApiJson;
@@ -279,7 +279,7 @@ fn lenient(raw: &str) -> SetupProgress {
 /// Sessions the user ran in their own `~/.claude` or `~/.codex` outside
 /// Droppen do not count: an install that only sees those is still a new one.
 async fn owns_sessions(paths: &droppen_instance::paths::Paths, transcripts: &TranscriptSources) -> bool {
-    if !crate::sessions::owned_sessions::read(paths).await.is_empty() {
+    if !droppen_sessions::owned_sessions::read(paths).await.is_empty() {
         return true;
     }
     for reader in transcripts.iter() {
@@ -466,7 +466,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_guide_opens_by_itself_only_for_a_new_install_of_the_app() {
-        let _index = crate::sessions::index::exclusive().await;
+        let _index = droppen_sessions::index::exclusive().await;
         let home = tempfile::tempdir().expect("tempdir");
         let mut state = crate::api::test_support::state(home.path()).await;
         let fresh = SetupProgress::default();
@@ -503,7 +503,7 @@ mod tests {
 
     #[tokio::test]
     async fn sessions_the_app_ran_on_the_user_s_own_logins_are_its_own_too() {
-        let _index = crate::sessions::index::exclusive().await;
+        let _index = droppen_sessions::index::exclusive().await;
         let fresh = SetupProgress::default();
 
         // A Claude session the app started on the user's own login: its

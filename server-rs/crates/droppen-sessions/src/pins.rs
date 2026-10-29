@@ -1,12 +1,12 @@
 //! Instance-local sidebar pins; never modify the CLI's transcript or shared titles.
 use droppen_instance::db::scope;
 use droppen_instance::paths::Paths;
-use crate::sessions::reference::local_key;
-use crate::sessions::{SessionScope, SessionSummary, Source};
+use crate::reference::local_key;
+use crate::{SessionScope, SessionSummary, Source};
 
 /// The `kv` key a pin is a row under.
 ///
-/// [`local_key`] and not [`crate::sessions::SessionRef::scoped_key`]: these
+/// [`local_key`] and not [`crate::SessionRef::scoped_key`]: these
 /// rows already live in the *instance* database, so naming the server again
 /// would only be saying it twice — and would orphan every pin already set.
 fn key(source: Source, id: &str) -> String {

@@ -46,7 +46,7 @@ use droppen_http::openapi_ext::Nullable;
 use super::ProbeRoots;
 use droppen_base::process_env::{apply_env, clean_env_bare};
 use droppen_base::time::parse_iso_ms;
-use crate::sessions::util::{read_tail_lines, try_parse};
+use droppen_sessions::util::{read_tail_lines, try_parse};
 use droppen_base::time::iso8601;
 
 /// The one question this module asks. It needs no thread, no turn and no

@@ -4,7 +4,7 @@
 //! owns, so a sibling server does not merely refuse to drive it — it never sees
 //! it at all. Codex has one `~/.codex` and no documented way to move it: every
 //! rollout file is visible to every server on the machine, and
-//! [`super::owned_sessions`] cannot close that gap, because a per-instance
+//! [`droppen_sessions::owned_sessions`] cannot close that gap, because a per-instance
 //! registry is deliberately never read across instances. It can say "mine". It
 //! can never say "someone else's", and so instance A's threads list in instance
 //! B, browsable, indistinguishable from the user's own `codex` runs.
@@ -54,7 +54,7 @@ use std::path::{Path, PathBuf};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 
-use super::Source;
+use droppen_sessions::Source;
 use droppen_instance::paths::Paths;
 
 /// What one instance may conclude about one codex thread.
@@ -70,7 +70,7 @@ pub enum Verdict {
 
 /// `<data>/codex-claims/<id>`, or `None` when the id is not a bare name.
 fn claim_file(paths: &Paths, id: &str) -> Option<PathBuf> {
-    super::reference::is_path_segment_id(id).then(|| paths.codex_claims_dir().join(id))
+    droppen_sessions::reference::is_path_segment_id(id).then(|| paths.codex_claims_dir().join(id))
 }
 
 /// The instance named by one claim file, or `None` when it names nothing usable.
@@ -87,8 +87,8 @@ fn named(raw: &str) -> Option<String> {
 
 /// Record that this instance made `id`, for the other instances to read.
 ///
-/// Codex's [`on_owned`](super::Transcripts::on_owned): run by
-/// [`super::owned_sessions::OwnedSessions::record`] right after the registry
+/// Codex's [`on_owned`](droppen_sessions::Transcripts::on_owned): run by
+/// [`droppen_sessions::owned_sessions::OwnedSessions::record`] right after the registry
 /// entry, so the two cannot drift: a registry entry with no claim is a thread a
 /// sibling still lists, which is the bug this exists to fix.
 ///
@@ -159,7 +159,7 @@ type CachedClaims = Option<(PathBuf, String, HashMap<String, String>)>;
 /// A listing runs every five seconds for every attached client, and a claim file
 /// is never rewritten — only created or removed, both of which move the
 /// directory's own mtime. So one `stat` stands in for reading every file in it,
-/// exactly as [`super::owned_sessions`] caches its registry parse. The one change
+/// exactly as [`droppen_sessions::owned_sessions`] caches its registry parse. The one change
 /// the `stat` cannot see is a new claim being filled, which is why
 /// [`Claims::all`] never caches a read that caught one still empty.
 static PARSED: Mutex<CachedClaims> = Mutex::const_new(None);
@@ -184,7 +184,7 @@ impl Claims {
     /// Every claim on the machine, thread id to instance name.
     pub async fn all(paths: &Paths) -> Self {
         let dir = paths.codex_claims_dir();
-        let signature = super::file_signature(&dir).await;
+        let signature = droppen_sessions::file_signature(&dir).await;
 
         if let Some(signature) = signature.as_deref() {
             let cached = PARSED.lock().await;
@@ -200,7 +200,7 @@ impl Claims {
         if let Ok(mut entries) = tokio::fs::read_dir(&dir).await {
             while let Ok(Some(entry)) = entries.next_entry().await {
                 let id = entry.file_name().to_string_lossy().into_owned();
-                if !super::reference::is_path_segment_id(&id) {
+                if !droppen_sessions::reference::is_path_segment_id(&id) {
                     continue;
                 }
                 match tokio::fs::read_to_string(entry.path()).await {
@@ -278,7 +278,7 @@ impl Claims {
 /// **Boot only, and under the instance lock**, like every other owner's move
 /// there: it writes into a directory the sibling servers are reading.
 pub async fn migrate(paths: &Paths) -> usize {
-    let owned = super::owned_sessions::read(paths).await;
+    let owned = droppen_sessions::owned_sessions::read(paths).await;
     let ids: Vec<String> = owned.ids(Source::Codex).map(str::to_owned).collect();
     if ids.is_empty() {
         return 0;
@@ -336,7 +336,7 @@ pub async fn prune(paths: &Paths) -> usize {
     let mut mine: Vec<(String, PathBuf)> = Vec::new();
     while let Ok(Some(entry)) = entries.next_entry().await {
         let id = entry.file_name().to_string_lossy().into_owned();
-        if !super::reference::is_path_segment_id(&id) {
+        if !droppen_sessions::reference::is_path_segment_id(&id) {
             continue;
         }
         let path = entry.path();
@@ -454,10 +454,10 @@ mod tests {
         std::fs::write(claims_dir.join("thread-a"), "").expect("created, not yet filled");
         assert_eq!(Claims::all(&b).await.owner("thread-a"), None);
 
-        let signature = super::super::file_signature(&claims_dir).await;
+        let signature = droppen_sessions::file_signature(&claims_dir).await;
         std::fs::write(claims_dir.join("thread-a"), "a").expect("filled");
         assert_eq!(
-            super::super::file_signature(&claims_dir).await,
+            droppen_sessions::file_signature(&claims_dir).await,
             signature,
             "filling moves nothing the cache sees"
         );

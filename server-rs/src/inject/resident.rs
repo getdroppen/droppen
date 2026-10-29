@@ -78,9 +78,9 @@ use droppen_http::openapi_ext::Optional;
 use droppen_base::process_env::Env;
 use droppen_base::procs;
 use crate::record::{Recorder, SpawnSummary, Stage};
-use crate::sessions::account::{AccountRef, LimitClass, RotationOutcome, RotationTrigger};
-use crate::sessions::delivery::{QuestionState, ReceiptStatus};
-use crate::sessions::{Injection, InjectionRunState, SessionStatus, Source};
+use droppen_sessions::account::{AccountRef, LimitClass, RotationOutcome, RotationTrigger};
+use droppen_sessions::delivery::{QuestionState, ReceiptStatus};
+use droppen_sessions::{Injection, InjectionRunState, SessionStatus, Source};
 use droppen_base::time::iso8601;
 
 use super::questions::{self, PermissionRequest, Stored};
@@ -443,7 +443,7 @@ impl Handle {
     }
 
     /// The mirror in the shape the API speaks in.
-    pub(super) fn info(&self) -> crate::sessions::ResidentInfo {
+    pub(super) fn info(&self) -> droppen_sessions::ResidentInfo {
         self.state().into()
     }
 }
@@ -475,7 +475,7 @@ enum Cmd {
     Interrupt,
     /// Stop one background task, by the CLI's own `task_id`.
     StopTask {
-        /// [`crate::sessions::BackgroundTask::id`], which is claude's id for it.
+        /// [`droppen_sessions::BackgroundTask::id`], which is claude's id for it.
         task_id: String,
     },
     /// A rung of the interrupt ladder came due.
@@ -598,8 +598,8 @@ impl Pending {
     }
 
     /// This message as a row shows it.
-    fn preview(&self, steered: bool) -> crate::sessions::QueuedMessage {
-        crate::sessions::QueuedMessage {
+    fn preview(&self, steered: bool) -> droppen_sessions::QueuedMessage {
+        droppen_sessions::QueuedMessage {
             id: self.id.clone(),
             text: clip_to(&self.text, QUEUE_PREVIEW_CAP),
             steered,
@@ -784,7 +784,7 @@ impl Run for ClaudeCode {
     // Onto this server's hidden list: claude keeps no archive of its own.
     fn archive<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Result<(), String>> {
         Box::pin(async move {
-            crate::sessions::archive::archive_claude_session(&self.registry.paths, id)
+            droppen_sessions::archive::archive_claude_session(&self.registry.paths, id)
                 .await
                 .map_err(|_| "archive failed".to_string())
         })
@@ -1624,7 +1624,7 @@ impl TaskProgress {
 #[derive(Debug, Clone, Default)]
 struct BackgroundTasks {
     /// `(id, tool_use_id, description, task_type, first_seen)`, oldest first.
-    entries: Vec<crate::sessions::BackgroundTask>,
+    entries: Vec<droppen_sessions::BackgroundTask>,
 }
 
 impl BackgroundTasks {
@@ -1669,7 +1669,7 @@ impl BackgroundTasks {
             }
             return changed;
         }
-        self.entries.push(crate::sessions::BackgroundTask {
+        self.entries.push(droppen_sessions::BackgroundTask {
             id: seen.id,
             tool_use_id: seen.tool_use_id.into(),
             description: seen.description.into(),
@@ -1747,7 +1747,7 @@ impl BackgroundTasks {
     }
 
     /// The first [`TASKS_ON_THE_WIRE`] of them, for the mirror.
-    fn wire(&self) -> Vec<crate::sessions::BackgroundTask> {
+    fn wire(&self) -> Vec<droppen_sessions::BackgroundTask> {
         self.entries.iter().take(TASKS_ON_THE_WIRE).cloned().collect()
     }
 }
@@ -7972,7 +7972,7 @@ done
         }
 
         /// The queue as a row would show it: steered first, then waiting.
-        fn queued(&self) -> Vec<crate::sessions::QueuedMessage> {
+        fn queued(&self) -> Vec<droppen_sessions::QueuedMessage> {
             self.state().queued_messages
         }
 
@@ -7993,11 +7993,11 @@ done
             self.registry.drop_queued(SESSION, qid).await
         }
 
-        fn injection(&self) -> Option<crate::sessions::Injection> {
+        fn injection(&self) -> Option<droppen_sessions::Injection> {
             self.registry.run_injection(Source::Claude, SESSION)
         }
 
-        fn injection_for(&self, id: &str) -> Option<crate::sessions::Injection> {
+        fn injection_for(&self, id: &str) -> Option<droppen_sessions::Injection> {
             self.registry.run_injection(Source::Claude, id)
         }
 
@@ -9390,7 +9390,7 @@ done
         until("the turn", || harness.state().phase == Phase::Working).await;
         let started = harness.state().turn_started_at.expect("a working turn has a start");
         assert!(started >= before, "started when the turn did: {started} vs {before}");
-        let info: crate::sessions::ResidentInfo = harness.state().into();
+        let info: droppen_sessions::ResidentInfo = harness.state().into();
         assert_eq!(info.turn_started_at.0.as_deref(), Some(started.as_str()), "and it is on the wire");
         harness.release();
         until("the result", || harness.state().phase == Phase::Idle).await;
@@ -9626,7 +9626,7 @@ await() {{ n=0; while [ ! -f "$dir/$1" ] && [ "$n" -lt 400 ]; do [ -d "$dir" ] |
 
         // The mirror is the API's own answer, so the shape a client sees is
         // asserted here rather than assumed from the driver's.
-        let info = crate::sessions::ResidentInfo::from(harness.state());
+        let info = droppen_sessions::ResidentInfo::from(harness.state());
         assert_eq!(info.background, 2, "the count stays authoritative");
         assert_eq!(info.tasks.len(), 2);
         assert_eq!(info.tasks[1].task_type.as_ref().map(String::as_str), Some("local_bash"));
@@ -10731,7 +10731,7 @@ done
                 .collect()
         }
 
-        fn latest_rotation(&self) -> Option<crate::sessions::account::SessionRotation> {
+        fn latest_rotation(&self) -> Option<droppen_sessions::account::SessionRotation> {
             self.registry.accounts.rotation_log().latest(SESSION)
         }
     }
@@ -11073,7 +11073,7 @@ dir=$(dirname "$GO")
             .await
         }
 
-        fn rotations(&self) -> Vec<crate::sessions::account::SessionRotation> {
+        fn rotations(&self) -> Vec<droppen_sessions::account::SessionRotation> {
             self.registry.accounts.rotation_log().history(SESSION, 20)
         }
     }
@@ -11698,7 +11698,7 @@ done
 
         assert_eq!(harness.state().question.as_deref(), Some("req-q1"));
         assert_eq!(harness.state().phase, Phase::Working, "claude asks mid-turn, and the turn waits");
-        let info: crate::sessions::ResidentInfo = harness.state().into();
+        let info: droppen_sessions::ResidentInfo = harness.state().into();
         assert!(info.asking, "and the row says it is asking, while working");
         assert_eq!(harness.registry.open_question(SESSION).as_deref(), Some("req-q1"));
         let stored = harness.registry.questions().get("req-q1").expect("on record");
@@ -12443,7 +12443,7 @@ done
             accounts: Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins())),
             quota: Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins())),
             composer: crate::drive::composer_prefs::ComposerPrefsStore::new(paths.clone()),
-            titles: crate::sessions::titles::TitlesStore::new(paths.clone()),
+            titles: droppen_sessions::titles::TitlesStore::new(paths.clone()),
             paths,
             transcripts: crate::app::transcript_sources(),
             providers: crate::inject::ProviderRegistry::new(harness.registry.clone(), crate::app::register_providers),

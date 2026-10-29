@@ -400,7 +400,7 @@ async fn alert(paths: &Paths, task_name: &str, reason: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sessions::Source;
+    use droppen_sessions::Source;
 
     fn task(expr: &str, enabled: bool) -> ScheduledTask {
         ScheduledTask {

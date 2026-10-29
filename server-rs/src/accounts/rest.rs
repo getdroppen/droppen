@@ -32,7 +32,7 @@ use super::limits::{self, Rest, Verdict};
 use super::store::AccountProvider;
 use droppen_instance::db::Db;
 use droppen_http::openapi_ext::Nullable;
-use crate::sessions::account::LimitClass;
+use droppen_sessions::account::LimitClass;
 use droppen_base::time::iso8601;
 
 /// The rows for a claude session on the machine's own login.

@@ -46,8 +46,8 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 
-use crate::sessions::reference::lock_name;
-use crate::sessions::Source;
+use droppen_sessions::reference::lock_name;
+use droppen_sessions::Source;
 
 /// The result of trying to claim a session.
 #[derive(Debug)]
@@ -132,7 +132,7 @@ pub fn acquire(dir: &Path, source: Source, session_id: &str) -> std::io::Result<
     }))
 }
 
-// The lock filename lives in `crate::sessions::reference::lock_name`, with
+// The lock filename lives in `droppen_sessions::reference::lock_name`, with
 // the rest of the session-reference spellings. It is the one of the four that
 // must *not* carry the server: this directory is shared by every instance on
 // the machine so that a second one is refused a session the first is driving,
@@ -149,7 +149,7 @@ fn read_holder(file: &mut File) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sessions::reference::{stem, MAX_STEM};
+    use droppen_sessions::reference::{stem, MAX_STEM};
 
     #[test]
     fn one_session_admits_one_holder_and_names_it() {

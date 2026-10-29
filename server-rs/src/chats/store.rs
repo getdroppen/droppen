@@ -119,11 +119,11 @@ pub fn api_chats_dir(paths: &Paths) -> PathBuf {
 
 /// The file a chat id names, if the id can name one at all.
 ///
-/// [`crate::sessions::reference::is_path_segment_id`] is the boundary that keeps
+/// [`droppen_sessions::reference::is_path_segment_id`] is the boundary that keeps
 /// a client-supplied id from walking out of the directory: `..` and `/` are both
 /// rejected, so the join below can only ever land inside `api-chats`.
 pub fn chat_path(paths: &Paths, id: &str) -> Result<PathBuf, ChatError> {
-    if !crate::sessions::reference::is_path_segment_id(id) {
+    if !droppen_sessions::reference::is_path_segment_id(id) {
         return Err(ChatError::message("invalid chat id"));
     }
     Ok(api_chats_dir(paths).join(format!("{id}.json")))

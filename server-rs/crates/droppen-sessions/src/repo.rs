@@ -52,7 +52,7 @@ const CACHE_MAX: usize = 512;
 /// does — `git init` in a directory that already had sessions, or a repository
 /// deleted underneath one — cost a stale grouping, not a wrong session list.
 ///
-/// The near tier of two. Behind it is [`crate::sessions::index`], where the same
+/// The near tier of two. Behind it is [`crate::index`], where the same
 /// answers survive a restart, which is what makes this the cache with the
 /// largest single payoff in the whole listing: 39 distinct directories at 8.6 ms
 /// of process spawn each, four at a time, is 84 ms that a cold list used to pay
@@ -66,7 +66,7 @@ pub async fn repo_key(cwd: &Path) -> Option<String> {
     if let Some(hit) = CACHE.get(cwd) {
         return hit;
     }
-    let index = crate::sessions::index::current();
+    let index = crate::index::current();
     if let Some(answer) = index.as_ref().and_then(|index| index.repo_key(cwd)) {
         CACHE.insert(cwd.to_path_buf(), answer.clone());
         return answer;
@@ -298,14 +298,14 @@ mod tests {
     /// probe would have overwritten it with `None`.
     #[tokio::test]
     async fn a_remembered_repository_key_costs_no_process() {
-        let _guard = crate::sessions::index::exclusive().await;
+        let _guard = crate::index::exclusive().await;
         let home = tempfile::tempdir().expect("tempdir");
         let paths = droppen_instance::paths::Paths::new(home.path().to_path_buf());
-        crate::sessions::index::install(&paths);
+        crate::index::install(&paths);
 
         let cwd = home.path().join("some-checkout");
         std::fs::create_dir_all(&cwd).expect("cwd");
-        crate::sessions::index::open(&paths).remember_repo_key(&cwd, Some("/repos/remembered/.git"));
+        crate::index::open(&paths).remember_repo_key(&cwd, Some("/repos/remembered/.git"));
 
         assert_eq!(
             repo_key(&cwd).await.as_deref(),

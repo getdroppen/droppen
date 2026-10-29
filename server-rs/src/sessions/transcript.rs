@@ -12,9 +12,9 @@ use std::path::{Path, PathBuf};
 use futures_util::future::BoxFuture;
 use serde_json::{Map, Value};
 
-use super::sidecars::{AgentEntry, SubagentMeta, Subagents};
-use super::tool_display::{display_claude_tool_result, display_claude_tool_use, extract_questions, shorten_tool_name};
-use super::util::{
+use droppen_sessions::sidecars::{AgentEntry, SubagentMeta, Subagents};
+use droppen_sessions::tool_display::{display_claude_tool_result, display_claude_tool_use, extract_questions, shorten_tool_name};
+use droppen_sessions::util::{
     clip, is_renderable_image, make_item, make_tool_item, try_parse, ItemKind, LossyLines, PatchHunk, Role, ToolDisplay, TranscriptItem, DETAIL_LIMIT,
 };
 use droppen_http::openapi_ext::Nullable;
@@ -727,7 +727,7 @@ pub async fn list_session_agents(session_file: &Path) -> Vec<AgentEntry> {
     agents
 }
 
-/// Claude Code's subagents, for [`super::Transcripts::subagents`]: the
+/// Claude Code's subagents, for [`droppen_sessions::Transcripts::subagents`]: the
 /// transcripts under each session's `subagents/` directory.
 impl Subagents for super::claude::ClaudeCodeSessions {
     fn agents<'a>(&'a self, session_file: &'a Path) -> BoxFuture<'a, Vec<AgentEntry>> {
@@ -775,14 +775,14 @@ fn result_images(
     home: &Path,
     cwd: Option<&str>,
 ) -> Option<Vec<String>> {
-    if super::tool_display::result_image_count(content) == 0 {
+    if droppen_sessions::tool_display::result_image_count(content) == 0 {
         return None;
     }
     let named = tool_paths.get(tool_use_id?)?;
     if !is_renderable_image(Path::new(named)) {
         return None;
     }
-    let resolved = super::mentions::resolve_within_home(home, named, cwd.map(Path::new))?;
+    let resolved = droppen_sessions::mentions::resolve_within_home(home, named, cwd.map(Path::new))?;
     Some(vec![resolved.to_string_lossy().into_owned()])
 }
 
@@ -1041,7 +1041,7 @@ pub async fn parse_claude_transcript(paths: &droppen_instance::paths::Paths, fil
         }
     }
 
-    super::mentions::annotate_mentioned_files(&paths.home, &mut items, cwd.as_deref()).await;
+    droppen_sessions::mentions::annotate_mentioned_files(&paths.home, &mut items, cwd.as_deref()).await;
     Ok(items)
 }
 

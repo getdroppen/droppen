@@ -20,7 +20,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use crate::sessions::Source;
+use droppen_sessions::Source;
 
 /// A held claim on one session; dropping it lets the session go.
 pub(crate) type SessionClaim = lock::InjectLock;
@@ -217,7 +217,7 @@ impl SpawnGate {
     /// server left behind.
     pub(crate) fn claim_held(&self, source: Source, id: &str) -> bool {
         use std::os::fd::AsRawFd;
-        let path = self.claims.dir.join(crate::sessions::reference::lock_name(source.as_str(), id));
+        let path = self.claims.dir.join(droppen_sessions::reference::lock_name(source.as_str(), id));
         let Ok(file) = std::fs::File::open(path) else { return false };
         // SAFETY: `file` is an open descriptor owned for the whole call, and
         // `LOCK_EX | LOCK_NB` takes no further arguments. A lock that is

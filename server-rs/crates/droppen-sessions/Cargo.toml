@@ -1,0 +1,55 @@
+[package]
+name = "droppen-sessions"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+publish = false
+description = "The Droppen server's session vocabulary, stores, listing, attention and usage stats, and the Transcripts port each CLI's reader implements"
+
+# What a session is and what is kept about it. It stands on the instance, the
+# HTTP kit, the UI preferences (the subagent tree is opt-in) and the plugin
+# store (the settings frame lists the plugins), and names no CLI: each one's
+# transcripts are read through the `Transcripts` port, by the server's readers.
+[dependencies]
+base64 = "0.22"
+chrono = "0.4"
+droppen-base = { path = "../droppen-base" }
+droppen-http = { path = "../droppen-http" }
+droppen-instance = { path = "../droppen-instance" }
+droppen-plugins = { path = "../droppen-plugins" }
+droppen-workbench = { path = "../droppen-workbench" }
+futures-util = "0.3"
+gotcha = { version = "0.4.1", features = ["openapi"] }
+# What gotcha's `Schematic` derive expands to names it.
+gotcha_core = "0.4.1"
+memchr = "2"
+regex = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { workspace = true }
+sha2 = "0.10"
+thiserror = "1"
+tokio = { version = "1", features = ["fs", "io-util", "macros", "rt", "sync", "time"] }
+tracing = "0.1"
+
+# `index::exclusive` (the lock the tests that install the process-wide index
+# take) and `loader::forget_transcript` (a parse forgotten, as a restart does),
+# for the server's tests of the readers, the feed and the routes. Only the
+# server's [dev-dependencies] turn it on.
+[features]
+test-support = []
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "test-util"] }
+
+[lints.rust]
+missing_docs = "deny"
+unreachable_pub = "deny"
+
+# `[lints] workspace = true` cannot be mixed with the rust lints above, so the
+# workspace's two clippy denials (`server-rs/Cargo.toml` `[workspace.lints]`)
+# are repeated here: keep them in step.
+[lints.clippy]
+significant_drop_in_scrutinee = "deny"
+await_holding_lock = "deny"

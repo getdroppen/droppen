@@ -40,7 +40,7 @@ use droppen_http::refresh::RefreshSink;
 use droppen_http::{close_within, send_within, CLOSE_LIMIT};
 use droppen_http::openapi_ext::ExtraResponses;
 use droppen_instance::paths::Paths;
-use crate::sessions::{self, SessionSummary, Source};
+use droppen_sessions::{SessionSummary, Source};
 
 /// Status changes (a live process exiting) touch no file; poll cheaply for them.
 const REFRESH_INTERVAL: Duration = Duration::from_secs(5);
@@ -318,11 +318,11 @@ async fn collect_sessions(drive: &Arc<Drive>) -> Vec<SessionSummary> {
     let drivers = drive.providers.driver_states();
     drive
         .transcripts
-        .list_and_filter(&drive.paths, &bindings, &drivers, None, None, sessions::ScopeFilter::All)
+        .list_and_filter(&drive.paths, &bindings, &drivers, None, None, droppen_sessions::ScopeFilter::All)
         .await
 }
 
-/// [`crate::sessions::SessionRef::local_key`] -> serialized summary, the form
+/// [`droppen_sessions::SessionRef::local_key`] -> serialized summary, the form
 /// the diff compares.
 fn index(sessions: &[SessionSummary]) -> HashMap<String, String> {
     sessions
@@ -335,7 +335,7 @@ fn index(sessions: &[SessionSummary]) -> HashMap<String, String> {
 /// `sessions:delta` frame carries — so it is a contract with the web client,
 /// not an implementation detail. Server-free for that reason.
 fn key_of(summary: &SessionSummary) -> String {
-    crate::sessions::reference::local_key(summary.source, &summary.id)
+    droppen_sessions::reference::local_key(summary.source, &summary.id)
 }
 
 /// The one task per feed that watches, polls, and pushes deltas.
@@ -503,7 +503,7 @@ struct SettingsFrame<'a> {
     /// watching.
     instance: &'a str,
     /// The same name, as a session reference scopes it. See
-    /// `crate::sessions::Settings::server_id`.
+    /// `droppen_sessions::Settings::server_id`.
     server_id: String,
     hostname: String,
     platform: &'static str,
@@ -776,7 +776,7 @@ mod tests {
     use super::*;
     use crate::api::AppState;
     use droppen_http::openapi_ext::Nullable;
-    use crate::sessions::{SessionStatus, Settings};
+    use droppen_sessions::{SessionStatus, Settings};
 
     /// The only fields `GET /api/settings` may have that the frame does not.
     ///
@@ -800,7 +800,7 @@ mod tests {
             pinned: false,
             id: id.to_string(),
             source: Source::Claude,
-            scope: crate::sessions::SessionScope::Owned,
+            scope: droppen_sessions::SessionScope::Owned,
             server: "default".into(),
             title: format!("session {id}"),
             cwd: Nullable(None),
@@ -811,7 +811,7 @@ mod tests {
             size_bytes: 0,
             file_path: format!("/tmp/{id}.jsonl"),
             status: SessionStatus::Idle,
-            activity: crate::sessions::SessionActivity::Idle,
+            activity: droppen_sessions::SessionActivity::Idle,
             resident: Nullable(None),
             claude_root: None,
             acp_agent: None,

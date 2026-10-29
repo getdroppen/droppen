@@ -3,7 +3,7 @@
 //!
 //! They are session vocabulary, so they live here. Accounts chooses the
 //! account, classifies the limit and writes the rotation log
-//! (`crate::accounts::{store, limits, rotation}`); it fills these in.
+//! (`accounts::{store, limits, rotation}`); it fills these in.
 
 use gotcha::Schematic;
 use serde::{Deserialize, Serialize};

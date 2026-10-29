@@ -81,10 +81,10 @@ use tokio_util::sync::CancellationToken;
 use crate::drive::Drive;
 use crate::inject::drafts::Draft;
 use droppen_instance::paths::{ClaudeRoot, Paths};
-use crate::sessions::account::AccountRef;
-use crate::sessions::loader::{encode_fp, Fp, Transcript, RESUME_OVERLAP};
-use crate::sessions::util::TranscriptItem;
-use crate::sessions::{file_signature, CliChoice, Injection, SessionDetail, SessionSummary, Source, TranscriptSources};
+use droppen_sessions::account::AccountRef;
+use droppen_sessions::loader::{encode_fp, Fp, Transcript, RESUME_OVERLAP};
+use droppen_sessions::util::TranscriptItem;
+use droppen_sessions::{file_signature, CliChoice, Injection, SessionDetail, SessionSummary, Source, TranscriptSources};
 use droppen_base::watch;
 
 /// How many items one page of transcript holds.
@@ -285,16 +285,16 @@ pub struct SessionState {
     /// Written by the session's driver the moment a rotation is decided, and
     /// the driver pokes this feed right after, so it arrives without waiting
     /// for the next poll.
-    pub rotation: Option<crate::sessions::account::SessionRotation>,
+    pub rotation: Option<droppen_sessions::account::SessionRotation>,
     /// The receipts of the messages clients named for this session, from the
     /// last two hours; see [`crate::inject::receipts`]. Always present, like
     /// `rotation`, so an absent field means a server too old to send it.
-    pub receipts: Vec<crate::sessions::delivery::MessageReceipt>,
+    pub receipts: Vec<droppen_sessions::delivery::MessageReceipt>,
     /// The questions the agent stopped to ask, oldest first: the one it is
     /// blocked on (`pending`), and the recent ones with what became of them —
     /// who answered, and when. See [`crate::inject::questions`]. Always
     /// present; empty for codex, which never asks.
-    pub questions: Vec<crate::sessions::delivery::SessionQuestion>,
+    pub questions: Vec<droppen_sessions::delivery::SessionQuestion>,
 }
 
 /// Read one session's live state, or `None` when it no longer exists.
@@ -304,12 +304,12 @@ pub async fn load_session_state(drive: &Arc<Drive>, source: Source, id: &str) ->
     let injection = drive.providers.injection_for(source, id);
     let running = injection
         .as_ref()
-        .map(|i| i.state == crate::sessions::InjectionRunState::Running)
+        .map(|i| i.state == droppen_sessions::InjectionRunState::Running)
         .unwrap_or(false);
     let finished_at = injection
         .as_ref()
         .and_then(|i| {
-            (i.state != crate::sessions::InjectionRunState::Running)
+            (i.state != droppen_sessions::InjectionRunState::Running)
                 .then(|| i.finished_at.as_ref().map(String::as_str))
                 .flatten()
         })
@@ -321,8 +321,8 @@ pub async fn load_session_state(drive: &Arc<Drive>, source: Source, id: &str) ->
     // unaffected in practice — a session with a resident is sendable whatever
     // its status says — but a rule that only holds because of a short-circuit
     // three functions away is a rule waiting to be broken.
-    crate::sessions::apply_driver(&mut summary, resident.as_ref(), running, finished_at);
-    crate::sessions::pins::apply(paths, std::slice::from_mut(&mut summary));
+    droppen_sessions::apply_driver(&mut summary, resident.as_ref(), running, finished_at);
+    droppen_sessions::pins::apply(paths, std::slice::from_mut(&mut summary));
     // An ACP session whose agent was removed cannot be continued, whatever is
     // still running for it.
     let (can_send, send_block_reason) = match drive.providers.send_block(&summary) {
@@ -334,7 +334,7 @@ pub async fn load_session_state(drive: &Arc<Drive>, source: Source, id: &str) ->
     // The CLI's own figure wins, then the model on the entry the reading came
     // from, then the reading itself; see `context::resolve_window`.
     let context_window =
-        crate::sessions::context::resolve_window(context.as_ref(), cli_choice.as_ref().and_then(|c| c.model.as_ref()).map(String::as_str));
+        droppen_sessions::context::resolve_window(context.as_ref(), cli_choice.as_ref().and_then(|c| c.model.as_ref()).map(String::as_str));
     let context_tokens = context.as_ref().map(|usage| usage.tokens);
     // One binding table, both CLIs: a codex thread started under a stored key
     // is pinned exactly as a claude session is, and the payload says so in the
@@ -349,9 +349,9 @@ pub async fn load_session_state(drive: &Arc<Drive>, source: Source, id: &str) ->
     // session is unread, or which repository it groups under.
     // `TranscriptSources::list_and_filter` says the same for the list; this is the
     // single-session path.
-    crate::sessions::children::apply(&drive.paths, &drive.transcripts, std::slice::from_mut(&mut summary)).await;
-    crate::sessions::attention::apply(&drive.paths, &drive.transcripts, std::slice::from_mut(&mut summary)).await;
-    crate::sessions::repo::apply(std::slice::from_mut(&mut summary)).await;
+    droppen_sessions::children::apply(&drive.paths, &drive.transcripts, std::slice::from_mut(&mut summary)).await;
+    droppen_sessions::attention::apply(&drive.paths, &drive.transcripts, std::slice::from_mut(&mut summary)).await;
+    droppen_sessions::repo::apply(std::slice::from_mut(&mut summary)).await;
     // Only claude sessions rotate, and only this instance's log knows about it.
     let rotation = match source {
         Source::Claude => drive.accounts.rotation_log().latest(id),
@@ -498,7 +498,7 @@ impl FeedRegistry {
     /// For a change no file shows and the watcher therefore cannot see — an
     /// automatic account rotation, decided in a session's driver — which would
     /// otherwise wait for the next poll. `key` is the session's
-    /// [`crate::sessions::SessionRef::scoped_key`]. A permit is stored when the
+    /// [`droppen_sessions::SessionRef::scoped_key`]. A permit is stored when the
     /// watcher is busy, so a poke is never lost, only merged with the next.
     pub fn poke(&self, key: &str) {
         let feeds = self.feeds.lock().expect("feed registry poisoned");
@@ -622,9 +622,9 @@ pub async fn attach_session_feed_with(
         .and_then(|resume| resume_frame(&sig, &transcript, resume))
         .unwrap_or_else(|| snapshot_frame(&sig, &state, &transcript, page_size));
     // The registry is this process' own memory, so the key carries the server:
-    // see `crate::sessions::SessionRef::scoped_key`. Nothing here is written
+    // see `droppen_sessions::SessionRef::scoped_key`. Nothing here is written
     // down or sent anywhere — the frames a socket receives never contain it.
-    let key = crate::sessions::SessionRef::new(droppen_instance::identity::ServerId::local(&drive.paths), source, id).scoped_key();
+    let key = droppen_sessions::SessionRef::new(droppen_instance::identity::ServerId::local(&drive.paths), source, id).scoped_key();
 
     let (rx, latest, latest_draft) = {
         let mut feeds = registry.feeds.lock().expect("feed registry poisoned");
@@ -1099,8 +1099,8 @@ async fn refresh_items(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sessions::loader::fingerprint_chain;
-    use crate::sessions::util::{make_item, ItemKind, Role};
+    use droppen_sessions::loader::fingerprint_chain;
+    use droppen_sessions::util::{make_item, ItemKind, Role};
 
     fn items(n: usize) -> Vec<TranscriptItem> {
         (0..n)
@@ -1445,7 +1445,7 @@ mod tests {
     #[tokio::test]
     async fn a_rotation_decision_reaches_an_open_session_feed_without_waiting_for_the_poll() {
         use crate::accounts::rotation::Decision;
-        use crate::sessions::account::{LimitClass, RotationOutcome, RotationTrigger};
+        use droppen_sessions::account::{LimitClass, RotationOutcome, RotationTrigger};
 
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = Arc::new(Paths::new(dir.path().to_path_buf()));
@@ -1668,7 +1668,7 @@ mod tests {
         let mut handle = std::fs::OpenOptions::new().append(true).open(&file).expect("open");
         std::io::Write::write_all(&mut handle, claude_turns(id, 250, 2).as_bytes()).expect("append");
         drop(handle);
-        crate::sessions::loader::forget_transcript(&file);
+        droppen_sessions::loader::forget_transcript(&file);
         let (_, restarted) = test_drive(dir.path());
         let feeds = FeedRegistry::new();
 

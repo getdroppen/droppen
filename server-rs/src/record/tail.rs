@@ -379,7 +379,7 @@ impl State {
             }
             // Lossy, because a recording is JSON and JSON is UTF-8. A
             // transcript line that is not valid UTF-8 is already unrenderable
-            // — [`crate::sessions::util::LossyLines`] reads it exactly this way
+            // — [`droppen_sessions::util::LossyLines`] reads it exactly this way
             // — so this loses nothing the Session page would have shown.
             self.emit(Event::Transcript {
                 file: label.to_string(),

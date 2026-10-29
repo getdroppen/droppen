@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use futures_util::future::BoxFuture;
 use serde_json::Value;
 
-use super::sidecars::{Checklist, ChecklistItem, Checklists};
+use droppen_sessions::sidecars::{Checklist, ChecklistItem, Checklists};
 use droppen_instance::paths::{ClaudeRoot, Paths};
 
 /// The status the CLI writes for a finished task.
@@ -28,10 +28,10 @@ const DONE: &str = "completed";
 /// hence a stricter rule than the lookup's.
 fn is_session_dir_name(id: &str) -> bool {
     // One rule for every id that becomes a path segment of its own.
-    super::reference::is_path_segment_id(id)
+    droppen_sessions::reference::is_path_segment_id(id)
 }
 
-/// Claude Code's checklists, for [`super::Transcripts::checklists`]: the task
+/// Claude Code's checklists, for [`droppen_sessions::Transcripts::checklists`]: the task
 /// files under the session's root's `tasks/` directory.
 impl Checklists for super::claude::ClaudeCodeSessions {
     fn read<'a>(&'a self, paths: &'a Paths, id: &'a str) -> BoxFuture<'a, Option<Checklist>> {

@@ -28,7 +28,7 @@ use droppen_instance::db::scope;
 use droppen_http::created::Created;
 use droppen_http::error::ApiError;
 use droppen_http::openapi_ext::Nullable;
-use crate::sessions::{SessionScope, SessionSummary, Source, TranscriptSources};
+use droppen_sessions::{SessionScope, SessionSummary, Source, TranscriptSources};
 
 /// How many recent folders step 03 offers.
 pub const RECENT_LIMIT: usize = 6;
@@ -210,10 +210,10 @@ pub async fn recent_folders(State(state): State<SetupState>) -> Json<RecentFolde
         .list_and_filter(
             &state.paths,
             &bindings,
-            &crate::sessions::DriverStates::default(),
+            &droppen_sessions::DriverStates::default(),
             None,
             None,
-            crate::sessions::ScopeFilter::All,
+            droppen_sessions::ScopeFilter::All,
         )
         .await;
     Json(RecentFolders {

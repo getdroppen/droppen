@@ -121,7 +121,7 @@ async fn usage_stats_aggregate_both_clis_over_the_window() {
     assert_eq!(body["pricing"]["unpricedModels"], serde_json::json!(["codex:gpt-5.6-sol"]));
     assert_eq!(
         body["pricing"]["overridePath"],
-        remote_hand_server::stats::usage::PriceOverride::of(&server.paths).path().to_string_lossy().into_owned(),
+        droppen_sessions::stats::usage::PriceOverride::of(&server.paths).path().to_string_lossy().into_owned(),
         "the override path is rooted at the server's home, not the user's"
     );
 

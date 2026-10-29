@@ -31,7 +31,7 @@
 //! For codex it is half the answer. A registry can only ever say "mine": it is
 //! deliberately never read across instances, so it cannot say "someone else's",
 //! and B would go on listing every thread A made as though the user had started
-//! it. The other half is [`super::codex_claims`] — a claim in the *shared* data
+//! it. The other half is `sessions::codex_claims` — a claim in the *shared* data
 //! directory, which B does read, and on which B hides the row altogether. That
 //! is the same silence an account-backed claude session in A's own Claude root
 //! already gets for free, arrived at the only way one `~/.codex` allows.
@@ -48,9 +48,9 @@
 //! — the one thing `{"claude": [...], "codex": [...]}` could always express and
 //! never mean — is not a row that can be written.
 //!
-//! `owned-sessions.json` was written for a while after the move: [`crate::app`]
+//! `owned-sessions.json` was written for a while after the move: `app`
 //! calls this the one piece of ownership state that cannot be rebuilt from the
-//! filesystem, so a [`droppen_supervisor::supervisor`] demotion to a `.prev` binary that had
+//! filesystem, so a `droppen_supervisor::supervisor` demotion to a `.prev` binary that had
 //! never heard of the database would have had nothing at all. No binary that
 //! old is left to demote to, and the file is no longer read: one left on disk
 //! is inert.
@@ -73,7 +73,7 @@ use droppen_instance::paths::Paths;
 /// The sources a row may name, by wire name: the CLIs whose sessions this
 /// instance records. A row naming any other is dropped ([`stored`]); an ACP
 /// session is owned by where its transcript is kept, not by a row here (see
-/// `crate::sessions::acp_transcript`).
+/// `sessions::acp_transcript`).
 const RECORDED: [&str; 2] = ["claude", "codex"];
 
 /// The ids one instance claims, per CLI, each with the server that made it.
@@ -235,7 +235,7 @@ async fn insert(paths: &Paths, source: Source, id: &str) -> std::io::Result<()> 
 /// Drop `id` from the registry, because the session no longer needs to be in it.
 ///
 /// The caller is Claude Code's prune at boot
-/// (`crate::sessions::claude::ClaudeCodeSessions::prune_owned`): an entry for a
+/// (`sessions::claude::ClaudeCodeSessions::prune_owned`): an entry for a
 /// transcript that is in neither root stands for a session nothing lists or
 /// resumes.
 pub async fn forget(paths: &Paths, source: Source, id: &str) -> std::io::Result<()> {

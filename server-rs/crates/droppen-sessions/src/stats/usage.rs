@@ -17,9 +17,9 @@ use serde_json::Value;
 
 use droppen_http::openapi_ext::Nullable;
 use droppen_instance::paths::Paths;
-use crate::sessions::sources::{TokenUsage, UsageFile};
-use crate::sessions::util::{try_parse, LossyLines};
-use crate::sessions::{Source, TranscriptSources, Transcripts};
+use crate::sources::{TokenUsage, UsageFile};
+use crate::util::{try_parse, LossyLines};
+use crate::{Source, TranscriptSources, Transcripts};
 use droppen_base::time::iso8601;
 
 const DAY_MS: i64 = 86_400_000;
@@ -680,7 +680,7 @@ impl TranscriptSources {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sessions::sources::test_reader::TestReader;
+    use crate::sources::test_reader::TestReader;
     use serde_json::json;
 
     /// Fold a literal transcript the way `parse_file` folds a real one.

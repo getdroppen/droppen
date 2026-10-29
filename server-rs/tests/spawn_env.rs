@@ -225,7 +225,7 @@ impl Server {
         let path = format!("{}:{}", bin.display(), env.get("PATH").expect("a PATH"));
         let paths = droppen_instance::paths::Paths::new(self.home().to_path_buf());
         let secret = remote_hand_server::notify::store::secret(&paths).await.expect("the channel's secret");
-        let key = remote_hand_server::sessions::attention::seen::key_of(remote_hand_server::sessions::Source::Claude, id);
+        let key = droppen_sessions::attention::seen::key_of(droppen_sessions::Source::Claude, id);
         let token = remote_hand_server::notify::token::mint(&secret, droppen_instance::instance::DEFAULT_INSTANCE, &key);
         env.insert("PATH".to_string(), path);
         env.insert("DROPPEN_NOTIFY_URL".to_string(), format!("http://127.0.0.1:{}/api/notify", self.addr.port()));

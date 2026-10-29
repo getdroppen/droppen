@@ -30,7 +30,7 @@
 //! * `assistant` / `thinking` — the whole of a run of deltas, written as soon
 //!   as the run ends. It supersedes the deltas before it, so a finished
 //!   transcript reads as messages and only a turn still streaming reads as
-//!   deltas. It is also the one line [`crate::sessions::attention`] counts as the agent
+//!   deltas. It is also the one line [`droppen_sessions::attention`] counts as the agent
 //!   speaking, once per message rather than once per token.
 //! * `tool_call` — `id`, `title`, `kind` and `input`; `tool_result` — `id`,
 //!   `status` and `output`.
@@ -54,11 +54,11 @@ use futures_util::future::BoxFuture;
 use serde::Serialize;
 use serde_json::{Map, Value};
 
-use super::util::{
+use droppen_sessions::util::{
     first_line_of, make_item, make_tool_item, read_head_lines, read_tail_lines, title_line, try_parse, FileRef, ItemKind, Role, ToolDisplay,
     TranscriptItem,
 };
-use super::{SessionActivity, SessionScope, SessionStatus, SessionSummary, Source};
+use droppen_sessions::{SessionActivity, SessionScope, SessionStatus, SessionSummary, Source};
 use crate::acp::{ContentBlock, SessionUpdate, ToolCallContent, ToolCallStatus, ToolKind};
 use droppen_instance::identity::ServerId;
 use droppen_http::openapi_ext::Nullable;
@@ -623,7 +623,7 @@ fn user_item(entry: &Map<String, Value>, at: Option<&str>) -> TranscriptItem {
 
 /// The texts in one transcript line that are the agent speaking to the user.
 ///
-/// What [`AcpSessions`] reads as speech ([`super::Transcripts::spoken_texts`]):
+/// What [`AcpSessions`] reads as speech ([`droppen_sessions::Transcripts::spoken_texts`]):
 /// the record that closes a run of answer text, never a delta.
 pub fn spoken_texts(entry: &Map<String, Value>) -> Vec<String> {
     if entry.get("type").and_then(Value::as_str) != Some("assistant") {
@@ -639,14 +639,14 @@ pub fn spoken_texts(entry: &Map<String, Value>) -> Vec<String> {
 }
 
 /// The model and effort the session last ran on: its newest `config` record.
-pub async fn read_cli_choice(file_path: &Path) -> Option<super::CliChoice> {
+pub async fn read_cli_choice(file_path: &Path) -> Option<droppen_sessions::CliChoice> {
     let lines = read_tail_lines(file_path, HEAD_BYTES as u64).await.ok()?;
     lines.iter().rev().filter_map(|line| try_parse(line)).find_map(|entry| {
         if entry.get("type").and_then(Value::as_str) != Some("config") {
             return None;
         }
         let field = |key: &str| entry.get(key).and_then(Value::as_str).map(str::to_owned);
-        Some(super::CliChoice {
+        Some(droppen_sessions::CliChoice {
             model: Nullable(field("model")),
             effort: Nullable(field("effort")),
             at: Nullable(field("timestamp")),
@@ -672,7 +672,7 @@ pub async fn has_conversation(file_path: &Path) -> bool {
 /// Every ACP session this server made, on every agent, configured or not; the
 /// order is the caller's.
 pub async fn list_sessions(paths: &Paths) -> Vec<SessionSummary> {
-    let titles = super::custom_titles(paths, Source::Acp).await;
+    let titles = droppen_sessions::custom_titles(paths, Source::Acp).await;
     let transcripts = AcpTranscripts::of(paths);
     let mut out = Vec::new();
     for agent in transcripts.agent_dirs().await {
@@ -692,15 +692,15 @@ pub async fn list_sessions(paths: &Paths) -> Vec<SessionSummary> {
 /// One session's list row, or `None` when there is no such session.
 pub async fn find_session(paths: &Paths, id: &str) -> Option<SessionSummary> {
     let (agent, file_path) = AcpTranscripts::of(paths).locate(id).await?;
-    let titles = super::custom_titles(paths, Source::Acp).await;
+    let titles = droppen_sessions::custom_titles(paths, Source::Acp).await;
     summary_of(paths, &agent, &file_path, id, &titles).await
 }
 
-/// The ACP transcripts this server keeps, for [`super::TranscriptSources`]:
+/// The ACP transcripts this server keeps, for [`droppen_sessions::TranscriptSources`]:
 /// one directory per agent under [`AcpTranscripts::dir`].
 pub struct AcpSessions;
 
-impl super::Transcripts for AcpSessions {
+impl droppen_sessions::Transcripts for AcpSessions {
     fn source(&self) -> Source {
         Source::Acp
     }
@@ -727,13 +727,13 @@ impl super::Transcripts for AcpSessions {
     }
 
     // The `config` record the driver writes when the choice changes.
-    fn cli_choice<'a>(&'a self, file_path: &'a Path) -> BoxFuture<'a, Option<super::CliChoice>> {
+    fn cli_choice<'a>(&'a self, file_path: &'a Path) -> BoxFuture<'a, Option<droppen_sessions::CliChoice>> {
         Box::pin(read_cli_choice(file_path))
     }
 
     // The `usage` record the driver writes from the agent's own `usage_update`.
-    fn context<'a>(&'a self, file_path: &'a Path) -> BoxFuture<'a, Option<super::context::ContextUsage>> {
-        Box::pin(super::context::read_acp_context(file_path))
+    fn context<'a>(&'a self, file_path: &'a Path) -> BoxFuture<'a, Option<droppen_sessions::context::ContextUsage>> {
+        Box::pin(droppen_sessions::context::read_acp_context(file_path))
     }
 
     fn spoken_texts(&self, entry: &Map<String, Value>) -> Vec<String> {

@@ -27,7 +27,7 @@ use droppen_http::error::{ApiError, Hinted};
 use droppen_http::openapi_ext::Optional;
 use super::routes::{NewSessionResult, SendMessageResult};
 use crate::inject::receipts::{self, Claim, InFlight, Kind, Receipts};
-use crate::sessions::Source;
+use droppen_sessions::Source;
 
 /// How long a retry waits for the attempt it collided with to answer.
 pub(crate) const WAIT_FOR_FIRST: Duration = Duration::from_secs(5);

@@ -58,7 +58,7 @@ use droppen_http::openapi_ext::{ExtraResponses, Optional};
 use droppen_instance::paths::Paths;
 use droppen_base::process_env::{clean_env_bare, resolve_on_path, Env};
 use crate::sessions::acp_transcript::{valid_agent_id, MAX_AGENT_ID};
-use crate::sessions::{SessionSummary, Source};
+use droppen_sessions::{SessionSummary, Source};
 
 /// The longest name a person needs.
 const MAX_NAME: usize = 64;

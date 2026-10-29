@@ -19,7 +19,8 @@ use droppen_instance::paths::Paths;
 use droppen_base::process_env::{redact_secrets, Env};
 use droppen_base::procs;
 use crate::record;
-use crate::sessions::{claude, codex, Injection, InjectionRunState, SessionRef, SessionStatus, Source};
+use crate::sessions::{claude, codex};
+use droppen_sessions::{Injection, InjectionRunState, SessionRef, SessionStatus, Source};
 use droppen_base::time::iso8601;
 use gotcha::Schematic;
 
@@ -203,7 +204,7 @@ pub(crate) fn codex_permission_flags(permission: &str) -> Result<Vec<&'static st
 /// The suffix that tells a CLI where its attachments are.
 ///
 /// It is also the contract the transcript parser reads back
-/// (`crate::sessions::util::parse_attachment_suffix`), so the wording is fixed.
+/// (`droppen_sessions::util::parse_attachment_suffix`), so the wording is fixed.
 pub fn attachment_suffix(paths: &[String]) -> String {
     let list = paths.iter().map(|p| format!("- {p}")).collect::<Vec<_>>().join("\n");
     format!("\n\n[{} attached file(s) — view with the Read tool:]\n{list}", paths.len())
@@ -395,7 +396,7 @@ impl InjectionRegistry {
         // move ahead tends to come in a burst: N sessions from A to B within a
         // few minutes. One push per account pair per window says it; the rest
         // would only bury it. A limit-driven rotation always pushes.
-        let ahead_burst = decision.trigger == crate::sessions::account::RotationTrigger::Ahead
+        let ahead_burst = decision.trigger == droppen_sessions::account::RotationTrigger::Ahead
             && !first_ahead_push(&decision.from.id, &decision.to.id, std::time::Instant::now());
         if !ahead_burst {
             if let Some(alerts) = self.alerts.get() {
@@ -463,7 +464,7 @@ impl InjectionRegistry {
     /// signed-out local login hands every start that names no account to a
     /// stand-in ([`crate::accounts::rotation::start_choice`]).
     pub(crate) fn credential_accepted(&self, account_id: &str, session_id: &str) {
-        use crate::sessions::account::LimitClass;
+        use droppen_sessions::account::LimitClass;
         let log = self.accounts.limit_log();
         if log
             .active_observed_ms(account_id, LimitClass::Auth, crate::accounts::rest::now_ms())
@@ -728,7 +729,7 @@ pub trait Alerts: Send + Sync {
     /// A run reached its final state. `driver` is the caller's snapshot of the
     /// drivers, taken synchronously after the finished turn was written back
     /// as idle, so the alert cannot describe the next queued turn.
-    fn turn(&self, paths: Arc<Paths>, source: Source, id: String, outcome: InjectionRunState, error: Option<String>, driver: crate::sessions::DriverStates);
+    fn turn(&self, paths: Arc<Paths>, source: Source, id: String, outcome: InjectionRunState, error: Option<String>, driver: droppen_sessions::DriverStates);
     /// The agent stopped to ask `question`. Called once per question, the
     /// first time it is put on record.
     fn question(&self, paths: Arc<Paths>, source: Source, id: String, question: String);
@@ -739,8 +740,8 @@ pub trait Alerts: Send + Sync {
         paths: Arc<Paths>,
         source: Source,
         id: String,
-        outcome: crate::sessions::account::RotationOutcome,
-        trigger: crate::sessions::account::RotationTrigger,
+        outcome: droppen_sessions::account::RotationOutcome,
+        trigger: droppen_sessions::account::RotationTrigger,
         text: String,
     );
 }
@@ -924,7 +925,7 @@ impl InjectionRegistry {
     /// Cheap for a message nobody named — the update finds no row — and a
     /// poke of the session's feed for one somebody did, so the receipt reaches
     /// the page without waiting for the next poll.
-    pub(crate) fn note_receipt(&self, source: Source, session: &str, qid: &str, status: crate::sessions::delivery::ReceiptStatus) {
+    pub(crate) fn note_receipt(&self, source: Source, session: &str, qid: &str, status: droppen_sessions::delivery::ReceiptStatus) {
         if self.receipts.mark(qid, status, session, receipts::now_ms()) {
             self.poke_feed(source, session);
         }
@@ -958,7 +959,7 @@ impl InjectionRegistry {
     /// on. Both registries are bounded by sessions this server process has
     /// driven, rather than by transcript or list rows, so the snapshot is cheap
     /// to make and cheap to carry.
-    pub fn driver_states(&self) -> crate::sessions::DriverStates {
+    pub fn driver_states(&self) -> droppen_sessions::DriverStates {
         let mut states = DriverStatesBuilder::default();
         self.claude_driver_states(&mut states);
         self.codex_driver_states(&mut states);
@@ -968,7 +969,7 @@ impl InjectionRegistry {
         for (key, run) in self.runs.lock().expect("injections poisoned").iter() {
             states.run(key.clone(), run.injection());
         }
-        crate::sessions::DriverStates::new(self.server.clone(), states.residents, states.running, states.finished)
+        droppen_sessions::DriverStates::new(self.server.clone(), states.residents, states.running, states.finished)
     }
 
     /// Stop a run in the runs map, which no resident drives: a one-shot run
@@ -1009,7 +1010,7 @@ impl InjectionRegistry {
 /// [`InjectionRegistry::driver_states`].
 #[derive(Default)]
 pub(crate) struct DriverStatesBuilder {
-    residents: HashMap<String, crate::sessions::ResidentInfo>,
+    residents: HashMap<String, droppen_sessions::ResidentInfo>,
     running: std::collections::HashSet<String>,
     finished: HashMap<String, String>,
 }
@@ -1017,8 +1018,8 @@ pub(crate) struct DriverStatesBuilder {
 impl DriverStatesBuilder {
     /// A resident the list is to show, under its [`InjectionRegistry::key_of`]
     /// key: every CLI files its sessions under that one key, so
-    /// [`crate::sessions::DriverStates::resident`] finds any of them with it.
-    pub(crate) fn resident(&mut self, key: String, info: crate::sessions::ResidentInfo) {
+    /// [`droppen_sessions::DriverStates::resident`] finds any of them with it.
+    pub(crate) fn resident(&mut self, key: String, info: droppen_sessions::ResidentInfo) {
         self.residents.insert(key, info);
     }
 
@@ -1641,7 +1642,7 @@ mod tests {
     #[test]
     fn the_attachment_suffix_is_what_the_transcript_parser_reads_back() {
         let suffix = attachment_suffix(&["/tmp/a.png".to_string(), "/tmp/b.txt".to_string()]);
-        let split = crate::sessions::util::parse_attachment_suffix(&format!("hi{suffix}"));
+        let split = droppen_sessions::util::parse_attachment_suffix(&format!("hi{suffix}"));
         assert_eq!(split.text, "hi");
         assert_eq!(split.images, ["/tmp/a.png"]);
         assert_eq!(split.files[0].path, "/tmp/b.txt");
@@ -1855,7 +1856,7 @@ mod tests {
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Arc::new(Paths::new(home.path().to_path_buf()));
         let locks = paths.data_dir().join("inject-locks");
-        let debris = locks.join(crate::sessions::reference::lock_name(Source::Claude.as_str(), DEAD));
+        let debris = locks.join(droppen_sessions::reference::lock_name(Source::Claude.as_str(), DEAD));
         std::fs::create_dir_all(&locks).expect("inject-locks");
         std::fs::write(&debris, b"1\n").expect("the dead run's lock file");
         let dirs = InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");

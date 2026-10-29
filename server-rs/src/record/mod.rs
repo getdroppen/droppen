@@ -403,7 +403,7 @@ impl Recorders {
         // whatever the CLI announced rather than anything this server minted.
         // Refusing the odd ones is cheaper than sanitising them, and a session
         // whose id is not id-shaped has bigger problems than its recording.
-        if !crate::sessions::reference::is_path_segment_id(session) {
+        if !droppen_sessions::reference::is_path_segment_id(session) {
             tracing::warn!(session = %session, "not recording a session whose id is not a plain identifier");
             return Recorder::disabled();
         }
@@ -997,9 +997,9 @@ mod tests {
     fn the_environment_decides_whether_anything_is_recorded_at_all() {
         // The parse rules rather than the process environment, which is shared
         // with every other test in this binary.
-        assert!(crate::sessions::reference::is_path_segment_id("11111111-1111-4111-8111-111111111111"));
-        assert!(crate::sessions::reference::is_path_segment_id("agent_1"));
-        assert!(!crate::sessions::reference::is_path_segment_id("a b"));
+        assert!(droppen_sessions::reference::is_path_segment_id("11111111-1111-4111-8111-111111111111"));
+        assert!(droppen_sessions::reference::is_path_segment_id("agent_1"));
+        assert!(!droppen_sessions::reference::is_path_segment_id("a b"));
         assert_eq!(clip("short", 10), "short");
         assert_eq!(clip("0123456789abc", 10).chars().count(), 11);
     }

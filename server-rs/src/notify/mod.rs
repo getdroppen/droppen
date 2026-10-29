@@ -66,7 +66,7 @@ use droppen_http::extract::ApiJson;
 use droppen_http::SendResult;
 use droppen_http::openapi_ext::{ExtraResponses, Optional};
 use droppen_instance::paths::Paths;
-use crate::sessions::Source;
+use droppen_sessions::Source;
 
 /// The one route an agent's `rh-notify` calls.
 pub const NOTIFY_PATH: &str = "/api/notify";
@@ -236,7 +236,7 @@ impl NotifyCaller {
 
     /// The `<source>/<id>` key a token is minted against.
     pub fn key(&self) -> String {
-        crate::sessions::attention::seen::key_of(self.source, &self.id)
+        droppen_sessions::attention::seen::key_of(self.source, &self.id)
     }
 
     /// Split a session key back into its two halves.
@@ -362,7 +362,7 @@ pub struct NotifyState {
     /// The instance this server owns, whose name the test message carries.
     pub instance: Arc<droppen_instance::instance::InstanceDirs>,
     /// What a nudge reads the session it came from through.
-    pub transcripts: crate::sessions::TranscriptSources,
+    pub transcripts: droppen_sessions::TranscriptSources,
 }
 droppen_http::substate!(NotifyState);
 

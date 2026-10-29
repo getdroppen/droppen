@@ -35,7 +35,7 @@ use gotcha::Schematic;
 use serde::{Deserialize, Serialize};
 
 use droppen_http::openapi_ext::Nullable;
-use crate::sessions::util::{ItemKind, Role, TranscriptItem};
+use droppen_sessions::util::{ItemKind, Role, TranscriptItem};
 
 /// How many matches a search returns when the client does not say.
 pub const DEFAULT_LIMIT: usize = 200;
@@ -384,7 +384,7 @@ pub fn search_items(items: &[TranscriptItem], query: &str, terms: &[String], lim
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sessions::util::{make_item, make_tool_item, ToolDisplay};
+    use droppen_sessions::util::{make_item, make_tool_item, ToolDisplay};
 
     fn text(role: Role, body: &str) -> TranscriptItem {
         make_item(role, ItemKind::Text, body, Some("2026-10-01T10:00:00.000Z"))

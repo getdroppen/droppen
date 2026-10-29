@@ -12,9 +12,9 @@ use serde_json::Value;
 
 use crate::agent::streams::source::{DraftFeed, Fingerprints, Items, ListedSession, SessionRow, StreamSource, Transcript};
 use droppen_instance::paths::Paths;
-use crate::sessions::loader::{self, encode_fp, Fp, RESUME_OVERLAP};
-use crate::sessions::util::TranscriptItem;
-use crate::sessions::{DriverStates, ScopeFilter, SessionScope, SessionSummary, Source, TranscriptSources};
+use droppen_sessions::loader::{self, encode_fp, Fp, RESUME_OVERLAP};
+use droppen_sessions::util::TranscriptItem;
+use droppen_sessions::{DriverStates, ScopeFilter, SessionScope, SessionSummary, Source, TranscriptSources};
 
 /// What the session list and the drafts need from above cloud.
 pub trait LiveSessions: Send + Sync {
@@ -123,7 +123,7 @@ impl SessionRow for Listed {
 
 impl ListedSession for Listed {
     fn signature(&self) -> BoxFuture<'_, Option<String>> {
-        Box::pin(crate::sessions::file_signature(Path::new(&self.summary.file_path)))
+        Box::pin(droppen_sessions::file_signature(Path::new(&self.summary.file_path)))
     }
 
     fn transcript<'a>(&'a self, sig: &'a str) -> BoxFuture<'a, Arc<dyn Transcript>> {

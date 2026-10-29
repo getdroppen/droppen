@@ -17,14 +17,14 @@ use tokio::io::AsyncBufReadExt;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::accounts::store::AccountProvider;
-use crate::sessions::{Injection, InjectionRunState, Source};
+use droppen_sessions::{Injection, InjectionRunState, Source};
 use droppen_base::process_env::{apply_env, clean_env, clean_env_bare};
 use droppen_base::procs;
 use droppen_base::time::iso8601;
 
 use super::common::{busy_message, new_uuid, session_workdir, Phase, QueueOutcome, ResidentState, CHAT_SYSTEM_PROMPT};
 use super::gate::{ClaimError, SessionLease};
-use crate::sessions::archive::ArchiveError;
+use droppen_sessions::archive::ArchiveError;
 use super::{
     codex_permission_flags, require_provider, runs, shim, with_codex_files, AccountChoice, Capabilities, CodexAccount, DriverStatesBuilder,
     InjectError, InjectionRegistry, Provider, Run, SendOptions, SendTo, Sent, SpawnPermit, StartAt,
@@ -118,7 +118,7 @@ impl Handle {
             queued_messages: state
                 .queue
                 .iter()
-                .map(|q| crate::sessions::QueuedMessage {
+                .map(|q| droppen_sessions::QueuedMessage {
                     id: q.id.clone(),
                     text: q.text.chars().take(200).collect(),
                     steered: q.request.is_some(),
@@ -134,7 +134,7 @@ impl Handle {
             question: None,
         }
     }
-    pub(super) fn info(&self) -> crate::sessions::ResidentInfo {
+    pub(super) fn info(&self) -> droppen_sessions::ResidentInfo {
         self.state().into()
     }
     pub(super) fn interrupt(&self) -> bool {
@@ -681,7 +681,7 @@ impl InjectionRegistry {
             record.codex = Some(state.clone());
             self.journal.add(record);
         }
-        self.note_receipt(Source::Codex, id, qid, crate::sessions::delivery::ReceiptStatus::Failed);
+        self.note_receipt(Source::Codex, id, qid, droppen_sessions::delivery::ReceiptStatus::Failed);
         QueueOutcome::Done
     }
 
@@ -691,7 +691,7 @@ impl InjectionRegistry {
 
     /// A loaded thread's writer owns its archive operation too. A separate
     /// `codex archive` cannot acquire that writer lock, even between turns.
-    pub async fn archive_codex(self: &Arc<Self>, id: &str) -> Result<(), crate::sessions::archive::ArchiveError> {
+    pub async fn archive_codex(self: &Arc<Self>, id: &str) -> Result<(), droppen_sessions::archive::ArchiveError> {
         // Match delivery's gate: no new resident or accepted message can slip
         // between selecting the archive path and committing its result.
         let mut permit = self.spawn_gate.permit().await;
@@ -1327,7 +1327,7 @@ impl Driver {
                         Source::Codex,
                         &self.record.session_id,
                         &dropped.id,
-                        crate::sessions::delivery::ReceiptStatus::Failed,
+                        droppen_sessions::delivery::ReceiptStatus::Failed,
                     );
                     let _ = reply.send(QueueOutcome::Done);
                 } else {
@@ -1419,7 +1419,7 @@ impl Driver {
                 // Acknowledged: a turn started with it, or it was steered into
                 // the one running. Either way codex has it.
                 self.registry
-                    .note_receipt(Source::Codex, &self.record.session_id, &sent.id, crate::sessions::delivery::ReceiptStatus::Sent);
+                    .note_receipt(Source::Codex, &self.record.session_id, &sent.id, droppen_sessions::delivery::ReceiptStatus::Sent);
                 if request.starts_with("start:") {
                     if let Some(turn) = value["result"]["turn"]["id"].as_str() {
                         // A response may follow turn/completed; do not resurrect it.
@@ -1820,7 +1820,7 @@ mod tests {
     #[tokio::test]
     async fn a_completed_turn_ends_a_refused_credential_rest_on_its_login() {
         use crate::accounts::limits::Verdict;
-        use crate::sessions::account::LimitClass;
+        use droppen_sessions::account::LimitClass;
         use crate::accounts::local_login::LocalLoginState;
         use crate::accounts::rest::{now_ms, Observation, LOCAL_CODEX};
         let mut h = Harness::new().await;
@@ -1866,7 +1866,7 @@ mod tests {
     /// always has.
     #[tokio::test]
     async fn a_usage_limit_is_recorded_and_changes_nothing_else() {
-        use crate::sessions::account::LimitClass;
+        use droppen_sessions::account::LimitClass;
         let mut h = Harness::new().await;
         h.start().await;
         let log = h.driver.registry.accounts.limit_log();
@@ -2470,7 +2470,7 @@ mod tests {
     #[tokio::test]
     async fn a_named_messages_receipt_follows_it_into_codex_and_out_of_the_queue() {
         use crate::inject::receipts::{Claim, Kind};
-        use crate::sessions::delivery::ReceiptStatus;
+        use droppen_sessions::delivery::ReceiptStatus;
         let mut h = Harness::new().await;
         let receipts = h.driver.registry.receipts().clone();
         let named = |text: &str| {

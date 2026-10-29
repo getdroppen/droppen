@@ -16,7 +16,7 @@ use super::{Source, TranscriptSources};
 use droppen_instance::paths::Paths;
 
 /// How many of a client's newest items a resume re-sends: `K` in
-/// [`crate::feed`]'s module docs. Those are the items the parser may still
+/// `feed`'s module docs. Those are the items the parser may still
 /// rewrite in place, so they are neither trusted nor fingerprinted.
 pub const RESUME_OVERLAP: usize = 3;
 
@@ -167,8 +167,8 @@ fn remember_transcript(file_path: &Path, sig: &str, transcript: Arc<Transcript>)
 
 /// Forget the remembered parse of `file_path`, the way a restart does, for a
 /// test of what a reader gets with nothing cached.
-#[cfg(test)]
-pub(crate) fn forget_transcript(file_path: &Path) {
+#[cfg(any(test, feature = "test-support"))]
+pub fn forget_transcript(file_path: &Path) {
     TRANSCRIPTS.lock().expect("cache").retain(|entry| entry.path != file_path);
 }
 

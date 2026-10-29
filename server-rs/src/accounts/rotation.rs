@@ -54,7 +54,7 @@ use super::rest::iso_ms;
 use super::store::{Account, AccountProvider, AccountsStore};
 use droppen_instance::db::Db;
 use droppen_http::openapi_ext::Nullable;
-use crate::sessions::account::{AccountRef, LimitClass, RotationOutcome, RotationTrigger, SessionRotation};
+use droppen_sessions::account::{AccountRef, LimitClass, RotationOutcome, RotationTrigger, SessionRotation};
 
 /// At most this many automatic switches for one message and the continuations
 /// that follow it. Three accounts refusing in a row is not bad luck.
@@ -1175,7 +1175,7 @@ mod tests {
     fn a_database_at_step_eight_gains_the_rotation_trigger_and_old_rows_read_as_limits() {
         use crate::accounts::rotation::RotationLog;
         use droppen_instance::db::{Db, SCHEMA};
-        use crate::sessions::account::RotationTrigger;
+        use droppen_sessions::account::RotationTrigger;
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("state.db");
         {

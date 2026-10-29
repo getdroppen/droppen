@@ -7,7 +7,7 @@
 //! events, and one of them is conditional:
 //!
 //! * **A turn finished and the session is unread.** "Unread" is
-//!   [`crate::sessions::attention`]'s verdict, unchanged — if the user is looking at the
+//!   [`droppen_sessions::attention`]'s verdict, unchanged — if the user is looking at the
 //!   session, the screen already said everything the notification would.
 //! * **A run failed.** Always, regardless of what anyone is looking at: a run
 //!   that died is not going to tell you itself.
@@ -72,14 +72,14 @@ use gotcha::axum::extract::FromRef;
 use gotcha::{api, GotchaRouter, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
-use crate::sessions::attention;
+use droppen_sessions::attention;
 use droppen_http::created::Created;
 use droppen_http::error::ApiError;
 use droppen_http::extract::ApiJson;
 use droppen_http::SendResult;
 use droppen_http::openapi_ext::{ExtraResponses, Optional};
 use droppen_instance::paths::Paths;
-use crate::sessions::{DriverStates, InjectionRunState, ResidentInfo, Source, TranscriptSources};
+use droppen_sessions::{DriverStates, InjectionRunState, ResidentInfo, Source, TranscriptSources};
 
 /// How long the same session's notifications are suppressed after one is sent.
 const THROTTLE: Duration = Duration::from_secs(60);
@@ -481,7 +481,7 @@ async fn notify_inner(
     // The transcript's own verdict, kept from before the overlay below runs.
     //
     // The unread gate must go on asking exactly the question it has always
-    // asked. `crate::sessions::apply_driver` promotes `status` to `Running`
+    // asked. `droppen_sessions::apply_driver` promotes `status` to `Running`
     // whenever the activity is `Working` or `Queued`, and `attention::is_unread`
     // answers `false` for `Running` — so feeding it the overlaid status would
     // silently delete every notification for a turn that ended with something
@@ -504,7 +504,7 @@ async fn notify_inner(
         InjectionRunState::Failed => Notice::Failed(error.unwrap_or_else(|| "the run failed".to_string())),
         InjectionRunState::Ok => {
             // A turn only earns a notification if the user has not already seen
-            // what it produced. Exactly `crate::sessions::attention`'s rule *and* its data:
+            // what it produced. Exactly `droppen_sessions::attention`'s rule *and* its data:
             // the clock is the newest message in the same unread ledger the list
             // row's badge and count come from, built by the same predicate
             // (`Transcripts::spoken_texts`) — so the badge and the notification can
@@ -554,11 +554,11 @@ pub fn notify_rotation(
     transcripts: TranscriptSources,
     source: Source,
     id: String,
-    outcome: crate::sessions::account::RotationOutcome,
-    trigger: crate::sessions::account::RotationTrigger,
+    outcome: droppen_sessions::account::RotationOutcome,
+    trigger: droppen_sessions::account::RotationTrigger,
     text: String,
 ) {
-    use crate::sessions::account::{RotationOutcome, RotationTrigger};
+    use droppen_sessions::account::{RotationOutcome, RotationTrigger};
     tokio::spawn(async move {
         let notice = Notice::Rotated(text.clone());
         let summary = transcripts.find_summary(&paths, source, &id).await;
@@ -697,7 +697,7 @@ pub fn notify_turn(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sessions::SessionSummary;
+    use droppen_sessions::SessionSummary;
 
     /// Serializes the tests that mutate process-global environment variables, so
     /// one setting `DROPPEN_PUSH_ALLOW_INSECURE_ENDPOINT` cannot be observed by another
@@ -828,7 +828,7 @@ mod tests {
     /// A resident with nothing outstanding, for the clause tests to vary.
     fn resident(queued: u32, background: u32) -> ResidentInfo {
         ResidentInfo {
-            phase: crate::sessions::ResidentPhase::Idle,
+            phase: droppen_sessions::ResidentPhase::Idle,
             queued,
             queued_messages: Vec::new(),
             background,
@@ -903,7 +903,7 @@ mod tests {
     /// The trap this module has to keep stepping around, pinned so a future
     /// refactor cannot "simplify" it away.
     ///
-    /// [`crate::sessions::apply_driver`] promotes `status` to `Running` for a
+    /// [`droppen_sessions::apply_driver`] promotes `status` to `Running` for a
     /// queued session, and [`attention::is_unread`] answers `false` for
     /// `Running`. So the overlay is applied for the *wording* while the unread
     /// gate keeps the status the transcript gave: pass it the overlaid one and
@@ -912,7 +912,7 @@ mod tests {
     #[test]
     fn the_overlay_rewrites_the_row_without_moving_the_unread_gate() {
         use droppen_http::openapi_ext::Nullable;
-        use crate::sessions::{apply_driver, SessionActivity, SessionScope, SessionStatus};
+        use droppen_sessions::{apply_driver, SessionActivity, SessionScope, SessionStatus};
 
         let mut summary = SessionSummary {
             pinned: false,
