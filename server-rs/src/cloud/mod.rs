@@ -70,11 +70,9 @@ pub mod gateway;
 pub mod hub_web;
 mod link;
 pub mod link_handoff;
-mod streams;
 
 pub use access::remote_viewer;
 pub use file::LinkFile;
-pub use streams::{LiveSessions, SessionStreams};
 pub use link::{post_cancel, post_finish, post_link, post_return, web_origin, ATTEMPT_TTL_MS, DEFAULT_HUB};
 
 use access::*;
@@ -1549,7 +1547,7 @@ mod tests {
         state.cloud.control.attach(droppen_agent::link::LinkEnv {
             addr,
             credential: "test".into(),
-            streams: Arc::new(SessionStreams::new(
+            streams: Arc::new(crate::stream_source::SessionStreams::new(
                 state.drive.paths.clone(),
                 state.drive.transcripts.clone(),
                 state.drive.clone(),
@@ -1677,7 +1675,7 @@ mod tests {
         state.cloud.control.attach(droppen_agent::link::LinkEnv {
             addr,
             credential: "test".into(),
-            streams: Arc::new(SessionStreams::new(
+            streams: Arc::new(crate::stream_source::SessionStreams::new(
                 state.drive.paths.clone(),
                 state.drive.transcripts.clone(),
                 state.drive.clone(),

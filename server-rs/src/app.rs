@@ -477,7 +477,7 @@ impl RemoteHandApp {
             cloud.attach(droppen_agent::link::LinkEnv {
                 addr,
                 credential: auth_for_link.internal_credential().to_string(),
-                streams: Arc::new(crate::cloud::SessionStreams::new(
+                streams: Arc::new(crate::stream_source::SessionStreams::new(
                     drive_for_link.paths.clone(),
                     drive_for_link.transcripts.clone(),
                     drive_for_link,
@@ -733,7 +733,7 @@ impl droppen_auth::NotifyCredential for NotifyTokens {
 
 /// The link's streams read the account bindings, the drivers and the drafts
 /// from the drive, as the session list does.
-impl crate::cloud::LiveSessions for crate::drive::Drive {
+impl crate::stream_source::LiveSessions for crate::drive::Drive {
     fn bindings(&self) -> futures_util::future::BoxFuture<'_, std::collections::BTreeMap<String, String>> {
         Box::pin(self.accounts.session_account_map())
     }

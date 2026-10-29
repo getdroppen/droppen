@@ -3,7 +3,7 @@
 //! loader: the streams read a transcript only through [`Transcript`],
 //! [`Items`] and [`Fingerprints`], and a row only through [`SessionRow`]. The
 //! server's tests hold a loader's transcript against these
-//! (`cloud::streams`), so the two cannot drift apart unnoticed. With
+//! (`stream_source`), so the two cannot drift apart unnoticed. With
 //! `test-support` only.
 
 use std::path::{Path, PathBuf};
