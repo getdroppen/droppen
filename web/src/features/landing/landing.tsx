@@ -16,7 +16,7 @@ import { FooterLine, PublicHeader, Section, SectionHead, SOURCE_URL } from "./pa
 import { PLAN_NUMBERS } from "./pricing-plans";
 import { ProductTour } from "./product-tour";
 import { useLatestRelease } from "./release-files";
-import { APP_PATH, publicLink, SECURITY_PATH, SIGN_IN_PATH, SIGN_UP_PATH, WAITLIST_HREF } from "./route";
+import { APP_PATH, publicLink, SECURITY_PATH, SIGN_UP_PATH, WAITLIST_HREF } from "./route";
 
 /*
  * The landing page: what a signed-out visitor sees at `/` in cloud mode
@@ -119,8 +119,10 @@ function HowItWorks() {
       <ol className="grid border-t border-border md:grid-cols-3">
         {steps.map(({ title, body }, i) => (
           <li key={title} className={cn("flex flex-col gap-2.5 px-6 py-7 max-md:px-4", i > 0 && "border-border max-md:border-t md:border-l")}>
-            <span className="flex size-6 items-center justify-center bg-fg font-mono text-xs font-medium text-bg tabular-nums">{i + 1}</span>
-            <span className="text-base leading-6 font-semibold text-fg">{title}</span>
+            <div className="flex items-center gap-2.5">
+              <span className="flex size-6 shrink-0 items-center justify-center bg-fg font-mono text-xs font-medium text-bg tabular-nums">{i + 1}</span>
+              <span className="text-base leading-6 font-semibold text-fg">{title}</span>
+            </div>
             <span className="text-sm leading-6 text-pretty text-muted">{body}</span>
           </li>
         ))}
@@ -153,8 +155,10 @@ function Features() {
               "lg:[&:nth-child(-n+3)]:border-b lg:[&:not(:nth-child(3n+1))]:border-l",
             )}
           >
-            <Icon className="size-5 text-fg" />
-            <span className="text-base leading-6 font-semibold text-fg">{title}</span>
+            <div className="flex items-center gap-2.5">
+              <Icon className="size-5 shrink-0 text-fg" />
+              <span className="text-base leading-6 font-semibold text-fg">{title}</span>
+            </div>
             <span className="text-sm leading-6 text-pretty text-muted">{body}</span>
           </li>
         ))}
@@ -181,8 +185,10 @@ function Security() {
       <ul className="grid border-t border-border md:grid-cols-3">
         {cards.map(({ icon: Icon, title, body }, i) => (
           <li key={title} className={cn("flex flex-col gap-2.5 px-6 py-7 max-md:px-4", i > 0 && "border-border max-md:border-t md:border-l")}>
-            <Icon className="size-5 text-fg" />
-            <span className="text-base leading-6 font-semibold text-fg">{title}</span>
+            <div className="flex items-center gap-2.5">
+              <Icon className="size-5 shrink-0 text-fg" />
+              <span className="text-base leading-6 font-semibold text-fg">{title}</span>
+            </div>
             <span className="text-sm leading-6 text-pretty text-muted">
               {body}
               {i === 2 && (
@@ -226,13 +232,6 @@ function Footer({ signedIn, signup }: { signedIn: boolean; signup: SignupMode })
                 className="group flex h-10 shrink-0 items-center justify-between gap-3 whitespace-nowrap border border-fg bg-fg px-4 text-sm font-medium text-bg transition-colors hover:bg-fg/85"
               >
                 <span>{signup === "closed" ? t("Join the waitlist") : t("Sign up on the web")}</span>
-                <ArrowRight className="size-4 shrink-0 transition-transform duration-150 group-hover:translate-x-0.5" />
-              </a>
-              <a
-                {...publicLink(SIGN_IN_PATH)}
-                className="group flex h-10 shrink-0 items-center justify-between gap-3 whitespace-nowrap border border-border-strong bg-bg px-4 text-sm font-medium text-fg transition-colors hover:border-fg hover:bg-hover"
-              >
-                <span>{t("Sign in")}</span>
                 <ArrowRight className="size-4 shrink-0 transition-transform duration-150 group-hover:translate-x-0.5" />
               </a>
             </div>

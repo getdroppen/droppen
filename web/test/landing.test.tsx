@@ -121,9 +121,9 @@ test("one primary action, and the calls to action go to sign-up and sign-in", ()
   const primaries = html.match(/data-variant="primary"/g) ?? [];
   assert.equal(primaries.length, 1, "one primary per page (docs/ui-spec.md V10)");
   assert.match(html, /<a href="\/signup"[^>]*data-variant="primary"[^>]*>Create a free account<\/a>/);
-  // Header offers sign-in via user menu; the page ends with a direct sign-in link.
+  // Sign-in is the header's user menu and nothing else: the page ends on sign-up alone.
   assert.match(html, /aria-label="Sign in"/, "sign-in in the header user menu");
-  assert.equal((html.match(/<a href="\/signin"/g) ?? []).length, 1, "sign-in at the end");
+  assert.equal((html.match(/<a href="\/signin"/g) ?? []).length, 0, "no sign-in link on the page");
   // The page ends on the same call to action, as a secondary.
   assert.match(html, /<a href="\/signup"[^>]*>[\s\S]*Sign up on the web[\s\S]*<\/a>/, "sign-up at the end");
 });
@@ -251,7 +251,7 @@ test("open sign-up by default: no invite wording; the invite wording only where 
   // The ways in: the waitlist where "Get started" was (the hero's and the footer's), and sign-in.
   assert.doesNotMatch(closed, /href="\/signup"|Create a free account/);
   assert.equal((closed.match(/<a href="\/pricing#waitlist"[^>]*>[\s\S]*?Join the waitlist[\s\S]*?<\/a>/g) ?? []).length, 3, "the hero's line, its account action and the footer's");
-  assert.match(closed, /<a href="\/signin"[^>]*>[\s\S]*?Sign in[\s\S]*?<\/a>/);
+  assert.match(closed, /aria-label="Sign in"/, "sign-in stays in the header's user menu");
   for (const signup of ["open", "invite"] as const) assert.match(draw("en", { signup }), /<a href="\/signup"[^>]*>Create a free account<\/a>/, signup);
   for (const [lng, line] of [["zh-CN", "目前暂停注册。"], ["zh-TW", "目前暫停註冊。"], ["ja", "現在、新規登録を停止しています。"]] as const) {
     const words = text(draw(lng, { signup: "closed" }));
@@ -505,7 +505,7 @@ test("the tour shows the product: six tabs of real screenshots, each in its fram
   assert.equal((tour.match(/role="tab"/g) ?? []).length, TOUR_TABS.length);
   assert.doesNotMatch(tour, /animate-/);
   assert.match(tour, /role="tab"[^>]*aria-selected="true"[^>]*data-tab="sessions"/);
-  for (const label of ["会话", "分屏并排", "终端", "我的设备", "移动端", "添加设备"]) assert.ok(text(tour).includes(label), label);
+  for (const label of ["会话", "分屏", "终端", "我的设备", "移动端", "添加设备"]) assert.ok(text(tour).includes(label), label);
   // Its picture in both themes, the light one described.
   assert.match(tour, /<img src="\/tour\/app-session-zh-CN-light\.webp" alt="Mac 上的 Droppen[^"]*"/);
   assert.match(tour, /<img src="\/tour\/app-session-zh-CN-dark\.webp" alt="" aria-hidden="true"/);

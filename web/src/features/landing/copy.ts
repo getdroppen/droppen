@@ -104,7 +104,7 @@ const zhCN: Bundle = {
   "Sessions": "会话",
   "Droppen on a Mac: a list of Claude Code and Codex sessions, and a session waiting for an answer":
     "Mac 上的 Droppen：Claude Code 和 Codex 的会话列表，以及一个等你回答的会话",
-  "Side by side": "分屏并排",
+  "Side by side": "分屏",
   "Droppen with three panes: two sessions and a terminal": "Mac 上的 Droppen 分成三栏：两个会话和一个终端",
   "Terminal": "终端",
   "A terminal in Droppen": "Droppen 里的终端",
