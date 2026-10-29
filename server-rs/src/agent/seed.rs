@@ -271,7 +271,7 @@ impl FileSeedStore {
             serde_json::to_vec_pretty(&KeyFile {
                 version: 1,
                 uuid: seed.uuid.clone(),
-                seed: seed.seed.iter().map(|b| format!("{b:02x}")).collect(),
+                seed: droppen_base::text::hex(seed.seed.as_ref()),
             })
             .map_err(|e| e.to_string())?,
         );

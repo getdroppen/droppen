@@ -98,15 +98,6 @@ pub struct HostKeys {
     guard: Guard,
 }
 
-/// [`droppen_base::text::hex`], zeroized: this is key material.
-fn hex(data: &[u8]) -> Zeroizing<String> {
-    Zeroizing::new(droppen_base::text::hex(data))
-}
-
-fn unhex32(text: &str) -> Option<[u8; 32]> {
-    droppen_base::text::unhex32(text)
-}
-
 impl HostKeys {
     /// The keys of `account` held by `device`: what the file says, or none
     /// when there is no file or it was written for another account or device
@@ -188,7 +179,7 @@ impl HostKeys {
             .hosts
             .get(host)
             .and_then(|e| e.get(&epoch))
-            .and_then(|k| unhex32(k))
+            .and_then(|k| droppen_base::text::unhex32(k))
             .map(Zeroizing::new)
     }
 
@@ -198,7 +189,7 @@ impl HostKeys {
     /// one key per epoch, so the one held is the committed one). A write
     /// refused leaves nothing behind in memory either.
     pub fn put(&mut self, host: &str, epoch: u32, key: &[u8]) -> Result<bool, String> {
-        let text = hex(key);
+        let text = Zeroizing::new(droppen_base::text::hex(key));
         let new_host = !self.file.hosts.contains_key(host);
         match self.file.hosts.get(host).and_then(|e| e.get(&epoch)) {
             Some(held) if held.as_str() == text.as_str() => return Ok(false),
