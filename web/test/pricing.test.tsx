@@ -115,7 +115,7 @@ test("the pricing page leads with what you get, in zh-CN first", () => {
     "或每年 $96，省 20%",
     "加入等候名单",
     "各方案包含的内容",
-    "留下邮箱，Pro 开放购买时我们会发邮件通知你。",
+    "留下邮箱，Pro 开放时通知",
     "每月流量额度用完后会怎样？",
     "「仅本地」是什么意思？",
     "可以自行部署吗？",
@@ -238,7 +238,7 @@ test("open sign-up: the form is Pro's alone — no plan to choose, whatever the 
   for (const line of [
     "Sign up with an e-mail address",
     "Free, with an account",
-    "Leave your address, and we'll write when Pro opens.",
+    "Leave your address, and we'll write when Pro opens",
     "Pro is not on sale yet: payments are on their way. Submitting the form is all it takes.",
   ]) {
     assert.ok(words.includes(line), `missing: ${line}`);
@@ -250,7 +250,7 @@ test("open sign-up: the form is Pro's alone — no plan to choose, whatever the 
   }
   // By invite, as before.
   const invited = text(draw("en", { signup: "invite" }));
-  for (const line of ["Sign-up is by invite for now", "Free; sign-up by invite for now", "Have an invite code? Sign up", "Leave your address, and we'll write when it's your turn."]) {
+  for (const line of ["Sign-up is by invite for now", "Free; sign-up by invite for now", "Have an invite code? Sign up", "Leave your address, and we'll write when it's your turn"]) {
     assert.ok(invited.includes(line), `invite missing: ${line}`);
   }
 });
@@ -261,7 +261,7 @@ test("closed sign-up: closed for now, Free's waitlist and Pro's, and no invite c
   for (const line of [
     "Sign-up is closed for now",
     "Free; sign-up is closed for now",
-    "Leave your address, and we'll write when sign-up or Pro opens.",
+    "Leave your address, and we'll write when sign-up or Pro opens",
     "Sign-up is closed for now, and Pro is not on sale yet. Pick what you are waiting for: we'll e-mail you when sign-up opens, or when Pro does. Submitting the form is all it takes.",
   ]) {
     assert.ok(words.includes(line), `missing: ${line}`);
@@ -388,7 +388,7 @@ test("the page reads in zh-TW and ja, with nothing left in English", () => {
   const tw = text(draw("zh-TW"));
   for (const line of ["免費開始，需要更多時升級 Pro", "僅本地", "加入等候名單", "3 台可執行 AI 的裝置", "各方案包含的內容", "可以自行架設嗎？", "裝置長時間離線會怎樣？"]) assert.ok(tw.includes(line), `zh-TW missing: ${line}`);
   const jp = text(draw("ja"));
-  for (const line of ["無料で始めて、必要になったら Pro へ。", "ローカルのみ", "ウェイトリストに登録", "AI を実行できるデバイス 3 台", "各プランの内容", "セルフホストできますか？", "デバイスが長くオフラインのままだと？"]) assert.ok(jp.includes(line), `ja missing: ${line}`);
+  for (const line of ["無料で始めて、必要なら Pro へ。", "ローカルのみ", "ウェイトリストに登録", "AI を実行できるデバイス 3 台", "各プランの内容", "セルフホストできますか？", "デバイスが長くオフラインのままだと？"]) assert.ok(jp.includes(line), `ja missing: ${line}`);
   for (const words of [tw, jp, text(draw("zh-CN"))]) {
     assert.doesNotMatch(words, /Join the waitlist|Start free|Local only|Everything in Free|What each plan includes|Before you choose|devices that run AI/);
   }

@@ -92,9 +92,9 @@ export const pricingZhCN: Bundle = {
     "免费版在云端保存每台设备最近 {{free}} 天会话的加密副本，Pro 保存最近 {{pro}} 天。设备离线超过这一期限，其云端副本会被删除；设备上的记录不受影响，重新上线后会自动再次上传这段时间的会话。",
 
   // Waitlist
-  "Leave your address, and we'll write when it's your turn.": "留下邮箱，轮到你时我们会发邮件通知你。",
-  "Leave your address, and we'll write when sign-up or Pro opens.": "留下邮箱，开放注册或 Pro 开放购买时，我们会发邮件通知你。",
-  "Leave your address, and we'll write when Pro opens.": "留下邮箱，Pro 开放购买时我们会发邮件通知你。",
+  "Leave your address, and we'll write when it's your turn": "留下邮箱，轮到你时我们会发邮件通知你",
+  "Leave your address, and we'll write when sign-up or Pro opens": "留下邮箱，开放注册或 Pro 开放购买时，我们会发邮件通知你",
+  "Leave your address, and we'll write when Pro opens": "留下邮箱，Pro 开放时通知",
   "Pro is not on sale yet: payments are on their way. Submitting the form is all it takes.": "Pro 尚未开放购买，付款功能仍在准备中。提交邮箱即可加入，无需其他步骤。",
   "Sign-up is closed for now, and Pro is not on sale yet. Pick what you are waiting for: we'll e-mail you when sign-up opens, or when Pro does. Submitting the form is all it takes.":
     "目前暂停注册，Pro 也尚未开放购买。请选择你在等待的项目：开放注册或 Pro 开放购买时，我们会发邮件通知你。提交邮箱即可加入，无需其他步骤。",
@@ -297,9 +297,9 @@ export const pricingZhTW: Bundle = {
   "Free keeps an encrypted copy of each device's last {{free}} days of sessions in the cloud, Pro its last {{pro}}. A device offline for longer than that has its cloud copy deleted: what is on the device is not affected, and those days are uploaded again once it is back online.":
     "免費版在雲端保存每台裝置最近 {{free}} 天工作階段的加密副本，Pro 保存最近 {{pro}} 天。裝置離線超過這一期限，其雲端副本會被刪除；裝置上的紀錄不受影響，重新上線後會自動再次上傳這段時間的工作階段。",
 
-  "Leave your address, and we'll write when it's your turn.": "留下電子郵件，輪到你時我們會寄信通知你。",
-  "Leave your address, and we'll write when sign-up or Pro opens.": "留下電子郵件，開放註冊或 Pro 開放購買時，我們會寄信通知你。",
-  "Leave your address, and we'll write when Pro opens.": "留下電子郵件，Pro 開放購買時我們會寄信通知你。",
+  "Leave your address, and we'll write when it's your turn": "留下電子郵件，輪到你時我們會寄信通知你",
+  "Leave your address, and we'll write when sign-up or Pro opens": "留下電子郵件，開放註冊或 Pro 開放購買時，我們會寄信通知你",
+  "Leave your address, and we'll write when Pro opens": "留下電子郵件，Pro 開放購買時我們會寄信通知你",
   "Pro is not on sale yet: payments are on their way. Submitting the form is all it takes.": "Pro 尚未開放購買，付款功能仍在準備中。送出電子郵件即可加入，無需其他步驟。",
   "Sign-up is closed for now, and Pro is not on sale yet. Pick what you are waiting for: we'll e-mail you when sign-up opens, or when Pro does. Submitting the form is all it takes.":
     "目前暫停註冊，Pro 也尚未開放購買。請選擇你在等待的項目：開放註冊或 Pro 開放購買時，我們會寄信通知你。送出電子郵件即可加入，無需其他步驟。",
@@ -444,7 +444,7 @@ export const pricingJa: Bundle = {
     "1 台ならアカウントなしで、招待があれば無料で、もっと多くのデバイスと長いオフライン閲覧なら Pro で。どのプランもエンドツーエンド暗号化です。",
   "Use Droppen on one device with no account, free with an account, or Pro for more devices and longer offline reading. Every plan is end-to-end encrypted.":
     "1 台ならアカウントなしで、アカウントがあれば無料で、もっと多くのデバイスと長いオフライン閲覧なら Pro で。どのプランもエンドツーエンド暗号化です。",
-  "Start free. Go Pro when you need more.": "無料で始めて、必要になったら Pro へ。",
+  "Start free. Go Pro when you need more.": "無料で始めて、必要なら Pro へ。",
   "Every plan is end-to-end encrypted: on none of them can we read your sessions, your code or your terminals. A plan decides only how many devices you can connect, how many days of sessions your phone can read while a device that runs AI is offline, and how much traffic goes through our servers each month.":
     "どのプランもエンドツーエンド暗号化で、どのプランでも私たちはあなたのセッション、コード、ターミナルを読めません。プランで決まるのは 3 つだけです。接続できるデバイスの数、AI を実行できるデバイスがオフラインのときにスマホで読めるセッションの日数、そして私たちのサーバーを経由する毎月の転送量です。",
   "Prices in US dollars. Pro is not on sale yet, and nothing is charged before you choose to pay.":
@@ -501,9 +501,9 @@ export const pricingJa: Bundle = {
   "Free keeps an encrypted copy of each device's last {{free}} days of sessions in the cloud, Pro its last {{pro}}. A device offline for longer than that has its cloud copy deleted: what is on the device is not affected, and those days are uploaded again once it is back online.":
     "無料プランは各デバイスの直近 {{free}} 日分のセッションを、Pro は直近 {{pro}} 日分を、暗号化したコピーとしてクラウドに保存します。それより長くオフラインのデバイスは、クラウド上のコピーが削除されます。デバイス内の記録はそのままで、オンラインに戻るとその期間のセッションが自動で再アップロードされます。",
 
-  "Leave your address, and we'll write when it's your turn.": "メールアドレスを登録してください。順番が来たらメールでお知らせします。",
-  "Leave your address, and we'll write when sign-up or Pro opens.": "メールアドレスを登録してください。新規登録の受付を再開したとき、または Pro の販売を始めたときにお知らせします。",
-  "Leave your address, and we'll write when Pro opens.": "メールアドレスを登録してください。Pro の販売を始めたらお知らせします。",
+  "Leave your address, and we'll write when it's your turn": "メールアドレスを登録してください。順番が来たらメールでお知らせします",
+  "Leave your address, and we'll write when sign-up or Pro opens": "メールアドレスを登録してください。新規登録の受付を再開したとき、または Pro の販売を始めたときにお知らせします",
+  "Leave your address, and we'll write when Pro opens": "メールアドレスを登録してください。Pro の販売を始めたらお知らせします",
   "Pro is not on sale yet: payments are on their way. Submitting the form is all it takes.": "Pro はまだ販売していません。お支払いの仕組みを準備中です。メールアドレスを送信すれば登録は完了です。",
   "Sign-up is closed for now, and Pro is not on sale yet. Pick what you are waiting for: we'll e-mail you when sign-up opens, or when Pro does. Submitting the form is all it takes.":
     "現在は新規登録を停止しており、Pro もまだ販売していません。お待ちの項目を選んでください。新規登録の受付を再開したとき、または Pro の販売を始めたときにメールでお知らせします。メールアドレスを送信すれば登録は完了です。",

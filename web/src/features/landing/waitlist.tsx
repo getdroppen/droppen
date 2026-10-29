@@ -102,7 +102,7 @@ function PlanChoice({ plan, onPlan }: { plan: WaitlistPlan; onPlan: (plan: Waitl
           >
             <input type="radio" name="plan" value={o.id} checked={plan === o.id} onChange={() => onPlan(o.id)} data-testid={`waitlist-plan-${o.id}`} className="sr-only" />
             <span>{o.name}</span>
-            <span className={cn("font-mono text-xs font-semibold", plan === o.id ? "text-bg/70" : "text-faint")}>{o.price}</span>
+            <span className={cn("text-xs font-semibold tabular-nums", plan === o.id ? "text-bg/70" : "text-faint")}>{o.price}</span>
           </label>
         ))}
       </div>
@@ -199,7 +199,7 @@ export function WaitlistForm({
         />
       </label>
       {refused && (
-        <p id="waitlist-error" role="alert" data-signal="failed" data-testid="waitlist-error" data-reason={refused.reason} className="font-mono text-xs font-semibold leading-4 text-danger">
+        <p id="waitlist-error" role="alert" data-signal="failed" data-testid="waitlist-error" data-reason={refused.reason} className="text-xs font-semibold leading-4 text-danger">
           {problemText(refused, t)}
         </p>
       )}
@@ -210,7 +210,7 @@ export function WaitlistForm({
         </button>
         <p className="text-xs leading-5 text-muted">
           {t("No confirmation mail and no newsletter: we use your address only to send what you asked for.")}{" "}
-          <a {...publicLink(PRIVACY_PATH)} data-testid="waitlist-privacy" className="text-fg underline underline-offset-4 hover:no-underline">
+          <a {...publicLink(PRIVACY_PATH)} data-testid="waitlist-privacy" className="whitespace-nowrap text-fg underline underline-offset-4 hover:no-underline">
             {t("Privacy notice")}
           </a>
         </p>

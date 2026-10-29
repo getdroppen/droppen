@@ -62,7 +62,7 @@ function PlanCard({
   name: string;
   recommended?: boolean;
   price: string;
-  unit: string;
+  unit?: string;
   note: string;
   action: ReactNode;
   aside?: ReactNode;
@@ -90,7 +90,7 @@ function PlanCard({
       <div className="flex flex-col gap-2">
         <p className="flex items-baseline gap-2">
           <span className="text-5xl leading-none font-semibold tracking-tight text-fg tabular-nums max-md:text-4xl">{price}</span>
-          <span className="text-xs font-semibold text-muted">{unit}</span>
+          {unit && <span className="text-xs font-semibold text-muted">{unit}</span>}
         </p>
         <p className="text-xs font-semibold leading-4 text-faint">{note}</p>
       </div>
@@ -100,7 +100,7 @@ function PlanCard({
       </div>
       <div className="flex flex-col gap-3 border-t border-border pt-5">
         <p className="text-sm leading-6 font-semibold text-fg">{lead}</p>
-        <Points items={points} large />
+        <Points items={points} large className="lg:hidden" />
       </div>
     </div>
   );
@@ -145,7 +145,6 @@ function Plans({ signedIn, signup, onChoose }: { signedIn: boolean; signup: Sign
           className="max-lg:border-t lg:border-l"
           name={t("Free")}
           price="$0"
-          unit={t("USD / month")}
           note={signup === "invite" ? t("Sign-up is by invite for now") : signup === "closed" ? t("Sign-up is closed for now") : t("Sign up with an e-mail address")}
           action={
             signedIn ? (
@@ -317,10 +316,10 @@ function Waitlist({
           label={t("Waitlist")}
           title={
             signup === "invite"
-              ? t("Leave your address, and we'll write when it's your turn.")
+              ? t("Leave your address, and we'll write when it's your turn")
               : signup === "closed"
-                ? t("Leave your address, and we'll write when sign-up or Pro opens.")
-                : t("Leave your address, and we'll write when Pro opens.")
+                ? t("Leave your address, and we'll write when sign-up or Pro opens")
+                : t("Leave your address, and we'll write when Pro opens")
           }
           lead={
             signup === "invite"
