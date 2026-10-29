@@ -3391,7 +3391,7 @@ export class CloudAccount {
    * out: storage, and another tab, are this origin's to write, not evidence.
    * One about a renewal this page's chain does not hold yet counts until
    * the chain brings it, if this browser verified that far or cannot tell
-   * (`ahead`, see {@link keptChecks}); one past that does not, but is kept.
+   * (`ahead`, see `RenewalNotes.keptChecks`); one past that does not, but is kept.
    */
   keptDisputes(): KeptDispute[] {
     return this.renewalNotes.keptDisputes();

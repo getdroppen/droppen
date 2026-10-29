@@ -177,7 +177,7 @@ export class RenewalNotes {
    * behind keeps the host isolated: isolation fails safe). `beyond` is kept,
    * not counted, and placed again when the record may have moved; either is
    * checked on the view that brings its entry before that view is taken
-   * ({@link install}).
+   * (`CloudAccount.install`).
    */
   private keptChecks = new Map<string, "ok" | "bad" | "checking" | "ahead" | "beyond">();
 
