@@ -1,6 +1,6 @@
 //! The signer against the Tauri updater: keys in Tauri's format (as
 //! `tauri signer generate` makes them), signatures checked the way
-//! tauri-plugin-updater 2.13.2 checks them (`updater.rs`: `verify_signature`,
+//! tauri-plugin-updater 2.14.1 checks them (`updater.rs`: `verify_signature`,
 //! `verify_signed_version`, `signed_version`, `base64_to_string`), with the
 //! same crate (minisign-verify). desktop/core's `update.rs` checks a
 //! signature this signer made too (its `testdata/update/in-repo-signer.*`).
@@ -19,7 +19,7 @@ fn tauri_key(password: &str) -> (String, String) {
     (pk, sk)
 }
 
-/// tauri-plugin-updater 2.13.2's check, with `requireSignedVersion` on: the
+/// tauri-plugin-updater 2.14.1's check, with `requireSignedVersion` on: the
 /// signature over `data` by `pub_key`, then the version it was signed for.
 fn updater_verifies(data: &[u8], release_signature: &str, pub_key: &str, announced_version: &str) -> Result<(), String> {
     let to_string = |b64: &str| String::from_utf8(B64.decode(b64).map_err(|e| e.to_string())?).map_err(|e| e.to_string());
