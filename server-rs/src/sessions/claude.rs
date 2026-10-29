@@ -675,6 +675,40 @@ impl super::Transcripts for ClaudeCodeSessions {
         Box::pin(read_cli_choice(file_path))
     }
 
+    fn external_reason(&self) -> String {
+        "this session was not started by this instance; continue it where it was started".to_string()
+    }
+
+    // The live claude the probe sees may be one the user has open in their own
+    // terminal, whatever it is doing.
+    fn live_block(&self, status: SessionStatus) -> Option<String> {
+        (status != SessionStatus::Idle).then(|| "attached to a live local Claude Code process".into())
+    }
+
+    // A session with no recorded root predates multi-root discovery, so it can
+    // only be in the local one.
+    fn detail_root(&self, summary: &SessionSummary) -> Option<ClaudeRoot> {
+        Some(summary.claude_root.unwrap_or(ClaudeRoot::Local))
+    }
+
+    fn foreign_sessions(&self) -> bool {
+        true
+    }
+
+    // Both roots' projects directories, made first: on a fresh install the
+    // managed root does not exist yet, and without a watch on it account
+    // sessions would wait for a restart. An unwritable home falls back to the
+    // poll interval.
+    fn watch_dirs<'a>(&'a self, paths: &'a Paths) -> BoxFuture<'a, Vec<PathBuf>> {
+        Box::pin(async move {
+            let dirs: Vec<PathBuf> = claude_roots::ClaudeRoots::of(paths).projects_dirs().into_iter().map(|(_, dir)| dir).collect();
+            for dir in &dirs {
+                let _ = tokio::fs::create_dir_all(dir).await;
+            }
+            dirs
+        })
+    }
+
     fn subagents(&self) -> Option<&dyn super::sidecars::Subagents> {
         Some(self)
     }

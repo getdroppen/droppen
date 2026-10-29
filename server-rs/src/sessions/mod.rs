@@ -999,55 +999,48 @@ impl TranscriptSources {
 /// must not break that.
 pub const EXTERNAL_SESSION_ERROR: &str = "external_session";
 
-/// Why an external session cannot be sent to, in one line for the composer.
-pub fn external_send_block_reason(source: Source) -> String {
-    match source {
-        Source::Claude => "this session was not started by this instance; continue it where it was started".to_string(),
-        Source::Codex => "this codex session was started elsewhere; continue it where it was started".to_string(),
-        Source::Acp => "this ACP session was started elsewhere; continue it where it was started".to_string(),
-    }
-}
-
-/// Whether the composer may send to this session, and why not.
-///
-/// Port of `sendability` in the former TypeScript server's `session-feed.ts`,
-/// plus the arms the TypeScript never had. `scope` is the ownership arm: a
-/// session this server did not make is browse-only, because resuming it would
-/// interleave this server's turns with those of whoever actually owns it.
-/// `injecting` is the injection arm the probe left out: a one-shot run
-/// remote-hand started blocks the composer regardless of what the CLI's own
-/// registration says.
-///
-/// `resident` is what a session driven by a process rather than a run needs, and
-/// it lifts both of the other two block arms:
-///
-/// * **the injection arm.** A second `claude --print` against one transcript
-///   would be two agents writing over each other, which is why an in-flight run
-///   used to be a refusal. One process taking messages in order cannot do that,
-///   so a message sent mid-turn is queued behind it and the composer stays open.
-/// * **the live-process arm.** That arm exists to keep remote-hand out of a
-///   conversation the user has open in their own terminal — and a resident
-///   registers itself in exactly the same place, because it *is* a real
-///   `claude`. Without this exemption the first turn would be the last one this
-///   server could send.
-///
-/// Ownership still outranks everything, including a resident: a run against an
-/// external session cannot exist, so reporting one would be a lie about a
-/// session this server has no claim on.
-pub fn sendability(source: Source, scope: SessionScope, status: SessionStatus, injecting: bool, resident: bool) -> (bool, Option<String>) {
-    if scope == SessionScope::External {
-        return (false, Some(external_send_block_reason(source)));
-    }
-    if resident {
-        return (true, None);
-    }
-    if injecting {
-        return (false, Some("a message from Droppen is still running".into()));
-    }
-    match (source, status) {
-        (Source::Claude, status) if status != SessionStatus::Idle => (false, Some("attached to a live local Claude Code process".into())),
-        (Source::Codex, SessionStatus::Running) => (false, Some("session is currently running".into())),
-        _ => (true, None),
+impl TranscriptSources {
+    /// Whether the composer may send to this session, and why not.
+    ///
+    /// Port of `sendability` in the former TypeScript server's `session-feed.ts`,
+    /// plus the arms the TypeScript never had. `scope` is the ownership arm: a
+    /// session this server did not make is browse-only, because resuming it would
+    /// interleave this server's turns with those of whoever actually owns it.
+    /// `injecting` is the injection arm the probe left out: a one-shot run
+    /// remote-hand started blocks the composer regardless of what the CLI's own
+    /// registration says. `status` is the live-process arm, which each CLI
+    /// answers itself ([`Transcripts::live_block`]).
+    ///
+    /// `resident` is what a session driven by a process rather than a run needs, and
+    /// it lifts both of the other two block arms:
+    ///
+    /// * **the injection arm.** A second `claude --print` against one transcript
+    ///   would be two agents writing over each other, which is why an in-flight run
+    ///   used to be a refusal. One process taking messages in order cannot do that,
+    ///   so a message sent mid-turn is queued behind it and the composer stays open.
+    /// * **the live-process arm.** That arm exists to keep remote-hand out of a
+    ///   conversation the user has open in their own terminal — and a resident
+    ///   registers itself in exactly the same place, because it *is* a real
+    ///   `claude`. Without this exemption the first turn would be the last one this
+    ///   server could send.
+    ///
+    /// Ownership still outranks everything, including a resident: a run against an
+    /// external session cannot exist, so reporting one would be a lie about a
+    /// session this server has no claim on.
+    pub fn sendability(&self, source: Source, scope: SessionScope, status: SessionStatus, injecting: bool, resident: bool) -> (bool, Option<String>) {
+        if scope == SessionScope::External {
+            return (false, Some(self.external_reason(source)));
+        }
+        if resident {
+            return (true, None);
+        }
+        if injecting {
+            return (false, Some("a message from Droppen is still running".into()));
+        }
+        match self.get(source).and_then(|reader| reader.live_block(status)) {
+            Some(reason) => (false, Some(reason)),
+            None => (true, None),
+        }
     }
 }
 
@@ -1078,16 +1071,18 @@ mod tests {
 
     #[test]
     fn a_live_claude_session_cannot_be_sent_to() {
+        let sources = crate::app::transcript_sources();
         let owned = SessionScope::Owned;
-        assert!(sendability(Source::Claude, owned, SessionStatus::Idle, false, false).0);
-        assert!(!sendability(Source::Claude, owned, SessionStatus::Waiting, false, false).0);
-        assert!(sendability(Source::Codex, owned, SessionStatus::Waiting, false, false).0);
-        assert!(!sendability(Source::Codex, owned, SessionStatus::Running, false, false).0);
+        assert!(sources.sendability(Source::Claude, owned, SessionStatus::Idle, false, false).0);
+        assert!(!sources.sendability(Source::Claude, owned, SessionStatus::Waiting, false, false).0);
+        assert!(sources.sendability(Source::Codex, owned, SessionStatus::Waiting, false, false).0);
+        assert!(!sources.sendability(Source::Codex, owned, SessionStatus::Running, false, false).0);
     }
 
     #[test]
     fn an_in_flight_injection_outranks_every_other_verdict() {
-        let (can_send, reason) = sendability(Source::Codex, SessionScope::Owned, SessionStatus::Idle, true, false);
+        let sources = crate::app::transcript_sources();
+        let (can_send, reason) = sources.sendability(Source::Codex, SessionScope::Owned, SessionStatus::Idle, true, false);
         assert!(!can_send);
         assert_eq!(reason.as_deref(), Some("a message from Droppen is still running"));
     }
@@ -1100,31 +1095,64 @@ mod tests {
     /// would answer its first message and refuse every one after it.
     #[test]
     fn a_resident_session_takes_messages_while_it_is_busy() {
+        let sources = crate::app::transcript_sources();
         let owned = SessionScope::Owned;
         assert!(
-            sendability(Source::Claude, owned, SessionStatus::Idle, true, true).0,
+            sources.sendability(Source::Claude, owned, SessionStatus::Idle, true, true).0,
             "a turn in flight is queued behind, not refused"
         );
         assert!(
-            sendability(Source::Claude, owned, SessionStatus::Waiting, false, true).0,
+            sources.sendability(Source::Claude, owned, SessionStatus::Waiting, false, true).0,
             "the live claude the probe found is the resident this server started"
         );
         // Ownership is the one thing it does not lift.
-        assert!(!sendability(Source::Claude, SessionScope::External, SessionStatus::Idle, false, true).0);
+        assert!(!sources.sendability(Source::Claude, SessionScope::External, SessionStatus::Idle, false, true).0);
     }
 
     /// An idle, unlocked, perfectly healthy session this server did not make is
     /// still not this server's to drive.
     #[test]
     fn somebody_elses_session_is_never_sendable() {
+        let sources = crate::app::transcript_sources();
         for source in [Source::Claude, Source::Codex] {
-            let (can_send, reason) = sendability(source, SessionScope::External, SessionStatus::Idle, false, false);
+            let (can_send, reason) = sources.sendability(source, SessionScope::External, SessionStatus::Idle, false, false);
             assert!(!can_send, "{source} external sessions are browse-only");
             assert!(reason.is_some_and(|reason| !reason.is_empty()));
         }
         // And ownership is checked before the injection state, which cannot
         // meaningfully exist for a session this server never started.
-        assert!(!sendability(Source::Claude, SessionScope::External, SessionStatus::Idle, true, false).0);
+        assert!(!sources.sendability(Source::Claude, SessionScope::External, SessionStatus::Idle, true, false).0);
+    }
+
+    /// Each CLI's refusals, word for word: the composer shows them as they are.
+    #[test]
+    fn every_source_refuses_in_its_own_words() {
+        let sources = crate::app::transcript_sources();
+        let external = |source| sources.sendability(source, SessionScope::External, SessionStatus::Idle, false, false);
+        assert_eq!(
+            external(Source::Claude),
+            (false, Some("this session was not started by this instance; continue it where it was started".to_string()))
+        );
+        assert_eq!(
+            external(Source::Codex),
+            (false, Some("this codex session was started elsewhere; continue it where it was started".to_string()))
+        );
+        assert_eq!(
+            external(Source::Acp),
+            (false, Some("this ACP session was started elsewhere; continue it where it was started".to_string()))
+        );
+        let owned = |source, status| sources.sendability(source, SessionScope::Owned, status, false, false);
+        for status in [SessionStatus::Running, SessionStatus::Waiting] {
+            assert_eq!(owned(Source::Claude, status), (false, Some("attached to a live local Claude Code process".to_string())));
+        }
+        assert_eq!(owned(Source::Claude, SessionStatus::Idle), (true, None));
+        assert_eq!(owned(Source::Codex, SessionStatus::Running), (false, Some("session is currently running".to_string())));
+        for status in [SessionStatus::Idle, SessionStatus::Waiting] {
+            assert_eq!(owned(Source::Codex, status), (true, None));
+        }
+        for status in [SessionStatus::Idle, SessionStatus::Running, SessionStatus::Waiting] {
+            assert_eq!(owned(Source::Acp, status), (true, None), "an ACP session has no live-process arm");
+        }
     }
 
     /// A row with nothing driving it, so the transcript heuristic is all there is.

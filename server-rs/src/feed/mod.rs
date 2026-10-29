@@ -84,7 +84,7 @@ use droppen_instance::paths::{ClaudeRoot, Paths};
 use crate::sessions::account::AccountRef;
 use crate::sessions::loader::{encode_fp, Fp, Transcript, RESUME_OVERLAP};
 use crate::sessions::util::TranscriptItem;
-use crate::sessions::{file_signature, sendability, CliChoice, Injection, SessionDetail, SessionSummary, Source, TranscriptSources};
+use crate::sessions::{file_signature, CliChoice, Injection, SessionDetail, SessionSummary, Source, TranscriptSources};
 use droppen_base::watch;
 
 /// How many items one page of transcript holds.
@@ -327,7 +327,7 @@ pub async fn load_session_state(drive: &Arc<Drive>, source: Source, id: &str) ->
     // still running for it.
     let (can_send, send_block_reason) = match crate::acp_agent::AcpAgentRegistry::of(paths).send_block(&summary) {
         Some(reason) => (false, Some(reason)),
-        None => sendability(source, summary.scope, summary.status, running, resident.is_some()),
+        None => drive.transcripts.sendability(source, summary.scope, summary.status, running, resident.is_some()),
     };
     let cli_choice = drive.transcripts.cli_choice(source, Path::new(&summary.file_path)).await;
     let context = drive.transcripts.context(source, Path::new(&summary.file_path)).await;
@@ -343,13 +343,7 @@ pub async fn load_session_state(drive: &Arc<Drive>, source: Source, id: &str) ->
     // The list route reports the binding on the summary too; keep both payloads
     // shaped the same so a client can read it from either.
     summary.account_id = account.as_ref().map(|a| a.id.clone());
-    // A claude session with no recorded root predates multi-root discovery, so
-    // it can only be in the local one — which is what the TypeScript's
-    // `raw.claudeRoot ?? "local"` says.
-    let claude_root = match source {
-        Source::Claude => Some(summary.claude_root.unwrap_or(ClaudeRoot::Local)),
-        Source::Codex | Source::Acp => None,
-    };
+    let claude_root = drive.transcripts.detail_root(source, &summary);
     // A row is a row wherever it is served from: the list route, the detail
     // route and this feed's `state` frames must not disagree about whether a
     // session is unread, or which repository it groups under.

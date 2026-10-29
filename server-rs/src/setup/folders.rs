@@ -28,7 +28,7 @@ use droppen_instance::db::scope;
 use droppen_http::created::Created;
 use droppen_http::error::ApiError;
 use droppen_http::openapi_ext::Nullable;
-use crate::sessions::{SessionScope, SessionSummary, Source};
+use crate::sessions::{SessionScope, SessionSummary, Source, TranscriptSources};
 
 /// How many recent folders step 03 offers.
 pub const RECENT_LIMIT: usize = 6;
@@ -51,6 +51,15 @@ pub enum FolderTool {
     Claude,
     /// Codex, outside Droppen.
     Codex,
+}
+
+impl FolderTool {
+    /// The CLI that ran a session outside Droppen, by its source's wire name;
+    /// `None` when no tool has that name.
+    fn of(source: Source) -> Option<Self> {
+        use serde::de::IntoDeserializer;
+        Self::deserialize(IntoDeserializer::<serde::de::value::Error>::into_deserializer(source.as_str())).ok()
+    }
 }
 
 /// A folder sessions ran in on this device.
@@ -95,18 +104,19 @@ fn name_of(path: &Path) -> String {
 
 /// The recent folders out of a session list, keeping those `exists` says are
 /// still there: grouped by folder, newest activity first, ties by path.
-pub fn recent_from(sessions: &[SessionSummary], exists: impl Fn(&Path) -> bool) -> Vec<RecentFolder> {
+/// `transcripts` says whose CLI ran a session this instance did not start.
+pub fn recent_from(sessions: &[SessionSummary], transcripts: &TranscriptSources, exists: impl Fn(&Path) -> bool) -> Vec<RecentFolder> {
     let mut by_cwd: std::collections::BTreeMap<&str, RecentFolder> = std::collections::BTreeMap::new();
     for session in sessions {
         let Some(cwd) = session.cwd.0.as_deref().filter(|cwd| !cwd.is_empty()) else {
             continue;
         };
-        let tool = match (session.scope, session.source) {
-            (SessionScope::Owned, _) => FolderTool::Droppen,
-            (SessionScope::External, Source::Claude) => FolderTool::Claude,
-            (SessionScope::External, Source::Codex) => FolderTool::Codex,
-            // Every ACP session is one this server started.
-            (SessionScope::External, Source::Acp) => FolderTool::Droppen,
+        // A session of a CLI only Droppen runs is another instance's.
+        let tool = match session.scope {
+            SessionScope::External if transcripts.foreign_sessions(session.source) => {
+                FolderTool::of(session.source).unwrap_or(FolderTool::Droppen)
+            }
+            SessionScope::Owned | SessionScope::External => FolderTool::Droppen,
         };
         let folder = by_cwd.entry(cwd).or_insert_with(|| RecentFolder {
             path: cwd.to_string(),
@@ -205,7 +215,7 @@ pub async fn recent_folders(State(state): State<SetupState>) -> Json<RecentFolde
         )
         .await;
     Json(RecentFolders {
-        folders: recent_from(&sessions, Path::is_dir),
+        folders: recent_from(&sessions, &state.transcripts, Path::is_dir),
     })
 }
 
@@ -255,7 +265,8 @@ mod tests {
             session("/w/gone", Source::Claude, SessionScope::Owned, "2026-10-20T00:00:00Z"),
             session("", Source::Claude, SessionScope::Owned, "2026-10-20T00:00:00Z"),
         ];
-        let folders = recent_from(&sessions, |path| path != Path::new("/w/gone"));
+        let transcripts = crate::app::transcript_sources();
+        let folders = recent_from(&sessions, &transcripts, |path| path != Path::new("/w/gone"));
         assert_eq!(folders.iter().map(|folder| folder.path.as_str()).collect::<Vec<_>>(), ["/w/api", "/w/site"]);
         let site = &folders[1];
         assert_eq!(site.name, "site");
@@ -267,9 +278,29 @@ mod tests {
         let many: Vec<SessionSummary> = (0..10)
             .map(|n| session(&format!("/w/p{n}"), Source::Claude, SessionScope::Owned, &format!("2026-10-1{n}T00:00:00Z")))
             .collect();
-        let folders = recent_from(&many, |_| true);
+        let folders = recent_from(&many, &transcripts, |_| true);
         assert_eq!(folders.len(), RECENT_LIMIT);
         assert_eq!(folders[0].path, "/w/p9");
+    }
+
+    /// A session this instance did not start is its CLI's when the user runs
+    /// that CLI too, and another Droppen's when only Droppen runs it.
+    #[test]
+    fn a_session_started_elsewhere_names_the_tool_that_ran_it() {
+        let transcripts = crate::app::transcript_sources();
+        let tool = |source| {
+            let sessions = [session("/w/a", source, SessionScope::External, "2026-10-10T00:00:00Z")];
+            recent_from(&sessions, &transcripts, |_| true)[0].tools.clone()
+        };
+        assert_eq!(tool(Source::Claude), [FolderTool::Claude]);
+        assert_eq!(tool(Source::Codex), [FolderTool::Codex]);
+        assert_eq!(tool(Source::Acp), [FolderTool::Droppen]);
+        // The bridge is by wire name, so a source whose sessions are run outside
+        // Droppen needs a tool of the same name.
+        for reader in transcripts.iter().filter(|reader| reader.foreign_sessions()) {
+            let source = reader.source();
+            assert_eq!(FolderTool::of(source).map(|tool| serde_json::to_value(tool).expect("json")), Some(serde_json::json!(source.as_str())));
+        }
     }
 
     #[test]
