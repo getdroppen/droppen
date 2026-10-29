@@ -117,7 +117,7 @@ fn window_label(minutes: i64) -> String {
 
 /// Where a Codex reading came from.
 ///
-/// On the wire, for the same reason [`crate::models::ModelListSource`] is: the
+/// On the wire, for the same reason `models::ModelListSource` is: the
 /// app server answers with the account's live numbers, while the session logs
 /// only say what some past turn was told. One shown as the other is how a panel
 /// tells a user they have 30% left of a week they have already spent.

@@ -1866,7 +1866,7 @@ export interface paths {
          *     The answer to `local_session_cannot_use_account`, for the moment it matters:
          *     the local login stopped working and the conversation is stuck on it. The
          *     session's transcript is copied into this instance's own root under a new id
-         *     ([`crate::sessions::continuation`]), the copy is bound to the account, and
+         *     (`sessions::continuation`), the copy is bound to the account, and
          *     the first message sent to it resumes the whole conversation there. The
          *     original is read and never written; it stays as it was, on the local login.
          *
@@ -1897,7 +1897,7 @@ export interface paths {
          *     so the answer is about what was unread *before* the reader got there, and
          *     no later report can move it. Read-only and ungated like search, and answered
          *     over the same cached parse, so the index is one the history route can page
-         *     to. See [`crate::sessions::attention::first_unread`].
+         *     to. See `sessions::attention::first_unread`.
          */
         get: operations["session_first_unread"];
         put?: never;
@@ -3213,7 +3213,7 @@ export interface components {
             authRequired: boolean;
             /**
              * @description Whether the Droppen desktop app runs this server and owns its login
-             *     (`crate::desktop_app`): the web app then shows no password change, no
+             *     (the server's `desktop_app` module): the web app then shows no password change, no
              *     sign-out and no sign-in to Droppen through a browser popup.
              */
             desktopApp: boolean;
@@ -3222,7 +3222,7 @@ export interface components {
              *     instance, to put before `droppenPath` (`APP_INSTANCE=bob …/droppen
              *     setup-code`): the instance when it is not `default`, and where this
              *     server keeps its files when that is not the usual place
-             *     [`crate::sessions::Paths::droppen_env`]. Empty for the usual install;
+             *     (`droppen_instance::paths::Paths::droppen_env`). Empty for the usual install;
              *     values not yet quoted for a shell. Servers older than this field send
              *     none.
              */
@@ -3231,7 +3231,7 @@ export interface components {
              * @description How a person on this device runs this server's binary, for the commands
              *     the web app asks them to type (`<droppenPath> user add <name>`): the
              *     `droppen` link beside the running binary if there is one, else the
-             *     binary itself, with the home directory as `~` (`crate::program`). A
+             *     binary itself, with the home directory as `~` (`droppen_base::program`). A
              *     path, not yet quoted for a shell. Servers older than this field send
              *     none; the web app then says `remote-hand-server`.
              */
@@ -3415,7 +3415,7 @@ export interface components {
          *
          *     Spelled `ChatRole` rather than `Role` because `Schematic::name()` is the
          *     Rust identifier and the schema registry has one component per name: a second
-         *     `Role` would silently merge with [`crate::sessions::util::Role`], whose
+         *     `Role` would silently merge with `sessions::util::Role`, whose
          *     values are `user | assistant | system`. The contract inlines this enum, so
          *     the component name itself is free.
          * @enum {string}
@@ -3719,7 +3719,7 @@ export interface components {
         /**
          * @description Where a Codex reading came from.
          *
-         *     On the wire, for the same reason [`crate::models::ModelListSource`] is: the
+         *     On the wire, for the same reason `models::ModelListSource` is: the
          *     app server answers with the account's live numbers, while the session logs
          *     only say what some past turn was told. One shown as the other is how a panel
          *     tells a user they have 30% left of a week they have already spent.
@@ -3950,7 +3950,7 @@ export interface components {
         /**
          * @description State of a message remote-hand injected into a session.
          *
-         *     Filled in by `crate::inject::InjectionRegistry`; `null` for a session
+         *     Filled in by `inject::InjectionRegistry`; `null` for a session
          *     remote-hand has never driven.
          */
         Injection: {
@@ -4295,7 +4295,7 @@ export interface components {
          *     The endpoint is not in it. Its last path segment is the Bark device key,
          *     which is the entirety of Bark's authorization, so what comes back is a mask:
          *     enough to recognise the endpoint you configured, and not enough to send to
-         *     it. Same rule as [`crate::chats::provider::ChatProviderInfo`]'s `hasKey`, one
+         *     it. Same rule as `chats::provider::ChatProviderInfo`'s `hasKey`, one
          *     step friendlier because there is only ever one of these and a user with two
          *     phones should be able to tell which one is armed.
          */
@@ -4833,7 +4833,7 @@ export interface components {
              * @description Those tasks, oldest first, as far as the CLI described them.
              *
              *     Empty whenever `background` is zero, and never longer than the cap the
-             *     driver publishes — see [`crate::inject::resident::TASKS_ON_THE_WIRE`].
+             *     driver publishes — see `inject::resident::TASKS_ON_THE_WIRE`.
              */
             tasks: components["schemas"]["BackgroundTask"][];
             /**
@@ -4850,7 +4850,7 @@ export interface components {
         /**
          * @description Where a resident process is in its cycle.
          *
-         *     The wire form of `crate::inject::resident::Phase`. A separate type because
+         *     The wire form of `inject::common::Phase`. A separate type because
          *     the driver's is an internal enum that the injection subsystem is free to
          *     grow states on, and this one is a contract.
          * @enum {string}
@@ -5613,14 +5613,14 @@ export interface components {
              *     it runs with approvals off, and every interactive request its app server
              *     makes is refused, so it has no way to stop and ask.
              *
-             *     `#[serde(default)]` for the summaries [`crate::sessions::index`] cached before
+             *     `#[serde(default)]` for the summaries `sessions::index` cached before
              *     this field existed; the live overlay fills it in.
              */
             asking?: boolean;
             /**
              * @description When the assistant last spoke on the main chain, ISO-8601.
              *
-             *     Derived from the transcript by [`crate::sessions::attention`], not stored; `null`
+             *     Derived from the transcript by `sessions::attention`, not stored; `null`
              *     for a session the assistant has not said anything in yet.
              */
             attentionAt: string | null;
@@ -5638,7 +5638,7 @@ export interface components {
             /**
              * @description Which Claude config root holds the session file (claude sessions only).
              *
-             *     Added with the accounts subsystem (`crate::claude_roots`); `None` for
+             *     Added with the accounts subsystem (`claude_roots`); `None` for
              *     codex, which has one root.
              */
             claudeRoot?: components["schemas"]["ClaudeRoot"];
@@ -5714,7 +5714,7 @@ export interface components {
              *     Filled in by the ownership overlay — `claude::mark_owned` and
              *     `codex::apply_ownership` — alongside `scope`, because both can change
              *     without the transcript being touched and neither may be cached against
-             *     it. `#[serde(default)]` for the summaries [`crate::sessions::index`] cached
+             *     it. `#[serde(default)]` for the summaries `sessions::index` cached
              *     before this field existed: they parse, and the overlay fills them in.
              */
             server?: string;
@@ -5745,7 +5745,7 @@ export interface components {
              *     CLI's own synthetic notices — counted from the start for a session never
              *     opened. Not suppressed while a turn runs, unlike `unread`: a working
              *     session can be holding answers nobody has read. `unread` is never true
-             *     with a count of zero. See [`crate::sessions::attention::unread`].
+             *     with a count of zero. See `sessions::attention::unread`.
              */
             unreadCount: number;
             /** @description Transcript mtime, ISO-8601. */
@@ -6036,7 +6036,7 @@ export interface components {
          * @description Whether the session list shows the subagents each session delegated to.
          *
          *     Opt-in: off until somebody turns it on, and while it is off the subagents are
-         *     not even looked for ([`crate::sessions::subagents`]).
+         *     not even looked for (`sessions::subagents`).
          * @enum {string}
          */
         SubagentTree: "off" | "on";

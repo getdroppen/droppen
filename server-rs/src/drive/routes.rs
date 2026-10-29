@@ -1421,7 +1421,7 @@ async fn whole_transcript(drive: &crate::drive::Drive, source: Source, id: &str)
 /// so the answer is about what was unread *before* the reader got there, and
 /// no later report can move it. Read-only and ungated like search, and answered
 /// over the same cached parse, so the index is one the history route can page
-/// to. See [`crate::sessions::attention::first_unread`].
+/// to. See `sessions::attention::first_unread`.
 #[api(id = "session_first_unread", group = "sessions", summary = "Where unread messages begin")]
 pub async fn session_first_unread(
     State(state): State<DriveState>,
@@ -1706,7 +1706,7 @@ pub async fn bind_session_account(
 /// The answer to `local_session_cannot_use_account`, for the moment it matters:
 /// the local login stopped working and the conversation is stuck on it. The
 /// session's transcript is copied into this instance's own root under a new id
-/// ([`crate::sessions::continuation`]), the copy is bound to the account, and
+/// (`sessions::continuation`), the copy is bound to the account, and
 /// the first message sent to it resumes the whole conversation there. The
 /// original is read and never written; it stays as it was, on the local login.
 ///

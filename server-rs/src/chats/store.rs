@@ -40,7 +40,7 @@ const UNTITLED: &str = "new chat";
 ///
 /// Spelled `ChatRole` rather than `Role` because `Schematic::name()` is the
 /// Rust identifier and the schema registry has one component per name: a second
-/// `Role` would silently merge with [`crate::sessions::util::Role`], whose
+/// `Role` would silently merge with `sessions::util::Role`, whose
 /// values are `user | assistant | system`. The contract inlines this enum, so
 /// the component name itself is free.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, Schematic)]
