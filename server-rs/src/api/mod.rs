@@ -84,7 +84,7 @@ pub struct AppState {
     pub lock: Arc<std::sync::OnceLock<std::sync::Weak<droppen_instance::instance::InstanceLock>>>,
     /// The hub link: started at boot for an enrolled instance, and at any
     /// time after by an enrollment from the local settings
-    /// ([`crate::agent::control`]). Inert in a server that does not own its
+    /// ([`crate::cloud::control`]). Inert in a server that does not own its
     /// instance.
     pub cloud: Arc<cloud::Cloud>,
     /// Whether the Droppen desktop app runs this server (`DROPPEN_DESKTOP_APP`,

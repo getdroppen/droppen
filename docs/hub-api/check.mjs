@@ -68,6 +68,8 @@ const SPEAKS = [
   ["web/src/features/cloud/", [["/v1/client", "client"]]],
   ["server-rs/src/agent/relays.rs", [["/v1/agent", "client"], ["/v1/connect", "client"]]],
   ["server-rs/src/agent/", [["/v1/agent", "client"]]],
+  // Link control signs in as the machine to delete its copy on the hub.
+  ["server-rs/src/cloud/control.rs", [["/v1/agent", "client"]]],
   ["server-rs/src/cloud/gateway.rs", [["/api/agg/ws", "server"]]],
   ["server-rs/src/aggregator/live.rs", [["/api/agg/ws", "server"]]],
   ["server-rs/src/aggregator/", [["/v1/client", "client"]]],

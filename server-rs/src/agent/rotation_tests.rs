@@ -906,7 +906,7 @@ async fn a_committed_renewal_is_taken_after_signing_in_with_the_new_key() {
     let st = AgentState::load(&a.files).unwrap().unwrap();
     assert!(st.rotation.renewed_ms.is_some());
     assert!(st.rotation.push_renew, "the push keys are renewed with it at the restart (R6 review)");
-    assert_eq!(st.rotation.previous_fingerprint.as_deref(), Some(super::control::machine_fingerprint(&old).as_str()));
+    assert_eq!(st.rotation.previous_fingerprint.as_deref(), Some(super::fingerprint::machine_fingerprint(&old).as_str()));
     let shown = a.files.rotation_status(Some(&st), now_ms_u64());
     assert_eq!(shown.state, "renewed");
     assert!(st.alarms.is_empty(), "no alarm for its own renewal");
@@ -1548,7 +1548,7 @@ async fn an_undelivered_dispute_statement_survives_disconnecting() {
     until("a first delivery", || !hub.disputes().is_empty()).await;
     assert!(file.exists());
     // Disconnect before the hub has it.
-    super::control::Control::new(a.paths.clone()).unenroll().await.unwrap();
+    crate::cloud::control::Control::new(a.paths.clone()).unenroll().await.unwrap();
     assert!(file.exists(), "the statement survives");
     let left: Vec<std::ffi::OsString> = std::fs::read_dir(file.parent().unwrap()).unwrap().map(|e| e.unwrap().file_name()).collect();
     assert_eq!(left, vec![file.file_name().unwrap().to_os_string()], "everything else in agent/ is gone");

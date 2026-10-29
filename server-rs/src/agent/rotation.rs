@@ -119,7 +119,7 @@ pub const NEW_KEY_GRACE: Duration = Duration::from_secs(20);
 #[cfg(test)]
 pub const NEW_KEY_GRACE: Duration = Duration::from_secs(2);
 
-/// What restarts the link in this process — the server's [`super::control::Control`]
+/// What restarts the link in this process — the server's [`crate::cloud::control::Control`]
 /// — once a renewed key is in place.
 pub type Restart = Arc<dyn Fn() + Send + Sync>;
 
@@ -1020,6 +1020,18 @@ pub(super) fn device_role_may_sign_in_at(shared: &Shared, now: u64) -> bool {
 }
 
 impl AgentFiles {
+    /// Whether the seed in use is one this device must never use again
+    /// ([`AgentFiles::seed_retired`]); `false` when there is none. The seed is
+    /// read here, so that only the agent ever holds it.
+    pub(crate) fn seed_in_use_retired(&self) -> Result<bool, String> {
+        let current = match FileSeedStore::for_instance(self).load() {
+            Ok(Some(seed)) => MachineIdentity::from_seed(&seed.seed),
+            Ok(None) => return Ok(false),
+            Err(error) => return Err(error),
+        };
+        Ok(self.seed_retired(&current))
+    }
+
     /// Whether `identity` is a seed this device must never use again: one it
     /// archived ([`re_enroll_fresh`]), or one the chain it knows (`state.json`'s)
     /// renewed away to keys it holds in no staging, waiting or set aside
@@ -1083,7 +1095,7 @@ impl AgentFiles {
 
 /// "Add this device again with a new identity" (§3.8 「只剩退役钥时」): for a
 /// device left holding only a retired key, which no rule lets renew in
-/// place. The link must be stopped first ([`super::control::Control::re_enroll_fresh`]).
+/// place. The link must be stopped first ([`crate::cloud::control::Control::re_enroll_fresh`]).
 ///
 /// Refused when this device's own chain renewed it to a key it staged
 /// (waiting, or set aside as expired) — that is its own renewal, which it
@@ -1181,7 +1193,7 @@ fn forget_for_a_fresh_identity(paths: &Paths, now: u64) -> Result<MachineIdentit
     std::fs::remove_file(&marker).map_err(|e| format!("{}: {e}", marker.display()))?;
     super::sync_dir(&marker);
     tracing::warn!(
-        fingerprint = %super::control::machine_fingerprint(&identity),
+        fingerprint = %super::fingerprint::machine_fingerprint(&identity),
         "made a fresh identity for this device: add it to the account again with a new registration code"
     );
     Ok(identity)
@@ -1233,7 +1245,7 @@ pub(super) fn promote(shared: &Arc<Shared>, signed_in: &MachineIdentity) -> Resu
         }
         staged.clone()
     };
-    let previous = super::control::machine_fingerprint(&shared.identity);
+    let previous = super::fingerprint::machine_fingerprint(&shared.identity);
     // The push keys follow the identity key: noted before the staged key is
     // moved into place, so a crash after it still renews them at the next
     // start.
@@ -1275,7 +1287,7 @@ pub(super) fn promote(shared: &Arc<Shared>, signed_in: &MachineIdentity) -> Resu
     }
     tracing::warn!(
         %previous,
-        fingerprint = %super::control::machine_fingerprint(&new),
+        fingerprint = %super::fingerprint::machine_fingerprint(&new),
         "renewed this device's identity key: restarting its link with it"
     );
     (shared.restart)();
@@ -1640,7 +1652,7 @@ mod tests {
         let refused = re_enroll_fresh(&paths, 77).err().expect("refused");
         assert!(refused.contains("staged"), "{refused}");
         untouched("adding it again");
-        let control = super::super::control::Control::new(paths.clone());
+        let control = crate::cloud::control::Control::new(paths.clone());
         assert!(!control.renew_retired_seed().await.unwrap(), "the local settings' sign-in");
         untouched("the local settings' sign-in");
         // However long ago it expired, one the chain names is never set aside (A2).

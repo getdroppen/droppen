@@ -1,0 +1,327 @@
+//! The server's handle on its hub link ([`crate::cloud::control::Control`])
+//! against this instance's agent files: enrolling, cancelling, adding again,
+//! restarting with a renewed key, unenrolling.
+
+use std::time::Duration;
+
+use rh_proto::identity::{EnrollCode, MachineIdentity};
+
+use super::enroll::BeginError;
+use super::link::LinkEnv;
+use super::state::AgentState;
+use super::status::Standing;
+use super::AgentFiles;
+use crate::cloud::control::*;
+use droppen_instance::paths::Paths;
+#[tokio::test]
+async fn a_server_that_does_not_own_its_instance_runs_no_link() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = Paths::for_instance(dir.path().to_path_buf(), "ctltest");
+    let control = Control::new(paths.clone());
+    assert!(matches!(control.available(), Err(ControlError::Unavailable(_))));
+    assert!(!control.start_if_enrolled().await);
+    assert_eq!(control.status().state, Standing::None);
+    let code = EnrollCode {
+        account_fingerprint: [1; 16],
+        secret: [2; 16],
+    };
+    assert!(matches!(
+        control.enroll(&code, "ws://127.0.0.1:9").await,
+        Err(ControlError::Unavailable(_))
+    ));
+}
+
+#[tokio::test]
+async fn status_reads_the_saved_state_and_unenroll_leaves_nothing_under_agent() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = Paths::for_instance(dir.path().to_path_buf(), "ctltest");
+    let control = Control::new(paths.clone());
+    let identity = control.identity().unwrap();
+    let mut st = AgentState::enrolling("wss://hub.example", "a-1", "m-1", [9; 16], 5_000);
+    st.save(&AgentFiles::of(&paths)).unwrap();
+    AgentFiles::of(&paths).store_machine_key(0, &[7; 32]).unwrap();
+    let status = control.status();
+    assert_eq!(status.state, Standing::Enrolling);
+    assert_eq!(status.machine.as_deref(), Some("m-1"));
+    assert!(!status.running);
+    st.mark_removed(6_000);
+    st.save(&AgentFiles::of(&paths)).unwrap();
+    assert_eq!(
+        control.status().state,
+        Standing::Enrolling,
+        "a removal mark the chain does not back is no removal"
+    );
+    control.unenroll().await.unwrap();
+    assert!(!paths.instance_dir().join("agent").exists(), "agent/ is gone");
+    assert_eq!(control.status().state, Standing::None);
+    assert_ne!(
+        control.identity().unwrap().sign_public(),
+        identity.sign_public(),
+        "a new machine key after unenroll"
+    );
+}
+
+/// The process keeps one connection per database file: after unenroll
+/// deletes `streams.db`, the next enrollment's store would be the old one
+/// — its rows (re-sent to the new account) in an unlinked file, every
+/// write lost on restart. The cached connection goes with the file.
+#[tokio::test]
+async fn a_new_enrollment_never_reopens_the_old_streams_store() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = Paths::for_instance(dir.path().to_path_buf(), "ctlstore");
+    let control = Control::new(paths.clone());
+    let _ = control.identity().unwrap();
+    let old = crate::agent::streams::store::Store::open(&AgentFiles::of(&paths));
+    old.set_kv("plan", "old-account-plan");
+    drop(old);
+    control.unenroll().await.unwrap();
+    let file = AgentFiles::of(&paths).streams_db();
+    assert!(!file.exists(), "agent/ is gone on disk");
+    let _ = control.identity().unwrap(); // a new machine key, as a new sign-in makes
+    let fresh = crate::agent::streams::store::Store::open(&AgentFiles::of(&paths));
+    assert_eq!(fresh.get_kv("plan"), None, "the new enrollment starts from an empty store");
+    fresh.set_kv("plan", "new-account-plan");
+    assert!(file.exists(), "and it is the file on disk");
+    drop(fresh);
+
+    // The same for an enrollment that replaces one that never completed.
+    AgentFiles::of(&paths).forget_enrollment_leftovers().unwrap();
+    assert_eq!(crate::agent::streams::store::Store::open(&AgentFiles::of(&paths)).get_kv("plan"), None);
+}
+
+/// What a link needs, for a server of these paths that listens nowhere.
+fn link_env(paths: &Paths) -> LinkEnv {
+    let instance = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), paths.instance()).unwrap();
+    let auth = crate::auth::Auth::new(paths, &instance, &droppen_http::config::AuthSettings::default(), false);
+    LinkEnv {
+        addr: "127.0.0.1:9".parse().unwrap(),
+        credential: "test".into(),
+        streams: {
+            let drive = crate::drive::Drive::new(std::sync::Arc::new(paths.clone()), &instance, auth, crate::app::transcript_sources());
+            std::sync::Arc::new(crate::cloud::SessionStreams::new(drive.paths.clone(), drive.transcripts.clone(), drive))
+        },
+        host: std::sync::Arc::new(crate::app::PushLinkHost),
+        cancel: tokio_util::sync::CancellationToken::new(),
+        aggregator_switch: std::sync::Arc::new(crate::cloud::LinkFile::of(paths)),
+    }
+}
+
+/// A port nothing listens on.
+fn closed_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
+}
+
+/// A deletion of the other devices' copies that a stop interrupted (it
+/// stopped right after turning the aggregator off) is finished at the next
+/// start, with the aggregator off.
+#[tokio::test]
+async fn an_unfinished_deletion_of_the_copies_is_finished_at_start() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = Paths::for_instance(dir.path().to_path_buf(), "ctlsweep");
+    std::fs::create_dir_all(paths.instance_dir()).unwrap();
+    std::fs::write(crate::cloud::LinkFile::of(&paths).path(), br#"{"aggregatorOff": true}"#).unwrap();
+    assert!(!crate::cloud::LinkFile::of(&paths).wants_aggregator());
+    let left = paths.instance_dir().join(".aggregator-deleted-1-2-3");
+    std::fs::create_dir_all(&left).unwrap();
+    std::fs::write(left.join("copies.db"), b"STARTUP-SWEEP-CANARY").unwrap();
+    let mut held = std::fs::File::open(left.join("copies.db")).unwrap();
+    let control = Control::new(paths.clone());
+    control.attach(link_env(&paths));
+    crate::aggregator::finish_deletions(Duration::from_secs(5)).await;
+    assert!(!left.exists(), "swept at start");
+    let mut bytes = Vec::new();
+    std::io::Read::read_to_end(&mut held, &mut bytes).unwrap();
+    assert!(bytes.iter().all(|b| *b == 0), "and zeroed before it went");
+}
+
+/// A sign-in that cannot begin (the hub unreachable, or the code
+/// refused) leaves the link that was running as it was: a failed sign-in
+/// never leaves it stopped.
+#[tokio::test]
+async fn a_sign_in_that_cannot_begin_leaves_the_link_as_it_was() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = Paths::for_instance(dir.path().to_path_buf(), "ctlrestore");
+    let control = Control::new(paths.clone());
+    let _ = control.identity().unwrap();
+    let hub = format!("ws://127.0.0.1:{}", closed_port());
+    AgentState::enrolling(&hub, "a-1", "m-1", [9; 16], 5_000).save(&AgentFiles::of(&paths)).unwrap();
+    control.attach(link_env(&paths));
+    assert!(control.start_if_enrolled().await);
+    assert!(control.status().running);
+    let code = EnrollCode {
+        account_fingerprint: [1; 16],
+        secret: [2; 16],
+    };
+    let failed = control.enroll(&code, &hub).await;
+    assert!(matches!(failed, Err(ControlError::Begin(BeginError::Unreachable(_)))), "{failed:?}");
+    assert!(control.status().running, "the link that ran before runs again");
+    assert_eq!(control.status().machine.as_deref(), Some("m-1"), "the same enrollment");
+    control.stop().await;
+}
+
+/// A member that stopped running AI (`SetHost false`) is its own standing,
+/// not an enrollment still waiting for a device: the settings do not say
+/// "enrolling", and neither cancel nor the code's expiry deletes its
+/// `state.json`.
+#[tokio::test]
+async fn a_member_that_stopped_running_ai_keeps_its_state() {
+    use rh_proto::chain::{genesis_draft, Action, ChainClock, ChainState, DeviceInfo, Signer};
+    let dir = tempfile::tempdir().unwrap();
+    let paths = Paths::for_instance(dir.path().to_path_buf(), "ctlhost");
+    let control = Control::new(paths.clone());
+    let machine = control.identity().unwrap();
+    let ak = MachineIdentity::from_seed(&[1; 32]);
+    let device = MachineIdentity::from_seed(&[2; 32]);
+    let info = DeviceInfo {
+        id: "d-1".into(),
+        sign_key: device.sign_public(),
+        dh_key: device.dh_public(),
+        full: true,
+    };
+    let genesis = genesis_draft("a-1", ak.sign_public(), info, None, 1_000).sign(ak.signing_key());
+    let mut chain = ChainState::verify(std::slice::from_ref(&genesis), None, &mut ChainClock::history()).unwrap();
+    let mut entries = vec![genesis];
+    let stop = Action::SetHost {
+        id: "m-1".into(),
+        host: false,
+    };
+    for action in [Action::AddMachine(machine.info("m-1")), stop] {
+        let e = chain.draft(Signer::Device("d-1".into()), action, 2_000).sign(device.signing_key());
+        chain.apply(&e, &mut ChainClock::history()).unwrap();
+        entries.push(e);
+    }
+    let mut st = AgentState::enrolling(
+        "wss://hub.example",
+        "a-1",
+        "m-1",
+        rh_proto::identity::fingerprint(&ak.sign_public()),
+        5_000,
+    );
+    assert!(st.absorb(&entries, 5_000).error.is_none());
+    assert!(st.enrolled() && st.not_hosting());
+    st.save(&AgentFiles::of(&paths)).unwrap();
+    let state_file = AgentFiles::of(&paths).state();
+    assert_eq!(control.status().state, Standing::NotHosting, "not \"enrolling\"");
+    assert!(!control.cancel_enrollment().await.unwrap(), "nothing to cancel");
+    assert!(state_file.exists());
+    control.expire_enrollment_now(0).await;
+    assert!(state_file.exists(), "the code's expiry leaves a member alone");
+    assert_eq!(control.delete_copies().await.unwrap(), 0, "no copy to delete while it runs no AI");
+    assert_eq!(control.status().state, Standing::NotHosting);
+}
+
+/// Host identity renewal (§3.5): once a renewed key is in place the link
+/// is restarted in this process — through the hook a link calls, on a
+/// task of its own — and runs with the new key; the server's token (what
+/// its AI sessions and terminals live under) is never touched.
+#[tokio::test]
+async fn a_restart_runs_the_link_with_the_renewed_key_and_leaves_the_server_alone() {
+    use crate::agent::{FileSeedStore, StagedSeed};
+    let dir = tempfile::tempdir().unwrap();
+    let paths = Paths::for_instance(dir.path().to_path_buf(), "ctlrestart");
+    let control = Control::new(paths.clone());
+    let old = control.identity().unwrap();
+    let hub = format!("ws://127.0.0.1:{}", closed_port());
+    AgentState::enrolling(&hub, "a-1", "m-1", [9; 16], 5_000).save(&AgentFiles::of(&paths)).unwrap();
+    let env = link_env(&paths);
+    let server = env.cancel.clone();
+    let session = server.child_token();
+    control.attach(env);
+    assert!(control.start_if_enrolled().await);
+    let key_in_use = |control: &Control| {
+        let running = control.running_link();
+        running.as_ref().filter(|r| !r.finished()).map(|r| r.shared.identity.sign_public())
+    };
+    assert_eq!(key_in_use(&control), Some(old.sign_public()));
+    // The renewed seed in place, as a promotion leaves it.
+    let store = FileSeedStore::for_instance(&AgentFiles::of(&paths));
+    store
+        .stage(&StagedSeed {
+            uuid: droppen_instance::identity::ensure(&paths).unwrap().uuid,
+            seed: zeroize::Zeroizing::new([9; 32]),
+            nonce: [1; 16],
+            chain_seq: 0,
+            chain_head: [0; 32],
+            assurance: rh_proto::chain::Assurance::Auto,
+            created_ms: 1,
+            accepted_ms: Some(2),
+        })
+        .unwrap();
+    store.promote(&[1; 16]).unwrap();
+    let new = MachineIdentity::from_seed(&[9; 32]);
+    // The promotion noted that the push keys follow; a
+    // device subscribed against the old VAPID key.
+    let old_vapid = crate::push::store::vapid_public(&paths).await.unwrap();
+    let point = {
+        use p256::elliptic_curve::sec1::ToEncodedPoint as _;
+        let device = p256::SecretKey::random(&mut rand::rngs::OsRng);
+        crate::push::ece::b64url(device.public_key().to_encoded_point(false).as_bytes())
+    };
+    crate::push::store::upsert(&paths, "https://push.example/a".into(), point, crate::push::ece::b64url(&[9; 16]), None)
+        .await
+        .unwrap();
+    {
+        let running = control.running_link();
+        let shared = &running.as_ref().unwrap().shared;
+        shared.state.lock().unwrap().rotation.push_renew = true;
+        shared.save();
+    }
+    (control.link_restart_hook())();
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while key_in_use(&control) != Some(new.sign_public()) {
+        assert!(std::time::Instant::now() < deadline, "the link restarts with the new key");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while AgentState::load(&AgentFiles::of(&paths)).unwrap().unwrap().rotation.push_renew {
+        assert!(std::time::Instant::now() < deadline, "the restarted link renews the push keys");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(crate::push::store::subscriptions(&paths).await.is_empty(), "every push subscription forgotten");
+    assert_ne!(crate::push::store::vapid_public(&paths).await.unwrap(), old_vapid, "a new VAPID keypair");
+    assert!(control.status().running);
+    assert!(!server.is_cancelled() && !session.is_cancelled(), "the server and what runs under it go on");
+    control.restart().await.unwrap();
+    assert_eq!(key_in_use(&control), Some(new.sign_public()));
+    control.stop().await;
+    assert!(!server.is_cancelled() && !session.is_cancelled());
+}
+
+/// "Add this device again" cut short by a crash after
+/// the seed was archived (its `state.json` still there) is finished when
+/// the control comes up: the instance is not enrolled, with a fresh seed,
+/// and the link does not start as the old enrollment.
+#[tokio::test]
+async fn adding_again_cut_short_by_a_crash_is_finished_when_the_control_comes_up() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = Paths::for_instance(dir.path().to_path_buf(), "ctlfresh");
+    let control = Control::new(paths.clone());
+    let old = control.identity().unwrap();
+    AgentState::enrolling("wss://hub.example", "a-1", "m-1", [9; 16], 5_000).save(&AgentFiles::of(&paths)).unwrap();
+    // What the crash left: the marker, the seed archived, the state kept.
+    let agent = AgentFiles::of(&paths).machine_key().parent().unwrap().to_path_buf();
+    droppen_base::fsutil::write_private_reporting_path(&agent.join("re-enroll-fresh.json"), b"{}").unwrap();
+    std::fs::rename(AgentFiles::of(&paths).machine_key(), AgentFiles::of(&paths).archived_key(5)).unwrap();
+    control.attach(link_env(&paths));
+    assert!(!AgentFiles::of(&paths).has_state(), "the old enrollment is forgotten");
+    assert!(!agent.join("re-enroll-fresh.json").exists());
+    let fresh = control.identity().unwrap();
+    assert_ne!(fresh.sign_public(), old.sign_public());
+    assert!(AgentFiles::of(&paths).seed_archived(&old));
+    assert!(!control.start_if_enrolled().await, "nothing to start");
+    assert_eq!(control.status().state, Standing::None);
+}
+
+#[tokio::test]
+async fn cancelling_an_enrollment_keeps_the_machine_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = Paths::for_instance(dir.path().to_path_buf(), "ctltest");
+    let control = Control::new(paths.clone());
+    let identity = control.identity().unwrap();
+    AgentState::enrolling("wss://hub.example", "a-1", "m-1", [9; 16], 5_000)
+        .save(&AgentFiles::of(&paths))
+        .unwrap();
+    assert!(control.cancel_enrollment().await.unwrap());
+    assert_eq!(control.status().state, Standing::None);
+    assert_eq!(control.identity().unwrap().sign_public(), identity.sign_public(), "the machine key stays");
+}

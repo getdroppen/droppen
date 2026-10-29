@@ -5,7 +5,7 @@
 use rh_proto::identity::{display_fingerprint, fingerprint_text, EnrollCode, MachineIdentity};
 
 use super::seed::{load_or_create, FileSeedStore};
-use super::{control, enroll, rotation, state, AgentFiles};
+use super::{enroll, fingerprint, rotation, state, status, AgentFiles};
 use droppen_instance::paths::Paths;
 use droppen_base::time::now_ms_u64;
 
@@ -30,7 +30,7 @@ pub(super) fn describe(paths: &Paths, identity: &MachineIdentity, created: bool)
 pub(crate) fn print_status(paths: &Paths) {
     let files = AgentFiles::of(paths);
     let status = match state::AgentState::load(&files) {
-        Ok(Some(st)) => control::AgentStatus::of_instance(&files, &st),
+        Ok(Some(st)) => status::AgentStatus::of_instance(&files, &st),
         Ok(None) => {
             println!("instance {}: not enrolled (a server on its own)", paths.instance());
             return;
@@ -41,13 +41,13 @@ pub(crate) fn print_status(paths: &Paths) {
         }
     };
     let state = match status.state {
-        control::Standing::Linked => "enrolled",
-        control::Standing::NotHosting => {
+        status::Standing::Linked => "enrolled",
+        status::Standing::NotHosting => {
             "enrolled, not running AI in this account (it writes no streams and accepts no channels until a device makes it run AI again)"
         }
-        control::Standing::Enrolling => "enrolling (waiting for the page that showed the code to add this device)",
-        control::Standing::Removed => "removed from the account (the link does not run)",
-        control::Standing::None | control::Standing::Broken => "unknown",
+        status::Standing::Enrolling => "enrolling (waiting for the page that showed the code to add this device)",
+        status::Standing::Removed => "removed from the account (the link does not run)",
+        status::Standing::None | status::Standing::Broken => "unknown",
     };
     println!("instance {}: {state}", paths.instance());
     let show = |label: &str, value: Option<String>| {
@@ -64,7 +64,7 @@ pub(crate) fn print_status(paths: &Paths) {
     show("run AI", status.machines.map(|n| n.to_string()));
     show("machine key", status.mk_epoch.map(|e| format!("epoch {e}")));
     if let Ok((identity, _)) = load_or_create_existing(paths) {
-        show("fingerprint", Some(control::machine_fingerprint(&identity)));
+        show("fingerprint", Some(fingerprint::machine_fingerprint(&identity)));
     }
     for line in rotation_lines(&status.rotation, now_ms_u64()) {
         println!("  {line}");

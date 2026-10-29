@@ -281,7 +281,7 @@ impl AgentFiles {
     /// Deliver every statement this instance keeps that the hub has not taken —
     /// at start, and whenever one is made. One delivery task per instance; none
     /// when nothing waits (or outside a runtime).
-    pub(in crate::agent) fn deliver_disputes(&self) {
+    pub(crate) fn deliver_disputes(&self) {
         if !self.kept_disputes().iter().any(|(_, s)| s.pending()) {
             return;
         }

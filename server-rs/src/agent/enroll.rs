@@ -1,7 +1,7 @@
 //! Joining this instance to an account (`docs/cross-machine-architecture.md`
 //! §6): `agent enroll <code> --hub <url>` on the command line, and the local
 //! settings' "Sign in to Droppen" in process
-//! ([`super::control::Control::enroll`]) — the same [`AgentFiles::begin_enrollment`], then either
+//! ([`crate::cloud::control::Control::enroll`]) — the same [`AgentFiles::begin_enrollment`], then either
 //! [`AgentFiles::wait_enrollment_confirmed`] here or the link.
 //!
 //! 1. Dial the hub and present the code's *token* — `HMAC(secret, …)`, never
@@ -77,7 +77,7 @@ impl AgentFiles {
     /// Steps 1 and 2 (see the module docs): present the code's token, prove the
     /// code and the keys, and save the enrolling state. Fast — a few round trips
     /// — and the same for the command line and the local API.
-    pub(in crate::agent) async fn begin_enrollment(&self, identity: &MachineIdentity, code: &EnrollCode, hub_url: &str) -> Result<Begun, BeginError> {
+    pub(crate) async fn begin_enrollment(&self, identity: &MachineIdentity, code: &EnrollCode, hub_url: &str) -> Result<Begun, BeginError> {
         if let Some(existing) = AgentState::load(self).map_err(BeginError::Local)? {
             if existing.enrolled() {
                 return Err(BeginError::Enrolled(format!(

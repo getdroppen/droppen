@@ -805,9 +805,63 @@ impl AgentFiles {
         Ok(())
     }
 
+    /// Delete an enrollment's state (and what it left), keeping the machine key.
+    pub(crate) fn forget_enrollment(&self) -> Result<(), String> {
+        self.forget_enrollment_leftovers()?;
+        match std::fs::remove_file(self.state()) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    /// Delete `agent/` and everything in it (no-op when it is not there) — but
+    /// a dispute statement the hub has not taken yet ([`super::dispute`]): the
+    /// only evidence that this device's key was replaced elsewhere, signed and
+    /// holding no secret, kept and still delivered until the hub has it. The
+    /// link — and with it the streams' writer — must be stopped first; the
+    /// process's connection to `streams.db` is dropped here, before the file.
+    pub(crate) fn unenroll(&self) -> Result<(), String> {
+        droppen_instance::db::forget(&self.streams_db());
+        let dir = self.0.clone();
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(format!("{}: {e}", dir.display())),
+        };
+        let mut kept = 0usize;
+        for entry in entries {
+            let entry = entry.map_err(|e| format!("{}: {e}", dir.display()))?;
+            let path = entry.path();
+            let is_dir = entry.file_type().map_err(|e| format!("{}: {e}", path.display()))?.is_dir();
+            if !is_dir && super::dispute::is_pending_statement(&path) {
+                kept += 1;
+                continue;
+            }
+            let removed = if is_dir { std::fs::remove_dir_all(&path) } else { std::fs::remove_file(&path) };
+            match removed {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(format!("{}: {e}", path.display())),
+            }
+        }
+        if kept == 0 {
+            match std::fs::remove_dir(&dir) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(format!("{}: {e}", dir.display())),
+            }
+            tracing::info!(dir = %dir.display(), "unenrolled: the agent's files are gone");
+        } else {
+            super::sync_dir(&dir.join("."));
+            tracing::warn!(dir = %dir.display(), kept, "unenrolled: the agent's files are gone but the dispute statements the hub does not have yet");
+        }
+        Ok(())
+    }
+
     /// Whether this instance has agent state (`agent/state.json`): enrollment
     /// state is per instance.
-    pub(in crate::agent) fn has_state(&self) -> bool {
+    pub(crate) fn has_state(&self) -> bool {
         self.state().exists()
     }
 }

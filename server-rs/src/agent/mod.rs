@@ -65,10 +65,12 @@ pub const POLICY_FEATURE: &str = "policy/1";
 pub const ROTATE_FEATURE: &str = "rotate/1";
 
 pub mod bridge;
-pub mod control;
+#[cfg(test)]
+mod control_tests;
 pub mod direct;
 pub mod dispute;
 pub mod enroll;
+pub mod fingerprint;
 pub mod hub;
 pub mod link;
 pub mod relays;
@@ -76,6 +78,7 @@ pub mod rotation;
 #[cfg(test)]
 mod rotation_tests;
 pub mod state;
+pub mod status;
 pub mod streams;
 pub mod system;
 
