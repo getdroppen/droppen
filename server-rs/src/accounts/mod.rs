@@ -30,7 +30,7 @@ use gotcha::{api, GotchaRouter, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
 use droppen_http::created::Created;
-use droppen_http::error::ApiError;
+use droppen_http::error::{ApiError, Hinted};
 use droppen_http::extract::{ApiJson, ApiPath, ApiQuery};
 use droppen_http::SendResult;
 use droppen_http::openapi_ext::{required_nullable, ExtraResponses, Nullable, Optional};
@@ -181,12 +181,12 @@ pub(crate) fn account_not_found() -> ApiError {
 /// offers from the session's own CLI, so reaching this is a bug in the client
 /// rather than something a person typed, and it should be able to say so.
 pub(crate) fn provider_mismatch() -> ApiError {
-    ApiError::with_body(
+    ApiError::refusal(
         StatusCode::BAD_REQUEST,
-        serde_json::json!({
-            "error": "provider_mismatch",
-            "hint": "this account authenticates the other CLI; a codex session needs a codex account and a claude session a claude one",
-        }),
+        Hinted {
+            error: "provider_mismatch",
+            hint: "this account authenticates the other CLI; a codex session needs a codex account and a claude session a claude one",
+        },
     )
 }
 
@@ -244,15 +244,27 @@ fn require_label(label: &str) -> Result<(), ApiError> {
 /// [`AccountError::Io`] is the only variant that does not become a `4xx`.
 fn store_error(error: AccountError, fallback: &str) -> ApiError {
     match error {
-        AccountError::Duplicate { existing_label, .. } => ApiError::with_body(
+        AccountError::Duplicate { existing_label, .. } => ApiError::refusal(
             StatusCode::CONFLICT,
-            serde_json::json!({ "error": "duplicate_account", "existingLabel": existing_label }),
+            DuplicateAccount {
+                error: "duplicate_account",
+                existing_label: &existing_label,
+            },
         ),
         AccountError::Invalid(message) => ApiError::bad_request(message),
         AccountError::ProviderMismatch { .. } => provider_mismatch(),
         AccountError::NotFound(_) => ApiError::bad_request(fallback.to_string()),
         AccountError::Io(_) => ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, fallback.to_string()),
     }
+}
+
+/// `duplicate_account`'s body: the label of the account that already holds
+/// the token, which the client shows.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DuplicateAccount<'a> {
+    error: &'static str,
+    existing_label: &'a str,
 }
 
 /// What the account routes use of the server's state.
@@ -844,6 +856,27 @@ mod tests {
     use crate::drive::routes::{bind_session_account, continue_session_on_account, ContinuedSession, SessionAccount, SessionContinue};
     use droppen_instance::paths::ClaudeRoot;
     use crate::sessions::{claude, Source};
+
+    /// The two refusals with a code of their own, byte for byte: the client
+    /// acts on `error`, shows `hint`, and names `existingLabel`.
+    #[test]
+    fn the_account_refusals_are_written_as_pinned() {
+        let mismatch = provider_mismatch();
+        assert_eq!(mismatch.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            mismatch.body().to_string(),
+            r#"{"error":"provider_mismatch","hint":"this account authenticates the other CLI; a codex session needs a codex account and a claude session a claude one"}"#
+        );
+        let duplicate = store_error(
+            AccountError::Duplicate {
+                existing_id: "a-1".into(),
+                existing_label: "Work \"main\"".into(),
+            },
+            "unused",
+        );
+        assert_eq!(duplicate.status(), StatusCode::CONFLICT);
+        assert_eq!(duplicate.body().to_string(), r#"{"error":"duplicate_account","existingLabel":"Work \"main\""}"#);
+    }
 
     #[test]
     fn an_auth_status_survives_a_banner_around_it() {

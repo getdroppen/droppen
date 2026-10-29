@@ -55,7 +55,7 @@ use crate::agent::fingerprint::machine_fingerprint;
 use crate::agent::status::{AgentStatus, Standing};
 use crate::aggregator::controller::AggregatorHost;
 use crate::auth::{MaybeIdentity, RETURN_ROUTE};
-use droppen_http::error::ApiError;
+use droppen_http::error::{ApiError, Coded};
 use droppen_http::extract::ApiJson;
 use droppen_http::openapi_ext::ExtraResponses;
 use droppen_instance::paths::Paths;
@@ -139,7 +139,7 @@ impl Cloud {
 
 /// `{error: code, message}` at `status`.
 fn refusal(status: StatusCode, code: &str, message: &str) -> ApiError {
-    ApiError::with_body(status, serde_json::json!({"error": code, "message": message}))
+    ApiError::refusal(status, Coded { error: code, message })
 }
 
 // ---------------------------------------------------------------- bodies
@@ -990,6 +990,15 @@ mod tests {
 
     use super::*;
     use crate::api::AppState;
+
+    /// A refusal's body, byte for byte: pages act on `error` and show
+    /// `message`, and the gateway's `bye` carries both.
+    #[test]
+    fn a_refusal_is_written_as_pinned() {
+        let refused = refusal(StatusCode::FORBIDDEN, "no_remote_access", "not here");
+        assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+        assert_eq!(refused.body().to_string(), r#"{"error":"no_remote_access","message":"not here"}"#);
+    }
 
     fn attempt(owner: &str, expires_ms: u64) -> Option<Attempt> {
         Some(Attempt {
