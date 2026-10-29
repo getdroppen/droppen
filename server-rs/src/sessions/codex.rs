@@ -23,10 +23,12 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
+use std::time::{Duration, SystemTime};
 
 use futures_util::future::BoxFuture;
 use serde_json::Value;
 
+use super::children::{read_at, sort, unread, SessionChild, SessionChildKind, SessionChildStatus};
 use super::codex_claims::{Claims, Verdict};
 use super::codex_tools::{CodexTools, Context};
 use droppen_instance::paths::Paths;
@@ -453,6 +455,45 @@ pub(super) async fn spawned_thread_state(thread: &SpawnedThread) -> (bool, bool)
     (working, failed)
 }
 
+/// Codex children of `parent`, nested; `depth` guards against a cycle in a
+/// damaged edge table.
+async fn codex_children(
+    parent: &str,
+    by_parent: &HashMap<&str, Vec<&SpawnedThread>>,
+    marks: &BTreeMap<String, String>,
+    parent_read: Option<&str>,
+    depth: usize,
+) -> Vec<SessionChild> {
+    let Some(threads) = by_parent.get(parent).filter(|_| depth < 8) else {
+        return Vec::new();
+    };
+    let mut children = Vec::with_capacity(threads.len());
+    for thread in threads {
+        let (working, failed) = spawned_thread_state(thread).await;
+        let status = match (working, failed) {
+            (true, _) => SessionChildStatus::Working,
+            (false, true) => SessionChildStatus::Failed,
+            (false, false) => SessionChildStatus::Done,
+        };
+        let updated_at = iso8601(SystemTime::UNIX_EPOCH + Duration::from_millis(thread.updated_ms.max(0) as u64));
+        let own = read_at(marks, Source::Codex, &thread.id);
+        let read = own.max(parent_read);
+        let grandchildren = Box::pin(codex_children(&thread.id, by_parent, marks, read, depth + 1)).await;
+        children.push(SessionChild {
+            id: thread.id.clone(),
+            kind: SessionChildKind::Thread,
+            name: thread.name.clone(),
+            role: Nullable(thread.role.clone()),
+            status,
+            unread: unread(status, &updated_at, own, parent_read),
+            updated_at,
+            children: grandchildren,
+        });
+    }
+    sort(&mut children);
+    children
+}
+
 /// The delegated subagent thread `id`, when it is one: the thread row, and
 /// the thread that spawned it.
 fn query_spawned_thread_row(db: &Path, id: &str) -> Option<(ThreadRow, String)> {
@@ -822,6 +863,24 @@ impl super::Transcripts for CodexSessions {
 
     fn usage_fold(&self) -> Box<dyn UsageFold> {
         Box::new(CodexUsage::default())
+    }
+
+    // Codex runs a subagent as a thread of its own and records the edge in
+    // its state database (`thread_spawn_edges`). The thread is a session and
+    // opens by its id; the list keeps it out of the top level and shows it
+    // here instead. The edges are one table for every session, so they are
+    // read once for all of them.
+    fn children<'a>(&'a self, paths: &'a Paths, sessions: Vec<&'a mut SessionSummary>, marks: &'a BTreeMap<String, String>) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            let codex_threads = spawned_threads(paths).await;
+            let mut threads_by_parent: HashMap<&str, Vec<&SpawnedThread>> = HashMap::new();
+            for thread in &codex_threads {
+                threads_by_parent.entry(thread.parent_id.as_str()).or_default().push(thread);
+            }
+            for session in sessions {
+                session.children = codex_children(&session.id, &threads_by_parent, marks, read_at(marks, Source::Codex, &session.id), 0).await;
+            }
+        })
     }
 }
 

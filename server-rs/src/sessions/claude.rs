@@ -701,6 +701,10 @@ impl super::Transcripts for ClaudeCodeSessions {
         Some(self)
     }
 
+    fn children<'a>(&'a self, _paths: &'a Paths, sessions: Vec<&'a mut SessionSummary>, marks: &'a BTreeMap<String, String>) -> BoxFuture<'a, ()> {
+        Box::pin(super::subagents::children(sessions, marks))
+    }
+
     fn context<'a>(&'a self, file_path: &'a Path) -> BoxFuture<'a, Option<super::context::ContextUsage>> {
         Box::pin(super::context::read_claude_context(file_path))
     }

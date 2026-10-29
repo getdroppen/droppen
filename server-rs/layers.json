@@ -342,11 +342,9 @@
     {
       "why": "sessions, attention and stats read each provider's transcripts and roots themselves. They go through the Transcripts port sessions owns, which each provider implements.",
       "edges": [
-        "attention -> sessions::subagents",
         "sessions -> claude_roots",
         "sessions -> sessions::claude",
-        "sessions -> sessions::codex_claims",
-        "sessions -> sessions::subagents"
+        "sessions -> sessions::codex_claims"
       ]
     },
     {
@@ -359,8 +357,7 @@
         "drive -> sessions::acp_transcript",
         "drive -> sessions::claude",
         "feed -> acp_agent",
-        "feed -> claude_roots",
-        "feed -> sessions::subagents"
+        "feed -> claude_roots"
       ]
     },
     {
@@ -393,12 +390,6 @@
         "accounts -> claude_roots",
         "setup -> accounts::quota::codex",
         "setup -> claude_roots"
-      ]
-    },
-    {
-      "why": "The implementations share transcript helpers that sit in Claude Code's and Codex's modules today; the shared parts go to sessions or the provider base.",
-      "edges": [
-        "sessions::subagents -> sessions::codex"
       ]
     },
     {
