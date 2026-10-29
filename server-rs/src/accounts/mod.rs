@@ -290,7 +290,7 @@ fn require_secret(secret: &str) -> Result<(), ApiError> {
 /// store's body: a launch for the other CLI is the same `provider_mismatch`
 /// here as at a spawn.
 async fn require_working(state: &AccountsState, provider: AccountProvider, credential: &Credential) -> Result<Option<String>, ApiError> {
-    let verdict = verify::verify_secret(state.accounts.logins(), &state.paths, provider, credential)
+    let verdict = state.accounts.logins().verify_secret(&state.paths, provider, credential)
         .await
         .map_err(|error| store_error(error, "cannot check the credential"))?;
     match verdict {

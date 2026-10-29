@@ -828,7 +828,7 @@ impl InjectionRegistry {
         // whatever `~/.codex/auth.json` holds. An account adds a model
         // provider that reads its key from a variable of ours, because
         // `app-server` reads no key variable of codex's own — see
-        // [`crate::accounts::login::codex::codex_provider_args`].
+        // [`crate::accounts::login::codex::CodexBaseUrl::provider_args`].
         let launch = account.as_ref().map(|account| &account.launch);
         let mut args: Vec<String> = vec!["app-server".into()];
         args.extend(launch.into_iter().flat_map(|launch| launch.codex_args.iter().cloned()));
@@ -2689,7 +2689,7 @@ mod tests {
             launch: crate::accounts::store::AccountLaunch {
                 provider: AccountProvider::Codex,
                 env: vec![],
-                codex_args: crate::accounts::login::codex::codex_provider_args("https://api.example.test/v1"),
+                codex_args: crate::accounts::login::codex::CodexBaseUrl::parse("https://api.example.test/v1").expect("a base URL").provider_args(),
             },
         };
         let chat = SendOptions {

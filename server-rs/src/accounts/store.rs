@@ -783,7 +783,7 @@ impl AccountsStore {
             .reading_file(&self.paths)
             .map(|path| super::quota::readings::load(&path))
             .unwrap_or_default();
-        let mut logins = super::local_login::local_logins(&self.logins, &self.limit_log(), &reading, super::rest::now_ms());
+        let mut logins = self.logins.local_logins(&self.limit_log(), &reading, super::rest::now_ms());
         logins.claude.is_default = self.local_is_default(AccountProvider::Claude);
         logins.codex.is_default = self.local_is_default(AccountProvider::Codex);
         logins

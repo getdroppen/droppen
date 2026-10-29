@@ -78,25 +78,27 @@ pub struct LocalLogins {
     pub codex: LocalLogin,
 }
 
-/// Both local logins, from this instance's limit log and the machine's shared
-/// local reading, each weighed by its own CLI's login. Neither is the default
-/// here: that is a setting of the store, which
-/// [`super::store::AccountsStore::local_logins`] fills in.
-pub fn local_logins(logins: &Logins, log: &LimitLog, local_reading: &SharedReading, now: i64) -> LocalLogins {
-    let mut rests = log.active_rests(now);
-    let claude_refused = log.active_observed_ms(LOCAL_CLAUDE, LimitClass::Auth, now);
-    let codex_refused = log.active_observed_ms(LOCAL_CODEX, LimitClass::Auth, now);
-    LocalLogins {
-        claude: LocalLogin {
-            state: logins.claude.local_state(claude_refused, local_reading),
-            rest: rests.remove(LOCAL_CLAUDE).unwrap_or_default(),
-            is_default: false,
-        },
-        codex: LocalLogin {
-            state: logins.codex.local_state(codex_refused, local_reading),
-            rest: rests.remove(LOCAL_CODEX).unwrap_or_default(),
-            is_default: false,
-        },
+impl Logins {
+    /// Both local logins, from this instance's limit log and the machine's shared
+    /// local reading, each weighed by its own CLI's login. Neither is the default
+    /// here: that is a setting of the store, which
+    /// [`super::store::AccountsStore::local_logins`] fills in.
+    pub fn local_logins(&self, log: &LimitLog, local_reading: &SharedReading, now: i64) -> LocalLogins {
+        let mut rests = log.active_rests(now);
+        let claude_refused = log.active_observed_ms(LOCAL_CLAUDE, LimitClass::Auth, now);
+        let codex_refused = log.active_observed_ms(LOCAL_CODEX, LimitClass::Auth, now);
+        LocalLogins {
+            claude: LocalLogin {
+                state: self.claude.local_state(claude_refused, local_reading),
+                rest: rests.remove(LOCAL_CLAUDE).unwrap_or_default(),
+                is_default: false,
+            },
+            codex: LocalLogin {
+                state: self.codex.local_state(codex_refused, local_reading),
+                rest: rests.remove(LOCAL_CODEX).unwrap_or_default(),
+                is_default: false,
+            },
+        }
     }
 }
 
@@ -157,7 +159,7 @@ mod tests {
         let now = 1_000 * MINUTE;
         refuse_local_claude(&log, now);
 
-        let logins = local_logins(&crate::app::logins(), &log, &read_at(now - MINUTE), now + MINUTE);
+        let logins = crate::app::logins().local_logins(&log, &read_at(now - MINUTE), now + MINUTE);
         assert_eq!(logins.claude.state, LocalLoginState::SignedOut);
         assert_eq!(logins.claude.rest.len(), 1);
         assert_eq!(logins.claude.rest[0].class, LimitClass::Auth);
@@ -179,13 +181,13 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            local_logins(&logins, &log, &probed, now).claude.state,
+            logins.local_logins(&log, &probed, now).claude.state,
             LocalLoginState::SignedOut,
             "the probe finding nobody signed in is enough on its own"
         );
 
         refuse_local_claude(&log, now - 2 * MINUTE);
-        let healed = local_logins(&logins, &log, &read_at(now - MINUTE), now);
+        let healed = logins.local_logins(&log, &read_at(now - MINUTE), now);
         assert_eq!(healed.claude.state, LocalLoginState::SignedIn, "a reading newer than the refusal");
         assert_eq!(healed.codex.state, LocalLoginState::Unknown, "claude's reading says nothing about codex's login");
     }
