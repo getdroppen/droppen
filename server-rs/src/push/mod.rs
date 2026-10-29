@@ -72,7 +72,7 @@ use gotcha::axum::extract::FromRef;
 use gotcha::{api, GotchaRouter, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
-use crate::sessions::attention::{self, derive};
+use crate::sessions::attention;
 use droppen_http::created::Created;
 use droppen_http::error::ApiError;
 use droppen_http::extract::ApiJson;
@@ -491,20 +491,20 @@ async fn notify_inner(
             // what it produced. Exactly `crate::sessions::attention`'s rule *and* its data:
             // the clock is the newest message in the same unread ledger the list
             // row's badge and count come from, built by the same predicate
-            // (`derive::spoken_texts`) — so the badge and the notification can
+            // (`Transcripts::spoken_texts`) — so the badge and the notification can
             // never disagree about whether the session said something new.
             let (Some(summary), Some(status)) = (summary.as_ref(), transcript_status) else {
                 return;
             };
             let seen = attention::seen::read(&paths).await;
             let read_at = seen.get(&tag).map(String::as_str);
-            let at = attention::clock_of(summary, read_at).await;
+            let at = attention::clock_of(summary, read_at, &transcripts).await;
             if !attention::is_unread(at.as_deref(), read_at, status) {
                 return;
             }
             // Only the words come from the tail, by the same predicate, so the
             // body is the message the clock was read from whenever it is there.
-            let echo = derive::read_echo(source, Path::new(&summary.file_path)).await;
+            let echo = transcripts.read_echo(source, Path::new(&summary.file_path)).await;
             let snippet = echo.map(|echo| echo.snippet()).unwrap_or_else(|| "Turn finished.".to_string());
             Notice::Finished(match still_busy_clause(summary.resident.as_ref()) {
                 Some(clause) => format!("{snippet} · {clause}"),

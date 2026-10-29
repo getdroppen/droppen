@@ -669,6 +669,35 @@ impl super::Transcripts for ClaudeCodeSessions {
     fn parse<'a>(&'a self, paths: &'a Paths, file_path: &'a Path) -> BoxFuture<'a, std::io::Result<Vec<util::TranscriptItem>>> {
         Box::pin(super::transcript::parse_claude_transcript(paths, file_path, false))
     }
+
+    fn cli_choice<'a>(&'a self, file_path: &'a Path) -> BoxFuture<'a, Option<super::CliChoice>> {
+        Box::pin(read_cli_choice(file_path))
+    }
+
+    fn context<'a>(&'a self, file_path: &'a Path) -> BoxFuture<'a, Option<super::context::ContextUsage>> {
+        Box::pin(super::context::read_claude_context(file_path))
+    }
+
+    // Each non-empty `text` block of a main-chain `assistant` entry.
+    // `isSidechain` is a subagent talking to itself, and `thinking` / `tool_use`
+    // are the model working. A `<synthetic>` entry — the CLI writing in the
+    // model's voice: a rate-limit wall, an API error — *does* count: it is the
+    // last thing the session said, and a session that stopped on a limit is
+    // exactly one the user needs to see has stopped.
+    fn spoken_texts(&self, entry: &serde_json::Map<String, Value>) -> Vec<String> {
+        let keep = |text: &str| {
+            let text = text.trim();
+            (!text.is_empty()).then(|| text.to_string())
+        };
+        if entry.get("isSidechain") == Some(&Value::Bool(true)) || entry.get("type").and_then(Value::as_str) != Some("assistant") {
+            return Vec::new();
+        }
+        content_blocks(entry.get("message"))
+            .iter()
+            .filter(|block| block.get("type").and_then(Value::as_str) == Some("text"))
+            .filter_map(|block| block.get("text").and_then(Value::as_str).and_then(keep))
+            .collect()
+    }
 }
 
 /// The model/effort a session last ran with, read from its transcript tail.

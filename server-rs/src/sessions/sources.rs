@@ -12,9 +12,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use futures_util::future::BoxFuture;
+use serde_json::{Map, Value};
 
+use super::context::ContextUsage;
 use super::util::TranscriptItem;
-use super::{SessionSummary, Source};
+use super::{CliChoice, SessionSummary, Source};
 use droppen_instance::paths::Paths;
 
 /// One CLI's transcripts: where its sessions are, and how one is read.
@@ -44,6 +46,28 @@ pub trait Transcripts: Send + Sync {
     /// The items the session view draws, read from the transcript at
     /// `file_path`.
     fn parse<'a>(&'a self, paths: &'a Paths, file_path: &'a Path) -> BoxFuture<'a, std::io::Result<Vec<TranscriptItem>>>;
+
+    /// The model and effort the session last ran with, read from the
+    /// transcript at `file_path`.
+    fn cli_choice<'a>(&'a self, file_path: &'a Path) -> BoxFuture<'a, Option<CliChoice>>;
+
+    /// How full the session's context window was on its last request, read
+    /// from the transcript at `file_path`.
+    fn context<'a>(&'a self, file_path: &'a Path) -> BoxFuture<'a, Option<ContextUsage>>;
+
+    /// The texts in one transcript entry that are the agent *speaking to the
+    /// user*, trimmed, in the order they were written.
+    ///
+    /// **The one definition** behind the badge, the unread count and the push
+    /// notification ([`crate::sessions::attention::unread`] counts these;
+    /// [`crate::sessions::attention::derive::echo`] takes the newest), so the
+    /// three can never disagree about whether something was said. One entry
+    /// per transcript row the session view draws for it. Thinking, tool calls
+    /// and a subagent talking to itself are the session working, not speech.
+    ///
+    /// remote-hand's own rows (task notifications, hand-backs) are user-side
+    /// entries and never reach this test.
+    fn spoken_texts(&self, entry: &Map<String, Value>) -> Vec<String>;
 }
 
 /// The reader of every source, keyed by [`Source`].
@@ -83,6 +107,16 @@ impl TranscriptSources {
     /// [`Transcripts::find_file`].
     pub async fn find_file(&self, paths: &Paths, source: Source, id: &str) -> Option<PathBuf> {
         self.get(source)?.find_file(paths, id).await
+    }
+
+    /// See [`Transcripts::cli_choice`].
+    pub async fn cli_choice(&self, source: Source, file_path: &Path) -> Option<CliChoice> {
+        self.get(source)?.cli_choice(file_path).await
+    }
+
+    /// See [`Transcripts::context`].
+    pub async fn context(&self, source: Source, file_path: &Path) -> Option<ContextUsage> {
+        self.get(source)?.context(file_path).await
     }
 
     /// `file_path` read by `source`'s reader, past every cache. A source with

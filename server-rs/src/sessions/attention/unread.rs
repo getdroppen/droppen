@@ -49,7 +49,7 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 use super::derive::spoken;
 use crate::sessions::util::try_parse;
-use crate::sessions::Source;
+use crate::sessions::Transcripts;
 
 /// The most the count ever says. The client renders this as `99+`.
 pub const CAP: usize = 99;
@@ -147,7 +147,14 @@ impl Ledger {
 /// attention clock has always used.
 ///
 /// `None` only for an unreadable file.
-pub async fn refresh(source: Source, path: &Path, known: Option<Ledger>, size: u64, read_at: Option<&str>, fallback_at: &str) -> Option<Ledger> {
+pub async fn refresh(
+    reader: &dyn Transcripts,
+    path: &Path,
+    known: Option<Ledger>,
+    size: u64,
+    read_at: Option<&str>,
+    fallback_at: &str,
+) -> Option<Ledger> {
     if let Some(mut ledger) = known {
         let usable = ledger.count(read_at).is_some();
         // A transcript only grows. One that is shorter than what was read, or
@@ -156,7 +163,7 @@ pub async fn refresh(source: Source, path: &Path, known: Option<Ledger>, size: u
         // back.
         if usable && size >= ledger.end && size - ledger.end <= FORWARD_BUDGET && still_the_same(path, &ledger).await.unwrap_or(false) {
             if size > ledger.end {
-                let (newer, end) = read_forward(source, path, ledger.end, fallback_at).await.ok()?;
+                let (newer, end) = read_forward(reader, path, ledger.end, fallback_at).await.ok()?;
                 ledger.extend(newer, end);
             }
             if ledger.head.is_none() && ledger.end > 0 {
@@ -165,7 +172,7 @@ pub async fn refresh(source: Source, path: &Path, known: Option<Ledger>, size: u
             return Some(ledger);
         }
     }
-    scan_back(source, path, read_at, fallback_at, COLD_BUDGET).await.ok()
+    scan_back(reader, path, read_at, fallback_at, COLD_BUDGET).await.ok()
 }
 
 /// Whether `path` is still the file the ledger was read from: the same first
@@ -223,7 +230,7 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 }
 
 /// The messages on the complete lines after `from`, and where those lines end.
-async fn read_forward(source: Source, path: &Path, from: u64, fallback_at: &str) -> std::io::Result<(Vec<String>, u64)> {
+async fn read_forward(reader: &dyn Transcripts, path: &Path, from: u64, fallback_at: &str) -> std::io::Result<(Vec<String>, u64)> {
     let mut file = tokio::fs::File::open(path).await?;
     file.seek(std::io::SeekFrom::Start(from)).await?;
     let mut buf = Vec::new();
@@ -236,7 +243,7 @@ async fn read_forward(source: Source, path: &Path, from: u64, fallback_at: &str)
     let complete = &buf[..=last_newline];
     let mut stamps = Vec::new();
     for line in complete.split(|byte| *byte == b'\n') {
-        stamps.extend(messages_on(source, line, fallback_at));
+        stamps.extend(messages_on(reader, line, fallback_at));
     }
     Ok((stamps, from + last_newline as u64 + 1))
 }
@@ -247,7 +254,7 @@ pub(super) static COLD_SCANS: std::sync::LazyLock<std::sync::Mutex<std::collecti
     std::sync::LazyLock::new(Default::default);
 
 /// Walk back from the end until the answer cannot change; see the module note.
-async fn scan_back(source: Source, path: &Path, read_at: Option<&str>, fallback_at: &str, budget: u64) -> std::io::Result<Ledger> {
+async fn scan_back(reader: &dyn Transcripts, path: &Path, read_at: Option<&str>, fallback_at: &str, budget: u64) -> std::io::Result<Ledger> {
     #[cfg(test)]
     {
         *COLD_SCANS.lock().expect("scan counter").entry(path.to_path_buf()).or_default() += 1;
@@ -257,7 +264,7 @@ async fn scan_back(source: Source, path: &Path, read_at: Option<&str>, fallback_
     // Newest first while walking; reversed once at the end.
     let mut newest_first: Vec<String> = Vec::new();
     let mut floor = None;
-    while let Some(found) = lines.next_spoken(source, fallback_at).await? {
+    while let Some(found) = lines.next_spoken(reader, fallback_at).await? {
         let at = found[0].clone();
         newest_first.extend(found);
         if newest_first.len() >= CAP {
@@ -325,14 +332,14 @@ impl BackwardBytes {
 
     /// The messages on the next line back that holds any; `None` at the start
     /// of the file or at the budget.
-    async fn next_spoken(&mut self, source: Source, fallback_at: &str) -> std::io::Result<Option<Vec<String>>> {
+    async fn next_spoken(&mut self, reader: &dyn Transcripts, fallback_at: &str) -> std::io::Result<Option<Vec<String>>> {
         loop {
             // Every complete line left in this chunk, newest first. The piece
             // before the first newline is only whole at the start of the file.
             while let Some(newline) = memchr::memrchr(b'\n', &self.buf[..self.upto]) {
                 let line = &self.buf[newline + 1..self.upto];
                 self.upto = newline;
-                let found = messages_on(source, line, fallback_at);
+                let found = messages_on(reader, line, fallback_at);
                 if !found.is_empty() {
                     return Ok(Some(found));
                 }
@@ -340,7 +347,7 @@ impl BackwardBytes {
             if self.cursor == 0 {
                 let first = &self.buf[..self.upto];
                 self.upto = 0;
-                let found = messages_on(source, first, fallback_at);
+                let found = messages_on(reader, first, fallback_at);
                 return Ok((!found.is_empty()).then_some(found));
             }
             if self.scanned >= self.budget {
@@ -380,14 +387,14 @@ fn might_speak(line: &[u8]) -> bool {
 }
 
 /// One timestamp per message on a line; empty for a line that holds none.
-fn messages_on(source: Source, line: &[u8], fallback_at: &str) -> Vec<String> {
+fn messages_on(reader: &dyn Transcripts, line: &[u8], fallback_at: &str) -> Vec<String> {
     if !might_speak(line) {
         return Vec::new();
     }
     let Some(entry) = try_parse(&String::from_utf8_lossy(line)) else {
         return Vec::new();
     };
-    let Some(said) = spoken(source, &entry) else {
+    let Some(said) = spoken(reader, &entry) else {
         return Vec::new();
     };
     let at = said.at.unwrap_or_else(|| fallback_at.to_string());
@@ -421,6 +428,8 @@ async fn complete_end(path: &Path) -> std::io::Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sessions::claude::ClaudeCodeSessions;
+    use crate::sessions::codex::CodexSessions;
 
     const FALLBACK: &str = "2026-01-01T09:59:59.000Z";
 
@@ -454,8 +463,8 @@ mod tests {
         std::fs::metadata(path).expect("stat").len()
     }
 
-    async fn ledger(source: Source, path: &Path, read_at: Option<&str>) -> Ledger {
-        refresh(source, path, None, size(path), read_at, FALLBACK).await.expect("a ledger")
+    async fn ledger(reader: &dyn Transcripts, path: &Path, read_at: Option<&str>) -> Ledger {
+        refresh(reader, path, None, size(path), read_at, FALLBACK).await.expect("a ledger")
     }
 
     /// The unit is a message the user reads. Thinking, tool calls, tool results
@@ -495,7 +504,7 @@ mod tests {
                 ),
             ],
         );
-        let ledger = ledger(Source::Claude, &path, None).await;
+        let ledger = ledger(&ClaudeCodeSessions, &path, None).await;
         assert_eq!(
             ledger.stamps,
             vec![at(1), at(5), at(7), at(7)],
@@ -520,7 +529,7 @@ mod tests {
                 ),
             ],
         );
-        let ledger = ledger(Source::Claude, &path, Some(&at(1))).await;
+        let ledger = ledger(&ClaudeCodeSessions, &path, Some(&at(1))).await;
         assert_eq!(ledger.count(Some(&at(1))), Some(1));
         assert_eq!(ledger.newest(), Some(at(2).as_str()));
     }
@@ -536,7 +545,7 @@ mod tests {
                 at(1)
             )],
         );
-        assert_eq!(ledger(Source::Claude, &path, None).await.stamps, vec![at(1)]);
+        assert_eq!(ledger(&ClaudeCodeSessions, &path, None).await.stamps, vec![at(1)]);
     }
 
     /// An adoption copies one transcript over another, and the copy can be as
@@ -547,7 +556,7 @@ mod tests {
     async fn a_replacement_of_equal_or_greater_length_is_scanned_again() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = write(dir.path(), &[user(0), assistant(1, "a"), assistant(2, "b")]);
-        let first = ledger(Source::Claude, &path, None).await;
+        let first = ledger(&ClaudeCodeSessions, &path, None).await;
         assert!(first.head.is_some(), "a complete first line is fingerprinted");
 
         // Longer, and a different first line.
@@ -555,26 +564,26 @@ mod tests {
             dir.path(),
             &[user(10), assistant(11, "x"), assistant(12, "y"), assistant(13, "z"), assistant(14, "w")],
         );
-        let again = refresh(Source::Claude, &path, Some(first.clone()), size(&path), None, FALLBACK)
+        let again = refresh(&ClaudeCodeSessions, &path, Some(first.clone()), size(&path), None, FALLBACK)
             .await
             .expect("a ledger");
         assert_eq!(again.stamps, vec![at(11), at(12), at(13), at(14)], "a fresh scan, nothing grafted on");
 
         // Same first line, but the old `end` now lands mid-line.
         let path = write(dir.path(), &[user(0), assistant(1, "a much longer first answer"), assistant(3, "c")]);
-        let shifted = refresh(Source::Claude, &path, Some(first), size(&path), None, FALLBACK)
+        let shifted = refresh(&ClaudeCodeSessions, &path, Some(first), size(&path), None, FALLBACK)
             .await
             .expect("a ledger");
         assert_eq!(shifted.stamps, vec![at(1), at(3)]);
 
         // And the genuine article — the same file, appended to — still resumes.
         let path = write(dir.path(), &[user(0), assistant(1, "a")]);
-        let original = ledger(Source::Claude, &path, None).await;
+        let original = ledger(&ClaudeCodeSessions, &path, None).await;
         let mut body = std::fs::read_to_string(&path).expect("read");
         body.push_str(&assistant(4, "d"));
         body.push('\n');
         std::fs::write(&path, body).expect("append");
-        let grown = refresh(Source::Claude, &path, Some(original.clone()), size(&path), None, FALLBACK)
+        let grown = refresh(&ClaudeCodeSessions, &path, Some(original.clone()), size(&path), None, FALLBACK)
             .await
             .expect("a ledger");
         assert_eq!(grown.stamps, vec![at(1), at(4)]);
@@ -585,7 +594,7 @@ mod tests {
     async fn only_messages_after_the_read_marker_count() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = write(dir.path(), &[assistant(1, "a"), user(2), assistant(3, "b"), assistant(4, "c")]);
-        let ledger = ledger(Source::Claude, &path, Some(&at(2))).await;
+        let ledger = ledger(&ClaudeCodeSessions, &path, Some(&at(2))).await;
         assert_eq!(ledger.count(Some(&at(2))), Some(2));
         assert_eq!(ledger.count(Some(&at(3))), Some(1), "looked at the very moment of the message: read");
         assert_eq!(ledger.count(Some(&at(9))), Some(0), "a read marker newer than everything");
@@ -597,7 +606,7 @@ mod tests {
         let lines: Vec<String> = (0..150).map(|n| assistant(n, "x")).collect();
         let path = write(dir.path(), &lines);
 
-        let never = ledger(Source::Claude, &path, None).await;
+        let never = ledger(&ClaudeCodeSessions, &path, None).await;
         assert_eq!(never.stamps.len(), CAP, "the scan stops at the cap");
         assert_eq!(never.count(None), Some(99), "never read: counts from the start, still capped");
         assert_eq!(never.count(Some(&at(10))), Some(99), "older than everything kept is still 99+");
@@ -610,7 +619,7 @@ mod tests {
     async fn a_scan_that_stopped_at_the_read_marker_answers_only_from_there() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = write(dir.path(), &[assistant(1, "a"), assistant(2, "b"), assistant(3, "c"), assistant(4, "d")]);
-        let ledger = ledger(Source::Claude, &path, Some(&at(2))).await;
+        let ledger = ledger(&ClaudeCodeSessions, &path, Some(&at(2))).await;
         assert_eq!(ledger.stamps, vec![at(2), at(3), at(4)], "nothing older than the marker was read");
         assert_eq!(ledger.floor.as_deref(), Some(at(2).as_str()));
         assert_eq!(ledger.count(Some(&at(2))), Some(2));
@@ -619,7 +628,7 @@ mod tests {
         assert_eq!(ledger.count(None), None, "nor can 'never read'");
 
         // …and asking anyway re-scans rather than guessing.
-        let rescanned = refresh(Source::Claude, &path, Some(ledger), size(&path), None, FALLBACK)
+        let rescanned = refresh(&ClaudeCodeSessions, &path, Some(ledger), size(&path), None, FALLBACK)
             .await
             .expect("a ledger");
         assert_eq!(rescanned.count(None), Some(4));
@@ -631,7 +640,7 @@ mod tests {
     async fn appended_messages_are_read_forward_and_half_lines_wait() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = write(dir.path(), &[assistant(1, "a")]);
-        let first = ledger(Source::Claude, &path, None).await;
+        let first = ledger(&ClaudeCodeSessions, &path, None).await;
         assert_eq!(first.count(None), Some(1));
 
         let whole = assistant(2, "b");
@@ -639,7 +648,7 @@ mod tests {
         let mut body = std::fs::read_to_string(&path).expect("read");
         body.push_str(head);
         std::fs::write(&path, &body).expect("half a line");
-        let mid = refresh(Source::Claude, &path, Some(first.clone()), size(&path), None, FALLBACK)
+        let mid = refresh(&ClaudeCodeSessions, &path, Some(first.clone()), size(&path), None, FALLBACK)
             .await
             .expect("a ledger");
         assert_eq!(mid.count(None), Some(1), "half a line is not a message yet");
@@ -648,7 +657,7 @@ mod tests {
         body.push_str(tail);
         body.push('\n');
         std::fs::write(&path, &body).expect("rest of the line");
-        let after = refresh(Source::Claude, &path, Some(mid), size(&path), None, FALLBACK)
+        let after = refresh(&ClaudeCodeSessions, &path, Some(mid), size(&path), None, FALLBACK)
             .await
             .expect("a ledger");
         assert_eq!(after.stamps, vec![at(1), at(2)]);
@@ -661,7 +670,7 @@ mod tests {
         let path = dir.path().join("t.jsonl");
         let whole = assistant(2, "b");
         std::fs::write(&path, format!("{}\n{}", assistant(1, "a"), &whole[..20])).expect("write");
-        let ledger = ledger(Source::Claude, &path, None).await;
+        let ledger = ledger(&ClaudeCodeSessions, &path, None).await;
         assert_eq!(ledger.count(None), Some(1));
         assert_eq!(ledger.end, assistant(1, "a").len() as u64 + 1, "it stops at the last newline");
     }
@@ -670,9 +679,9 @@ mod tests {
     async fn a_replaced_transcript_is_scanned_again() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = write(dir.path(), &[assistant(1, "a"), assistant(2, "b"), assistant(3, "c")]);
-        let first = ledger(Source::Claude, &path, None).await;
+        let first = ledger(&ClaudeCodeSessions, &path, None).await;
         let path = write(dir.path(), &[assistant(5, "z")]);
-        let again = refresh(Source::Claude, &path, Some(first), size(&path), None, FALLBACK)
+        let again = refresh(&ClaudeCodeSessions, &path, Some(first), size(&path), None, FALLBACK)
             .await
             .expect("a ledger");
         assert_eq!(again.stamps, vec![at(5)], "shorter than what was read means it is a different file");
@@ -710,7 +719,7 @@ mod tests {
                 ),
             ],
         );
-        let ledger = ledger(Source::Codex, &path, None).await;
+        let ledger = ledger(&CodexSessions, &path, None).await;
         assert_eq!(ledger.stamps, vec![at(1), at(5)], "the event_msg echo and the wrapper are not messages");
         assert_eq!(ledger.count(Some(&at(1))), Some(1));
     }
@@ -722,14 +731,14 @@ mod tests {
             dir.path(),
             &[r#"{"type":"assistant","message":{"content":[{"type":"text","text":"undated"}]}}"#.to_string()],
         );
-        let ledger = ledger(Source::Claude, &path, None).await;
+        let ledger = ledger(&ClaudeCodeSessions, &path, None).await;
         assert_eq!(ledger.stamps, vec![FALLBACK.to_string()]);
     }
 
     #[tokio::test]
     async fn a_missing_file_has_no_ledger() {
         assert_eq!(
-            refresh(Source::Claude, Path::new("/nonexistent/x.jsonl"), None, 0, None, FALLBACK).await,
+            refresh(&ClaudeCodeSessions, Path::new("/nonexistent/x.jsonl"), None, 0, None, FALLBACK).await,
             None
         );
     }

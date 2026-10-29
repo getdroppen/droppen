@@ -53,7 +53,7 @@ use droppen_http::openapi_ext::Nullable;
 use droppen_instance::paths::Paths;
 use crate::sessions::index::Index;
 use crate::sessions::util::{ItemKind, Role, TranscriptItem};
-use crate::sessions::{SessionStatus, SessionSummary};
+use crate::sessions::{SessionStatus, SessionSummary, TranscriptSources};
 use unread::Ledger;
 
 /// Whether a session is waiting on the user.
@@ -97,7 +97,7 @@ pub struct FirstUnread {
 /// [`FirstUnread`] over one transcript's items.
 ///
 /// The messages are the ones `unreadCount` counts: an agent text item is
-/// exactly one of [`derive::spoken_texts`]' texts — a non-empty text block of a
+/// exactly one of [`crate::sessions::Transcripts::spoken_texts`]' texts — a non-empty text block of a
 /// main-chain claude `assistant` entry, a non-wrapper text part of a codex
 /// assistant `message` — stamped with its entry's timestamp. They are read off
 /// the feed's parse rather than the [`unread::Ledger`] for two reasons: the
@@ -185,7 +185,7 @@ fn evict(cache: &mut HashMap<String, Cached>) {
 /// provided it can count against this read marker (see [`Ledger::floor`]).
 /// One that is merely *behind* the row is resumed from where it stopped. The
 /// result goes back into both tiers whenever it changed.
-async fn ledger_for(index: Option<&Index>, summary: &SessionSummary, read_at: Option<&str>) -> Option<Ledger> {
+async fn ledger_for(index: Option<&Index>, transcripts: &TranscriptSources, summary: &SessionSummary, read_at: Option<&str>) -> Option<Ledger> {
     let current = |updated_at: &str, size_bytes: u64, ledger: &Ledger| {
         updated_at == summary.updated_at && size_bytes == summary.size_bytes && ledger.count(read_at).is_some()
     };
@@ -226,8 +226,9 @@ async fn ledger_for(index: Option<&Index>, summary: &SessionSummary, read_at: Op
             None => None,
         },
     };
+    let reader = transcripts.get(summary.source)?;
     let ledger = unread::refresh(
-        summary.source,
+        reader,
         Path::new(&summary.file_path),
         known,
         summary.size_bytes,
@@ -301,7 +302,7 @@ fn remember(index: Option<&Index>, summary: &SessionSummary, ledger: &Ledger) {
 /// and a count of zero means `unread` is false. The count is *not* suppressed
 /// while a turn runs — a working session can be holding three answers you
 /// have not read — but `unread` still is, exactly as before.
-pub async fn apply(paths: &Paths, sessions: &mut [SessionSummary]) {
+pub async fn apply(paths: &Paths, transcripts: &TranscriptSources, sessions: &mut [SessionSummary]) {
     if sessions.is_empty() {
         return;
     }
@@ -309,7 +310,7 @@ pub async fn apply(paths: &Paths, sessions: &mut [SessionSummary]) {
     let index = crate::sessions::index::current();
     for summary in sessions.iter_mut() {
         let read_at = seen.get(&seen::key_of(summary.source, &summary.id)).map(String::as_str);
-        let ledger = ledger_for(index.as_ref(), summary, read_at).await;
+        let ledger = ledger_for(index.as_ref(), transcripts, summary, read_at).await;
         fill(summary, ledger.as_ref(), read_at);
     }
 }
@@ -317,9 +318,9 @@ pub async fn apply(paths: &Paths, sessions: &mut [SessionSummary]) {
 /// When the assistant last spoke in one session, read from the same ledger
 /// [`apply`] fills the list row from — for a caller outside the list that must
 /// agree with the row's badge (the push gate in [`crate::push`]).
-pub async fn clock_of(summary: &SessionSummary, read_at: Option<&str>) -> Option<String> {
+pub async fn clock_of(summary: &SessionSummary, read_at: Option<&str>, transcripts: &TranscriptSources) -> Option<String> {
     let index = crate::sessions::index::current();
-    let ledger = ledger_for(index.as_ref(), summary, read_at).await?;
+    let ledger = ledger_for(index.as_ref(), transcripts, summary, read_at).await?;
     ledger.newest().map(str::to_owned)
 }
 
@@ -461,7 +462,9 @@ mod tests {
         };
         index.remember_unread_ledger(&summary.file_path, &summary.updated_at, summary.size_bytes, &stored);
 
-        let ledger = ledger_for(Some(&index), &summary, None).await.expect("a ledger");
+        let ledger = ledger_for(Some(&index), &crate::app::transcript_sources(), &summary, None)
+            .await
+            .expect("a ledger");
         assert_eq!(ledger, stored, "same watermark: no re-parse");
         assert_eq!(ledger.count(None), Some(3));
     }
@@ -493,7 +496,9 @@ mod tests {
         body.push('\n');
         std::fs::write(&file, body).expect("append");
         let after = row(&file, "2026-01-01T10:00:07.000Z", SessionStatus::Idle);
-        let ledger = ledger_for(Some(&index), &after, None).await.expect("a ledger");
+        let ledger = ledger_for(Some(&index), &crate::app::transcript_sources(), &after, None)
+            .await
+            .expect("a ledger");
         assert_eq!(ledger.stamps, vec![stamp(1), stamp(2), stamp(7)]);
 
         // …and the up-to-date ledger went back into the index, against the new row.
@@ -509,7 +514,9 @@ mod tests {
         std::fs::write(&file, format!("{}\n{}\n{}\n", said(1), said(2), said(3))).expect("write");
 
         let mut idle = row(&file, "2026-01-01T10:00:03.000Z", SessionStatus::Idle);
-        let ledger = ledger_for(None, &idle, Some(&stamp(1))).await.expect("a ledger");
+        let ledger = ledger_for(None, &crate::app::transcript_sources(), &idle, Some(&stamp(1)))
+            .await
+            .expect("a ledger");
         fill(&mut idle, Some(&ledger), Some(&stamp(1)));
         assert_eq!((idle.unread, idle.unread_count), (true, 2), "two answers since the last look");
         assert_eq!(idle.attention_at.0.as_deref(), Some(stamp(3).as_str()));
@@ -526,7 +533,7 @@ mod tests {
 
         // Never opened: every message counts.
         let mut never = row(&file, "2026-01-01T10:00:03.000Z", SessionStatus::Waiting);
-        let full = ledger_for(None, &never, None).await.expect("a ledger");
+        let full = ledger_for(None, &crate::app::transcript_sources(), &never, None).await.expect("a ledger");
         fill(&mut never, Some(&full), None);
         assert_eq!((never.unread, never.unread_count), (true, 3));
     }
@@ -555,7 +562,9 @@ mod tests {
         // The row's `updatedAt` is the transcript's mtime: the ledger's stand-in.
         let mtime = "2026-01-01T10:00:04.000Z";
         let summary = row(&file, mtime, SessionStatus::Idle);
-        let full = ledger_for(None, &summary, None).await.expect("a ledger");
+        let full = ledger_for(None, &crate::app::transcript_sources(), &summary, None)
+            .await
+            .expect("a ledger");
 
         let markers = [None, Some(stamp(1)), Some(stamp(2)), Some(stamp(3)), Some(mtime.to_string())];
         for read_at in &markers {
@@ -621,7 +630,11 @@ mod tests {
         let file = home.path().join("both.jsonl");
         std::fs::write(&file, format!("{}\n{}\n", said(1), said(2))).expect("write");
         let summary = row(&file, "2026-01-01T10:00:02.000Z", SessionStatus::Idle);
-        let (a, b) = tokio::join!(ledger_for(None, &summary, None), ledger_for(None, &summary, None));
+        let transcripts = crate::app::transcript_sources();
+        let (a, b) = tokio::join!(
+            ledger_for(None, &transcripts, &summary, None),
+            ledger_for(None, &transcripts, &summary, None)
+        );
         assert_eq!(a, b);
         assert_eq!(a.expect("a ledger").count(None), Some(2));
         let scans = unread::COLD_SCANS.lock().expect("scan counter").get(&file).copied();
@@ -642,11 +655,11 @@ mod tests {
         std::fs::write(&file, format!("{}\n{notice}\n", said(1))).expect("write");
         let mut summary = row(&file, "2026-01-01T10:00:09.000Z", SessionStatus::Waiting);
         let read_at = Some("2026-01-01T10:00:05.000Z");
-        let clock = clock_of(&summary, read_at).await;
+        let clock = clock_of(&summary, read_at, &crate::app::transcript_sources()).await;
         assert_eq!(clock.as_deref(), Some("2026-01-01T10:00:09.000Z"));
-        let echo = derive::read_echo(Source::Claude, &file).await.expect("an echo");
+        let echo = crate::app::transcript_sources().read_echo(Source::Claude, &file).await.expect("an echo");
         assert_eq!(echo.at, clock, "the notification's words come from the message the clock was read from");
-        let ledger = ledger_for(None, &summary, read_at).await;
+        let ledger = ledger_for(None, &crate::app::transcript_sources(), &summary, read_at).await;
         fill(&mut summary, ledger.as_ref(), read_at);
         assert!(
             summary.unread && is_unread(clock.as_deref(), read_at, SessionStatus::Waiting),
