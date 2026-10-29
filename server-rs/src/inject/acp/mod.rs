@@ -17,7 +17,7 @@
 //! * `session/set_config_option` before a turn whose message picked another
 //!   model or effort than the session has: the agent publishes both as
 //!   configuration options (categories `model` and `thought_level`), and
-//!   [`InjectionRegistry::acp_options`] reads them for the composer before any
+//!   [`AcpRuns::acp_options`] reads them for the composer before any
 //!   session exists, by opening one in a scratch directory and closing it;
 //! * `session/cancel` to stop a turn.
 //!
@@ -49,13 +49,14 @@ mod client;
 mod conn;
 mod driver;
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use super::common::{new_uuid, session_workdir, QueueOutcome, ResidentState};
-use super::{AccountChoice, Capabilities, DriverStatesBuilder, InjectError, InjectionRegistry, Provider, Run, SendOptions, SendTo, Sent, SpawnPermit, StartAt};
+use super::{AccountChoice, Capabilities, DriverStatesBuilder, InjectError, InjectionRegistry, ListsRuns, Provider, Run, SendOptions, SendTo, Sent, SpawnPermit, StartAt};
 use futures_util::future::BoxFuture;
 use crate::acp::{category, option_for, ConfigOption, InitializeResponse};
 use crate::acp_agent::{AcpAgent, AcpAgentRegistry, AcpCheck, AcpCheckState};
@@ -229,7 +230,7 @@ async fn launch(agent: &AcpAgent, workdir: &Path) -> Result<Started, InjectError
 
 impl Started {
     /// End a process that did not get as far as a driver, and say why.
-    async fn fail(mut self, registry: &InjectionRegistry, agent: &AcpAgent, reason: String) -> InjectError {
+    async fn fail(mut self, registry: &AcpRuns, agent: &AcpAgent, reason: String) -> InjectError {
         self.client.kill_all();
         self.process.kill().await;
         let tail = self.stderr.settled().await;
@@ -243,12 +244,12 @@ impl Started {
 /// is busy — it is not removed, archived or started twice — and a message
 /// sent to it meanwhile queues behind the first.
 ///
-/// Dropped before [`InjectionRegistry::acp_attach`] took it — the start
+/// Dropped before [`AcpRuns::acp_attach`] took it — the start
 /// failed, or its request was given up on — it takes its handle out again and
 /// puts back the one it replaced; the messages on their way are dropped, and
 /// their senders told the agent exited before it took them.
 struct Starting<'a> {
-    registry: &'a InjectionRegistry,
+    registry: &'a AcpRuns,
     key: String,
     handle: Handle,
     rx: Option<mpsc::UnboundedReceiver<Cmd>>,
@@ -296,17 +297,72 @@ fn scratch(kind: &str) -> std::io::Result<ScratchDir> {
 
 /// Every configured ACP agent, as the provider registry knows them.
 pub(crate) struct Acp {
-    /// The registry it reads its agent processes from.
-    registry: Arc<InjectionRegistry>,
+    /// Its agents' processes and what they offer.
+    runs: Arc<AcpRuns>,
     /// Each agent's models.
     models: crate::models::acp::AcpModels,
 }
 
 impl Acp {
-    /// The ACP agents over `registry`.
+    /// The ACP agents, run on `registry`.
     pub(crate) fn new(registry: Arc<InjectionRegistry>) -> Self {
-        let models = crate::models::acp::AcpModels::new(registry.paths.clone(), registry.clone());
-        Self { registry, models }
+        let runs = AcpRuns::new(registry);
+        let models = crate::models::acp::AcpModels::new(runs.paths.clone(), runs.clone());
+        Self { runs, models }
+    }
+
+    /// Its runs, for the ACP agents' own routes.
+    pub(crate) fn runs(&self) -> &Arc<AcpRuns> {
+        &self.runs
+    }
+}
+
+/// The ACP agents' runs: the agent process behind each session, what each
+/// agent offers, and the probes that ask it. Kept here rather than in the
+/// injection registry they run on, whose shared parts — the spawn gate, the
+/// paths, the runs journal, the feeds — they reach through it.
+pub(crate) struct AcpRuns {
+    /// What they run on.
+    registry: Arc<InjectionRegistry>,
+    /// The agent process behind each ACP session, keyed
+    /// [`InjectionRegistry::key_of`].
+    acp_servers: Mutex<HashMap<String, Handle>>,
+    /// What each ACP agent last said it offers, by agent id: its model list
+    /// and effort ladder, for the composer; see [`AcpRuns::acp_options`].
+    acp_options: Mutex<HashMap<String, Vec<ConfigOption>>>,
+    /// Serializes each agent's probes, so a page asking twice starts one
+    /// process, not two.
+    acp_probes: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+}
+
+impl AcpRuns {
+    /// None yet, on `registry`, and in its session list from now on.
+    fn new(registry: Arc<InjectionRegistry>) -> Arc<Self> {
+        let runs = Arc::new(Self {
+            registry,
+            acp_servers: Mutex::new(HashMap::new()),
+            acp_options: Mutex::new(HashMap::new()),
+            acp_probes: Mutex::new(HashMap::new()),
+        });
+        let listed: Arc<dyn ListsRuns> = runs.clone();
+        runs.registry.list(Arc::downgrade(&listed));
+        runs
+    }
+}
+
+/// The injection registry's shared parts, read as if they were the runs' own:
+/// the method bodies that moved here from it read them as they did.
+impl std::ops::Deref for AcpRuns {
+    type Target = InjectionRegistry;
+
+    fn deref(&self) -> &InjectionRegistry {
+        &self.registry
+    }
+}
+
+impl ListsRuns for AcpRuns {
+    fn driver_states(&self, states: &mut DriverStatesBuilder) {
+        self.acp_driver_states(states);
     }
 }
 
@@ -329,12 +385,16 @@ impl Provider for Acp {
     fn models(&self) -> &dyn crate::models::Models {
         &self.models
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 impl Run for Acp {
     /// Reopened where it ran, whatever `cwd` says: see `acp_send`.
     fn send<'a>(&'a self, to: SendTo<'a>) -> BoxFuture<'a, Result<Sent, InjectError>> {
-        Box::pin(self.registry.acp_send(to.id, to.text, to.options))
+        Box::pin(self.runs.acp_send(to.id, to.text, to.options))
     }
 
     /// The id is this server's own and the transcript it is kept in is this
@@ -346,18 +406,18 @@ impl Run for Acp {
                 .acp_agent
                 .as_deref()
                 .ok_or_else(|| InjectError::message("a new ACP session needs the agent it runs on"))?;
-            self.registry.acp_start(agent, at.cwd, at.text, at.options).await
+            self.runs.acp_start(agent, at.cwd, at.text, at.options).await
         })
     }
 
     /// The agent process's own state: ACP runs are not journalled, so the runs
     /// map holds none of them.
     fn injection(&self, id: &str) -> Option<Injection> {
-        self.registry.acp_handle(id).and_then(|handle| handle.injection())
+        self.runs.acp_handle(id).and_then(|handle| handle.injection())
     }
 
     fn resident(&self, id: &str) -> Option<ResidentState> {
-        self.registry.acp_handle(id).filter(|h| h.visible()).map(|h| h.state())
+        self.runs.acp_handle(id).filter(|h| h.visible()).map(|h| h.state())
     }
 
     /// Never asked: a schedule cannot start an ACP session, so no task's
@@ -373,7 +433,7 @@ impl Run for Acp {
         match acp_agent {
             None => Err(ApiError::bad_request("an ACP session needs acpAgent: the agent it runs on")),
             Some(id) if !crate::sessions::acp_transcript::valid_agent_id(id) => Err(ApiError::bad_request(format!("invalid ACP agent id: {id}"))),
-            Some(id) if AcpAgentRegistry::of(&self.registry.paths).get(id).is_none() => {
+            Some(id) if AcpAgentRegistry::of(&self.runs.paths).get(id).is_none() => {
                 Err(ApiError::bad_request(format!("no ACP agent \"{id}\" is configured")))
             }
             Some(_) => Ok(()),
@@ -382,30 +442,30 @@ impl Run for Acp {
 
     // A session whose agent was removed cannot be continued.
     fn send_block(&self, summary: &SessionSummary) -> Option<String> {
-        AcpAgentRegistry::of(&self.registry.paths).send_block(summary)
+        AcpAgentRegistry::of(&self.runs.paths).send_block(summary)
     }
 
     fn drop_queued<'a>(&'a self, id: &'a str, qid: &'a str) -> BoxFuture<'a, QueueOutcome> {
-        Box::pin(self.registry.acp_queue_action(id, qid, false))
+        Box::pin(self.runs.acp_queue_action(id, qid, false))
     }
 
     fn steer_queued<'a>(&'a self, id: &'a str, qid: &'a str) -> BoxFuture<'a, QueueOutcome> {
-        Box::pin(self.registry.acp_queue_action(id, qid, true))
+        Box::pin(self.runs.acp_queue_action(id, qid, true))
     }
 
     /// The agent process, when one is running: an ACP session has no run
     /// outside it.
     fn interrupt(&self, id: &str) -> bool {
-        self.registry.acp_handle(id).filter(Handle::alive).is_some_and(|handle| handle.interrupt())
+        self.runs.acp_handle(id).filter(Handle::alive).is_some_and(|handle| handle.interrupt())
     }
 
     // The transcript moves out of the agent's list (`archive_acp`).
     fn archive<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Result<(), String>> {
-        Box::pin(async move { self.registry.archive_acp(id).await.map_err(|error| error.to_string()) })
+        Box::pin(async move { self.runs.archive_acp(id).await.map_err(|error| error.to_string()) })
     }
 }
 
-impl InjectionRegistry {
+impl AcpRuns {
     /// ACP's part of [`InjectionRegistry::driver_states`]: the agent processes
     /// the list is to show, and the state of every one's run.
     pub(super) fn acp_driver_states(&self, states: &mut DriverStatesBuilder) {
@@ -532,7 +592,7 @@ impl InjectionRegistry {
 
     /// Apply `patch` to the agent `id` (adding it when there is none), under
     /// the spawn gate. When its command line or environment changed, its
-    /// sessions' processes are renewed ([`InjectionRegistry::renew_acp_processes`]):
+    /// sessions' processes are renewed ([`AcpRuns::renew_acp_processes`]):
     /// a rotated key, say, reaches every session's next process.
     pub async fn reconfigure_acp_agent(&self, id: &str, patch: &crate::acp_agent::AcpAgentUpdate) -> Result<AcpAgent, String> {
         let _permit = self.spawn_gate.permit().await;
@@ -570,12 +630,12 @@ impl InjectionRegistry {
     ///
     /// Bounded: `initialize` gets [`CHECK_TIMEOUT`], what the agent wrote to
     /// stderr is its last few lines, and the error is cut to a few KB. What it
-    /// says is redacted ([`InjectionRegistry::redact_acp`]).
+    /// says is redacted ([`AcpRuns::redact_acp`]).
     pub async fn check_acp_agent(&self, agent: &AcpAgent) -> AcpCheck {
         self.check_acp_agent_within(agent, CHECK_TIMEOUT).await
     }
 
-    /// [`InjectionRegistry::check_acp_agent`], waiting `patience` for the answer.
+    /// [`AcpRuns::check_acp_agent`], waiting `patience` for the answer.
     async fn check_acp_agent_within(&self, agent: &AcpAgent, patience: Duration) -> AcpCheck {
         let env = agent.environment(clean_env_bare());
         let searched = format!("PATH={}", env.get("PATH").map(String::as_str).unwrap_or(""));
@@ -631,7 +691,7 @@ impl InjectionRegistry {
     /// send.
     pub(super) async fn acp_start(self: &Arc<Self>, agent: &str, cwd: &str, text: &str, options: &SendOptions) -> Result<String, InjectError> {
         // The agent is read under the gate, which its removal holds too
-        // ([`InjectionRegistry::remove_acp_agent`]).
+        // ([`AcpRuns::remove_acp_agent`]).
         let mut permit = self.spawn_gate.permit().await;
         let agent = AcpAgentRegistry::of(&self.paths)
             .get(agent)
@@ -656,7 +716,7 @@ impl InjectionRegistry {
 
     /// Hand a message to the session `id`, starting its own agent if needed:
     /// the one its transcript is kept under, whatever else is configured now.
-    /// Under the gate as [`InjectionRegistry::acp_start`] is.
+    /// Under the gate as [`AcpRuns::acp_start`] is.
     pub(super) async fn acp_send(self: &Arc<Self>, id: &str, text: &str, options: &SendOptions) -> Result<Sent, InjectError> {
         let (agent_id, file) = AcpTranscripts::of(&self.paths).locate(id)
             .await
@@ -907,6 +967,11 @@ mod tests {
         assert_eq!(prompt, "look\n\n[2 attached file(s):]\n- /u/a.png\n- /u/b.txt");
     }
 
+    /// The ACP runs of `drive`'s provider.
+    fn acp_of(drive: &crate::drive::Drive) -> Arc<AcpRuns> {
+        drive.providers.provider::<Acp>().expect("the ACP provider").runs().clone()
+    }
+
     fn agent() -> AcpAgent {
         AcpAgent {
             id: "fake".into(),
@@ -1106,7 +1171,7 @@ mod tests {
     async fn an_agent_that_never_answers_a_model_switch_holds_up_no_other_send() {
         let home = tempfile::tempdir().expect("tempdir");
         let state = crate::api::test_support::state(home.path()).await;
-        let injections = state.drive.injections.clone();
+        let injections = acp_of(&state.drive);
         configure_fake(&state.paths, home.path(), "stuck", "FAKE_AGENT_SLOW=session/set_config_option=600");
         configure_fake(&state.paths, home.path(), "other", "");
         let dirs = workdirs(home.path(), &["stuck", "other"]);
@@ -1169,7 +1234,7 @@ mod tests {
     async fn an_agent_that_hangs_while_it_starts_holds_up_no_other_send() {
         let home = tempfile::tempdir().expect("tempdir");
         let state = crate::api::test_support::state(home.path()).await;
-        let injections = state.drive.injections.clone();
+        let injections = acp_of(&state.drive);
         configure_fake(&state.paths, home.path(), "hangs", "FAKE_AGENT_SLOW=initialize=600");
         configure_fake(&state.paths, home.path(), "other", "");
         let dirs = workdirs(home.path(), &["hangs", "other"]);
@@ -1212,7 +1277,7 @@ mod tests {
     async fn a_stop_does_not_drop_a_message_on_its_way() {
         let home = tempfile::tempdir().expect("tempdir");
         let state = crate::api::test_support::state(home.path()).await;
-        let injections = state.drive.injections.clone();
+        let injections = acp_of(&state.drive);
         configure_fake(&state.paths, home.path(), "fake", "");
         let dir = workdirs(home.path(), &["work"]).remove(0);
         let id = injections
@@ -1238,11 +1303,24 @@ mod tests {
         text.lines().map(unstamped).collect()
     }
 
+    /// A session's agent process is in the snapshot the injection registry
+    /// takes itself, which a turn's alert carries, as well as in the one the
+    /// session list asks the providers for.
+    #[tokio::test]
+    async fn an_acp_session_is_in_the_registrys_own_snapshot() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let (state, id, _) = one_turn(home.path(), "", "hi", &SendOptions::default()).await;
+        let own = state.drive.injections.driver_states().resident(Source::Acp, &id).expect("in the registry's snapshot");
+        assert_eq!(own.phase, droppen_sessions::ResidentPhase::Idle);
+        let listed = state.drive.providers.driver_states().resident(Source::Acp, &id).expect("in the providers' snapshot");
+        assert_eq!(listed.phase, droppen_sessions::ResidentPhase::Idle);
+    }
+
     /// Start a session on the stand-in, configured with `env`, with one
     /// message, and wait for its turn to end; its id and working directory.
     async fn one_turn(home: &Path, env: &str, text: &str, options: &SendOptions) -> (crate::api::AppState, String, PathBuf) {
         let state = crate::api::test_support::state(home).await;
-        let injections = state.drive.injections.clone();
+        let injections = acp_of(&state.drive);
         configure_fake(&state.paths, home, "fake", env);
         let dir = workdirs(home, &["work"]).remove(0);
         let id = injections.acp_start("fake", &dir.to_string_lossy(), text, options).await.expect("started");
@@ -1345,7 +1423,7 @@ mod tests {
         let state = crate::api::test_support::state(home.path()).await;
         let record = tempfile::tempdir().expect("tempdir");
         let agent = deaf_agent(record.path());
-        let check = state.drive.injections.check_acp_agent_within(&agent, Duration::from_secs(2)).await;
+        let check = acp_of(&state.drive).check_acp_agent_within(&agent, Duration::from_secs(2)).await;
         assert_eq!(check.state, AcpCheckState::Failed);
         assert!(
             check.error.0.as_deref().is_some_and(|error| error.contains("did not answer initialize")),
@@ -1367,7 +1445,7 @@ mod tests {
         let state = crate::api::test_support::state(home.path()).await;
         let record = tempfile::tempdir().expect("tempdir");
         let agent = deaf_agent(record.path());
-        let cancelled = tokio::time::timeout(Duration::from_secs(2), state.drive.injections.check_acp_agent(&agent)).await;
+        let cancelled = tokio::time::timeout(Duration::from_secs(2), acp_of(&state.drive).check_acp_agent(&agent)).await;
         assert!(cancelled.is_err(), "still waiting for initialize when dropped");
         let (scratch, helper) = recorded(record.path());
         assert!(!scratch.exists(), "{} is left behind", scratch.display());
@@ -1386,7 +1464,7 @@ mod tests {
     async fn acp_starts_and_archives_hold_the_gate_only_around_the_map() {
         let home = tempfile::tempdir().expect("tempdir");
         let state = crate::api::test_support::state(home.path()).await;
-        let injections = state.drive.injections.clone();
+        let injections = acp_of(&state.drive);
         configure_fake(&state.paths, home.path(), "fake", "");
         let dir = workdirs(home.path(), &["work"]).remove(0);
         let plain = SendOptions::default();
@@ -1419,7 +1497,7 @@ mod tests {
     async fn a_probe_and_a_check_start_their_agent_outside_the_gate() {
         let home = tempfile::tempdir().expect("tempdir");
         let state = crate::api::test_support::state(home.path()).await;
-        let injections = state.drive.injections.clone();
+        let injections = acp_of(&state.drive);
         configure_fake(&state.paths, home.path(), "fake", "");
         let agent = AcpAgentRegistry::of(&state.paths).get("fake").expect("configured");
 

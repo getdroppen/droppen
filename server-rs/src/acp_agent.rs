@@ -523,7 +523,7 @@ pub struct AcpAuthMethod {
 }
 
 /// The longest error a check keeps, and what an agent says in a session's
-/// error is cut to ([`crate::inject::InjectionRegistry::redact_acp`]).
+/// error is cut to ([`crate::inject::acp::AcpRuns::redact_acp`]).
 pub(crate) const MAX_CHECK_ERROR: usize = 4096;
 /// The longest name, title, version or id of what an agent says it is, and
 /// of a model or effort it offers, in characters; and the longest description
@@ -657,7 +657,7 @@ pub struct AcpAgentState {
     /// Where the agents' configuration lives.
     pub paths: Arc<droppen_instance::paths::Paths>,
     /// The live runs, which check an agent and stop its sessions when it goes.
-    pub injections: Arc<crate::inject::InjectionRegistry>,
+    pub(crate) acp: Arc<crate::inject::acp::AcpRuns>,
 }
 droppen_http::substate!(AcpAgentState);
 
@@ -682,7 +682,7 @@ pub async fn put_acp_agent(
     ApiJson(body): ApiJson<AcpAgentUpdate>,
 ) -> Result<Json<AcpAgentInfo>, ApiError> {
     let agent = state
-        .injections
+        .acp
         .reconfigure_acp_agent(&id, &body)
         .await
         .map_err(ApiError::bad_request)?;
@@ -699,7 +699,7 @@ pub async fn delete_acp_agent(State(state): State<AcpAgentState>, ApiPath(id): A
     let Some(agent) = AcpAgentRegistry::of(&state.paths).get(&id) else {
         return Err(ApiError::not_found("no such ACP agent"));
     };
-    match state.injections.remove_acp_agent(&agent).await {
+    match state.acp.remove_acp_agent(&agent).await {
         Ok(true) => Ok(Json(SendResult { accepted: true })),
         Ok(false) => Err(ApiError::not_found("no such ACP agent")),
         Err(busy) => Err(ApiError::conflict(busy)),
@@ -712,7 +712,7 @@ pub async fn delete_acp_agent(State(state): State<AcpAgentState>, ApiPath(id): A
 #[api(id = "check_acp_agent", group = "acp", summary = "Check an ACP agent")]
 pub async fn check_acp_agent(State(state): State<AcpAgentState>, ApiPath(id): ApiPath<String>) -> Result<Json<AcpCheck>, ApiError> {
     let agent = AcpAgentRegistry::of(&state.paths).get(&id).ok_or_else(|| ApiError::not_found("no such ACP agent"))?;
-    let check = state.injections.check_acp_agent(&agent).await;
+    let check = state.acp.check_acp_agent(&agent).await;
     agent.record_check(&AcpAgentRegistry::of(&state.paths), &check);
     Ok(Json(check))
 }

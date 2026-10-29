@@ -693,6 +693,10 @@ impl Provider for ClaudeCode {
     fn models(&self) -> &dyn crate::models::Models {
         &self.models
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 impl Run for ClaudeCode {
@@ -7144,9 +7148,7 @@ mod tests {
             quota: Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins())),
             server: droppen_instance::identity::ServerId::local(&paths),
             codex_servers: Mutex::new(HashMap::new()),
-            acp_servers: Mutex::new(HashMap::new()),
-            acp_options: Mutex::new(HashMap::new()),
-            acp_probes: Mutex::new(HashMap::new()),
+            listed: Mutex::new(Vec::new()),
             runs: Mutex::new(HashMap::new()),
             residents: Mutex::new(HashMap::new()),
             spawn_gate: crate::inject::gate::SpawnGate::new(paths.data_dir().join("inject-locks")),

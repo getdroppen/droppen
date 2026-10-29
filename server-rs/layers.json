@@ -334,8 +334,6 @@
     {
       "why": "inject names each implementation: the registry starts them. They go when each provider registers itself from the entry (ClaudeCode::register, Codex::register, Acp::register).",
       "edges": [
-        "inject -> acp",
-        "inject -> inject::acp",
         "inject -> inject::app_server",
         "inject -> inject::resident",
         "inject -> record",

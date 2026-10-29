@@ -32,6 +32,10 @@ pub trait Provider: Send + Sync {
     /// The models its CLI offers, and which efforts and permission modes it
     /// takes.
     fn models(&self) -> &dyn Models;
+
+    /// Itself, for a route of its own that needs it by its type
+    /// ([`ProviderRegistry::provider`]).
+    fn as_any(&self) -> &dyn std::any::Any;
 }
 
 /// What a provider's sessions can do that not every CLI's can.
@@ -189,6 +193,12 @@ impl ProviderRegistry {
     /// Every source a provider is registered for, in [`Source`]'s order.
     pub fn sources(&self) -> impl Iterator<Item = Source> + '_ {
         self.providers.keys().copied()
+    }
+
+    /// The provider of type `P`, for a route of its own; `None` when none is
+    /// registered.
+    pub fn provider<P: Provider + 'static>(&self) -> Option<&P> {
+        self.providers.values().find_map(|provider| provider.as_any().downcast_ref())
     }
 
     /// The runs of `source`'s provider, when one is registered.

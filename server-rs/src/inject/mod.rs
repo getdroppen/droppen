@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 #[cfg(test)]
 use std::process::Stdio;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use futures_util::future::BoxFuture;
@@ -574,15 +574,10 @@ pub struct InjectionRegistry {
     /// dies with the registry. See [`InjectionRegistry::key_of`].
     server: ServerId,
     codex_servers: Mutex<HashMap<String, app_server::Handle>>,
-    /// The agent process behind each ACP session, keyed [`Self::key_of`];
-    /// see [`acp`].
-    acp_servers: Mutex<HashMap<String, acp::Handle>>,
-    /// What each ACP agent last said it offers, by agent id: its model list
-    /// and effort ladder, for the composer; see [`InjectionRegistry::acp_options`].
-    acp_options: Mutex<HashMap<String, Vec<crate::acp::ConfigOption>>>,
-    /// Serializes each agent's probes, so a page asking twice starts one
-    /// process, not two.
-    acp_probes: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    /// The runs a provider keeps itself, which [`Self::driver_states`] gathers
+    /// after Claude Code's and Codex's: each listed itself as it was made
+    /// ([`ListsRuns`]).
+    listed: Mutex<Vec<Weak<dyn ListsRuns>>>,
     runs: Mutex<HashMap<String, Arc<RunEntry>>>,
     /// The resident claude behind each session, keyed by session id alone —
     /// there is no codex resident, so the source is not part of the key.
@@ -799,9 +794,7 @@ impl InjectionRegistry {
             quota,
             server: ServerId::local(&paths),
             codex_servers: Mutex::new(HashMap::new()),
-            acp_servers: Mutex::new(HashMap::new()),
-            acp_options: Mutex::new(HashMap::new()),
-            acp_probes: Mutex::new(HashMap::new()),
+            listed: Mutex::new(Vec::new()),
             runs: Mutex::new(HashMap::new()),
             residents: Mutex::new(HashMap::new()),
             spawn_gate: gate::SpawnGate::new(paths.data_dir().join("inject-locks")),
@@ -963,13 +956,26 @@ impl InjectionRegistry {
         let mut states = DriverStatesBuilder::default();
         self.claude_driver_states(&mut states);
         self.codex_driver_states(&mut states);
-        self.acp_driver_states(&mut states);
+        // Taken out of the list first, so that no provider's lock is taken
+        // under it.
+        let listed: Vec<Arc<dyn ListsRuns>> = self.listed.lock().expect("listed runs").iter().filter_map(Weak::upgrade).collect();
+        for runs in listed {
+            runs.driver_states(&mut states);
+        }
         // Last, so that where a run here and a CLI's own handle share a key,
         // the run's finishing time is the one the list shows.
         for (key, run) in self.runs.lock().expect("injections poisoned").iter() {
             states.run(key.clone(), run.injection());
         }
         droppen_sessions::DriverStates::new(self.server.clone(), states.residents, states.running, states.finished)
+    }
+
+    /// Show `runs` in every snapshot [`Self::driver_states`] takes from now
+    /// on, for as long as they last.
+    pub(crate) fn list(&self, runs: Weak<dyn ListsRuns>) {
+        let mut listed = self.listed.lock().expect("listed runs");
+        listed.retain(|runs| runs.strong_count() > 0);
+        listed.push(runs);
     }
 
     /// Stop a run in the runs map, which no resident drives: a one-shot run
@@ -1004,6 +1010,13 @@ impl InjectionRegistry {
         signal(pid, libc::SIGTERM);
         true
     }
+}
+
+/// A provider's runs, kept by the provider rather than here, that the session
+/// list shows ([`InjectionRegistry::driver_states`]).
+pub(crate) trait ListsRuns: Send + Sync {
+    /// Add its sessions' processes and the state of their runs to `states`.
+    fn driver_states(&self, states: &mut DriverStatesBuilder);
 }
 
 /// The session list's view of the runs, gathered a CLI at a time; see

@@ -16,7 +16,7 @@ use super::client::Client;
 use super::conn::{Conn, Event};
 use crate::acp::{category, option_for, ConfigOption, SessionUpdate};
 use crate::acp_agent::AcpAgent;
-use crate::inject::{InjectError, InjectionRegistry, Phase, QueueOutcome, ResidentState, Sent};
+use crate::inject::{InjectError, Phase, QueueOutcome, ResidentState, Sent};
 use crate::sessions::acp_transcript::{Record, Translator};
 use droppen_sessions::{Injection, InjectionRunState, Source};
 use droppen_base::time::iso8601;
@@ -444,7 +444,7 @@ enum Unset {
 }
 
 pub(super) struct Driver {
-    pub(super) registry: Arc<InjectionRegistry>,
+    pub(super) registry: Arc<super::AcpRuns>,
     /// The agent the session runs on, as it was configured when this process
     /// started.
     pub(super) agent: AcpAgent,
@@ -713,7 +713,7 @@ impl Driver {
 
     /// Write down which model and effort the session runs on, when that is
     /// news: what the composer shows for a session it reopens. A value the
-    /// model list would leave out ([`InjectionRegistry::acp_id_shown`]) is
+    /// model list would leave out ([`super::AcpRuns::acp_id_shown`]) is
     /// left out here too.
     async fn record_choice(&mut self) {
         let current = |category: &str| {
