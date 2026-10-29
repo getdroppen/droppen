@@ -50,13 +50,13 @@ pub(super) fn local_auth_off() -> ApiError {
 }
 
 /// Whether `user` is this device's owner by the local capability right now:
-/// the local owner ([`crate::auth::LOCAL_OWNER`]) while the device has no user
-/// account. Its session is only good then anyway ([`crate::auth::Auth::still_valid`]);
+/// the local owner ([`droppen_auth::LOCAL_OWNER`]) while the device has no user
+/// account. Its session is only good then anyway ([`droppen_auth::Auth::still_valid`]);
 /// this says the same of the link.
 ///
 /// **The one owner hook.** The local owner is the operating-system user the
 /// AI runs as — who can read whatever the link keeps on disk — proved by the
-/// running server's control socket ([`crate::auth::local_open`]). While there
+/// running server's control socket ([`droppen_auth::local_open`]). While there
 /// is no user account it is the owner of the Droppen link whatever
 /// `cloud.json` names: it manages it, and sees other devices' copies. Every
 /// owner rule here asks this first; one that needs the local owner too
@@ -64,7 +64,7 @@ pub(super) fn local_auth_off() -> ApiError {
 /// in passes to that account ([`super::LinkFile::hand_over_from_local_owner`]).
 pub(super) async fn local_owner_now(state: &CloudState, user: &str) -> bool {
     let auth = &state.auth;
-    crate::auth::is_local_owner(user) && !auth.is_off() && !auth.users.has_users().await
+    droppen_auth::is_local_owner(user) && !auth.is_off() && !auth.users.has_users().await
 }
 
 /// Every local account's `createdAt`, by name.
@@ -116,7 +116,7 @@ pub(super) fn owner_of<'a>(file: &'a CloudFile, accounts: &BTreeMap<String, Stri
 /// before the first account and that came back after must not leave the link
 /// to `local:owner` on a device that has an account.
 pub(super) async fn may_manage(state: &CloudState, file: &CloudFile, user: &str) -> bool {
-    if crate::auth::is_local_owner(user) {
+    if droppen_auth::is_local_owner(user) {
         return local_owner_now(state, user).await;
     }
     match owner_of(file, &accounts(state).await) {

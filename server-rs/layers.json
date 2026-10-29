@@ -80,12 +80,10 @@
         {
           "name": "droppen-auth",
           "about": "Users, logins, tickets, the Identity extractor.",
-          "modules": [
-            "auth"
-          ],
+          "modules": [],
           "mayUse": [],
           "notes": [
-            "Gets notify's caller classification: items of notify, counted there until they move."
+            "Asks for notify's caller capability through its NotifyCredential port, which the entry fills."
           ]
         },
         {

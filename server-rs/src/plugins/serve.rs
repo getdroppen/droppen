@@ -14,7 +14,7 @@
 //!
 //! # How this sits with the authentication guard
 //!
-//! Deliberately on the guard's *static* side: `crate::auth::exempt` lets every
+//! Deliberately on the guard's *static* side: `droppen_auth::exempt` lets every
 //! `GET`/`HEAD` outside `/api/` through without a session, because the shell
 //! and its assets must load before anyone can type a password. This route
 //! cannot ask for a session — `import()` has no place to put a header — so it
@@ -42,7 +42,8 @@ use gotcha::axum::http::{header, HeaderValue, Response, StatusCode};
 use gotcha::State;
 
 use super::routes::PluginsState;
-use crate::auth::MaybeIdentity;
+use super::CloudIdentityExt;
+use droppen_auth::MaybeIdentity;
 use droppen_http::extract::ApiPath;
 
 /// The route, as gotcha registers it. The build id inside the URL makes the
@@ -231,7 +232,7 @@ mod tests {
         state.plugins.install(&package_bytes("tasks", "0.1.0"), None).unwrap();
         let entry = state.plugins.status_of("tasks").unwrap().entry.unwrap();
         // Outside the guard, so the injected identity is what the handler sees;
-        // that is exactly the shape `crate::auth::guard` leaves for the bridge.
+        // that is exactly the shape `droppen_auth::guard` leaves for the bridge.
         let mut router = router.layer(gotcha::axum::middleware::from_fn(as_cloud));
         let response = call(&mut router, &entry).await;
         assert_eq!(response.status(), StatusCode::NOT_FOUND);

@@ -37,8 +37,8 @@ use super::wire::{
     PluginBatch, PluginBatchResult, PluginCurrentDoc, PluginDeleted, PluginDoc, PluginDocConflict, PluginDocHistory, PluginDocList, PluginDocQuery,
     PluginHistoryQuery, PluginInvalidPackage, PluginList, PluginPutDoc, PluginStatus, PluginSwitch, PluginTarballBody, PluginTooLarge,
 };
-use super::{DecisionReason, PluginError, Plugins};
-use crate::auth::MaybeIdentity;
+use super::{CloudIdentityExt, DecisionReason, PluginError, Plugins};
+use droppen_auth::MaybeIdentity;
 use droppen_http::error::ApiError;
 use droppen_http::extract::{ApiJson, ApiPath, ApiQuery};
 use droppen_http::openapi_ext::ExtraResponses;
@@ -188,10 +188,18 @@ impl Plugins {
     }
 }
 
-impl MaybeIdentity {
+/// What the plugin routes ask of the identity behind a request.
+trait PluginCallerExt {
     /// Refuse a request that came over the cloud agent's bridge: a device gets
     /// none of the plugin surface, and the answer is the one an unknown plugin
     /// gets so it learns nothing from the difference.
+    fn refuse_cloud(&self) -> Result<(), ApiError>;
+
+    /// The signed-in user behind a request, when there is one.
+    fn caller(&self) -> Option<String>;
+}
+
+impl PluginCallerExt for MaybeIdentity {
     fn refuse_cloud(&self) -> Result<(), ApiError> {
         if self.is_cloud() {
             return Err(coded(
@@ -203,13 +211,12 @@ impl MaybeIdentity {
         Ok(())
     }
 
-    /// The signed-in user behind a request, when there is one.
     fn caller(&self) -> Option<String> {
         self.0.as_ref().map(|identity| identity.username.clone())
     }
 }
 
-/// [`MaybeIdentity::refuse_cloud`], before the request's body is parsed.
+/// [`PluginCallerExt::refuse_cloud`], before the request's body is parsed.
 ///
 /// A handler's arguments — including a JSON body — are extracted before its
 /// first line runs, so a malformed body from a device would otherwise be

@@ -510,15 +510,15 @@ impl UsersStore {
     /// count towards [`UsersStore::has_users`] — so it does not end the setup
     /// state — `user list` leaves it out, its password is not changed through
     /// the API, and it is nobody's way to other devices on its own
-    /// (`crate::cloud`).
+    /// (`cloud`).
     pub async fn add_app(&self, name: &str, password: &str) -> Result<(), UserError> {
         self.add_kind(name, password, true).await
     }
 
     /// Hold every write to the store until the guard goes: for a test that
     /// needs a request caught between its check and its write.
-    #[cfg(test)]
-    pub(crate) async fn hold_writes(&self) -> tokio::sync::MutexGuard<'_, ()> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn hold_writes(&self) -> tokio::sync::MutexGuard<'_, ()> {
         self.write_lock.lock().await
     }
 

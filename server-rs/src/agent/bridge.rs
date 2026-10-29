@@ -1119,7 +1119,11 @@ mod tests {
         // The server's sources, and those of the crates it is made of that
         // register routes.
         let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let mut dirs = vec![manifest.join("src"), manifest.join("crates/droppen-supervisor/src")];
+        let mut dirs = vec![
+            manifest.join("src"),
+            manifest.join("crates/droppen-supervisor/src"),
+            manifest.join("crates/droppen-auth/src"),
+        ];
         while let Some(dir) = dirs.pop() {
             for entry in std::fs::read_dir(&dir).unwrap() {
                 let path = entry.unwrap().path();

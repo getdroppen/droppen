@@ -22,14 +22,14 @@
 //!    not change the link, nor use this computer to reach others.
 //! 2. Local authentication must be on and the caller signed in — to a local
 //!    account, or as this device's owner through `remote-hand-server open`
-//!    while it has no user account ([`crate::auth::LOCAL_OWNER`]) — or the
+//!    while it has no user account ([`droppen_auth::LOCAL_OWNER`]) — or the
 //!    mutating routes answer 409 `local_auth_required`: once linked, other
 //!    machines are reachable from here, which must never be open to anybody
 //!    who can reach the port. Every request without a session is refused
 //!    before it gets here, so this is only ever reached with
 //!    `auth.enabled = false`.
 //! 3. The `/api/*` Origin check ([`droppen_http::origin`]) and the bearer token
-//!    ([`crate::auth`]) apply as everywhere; there are no cookies, so there
+//!    ([`droppen_auth`]) apply as everywhere; there are no cookies, so there
 //!    is no CSRF surface, and the attempt's nonce is a second binding.
 //!
 //! **What this computer ever gets from Droppen**: an RH1 enrollment code (one
@@ -54,7 +54,7 @@ use serde::{Deserialize, Serialize};
 use crate::agent::fingerprint::machine_fingerprint;
 use crate::agent::status::{AgentStatus, Standing};
 use crate::aggregator::controller::AggregatorHost;
-use crate::auth::{MaybeIdentity, RETURN_ROUTE};
+use droppen_auth::{MaybeIdentity, RETURN_ROUTE};
 use droppen_http::error::ApiError;
 use droppen_http::extract::ApiJson;
 use droppen_http::openapi_ext::ExtraResponses;
@@ -690,7 +690,7 @@ pub struct CloudState {
     pub cloud: Arc<Cloud>,
     /// Local accounts and logins: who may manage the link, and who may view
     /// the copies.
-    pub auth: Arc<crate::auth::Auth>,
+    pub auth: Arc<droppen_auth::Auth>,
     /// Whether the Droppen desktop app runs this server.
     pub desktop_app: bool,
     /// Cancelled by the shutdown supervisor; the gateway's sockets close on it.
@@ -1283,7 +1283,7 @@ mod tests {
         let login = state.drive.auth.sessions.issue(user, None).await.unwrap();
         MaybeIdentity(Some(droppen_http::identity::AuthIdentity {
             username: user.into(),
-            token_sha256: Some(crate::auth::sessions::digest_of(&login.token)),
+            token_sha256: Some(droppen_auth::sessions::digest_of(&login.token)),
         }))
     }
 
@@ -1893,20 +1893,20 @@ mod tests {
             .add_app("droppen-app", "correct horse battery staple")
             .await
             .unwrap();
-        let owner = signed_in(&state, crate::auth::LOCAL_OWNER).await;
+        let owner = signed_in(&state, droppen_auth::LOCAL_OWNER).await;
         enrolled(&state);
         // Signed in by the local owner: what `post_finish` records.
         state
             .cloud
             .update_file(|f| {
-                f.owner = Some(crate::auth::LOCAL_OWNER.into());
+                f.owner = Some(droppen_auth::LOCAL_OWNER.into());
                 f.linked_at = Some(1);
-                f.remote_access.insert(crate::auth::LOCAL_OWNER.into(), true);
+                f.remote_access.insert(droppen_auth::LOCAL_OWNER.into(), true);
                 f.remote_access.insert("droppen-app".into(), true);
             })
             .unwrap();
-        assert_eq!(remote_viewer(&CloudState::from_ref(&state), &owner).await.unwrap(), crate::auth::LOCAL_OWNER);
-        let status = status_for(&CloudState::from_ref(&state), Some(crate::auth::LOCAL_OWNER)).await;
+        assert_eq!(remote_viewer(&CloudState::from_ref(&state), &owner).await.unwrap(), droppen_auth::LOCAL_OWNER);
+        let status = status_for(&CloudState::from_ref(&state), Some(droppen_auth::LOCAL_OWNER)).await;
         assert!(
             status.can_manage && status.sees_other_devices && !status.can_claim,
             "the owner, with nothing to claim"
@@ -1918,7 +1918,7 @@ mod tests {
         // The first account: the link is ada's, bound to her account, and the
         // owner's sessions are over.
         state.drive.auth.users.add("ada", "correct horse battery staple").await.unwrap();
-        state.drive.auth.sessions.revoke_user(crate::auth::LOCAL_OWNER, None).await;
+        state.drive.auth.sessions.revoke_user(droppen_auth::LOCAL_OWNER, None).await;
         state.cloud.hand_over_from_local_owner(&state.drive.auth.users).await;
         let file = state.cloud.read_file();
         assert_eq!(file.owner.as_deref(), Some("ada"));
@@ -1927,13 +1927,13 @@ mod tests {
         let ada = signed_in(&state, "ada").await;
         assert_eq!(remote_viewer(&CloudState::from_ref(&state), &ada).await.unwrap(), "ada");
         assert!(remote_viewer(&CloudState::from_ref(&state), &owner).await.is_err(), "the owner's session is gone");
-        let fresh = signed_in(&state, crate::auth::LOCAL_OWNER).await;
+        let fresh = signed_in(&state, droppen_auth::LOCAL_OWNER).await;
         assert!(
             remote_viewer(&CloudState::from_ref(&state), &fresh).await.is_err(),
             "and no owner session counts with an account"
         );
-        assert!(!may_manage(&CloudState::from_ref(&state), &state.cloud.read_file(), crate::auth::LOCAL_OWNER).await);
-        assert!(!status_for(&CloudState::from_ref(&state), Some(crate::auth::LOCAL_OWNER)).await.sees_other_devices);
+        assert!(!may_manage(&CloudState::from_ref(&state), &state.cloud.read_file(), droppen_auth::LOCAL_OWNER).await);
+        assert!(!status_for(&CloudState::from_ref(&state), Some(droppen_auth::LOCAL_OWNER)).await.sees_other_devices);
     }
 
     /// The desktop app signs this device in to Droppen from its own window,
@@ -1982,7 +1982,7 @@ mod tests {
     async fn the_local_owner_manages_nothing_once_the_device_has_an_account() {
         let home = tempfile::tempdir().unwrap();
         let state = crate::api::test_support::state(home.path()).await;
-        let owner = crate::auth::LOCAL_OWNER;
+        let owner = droppen_auth::LOCAL_OWNER;
         assert!(may_manage(&CloudState::from_ref(&state), &state.cloud.read_file(), owner).await, "the owner, while there is no account");
         state.drive.auth.users.add("ada", "correct horse battery staple").await.unwrap();
         let file = state.cloud.read_file();
@@ -2017,7 +2017,7 @@ mod tests {
             Ok(None),
             "the app linked it: the app keeps it"
         );
-        write(crate::auth::LOCAL_OWNER);
+        write(droppen_auth::LOCAL_OWNER);
         assert_eq!(
             LinkFile::of(&paths).hand_over_from_local_owner(&accounts[..1]),
             Ok(None),

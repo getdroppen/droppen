@@ -17,7 +17,7 @@
 //! by definition never matches one.
 //!
 //! Sitting on the fallback also leaves `/embed/*` outside the `/api/*` origin
-//! guard; what guards it is the unguessable id ([`crate::auth`], "Who has to
+//! guard; what guards it is the unguessable id ([`droppen_auth`], "Who has to
 //! log in").
 //!
 //! # What it does to the traffic

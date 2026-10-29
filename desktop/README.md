@@ -268,7 +268,7 @@ password it made up.
    the removal itself refuses a user account.
 2. **Only the app's account.** Accounts are per-instance; a new instance does
    not inherit the machine-wide set an older build kept
-   (`server-rs/src/auth/users.rs`). One cleanup remains for instances an older
+   (`server-rs/crates/droppen-auth/src/users.rs`). One cleanup remains for instances an older
    build first started: if that start was cut short before the inherited
    accounts were removed, the marker still says so and every start retries the
    removal (`user rm --yes`, which the server asks for before removing the last

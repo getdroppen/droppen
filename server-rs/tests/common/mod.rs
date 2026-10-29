@@ -12,7 +12,7 @@
 //! # Authentication
 //!
 //! A server with no account is in its setup state and refuses every route
-//! (`crate::auth::setup`). Almost no test here is about that, so the ordinary
+//! (`droppen_auth::setup`). Almost no test here is about that, so the ordinary
 //! starts — [`TestServer::start`], [`TestServer::start_with`],
 //! [`TestServer::start_at`] — switch authentication **off** explicitly, the
 //! `auth.enabled = false` escape hatch, rather than every test logging in. The

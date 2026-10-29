@@ -388,8 +388,8 @@ impl Setup {
     }
 
     /// The live code, for tests that play the person reading standard error.
-    #[cfg(test)]
-    pub(crate) fn live(&self) -> Option<String> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn live(&self) -> Option<String> {
         match &*self.code.lock().expect("setup lock") {
             Code::Live(code) => Some(code.clone()),
             Code::None | Code::Spending(_) => None,

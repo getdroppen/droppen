@@ -18,7 +18,7 @@
 //! is not a thing to keep on disk for a reason that no longer exists. Nothing
 //! reads the file any more.
 //!
-//! [`crate::auth::users`] keeps its file and this one does not, which looks like
+//! [`droppen_auth::users`] keeps its file and this one does not, which looks like
 //! an inconsistency and is not: that store's copy is a *second opinion*, because
 //! an empty users table means authentication is switched off. An empty accounts
 //! table means the user has not added a login yet, which is an ordinary answer,

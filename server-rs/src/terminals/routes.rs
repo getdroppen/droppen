@@ -56,7 +56,7 @@ pub struct TerminalsState {
     /// Every live web terminal.
     pub terminals: Arc<super::Registry>,
     /// The logins a terminal socket watches, so signing out ends it.
-    pub auth: Arc<crate::auth::Auth>,
+    pub auth: Arc<droppen_auth::Auth>,
     /// How long one frame may take to leave before the socket is given up on.
     pub send_limit: std::time::Duration,
     /// Cancelled by the shutdown supervisor; the socket closes on it.
@@ -113,11 +113,11 @@ pub async fn kill_terminal(State(state): State<TerminalsState>, ApiPath(id): Api
 /// `ParameterProvider`.
 ///
 /// A socket opened by a login closes with 4401 once that login no longer
-/// stands ([`crate::auth::Auth::watch_login`]): a shell is the last thing to leave
+/// stands ([`droppen_auth::Auth::watch_login`]): a shell is the last thing to leave
 /// open for a login that was signed out.
 pub async fn terminal_ws(
     State(state): State<TerminalsState>,
-    who: crate::auth::MaybeIdentity,
+    who: droppen_auth::MaybeIdentity,
     ApiPath(id): ApiPath<String>,
     upgrade: WebSocketUpgrade,
 ) -> Response {
@@ -182,7 +182,7 @@ async fn run_terminal_socket(socket: WebSocket, state: TerminalsState, id: Strin
     loop {
         tokio::select! {
             () = &mut ended => {
-                let _ = send_within(&mut sender, Message::Close(Some(crate::auth::signed_out_frame())), state.send_limit, &state.cancel).await;
+                let _ = send_within(&mut sender, Message::Close(Some(droppen_auth::signed_out_frame())), state.send_limit, &state.cancel).await;
                 break;
             }
             chunk = attachment.next_chunk(), if live => match chunk {

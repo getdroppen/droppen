@@ -1,0 +1,68 @@
+[package]
+name = "droppen-auth"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+publish = false
+description = "The Droppen server's local accounts: users, logins, tickets, the login guard and its routes"
+
+# Who may talk to the server at all. It stands on the instance, the HTTP kit and
+# the pty sidecar's socket rules, and names none of the subsystems it guards: a
+# credential of one of theirs (notify's capability, the link a first account
+# takes over) reaches it through a port the entry fills.
+[dependencies]
+# Local account passwords. RustCrypto's own Argon2, so the server's "nothing but
+# rustls" rule still holds: it is pure Rust and pulls in no system crypto
+# library. `std` is what gives `password_hash::Error` an `std::error::Error`
+# impl, which the CLI's error plumbing wants.
+argon2 = { version = "0.5", features = ["std"] }
+base64 = "0.22"
+# The `user`, `setup-code` and `open` command lines, which the server mounts. The
+# features are the server's, so they parse alike.
+clap = { version = "4.5", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
+droppen-base = { path = "../droppen-base" }
+droppen-http = { path = "../droppen-http" }
+droppen-instance = { path = "../droppen-instance" }
+# The control socket `open` asks: its directory and path rules are the pty
+# sidecar's.
+droppen-pty = { path = "../droppen-pty" }
+gotcha = { version = "0.4.1", features = ["openapi"] }
+# What gotcha's `Schematic` derive expands to names it.
+gotcha_core = "0.4.1"
+libc = "0.2"
+rand = "0.8"
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Constant-time comparison of session-token digests. Already in the graph
+# (every RustCrypto crate depends on it); named here because `sessions` uses it
+# directly, and an implicit dependency is one `cargo update` away from
+# disappearing.
+subtle = "2"
+thiserror = "1"
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "rt", "sync", "time"] }
+tokio-util = "0.7"
+tracing = "0.1"
+
+# `setup::Setup::live` (the live setup code) and `users::UsersStore::hold_writes`
+# (a request caught between its check and its write), for the server's tests of
+# the routes and the guard. Only the server's [dev-dependencies] turn it on.
+[features]
+test-support = []
+
+[dev-dependencies]
+tempfile = "3"
+# `start_paused` runtimes, so a login's recheck is asserted without a test that
+# waits it out.
+tokio = { version = "1", features = ["macros", "rt", "test-util"] }
+
+[lints.rust]
+missing_docs = "deny"
+unreachable_pub = "deny"
+
+# `[lints] workspace = true` cannot be mixed with the rust lints above, so the
+# workspace's two clippy denials (`server-rs/Cargo.toml` `[workspace.lints]`)
+# are repeated here: keep them in step.
+[lints.clippy]
+significant_drop_in_scrutinee = "deny"
+await_holding_lock = "deny"

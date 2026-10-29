@@ -175,12 +175,16 @@ impl<T> LockRecoverExt<T> for Mutex<T> {
 }
 
 /// Whether this request came over the cloud agent's bridge and speaks for a
-/// device (`crate::auth` resolves it from the agent's headers). Nothing of the
+/// device (`droppen_auth` resolves it from the agent's headers). Nothing of the
 /// plugin host is served to one.
-impl crate::auth::MaybeIdentity {
+pub(crate) trait CloudIdentityExt {
     /// Whether this request came over the cloud agent's bridge and speaks for
     /// a device. Nothing of the plugin host is served to one.
-    pub(crate) fn is_cloud(&self) -> bool {
+    fn is_cloud(&self) -> bool;
+}
+
+impl CloudIdentityExt for droppen_auth::MaybeIdentity {
+    fn is_cloud(&self) -> bool {
         self.0.as_ref().is_some_and(|identity| identity.username.starts_with("cloud:"))
     }
 }

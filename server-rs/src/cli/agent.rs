@@ -51,7 +51,7 @@ pub struct AgentArgs {
     #[arg(long, global = true, allow_hyphen_values = true)]
     pub hub: Option<String>,
     /// The instance, wherever among the arguments it is written.
-    #[arg(long, global = true, action = clap::ArgAction::Append, value_parser = crate::auth::cli::instance_name, allow_hyphen_values = true)]
+    #[arg(long, global = true, action = clap::ArgAction::Append, value_parser = droppen_auth::cli::instance_name, allow_hyphen_values = true)]
     pub instance: Vec<String>,
     /// The action to take.
     #[command(subcommand)]
@@ -100,7 +100,7 @@ impl AgentArgs {
     pub async fn run(self) -> Result<(), String> {
         let (hub, code) = self.checked()?;
         let enrolling = matches!(self.command, AgentCommand::Enroll { .. });
-        let paths = crate::auth::cli::home_paths(self.instance.last().map(String::as_str))?;
+        let paths = droppen_auth::cli::home_paths(self.instance.last().map(String::as_str))?;
         if enrolling {
             let config = droppen_http::config::load(std::env::var("GOTCHA_ACTIVE_PROFILE").ok()).map_err(|error| error.to_string())?;
             if let Some(refusal) = refuse_enroll(&paths, config.app.auth.enabled()).await {
@@ -194,8 +194,8 @@ pub(crate) const CODE_LINE_LIMIT: u64 = 1024;
 /// a terminal, else the first line of what is piped in, read no further than
 /// [`CODE_LINE_LIMIT`].
 fn read_code_from_stdin() -> Result<EnrollCode, String> {
-    let line = if crate::auth::cli::stdin_is_a_terminal() {
-        crate::auth::cli::read_secret("One-time code from droppen.app: ").map_err(|e| format!("could not read the code: {e}"))?
+    let line = if droppen_auth::cli::stdin_is_a_terminal() {
+        droppen_auth::cli::read_secret("One-time code from droppen.app: ").map_err(|e| format!("could not read the code: {e}"))?
     } else {
         read_capped_line(std::io::stdin().lock())?
     };
@@ -233,10 +233,10 @@ pub(crate) async fn refuse_enroll(paths: &Paths, auth_enabled: Option<bool>) -> 
     }
     // A user account: the desktop app's own login does not count, for the
     // reason it does not end the setup state.
-    if crate::auth::users::UsersStore::new(paths).has_users().await {
+    if droppen_auth::users::UsersStore::new(paths).has_users().await {
         return None;
     }
-    let code_file = crate::auth::setup::code_file(paths);
+    let code_file = droppen_auth::setup::code_file(paths);
     Some(format!(
         "instance {name} has no local account, and a device linked to Droppen must have one: other devices are reachable from its page.\n\
          Create one first, either here:\n    \

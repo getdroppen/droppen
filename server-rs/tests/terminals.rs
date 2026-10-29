@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
-use remote_hand_server::auth::users::UsersStore;
+use droppen_auth::users::UsersStore;
 use remote_hand_server::feed::global::LOGIN_RECHECK;
 use droppen_instance::instance::{InstanceDirs, DEFAULT_INSTANCE};
 use droppen_instance::paths::Paths;

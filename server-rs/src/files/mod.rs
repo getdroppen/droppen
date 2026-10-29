@@ -24,7 +24,7 @@ use gotcha::{api, GotchaRouter, Json, Multipart, Schematic, State};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
 
-use crate::auth::MaybeIdentity;
+use droppen_auth::MaybeIdentity;
 use droppen_http::error::ApiError;
 use droppen_http::extract::ApiQuery;
 use droppen_http::openapi_ext::{ExtraResponses, Nullable};

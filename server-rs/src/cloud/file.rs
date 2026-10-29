@@ -101,7 +101,7 @@ impl Cloud {
     }
 
     /// [`LinkFile::hand_over_from_local_owner`], under this server's file lock.
-    pub async fn hand_over_from_local_owner(&self, users: &crate::auth::users::UsersStore) {
+    pub async fn hand_over_from_local_owner(&self, users: &droppen_auth::users::UsersStore) {
         let accounts: Vec<(String, String, bool)> = users.list().await.into_iter().map(|u| (u.name, u.created_at, u.app)).collect();
         let _guard = self.file.lock().expect("cloud file");
         match LinkFile::of(&self.paths).hand_over_from_local_owner(&accounts) {
@@ -127,11 +127,11 @@ impl Cloud {
 }
 
 /// The account-creating route reaches the link through this
-/// ([`crate::auth::LinkHandOver`]): the same call, awaited at the same point.
-impl crate::auth::LinkHandOver for Cloud {
+/// ([`droppen_auth::LinkHandOver`]): the same call, awaited at the same point.
+impl droppen_auth::LinkHandOver for Cloud {
     fn hand_over_from_local_owner<'a>(
         &'a self,
-        users: &'a crate::auth::users::UsersStore,
+        users: &'a droppen_auth::users::UsersStore,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
         Box::pin(Cloud::hand_over_from_local_owner(self, users))
     }
@@ -213,7 +213,7 @@ fn unreadable(path: &std::path::Path, error: &str) -> bool {
 
 impl LinkFile {
     /// When the device gets its first user account: a Droppen link the local owner
-    /// signed in ([`crate::auth::LOCAL_OWNER`] named as `cloud.json`'s owner)
+    /// signed in ([`droppen_auth::LOCAL_OWNER`] named as `cloud.json`'s owner)
     /// passes to the first user account — whoever makes it is the OS user (a
     /// shell, or a page opened with `remote-hand-server open`) or holds the setup
     /// code only that user can read — bound to that account by its `createdAt`
@@ -234,7 +234,7 @@ impl LinkFile {
         let Ok(mut file) = serde_json::from_slice::<CloudFile>(&bytes) else {
             return Ok(None);
         };
-        if !file.owner.as_deref().is_some_and(crate::auth::is_local_owner) {
+        if !file.owner.as_deref().is_some_and(droppen_auth::is_local_owner) {
             return Ok(None);
         }
         // The first user account: the oldest that is not app-internal.

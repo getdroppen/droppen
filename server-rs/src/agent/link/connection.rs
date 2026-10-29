@@ -33,7 +33,7 @@ use droppen_base::time::now_ms_u64;
 pub struct LinkEnv {
     /// The server's own listener.
     pub addr: SocketAddr,
-    /// [`crate::auth::Auth::internal_credential`].
+    /// [`droppen_auth::Auth::internal_credential`].
     pub credential: String,
     /// The sessions the streams copy ([`crate::agent::streams::source`]).
     pub streams: Arc<dyn crate::agent::streams::source::StreamSource>,

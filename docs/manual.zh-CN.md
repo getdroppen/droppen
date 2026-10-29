@@ -210,7 +210,7 @@ remote-hand-server open --instance alice             # 没有账号时:以这台
 升级不会开门:某个实例第一次读自己的账号表时,会**一次性**继承原来全机那份账号
 (`~/.config/remote-hand/state.db` 的 `users` 表,表空时回落到 `~/.config/remote-hand/users.json`)。
 全机那份**只冻结、不删除**——回滚到旧二进制时它得还能找到账号、继续 fail-closed。代价写在
-`server-rs/src/auth/users.rs` 的模块注释里:升级之后吊销的账号只会从实例里消失,回滚后旧
+`server-rs/crates/droppen-auth/src/users.rs` 的模块注释里:升级之后吊销的账号只会从实例里消失,回滚后旧
 二进制仍然认它。这个方向是故意选的:它可能让一扇本该换锁的门还能被开,但绝不会让一扇门根本
 没有锁。
 

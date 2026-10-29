@@ -204,9 +204,9 @@ pub struct NotifyBody {
 
 /// The session a verified [`token`] names.
 ///
-/// Put in the request extensions by [`crate::auth::guard`] and read back out by
+/// Put in the request extensions by [`droppen_auth::guard`] and read back out by
 /// the extractor below, so the handler never parses a header itself — the same
-/// arrangement [`crate::auth::Identity`] has, and deliberately *not* the same
+/// arrangement [`droppen_auth::Identity`] has, and deliberately *not* the same
 /// type. This is not an identity: it authorizes one operation on one session and
 /// carries no account, so nothing that asks "who is this" can be satisfied by it
 /// by accident.
@@ -250,7 +250,7 @@ impl<S: Send + Sync> FromRequestParts<S> for NotifyCaller {
 
 /// Whether this request is the one an agent's `rh-notify` makes.
 ///
-/// Asked by [`crate::auth::guard`] before it does any work, so the extra file
+/// Asked by [`droppen_auth::guard`] before it does any work, so the extra file
 /// read below is paid on one route and not on every request.
 pub fn is_notify_request(method: &Method, path: &str) -> bool {
     method == Method::POST && path == NOTIFY_PATH
@@ -279,7 +279,7 @@ pub async fn caller(paths: &Paths, instance: &str, headers: &HeaderMap) -> Optio
 
 /// The token out of `Authorization: Bearer <token>`.
 ///
-/// Copied from [`crate::auth::RequestCredentialsExt::bearer`] rather than
+/// Copied from [`droppen_auth::RequestCredentialsExt::bearer`] rather than
 /// shared with it, because that one is private to a module whose job is
 /// accounts and this one's job is not.
 /// The rule is what matters: a long-lived credential is read from this header
@@ -424,7 +424,7 @@ pub async fn notify_test(State(state): State<NotifyState>) -> Result<Json<SendRe
 #[api(id = "notify", group = "notify", summary = "Send a notification from a session")]
 pub async fn notify(
     State(state): State<NotifyState>,
-    // `#[api(skip)]` for [`crate::auth::Identity`]'s reason: the caller is
+    // `#[api(skip)]` for [`droppen_auth::Identity`]'s reason: the caller is
     // proved by a header the guard has already read, and gotcha would otherwise
     // ask this parameter for an OpenAPI contribution it has none of.
     #[api(skip)] caller: NotifyCaller,
