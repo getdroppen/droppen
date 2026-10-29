@@ -671,9 +671,15 @@ impl Provider for ClaudeCode {
     }
 
     /// claude stops to ask (`AskUserQuestion`), and the turn waits for the
-    /// answer.
+    /// answer. An instant chat runs with every tool disabled, so it cannot read
+    /// an attachment.
     fn capabilities(&self) -> Capabilities {
-        Capabilities { questions: true }
+        Capabilities {
+            questions: true,
+            chats: true,
+            chat_attachments: false,
+            schedules: true,
+        }
     }
 
     fn run(&self) -> &dyn Run {

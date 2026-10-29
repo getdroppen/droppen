@@ -35,6 +35,14 @@ pub struct Capabilities {
     /// Its sessions stop to ask the user questions, which this server keeps
     /// and answers into the turn that asked.
     pub questions: bool,
+    /// It runs instant chats: its sessions in the chats directory are listed
+    /// as chats.
+    pub chats: bool,
+    /// Its instant chats can read what is attached to a message. Only asked of
+    /// a provider with `chats`.
+    pub chat_attachments: bool,
+    /// Scheduled tasks can run on it.
+    pub schedules: bool,
 }
 
 /// What a provider says about the sessions it runs, each named by its id.

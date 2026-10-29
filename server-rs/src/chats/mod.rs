@@ -42,7 +42,7 @@ use droppen_http::SendResult;
 use crate::inject::SendOptions;
 use droppen_http::openapi_ext::{ExtraResponses, Nullable, Optional};
 use droppen_instance::paths::Paths;
-use crate::sessions::{chats_cwd, claude, codex, Source};
+use crate::sessions::{chats_cwd, Source};
 
 pub use provider::{ChatModelList, ChatProviderInfo, ChatProviderUpdate};
 pub use store::{ApiChat, ApiChatMessage};
@@ -146,22 +146,16 @@ pub enum ChatKind {
 }
 
 impl ChatKind {
-    /// The CLI this kind names, or `None` for the API backend.
+    /// The CLI this kind names, or `None` for the API backend: the source with
+    /// the kind's wire name.
     fn source(self) -> Option<Source> {
-        match self {
-            ChatKind::Claude => Some(Source::Claude),
-            ChatKind::Codex => Some(Source::Codex),
-            ChatKind::Api => None,
-        }
+        serde_json::to_value(self).ok().and_then(|name| Source::deserialize(name).ok())
     }
 
-    /// The kind a discovered CLI session belongs to; an ACP agent has no chats.
+    /// The kind a discovered CLI session belongs to: the kind with its source's
+    /// wire name, or `None` for a CLI with no chats.
     fn of(source: Source) -> Option<Self> {
-        match source {
-            Source::Claude => Some(ChatKind::Claude),
-            Source::Codex => Some(ChatKind::Codex),
-            Source::Acp => None,
-        }
+        serde_json::to_value(source).ok().and_then(|name| Self::deserialize(name).ok())
     }
 }
 
@@ -321,18 +315,20 @@ droppen_http::substate!(ChatsState);
 pub async fn list_chats(State(state): State<ChatsState>) -> Json<ChatList> {
     let paths = state.paths.as_ref();
     let bindings = state.drive.accounts.session_account_map().await;
-    let (claude_sessions, codex_sessions, api_chats) = tokio::join!(
-        claude::list_claude_sessions(paths, &bindings),
-        codex::list_codex_sessions(paths),
-        store::list_api_chats(paths),
-    );
+    let providers = &state.drive.providers;
+    // Every CLI that runs instant chats, read at once, in `Source`'s order.
+    let lists = providers
+        .sources()
+        .filter(|source| providers.capabilities(*source).chats)
+        .map(|source| state.drive.transcripts.list(paths, &bindings, Some(source)));
+    let (cli_sessions, api_chats) = tokio::join!(futures_util::future::join_all(lists), store::list_api_chats(paths));
 
     // The anchor directory is what makes a CLI session a chat; every other
     // session in the list belongs on the sessions screen instead.
     let anchor = chats_cwd(paths).to_string_lossy().into_owned();
-    let mut chats: Vec<ChatSummary> = claude_sessions
+    let mut chats: Vec<ChatSummary> = cli_sessions
         .into_iter()
-        .chain(codex_sessions)
+        .flatten()
         .filter(|session| session.cwd.as_ref().map(String::as_str) == Some(anchor.as_str()))
         .filter_map(|session| {
             Some(ChatSummary {
@@ -753,6 +749,29 @@ mod tests {
         assert_eq!(ChatKind::of(Source::Codex), Some(ChatKind::Codex));
         assert_eq!(ChatKind::of(Source::Acp), None);
         assert_eq!(ChatKind::Api.source(), None, "the API backend is not a CLI");
+    }
+
+    /// The chat kinds and the CLIs are tied by wire name: a CLI has the chat
+    /// kind of its name exactly when it runs instant chats, and each CLI kind
+    /// names one that does.
+    #[test]
+    fn every_cli_with_chats_has_the_chat_kind_of_its_name() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let paths = Arc::new(Paths::new(home.path().to_path_buf()));
+        let dirs = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), "chats-test").expect("valid name");
+        dirs.create().expect("instance dirs");
+        let accounts = Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins()));
+        let quota = Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone()));
+        let injections = crate::inject::InjectionRegistry::new(paths, &dirs, accounts, quota);
+        let providers = crate::inject::ProviderRegistry::new(injections, crate::app::register_providers);
+        let with_chats: Vec<Source> = providers.sources().filter(|source| providers.capabilities(*source).chats).collect();
+        assert!(!with_chats.is_empty());
+        for source in providers.sources() {
+            assert_eq!(ChatKind::of(source).is_some(), with_chats.contains(&source), "{source}");
+        }
+        for kind in [ChatKind::Claude, ChatKind::Codex] {
+            assert!(kind.source().is_some_and(|source| with_chats.contains(&source)), "{kind:?}");
+        }
     }
 
     #[test]

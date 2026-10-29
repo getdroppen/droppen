@@ -336,7 +336,7 @@
       "droppen-provider-codex",
       "droppen-provider-acp"
     ],
-    "count": 42
+    "count": 35
   },
   "allowed": [
     {
@@ -350,8 +350,6 @@
     {
       "why": "drive, feed and chats call each provider's transcript, roots, checklist and agent code themselves (the ACP agent registry too), and Drive holds Claude Code's setup-token captures. They go through the provider base (Provider, Transcripts).",
       "edges": [
-        "chats -> sessions::claude",
-        "chats -> sessions::codex",
         "drive -> accounts::setup_token",
         "drive -> sessions::claude",
         "feed -> claude_roots"

@@ -786,6 +786,38 @@ mod tests {
         assert_eq!(transcripts, [Source::Claude, Source::Codex, Source::Acp], "every source has both");
     }
 
+    /// What each CLI's sessions are offered for: only Claude Code stops to ask
+    /// questions, Claude Code runs its instant chats with every tool off, so
+    /// they take no attachments, and an ACP agent runs neither instant chats
+    /// nor scheduled tasks.
+    #[test]
+    fn every_provider_says_what_its_sessions_are_offered_for() {
+        use crate::inject::Capabilities;
+        let home = tempfile::tempdir().expect("tempdir");
+        let paths = Arc::new(Paths::new(home.path().to_path_buf()));
+        let dirs = InstanceDirs::new(&paths.data_dir(), "capabilities-test").expect("valid name");
+        dirs.create().expect("instance dirs");
+        let accounts = Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), logins()));
+        let quota = Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone()));
+        let providers = ProviderRegistry::new(InjectionRegistry::new(paths, &dirs, accounts, quota), register_providers);
+
+        let all = Capabilities {
+            questions: true,
+            chats: true,
+            chat_attachments: true,
+            schedules: true,
+        };
+        assert_eq!(
+            providers.capabilities(Source::Claude),
+            Capabilities {
+                chat_attachments: false,
+                ..all
+            }
+        );
+        assert_eq!(providers.capabilities(Source::Codex), Capabilities { questions: false, ..all });
+        assert_eq!(providers.capabilities(Source::Acp), Capabilities::default());
+    }
+
     /// The instance is free as soon as the serve task ends, whatever still holds
     /// the server's state.
     ///

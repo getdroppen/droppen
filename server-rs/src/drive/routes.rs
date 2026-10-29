@@ -713,9 +713,11 @@ async fn deliver_message(
         return Err(ApiError::conflict(reason.unwrap_or_else(|| "cannot send".to_string())));
     }
 
-    // claude instant chats run with every tool disabled, so attachments can't be read.
+    // Some CLIs run an instant chat with every tool disabled, so it cannot read
+    // an attachment.
     let chat = summary.cwd.as_ref().map(Path::new) == Some(chats_cwd(&drive.paths).as_path());
-    if chat && source == Source::Claude && !(images.is_empty() && attachments.is_empty()) {
+    let capabilities = drive.providers.capabilities(source);
+    if chat && capabilities.chats && !capabilities.chat_attachments && !(images.is_empty() && attachments.is_empty()) {
         return Err(ApiError::conflict("attachments are not supported in claude instant chats"));
     }
 

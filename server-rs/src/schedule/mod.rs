@@ -462,6 +462,18 @@ async fn validated_cwd(paths: &Paths, cwd: &str) -> Result<String, ApiError> {
     Ok(resolved.to_string_lossy().into_owned())
 }
 
+impl ScheduleState {
+    /// Refuse a task on `source` when scheduled tasks do not run on it. Checked
+    /// before the flags, which are only meaningful for a CLI that runs tasks.
+    fn check_schedulable(&self, source: Source) -> Result<(), ApiError> {
+        if self.drive.providers.capabilities(source).schedules {
+            Ok(())
+        } else {
+            Err(ApiError::bad_request("scheduled tasks run on Claude Code or Codex"))
+        }
+    }
+}
+
 /// The flag values, checked now rather than at the moment of the spawn, and
 /// checked against the CLI that will actually be handed them.
 ///
@@ -487,9 +499,6 @@ async fn validated_cwd(paths: &Paths, cwd: &str) -> Result<String, ApiError> {
 /// history, codex's out of a cache — so a model this machine has not run yet is
 /// not a model that does not exist.
 async fn validated_flags(paths: &Paths, source: Source, model: Option<&str>, effort: Option<&str>, permission: Option<&str>) -> Result<(), ApiError> {
-    if source == Source::Acp {
-        return Err(ApiError::bad_request("scheduled tasks run on Claude Code or Codex"));
-    }
     crate::drive::routes::validate_flags(model, effort, permission).map_err(ApiError::bad_request)?;
 
     if let Some(effort) = effort.filter(|effort| !effort.is_empty()) {
@@ -580,6 +589,7 @@ pub async fn create_scheduled_task(
         flag(body.effort.as_deref()),
         flag(body.permission.as_deref()),
     );
+    state.check_schedulable(body.source)?;
     validated_flags(paths, body.source, model.as_deref(), effort.as_deref(), permission.as_deref()).await?;
     let cwd = validated_cwd(paths, &body.cwd).await?;
 
@@ -645,6 +655,7 @@ pub async fn update_scheduled_task(
         .find(|task| task.id == id)
         .ok_or_else(|| ApiError::not_found("scheduled task not found"))?;
     let source = body.source.0.unwrap_or(stored.source);
+    state.check_schedulable(source)?;
     validated_flags(
         paths,
         source,
@@ -1020,6 +1031,28 @@ mod tests {
             validated_flags(&paths, Source::Codex, Some("gpt-5.5"), Some("low"), None).await.is_ok(),
             "a named model answers for itself"
         );
+    }
+
+    /// A task runs only on a CLI whose provider takes scheduled tasks; any other
+    /// is refused before its flags are looked at.
+    #[test]
+    fn a_task_runs_only_on_a_cli_that_takes_scheduled_tasks() {
+        let (_dir, paths) = paths();
+        let paths = Arc::new(paths);
+        let instance = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
+        let auth = crate::auth::Auth::new(&paths, &instance, &droppen_http::config::AuthSettings::default(), false, Arc::new(crate::app::NotifyTokens));
+        let drive = crate::drive::Drive::new(paths.clone(), &instance, auth, crate::app::transcript_sources(), crate::app::register_providers, crate::app::logins());
+        let state = ScheduleState {
+            paths,
+            drive,
+            global: crate::feed::global::GlobalFeed::new(),
+            cancel: tokio_util::sync::CancellationToken::new(),
+        };
+        assert!(state.check_schedulable(Source::Claude).is_ok());
+        assert!(state.check_schedulable(Source::Codex).is_ok());
+        let refused = state.check_schedulable(Source::Acp).expect_err("an ACP agent runs no scheduled tasks");
+        assert_eq!(refused.status(), gotcha::axum::http::StatusCode::BAD_REQUEST);
+        assert_eq!(refused.body()["error"], "scheduled tasks run on Claude Code or Codex");
     }
 
     #[tokio::test]

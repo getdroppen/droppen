@@ -260,7 +260,12 @@ impl Provider for Codex {
     /// Approvals are off and every request the app server makes is refused:
     /// codex never stops to ask.
     fn capabilities(&self) -> Capabilities {
-        Capabilities::default()
+        Capabilities {
+            questions: false,
+            chats: true,
+            chat_attachments: true,
+            schedules: true,
+        }
     }
 
     fn run(&self) -> &dyn Run {
