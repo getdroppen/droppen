@@ -83,7 +83,6 @@ import {
   CHAIN_VERSION,
   CHAIN_VERSION_3,
   ChainClock,
-  ChainError,
   ChainState,
   copy,
   createAttestation,
@@ -326,12 +325,13 @@ import { deviceFingerprint, hasRunAi, joinAction, type Refusal, refusalOf, type 
 import { AccountError, heldWho, hostAdminRefused, KeysUnreadableError, MovingCheckpoint, noNewAccounts, notUpgraded, ranAiAdminRefused } from "./account/errors";
 import { CHAIN_V3_WAIT, FIRST_LOAD_TRIES, HOST_KEYS_WAIT, KEY_REQUEST_EVERY_MS, MAX_APPEND_ENTRIES, MAX_HOST_KEY_MAILS, RENEW_MARGIN_MS, RENEW_RETRY_MS, SECOND_REFUSAL_MS } from "./account/limits";
 import { answeredWithin, BUSY, CODE_WAIT_MS, RENEW_RESTARTS, RenewalError, type RenewalReport, type RenewOptions } from "./account/renewal";
-import type { ChainAlert, FreshUserKey, HeldBack, HeldChange, RotationReport, VetoPlan, VetoTarget } from "./account/views";
+import type { ChainAlert, FreshUserKey, HeldBack, HeldChange, RotationReport, VetoPlan } from "./account/views";
 import { forgetBrowser } from "./account/wipe";
 import { ReEnrollWarnings } from "./account/re-enroll";
 import { ChainAlerts } from "./account/alerts";
 import { type AccountNote, accountBasics } from "./account/basics";
 import { RenewalNotes } from "./account/renewal-notes";
+import { ActivationHold } from "./account/held-back";
 export { deviceFingerprint, hasRunAi, joinAction, limitedDevice } from "./account/devices";
 export type { JoinKeys, PromoteBlock, Refusal, SelfRemoval, Standing } from "./account/devices";
 export { AccountError, hostAdminRefused, KeysUnreadableError, v3NotWritableError } from "./account/errors";
@@ -406,14 +406,6 @@ export class CloudAccount {
   /** Stop hearing the other tabs ({@link stopSession}). */
   private unhearCrossTab: (() => void) | null = null;
   private readonly crossTab: CrossTab | null;
-  private held: HeldBack | null = null;
-  /**
-   * The last hold a sync took in on this device's own clock (its day passed
-   * here): its activation, and how far this view went with it. A veto the
-   * person confirmed on that hold's plan is still a veto, but only while
-   * nothing newer has been taken in since (`removeDevice`'s `veto`).
-   */
-  private taken: { seq: number; device: string; takenThroughSeq: number } | null = null;
   /** Set (for good, in this page) once this view conflicted with the chain this browser verified: why. */
   private forkedWhy: string | null = null;
   private unwatchSeen: (() => void) | null = null;
@@ -427,7 +419,6 @@ export class CloudAccount {
    * view reaches it, the page vouches for nothing (`attestation`).
    */
   private unrecordedThrough = -1;
-  private heldTimer: ReturnType<typeof setTimeout> | null = null;
   private lastRenewal: { token: string; atMs: number } | null = null;
   /** What `HubApi.renew` is set to for this account (`open` sets it). */
   readonly renewer = (stale: string): Promise<string | null> => this.renewAfter401(stale);
@@ -454,6 +445,13 @@ export class CloudAccount {
   });
   /** What the renewal runner noted, the disputes kept here, and what an automatic renewal may not go past (`RenewalNotes`). */
   private readonly renewalNotes: RenewalNotes;
+  /** A self-activation this device holds back, and what settles it (`ActivationHold`). */
+  private readonly hold = new ActivationHold(this.basics, {
+    sync: () => this.sync(),
+    adopt: (chain, mine) => this.adopt(chain, mine),
+    latchFork: (message) => this.latchFork(message),
+    keepFresh: () => this.keepFresh,
+  });
 
   private constructor(
     readonly api: HubApi,
@@ -810,7 +808,7 @@ export class CloudAccount {
   keepSessionFresh(): void {
     this.keepFresh = true;
     this.schedule();
-    this.scheduleHeld();
+    this.hold.scheduleHeld();
     if (!this.unwatchSeen) this.watchSeenRecord();
   }
 
@@ -819,8 +817,7 @@ export class CloudAccount {
     this.keepFresh = false;
     if (this.renewTimer) clearTimeout(this.renewTimer);
     this.renewTimer = null;
-    if (this.heldTimer) clearTimeout(this.heldTimer);
-    this.heldTimer = null;
+    this.hold.stopTimer();
     this.unwatchSeen?.();
     // Nor does it hear the other tabs any more (what they keep would have it catch up with the hub).
     this.unhearCrossTab?.();
@@ -1351,7 +1348,7 @@ export class CloudAccount {
         }
       }
       await this.install(verified.state, verified.clock);
-      this.setHeld(verified.held);
+      this.hold.setHeld(verified.held);
       this.emit();
       return verified.state.seq + 1;
     }
@@ -1362,7 +1359,7 @@ export class CloudAccount {
     const { applied, error } = await next.mergePrefix(decoded, clock);
     // What took effect is kept and told before anything else is decided — once held against the seen record.
     if (applied && (await this.install(next, clock))) this.emit();
-    this.setHeld(this.heldFrom(error, decoded));
+    this.hold.setHeld(this.hold.heldFrom(error, decoded));
     return applied;
   }
 
@@ -1380,7 +1377,7 @@ export class CloudAccount {
     const clock = seen ? ChainClock.resume(now, seen.seenThrough, seen.firstSeen) : ChainClock.live(now, decoded.length);
     const { state, error } = await ChainState.verifyPrefix(decoded, undefined, clock);
     if (pinned && pinned !== hex(state.hashAt(0)!)) throw this.latchFork("the hub served a different genesis than this device pinned");
-    const held = this.heldFrom(error, decoded);
+    const held = this.hold.heldFrom(error, decoded);
     // Against every checkpoint this browser holds (an older page's kept apart too).
     let behind = false;
     for (const mark of pinned ? checkpoints(trust) : []) {
@@ -1400,26 +1397,6 @@ export class CloudAccount {
   }
 
   /**
-   * Why a merge of `served` stopped, as what this device holds back: `null`
-   * when it did not stop; a self-activation too early here (and everything
-   * the hub served from it) — with the recovery words, or through a passkey
-   * slot (`passkeyActivate`: any admin may veto it, docs/passkeys.md §4.4,
-   * so it names its device as a recovered one does); anything else is
-   * thrown — a fork as the alarm it is (latched), an entry that does not
-   * verify as itself.
-   */
-  private heldFrom(error: ChainError | null, served: Entry[]): HeldBack | null {
-    if (!error) return null;
-    if (error.kind === "fork") throw this.latchFork(error.message);
-    if (error.kind !== "tooEarly" || error.detail.seq === undefined) throw error;
-    const seq = error.detail.seq;
-    const entries = served.filter((e) => e.draft.seq >= seq);
-    const action = entries[0]?.draft.action;
-    const device = action?.type === "activateRecovered" || action?.type === "passkeyActivate" ? action.id : null;
-    return { seq, device, readyMs: error.detail.readyMs ?? 0, entries };
-  }
-
-  /**
    * Entries the hub has past this view that this device does not take yet: a
    * recovered (or passkey-joined) device's self-activation that comes before
    * a day has passed since this device first saw its join (and whatever
@@ -1428,35 +1405,7 @@ export class CloudAccount {
    * by itself once `readyMs` has passed (the next sync).
    */
   get heldBack(): HeldBack | null {
-    return this.held;
-  }
-
-  private setHeld(held: HeldBack | null): void {
-    const was = this.held;
-    // A hold taken in by the clock (not by the person's approve or veto, `adopt`): kept, so a veto confirmed on it a moment ago still is one.
-    if (was?.device && was.seq !== held?.seq && this.state && this.state.seq >= was.seq) {
-      const at = this.state.entryAt(was.seq)?.draft.action;
-      if ((at?.type === "activateRecovered" || at?.type === "passkeyActivate") && at.id === was.device) this.taken = { seq: was.seq, device: was.device, takenThroughSeq: this.state.seq };
-    }
-    this.held = held;
-    this.scheduleHeld();
-    if ((was?.seq ?? -1) !== (held?.seq ?? -1) || (was?.entries.length ?? 0) !== (held?.entries.length ?? 0)) this.emit();
-  }
-
-  /** While the page is open, look again once a held-back activation may be taken. */
-  private scheduleHeld(): void {
-    if (this.heldTimer) clearTimeout(this.heldTimer);
-    this.heldTimer = null;
-    if (!this.held || !this.keepFresh) return;
-    const wait = Math.max(1000, this.held.readyMs - Date.now() + 1000);
-    this.heldTimer = setTimeout(
-      () => {
-        this.heldTimer = null;
-        this.sync().catch((error: unknown) => console.warn("cloud account: sync after a held-back activation:", error));
-      },
-      Math.min(wait, 6 * 60 * 60 * 1000),
-    );
-    (this.heldTimer as { unref?: () => void }).unref?.();
+    return this.hold.heldBack;
   }
 
   /**
@@ -1466,7 +1415,7 @@ export class CloudAccount {
   async absorb(encoded: Uint8Array[]): Promise<number> {
     this.assertNotForked();
     // Pushes follow the hub's head, past what this view holds back.
-    if (!this.state || this.held) return this.sync();
+    if (!this.state || this.hold.heldBack) return this.sync();
     let entries: Entry[];
     try {
       entries = encoded.map((e) => decodeEntry(e));
@@ -1479,7 +1428,7 @@ export class CloudAccount {
     const { applied, error } = await next.mergePrefix(entries, clock);
     if (applied && (await this.install(next, clock))) this.emit();
     if (error?.kind === "outOfOrder") return applied + (await this.sync());
-    this.setHeld(this.heldFrom(error, entries));
+    this.hold.setHeld(this.hold.heldFrom(error, entries));
     return applied;
   }
 
@@ -1511,15 +1460,6 @@ export class CloudAccount {
   }
 
   /**
-   * The hub's chain past a held-back activation, verified with no clock:
-   * only ever to sign this device's veto on (a removal must go on the hub's
-   * head) or to take on the user's word ("approve") — never trusted before.
-   */
-  private async provisional(held: HeldBack): Promise<ChainState> {
-    return ChainState.verify([...this.state!.allEntries(), ...held.entries], undefined, ChainClock.history());
-  }
-
-  /**
    * Take `chain` — the hub's, past a held-back self-activation — with this
    * device's own `mine` on it: a veto (or the user's "approve") settled what
    * the day's delay was there for. Everything new is first seen now, and the
@@ -1530,10 +1470,7 @@ export class CloudAccount {
     const clock = ChainClock.resume(now, chain.seq, this.clock.firstSeen.entries());
     for (let seq = this.state!.seq + 1; seq <= chain.seq; seq++) clock.observe(seq);
     await this.install(chain, clock);
-    this.held = null;
-    // Settled by the person: no earlier plan is a veto any more.
-    this.taken = null;
-    this.scheduleHeld();
+    this.hold.settled();
     this.emit();
   }
 
@@ -1583,7 +1520,7 @@ export class CloudAccount {
     this.assertNotForked();
     for (let attempt = 0; ; attempt++) {
       if (!this.state) throw new AccountError("notInChain", "the account has no chain yet");
-      const held = this.held;
+      const held = this.hold.heldBack;
       if (held && !opts.overHeld) {
         throw new AccountError(
           "heldBack",
@@ -1591,7 +1528,7 @@ export class CloudAccount {
           held.readyMs,
         );
       }
-      const base = held ? await this.provisional(held) : this.state;
+      const base = held ? await this.hold.provisional(held) : this.state;
       const actions = await build(base);
       // The hub takes 1–64 entries an append: a bigger batch is said here, before anything is signed.
       if (actions.length > MAX_APPEND_ENTRIES) {
@@ -2912,7 +2849,7 @@ export class CloudAccount {
     // The hub's chain as it stands first: a self-activation this page has not
     // seen yet is held back here (and so refuses the pairing) before any key goes.
     await this.sync();
-    this.refuseWhileHeld();
+    this.hold.refuseWhileHeld();
     const chain = this.requireAdmin();
     const listed = chain.deviceRecord(candidate.device);
     if (!opts.admin && !listed) this.requireUpgraded(chain);
@@ -2926,7 +2863,7 @@ export class CloudAccount {
         api: {
           mail: (token, mail) => {
             this.assertNotForked();
-            this.refuseWhileHeld();
+            this.hold.refuseWhileHeld();
             return this.api.mail(token, mail);
           },
         },
@@ -2950,26 +2887,6 @@ export class CloudAccount {
       }
     }
     return joining ? "delivered" : done;
-  }
-
-  /**
-   * While this device holds back a self-activation ({@link heldBack}), it
-   * hands no device its keys by pairing — not even one already listed, which
-   * needs no new entry, and so would not meet the refusal every entry but
-   * the veto meets (`appendBatch`): that device, opening the account afresh,
-   * may take the held activation as history. It waits, as they do, until the
-   * person approves or removes the held device.
-   */
-  private refuseWhileHeld(): void {
-    const held = this.held;
-    if (!held) return;
-    throw new AccountError(
-      "heldBack",
-      "{{id}} activated itself sooner than this device allows: approve it or remove it first. Until then this device adds no device and pairs none again.",
-      held.readyMs,
-      undefined,
-      { id: held.device ?? "?" },
-    );
   }
 
   /**
@@ -3168,21 +3085,7 @@ export class CloudAccount {
   ): Promise<RotationReport> {
     if (id === this.deviceId) throw new AccountError("self", "remove this device from another device");
     const veto = opts.veto?.device === id ? opts.veto : undefined;
-    // The hold the veto is over: this view's, or — taken in by this device's
-    // clock since the person read the plan — that one, but only while it is
-    // the last one taken in and the chain here has not moved since: a stale
-    // plan could take out a device trusted after it (the person looks again).
-    let held: HeldBack | null = this.held;
-    let sweepTo: number | null = null;
-    if (!held && veto) {
-      const taken = this.taken;
-      if (!taken || taken.seq !== veto.seq || taken.device !== id || this.state?.seq !== taken.takenThroughSeq) {
-        throw new AccountError("vetoStale", "{{id}}'s activation was taken in here, and the account's chain has moved on since: look at your devices again, and remove what is not yours there", undefined, undefined, { id });
-      }
-      held = { seq: veto.seq, device: id, readyMs: 0, entries: [] };
-      // What the plan could stand for: up to where this view took the hold in.
-      sweepTo = taken.takenThroughSeq;
-    }
+    const { held, sweepTo } = this.hold.vetoedHold(id, veto);
     if (!held) {
       const record = this.state?.deviceRecord(id);
       const v3 = this.state?.isV3 === true;
@@ -3228,13 +3131,13 @@ export class CloudAccount {
     // passed here, and the veto must still take out what it is for — not find
     // the held device trusted by then and remove nothing. Taken in already
     // before the call: as the plan the person confirmed read them.
-    const view = sweepTo === null || !veto ? this.trustedView() : new Set([...veto.view, this.deviceId]);
+    const view = sweepTo === null || !veto ? this.hold.trustedView() : new Set([...veto.view, this.deviceId]);
     try {
       const report = await this.rotate(
         courier,
         reencrypt,
         (chain) => {
-          const live = this.held;
+          const live = this.hold.heldBack;
           // Another device's activation held back meanwhile: the veto is not signed on top of it (that would take it in).
           if (live && live.device !== held.device) throw new AccountError("heldBack", `${heldWho(live)}: approve or remove it first`, live.readyMs);
           // The hold as it stands now (its entries may have grown); taken in on
@@ -3261,7 +3164,7 @@ export class CloudAccount {
         { overHeld: true },
       );
       // Done: the plan it was read on is no veto any more.
-      if (this.taken?.seq === held.seq) this.taken = null;
+      this.hold.planDone(held.seq);
       return report;
     } catch (error) {
       // A veto is one append (it cannot be split): with the wider choice on, the way out is to leave it off.
@@ -3299,7 +3202,7 @@ export class CloudAccount {
     const me = this.deviceId;
     const slots = chain.allSlots().some((s) => !s.removed && (s.setBy === me || chain.deviceRecord(me)?.viaPasskey === s.slot.slot));
     if (chain.voidsRecoveryWords(me, "removal") || slots) return "keepsSignIn";
-    if (this.held) return "heldBack";
+    if (this.hold.heldBack) return "heldBack";
     return "removable";
   }
 
@@ -4281,29 +4184,7 @@ export class CloudAccount {
    * active devices now.
    */
   vetoScope(held: HeldBack, chain: ChainState, opts: { trusted?: true | ReadonlySet<string>; view?: ReadonlySet<string> } = {}): { devices: string[]; machines: string[] } {
-    const tainted = new Set<string>(held.device ? [held.device] : []);
-    const machines = new Set<string>();
-    const trust = opts.trusted;
-    for (const e of held.entries) {
-      const { signer, action } = e.draft;
-      const brought = signer.type === "recovery" || signer.type === "passkey" || (signer.type === "device" && tainted.has(signer.id));
-      // Signed by another device this view trusted: what it brought in goes only if asked.
-      const byTrusted = !brought && trust !== undefined && signer.type === "device" && signer.id !== this.deviceId;
-      if (!brought && !byTrusted) continue;
-      const take = (id: string, into: Set<string>) => {
-        if (brought || trust === true || (typeof trust === "object" && trust.has(id))) into.add(id);
-      };
-      if (action.type === "addDevice" || action.type === "recoveryJoin" || action.type === "recoveryJoin3") take(action.device.id, tainted);
-      else if (action.type === "addDevice3") take(action.device.id, action.device.flags.host && !action.device.flags.admin ? machines : tainted);
-      else if (action.type === "approveDevice" || action.type === "activateRecovered" || action.type === "passkeyActivate") take(action.id, tainted);
-      else if (action.type === "addMachine") take(action.machine.id, machines);
-    }
-    // Neither this device nor one this view already trusted: only what came in while the activation was held back.
-    const view = opts.view ?? this.trustedView();
-    const trustedHere = (id: string) => id === this.deviceId || view.has(id);
-    const devices = [...tainted].filter((id) => !trustedHere(id) && chain.deviceRecord(id) && chain.deviceRecord(id)!.status.type !== "removed");
-    devices.sort((x, y) => (x === held.device ? -1 : y === held.device ? 1 : 0));
-    return { devices, machines: [...machines].filter((m) => !trustedHere(m) && chain.machine(m)) };
+    return this.hold.vetoScope(held, chain, opts);
   }
 
   /**
@@ -4314,84 +4195,12 @@ export class CloudAccount {
    * what it does to the recovery words.
    */
   async vetoPlan(): Promise<VetoPlan | null> {
-    const held = this.held;
-    if (!held?.device || !this.state) return null;
-    const view = this.trustedView();
-    const chain = await this.provisional(held);
-    const scope = this.vetoScope(held, chain, { view });
-    const wide = this.vetoScope(held, chain, { view, trusted: true });
-    const inScope = new Set([...scope.devices, ...scope.machines]);
-    // Who brought each one in: the first held-back entry that did.
-    const by = new Map<string, string | null>();
-    for (const e of held.entries) {
-      const { signer, action } = e.draft;
-      const subject =
-        action.type === "addDevice" || action.type === "recoveryJoin" || action.type === "recoveryJoin3" || action.type === "addDevice3"
-          ? action.device.id
-          : action.type === "addMachine"
-            ? action.machine.id
-            : action.type === "approveDevice" || action.type === "activateRecovered" || action.type === "passkeyActivate"
-              ? action.id
-              : null;
-      if (subject !== null && subject !== held.device && !by.has(subject)) by.set(subject, signer.type === "device" ? signer.id : signer.type === "passkey" ? signer.slot : null);
-    }
-    const target = (id: string): VetoTarget => ({ id, host: chain.deviceRecord(id)?.host === true, by: by.get(id) ?? null });
-    const trusted = [...wide.devices, ...wide.machines].filter((id) => !inScope.has(id));
-    const voids = (ids: Iterable<string>) => [...ids].some((id) => chain.voidsRecoveryWords(id, "removal"));
-    const voidsWords = voids(inScope);
-    // The passkey slots a removal turns off, as the chain rules: those its device registered, and the one it came in through.
-    const slotsOf = (ids: Iterable<string>) => {
-      const gone = new Set(ids);
-      const through = new Set([...gone].flatMap((id) => chain.deviceRecord(id)?.viaPasskey ?? []));
-      return new Set(chain.allSlots().flatMap((s) => (!s.removed && (gone.has(s.setBy) || through.has(s.slot.slot)) ? [s.slot.slot] : [])));
-    };
-    const slots = slotsOf(inScope);
-    return {
-      device: held.device,
-      seq: held.seq,
-      view: [...view],
-      scope: [...scope.devices, ...scope.machines].map(target),
-      trusted: trusted.map(target),
-      voidsWords,
-      trustedVoidsWords: !voidsWords && voids(trusted),
-      voidsPasskeys: slots.size > 0,
-      trustedVoidsPasskeys: [...slotsOf(trusted)].some((slot) => !slots.has(slot)),
-    };
-  }
-
-  /** The devices this view trusts now (active in it), and this device: what a veto never removes. */
-  private trustedView(): Set<string> {
-    const ids = new Set((this.state?.allDevices() ?? []).filter((d) => d.status.type === "active").map((d) => d.info.id));
-    ids.add(this.deviceId);
-    return ids;
+    return this.hold.vetoPlan();
   }
 
   /** The entries held back past the activation, as the page lists them ("what approving takes in"). */
   heldChanges(): HeldChange[] {
-    const held = this.held;
-    if (!held) return [];
-    return held.entries.map((e) => {
-      const { signer, action } = e.draft;
-      const subject =
-        action.type === "addDevice" || action.type === "recoveryJoin" || action.type === "addDevice3" || action.type === "recoveryJoin3"
-          ? action.device.id
-          : action.type === "addMachine"
-            ? action.machine.id
-            : action.type === "removeDevice" ||
-                action.type === "removeMachine" ||
-                action.type === "approveDevice" ||
-                action.type === "activateRecovered" ||
-                action.type === "removeDevice3" ||
-                action.type === "setAdmin" ||
-                action.type === "setHost" ||
-                action.type === "passkeyActivate"
-              ? action.id
-              : action.type === "setAccept"
-                ? action.host
-                : null;
-      // A passkey slot's entries are named by the slot (as the alerts name them).
-      return { seq: e.draft.seq, kind: action.type, by: signer.type === "device" ? signer.id : signer.type === "passkey" ? signer.slot : null, subject };
-    });
+    return this.hold.heldChanges();
   }
 
   /**
@@ -4620,8 +4429,8 @@ export class CloudAccount {
 
   /** Approve a device that joined with the recovery key, and mail it every `UK` epoch held (it may have joined before the newest). */
   async approveDevice(id: string): Promise<void> {
-    const held = this.held;
-    if (held && held.device === id) return this.vouchForHeld(held);
+    const held = this.hold.heldBack;
+    if (held && held.device === id) return this.hold.vouchForHeld(held);
     const record = this.state?.deviceRecord(id);
     if (record?.status.type !== "pending") throw new AccountError("notPending", `${id} is not waiting for approval`);
     // One that joined with a passkey is approved only by pairing with it (`pairDevice`): its id alone says nothing of whose screen it is.
@@ -4630,19 +4439,6 @@ export class CloudAccount {
     // A user key only to a device that manages the account (a passkey's joins do not: chain v3 §3.2).
     if (record.admin) await this.withUserKeys((keys) => this.mailUserKeys(id, record.info.dhKey, keys));
     else if (!record.host) await this.sendHostKeys(id);
-  }
-
-  /**
-   * "That was me" for a held-back self-activation: take the hub's chain past
-   * it now, on the user's word — unless that chain no longer has this device
-   * (then approving would only be a way to wipe it).
-   */
-  private async vouchForHeld(held: HeldBack): Promise<void> {
-    const chain = await this.provisional(held);
-    if (chain.device(this.deviceId) === undefined) {
-      throw new AccountError("heldBack", "the hub's chain goes on to remove this device: remove the recovered device from another device instead");
-    }
-    await this.adopt(chain, []);
   }
 
   /**
@@ -5005,7 +4801,7 @@ export class CloudAccount {
     if (recorded > this.state.seq || this.unrecordedThrough > this.state.seq) {
       await this.sync();
       if (this.state.seq < recorded) {
-        if (this.held) throw new AccountError("heldBack", "this page holds back entries another page of this browser took: it vouches for nothing until it takes them");
+        if (this.hold.heldBack) throw new AccountError("heldBack", "this page holds back entries another page of this browser took: it vouches for nothing until it takes them");
         throw this.latchFork(`the hub serves this page the account's chain through entry ${this.state.seq}, and another page of this browser verified it through ${recorded}`);
       }
       if (this.state.seq < this.unrecordedThrough) {
