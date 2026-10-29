@@ -632,6 +632,25 @@ impl super::Transcripts for AcpSessions {
     fn spoken_texts(&self, entry: &Map<String, Value>) -> Vec<String> {
         spoken_texts(entry)
     }
+
+    fn external_reason(&self) -> &'static str {
+        "this ACP session was started elsewhere; continue it where it was started"
+    }
+
+    /// Every ACP session is one a Droppen started.
+    fn foreign_sessions(&self) -> bool {
+        false
+    }
+
+    /// One recursive watch covers every agent, made when it is missing: the
+    /// first ACP session would otherwise only reach the list on the poll.
+    fn watch_dirs<'a>(&'a self, paths: &'a Paths) -> BoxFuture<'a, Vec<PathBuf>> {
+        Box::pin(async move {
+            let acp = AcpTranscripts::of(paths).dir();
+            let _ = tokio::fs::create_dir_all(&acp).await;
+            vec![acp]
+        })
+    }
 }
 
 /// Build the row for one transcript of `agent`'s.

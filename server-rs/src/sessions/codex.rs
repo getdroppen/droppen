@@ -807,6 +807,22 @@ impl super::Transcripts for CodexSessions {
     fn usage_fold(&self) -> Box<dyn UsageFold> {
         Box::new(CodexUsage::default())
     }
+
+    fn external_reason(&self) -> &'static str {
+        "this codex session was started elsewhere; continue it where it was started"
+    }
+
+    fn live_block(&self, status: SessionStatus) -> Option<&'static str> {
+        (status == SessionStatus::Running).then_some("session is currently running")
+    }
+
+    fn foreign_sessions(&self) -> bool {
+        true
+    }
+
+    fn watch_dirs<'a>(&'a self, paths: &'a Paths) -> BoxFuture<'a, Vec<PathBuf>> {
+        Box::pin(std::future::ready(vec![paths.codex_sessions()]))
+    }
 }
 
 /// Codex emits *cumulative* `token_count` events; the per-turn delta lives in

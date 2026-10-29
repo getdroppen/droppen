@@ -31,7 +31,7 @@ use droppen_instance::paths::ClaudeRoot;
 use crate::sessions::delivery::{QuestionState, ReceiptLookup, ReceiptStatus, SessionQuestion};
 use crate::sessions::sidecars::{is_agent_id, AgentPath, Checklist};
 use crate::sessions::util::TranscriptItem;
-use crate::sessions::{archive, chats_cwd, claude, file_signature, sendability, SessionScope, Source};
+use crate::sessions::{archive, chats_cwd, claude, file_signature, SessionScope, Source, TranscriptSources};
 
 /// `POST /api/sessions/{source}/{id}/message` body.
 #[derive(Debug, Clone, Serialize, Deserialize, Schematic)]
@@ -714,7 +714,7 @@ async fn deliver_message(
     // agent was removed is refused whatever is running.
     let (can_send, reason) = match crate::acp_agent::AcpAgentRegistry::of(&drive.paths).send_block(&summary) {
         Some(reason) => (false, Some(reason)),
-        None => sendability(
+        None => drive.transcripts.sendability(
             source,
             summary.scope,
             summary.status,
@@ -995,7 +995,7 @@ async fn settle_expired(
         return Err(ApiError::bad_request("the answer is too long to send as a message"));
     }
     let (source, id) = (summary.source, summary.id.as_str());
-    let (can_send, reason) = sendability(
+    let (can_send, reason) = drive.transcripts.sendability(
         source,
         summary.scope,
         summary.status,
@@ -1099,12 +1099,12 @@ fn spawn_refusal(error: inject::InjectError, fallback: &str) -> ApiError {
 /// One body, one shape, one token, whether the change was a message, a rename or
 /// an archive: the client turns `external_session` into the same read-only
 /// notice from any of them.
-pub(crate) fn external_session(source: Source) -> ApiError {
+pub(crate) fn external_session(transcripts: &TranscriptSources, source: Source) -> ApiError {
     ApiError::with_body(
         gotcha::axum::http::StatusCode::CONFLICT,
         serde_json::json!({
             "error": crate::sessions::EXTERNAL_SESSION_ERROR,
-            "hint": crate::sessions::external_send_block_reason(source),
+            "hint": transcripts.external_reason(source),
         }),
     )
 }
@@ -1142,7 +1142,7 @@ pub(crate) async fn writable_session(drive: &crate::drive::Drive, source: Source
     // tail an interrupt can leave behind.
     drive.providers.driver_states().apply(&drive.transcripts, std::slice::from_mut(&mut summary));
     if summary.scope == SessionScope::External {
-        return Err(external_session(source));
+        return Err(external_session(&drive.transcripts, source));
     }
     Ok(summary)
 }

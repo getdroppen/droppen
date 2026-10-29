@@ -737,6 +737,39 @@ impl super::Transcripts for ClaudeCodeSessions {
     fn usage_fold(&self) -> Box<dyn UsageFold> {
         Box::new(ClaudeUsage)
     }
+
+    fn external_reason(&self) -> &'static str {
+        "this session was not started by this instance; continue it where it was started"
+    }
+
+    /// A claude that is not idle has a process of its own on the session:
+    /// the user's terminal, or another server.
+    fn live_block(&self, status: SessionStatus) -> Option<&'static str> {
+        (status != SessionStatus::Idle).then_some("attached to a live local Claude Code process")
+    }
+
+    /// A claude session with no recorded root predates multi-root discovery, so
+    /// it can only be in the local one — which is what the TypeScript's
+    /// `raw.claudeRoot ?? "local"` says.
+    fn detail_root(&self, summary: &SessionSummary) -> Option<ClaudeRoot> {
+        Some(summary.claude_root.unwrap_or(ClaudeRoot::Local))
+    }
+
+    fn foreign_sessions(&self) -> bool {
+        true
+    }
+
+    /// Every root's projects directory, made when it is missing: on a fresh
+    /// install the managed root does not exist yet.
+    fn watch_dirs<'a>(&'a self, paths: &'a Paths) -> BoxFuture<'a, Vec<PathBuf>> {
+        Box::pin(async move {
+            let dirs: Vec<PathBuf> = claude_roots::ClaudeRoots::of(paths).projects_dirs().into_iter().map(|(_, dir)| dir).collect();
+            for dir in &dirs {
+                let _ = tokio::fs::create_dir_all(dir).await;
+            }
+            dirs
+        })
+    }
 }
 
 /// Claude assistant entries carry per-message `message.usage` + `message.model`.

@@ -999,55 +999,47 @@ impl TranscriptSources {
 /// must not break that.
 pub const EXTERNAL_SESSION_ERROR: &str = "external_session";
 
-/// Why an external session cannot be sent to, in one line for the composer.
-pub fn external_send_block_reason(source: Source) -> String {
-    match source {
-        Source::Claude => "this session was not started by this instance; continue it where it was started".to_string(),
-        Source::Codex => "this codex session was started elsewhere; continue it where it was started".to_string(),
-        Source::Acp => "this ACP session was started elsewhere; continue it where it was started".to_string(),
-    }
-}
-
-/// Whether the composer may send to this session, and why not.
-///
-/// Port of `sendability` in the former TypeScript server's `session-feed.ts`,
-/// plus the arms the TypeScript never had. `scope` is the ownership arm: a
-/// session this server did not make is browse-only, because resuming it would
-/// interleave this server's turns with those of whoever actually owns it.
-/// `injecting` is the injection arm the probe left out: a one-shot run
-/// remote-hand started blocks the composer regardless of what the CLI's own
-/// registration says.
-///
-/// `resident` is what a session driven by a process rather than a run needs, and
-/// it lifts both of the other two block arms:
-///
-/// * **the injection arm.** A second `claude --print` against one transcript
-///   would be two agents writing over each other, which is why an in-flight run
-///   used to be a refusal. One process taking messages in order cannot do that,
-///   so a message sent mid-turn is queued behind it and the composer stays open.
-/// * **the live-process arm.** That arm exists to keep remote-hand out of a
-///   conversation the user has open in their own terminal — and a resident
-///   registers itself in exactly the same place, because it *is* a real
-///   `claude`. Without this exemption the first turn would be the last one this
-///   server could send.
-///
-/// Ownership still outranks everything, including a resident: a run against an
-/// external session cannot exist, so reporting one would be a lie about a
-/// session this server has no claim on.
-pub fn sendability(source: Source, scope: SessionScope, status: SessionStatus, injecting: bool, resident: bool) -> (bool, Option<String>) {
-    if scope == SessionScope::External {
-        return (false, Some(external_send_block_reason(source)));
-    }
-    if resident {
-        return (true, None);
-    }
-    if injecting {
-        return (false, Some("a message from Droppen is still running".into()));
-    }
-    match (source, status) {
-        (Source::Claude, status) if status != SessionStatus::Idle => (false, Some("attached to a live local Claude Code process".into())),
-        (Source::Codex, SessionStatus::Running) => (false, Some("session is currently running".into())),
-        _ => (true, None),
+impl TranscriptSources {
+    /// Whether the composer may send to this session, and why not.
+    ///
+    /// Port of `sendability` in the former TypeScript server's `session-feed.ts`,
+    /// plus the arms the TypeScript never had. `scope` is the ownership arm: a
+    /// session this server did not make is browse-only, because resuming it would
+    /// interleave this server's turns with those of whoever actually owns it.
+    /// `injecting` is the injection arm the probe left out: a one-shot run
+    /// remote-hand started blocks the composer regardless of what the CLI's own
+    /// registration says.
+    ///
+    /// `resident` is what a session driven by a process rather than a run needs, and
+    /// it lifts both of the other two block arms:
+    ///
+    /// * **the injection arm.** A second `claude --print` against one transcript
+    ///   would be two agents writing over each other, which is why an in-flight run
+    ///   used to be a refusal. One process taking messages in order cannot do that,
+    ///   so a message sent mid-turn is queued behind it and the composer stays open.
+    /// * **the live-process arm.** That arm exists to keep remote-hand out of a
+    ///   conversation the user has open in their own terminal — and a resident
+    ///   registers itself in exactly the same place, because it *is* a real
+    ///   `claude`. Without this exemption the first turn would be the last one this
+    ///   server could send.
+    ///
+    /// Ownership still outranks everything, including a resident: a run against an
+    /// external session cannot exist, so reporting one would be a lie about a
+    /// session this server has no claim on.
+    pub fn sendability(&self, source: Source, scope: SessionScope, status: SessionStatus, injecting: bool, resident: bool) -> (bool, Option<String>) {
+        if scope == SessionScope::External {
+            return (false, self.external_reason(source));
+        }
+        if resident {
+            return (true, None);
+        }
+        if injecting {
+            return (false, Some("a message from Droppen is still running".into()));
+        }
+        match self.get(source).and_then(|reader| reader.live_block(status)) {
+            Some(reason) => (false, Some(reason.into())),
+            None => (true, None),
+        }
     }
 }
 
@@ -1075,6 +1067,11 @@ pub async fn file_signature(path: &Path) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// [`TranscriptSources::sendability`] over every CLI's reader.
+    fn sendability(source: Source, scope: SessionScope, status: SessionStatus, injecting: bool, resident: bool) -> (bool, Option<String>) {
+        crate::app::transcript_sources().sendability(source, scope, status, injecting, resident)
+    }
 
     #[test]
     fn a_live_claude_session_cannot_be_sent_to() {

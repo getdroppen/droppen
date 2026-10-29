@@ -17,9 +17,9 @@ use serde_json::{Map, Value};
 use super::context::ContextUsage;
 use super::sidecars::{Checklists, Subagents};
 use super::util::TranscriptItem;
-use super::{CliChoice, SessionSummary, Source};
+use super::{CliChoice, SessionStatus, SessionSummary, Source};
 use droppen_base::time::mtime_ms;
-use droppen_instance::paths::Paths;
+use droppen_instance::paths::{ClaudeRoot, Paths};
 
 /// One CLI's transcripts: where its sessions are, and how one is read.
 ///
@@ -89,6 +89,40 @@ pub trait Transcripts: Send + Sync {
     fn checklists(&self) -> Option<&dyn Checklists> {
         None
     }
+
+    /// Why a session of this CLI that this server did not start cannot be sent
+    /// to, in one line for the composer.
+    fn external_reason(&self) -> &'static str;
+
+    /// Why a session this server owns cannot take a message while the CLI
+    /// reports it `status`, or `None` when it can.
+    ///
+    /// The arm that keeps remote-hand out of a conversation the user has open
+    /// in their own terminal; see [`TranscriptSources::sendability`].
+    fn live_block(&self, status: SessionStatus) -> Option<&'static str> {
+        let _ = status;
+        None
+    }
+
+    /// The root a session's detail names, for a CLI that keeps its sessions in
+    /// more than one.
+    fn detail_root(&self, summary: &SessionSummary) -> Option<ClaudeRoot> {
+        let _ = summary;
+        None
+    }
+
+    /// Whether this CLI starts sessions of its own, outside Droppen, so that a
+    /// folder lists the CLI among the tools that ran there.
+    fn foreign_sessions(&self) -> bool;
+
+    /// The directories a session file of this CLI can appear in, for the
+    /// session list's watcher.
+    ///
+    /// A watch on a missing directory simply fails, leaving the list with no
+    /// watcher until a restart, so a reader makes the ones the CLI would make
+    /// later where that is cheap and harmless; an unwritable home just falls
+    /// back to the poll interval.
+    fn watch_dirs<'a>(&'a self, paths: &'a Paths) -> BoxFuture<'a, Vec<PathBuf>>;
 
     /// The transcripts that count toward the token-usage stats and were
     /// written at or after `cutoff_ms`. None by default: a CLI whose
@@ -221,6 +255,32 @@ impl TranscriptSources {
     /// See [`Transcripts::checklists`]; `None` for a source with no reader.
     pub fn checklists(&self, source: Source) -> Option<&dyn Checklists> {
         self.get(source)?.checklists()
+    }
+
+    /// See [`Transcripts::external_reason`]; `None` for a source with no
+    /// reader.
+    pub fn external_reason(&self, source: Source) -> Option<String> {
+        self.get(source).map(|reader| reader.external_reason().to_string())
+    }
+
+    /// See [`Transcripts::detail_root`]; `None` for a source with no reader.
+    pub fn detail_root(&self, source: Source, summary: &SessionSummary) -> Option<ClaudeRoot> {
+        self.get(source)?.detail_root(summary)
+    }
+
+    /// See [`Transcripts::foreign_sessions`]; false for a source with no
+    /// reader.
+    pub fn foreign_sessions(&self, source: Source) -> bool {
+        self.get(source).is_some_and(|reader| reader.foreign_sessions())
+    }
+
+    /// Every reader's [`Transcripts::watch_dirs`], in [`Source`]'s order.
+    pub async fn watch_dirs(&self, paths: &Paths) -> Vec<PathBuf> {
+        let mut dirs = Vec::new();
+        for reader in self.iter() {
+            dirs.extend(reader.watch_dirs(paths).await);
+        }
+        dirs
     }
 
     /// See [`Transcripts::cli_choice`].

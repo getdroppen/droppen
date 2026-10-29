@@ -28,7 +28,7 @@ use droppen_instance::db::scope;
 use droppen_http::created::Created;
 use droppen_http::error::ApiError;
 use droppen_http::openapi_ext::Nullable;
-use crate::sessions::{SessionScope, SessionSummary, Source};
+use crate::sessions::{SessionScope, SessionSummary, Source, TranscriptSources};
 
 /// How many recent folders step 03 offers.
 pub const RECENT_LIMIT: usize = 6;
@@ -51,6 +51,15 @@ pub enum FolderTool {
     Claude,
     /// Codex, outside Droppen.
     Codex,
+}
+
+impl FolderTool {
+    /// The tool a session of `source` ran under outside Droppen, by the name
+    /// both enums give it on the wire; `None` for a source with no tool here.
+    fn outside(source: Source) -> Option<Self> {
+        use serde::de::IntoDeserializer;
+        Self::deserialize(IntoDeserializer::<serde::de::value::Error>::into_deserializer(source.as_str())).ok()
+    }
 }
 
 /// A folder sessions ran in on this device.
@@ -95,18 +104,17 @@ fn name_of(path: &Path) -> String {
 
 /// The recent folders out of a session list, keeping those `exists` says are
 /// still there: grouped by folder, newest activity first, ties by path.
-pub fn recent_from(sessions: &[SessionSummary], exists: impl Fn(&Path) -> bool) -> Vec<RecentFolder> {
+pub fn recent_from(sessions: &[SessionSummary], transcripts: &TranscriptSources, exists: impl Fn(&Path) -> bool) -> Vec<RecentFolder> {
     let mut by_cwd: std::collections::BTreeMap<&str, RecentFolder> = std::collections::BTreeMap::new();
     for session in sessions {
         let Some(cwd) = session.cwd.0.as_deref().filter(|cwd| !cwd.is_empty()) else {
             continue;
         };
-        let tool = match (session.scope, session.source) {
-            (SessionScope::Owned, _) => FolderTool::Droppen,
-            (SessionScope::External, Source::Claude) => FolderTool::Claude,
-            (SessionScope::External, Source::Codex) => FolderTool::Codex,
-            // Every ACP session is one this server started.
-            (SessionScope::External, Source::Acp) => FolderTool::Droppen,
+        let tool = match session.scope {
+            SessionScope::External if transcripts.foreign_sessions(session.source) => {
+                FolderTool::outside(session.source).unwrap_or(FolderTool::Droppen)
+            }
+            SessionScope::Owned | SessionScope::External => FolderTool::Droppen,
         };
         let folder = by_cwd.entry(cwd).or_insert_with(|| RecentFolder {
             path: cwd.to_string(),
@@ -205,7 +213,7 @@ pub async fn recent_folders(State(state): State<SetupState>) -> Json<RecentFolde
         )
         .await;
     Json(RecentFolders {
-        folders: recent_from(&sessions, Path::is_dir),
+        folders: recent_from(&sessions, &state.transcripts, Path::is_dir),
     })
 }
 
@@ -255,7 +263,7 @@ mod tests {
             session("/w/gone", Source::Claude, SessionScope::Owned, "2026-10-20T00:00:00Z"),
             session("", Source::Claude, SessionScope::Owned, "2026-10-20T00:00:00Z"),
         ];
-        let folders = recent_from(&sessions, |path| path != Path::new("/w/gone"));
+        let folders = recent_from(&sessions, &crate::app::transcript_sources(), |path| path != Path::new("/w/gone"));
         assert_eq!(folders.iter().map(|folder| folder.path.as_str()).collect::<Vec<_>>(), ["/w/api", "/w/site"]);
         let site = &folders[1];
         assert_eq!(site.name, "site");
@@ -267,7 +275,7 @@ mod tests {
         let many: Vec<SessionSummary> = (0..10)
             .map(|n| session(&format!("/w/p{n}"), Source::Claude, SessionScope::Owned, &format!("2026-10-1{n}T00:00:00Z")))
             .collect();
-        let folders = recent_from(&many, |_| true);
+        let folders = recent_from(&many, &crate::app::transcript_sources(), |_| true);
         assert_eq!(folders.len(), RECENT_LIMIT);
         assert_eq!(folders[0].path, "/w/p9");
     }
@@ -333,5 +341,19 @@ mod tests {
         let next = practice_folder(State(SetupState::from_ref(&state))).await.expect("next").0.path;
         assert_ne!(next, first);
         assert!(next.ends_with("first-session-2"), "{next}");
+    }
+    /// A folder lists a CLI by the name the folder's tool and the session's
+    /// source both give it on the wire, so a rename of either would quietly
+    /// file a CLI's folders under no tool. Pinned for every source, against the
+    /// readers' say on which CLIs start sessions of their own.
+    #[test]
+    fn a_session_outside_droppen_is_filed_under_its_cli_by_wire_name() {
+        assert_eq!(FolderTool::outside(Source::Claude), Some(FolderTool::Claude));
+        assert_eq!(FolderTool::outside(Source::Codex), Some(FolderTool::Codex));
+        assert_eq!(FolderTool::outside(Source::Acp), None);
+        let transcripts = crate::app::transcript_sources();
+        for source in [Source::Claude, Source::Codex, Source::Acp] {
+            assert_eq!(transcripts.foreign_sessions(source), FolderTool::outside(source).is_some(), "{source}");
+        }
     }
 }
