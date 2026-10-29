@@ -54,7 +54,9 @@ use gotcha::axum::extract::FromRef;
 use gotcha::{api, GotchaRouter, Json, Schematic, State};
 use rusqlite::{Connection, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
+#[cfg(test)]
+use serde_json::json;
 use unicode_segmentation::UnicodeSegmentation;
 
 use droppen_http::refresh::Refresh;
@@ -220,13 +222,249 @@ fn now() -> String {
 }
 
 /// The content of a pane showing nothing yet.
+#[cfg(test)]
 fn picker() -> Value {
-    json!({ "kind": "picker" })
+    PaneContent::picker().to_value()
 }
 
 /// A leaf holding nothing — the shape an unusable node degrades to.
 fn picker_leaf() -> Value {
-    json!({ "type": "leaf", "id": new_id(), "content": picker() })
+    Node::picker_leaf().to_value()
+}
+
+/// One node of a pane tree as the server stores and serves it (a [`Screen`]'s
+/// `layout`), every field rebuilt from a value just checked.
+#[derive(Debug, Serialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+enum Node {
+    /// Two panes side by side (`row`) or stacked (`column`), `ratio` the first
+    /// one's share.
+    Split {
+        id: String,
+        direction: Direction,
+        ratio: f64,
+        children: Box<[Node; 2]>,
+    },
+    /// One pane.
+    Leaf { id: String, content: PaneContent },
+}
+
+/// How a split lays out its two children.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum Direction {
+    Row,
+    Column,
+}
+
+/// What a leaf shows, tagged `kind`. `machine` is there only on the kinds that
+/// are on a device, and only when the client sent one ([`PaneContent::on`]).
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", rename_all_fields = "camelCase")]
+enum PaneContent {
+    Picker {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        machine: Option<String>,
+    },
+    Session {
+        source: String,
+        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        machine: Option<String>,
+    },
+    Chat {
+        chat_kind: String,
+        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        machine: Option<String>,
+    },
+    Terminal {
+        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        machine: Option<String>,
+    },
+    NewSession {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        machine: Option<String>,
+    },
+    Tasks,
+    /// `state` is the pane's own and opaque to the server: kept as sent, in the
+    /// order sent, when [`ScreenContent::plugin_content`] lets it through.
+    Plugin {
+        plugin: String,
+        pane: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        state: Option<serde_json::Map<String, Value>>,
+    },
+    Files {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        path: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        file: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        machine: Option<String>,
+    },
+    Browser { id: String },
+}
+
+impl Node {
+    /// A leaf holding nothing.
+    fn picker_leaf() -> Self {
+        Node::Leaf {
+            id: new_id(),
+            content: PaneContent::picker(),
+        }
+    }
+
+    /// See [`ScreenNode::sanitize_node`].
+    fn sanitize(raw: Option<&Value>, budget: &mut u32) -> Self {
+        let Some(Value::Object(raw)) = raw else { return Self::picker_leaf() };
+
+        let children = raw.get("children").and_then(Value::as_array).filter(|c| c.len() == 2);
+        if let Some(children) = children {
+            if raw.get("type").and_then(Value::as_str) == Some("split") && *budget >= 2 {
+                *budget -= 1;
+                let ratio = raw.get("ratio").and_then(Value::as_f64).unwrap_or(0.5).clamp(MIN_RATIO, 1.0 - MIN_RATIO);
+                let direction = if raw.get("direction").and_then(Value::as_str) == Some("column") {
+                    Direction::Column
+                } else {
+                    Direction::Row
+                };
+                return Node::Split {
+                    id: raw.get("id").sanitize_id(),
+                    direction,
+                    ratio,
+                    children: Box::new([Self::sanitize(children.first(), budget), Self::sanitize(children.get(1), budget)]),
+                };
+            }
+        }
+        Node::Leaf {
+            id: raw.get("id").sanitize_id(),
+            content: PaneContent::sanitize(raw.get("content")),
+        }
+    }
+
+    /// As a [`Screen`]'s `layout` holds it.
+    fn to_value(&self) -> Value {
+        // Strings, clamped ratios and the plugin state, which always encode.
+        serde_json::to_value(self).unwrap_or_default()
+    }
+}
+
+impl PaneContent {
+    /// The content of a pane showing nothing yet.
+    fn picker() -> Self {
+        PaneContent::Picker { machine: None }
+    }
+
+    /// The `kind` it is written under.
+    fn kind(&self) -> &'static str {
+        match self {
+            PaneContent::Picker { .. } => "picker",
+            PaneContent::Session { .. } => "session",
+            PaneContent::Chat { .. } => "chat",
+            PaneContent::Terminal { .. } => "terminal",
+            PaneContent::NewSession { .. } => "new-session",
+            PaneContent::Tasks => "tasks",
+            PaneContent::Plugin { .. } => "plugin",
+            PaneContent::Files { .. } => "files",
+            PaneContent::Browser { .. } => "browser",
+        }
+    }
+
+    /// On `machine`, for the kinds that are on a device — a session, a chat, a
+    /// terminal, a folder, and a picker choosing from one; the others as they are.
+    fn on(mut self, machine: &str) -> Self {
+        match &mut self {
+            PaneContent::Picker { machine: on }
+            | PaneContent::Session { machine: on, .. }
+            | PaneContent::Chat { machine: on, .. }
+            | PaneContent::Terminal { machine: on, .. }
+            | PaneContent::NewSession { machine: on }
+            | PaneContent::Files { machine: on, .. } => *on = Some(machine.to_owned()),
+            PaneContent::Tasks | PaneContent::Plugin { .. } | PaneContent::Browser { .. } => {}
+        }
+        self
+    }
+
+    /// See [`ScreenNode::sanitize_content`].
+    fn sanitize(raw: Option<&Value>) -> Self {
+        let content = Self::sanitize_kind(raw);
+        if let Some(Value::Object(raw)) = raw {
+            // Only on the kind that was sent: content that degraded (to a picker) is nobody's.
+            if raw.get("kind").and_then(Value::as_str) == Some(content.kind()) {
+                if let Some(machine) = raw.content_machine() {
+                    return content.on(machine);
+                }
+            }
+        }
+        content
+    }
+
+    /// See [`ScreenNode::sanitize_kind`].
+    fn sanitize_kind(raw: Option<&Value>) -> Self {
+        let Some(Value::Object(raw)) = raw else { return Self::picker() };
+        let id = raw.content_id().map(str::to_owned);
+        match raw.get("kind").and_then(Value::as_str) {
+            Some("session") => match (id, raw.get("source").and_then(Value::as_str)) {
+                (Some(id), Some(source @ ("claude" | "codex"))) => PaneContent::Session {
+                    source: source.to_owned(),
+                    id,
+                    machine: None,
+                },
+                _ => Self::picker(),
+            },
+            Some("chat") => match (id, raw.get("chatKind").and_then(Value::as_str)) {
+                (Some(id), Some(kind @ ("claude" | "codex" | "api"))) => PaneContent::Chat {
+                    chat_kind: kind.to_owned(),
+                    id,
+                    machine: None,
+                },
+                _ => Self::picker(),
+            },
+            Some("terminal") => id.map_or_else(Self::picker, |id| PaneContent::Terminal { id, machine: None }),
+            // The empty session view a session is started from: nothing of its own
+            // to check, and it names no resource — it becomes a `session` pane
+            // once its first message has started one.
+            Some("new-session") => PaneContent::NewSession { machine: None },
+            // The built-in task checklist. Kept for ever: a layout saved by an
+            // older build still holds it, and the web reads it as the `tasks`
+            // plugin's `checklist` pane.
+            Some("tasks") => PaneContent::Tasks,
+            // A plugin's pane. Kept whether or not that plugin is on — or even
+            // bundled — for the reason `browser` below is: the server does not own
+            // these ids, and degrading one would rewrite the user's layout on the
+            // next save, so turning a plugin back on would not bring its pane back.
+            Some("plugin") => raw.plugin_content().unwrap_or_else(Self::picker),
+            Some("files") => {
+                // Locations only; file API containment and authorization still
+                // apply when the pane actually requests a directory or file.
+                let location = |key: &str| {
+                    raw.get(key)
+                        .and_then(Value::as_str)
+                        .filter(|s| !s.is_empty() && s.len() <= 4096 && !s.contains('\0'))
+                        .map(str::to_owned)
+                };
+                PaneContent::Files {
+                    path: location("path"),
+                    file: location("file"),
+                    machine: None,
+                }
+            }
+            // No route serves a browser pane, but a row written by an older build
+            // still holds one and the web still renders it as a picker. Degrading it
+            // here would silently rewrite the user's layout on the next save; the
+            // server does not own these ids and must not.
+            Some("browser") => id.map_or_else(Self::picker, |id| PaneContent::Browser { id }),
+            _ => Self::picker(),
+        }
+    }
+
+    /// As a leaf's `content` holds it.
+    fn to_value(&self) -> Value {
+        // Checked strings and the plugin state, which always encode.
+        serde_json::to_value(self).unwrap_or_default()
+    }
 }
 
 /// Reading a stored screen's JSON.
@@ -325,92 +563,15 @@ impl ScreenNode for Option<&Value> {
     }
 
     fn sanitize_node(&self, budget: &mut u32) -> Value {
-        let Some(Value::Object(raw)) = *self else { return picker_leaf() };
-
-        let children = raw.get("children").and_then(Value::as_array).filter(|c| c.len() == 2);
-        if let Some(children) = children {
-            if raw.get("type").and_then(Value::as_str) == Some("split") && *budget >= 2 {
-                *budget -= 1;
-                let ratio = raw.get("ratio").and_then(Value::as_f64).unwrap_or(0.5).clamp(MIN_RATIO, 1.0 - MIN_RATIO);
-                let direction = if raw.get("direction").and_then(Value::as_str) == Some("column") {
-                    "column"
-                } else {
-                    "row"
-                };
-                return json!({
-                    "type": "split",
-                    "id": raw.get("id").sanitize_id(),
-                    "direction": direction,
-                    "ratio": ratio,
-                    "children": [children.first().sanitize_node(budget), children.get(1).sanitize_node(budget)],
-                });
-            }
-        }
-        json!({ "type": "leaf", "id": raw.get("id").sanitize_id(), "content": raw.get("content").sanitize_content() })
+        Node::sanitize(*self, budget).to_value()
     }
 
     fn sanitize_content(&self) -> Value {
-        let mut content = self.sanitize_kind();
-        if let (Some(Value::Object(raw)), Some(kind)) = (*self, content.get("kind").and_then(Value::as_str)) {
-            // Only on the kind that was sent: content that degraded (to a picker) is nobody's.
-            let sent = raw.get("kind").and_then(Value::as_str);
-            if sent == Some(kind) && matches!(kind, "session" | "new-session" | "chat" | "terminal" | "files" | "picker") {
-                if let Some(machine) = raw.content_machine() {
-                    content["machine"] = json!(machine);
-                }
-            }
-        }
-        content
+        PaneContent::sanitize(*self).to_value()
     }
 
     fn sanitize_kind(&self) -> Value {
-        let Some(Value::Object(raw)) = *self else { return picker() };
-        let id = raw.content_id();
-        match raw.get("kind").and_then(Value::as_str) {
-            Some("session") => match (id, raw.get("source").and_then(Value::as_str)) {
-                (Some(id), Some(source @ ("claude" | "codex"))) => json!({ "kind": "session", "source": source, "id": id }),
-                _ => picker(),
-            },
-            Some("chat") => match (id, raw.get("chatKind").and_then(Value::as_str)) {
-                (Some(id), Some(kind @ ("claude" | "codex" | "api"))) => json!({ "kind": "chat", "chatKind": kind, "id": id }),
-                _ => picker(),
-            },
-            Some("terminal") => id.map_or_else(picker, |id| json!({ "kind": "terminal", "id": id })),
-            // The empty session view a session is started from: nothing of its own
-            // to check, and it names no resource — it becomes a `session` pane
-            // once its first message has started one.
-            Some("new-session") => json!({ "kind": "new-session" }),
-            // The built-in task checklist. Kept for ever: a layout saved by an
-            // older build still holds it, and the web reads it as the `tasks`
-            // plugin's `checklist` pane.
-            Some("tasks") => json!({ "kind": "tasks" }),
-            // A plugin's pane. Kept whether or not that plugin is on — or even
-            // bundled — for the reason `browser` below is: the server does not own
-            // these ids, and degrading one would rewrite the user's layout on the
-            // next save, so turning a plugin back on would not bring its pane back.
-            Some("plugin") => raw.plugin_content().unwrap_or_else(picker),
-            Some("files") => {
-                // Locations only; file API containment and authorization still
-                // apply when the pane actually requests a directory or file.
-                let mut content = json!({ "kind": "files" });
-                for key in ["path", "file"] {
-                    if let Some(path) = raw
-                        .get(key)
-                        .and_then(Value::as_str)
-                        .filter(|s| !s.is_empty() && s.len() <= 4096 && !s.contains('\0'))
-                    {
-                        content[key] = json!(path);
-                    }
-                }
-                content
-            }
-            // No route serves a browser pane, but a row written by an older build
-            // still holds one and the web still renders it as a picker. Degrading it
-            // here would silently rewrite the user's layout on the next save; the
-            // server does not own these ids and must not.
-            Some("browser") => id.map_or_else(picker, |id| json!({ "kind": "browser", "id": id })),
-            _ => picker(),
-        }
+        PaneContent::sanitize_kind(*self).to_value()
     }
 }
 
@@ -433,7 +594,7 @@ trait ScreenContent {
     /// pane's own, opaque to the server — only when it is a flat object of strings,
     /// numbers, booleans and nulls of at most [`PLUGIN_PANE_STATE_BYTES`] as JSON.
     /// A state that is not is dropped, and the pane kept.
-    fn plugin_content(&self) -> Option<Value>;
+    fn plugin_content(&self) -> Option<PaneContent>;
 }
 
 impl ScreenContent for serde_json::Map<String, Value> {
@@ -449,7 +610,7 @@ impl ScreenContent for serde_json::Map<String, Value> {
         })
     }
 
-    fn plugin_content(&self) -> Option<Value> {
+    fn plugin_content(&self) -> Option<PaneContent> {
         let plugin = self.get("plugin").and_then(Value::as_str).filter(|id| droppen_plugin_sdk::valid_id(id))?;
         let pane = self.get("pane").and_then(Value::as_str).filter(|pane| {
             let bytes = pane.as_bytes();
@@ -457,17 +618,21 @@ impl ScreenContent for serde_json::Map<String, Value> {
                 && bytes[0].is_ascii_lowercase()
                 && bytes.iter().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'-')
         })?;
-        let mut content = json!({ "kind": "plugin", "plugin": plugin, "pane": pane });
-        if let Some(Value::Object(state)) = self.get("state") {
-            let flat = state
-                .values()
-                .all(|value| matches!(value, Value::String(_) | Value::Number(_) | Value::Bool(_) | Value::Null));
-            let small = serde_json::to_string(state).is_ok_and(|text| text.len() <= PLUGIN_PANE_STATE_BYTES);
-            if flat && small {
-                content["state"] = Value::Object(state.clone());
+        let state = match self.get("state") {
+            Some(Value::Object(state)) => {
+                let flat = state
+                    .values()
+                    .all(|value| matches!(value, Value::String(_) | Value::Number(_) | Value::Bool(_) | Value::Null));
+                let small = serde_json::to_string(state).is_ok_and(|text| text.len() <= PLUGIN_PANE_STATE_BYTES);
+                (flat && small).then(|| state.clone())
             }
-        }
-        Some(content)
+            _ => None,
+        };
+        Some(PaneContent::Plugin {
+            plugin: plugin.to_owned(),
+            pane: pane.to_owned(),
+            state,
+        })
     }
 }
 
@@ -1132,8 +1297,9 @@ enum Refused {
 
 impl From<Refused> for ApiError {
     fn from(refused: Refused) -> Self {
-        let conflict = |body: Result<Value, serde_json::Error>| {
-            ApiError::with_body(StatusCode::CONFLICT, body.unwrap_or_else(|_| json!({ "error": "conflict" })))
+        let conflict = |body: Result<Value, serde_json::Error>| match body {
+            Ok(body) => ApiError::with_body(StatusCode::CONFLICT, body),
+            Err(_) => ApiError::new(StatusCode::CONFLICT, "conflict"),
         };
         match refused {
             Refused::Missing => ApiError::not_found("screen not found"),
@@ -1156,6 +1322,32 @@ fn write_failed(error: rusqlite::Error) -> ApiError {
     ApiError::internal(format!("failed to write screens: {error}"))
 }
 
+/// The screens' frames on the global feed, tagged `type`.
+#[derive(Serialize)]
+#[serde(tag = "type")]
+enum ScreensFrame<'a> {
+    /// One screen changed, or went (`deleted`).
+    #[serde(rename = "screens:changed")]
+    Changed {
+        id: &'a str,
+        revision: u64,
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        deleted: bool,
+    },
+    /// The list's membership or order changed.
+    #[serde(rename = "screens:list", rename_all = "camelCase")]
+    List { list_revision: u64 },
+}
+
+impl ScreensFrame<'_> {
+    fn publish(&self, feed: &Refresh) {
+        // Strings and numbers, which always encode.
+        if let Ok(frame) = serde_json::to_string(self) {
+            feed.publish(frame);
+        }
+    }
+}
+
 /// The screens' frames on the global feed.
 trait AnnounceScreensExt {
     fn announce_changed(&self, id: &str, revision: u64, deleted: bool);
@@ -1165,16 +1357,12 @@ trait AnnounceScreensExt {
 impl AnnounceScreensExt for Refresh {
     /// Tell every open client that one screen changed, or went.
     fn announce_changed(&self, id: &str, revision: u64, deleted: bool) {
-        let mut frame = json!({ "type": "screens:changed", "id": id, "revision": revision });
-        if deleted {
-            frame["deleted"] = json!(true);
-        }
-        self.publish(frame.to_string());
+        ScreensFrame::Changed { id, revision, deleted }.publish(self);
     }
 
     /// Tell every open client that the list's membership or order changed.
     fn announce_list(&self, list_revision: u64) {
-        self.publish(json!({ "type": "screens:list", "listRevision": list_revision }).to_string());
+        ScreensFrame::List { list_revision }.publish(self);
     }
 }
 
