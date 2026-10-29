@@ -25,6 +25,7 @@ use tokio_tungstenite::tungstenite::protocol::CloseFrame;
 use tokio_tungstenite::tungstenite::Message;
 use zeroize::Zeroizing;
 
+use super::hub::BlankExt;
 use super::link::{self, Shared};
 use super::rotation::{self, Verdict};
 use super::state::AgentState;
@@ -368,6 +369,7 @@ impl FakeHub {
                 }
                 let Some(Ok(Message::Text(text))) = source.next().await else { continue };
                 let login: Value = serde_json::from_str(text.as_str()).unwrap();
+                heard.lock().unwrap().push(login.clone());
                 let mut seen = Login {
                     nonce,
                     time_ms: login["time_ms"].as_u64().unwrap(),
@@ -664,6 +666,14 @@ async fn a_renewal_request_stages_a_new_seed_and_proves_it() {
     assert_eq!(stages[0]["old_sig"], answer["oldSig"]);
     assert_eq!(stages[0]["new_sig"], answer["newSig"]);
     assert_eq!((stages[0]["staged_seq"].as_u64(), stages[0]["assurance"].as_u64()), (Some(a.hub.seq()), Some(0)));
+    // The whole message: every key above, and the staged head.
+    assert_eq!(
+        stages[0].clone().blank(&["staged_head"]),
+        json!({
+            "t": "rotation_stage", "nonce": hex(&[7; 16]), "staged_seq": a.hub.seq(), "staged_head": "", "sign_key": hex(&new_sign),
+            "dh_key": hex(&new_dh), "assurance": 0, "old_sig": answer["oldSig"], "new_sig": answer["newSig"],
+        })
+    );
     // The same nonce: the same answer, and nothing staged again.
     let (status, again) = rotate(&shared, &a.request([7; 16], &eph, 0)).await;
     assert_eq!((status, &again), (200, &answer));
@@ -809,6 +819,16 @@ async fn a_hub_that_does_not_offer_rotate_gets_no_staging() {
     // It still declares what it can do.
     let info = hub.heard("agent_info");
     assert!(info[0]["features"].as_array().unwrap().iter().any(|f| f == "rotate/1"), "{info:?}");
+    assert_eq!(
+        info[0],
+        json!({"t": "agent_info", "version": droppen_http::SERVER_VERSION, "features": [super::CHAIN_V3_FEATURE, super::POLICY_FEATURE, super::ROTATE_FEATURE]})
+    );
+    // Signed in and asking for the chain past what it holds, each in its shape.
+    assert_eq!(
+        hub.heard("login")[0].clone().blank(&["time_ms", "sig"]),
+        json!({"t": "login", "role": "agent", "account": "a-1", "id": "m-1", "time_ms": 0, "sig": ""})
+    );
+    assert_eq!(hub.heard("chain_sub")[0], json!({"t": "chain_sub", "from": a.hub.seq() + 1}));
     shared.cancel.cancel();
     let _ = task.await;
 }
@@ -841,6 +861,7 @@ async fn rotation_pending_is_confirmed_with_the_new_key_over_this_connections_no
     until("the ack", || !hub.heard("rotation_ack").is_empty()).await;
     let ack = hub.heard("rotation_ack").remove(0);
     assert_eq!(ack["sign_key"], answer["signKey"]);
+    assert_eq!(ack.clone().blank(&["sig"]), json!({"t": "rotation_ack", "sign_key": answer["signKey"], "sig": ""}));
     let login = hub.logins().last().cloned().unwrap();
     let old = machine();
     let body = rh_proto::chain::host_rotate_body(
@@ -864,6 +885,7 @@ async fn rotation_pending_is_confirmed_with_the_new_key_over_this_connections_no
     hub.send_json(other);
     until("rotation_unknown", || !hub.heard("rotation_unknown").is_empty()).await;
     assert_eq!(hub.heard("rotation_unknown")[0]["sign_key"], json!(hex(&thief().sign_public())));
+    assert_eq!(hub.heard("rotation_unknown")[0], json!({"t": "rotation_unknown", "sign_key": hex(&thief().sign_public())}));
     assert_eq!(hub.heard("rotation_ack").len(), 1);
     shared.cancel.cancel();
     let _ = task.await;
@@ -1589,6 +1611,7 @@ async fn a_hub_saying_rotated_is_believed_only_with_a_verified_renewal() {
     until("a second try", || hub.logins().len() >= 2).await;
     assert!(!shared.cancel.is_cancelled(), "the link keeps trying");
     assert!(!hub.heard("chain_sub").is_empty(), "it asked for the chain on the refused socket");
+    assert_eq!(hub.heard("chain_sub")[0], json!({"t": "chain_sub", "from": a.hub.seq() + 1}));
     {
         let st = shared.state.lock().unwrap();
         assert!(st.rotation.refused_ms.is_some() && st.rotation.foreign_ms.is_none());
@@ -1636,6 +1659,8 @@ async fn a_hub_saying_rotated_is_believed_only_with_a_verified_renewal() {
     until("the dispute statement", || !hub.disputes().is_empty()).await;
     let (_, body) = hub.disputes()[0].clone();
     assert!(b.hub.verify_rotate_dispute("m-1", renewal[0].seq(), &unhex64(body["sig"].as_str().unwrap())));
+    let entry_hash = hex(&b.hub.hash_at(renewal[0].seq()).unwrap());
+    assert_eq!(body.blank(&["sig"]), json!({"seq": renewal[0].seq(), "entry_hash": entry_hash, "sig": ""}));
     tokio::time::sleep(Duration::from_millis(500)).await;
     assert_eq!(hub.logins().len(), 1);
     assert_eq!(b.seed_in_use().sign_public(), old.sign_public(), "the seed stays until a person adds it again");

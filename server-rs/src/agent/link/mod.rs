@@ -2081,9 +2081,9 @@ mod tests {
         assert_eq!(out["id"], 0);
         assert_eq!(deferred.len(), MAX_DEFERRED);
         // Pushed out: acknowledged when moot, else released to the mailbox — never dropped.
-        assert_eq!(evicted_message(&mail(0, 2), Some(3))["t"], "mail_ack");
-        assert_eq!(evicted_message(&mail(0, 5), Some(3))["t"], "mail_release");
-        assert_eq!(evicted_message(&mail(0, 5), None)["t"], "mail_release");
+        assert_eq!(serde_json::to_value(evicted_message(&mail(0, 2), Some(3))).unwrap(), json!({"t": "mail_ack", "id": 0}));
+        assert_eq!(serde_json::to_value(evicted_message(&mail(0, 5), Some(3))).unwrap(), json!({"t": "mail_release", "id": 0}));
+        assert_eq!(serde_json::to_value(evicted_message(&mail(0, 5), None)).unwrap(), json!({"t": "mail_release", "id": 0}));
     }
 
     fn closes(out: &mut mpsc::UnboundedReceiver<Frame>) -> Vec<(u32, u16)> {

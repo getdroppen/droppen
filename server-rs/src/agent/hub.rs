@@ -393,6 +393,29 @@ pub(super) fn spawn_writer(
     })
 }
 
+/// A message with what changes per run blanked, for comparing the rest
+/// exactly: each key a number (made `0`) or a string that is not empty
+/// (made `""`).
+#[cfg(test)]
+pub(in crate::agent) trait BlankExt {
+    fn blank(self, keys: &[&str]) -> Value;
+}
+
+#[cfg(test)]
+impl BlankExt for Value {
+    fn blank(mut self, keys: &[&str]) -> Value {
+        for key in keys {
+            let was = self[*key].clone();
+            self[*key] = match was {
+                Value::Number(n) if n.is_u64() => json!(0),
+                Value::String(s) if !s.is_empty() => json!(""),
+                other => panic!("{key}: {other} in {self}"),
+            };
+        }
+        self
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -438,5 +461,47 @@ mod tests {
         for bytes in [&[][..], &[0x00], &[0x0f, 0xf0], &[0xab, 0xcd, 0xef], &[7; 32], &all] {
             assert_eq!(hex(bytes), rh_client::hex(bytes), "{bytes:?}");
         }
+    }
+
+    /// What a machine sends the hub to sign in and delete its copy there,
+    /// compared whole.
+    #[tokio::test]
+    async fn deleting_the_copy_signs_in_and_deletes_in_the_documented_shape() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("ws://127.0.0.1:{}", listener.local_addr().unwrap().port());
+        let heard: std::sync::Arc<std::sync::Mutex<Vec<Value>>> = Default::default();
+        let (kept, hub) = (heard.clone(), url.clone());
+        tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
+            let challenge = json!({"t": "challenge", "nonce": hex(&[5; 32]), "hub": hub, "version": 1});
+            ws.send(Message::Text(challenge.to_string().into())).await.unwrap();
+            let mut lists = 0;
+            while let Some(Ok(Message::Text(text))) = ws.next().await {
+                let v: Value = serde_json::from_str(text.as_str()).unwrap();
+                kept.lock().unwrap().push(v.clone());
+                let answer = match v["t"].as_str() {
+                    Some("login") => json!({"t": "welcome"}),
+                    Some("stream_list") => {
+                        lists += 1;
+                        let streams = if lists == 1 { json!([{"stream": "ab12"}]) } else { json!([]) };
+                        json!({"t": "stream_list", "streams": streams})
+                    }
+                    _ => continue,
+                };
+                ws.send(Message::Text(answer.to_string().into())).await.unwrap();
+            }
+        });
+        let st = AgentState::enrolling(&url, "a-1", "m-1", [0; 16], 1_000);
+        assert_eq!(delete_streams(&st, &MachineIdentity::from_seed(&[4; 32])).await, Ok(1));
+        let heard = heard.lock().unwrap().clone();
+        assert_eq!(
+            heard[0].clone().blank(&["time_ms", "sig"]),
+            json!({"t": "login", "role": "agent", "account": "a-1", "id": "m-1", "time_ms": 0, "sig": ""})
+        );
+        assert_eq!(
+            heard[1..],
+            [json!({"t": "stream_list"}), json!({"t": "stream_delete", "stream": "ab12"}), json!({"t": "stream_list"})]
+        );
     }
 }
