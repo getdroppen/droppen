@@ -733,7 +733,7 @@ pub struct SetupState {
     /// port cell the desktop-window gate reads.
     pub setup: Arc<Setup>,
     /// Every live web terminal; an install or a sign-in runs in one.
-    pub terminals: Arc<crate::terminals::Registry>,
+    pub terminals: Arc<droppen_workbench::terminals::Registry>,
     /// The stored accounts, which count as a tool's login.
     pub accounts: Arc<crate::accounts::store::AccountsStore>,
     /// The instance's paths: the home directory and the sessions it owns.
@@ -1065,28 +1065,6 @@ pub(crate) mod tests {
         RunOutput::exited(0, format!("hello from .zshrc\n{}\n{body}\n{}\n", shell::BEGIN, shell::END), "")
     }
 
-    /// A test that sets the child-`PATH` override takes this, and gets back
-    /// what was there when it ends. In the test build the override is the
-    /// test thread's own (`process_env`), so no other test sees it meanwhile;
-    /// this keeps a thread the harness reuses from inheriting it.
-    pub(crate) struct ChildPathGuard {
-        before: Option<String>,
-    }
-
-    impl ChildPathGuard {
-        pub(crate) fn take() -> Self {
-            Self {
-                before: droppen_base::process_env::child_path_override(),
-            }
-        }
-    }
-
-    impl Drop for ChildPathGuard {
-        fn drop(&mut self) {
-            droppen_base::process_env::set_child_path(self.before.take());
-        }
-    }
-
     /// The scratch folder a trust test works in, as the top of the walk
     /// (`tasks::TRUST_ROOT`): the folders above it are the machine's, not the
     /// test's. Returns it canonical; the walk stops again when this is dropped.
@@ -1195,7 +1173,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn a_rescan_puts_the_shell_s_path_on_every_child_and_finds_what_it_adds() {
-        let _guard = ChildPathGuard::take();
+        let _guard = droppen_base::process_env::ChildPathGuard::take();
         let home = tempfile::tempdir().expect("tempdir");
         let nvm = home.path().join(".nvm/versions/node/v22.3.0/bin");
         std::fs::create_dir_all(&nvm).expect("nvm");
@@ -1234,7 +1212,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn a_rescan_the_shell_did_not_answer_changes_nothing_and_says_why() {
-        let _guard = ChildPathGuard::take();
+        let _guard = droppen_base::process_env::ChildPathGuard::take();
         let home = tempfile::tempdir().expect("tempdir");
         let fixture = Fixture::new();
         fixture.answer("zsh -ilc", RunOutput::timeout());
@@ -1247,7 +1225,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn the_adopted_directories_come_back_at_boot() {
-        let _guard = ChildPathGuard::take();
+        let _guard = droppen_base::process_env::ChildPathGuard::take();
         let home = tempfile::tempdir().expect("tempdir");
         let scratch = TrustRoot::at(home.path());
         let picked = scratch.0.join("tools/bin");
@@ -1255,8 +1233,8 @@ pub(crate) mod tests {
         let setup = guide(home.path(), Fixture::new(), None);
         setup.apply_overlay();
         assert_eq!(
-            droppen_base::process_env::child_path_override(),
-            _guard.before,
+            droppen_base::process_env::child_path_override().as_deref(),
+            _guard.before(),
             "nothing adopted, nothing changed"
         );
         // Adopted once; since then, another folder of the same name was made

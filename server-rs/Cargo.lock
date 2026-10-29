@@ -1249,6 +1249,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "droppen-workbench"
+version = "0.1.0"
+dependencies = [
+ "droppen-auth",
+ "droppen-base",
+ "droppen-files",
+ "droppen-http",
+ "droppen-instance",
+ "droppen-plugin-sdk",
+ "droppen-pty",
+ "futures-util",
+ "gotcha",
+ "gotcha_core",
+ "hyper",
+ "hyper-util",
+ "libc",
+ "regex",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-tungstenite",
+ "tokio-util",
+ "tower-service",
+ "tracing",
+ "unicode-segmentation",
+ "uuid",
+]
+
+[[package]]
 name = "dunce"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2901,6 +2933,7 @@ dependencies = [
  "droppen-pty",
  "droppen-search-path",
  "droppen-supervisor",
+ "droppen-workbench",
  "ed25519-dalek",
  "flate2",
  "futures-util",
@@ -2908,8 +2941,6 @@ dependencies = [
  "gotcha_core",
  "hkdf",
  "hmac",
- "hyper",
- "hyper-util",
  "libc",
  "memchr",
  "mime_guess",
@@ -2935,7 +2966,6 @@ dependencies = [
  "tower-service",
  "tracing",
  "tracing-subscriber",
- "unicode-segmentation",
  "uuid",
  "zeroize",
 ]

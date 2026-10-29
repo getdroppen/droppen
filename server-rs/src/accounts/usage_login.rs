@@ -24,7 +24,7 @@ use droppen_http::error::ApiError;
 use droppen_http::extract::ApiPath;
 use droppen_http::openapi_ext::{ExtraResponses, Optional};
 use droppen_base::process_env::{apply_env, claude_env, clean_env_bare, resolve_on_path};
-use crate::terminals::{CreateSpec, Registry};
+use droppen_workbench::terminals::{CreateSpec, Registry};
 
 use super::store::{Account, AccountKind, AccountPatch, AccountProvider};
 use super::{account_not_found, parse_auth_status, require_uuid, AccountsState};

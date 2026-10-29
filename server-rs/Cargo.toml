@@ -16,7 +16,7 @@ workspace = true
 # package stays the default member, so a bare `cargo build`/`cargo test` here
 # still means the server and nothing else.
 [workspace]
-members = [".", "crates/rh-proto", "crates/rh-relay", "crates/droppen-relay", "crates/rh-client", "crates/rh-devkit", "crates/droppen-plugin-sdk", "crates/droppen-search-path", "crates/droppen-base", "crates/droppen-instance", "crates/droppen-http", "crates/droppen-pty", "crates/droppen-supervisor", "crates/droppen-auth", "crates/droppen-files"]
+members = [".", "crates/rh-proto", "crates/rh-relay", "crates/droppen-relay", "crates/rh-client", "crates/rh-devkit", "crates/droppen-plugin-sdk", "crates/droppen-search-path", "crates/droppen-base", "crates/droppen-instance", "crates/droppen-http", "crates/droppen-pty", "crates/droppen-supervisor", "crates/droppen-auth", "crates/droppen-files", "crates/droppen-workbench"]
 
 # Every member takes serde_json from here, so `preserve_order` is on in every
 # build: a `Value` writes its keys in insertion order rather than sorted. Cargo
@@ -82,6 +82,8 @@ droppen-pty = { path = "crates/droppen-pty" }
 droppen-auth = { path = "crates/droppen-auth" }
 # Files under the home directory behind the path fence, and the media proxy.
 droppen-files = { path = "crates/droppen-files" }
+# The panes and the layout around sessions: terminals, apps, screens, prefs.
+droppen-workbench = { path = "crates/droppen-workbench" }
 # Machine-signed stream heads and manifests (the agent's streams).
 ed25519-dalek = "2"
 # The agent's one outbound websocket to the hub, and its loopback sockets to
@@ -97,12 +99,6 @@ gotcha = { version = "0.4.1", features = ["openapi"] }
 gotcha_core = "0.4.1"
 
 axum = { version = "0.8", features = ["ws", "multipart"] }
-# The `/embed/{id}/*` reverse proxy needs what gotcha's router cannot reach: an
-# upstream HTTP client that streams, and `hyper::upgrade` on both ends of a
-# websocket. Both are already in the graph as axum's own dependencies; naming
-# them here pins the same versions rather than adding a second copy.
-hyper = { version = "1", features = ["client", "http1"] }
-hyper-util = { version = "0.1", features = ["client", "client-legacy", "http1", "tokio"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "net", "process", "signal", "sync", "time"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 futures-util = "0.3"
@@ -168,8 +164,6 @@ regex = "1"
 # The unread scan's prefilter: a SIMD substring search over raw transcript bytes,
 # so the tool output that is most of a transcript is never decoded or parsed.
 memchr = "2"
-# Screen icons are single graphemes, including flags and joined emoji.
-unicode-segmentation = "1"
 thiserror = "1"
 # `randomUUID()`'s replacement: new session ids and account ids are v4 uuids.
 uuid = { version = "1", features = ["v4"] }

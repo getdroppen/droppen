@@ -86,12 +86,12 @@ pub struct Cleanups {
     /// The live session feeds.
     pub feeds: Arc<FeedRegistry>,
     /// The live web terminals. Detached rather than killed on the way out —
-    /// see [`crate::terminals::Registry::shutdown_all`].
-    pub terminals: Arc<crate::terminals::Registry>,
+    /// see [`droppen_workbench::terminals::Registry::shutdown_all`].
+    pub terminals: Arc<droppen_workbench::terminals::Registry>,
     /// The running embedded apps. Detached rather than killed on the way out,
     /// for the same reason the terminals are — see
-    /// [`crate::apps::Registry::shutdown_all`].
-    pub apps: Arc<crate::apps::Registry>,
+    /// [`droppen_workbench::apps::Registry::shutdown_all`].
+    pub apps: Arc<droppen_workbench::apps::Registry>,
     /// The shared session-list watcher.
     pub global: Arc<GlobalFeed>,
 }
@@ -111,7 +111,7 @@ impl Cleanups {
         // Same reasoning one level up: a `code-server` is spawned detached, so
         // it outlives this process with the user's unsaved buffers in it. The
         // next boot finds it in the instance directory's `apps.json` and adopts
-        // it back — see [`crate::apps::Registry::shutdown_all`].
+        // it back — see [`droppen_workbench::apps::Registry::shutdown_all`].
         let apps = self.apps.shutdown_all();
         tracing::info!(apps, "detached embedded apps; they keep running");
     }

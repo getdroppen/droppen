@@ -144,8 +144,8 @@ impl GotchaApp for RemoteHandApp {
                 plugins: crate::plugins::Plugins::load(&paths, &plugins_config, Some(refresh.clone())),
                 chats: crate::chats::Chats::new(paths.clone()),
                 drive,
-                terminals: crate::terminals::Registry::new(paths.clone(), instance.clone()),
-                apps: crate::apps::Registry::new(paths.clone(), instance.clone()),
+                terminals: droppen_workbench::terminals::Registry::new(paths.clone(), instance.clone()),
+                apps: droppen_workbench::apps::Registry::new(paths.clone(), instance.clone()),
                 setup: crate::setup::Setup::new(paths.clone()),
                 paths,
                 instance,
@@ -238,7 +238,7 @@ impl RemoteHandApp {
         // half-scanned instance directory.
         //
         // "Before the listener" is bounded, though, and deliberately so.
-        // [`crate::terminals::Registry::readopt_all`] gives the whole instance
+        // [`droppen_workbench::terminals::Registry::readopt_all`] gives the whole instance
         // directory one budget and lets whatever is still handshaking outlive
         // it; a shim that has wedged costs seconds, and a boot that waited for
         // all of them is a server that never starts. The terminals that land
@@ -367,7 +367,7 @@ impl RemoteHandApp {
         // tower `Service` sees. Re-registering the fallback puts it in front of
         // the SPA service, which it delegates every non-embed path to, so the
         // static-file behaviour is exactly what `api::routes` set up.
-        let router = router.fallback_service(crate::apps::embed::fallback(cleanups.apps.clone(), crate::static_files::service()));
+        let router = router.fallback_service(droppen_workbench::apps::embed::fallback(cleanups.apps.clone(), crate::static_files::service()));
         // The authentication guard goes on **here**, after the last
         // `fallback_service`, and that ordering is the whole point.
         // `axum::Router::layer` wraps the routes and the fallback *as they stand

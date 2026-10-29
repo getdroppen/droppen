@@ -115,6 +115,36 @@ pub fn child_path_override() -> Option<String> {
     }
 }
 
+/// A test that sets the child-`PATH` override takes this, and gets back what
+/// was there when it ends. In the test build the override is the test thread's
+/// own, so no other test sees it meanwhile; this keeps a thread the harness
+/// reuses from inheriting it.
+#[cfg(any(test, feature = "test-support"))]
+pub struct ChildPathGuard {
+    /// The override when the guard was taken, put back when it drops.
+    before: Option<String>,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl ChildPathGuard {
+    /// Remember the override as it stands, to put it back on drop.
+    pub fn take() -> Self {
+        Self { before: child_path_override() }
+    }
+
+    /// The override as it stood when the guard was taken.
+    pub fn before(&self) -> Option<&str> {
+        self.before.as_deref()
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl Drop for ChildPathGuard {
+    fn drop(&mut self) {
+        set_child_path(self.before.take());
+    }
+}
+
 /// The `PATH` this process was started with, whatever the override says.
 pub fn inherited_path() -> String {
     std::env::var("PATH").unwrap_or_default()

@@ -81,7 +81,7 @@ use droppen_http::app_window::AppWindow;
 use droppen_http::SendResult;
 use droppen_http::openapi_ext::{ExtraResponses, Optional};
 use droppen_base::process_env::{claude_env, clean_env_bare, resolve_on_path};
-use crate::terminals::{CreateSpec, Registry};
+use droppen_workbench::terminals::{CreateSpec, Registry};
 use droppen_base::text::strip_ansi;
 
 use super::store::{AccountError, AccountKind, AccountPatch, AccountProvider, Credential};

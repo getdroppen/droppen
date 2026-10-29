@@ -4,7 +4,7 @@
 //! No `code-server` is involved. The proxy only ever asks the registry "which
 //! loopback port does this id mean", so the upstream here is a small axum server
 //! the test starts itself, registered through
-//! [`Registry::register_upstream`](remote_hand_server::apps::Registry::register_upstream).
+//! [`Registry::register_upstream`](droppen_workbench::apps::Registry::register_upstream).
 //! It answers every path with a page that echoes the request target back — which
 //! is what makes the path rewrite observable — under a deliberately hostile
 //! `Content-Security-Policy`, and speaks a websocket echo on `/socket`.
@@ -21,8 +21,8 @@ use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use gotcha::axum::http::{header, HeaderValue};
-use remote_hand_server::apps::record::{self, AppRecord};
-use remote_hand_server::apps::AppType;
+use droppen_workbench::apps::record::{self, AppRecord};
+use droppen_workbench::apps::AppType;
 use droppen_base::procs::alive;
 use droppen_instance::instance::{InstanceDirs, DEFAULT_INSTANCE};
 use droppen_instance::paths::Paths;

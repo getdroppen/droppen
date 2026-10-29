@@ -20,7 +20,7 @@
 //     skipped, and a render that never ends does not hold up the rest;
 //   · turning diagrams off puts the code back in an open transcript.
 // Where the pref comes from (the server, the settings row) is pinned in
-// `server-rs/src/prefs` and `test/settings-message-rendering.test.tsx`.
+// `server-rs/crates/droppen-workbench/src/prefs` and `test/settings-message-rendering.test.tsx`.
 //
 // jsdom rather than `react-dom/server`, because the diagram arrives through an
 // effect and a dynamic import. For the rendering itself the engine is

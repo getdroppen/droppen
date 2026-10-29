@@ -19,7 +19,7 @@ use droppen_instance::instance::{InstanceDirs, DEFAULT_INSTANCE};
 use droppen_instance::paths::Paths;
 use droppen_pty::proto::Meta;
 use droppen_pty::sidecar::{self, Sidecars};
-use remote_hand_server::terminals::{Registry, MAX_TERMINALS};
+use droppen_workbench::terminals::{Registry, MAX_TERMINALS};
 use serde_json::Value;
 use tokio_tungstenite::tungstenite::Message;
 
@@ -653,7 +653,7 @@ async fn a_client_that_stops_reading_is_disconnected_rather_than_waited_for() {
     let mut told_why = false;
     let mut backlog = 0usize;
     while let Some(text) = slow.next_text().await {
-        told_why |= text.contains(remote_hand_server::terminals::SLOW_NOTE.trim());
+        told_why |= text.contains(droppen_workbench::terminals::SLOW_NOTE.trim());
         backlog += text.len();
         assert!(backlog < 32 * 1024 * 1024, "the slow client's queue is not bounded at all");
         // Unchecked: whether the server is still there to read it is the

@@ -1003,7 +1003,7 @@ interface AppShell {
 - **新建会话**：两台以上设备时对话框顶部有设备选择，默认顺序：当前叶子或路由的设备 → 上次用的（`rh.hub.new-session-device`）→ `home`；离线、`stale` 的置灰并写原因。选中即占用（拨号），模型、账号、目录、最近目录都走所选设备的 `api`；建好后在那台打开（`/m/<设备>/sessions/…`，或叶子带上 `machine`）。窗格里的新终端、文件同理走叶子的设备。
 - **设置**：`/m/<设备>/settings`；两台以上设备时设置页标题行有设备选择。字号与语言只由主设备的偏好决定（`PrefsSync`），所以只在主设备的设置里出现；其它设备的设置里换成一行说明和去主设备设置的链接。
 - **不串号**：查询、feed、草稿、发件箱、回执检查、排队提示、终端、上传本来就按 `useMachine()` 与 `sessionKey` 取址，换成叶子或路由的 provider 即可；新键都在 `rh.hub.` 下；`check:machines` 保持通过。
-- **服务端也要认 `machine`**：屏幕的清洗（`server-rs/src/screens`）按已知字段重建每个叶子，读和写都过它，原来会把 `machine` 丢掉。现在它在 `session`、`chat`、`terminal`、`files`、`picker` 上保留一个能用的 `machine`（非空、不超过 200 字、无控制字符，与 id 同样只存不解），退化成选择器的内容不带。droppen.app 上屏幕存在主设备的 agent 里，所以主设备的 agent 要升级到这一版，跨设备的屏幕才存得住；旧 agent 存回来少了设备时，网页在那块屏幕上提示（`machinesDropped`），窗格回到主设备。
+- **服务端也要认 `machine`**：屏幕的清洗（`server-rs/crates/droppen-workbench/src/screens`）按已知字段重建每个叶子，读和写都过它，原来会把 `machine` 丢掉。现在它在 `session`、`chat`、`terminal`、`files`、`picker` 上保留一个能用的 `machine`（非空、不超过 200 字、无控制字符，与 id 同样只存不解），退化成选择器的内容不带。droppen.app 上屏幕存在主设备的 agent 里，所以主设备的 agent 要升级到这一版，跨设备的屏幕才存得住；旧 agent 存回来少了设备时，网页在那块屏幕上提示（`machinesDropped`），窗格回到主设备。
 - **回滚**：旧版本（网页或 agent）读到带 `machine` 的叶子会在 `home` 上找那个 id：会话「找不到」、终端「已退出」、文件落在 `home` 的同一路径，都不崩；旧 agent 读时就丢掉 `machine`，下一次保存把它写没。`/m/…` 地址在旧版本里是未知路由。除了可选的 `machine`，存储格式不变。
 - **拆成两步**：第一步是路由、叶子与屏幕 JSON（含服务端清洗）、`MachineView`、按设备计数的列表 feed、`hold()` 接口、导航栏、新建会话的设备选择、设置的设备选择、一致性预览的 `uiDevices=1`、测试；第二步是 `hub-shell.ts`（占用计数、focus 从路由来、主设备固定与「设为主设备」、`select` 改为导航）、`cloud-bar.tsx`、`cloud-app.tsx`、仪表盘 `openAt` 改用 `/m/` 地址、`sw.js` 的离线壳路由加 `m/`、`ui-wording` 测试收进新文案表、浏览器验收与云端 e2e。
 

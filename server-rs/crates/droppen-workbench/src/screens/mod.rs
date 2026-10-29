@@ -1497,7 +1497,33 @@ pub fn describe(reg: &mut ExtraResponses) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::feed::global::GlobalFeed;
+
+    /// The frames the store announces, in order: what a feed client would hear.
+    #[derive(Default)]
+    struct Frames(std::sync::Mutex<Vec<String>>);
+
+    impl Frames {
+        /// Every frame announced since the last call, decoded.
+        fn drain(&self) -> Vec<Value> {
+            std::mem::take(&mut *self.0.lock().unwrap())
+                .iter()
+                .map(|frame| serde_json::from_str(frame).expect("a JSON frame"))
+                .collect()
+        }
+    }
+
+    impl droppen_http::refresh::RefreshSink for Frames {
+        fn request_refresh(&self, _expected: Option<(&dyn std::fmt::Display, &str)>) {}
+
+        fn publish(&self, frame: String) {
+            self.0.lock().unwrap().push(frame);
+        }
+    }
+
+    /// A feed nobody listens to.
+    fn unheard() -> Refresh {
+        Refresh::new(std::sync::Arc::new(Frames::default()))
+    }
 
     /// A split of two leaves, `depth` levels deep.
     fn nested_split(depth: u32) -> Value {
@@ -1709,7 +1735,7 @@ mod tests {
         assert_eq!(screens[0], screen);
 
         // And the next save leaves the table as the only place a layout lives.
-        store.update(&Refresh::new(GlobalFeed::new()),
+        store.update(&unheard(),
             "screen-1",
             ScreenUpdate {
                 title: Some("again".to_string()).into(),
@@ -1867,7 +1893,7 @@ mod tests {
         assert_eq!(screens.len(), 1);
         assert_eq!(screens[0].layout.0, layout, "the browser leaf must survive the sanitizer");
 
-        let saved = store.update(&Refresh::new(GlobalFeed::new()),
+        let saved = store.update(&unheard(),
             "screen-1",
             ScreenUpdate {
                 layout: Optional(Some(screens[0].layout.clone())),
@@ -1935,13 +1961,6 @@ mod tests {
         screens.iter().map(|screen| screen.id.as_str()).collect()
     }
 
-    /// Every frame published so far, decoded.
-    fn drain(rx: &mut tokio::sync::broadcast::Receiver<std::sync::Arc<str>>) -> Vec<Value> {
-        std::iter::from_fn(|| rx.try_recv().ok())
-            .map(|frame| serde_json::from_str(&frame).expect("a JSON frame"))
-            .collect()
-    }
-
     /// The phone and the laptop both open revision 1. The laptop saves first;
     /// the phone's save, still based on 1, must not land on top of it — it is
     /// refused, and told what the screen now is so it can adopt it.
@@ -1950,7 +1969,7 @@ mod tests {
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(home.path().to_path_buf());
         let store = ScreenStore::of(&paths);
-        let feed = Refresh::new(GlobalFeed::new());
+        let feed = unheard();
         let created = store.create(&feed, ScreenCreate::default()).await.expect("create");
         assert_eq!(created.revision, 1);
 
@@ -2016,7 +2035,7 @@ mod tests {
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(home.path().to_path_buf());
         let store = ScreenStore::of(&paths);
-        let feed = Refresh::new(GlobalFeed::new());
+        let feed = unheard();
         seed(&paths, &[screen("a"), screen("b")]).await;
 
         // The laptop deletes `a` while the phone creates a screen; neither has
@@ -2057,7 +2076,7 @@ mod tests {
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(home.path().to_path_buf());
         let store = ScreenStore::of(&paths);
-        let feed = Refresh::new(GlobalFeed::new());
+        let feed = unheard();
         seed(&paths, &[screen("a"), screen("b"), screen("c")]).await;
 
         let (reordered, created) = tokio::join!(
@@ -2101,7 +2120,7 @@ mod tests {
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(home.path().to_path_buf());
         let store = ScreenStore::of(&paths);
-        let feed = Refresh::new(GlobalFeed::new());
+        let feed = unheard();
         assert_eq!(store.read_list().await.list_revision, 1, "an untouched list is at revision 1");
 
         let first = store.create(&feed,
@@ -2167,20 +2186,19 @@ mod tests {
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(home.path().to_path_buf());
         let store = ScreenStore::of(&paths);
-        let global = GlobalFeed::new();
-        let mut rx = global.listen();
-        let feed = Refresh::new(global.clone());
+        let frames = std::sync::Arc::new(Frames::default());
+        let feed = Refresh::new(frames.clone());
 
         let a = store.create(&feed, ScreenCreate::default()).await.expect("create a");
         assert_eq!(
-            drain(&mut rx),
+            frames.drain(),
             vec![
                 json!({ "type": "screens:changed", "id": a.id, "revision": 1 }),
                 json!({ "type": "screens:list", "listRevision": 2 }),
             ]
         );
         let b = store.create(&feed, ScreenCreate::default()).await.expect("create b");
-        drain(&mut rx);
+        frames.drain();
 
         store.update(&feed,
             &a.id,
@@ -2190,7 +2208,7 @@ mod tests {
             },)
         .await
         .expect("save");
-        assert_eq!(drain(&mut rx), vec![json!({ "type": "screens:changed", "id": a.id, "revision": 2 })]);
+        assert_eq!(frames.drain(), vec![json!({ "type": "screens:changed", "id": a.id, "revision": 2 })]);
 
         store.update(&feed, &a.id, patch(1)).await.expect_err("stale");
         store.reorder(&feed,
@@ -2200,7 +2218,7 @@ mod tests {
             },)
         .await
         .expect("an order that is already so");
-        assert_eq!(drain(&mut rx), Vec::<Value>::new(), "a refusal or a no-op announces nothing");
+        assert_eq!(frames.drain(), Vec::<Value>::new(), "a refusal or a no-op announces nothing");
 
         store.reorder(&feed,
             ScreenOrder {
@@ -2209,11 +2227,11 @@ mod tests {
             },)
         .await
         .expect("reorder");
-        assert_eq!(drain(&mut rx), vec![json!({ "type": "screens:list", "listRevision": 4 })]);
+        assert_eq!(frames.drain(), vec![json!({ "type": "screens:list", "listRevision": 4 })]);
 
         store.delete(&feed, &a.id, None).await.expect("delete");
         assert_eq!(
-            drain(&mut rx),
+            frames.drain(),
             vec![
                 json!({ "type": "screens:changed", "id": a.id, "revision": 3, "deleted": true }),
                 json!({ "type": "screens:list", "listRevision": 5 }),
@@ -2250,7 +2268,7 @@ mod tests {
         assert!(list.screens.iter().all(|screen| screen.revision == 1));
         assert_eq!(list.list_revision, 1);
 
-        let saved = store.update(&Refresh::new(GlobalFeed::new()),
+        let saved = store.update(&unheard(),
             "old-2",
             ScreenUpdate {
                 layout: Optional(Some(terminal("t"))),

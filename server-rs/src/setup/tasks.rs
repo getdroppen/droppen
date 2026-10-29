@@ -1,7 +1,7 @@
 //! Installs, updates and sign-ins, run where the user can watch them.
 //!
 //! Each task is a whitelisted command ([`super::commands`]) in an ordinary
-//! server terminal ([`crate::terminals`]): the guide shows it in its embedded
+//! server terminal ([`droppen_workbench::terminals`]): the guide shows it in its embedded
 //! xterm, the user can type into it (a password prompt, the code a CLI asks
 //! for), and because terminals live in a detached shim, an install keeps going
 //! when the window closes and is there to reattach to when it opens again.
@@ -89,7 +89,7 @@ use droppen_instance::db::scope;
 use droppen_http::error::{ApiError, Hinted, Reasoned};
 use droppen_http::openapi_ext::Nullable;
 use droppen_base::process_env::{self, Env};
-use crate::terminals::{CreateSpec, Registry};
+use droppen_workbench::terminals::{CreateSpec, Registry};
 
 /// The `kv` key, under [`scope::SETUP`].
 const TASKS_KEY: &str = "tasks";
@@ -1101,7 +1101,7 @@ mod tests {
     /// that exited 0 and left the tool as old as it was.
     #[tokio::test]
     async fn an_exit_of_0_that_installed_nothing_failed() {
-        let _guard = crate::setup::tests::ChildPathGuard::take();
+        let _guard = droppen_base::process_env::ChildPathGuard::take();
         let fixture = Fixture::new();
         fixture
             .answer("zsh -ilc", RunOutput::timeout())
@@ -1137,7 +1137,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_failed_task_says_why_and_keeps_its_tail_redacted() {
-        let _guard = crate::setup::tests::ChildPathGuard::take();
+        let _guard = droppen_base::process_env::ChildPathGuard::take();
         let fixture = Fixture::new();
         fixture.answer("zsh -ilc", RunOutput::timeout());
         let (_home, state) = scene(fixture.clone()).await;
@@ -1318,7 +1318,7 @@ mod tests {
 
     #[tokio::test]
     async fn only_an_executable_named_for_the_tool_is_adopted() {
-        let _guard = crate::setup::tests::ChildPathGuard::take();
+        let _guard = droppen_base::process_env::ChildPathGuard::take();
         let (home, state) = scene(Fixture::new()).await;
         let scratch = crate::setup::tests::TrustRoot::at(home.path());
         let root = scratch.0.clone();

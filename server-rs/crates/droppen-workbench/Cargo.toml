@@ -1,0 +1,65 @@
+[package]
+name = "droppen-workbench"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+publish = false
+description = "The Droppen server's panes and layout around sessions: web terminals, embedded apps, saved screens and UI preferences"
+
+# The panes and the layout around sessions. They stand on the instance, the HTTP
+# kit, the pty shims, the login guard and the home-directory files, and name
+# none of the server's session or provider subsystems.
+[dependencies]
+droppen-auth = { path = "../droppen-auth" }
+droppen-base = { path = "../droppen-base" }
+droppen-files = { path = "../droppen-files" }
+droppen-http = { path = "../droppen-http" }
+droppen-instance = { path = "../droppen-instance" }
+# A plugin pane names its plugin by id (`screens`).
+droppen-plugin-sdk = { path = "../droppen-plugin-sdk" }
+droppen-pty = { path = "../droppen-pty" }
+futures-util = "0.3"
+gotcha = { version = "0.4.1", features = ["openapi"] }
+# What gotcha's `Schematic` derive expands to names it.
+gotcha_core = "0.4.1"
+# The `/embed/{id}/*` reverse proxy needs what gotcha's router cannot reach: an
+# upstream HTTP client that streams, and `hyper::upgrade` on both ends of a
+# websocket. Both are already in the graph as axum's own dependencies; naming
+# them here pins the same versions rather than adding a second copy.
+hyper = { version = "1", features = ["client", "http1"] }
+hyper-util = { version = "0.1", features = ["client", "client-legacy", "http1", "tokio"] }
+libc = "0.2"
+regex = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { workspace = true }
+thiserror = "1"
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt", "sync", "time"] }
+tokio-util = "0.7"
+tower-service = "0.3"
+tracing = "0.1"
+# Screen icons are single graphemes, including flags and joined emoji.
+unicode-segmentation = "1"
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+# The child-PATH override per test thread, which the terminal and app tests
+# that set it rely on: see the feature's own comment.
+droppen-base = { path = "../droppen-base", features = ["test-support"] }
+# A link whose frames are all queued at once (`droppen_pty::client::Link::preloaded`).
+droppen-pty = { path = "../droppen-pty", features = ["test-support"] }
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt", "test-util"] }
+# A client for the terminal socket in its route tests.
+tokio-tungstenite = "0.29"
+
+[lints.rust]
+missing_docs = "deny"
+unreachable_pub = "deny"
+
+# `[lints] workspace = true` cannot be mixed with the rust lints above, so the
+# workspace's two clippy denials (`server-rs/Cargo.toml` `[workspace.lints]`)
+# are repeated here: keep them in step.
+[lints.clippy]
+significant_drop_in_scrutinee = "deny"
+await_holding_lock = "deny"

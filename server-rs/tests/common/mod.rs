@@ -27,7 +27,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use remote_hand_server::app::RemoteHandApp;
-use remote_hand_server::apps::Registry;
+use droppen_workbench::apps::Registry;
 use remote_hand_server::feed::global::GlobalFeed;
 use remote_hand_server::feed::FeedRegistry;
 use droppen_instance::instance::InstanceDirs;
@@ -46,7 +46,7 @@ pub struct TestServer {
     /// The same path set the server's handlers see.
     pub paths: Paths,
     global: Arc<GlobalFeed>,
-    terminals: Arc<remote_hand_server::terminals::Registry>,
+    terminals: Arc<droppen_workbench::terminals::Registry>,
     apps: Arc<Registry>,
     feeds: Arc<FeedRegistry>,
     cleanups: Cleanups,
@@ -179,7 +179,7 @@ impl TestServer {
     }
 
     /// The terminal registry these handlers share.
-    pub fn terminals(&self) -> Arc<remote_hand_server::terminals::Registry> {
+    pub fn terminals(&self) -> Arc<droppen_workbench::terminals::Registry> {
         self.terminals.clone()
     }
 
@@ -592,6 +592,6 @@ impl Drop for KillGroupOnDrop {
 }
 
 /// A terminal running `script` under `/bin/sh`.
-pub fn sh(script: &str) -> remote_hand_server::terminals::CreateSpec {
-    remote_hand_server::terminals::CreateSpec::new("/bin/sh", vec!["-c".to_string(), script.to_string()])
+pub fn sh(script: &str) -> droppen_workbench::terminals::CreateSpec {
+    droppen_workbench::terminals::CreateSpec::new("/bin/sh", vec!["-c".to_string(), script.to_string()])
 }

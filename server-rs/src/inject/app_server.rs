@@ -2139,7 +2139,7 @@ mod tests {
         const UNLOADED: &str = "0199c1a1-0000-4000-8000-000000000002";
         const MISMATCHED: &str = "0199c1a1-0000-4000-8000-000000000003";
         const OTHER: &str = "0199c1a1-0000-4000-8000-000000000004";
-        let _path = crate::setup::tests::ChildPathGuard::take();
+        let _path = droppen_base::process_env::ChildPathGuard::take();
         let home = tempfile::tempdir().expect("tempdir");
         // The stand-in app server runs only under a test root.
         std::fs::write(home.path().join(".rh-test-root"), b"").expect("test root");

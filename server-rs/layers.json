@@ -97,12 +97,7 @@
         {
           "name": "droppen-workbench",
           "about": "Terminal and app panes, saved screens, UI preferences.",
-          "modules": [
-            "terminals",
-            "apps",
-            "screens",
-            "prefs"
-          ],
+          "modules": [],
           "mayUse": [
             "droppen-auth",
             "droppen-files"
