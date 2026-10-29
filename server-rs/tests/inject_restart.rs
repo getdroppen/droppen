@@ -705,16 +705,12 @@ fn queued_texts(record: &Value) -> Vec<&str> {
 
 /// Whether nobody holds this lock file — asked by taking it and letting go.
 fn flock_is_free(path: &Path) -> bool {
-    use std::os::fd::AsRawFd;
     let Ok(file) = std::fs::File::options().read(true).write(true).create(true).truncate(false).open(path) else {
         return true;
     };
-    // SAFETY: an open descriptor this function owns, and a flag pair that takes
-    // no further arguments.
-    let taken = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0;
+    let taken = file.try_lock().is_ok();
     if taken {
-        // SAFETY: releasing the lock this call just took.
-        unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_UN) };
+        let _ = file.unlock();
     }
     taken
 }

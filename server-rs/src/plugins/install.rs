@@ -692,7 +692,6 @@ struct PackagesLock {
 }
 
 fn lock_packages(parent: &Path) -> Result<PackagesLock, InstallError> {
-    use std::os::unix::io::AsRawFd;
     let path = parent.join(LOCK_FILE);
     let file = fs::OpenOptions::new()
         .read(true)
@@ -702,14 +701,10 @@ fn lock_packages(parent: &Path) -> Result<PackagesLock, InstallError> {
         .open(&path)
         .map_err(|error| failed(format!("cannot open {}: {error}", path.display())))?;
     loop {
-        // SAFETY: `file` is an open descriptor this process owns for the call,
-        // and LOCK_EX takes no other arguments.
-        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } == 0 {
-            return Ok(PackagesLock { file });
-        }
-        let error = io::Error::last_os_error();
-        if error.kind() != io::ErrorKind::Interrupted {
-            return Err(failed(format!("cannot lock {}: {error}", path.display())));
+        match file.lock() {
+            Ok(()) => return Ok(PackagesLock { file }),
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(failed(format!("cannot lock {}: {error}", path.display()))),
         }
     }
 }
