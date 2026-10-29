@@ -276,8 +276,15 @@ fn require_secret(secret: &str) -> Result<(), ApiError> {
 /// `Ok(Some(why))` is that third case: stored, but nobody has proved it works.
 /// It is returned rather than swallowed because the UI promises a check, and a
 /// promise kept silently only when convenient is not one.
+///
+/// A credential with nothing to check is the store's refusal, and gets the
+/// store's body: a launch for the other CLI is the same `provider_mismatch`
+/// here as at a spawn.
 async fn require_working(state: &AccountsState, provider: AccountProvider, credential: &Credential) -> Result<Option<String>, ApiError> {
-    match verify::verify_secret(state.accounts.logins(), &state.paths, provider, credential).await {
+    let verdict = verify::verify_secret(state.accounts.logins(), &state.paths, provider, credential)
+        .await
+        .map_err(|error| store_error(error, "cannot check the credential"))?;
+    match verdict {
         verify::Verdict::Valid => Ok(None),
         verify::Verdict::Invalid(reason) => Err(ApiError::bad_request(reason)),
         verify::Verdict::Unverifiable(why) => {
@@ -738,6 +745,31 @@ mod tests {
             "unused",
         );
         assert_eq!(format!("{from_store:?}"), rendered);
+    }
+
+    /// A credential its login would check as the other CLI's is refused with
+    /// that same body, on `POST` and `PATCH` alike: both check through here.
+    #[tokio::test]
+    async fn a_credential_checked_as_the_other_clis_gets_the_mismatch_body() {
+        // Nothing on `PATH`, so no CLI could start even if the refusal did not
+        // come first. The override is this test thread's own (`process_env`).
+        let empty = tempfile::tempdir().expect("a PATH directory with nothing in it");
+        droppen_base::process_env::set_child_path(Some(empty.path().to_string_lossy().into_owned()));
+        let home = tempfile::tempdir().expect("tempdir");
+        let app = crate::api::test_support::state(home.path()).await;
+        let mut state = AccountsState::from_ref(&app);
+        let real = crate::app::logins();
+        let swapped = login::Logins {
+            claude: real.codex.clone(),
+            codex: real.claude.clone(),
+        };
+        state.accounts = Arc::new(store::AccountsStore::new(state.paths.clone(), swapped));
+        let block = Credential::Env(droppen_base::env_block::parse_env_block("OPENAI_API_KEY=not-a-real-openai-key").expect("block"));
+
+        let error = require_working(&state, AccountProvider::Claude, &block).await.expect_err("refused");
+        let pinned = provider_mismatch();
+        assert_eq!(error.status(), pinned.status());
+        assert_eq!(error.body().to_string(), pinned.body().to_string(), "the hint included");
     }
 
     #[test]

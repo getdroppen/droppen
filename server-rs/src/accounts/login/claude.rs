@@ -48,7 +48,7 @@ trait BaseUrlHintExt {
     /// Put the hint in front of a verdict that did not go well.
     ///
     /// Never a refusal of its own: a `/v1` root is unusual rather than wrong — a
-    /// relay is free to serve `/v1/v1/messages` — and this function only ever
+    /// relay is free to serve `/v1/v1/messages` — and this method only ever
     /// changes what a failure *says*. A credential that works is left alone, hint
     /// or no hint, because there is nothing to explain.
     fn with_base_url_hint(&self, verdict: Verdict) -> Verdict;
@@ -191,6 +191,9 @@ impl Login for ClaudeCodeLogin {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use droppen_base::env_block::parse_env_block;
+    use crate::accounts::verify::StubCli;
+    use droppen_base::process_env::set_child_path;
 
     /// A CLI that fell over is not a CLI that turned the credential down.
     ///
@@ -270,23 +273,57 @@ mod tests {
     /// verdicts it reaches without running the CLI, and only for a `/v1` root.
     #[tokio::test]
     async fn a_check_that_cannot_run_proves_nothing_and_still_carries_the_hint() {
+        // An empty `PATH`, whatever this machine has installed, so the words
+        // can only be claude's own check stopping. The override is this test
+        // thread's own (`process_env`).
+        let empty = tempfile::tempdir().expect("a PATH directory with nothing in it");
+        set_child_path(Some(empty.path().to_string_lossy().into_owned()));
         let home = tempfile::tempdir().expect("tempdir");
         let paths = crate::accounts::verify::paths_where_no_scratch_can_be_made(home.path());
-        // It stops before starting anything either way: claude is not on
-        // `PATH` here, or it is and the scratch directory cannot be made.
-        let claudes_own = |why: &str| {
-            why == "the `claude` CLI is not on PATH, so the token cannot be checked"
-                || why.starts_with("cannot prepare the check's config directory: ")
-        };
+        let not_on_path = "the `claude` CLI is not on PATH, so the token cannot be checked";
 
         let verdict = ClaudeCodeLogin.verify(&paths, &launch("https://gw.example.com/v1"), &[]).await;
-        let Verdict::Unverifiable(why) = verdict else { panic!("a check that cannot run proves nothing: {verdict:?}") };
-        let rest = why.strip_prefix(CLAUDE_BASE_URL_HINT).unwrap_or_else(|| panic!("the hint goes first: {why}"));
-        assert!(claudes_own(rest), "{rest}");
+        assert_eq!(verdict, Verdict::Unverifiable(format!("{CLAUDE_BASE_URL_HINT}{not_on_path}")), "the hint goes first");
 
         let verdict = ClaudeCodeLogin.verify(&paths, &launch("https://gw.example.com"), &[]).await;
-        let Verdict::Unverifiable(why) = verdict else { panic!("a check that cannot run proves nothing: {verdict:?}") };
-        assert!(claudes_own(&why), "a root gets no hint: {why}");
+        assert_eq!(verdict, Verdict::Unverifiable(not_on_path.to_string()), "a root gets no hint");
+    }
+
+    /// The check is one `claude -p ping` with the probe's own arguments, in a
+    /// fresh config directory and an empty working directory under the
+    /// instance's data, both gone once it answers, with the credential in its
+    /// environment — and a refusal is quoted back without that credential.
+    #[tokio::test]
+    async fn the_check_runs_claude_in_a_scratch_of_its_own() {
+        let claude = StubCli::new(
+            "claude",
+            &["CLAUDE_CONFIG_DIR", "ANTHROPIC_AUTH_TOKEN"],
+            "printf 'API Error: 401 Unauthorized for %s\\n' \"$ANTHROPIC_AUTH_TOKEN\" >&2\nexit 1\n",
+        );
+        set_child_path(Some(claude.path()));
+        let home = tempfile::tempdir().expect("tempdir");
+        // Canonical, because the stub reports its working directory physically.
+        let paths = Paths::new(home.path().canonicalize().expect("canonical home"));
+        let token = "not-a-real-gateway-token";
+        let block = parse_env_block(&format!("ANTHROPIC_AUTH_TOKEN={token}\nANTHROPIC_BASE_URL=https://gw.example.com")).expect("block");
+        let launch = ClaudeCodeLogin.spawn_env(AccountKind::Env, "", &block).expect("a launch");
+
+        let verdict = ClaudeCodeLogin.verify(&paths, &launch, &[token]).await;
+        assert_eq!(
+            verdict,
+            Verdict::Invalid("the token was refused: API Error: 401 Unauthorized for [redacted]".to_string())
+        );
+        assert_eq!(
+            claude.recorded("argv").lines().collect::<Vec<_>>(),
+            ["-p", "ping", "--output-format", "json", "--no-session-persistence"]
+        );
+        assert!(claude.recorded("ANTHROPIC_AUTH_TOKEN") == token, "the credential reached the CLI");
+        let config = std::path::PathBuf::from(claude.recorded("CLAUDE_CONFIG_DIR"));
+        let scratch = config.parent().expect("the scratch");
+        assert_eq!(scratch.parent(), Some(paths.data_dir().join("verify").as_path()));
+        assert_eq!(config, scratch.join("claude"));
+        assert_eq!(std::path::PathBuf::from(claude.recorded("cwd").trim_end()), scratch.join("cwd"));
+        assert!(!scratch.exists(), "the scratch goes once the check has answered");
     }
 
     /// A block whose base URL already carries the path claude appends.

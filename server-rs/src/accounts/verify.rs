@@ -162,11 +162,49 @@ pub(crate) fn paths_where_no_scratch_can_be_made(home: &std::path::Path) -> Path
     paths
 }
 
+/// A stand-in CLI, alone in a directory that is to be the whole `PATH` of a
+/// check: a `sh` script that writes down how it was started — its arguments one
+/// per line in `argv`, its working directory in `cwd`, each named variable in a
+/// file of that name, all beside itself — and then runs the given tail. Builtins
+/// only, because nothing else is on that `PATH`.
+#[cfg(test)]
+pub(crate) struct StubCli(tempfile::TempDir);
+
+#[cfg(test)]
+impl StubCli {
+    pub(crate) fn new(name: &str, vars: &[&str], tail: &str) -> Self {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().expect("the stub's directory");
+        let at = dir.path().display();
+        let mut script = format!("#!/bin/sh\nprintf '%s\\n' \"$@\" > '{at}/argv'\npwd -P > '{at}/cwd'\n");
+        for var in vars {
+            script.push_str(&format!("printf '%s' \"${var}\" > '{at}/{var}'\n"));
+        }
+        script.push_str(tail);
+        let stub = dir.path().join(name);
+        std::fs::write(&stub, script).expect("the stub");
+        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        Self(dir)
+    }
+
+    /// The `PATH` that finds the stub and nothing else.
+    pub(crate) fn path(&self) -> String {
+        self.0.path().to_string_lossy().into_owned()
+    }
+
+    /// What the stub wrote down under `what`.
+    pub(crate) fn recorded(&self, what: &str) -> String {
+        std::fs::read_to_string(self.0.path().join(what)).unwrap_or_else(|error| panic!("the stub never wrote {what}: {error}"))
+    }
+}
+
 /// Spend one real request proving the credential works.
 ///
-/// Never panics and never fails: everything that is not a clean run or a clean
-/// refusal comes back as [`Verdict::Unverifiable`].
-pub async fn verify_secret(logins: &Logins, paths: &Paths, provider: AccountProvider, credential: &Credential) -> Verdict {
+/// Fails only where there is nothing to check, with the store's own error, so
+/// that the refusal reads exactly as the store's does. Otherwise never panics
+/// and never fails: everything that is not a clean run or a clean refusal
+/// comes back as [`Verdict::Unverifiable`].
+pub async fn verify_secret(logins: &Logins, paths: &Paths, provider: AccountProvider, credential: &Credential) -> Result<Verdict, AccountError> {
     let (secret, env) = match credential {
         Credential::Oauth(secret) => (secret.as_str(), Vec::new()),
         Credential::Env(env) => ("", env.clone()),
@@ -175,25 +213,19 @@ pub async fn verify_secret(logins: &Logins, paths: &Paths, provider: AccountProv
     // than probed: there is nothing to run. Only codex can say this, and only
     // about a block with no key variable in it.
     let login = logins.of(provider);
-    let launch = match login.spawn_env(credential.kind(), secret, &env) {
-        Ok(launch) => launch,
-        Err(error) => return Verdict::Invalid(error.to_string()),
-    };
+    let launch = login.spawn_env(credential.kind(), secret, &env)?;
     // A launch says which CLI it starts, and only the credential's own may
     // check it: a login filed under the other CLI would run the wrong program
-    // and vouch for a credential it never tested. Refused the way the store
-    // refuses such a launch for a spawn.
+    // and vouch for a credential it never tested. Refused as the store refuses
+    // such a launch for a spawn.
     if launch.provider != provider {
-        return Verdict::Invalid(
-            AccountError::ProviderMismatch {
-                account: provider,
-                wanted: launch.provider,
-            }
-            .to_string(),
-        );
+        return Err(AccountError::ProviderMismatch {
+            account: provider,
+            wanted: launch.provider,
+        });
     }
     let values = credential.values();
-    login.verify(paths, &launch, &values).await
+    Ok(login.verify(paths, &launch, &values).await)
 }
 
 #[cfg(test)]
@@ -251,10 +283,17 @@ mod tests {
         let (logins, calls) = recording(AccountProvider::Codex, AccountProvider::Claude);
         let claude = Credential::Oauth("claude-test-token".to_string());
         let codex = Credential::Env(parse_env_block("OPENAI_API_KEY=codex-test-key").expect("block"));
-        let mismatch = Verdict::Invalid("provider_mismatch".to_string());
 
-        assert_eq!(verify_secret(&logins, &paths, AccountProvider::Claude, &claude).await, mismatch);
-        assert_eq!(verify_secret(&logins, &paths, AccountProvider::Codex, &codex).await, mismatch);
+        let refused = verify_secret(&logins, &paths, AccountProvider::Claude, &claude).await;
+        assert!(
+            matches!(refused, Err(AccountError::ProviderMismatch { account: AccountProvider::Claude, wanted: AccountProvider::Codex })),
+            "{refused:?}"
+        );
+        let refused = verify_secret(&logins, &paths, AccountProvider::Codex, &codex).await;
+        assert!(
+            matches!(refused, Err(AccountError::ProviderMismatch { account: AccountProvider::Codex, wanted: AccountProvider::Claude })),
+            "{refused:?}"
+        );
         assert!(calls.lock().expect("calls").is_empty(), "no check ran");
 
         // The real logins swapped: a claude block holding an OpenAI key would
@@ -265,7 +304,11 @@ mod tests {
             codex: real.claude.clone(),
         };
         let block = Credential::Env(parse_env_block("OPENAI_API_KEY=codex-test-key").expect("block"));
-        assert_eq!(verify_secret(&swapped, &paths, AccountProvider::Claude, &block).await, mismatch);
+        let refused = verify_secret(&swapped, &paths, AccountProvider::Claude, &block).await;
+        assert!(
+            matches!(refused, Err(AccountError::ProviderMismatch { account: AccountProvider::Claude, wanted: AccountProvider::Codex })),
+            "{refused:?}"
+        );
     }
 
     /// Each credential is checked by its own CLI's login, with its own values
@@ -278,8 +321,10 @@ mod tests {
         let claude = Credential::Oauth("claude-test-token".to_string());
         let codex = Credential::Env(parse_env_block("OPENAI_API_KEY=codex-test-key").expect("block"));
 
-        assert_eq!(verify_secret(&logins, &paths, AccountProvider::Claude, &claude).await, Verdict::Valid);
-        assert_eq!(verify_secret(&logins, &paths, AccountProvider::Codex, &codex).await, Verdict::Valid);
+        let checked = verify_secret(&logins, &paths, AccountProvider::Claude, &claude).await;
+        assert!(matches!(checked, Ok(Verdict::Valid)), "{checked:?}");
+        let checked = verify_secret(&logins, &paths, AccountProvider::Codex, &codex).await;
+        assert!(matches!(checked, Ok(Verdict::Valid)), "{checked:?}");
         assert_eq!(
             *calls.lock().expect("calls"),
             vec![
