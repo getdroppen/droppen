@@ -4,10 +4,15 @@ use std::sync::Arc;
 
 use futures_util::future::BoxFuture;
 
-use super::{ModelInfo, ModelList, ModelListSource, Models, ModelsQuery};
+use super::{ModelInfo, ModelList, ModelListSource, ModelRule, Models, ModelsQuery};
 use crate::inject::InjectionRegistry;
 use droppen_http::openapi_ext::Nullable;
 use droppen_instance::paths::Paths;
+
+/// A model id as an ACP agent spells it: `provider:model`, where the model
+/// half is often a path (`openrouter:vendor/name`). Still nothing that could
+/// read as a flag or hold a space; the agent checks it against its own list.
+pub const ACP_MODEL_PATTERN: &str = r"^[A-Za-z0-9][[:word:].:/@+-]*$";
 
 /// The ACP agents' models, for [`Models`]: each agent's own list, asked of the
 /// agent ([`InjectionRegistry::acp_options`]).
@@ -24,46 +29,7 @@ impl AcpModels {
     pub(crate) fn new(paths: Arc<Paths>, injections: Arc<InjectionRegistry>) -> Self {
         Self { paths, injections }
     }
-}
 
-impl Models for AcpModels {
-    // The agent id is checked before it is used: it becomes a path segment
-    // when the agent is looked up.
-    fn list<'a>(&'a self, query: &'a ModelsQuery) -> BoxFuture<'a, Result<ModelList, String>> {
-        Box::pin(async move {
-            // Every agent has its own list: one served for another is a picker
-            // offering models the session cannot run.
-            let agent = query
-                .acp_agent
-                .as_deref()
-                .filter(|id| crate::sessions::acp_transcript::valid_agent_id(id))
-                .ok_or_else(|| "acpAgent names the ACP agent to list models for".to_string())?;
-            let (models, source, hidden) = self.agent_models(agent).await;
-            Ok(ModelList {
-                models,
-                source,
-                hidden: (hidden > 0).then_some(hidden).into(),
-            })
-        })
-    }
-
-    // An ACP agent has no logins; its list is asked for by agent.
-    fn ids<'a>(&'a self, _account_id: Option<&'a str>) -> BoxFuture<'a, Vec<String>> {
-        Box::pin(std::future::ready(Vec::new()))
-    }
-
-    // The agent checks an effort against the model it runs when it is set.
-    fn accepted_efforts<'a>(&'a self, _model: Option<&'a str>) -> BoxFuture<'a, Option<Vec<String>>> {
-        Box::pin(std::future::ready(None))
-    }
-
-    // An ACP agent has no permission modes to choose between.
-    fn permission_is_known(&self, _permission: &str) -> bool {
-        false
-    }
-}
-
-impl AcpModels {
     /// An ACP agent's list: the values of its `model` option, each with the
     /// ladder of its `thought_level` option, as the agent itself publishes them
     /// ([`crate::inject::InjectionRegistry::acp_options`]).
@@ -118,3 +84,46 @@ impl AcpModels {
         (models, ModelListSource::Cache, hidden)
     }
 }
+
+impl Models for AcpModels {
+    // The agent id is checked before it is used: it is the key the agent's
+    // configuration is looked up by, and later a path segment (the agent's
+    // transcript directory, `AcpTranscripts::agent_dir`).
+    fn list<'a>(&'a self, query: &'a ModelsQuery) -> BoxFuture<'a, Result<ModelList, String>> {
+        Box::pin(async move {
+            // Every agent has its own list: one served for another is a picker
+            // offering models the session cannot run.
+            let agent = query
+                .acp_agent
+                .as_deref()
+                .filter(|id| crate::sessions::acp_transcript::valid_agent_id(id))
+                .ok_or_else(|| "acpAgent names the ACP agent to list models for".to_string())?;
+            let (models, source, hidden) = self.agent_models(agent).await;
+            Ok(ModelList {
+                models,
+                source,
+                hidden: (hidden > 0).then_some(hidden).into(),
+            })
+        })
+    }
+
+    // An ACP agent has no logins; its list is asked for by agent.
+    fn ids<'a>(&'a self, _account_id: Option<&'a str>) -> BoxFuture<'a, Vec<String>> {
+        Box::pin(std::future::ready(Vec::new()))
+    }
+
+    // The agent checks an effort against the model it runs when it is set.
+    fn accepted_efforts<'a>(&'a self, _model: Option<&'a str>) -> BoxFuture<'a, Option<Vec<String>>> {
+        Box::pin(std::future::ready(None))
+    }
+
+    // An ACP agent has no permission modes to choose between.
+    fn permission_is_known(&self, _permission: &str) -> bool {
+        false
+    }
+
+    fn model_rule(&self) -> ModelRule {
+        ModelRule::new(ACP_MODEL_PATTERN, 200)
+    }
+}
+

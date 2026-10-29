@@ -500,6 +500,10 @@ async fn models_and_efforts_come_from_the_agent_and_are_set_before_the_turn() {
     // A list is always some agent's.
     let (status, body) = server.get("/api/models?source=acp").await;
     assert_eq!(status, 400, "{body}");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&body).expect("a JSON refusal"),
+        json!({"error": "acpAgent names the ACP agent to list models for"})
+    );
     // The list is the agent's own, read by a probe that leaves no session behind.
     let models = server.get_json("/api/models?source=acp&acpAgent=fake").await;
     assert_eq!(models["source"], "cache", "{models:#}");

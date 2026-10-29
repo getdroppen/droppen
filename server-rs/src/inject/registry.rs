@@ -307,6 +307,12 @@ impl ProviderRegistry {
         self.providers.get(&source).map(|provider| provider.models())
     }
 
+    /// See [`Models::model_rule`]. A source no provider runs admits no model
+    /// id ([`crate::models::ModelRule::NONE`]).
+    pub fn model_rule(&self, source: Source) -> crate::models::ModelRule {
+        self.models(source).map_or(crate::models::ModelRule::NONE, |models| models.model_rule())
+    }
+
     /// Whether an instant chat of `source` turns away a message with
     /// attachments: one whose provider runs chats that cannot read them, and
     /// one no provider runs, since nothing can say it reads them.
@@ -511,7 +517,8 @@ mod tests {
             acp_agent: agent.map(str::to_owned),
         };
         let acp = providers.models(Source::Acp).expect("the ACP provider");
-        for agent in [None, Some("../fake"), Some("Fake")] {
+        let too_long = "x".repeat(crate::sessions::acp_transcript::MAX_AGENT_ID + 1);
+        for agent in [None, Some("../fake"), Some("Fake"), Some(""), Some("a/b"), Some("a\0b"), Some(too_long.as_str())] {
             assert_eq!(
                 acp.list(&query(Source::Acp, agent)).await.err().as_deref(),
                 Some("acpAgent names the ACP agent to list models for"),
@@ -526,6 +533,27 @@ mod tests {
 
         let other = tempfile::tempdir().expect("tempdir");
         assert!(providers_from(other.path(), |_, _| {}).models(Source::Acp).is_none());
+    }
+
+    /// Each CLI's model ids are held to its own spelling: names for Claude Code
+    /// and Codex, `provider:model` paths for an ACP agent, and nothing at all
+    /// for a source no provider runs.
+    #[test]
+    fn each_cli_spells_its_model_ids_its_own_way() {
+        use crate::models::ModelRule;
+        let home = tempfile::tempdir().expect("tempdir");
+        let providers = providers(home.path());
+        assert_eq!(providers.model_rule(Source::Claude), ModelRule::NAMED);
+        assert_eq!(providers.model_rule(Source::Codex), ModelRule::NAMED);
+        let acp = providers.model_rule(Source::Acp);
+        assert!(acp.admits("openrouter:vendor/name") && acp.admits(&"m".repeat(200)));
+        assert!(!acp.admits(&"m".repeat(201)) && !acp.admits("--add-dir") && !acp.admits("a b"));
+        assert!(!ModelRule::NAMED.admits("openrouter:vendor/name"), "a path is not a name");
+
+        let other = tempfile::tempdir().expect("tempdir");
+        let none = providers_from(other.path(), |_, _| {});
+        assert_eq!(none.model_rule(Source::Claude), ModelRule::NONE);
+        assert!(!ModelRule::NONE.admits("opus"), "a source no provider runs takes no model");
     }
 
     /// A new session names an ACP agent exactly when it is an ACP session, and

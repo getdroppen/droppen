@@ -169,42 +169,6 @@ fn claude_env_models(vars: &BTreeMap<String, String>) -> Option<Vec<ModelInfo>> 
     Some(models)
 }
 
-impl ClaudeModels {
-    /// The Claude list for one login: the local one, or a stored account's.
-    ///
-    /// Three lanes, because the three kinds of login can be asked three different
-    /// things. An OAuth account has a config root of its own and is *asked*. An env
-    /// account has no root and usually no Anthropic behind it either, but it does
-    /// have a block, and a block that names a model has answered the question — see
-    /// [`claude_env_models`]. Everything else falls back.
-    ///
-    /// An account that cannot be asked is not an error — an unknown id, a deleted
-    /// account, one with no `/usage` login of its own — because the caller is a
-    /// picker and a picker must always have something to show. It gets the same
-    /// alias list and the same [`ModelListSource::Fallback`] as any other probe
-    /// failure, which the composer already marks as a guess.
-    async fn login_models(&self, account_id: Option<&str>) -> (Vec<ModelInfo>, ModelListSource) {
-        let Some(id) = account_id.map(str::trim).filter(|id| !id.is_empty()) else {
-            return self.cache.models(None).await;
-        };
-        let accounts = &self.accounts;
-        let Some(account) = accounts.get(id).await else {
-            return (claude_fallback(), ModelListSource::Fallback);
-        };
-        if account.kind == AccountKind::Env {
-            // A block that names no model says nothing, and gets the guess it is.
-            return match claude_env_models(&accounts.env_values(id, &CLAUDE_MODEL_VARS).await) {
-                Some(models) => (models, ModelListSource::AccountEnv),
-                None => (claude_fallback(), ModelListSource::Fallback),
-            };
-        }
-        let Some(dir) = probe_dir(accounts, &account) else {
-            return (claude_fallback(), ModelListSource::Fallback);
-        };
-        self.cache.models(Some(&dir)).await
-    }
-}
-
 /// The directory an account's list can be asked of, when there is one.
 ///
 /// The quota panel's rule, not a new one: only an OAuth account that has opted
@@ -253,6 +217,40 @@ impl ClaudeModels {
             cache: Arc::new(ClaudeModelCache::new(paths)),
             accounts,
         }
+    }
+
+    /// The Claude list for one login: the local one, or a stored account's.
+    ///
+    /// Three lanes, because the three kinds of login can be asked three different
+    /// things. An OAuth account has a config root of its own and is *asked*. An env
+    /// account has no root and usually no Anthropic behind it either, but it does
+    /// have a block, and a block that names a model has answered the question — see
+    /// [`claude_env_models`]. Everything else falls back.
+    ///
+    /// An account that cannot be asked is not an error — an unknown id, a deleted
+    /// account, one with no `/usage` login of its own — because the caller is a
+    /// picker and a picker must always have something to show. It gets the same
+    /// alias list and the same [`ModelListSource::Fallback`] as any other probe
+    /// failure, which the composer already marks as a guess.
+    async fn login_models(&self, account_id: Option<&str>) -> (Vec<ModelInfo>, ModelListSource) {
+        let Some(id) = account_id.map(str::trim).filter(|id| !id.is_empty()) else {
+            return self.cache.models(None).await;
+        };
+        let accounts = &self.accounts;
+        let Some(account) = accounts.get(id).await else {
+            return (claude_fallback(), ModelListSource::Fallback);
+        };
+        if account.kind == AccountKind::Env {
+            // A block that names no model says nothing, and gets the guess it is.
+            return match claude_env_models(&accounts.env_values(id, &CLAUDE_MODEL_VARS).await) {
+                Some(models) => (models, ModelListSource::AccountEnv),
+                None => (claude_fallback(), ModelListSource::Fallback),
+            };
+        }
+        let Some(dir) = probe_dir(accounts, &account) else {
+            return (claude_fallback(), ModelListSource::Fallback);
+        };
+        self.cache.models(Some(&dir)).await
     }
 }
 

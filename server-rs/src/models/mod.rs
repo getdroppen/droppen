@@ -6,9 +6,9 @@
 //! ([`acp`]). So each provider answers [`Models`] for its own CLI, and the
 //! route asks the provider of the source it is asked about.
 //!
-//! A list degrades to a static guess rather than failing, because an empty
-//! model picker is worse than a slightly stale one, and says which of the two
-//! the caller is looking at.
+//! Claude's and Codex's lists degrade to a static guess rather than failing,
+//! because an empty model picker is worse than a slightly stale one, and say
+//! which of the two the caller is looking at.
 
 use std::sync::Arc;
 
@@ -92,6 +92,57 @@ pub struct ModelsQuery {
     pub acp_agent: Option<String>,
 }
 
+/// What a model id spelled as a name may look like ([`ModelRule::NAMED`]).
+///
+/// A word-ish name, optionally followed by one bracketed variant tag — the
+/// shape of `claude-opus-4-8[1m]`, which is how the CLI is asked for the
+/// long-context variant of a model that has one. The tag is spelled out rather
+/// than folded into the character class on purpose: the value is handed to a
+/// CLI as a flag value, and a class permissive enough to hold a bracket
+/// anywhere would also hold an unbalanced one. Alphanumerics only inside it, so
+/// nothing a shell would read as special can ever get in even if a caller one
+/// day builds a command line out of this instead of an argv.
+///
+/// The name itself is `[[:word:]]`, `.`, `:` and `-`. That POSIX class is the
+/// ASCII `\w` the original pattern was reaching for by writing `(?-u:\w)`
+/// *inside* a character class — where it is not a flag group at all: the `?-u`
+/// in the middle of it reads as a **range**, `?`(0x3F) through `u`(0x75), and
+/// that range quietly admitted `\`, `` ` ``, `^`, `@`, `(`, `)` and both
+/// brackets. So brackets were already getting through, by accident and
+/// unbalanced; this says what is meant instead.
+pub const MODEL_PATTERN: &str = r"^[A-Za-z0-9][[:word:].:-]*(?:\[[A-Za-z0-9]+\])?$";
+
+/// How a CLI's model ids are spelled, which every model id is held to before
+/// it reaches the CLI: on the send routes, in the composer's choices and in a
+/// scheduled task. The value becomes a CLI argument, so an unbounded `model`
+/// could read as a flag rather than as a model name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ModelRule {
+    /// The pattern a model id matches.
+    pattern: &'static str,
+    /// The longest a model id may be, in characters.
+    max_len: usize,
+}
+
+impl ModelRule {
+    /// A model id spelled as a name ([`MODEL_PATTERN`]), at most 100
+    /// characters: the rule of a CLI that does not spell its ids its own way.
+    pub const NAMED: ModelRule = ModelRule::new(MODEL_PATTERN, 100);
+
+    /// The rule of a source no provider runs, which admits no model id.
+    pub const NONE: ModelRule = ModelRule::new("", 0);
+
+    /// Ids matching `pattern`, at most `max_len` characters long.
+    pub const fn new(pattern: &'static str, max_len: usize) -> Self {
+        Self { pattern, max_len }
+    }
+
+    /// Whether `model` is spelled the way this rule allows.
+    pub fn admits(&self, model: &str) -> bool {
+        self.max_len > 0 && model.chars().count() <= self.max_len && regex::Regex::new(self.pattern).expect("valid model pattern").is_match(model)
+    }
+}
+
 /// What one CLI says about its models: the list a picker offers, the ids a
 /// start is chosen against, and which efforts and permission modes it takes.
 /// Each provider answers for its own CLI ([`crate::inject::Provider::models`]).
@@ -126,6 +177,11 @@ pub trait Models: Send + Sync {
     /// Whether this CLI would take `permission` as the permission mode it is
     /// spawned with.
     fn permission_is_known(&self, permission: &str) -> bool;
+
+    /// How this CLI's model ids are spelled.
+    fn model_rule(&self) -> ModelRule {
+        ModelRule::NAMED
+    }
 }
 
 /// What the model routes use of the server's state.

@@ -86,12 +86,17 @@ impl CodexModels {
     pub(crate) fn new(paths: Arc<Paths>) -> Self {
         Self { paths }
     }
+
+    /// What Codex's own cache lists, or the static fallback.
+    async fn cached(&self) -> (Vec<ModelInfo>, ModelListSource) {
+        codex_models(&crate::sessions::codex::CodexHome::of(&self.paths).models_cache()).await
+    }
 }
 
 impl Models for CodexModels {
     fn list<'a>(&'a self, _query: &'a ModelsQuery) -> BoxFuture<'a, Result<ModelList, String>> {
         Box::pin(async move {
-            let (models, source) = codex_models(&crate::sessions::codex::CodexHome::of(&self.paths).models_cache()).await;
+            let (models, source) = self.cached().await;
             Ok(ModelList {
                 models,
                 source,
@@ -102,7 +107,7 @@ impl Models for CodexModels {
 
     fn ids<'a>(&'a self, _account_id: Option<&'a str>) -> BoxFuture<'a, Vec<String>> {
         Box::pin(async move {
-            let (models, _) = codex_models(&crate::sessions::codex::CodexHome::of(&self.paths).models_cache()).await;
+            let (models, _) = self.cached().await;
             models.into_iter().map(|model| model.id).collect()
         })
     }
@@ -112,7 +117,7 @@ impl Models for CodexModels {
     // missing, this answers `None` and the caller accepts whatever it was given.
     fn accepted_efforts<'a>(&'a self, model: Option<&'a str>) -> BoxFuture<'a, Option<Vec<String>>> {
         Box::pin(async move {
-            let (models, list) = codex_models(&crate::sessions::codex::CodexHome::of(&self.paths).models_cache()).await;
+            let (models, list) = self.cached().await;
             if list == ModelListSource::Fallback {
                 return None;
             }
