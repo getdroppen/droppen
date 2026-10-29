@@ -295,6 +295,32 @@ mod tests {
         assert!(!encoded.contains("\n"), "a raw newline would end the JSON string: {encoded}");
     }
 
+    /// The body `rh-notify` posts, byte for byte.
+    #[test]
+    fn the_payload_bytes() {
+        let bytes = |options: &Options| serde_json::to_string(&payload(options).expect("payload")).unwrap();
+        let full = Options {
+            title: "Blocked".into(),
+            body: "line one\nline \"two\"".into(),
+            level: Some("time-sensitive".into()),
+            group: Some("deploy".into()),
+        };
+        assert_eq!(bytes(&full), r#"{"title":"Blocked","body":"line one\nline \"two\"","level":"timeSensitive","group":"deploy"}"#);
+        let bare = Options {
+            title: "T".into(),
+            body: String::new(),
+            level: None,
+            group: Some(" ".into()),
+        };
+        assert_eq!(bytes(&bare), r#"{"title":"T","body":""}"#);
+        let quiet = Options {
+            level: Some("low".into()),
+            group: None,
+            ..bare
+        };
+        assert_eq!(bytes(&quiet), r#"{"title":"T","body":"","level":"passive"}"#);
+    }
+
     #[test]
     fn an_absent_flag_is_absent_from_the_body() {
         let payload = payload(&Options {

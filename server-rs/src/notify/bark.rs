@@ -308,6 +308,42 @@ mod tests {
         assert!(!insecure_endpoints_allowed(), "unset");
     }
 
+    /// The body bark-server gets, byte for byte: title and body, the optional
+    /// fields only when they say something, then the level and `isArchive`.
+    #[test]
+    fn the_payload_bytes() {
+        let bytes = |nudge: &Nudge| serde_json::to_string(&payload(nudge)).unwrap();
+        let bare = Nudge {
+            title: "Blocked on a decision".into(),
+            body: "Postgres or \"SQLite\"?".into(),
+            subtitle: None,
+            group: None,
+            url: None,
+            level: Level::Active,
+        };
+        assert_eq!(bytes(&bare), r#"{"title":"Blocked on a decision","body":"Postgres or \"SQLite\"?","level":"active","isArchive":"1"}"#);
+        let full = Nudge {
+            title: "Done".into(),
+            body: "All 41 tests pass.".into(),
+            subtitle: Some("remote-hand · bark notifications".into()),
+            group: Some("remote-hand".into()),
+            url: Some("https://rh.example/sessions/claude/abc".into()),
+            level: Level::TimeSensitive,
+        };
+        assert_eq!(
+            bytes(&full),
+            r#"{"title":"Done","body":"All 41 tests pass.","subtitle":"remote-hand · bark notifications","group":"remote-hand","url":"https://rh.example/sessions/claude/abc","level":"timeSensitive","isArchive":"1"}"#
+        );
+        let blank = Nudge {
+            subtitle: Some(String::new()),
+            group: Some(String::new()),
+            url: Some(String::new()),
+            level: Level::Passive,
+            ..full
+        };
+        assert_eq!(bytes(&blank), r#"{"title":"Done","body":"All 41 tests pass.","level":"passive","isArchive":"1"}"#);
+    }
+
     #[test]
     fn the_payload_carries_what_bark_understands_and_omits_the_rest() {
         let bare = payload(&Nudge {

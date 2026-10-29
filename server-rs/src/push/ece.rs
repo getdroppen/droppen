@@ -344,6 +344,11 @@ mod tests {
         assert_eq!(jose["typ"], "JWT");
 
         let claims: serde_json::Value = serde_json::from_slice(&b64(parts[1])).expect("claims");
+        // The signed bytes: `aud`, `exp`, `sub`, in that order.
+        assert_eq!(
+            String::from_utf8(b64(parts[1])).expect("utf-8"),
+            format!(r#"{{"aud":"https://fcm.googleapis.com","exp":{},"sub":"mailto:x@y.z"}}"#, claims["exp"])
+        );
         assert_eq!(claims["aud"], "https://fcm.googleapis.com", "the origin, not the subscription URL");
         assert_eq!(claims["sub"], "mailto:x@y.z");
         let exp = claims["exp"].as_u64().expect("exp");
