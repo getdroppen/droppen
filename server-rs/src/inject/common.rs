@@ -11,6 +11,9 @@ use std::path::PathBuf;
 
 use droppen_instance::paths::Paths;
 
+use super::questions;
+use crate::sessions::delivery::SessionQuestion;
+
 /// The instant-chat persona: the text the CLI is actually launched with.
 pub(super) const CHAT_SYSTEM_PROMPT: &str = concat!(
     "You are a friendly general-purpose assistant in a casual chat app. ",
@@ -215,6 +218,37 @@ pub enum StopTaskOutcome {
     NoResident,
     /// The resident is not minding a task by that id.
     NoSuchTask,
+}
+
+/// What the user said to a question.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Reply {
+    /// An answer: choices, notes, words of their own — see [`questions::Answer`].
+    Answer(questions::Answer),
+    /// "Use your judgement": the question is refused, and the agent told so.
+    Dismiss,
+}
+
+/// What an answer did, or why it could not.
+#[derive(Debug, Clone)]
+pub enum AnswerOutcome {
+    /// Written to claude: its turn goes on with the answer. The question as it
+    /// now stands.
+    Delivered(SessionQuestion),
+    /// Somebody got there first, or the question closed: the question as they
+    /// left it, so whoever is answering can be told who and when.
+    Resolved(SessionQuestion),
+    /// This driver is not holding that question open.
+    Unknown,
+    /// This server holds no resident for the session.
+    NoResident,
+    /// The resident is still reading back its history after a restart, and
+    /// does not yet know which questions it holds. Ask again in a moment.
+    NotReady,
+    /// The answer is not one the question could be given.
+    Invalid(String),
+    /// The write to claude failed; the question is still pending.
+    Unreachable,
 }
 
 #[cfg(test)]

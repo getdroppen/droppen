@@ -36,11 +36,10 @@ mod runs;
 pub mod shim;
 
 pub(crate) use app_server::Codex;
-pub use common::{Phase, QueueOutcome, ResidentState, StopTaskOutcome};
+pub use common::{AnswerOutcome, Phase, QueueOutcome, Reply, ResidentState, StopTaskOutcome};
 pub use gate::SpawnPermit;
-pub use registry::{Provider, ProviderRegistry, Run};
+pub use registry::{Capabilities, Provider, ProviderRegistry, Run};
 pub(crate) use resident::ClaudeCode;
-pub use resident::{AnswerOutcome, Reply};
 
 use common::{new_uuid, session_workdir, CHAT_SYSTEM_PROMPT};
 
@@ -1505,63 +1504,14 @@ impl InjectionRegistry {
         crate::sessions::DriverStates::new(self.server.clone(), states.residents, states.running, states.finished)
     }
 
-    /// Take a message out of a session's queue before it is written to the CLI.
+    /// Stop a run in the runs map, which no resident drives: a one-shot run
+    /// adopted from the previous server. `false` when nothing is running.
     ///
-    /// Both resident protocols hold durable queues. Legacy exec runs do not.
-    pub async fn drop_queued_message(&self, source: Source, id: &str, qid: &str) -> QueueOutcome {
-        if source == Source::Codex {
-            return self.codex_queue_action(id, qid, false).await;
-        }
-        if source == Source::Acp {
-            return self.acp_queue_action(id, qid, false).await;
-        }
-        if source != Source::Claude {
-            return QueueOutcome::NoResident;
-        }
-        self.drop_queued(id, qid).await
-    }
-
-    /// Hand a queued message to claude now, ahead of the turn in flight.
-    ///
-    /// See [`resident::Driver::steer`] for what that means to the CLI and why
-    /// it is a delivery rather than an interruption.
-    pub async fn steer_queued_message(&self, source: Source, id: &str, qid: &str) -> QueueOutcome {
-        if source == Source::Codex {
-            return self.codex_queue_action(id, qid, true).await;
-        }
-        if source == Source::Acp {
-            return self.acp_queue_action(id, qid, true).await;
-        }
-        if source != Source::Claude {
-            return QueueOutcome::NoResident;
-        }
-        self.steer_queued(id, qid).await
-    }
-
-    /// Stop the turn remote-hand started. `false` when nothing is running.
-    ///
-    /// A resident is asked rather than killed: the first rung of its ladder is
-    /// a `control_request` that ends the *turn* and leaves the process — and
-    /// anything it started in the background — alive. Only a CLI that will not
-    /// answer gets signalled, and only by the driver that can tell whether the
-    /// turn ended in between.
-    ///
-    /// For a one-shot codex run there is no such distinction, and the old rule
-    /// applies: a pid that no longer names the run it was recorded for is *not*
-    /// signalled, and the run is closed out as finished instead — see
+    /// For such a run there is no turn to end short of the process, and the
+    /// old rule applies: a pid that no longer names the run it was recorded for
+    /// is *not* signalled, and the run is closed out as finished instead — see
     /// [`vanished`] for why that is the only safe direction.
-    pub fn interrupt(&self, source: Source, id: &str) -> bool {
-        if source == Source::Acp {
-            return self.acp_handle(id).filter(acp::Handle::alive).is_some_and(|h| h.interrupt());
-        }
-        if source == Source::Codex {
-            if let Some(h) = self.codex_handle(id).filter(app_server::Handle::alive) {
-                return h.interrupt();
-            }
-        }
-        if self.has_resident(source, id) {
-            return self.interrupt_resident(id);
-        }
+    pub(crate) fn interrupt_legacy(&self, source: Source, id: &str) -> bool {
         // The handle is cloned out so the map lock is released first: the
         // fail-closed path below rewrites `runs.json` and unlinks a claim, and
         // neither belongs under a lock every route contends on.
@@ -1585,23 +1535,6 @@ impl InjectionRegistry {
         drop(state);
         signal(pid, libc::SIGTERM);
         true
-    }
-
-    /// Ask claude to stop one background task, leaving the turn alone.
-    ///
-    /// The narrow counterpart to [`Injections::interrupt`], and deliberately not
-    /// reachable the same way: Stop ends the *turn*, which is a thing this
-    /// server started and can therefore take back, while a background task is a
-    /// child claude is minding on its own clock. The CLI's `stop_task` control
-    /// request is the only thing that can end one of those without ending the
-    /// process, so a session with no resident — every codex run, and a claude
-    /// session this server is not driving — has no way to do it at all rather
-    /// than a worse way.
-    pub fn stop_background_task(&self, source: Source, id: &str, task_id: &str) -> StopTaskOutcome {
-        if source != Source::Claude || !self.has_resident(source, id) {
-            return StopTaskOutcome::NoResident;
-        }
-        self.stop_resident_task(id, task_id)
     }
 }
 

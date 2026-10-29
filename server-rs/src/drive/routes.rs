@@ -733,16 +733,16 @@ async fn deliver_message(
     // the process is the one blocked mid-turn, which cannot change them. They
     // apply to the next message that starts a turn, as they always have.
     let mut meant_as_answer = false;
-    if source == Source::Claude {
-        if let Some(request_id) = drive.injections.open_question(&id) {
+    if drive.providers.capabilities(source).questions {
+        if let Some(request_id) = drive.providers.open_question(source, &id) {
             meant_as_answer = true;
             let answer = Answer {
                 response: Some(inject::claude_prompt(&body.text, &images, &attachments)),
                 ..Answer::default()
             };
             if let AnswerOutcome::Delivered(_) = drive
-                .injections
-                .answer_question(&id, &request_id, Reply::Answer(answer), by.clone())
+                .providers
+                .answer_question(source, &id, &request_id, Reply::Answer(answer), by.clone())
                 .await
             {
                 if let Some(qid) = &qid {
@@ -787,9 +787,10 @@ pub async fn session_questions(
     State(state): State<DriveState>,
     ApiPath((source, id)): ApiPath<(Source, String)>,
 ) -> Result<Json<SessionQuestions>, ApiError> {
-    let questions = match source {
-        Source::Claude => state.drive.injections.questions().for_session(&id, questions::now_ms()),
-        Source::Codex | Source::Acp => Vec::new(),
+    let questions = if state.drive.providers.capabilities(source).questions {
+        state.drive.injections.questions().for_session(&id, questions::now_ms())
+    } else {
+        Vec::new()
     };
     Ok(Json(SessionQuestions { questions }))
 }
@@ -892,7 +893,7 @@ async fn settle_question(
     if let Reply::Answer(answer) = &reply {
         questions::check_answer_size(answer).map_err(ApiError::bad_request)?;
     }
-    if source != Source::Claude {
+    if !drive.providers.capabilities(source).questions {
         return Err(ApiError::not_found("no such question"));
     }
     let summary = writable_session(drive, source, id).await?;
@@ -905,7 +906,7 @@ async fn settle_question(
         questions::check_answer(&stored.questions, answer).map_err(ApiError::bad_request)?;
     }
     let settled = match stored.state {
-        QuestionState::Pending => match drive.injections.answer_question(id, request_id, reply.clone(), by.clone()).await {
+        QuestionState::Pending => match drive.providers.answer_question(source, id, request_id, reply.clone(), by.clone()).await {
             AnswerOutcome::Delivered(question) => Ok(QuestionAnswerResult {
                 question,
                 delivered: QuestionDelivery::Turn,
@@ -1140,7 +1141,7 @@ pub async fn interrupt_session(
     State(state): State<DriveState>,
     ApiPath((source, id)): ApiPath<(Source, String)>,
 ) -> Result<Json<SendResult>, ApiError> {
-    if !state.drive.injections.interrupt(source, &id) {
+    if !state.drive.providers.interrupt(source, &id) {
         return Err(ApiError::conflict("no running message to interrupt"));
     }
     Ok(Json(SendResult { accepted: true }))
@@ -1163,7 +1164,7 @@ pub async fn stop_background_task(
     State(state): State<DriveState>,
     ApiPath(TaskPath { source, id, task_id }): ApiPath<TaskPath>,
 ) -> Result<Json<SendResult>, ApiError> {
-    match state.drive.injections.stop_background_task(source, &id, &task_id) {
+    match state.drive.providers.stop_background_task(source, &id, &task_id) {
         inject::StopTaskOutcome::Asked => Ok(Json(SendResult { accepted: true })),
         // 404 rather than 409: the task is not there to act on, most often
         // because it finished while the button was being pressed.
@@ -1215,7 +1216,7 @@ pub async fn drop_queued_message(
     State(state): State<DriveState>,
     ApiPath(QueuePath { source, id, qid }): ApiPath<QueuePath>,
 ) -> Result<Json<SendResult>, ApiError> {
-    queue_result(state.drive.injections.drop_queued_message(source, &id, &qid).await)
+    queue_result(state.drive.providers.drop_queued_message(source, &id, &qid).await)
 }
 
 /// Hand a queued message to claude now, ahead of the turn in flight.
@@ -1230,7 +1231,7 @@ pub async fn steer_queued_message(
     State(state): State<DriveState>,
     ApiPath(QueuePath { source, id, qid }): ApiPath<QueuePath>,
 ) -> Result<Json<SendResult>, ApiError> {
-    queue_result(state.drive.injections.steer_queued_message(source, &id, &qid).await)
+    queue_result(state.drive.providers.steer_queued_message(source, &id, &qid).await)
 }
 
 /// Desired sidebar pin state; PUT is idempotent.

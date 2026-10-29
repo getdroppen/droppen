@@ -65,6 +65,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
+use futures_util::future::BoxFuture;
 use serde_json::Value;
 use tokio::sync::mpsc;
 
@@ -78,16 +79,16 @@ use droppen_base::process_env::Env;
 use droppen_base::procs;
 use crate::record::{Recorder, SpawnSummary, Stage};
 use crate::sessions::account::{AccountRef, LimitClass, RotationOutcome, RotationTrigger};
-use crate::sessions::delivery::{QuestionState, ReceiptStatus, SessionQuestion};
+use crate::sessions::delivery::{QuestionState, ReceiptStatus};
 use crate::sessions::{Injection, InjectionRunState, SessionStatus, Source};
 use droppen_base::time::iso8601;
 
 use super::questions::{self, PermissionRequest, Stored};
 use super::shim::{self, Link, Output, Sidecars, Spawn};
-use super::common::{busy_message, new_uuid, Phase, QueueOutcome, ResidentState, StopTaskOutcome};
+use super::common::{busy_message, new_uuid, AnswerOutcome, Phase, QueueOutcome, Reply, ResidentState, StopTaskOutcome};
 use super::drafts::Draft;
 use super::gate::{ClaimError, SessionLease};
-use super::{runs, DriverStatesBuilder, InjectError, InjectionRegistry, Provider, Run, RunEntry, RunState, SpawnPermit};
+use super::{runs, Capabilities, DriverStatesBuilder, InjectError, InjectionRegistry, Provider, Run, RunEntry, RunState, SpawnPermit};
 
 /// The mode flags every resident is started with.
 ///
@@ -506,37 +507,6 @@ enum Cmd {
     },
 }
 
-/// What the user said to a question.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Reply {
-    /// An answer: choices, notes, words of their own — see [`questions::Answer`].
-    Answer(questions::Answer),
-    /// "Use your judgement": the question is refused, and the agent told so.
-    Dismiss,
-}
-
-/// What an answer did, or why it could not.
-#[derive(Debug, Clone)]
-pub enum AnswerOutcome {
-    /// Written to claude: its turn goes on with the answer. The question as it
-    /// now stands.
-    Delivered(SessionQuestion),
-    /// Somebody got there first, or the question closed: the question as they
-    /// left it, so whoever is answering can be told who and when.
-    Resolved(SessionQuestion),
-    /// This driver is not holding that question open.
-    Unknown,
-    /// This server holds no resident for the session.
-    NoResident,
-    /// The resident is still reading back its history after a restart, and
-    /// does not yet know which questions it holds. Ask again in a moment.
-    NotReady,
-    /// The answer is not one the question could be given.
-    Invalid(String),
-    /// The write to claude failed; the question is still pending.
-    Unreachable,
-}
-
 /// One message waiting for its turn.
 struct Pending {
     /// What the queue routes name this message by.
@@ -700,6 +670,12 @@ impl Provider for ClaudeCode {
         Source::Claude
     }
 
+    /// claude stops to ask (`AskUserQuestion`), and the turn waits for the
+    /// answer.
+    fn capabilities(&self) -> Capabilities {
+        Capabilities { questions: true }
+    }
+
     fn run(&self) -> &dyn Run {
         self
     }
@@ -750,21 +726,48 @@ impl Run for ClaudeCode {
     fn recheck_holds(&self) {
         self.registry.recheck_holds();
     }
+
+    fn drop_queued<'a>(&'a self, id: &'a str, qid: &'a str) -> BoxFuture<'a, QueueOutcome> {
+        Box::pin(self.registry.drop_queued(id, qid))
+    }
+
+    fn steer_queued<'a>(&'a self, id: &'a str, qid: &'a str) -> BoxFuture<'a, QueueOutcome> {
+        Box::pin(self.registry.steer_queued(id, qid))
+    }
+
+    /// The resident, when this server holds one; otherwise a run adopted
+    /// from the previous server.
+    fn interrupt(&self, id: &str) -> bool {
+        if self.holds(id) {
+            return self.registry.interrupt_resident(id);
+        }
+        self.registry.interrupt_legacy(Source::Claude, id)
+    }
+
+    fn stop_background_task(&self, id: &str, task_id: &str) -> StopTaskOutcome {
+        if !self.holds(id) {
+            return StopTaskOutcome::NoResident;
+        }
+        self.registry.stop_resident_task(id, task_id)
+    }
+
+    fn open_question(&self, id: &str) -> Option<String> {
+        self.registry.open_question(id)
+    }
+
+    fn answer_question<'a>(&'a self, id: &'a str, request_id: &'a str, reply: Reply, by: Option<String>) -> BoxFuture<'a, AnswerOutcome> {
+        Box::pin(self.registry.answer_question(id, request_id, reply, by))
+    }
+}
+
+impl ClaudeCode {
+    /// Whether this server holds a resident for session `id`.
+    fn holds(&self, id: &str) -> bool {
+        self.registry.residents.lock().expect("residents poisoned").contains_key(id)
+    }
 }
 
 impl InjectionRegistry {
-    /// Whether this server holds a resident for the session, for the stop
-    /// paths below; the routes ask [`super::ProviderRegistry::has_resident`].
-    pub(super) fn has_resident(&self, source: Source, id: &str) -> bool {
-        if source == Source::Codex {
-            return self.codex_handle(id).is_some_and(|h| h.visible());
-        }
-        if source == Source::Acp {
-            return self.acp_handle(id).is_some_and(|h| h.visible());
-        }
-        source == Source::Claude && self.residents.lock().expect("residents poisoned").contains_key(id)
-    }
-
     /// Claude's part of [`InjectionRegistry::driver_states`]: every resident.
     pub(super) fn claude_driver_states(&self, states: &mut DriverStatesBuilder) {
         for (id, handle) in self.residents.lock().expect("residents poisoned").iter() {
