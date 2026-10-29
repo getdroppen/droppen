@@ -5,7 +5,7 @@ use std::sync::Arc;
 use futures_util::future::BoxFuture;
 
 use super::{ModelInfo, ModelList, ModelListSource, ModelRule, Models, ModelsQuery};
-use crate::inject::InjectionRegistry;
+use crate::inject::acp::AcpRuns;
 use droppen_http::openapi_ext::Nullable;
 use droppen_instance::paths::Paths;
 
@@ -15,24 +15,24 @@ use droppen_instance::paths::Paths;
 pub const ACP_MODEL_PATTERN: &str = r"^[A-Za-z0-9][[:word:].:/@+-]*$";
 
 /// The ACP agents' models, for [`Models`]: each agent's own list, asked of the
-/// agent ([`InjectionRegistry::acp_options`]).
+/// agent ([`AcpRuns::acp_options`]).
 pub(crate) struct AcpModels {
     /// The instance's paths, which hold the agents' configurations.
     paths: Arc<Paths>,
     /// The live runs, which ask an ACP agent for its options.
-    injections: Arc<InjectionRegistry>,
+    injections: Arc<AcpRuns>,
 }
 
 impl AcpModels {
     /// The models of the agents configured under `paths`, asked through
     /// `injections`.
-    pub(crate) fn new(paths: Arc<Paths>, injections: Arc<InjectionRegistry>) -> Self {
+    pub(crate) fn new(paths: Arc<Paths>, injections: Arc<AcpRuns>) -> Self {
         Self { paths, injections }
     }
 
     /// An ACP agent's list: the values of its `model` option, each with the
     /// ladder of its `thought_level` option, as the agent itself publishes them
-    /// ([`crate::inject::InjectionRegistry::acp_options`]).
+    /// ([`AcpRuns::acp_options`]).
     ///
     /// The agent's list is the whole list: there is no static guess to fall back
     /// on, so an agent that cannot be asked — or is not configured — yields no
@@ -55,7 +55,7 @@ impl AcpModels {
         // redacted as its errors are, and no longer than a name. An id goes back
         // to the agent as it is when picked, so one that looks like a credential,
         // or is too long to show whole, is left out rather than shown altered
-        // ([`crate::inject::InjectionRegistry::acp_id_shown`]).
+        // ([`AcpRuns::acp_id_shown`]).
         let injections = &self.injections;
         let shown = |text: &str| droppen_base::text::clip(&injections.redact_acp(&agent, text), crate::acp_agent::MAX_AGENT_WORD);
         let usable = |id: &str| injections.acp_id_shown(id);

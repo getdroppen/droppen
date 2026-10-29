@@ -455,6 +455,10 @@ impl Provider for Codex {
     fn models(&self) -> &dyn crate::models::Models {
         &self.models
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 impl Run for Codex {
