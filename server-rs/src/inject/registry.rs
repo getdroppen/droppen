@@ -60,8 +60,7 @@ pub trait Run: Send + Sync {
 /// same order whichever was registered first.
 pub struct ProviderRegistry {
     providers: BTreeMap<Source, Arc<dyn Provider>>,
-    /// The runs of every provider, which each one reads its state from until
-    /// that state is its own.
+    /// The runs map every provider reads its sessions' state from.
     injections: Arc<InjectionRegistry>,
 }
 
