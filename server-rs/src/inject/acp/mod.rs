@@ -1495,6 +1495,45 @@ mod tests {
         injections.archive_acp(gate, &id).await.expect("archived");
         assert_eq!(injections.steps()[4..], [step("agent stopping", false, Some(false))]);
     }
+
+    /// The provider registry lends its own spawn gate, the one its routes take
+    /// too: a start and a send through it hold that gate around the map, and
+    /// an archive through it waits for as long as that gate is held.
+    #[tokio::test]
+    async fn the_provider_registry_lends_its_own_gate() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let state = crate::api::test_support::state(home.path()).await;
+        let (providers, injections) = (state.drive.providers.clone(), acp_of(&state.drive));
+        configure_fake(&state.paths, home.path(), "fake", "");
+        let dir = workdirs(home.path(), &["work"]).remove(0).to_string_lossy().into_owned();
+        let options = SendOptions {
+            acp_agent: Some("fake".into()),
+            ..SendOptions::default()
+        };
+
+        let id = providers.start_new_session(Source::Acp, &dir, "hello", &options).await.expect("started");
+        assert_eq!(injections.steps()[0], step("agent placeholder", true, Some(false)));
+        until("the first turn", || injections.acp_handle(&id).is_some_and(|handle| !handle.busy())).await;
+        if let Some(stopping) = injections.acp_handle(&id).expect("a handle").request_stop() {
+            let _ = stopping.await;
+        }
+        until("the process to go", || injections.acp_handle(&id).is_none_or(|handle| !handle.alive())).await;
+        providers.send_to_session(Source::Acp, &id, None, "again", &SendOptions::default()).await.expect("reopened");
+        assert_eq!(injections.steps()[2], step("agent placeholder", true, Some(false)));
+        until("the second turn", || injections.acp_handle(&id).is_some_and(|handle| !handle.busy())).await;
+
+        let held = providers.gate().permit().await;
+        let archive = tokio::spawn({
+            let (providers, id) = (providers.clone(), id.clone());
+            async move { providers.archive(Source::Acp, &id).await }
+        });
+        // Not done while the gate is held: an archive lent another gate would
+        // be by then. A slow machine can only make this pass, not fail.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(!archive.is_finished(), "an archive waits for the registry's gate");
+        drop(held);
+        archive.await.expect("joined").expect("archived");
+    }
     /// Asking an agent what it offers, or checking that it answers, starts it
     /// in a scratch directory and outside the spawn gate: neither runs a
     /// session, and a slow agent must not hold up every send.
