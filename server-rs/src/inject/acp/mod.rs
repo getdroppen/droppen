@@ -59,7 +59,8 @@ use super::{AccountChoice, DriverStatesBuilder, InjectError, InjectionRegistry, 
 use crate::acp::{category, option_for, ConfigOption, InitializeResponse};
 use crate::acp_agent::{AcpAgent, AcpAgentRegistry, AcpCheck, AcpCheckState};
 use crate::sessions::acp_transcript::{has_conversation, read_header, record, AcpTranscripts, Translator};
-use crate::sessions::{Injection, Source};
+use crate::sessions::{Injection, SessionSummary, Source};
+use droppen_http::error::ApiError;
 use droppen_base::process_env::clean_env_bare;
 use client::Client;
 use conn::Conn;
@@ -330,6 +331,25 @@ impl Run for Acp {
     /// previous session is one.
     fn schedule_busy(&self, _id: &str) -> Option<&'static str> {
         None
+    }
+
+    // The agent id becomes a path segment, the agent's transcript directory
+    // (`AcpTranscripts::agent_dir`), so it is held to `valid_agent_id` before
+    // it is looked up; then it has to name a configured agent.
+    fn check_start(&self, acp_agent: Option<&str>) -> Result<(), ApiError> {
+        match acp_agent {
+            None => Err(ApiError::bad_request("an ACP session needs acpAgent: the agent it runs on")),
+            Some(id) if !crate::sessions::acp_transcript::valid_agent_id(id) => Err(ApiError::bad_request(format!("invalid ACP agent id: {id}"))),
+            Some(id) if AcpAgentRegistry::of(&self.registry.paths).get(id).is_none() => {
+                Err(ApiError::bad_request(format!("no ACP agent \"{id}\" is configured")))
+            }
+            Some(_) => Ok(()),
+        }
+    }
+
+    // A session whose agent was removed cannot be continued.
+    fn send_block(&self, summary: &SessionSummary) -> Option<String> {
+        AcpAgentRegistry::of(&self.registry.paths).send_block(summary)
     }
 }
 

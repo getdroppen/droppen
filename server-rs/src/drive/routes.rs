@@ -507,21 +507,6 @@ fn validate_body(
     Ok(())
 }
 
-/// A new session names an ACP agent exactly when it is one, and the agent it
-/// names is one that is configured: an unknown one is a bad request rather
-/// than a session that cannot start.
-fn validate_acp_agent(state: &DriveState, source: Source, agent: Option<&str>) -> Result<(), ApiError> {
-    match (source, agent) {
-        (Source::Acp, None) => Err(ApiError::bad_request("an ACP session needs acpAgent: the agent it runs on")),
-        (Source::Acp, Some(id)) if !crate::sessions::acp_transcript::valid_agent_id(id) => Err(ApiError::bad_request(format!("invalid ACP agent id: {id}"))),
-        (Source::Acp, Some(id)) if crate::acp_agent::AcpAgentRegistry::of(&state.paths).get(id).is_none() => {
-            Err(ApiError::bad_request(format!("no ACP agent \"{id}\" is configured")))
-        }
-        (Source::Acp, Some(_)) | (_, None) => Ok(()),
-        (_, Some(_)) => Err(ApiError::bad_request("acpAgent is only for ACP sessions")),
-    }
-}
-
 fn send_options(model: Option<String>, effort: Option<String>, permission: Option<String>, account_id: Option<Option<String>>) -> SendOptions {
     SendOptions {
         model,
@@ -559,7 +544,7 @@ pub async fn new_session(State(state): State<DriveState>, ApiJson(body): ApiJson
         body.permission.as_deref(),
         &body.account_id,
     )?;
-    validate_acp_agent(&state, body.source, body.acp_agent.as_deref())?;
+    state.drive.providers.check_start(body.source, body.acp_agent.as_deref())?;
     let Some(client_id) = body.client_message_id.0.clone() else {
         return start_session(state, body, None).await.map(Json);
     };
@@ -712,7 +697,7 @@ async fn deliver_message(
     // flight ends. See [`sendability`] for why the live-process arm is lifted
     // too — the live process the probe can see is ours. An ACP session whose
     // agent was removed is refused whatever is running.
-    let (can_send, reason) = match crate::acp_agent::AcpAgentRegistry::of(&drive.paths).send_block(&summary) {
+    let (can_send, reason) = match drive.providers.send_block(&summary) {
         Some(reason) => (false, Some(reason)),
         None => drive.transcripts.sendability(
             source,
