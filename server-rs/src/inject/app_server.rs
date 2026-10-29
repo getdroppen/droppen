@@ -600,7 +600,7 @@ impl InjectionRegistry {
         self.run_injection(Source::Codex, id)
     }
 
-    /// Codex's part of [`InjectionRegistry::driver_states`]: the app servers
+    /// Codex's part of [`super::RunHost::driver_states`]: the app servers
     /// the list is to show, and the state of every app server's run.
     pub(super) fn codex_driver_states(&self, states: &mut DriverStatesBuilder) {
         for (id, handle) in self.codex_servers.lock().unwrap().iter().filter(|(_, h)| h.visible()) {

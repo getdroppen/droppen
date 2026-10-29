@@ -325,7 +325,7 @@ pub(crate) struct AcpRuns {
     /// What they run on.
     registry: Arc<InjectionRegistry>,
     /// The agent process behind each ACP session, keyed
-    /// [`InjectionRegistry::key_of`].
+    /// [`super::RunHost::key_of`].
     acp_servers: Mutex<HashMap<String, Handle>>,
     /// What each ACP agent last said it offers, by agent id: its model list
     /// and effort ladder, for the composer; see [`AcpRuns::acp_options`].
@@ -361,7 +361,7 @@ impl std::ops::Deref for AcpRuns {
 }
 
 impl ListsRuns for AcpRuns {
-    fn driver_states(&self, states: &mut DriverStatesBuilder) {
+    fn add_to(&self, states: &mut DriverStatesBuilder) {
         self.acp_driver_states(states);
     }
 }
@@ -466,7 +466,7 @@ impl Run for Acp {
 }
 
 impl AcpRuns {
-    /// ACP's part of [`InjectionRegistry::driver_states`]: the agent processes
+    /// ACP's part of [`super::RunHost::driver_states`]: the agent processes
     /// the list is to show, and the state of every one's run.
     pub(super) fn acp_driver_states(&self, states: &mut DriverStatesBuilder) {
         // Already keyed `key_of`, so the keys go in as they are.
@@ -547,13 +547,13 @@ impl AcpRuns {
 
     /// Whether an id an agent gave — a model, an effort — can be shown and
     /// sent back as it is: no longer than a name, and nothing in it that
-    /// [`InjectionRegistry::redact`] would take out. The agent's own variables'
+    /// [`super::RunHost::redact`] would take out. The agent's own variables'
     /// values are not looked for: they are often what names its model.
     pub(crate) fn acp_id_shown(&self, id: &str) -> bool {
         id.chars().count() <= crate::acp_agent::MAX_AGENT_WORD && self.redact(id) == id
     }
 
-    /// What `agent` said, fit to be stored and shown: [`InjectionRegistry::redact`],
+    /// What `agent` said, fit to be stored and shown: [`super::RunHost::redact`],
     /// after its own variables' values are taken out — they are what an API
     /// key looks like — and then cut to a few KB, as a session's error, its
     /// transcript and a push notification carry it.

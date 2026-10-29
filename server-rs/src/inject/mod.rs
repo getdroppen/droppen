@@ -116,7 +116,7 @@ pub enum AccountChoice {
     /// `accountId: "<uuid>"` with `accountFrom: "start"`: the account
     /// `GET /api/accounts/start` named for a pair no model-less start reaches
     /// (`placed: false`). The start rule's choice, not a person's — logged as
-    /// that, and re-checked at the spawn ([`InjectionRegistry::rule_account`]).
+    /// that, and re-checked at the spawn ([`RunHost::rule_account`]).
     Rule(String),
 }
 
@@ -279,7 +279,7 @@ pub struct Sent {
     pub queued: bool,
 }
 
-impl InjectionRegistry {
+impl RunHost {
     /// An account the start rule named for a pair no model-less start reaches
     /// (`accountFrom: "start"`), checked again now: still the login a start naming
     /// no model gets ([`crate::accounts::rotation::StartInputs::still_names`]) —
@@ -359,7 +359,9 @@ impl InjectionRegistry {
     pub(crate) fn redact(&self, text: &str) -> String {
         redact_secrets(&self.accounts.redact_known_secrets(text))
     }
+}
 
+impl InjectionRegistry {
     /// Write a rotation decision down and tell everyone who should hear of it:
     /// the log line, the phone, the session's feed and the list.
     ///
@@ -413,7 +415,9 @@ impl InjectionRegistry {
         self.announce(Source::Claude, &decision.session_id);
         id
     }
+}
 
+impl RunHost {
     /// Write a limit a driver saw into this instance's limit log.
     ///
     /// Phase 1 of account rotation, and only that: whatever the driver then
@@ -558,10 +562,15 @@ impl RunEntry {
 /// The TypeScript keeps two module-level maps. Here they are one registry that
 /// lives in the application state, so two servers in one process do not kill
 /// each other's children.
-pub struct InjectionRegistry {
+///
+/// What every provider's runs share: the runs map and its journal, the
+/// receipts, questions and drafts, whom a change is told to, the accounts a
+/// start is placed on, and the watchdog's timings. Each provider's own runs
+/// reach it through themselves ([`InjectionRegistry`], [`acp::AcpRuns`]).
+pub struct RunHost {
     /// The stored logins, for one job only: taking the credentials this server
     /// injected back out of whatever the CLI printed. See
-    /// [`InjectionRegistry::redact`].
+    /// [`RunHost::redact`].
     accounts: Arc<crate::accounts::store::AccountsStore>,
     /// The quota readings, for one job only: every `rate_limit_event` a
     /// resident's claude writes is a reading of the login it runs on, and the
@@ -571,27 +580,16 @@ pub struct InjectionRegistry {
     /// This server's name, so the keys below can say whose they are.
     ///
     /// Only ever this process' own: everything keyed by it is in memory and
-    /// dies with the registry. See [`InjectionRegistry::key_of`].
+    /// dies with the registry. See [`RunHost::key_of`].
     server: ServerId,
-    codex_servers: Mutex<HashMap<String, app_server::Handle>>,
-    /// The runs a provider keeps itself, which [`Self::driver_states`] gathers
-    /// after Claude Code's and Codex's: each listed itself as it was made
-    /// ([`ListsRuns`]).
+    /// Every provider's runs, which [`Self::driver_states`] gathers: each
+    /// listed itself as it was made ([`ListsRuns`]).
     listed: Mutex<Vec<Weak<dyn ListsRuns>>>,
     runs: Mutex<HashMap<String, Arc<RunEntry>>>,
-    /// The resident claude behind each session, keyed by session id alone —
-    /// there is no codex resident, so the source is not part of the key.
-    residents: Mutex<HashMap<String, resident::Handle>>,
-    /// Serializes the gap between "no resident for this session" and "one in the
-    /// map", and holds the per-session claims; see [`InjectionRegistry::deliver`].
-    spawn_gate: gate::SpawnGate,
     /// Where a resident's shim leaves its socket, stderr tail and tombstone.
     shim_dir: PathBuf,
     /// How long a codex run may make no progress before it is ended.
     idle_timeout: Duration,
-    /// How long a claude turn may make no progress before it is *marked*
-    /// stalled. Nothing is ever killed for it; see [`resident`].
-    stall_after: Duration,
     /// How long each rung of a resident's interrupt ladder waits for the turn to
     /// end before the next signal.
     ///
@@ -603,6 +601,44 @@ pub struct InjectionRegistry {
     interrupt_step: Duration,
     /// How often the watchdog checks.
     watchdog_interval: Duration,
+    /// Where transcripts are discovered, for the idle watchdog.
+    paths: Arc<Paths>,
+    /// The record of in-flight runs, in this server's own instance directory.
+    journal: runs::RunsFile,
+    /// The session feed and the list feed, told when a driver changes something
+    /// no file shows. Set once, at startup; empty in tests that build no app.
+    listeners: std::sync::OnceLock<Listeners>,
+    /// Where the drivers send a turn's end, a question and a rotation for the
+    /// phone. Set once, at startup; empty in tests that build no app.
+    alerts: std::sync::OnceLock<Arc<dyn Alerts>>,
+    /// The idempotency claims and receipts of messages a client named, in
+    /// this instance's database. The drivers report into it by queue id; see
+    /// [`receipts`].
+    receipts: Arc<receipts::Receipts>,
+    /// The questions claude stopped to ask, in this instance's database. The
+    /// drivers open and close them; the answer routes compare-and-set them.
+    /// See [`questions`].
+    questions: Arc<questions::Questions>,
+    /// What each resident claude is thinking right now, as a running count;
+    /// written by the drivers, read by the session feeds. See [`drafts`].
+    drafts: drafts::Drafts,
+}
+
+/// Claude Code's residents and Codex's app servers, and the spawn gate, on
+/// the host whose runs every provider shares ([`RunHost`]).
+pub struct InjectionRegistry {
+    /// What its runs share with every provider's.
+    host: Arc<RunHost>,
+    codex_servers: Mutex<HashMap<String, app_server::Handle>>,
+    /// The resident claude behind each session, keyed by session id alone —
+    /// there is no codex resident, so the source is not part of the key.
+    residents: Mutex<HashMap<String, resident::Handle>>,
+    /// Serializes the gap between "no resident for this session" and "one in the
+    /// map", and holds the per-session claims; see [`InjectionRegistry::deliver`].
+    spawn_gate: gate::SpawnGate,
+    /// How long a claude turn may make no progress before it is *marked*
+    /// stalled. Nothing is ever killed for it; see [`resident`].
+    stall_after: Duration,
     /// How long a settings change may be parked behind claude's background work
     /// before the process is restarted anyway; `None` to wait for ever.
     ///
@@ -665,10 +701,6 @@ pub struct InjectionRegistry {
     /// moment its transcript grows — see [`InjectionRegistry::transcript_grew`].
     /// Production runs [`resident::ABSORB_POLL`], or `DROPPEN_ABSORB_POLL_MS`.
     absorb_poll: Duration,
-    /// Where transcripts are discovered, for the idle watchdog.
-    paths: Arc<Paths>,
-    /// The record of in-flight runs, in this server's own instance directory.
-    journal: runs::RunsFile,
     /// What the spawn gate and the session's claim were at each traced point
     /// of a spawn; see [`Step`].
     #[cfg(test)]
@@ -683,31 +715,14 @@ pub struct InjectionRegistry {
     /// path, and for the process an automatic rotation moves a session to,
     /// which a driver builds by itself.
     decoration: Arc<dyn SpawnDecoration>,
-    /// The session feed and the list feed, told when a driver changes something
-    /// no file shows. Set once, at startup; empty in tests that build no app.
-    listeners: std::sync::OnceLock<Listeners>,
-    /// Where the drivers send a turn's end, a question and a rotation for the
-    /// phone. Set once, at startup; empty in tests that build no app.
-    alerts: std::sync::OnceLock<Arc<dyn Alerts>>,
     /// When a quota reading last woke the residents holding a queue; see
     /// [`InjectionRegistry::recheck_holds`].
     reading_recheck: Mutex<Option<Instant>>,
-    /// The idempotency claims and receipts of messages a client named, in
-    /// this instance's database. The drivers report into it by queue id; see
-    /// [`receipts`].
-    receipts: Arc<receipts::Receipts>,
-    /// The questions claude stopped to ask, in this instance's database. The
-    /// drivers open and close them; the answer routes compare-and-set them.
-    /// See [`questions`].
-    questions: Arc<questions::Questions>,
-    /// What each resident claude is thinking right now, as a running count;
-    /// written by the drivers, read by the session feeds. See [`drafts`].
-    drafts: drafts::Drafts,
 }
 
 /// The per-session feeds as the drivers see them: the open views of a session
 /// are told to look again. The feeds sit above the drivers, so they implement
-/// this and the entry hands it in ([`InjectionRegistry::attach_listeners`]).
+/// this and the entry hands it in ([`RunHost::attach_listeners`]).
 pub trait SessionFeeds: Send + Sync {
     /// Wake the open views of the session `key` names, if it has any.
     fn poke(&self, key: &str);
@@ -715,7 +730,7 @@ pub trait SessionFeeds: Send + Sync {
 
 /// The alerts a run raises for the user's phone. The alert channels sit above
 /// the drivers, so the entry implements this over them and hands it in
-/// ([`InjectionRegistry::attach_alerts`]).
+/// ([`RunHost::attach_alerts`]).
 ///
 /// Every method returns at once and sends in the background: a driver calls
 /// them while it holds a run's lock or is about to respawn a session, and a
@@ -785,26 +800,14 @@ impl InjectionRegistry {
         quota: Arc<crate::accounts::quota::QuotaCache>,
         decoration: Arc<dyn SpawnDecoration>,
     ) -> Arc<Self> {
-        let receipts = Arc::new(receipts::Receipts::new(droppen_instance::db::at(paths.instance_db())));
-        let questions = Arc::new(questions::Questions::new(droppen_instance::db::at(paths.instance_db())));
         Arc::new(Self {
-            receipts,
-            questions,
-            accounts,
-            quota,
-            server: ServerId::local(&paths),
+            host: RunHost::new(paths.clone(), instance, accounts, quota),
             codex_servers: Mutex::new(HashMap::new()),
-            listed: Mutex::new(Vec::new()),
-            runs: Mutex::new(HashMap::new()),
             residents: Mutex::new(HashMap::new()),
             spawn_gate: gate::SpawnGate::new(paths.data_dir().join("inject-locks")),
-            shim_dir: instance.session_shims(),
-            idle_timeout: env_ms("DROPPEN_IDLE_TIMEOUT_MS", Duration::from_secs(20 * 60)),
             // Ten minutes of silence is a *report*, not a sentence: the only
             // thing that happens at this threshold is that the turn is marked.
             stall_after: env_ms("DROPPEN_STALL_MS", Duration::from_secs(10 * 60)),
-            interrupt_step: env_ms("DROPPEN_INTERRUPT_STEP_MS", Duration::from_secs(5)),
-            watchdog_interval: env_ms("DROPPEN_WATCHDOG_INTERVAL_MS", Duration::from_secs(60)),
             // Half an hour: past every background job short enough that waiting
             // is the obvious answer, and well short of a session that is stuck.
             // Zero means "wait for ever", which is why this does not go through
@@ -833,14 +836,65 @@ impl InjectionRegistry {
             recovery_backoff: resident::RECOVERY_BACKOFF,
             steer_settle: env_ms("DROPPEN_STEER_SETTLE_MS", resident::STEER_SETTLE),
             absorb_poll: env_ms("DROPPEN_ABSORB_POLL_MS", resident::ABSORB_POLL),
-            journal: runs::RunsFile::new(instance.runs_file()),
             #[cfg(test)]
             steps: Mutex::new(Vec::new()),
-            recorders: record::Recorders::new(paths.clone(), instance),
+            recorders: record::Recorders::new(paths, instance),
             decoration,
+            reading_recheck: Mutex::new(None),
+        })
+        .listed()
+    }
+
+    /// Itself, its Claude Code and Codex runs listed with its host, ahead of
+    /// any other provider's ([`RunHost::driver_states`]).
+    fn listed(self: Arc<Self>) -> Arc<Self> {
+        let runs: Arc<dyn ListsRuns> = self.clone();
+        self.host.list(Arc::downgrade(&runs));
+        self
+    }
+}
+
+impl std::ops::Deref for InjectionRegistry {
+    type Target = RunHost;
+
+    fn deref(&self) -> &RunHost {
+        &self.host
+    }
+}
+
+impl ListsRuns for InjectionRegistry {
+    fn add_to(&self, states: &mut DriverStatesBuilder) {
+        self.claude_driver_states(states);
+        self.codex_driver_states(states);
+    }
+}
+
+impl RunHost {
+    /// The host of a registry's runs, the watchdog timed as the environment
+    /// asks ([`InjectionRegistry::new`]).
+    fn new(
+        paths: Arc<Paths>,
+        instance: &InstanceDirs,
+        accounts: Arc<crate::accounts::store::AccountsStore>,
+        quota: Arc<crate::accounts::quota::QuotaCache>,
+    ) -> Arc<Self> {
+        let receipts = Arc::new(receipts::Receipts::new(droppen_instance::db::at(paths.instance_db())));
+        let questions = Arc::new(questions::Questions::new(droppen_instance::db::at(paths.instance_db())));
+        Arc::new(Self {
+            receipts,
+            questions,
+            accounts,
+            quota,
+            server: ServerId::local(&paths),
+            listed: Mutex::new(Vec::new()),
+            runs: Mutex::new(HashMap::new()),
+            shim_dir: instance.session_shims(),
+            idle_timeout: env_ms("DROPPEN_IDLE_TIMEOUT_MS", Duration::from_secs(20 * 60)),
+            interrupt_step: env_ms("DROPPEN_INTERRUPT_STEP_MS", Duration::from_secs(5)),
+            watchdog_interval: env_ms("DROPPEN_WATCHDOG_INTERVAL_MS", Duration::from_secs(60)),
+            journal: runs::RunsFile::new(instance.runs_file()),
             listeners: std::sync::OnceLock::new(),
             alerts: std::sync::OnceLock::new(),
-            reading_recheck: Mutex::new(None),
             drafts: drafts::Drafts::default(),
             paths,
         })
@@ -869,7 +923,7 @@ impl InjectionRegistry {
 
     /// Ask the session list, and nothing else, to look again.
     ///
-    /// The other narrow half of [`InjectionRegistry::announce`], for a change
+    /// The other narrow half of [`RunHost::announce`], for a change
     /// the session's own view must hear about in a particular order: a resident
     /// that took a steered message off its queue on the transcript's word pokes
     /// the feed only once that feed has shown the transcript — see
@@ -882,7 +936,7 @@ impl InjectionRegistry {
 
     /// Push one session's state to whoever is watching it, and nothing else.
     ///
-    /// The narrow half of [`InjectionRegistry::announce`], for a change only
+    /// The narrow half of [`RunHost::announce`], for a change only
     /// the session's own view shows — a message's receipt — and that the list
     /// has no column for.
     pub(crate) fn poke_feed(&self, source: Source, id: &str) {
@@ -954,13 +1008,12 @@ impl InjectionRegistry {
     /// to make and cheap to carry.
     pub fn driver_states(&self) -> droppen_sessions::DriverStates {
         let mut states = DriverStatesBuilder::default();
-        self.claude_driver_states(&mut states);
-        self.codex_driver_states(&mut states);
-        // Taken out of the list first, so that no provider's lock is taken
-        // under it.
+        // In the order they were listed: Claude Code's, then Codex's, then
+        // ACP's. Taken out of the list first, so that no provider's lock is
+        // taken under it.
         let listed: Vec<Arc<dyn ListsRuns>> = self.listed.lock().expect("listed runs").iter().filter_map(Weak::upgrade).collect();
         for runs in listed {
-            runs.driver_states(&mut states);
+            runs.add_to(&mut states);
         }
         // Last, so that where a run here and a CLI's own handle share a key,
         // the run's finishing time is the one the list shows.
@@ -1013,14 +1066,14 @@ impl InjectionRegistry {
 }
 
 /// A provider's runs, kept by the provider rather than here, that the session
-/// list shows ([`InjectionRegistry::driver_states`]).
+/// list shows ([`RunHost::driver_states`]).
 pub(crate) trait ListsRuns: Send + Sync {
     /// Add its sessions' processes and the state of their runs to `states`.
-    fn driver_states(&self, states: &mut DriverStatesBuilder);
+    fn add_to(&self, states: &mut DriverStatesBuilder);
 }
 
 /// The session list's view of the runs, gathered a CLI at a time; see
-/// [`InjectionRegistry::driver_states`].
+/// [`RunHost::driver_states`].
 #[derive(Default)]
 pub(crate) struct DriverStatesBuilder {
     residents: HashMap<String, droppen_sessions::ResidentInfo>,
@@ -1029,7 +1082,7 @@ pub(crate) struct DriverStatesBuilder {
 }
 
 impl DriverStatesBuilder {
-    /// A resident the list is to show, under its [`InjectionRegistry::key_of`]
+    /// A resident the list is to show, under its [`RunHost::key_of`]
     /// key: every CLI files its sessions under that one key, so
     /// [`droppen_sessions::DriverStates::resident`] finds any of them with it.
     pub(crate) fn resident(&mut self, key: String, info: droppen_sessions::ResidentInfo) {
@@ -1512,7 +1565,7 @@ fn signal(pid: u32, sig: libc::c_int) {
 /// The claim is handed back rather than dropped here so the caller can release
 /// the state lock before its unlink runs.
 #[must_use = "the claim is released when this is dropped, which should happen outside the state lock"]
-fn release(registry: &InjectionRegistry, state: &mut RunState) -> Option<gate::SessionLease> {
+fn release(registry: &RunHost, state: &mut RunState) -> Option<gate::SessionLease> {
     registry.journal.remove(&state.run_id);
     state.lock.take()
 }

@@ -803,7 +803,7 @@ impl ClaudeCode {
 }
 
 impl InjectionRegistry {
-    /// Claude's part of [`InjectionRegistry::driver_states`]: every resident.
+    /// Claude's part of [`super::RunHost::driver_states`]: every resident.
     pub(super) fn claude_driver_states(&self, states: &mut DriverStatesBuilder) {
         for (id, handle) in self.residents.lock().expect("residents poisoned").iter() {
             states.resident(self.key_of(Source::Claude, id), handle.info());
@@ -7141,22 +7141,29 @@ mod tests {
         let paths = Arc::new(Paths::new(home.to_path_buf()));
         let dirs = InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
         dirs.create().expect("instance directories");
-        Arc::new(InjectionRegistry {
+        let host = Arc::new(crate::inject::RunHost {
             receipts: Arc::new(crate::inject::receipts::Receipts::new(droppen_instance::db::at(paths.instance_db()))),
             questions: Arc::new(crate::inject::questions::Questions::new(droppen_instance::db::at(paths.instance_db()))),
             accounts: Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins())),
             quota: Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins())),
             server: droppen_instance::identity::ServerId::local(&paths),
-            codex_servers: Mutex::new(HashMap::new()),
             listed: Mutex::new(Vec::new()),
             runs: Mutex::new(HashMap::new()),
-            residents: Mutex::new(HashMap::new()),
-            spawn_gate: crate::inject::gate::SpawnGate::new(paths.data_dir().join("inject-locks")),
             shim_dir: dirs.session_shims(),
             idle_timeout: Duration::from_secs(600),
-            stall_after: stall,
             interrupt_step: step,
             watchdog_interval: tick,
+            journal: runs::RunsFile::new(dirs.runs_file()),
+            listeners: std::sync::OnceLock::new(),
+            alerts: std::sync::OnceLock::new(),
+            drafts: crate::inject::drafts::Drafts::default(),
+            paths: paths.clone(),
+        });
+        Arc::new(InjectionRegistry {
+            codex_servers: Mutex::new(HashMap::new()),
+            residents: Mutex::new(HashMap::new()),
+            spawn_gate: crate::inject::gate::SpawnGate::new(paths.data_dir().join("inject-locks")),
+            stall_after: stall,
             resident_idle: None,
             // Short enough that the ceiling on a parked settings change can be
             // watched inside a test, and far past anything else here waits for.
@@ -7170,7 +7177,6 @@ mod tests {
             recovery_backoff: [Duration::from_millis(30); 3],
             steer_settle: settle,
             absorb_poll,
-            journal: runs::RunsFile::new(dirs.runs_file()),
             steps: Mutex::new(Vec::new()),
             // Recording on, into this test's own instance directory, for the
             // same reason the timings are set by hand: `Recorders::new` reads
@@ -7178,12 +7184,10 @@ mod tests {
             // answer to be yes whatever the developer's shell says.
             recorders: crate::record::Recorders::new_at(dirs.session_logs(), None, paths.clone()),
             decoration: crate::drive::NotifyDecoration::new(paths.clone(), dirs),
-            listeners: std::sync::OnceLock::new(),
-            alerts: std::sync::OnceLock::new(),
             reading_recheck: Mutex::new(None),
-            drafts: crate::inject::drafts::Drafts::default(),
-            paths,
+            host,
         })
+        .listed()
     }
 
     /// The bounded wait every fake CLI in here uses to sit on `$GO`, prepended
