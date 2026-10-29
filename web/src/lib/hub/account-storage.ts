@@ -66,9 +66,14 @@ export const reEnrollConnectedKey = (account: string) => `rh.hub.reenroll.connec
 export const keptDisputesKey = (account: string) => `rh.hub.renewal.disputes.${account}`;
 /** This admin device's own 「这台设备只签在设备上确认的换钥」 (§4.4): set, it signs no automatic renewal, whatever the chain or the hub says. */
 export const localAssuredKey = (account: string) => `rh.hub.renewal.localAssured.${account}`;
-/** A renewal superseded by a loss after it staged is started again at most this many times in all (§4.1 「清除」). */
 /** The Web Lock a page holds while it renews `host` (asking, waiting for the window, writing): across this browser's tabs. */
 export const renewalLockName = (account: string, host: string) => `rh.hub.renewal.${account}.${host}`;
+/**
+ * How the tabs of this browser tell each other of disputes one of them
+ * verified (§3.8): what one tab keeps reaches the others at
+ * once — their channels to a host isolated now close — even where storage
+ * cannot be written. `null`: no other tab to tell.
+ */
 export interface CrossTab {
   post(message: unknown): void;
   subscribe(fn: (message: unknown) => void): () => void;

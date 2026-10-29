@@ -79,14 +79,12 @@ import {
   type PauseRemoval,
   type Assurance,
   type Attestation,
-  base32,
   type Bytes,
   CHAIN_VERSION,
   CHAIN_VERSION_3,
   ChainClock,
   ChainError,
   ChainState,
-  concat,
   copy,
   createAttestation,
   DecodeError,
@@ -108,7 +106,6 @@ import {
   exportPublic,
   fingerprint,
   fixedVersion,
-  forgetDeviceKeys,
   fromHex,
   generateEnrollCode,
   genesis3Draft,
@@ -148,7 +145,6 @@ import {
   signDraft,
   signHubLogin,
   type SlotRecord,
-  type UnreadableReason,
   userKeyCommit,
   utf8,
   verifyEnrollProof,
@@ -157,13 +153,12 @@ import {
   verifyRotateConfirm,
   WrapError,
 } from "@/lib/e2e";
-import { type AccountView, chainV3Writable, CODE_PAIRING_WINDOW_MS, type HostRotationView, type HubApi, HubApiError, hubErrorKind, type HubSession, MAIL_HOST_KEY, MAIL_KEY_REQUEST, MAIL_PAIRING, MAIL_USER_KEY } from "./api";
+import { chainV3Writable, CODE_PAIRING_WINDOW_MS, type HostRotationView, type HubApi, HubApiError, type HubSession, MAIL_HOST_KEY, MAIL_KEY_REQUEST, MAIL_PAIRING, MAIL_USER_KEY } from "./api";
 import { hubOrigin } from "./config";
 import {
   ChannelUnavailable,
   deliverMachineKey,
   type DeliveryResult,
-  forgetPendingReencrypts,
   type MachineKeyCourier,
   notePendingReencrypt,
   type PendingReencrypt,
@@ -172,19 +167,15 @@ import {
   STALE_GRACE_MS,
 } from "./deliver";
 import {
-  forgetLocalWrapKey,
   HostKeyVault,
   type KeptRenewal,
   keyName,
   Keyring,
-  LEGACY_MACHINE_KEY_PREFIX,
-  legacyMachineKeyName,
   machineKeyBytes,
   migrateLegacyMachineKeys,
   moveLegacyMachineKeysToVault,
   openMachineKeys,
   openRecoveryPackage,
-  type Rewrap,
   rewrapMachineKeys,
   recoveryTag,
   RenewalStash,
@@ -338,644 +329,21 @@ import {
 } from "./account-storage";
 export type { AccountLocks, AccountStorage, CrossTab, SeenWatch } from "./account-storage";
 import type { ControllersRecord } from "./streams";
-
-const RENEW_RESTARTS = 3;
-/** What `holdRenewal` answers while another tab of this browser holds the renewal of that host. */
-const BUSY: unique symbol = Symbol("busy");
-
-
-/**
- * How the tabs of this browser tell each other of disputes one of them
- * verified (§3.8): what one tab keeps reaches the others at
- * once — their channels to a host isolated now close — even where storage
- * cannot be written. `null`: no other tab to tell.
- */
-
-/** Renew the device session this long before it expires. */
-export const RENEW_MARGIN_MS = 5 * 60 * 1000;
-/** A session minted on a 401 and refused again within this long: the hub will not have this device. */
-const SECOND_REFUSAL_MS = 60 * 1000;
-const RENEW_RETRY_MS = 30 * 1000;
-/** How often a device missing the newest user key asks the others for it again. */
-export const KEY_REQUEST_EVERY_MS = 10 * 60 * 1000;
-/**
- * The most host keys one answer seals for one device (newest epochs first):
- * under the hub's share of one sender in one mailbox (128), with room left
- * for the other mail.
- */
-export const MAX_HOST_KEY_MAILS = 96;
-/**
- * How long a new host's registration waits for its device role to sign in at
- * the hub (it does within a second of seeing itself in the chain) before the
- * other hosts' keys are sealed to it (S1-4); past it, the host asks for them
- * itself (purpose 4).
- */
-export const HOST_KEYS_WAIT = { forMs: 20_000, everyMs: 1_000 };
-/**
- * How long an enrollment waits for the new host's agent to declare `chain/3`
- * (its proof can land a moment before its declaration): a 409
- * `chain_v3_not_ready` naming only that host is tried again for this long.
- */
-export const CHAIN_V3_WAIT = { forMs: 5000, everyMs: 500 };
-/** The most entries the hub takes in one append (`POST /v1/chain`, docs/hub-api/http.md): a bigger batch is refused here, before anything is signed. */
-export const MAX_APPEND_ENTRIES = 64;
-/** How many times a page's first load fetches the chain before a record it cannot reach is a fork (other pages may record more meanwhile). */
-const FIRST_LOAD_TRIES = 5;
-
-/** What a wipe could not forget, each step on its own (`CloudAccount.wipe`, `CloudAccount.wipeLocal`). */
-export class WipeError extends Error {
-  constructor(readonly failures: string[]) {
-    super(failures.join("; "));
-    this.name = "WipeError";
-  }
-}
-
-/** The failures a wipe's error names: each of a {@link WipeError}'s, or the error itself. */
-export function wipeFailures(error: unknown): string[] {
-  if (error instanceof WipeError) return error.failures;
-  return [error instanceof Error ? error.message : String(error)];
-}
-
-/**
- * Everything a browser keeps for `account` (as device `deviceId`, when it
- * noted one), forgotten one step at a time: every step is tried whatever an
- * earlier one did, and what failed is thrown at the end ({@link WipeError}).
- */
-async function forgetBrowser(input: {
-  store: KeyStore;
-  storage: AccountStorage;
-  account: string;
-  deviceId: string | null;
-  vaults: [UserKeyVault, HostKeyVault, RenewalStash, { wipe(): Promise<void> }];
-  legacyHosts: string[];
-  forgetSeen: () => Promise<void>;
-}): Promise<void> {
-  const { store, storage, account, deviceId } = input;
-  const [vault, hostKeys, renewalStash, keyring] = input.vaults;
-  const failures: string[] = [];
-  const step = async (what: string, work: () => Promise<unknown> | unknown) => {
-    try {
-      await work();
-    } catch (error) {
-      failures.push(`${what}: ${error instanceof Error ? error.message : String(error)}`.slice(0, 200));
-    }
-  };
-  // The keys that sign as this device and open what it was sealed, first.
-  await step("device keys", () => forgetDeviceKeys(store));
-  await step("local wrap key", () => forgetLocalWrapKey(store));
-  await step("user keys", () => vault.wipe());
-  await step("host keys", () => hostKeys.wipe());
-  await step("renewals", () => renewalStash.wipe());
-  await step("keyring copy", () => keyring.wipe());
-  await step("machine keys", async () => {
-    // M1/M2a's raw machine keys: every one the store lists, whether or not a
-    // chain names its host (a wipe without one too) — they are not kept per
-    // account, but nor are the device keys and the local wrap key that go
-    // above — and, in a store that cannot list, those of the hosts named.
-    const names = new Set((await store.list?.(LEGACY_MACHINE_KEY_PREFIX)) ?? []);
-    for (const host of input.legacyHosts) {
-      for (let epoch = 0; epoch < 64; epoch++) {
-        const name = legacyMachineKeyName(host, epoch);
-        if ((await store.get(name)) !== undefined) names.add(name);
-      }
-    }
-    for (const name of names) await store.delete(name);
-  });
-  await step("pending re-encryptions", () => forgetPendingReencrypts(account));
-  // The browser's notes (forgetting one never throws).
-  const notes = [deviceKey(account), deviceSignKey(account), lostDeviceKey(account), lostWhyKey(account), afreshKey(account)];
-  if (deviceId) notes.push(hostKeyRequestKey(account, deviceId), keyRequestKey(account, deviceId), joinedKey(account, deviceId), ackKey(account, deviceId));
-  notes.push(reEnrollDismissedKey(account), reEnrollConnectedKey(account), keptDisputesKey(account), localAssuredKey(account));
-  for (const key of notes) forgetIn(storage, key);
-  await step("seen record", () => input.forgetSeen());
-  if (failures.length) throw new WipeError(failures);
-}
-
-export type AccountErrorKind =
-  | "notInChain"
-  | "fork"
-  | "proof"
-  | "expired"
-  | "noUserKey"
-  | "noRecoveryKey"
-  | "wrongWords"
-  | "noPackages"
-  | "tooEarly"
-  | "notPending"
-  | "self"
-  | "unpinned"
-  | "refused"
-  | "heldBack"
-  | "missingKey"
-  /** The hub does not take v3 entries for this account now (`chain_v3.writable`): to upgrade it, or (on a v3 chain) to add a host or make one a host again. */
-  | "notWritable"
-  /** The chain holds no v3 entry yet: this needs the account upgraded first (`upgradeToV3`, review D4). */
-  | "notUpgraded"
-  /** The batch would not verify: the chain's verifier refused it here, before it was signed away (`rule` says why). */
-  | "invalidEntry"
-  /** Only a device that manages the account may do this. */
-  | "notAdmin"
-  /** The last device that manages the account stays one. */
-  | "lastAdmin"
-  /** Another page of this browser set the account up a moment ago: this one reloads. */
-  | "setUpElsewhere"
-  /** This browser's device keys are stored but would not open just now: they were left as they are (try again). */
-  | "keysUnreadable"
-  /** No current passkey slot names the passkey a new device tried to join with (docs/passkeys.md §4.6). */
-  | "noPasskeySlot"
-  /** The passkey gave no PRF output here: it cannot let devices join from this browser (§5.2). */
-  | "noPrf"
-  /** What the passkey's PRF gave is not the slot's `PAK`, or the slot's proof does not hold: nothing is trusted (§4.6 step 3). */
-  | "wrongPasskey"
-  /** The device being approved no longer waits to join: a newer join with the same passkey replaced it, or a device removed it. */
-  | "joinReplaced"
-  /** The keys the pairing checked are not the ones the device waiting to join was added with. */
-  | "joinMismatch"
-  /** The account has as many passkey slots as it may. */
-  | "tooManySlots"
-  /** The batch is more entries than the hub takes in one append ({@link MAX_APPEND_ENTRIES}). */
-  | "tooManyEntries"
-  /** A veto would remove nothing: what it was for is out of the account already. Nothing is signed. */
-  | "nothingToRemove"
-  /** A veto confirmed on a hold this device has since taken in, with the chain moved on after that: the person looks again. Nothing is signed. */
-  | "vetoStale"
-  /**
-   * A host that may have had its identity key copied (`hostsToRotate`) or is
-   * isolated would be let control another one: renew its identity key first
-   * (docs/host-identity-rotation.md §4.1, §7 decision 8).
-   */
-  | "exposed"
-  /** A pause's end would give back other control than the person was shown (M7): ask again. */
-  | "pauseChanged";
-
-export class AccountError extends Error {
-  /** The message as an i18n key (the English, with `{{name}}` where `vars` go). */
-  readonly key: string;
-
-  constructor(
-    readonly kind: AccountErrorKind,
-    message: string,
-    readonly readyMs?: number,
-    /** `invalidEntry`: the chain's rule that refused it (`RULES`, or the verifier's error kind). */
-    readonly rule?: string,
-    /** What the message says to a person: its i18n key (the English) and the values it names, when it has them. */
-    readonly vars?: Record<string, string>,
-  ) {
-    super(vars ? message.replace(/\{\{(\w+)\}\}/g, (_, name: string) => vars[name] ?? "") : message);
-    this.name = "AccountError";
-    this.key = message;
-  }
-}
-
-/** `keysUnreadable`: why (`UnreadableReason`), for the screen to say it in the person's words. */
-export class KeysUnreadableError extends AccountError {
-  constructor(
-    readonly reason: UnreadableReason,
-    message: string,
-  ) {
-    super("keysUnreadable", message);
-  }
-}
-
-/**
- * A served chain only behind the seen record, agreeing with it where they
- * overlap: a checkpoint another page is still moving, looked at again (a
- * page's first load), not a fork — until it stays so.
- */
-class MovingCheckpoint extends AccountError {
-  constructor(message: string) {
-    super("fork", message);
-  }
-}
-
-/**
- * Why a host's identity key renewal did not go through
- * (`CloudAccount.renewIdentity`; docs/host-identity-rotation.md §4.2):
- *
- * - `tooOld`: its Droppen has no `/rh/rotate` (404), or never declared
- *   `rotate/1` — re-enrolling it is the way; not tried again.
- * - `disabled`: the hub takes no renewal (`DROPPEN_HUB_HOST_ROTATION` off, or
- *   a hub from before renewals).
- * - `needsAssurance`: only a renewal confirmed on the device itself goes (clone
- *   evidence, an isolated host, the account's setting).
- * - `inProgress`: another page's attempt is running.
- * - `offline`: no channel to it.
- * - `hubNotReady`: its own hub connection cannot stage a renewal yet.
- * - `waiting`: the hub waits for other hosts to declare `rotate/1` (`hosts`).
- * - `renewFirst`: it is exposed and lets exposed hosts that have not renewed
- *   yet control it (`hosts`): those renew first (§4.1 「次序先于收窄」) — their
- *   old keys would still reach its new seed. Not tried; nothing to withdraw.
- * - `superseded`: a device that could control it was lost after the view its
- *   new key was staged on (§4.1 「清除」): that seed is no remedy for it. The
- *   attempt is withdrawn and started again with a fresh nonce and seed a few
- *   times; this is what is left when those ran out.
- * - `policyUnset`: the account has not chosen how renewals are confirmed yet
- *   (§5.6 「打开的顺序」): an admin writes a `SetRenewalPolicy` first.
- * - `refused`: it, or the hub, would not (`detail` says why).
- * - `badAnswer`: its answer does not check out (a signature, the DH
- *   confirmation, a key the chain named before, another chain view) —
- *   possibly not the computer itself answering.
- * - `wrongCode` / `cancelled`: the code typed is not the one the device shows,
- *   or none was typed.
- * - `voided`: the hub voided the staging (`detail`: `not_acked`, `conflict` —
- *   another holder of its old key showed up — or `expired`).
- * - `rate`: the hub's rate for renewals of this host.
- * - The host's own 412 `stale` (`agent/bridge.rs`: no admin's recent word on
- *   the account as it sees it), by its `reason`:
- *   - `unconfirmed` (`stale`): no other admin device vouched for its head
- *     (`hosts`: the account's other admins). This device's own word counts
- *     only while it is the sole admin (`ChainState.freshness`), so right after
- *     it changed the account — its renewal policy, say — another admin device
- *     has to see the change first; as the sole admin, its word did not reach
- *     the host (`detail`: why);
- *   - `behind`: an admin vouched for more of the chain than the host has: it
- *     catches up first;
- *   - `fork`: the host's view conflicts with what an admin vouched for — not
- *     tried again;
- *   - `lapsed`: the host takes no control from this device now (no admin's
- *     word in seven days, or this device may no longer control it).
- * - `failed`: anything else (`detail`).
- */
-export type RenewalFailure =
-  | "unconfirmed"
-  | "behind"
-  | "fork"
-  | "lapsed"
-  | "tooOld"
-  | "disabled"
-  | "needsAssurance"
-  | "inProgress"
-  | "offline"
-  | "hubNotReady"
-  | "waiting"
-  | "renewFirst"
-  | "superseded"
-  | "policyUnset"
-  | "refused"
-  | "badAnswer"
-  | "wrongCode"
-  | "cancelled"
-  | "voided"
-  | "rate"
-  | "failed";
-
-export class RenewalError extends Error {
-  constructor(
-    readonly kind: RenewalFailure,
-    message: string,
-    /** The hub's or the agent's own reason, when it gave one. */
-    readonly detail?: string,
-    /** `waiting`: the hosts the hub waits for; `renewFirst`: the hosts to renew first; `unconfirmed`: the other admin devices, one of which has to vouch. */
-    readonly hosts?: string[],
-  ) {
-    super(message);
-    this.name = "RenewalError";
-  }
-}
-
-/** What one completed identity key renewal did (`CloudAccount.renewIdentity`). */
-export interface RenewalReport {
-  host: string;
-  /** The chain seq of its `rotateHostKey`. */
-  seq: number;
-  assurance: Assurance;
-  signKey: Bytes;
-  dhKey: Bytes;
-  /** The new keys as people compare them ({@link deviceFingerprint}). */
-  fingerprint: string;
-  /** Its next machine key epoch, sealed to the new key only. */
-  mkEpoch: number;
-  result: DeliveryResult;
-  /** How many of the hosts' keys its device role was sealed again (`null`: it has not signed in with the new key yet; it asks). */
-  hostKeys: number | null;
-  /** A new user key the batch carried (the newest was stale). */
-  userKey?: FreshUserKey;
-}
-
-/** How long a renewal confirmed on the device waits for the person to type the code (`RenewOptions.codeWaitMs`). */
-export const CODE_WAIT_MS = 10 * 60_000;
-
-/** The code `answer` gives, or `null` (given up) once `ms` passed without one. */
-function answeredWithin(answer: Promise<string | null>, ms: number): Promise<string | null> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const late = new Promise<null>((resolve) => {
-    timer = setTimeout(() => resolve(null), ms);
-  });
-  return Promise.race([answer, late]).finally(() => clearTimeout(timer));
-}
-
-/** How `renewIdentity` goes (`assurance`), and what it may ask of the page. */
-export interface RenewOptions {
-  assurance: Assurance;
-  /**
-   * A renewal confirmed on the device (`ASSURANCE_ON_DEVICE`): ask the person
-   * to type the code the device shows (`null`: they gave up). The page is
-   * never told the code: it must be typed (§3.7).
-   */
-  askCode?: (host: string) => Promise<string | null>;
-  /**
-   * How long `askCode` is waited for ({@link CODE_WAIT_MS}): unanswered by
-   * then, the renewal is cancelled as if the person gave up — a prompt left
-   * open never holds the renewal runner's queue (and the disputes it checks).
-   */
-  codeWaitMs?: number;
-  /** Where it is, for the page. */
-  onStep?: (step: "requesting" | "confirming" | "waiting" | "writing" | "handing") => void;
-  /** How often to look at the hub's staging, and for how long at most (the window and a margin). */
-  pollMs?: number;
-  maxWaitMs?: number;
-  /** How long the host's device role is waited for to seal it the hosts' keys again (`handHostKeys`). */
-  hostKeysWait?: { forMs: number; everyMs: number };
-  /** Timers, for tests. */
-  sleep?: (ms: number) => Promise<void>;
-  now?: () => number;
-}
-
-/**
- * Why the chain does not take a device that runs AI as a full device (review
- * D1: `RULES.hostNotAdmin`), as an error whose message is an i18n key.
- */
-export function hostAdminRefused(): AccountError {
-  return new AccountError("invalidEntry", "a device that runs AI cannot be a full device (yet)", undefined, RULES.hostNotAdmin);
-}
-
-/**
- * Why a new host cannot be added yet on a chain that holds a v3 entry: the
- * hub does not take v3 entries now (`chain_v3.writable`). `null` when it does,
- * or the chain is not v3. `namedWaiting`: name the devices that must update
- * first (the browser hand-off's page does; the code screen says it plainly).
- */
-export function v3NotWritableError(
-  chainV3: boolean | undefined,
-  view: Pick<AccountView, "chainV3"> | null | undefined,
-  namedWaiting = false,
-): AccountError | null {
-  if (!chainV3 || chainV3Writable(view)) return null;
-  const waiting = namedWaiting ? (view?.chainV3?.waiting ?? []) : [];
-  return waiting.length
-    ? new AccountError("notWritable", "Not available yet: update Droppen on {{hosts}} first.", undefined, undefined, { hosts: waiting.join(", ") })
-    : new AccountError("notWritable", "Not available yet: Droppen turns this on once it is updated on every device of the account that runs AI.");
-}
-
-/** D1 extended: a device that ran AI (and stopped) is never a full device either (`RULES.ranAiNotAdmin`), as an error whose message is an i18n key. */
-function ranAiAdminRefused(id: string): AccountError {
-  return new AccountError(
-    "invalidEntry",
-    "{{id}} ran AI before, and its agent kept its key in a file: it cannot be a full device. Add a new browser or phone instead.",
-    undefined,
-    RULES.ranAiNotAdmin,
-    { id },
-  );
-}
-
-/**
- * Whether device `record` has ever run AI (D1 extended), as the chain's
- * verifier judges `setAdmin true`: it was a host at some point (`ranAi`), or
- * the chain committed a machine key for it. Such a device never manages the
- * account — the one notion `setAdmin` and the devices page both use.
- */
-export function hasRunAi(chain: Pick<ChainState, "machineKeyEpochs">, record: DeviceRecord): boolean {
-  return record.ranAi || chain.machineKeyEpochs(record.info.id) > 0;
-}
-
-/**
- * The hub takes no chain v3 entries now, and a new account starts on v3 only
- * (`createGenesis`): none is made, and the person is told so.
- */
-function noNewAccounts(): AccountError {
-  return new AccountError("notWritable", "New accounts cannot be set up right now: the hub does not take chain v3 changes yet — that is on Droppen's side. Try again later.");
-}
-
-/** The chain holds no v3 entry yet (review D4). */
-function notUpgraded(): AccountError {
-  return new AccountError("notUpgraded", "upgrade the account to chain v3 first (「我的设备」)");
-}
-
-/** A device's keys as an entry names them. */
-export interface JoinKeys {
-  id: string;
-  signKey: Bytes;
-  dhKey: Bytes;
-}
-
-/**
- * The entry that adds a device to `chain` (docs/local-aggregator.md §3.5,
- * review D4): a v3 `addDevice3` with its two flags once the chain holds a v3
- * entry, else what chain v2 says the same with — `addMachine` for a host,
- * `addDevice{full}` for a device that manages the account — and nothing v2
- * cannot say: never a v2 device that is not full (an old agent would let it
- * reach the admin routes). Never a host that manages the account, in either
- * version (review D1).
- */
-export function joinAction(device: JoinKeys, opts: { host: boolean; admin: boolean }, chain: Pick<ChainState, "isV3">): Action {
-  const keys = { id: device.id, signKey: device.signKey, dhKey: device.dhKey };
-  if (opts.host && opts.admin) throw hostAdminRefused();
-  if (chain.isV3) return { type: "addDevice3", device: { ...keys, flags: { host: opts.host, admin: opts.admin } } };
-  if (opts.host) return { type: "addMachine", machine: keys };
-  if (!opts.admin) throw notUpgraded();
-  return { type: "addDevice", device: { ...keys, full: true } };
-}
-
-/** Why "make it a full device" cannot be pressed on a limited device's row (`null`: it can). */
-export type PromoteBlock =
-  /** This device's own row: another full device makes it one. */
-  | "self"
-  /** The device looking is a limited device itself: a read-only list. */
-  | "notAdmin"
-  /** The chain holds no v3 entry yet: upgrade the account first (review D4). */
-  | "notUpgraded";
-
-/**
- * Whether `device` is a limited device as `viewer` sees it in 「我的设备」:
- * a current browser or phone of the account that is not a full device
- * (chain v3's admin) — an older pairing, or a passkey's join, which the chain
- * adds as one (`RULES.passkeyPlain`). Every browser or phone is meant to be a
- * full device; a full device makes a limited one so (`setAdmin true`), never
- * its own row, and only on an account upgraded to chain v3 (`upgraded`: the
- * chain holds a v3 entry — review D4). A device that runs AI, or ever did
- * (D1 extended: {@link hasRunAi}), is no limited device: it never manages the
- * account (review D1). `null`: not a limited device.
- */
-export function limitedDevice(input: {
-  viewer: string;
-  viewerAdmin: boolean;
-  device: DeviceRecord;
-  upgraded: boolean;
-  /** It ran AI before ({@link hasRunAi}: the chain's own notion; `device.ranAi` when not given). */
-  ranAi?: boolean;
-}): { block: PromoteBlock | null } | null {
-  const { viewer, viewerAdmin, device, upgraded } = input;
-  if (device.status.type !== "active" || device.admin || device.host || (input.ranAi ?? device.ranAi)) return null;
-  if (device.info.id === viewer) return { block: "self" };
-  if (!viewerAdmin) return { block: "notAdmin" };
-  if (!upgraded) return { block: "notUpgraded" };
-  return { block: null };
-}
-
-/** Where this device stands in the account's chain. */
-export type Standing = "active" | "pending" | "removed" | "absent";
-
-/** Whether this device may take itself out of the account as it signs out for good, and if not, why (`CloudAccount.selfRemoval`). */
-export type SelfRemoval = "removable" | "notActive" | "notAdmin" | "lastAdmin" | "keepsSignIn" | "heldBack";
-
-/**
- * Why the hub will not give this device a session: it says the device was
- * `removed`, or it `denied` it — or the account itself is gone: `deleted`
- * (`410 account_deleted` to a session renewal, or `error account_deleted` on
- * the device socket), whose keys open nothing any more and are wiped.
- */
-export type Refusal = "removed" | "denied" | "deleted";
-
-/** A device's keys as a person compares them on two screens: base32 of their fingerprint, in groups of four. */
-export async function deviceFingerprint(signKey: Uint8Array, dhKey: Uint8Array): Promise<string> {
-  const fp = await fingerprint(concat(signKey, dhKey));
-  return (base32(fp.slice(0, 10)).match(/.{1,4}/g) ?? []).join("-");
-}
-
-export interface RotationReport {
-  /** The new user key epoch; `null` when only machine keys were rotated (a device that held no user key left). */
-  ukEpoch: number | null;
-  /** Devices the new `UK` epoch was sealed to (mailbox, purpose 1). */
-  sealedTo: string[];
-  /** Devices that are not admins the new machine keys were sealed to (mailbox, purpose 5). */
-  hostKeysTo?: string[];
-  /** Those it could not reach, and why. */
-  hostKeysFailed?: Record<string, string>;
-  failedTo: string[];
-  /** Why each of `failedTo` failed (the hub's error code, e.g. `mailbox_full`, or a message). */
-  failedWhy: Record<string, string>;
-  /** Whether it went into the recovery package too. */
-  recovery: boolean;
-  machines: {
-    machine: string;
-    mkEpoch?: number;
-    result?: DeliveryResult;
-    error?: string;
-    /**
-     * Why the keyring did not take the new key's blob (e.g. `keyring_full`):
-     * the key was handed over all the same — the agent must stop sealing under
-     * the retired one — but other devices cannot read what the machine writes
-     * from now on until the keys are rotated again with room in the keyring.
-     */
-    keyring?: string;
-  }[];
-  /** A veto over a held-back activation: the devices and machines it took out besides (what the recovered device brought in). */
-  vetoed?: { devices: string[]; machines: string[] };
-  /**
-   * The older machine-key wraps rewritten under the new user key, in this
-   * device's own name (relay-and-plans §6: the hub then reclaims the wraps
-   * they supersede, the removed device's among them), and any that failed —
-   * those stay readable through their old wraps.
-   */
-  rewrapped?: { done: Rewrap[]; failed: (Rewrap & { error: string })[] };
-}
-
-/**
- * A new user key epoch a batch that issues machine keys carried because the
- * newest one was held by a device that no longer manages the account
- * ({@link userKeyStale}): shared as a rotation shares it — kept here, sealed
- * for the recovery words, mailed to the other admins.
- */
-export interface FreshUserKey {
-  epoch: number;
-  sealedTo: string[];
-  failedTo: string[];
-  failedWhy: Record<string, string>;
-  recovery: boolean;
-}
-
-/** A device a veto would take out ({@link VetoPlan}), and what brought it in. */
-export interface VetoTarget {
-  id: string;
-  /** It runs AI (a host): taken out, it must be added to the account again. */
-  host: boolean;
-  /** Who brought it in: the device that signed it, a passkey slot, or `null` for the recovery words (`null` too for the held device itself). */
-  by: string | null;
-}
-
-/**
- * What vetoing a held-back activation would take out, for the page to show
- * before the person confirms (issue #17): `scope`, which the veto always
- * takes, and `trusted`, which it takes only if asked.
- */
-export interface VetoPlan {
-  /** The device whose activation is held back. */
-  device: string;
-  /** Where the hold starts: the activation's seq. */
-  seq: number;
-  /** The devices this view trusted when the plan was read: what the veto never removes (handed back to `removeDevice`'s `veto`). */
-  view: string[];
-  /** The held device first, then what it, the recovery words or a passkey slot brought in (`vetoScope`). */
-  scope: VetoTarget[];
-  /**
-   * What the devices this view already trusted (other than this one) brought
-   * in while the activation was held back here, and what those brought in:
-   * not in `scope`, kept unless the person asks (`removeDevice`'s
-   * `alsoTrusted`). Never this device, nor a device this view already trusted.
-   */
-  trusted: VetoTarget[];
-  /** Whether the veto voids the account's current recovery words (a device it takes out set them, or came back with them). */
-  voidsWords: boolean;
-  /** Whether also taking out `trusted` voids them where `scope` alone does not. */
-  trustedVoidsWords: boolean;
-  /** Whether the veto turns off passkey slots (one a device it takes out registered, or came in through): joining with them stops. */
-  voidsPasskeys: boolean;
-  /** Whether also taking out `trusted` turns off slots `scope` alone does not. */
-  trustedVoidsPasskeys: boolean;
-}
-
-/** One entry the hub's chain has past a held-back activation, as the page shows it. */
-export interface HeldChange {
-  seq: number;
-  kind: Action["type"];
-  /** The device that signed it (a passkey slot: the slot), or `null` for the recovery words. */
-  by: string | null;
-  /** The device or machine it is about, if any. */
-  subject: string | null;
-}
-
-/** A change to who is in the account that this device has not acknowledged yet. */
-export interface ChainAlert {
-  seq: number;
-  /** `upgrade`: the account's first chain v3 entry (a new user key written as v3: review D4). */
-  kind: "addDevice" | "removeDevice" | "recoveryJoin" | "setRecoveryKey" | "keyEpochs" | "upgrade" | "setAdmin" | "setHost" | "setAccept" | "passkey" | "rotateHostKey" | "renewalPolicy" | "renewalPause";
-  /**
-   * `renewalPause` (host identity rotation §3.4 rule 10): which marker, and the control its start paused (per host, the
-   * ids it stopped accepting) — for `completed`, only what comes back (empty: none of it).
-   */
-  pause?: { phase: "start" | "completed" | "cancelled"; removals: { host: string; ids: string[] }[] };
-  /** The device that signed it, or `null` for the recovery words (a passkey slot's entries: the slot). */
-  by: string | null;
-  /** Chain v3's `addDevice3`: what the added device may do (「可运行 AI」, 「可管理账号」). */
-  flags?: { host: boolean; admin: boolean };
-  /** `setAdmin` / `setHost`: what it was set to; `renewalPolicy`: whether every renewal must now be confirmed on the device. */
-  on?: boolean;
-  /** `setAccept`: whom the host accepts control from now. */
-  accept?: Accept;
-  /** A passkey entry: which (a slot registered or removed, a device it added, one activating itself). */
-  passkey?: "slotSet" | "slotRemove" | "join" | "activate";
-  /** `rotateHostKey` (`docs/host-identity-rotation.md` §3.4 "告警"): the host's new keys (said by their `deviceFingerprint`), and whether the renewal was confirmed on the device. */
-  renewed?: { signKey: Uint8Array; dhKey: Uint8Array; onDevice: boolean };
-  /** The device added, removed or joined (`null` for new recovery words). */
-  subject: string | null;
-  /** When this device first saw it (else when it says it was made). */
-  atMs: number;
-  /** A device this device may remove about it (the one added or joined, or the one that set the words), if still there. */
-  remove: string | null;
-}
-
-/** Entries the hub has past this view that this device does not take yet (see `CloudAccount.heldBack`). */
-export interface HeldBack {
-  /** The entry it stopped at: a recovered device's self-activation, or a passkey-joined one's (`passkeyActivate`). */
-  seq: number;
-  /** The device that activated itself. */
-  device: string | null;
-  /** When this device's own clock takes it: a day after it first saw the join. */
-  readyMs: number;
-  /** What the hub served from `seq` on. */
-  entries: Entry[];
-}
-
+import { deviceFingerprint, hasRunAi, joinAction, type Refusal, refusalOf, type SelfRemoval, type Standing } from "./account/devices";
+import { AccountError, heldWho, hostAdminRefused, KeysUnreadableError, MovingCheckpoint, noNewAccounts, notUpgraded, ranAiAdminRefused } from "./account/errors";
+import { CHAIN_V3_WAIT, FIRST_LOAD_TRIES, HOST_KEYS_WAIT, KEY_REQUEST_EVERY_MS, MAX_APPEND_ENTRIES, MAX_HOST_KEY_MAILS, RENEW_MARGIN_MS, RENEW_RETRY_MS, SECOND_REFUSAL_MS } from "./account/limits";
+import { answeredWithin, BUSY, CODE_WAIT_MS, RENEW_RESTARTS, RenewalError, type RenewalReport, type RenewOptions } from "./account/renewal";
+import type { ChainAlert, FreshUserKey, HeldBack, HeldChange, RotationReport, VetoPlan, VetoTarget } from "./account/views";
+import { forgetBrowser } from "./account/wipe";
+export { deviceFingerprint, hasRunAi, joinAction, limitedDevice } from "./account/devices";
+export type { JoinKeys, PromoteBlock, Refusal, SelfRemoval, Standing } from "./account/devices";
+export { AccountError, hostAdminRefused, KeysUnreadableError, v3NotWritableError } from "./account/errors";
+export type { AccountErrorKind } from "./account/errors";
+export { CHAIN_V3_WAIT, HOST_KEYS_WAIT, KEY_REQUEST_EVERY_MS, MAX_APPEND_ENTRIES, MAX_HOST_KEY_MAILS, RENEW_MARGIN_MS } from "./account/limits";
+export { CODE_WAIT_MS, RenewalError } from "./account/renewal";
+export type { RenewalFailure, RenewalReport, RenewOptions } from "./account/renewal";
+export type { ChainAlert, FreshUserKey, HeldBack, HeldChange, RotationReport, VetoPlan, VetoTarget } from "./account/views";
+export { WipeError, wipeFailures } from "./account/wipe";
 
 export interface AccountOptions {
   /** The hub origin sign-ins name (`wss://hub`, the page's meta tag); defaults to `hubOrigin()`. */
@@ -1002,21 +370,7 @@ export interface AccountOptions {
 
 type Listener = () => void;
 
-function refusalOf(error: unknown): Refusal | null {
-  if (!(error instanceof HubApiError)) return null;
-  if (hubErrorKind(error) === "accountDeleted") return "deleted";
-  if (error.status === 403 && error.code === "device_removed") return "removed";
-  if (error.status === 401) return "denied";
-  return null;
-}
-
 const random32 = () => crypto.getRandomValues(new Uint8Array(32));
-
-/** A held-back activation, in an error's words: who, and how it came in. */
-function heldWho(held: HeldBack): string {
-  const how = held.entries[0]?.draft.action.type === "passkeyActivate" ? "joined through a passkey" : "came back with the recovery words";
-  return `${held.device ?? "a device"} ${how} and activated itself sooner than this device allows`;
-}
 
 /** `keys` with the `wanted` epochs first, then the rest newest first. */
 export function requestedFirst<T extends { epoch: number }>(keys: T[], wanted: ReadonlySet<number>): T[] {
