@@ -16,7 +16,7 @@ workspace = true
 # package stays the default member, so a bare `cargo build`/`cargo test` here
 # still means the server and nothing else.
 [workspace]
-members = [".", "crates/rh-proto", "crates/rh-relay", "crates/droppen-relay", "crates/rh-client", "crates/rh-devkit", "crates/droppen-plugin-sdk", "crates/droppen-search-path", "crates/droppen-base", "crates/droppen-instance", "crates/droppen-http", "crates/droppen-pty", "crates/droppen-supervisor", "crates/droppen-auth"]
+members = [".", "crates/rh-proto", "crates/rh-relay", "crates/droppen-relay", "crates/rh-client", "crates/rh-devkit", "crates/droppen-plugin-sdk", "crates/droppen-search-path", "crates/droppen-base", "crates/droppen-instance", "crates/droppen-http", "crates/droppen-pty", "crates/droppen-supervisor", "crates/droppen-auth", "crates/droppen-files"]
 
 # Every member takes serde_json from here, so `preserve_order` is on in every
 # build: a `Value` writes its keys in insertion order rather than sorted. Cargo
@@ -80,6 +80,8 @@ droppen-supervisor = { path = "crates/droppen-supervisor" }
 droppen-pty = { path = "crates/droppen-pty" }
 # Local accounts: users, logins, tickets, the login guard and its routes.
 droppen-auth = { path = "crates/droppen-auth" }
+# Files under the home directory behind the path fence, and the media proxy.
+droppen-files = { path = "crates/droppen-files" }
 # Machine-signed stream heads and manifests (the agent's streams).
 ed25519-dalek = "2"
 # The agent's one outbound websocket to the hub, and its loopback sockets to

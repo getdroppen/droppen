@@ -391,8 +391,8 @@ fn response_overrides() -> ExtraResponses {
     cloud::describe(&mut reg);
     crate::drive::describe(&mut reg);
     crate::feed::global::describe(&mut reg);
-    crate::files::describe(&mut reg);
-    crate::media::describe(&mut reg);
+    droppen_files::describe(&mut reg);
+    droppen_files::media::describe(&mut reg);
     crate::models::describe(&mut reg);
     crate::notify::describe(&mut reg);
     crate::plugins::routes::describe(&mut reg);
@@ -425,8 +425,8 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
     let router = crate::cloud::gateway::routes(router);
     let router = crate::drive::DriveState::routes(router);
     let router = crate::feed::global::EventsState::routes(router);
-    let router = crate::files::FilesState::routes(router);
-    let router = crate::media::routes(router);
+    let router = droppen_files::FilesState::routes(router);
+    let router = droppen_files::media::routes(router);
     let router = crate::models::ModelsState::routes(router);
     let router = crate::notify::NotifyState::routes(router);
     let router = crate::plugins::routes::PluginsState::routes(router);

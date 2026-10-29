@@ -399,7 +399,7 @@ impl PluginsState {
     /// Register the routes.
     ///
     /// The two that carry a document are a sub-router of their own, so the raised
-    /// body limit is theirs and no other route's (as `crate::files` does it). The
+    /// body limit is theirs and no other route's (as `droppen_files` does it). The
     /// read of a single document shares its path, and so its sub-router; it has no
     /// body for the limit to matter to. The install route gets a sub-router of its
     /// own for its own, larger, limit.

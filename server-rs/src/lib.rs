@@ -28,9 +28,9 @@
 //! * [`chats`] — instant chats: CLI sessions in an anchor directory, plus the
 //!   BYO-API backend and its streamed replies;
 //! * [`quota`] — the subscription panel;
-//! * [`files`] — browsing, reading and uploading under the home directory, and
+//! * [`droppen_files`] — browsing, reading and uploading under the home directory, and
 //!   the one place a client-supplied path is resolved and bounded;
-//! * [`media`] — images in private GitHub repositories, fetched through the
+//! * [`droppen_files::media`] — images in private GitHub repositories, fetched through the
 //!   host's own `gh` login so a transcript can show what an agent pushed;
 //! * [`terminals`] — PTYs the browser drives over a websocket, each one owned
 //!   by a detached [`droppen_pty`] shim so it survives a server restart;
@@ -89,9 +89,7 @@ pub mod desktop_app;
 pub mod drive;
 pub mod export;
 pub mod feed;
-pub mod files;
 pub mod inject;
-pub mod media;
 pub mod models;
 pub mod notify;
 pub mod plugins;
