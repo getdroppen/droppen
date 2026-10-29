@@ -3,7 +3,7 @@
 //! Both residents use the protocol-agnostic session shim. Legacy codex exec
 //! runs are still adopted by PID until they finish, but no new exec is spawned.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 #[cfg(test)]
 use std::process::Stdio;
@@ -582,9 +582,10 @@ pub struct RunHost {
     /// Only ever this process' own: everything keyed by it is in memory and
     /// dies with the registry. See [`RunHost::key_of`].
     server: ServerId,
-    /// Every provider's runs, which [`Self::driver_states`] gathers: each
-    /// listed itself as it was made ([`ListsRuns`]).
-    listed: Mutex<Vec<Weak<dyn ListsRuns>>>,
+    /// Every provider's runs, by the source they run, which
+    /// [`Self::driver_states`] gathers: each listed itself as it was made
+    /// ([`ListsRuns`]).
+    listed: Mutex<BTreeMap<Source, Weak<dyn ListsRuns>>>,
     runs: Mutex<HashMap<String, Arc<RunEntry>>>,
     /// Where a resident's shim leaves its socket, stderr tail and tombstone.
     shim_dir: PathBuf,
@@ -842,14 +843,6 @@ impl InjectionRegistry {
         })
         .listed()
     }
-
-    /// Itself, its Claude Code and Codex runs listed with its host, ahead of
-    /// any other provider's ([`RunHost::driver_states`]).
-    fn listed(self: Arc<Self>) -> Arc<Self> {
-        let runs: Arc<dyn ListsRuns> = self.clone();
-        self.host.list(Arc::downgrade(&runs));
-        self
-    }
 }
 
 impl std::ops::Deref for InjectionRegistry {
@@ -884,7 +877,7 @@ impl RunHost {
             accounts,
             quota,
             server: ServerId::local(&paths),
-            listed: Mutex::new(Vec::new()),
+            listed: Mutex::new(BTreeMap::new()),
             runs: Mutex::new(HashMap::new()),
             shim_dir: instance.session_shims(),
             idle_timeout: env_ms("DROPPEN_IDLE_TIMEOUT_MS", Duration::from_secs(20 * 60)),
@@ -1010,10 +1003,10 @@ impl RunHost {
     /// to make and cheap to carry.
     pub fn driver_states(&self) -> droppen_sessions::DriverStates {
         let mut states = DriverStatesBuilder::default();
-        // In the order they were listed: Claude Code's, then Codex's, then
-        // ACP's. Taken out of the list first, so that no provider's lock is
-        // taken under it.
-        let listed: Vec<Arc<dyn ListsRuns>> = self.listed.lock().expect("listed runs").iter().filter_map(Weak::upgrade).collect();
+        // In [`Source`]'s order: Claude Code's, then Codex's, then ACP's.
+        // Taken out of the list first, so that no provider's lock is taken
+        // under it.
+        let listed: Vec<Arc<dyn ListsRuns>> = self.listed.lock().expect("listed runs").values().filter_map(Weak::upgrade).collect();
         for runs in listed {
             runs.add_to(&mut states);
         }
@@ -1025,12 +1018,18 @@ impl RunHost {
         droppen_sessions::DriverStates::new(self.server.clone(), states.residents, states.running, states.finished)
     }
 
-    /// Show `runs` in every snapshot [`Self::driver_states`] takes from now
-    /// on, for as long as they last.
-    pub(crate) fn list(&self, runs: Weak<dyn ListsRuns>) {
+    /// Show `runs`, `source`'s, in every snapshot [`Self::driver_states`]
+    /// takes from now on, for as long as they last.
+    ///
+    /// One provider's runs per source: a second, while the first lasts, is
+    /// refused, as two would each hold a part of one source's sessions.
+    pub(crate) fn list(&self, source: Source, runs: Weak<dyn ListsRuns>) {
         let mut listed = self.listed.lock().expect("listed runs");
-        listed.retain(|runs| runs.strong_count() > 0);
-        listed.push(runs);
+        if listed.get(&source).is_some_and(|runs| runs.strong_count() > 0) {
+            drop(listed);
+            panic!("{source} runs are listed on this host already: one provider's runs per source");
+        }
+        listed.insert(source, runs);
     }
 
     /// Stop a run in the runs map, which no resident drives: a one-shot run

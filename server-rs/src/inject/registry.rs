@@ -488,6 +488,23 @@ mod tests {
         .unwrap_or_else(|error| panic!("a session row: {error}"))
     }
 
+    /// One provider's runs per source on a host: a second provider registry
+    /// over the same injection registry is refused while the first's ACP
+    /// runs last, and builds once they have gone.
+    #[test]
+    fn a_second_live_acp_runs_on_one_registry_is_refused() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let first = providers(home.path());
+        let injections = first.injections.clone();
+        let second = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| ProviderRegistry::new(injections.clone(), crate::app::register_providers)));
+        let refused = second.err().expect("refused while the first lasts");
+        let why = refused.downcast_ref::<String>().map(String::as_str).unwrap_or_default();
+        assert!(why.contains("acp runs are listed on this host already"), "{why}");
+        drop(first);
+        let again = ProviderRegistry::new(injections, crate::app::register_providers);
+        assert!(again.provider::<crate::inject::acp::Acp>().is_some());
+    }
+
     /// A source no provider runs is refused at the start and blocked at a send,
     /// whatever the request names: nothing could start or drive its session.
     #[test]

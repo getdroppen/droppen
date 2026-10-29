@@ -345,7 +345,7 @@ impl AcpRuns {
             acp_probes: Mutex::new(HashMap::new()),
         });
         let listed: Arc<dyn ListsRuns> = runs.clone();
-        runs.host.list(Arc::downgrade(&listed));
+        runs.host.list(Source::Acp, Arc::downgrade(&listed));
         runs
     }
 }

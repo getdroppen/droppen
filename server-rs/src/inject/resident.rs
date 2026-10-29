@@ -804,6 +804,15 @@ impl ClaudeCode {
 }
 
 impl InjectionRegistry {
+    /// Itself, listed with its host as Claude Code's runs: its residents,
+    /// and Codex's app servers until those are Codex's own
+    /// ([`super::RunHost::driver_states`]).
+    pub(super) fn listed(self: Arc<Self>) -> Arc<Self> {
+        let runs: Arc<dyn super::ListsRuns> = self.clone();
+        self.host.list(Source::Claude, Arc::downgrade(&runs));
+        self
+    }
+
     /// Claude's part of [`super::RunHost::driver_states`]: every resident.
     pub(super) fn claude_driver_states(&self, states: &mut DriverStatesBuilder) {
         for (id, handle) in self.residents.lock().expect("residents poisoned").iter() {
@@ -7151,7 +7160,7 @@ mod tests {
             accounts: Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins())),
             quota: Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins())),
             server: droppen_instance::identity::ServerId::local(&paths),
-            listed: Mutex::new(Vec::new()),
+            listed: Mutex::new(std::collections::BTreeMap::new()),
             runs: Mutex::new(HashMap::new()),
             shim_dir: dirs.session_shims(),
             idle_timeout: Duration::from_secs(600),
