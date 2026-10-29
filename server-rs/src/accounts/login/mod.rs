@@ -3,19 +3,25 @@
 //! The store keeps the credentials and the rotation chooses between them in the
 //! same way for every CLI. How a credential reaches a child differs: claude
 //! reads it out of its environment as it stands, while codex has to be handed a
-//! model provider of the server's own on its command line. Each CLI says how
-//! through its [`Login`], and the entry hands the store one per
-//! [`AccountProvider`] ([`Logins`]), so the accounts name no CLI's own code.
+//! model provider of the server's own on its command line, and each is proved
+//! to work by a run of its own CLI. Each CLI says how through its [`Login`],
+//! and the entry hands the store one per [`AccountProvider`] ([`Logins`]), so
+//! the accounts name no CLI's own code.
 
 pub mod claude;
 pub mod codex;
 
 use std::sync::Arc;
 
+use futures_util::future::BoxFuture;
+
 use super::store::{AccountError, AccountKind, AccountLaunch, AccountProvider};
 use droppen_base::env_block::EnvVar;
+use super::verify::Verdict;
+use droppen_instance::paths::Paths;
 
-/// One CLI's part of the accounts: how a credential starts it.
+/// One CLI's part of the accounts: how a credential starts it, and how one
+/// is proved to work.
 pub trait Login: Send + Sync {
     /// What one credential puts into a spawn of this CLI, without it having to
     /// be stored first.
@@ -26,6 +32,15 @@ pub trait Login: Send + Sync {
     /// credential this CLI could never be started under, which the store
     /// refuses to keep.
     fn spawn_env(&self, kind: AccountKind, secret: &str, env: &[EnvVar]) -> Result<AccountLaunch, AccountError>;
+
+    /// Spend one real request proving the credential `launch` was built from
+    /// works: one run of this CLI with it, in a scratch home of its own, so the
+    /// only login in reach is the one being checked.
+    ///
+    /// `secrets` are the credential's values: whatever the CLI says back is
+    /// redacted of them before it reaches the verdict. Never fails: anything
+    /// that is not a clean run or a clean refusal is [`Verdict::Unverifiable`].
+    fn verify<'a>(&'a self, paths: &'a Paths, launch: &'a AccountLaunch, secrets: &'a [&'a str]) -> BoxFuture<'a, Verdict>;
 }
 
 /// Every CLI's [`Login`], one per [`AccountProvider`].

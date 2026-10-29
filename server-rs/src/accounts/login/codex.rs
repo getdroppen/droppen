@@ -1,8 +1,15 @@
-//! Codex's part of the accounts: how a credential starts `codex`.
+//! Codex's part of the accounts: how a credential starts `codex`, and the
+//! check that proves one works before it is kept.
+
+use futures_util::future::BoxFuture;
 
 use super::Login;
+use crate::accounts::quota::{is_rate_limited, mentions_status};
 use crate::accounts::store::{AccountError, AccountKind, AccountLaunch, AccountProvider, CODEX_BASE_URL_VAR, CODEX_KEY_CANDIDATES};
 use droppen_base::env_block::EnvVar;
+use crate::accounts::verify::{reason, Scratch, Verdict, PROBE_PROMPT, PROBE_TIMEOUT};
+use droppen_instance::paths::Paths;
+use droppen_base::process_env::{apply_env, clean_env, clean_env_bare, resolve_on_path};
 
 /// The environment variable a codex account's key is read from.
 ///
@@ -71,6 +78,94 @@ pub fn normalize_base_url(raw: &str) -> Result<String, AccountError> {
     Ok(url.to_string())
 }
 
+/// What a codex probe runs. `--skip-git-repo-check` because the scratch
+/// directory is deliberately not a repository, and the account's own provider
+/// override is appended by [`AccountLaunch::codex_args`].
+const CODEX_PROBE_ARGS: [&str; 2] = ["exec", "--skip-git-repo-check"];
+
+/// One `codex exec ping` through the account's own model provider.
+///
+/// Two deliberate differences from the claude probe, both about *not touching
+/// the user's codex state*:
+///
+/// * a scratch `CODEX_HOME`, so the run's rollout lands in a directory that is
+///   deleted afterwards rather than appearing in the session list — and so the
+///   probe cannot fall back on the user's own `auth.json` and answer for a login
+///   that is not the one being checked;
+/// * the provider override from [`crate::accounts::login::codex::codex_provider_args`],
+///   which is the whole of how a key reaches codex: `app-server` reads neither
+///   `OPENAI_API_KEY` nor `CODEX_API_KEY`, so a probe that only set a variable
+///   would be checking nothing at all.
+async fn verify_codex(paths: &Paths, launch: &AccountLaunch, secrets: &[&str]) -> Verdict {
+    if resolve_on_path("codex", &clean_env_bare()).is_none() {
+        return Verdict::Unverifiable("the `codex` CLI is not on PATH, so the key cannot be checked".to_string());
+    }
+    let scratch = match Scratch::make(paths).await {
+        Ok(scratch) => scratch,
+        Err(error) => return Verdict::Unverifiable(format!("cannot prepare the check's config directory: {error}")),
+    };
+
+    let mut command = tokio::process::Command::new("codex");
+    command
+        .args(
+            CODEX_PROBE_ARGS
+                .iter()
+                .map(|arg| arg.to_string())
+                .chain(launch.codex_args.iter().cloned()),
+        )
+        .arg(PROBE_PROMPT)
+        .current_dir(scratch.cwd())
+        .stdin(std::process::Stdio::null())
+        .kill_on_drop(true);
+    apply_env(
+        &mut command,
+        &clean_env(
+            [("CODEX_HOME".to_string(), scratch.codex_home().to_string_lossy().into_owned())]
+                .into_iter()
+                .chain(launch.env.iter().cloned()),
+        ),
+    );
+
+    let output = match tokio::time::timeout(PROBE_TIMEOUT, command.output()).await {
+        Ok(Ok(output)) => output,
+        Ok(Err(error)) => return Verdict::Unverifiable(format!("the `codex` CLI could not be started: {error}")),
+        Err(_) => return Verdict::Unverifiable("the check timed out before the CLI answered".to_string()),
+    };
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    // `codex exec` reports a refusal on stderr and still exits zero often
+    // enough that the exit code cannot be the test; the words are.
+    if is_codex_refusal(&stdout) || is_codex_refusal(&stderr) {
+        return Verdict::Invalid(format!("the key was refused: {}", reason(&stderr, &stdout, secrets)));
+    }
+    if output.status.success() {
+        return Verdict::Valid;
+    }
+    if is_rate_limited(&stdout) || is_rate_limited(&stderr) {
+        return Verdict::Unverifiable("the account is rate-limited, so the key could not be checked".to_string());
+    }
+    Verdict::Unverifiable(format!(
+        "the check itself failed, so the key was not tested: {}",
+        reason(&stderr, &stdout, secrets)
+    ))
+}
+
+/// Whether codex is complaining about the *key* rather than about itself.
+///
+/// The same narrow direction as [`is_credential_refusal`]: a miss stores an
+/// unchecked key and says so, a false positive refuses a working one.
+fn is_codex_refusal(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    const MARKERS: [&str; 5] = [
+        "invalid_api_key",
+        "incorrect api key",
+        "unauthorized",
+        "missing bearer",
+        "invalid api key",
+    ];
+    MARKERS.iter().any(|marker| lower.contains(marker)) || mentions_status(&lower, "401", None)
+}
+
 /// Codex's [`Login`].
 pub struct CodexLogin;
 
@@ -109,5 +204,10 @@ impl Login for CodexLogin {
             env: vars,
             codex_args,
         })
+    }
+
+    /// One `codex exec ping` through the account's own model provider.
+    fn verify<'a>(&'a self, paths: &'a Paths, launch: &'a AccountLaunch, secrets: &'a [&'a str]) -> BoxFuture<'a, Verdict> {
+        Box::pin(verify_codex(paths, launch, secrets))
     }
 }
