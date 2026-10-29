@@ -284,7 +284,8 @@ impl Rotation {
     /// it; `false` when nobody does.
     pub fn answer(&self, value: &Value) -> bool {
         let Some(hash) = value["nonce_hash"].as_str() else { return false };
-        match self.lock().waiting.remove(hash) {
+        let waiting = self.lock().waiting.remove(hash);
+        match waiting {
             Some(tx) => tx.send(value.clone()).is_ok(),
             None => false,
         }
