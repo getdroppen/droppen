@@ -57,6 +57,7 @@ impl FromRef<AppState> for StatsState {
     fn from_ref(state: &AppState) -> Self {
         Self {
             paths: state.paths.clone(),
+            transcripts: state.drive.transcripts.clone(),
         }
     }
 }

@@ -30,13 +30,15 @@ pub struct UsageQuery {
 pub struct StatsState {
     /// Where sessions are discovered.
     pub paths: Arc<Paths>,
+    /// Each CLI's transcripts, which say what each session used.
+    pub transcripts: crate::sessions::TranscriptSources,
 }
 droppen_http::substate!(StatsState);
 
 /// Token usage aggregated by day and model over the recent window.
 #[api(id = "usage_stats", group = "stats", summary = "Token usage")]
 pub async fn usage_stats(State(state): State<StatsState>, ApiQuery(query): ApiQuery<UsageQuery>) -> Json<UsageStats> {
-    Json(usage::collect_usage(state.paths.as_ref(), query.days).await)
+    Json(state.transcripts.collect_usage(state.paths.as_ref(), query.days).await)
 }
 
 impl StatsState {

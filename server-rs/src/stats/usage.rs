@@ -17,12 +17,10 @@ use serde_json::Value;
 
 use droppen_http::openapi_ext::Nullable;
 use droppen_instance::paths::Paths;
+use crate::sessions::sources::{TokenUsage, UsageFile};
 use crate::sessions::util::{try_parse, LossyLines};
-use crate::sessions::Source;
-use droppen_base::time::{iso8601, mtime_ms};
-
-/// One parsed JSONL entry.
-type Entry = serde_json::Map<String, Value>;
+use crate::sessions::{Source, TranscriptSources, Transcripts};
+use droppen_base::time::iso8601;
 
 const DAY_MS: i64 = 86_400_000;
 
@@ -237,115 +235,16 @@ impl RowMap {
         };
         self.rows[slot].bucket.add(delta);
     }
-}
 
-/// A finite JSON number, or zero — Node's `typeof v === "number" && isFinite(v)`.
-fn num(value: Option<&Value>) -> f64 {
-    value.and_then(Value::as_f64).filter(|n| n.is_finite()).unwrap_or(0.0)
-}
-
-/// UTC calendar day of an entry's `timestamp`, or `None` when it has none.
-fn date_of(entry: &Entry) -> Option<String> {
-    entry
-        .get("timestamp")
-        .and_then(Value::as_str)
-        .and_then(|ts| ts.get(..10))
-        .map(str::to_owned)
-}
-
-/// Claude assistant entries carry per-message `message.usage` + `message.model`.
-fn fold_claude(rows: &mut RowMap, entry: &Entry) {
-    if entry.get("type").and_then(Value::as_str) != Some("assistant") {
-        return;
-    }
-    let Some(message) = entry.get("message").and_then(Value::as_object) else {
-        return;
-    };
-    let Some(usage) = message.get("usage").and_then(Value::as_object) else {
-        return;
-    };
-    let Some(date) = date_of(entry) else { return };
-    let delta = Bucket {
-        input: num(usage.get("input_tokens")),
-        output: num(usage.get("output_tokens")),
-        cache_read: num(usage.get("cache_read_input_tokens")),
-        cache_write: num(usage.get("cache_creation_input_tokens")),
-    };
-    if delta.total() == 0.0 {
-        return;
-    }
-    let model = message.get("model").and_then(Value::as_str).unwrap_or("unknown");
-    rows.add(&date, Source::Claude, model, delta);
-}
-
-/// Codex emits *cumulative* `token_count` events; the per-turn delta lives in
-/// `last_token_usage`, and the active model comes from the preceding
-/// `turn_context`. Events can repeat, so only a strict increase of the running
-/// total is counted.
-#[derive(Debug)]
-struct CodexFolder {
-    model: String,
-    prev_total: f64,
-}
-
-impl Default for CodexFolder {
-    fn default() -> Self {
-        Self {
-            model: "codex".to_string(),
-            prev_total: 0.0,
-        }
-    }
-}
-
-impl CodexFolder {
-    fn fold(&mut self, rows: &mut RowMap, entry: &Entry) {
-        let entry_type = entry.get("type").and_then(Value::as_str);
-        if entry_type == Some("turn_context") {
-            let model = entry
-                .get("payload")
-                .and_then(Value::as_object)
-                .and_then(|payload| payload.get("model"))
-                .and_then(Value::as_str)
-                .filter(|model| !model.is_empty());
-            if let Some(model) = model {
-                self.model = model.to_string();
-            }
-            return;
-        }
-        if entry_type != Some("event_msg") {
-            return;
-        }
-        let Some(payload) = entry.get("payload").and_then(Value::as_object) else {
-            return;
-        };
-        if payload.get("type").and_then(Value::as_str) != Some("token_count") {
-            return;
-        }
-        let Some(info) = payload.get("info").and_then(Value::as_object) else {
-            return;
-        };
-        let total = info
-            .get("total_token_usage")
-            .and_then(Value::as_object)
-            .map(|usage| num(usage.get("total_tokens")))
-            .unwrap_or(0.0);
-        if total <= self.prev_total {
-            return; // duplicate / non-progressing report
-        }
-        self.prev_total = total;
-        let Some(date) = date_of(entry) else { return };
-        let Some(last) = info.get("last_token_usage").and_then(Value::as_object) else {
-            return;
-        };
-        let cache_read = num(last.get("cached_input_tokens"));
+    /// Add what one transcript entry said it used.
+    fn add_usage(&mut self, source: Source, usage: TokenUsage) {
         let delta = Bucket {
-            // `input_tokens` already includes whatever came out of the cache.
-            input: (num(last.get("input_tokens")) - cache_read).max(0.0),
-            output: num(last.get("output_tokens")),
-            cache_read,
-            cache_write: 0.0,
+            input: usage.input,
+            output: usage.output,
+            cache_read: usage.cache_read,
+            cache_write: usage.cache_write,
         };
-        rows.add(&date, Source::Codex, &self.model, delta);
+        self.add(&usage.date, source, &usage.model, delta);
     }
 }
 
@@ -554,82 +453,17 @@ fn cost_of(bucket: Bucket, price: ModelPrice) -> f64 {
 
 // --- file scanning -----------------------------------------------------------
 
-/// A session file inside the window, with the mtime its parse is cached on.
-#[derive(Debug, Clone)]
-struct FileRef {
-    path: PathBuf,
-    mtime: f64,
-}
-
 /// One file's folded rows, keyed by the mtime they were folded from.
 type CachedRows = HashMap<PathBuf, (f64, Vec<UsageRow>)>;
 
 /// Parsed rows per file+mtime, so a refresh only re-reads sessions that changed.
 static FILE_CACHE: LazyLock<Mutex<CachedRows>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
-async fn stat_ref(path: PathBuf, cutoff_ms: f64) -> Option<FileRef> {
-    let metadata = tokio::fs::metadata(&path).await.ok()?;
-    let mtime = mtime_ms(&metadata);
-    (mtime >= cutoff_ms).then_some(FileRef { path, mtime })
-}
-
-fn is_jsonl(path: &Path) -> bool {
-    path.file_name().map(|name| name.to_string_lossy().ends_with(".jsonl")).unwrap_or(false)
-}
-
-/// Claude keeps one flat `<uuid>.jsonl` per session under each project dir, and
-/// both config roots contribute: usage is per machine, not per login.
-async fn claude_files(paths: &Paths, cutoff_ms: f64) -> Vec<FileRef> {
-    let mut out = Vec::new();
-    for (_, projects) in crate::claude_roots::ClaudeRoots::of(&paths).projects_dirs() {
-        let Ok(mut roots) = tokio::fs::read_dir(&projects).await else { continue };
-        while let Ok(Some(project)) = roots.next_entry().await {
-            let Ok(mut files) = tokio::fs::read_dir(project.path()).await else {
-                continue;
-            };
-            while let Ok(Some(file)) = files.next_entry().await {
-                let path = file.path();
-                if !is_jsonl(&path) {
-                    continue;
-                }
-                if let Some(reference) = stat_ref(path, cutoff_ms).await {
-                    out.push(reference);
-                }
-            }
-        }
-    }
-    out
-}
-
-/// Codex nests rollouts under `sessions/YYYY/MM/DD`, so the tree is walked.
-///
-/// An explicit stack rather than recursion: a recursive `async fn` needs its
-/// future boxed at every level, which buys nothing here.
-async fn codex_files(paths: &Paths, cutoff_ms: f64) -> Vec<FileRef> {
-    let mut out = Vec::new();
-    let mut pending = vec![paths.codex_sessions()];
-    while let Some(dir) = pending.pop() {
-        let Ok(mut entries) = tokio::fs::read_dir(&dir).await else { continue };
-        while let Ok(Some(entry)) = entries.next_entry().await {
-            let path = entry.path();
-            let Ok(file_type) = entry.file_type().await else { continue };
-            if file_type.is_dir() {
-                pending.push(path);
-            } else if is_jsonl(&path) {
-                if let Some(reference) = stat_ref(path, cutoff_ms).await {
-                    out.push(reference);
-                }
-            }
-        }
-    }
-    out
-}
-
 /// Stream a single session file, holding at most one line in memory at a time.
-async fn parse_file(path: &Path, source: Source) -> std::io::Result<Vec<UsageRow>> {
+async fn parse_file(path: &Path, reader: &dyn Transcripts) -> std::io::Result<Vec<UsageRow>> {
     let mut lines = LossyLines::open(path).await?;
     let mut rows = RowMap::default();
-    let mut codex = CodexFolder::default();
+    let mut fold = reader.usage_fold();
     // A read error stops the walk rather than discarding the rows already
     // folded: a half-written tail line is normal while a CLI is mid-write.
     // Malformed *bytes* are not a read error — `LossyLines` substitutes the
@@ -640,17 +474,14 @@ async fn parse_file(path: &Path, source: Source) -> std::io::Result<Vec<UsageRow
             continue;
         }
         let Some(entry) = try_parse(&line) else { continue };
-        match source {
-            Source::Claude => fold_claude(&mut rows, &entry),
-            Source::Codex => codex.fold(&mut rows, &entry),
-            // An ACP agent reports no per-model token counts this server can price.
-            Source::Acp => {}
+        if let Some(usage) = fold.fold(&entry) {
+            rows.add_usage(reader.source(), usage);
         }
     }
     Ok(rows.rows)
 }
 
-async fn file_rows(file: FileRef, source: Source) -> Vec<UsageRow> {
+async fn file_rows(file: UsageFile, reader: &dyn Transcripts) -> Vec<UsageRow> {
     if let Some((mtime, rows)) = FILE_CACHE.lock().expect("usage cache poisoned").get(&file.path) {
         if *mtime == file.mtime {
             return rows.clone();
@@ -658,7 +489,7 @@ async fn file_rows(file: FileRef, source: Source) -> Vec<UsageRow> {
     }
     // An unreadable file contributes nothing and is not cached, so a transient
     // failure does not stick until the file changes again.
-    let Ok(rows) = parse_file(&file.path, source).await else {
+    let Ok(rows) = parse_file(&file.path, reader).await else {
         return Vec::new();
     };
     FILE_CACHE
@@ -668,9 +499,9 @@ async fn file_rows(file: FileRef, source: Source) -> Vec<UsageRow> {
     rows
 }
 
-async fn rows_per_file(refs: Vec<FileRef>, source: Source) -> Vec<Vec<UsageRow>> {
+async fn rows_per_file(refs: Vec<UsageFile>, reader: &dyn Transcripts) -> Vec<Vec<UsageRow>> {
     futures_util::stream::iter(refs)
-        .map(|file| file_rows(file, source))
+        .map(|file| file_rows(file, reader))
         .buffered(READ_CONCURRENCY)
         .collect()
         .await
@@ -733,132 +564,144 @@ impl Accumulator {
     }
 }
 
-/// Aggregate token usage across every Claude and Codex session touched within
-/// the last `days` days, grouped by calendar day and by model.
-pub async fn collect_usage(paths: &Paths, days: Option<u32>) -> UsageStats {
-    let window_days = normalize_days(days);
-    let generated_at = iso8601(SystemTime::now());
-    let today = generated_at[..10].to_string();
-    let (since, cutoff_ms) = window_bounds(&today, window_days);
-    let cutoff_ms = cutoff_ms as f64;
+impl TranscriptSources {
+    /// Aggregate token usage across every Claude and Codex session touched within
+    /// the last `days` days, grouped by calendar day and by model.
+    pub async fn collect_usage(&self, paths: &Paths, days: Option<u32>) -> UsageStats {
+        let window_days = normalize_days(days);
+        let generated_at = iso8601(SystemTime::now());
+        let today = generated_at[..10].to_string();
+        let (since, cutoff_ms) = window_bounds(&today, window_days);
+        let cutoff_ms = cutoff_ms as f64;
 
-    let (claude_refs, codex_refs) = tokio::join!(claude_files(paths, cutoff_ms), codex_files(paths, cutoff_ms));
-    let (claude_per_file, codex_per_file) = tokio::join!(rows_per_file(claude_refs, Source::Claude), rows_per_file(codex_refs, Source::Codex));
+        let readers: Vec<&dyn Transcripts> = self.iter().collect();
+        let refs = futures_util::future::join_all(readers.iter().map(|reader| reader.usage_files(paths, cutoff_ms))).await;
+        let per_file = futures_util::future::join_all(readers.iter().zip(refs).map(|(reader, refs)| rows_per_file(refs, *reader))).await;
 
-    let mut acc = Accumulator::default();
-    let claude_sessions = acc.consume(&claude_per_file, &since);
-    let codex_sessions = acc.consume(&codex_per_file, &since);
+        // One source after the other, in `Source`'s order: a model's place in
+        // `byModel` among equal totals is where it was first seen.
+        let mut acc = Accumulator::default();
+        let sessions: Vec<(Source, usize)> = readers
+            .iter()
+            .zip(&per_file)
+            .map(|(reader, per_file)| (reader.source(), acc.consume(per_file, &since)))
+            .collect();
 
-    // Fill every calendar day in the window so the timeline chart has no gaps.
-    let mut daily = Vec::new();
-    let mut cursor = millis_from_date(&since).unwrap_or(0);
-    for _ in 0..=window_days + 1 {
-        let date = date_from_millis(cursor);
-        let bucket = acc.days.get(&date).copied().unwrap_or_default();
-        let reached_today = date >= today;
-        daily.push(DayUsage {
-            input: bucket.input,
-            output: bucket.output,
-            cache_read: bucket.cache_read,
-            cache_write: bucket.cache_write,
-            date,
-            total: bucket.total(),
-        });
-        if reached_today {
-            break;
-        }
-        cursor += DAY_MS;
-    }
-
-    // Price each model's tokens at published API rates; unpriced models (Codex/
-    // OpenAI, or anything without a table entry) contribute nothing and are named.
-    let prices = PriceTable::load(&PriceOverride::of(&paths).path()).await;
-    let mut unpriced_models = Vec::new();
-    let mut cost_usd = 0.0;
-    let mut by_model = acc.models;
-    for model in &mut by_model {
-        let bucket = Bucket {
-            input: model.input,
-            output: model.output,
-            cache_read: model.cache_read,
-            cache_write: model.cache_write,
-        };
-        match prices.get(&model.model) {
-            Some(price) => {
-                let cost = cost_of(bucket, price);
-                model.cost = Nullable(Some(cost));
-                cost_usd += cost;
-            }
-            None => {
-                model.cost = Nullable(None);
-                unpriced_models.push(format!("{}:{}", model.source, model.model));
-            }
-        }
-    }
-    // Stable, so equal totals keep the order they were first seen in.
-    by_model.sort_by(|a, b| b.total.partial_cmp(&a.total).unwrap_or(std::cmp::Ordering::Equal));
-
-    let by_source = [(Source::Claude, claude_sessions), (Source::Codex, codex_sessions)]
-        .into_iter()
-        .map(|(source, sessions)| {
-            let models = by_model.iter().filter(|model| model.source == source);
-            let (total, cost) = models.fold((0.0, 0.0), |(total, cost), model| {
-                (total + model.total, cost + model.cost.as_ref().copied().unwrap_or(0.0))
+        // Fill every calendar day in the window so the timeline chart has no gaps.
+        let mut daily = Vec::new();
+        let mut cursor = millis_from_date(&since).unwrap_or(0);
+        for _ in 0..=window_days + 1 {
+            let date = date_from_millis(cursor);
+            let bucket = acc.days.get(&date).copied().unwrap_or_default();
+            let reached_today = date >= today;
+            daily.push(DayUsage {
+                input: bucket.input,
+                output: bucket.output,
+                cache_read: bucket.cache_read,
+                cache_write: bucket.cache_write,
+                date,
+                total: bucket.total(),
             });
-            SourceUsage {
-                source,
-                total,
-                sessions,
-                cost,
+            if reached_today {
+                break;
             }
-        })
-        .filter(|entry| entry.sessions > 0 || entry.total > 0.0)
-        .collect();
+            cursor += DAY_MS;
+        }
 
-    UsageStats {
-        window_days,
-        since,
-        generated_at,
-        totals: UsageTotals {
-            input: acc.totals.input,
-            output: acc.totals.output,
-            cache_read: acc.totals.cache_read,
-            cache_write: acc.totals.cache_write,
-            total: acc.totals.total(),
-            sessions: claude_sessions + codex_sessions,
-            cost_usd,
-        },
-        daily,
-        by_model,
-        by_source,
-        pricing: UsagePricing {
-            unpriced_models,
-            override_path: PriceOverride::of(&paths).path().to_string_lossy().into_owned(),
-        },
+        // Price each model's tokens at published API rates; unpriced models (Codex/
+        // OpenAI, or anything without a table entry) contribute nothing and are named.
+        let prices = PriceTable::load(&PriceOverride::of(&paths).path()).await;
+        let mut unpriced_models = Vec::new();
+        let mut cost_usd = 0.0;
+        let mut by_model = acc.models;
+        for model in &mut by_model {
+            let bucket = Bucket {
+                input: model.input,
+                output: model.output,
+                cache_read: model.cache_read,
+                cache_write: model.cache_write,
+            };
+            match prices.get(&model.model) {
+                Some(price) => {
+                    let cost = cost_of(bucket, price);
+                    model.cost = Nullable(Some(cost));
+                    cost_usd += cost;
+                }
+                None => {
+                    model.cost = Nullable(None);
+                    unpriced_models.push(format!("{}:{}", model.source, model.model));
+                }
+            }
+        }
+        // Stable, so equal totals keep the order they were first seen in.
+        by_model.sort_by(|a, b| b.total.partial_cmp(&a.total).unwrap_or(std::cmp::Ordering::Equal));
+
+        let by_source = sessions
+            .iter()
+            .map(|&(source, sessions)| {
+                let models = by_model.iter().filter(|model| model.source == source);
+                let (total, cost) = models.fold((0.0, 0.0), |(total, cost), model| {
+                    (total + model.total, cost + model.cost.as_ref().copied().unwrap_or(0.0))
+                });
+                SourceUsage {
+                    source,
+                    total,
+                    sessions,
+                    cost,
+                }
+            })
+            .filter(|entry| entry.sessions > 0 || entry.total > 0.0)
+            .collect();
+
+        UsageStats {
+            window_days,
+            since,
+            generated_at,
+            totals: UsageTotals {
+                input: acc.totals.input,
+                output: acc.totals.output,
+                cache_read: acc.totals.cache_read,
+                cache_write: acc.totals.cache_write,
+                total: acc.totals.total(),
+                sessions: sessions.iter().map(|(_, sessions)| sessions).sum(),
+                cost_usd,
+            },
+            daily,
+            by_model,
+            by_source,
+            pricing: UsagePricing {
+                unpriced_models,
+                override_path: PriceOverride::of(&paths).path().to_string_lossy().into_owned(),
+            },
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sessions::claude::ClaudeCodeSessions;
+    use crate::sessions::codex::CodexSessions;
     use serde_json::json;
 
     /// Fold a literal transcript the way `parse_file` folds a real one.
-    fn claude_rows(entries: Value) -> Vec<UsageRow> {
+    fn rows_of(reader: &dyn Transcripts, entries: Value) -> Vec<UsageRow> {
         let mut rows = RowMap::default();
+        let mut fold = reader.usage_fold();
         for entry in entries.as_array().expect("array") {
-            fold_claude(&mut rows, entry.as_object().expect("object"));
+            if let Some(usage) = fold.fold(entry.as_object().expect("object")) {
+                rows.add_usage(reader.source(), usage);
+            }
         }
         rows.rows
     }
 
+    fn claude_rows(entries: Value) -> Vec<UsageRow> {
+        rows_of(&ClaudeCodeSessions, entries)
+    }
+
     fn codex_rows(entries: Value) -> Vec<UsageRow> {
-        let mut rows = RowMap::default();
-        let mut folder = CodexFolder::default();
-        for entry in entries.as_array().expect("array") {
-            folder.fold(&mut rows, entry.as_object().expect("object"));
-        }
-        rows.rows
+        rows_of(&CodexSessions, entries)
     }
 
     #[test]
@@ -1082,7 +925,7 @@ mod tests {
         .expect("write");
         drop(file);
 
-        let rows = parse_file(&path, Source::Claude).await.expect("parse");
+        let rows = parse_file(&path, &ClaudeCodeSessions).await.expect("parse");
         let total: f64 = rows.iter().map(|row| row.bucket.input).sum();
         assert_eq!(total, 5.0, "the turns after the bad byte must still be counted");
     }

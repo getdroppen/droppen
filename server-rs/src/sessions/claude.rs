@@ -12,6 +12,7 @@ use std::sync::{LazyLock, Mutex};
 use futures_util::future::BoxFuture;
 use serde_json::Value;
 
+use super::sources::{TokenUsage, UsageFile, UsageFold};
 use super::transcript::{content_blocks, title_line, user_title_candidate};
 use super::util::{self, read_head_lines, read_tail_lines, try_parse, FileCache};
 use super::{SessionActivity, SessionScope, SessionStatus, SessionSummary, Source};
@@ -697,6 +698,67 @@ impl super::Transcripts for ClaudeCodeSessions {
             .filter(|block| block.get("type").and_then(Value::as_str) == Some("text"))
             .filter_map(|block| block.get("text").and_then(Value::as_str).and_then(keep))
             .collect()
+    }
+
+    // Claude keeps one flat `<uuid>.jsonl` per session under each project dir, and
+    // both config roots contribute: usage is per machine, not per login.
+    fn usage_files<'a>(&'a self, paths: &'a Paths, cutoff_ms: f64) -> BoxFuture<'a, Vec<UsageFile>> {
+        Box::pin(async move {
+            let mut out = Vec::new();
+            for (_, projects) in crate::claude_roots::ClaudeRoots::of(&paths).projects_dirs() {
+                let Ok(mut roots) = tokio::fs::read_dir(&projects).await else { continue };
+                while let Ok(Some(project)) = roots.next_entry().await {
+                    let Ok(mut files) = tokio::fs::read_dir(project.path()).await else {
+                        continue;
+                    };
+                    while let Ok(Some(file)) = files.next_entry().await {
+                        let path = file.path();
+                        if !util::is_jsonl(&path) {
+                            continue;
+                        }
+                        if let Some(reference) = UsageFile::stat(path, cutoff_ms).await {
+                            out.push(reference);
+                        }
+                    }
+                }
+            }
+            out
+        })
+    }
+
+    fn usage_fold(&self) -> Box<dyn UsageFold> {
+        Box::new(ClaudeUsage)
+    }
+}
+
+/// Claude assistant entries carry per-message `message.usage` + `message.model`.
+struct ClaudeUsage;
+
+impl UsageFold for ClaudeUsage {
+    fn fold(&mut self, entry: &serde_json::Map<String, Value>) -> Option<TokenUsage> {
+        if entry.get("type").and_then(Value::as_str) != Some("assistant") {
+            return None;
+        }
+        let Some(message) = entry.get("message").and_then(Value::as_object) else {
+            return None;
+        };
+        let Some(usage) = message.get("usage").and_then(Value::as_object) else {
+            return None;
+        };
+        let Some(date) = util::date_of(entry) else { return None };
+        let model = message.get("model").and_then(Value::as_str).unwrap_or("unknown");
+        let delta = TokenUsage {
+            date,
+            model: model.to_string(),
+            input: util::num(usage.get("input_tokens")),
+            output: util::num(usage.get("output_tokens")),
+            cache_read: util::num(usage.get("cache_read_input_tokens")),
+            cache_write: util::num(usage.get("cache_creation_input_tokens")),
+        };
+        if delta.total() == 0.0 {
+            return None;
+        }
+        Some(delta)
     }
 }
 

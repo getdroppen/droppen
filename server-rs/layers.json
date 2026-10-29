@@ -338,7 +338,7 @@
       "droppen-provider-codex",
       "droppen-provider-acp"
     ],
-    "count": 81
+    "count": 72
   },
   "allowed": [
     {
@@ -348,8 +348,7 @@
         "sessions -> claude_roots",
         "sessions -> sessions::claude",
         "sessions -> sessions::codex_claims",
-        "sessions -> sessions::subagents",
-        "stats -> claude_roots"
+        "sessions -> sessions::subagents"
       ]
     },
     {
