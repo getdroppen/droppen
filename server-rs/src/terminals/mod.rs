@@ -966,10 +966,10 @@ impl Registry {
     /// inside the home directory.
     ///
     /// The terminal and the file browser must never disagree about what is
-    /// inside the home directory, so the rule is [`crate::files::resolve_safe`]'s;
+    /// inside the home directory, so the rule is [`droppen_files::resolve_safe`]'s;
     /// only the error type is this module's.
     pub fn resolve_safe(&self, requested: &str) -> Result<String, TerminalError> {
-        crate::files::resolve_safe(&self.paths, Some(requested))
+        droppen_files::resolve_safe(&self.paths, Some(requested))
             .map(|path| path.to_string_lossy().into_owned())
             .map_err(|_| TerminalError::Path)
     }

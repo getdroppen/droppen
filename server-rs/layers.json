@@ -89,10 +89,7 @@
         {
           "name": "droppen-files",
           "about": "Home-directory access behind the path guard, and the media proxy.",
-          "modules": [
-            "files",
-            "media"
-          ],
+          "modules": [],
           "mayUse": [
             "droppen-auth"
           ]

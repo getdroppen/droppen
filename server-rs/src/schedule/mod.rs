@@ -458,7 +458,7 @@ fn sanitize_name(value: Option<&str>, fallback: &str) -> String {
 /// to tell, and the person who could fix it is asleep. The same two checks
 /// `POST /api/sessions/new` makes, in the same order.
 async fn validated_cwd(paths: &Paths, cwd: &str) -> Result<String, ApiError> {
-    let resolved = crate::files::resolve_safe(paths, Some(cwd)).map_err(|error| error.into_api("invalid working directory"))?;
+    let resolved = droppen_files::resolve_safe(paths, Some(cwd)).map_err(|error| error.into_api("invalid working directory"))?;
     if !tokio::fs::metadata(&resolved).await.map(|meta| meta.is_dir()).unwrap_or(false) {
         return Err(ApiError::bad_request(format!("not a directory: {}", resolved.display())));
     }

@@ -27,7 +27,7 @@ fn attachment_missing() -> ApiError {
 /// provider hands them to a child process (`-i`, `--add-dir`, the prompt
 /// suffix): a path that escaped the uploads directory would widen what the CLI
 /// may read. The
-/// *resolved* paths are returned because [`crate::files::FileRoots::assert_under_uploads`]
+/// *resolved* paths are returned because [`droppen_files::FileRoots::assert_under_uploads`]
 /// only vouches for what it resolved, not for the spelling the client sent.
 ///
 /// The lexical check comes first and keeps its own refusal. Then the file
@@ -40,7 +40,7 @@ pub fn resolve_attachments(paths: &Paths, images: Vec<String>, files: Vec<String
         return Ok((images, files));
     }
     let uploads = std::fs::canonicalize(paths.uploads_dir()).ok();
-    let roots = crate::files::FileRoots::of(paths);
+    let roots = droppen_files::FileRoots::of(paths);
     let resolve = |requested: Vec<String>| -> Result<Vec<String>, ApiError> {
         requested
             .into_iter()

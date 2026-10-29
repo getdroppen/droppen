@@ -10,6 +10,15 @@
 //! Every entry point takes the request's [`Paths`], and nothing here may read
 //! `$HOME` or `dirs::home_dir()` directly: the integration tests point a whole
 //! server at a temporary home, and a direct read would step out of it.
+//!
+//! [`media`] serves the pictures an agent links to in private GitHub
+//! repositories, under the same inline image rules ([`FileBytes`],
+//! [`INLINE_CSP`]).
+//!
+//! A name in backticks such as `sessions` in these docs is a module of the
+//! server, which this crate cannot link to.
+
+pub mod media;
 
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
@@ -330,11 +339,11 @@ pub enum Access {
 ///
 /// * `plans` — a session in plan mode writes its plan to
 ///   `$CLAUDE_CONFIG_DIR/plans/<name>.md` and says so; the path becomes a
-///   download chip on that reply ([`crate::sessions::mentions`]) or a link
+///   download chip on that reply (`sessions::mentions`) or a link
 ///   in its markdown.
 /// * `image-cache` — where Claude Code keeps an image pasted into a session,
 ///   whose path it hands the model; a `Read` of it is offered as the tool
-///   result's thumbnail ([`crate::sessions::transcript`]).
+///   result's thumbnail (`sessions::transcript`).
 ///
 /// Plus [`READABLE_IN_PROJECTS`]. Nothing else in the root is linked from
 /// anywhere — its transcripts reach the page through the session routes,
@@ -1402,7 +1411,9 @@ mod tests {
     #[tokio::test]
     async fn the_file_routes_fence_bridged_devices_by_their_identity() {
         let home = tempfile::tempdir().expect("tempdir");
-        let state = FilesState::from_ref(&crate::api::test_support::state(home.path()).await);
+        // The sub-state a server under `home` hands these routes: its paths, of
+        // its instance (the unit tests' `unittest`).
+        let state = FilesState { paths: Arc::new(Paths::for_instance(home.path().to_path_buf(), "unittest")) };
         let key = state.paths.data_dir().join("instances/default/agent/machine-key.json");
         std::fs::create_dir_all(key.parent().unwrap()).unwrap();
         std::fs::write(&key, b"{}").unwrap();

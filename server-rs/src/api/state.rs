@@ -24,7 +24,7 @@ use crate::chats::ChatsState;
 use crate::cloud::CloudState;
 use crate::drive::DriveState;
 use crate::feed::global::{ClaudeDirs, EventsState};
-use crate::files::FilesState;
+use droppen_files::FilesState;
 use crate::notify::NotifyState;
 use crate::plugins::routes::PluginsState;
 use crate::prefs::PrefsState;

@@ -1123,6 +1123,7 @@ mod tests {
             manifest.join("src"),
             manifest.join("crates/droppen-supervisor/src"),
             manifest.join("crates/droppen-auth/src"),
+            manifest.join("crates/droppen-files/src"),
         ];
         while let Some(dir) = dirs.pop() {
             for entry in std::fs::read_dir(&dir).unwrap() {

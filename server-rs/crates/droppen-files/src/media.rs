@@ -46,7 +46,7 @@ use gotcha::{api, GotchaRouter, Schematic};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
 
-use crate::files::{FileBytes, INLINE_CSP};
+use crate::{FileBytes, INLINE_CSP};
 use droppen_http::error::ApiError;
 use droppen_http::extract::ApiQuery;
 use droppen_http::openapi_ext::ExtraResponses;

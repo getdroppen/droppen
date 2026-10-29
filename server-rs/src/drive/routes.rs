@@ -19,7 +19,6 @@ use crate::accounts::store::{AccountError, AccountProvider};
 use crate::accounts::{account_not_found, provider_mismatch, require_uuid};
 use droppen_auth::MaybeIdentity;
 use crate::feed;
-use crate::files;
 use droppen_http::error::{ApiError, Hinted};
 use droppen_http::SendResult;
 use droppen_http::extract::{ApiJson, ApiPath, ApiQuery};
@@ -578,7 +577,7 @@ async fn start_session(state: DriveState, body: NewSession, qid: Option<String>)
     // ([`deliver_message`]): every one proven to come from `/api/uploads`, and
     // the resolved path — what was checked — is what reaches the CLI.
     let (images, attachments) = resolve_attachments(&drive.paths, body.images.0.unwrap_or_default(), body.files.0.unwrap_or_default())?;
-    let resolved = files::resolve_safe(&drive.paths, Some(&body.cwd)).map_err(|error| error.into_api("invalid working directory"))?;
+    let resolved = droppen_files::resolve_safe(&drive.paths, Some(&body.cwd)).map_err(|error| error.into_api("invalid working directory"))?;
     // Catch a bad path here: a spawn in a missing cwd only fails asynchronously.
     if !tokio::fs::metadata(&resolved).await.map(|m| m.is_dir()).unwrap_or(false) {
         return Err(ApiError::bad_request(format!("not a directory: {}", resolved.display())));
@@ -2275,7 +2274,7 @@ mod tests {
     fn a_cwd_can_never_leave_the_home_directory() {
         let (dir, drive) = drive();
         let home = dir.path();
-        let resolve = |requested| files::resolve_safe(&drive.paths, Some(requested));
+        let resolve = |requested| droppen_files::resolve_safe(&drive.paths, Some(requested));
         assert_eq!(resolve("~").expect("home"), home);
         assert_eq!(resolve("~/proj").expect("under home"), home.join("proj"));
         assert_eq!(resolve("").expect("empty is home"), home);

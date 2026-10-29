@@ -1128,6 +1128,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "droppen-files"
+version = "0.1.0"
+dependencies = [
+ "droppen-auth",
+ "droppen-base",
+ "droppen-http",
+ "droppen-instance",
+ "futures-util",
+ "gotcha",
+ "gotcha_core",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "droppen-http"
 version = "0.1.0"
 dependencies = [
@@ -2875,6 +2894,7 @@ dependencies = [
  "croner",
  "droppen-auth",
  "droppen-base",
+ "droppen-files",
  "droppen-http",
  "droppen-instance",
  "droppen-plugin-sdk",

@@ -274,7 +274,7 @@ async fn fire(state: &ScheduleState, task: ScheduledTask) {
     // Re-checked at the moment of the spawn as well as when the task was saved:
     // a directory that was there in March can be gone in April, and the failure
     // is worth a message rather than an unexplained CLI error.
-    let cwd = match crate::files::resolve_safe(&paths, Some(&task.cwd)) {
+    let cwd = match droppen_files::resolve_safe(&paths, Some(&task.cwd)) {
         Ok(resolved) if tokio::fs::metadata(&resolved).await.map(|meta| meta.is_dir()).unwrap_or(false) => resolved.to_string_lossy().into_owned(),
         _ => {
             failed(state, &task, &at, format!("the working directory is gone: {}", task.cwd)).await;
