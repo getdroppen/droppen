@@ -2039,7 +2039,7 @@ test("a kept dispute about an entry past anything this browser has verified does
   const bus = tabsBus();
   const blind = await tabOf(a, bus());
   assert.equal(blind.isolated("m-1"), false);
-  (blind as unknown as { readHeld: () => Promise<never> }).readHeld = async () => {
+  (blind as unknown as { trust: { readHeld: () => Promise<never> } }).trust.readHeld = async () => {
     throw new Error("the store failed");
   };
   bus().post({ storage: key });
