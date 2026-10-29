@@ -134,9 +134,13 @@ jobs:
            and every finding with its severity, file, line (when there is one), title, and
            detail (what is wrong and the fix). Never quote a secret, token or key you find:
            name its file and line.
+        5. Your turns are limited, and running out leaves no verdict at all. On a large change
+           (a file moved into a new crate, say), read the diff first, open only the code that
+           bears on the points above, and return the structured output in time; say in the
+           summary what you did not open.
       REVIEW_ARGS: |
         --model ${{ vars.LLM_REVIEW_MODEL || 'claude-sonnet-5-5' }}
-        --max-turns 30
+        --max-turns 60
         --tools "Read,Grep,Glob"
         --allowedTools "Read,Grep,Glob"
         --disallowedTools "Bash,Edit,MultiEdit,Write,NotebookEdit,WebFetch,WebSearch,Task,Agent,Skill,Read(//proc/**),Read(//sys/**),Read(//dev/**),Read(//home/runner/work/_temp/**)"
