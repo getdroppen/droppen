@@ -217,7 +217,7 @@
           "notes": [
             "inject's own items, inject::receipts and inject::questions, drafts, runs, and the spawn gate with its claims (inject::gate).",
             "inject::shim, the session shim: Claude Code and Codex both start their CLI through it.",
-            "models keeps its routes here; each provider gets its own model list (models::probe)."
+            "models keeps its routes and the list's wire types here; each provider's list is its own (models::claude with its probe, models::codex, models::acp)."
           ]
         },
         {
@@ -235,7 +235,8 @@
             "accounts::usage_login",
             "accounts::local_login",
             "accounts::login::claude",
-            "record"
+            "record",
+            "models::claude"
           ],
           "mayUse": [
             "droppen-provider",
@@ -253,7 +254,8 @@
             "sessions::codex_tools",
             "sessions::codex_claims",
             "accounts::quota::codex",
-            "accounts::login::codex"
+            "accounts::login::codex",
+            "models::codex"
           ],
           "mayUse": [
             "droppen-provider",
@@ -268,7 +270,8 @@
             "acp",
             "acp_agent",
             "inject::acp",
-            "sessions::acp_transcript"
+            "sessions::acp_transcript",
+            "models::acp"
           ],
           "mayUse": [
             "droppen-provider",
@@ -344,7 +347,7 @@
       ]
     },
     {
-      "why": "inject and models name each implementation: the registry starts them, models asks each for its list. They go when each provider registers itself from the entry (ClaudeCode::register, Codex::register, Acp::register) and brings its own model list.",
+      "why": "inject names each implementation: the registry starts them. They go when each provider registers itself from the entry (ClaudeCode::register, Codex::register, Acp::register).",
       "edges": [
         "inject -> acp",
         "inject -> inject::acp",
@@ -353,11 +356,7 @@
         "inject -> record",
         "inject -> sessions::acp_transcript",
         "inject -> sessions::claude",
-        "inject -> sessions::codex",
-        "models -> acp",
-        "models -> acp_agent",
-        "models -> sessions::acp_transcript",
-        "models -> sessions::codex"
+        "inject -> sessions::codex"
       ]
     },
     {
@@ -375,12 +374,6 @@
       "edges": [
         "accounts::setup_token -> drive",
         "accounts::usage_login -> drive"
-      ]
-    },
-    {
-      "why": "A domain pair that points the wrong way: accounts checks a model against models::model_ids. It goes when that item moves to the crate that owns it.",
-      "edges": [
-        "accounts -> models"
       ]
     }
   ]

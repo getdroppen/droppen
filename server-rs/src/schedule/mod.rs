@@ -475,10 +475,12 @@ impl ScheduleState {
     /// Both routes check a task only through here, so neither can store one on
     /// a CLI the other would refuse.
     async fn check_cli(&self, source: Source, model: Option<&str>, effort: Option<&str>, permission: Option<&str>) -> Result<(), ApiError> {
-        if !self.drive.providers.capabilities(source).schedules {
-            return Err(ApiError::bad_request("scheduled tasks run on Claude Code or Codex"));
-        }
-        validated_flags(&self.paths, source, model, effort, permission).await
+        let providers = &self.drive.providers;
+        let models = match providers.models(source) {
+            Some(models) if providers.capabilities(source).schedules => models,
+            _ => return Err(ApiError::bad_request("scheduled tasks run on Claude Code or Codex")),
+        };
+        validated_flags(models, source, model, effort, permission).await
     }
 }
 
@@ -509,11 +511,11 @@ impl ScheduleState {
 ///
 /// The routes reach it through [`ScheduleState::check_cli`], which refuses a
 /// CLI that runs no scheduled tasks first.
-async fn validated_flags(paths: &Paths, source: Source, model: Option<&str>, effort: Option<&str>, permission: Option<&str>) -> Result<(), ApiError> {
+async fn validated_flags(models: &dyn crate::models::Models, source: Source, model: Option<&str>, effort: Option<&str>, permission: Option<&str>) -> Result<(), ApiError> {
     crate::drive::routes::validate_flags(model, effort, permission).map_err(ApiError::bad_request)?;
 
     if let Some(effort) = effort.filter(|effort| !effort.is_empty()) {
-        if let Some(accepted) = crate::models::accepted_efforts(paths, source, model).await {
+        if let Some(accepted) = models.accepted_efforts(model).await {
             if !accepted.iter().any(|known| known == effort) {
                 return Err(ApiError::bad_request(match accepted.is_empty() {
                     true => format!("{source} takes no effort for that model"),
@@ -524,7 +526,7 @@ async fn validated_flags(paths: &Paths, source: Source, model: Option<&str>, eff
     }
 
     if let Some(permission) = permission.filter(|permission| !permission.is_empty()) {
-        if !crate::models::permission_is_known(source, permission) {
+        if !models.permission_is_known(permission) {
             return Err(ApiError::bad_request(format!("unknown {source} permission mode: {permission}")));
         }
     }
@@ -807,6 +809,20 @@ mod tests {
         (dir, paths)
     }
 
+    /// [`validated_flags`] for `source`, against the model list of the
+    /// provider the entry registers for it over `paths`.
+    async fn flags(paths: &Paths, source: Source, model: Option<&str>, effort: Option<&str>, permission: Option<&str>) -> Result<(), ApiError> {
+        let paths = Arc::new(paths.clone());
+        let dirs = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
+        dirs.create().expect("instance dirs");
+        let accounts = Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins()));
+        let quota = Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone()));
+        let decoration = crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone());
+        let injections = crate::inject::InjectionRegistry::new(paths, &dirs, accounts, quota, decoration);
+        let providers = crate::inject::ProviderRegistry::new(injections, crate::app::register_providers);
+        validated_flags(providers.models(source).expect("a provider"), source, model, effort, permission).await
+    }
+
     fn task(id: &str) -> ScheduledTask {
         ScheduledTask {
             id: id.to_string(),
@@ -996,28 +1012,28 @@ mod tests {
         // The values the composer offers for each, and neither CLI's are the
         // other's: `acceptEdits` is not a sandbox and `read-only` is not a
         // permission mode.
-        assert!(validated_flags(&paths, Source::Claude, None, None, Some("acceptEdits")).await.is_ok());
-        assert!(validated_flags(&paths, Source::Codex, None, None, Some("read-only")).await.is_ok());
-        assert!(validated_flags(&paths, Source::Claude, None, None, Some("read-only")).await.is_err());
-        assert!(validated_flags(&paths, Source::Codex, None, None, Some("acceptEdits")).await.is_err());
-        assert!(validated_flags(&paths, Source::Claude, None, None, Some("nonsense")).await.is_err());
+        assert!(flags(&paths, Source::Claude, None, None, Some("acceptEdits")).await.is_ok());
+        assert!(flags(&paths, Source::Codex, None, None, Some("read-only")).await.is_ok());
+        assert!(flags(&paths, Source::Claude, None, None, Some("read-only")).await.is_err());
+        assert!(flags(&paths, Source::Codex, None, None, Some("acceptEdits")).await.is_err());
+        assert!(flags(&paths, Source::Claude, None, None, Some("nonsense")).await.is_err());
     }
 
     #[tokio::test]
     async fn a_claude_effort_is_checked_against_the_ladder_the_model_actually_has() {
         let (_dir, paths) = paths();
-        assert!(validated_flags(&paths, Source::Claude, Some("opus"), Some("max"), None).await.is_ok());
+        assert!(flags(&paths, Source::Claude, Some("opus"), Some("max"), None).await.is_ok());
         assert!(
-            validated_flags(&paths, Source::Claude, Some("haiku"), Some("high"), None).await.is_err(),
+            flags(&paths, Source::Claude, Some("haiku"), Some("high"), None).await.is_err(),
             "the haiku tier takes no --effort at all"
         );
         assert!(
-            validated_flags(&paths, Source::Claude, Some("claude-opus-4-5"), Some("xhigh"), None)
+            flags(&paths, Source::Claude, Some("claude-opus-4-5"), Some("xhigh"), None)
                 .await
                 .is_err(),
             "that generation predates the rung"
         );
-        assert!(validated_flags(&paths, Source::Claude, None, Some("nonsense"), None).await.is_err());
+        assert!(flags(&paths, Source::Claude, None, Some("nonsense"), None).await.is_err());
     }
 
     #[tokio::test]
@@ -1025,7 +1041,7 @@ mod tests {
         let (_dir, paths) = paths();
         // No `models_cache.json`, so nothing here is entitled to an opinion —
         // refusing would hide a rung a new model was released for.
-        assert!(validated_flags(&paths, Source::Codex, None, Some("xhigh"), None).await.is_ok());
+        assert!(flags(&paths, Source::Codex, None, Some("xhigh"), None).await.is_ok());
 
         // With a cache, the rungs it names are the ones that count.
         std::fs::create_dir_all(paths.codex_dir()).expect("codex dir");
@@ -1034,10 +1050,10 @@ mod tests {
             r#"{"models":[{"slug":"gpt-5.5","visibility":"list","supported_reasoning_levels":[{"effort":"low"},{"effort":"high"}]}]}"#,
         )
         .expect("seed");
-        assert!(validated_flags(&paths, Source::Codex, None, Some("high"), None).await.is_ok());
-        assert!(validated_flags(&paths, Source::Codex, None, Some("xhigh"), None).await.is_err());
+        assert!(flags(&paths, Source::Codex, None, Some("high"), None).await.is_ok());
+        assert!(flags(&paths, Source::Codex, None, Some("xhigh"), None).await.is_err());
         assert!(
-            validated_flags(&paths, Source::Codex, Some("gpt-5.5"), Some("low"), None).await.is_ok(),
+            flags(&paths, Source::Codex, Some("gpt-5.5"), Some("low"), None).await.is_ok(),
             "a named model answers for itself"
         );
     }

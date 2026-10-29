@@ -243,12 +243,15 @@ async fn rpc(registry: &InjectionRegistry, link: &mut shim::Link, method: &str, 
 pub(crate) struct Codex {
     /// The registry it reads its app servers from.
     registry: Arc<InjectionRegistry>,
+    /// Its CLI's models.
+    models: crate::models::codex::CodexModels,
 }
 
 impl Codex {
     /// Codex over `registry`.
     pub(crate) fn new(registry: Arc<InjectionRegistry>) -> Self {
-        Self { registry }
+        let models = crate::models::codex::CodexModels::new(registry.paths.clone());
+        Self { registry, models }
     }
 }
 
@@ -270,6 +273,10 @@ impl Provider for Codex {
 
     fn run(&self) -> &dyn Run {
         self
+    }
+
+    fn models(&self) -> &dyn crate::models::Models {
+        &self.models
     }
 }
 

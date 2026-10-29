@@ -14,6 +14,7 @@ use futures_util::future::BoxFuture;
 use tokio::sync::watch;
 
 use super::{drafts, AnswerOutcome, InjectError, InjectionRegistry, QueueOutcome, Reply, ResidentState, SendOptions, Sent, StopTaskOutcome};
+use crate::models::Models;
 use crate::sessions::{DriverStates, Injection, InjectionRunState, ResidentInfo, SessionSummary, Source};
 use droppen_http::error::ApiError;
 
@@ -27,6 +28,10 @@ pub trait Provider: Send + Sync {
 
     /// What it says about those sessions.
     fn run(&self) -> &dyn Run;
+
+    /// The models its CLI offers, and which efforts and permission modes it
+    /// takes.
+    fn models(&self) -> &dyn Models;
 }
 
 /// What a provider's sessions can do that not every CLI's can.
@@ -297,6 +302,11 @@ impl ProviderRegistry {
         self.providers.get(&source).map(|provider| provider.capabilities()).unwrap_or_default()
     }
 
+    /// See [`Provider::models`]; `None` for a source with no provider.
+    pub fn models(&self, source: Source) -> Option<&dyn Models> {
+        self.providers.get(&source).map(|provider| provider.models())
+    }
+
     /// Whether an instant chat of `source` turns away a message with
     /// attachments: one whose provider runs chats that cannot read them, and
     /// one no provider runs, since nothing can say it reads them.
@@ -377,6 +387,16 @@ impl ProviderRegistry {
         match self.run(source) {
             Some(run) => run.archive(id).await,
             None => Err(format!("no provider runs {source} sessions")),
+        }
+    }
+}
+
+impl crate::accounts::ModelIds for ProviderRegistry {
+    // A source no provider runs offers no model of its own.
+    fn model_ids<'a>(&'a self, source: Source, account_id: Option<&'a str>) -> BoxFuture<'a, Vec<String>> {
+        match self.models(source) {
+            Some(models) => models.ids(account_id),
+            None => Box::pin(std::future::ready(Vec::new())),
         }
     }
 }
@@ -475,6 +495,37 @@ mod tests {
         assert!(claude.chat_refuses_attachments(Source::Claude));
         assert!(claude.chat_refuses_attachments(Source::Codex), "no provider runs codex here");
         assert!(claude.chat_refuses_attachments(Source::Acp), "no provider runs acp here");
+    }
+
+    /// An ACP model list names its agent by an id that can be a directory name,
+    /// checked before the agent is looked up, and refused in these words
+    /// otherwise; the other CLIs' lists ignore the field. A source no provider
+    /// runs has no list.
+    #[tokio::test]
+    async fn an_acp_model_list_names_its_agent_by_an_id_that_can_be_a_directory_name() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let providers = providers(home.path());
+        let query = |source, agent: Option<&str>| crate::models::ModelsQuery {
+            source,
+            account_id: None,
+            acp_agent: agent.map(str::to_owned),
+        };
+        let acp = providers.models(Source::Acp).expect("the ACP provider");
+        for agent in [None, Some("../fake"), Some("Fake")] {
+            assert_eq!(
+                acp.list(&query(Source::Acp, agent)).await.err().as_deref(),
+                Some("acpAgent names the ACP agent to list models for"),
+                "{agent:?}"
+            );
+        }
+        let unconfigured = acp.list(&query(Source::Acp, Some("other"))).await.expect("a list");
+        assert!(unconfigured.models.is_empty() && unconfigured.hidden.is_none());
+        assert_eq!(unconfigured.source, crate::models::ModelListSource::Fallback, "an agent that is not configured has no list");
+        let codex = providers.models(Source::Codex).expect("the Codex provider");
+        assert!(codex.list(&query(Source::Codex, Some("../fake"))).await.is_ok(), "only an ACP list reads acpAgent");
+
+        let other = tempfile::tempdir().expect("tempdir");
+        assert!(providers_from(other.path(), |_, _| {}).models(Source::Acp).is_none());
     }
 
     /// A new session names an ACP agent exactly when it is an ACP session, and

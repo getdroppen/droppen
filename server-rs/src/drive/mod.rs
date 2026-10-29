@@ -59,8 +59,6 @@ pub struct Drive {
     /// Behind an `Arc` because the injection registry holds the same one: its
     /// drivers are where the session readings come from.
     pub quota: Arc<QuotaCache>,
-    /// The Claude model list, asked of the CLI and cached for the process.
-    pub models: Arc<crate::models::ClaudeModelCache>,
     /// Composer model/effort/permission choices, shared across devices.
     pub composer: composer_prefs::ComposerPrefsStore,
     /// User-set session titles.
@@ -105,7 +103,6 @@ impl Drive {
             injections,
             accounts,
             quota,
-            models: Arc::new(crate::models::ClaudeModelCache::new(paths.clone())),
             composer: composer_prefs::ComposerPrefsStore::new(paths.clone()),
             titles: titles::TitlesStore::new(paths.clone()),
             paths,

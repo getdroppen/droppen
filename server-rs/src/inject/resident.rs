@@ -657,12 +657,15 @@ async fn wait_recorded(
 pub(crate) struct ClaudeCode {
     /// The registry it reads its residents from.
     registry: Arc<InjectionRegistry>,
+    /// Its CLI's models, per login.
+    models: crate::models::claude::ClaudeModels,
 }
 
 impl ClaudeCode {
     /// Claude Code over `registry`.
     pub(crate) fn new(registry: Arc<InjectionRegistry>) -> Self {
-        Self { registry }
+        let models = crate::models::claude::ClaudeModels::new(registry.paths.clone(), registry.accounts.clone());
+        Self { registry, models }
     }
 }
 
@@ -685,6 +688,10 @@ impl Provider for ClaudeCode {
 
     fn run(&self) -> &dyn Run {
         self
+    }
+
+    fn models(&self) -> &dyn crate::models::Models {
+        &self.models
     }
 }
 
@@ -12435,7 +12442,6 @@ done
             injections: harness.registry.clone(),
             accounts: Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins())),
             quota: Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone())),
-            models: Arc::new(crate::models::ClaudeModelCache::new(paths.clone())),
             composer: crate::drive::composer_prefs::ComposerPrefsStore::new(paths.clone()),
             titles: crate::sessions::titles::TitlesStore::new(paths.clone()),
             paths,
