@@ -45,6 +45,8 @@ pub(crate) mod retention;
 pub mod source;
 pub(crate) mod store;
 pub(crate) mod writer;
+#[cfg(test)]
+mod test_transcripts;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
@@ -1908,7 +1910,7 @@ fn short(stream: &StreamId) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sessions::loader::{encode_fp, Transcript};
+    use super::test_transcripts::{encode_fp, TestItems, TestTranscript};
 
     /// Host identity renewal (§5.4): the writer remembers which key it signs
     /// with; started with another — a renewed key — every stream with a
@@ -1983,18 +1985,19 @@ mod tests {
     const DAY: u64 = retention::DAY_MS;
 
     /// `n` items of about 8 KB, the first `old` dated `old_ms`, the rest `new_ms`.
-    fn dated_items(n: usize, old: usize, old_ms: u64, new_ms: u64) -> Vec<crate::sessions::util::TranscriptItem> {
-        (0..n)
-            .map(|i| {
-                let at = ms_iso(if i < old { old_ms } else { new_ms });
-                serde_json::from_value(serde_json::json!({
-                    "role": "assistant", "kind": "text", "text": format!("{i}:{}", "x".repeat(8000)),
-                    "detail": null, "toolName": null, "meta": null, "isError": false, "question": null,
-                    "timestamp": at, "truncated": false,
-                }))
-                .unwrap()
-            })
-            .collect()
+    fn dated_items(n: usize, old: usize, old_ms: u64, new_ms: u64) -> TestItems {
+        TestItems(
+            (0..n)
+                .map(|i| {
+                    let at = ms_iso(if i < old { old_ms } else { new_ms });
+                    serde_json::json!({
+                        "role": "assistant", "kind": "text", "text": format!("{i}:{}", "x".repeat(8000)),
+                        "detail": null, "toolName": null, "meta": null, "isError": false, "question": null,
+                        "timestamp": at, "truncated": false,
+                    })
+                })
+                .collect(),
+        )
     }
 
     /// The page refs a writer would keep for `plan` (a new page named
@@ -2052,8 +2055,8 @@ mod tests {
         let old_ms = now - 20 * DAY;
         let path = std::path::Path::new("/tmp/long.jsonl");
         // 30 items, 0..20 three weeks old, 20..30 an hour old; 7 to a page.
-        let transcript = Transcript::new(path, Arc::new(dated_items(30, 20, old_ms, now - 3_600_000)));
-        let chain = transcript.chain().clone();
+        let transcript = TestTranscript::new(path, dated_items(30, 20, old_ms, now - 3_600_000));
+        let chain = transcript.chain.0.clone();
         let mut r = row(0, 1, None, None);
         r.manifest_upto = Some(0);
 
@@ -2101,10 +2104,10 @@ mod tests {
         assert_eq!(base, 20);
         assert_eq!(kinds(&rebuilt), ["window 20..20", "new 20..27", "new 27..30"]);
         assert_eq!(body_of(&rebuilt, 0)["base"], 20);
-        assert_eq!(copy_start(&*transcript.items, cutoff), (20, true));
-        assert_eq!(copy_start(&*transcript.items, None), (0, false));
+        assert_eq!(copy_start(&transcript.items, cutoff), (20, true));
+        assert_eq!(copy_start(&transcript.items, None), (0, false));
         // A session all within the window is not touched.
-        let young = Transcript::new(path, Arc::new(dated_items(10, 0, 0, now)));
+        let young = TestTranscript::new(path, dated_items(10, 0, 0, now));
         let (plan, base) = session_plan(&r, &young, "sig", 0, 0, true, false, cutoff, Some(0));
         assert_eq!(base, 0);
         assert!(!kinds(&plan).iter().any(|k| k.starts_with("window")));

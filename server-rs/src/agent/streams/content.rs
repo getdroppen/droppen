@@ -622,21 +622,20 @@ pub fn status_fingerprint(body: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sessions::loader::{encode_fp, fingerprint_chain, RESUME_OVERLAP};
-    use crate::sessions::util::TranscriptItem;
-    use crate::sessions::{SessionScope, SessionSummary};
+    use super::super::test_transcripts::{encode_fp, fingerprint_chain, TestItems, TestRow, RESUME_OVERLAP};
 
-    fn items(n: usize, text_len: usize) -> Vec<TranscriptItem> {
-        (0..n)
-            .map(|i| {
-                serde_json::from_value(serde_json::json!({
-                    "role": "assistant", "kind": "text", "text": format!("{i}:{}", "x".repeat(text_len)),
-                    "detail": null, "toolName": null, "meta": null, "isError": false, "question": null,
-                    "timestamp": null, "truncated": false,
-                }))
-                .unwrap()
-            })
-            .collect()
+    fn items(n: usize, text_len: usize) -> TestItems {
+        TestItems(
+            (0..n)
+                .map(|i| {
+                    serde_json::json!({
+                        "role": "assistant", "kind": "text", "text": format!("{i}:{}", "x".repeat(text_len)),
+                        "detail": null, "toolName": null, "meta": null, "isError": false, "question": null,
+                        "timestamp": null, "truncated": false,
+                    })
+                })
+                .collect(),
+        )
     }
 
     #[test]
@@ -646,17 +645,17 @@ mod tests {
         let chain = fingerprint_chain(path, &list);
         let cursor = SessionCursor::at(0, 10, &chain, "s");
         assert_eq!(cursor.delta(&chain), Delta::None);
-        list.extend(items(2, 7));
+        list.0.extend(items(2, 7).0);
         let grown = fingerprint_chain(path, &list);
         assert_eq!(cursor.delta(&grown), Delta::From(10), "appended: from the old end");
         // The last item rewritten in place (a tool result attaching).
         let mut rewritten = items(10, 5);
-        rewritten[9].text = "changed".into();
+        rewritten.0[9]["text"] = "changed".into();
         let chain2 = fingerprint_chain(path, &rewritten);
         assert_eq!(cursor.delta(&chain2), Delta::From(9));
         // Rewritten further back than the cursor remembers: rebuild.
         let mut early = items(10, 5);
-        early[0].text = "changed".into();
+        early.0[0]["text"] = "changed".into();
         assert_eq!(cursor.delta(&fingerprint_chain(path, &early)), Delta::Rebuild);
         // Another file entirely.
         assert_eq!(
@@ -679,8 +678,8 @@ mod tests {
             assert_eq!(v["fromIndex"], at);
             assert_eq!(v["endIndex"], *end);
             assert_eq!(v["items"].as_array().unwrap().len(), end - at);
-            assert_eq!(v["fp"], encode_fp(&chain[*end]));
-            assert_eq!(v["prefixFp"], encode_fp(&chain[end - RESUME_OVERLAP]));
+            assert_eq!(v["fp"], encode_fp(&chain.0[*end]));
+            assert_eq!(v["prefixFp"], encode_fp(&chain.0[end - RESUME_OVERLAP]));
             at = *end;
         }
         assert_eq!(at, 40);
@@ -694,7 +693,7 @@ mod tests {
     fn an_item_too_big_for_a_record_is_cut_down_and_marked() {
         let path = std::path::Path::new("/tmp/t.jsonl");
         let mut list = items(3, 10);
-        list[1].detail = droppen_http::openapi_ext::Nullable(Some("é".repeat(200_000)));
+        list.0[1]["detail"] = "é".repeat(200_000).into();
         let chain = fingerprint_chain(path, &list);
         let bodies = session_bodies(&list, 0, 3, &chain);
         let all: Vec<Value> = bodies
@@ -711,18 +710,14 @@ mod tests {
         }
     }
 
-    fn summary(id: &str, scope: SessionScope, updated: &str) -> SessionSummary {
-        let mut v: Value = serde_json::json!({
-            "pinned": false, "id": id, "source": "claude", "scope": "owned", "server": "s", "title": "t",
+    /// A session-list row; `scope` as the list spells it (`owned`, `external`).
+    fn summary(id: &str, scope: &str, updated: &str) -> TestRow {
+        TestRow::of(serde_json::json!({
+            "pinned": false, "id": id, "source": "claude", "scope": scope, "server": "s", "title": "t",
             "cwd": null, "repoKey": null, "gitBranch": null, "updatedAt": updated, "createdAt": updated,
             "sizeBytes": 1, "filePath": "/x", "status": "idle", "activity": "idle", "resident": null,
             "claudeRoot": null, "accountId": null, "attentionAt": null, "unread": false, "unreadCount": 0,
-        });
-        v["scope"] = serde_json::to_value(scope).unwrap();
-        match serde_json::from_value(v.clone()) {
-            Ok(s) => s,
-            Err(e) => panic!("a SessionSummary fixture: {e}: {v}"),
-        }
+        }))
     }
 
     #[test]
@@ -733,21 +728,21 @@ mod tests {
             .unwrap()
             .as_millis() as u64;
         let scope = Scope::default();
-        assert!(scope.admits(&summary("a", SessionScope::Owned, "2026-10-14T00:00:00Z"), now));
-        assert!(scope.admits(&summary("a", SessionScope::Owned, "2026-09-16T00:00:00Z"), now));
+        assert!(scope.admits(&summary("a", "owned", "2026-10-14T00:00:00Z"), now));
+        assert!(scope.admits(&summary("a", "owned", "2026-09-16T00:00:00Z"), now));
         assert!(
-            !scope.admits(&summary("a", SessionScope::Owned, "2026-09-01T00:00:00Z"), now),
+            !scope.admits(&summary("a", "owned", "2026-09-01T00:00:00Z"), now),
             "older than 30 days"
         );
         assert!(
-            !scope.admits(&summary("a", SessionScope::External, "2026-10-14T00:00:00Z"), now),
+            !scope.admits(&summary("a", "external", "2026-10-14T00:00:00Z"), now),
             "~/.claude is not synced by default"
         );
-        assert!(Scope { external: true, ..scope }.admits(&summary("a", SessionScope::External, "2026-10-14T00:00:00Z"), now));
-        assert!(!scope.admits(&summary("a", SessionScope::Owned, "not a date"), now));
+        assert!(Scope { external: true, ..scope }.admits(&summary("a", "external", "2026-10-14T00:00:00Z"), now));
+        assert!(!scope.admits(&summary("a", "owned", "not a date"), now));
         let rows = vec![
-            summary("a", SessionScope::Owned, "2026-10-14T00:00:00Z"),
-            summary("b", SessionScope::External, "2026-10-14T00:00:00Z"),
+            summary("a", "owned", "2026-10-14T00:00:00Z"),
+            summary("b", "external", "2026-10-14T00:00:00Z"),
         ];
         let kept = index_rows(&rows, &scope, now);
         assert_eq!(kept.keys().collect::<Vec<_>>(), vec!["claude/a"]);
@@ -796,7 +791,7 @@ mod tests {
             w,
             serde_json::json!({
                 "fromIndex": 4, "items": [], "endIndex": 4,
-                "fp": encode_fp(&chain[4]), "prefixFp": encode_fp(&chain[1]),
+                "fp": encode_fp(&chain.0[4]), "prefixFp": encode_fp(&chain.0[1]),
                 "base": 4, "before": "2025-10-09T08:53:20.000Z",
             })
         );
@@ -804,8 +799,8 @@ mod tests {
         assert_eq!(undated["before"], Value::Null);
         // Item times: what parses, and nothing for what does not.
         let mut dated = items(3, 1);
-        dated[0].timestamp = droppen_http::openapi_ext::Nullable(Some("2026-10-15T08:00:01.000Z".into()));
-        dated[2].timestamp = droppen_http::openapi_ext::Nullable(Some("not a time".into()));
+        dated.0[0]["timestamp"] = "2026-10-15T08:00:01.000Z".into();
+        dated.0[2]["timestamp"] = "not a time".into();
         assert_eq!(item_times(&dated), vec![Some(1_792_051_201_000), None, None]);
     }
 

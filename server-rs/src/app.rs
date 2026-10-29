@@ -768,6 +768,26 @@ impl crate::agent::streams::source::DraftFeed for tokio::sync::watch::Receiver<c
 mod tests {
     use super::*;
 
+    /// The server's link host renews the push (VAPID) keypair, and a renewal
+    /// the state database refuses fails and leaves the keypair as it was:
+    /// what the link's retry counts on
+    /// (`agent::link::tests::the_push_keys_are_renewed_again_after_a_failure_without_a_restart`).
+    #[tokio::test]
+    async fn the_push_link_host_renews_the_vapid_keys_and_fails_when_refused() {
+        use crate::agent::link::LinkHost;
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::for_instance(dir.path().to_path_buf(), "agentlink");
+        let old = crate::push::store::vapid_public(&paths).await.unwrap();
+        let db = droppen_instance::db::at(paths.instance_db());
+        db.write(|tx| tx.execute_batch("CREATE TRIGGER refuse_push BEFORE UPDATE ON kv WHEN NEW.scope = 'push' BEGIN SELECT RAISE(ABORT, 'refused (test)'); END;"))
+            .unwrap();
+        assert!(PushLinkHost.renew_push_keys(&paths).await.is_err(), "refused");
+        assert_eq!(crate::push::store::vapid_public(&paths).await.unwrap(), old);
+        db.write(|tx| tx.execute_batch("DROP TRIGGER refuse_push")).unwrap();
+        PushLinkHost.renew_push_keys(&paths).await.expect("renewed");
+        assert_ne!(crate::push::store::vapid_public(&paths).await.unwrap(), old, "a new push key");
+    }
+
     /// Each CLI is registered twice, for its transcripts and for its runs, in
     /// two functions here. A CLI in one and not the other would list sessions
     /// nothing can drive, or drive sessions nothing lists, and both lists are
