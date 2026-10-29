@@ -326,6 +326,16 @@ mod assets {
 
 #[cfg(test)]
 mod tests {
+    /// The JSON error the static files answer with, byte for byte.
+    #[tokio::test]
+    async fn a_json_error_is_its_message() {
+        let response = super::json_error(StatusCode::NOT_FOUND, "not found");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(response.headers()[header::CONTENT_TYPE], "application/json");
+        let body = gotcha::axum::body::to_bytes(response.into_body(), usize::MAX).await.expect("body");
+        assert_eq!(std::str::from_utf8(&body).expect("utf-8"), r#"{"error":"not found"}"#);
+    }
+
     use super::*;
     use gotcha::axum::http::Method;
     use gotcha::axum::Router;

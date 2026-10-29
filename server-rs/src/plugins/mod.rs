@@ -875,7 +875,10 @@ pub(crate) mod tests {
 
         let status = switched.set_enabled("notes", true, Some("ada"), DecisionReason::Settings).unwrap();
         assert!(status.enabled);
-        let frame: serde_json::Value = serde_json::from_str(&rx.try_recv().unwrap()).unwrap();
+        let raw = rx.try_recv().unwrap();
+        // The frame's bytes: its type first, then the list as the route writes it.
+        assert_eq!(&*raw, format!(r#"{{"type":"plugins","plugins":{}}}"#, serde_json::to_string(&switched.status()).unwrap()));
+        let frame: serde_json::Value = serde_json::from_str(&raw).unwrap();
         assert_eq!(frame["type"], "plugins");
         assert_eq!(frame["plugins"][0]["enabled"], json!(true));
         let decision = switched.decision("notes").unwrap();
@@ -897,7 +900,9 @@ pub(crate) mod tests {
             )
             .unwrap();
         assert_eq!(doc.revision, 1);
-        let frame: serde_json::Value = serde_json::from_str(&rx.try_recv().unwrap()).unwrap();
+        let raw = rx.try_recv().unwrap();
+        assert_eq!(&*raw, r#"{"type":"plugin-doc","plugin":"notes","name":"state","revision":1}"#);
+        let frame: serde_json::Value = serde_json::from_str(&raw).unwrap();
         assert_eq!(frame, json!({"type": "plugin-doc", "plugin": "notes", "name": "state", "revision": 1}));
         assert!(store.exists());
 

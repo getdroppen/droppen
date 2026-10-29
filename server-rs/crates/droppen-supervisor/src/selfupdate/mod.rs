@@ -634,6 +634,10 @@ mod tests {
         let response = gotcha::axum::response::IntoResponse::into_response(error);
         assert_eq!(response.status(), gotcha::axum::http::StatusCode::FORBIDDEN);
         let body = gotcha::axum::body::to_bytes(response.into_body(), usize::MAX).await.expect("body");
+        assert_eq!(
+            std::str::from_utf8(&body).expect("utf-8"),
+            r#"{"error":"self_upgrade_disabled","detail":"this server is run by the Droppen desktop app, which updates it with the app; update the app instead"}"#
+        );
         let body: serde_json::Value = serde_json::from_slice(&body).expect("json");
         assert_eq!(body["error"], "self_upgrade_disabled");
         assert!(

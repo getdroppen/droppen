@@ -879,6 +879,13 @@ pub fn describe(reg: &mut ExtraResponses) {
 
 #[cfg(test)]
 mod tests {
+    /// A refusal's body, byte for byte: the code, then the sentence.
+    #[test]
+    fn a_refusal_is_a_code_and_a_hint() {
+        let refused = super::refused(StatusCode::CONFLICT, "no_setup_code", "start the server again");
+        assert_eq!(refused.body().to_string(), r#"{"error":"no_setup_code","hint":"start the server again"}"#);
+    }
+
     use super::*;
     use crate::api::AppState;
     use gotcha::axum::body::Body;

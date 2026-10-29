@@ -504,6 +504,13 @@ pub fn describe(reg: &mut ExtraResponses) {
 
 #[cfg(test)]
 mod tests {
+    /// A coded refusal's body, byte for byte.
+    #[test]
+    fn a_coded_refusal_is_a_code_and_a_message() {
+        let refused = super::coded(StatusCode::NOT_FOUND, "plugin_not_found", "no plugin \"x\"");
+        assert_eq!(refused.body().to_string(), r#"{"error":"plugin_not_found","message":"no plugin \"x\""}"#);
+    }
+
     use super::*;
     use gotcha::axum::body::Body;
     use gotcha::axum::http::Request;

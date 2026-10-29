@@ -1088,6 +1088,18 @@ impl AppsState {
 
 #[cfg(test)]
 mod tests {
+    /// A missing program is a `409` with a code the web app turns into words
+    /// and the sentence beside it, byte for byte.
+    #[test]
+    fn a_missing_program_is_a_conflict_with_a_code_and_a_hint() {
+        let refused = super::AppError::Missing(super::AppType::Vscode).into_api();
+        assert_eq!(refused.status(), gotcha::axum::http::StatusCode::CONFLICT);
+        assert_eq!(
+            refused.body().to_string(),
+            r#"{"error":"code_server_missing","hint":"code-server is not installed on this device, or is not on the server's PATH"}"#
+        );
+    }
+
     use super::*;
 
     /// A registry on a throwaway home and instance.

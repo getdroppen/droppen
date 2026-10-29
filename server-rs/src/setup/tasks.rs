@@ -903,6 +903,14 @@ pub async fn install_git(state: &SetupState) -> bool {
 
 #[cfg(test)]
 mod tests {
+    /// `unavailable`'s body, byte for byte.
+    #[test]
+    fn unavailable_is_a_code_and_a_reason() {
+        let refused = super::unavailable("not_installed");
+        assert_eq!(refused.status(), gotcha::axum::http::StatusCode::BAD_REQUEST);
+        assert_eq!(refused.body().to_string(), r#"{"error":"unavailable","reason":"not_installed"}"#);
+    }
+
     use super::*;
     use crate::api::AppState;
     use gotcha::axum::extract::FromRef;
@@ -1319,8 +1327,8 @@ mod tests {
             picked.to_string_lossy().replace("/claude", "/codex"),
         ] {
             assert_eq!(
-                setup.adopt(ToolId::Claude, &bad).expect_err(&bad).body()["error"],
-                "not_the_tool",
+                setup.adopt(ToolId::Claude, &bad).expect_err(&bad).body().to_string(),
+                r#"{"error":"not_the_tool","hint":"an executable file named claude"}"#,
                 "{bad}"
             );
         }
@@ -1345,8 +1353,8 @@ mod tests {
         chmod(&root.join("open"), 0o777);
         for theirs in [&shared, &link, &writable, &under_open] {
             assert_eq!(
-                setup.adopt(ToolId::Claude, &theirs.to_string_lossy()).expect_err("not adopted").body()["error"],
-                "not_yours",
+                setup.adopt(ToolId::Claude, &theirs.to_string_lossy()).expect_err("not adopted").body().to_string(),
+                r#"{"error":"not_yours","hint":"the file and its folder must belong to you and be writable by nobody else"}"#,
                 "{}",
                 theirs.display()
             );
@@ -1369,8 +1377,8 @@ mod tests {
         let colon = root.join("Tools 24:25/bin/claude");
         marker(&colon);
         assert_eq!(
-            setup.adopt(ToolId::Claude, &colon.to_string_lossy()).expect_err("colon").body()["error"],
-            "colon_in_path"
+            setup.adopt(ToolId::Claude, &colon.to_string_lossy()).expect_err("colon").body().to_string(),
+            r#"{"error":"colon_in_path","hint":"a folder whose path has a ':' cannot go on a PATH; move the CLI or link it from another folder"}"#
         );
         assert!(setup.overlay().is_empty());
 

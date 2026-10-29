@@ -111,3 +111,15 @@ impl Schematic for ApiError {
         <Error as Schematic>::generate_schema()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The body the web client reads `.error` off, byte for byte.
+    #[test]
+    fn an_error_body_is_its_message() {
+        assert_eq!(ApiError::new(StatusCode::NOT_FOUND, "session not found").body().to_string(), r#"{"error":"session not found"}"#);
+        assert_eq!(ApiError::conflict("busy \"now\"").body().to_string(), r#"{"error":"busy \"now\""}"#);
+    }
+}
