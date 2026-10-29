@@ -41,6 +41,7 @@ export const pricingZhCN: Bundle = {
   // The plans
   "End-to-end encrypted: we can't read your sessions, code or terminals": "端到端加密：我们无法读取你的会话、代码和终端",
   "Local only": "仅本地",
+  "Recommended": "推荐",
   "forever": "永久免费",
   "No account, nothing to sign up for": "无需账号，也不用注册",
   "Droppen on the device your AI runs on, and nothing in the cloud.": "Droppen 只安装在运行 AI 的设备上，云端不保存任何内容。",
@@ -247,6 +248,7 @@ export const pricingZhTW: Bundle = {
 
   "End-to-end encrypted: we can't read your sessions, code or terminals": "端對端加密：我們無法讀取你的工作階段、程式碼和終端機",
   "Local only": "僅本地",
+  "Recommended": "推薦",
   "forever": "永久免費",
   "No account, nothing to sign up for": "不需要帳號，也不用註冊",
   "Droppen on the device your AI runs on, and nothing in the cloud.": "Droppen 只安裝在執行 AI 的裝置上，雲端不保存任何內容。",
@@ -450,6 +452,7 @@ export const pricingJa: Bundle = {
 
   "End-to-end encrypted: we can't read your sessions, code or terminals": "エンドツーエンド暗号化：セッション、コード、ターミナルは私たちにも読めません",
   "Local only": "ローカルのみ",
+  "Recommended": "おすすめ",
   "forever": "ずっと無料",
   "No account, nothing to sign up for": "アカウント不要、登録もいりません",
   "Droppen on the device your AI runs on, and nothing in the cloud.": "Droppen は AI が動くデバイスの中だけで動き、クラウドには何も保存しません。",

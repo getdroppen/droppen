@@ -2,7 +2,6 @@ import { type FormEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Check, Loader2 } from "lucide-react";
 import { CapsLabel } from "@/components/ui/caps-label";
-import { field } from "@/features/cloud/ui";
 import { type HubApi, HubApiError, type SignupMode, type WaitlistPlan } from "@/lib/hub/api";
 import { cn } from "@/lib/cn";
 import { PRO_PRICE } from "./pricing-plans";
@@ -96,7 +95,7 @@ function PlanChoice({ plan, onPlan }: { plan: WaitlistPlan; onPlan: (plan: Waitl
           <label
             key={o.id}
             className={cn(
-              "flex h-9 cursor-pointer items-center justify-center gap-2 bg-bg px-3 text-sm font-medium text-fg hover:bg-hover",
+              "flex h-9 cursor-pointer items-center justify-center gap-2 bg-bg px-3 text-sm font-medium text-fg hover:bg-hover max-md:h-10",
               "has-[:focus-visible]:outline-2 has-[:focus-visible]:-outline-offset-2 has-[:focus-visible]:outline-accent",
               plan === o.id && "bg-fg text-bg hover:bg-fg",
             )}
@@ -133,6 +132,15 @@ function Joined({ plan, signup, onAgain }: { plan: WaitlistPlan; signup: SignupM
     </div>
   );
 }
+
+/**
+ * The e-mail field at the public pages' size and face: 36px, sans 14px (16px
+ * on phones), the field's own border as the auxiliary cue and the page's 2px
+ * keyboard-focus ring (docs/ui-spec.md §1). `field` in `features/cloud/ui` is
+ * the app's 12px mono control, which is not this page's face.
+ */
+const emailField =
+  "h-9 w-full border border-border bg-bg px-2.5 text-sm text-fg placeholder:text-faint focus:border-fg max-md:h-10 max-md:text-base";
 
 /**
  * The form. `plan` is the page's (the plan cards choose it too); with
@@ -187,7 +195,7 @@ export function WaitlistForm({
           placeholder="you@example.com"
           aria-invalid={refused?.reason === "email" || refused?.reason === "disposable" ? true : undefined}
           aria-describedby={refused ? "waitlist-error" : undefined}
-          className={field}
+          className={emailField}
         />
       </label>
       {refused && (
@@ -196,7 +204,7 @@ export function WaitlistForm({
         </p>
       )}
       <div className="flex flex-col gap-3">
-        <button type="submit" data-variant="primary" data-testid="waitlist-submit" disabled={sending} className={cn(landingPrimary, "w-full sm:w-fit")}>
+        <button type="submit" data-variant="primary" data-testid="waitlist-submit" disabled={sending} className={cn(landingPrimary, "w-full sm:w-fit max-md:h-10")}>
           {sending && <Loader2 aria-hidden="true" className="size-3.5 animate-spin" />}
           {t("Join the waitlist")}
         </button>

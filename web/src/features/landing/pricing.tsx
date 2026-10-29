@@ -6,7 +6,7 @@ import { HubApi, type SignupMode, type WaitlistPlan } from "@/lib/hub/api";
 import { cn } from "@/lib/cn";
 import { landingBundles } from "./copy";
 import { DOWNLOAD_PATH } from "./get-droppen";
-import { FooterLine, landingPrimary, landingSecondary, Points, PublicHeader, Section, SectionHead } from "./page-kit";
+import { cjkTracking, FooterLine, landingPrimary, landingSecondary, Points, PublicHeader, Section, SectionHead } from "./page-kit";
 import { gb, PLAN_NUMBERS, PRO_PRICE, THROTTLED_KB_PER_SEC, yearlySaving } from "./pricing-plans";
 import { APP_PATH, publicLink, SIGN_UP_PATH } from "./route";
 import { type WaitlistState, WaitlistForm } from "./waitlist";
@@ -48,7 +48,7 @@ export function planOfSearch(search: string): WaitlistPlan {
 function PlanCard({
   testId,
   name,
-  chip,
+  recommended,
   price,
   unit,
   note,
@@ -60,7 +60,7 @@ function PlanCard({
 }: {
   testId: string;
   name: string;
-  chip?: string;
+  recommended?: boolean;
   price: string;
   unit: string;
   note: string;
@@ -70,12 +70,22 @@ function PlanCard({
   points: string[];
   className?: string;
 }) {
+  const { t } = useTranslation();
   return (
     // From 1024px the three cards share their rows (a subgrid), so prices, buttons and the lists below line up across them.
-    <div data-testid={testId} className={cn("grid min-w-0 content-start gap-6 border-border px-6 py-8 max-md:px-4 max-md:py-7 lg:row-span-4 lg:grid-rows-subgrid", className)}>
-      <div className="flex min-h-5 items-center gap-2">
-        <span className="text-sm leading-5 font-semibold text-fg">{name}</span>
-        {chip && <span className="inline-flex items-center border border-fg px-1.5 text-sm leading-4 font-semibold tracking-wider text-fg uppercase">{chip}</span>}
+    <div
+      data-testid={testId}
+      role="group"
+      aria-labelledby={`${testId}-name`}
+      className={cn("grid min-w-0 content-start gap-6 border-border px-6 py-8 max-md:px-4 max-md:py-7 lg:row-span-4 lg:grid-rows-subgrid", className)}
+    >
+      <div className="flex min-h-6 items-center gap-2">
+        <h3 id={`${testId}-name`} className="text-base leading-6 font-semibold text-fg">{name}</h3>
+        {recommended && (
+          <span className={cn("inline-flex items-center bg-fg px-1.5 py-0.5 text-2xs font-semibold tracking-wider text-bg uppercase", cjkTracking)}>
+            {t("Recommended")}
+          </span>
+        )}
       </div>
       <div className="flex flex-col gap-2">
         <p className="flex items-baseline gap-2">
@@ -89,8 +99,8 @@ function PlanCard({
         {aside}
       </div>
       <div className="flex flex-col gap-3 border-t border-border pt-5">
-        <p className="text-xs leading-5 font-semibold text-fg">{lead}</p>
-        <Points items={points} />
+        <p className="text-sm leading-6 font-semibold text-fg">{lead}</p>
+        <Points items={points} large />
       </div>
     </div>
   );
@@ -109,6 +119,7 @@ function Plans({ signedIn, signup, onChoose }: { signedIn: boolean; signup: Sign
   };
   return (
     <Section id="plans">
+      <h2 className="sr-only">{t("Pricing")}</h2>
       <div data-testid="plans" className="grid lg:grid-cols-3 lg:grid-rows-[auto_auto_auto_1fr]">
         <PlanCard
           testId="plan-local"
@@ -117,7 +128,7 @@ function Plans({ signedIn, signup, onChoose }: { signedIn: boolean; signup: Sign
           unit={t("forever")}
           note={t("No account, nothing to sign up for")}
           action={
-            <a {...publicLink(DOWNLOAD_PATH)} data-testid="plan-local-download" className={cn(landingSecondary, "w-full")}>
+            <a {...publicLink(DOWNLOAD_PATH)} data-testid="plan-local-download" className={cn(landingSecondary, "w-full max-md:h-10")}>
               {t("Download Droppen")}
             </a>
           }
@@ -138,15 +149,15 @@ function Plans({ signedIn, signup, onChoose }: { signedIn: boolean; signup: Sign
           note={signup === "invite" ? t("Sign-up is by invite for now") : signup === "closed" ? t("Sign-up is closed for now") : t("Sign up with an e-mail address")}
           action={
             signedIn ? (
-              <a {...publicLink(APP_PATH)} data-testid="plan-free-open" className={cn(landingSecondary, "w-full")}>
+              <a {...publicLink(APP_PATH)} data-testid="plan-free-open" className={cn(landingSecondary, "w-full max-md:h-10")}>
                 {t("Open app")}
               </a>
             ) : signup !== "open" ? (
-              <a href="#waitlist" onClick={choose("free")} data-testid="plan-free-waitlist" className={cn(landingSecondary, "w-full")}>
+              <a href="#waitlist" onClick={choose("free")} data-testid="plan-free-waitlist" className={cn(landingSecondary, "w-full max-md:h-10")}>
                 {t("Join the waitlist")}
               </a>
             ) : (
-              <a {...publicLink(SIGN_UP_PATH)} data-variant="primary" data-testid="plan-free-signup" className={cn(landingPrimary, "w-full")}>
+              <a {...publicLink(SIGN_UP_PATH)} data-variant="primary" data-testid="plan-free-signup" className={cn(landingPrimary, "w-full max-md:h-10")}>
                 {t("Sign up")}
               </a>
             )
@@ -173,7 +184,7 @@ function Plans({ signedIn, signup, onChoose }: { signedIn: boolean; signup: Sign
           testId="plan-pro"
           className="max-lg:border-t lg:border-l"
           name="Pro"
-          chip={t("Waitlist")}
+          recommended
           price={`$${PRO_PRICE.monthly}`}
           unit={t("USD / month")}
           note={t("or ${{price}} a year: save {{saving}}%", { price: PRO_PRICE.yearly, saving: yearlySaving() })}
@@ -183,7 +194,7 @@ function Plans({ signedIn, signup, onChoose }: { signedIn: boolean; signup: Sign
               onClick={choose("pro")}
               data-variant={freeLeads ? undefined : "primary"}
               data-testid="plan-pro-waitlist"
-              className={cn(freeLeads ? landingSecondary : landingPrimary, "w-full")}
+              className={cn(freeLeads ? landingSecondary : landingPrimary, "w-full max-md:h-10")}
             >
               {t("Join the waitlist")}
             </a>
@@ -235,10 +246,10 @@ function Compare({ signup }: { signup: SignupMode }) {
   ];
   const heads = [t("Local only"), t("Free"), "Pro"];
   return (
-    <Section id="compare">
+    <Section id="compare" className="max-lg:hidden">
       <SectionHead label={t("Compare")} title={t("What each plan includes")} />
       <div role="table" aria-label={t("What each plan includes")} data-testid="compare" className="border-t border-border">
-        <div role="row" className="grid grid-cols-3 border-b border-border md:grid-cols-[minmax(0,1.4fr)_repeat(3,minmax(0,1fr))]">
+        <div role="row" className="grid grid-cols-3 border-b border-border-strong md:grid-cols-[minmax(0,1.6fr)_repeat(3,minmax(0,1fr))]">
           <span role="columnheader" className="max-md:sr-only" />
           {heads.map((h, i) => (
             // The plans' names as their cards write them: in capitals, 「PRO」 read as another word beside 「免费版」.
@@ -248,8 +259,8 @@ function Compare({ signup }: { signup: SignupMode }) {
           ))}
         </div>
         {rows.map((r) => (
-          <div key={r.name} role="row" className="grid grid-cols-3 border-b border-border last:border-b-0 md:grid-cols-[minmax(0,1.4fr)_repeat(3,minmax(0,1fr))]">
-            <span role="rowheader" className="col-span-3 px-6 pt-3.5 text-sm leading-5 font-semibold text-fg max-md:px-4 md:col-span-1 md:pb-3.5">
+          <div key={r.name} role="row" className="grid grid-cols-3 border-b border-border last:border-b-0 md:grid-cols-[minmax(0,1.6fr)_repeat(3,minmax(0,1fr))]">
+            <span role="rowheader" className="col-span-3 px-6 pt-3.5 text-sm leading-6 font-semibold text-fg max-md:px-4 md:col-span-1 md:pb-3.5">
               {r.name}
             </span>
             {r.values.map((v, i) => (
@@ -257,7 +268,7 @@ function Compare({ signup }: { signup: SignupMode }) {
                 key={i}
                 role="cell"
                 className={cn(
-                  "flex min-w-0 items-start px-6 py-3.5 text-xs leading-5 text-muted tabular-nums max-md:px-4 max-md:pt-1.5",
+                  "flex min-w-0 items-start px-6 py-3.5 text-sm leading-6 text-muted tabular-nums max-md:px-4 max-md:pt-1.5",
                   i > 0 && "border-l border-border",
                   "md:border-l md:border-border",
                 )}
@@ -269,10 +280,12 @@ function Compare({ signup }: { signup: SignupMode }) {
         ))}
       </div>
       <p data-testid="compare-note" className="border-t border-border px-6 py-3.5 text-xs leading-5 text-muted max-md:px-4">
-        {t("Free keeps an encrypted copy of each device's last {{free}} days of sessions in the cloud, Pro its last {{pro}}. A device offline for longer than that has its cloud copy deleted: what is on the device is not affected, and those days are uploaded again once it is back online.", {
-          free: free.retentionDays,
-          pro: pro.retentionDays,
-        })}
+        <span className="block max-w-[60ch]">
+          {t("Free keeps an encrypted copy of each device's last {{free}} days of sessions in the cloud, Pro its last {{pro}}. A device offline for longer than that has its cloud copy deleted: what is on the device is not affected, and those days are uploaded again once it is back online.", {
+            free: free.retentionDays,
+            pro: pro.retentionDays,
+          })}
+        </span>
       </p>
     </Section>
   );
@@ -375,8 +388,8 @@ function Faq() {
       <dl data-testid="faq" className="grid border-t border-border lg:grid-cols-2">
         {items.map((item, i) => (
           <div key={item.q} className={cn("flex flex-col gap-2 border-border px-6 py-6 max-md:px-4", i > 0 && "max-lg:border-t", i > 1 && "lg:border-t", i % 2 === 1 && "lg:border-l")}>
-            <dt className="text-sm leading-5 font-semibold text-fg">{item.q}</dt>
-            <dd className="text-xs leading-5 text-muted">{item.a}</dd>
+            <dt className="text-base leading-6 font-semibold text-fg">{item.q}</dt>
+            <dd className="max-w-prose text-sm leading-6 text-muted">{item.a}</dd>
           </div>
         ))}
       </dl>
@@ -440,10 +453,10 @@ export default function PricingPage({
       <div className="md:px-8">
         <main className="mx-auto max-w-[1360px] md:border-x md:border-border">
           <div className="flex flex-col gap-5 px-10 pt-16 pb-10 max-lg:pt-12 max-md:px-4 max-md:pt-10 max-md:pb-8">
-            <h1 className="max-w-[18em] text-5xl leading-display font-normal tracking-tight text-balance text-fg [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-md:text-4xl xl:text-5xl">
+            <h1 className="max-w-[18em] text-5xl leading-display font-normal tracking-tighter text-balance text-fg [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-md:text-4xl">
               {t("Start free. Go Pro when you need more.")}
             </h1>
-            <p className="max-w-[40em] text-base leading-6 text-muted max-md:text-sm max-md:leading-6">
+            <p className="max-w-[40em] text-base leading-6 text-muted">
               {t(
                 "Every plan is end-to-end encrypted: on none of them can we read your sessions, your code or your terminals. A plan decides only how many devices you can connect, how many days of sessions your phone can read while a device that runs AI is offline, and how much traffic goes through our servers each month.",
               )}
