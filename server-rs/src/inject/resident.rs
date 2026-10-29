@@ -12435,7 +12435,7 @@ done
             injections: harness.registry.clone(),
             accounts: Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins())),
             quota: Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone())),
-            models: Arc::new(crate::models::ClaudeModelCache::new(paths.clone())),
+            models: Arc::new(crate::models::claude::ClaudeModelCache::new(paths.clone())),
             composer: crate::drive::composer_prefs::ComposerPrefsStore::new(paths.clone()),
             titles: crate::sessions::titles::TitlesStore::new(paths.clone()),
             paths,

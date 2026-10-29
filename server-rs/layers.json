@@ -217,7 +217,7 @@
           "notes": [
             "inject's own items, inject::receipts and inject::questions, drafts, runs, and the spawn gate with its claims (inject::gate).",
             "inject::shim, the session shim: Claude Code and Codex both start their CLI through it.",
-            "models keeps its routes here; each provider gets its own model list (models::probe)."
+            "models keeps its routes and the list's wire types here; each provider's list is its own (models::claude with its probe, models::codex, models::acp)."
           ]
         },
         {
@@ -235,7 +235,8 @@
             "accounts::usage_login",
             "accounts::local_login",
             "accounts::login::claude",
-            "record"
+            "record",
+            "models::claude"
           ],
           "mayUse": [
             "droppen-provider",
@@ -253,7 +254,8 @@
             "sessions::codex_tools",
             "sessions::codex_claims",
             "accounts::quota::codex",
-            "accounts::login::codex"
+            "accounts::login::codex",
+            "models::codex"
           ],
           "mayUse": [
             "droppen-provider",
@@ -268,7 +270,8 @@
             "acp",
             "acp_agent",
             "inject::acp",
-            "sessions::acp_transcript"
+            "sessions::acp_transcript",
+            "models::acp"
           ],
           "mayUse": [
             "droppen-provider",
@@ -340,6 +343,7 @@
       "why": "drive finds a Claude Code session by its id itself (sessions::claude), and Drive holds Claude Code's setup-token captures. They go through the provider base (Provider, Transcripts).",
       "edges": [
         "drive -> accounts::setup_token",
+        "drive -> models::claude",
         "drive -> sessions::claude"
       ]
     },
@@ -354,8 +358,9 @@
         "inject -> sessions::acp_transcript",
         "inject -> sessions::claude",
         "inject -> sessions::codex",
-        "models -> acp",
-        "models -> acp_agent",
+        "models -> models::acp",
+        "models -> models::claude",
+        "models -> models::codex",
         "models -> sessions::acp_transcript",
         "models -> sessions::codex"
       ]
