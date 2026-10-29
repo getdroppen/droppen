@@ -32,3 +32,6 @@ tokio-tungstenite = { version = "0.29", features = ["rustls-tls-webpki-roots"] }
 # Built alone (`cargo build -p droppen-relay`, the Dockerfile) nothing else
 # picks rustls's crypto provider: ring, as everywhere in this workspace.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+
+[lints]
+workspace = true

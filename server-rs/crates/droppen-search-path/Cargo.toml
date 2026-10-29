@@ -10,3 +10,6 @@ description = "The PATH the Droppen server runs with: the login shell's director
 # command-line installer's test all follow this one rule, so it must not pull
 # either workspace's graph into the other.
 [dependencies]
+
+[lints]
+workspace = true

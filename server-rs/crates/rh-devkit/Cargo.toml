@@ -49,3 +49,6 @@ serde = { version = "1", features = ["derive"] }
 # An in-memory hub for the tests of the device's flows (`tests/v3_flows.rs`):
 # the version the root crate already links.
 axum = "0.8"
+
+[lints]
+workspace = true

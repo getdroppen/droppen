@@ -41,3 +41,6 @@ tempfile = "3"
 # (`login_item.rs`); already in the lock through security-framework.
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 core-foundation = "0.10"
+
+[lints]
+workspace = true
