@@ -55,7 +55,7 @@ pub enum Command {
     Preflight(RawTail),
     /// Resident pty owned by a terminal (started by the server).
     #[command(hide = true)]
-    PtyShim(crate::pty_shim::child::PtyShimArgs),
+    PtyShim(droppen_pty::child::PtyShimArgs),
     /// Resident pipe owned by an AI session (started by the server).
     #[command(hide = true)]
     SessionShim(crate::inject::shim::SessionShimArgs),
@@ -496,7 +496,7 @@ pub(crate) mod tests {
     #[test]
     fn the_shim_spawns_are_pinned() {
         use crate::inject::shim::SessionShimArgs;
-        use crate::pty_shim::child::PtyShimArgs;
+        use droppen_pty::child::PtyShimArgs;
         let pty = |cols: Option<&str>, rows: Option<&str>, command: &[&str]| {
             Command::PtyShim(PtyShimArgs {
                 socket: "/run/t.sock".into(),
@@ -536,6 +536,60 @@ pub(crate) mod tests {
             ),
         ] {
             assert_eq!(parse(&argv).expect("parses"), expected, "{argv:?}");
+        }
+    }
+
+    /// The `pty-shim` command line as this binary parses it.
+    mod pty_shim {
+        use std::path::PathBuf;
+
+        use clap::error::ErrorKind;
+
+        use super::super::Command;
+        use droppen_pty::child::PtyShimArgs;
+
+        fn parse(words: &[String]) -> Result<PtyShimArgs, clap::Error> {
+            match super::parse_words("pty-shim", words)? {
+                Command::PtyShim(parsed) => Ok(parsed),
+                other => panic!("{words:?} parsed as {other:?}"),
+            }
+        }
+
+        #[test]
+        fn the_command_line_needs_both_paths_and_a_separator() {
+            let argv: Vec<String> = ["--socket", "/tmp/a.sock", "--exit-file", "/tmp/a.exit", "--", "/bin/sh", "-l"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+            let args = parse(&argv).expect("parse");
+            assert_eq!(args.socket, PathBuf::from("/tmp/a.sock"));
+            assert_eq!(args.exit_file, PathBuf::from("/tmp/a.exit"));
+            assert_eq!(args.command, vec!["/bin/sh".to_string(), "-l".to_string()]);
+
+            let missing_separator: Vec<String> = ["--socket", "/tmp/a.sock", "--exit-file", "/tmp/a.exit"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+            assert_eq!(
+                parse(&missing_separator).unwrap_err().kind(),
+                ErrorKind::MissingRequiredArgument,
+                "the command must follow `--`"
+            );
+
+            let empty_command: Vec<String> = ["--socket", "/s", "--exit-file", "/e", "--"].iter().map(|s| s.to_string()).collect();
+            assert_eq!(parse(&empty_command).unwrap_err().kind(), ErrorKind::MissingRequiredArgument);
+
+            let no_socket: Vec<String> = ["--exit-file", "/e", "--", "/bin/sh"].iter().map(|s| s.to_string()).collect();
+            assert_eq!(parse(&no_socket).unwrap_err().kind(), ErrorKind::MissingRequiredArgument);
+
+            // An argument that looks like a flag is only a flag *before* the
+            // separator; after it, it belongs to the shell.
+            let after: Vec<String> = ["--socket", "/s", "--exit-file", "/e", "--", "/bin/sh", "--socket", "-c", "echo"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+            let parsed = parse(&after).expect("parse");
+            assert_eq!(&parsed.command[1..], ["--socket", "-c", "echo"]);
         }
     }
 }

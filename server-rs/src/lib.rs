@@ -33,7 +33,7 @@
 //! * [`media`] — images in private GitHub repositories, fetched through the
 //!   host's own `gh` login so a transcript can show what an agent pushed;
 //! * [`terminals`] — PTYs the browser drives over a websocket, each one owned
-//!   by a detached [`pty_shim`] so it survives a server restart;
+//!   by a detached [`droppen_pty`] shim so it survives a server restart;
 //! * [`instance`] — which server owns the adoptable resources on this machine;
 //! * [`apps`] — a VS Code server per app, and the [`apps::embed`] reverse proxy
 //!   the iframe reaches it through;
@@ -104,7 +104,6 @@ pub mod origin;
 pub mod paths;
 pub mod plugins;
 pub mod prefs;
-pub mod pty_shim;
 pub mod push;
 pub mod record;
 pub mod schedule;

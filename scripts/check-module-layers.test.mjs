@@ -8,7 +8,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, describe, test } from "node:test";
-import { builtCode, checkLayers, cycles, moduleGraph, namedModules, pathsFrom } from "./check-module-layers.mjs";
+import { builtCode, checkLayers, cycles, manifestDependencies, moduleGraph, namedModules, pathsFrom, workspaceCrates } from "./check-module-layers.mjs";
 
 const named = (src) => namedModules(builtCode(src), "crate").map((u) => u.name);
 
@@ -61,7 +61,10 @@ describe("the module graph of a crate", () => {
     mkdirSync(dirname(join(root, path)), { recursive: true });
     writeFileSync(join(root, path), text);
   };
-  write("Cargo.toml", '[package]\nname = "the-server"\n');
+  write("Cargo.toml", '[package]\nname = "the-server"\n\n[workspace]\nmembers = [".", "crates/the-pty"]\n');
+  write("crates/the-pty/Cargo.toml", '[package]\nname = "the-pty"\n\n[dependencies]\ndroppen-base = { path = "../droppen-base" }\n');
+  write("crates/the-pty/src/lib.rs", "pub mod ring;\npub fn f() {}\n#[cfg(test)]\nmod tests {\n}\n");
+  write("crates/the-pty/src/ring.rs", "// the ring\npub struct Ring;\n");
   write("src/lib.rs", "pub mod low;\npub mod high;\n#[cfg(test)]\nmod only_tests;\n");
   write("src/low.rs", "pub fn f() {}\nmod inner;\n#[cfg(test)]\nmod tests;\n");
   write("src/low/inner.rs", "use crate::high::H;\n");
@@ -82,6 +85,18 @@ describe("the module graph of a crate", () => {
     assert.deepEqual([...g.edges.get("cli").keys()], ["high"]);
     assert.deepEqual(g.problems, []);
     assert.deepEqual(cycles(g.modules, g.edges), [["high", "low"]]);
+  });
+
+  test("a path into a crate that has left is a use of that crate", () => {
+    const g = moduleGraph(root, { crates: ["droppen-base", "the-pty"] });
+    assert.deepEqual(g.crateUses, [{ from: ["cli"], crate: "droppen-base", where: "src/cli.rs:3" }]);
+    assert.deepEqual([...g.edges.get("cli").keys()], ["high"], "and not a module of this one");
+  });
+
+  test("the workspace's other crates: their names, dependencies and code lines", () => {
+    assert.deepEqual(workspaceCrates(root), [
+      { name: "the-pty", manifest: "crates/the-pty/Cargo.toml", dependencies: [{ name: "droppen-base", line: 5 }], lines: 3 },
+    ]);
   });
 
   test("a child module's name, self:: and super:: are uses, resolved to module paths", () => {
@@ -127,6 +142,7 @@ describe("the crate rules", () => {
       crates: [
         { name: "c-paths", modules: ["paths"] },
         { name: "c-http", modules: ["http"], mayUse: ["c-paths"] },
+        { name: "c-pty", modules: [], mayUse: ["c-paths"] },
       ],
     },
     {
@@ -215,6 +231,63 @@ describe("the crate rules", () => {
     };
     assert.deepEqual(checkLayers(moduleGraph(root), config).problems, [
       "inject -> push: c-provider may not use c-notify: c-provider's mayUse does not list c-notify (1 use(s), the first at src/inject/mod.rs:4)",
+    ]);
+  });
+
+  test("a crate that has left is used by its name, under the same rules", () => {
+    const g = graph(["sessions -> time"], {}, placed);
+    g.crateUses = [
+      { from: ["sessions"], crate: "c-pty", where: "src/sessions.rs:2" },
+      { from: ["paths"], crate: "c-pty", where: "src/paths.rs:2" },
+      { from: ["http"], crate: "c-time", where: "src/http.rs:2" },
+    ];
+    const { problems, stats } = checkLayers(g, { layers, allowed: [] });
+    assert.deepEqual(problems, ["paths -> c-pty: c-paths may not use c-pty: c-paths's mayUse does not list c-pty (1 use(s), the first at src/paths.rs:2)"]);
+    assert.equal(stats.violations, 1);
+    assert.deepEqual(checkLayers(g, { layers, allowed: [{ why: "test", edges: ["paths -> c-pty"] }] }).problems, []);
+  });
+
+  test("a workspace crate's dependencies are held to its layer, with no exceptions", () => {
+    const workspace = [
+      {
+        name: "c-pty",
+        manifest: "crates/c-pty/Cargo.toml",
+        dependencies: [{ name: "c-time", line: 5 }, { name: "c-paths", line: 6 }, { name: "c-http", line: 7 }, { name: "c-sessions", line: 8 }, { name: "tokio", line: 9 }],
+        lines: 40,
+      },
+      { name: "elsewhere", manifest: "crates/elsewhere/Cargo.toml", dependencies: [{ name: "c-sessions", line: 3 }], lines: 9 },
+    ];
+    const g = graph(["sessions -> time"], {}, placed);
+    g.crateUses = [{ from: ["sessions"], crate: "c-pty", where: "src/sessions.rs:2" }];
+    const allowed = [{ why: "test", edges: ["c-pty -> c-http"] }];
+    const middle = layers.map((l) => (l.name === "platform" ? { ...l, middle: true } : l));
+    const { problems, stats } = checkLayers(g, { layers: middle, allowed }, workspace);
+    assert.deepEqual(problems, [
+      "crates/c-pty/Cargo.toml:7: c-pty depends on c-http, which it may not use: c-pty's mayUse does not list c-http",
+      "crates/c-pty/Cargo.toml:8: c-pty depends on c-sessions, which it may not use: c-sessions is in a higher layer (domain)",
+      "allowed lists c-pty -> c-http, which is no longer a use between crates that may not use each other: drop it",
+    ]);
+    assert.deepEqual(stats.middle.find((c) => c.crate === "c-pty"), { crate: "c-pty", code: 40, fanIn: 1 });
+  });
+
+  test("a manifest's dependencies, by package name; dev- and build-dependencies aside", () => {
+    const manifest = [
+      "[package]",
+      'name = "c-pty"',
+      "[dependencies]",
+      'droppen-base = { path = "../droppen-base" }',
+      'base = { path = "../droppen-base", package = "droppen-base-two" }',
+      "[dev-dependencies]",
+      'tempfile = "3"',
+      "[target.'cfg(unix)'.dependencies]",
+      'libc = "0.2"',
+      "[features]",
+      "test-support = []",
+    ].join("\n");
+    assert.deepEqual(manifestDependencies(manifest), [
+      { name: "droppen-base", line: 4 },
+      { name: "droppen-base-two", line: 5 },
+      { name: "libc", line: 9 },
     ]);
   });
 

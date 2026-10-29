@@ -16,8 +16,8 @@ use remote_hand_server::auth::users::UsersStore;
 use remote_hand_server::feed::global::LOGIN_RECHECK;
 use remote_hand_server::instance::{InstanceDirs, DEFAULT_INSTANCE};
 use remote_hand_server::paths::Paths;
-use remote_hand_server::pty_shim::proto::Meta;
-use remote_hand_server::pty_shim::sidecar::{self, Sidecars};
+use droppen_pty::proto::Meta;
+use droppen_pty::sidecar::{self, Sidecars};
 use remote_hand_server::terminals::{CreateSpec, Registry, MAX_TERMINALS};
 use serde_json::Value;
 use tokio_tungstenite::tungstenite::Message;
@@ -143,7 +143,7 @@ fn sh(script: &str) -> CreateSpec {
 /// `u64::MAX` as the cursor is the "peek" idiom: the ring clamps it to the head,
 /// so this connection is told the shell's pid and then handed no output at all.
 async fn read_shell_pid(shims: &std::path::Path, id: &str) -> u32 {
-    let link = remote_hand_server::pty_shim::client::connect(&sidecars(shims, id).socket(), u64::MAX)
+    let link = droppen_pty::client::connect(&sidecars(shims, id).socket(), u64::MAX)
         .await
         .expect("connect to the shim");
     link.shell_pid
@@ -176,7 +176,7 @@ fn registry_at(home: &Path) -> Arc<Registry> {
 
 /// A uuid-shaped id whose first sixteen hex digits are `n`'s.
 ///
-/// The socket is named after those digits (`pty_shim::sidecar`), so ids that
+/// The socket is named after those digits (`droppen_pty::sidecar`), so ids that
 /// only differ further along would all try to bind the same address.
 fn seeded_id(n: usize) -> String {
     format!("{n:08x}-1111-4000-8000-000000000000")
@@ -218,7 +218,7 @@ fn alive(pid: u32) -> bool {
 }
 
 fn kill_pid(pid: u32) {
-    remote_hand_server::pty_shim::child::kill_shell(pid, libc::SIGKILL);
+    droppen_pty::child::kill_shell(pid, libc::SIGKILL);
 }
 
 #[tokio::test]

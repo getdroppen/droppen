@@ -64,11 +64,11 @@ fn hex_digest(bytes: &[u8], chars: usize) -> String {
 /// Where a terminal's socket goes: beside its other sidecars if that address
 /// fits, and in a per-instance directory under `/tmp` if it does not.
 ///
-/// Shared with [`crate::inject::shim`], whose sockets live one directory over
+/// Shared with the server's `inject::shim`, whose sockets live one directory over
 /// and hit the same `sun_path` ceiling for the same reason. The budget is a
 /// property of the kernel, not of what is on the other end of the socket, so
 /// there is one implementation of it.
-pub(crate) fn socket_path(dir: &Path, id: &str) -> PathBuf {
+pub fn socket_path(dir: &Path, id: &str) -> PathBuf {
     let stem = socket_stem(id);
     let beside = dir.join(format!("{stem}.sock"));
     if beside.as_os_str().len() <= SUN_PATH_MAX {
@@ -107,7 +107,7 @@ fn runtime_dir(dir: &Path) -> PathBuf {
 /// what they should in an unlucky order. A resident claude restarted for a
 /// settings change hits it routinely, because the outgoing shim and the incoming
 /// one are the only two there are.
-pub(crate) fn ensure_socket_dir(socket: &Path, beside: &Path) -> std::io::Result<()> {
+pub fn ensure_socket_dir(socket: &Path, beside: &Path) -> std::io::Result<()> {
     let Some(parent) = socket.parent() else { return Ok(()) };
     if parent == beside {
         return Ok(());

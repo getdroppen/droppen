@@ -1,0 +1,52 @@
+[package]
+name = "droppen-pty"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+publish = false
+description = "The Droppen server's pseudo-terminals that outlive it: the pty shim, its frame format, its ring and screen model, and the server's end of the link"
+
+# The shim is the server's own binary under a hidden subcommand, so the server
+# links this crate twice over: as the shim, and as the shim's client. It names
+# nothing of the server, which keeps the shim's frame format and sidecar files
+# out of reach of the subsystems they must outlive.
+[dependencies]
+# The shim's command line (`child::PtyShimArgs`), which the server mounts as a
+# hidden subcommand. The features are the server's, so the two parse alike.
+clap = { version = "4.5", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
+droppen-base = { path = "../droppen-base" }
+libc = "0.2"
+# The web terminals' pseudo-terminals.
+portable-pty = "0.9"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "rt", "sync", "time"] }
+tracing = "0.1"
+# A terminal emulator with no terminal: the pty shim feeds it every byte the
+# shell produces so a client that attaches an hour late can be handed a repaint
+# of the screen rather than an hour of scrollback. `vim` cannot be reconstructed
+# from its own output; it can be reconstructed from the state that output made.
+vt100 = "0.16.2"
+
+# `client::Link::preloaded`, a link whose frames are all queued at once, for the
+# server's terminal tests. Only the server's [dev-dependencies] turn it on.
+[features]
+test-support = []
+
+[dev-dependencies]
+tempfile = "3"
+# `start_paused` runtimes, so the handshake's deadline is asserted without a
+# test that waits it out.
+tokio = { version = "1", features = ["macros", "rt", "test-util"] }
+
+[lints.rust]
+missing_docs = "deny"
+unreachable_pub = "deny"
+
+# `[lints] workspace = true` cannot be mixed with the rust lints above, so the
+# workspace's two clippy denials (`server-rs/Cargo.toml` `[workspace.lints]`)
+# are repeated here: keep them in step.
+[lints.clippy]
+significant_drop_in_scrutinee = "deny"
+await_holding_lock = "deny"

@@ -520,8 +520,9 @@ mod tests {
         let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let src = manifest.join("src");
         let mut found = Vec::new();
-        // The server's sources too: it reads the environment through this module.
-        let mut dirs = vec![src.clone(), manifest.join("../../src")];
+        // The server's sources too, and those of the crates it is made of: they
+        // read the environment through this module.
+        let mut dirs = vec![src.clone(), manifest.join("../../src"), manifest.join("../droppen-pty/src")];
         while let Some(dir) = dirs.pop() {
             for entry in std::fs::read_dir(&dir).expect("read src").flatten() {
                 let path = entry.path();

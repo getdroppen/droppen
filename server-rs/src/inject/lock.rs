@@ -79,7 +79,7 @@ impl Drop for InjectLock {
     ///
     /// Unlinking keeps `inject-locks/` from accumulating one file per session
     /// ever driven. The guard is the same one
-    /// `crate::pty_shim::child::unlink_if_ours` applies to sockets: compare the
+    /// `droppen_pty::child::unlink_if_ours` applies to sockets: compare the
     /// path's identity — device, inode and the ctime that pins it to one
     /// creation — against what was locked, and leave anything else alone.
     /// Without it, a slow drop could delete the file a *successor* has already
@@ -90,7 +90,7 @@ impl Drop for InjectLock {
     /// and claims it — which is correct, because this run is over.
     fn drop(&mut self) {
         let Some(identity) = self.identity else { return };
-        if crate::pty_shim::child::path_identity(&self.path) == Some(identity) {
+        if droppen_pty::child::path_identity(&self.path) == Some(identity) {
             let _ = std::fs::remove_file(&self.path);
         }
     }
@@ -126,7 +126,7 @@ pub fn acquire(dir: &Path, source: Source, session_id: &str) -> std::io::Result<
     let _ = file.flush();
 
     Ok(Outcome::Acquired(InjectLock {
-        identity: crate::pty_shim::child::path_identity(&path),
+        identity: droppen_pty::child::path_identity(&path),
         _file: file,
         path,
     }))

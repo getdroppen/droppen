@@ -114,9 +114,9 @@ impl ControlSocket {
 
     /// Where the control socket is: in [`ControlSocket::dir`] when the address
     /// fits a `sun_path`, else in the instance's `0700` directory under `/tmp`
-    /// ([`crate::pty_shim::sidecar::socket_path`]).
+    /// ([`droppen_pty::sidecar::socket_path`]).
     pub fn path(&self) -> PathBuf {
-        crate::pty_shim::sidecar::socket_path(&self.dir(), "local-open")
+        droppen_pty::sidecar::socket_path(&self.dir(), "local-open")
     }
 
     /// The port this instance's server recorded when it bound.
@@ -197,7 +197,7 @@ impl ControlSocket {
         let dir = self.dir();
         private_dir(&dir)?;
         let socket = self.path();
-        crate::pty_shim::sidecar::ensure_socket_dir(&socket, &dir)?;
+        droppen_pty::sidecar::ensure_socket_dir(&socket, &dir)?;
         // A socket left by a server that did not get to remove its own: this
         // one owns the instance now, so nobody is listening on it.
         let _ = std::fs::remove_file(&socket);
@@ -692,7 +692,7 @@ mod tests {
         let dir = control.dir();
         private_dir(&dir).unwrap();
         let socket = control.path();
-        crate::pty_shim::sidecar::ensure_socket_dir(&socket, &dir).unwrap();
+        droppen_pty::sidecar::ensure_socket_dir(&socket, &dir).unwrap();
         let _ = std::fs::remove_file(&socket);
         let listener = tokio::net::UnixListener::bind(&socket).unwrap();
         tokio::spawn(async move {
