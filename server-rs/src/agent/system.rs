@@ -5,14 +5,30 @@
 
 use std::sync::OnceLock;
 
-use serde_json::{json, Value};
+use serde::Serialize;
 
 /// The most a field read from the system keeps.
 const MAX_FIELD: usize = 64;
 
+/// A computer's system as its status says it: `{name, version, arch}`, with
+/// `distro` before `arch` on Linux only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Os {
+    /// Rust's name for the system: `macos`, `linux`, …
+    pub name: String,
+    /// The version its system file names, if it names one.
+    pub version: Option<String>,
+    /// Linux's os-release `ID`: `null` when the file has none, and left out on
+    /// every other system.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub distro: Option<Option<String>>,
+    /// The CPU architecture, Rust's name for it.
+    pub arch: String,
+}
+
 /// This computer's system, read once.
-pub fn os() -> &'static Value {
-    static OS: OnceLock<Value> = OnceLock::new();
+pub fn os() -> &'static Os {
+    static OS: OnceLock<Os> = OnceLock::new();
     OS.get_or_init(|| detect(std::env::consts::OS, std::env::consts::ARCH, |path| std::fs::read_to_string(path).ok()))
 }
 
@@ -40,28 +56,36 @@ fn os_release(text: &str, key: &str) -> Option<String> {
 }
 
 /// The system `os` (Rust's name for it) on `arch`, reading files with `read`.
-fn detect(os: &str, arch: &str, read: impl Fn(&str) -> Option<String>) -> Value {
+pub(crate) fn detect(os: &str, arch: &str, read: impl Fn(&str) -> Option<String>) -> Os {
     match os {
-        "macos" => {
-            let version = read("/System/Library/CoreServices/SystemVersion.plist").and_then(|t| plist_string(&t, "ProductVersion"));
-            json!({"name": "macos", "version": version, "arch": arch})
-        }
+        "macos" => Os {
+            name: "macos".into(),
+            version: read("/System/Library/CoreServices/SystemVersion.plist").and_then(|t| plist_string(&t, "ProductVersion")),
+            distro: None,
+            arch: arch.into(),
+        },
         "linux" => {
             let release = read("/etc/os-release").or_else(|| read("/usr/lib/os-release")).unwrap_or_default();
-            json!({
-                "name": "linux",
-                "version": os_release(&release, "VERSION_ID"),
-                "distro": os_release(&release, "ID"),
-                "arch": arch,
-            })
+            Os {
+                name: "linux".into(),
+                version: os_release(&release, "VERSION_ID"),
+                distro: Some(os_release(&release, "ID")),
+                arch: arch.into(),
+            }
         }
-        other => json!({"name": other, "version": null, "arch": arch}),
+        other => Os {
+            name: other.into(),
+            version: None,
+            distro: None,
+            arch: arch.into(),
+        },
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn the_system_is_read_from_the_files_each_one_keeps() {
@@ -73,20 +97,41 @@ mod tests {
         let mac = detect("macos", "aarch64", |p| {
             (p == "/System/Library/CoreServices/SystemVersion.plist").then(|| plist.to_string())
         });
-        assert_eq!(mac, json!({"name": "macos", "version": "15.3.1", "arch": "aarch64"}));
+        assert_eq!(serde_json::to_value(mac).unwrap(), json!({"name": "macos", "version": "15.3.1", "arch": "aarch64"}));
         let release = "NAME=\"Ubuntu\"\nVERSION_ID=\"24.04\"\nID=ubuntu\nID_LIKE=debian\n";
         let linux = detect("linux", "x86_64", |p| (p == "/usr/lib/os-release").then(|| release.to_string()));
-        assert_eq!(linux, json!({"name": "linux", "version": "24.04", "distro": "ubuntu", "arch": "x86_64"}));
+        assert_eq!(serde_json::to_value(linux).unwrap(), json!({"name": "linux", "version": "24.04", "distro": "ubuntu", "arch": "x86_64"}));
         // Nothing to read: the name and the architecture still.
         assert_eq!(
-            detect("macos", "x86_64", |_| None),
+            serde_json::to_value(detect("macos", "x86_64", |_| None)).unwrap(),
             json!({"name": "macos", "version": null, "arch": "x86_64"})
         );
-        assert_eq!(detect("freebsd", "x86_64", |_| None)["name"], "freebsd");
+        assert_eq!(detect("freebsd", "x86_64", |_| None).name, "freebsd");
         // What a file says is kept short and printable.
         let long = format!("VERSION_ID={}\u{7}", "9".repeat(200));
         assert_eq!(os_release(&long, "VERSION_ID").unwrap().len(), MAX_FIELD);
         assert_eq!(os_release("VERSION_ID=\"\"", "VERSION_ID"), None);
-        assert!(os()["name"].is_string());
+        assert!(!os().name.is_empty());
+    }
+
+    /// The exact bytes each system writes into the status, which its
+    /// fingerprint covers: `distro` only on Linux, and `null` there when
+    /// os-release names no `ID`.
+    #[test]
+    fn each_system_writes_the_same_bytes() {
+        let bytes = |os: &str, arch: &str, file: Option<&str>| serde_json::to_string(&detect(os, arch, |_| file.map(str::to_string))).unwrap();
+        let plist = "<key>ProductVersion</key><string>15.3.1</string>";
+        assert_eq!(bytes("macos", "aarch64", Some(plist)), r#"{"name":"macos","version":"15.3.1","arch":"aarch64"}"#);
+        assert_eq!(bytes("macos", "x86_64", None), r#"{"name":"macos","version":null,"arch":"x86_64"}"#);
+        assert_eq!(
+            bytes("linux", "x86_64", Some("VERSION_ID=\"24.04\"\nID=ubuntu\n")),
+            r#"{"name":"linux","version":"24.04","distro":"ubuntu","arch":"x86_64"}"#
+        );
+        assert_eq!(
+            bytes("linux", "aarch64", Some("VERSION_ID=12\n")),
+            r#"{"name":"linux","version":"12","distro":null,"arch":"aarch64"}"#
+        );
+        assert_eq!(bytes("linux", "x86_64", None), r#"{"name":"linux","version":null,"distro":null,"arch":"x86_64"}"#);
+        assert_eq!(bytes("freebsd", "x86_64", Some("ID=freebsd\n")), r#"{"name":"freebsd","version":null,"arch":"x86_64"}"#);
     }
 }
