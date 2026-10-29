@@ -31,7 +31,7 @@ use crate::prefs::PrefsState;
 use crate::push::PushState;
 use crate::schedule::ScheduleState;
 use crate::screens::ScreensState;
-use crate::selfupdate::SelfUpdateState;
+use droppen_supervisor::selfupdate::SelfUpdateState;
 use crate::setup::SetupState;
 use crate::stats::StatsState;
 use crate::terminals::TerminalsState;
@@ -286,5 +286,23 @@ impl FromRef<AppState> for CloudState {
             desktop_app: state.desktop_app,
             cancel: state.cancel.clone(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The self-upgrade route refuses a server the desktop app runs by the
+    /// switch its sub-state carries, so the sub-state carries the server's own.
+    #[tokio::test]
+    async fn the_self_upgrade_state_carries_the_desktop_app_switch() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let mut state = crate::api::test_support::state(home.path()).await;
+        assert!(!SelfUpdateState::from_ref(&state).desktop_app, "an ordinary server");
+        state.desktop_app = true;
+        let sub = SelfUpdateState::from_ref(&state);
+        assert!(sub.desktop_app, "a server the desktop app runs");
+        assert!(Arc::ptr_eq(&sub.paths, &state.paths) && Arc::ptr_eq(&sub.lock, &state.lock));
     }
 }

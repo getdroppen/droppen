@@ -1,0 +1,42 @@
+[package]
+name = "droppen-supervisor"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+publish = false
+description = "The Droppen server's supervising process and self-update"
+
+# What must not see the app: the loop that brings a server back after it
+# exits, and the route that swaps the binary that loop starts.
+[dependencies]
+droppen-base = { path = "../droppen-base" }
+droppen-http = { path = "../droppen-http" }
+droppen-instance = { path = "../droppen-instance" }
+gotcha = { version = "0.4.1", features = ["openapi"] }
+# What gotcha's `Schematic` derive expands to names it.
+gotcha_core = "0.4.1"
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# The digest an upload is checked against when the caller sends one.
+sha2 = "0.10"
+tokio = { version = "1", features = ["fs", "io-util", "macros", "process", "rt", "time"] }
+tokio-util = "0.7"
+tracing = "0.1"
+# The staging names of uploaded and kept binaries.
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt"] }
+
+[lints.rust]
+missing_docs = "deny"
+unreachable_pub = "deny"
+
+# `[lints] workspace = true` cannot be mixed with the rust lints above, so the
+# workspace's two clippy denials (`server-rs/Cargo.toml` `[workspace.lints]`)
+# are repeated here: keep them in step.
+[lints.clippy]
+significant_drop_in_scrutinee = "deny"
+await_holding_lock = "deny"

@@ -31,7 +31,7 @@
 //! device; the VAPID private scalar is one string, so it is a `kv` row under
 //! [`scope::PUSH`].
 //!
-//! `push.json` was written for a while after the move — a [`crate::supervisor`]
+//! `push.json` was written for a while after the move — a [`droppen_supervisor::supervisor`]
 //! demotion to a `.prev` binary that had never heard of the database would
 //! otherwise have come up with no devices and no key, and a fresh key
 //! unsubscribes every device there is. No binary that old is left to demote to,

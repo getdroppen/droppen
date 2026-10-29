@@ -50,7 +50,7 @@
 //!
 //! `owned-sessions.json` was written for a while after the move: [`crate::app`]
 //! calls this the one piece of ownership state that cannot be rebuilt from the
-//! filesystem, so a [`crate::supervisor`] demotion to a `.prev` binary that had
+//! filesystem, so a [`droppen_supervisor::supervisor`] demotion to a `.prev` binary that had
 //! never heard of the database would have had nothing at all. No binary that
 //! old is left to demote to, and the file is no longer read: one left on disk
 //! is inert.

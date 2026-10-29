@@ -57,7 +57,7 @@
 | 无头设备 | `rh-devkit` 已经是一个完整的 Rust 设备端：注册、设备会话、在 Hub 与中继签入、开通道、rpc、读流。钥只在内存里 | `C/rh-devkit/src/lib.rs:103-484,758-870` | 抽成库，给本机发起控制用 |
 | SPA 的单机假设 | 全局唯一 `transport()`；`api` 单例；`feedHub`、`GlobalFeedStore` 是单例，行键 `source/id`；查询键、路由、`PaneContent` 都不含机器；换机器靠 `location.reload()` | `W/lib/transport/index.ts:18-34`、`W/api/client.ts:31`、`W/app/global-feed.tsx:25-191`、`W/app/pane-tree.ts:7-33`、`W/features/cloud/context.ts:48-72` | §6 的改造面 |
 | 已按机器取址的 | 云端副本的 IndexedDB 键 `stream/<账户>/<机器>/…`；`StatusReaders` 同时读所有机器；`MachineChannel` 可以同时开多条 | `W/lib/hub/mirror.ts:167-169`、`W/features/cloud/machine-name.tsx:215-303`、`W/lib/hub/machine.ts:246-275` | 可以直接复用 |
-| 打包 | 资产 `remote-hand-<版本>-macos-aarch64.tar.gz`；自升级是推送式上传；托管副本写死 `<数据>/bin/remote-hand-server`；示例 launchd 标签带个人前缀（`com.<名字>.remote-hand`） | `.github/workflows/release.yml`、`S/selfupdate/store.rs:39`、`S/selfupdate/mod.rs:183-200` | §7 |
+| 打包 | 资产 `remote-hand-<版本>-macos-aarch64.tar.gz`；自升级是推送式上传；托管副本写死 `<数据>/bin/remote-hand-server`；示例 launchd 标签带个人前缀（`com.<名字>.remote-hand`） | `.github/workflows/release.yml`、`C/droppen-supervisor/src/selfupdate/store.rs:39`、`C/droppen-supervisor/src/selfupdate/mod.rs:183-200` | §7 |
 | 仓库与依赖方向 | 一个工作区含 `rh-hub`；没有任何开源 crate 依赖 `rh-hub`；但本地端到端脚本从源码构建 Hub；Hub 的路由表只在它的文档注释里 | `server-rs/Cargo.toml` 的工作区成员、`C/rh-devkit/scripts/` 里的本地端到端脚本 | §2.1 |
 
 ## 2. 三个程序

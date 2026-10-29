@@ -87,7 +87,7 @@ pub fn server_env(inherited: impl IntoIterator<Item = (String, String)>, path: &
 pub const DESKTOP_APP_ENV: [&str; 2] = ["DROPPEN_DESKTOP_APP", "RH_DESKTOP_APP"];
 
 /// What `serve` exits with when another server already holds its instance
-/// (`EX_TEMPFAIL`; `server-rs/src/supervisor.rs`, `INSTANCE_HELD_EXIT`).
+/// (`EX_TEMPFAIL`; `server-rs/crates/droppen-supervisor/src/supervisor.rs`, `INSTANCE_HELD_EXIT`).
 pub const INSTANCE_HELD_EXIT: i32 = 75;
 
 /// How to start one server process.

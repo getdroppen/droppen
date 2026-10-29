@@ -257,7 +257,7 @@ fn is_zero(value: &u8) -> bool {
 /// deleted. Leaving it where it is costs nothing: it is inert history.
 ///
 /// The release that added the table also wrote every commit back out as
-/// `runs.json`, because [`crate::supervisor`] demotes to the `.prev` binary
+/// `runs.json`, because [`droppen_supervisor::supervisor`] demotes to the `.prev` binary
 /// after three fast failures without asking anyone, and the `.prev` of that day
 /// had never heard of the database. A rollback that found no file would have
 /// adopted nothing: every resident orphaned, its queued messages lost, the

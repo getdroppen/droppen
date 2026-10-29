@@ -6,7 +6,7 @@
 //! notification's `tag` carries, so the three never have to be translated into
 //! each other.
 //!
-//! `seen.json` was a mirror for one version, so that a [`crate::supervisor`]
+//! `seen.json` was a mirror for one version, so that a [`droppen_supervisor::supervisor`]
 //! demotion onto a `.prev` binary that had never heard of this database would
 //! still find its marks; the rollback floor has since risen to a build that
 //! reads the database, so nothing reads the file any more.

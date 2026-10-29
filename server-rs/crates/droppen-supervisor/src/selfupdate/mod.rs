@@ -42,7 +42,7 @@
 //!
 //! This route replaces the program the machine will run, which makes it the most
 //! privileged route this server has. It is reached like every other one: through
-//! [`crate::auth`]'s layer, so only a signed-in account on this instance may post
+//! the server's `auth` layer, so only a signed-in account on this instance may post
 //! to it. Anyone who *is* signed in can already read every file under the home
 //! directory, open a shell through `POST /api/terminals`, and run arbitrary
 //! commands as this user; a route that swaps the binary adds persistence to
@@ -192,7 +192,7 @@ pub struct ServerBinaryUpload {
 #[derive(Clone)]
 pub struct SelfUpdateState {
     /// Whether the Droppen desktop app runs this server (see
-    /// [`crate::desktop_app`]); such a server refuses to replace the binary.
+    /// the server's `desktop_app`); such a server refuses to replace the binary.
     pub desktop_app: bool,
     /// This server's claim on its instance directory, filled in once the flock
     /// is held; the route refuses while it is empty or no longer upgrades.
@@ -227,7 +227,7 @@ impl SelfUpdateState {
 pub async fn self_upgrade(State(state): State<SelfUpdateState>, multipart: Multipart) -> Result<Json<SelfUpgrade>, ApiError> {
     // Before anything else, and before a byte is read: a server the desktop app
     // runs is updated with the app, and this route would only replace the
-    // shared `<data>/bin` that other instances run (`crate::desktop_app`).
+    // shared `<data>/bin` that other instances run (the server's `desktop_app`).
     state.refuse_self_upgrade_under_app()?;
     // Ownership first, before a byte is read: replacing `<data>/bin` and
     // restarting is an owner's move, and the flock is only meaningful while
@@ -619,7 +619,15 @@ mod tests {
     #[tokio::test]
     async fn a_server_run_by_the_desktop_app_refuses_to_replace_the_shared_binary() {
         let home = tempfile::tempdir().expect("tempdir");
-        let mut state = SelfUpdateState::from_ref(&crate::api::test_support::state(home.path()).await);
+        // An ordinary server's sub-state, rooted in the scratch home. The
+        // server's own tests pin that its state fills `desktop_app` with the
+        // server's switch.
+        let mut state = SelfUpdateState {
+            desktop_app: false,
+            lock: Arc::new(std::sync::OnceLock::new()),
+            paths: Arc::new(Paths::for_instance(home.path().to_path_buf(), "unittest")),
+            cancel: tokio_util::sync::CancellationToken::new(),
+        };
         assert!(state.refuse_self_upgrade_under_app().is_ok(), "an ordinary server is not refused here");
         state.desktop_app = true;
         let error = state.refuse_self_upgrade_under_app().expect_err("refused under the app");

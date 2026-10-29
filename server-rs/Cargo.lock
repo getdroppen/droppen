@@ -1181,6 +1181,26 @@ name = "droppen-search-path"
 version = "0.1.0"
 
 [[package]]
+name = "droppen-supervisor"
+version = "0.1.0"
+dependencies = [
+ "droppen-base",
+ "droppen-http",
+ "droppen-instance",
+ "gotcha",
+ "gotcha_core",
+ "libc",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "dunce"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2831,6 +2851,7 @@ dependencies = [
  "droppen-plugin-sdk",
  "droppen-pty",
  "droppen-search-path",
+ "droppen-supervisor",
  "ed25519-dalek",
  "flate2",
  "futures-util",
