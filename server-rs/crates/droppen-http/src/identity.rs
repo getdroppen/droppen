@@ -31,8 +31,8 @@ pub struct AuthIdentity {
 /// The one type the guard inserts for that capability: what it holds is
 /// opaque to the guard, so whatever the capability's check proves stays
 /// inside it and can never stand in the extensions as an [`AuthIdentity`] or
-/// anything else a handler reads. Only the code that made it reads it back
-/// ([`NotifyGrant::get`]).
+/// anything else a handler reads. Only code that can name the type it holds
+/// reads it back ([`NotifyGrant::get`]).
 #[derive(Clone)]
 pub struct NotifyGrant(Arc<dyn Any + Send + Sync>);
 
