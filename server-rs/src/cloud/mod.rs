@@ -1118,6 +1118,17 @@ mod tests {
             .await
             .unwrap();
         assert!(!dir.exists(), "turning aggregation off deletes other devices' keys and copies");
+        assert!(
+            !state.cloud.aggregator_switch().is_on(),
+            "the switch this server hands the link reads the API's off in cloud.json"
+        );
+        let _ = post_aggregator(State(CloudState::from_ref(&state)), alice(), ApiJson(AggregatorRequest { enabled: true }))
+            .await
+            .unwrap();
+        assert!(
+            state.cloud.aggregator_switch().is_on(),
+            "and on again once the API turns it back on"
+        );
         fill();
         let _ = post_unlink(State(CloudState::from_ref(&state)), alice(), ApiJson(UnlinkRequest { delete_copies: None }))
             .await
