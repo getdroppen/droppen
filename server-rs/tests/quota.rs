@@ -134,6 +134,28 @@ async fn an_account_that_never_opted_in_is_never_probed() {
     probe.stop().await;
 }
 
+/// The panel once the local login's reading and every one of `accounts`
+/// accounts' readings are stamped.
+///
+/// A cold panel answers within `COLLECT_BUDGET` with whatever is on file while
+/// the probes carry on behind it, and three serialized probes can take longer
+/// than that on a loaded machine. Asking until the stamps are there asserts on
+/// what the probes read rather than on how fast they read it; a poll while they
+/// run joins them rather than starting more.
+async fn quota_once_stamped(probe: &Probe, accounts: usize) -> Value {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        let quota = probe.get_json("/api/stats/quota").await;
+        let listed = quota["accounts"].as_array().map(Vec::as_slice).unwrap_or_default();
+        let stamped = listed.len() == accounts && listed.iter().all(|account| account["updatedAt"].is_string());
+        if stamped && quota["claude"]["updatedAt"].is_string() {
+            return quota;
+        }
+        assert!(std::time::Instant::now() < deadline, "the readings were never stamped: {quota}");
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+}
+
 #[tokio::test]
 async fn readings_are_cached_per_config_dir_and_probes_never_overlap() {
     let probe = Probe::start().await;
@@ -141,7 +163,7 @@ async fn readings_are_cached_per_config_dir_and_probes_never_overlap() {
     let second = probing_account(&probe, "Two", "sk-ant-oat01-TWO0123456789").await;
     plan_usage(&probe.home, USAGE);
 
-    let quota = probe.get_json("/api/stats/quota").await;
+    let quota = quota_once_stamped(&probe, 2).await;
     let accounts = quota["accounts"].as_array().expect("accounts");
     assert_eq!(accounts.len(), 2);
     for account in accounts {

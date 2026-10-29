@@ -705,6 +705,13 @@ impl super::Transcripts for AcpSessions {
         Source::Acp
     }
 
+    /// False: for the first-run guide an install has been used once it has
+    /// run a Claude Code or Codex session, and an ACP session alone does not
+    /// count.
+    fn has_own_sessions<'a>(&'a self, _paths: &'a Paths) -> BoxFuture<'a, bool> {
+        Box::pin(async { false })
+    }
+
     // The account store holds no ACP accounts, so no binding names an ACP
     // session.
     fn list<'a>(&'a self, paths: &'a Paths, _bindings: &'a BTreeMap<String, String>) -> BoxFuture<'a, Vec<SessionSummary>> {

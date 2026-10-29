@@ -24,7 +24,7 @@ use std::time::Duration;
 use futures_util::future::BoxFuture;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::accounts::login::Login;
+use crate::accounts::login::{Login, Logins};
 use droppen_base::process_env::{apply_env, Env};
 
 /// The most output kept from one stream of one invocation. A version string or
@@ -141,7 +141,7 @@ impl RunOutput {
 }
 
 /// One request to a short-lived `codex app-server` (see
-/// [`crate::accounts::quota::codex::app_server_call`]).
+/// [`Login::app_server_call`]).
 #[derive(Clone)]
 pub struct RpcCall {
     /// The `codex` binary to start.
@@ -179,7 +179,17 @@ pub trait Runner: Send + Sync {
 #[derive(Clone)]
 pub struct SystemRunner {
     /// Codex's login, which is what knows how to talk to its app server.
-    pub codex: Arc<dyn Login>,
+    codex: Arc<dyn Login>,
+}
+
+impl SystemRunner {
+    /// The runner for a server whose CLIs log in through `logins`: the app
+    /// server it asks is always codex's.
+    pub fn new(logins: &Logins) -> Self {
+        Self {
+            codex: logins.codex.clone(),
+        }
+    }
 }
 
 impl Runner for SystemRunner {
@@ -192,7 +202,10 @@ impl Runner for SystemRunner {
         Box::pin(async move {
             match codex.app_server_call(&call.program, &call.cwd, &call.env, call.method, call.timeout) {
                 Some(ask) => ask.await,
-                None => None,
+                None => {
+                    tracing::debug!(method = call.method, "codex's login offers no app server to ask");
+                    None
+                }
             }
         })
     }
