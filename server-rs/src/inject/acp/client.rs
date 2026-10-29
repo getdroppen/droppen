@@ -18,10 +18,12 @@
 //! minutes later, perhaps.
 
 use std::collections::HashMap;
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use agent_client_protocol_schema::v1::{
     CreateTerminalResponse, KillTerminalResponse, ReadTextFileResponse, ReleaseTerminalResponse, RequestPermissionOutcome,
@@ -42,6 +44,10 @@ const DEFAULT_OUTPUT_LIMIT: usize = 1024 * 1024;
 const MAX_OUTPUT_LIMIT: usize = 16 * 1024 * 1024;
 /// The most terminals one session may hold open.
 const MAX_TERMINALS: usize = 32;
+/// How long a kill waits for the group to go before signalling it again.
+const KILL_RETRY: Duration = Duration::from_millis(5);
+/// How long a kill keeps signalling a group with a member still alive.
+const KILL_PATIENCE: Duration = Duration::from_secs(1);
 
 /// JSON-RPC's codes for the refusals below, and ACP's for a missing resource.
 const METHOD_NOT_FOUND: i32 = -32601;
@@ -103,15 +109,53 @@ struct Terminal {
 }
 
 impl Terminal {
-    fn kill(&self) {
+    /// Kill the command and every process in its group.
+    ///
+    /// One `SIGKILL` to the group can miss one: on macOS a child the shell is
+    /// forking at that moment is not yet among the members the signal reaches,
+    /// and lives on in the group with the terminal's pipes open (#430). So the
+    /// group is signalled again every [`KILL_RETRY`] until no live member is
+    /// left to take the signal, the command's exit is recorded, or
+    /// [`KILL_PATIENCE`] has passed.
+    ///
+    /// The first signal goes out when this is called, so a caller that does
+    /// not wait for the rest has still sent it; the future is the rest.
+    fn kill(self: Arc<Self>) -> impl Future<Output = ()> + Send + 'static {
+        let delivered = self.signal();
+        async move {
+            if !delivered {
+                return;
+            }
+            let deadline = tokio::time::Instant::now() + KILL_PATIENCE;
+            let mut exit = self.exit.clone();
+            loop {
+                // Woken early when the exit is recorded. A closed channel is a
+                // reaper that is gone, with nothing more to report.
+                if let Ok(Err(_)) = tokio::time::timeout(KILL_RETRY, exit.changed()).await {
+                    return;
+                }
+                if tokio::time::Instant::now() >= deadline || !self.signal() {
+                    return;
+                }
+            }
+        }
+    }
+
+    /// One `SIGKILL` to the group while the command's exit is unrecorded, and
+    /// whether a live member took it. A group whose only member left is its
+    /// leader, dead but not yet reaped, answers `EPERM` on macOS; a group with
+    /// no member at all answers `ESRCH`.
+    fn signal(&self) -> bool {
         if self.exit.borrow().is_some() {
-            return;
+            return false;
         }
-        if let Some(group) = self.group {
-            // SAFETY: a signal to a process group this server created and has
-            // not seen exit; the worst outcome is an `ESRCH`, which is ignored.
-            unsafe { libc::kill(-(group as libc::pid_t), libc::SIGKILL) };
-        }
+        let Some(group) = self.group else {
+            return false;
+        };
+        // SAFETY: a signal to a process group this server created, whose
+        // leader it has not reaped (the exit is recorded right after), so the
+        // group's id is still this group's; a failure is only reported.
+        unsafe { libc::kill(-(group as libc::pid_t), libc::SIGKILL) == 0 }
     }
 }
 
@@ -137,10 +181,12 @@ impl Client {
     }
 
     /// Kill every terminal still running: the agent's process is gone, and
-    /// nothing is left to read them or to stop them later.
+    /// nothing is left to read them or to stop them later. Each is signalled
+    /// here; the signals after the first, for a child it missed, go on a task
+    /// of their own.
     pub(super) fn kill_all(&self) {
         for terminal in self.terminals.lock().unwrap().drain().map(|(_, terminal)| terminal) {
-            terminal.kill();
+            tokio::spawn(terminal.kill());
         }
     }
 
@@ -153,14 +199,14 @@ impl Client {
             "terminal/output" => self.terminal_output(&params::<TerminalParams>(request)?.terminal_id),
             "terminal/wait_for_exit" => self.wait_for_terminal_exit(&params::<TerminalParams>(request)?.terminal_id).await,
             "terminal/kill" => {
-                self.terminal(&params::<TerminalParams>(request)?.terminal_id)?.kill();
+                self.terminal(&params::<TerminalParams>(request)?.terminal_id)?.kill().await;
                 answer(KillTerminalResponse::new())
             }
             "terminal/release" => {
                 let id = params::<TerminalParams>(request)?.terminal_id;
                 let terminal = self.terminals.lock().unwrap().remove(&id);
                 if let Some(terminal) = terminal {
-                    terminal.kill();
+                    terminal.kill().await;
                 }
                 answer(ReleaseTerminalResponse::new())
             }
