@@ -19,13 +19,15 @@ name: llm-security-review
 #   had more than those tools fails it. A fork whose author has had nothing
 #   merged here fails it without a review, until a maintainer re-runs it: a
 #   stranger's pull requests do not spend the gateway's key.
-# - comment: posts the verdict and the findings as one comment, kept up to
-#   date. Nothing of the pull request runs in it.
-# - approve-fork-runs: on PASS, approves the workflow runs that wait for a
-#   maintainer's approval (the repository requires it for every outside
-#   contributor), of exactly the reviewed commit. A later push's runs wait for
-#   that push's review. On BLOCK or an error, or when the pull request changes
-#   .github/, nothing is approved: the runs wait for a maintainer.
+# - comment: on BLOCK, a review that requests changes, with the findings; with
+#   no verdict, one comment that says why, kept up to date; on PASS nothing,
+#   and what earlier runs asked for is dismissed. Nothing of the pull request
+#   runs in it.
+# - approve-fork-runs: for a fork, on PASS, approves the workflow runs that
+#   wait for a maintainer's approval (the repository requires it for every
+#   outside contributor), of exactly the reviewed commit. A later push's runs
+#   wait for that push's review. On BLOCK or an error, or when the pull request
+#   changes .github/, nothing is approved: the runs wait for a maintainer.
 #
 # Rollout switch: repository variable LLM_REVIEW_ENABLED=true; every job is
 # skipped otherwise (and a fork's runs wait for a maintainer). Needs the
@@ -437,7 +439,7 @@ jobs:
     permissions:
       pull-requests: write
     steps:
-      - name: Post the review on the pull request
+      - name: Report the review on the pull request
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -445,18 +447,44 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           FORK: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          CHANGES_GITHUB: ${{ needs.llm-security-review.outputs.changes_github }}
           VERDICT: ${{ needs.llm-security-review.outputs.verdict }}
           REASON: ${{ needs.llm-security-review.outputs.reason }}
           RESULT: ${{ needs.llm-security-review.outputs.result }}
         run: |
           set -euo pipefail
           marker='<!-- llm-security-review -->'
+          bot='github-actions[bot]'
           [ -n "$VERDICT" ] || { VERDICT=ERROR; REASON="the review did not finish"; }
+          # What earlier runs left on the pull request: their "changes
+          # requested" reviews, and the comment a run without a verdict keeps.
+          requested=$(gh api --paginate "repos/$GH_REPO/pulls/$NUMBER/reviews" \
+            --jq ".[] | select(.user.login == \"$bot\" and .state == \"CHANGES_REQUESTED\" and ((.body // \"\") | startswith(\"$marker\"))) | .id")
+          kept=$(gh api --paginate "repos/$GH_REPO/issues/$NUMBER/comments" \
+            --jq ".[] | select(.user.login == \"$bot\" and ((.body // \"\") | startswith(\"$marker\"))) | .id")
+          dismiss() {
+            for id in $requested; do
+              jq -n --arg message "$1" '{message: $message, event: "DISMISS"}' \
+                | gh api -X PUT "repos/$GH_REPO/pulls/$NUMBER/reviews/$id/dismissals" --input - > /dev/null
+              echo "dismissed review $id"
+            done
+          }
+          unkeep() {
+            for id in $kept; do
+              gh api -X DELETE "repos/$GH_REPO/issues/comments/$id" > /dev/null
+              echo "deleted comment $id"
+            done
+          }
+          # A pass says nothing: the green check is the answer. What an
+          # earlier commit's review asked for no longer stands.
+          if [ "$VERDICT" = PASS ]; then
+            dismiss "The security review passed on $HEAD_SHA."
+            unkeep
+            exit 0
+          fi
           # The agent's text, as plain text (def text), and nothing that looks
           # like a credential (then nothing of it at all).
           body=$(jq -rn --arg marker "$marker" --arg verdict "$VERDICT" --arg reason "$REASON" \
-            --arg sha "$HEAD_SHA" --arg run "$RUN_URL" --arg fork "$FORK" --arg github "$CHANGES_GITHUB" --arg raw "$RESULT" '
+            --arg sha "$HEAD_SHA" --arg run "$RUN_URL" --arg fork "$FORK" --arg raw "$RESULT" '
             # Markdown and HTML images and links go (a link keeps its text),
             # no URL stays clickable, and no @-mention pings anyone.
             def text:
@@ -477,30 +505,43 @@ jobs:
                 "",
                 (if $verdict == "ERROR" then "The review did not give a verdict: \($reason)." else ($r.summary // "" | text) end),
                 "",
-                (if ($f | length) == 0 then (if $verdict == "ERROR" then empty else "No findings." end)
+                (if ($f | length) == 0 then empty
                  else "Findings (\($f | length)):", "",
                    ($f[] | "- **[\(.severity // "?" | text)]** `\(.file // "?" | text)\(if .line then ":\(.line)" else "" end)`: \(.title // "" | text)\n  \(.detail // "" | text | gsub("\n"; "\n  "))")
                  end),
                 "",
-                (if $fork == "true" then
-                   (if $verdict != "PASS" then "This pull request comes from a fork: its workflow runs for this commit stay waiting for a maintainer."
-                    elif $github != "false" then "This pull request comes from a fork and changes files under `.github/`: its workflow runs for this commit wait for a maintainer, even though the review passed."
-                    else "This pull request comes from a fork: the review has passed, so this commit'"'"'s workflow runs are approved now." end)
-                 else empty end)
+                (if $fork == "true" then "This pull request comes from a fork: its workflow runs for this commit stay waiting for a maintainer." else empty end)
               ] | join("\n") | .[0:60000]')
           if printf '%s' "$body" | grep -Eq 'gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|sk-[A-Za-z0-9_-]{20,}|eyJ[A-Za-z0-9_-]{10,}\.eyJ|-----BEGIN [A-Z ]*PRIVATE KEY'; then
             body=$(jq -rn --arg marker "$marker" --arg verdict "$VERDICT" --arg sha "$HEAD_SHA" --arg run "$RUN_URL" \
               '"\($marker)\n## Automated security review: \($verdict)\n\nCommit `\($sha)` ([run](\($run))). The text of the review is withheld: part of it looks like a credential. A maintainer reads it in the run."')
             withheld=1
           fi
-          id=$(gh api --paginate "repos/$GH_REPO/issues/$NUMBER/comments" \
-            --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | .id" | tail -n 1)
-          if [ -n "$id" ]; then
-            jq -n --arg body "$body" '{body: $body}' | gh api -X PATCH "repos/$GH_REPO/issues/comments/$id" --input - > /dev/null
-            echo "updated comment $id"
+          if [ "$VERDICT" = BLOCK ]; then
+            # A block asks for changes on the reviewed commit; it replaces what
+            # earlier runs asked for or said.
+            dismiss "Superseded by the security review of $HEAD_SHA."
+            unkeep
+            if jq -n --arg body "$body" --arg sha "$HEAD_SHA" '{commit_id: $sha, body: $body, event: "REQUEST_CHANGES"}' \
+              | gh api "repos/$GH_REPO/pulls/$NUMBER/reviews" --input - > /dev/null; then
+              echo "requested changes"
+            else
+              # The findings still reach the pull request, and the job says why.
+              jq -n --arg body "$body" '{body: $body}' | gh api "repos/$GH_REPO/issues/$NUMBER/comments" --input - > /dev/null
+              echo "::error::GitHub refused the review that requests changes; the findings were posted as a comment"
+              exit 1
+            fi
           else
-            jq -n --arg body "$body" '{body: $body}' | gh api "repos/$GH_REPO/issues/$NUMBER/comments" --input - > /dev/null
-            echo "posted a comment"
+            # No verdict judges no code, so nothing is asked of the author: one
+            # comment says why, kept up to date. An earlier block still stands.
+            id=$(printf '%s\n' $kept | tail -n 1)
+            if [ -n "$id" ]; then
+              jq -n --arg body "$body" '{body: $body}' | gh api -X PATCH "repos/$GH_REPO/issues/comments/$id" --input - > /dev/null
+              echo "updated comment $id"
+            else
+              jq -n --arg body "$body" '{body: $body}' | gh api "repos/$GH_REPO/issues/$NUMBER/comments" --input - > /dev/null
+              echo "posted a comment"
+            fi
           fi
           if [ "${withheld:-0}" = 1 ]; then
             echo "::error::the review's text looked like it held a credential; it was not posted"
@@ -509,8 +550,9 @@ jobs:
 
   approve-fork-runs:
     needs: llm-security-review
-    # Not when the pull request changes .github/: then a maintainer approves.
-    if: ${{ needs.llm-security-review.result == 'success' && needs.llm-security-review.outputs.verdict == 'PASS' && needs.llm-security-review.outputs.changes_github == 'false' }}
+    # Only a fork's runs wait for approval. Not when the pull request changes
+    # .github/: then a maintainer approves.
+    if: ${{ github.event.pull_request.head.repo.id != github.event.repository.id && needs.llm-security-review.result == 'success' && needs.llm-security-review.outputs.verdict == 'PASS' && needs.llm-security-review.outputs.changes_github == 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

