@@ -631,6 +631,57 @@ pub async fn load_claude_summary(paths: &Paths, id: &str) -> Option<SessionSumma
 /// both roots' projects directories, and the parser of their main chain.
 pub struct ClaudeCodeSessions;
 
+impl ClaudeCodeSessions {
+    /// Drop claude entries whose transcript is not in any root this server reads.
+    ///
+    /// Two things put one there. A claude id is recorded *before* the spawn, so a
+    /// launch that failed leaves an entry for a session that never existed; and a
+    /// transcript the user deletes leaves one for a session that no longer does.
+    /// Neither is harmful — nothing lists an id with no file — but the registry is
+    /// the one piece of ownership state that cannot be rebuilt from the filesystem,
+    /// so it should not accumulate forever either.
+    ///
+    /// **Boot only, and under the instance lock**, rather than on every load: the
+    /// check is a directory scan per id, and the read path runs once per list
+    /// refresh for every attached client. There is a narrow race — a server
+    /// restarted in the moment between a claude id being recorded and its CLI
+    /// writing the first line would prune it — and the cost of losing it is that the
+    /// session lists as external: still readable here, and still the user's own to
+    /// continue with `claude --resume`, but no longer sendable from this server.
+    ///
+    /// Codex entries are deliberately left alone. `~/.codex` hides archived and
+    /// subagent threads from every lookup cheap enough to run here, so "not found"
+    /// there does not mean "gone", and disowning a thread the user merely archived
+    /// would be worse than keeping a stale line.
+    pub async fn prune_owned(&self, paths: &Paths) {
+        let owned = super::owned_sessions::read(paths).await;
+        let ids: Vec<String> = owned.ids(Source::Claude).map(str::to_owned).collect();
+        if ids.is_empty() {
+            return;
+        }
+        let mut stale: Vec<String> = Vec::new();
+        for id in ids {
+            let found = find_in_root(paths, ClaudeRoot::Managed, &id).await.is_some() || find_in_root(paths, ClaudeRoot::Local, &id).await.is_some();
+            if !found {
+                stale.push(id);
+            }
+        }
+        if stale.is_empty() {
+            return;
+        }
+        for id in &stale {
+            if let Err(error) = super::owned_sessions::forget(paths, Source::Claude, id).await {
+                tracing::warn!(session = %id, %error, "cannot drop a stale ownership entry");
+                return;
+            }
+        }
+        tracing::info!(
+            dropped = stale.len(),
+            "dropped ownership entries for claude sessions that no longer exist"
+        );
+    }
+}
+
 impl super::Transcripts for ClaudeCodeSessions {
     fn source(&self) -> Source {
         Source::Claude
@@ -819,6 +870,39 @@ pub async fn read_cli_choice(file_path: &Path) -> Option<super::CliChoice> {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    /// A claude id is recorded *before* its spawn, so a launch that failed
+    /// leaves an entry for a session that never existed — and a transcript the
+    /// user deletes leaves one for a session that no longer does.
+    #[tokio::test]
+    async fn the_prune_drops_claude_ids_with_no_transcript_and_keeps_the_rest() {
+        use crate::claude_roots;
+        use crate::sessions::owned_sessions;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let paths = Paths::new(dir.path().to_path_buf());
+        let project = claude_roots::ClaudeRoots::of(&paths).projects_dir(ClaudeRoot::Local).join("-w");
+        std::fs::create_dir_all(&project).expect("project dir");
+        std::fs::write(project.join("alive.jsonl"), "{}\n").expect("a session that exists");
+
+        owned_sessions::record(&paths, Source::Claude, "alive").await.expect("record");
+        owned_sessions::record(&paths, Source::Claude, "never-launched").await.expect("record");
+        // Codex is left alone whatever the filesystem says: `~/.codex` hides
+        // archived threads from every lookup cheap enough to run at boot, so
+        // "not found" there is not "gone".
+        owned_sessions::record(&paths, Source::Codex, "archived-thread").await.expect("record");
+
+        ClaudeCodeSessions.prune_owned(&paths).await;
+
+        let owned = owned_sessions::read(&paths).await;
+        assert!(owned.contains(Source::Claude, "alive"));
+        assert!(!owned.contains(Source::Claude, "never-launched"), "the failed launch is dropped");
+        assert!(owned.contains(Source::Codex, "archived-thread"), "codex entries are never pruned");
+
+        // Idempotent, and a no-op on a registry with nothing to drop.
+        ClaudeCodeSessions.prune_owned(&paths).await;
+        assert_eq!(owned_sessions::read(&paths).await, owned);
+    }
 
     fn session(lines: &[&str]) -> (tempfile::TempDir, PathBuf) {
         let dir = tempfile::tempdir().expect("tempdir");

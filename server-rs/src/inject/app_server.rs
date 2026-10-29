@@ -299,7 +299,7 @@ impl Run for Codex {
             // which thread it actually made. A failure here costs the session its
             // ownership (it lists as external) and nothing else, so it is logged rather
             // than turned into a refusal of a run that has already started.
-            if let Err(error) = crate::sessions::owned_sessions::record(&self.registry.paths, Source::Codex, &id).await {
+            if let Err(error) = crate::sessions::codex_claims::record_thread(&self.registry.paths, &id).await {
                 tracing::error!(session = %id, %error, "cannot record this codex session as ours; it will list as external");
             }
             // Written beside the ownership record and for the same reason: the thread id

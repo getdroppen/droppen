@@ -1364,7 +1364,7 @@ mod tests {
         assert_eq!((found.scope, found.server.as_str()), (SessionScope::External, "alice"));
 
         // Recorded as this instance's own: the value now comes off the row.
-        owned_sessions::record(&paths, Source::Codex, id).await.expect("record");
+        crate::sessions::codex_claims::record_thread(&paths, id).await.expect("record");
         let mine = find_codex_session(&paths, id).await.expect("the row");
         assert_eq!(mine.scope, SessionScope::Owned);
         assert_eq!(mine.server, "alice");

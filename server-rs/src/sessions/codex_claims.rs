@@ -85,11 +85,25 @@ fn named(raw: &str) -> Option<String> {
     droppen_instance::instance::valid_name(name).then(|| name.to_string())
 }
 
+/// Record that this instance made codex thread `id`: in its ownership registry
+/// ([`super::owned_sessions::record`]), then as a claim here. One call for both,
+/// so they cannot drift.
+///
+/// The registry's outcome is the answer. The claim is a separate, best-effort
+/// copy of what was just recorded, and it is re-attempted on a second
+/// `record_thread` of the same id precisely so a claim that failed to land once
+/// is not permanent.
+pub async fn record_thread(paths: &Paths, id: &str) -> std::io::Result<()> {
+    let outcome = super::owned_sessions::record(paths, Source::Codex, id).await;
+    claim(paths, id).await;
+    outcome
+}
+
 /// Record that this instance made `id`, for the other instances to read.
 ///
-/// Called wherever [`super::owned_sessions::record`] records a codex thread —
-/// from inside it, in fact, so the two cannot drift: a registry entry with no
-/// claim is a thread a sibling still lists, which is the bug this exists to fix.
+/// Called by [`record_thread`] right after the registry entry, so the two
+/// cannot drift: a registry entry with no claim is a thread a sibling still
+/// lists, which is the bug this exists to fix.
 ///
 /// Best effort. Every failure is logged and none is propagated, because the run
 /// that just succeeded must not be reported as failed over bookkeeping a sibling
@@ -501,7 +515,7 @@ mod tests {
 
         // Simulate a registry written before claims existed: the entry is there,
         // the claim is not.
-        super::super::owned_sessions::record(&a, Source::Codex, "old-thread")
+        record_thread(&a, "old-thread")
             .await
             .expect("record");
         std::fs::remove_file(a.codex_claims_dir().join("old-thread")).expect("unclaim");
@@ -511,7 +525,7 @@ mod tests {
         assert_eq!(migrate(&a).await, 0, "and the second boot writes nothing");
 
         // A conflict is reported by leaving the other instance's claim alone.
-        super::super::owned_sessions::record(&b, Source::Codex, "old-thread")
+        record_thread(&b, "old-thread")
             .await
             .expect("record");
         assert_eq!(migrate(&b).await, 0);
