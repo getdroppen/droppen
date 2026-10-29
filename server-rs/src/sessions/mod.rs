@@ -922,7 +922,7 @@ impl TranscriptSources {
         // After the driver: a Claude child counts as working only while its
         // parent is, and that is the driver's answer.
         subagents::apply(paths, &mut sessions).await;
-        attention::apply(paths, &mut sessions).await;
+        attention::apply(paths, self, &mut sessions).await;
         repo::apply(&mut sessions).await;
         pins::apply(paths, &mut sessions);
         sessions.sort_by_key(|session| !session.pinned);

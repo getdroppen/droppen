@@ -726,6 +726,48 @@ impl super::Transcripts for CodexSessions {
     fn parse<'a>(&'a self, paths: &'a Paths, file_path: &'a Path) -> BoxFuture<'a, std::io::Result<Vec<TranscriptItem>>> {
         Box::pin(parse_codex_transcript(paths, file_path))
     }
+
+    fn cli_choice<'a>(&'a self, file_path: &'a Path) -> BoxFuture<'a, Option<CliChoice>> {
+        Box::pin(read_codex_cli_choice(file_path))
+    }
+
+    fn context<'a>(&'a self, file_path: &'a Path) -> BoxFuture<'a, Option<super::context::ContextUsage>> {
+        Box::pin(super::context::read_codex_context(file_path))
+    }
+
+    // Each non-empty text part of an assistant `message` payload, minus the
+    // injected wrappers (`<environment_context>`, `AGENTS.md`, …), which are
+    // instructions rather than speech. `reasoning` and tool calls are not
+    // messages, and an `event_msg` is an echo of a `response_item` already
+    // read. Codex has no sidechain of its own: a subagent thread is a separate
+    // rollout file, hidden from the list by discovery.
+    fn spoken_texts(&self, entry: &serde_json::Map<String, Value>) -> Vec<String> {
+        let keep = |text: &str| {
+            let text = text.trim();
+            (!text.is_empty()).then(|| text.to_string())
+        };
+        if entry.get("type").and_then(Value::as_str) != Some("response_item") {
+            return Vec::new();
+        }
+        let Some(payload) = entry.get("payload").and_then(Value::as_object) else {
+            return Vec::new();
+        };
+        if payload.get("type").and_then(Value::as_str) != Some("message") || payload.get("role").and_then(Value::as_str) != Some("assistant") {
+            return Vec::new();
+        }
+        payload
+            .get("content")
+            .and_then(Value::as_array)
+            .map(|parts| {
+                parts
+                    .iter()
+                    .filter_map(|part| part.get("text").and_then(Value::as_str))
+                    .filter(|text| !is_wrapper_text(text))
+                    .filter_map(keep)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
 }
 
 /// Resolve one visible Codex session without listing the whole corpus.

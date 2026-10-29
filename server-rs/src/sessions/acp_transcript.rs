@@ -523,8 +523,8 @@ fn user_item(entry: &Map<String, Value>, at: Option<&str>) -> TranscriptItem {
 
 /// The texts in one transcript line that are the agent speaking to the user.
 ///
-/// The ACP arm of [`crate::sessions::attention::derive::spoken_texts`]: the record that
-/// closes a run of answer text, never a delta.
+/// What [`AcpSessions`] reads as speech ([`super::Transcripts::spoken_texts`]):
+/// the record that closes a run of answer text, never a delta.
 pub fn spoken_texts(entry: &Map<String, Value>) -> Vec<String> {
     if entry.get("type").and_then(Value::as_str) != Some("assistant") {
         return Vec::new();
@@ -617,6 +617,20 @@ impl super::Transcripts for AcpSessions {
 
     fn parse<'a>(&'a self, _paths: &'a Paths, file_path: &'a Path) -> BoxFuture<'a, std::io::Result<Vec<TranscriptItem>>> {
         Box::pin(parse_transcript(file_path))
+    }
+
+    // The `config` record the driver writes when the choice changes.
+    fn cli_choice<'a>(&'a self, file_path: &'a Path) -> BoxFuture<'a, Option<super::CliChoice>> {
+        Box::pin(read_cli_choice(file_path))
+    }
+
+    // The `usage` record the driver writes from the agent's own `usage_update`.
+    fn context<'a>(&'a self, file_path: &'a Path) -> BoxFuture<'a, Option<super::context::ContextUsage>> {
+        Box::pin(super::context::read_acp_context(file_path))
+    }
+
+    fn spoken_texts(&self, entry: &Map<String, Value>) -> Vec<String> {
+        spoken_texts(entry)
     }
 }
 

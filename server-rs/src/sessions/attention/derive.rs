@@ -22,9 +22,8 @@ use std::path::Path;
 
 use serde_json::Value;
 
-use crate::sessions::transcript::content_blocks;
 use crate::sessions::util::{read_tail_lines, try_parse};
-use crate::sessions::Source;
+use crate::sessions::{Source, TranscriptSources, Transcripts};
 
 /// How much of a transcript's end is read. `TAIL_BYTES` in
 /// [`crate::sessions::claude`] and [`crate::sessions::codex`], for the same
@@ -85,76 +84,15 @@ fn collapse_whitespace(text: &str) -> String {
     out
 }
 
-/// The texts in one transcript entry that are the agent *speaking to the user*,
-/// trimmed, in the order they were written.
+/// The newest thing said in a tail, by [`Transcripts::spoken_texts`].
 ///
-/// **The one definition** behind the badge, the unread count and the push
-/// notification ([`crate::sessions::attention::unread`] counts these; [`claude_echo`] and
-/// [`codex_echo`] take the newest), so the three can never disagree about
-/// whether something was said. One entry per transcript row the session view
-/// draws for it:
-///
-/// * claude: each non-empty `text` block of a main-chain `assistant` entry.
-///   `isSidechain` is a subagent talking to itself, and `thinking` / `tool_use`
-///   are the model working. A `<synthetic>` entry — the CLI writing in the
-///   model's voice: a rate-limit wall, an API error — *does* count: it is the
-///   last thing the session said, and a session that stopped on a limit is
-///   exactly one the user needs to see has stopped.
-/// * codex: each non-empty text part of an assistant `message` payload, minus
-///   the injected wrappers (`<environment_context>`, `AGENTS.md`, …), which are
-///   instructions rather than speech. `reasoning` and tool calls are not
-///   messages, and an `event_msg` is an echo of a `response_item` already read.
-///
-/// remote-hand's own rows (task notifications, hand-backs) are user-side
-/// entries and never reach this test.
-pub fn spoken_texts(source: Source, entry: &serde_json::Map<String, Value>) -> Vec<String> {
-    let keep = |text: &str| {
-        let text = text.trim();
-        (!text.is_empty()).then(|| text.to_string())
-    };
-    match source {
-        Source::Acp => crate::sessions::acp_transcript::spoken_texts(entry),
-        Source::Claude => {
-            if entry.get("isSidechain") == Some(&Value::Bool(true)) || entry.get("type").and_then(Value::as_str) != Some("assistant") {
-                return Vec::new();
-            }
-            content_blocks(entry.get("message"))
-                .iter()
-                .filter(|block| block.get("type").and_then(Value::as_str) == Some("text"))
-                .filter_map(|block| block.get("text").and_then(Value::as_str).and_then(keep))
-                .collect()
-        }
-        Source::Codex => {
-            if entry.get("type").and_then(Value::as_str) != Some("response_item") {
-                return Vec::new();
-            }
-            let Some(payload) = entry.get("payload").and_then(Value::as_object) else {
-                return Vec::new();
-            };
-            if payload.get("type").and_then(Value::as_str) != Some("message") || payload.get("role").and_then(Value::as_str) != Some("assistant") {
-                return Vec::new();
-            }
-            payload
-                .get("content")
-                .and_then(Value::as_array)
-                .map(|parts| {
-                    parts
-                        .iter()
-                        .filter_map(|part| part.get("text").and_then(Value::as_str))
-                        .filter(|text| !crate::sessions::codex::is_wrapper_text(text))
-                        .filter_map(keep)
-                        .collect()
-                })
-                .unwrap_or_default()
-        }
-    }
-}
-
-/// The newest thing said in a tail, by [`spoken_texts`].
-fn newest_echo(source: Source, tail: &[String]) -> Option<AssistantEcho> {
+/// Walks back past every entry that says nothing — a turn that ends mid-tool is
+/// the session working, and the newest text before it is still the last thing
+/// the user was told.
+pub fn echo(reader: &dyn Transcripts, tail: &[String]) -> Option<AssistantEcho> {
     for line in tail.iter().rev() {
         let Some(entry) = try_parse(line) else { continue };
-        if let Some(text) = spoken_texts(source, &entry).pop() {
+        if let Some(text) = reader.spoken_texts(&entry).pop() {
             return Some(AssistantEcho {
                 at: entry.get("timestamp").and_then(Value::as_str).map(str::to_owned),
                 text,
@@ -164,25 +102,8 @@ fn newest_echo(source: Source, tail: &[String]) -> Option<AssistantEcho> {
     None
 }
 
-/// The newest assistant text in a Claude transcript tail.
-///
-/// Walks back past every entry that says nothing — a turn that ends mid-tool is
-/// the session working, and the newest text before it is still the last thing
-/// the user was told. What counts as saying something is [`spoken_texts`].
-pub fn claude_echo(tail: &[String]) -> Option<AssistantEcho> {
-    newest_echo(Source::Claude, tail)
-}
-
-/// The newest assistant text in a Codex rollout tail, by [`spoken_texts`].
-///
-/// Codex has no sidechain of its own — a subagent thread is a separate rollout
-/// file, hidden from the list by discovery.
-pub fn codex_echo(tail: &[String]) -> Option<AssistantEcho> {
-    newest_echo(Source::Codex, tail)
-}
-
-/// What one transcript line adds to the unread count: [`spoken_texts`],
-/// counted, with the entry's timestamp.
+/// What one transcript line adds to the unread count:
+/// [`Transcripts::spoken_texts`], counted, with the entry's timestamp.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Spoken {
     /// The entry's own timestamp, when it carried one.
@@ -192,32 +113,37 @@ pub struct Spoken {
 }
 
 /// [`Spoken`] for one parsed line, or `None` when it holds no message.
-pub fn spoken(source: Source, entry: &serde_json::Map<String, Value>) -> Option<Spoken> {
-    let messages = spoken_texts(source, entry).len();
+pub fn spoken(reader: &dyn Transcripts, entry: &serde_json::Map<String, Value>) -> Option<Spoken> {
+    let messages = reader.spoken_texts(entry).len();
     (messages > 0).then(|| Spoken {
         at: entry.get("timestamp").and_then(Value::as_str).map(str::to_owned),
         messages,
     })
 }
 
-/// [`claude_echo`] or [`codex_echo`], by source.
-pub fn echo(source: Source, tail: &[String]) -> Option<AssistantEcho> {
-    match source {
-        Source::Claude => claude_echo(tail),
-        Source::Codex => codex_echo(tail),
-        Source::Acp => newest_echo(Source::Acp, tail),
+impl TranscriptSources {
+    /// [`echo`], reading the tail of `source`'s transcript at `file_path`
+    /// itself. `None` for an unreadable file or a source with no reader.
+    pub async fn read_echo(&self, source: Source, file_path: &Path) -> Option<AssistantEcho> {
+        let reader = self.get(source)?;
+        let tail = read_tail_lines(file_path, TAIL_BYTES).await.ok()?;
+        echo(reader, &tail)
     }
-}
-
-/// [`echo`], reading the tail itself. `None` for an unreadable file.
-pub async fn read_echo(source: Source, file_path: &Path) -> Option<AssistantEcho> {
-    let tail = read_tail_lines(file_path, TAIL_BYTES).await.ok()?;
-    echo(source, &tail)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sessions::claude::ClaudeCodeSessions;
+    use crate::sessions::codex::CodexSessions;
+
+    fn claude_echo(tail: &[String]) -> Option<AssistantEcho> {
+        echo(&ClaudeCodeSessions, tail)
+    }
+
+    fn codex_echo(tail: &[String]) -> Option<AssistantEcho> {
+        echo(&CodexSessions, tail)
+    }
 
     fn lines(raw: &[&str]) -> Vec<String> {
         raw.iter().map(|l| (*l).to_string()).collect()
@@ -277,7 +203,7 @@ mod tests {
         assert_eq!(echo.at.as_deref(), Some("2026-01-01T00:00:06.000Z"));
         assert_eq!(echo.text, "You've hit your limit");
         let entry = try_parse(&tail[1]).expect("parses");
-        assert_eq!(spoken(Source::Claude, &entry).map(|said| said.messages), Some(1));
+        assert_eq!(spoken(&ClaudeCodeSessions, &entry).map(|said| said.messages), Some(1));
     }
 
     /// A codex wrapper is instructions, for the echo as for the count.
@@ -288,7 +214,7 @@ mod tests {
             r#"{"type":"response_item","timestamp":"2026-01-01T00:00:02.000Z","payload":{"type":"message","role":"assistant","content":[{"text":"<environment_context>x</environment_context>"}]}}"#,
         ]);
         assert_eq!(codex_echo(&tail).expect("an echo").text, "real");
-        assert_eq!(spoken(Source::Codex, &try_parse(&tail[1]).expect("parses")), None);
+        assert_eq!(spoken(&CodexSessions, &try_parse(&tail[1]).expect("parses")), None);
     }
 
     #[test]
@@ -374,6 +300,11 @@ mod tests {
 
     #[tokio::test]
     async fn a_missing_file_has_no_clock() {
-        assert_eq!(read_echo(Source::Claude, Path::new("/nonexistent/x.jsonl")).await, None);
+        assert_eq!(
+            crate::app::transcript_sources()
+                .read_echo(Source::Claude, Path::new("/nonexistent/x.jsonl"))
+                .await,
+            None
+        );
     }
 }

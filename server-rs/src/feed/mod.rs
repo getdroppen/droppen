@@ -85,7 +85,7 @@ use droppen_instance::paths::{ClaudeRoot, Paths};
 use crate::sessions::account::AccountRef;
 use crate::sessions::loader::{encode_fp, Fp, Transcript, RESUME_OVERLAP};
 use crate::sessions::util::TranscriptItem;
-use crate::sessions::{claude, codex, file_signature, sendability, CliChoice, Injection, SessionDetail, SessionSummary, Source, TranscriptSources};
+use crate::sessions::{file_signature, sendability, CliChoice, Injection, SessionDetail, SessionSummary, Source, TranscriptSources};
 
 /// How many items one page of transcript holds.
 pub const SESSION_PAGE_SIZE: usize = 200;
@@ -326,18 +326,8 @@ pub async fn load_session_state(drive: &Arc<Drive>, source: Source, id: &str) ->
         Some(reason) => (false, Some(reason)),
         None => sendability(source, summary.scope, summary.status, running, resident.is_some()),
     };
-    let cli_choice = match source {
-        Source::Claude => claude::read_cli_choice(Path::new(&summary.file_path)).await,
-        Source::Codex => codex::read_codex_cli_choice(Path::new(&summary.file_path)).await,
-        // The `config` record the driver writes when the choice changes.
-        Source::Acp => crate::sessions::acp_transcript::read_cli_choice(Path::new(&summary.file_path)).await,
-    };
-    let context = match source {
-        Source::Claude => crate::sessions::context::read_claude_context(Path::new(&summary.file_path)).await,
-        Source::Codex => crate::sessions::context::read_codex_context(Path::new(&summary.file_path)).await,
-        // The `usage` record the driver writes from the agent's own `usage_update`.
-        Source::Acp => crate::sessions::context::read_acp_context(Path::new(&summary.file_path)).await,
-    };
+    let cli_choice = drive.transcripts.cli_choice(source, Path::new(&summary.file_path)).await;
+    let context = drive.transcripts.context(source, Path::new(&summary.file_path)).await;
     // The CLI's own figure wins, then the model on the entry the reading came
     // from, then the reading itself; see `context::resolve_window`.
     let context_window =
@@ -363,7 +353,7 @@ pub async fn load_session_state(drive: &Arc<Drive>, source: Source, id: &str) ->
     // `TranscriptSources::list_and_filter` says the same for the list; this is the
     // single-session path.
     crate::sessions::subagents::apply(&drive.paths, std::slice::from_mut(&mut summary)).await;
-    crate::sessions::attention::apply(&drive.paths, std::slice::from_mut(&mut summary)).await;
+    crate::sessions::attention::apply(&drive.paths, &drive.transcripts, std::slice::from_mut(&mut summary)).await;
     crate::sessions::repo::apply(std::slice::from_mut(&mut summary)).await;
     // Only claude sessions rotate, and only this instance's log knows about it.
     let rotation = match source {
