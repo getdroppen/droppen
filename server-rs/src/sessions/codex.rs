@@ -20,10 +20,11 @@
 //! Assistant file mentions use the same existence and home-directory checks as
 //! Claude transcripts, including Codex's structured file-citation directives.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
+use futures_util::future::BoxFuture;
 use serde_json::Value;
 
 use super::codex_claims::{Claims, Verdict};
@@ -689,6 +690,42 @@ async fn list_by_scanning(paths: &Paths) -> Vec<SessionSummary> {
         out.push(with_codex_status(meta_to_summary(&meta, &names), meta.updated_ms).await);
     }
     out
+}
+
+/// Codex's transcripts, for [`super::TranscriptSources`]: the rollouts under
+/// `~/.codex`, found through its state database or by walking them.
+pub struct CodexSessions;
+
+impl super::Transcripts for CodexSessions {
+    fn source(&self) -> Source {
+        Source::Codex
+    }
+
+    fn list<'a>(&'a self, paths: &'a Paths, bindings: &'a BTreeMap<String, String>) -> BoxFuture<'a, Vec<SessionSummary>> {
+        Box::pin(async move {
+            let mut sessions = list_codex_sessions(paths).await;
+            // The claude discovery applies the bindings itself, inside the root walk it
+            // has to do anyway; codex has no such walk, so its rows are matched up here.
+            // Either way the field means the same thing and is filled from the same
+            // table — a client reading `accountId` must not have to ask which CLI wrote
+            // the row.
+            for session in &mut sessions {
+                session.account_id = bindings.get(&session.id).cloned();
+            }
+            sessions
+        })
+    }
+
+    // Also what `find_file` reads the path off: a database row, and a status
+    // read of one 64 KiB tail for a recent rollout only, cheap enough not to
+    // need a lookup of its own.
+    fn find<'a>(&'a self, paths: &'a Paths, id: &'a str) -> BoxFuture<'a, Option<SessionSummary>> {
+        Box::pin(find_codex_session(paths, id))
+    }
+
+    fn parse<'a>(&'a self, paths: &'a Paths, file_path: &'a Path) -> BoxFuture<'a, std::io::Result<Vec<TranscriptItem>>> {
+        Box::pin(parse_codex_transcript(paths, file_path))
+    }
 }
 
 /// Resolve one visible Codex session without listing the whole corpus.

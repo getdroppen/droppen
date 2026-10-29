@@ -23,7 +23,7 @@ use crate::accounts::store::AccountsStore;
 use crate::auth::Auth;
 use crate::inject::InjectionRegistry;
 use crate::paths::Paths;
-use crate::sessions::titles;
+use crate::sessions::{titles, TranscriptSources};
 
 pub use routes::{describe, DriveState};
 
@@ -31,6 +31,9 @@ pub use routes::{describe, DriveState};
 pub struct Drive {
     /// Where everything is discovered and written.
     pub paths: Arc<Paths>,
+    /// Each CLI's transcripts, which the session routes, the feeds and the
+    /// cloud streams list and read sessions through.
+    pub transcripts: TranscriptSources,
     /// The stored logins, for both CLIs.
     ///
     /// Behind an `Arc` because the injection registry holds the same store: a
@@ -78,7 +81,7 @@ impl Drive {
     /// records its in-flight runs in the instance directory, so a restart can
     /// find them again. `auth` is built by the caller rather than here, because
     /// the middleware needs the same handle and is mounted outside the router.
-    pub fn new(paths: Arc<Paths>, instance: &crate::instance::InstanceDirs, auth: Arc<Auth>) -> Arc<Self> {
+    pub fn new(paths: Arc<Paths>, instance: &crate::instance::InstanceDirs, auth: Arc<Auth>, transcripts: TranscriptSources) -> Arc<Self> {
         let accounts = Arc::new(AccountsStore::new(paths.clone()));
         let quota = Arc::new(QuotaCache::new(paths.clone()));
         Arc::new(Self {
@@ -92,6 +95,7 @@ impl Drive {
             titles: titles::TitlesStore::new(paths.clone()),
             instance: instance.clone(),
             paths,
+            transcripts,
         })
     }
 

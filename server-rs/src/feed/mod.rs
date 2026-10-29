@@ -83,9 +83,9 @@ use crate::drive::Drive;
 use crate::inject::drafts::Draft;
 use crate::paths::{ClaudeRoot, Paths};
 use crate::sessions::account::AccountRef;
-use crate::sessions::loader::{encode_fp, load_transcript, parse_transcript, Fp, Transcript, RESUME_OVERLAP};
+use crate::sessions::loader::{encode_fp, Fp, Transcript, RESUME_OVERLAP};
 use crate::sessions::util::TranscriptItem;
-use crate::sessions::{claude, codex, file_signature, sendability, CliChoice, Injection, SessionDetail, SessionSummary, Source};
+use crate::sessions::{claude, codex, file_signature, sendability, CliChoice, Injection, SessionDetail, SessionSummary, Source, TranscriptSources};
 
 /// How many items one page of transcript holds.
 pub const SESSION_PAGE_SIZE: usize = 200;
@@ -300,7 +300,7 @@ pub struct SessionState {
 /// Read one session's live state, or `None` when it no longer exists.
 pub async fn load_session_state(drive: &Arc<Drive>, source: Source, id: &str) -> Option<SessionState> {
     let paths = drive.paths.as_ref();
-    let mut summary = crate::sessions::find_summary(paths, source, id).await?;
+    let mut summary = drive.transcripts.find_summary(paths, source, id).await?;
     let injection = drive.injections.injection_for(source, id);
     let running = injection
         .as_ref()
@@ -360,7 +360,7 @@ pub async fn load_session_state(drive: &Arc<Drive>, source: Source, id: &str) ->
     // A row is a row wherever it is served from: the list route, the detail
     // route and this feed's `state` frames must not disagree about whether a
     // session is unread, or which repository it groups under.
-    // `crate::sessions::list_and_filter` says the same for the list; this is the
+    // `TranscriptSources::list_and_filter` says the same for the list; this is the
     // single-session path.
     crate::sessions::subagents::apply(&drive.paths, std::slice::from_mut(&mut summary)).await;
     crate::sessions::attention::apply(&drive.paths, std::slice::from_mut(&mut summary)).await;
@@ -396,7 +396,7 @@ pub async fn load_session_detail(drive: &Arc<Drive>, source: Source, id: &str) -
     let state = load_session_state(drive, source, id).await?;
     let file_path = PathBuf::from(&state.summary.file_path);
     let sig = file_signature(&file_path).await?;
-    let items = parse_transcript(&drive.paths, source, &file_path, &sig).await;
+    let items = drive.transcripts.load_items(&drive.paths, source, &file_path, &sig).await;
     // A changed signature may have rewritten an existing normalized item, so
     // only a snapshot is safe.
     let page = transcript_page(&items, items.len());
@@ -625,7 +625,7 @@ pub async fn attach_session_feed_with(
     let state = load_session_state(drive, source, id).await?;
     let file_path = PathBuf::from(&state.summary.file_path);
     let sig = file_signature(&file_path).await?;
-    let transcript = load_transcript(&drive.paths, source, &file_path, &sig).await;
+    let transcript = drive.transcripts.load(&drive.paths, source, &file_path, &sig).await;
     let chain = transcript.chain().clone();
 
     // A resumed client is sent what it is missing and nothing else; its state
@@ -1009,7 +1009,7 @@ async fn watch_session(target: WatchTarget, mut last_sig: String, tx: broadcast:
             }
         }
 
-        match refresh_items(&drive.paths, source, &file_path, &tx, &latest, &mut last_sig).await {
+        match refresh_items(&drive.paths, &drive.transcripts, source, &file_path, &tx, &latest, &mut last_sig).await {
             None => break,
             Some(true) => {
                 // What landed may be a steered message claude folded into its
@@ -1084,6 +1084,7 @@ fn push_draft(draft: &Draft, tx: &broadcast::Sender<Broadcast>, latest_draft: &L
 /// gone and the feed should close.
 async fn refresh_items(
     paths: &Paths,
+    transcripts: &TranscriptSources,
     source: Source,
     file_path: &Path,
     tx: &broadcast::Sender<Broadcast>,
@@ -1094,7 +1095,7 @@ async fn refresh_items(
     if sig == *last_sig {
         return Some(false);
     }
-    let transcript = load_transcript(paths, source, file_path, &sig).await;
+    let transcript = transcripts.load(paths, source, file_path, &sig).await;
     // Fingerprinted here, once, rather than by whichever client gets to it
     // first while the others wait on the lock. Each client then cuts its own
     // delta against the version it holds (`FeedAttachment::catch_up`): a file
@@ -1346,22 +1347,22 @@ mod tests {
         let line = |text: &str| format!(r#"{{"type":"assistant","message":{{"content":[{{"type":"text","text":"{text}"}}]}}}}"#);
 
         std::fs::write(&path, format!("{}\n{}\n", line("one"), line("two"))).expect("seed");
-        let first = parse_transcript(&paths, Source::Claude, &path, "sig-1").await;
+        let first = crate::app::transcript_sources().load_items(&paths, Source::Claude, &path, "sig-1").await;
         assert_eq!(first.len(), 2);
 
         // The file changes underneath, but the caller still says `sig-1`: the
         // cached parse is what it gets, no read at all.
         std::fs::write(&path, format!("{}\n{}\n{}\n", line("one"), line("two"), line("three"))).expect("rewrite");
-        let cached = parse_transcript(&paths, Source::Claude, &path, "sig-1").await;
+        let cached = crate::app::transcript_sources().load_items(&paths, Source::Claude, &path, "sig-1").await;
         assert_eq!(cached.len(), 2, "the same signature must not cost a re-read");
 
         // A new signature — which is what a changed length or mtime produces —
         // invalidates it, shrinks included.
-        let fresh = parse_transcript(&paths, Source::Claude, &path, "sig-2").await;
+        let fresh = crate::app::transcript_sources().load_items(&paths, Source::Claude, &path, "sig-2").await;
         assert_eq!(fresh.len(), 3, "a changed signature must re-read");
 
         std::fs::write(&path, format!("{}\n", line("one"))).expect("shrink");
-        let shrunk = parse_transcript(&paths, Source::Claude, &path, "sig-3").await;
+        let shrunk = crate::app::transcript_sources().load_items(&paths, Source::Claude, &path, "sig-3").await;
         assert_eq!(shrunk.len(), 1, "a file that shrank must not keep its old tail");
     }
 
@@ -1462,7 +1463,7 @@ mod tests {
         let paths = Arc::new(Paths::new(dir.path().to_path_buf()));
         let instance = crate::instance::InstanceDirs::new(&paths.data_dir(), crate::instance::DEFAULT_INSTANCE).expect("valid name");
         let auth = crate::auth::Auth::new(&paths, &instance, &crate::config::AuthSettings::default(), false);
-        let drive = Drive::new(paths.clone(), &instance, auth);
+        let drive = Drive::new(paths.clone(), &instance, auth, crate::app::transcript_sources());
         let feeds = FeedRegistry::new();
         drive.injections.attach_listeners(feeds.clone(), crate::http::refresh::Refresh::new(global::GlobalFeed::new()));
 
@@ -1564,7 +1565,7 @@ mod tests {
     }
 
     /// The snapshot a websocket opens with is a page over whatever
-    /// [`parse_transcript`] returned, so a strict decode failure would show the
+    /// [`TranscriptSources::load_items`] returned, so a strict decode failure would show the
     /// client an empty session rather than the one it asked for.
     #[tokio::test]
     async fn a_truncated_character_at_eof_still_pages_the_whole_transcript() {
@@ -1579,7 +1580,9 @@ mod tests {
         file.write_all(&[0xe4, 0xbd]).expect("write");
         drop(file);
 
-        let items = parse_transcript(&Paths::new(dir.path().to_path_buf()), Source::Claude, &path, "truncated").await;
+        let items = crate::app::transcript_sources()
+            .load_items(&Paths::new(dir.path().to_path_buf()), Source::Claude, &path, "truncated")
+            .await;
         let page = transcript_page(&items, items.len());
         assert_eq!(page.total_items, 2, "one bad byte must not blank the snapshot");
     }
@@ -1626,7 +1629,7 @@ mod tests {
         let paths = Arc::new(Paths::new(dir.to_path_buf()));
         let instance = crate::instance::InstanceDirs::new(&paths.data_dir(), crate::instance::DEFAULT_INSTANCE).expect("valid name");
         let auth = crate::auth::Auth::new(&paths, &instance, &crate::config::AuthSettings::default(), false);
-        let drive = Drive::new(paths.clone(), &instance, auth);
+        let drive = Drive::new(paths.clone(), &instance, auth, crate::app::transcript_sources());
         (paths, drive)
     }
 
@@ -1860,7 +1863,7 @@ mod tests {
         let (drive, file) = drafted_session(dir.path(), id);
         append(&file, &entry(id, "u-text", "said"));
         let sig = file_signature(&file).await.expect("sig");
-        let transcript = load_transcript(&drive.paths, Source::Claude, &file, &sig).await;
+        let transcript = drive.transcripts.load(&drive.paths, Source::Claude, &file, &sig).await;
         let delta: Value = serde_json::from_str(&delta_frame(&sig, None, &transcript, 0)).expect("json");
         let reset: Value = serde_json::from_str(&reset_frame(&sig, &transcript)).expect("json");
         for frame in [&delta, &reset] {

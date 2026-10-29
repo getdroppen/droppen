@@ -145,15 +145,18 @@ pub async fn list_sessions(State(state): State<AppState>, ApiQuery(query): ApiQu
 
     let bindings = state.drive.accounts.session_account_map().await;
     let drivers = state.drive.injections.driver_states();
-    let mut sessions = sessions::list_and_filter(
-        &state.paths,
-        &bindings,
-        &drivers,
-        query.source,
-        query.q.as_deref(),
-        query.scope.unwrap_or_default(),
-    )
-    .await;
+    let mut sessions = state
+        .drive
+        .transcripts
+        .list_and_filter(
+            &state.paths,
+            &bindings,
+            &drivers,
+            query.source,
+            query.q.as_deref(),
+            query.scope.unwrap_or_default(),
+        )
+        .await;
 
     // `total` counts everything that matched, not just the page returned.
     let total = sessions.len();

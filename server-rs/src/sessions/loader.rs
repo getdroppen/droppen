@@ -12,7 +12,7 @@ use base64::Engine;
 use sha2::{Digest, Sha256};
 
 use super::util::TranscriptItem;
-use super::{codex, Source};
+use super::{Source, TranscriptSources};
 use crate::paths::Paths;
 
 /// How many of a client's newest items a resume re-sends: `K` in
@@ -181,69 +181,57 @@ fn cached_transcript(file_path: &Path, sig: Option<&str>) -> Option<Arc<Transcri
         .map(|entry| entry.transcript.clone())
 }
 
-/// Normalize a transcript for the feed and for the history route.
-///
-/// `sig` is the caller's [`super::file_signature`] for `file_path`, which is what makes
-/// the cache above safe: an unchanged file is never re-read.
-///
-/// Shared as an `Arc` because the same parse is fanned out to every attached
-/// client and is the only thing a failed read can fall back on; a `Vec` would be
-/// deep-cloned on both paths.
-pub async fn parse_transcript(paths: &Paths, source: Source, file_path: &Path, sig: &str) -> Arc<Vec<TranscriptItem>> {
-    load_transcript(paths, source, file_path, sig).await.items.clone()
-}
-
-/// [`parse_transcript`], with the fingerprint chain the feed and the history
-/// route resume against.
-pub async fn load_transcript(paths: &Paths, source: Source, file_path: &Path, sig: &str) -> Arc<Transcript> {
-    if let Some(transcript) = cached_transcript(file_path, Some(sig)) {
-        return transcript;
+impl TranscriptSources {
+    /// Normalize a transcript for the feed and for the history route.
+    ///
+    /// `sig` is the caller's [`super::file_signature`] for `file_path`, which is what makes
+    /// the cache above safe: an unchanged file is never re-read.
+    ///
+    /// Shared as an `Arc` because the same parse is fanned out to every attached
+    /// client and is the only thing a failed read can fall back on; a `Vec` would be
+    /// deep-cloned on both paths.
+    pub async fn load_items(&self, paths: &Paths, source: Source, file_path: &Path, sig: &str) -> Arc<Vec<TranscriptItem>> {
+        self.load(paths, source, file_path, sig).await.items.clone()
     }
-    let parsed = match source {
-        Source::Claude => crate::sessions::transcript::parse_claude_transcript(paths, file_path, false)
-            .await
-            .map(|items| Transcript::new(file_path, Arc::new(items))),
-        Source::Codex => codex::parse_codex_transcript(paths, file_path)
-            .await
-            .map(|items| Transcript::new(file_path, Arc::new(items))),
-        Source::Acp => crate::sessions::acp_transcript::parse_transcript(file_path)
-            .await
-            .map(|items| Transcript::new(file_path, Arc::new(items))),
-    };
-    match parsed {
-        Ok(transcript) => {
-            let transcript = Arc::new(transcript);
-            remember_transcript(file_path, sig, transcript.clone());
-            transcript
+
+    /// [`TranscriptSources::load_items`], with the fingerprint chain the feed and
+    /// the history route resume against.
+    pub async fn load(&self, paths: &Paths, source: Source, file_path: &Path, sig: &str) -> Arc<Transcript> {
+        if let Some(transcript) = cached_transcript(file_path, Some(sig)) {
+            return transcript;
         }
-        Err(error) => {
-            tracing::warn!(path = %file_path.display(), %error, "cannot read transcript; keeping the last good items");
-            cached_transcript(file_path, None).unwrap_or_else(|| Arc::new(Transcript::new(file_path, Arc::default())))
+        let parsed = self
+            .parse(paths, source, file_path)
+            .await
+            .map(|items| Transcript::new(file_path, Arc::new(items)));
+        match parsed {
+            Ok(transcript) => {
+                let transcript = Arc::new(transcript);
+                remember_transcript(file_path, sig, transcript.clone());
+                transcript
+            }
+            Err(error) => {
+                tracing::warn!(path = %file_path.display(), %error, "cannot read transcript; keeping the last good items");
+                cached_transcript(file_path, None).unwrap_or_else(|| Arc::new(Transcript::new(file_path, Arc::default())))
+            }
         }
     }
-}
 
-/// A transcript read now, past the cache and without filling it: for a
-/// reader that walks many sessions once (the cloud agent's first copy of a
-/// machine's history), which would otherwise push out the few parses the
-/// live feeds are sharing. `None` when it cannot be read.
-pub async fn read_transcript_uncached(paths: &Paths, source: Source, file_path: &Path) -> Option<Transcript> {
-    let parsed = match source {
-        Source::Claude => crate::sessions::transcript::parse_claude_transcript(paths, file_path, false)
+    /// A transcript read now, past the cache and without filling it: for a
+    /// reader that walks many sessions once (the cloud agent's first copy of a
+    /// machine's history), which would otherwise push out the few parses the
+    /// live feeds are sharing. `None` when it cannot be read.
+    pub async fn read_uncached(&self, paths: &Paths, source: Source, file_path: &Path) -> Option<Transcript> {
+        let parsed = self
+            .parse(paths, source, file_path)
             .await
-            .map(|items| Transcript::new(file_path, Arc::new(items))),
-        Source::Codex => codex::parse_codex_transcript(paths, file_path)
-            .await
-            .map(|items| Transcript::new(file_path, Arc::new(items))),
-        Source::Acp => crate::sessions::acp_transcript::parse_transcript(file_path)
-            .await
-            .map(|items| Transcript::new(file_path, Arc::new(items))),
-    };
-    match parsed {
-        Ok(transcript) => Some(transcript),
-        Err(error) => {
-            tracing::warn!(path = %file_path.display(), %error, "cannot read transcript");
-            None
+            .map(|items| Transcript::new(file_path, Arc::new(items)));
+        match parsed {
+            Ok(transcript) => Some(transcript),
+            Err(error) => {
+                tracing::warn!(path = %file_path.display(), %error, "cannot read transcript");
+                None
+            }
         }
     }
 }

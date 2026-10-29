@@ -30,7 +30,7 @@ use crate::paths::ClaudeRoot;
 use crate::sessions::checklist::{self, Checklist};
 use crate::sessions::delivery::{QuestionState, ReceiptLookup, ReceiptStatus, SessionQuestion};
 use crate::sessions::util::TranscriptItem;
-use crate::sessions::{archive, chats_cwd, claude, codex, file_signature, sendability, transcript, SessionScope, Source};
+use crate::sessions::{archive, chats_cwd, claude, file_signature, sendability, transcript, SessionScope, Source};
 
 /// `POST /api/sessions/{source}/{id}/message` body.
 #[derive(Debug, Clone, Serialize, Deserialize, Schematic)]
@@ -1146,7 +1146,9 @@ pub(crate) fn external_session(source: Source) -> ApiError {
 /// an unread badge that could not be cleared would make that browsing worse
 /// rather than safer.
 pub(crate) async fn writable_session(drive: &crate::drive::Drive, source: Source, id: &str) -> Result<crate::sessions::SessionSummary, ApiError> {
-    let mut summary = crate::sessions::find_summary(&drive.paths, source, id)
+    let mut summary = drive
+        .transcripts
+        .find_summary(&drive.paths, source, id)
         .await
         .ok_or_else(|| ApiError::not_found("session not found"))?;
     // The raw loaders only know the transcript. Apply the same driver snapshot
@@ -1350,7 +1352,7 @@ pub async fn session_history(
     let state_now = feed::load_session_state(drive, source, &id).await.ok_or_else(not_found)?;
     let file_path = PathBuf::from(&state_now.summary.file_path);
     let sig = file_signature(&file_path).await.ok_or_else(not_found)?;
-    let transcript = crate::sessions::loader::load_transcript(&drive.paths, source, &file_path, &sig).await;
+    let transcript = drive.transcripts.load(&drive.paths, source, &file_path, &sig).await;
     let before = query.before as usize;
     // Only the prefix the page depends on is checked, so a session that grew
     // since the client's window was cut is no reason to refuse it.
@@ -1417,25 +1419,14 @@ pub(crate) async fn search_session(
 /// not checked either — reading is never gated.
 async fn whole_transcript(drive: &crate::drive::Drive, source: Source, id: &str) -> Result<(std::sync::Arc<Vec<TranscriptItem>>, String), ApiError> {
     let not_found = || ApiError::not_found("session not found");
-    let file_path = match source {
-        Source::Claude => claude::find_claude_session_file(&drive.paths, id).await,
-        // A database row, and a status read of one 64 KiB tail for a recent
-        // rollout only: cheap enough not to need a lookup of its own.
-        Source::Codex => codex::find_codex_session(&drive.paths, id)
-            .await
-            .map(|summary| PathBuf::from(summary.file_path)),
-        Source::Acp => crate::sessions::acp_transcript::find_session(&drive.paths, id)
-            .await
-            .map(|summary| PathBuf::from(summary.file_path)),
-    }
-    .ok_or_else(not_found)?;
+    let file_path = drive.transcripts.find_file(&drive.paths, source, id).await.ok_or_else(not_found)?;
     let sig = file_signature(&file_path).await.ok_or_else(not_found)?;
     let mtime = tokio::fs::metadata(&file_path)
         .await
         .and_then(|metadata| metadata.modified())
         .map(droppen_base::time::iso8601)
         .map_err(|_| not_found())?;
-    Ok((crate::sessions::loader::load_transcript(&drive.paths, source, &file_path, &sig).await.items.clone(), mtime))
+    Ok((drive.transcripts.load(&drive.paths, source, &file_path, &sig).await.items.clone(), mtime))
 }
 
 /// Where the messages a visit has not read yet begin.
@@ -1497,7 +1488,9 @@ pub async fn session_agents(
     // shared cache, so the common case — a client opening the panel on a session
     // it is already watching — costs nothing.
     let anchors: HashSet<String> = match file_signature(&file_path).await {
-        Some(sig) => crate::sessions::loader::parse_transcript(&drive.paths, source, &file_path, &sig)
+        Some(sig) => drive
+            .transcripts
+            .load_items(&drive.paths, source, &file_path, &sig)
             .await
             .iter()
             .filter_map(|item| item.tool_use_id.clone())
@@ -1604,7 +1597,7 @@ pub struct RecentCwds {
 #[api(id = "recent_cwds", group = "sessions", summary = "Recently used directories")]
 pub async fn recent_cwds(State(state): State<DriveState>, ApiQuery(query): ApiQuery<RecentCwdsQuery>) -> Json<RecentCwds> {
     let bindings = state.drive.accounts.session_account_map().await;
-    let cwds = crate::sessions::recent_cwds(&state.drive.paths, &bindings, query.source).await;
+    let cwds = state.drive.transcripts.recent_cwds(&state.drive.paths, &bindings, query.source).await;
     Json(RecentCwds { cwds })
 }
 
@@ -2206,7 +2199,7 @@ mod tests {
         let paths = Arc::new(crate::paths::Paths::new(dir.path().to_path_buf()));
         let instance = crate::instance::InstanceDirs::new(&paths.data_dir(), crate::instance::DEFAULT_INSTANCE).expect("valid name");
         let auth = crate::auth::Auth::new(&paths, &instance, &crate::config::AuthSettings::default(), false);
-        let drive = Drive::new(paths, &instance, auth);
+        let drive = Drive::new(paths, &instance, auth, crate::app::transcript_sources());
         (dir, drive)
     }
 
@@ -2604,7 +2597,10 @@ mod tests {
         );
         let summary = claude::load_claude_summary(&drive.paths, id).await.expect("the session is there");
         let sig = file_signature(std::path::Path::new(&summary.file_path)).await.expect("sig");
-        let items = crate::sessions::loader::parse_transcript(&drive.paths, Source::Claude, std::path::Path::new(&summary.file_path), &sig).await;
+        let items = drive
+            .transcripts
+            .load_items(&drive.paths, Source::Claude, std::path::Path::new(&summary.file_path), &sig)
+            .await;
 
         let found = first_unread_of(&drive, Source::Claude, id, Some("2026-10-01T10:00:30.000Z"))
             .await
@@ -2670,7 +2666,10 @@ mod tests {
 
         // The same numbering the history route pages by.
         let sig = file_signature(std::path::Path::new(&summary.file_path)).await.expect("sig");
-        let items = crate::sessions::loader::parse_transcript(&drive.paths, Source::Claude, std::path::Path::new(&summary.file_path), &sig).await;
+        let items = drive
+            .transcripts
+            .load_items(&drive.paths, Source::Claude, std::path::Path::new(&summary.file_path), &sig)
+            .await;
         let ticker = search_session(&drive, Source::Claude, id, &search("useticker"))
             .await
             .expect("searchable");

@@ -74,6 +74,7 @@ impl FromRef<AppState> for NotifyState {
         Self {
             paths: state.paths.clone(),
             instance: state.instance.clone(),
+            transcripts: state.drive.transcripts.clone(),
         }
     }
 }
@@ -150,6 +151,7 @@ impl FromRef<AppState> for SetupState {
             terminals: state.terminals.clone(),
             accounts: state.drive.accounts.clone(),
             paths: state.drive.paths.clone(),
+            transcripts: state.drive.transcripts.clone(),
             desktop_app: state.desktop_app,
         }
     }

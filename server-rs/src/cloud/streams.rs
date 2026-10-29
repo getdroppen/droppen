@@ -14,7 +14,7 @@ use crate::agent::streams::source::{DraftFeed, Fingerprints, Items, ListedSessio
 use crate::paths::Paths;
 use crate::sessions::loader::{self, encode_fp, Fp, RESUME_OVERLAP};
 use crate::sessions::util::TranscriptItem;
-use crate::sessions::{DriverStates, ScopeFilter, SessionScope, SessionSummary, Source};
+use crate::sessions::{DriverStates, ScopeFilter, SessionScope, SessionSummary, Source, TranscriptSources};
 
 /// What the session list and the drafts need from above cloud.
 pub trait LiveSessions: Send + Sync {
@@ -31,14 +31,15 @@ pub trait LiveSessions: Send + Sync {
 /// list and feeds read them.
 pub struct SessionStreams {
     paths: Arc<Paths>,
+    transcripts: TranscriptSources,
     live: Arc<dyn LiveSessions>,
 }
 
 impl SessionStreams {
-    /// The sessions under `paths`, with the bindings, drivers and drafts of
-    /// `live`.
-    pub fn new(paths: Arc<Paths>, live: Arc<dyn LiveSessions>) -> Self {
-        Self { paths, live }
+    /// The sessions under `paths`, read through `transcripts`, with the
+    /// bindings, drivers and drafts of `live`.
+    pub fn new(paths: Arc<Paths>, transcripts: TranscriptSources, live: Arc<dyn LiveSessions>) -> Self {
+        Self { paths, transcripts, live }
     }
 }
 
@@ -53,13 +54,15 @@ impl StreamSource for SessionStreams {
             let bindings = self.live.bindings().await;
             let drivers = self.live.driver_states();
             let filter = if external { ScopeFilter::All } else { ScopeFilter::Owned };
-            crate::sessions::list_and_filter(&self.paths, &bindings, &drivers, None, None, filter)
+            self.transcripts
+                .list_and_filter(&self.paths, &bindings, &drivers, None, None, filter)
                 .await
                 .into_iter()
                 .map(|summary| {
                     Box::new(Listed {
                         summary,
                         paths: self.paths.clone(),
+                        transcripts: self.transcripts.clone(),
                     }) as Box<dyn ListedSession>
                 })
                 .collect()
@@ -97,6 +100,7 @@ impl SessionRow for SessionSummary {
 struct Listed {
     summary: SessionSummary,
     paths: Arc<Paths>,
+    transcripts: TranscriptSources,
 }
 
 impl SessionRow for Listed {
@@ -124,15 +128,18 @@ impl ListedSession for Listed {
 
     fn transcript<'a>(&'a self, sig: &'a str) -> BoxFuture<'a, Arc<dyn Transcript>> {
         Box::pin(async move {
-            let transcript: Arc<dyn Transcript> =
-                loader::load_transcript(&self.paths, self.summary.source, Path::new(&self.summary.file_path), sig).await;
+            let transcript: Arc<dyn Transcript> = self
+                .transcripts
+                .load(&self.paths, self.summary.source, Path::new(&self.summary.file_path), sig)
+                .await;
             transcript
         })
     }
 
     fn read_transcript(&self) -> BoxFuture<'_, Option<Arc<dyn Transcript>>> {
         Box::pin(async move {
-            loader::read_transcript_uncached(&self.paths, self.summary.source, Path::new(&self.summary.file_path))
+            self.transcripts
+                .read_uncached(&self.paths, self.summary.source, Path::new(&self.summary.file_path))
                 .await
                 .map(|transcript| Arc::new(transcript) as Arc<dyn Transcript>)
         })
