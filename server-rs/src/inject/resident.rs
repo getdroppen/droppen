@@ -12176,11 +12176,17 @@ done
     #[tokio::test]
     async fn a_question_lost_in_a_replay_gap_is_still_held_open() {
         let [call, request] = question_lines();
+        // 2000 lines of 61 bytes: more than a pipe holds (64 KiB) on top of the
+        // 4 KiB ring. The shell cannot finish writing them, and so cannot touch
+        // the marker the harness attaches after, until the shim has read all
+        // but one pipe's worth, by which point the question has left the ring.
+        // With fewer, the attach could come before the shim had read past the
+        // question, and the replay would hand it over whole.
         let history = [
             format!(r#"printf '%s\n' '{{"type":"system","subtype":"init","session_id":"{SESSION}"}}'"#),
             format!(r#"printf '%s\n' '{call}'"#),
             format!(r#"printf '%s\n' '{request}'"#),
-            r#"i=0; while [ "$i" -lt 300 ]; do printf '%s\n' '{"type":"system","subtype":"commands_changed","commands":[]}'; i=$((i + 1)); done"#
+            r#"i=0; while [ "$i" -lt 2000 ]; do printf '%s\n' '{"type":"system","subtype":"commands_changed","commands":[]}'; i=$((i + 1)); done"#
                 .to_string(),
         ]
         .join("\n");
@@ -12204,10 +12210,12 @@ done
         )
         .await;
         until("the question to be held open across the gap", || harness.state().question.is_some()).await;
-        assert!(
-            harness.recording().iter().any(|event| matches!(event, crate::record::Event::Gap { .. })),
-            "the history really did lose its start"
-        );
+        // The recording is written by a task of its own, so the gap can reach
+        // the file after the driver has already acted on it.
+        until("the recording to show the history lost its start", || {
+            harness.recording().iter().any(|event| matches!(event, crate::record::Event::Gap { .. }))
+        })
+        .await;
         assert_eq!(harness.state().phase, Phase::Working, "the turn the question blocks is open");
         assert_eq!(
             harness.registry.questions().get("req-q1").map(|stored| stored.state),
