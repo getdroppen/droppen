@@ -168,6 +168,34 @@ test("exposure is transitive: X → m-1 → m-2, and a host let control another 
   assert.deepEqual([...hostsToRotate(a.chain!).get("m-3")!.via.keys()], ["m-1"]);
 });
 
+test("alerts: a renewed identity key is an alert on the account's other devices — the new keys, how it was confirmed — until acknowledged", async () => {
+  const { hub, a, agents, x } = await account();
+  const y = await pairBrowser(hub, a, { admin: false });
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  await a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick });
+  await a.renewIdentity("m-2", agents, { assurance: ASSURANCE_ON_DEVICE, askCode: async (h) => agents.sas.get(h)!, ...quick });
+  await y.sync();
+  const keysOf = (host: string) => ({ signKey: hex(y.chain!.deviceRecord(host)!.info.signKey), dhKey: hex(y.chain!.deviceRecord(host)!.info.dhKey) });
+  const renewed = y.alerts().filter((z) => z.kind === "rotateHostKey");
+  assert.deepEqual(
+    renewed.map((z) => [z.by, z.subject, z.remove, { signKey: hex(z.renewed!.signKey), dhKey: hex(z.renewed!.dhKey) }, z.renewed!.onDevice]),
+    [
+      [a.deviceId, "m-1", null, keysOf("m-1"), false],
+      [a.deviceId, "m-2", null, keysOf("m-2"), true],
+    ],
+  );
+  const others = y.alerts().filter((z) => z.kind !== "rotateHostKey").map((z) => z.seq);
+  for (const [i, z] of renewed.entries()) {
+    y.acknowledge(z.seq);
+    assert.deepEqual(
+      y.alerts().filter((w) => w.kind === "rotateHostKey").map((w) => w.subject),
+      renewed.slice(i + 1).map((w) => w.subject),
+      `acknowledging ${z.subject}'s renewal takes it alone`,
+    );
+    assert.deepEqual(y.alerts().filter((w) => w.kind !== "rotateHostKey").map((w) => w.seq), others);
+  }
+});
+
 test("a renewal clears that host only; what it let in stays exposed until each renews — controllers first: renewIdentity refuses one ahead of an exposed host it lets in (§4.1)", async () => {
   const { a, agents, x } = await account();
   await a.removeDevice(x.deviceId, new FakeCourier());
