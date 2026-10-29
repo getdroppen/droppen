@@ -234,8 +234,8 @@ pub struct Attached {
 ///
 /// [`Drive`] rather than [`Paths`] because a session row carries its account
 /// binding, and the binding lives in the account store. `instance` is passed in
-/// for the same reason `started_at` is: it describes the *server*, which a feed
-/// knows nothing about.
+/// for the same reason `started_at` and `claude_dirs` are: it describes the
+/// *server*, which a feed knows nothing about.
 ///
 /// `plugins` is the instance's plugin list as of the attach; a later switch
 /// arrives as its own `plugins` frame. A cloud subscriber is given an empty
@@ -245,6 +245,7 @@ pub async fn attach(
     drive: &Arc<Drive>,
     instance: &str,
     started_at: &str,
+    claude_dirs: &ClaudeDirs,
     plugins: &[droppen_plugin_sdk::PluginStatus],
 ) -> Attached {
     let paths = drive.paths.as_ref();
@@ -298,7 +299,7 @@ pub async fn attach(
     };
 
     Attached {
-        opening: vec![settings_frame(paths, instance, started_at, plugins), snapshot],
+        opening: vec![settings_frame(paths, instance, started_at, claude_dirs, plugins), snapshot],
         attachment: GlobalAttachment { feed: feed.clone(), rx },
     }
 }
@@ -442,8 +443,13 @@ fn delta_frame(seen: &HashMap<String, String>, sessions: &[SessionSummary], next
 /// would mean scanning both CLIs' corpora on every reconnect. That relationship
 /// is the contract — a client reads whichever of the two it has — and
 /// `the_settings_frame_carries_every_field_the_settings_route_does` pins it.
-fn settings_frame(paths: &Paths, instance: &str, started_at: &str, plugins: &[droppen_plugin_sdk::PluginStatus]) -> String {
-    let roots = crate::claude_roots::ClaudeRoots::of(paths);
+fn settings_frame(
+    paths: &Paths,
+    instance: &str,
+    started_at: &str,
+    claude_dirs: &ClaudeDirs,
+    plugins: &[droppen_plugin_sdk::PluginStatus],
+) -> String {
     ListFrame::Settings(SettingsFrame {
         instance,
         server_id: droppen_instance::identity::ServerId::local(paths).to_string(),
@@ -452,8 +458,8 @@ fn settings_frame(paths: &Paths, instance: &str, started_at: &str, plugins: &[dr
         node_version: droppen_http::RUNTIME_VERSION,
         server_version: droppen_http::SERVER_VERSION,
         home_dir: paths.home.to_string_lossy().into_owned(),
-        claude_dir: roots.local_projects().to_string_lossy().into_owned(),
-        claude_managed_dir: roots.managed_projects().to_string_lossy().into_owned(),
+        claude_dir: &claude_dirs.local,
+        claude_managed_dir: &claude_dirs.managed,
         codex_dir: paths.codex_sessions().to_string_lossy().into_owned(),
         server_started_at: started_at,
         plugins,
@@ -507,8 +513,8 @@ struct SettingsFrame<'a> {
     /// web knows a self-upgrade happened underneath it.
     server_version: &'static str,
     home_dir: String,
-    claude_dir: String,
-    claude_managed_dir: String,
+    claude_dir: &'a str,
+    claude_managed_dir: &'a str,
     codex_dir: String,
     server_started_at: &'a str,
     /// Which plugins are on decides which parts of the app exist, so it
@@ -545,6 +551,18 @@ pub trait PluginStatuses: Send + Sync {
     fn status(&self) -> futures_util::future::BoxFuture<'_, Vec<droppen_plugin_sdk::PluginStatus>>;
 }
 
+/// Where Claude Code keeps its projects, which the `settings` frame names.
+/// Claude Code's roots are not below the feed, so the entry reads these from
+/// them when a socket opens, as `/api/settings` does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClaudeDirs {
+    /// `claudeDir`: where Claude Code keeps its transcripts.
+    pub local: String,
+    /// `claudeManagedDir`: where this instance keeps the transcripts of the
+    /// sessions it owns.
+    pub managed: String,
+}
+
 /// What the session-list socket uses of the server's state.
 #[derive(Clone)]
 pub struct EventsState {
@@ -562,6 +580,8 @@ pub struct EventsState {
     pub instance: Arc<droppen_instance::instance::InstanceDirs>,
     /// When this process started, ISO-8601, for the `settings` frame.
     pub started_at: Arc<str>,
+    /// Claude Code's two project directories, for the `settings` frame.
+    pub claude_dirs: ClaudeDirs,
     /// Every live session feed, which a subscription attaches to.
     pub feeds: Arc<super::FeedRegistry>,
 }
@@ -630,7 +650,15 @@ async fn run_socket(socket: WebSocket, state: EventsState, options: MuxOptions, 
     // `plugins: []` just as `/api/settings` does for it (`docs/plugins/
     // runtime.md` §5); the live frames are filtered below.
     let plugins = if cloud { Vec::new() } else { state.plugins.status().await };
-    let attached = attach(&state.global, &state.drive, state.instance.name(), state.started_at.as_ref(), &plugins).await;
+    let attached = attach(
+        &state.global,
+        &state.drive,
+        state.instance.name(),
+        state.started_at.as_ref(),
+        &state.claude_dirs,
+        &plugins,
+    )
+    .await;
     let mut attachment = attached.attachment;
     for frame in attached.opening {
         if !send_within(&mut sender, encode(frame, compress), limit, shutdown).await {
@@ -757,6 +785,16 @@ mod tests {
     /// frame pays for neither.
     const ROUTE_ONLY: [&str; 2] = ["claudeSessionCount", "codexSessionCount"];
 
+    /// Two directories for the `settings` frame to name. What the entry reads
+    /// from Claude Code's roots for a real server is checked through the
+    /// socket, in `tests/global_feed.rs`.
+    fn claude_dirs() -> ClaudeDirs {
+        ClaudeDirs {
+            local: "/home/someone/.claude/projects".into(),
+            managed: "/home/someone/.local/share/droppen/claude/projects".into(),
+        }
+    }
+
     fn summary(id: &str, updated_at: &str) -> SessionSummary {
         SessionSummary {
             pinned: false,
@@ -801,7 +839,7 @@ mod tests {
     fn the_settings_frame_carries_every_field_the_settings_route_does() {
         let paths = Paths::new(PathBuf::from("/home/someone"));
         let frame: serde_json::Value =
-            serde_json::from_str(&settings_frame(&paths, "default", "2026-01-01T00:00:00.000Z", &[])).expect("a JSON frame");
+            serde_json::from_str(&settings_frame(&paths, "default", "2026-01-01T00:00:00.000Z", &claude_dirs(), &[])).expect("a JSON frame");
         // Values are irrelevant here; this is about the shape the two agree on.
         let route = serde_json::to_value(Settings {
             instance: "default".into(),
@@ -874,6 +912,7 @@ mod tests {
             &paths,
             "default",
             "2026-01-01T00:00:00.000Z",
+            &claude_dirs(),
             std::slice::from_ref(&status),
         ))
         .expect("a JSON frame");
@@ -887,7 +926,7 @@ mod tests {
     fn the_list_frames_are_written_as_pinned() {
         let paths = Paths::new(PathBuf::from("/home/someone"));
         assert_eq!(
-            settings_frame(&paths, "default", "2026-01-01T00:00:00.000Z", &[]),
+            settings_frame(&paths, "default", "2026-01-01T00:00:00.000Z", &claude_dirs(), &[]),
             serde_json::json!({
                 "type": "settings",
                 "instance": "default",
@@ -897,8 +936,8 @@ mod tests {
                 "nodeVersion": droppen_http::RUNTIME_VERSION,
                 "serverVersion": droppen_http::SERVER_VERSION,
                 "homeDir": "/home/someone",
-                "claudeDir": crate::claude_roots::ClaudeRoots::of(&paths).local_projects().to_string_lossy(),
-                "claudeManagedDir": crate::claude_roots::ClaudeRoots::of(&paths).managed_projects().to_string_lossy(),
+                "claudeDir": "/home/someone/.claude/projects",
+                "claudeManagedDir": "/home/someone/.local/share/droppen/claude/projects",
                 "codexDir": paths.codex_sessions().to_string_lossy(),
                 "serverStartedAt": "2026-01-01T00:00:00.000Z",
                 "plugins": [],
