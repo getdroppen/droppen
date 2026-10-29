@@ -1,9 +1,10 @@
 use std::sync::{Arc, Mutex};
 
 use rh_proto::chain::ChainError;
-use serde_json::{json, Value};
+use serde_json::Value;
 
 use super::bridge;
+use crate::agent::answers::{AnswerBody, DisplayName, Info, KeyRefused, MachineKeyTaken, Refused};
 use super::lapse::{still_controls, ChannelLapse};
 use super::Shared;
 use droppen_base::text::unhex;
@@ -106,19 +107,27 @@ impl AgentLocal {
             let st = shared.state.lock().expect("agent state");
             st.chain.as_ref().and_then(|c| c.admin(device)).is_some()
         };
-        let bad = |message: &str| (400, json!({"error": "bad_request", "message": message}));
+        let bad = |message: &str| (400, Refused { error: "bad_request", message }.body());
         match (method, path) {
             ("GET", "/rh/info") => {
                 let st = shared.state.lock().expect("agent state");
-                (
-                    200,
-                    json!({"displayName": st.display_name, "hostname": droppen_http::hostname(), "mkEpoch": st.mk_epoch, "machine": st.machine, "alarms": st.alarms, "controllers": st.controllers()}),
-                )
+                let info = Info {
+                    display_name: &st.display_name,
+                    hostname: droppen_http::hostname(),
+                    mk_epoch: st.mk_epoch,
+                    machine: &st.machine,
+                    alarms: &st.alarms,
+                    controllers: st.controllers(),
+                };
+                (200, info.body())
             }
-            (_, "/rh/display-name" | "/rh/machine-key") if !full => (
-                403,
-                json!({"error": "forbidden", "message": "only a current full device of the account may do this"}),
-            ),
+            (_, "/rh/display-name" | "/rh/machine-key") if !full => {
+                let refused = Refused {
+                    error: "forbidden",
+                    message: "only a current full device of the account may do this",
+                };
+                (403, refused.body())
+            }
             ("POST", "/rh/display-name") => {
                 let Ok(v) = serde_json::from_slice::<Value>(body) else {
                     return bad("JSON expected");
@@ -138,7 +147,7 @@ impl AgentLocal {
                 shared.save();
                 tracing::info!(%device, "display name changed");
                 shared.sync.send(super::streams::Event::DisplayName(name.clone()));
-                (200, json!({"displayName": name}))
+                (200, DisplayName { display_name: name }.body())
             }
             ("POST", "/rh/machine-key") => {
                 let Ok(v) = serde_json::from_slice::<Value>(body) else {
@@ -164,23 +173,27 @@ impl AgentLocal {
                     match committed {
                         Some(Ok(())) => {}
                         Some(Err(ChainError::UncommittedKey { .. })) => {
-                            return (
-                                409,
-                                json!({"error": "uncommitted", "message": "the chain commits no such content key epoch (yet): sync and attest, then retry", "mkEpoch": st.mk_epoch}),
-                            )
+                            let refused = KeyRefused {
+                                error: "uncommitted",
+                                message: "the chain commits no such content key epoch (yet): sync and attest, then retry",
+                                mk_epoch: st.mk_epoch,
+                            };
+                            return (409, refused.body());
                         }
                         _ => {
-                            return (
-                                409,
-                                json!({"error": "key_mismatch", "message": "not the key the chain committed for that epoch", "mkEpoch": st.mk_epoch}),
-                            )
+                            let refused = KeyRefused {
+                                error: "key_mismatch",
+                                message: "not the key the chain committed for that epoch",
+                                mk_epoch: st.mk_epoch,
+                            };
+                            return (409, refused.body());
                         }
                     }
                     st.mk_epoch
                 };
                 if let Err(error) = shared.files.store_machine_key(epoch, key.as_ref()) {
                     tracing::error!(%error, "cannot store a machine key");
-                    return (500, json!({"error": "unavailable", "message": "cannot store the key"}));
+                    return (500, Refused { error: "unavailable", message: "cannot store the key" }.body());
                 }
                 let newer = current.is_none_or(|c| epoch > c);
                 if newer {
@@ -188,7 +201,12 @@ impl AgentLocal {
                     shared.save();
                     tracing::info!(epoch, %device, reencrypt, "took a machine key inside a channel");
                     shared.sync.send(super::streams::Event::KeysChanged { reencrypt });
-                    return (200, json!({"mkEpoch": epoch, "changed": true}));
+                    let taken = MachineKeyTaken {
+                        mk_epoch: Some(epoch),
+                        changed: true,
+                        reencrypt: None,
+                    };
+                    return (200, taken.body());
                 }
                 // An epoch it holds already (or an older one, kept for
                 // reading): with `reencrypt`, the re-encryption a mailed key
@@ -197,12 +215,14 @@ impl AgentLocal {
                     tracing::info!(epoch, %device, "re-encryption asked for the current machine key");
                     shared.sync.send(super::streams::Event::KeysChanged { reencrypt: true });
                 }
-                (
-                    200,
-                    json!({"mkEpoch": current, "changed": false, "reencrypt": reencrypt && current == Some(epoch)}),
-                )
+                let held = MachineKeyTaken {
+                    mk_epoch: current,
+                    changed: false,
+                    reencrypt: Some(reencrypt && current == Some(epoch)),
+                };
+                (200, held.body())
             }
-            _ => (404, json!({"error": "not_found", "message": "no such agent route"})),
+            _ => (404, Refused { error: "not_found", message: "no such agent route" }.body()),
         }
     }
 }

@@ -11,10 +11,10 @@ use rh_proto::handshake::{self, Accepted, AgentSide, HandshakeError, FRESHNESS_M
 use rh_proto::mux::{Role, StreamClass};
 use rh_proto::noise::{Binding, RekeyPolicy};
 use rh_proto::path::{self, DirectBinding};
-use serde_json::json;
 use tokio::sync::mpsc;
 
 use super::alerts::{alert_account_changes, raise_alarm};
+use crate::agent::answers::ServerInfo;
 use super::bridge;
 use super::lapse::{close_lapsed, drop_removed, lapse_wait, on_removed, ChainStateExt, ChannelLapse};
 use super::local::AgentLocal;
@@ -39,9 +39,12 @@ impl ChainErrorExt for ChainError {
 }
 
 pub(in crate::agent) fn server_info(direct: bool) -> Vec<u8> {
-    json!({"agent": "remote-hand", "version": droppen_http::SERVER_VERSION, "features": super::direct::features(direct)})
-        .to_string()
-        .into_bytes()
+    let info = ServerInfo {
+        agent: "remote-hand",
+        version: droppen_http::SERVER_VERSION,
+        features: super::direct::features(direct),
+    };
+    serde_json::to_vec(&info).expect("server_info encodes")
 }
 
 pub(in crate::agent) fn now_us() -> u64 {
@@ -652,3 +655,20 @@ pub(in crate::agent) fn accept(
     }
 }
 
+#[cfg(test)]
+mod server_info_tests {
+    use serde_json::{json, Value};
+
+    /// What the handshake reply carries, compared whole: device pages of any
+    /// version read `features` from it.
+    #[test]
+    fn server_info_has_its_documented_shape() {
+        for direct in [false, true] {
+            let info: Value = serde_json::from_slice(&super::server_info(direct)).unwrap();
+            assert_eq!(
+                info,
+                json!({"agent": "remote-hand", "version": droppen_http::SERVER_VERSION, "features": crate::agent::direct::features(direct)})
+            );
+        }
+    }
+}

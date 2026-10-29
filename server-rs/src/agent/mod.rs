@@ -64,6 +64,7 @@ pub const POLICY_FEATURE: &str = "policy/1";
 /// agent send the rotation messages at all.
 pub const ROTATE_FEATURE: &str = "rotate/1";
 
+mod answers;
 pub mod bridge;
 #[cfg(test)]
 mod control_tests;

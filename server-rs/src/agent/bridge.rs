@@ -22,6 +22,8 @@ use tokio_tungstenite::tungstenite::Message;
 
 use droppen_http::bridge::{CREDENTIAL_HEADER, DEVICE_HEADER};
 
+use super::answers::{AnswerBody, Refused, RefusedWithReason};
+
 /// The largest rpc request body the bridge buffers.
 const MAX_BODY: usize = 64 * 1024 * 1024;
 
@@ -163,35 +165,32 @@ pub enum Refusal {
 impl Refusal {
     /// The status and body a refused request is answered with.
     pub fn answer(self) -> (u16, serde_json::Value) {
+        let refused = |status, error, message| (status, Refused { error, message }.body());
+        let stale = |reason, message| (412, RefusedWithReason { error: "stale", reason, message }.body());
         match self {
-            Refusal::LimitedDevice => (
+            Refusal::LimitedDevice => refused(
                 403,
-                serde_json::json!({"error": "limited_device", "message": "this device cannot manage the account: ask an admin device, or change it on the device itself"}),
+                "limited_device",
+                "this device cannot manage the account: ask an admin device, or change it on the device itself",
             ),
-            Refusal::Stale(View::Behind) => (
-                412,
-                serde_json::json!({"error": "stale", "reason": "behind", "message": "an admin device has seen more of the account's device chain than the device you reach, which has to catch up first"}),
+            Refusal::Stale(View::Behind) => stale(
+                "behind",
+                "an admin device has seen more of the account's device chain than the device you reach, which has to catch up first",
             ),
-            Refusal::Stale(View::Fork) => (
-                412,
-                serde_json::json!({"error": "stale", "reason": "fork", "message": "the device you reach has a view of the account's device chain that conflicts with what an admin device vouched for"}),
+            Refusal::Stale(View::Fork) => stale(
+                "fork",
+                "the device you reach has a view of the account's device chain that conflicts with what an admin device vouched for",
             ),
-            Refusal::Stale(View::Stale | View::Fresh) => (
-                412,
-                serde_json::json!({"error": "stale", "reason": "stale", "message": "no admin device vouched for the account as the device you reach sees it in the last 12 hours: attest and retry"}),
+            Refusal::Stale(View::Stale | View::Fresh) => stale(
+                "stale",
+                "no admin device vouched for the account as the device you reach sees it in the last 12 hours: attest and retry",
             ),
-            Refusal::Lapsed => (
-                412,
-                serde_json::json!({"error": "stale", "reason": "lapsed", "message": "the device you reach takes no control from this device now: no admin device vouched for the account as it sees it in the last 7 days, or this device may no longer control it"}),
+            Refusal::Lapsed => stale(
+                "lapsed",
+                "the device you reach takes no control from this device now: no admin device vouched for the account as it sees it in the last 7 days, or this device may no longer control it",
             ),
-            Refusal::NotFromCloud => (
-                403,
-                serde_json::json!({"error": "not_from_cloud", "message": "this is done on the device itself only, not from another device"}),
-            ),
-            Refusal::Unlisted => (
-                403,
-                serde_json::json!({"error": "not_offered", "message": "the device you reach does not offer that to other devices"}),
-            ),
+            Refusal::NotFromCloud => refused(403, "not_from_cloud", "this is done on the device itself only, not from another device"),
+            Refusal::Unlisted => refused(403, "not_offered", "the device you reach does not offer that to other devices"),
         }
     }
 }
@@ -521,13 +520,11 @@ pub fn push_key_route(method: &str, path: &str) -> bool {
 
 /// The answer to a [`push_key_route`] while the push keys are renewed.
 fn push_renewing_answer() -> (u16, serde_json::Value) {
-    (
-        503,
-        serde_json::json!({
-            "error": PUSH_RENEWING,
-            "message": "this computer is renewing its push keys with its identity key: ask again in a moment",
-        }),
-    )
+    let refused = Refused {
+        error: PUSH_RENEWING,
+        message: "this computer is renewing its push keys with its identity key: ask again in a moment",
+    };
+    (503, refused.body())
 }
 
 /// `%XX` escapes decoded (anything malformed left as it is).
@@ -855,6 +852,7 @@ async fn socket(mut stream: Stream, head: RequestHead, device: &str, loopback: &
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     const PLAIN: Standing = Standing {
         admin: false,
@@ -1033,6 +1031,29 @@ mod tests {
         assert_eq!(Refusal::Stale(View::Stale).answer().0, 412);
         assert_eq!(Refusal::Unlisted.answer(), (403, Refusal::Unlisted.answer().1));
         assert_eq!(Refusal::Unlisted.answer().1["error"], "not_offered");
+    }
+
+    /// Every refusal, and the push-key answer while it renews, compared
+    /// whole: device pages of any version read these bodies.
+    #[test]
+    fn every_refusal_has_its_documented_body() {
+        let cases = [
+            (Refusal::LimitedDevice, 403, json!({"error": "limited_device", "message": "this device cannot manage the account: ask an admin device, or change it on the device itself"})),
+            (Refusal::Stale(View::Behind), 412, json!({"error": "stale", "reason": "behind", "message": "an admin device has seen more of the account's device chain than the device you reach, which has to catch up first"})),
+            (Refusal::Stale(View::Fork), 412, json!({"error": "stale", "reason": "fork", "message": "the device you reach has a view of the account's device chain that conflicts with what an admin device vouched for"})),
+            (Refusal::Stale(View::Stale), 412, json!({"error": "stale", "reason": "stale", "message": "no admin device vouched for the account as the device you reach sees it in the last 12 hours: attest and retry"})),
+            (Refusal::Stale(View::Fresh), 412, json!({"error": "stale", "reason": "stale", "message": "no admin device vouched for the account as the device you reach sees it in the last 12 hours: attest and retry"})),
+            (Refusal::Lapsed, 412, json!({"error": "stale", "reason": "lapsed", "message": "the device you reach takes no control from this device now: no admin device vouched for the account as it sees it in the last 7 days, or this device may no longer control it"})),
+            (Refusal::NotFromCloud, 403, json!({"error": "not_from_cloud", "message": "this is done on the device itself only, not from another device"})),
+            (Refusal::Unlisted, 403, json!({"error": "not_offered", "message": "the device you reach does not offer that to other devices"})),
+        ];
+        for (refusal, status, body) in cases {
+            assert_eq!(refusal.answer(), (status, body), "{refusal:?}");
+        }
+        assert_eq!(
+            push_renewing_answer(),
+            (503, json!({"error": "push_renewing", "message": "this computer is renewing its push keys with its identity key: ask again in a moment"}))
+        );
     }
 
     /// A 412 says why — `reason` is

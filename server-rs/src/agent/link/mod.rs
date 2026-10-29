@@ -557,6 +557,84 @@ mod tests {
         );
     }
 
+    /// The agent's own routes, compared whole: `/rh/info`, `/rh/display-name`
+    /// and `/rh/machine-key`, each refusal, and a route it does not have.
+    #[tokio::test]
+    async fn the_agents_own_routes_answer_in_their_documented_shapes() {
+        use bridge::Local as _;
+        let mut a = policy_account();
+        let key = [7u8; 32];
+        take(
+            &mut a,
+            vec![Action::KeyEpochs(rh_proto::chain::KeyCommits {
+                user: None,
+                machines: vec![(
+                    "m-1".into(),
+                    rh_proto::chain::KeyCommit {
+                        epoch: 0,
+                        hash: rh_proto::chain::machine_key_commit("a-1", "m-1", 0, &key),
+                    },
+                )],
+            })],
+        );
+        let local = AgentLocal::new(a.shared.clone(), Arc::new(Mutex::new(ChannelLapse::new("d-1"))));
+        let info = {
+            let st = a.shared.state.lock().unwrap();
+            json!({
+                "displayName": st.display_name, "hostname": droppen_http::hostname(), "mkEpoch": st.mk_epoch, "machine": "m-1",
+                "alarms": st.alarms, "controllers": st.controllers(),
+            })
+        };
+        assert_eq!(local.handle("d-1", "GET", "/rh/info", b"").await, (200, info));
+        let forbidden = json!({"error": "forbidden", "message": "only a current full device of the account may do this"});
+        assert_eq!(local.handle("d-3", "POST", "/rh/display-name", b"{}").await, (403, forbidden.clone()));
+        assert_eq!(local.handle("d-3", "POST", "/rh/machine-key", b"{}").await, (403, forbidden));
+        let bad = |message: &str| (400, json!({"error": "bad_request", "message": message}));
+        assert_eq!(local.handle("d-1", "POST", "/rh/display-name", b"nope").await, bad("JSON expected"));
+        let long = json!({"name": "x".repeat(65)}).to_string();
+        assert_eq!(
+            local.handle("d-1", "POST", "/rh/display-name", long.as_bytes()).await,
+            bad("a name is at most 64 characters, none of them control characters")
+        );
+        assert_eq!(local.handle("d-1", "POST", "/rh/display-name", br#"{"name":5}"#).await, bad("name must be a string or null"));
+        assert_eq!(
+            local.handle("d-1", "POST", "/rh/display-name", br#"{"name":"study"}"#).await,
+            (200, json!({"displayName": "study"}))
+        );
+        assert_eq!(
+            local.handle("d-1", "POST", "/rh/display-name", br#"{"name":null}"#).await,
+            (200, json!({"displayName": null}))
+        );
+        assert_eq!(local.handle("d-1", "POST", "/rh/machine-key", b"nope").await, bad("JSON expected"));
+        assert_eq!(local.handle("d-1", "POST", "/rh/machine-key", b"{}").await, bad("{epoch, key (64 hex)} expected"));
+        let held = a.shared.state.lock().unwrap().mk_epoch;
+        let offer = |epoch: u32, key: &[u8; 32], reencrypt: bool| json!({"epoch": epoch, "key": droppen_base::text::hex(key), "reencrypt": reencrypt}).to_string();
+        assert_eq!(
+            local.handle("d-1", "POST", "/rh/machine-key", offer(1, &key, false).as_bytes()).await,
+            (409, json!({"error": "uncommitted", "message": "the chain commits no such content key epoch (yet): sync and attest, then retry", "mkEpoch": held}))
+        );
+        assert_eq!(
+            local.handle("d-1", "POST", "/rh/machine-key", offer(0, &[8; 32], false).as_bytes()).await,
+            (409, json!({"error": "key_mismatch", "message": "not the key the chain committed for that epoch", "mkEpoch": held}))
+        );
+        assert_eq!(
+            local.handle("d-1", "POST", "/rh/machine-key", offer(0, &key, false).as_bytes()).await,
+            (200, json!({"mkEpoch": 0, "changed": true}))
+        );
+        assert_eq!(
+            local.handle("d-1", "POST", "/rh/machine-key", offer(0, &key, true).as_bytes()).await,
+            (200, json!({"mkEpoch": 0, "changed": false, "reencrypt": true}))
+        );
+        assert_eq!(
+            local.handle("d-1", "POST", "/rh/machine-key", offer(0, &key, false).as_bytes()).await,
+            (200, json!({"mkEpoch": 0, "changed": false, "reencrypt": false}))
+        );
+        assert_eq!(
+            local.handle("d-1", "GET", "/rh/nope", b"").await,
+            (404, json!({"error": "not_found", "message": "no such agent route"}))
+        );
+    }
+
     /// The 412's `reason` follows the freshness check: an admin vouching for a
     /// head beyond this agent's view makes it `behind`; once this agent takes
     /// a different entry at that seq, the same vouching conflicts with its
