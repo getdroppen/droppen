@@ -13,6 +13,9 @@ publish = false
 # dependency tree: see `scripts/check-sdk-crate-deps.sh`.
 [dependencies]
 serde = { version = "1", features = ["derive"] }
+# Not the workspace's serde_json: plugin authors build against this crate, and
+# `workspace = true` would turn `preserve_order` on in their builds too. Its
+# tests compare `Value`s, which ignore key order.
 serde_json = "1"
 semver = { version = "1", features = ["serde"] }
 

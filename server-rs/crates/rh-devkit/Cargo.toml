@@ -38,7 +38,7 @@ sha2 = "0.10"
 base64 = "0.22"
 rand = "0.8"
 zeroize = "1"
-serde_json = "1"
+serde_json = { workspace = true }
 # Sans-IO WebRTC (ICE, DTLS, SCTP) for the p2p probe, on pure-Rust crypto.
 str0m = { version = "0.24", default-features = false, features = ["rust-crypto"], optional = true }
 

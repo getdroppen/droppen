@@ -18,6 +18,16 @@ workspace = true
 [workspace]
 members = [".", "crates/rh-proto", "crates/rh-relay", "crates/droppen-relay", "crates/rh-client", "crates/rh-devkit", "crates/droppen-plugin-sdk", "crates/droppen-search-path", "crates/droppen-base", "crates/droppen-instance", "crates/droppen-http", "crates/droppen-pty", "crates/droppen-supervisor"]
 
+# Every member takes serde_json from here, so `preserve_order` is on in every
+# build: a `Value` writes its keys in insertion order rather than sorted. Cargo
+# unifies features per build and `agent-client-protocol-schema` turns this one
+# on with no way off, so a member that took serde_json on its own would write
+# different bytes under `cargo test -p <member>` than in a workspace build.
+# `scripts/check-serde-json-order.sh` (CI) checks that no member builds
+# without it, but for the exempt ones it names, each with its reason.
+[workspace.dependencies]
+serde_json = { version = "1", features = ["preserve_order"] }
+
 # Two causes of a program that waits on itself forever. In edition 2021 a
 # guard made in a match/if-let/while-let scrutinee lives until the end of the
 # whole block, so code reached there (a hook, a callback) can take the same
@@ -108,7 +118,7 @@ tempfile = "3"
 # (a required --hub, a validated instance name) stay where they are.
 clap = { version = "4.5", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { workspace = true }
 
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

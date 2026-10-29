@@ -161,6 +161,19 @@ async fn a_session_detail_carries_its_transcript_and_a_missing_one_404s() {
     probe.stop().await;
 }
 
+/// Every server serves the spec in the same bytes. gotcha builds some of its
+/// maps (a schema's `properties`) from hash maps, whose order differs from one
+/// map to the next.
+#[tokio::test]
+async fn every_server_serves_the_spec_in_the_same_bytes() {
+    let (one, two) = (start().await, start().await);
+    let (first, second) = (one.get("/openapi.json").await, two.get("/openapi.json").await);
+    assert_eq!(first.0, 200);
+    assert!(first == second, "two servers served the spec in different orders");
+    one.stop().await;
+    two.stop().await;
+}
+
 #[tokio::test]
 async fn the_spec_is_served_and_names_the_ported_routes() {
     let probe = start().await;

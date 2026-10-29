@@ -87,10 +87,12 @@ async fn fetch_spec(addr: std::net::SocketAddr) -> Result<String, String> {
     }
     let raw = response.bytes().await.map_err(|e| format!("read: {e}"))?;
     let body = String::from_utf8(raw.to_vec()).map_err(|e| format!("non-utf8 response: {e}"))?;
-    let value: serde_json::Value = serde_json::from_str(&body).map_err(|e| format!("/openapi.json is not JSON: {e}"))?;
-    // Re-serialize rather than passing the response through: `serde_json`'s map
-    // is a `BTreeMap`, so this both pretty-prints and gives a stable key order,
-    // which is what makes the exported file diffable across runs.
+    let mut value: serde_json::Value = serde_json::from_str(&body).map_err(|e| format!("/openapi.json is not JSON: {e}"))?;
+    // Re-serialize rather than passing the response through, with every object
+    // sorted: gotcha builds some maps (a schema's `properties`) from hash maps,
+    // and a `Value` keeps the order it was given (`preserve_order`), so sorting
+    // is what makes the exported file the same on every run and diffable.
+    value.sort_all_objects();
     let mut pretty = serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?;
     pretty.push('\n');
     Ok(pretty)
