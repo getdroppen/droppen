@@ -5804,7 +5804,7 @@ export interface components {
             /**
              * @description Exactly which build this is: the crate version, plus the commit it was
              *     built from. A client that watches this can tell that the server it is
-             *     talking to has been replaced under it — see [`crate::selfupdate`].
+             *     talking to has been replaced under it — see `droppen_supervisor::selfupdate`.
              */
             serverVersion: string;
         };

@@ -267,7 +267,7 @@ const JSON: &str = "application/json";
 #[macro_export]
 macro_rules! inline_string_enum {
     ($name:ident, [$($variant:literal),+ $(,)?]) => {
-        impl ::gotcha::Schematic for $name {
+        impl $crate::gotcha::Schematic for $name {
             fn name() -> &'static str {
                 ::std::stringify!($name)
             }
@@ -280,16 +280,16 @@ macro_rules! inline_string_enum {
                 "string"
             }
 
-            fn generate_schema() -> ::gotcha_core::EnhancedSchema {
-                ::gotcha_core::EnhancedSchema {
-                    schema: ::gotcha::oas::Schema {
+            fn generate_schema() -> $crate::gotcha_core::EnhancedSchema {
+                $crate::gotcha_core::EnhancedSchema {
+                    schema: $crate::gotcha::oas::Schema {
                         _type: Some("string".to_string()),
                         format: None,
                         nullable: None,
                         description: None,
                         extras: ::std::collections::BTreeMap::from([(
                             "enum".to_string(),
-                            ::serde_json::json!([$($variant),+]),
+                            $crate::serde_json::json!([$($variant),+]),
                         )]),
                     },
                     required: true,
