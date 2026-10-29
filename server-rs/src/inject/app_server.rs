@@ -425,7 +425,7 @@ pub(crate) struct Codex {
 }
 
 impl Codex {
-    /// Codex, its runs `registry`'s.
+    /// Codex, on the runs `registry` keeps for it.
     pub(crate) fn new(registry: Arc<InjectionRegistry>) -> Self {
         let models = crate::models::codex::CodexModels::new(registry.paths.clone());
         Self {
@@ -599,7 +599,7 @@ impl Run for Codex {
 impl Codex {
     /// Which account a codex spawn runs under, and what it puts into it.
     ///
-    /// The same three-state resolution [`InjectionRegistry::resume_claude_env`] does, and for the same
+    /// The same three-state resolution [`super::resident::ClaudeCodeRuns::resume_claude_env`] does, and for the same
     /// reason: `accountId: null` is "the machine's own codex login" even when a
     /// default is configured, absent is "whatever this thread is already bound to",
     /// and a named account both wins and is written down.

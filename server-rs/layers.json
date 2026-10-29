@@ -339,7 +339,6 @@
       "edges": [
         "inject -> inject::app_server",
         "inject -> inject::resident",
-        "inject -> record",
         "inject -> sessions::acp_transcript",
         "inject -> sessions::claude",
         "inject -> sessions::codex"

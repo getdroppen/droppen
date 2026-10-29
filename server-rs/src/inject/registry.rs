@@ -497,6 +497,8 @@ mod tests {
         let providers = providers(home.path());
         let codex = providers.provider::<crate::inject::Codex>().expect("Codex");
         assert!(Arc::ptr_eq(codex.runs(), &providers.injections.codex), "Codex's");
+        let claude = providers.provider::<crate::inject::ClaudeCode>().expect("Claude Code");
+        assert!(Arc::ptr_eq(claude.runs(), &providers.injections.claude), "Claude Code's");
     }
 
     /// One provider's runs per source on a host: a second provider registry

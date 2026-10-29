@@ -18,7 +18,6 @@ use droppen_instance::instance::InstanceDirs;
 use droppen_instance::paths::Paths;
 use droppen_base::process_env::{redact_secrets, Env};
 use droppen_base::procs;
-use crate::record;
 use crate::sessions::{claude, codex};
 use droppen_sessions::{Injection, InjectionRunState, SessionRef, SessionStatus, Source};
 use droppen_base::time::iso8601;
@@ -359,65 +358,7 @@ impl RunHost {
     pub(crate) fn redact(&self, text: &str) -> String {
         redact_secrets(&self.accounts.redact_known_secrets(text))
     }
-}
 
-impl InjectionRegistry {
-    /// Write a rotation decision down and tell everyone who should hear of it:
-    /// the log line, the phone, the session's feed and the list.
-    ///
-    /// The one `info` line per decision is here, so every path that decides —
-    /// a switch, nowhere to go, the cap — is logged the same way. Returns the
-    /// record's id, for a switch that learns later how much it interrupted.
-    fn record_rotation(&self, decision: &crate::accounts::rotation::Decision, notice: &str) -> Option<i64> {
-        let id = match self.accounts.rotation_log().record(decision) {
-            Ok(id) => Some(id),
-            Err(error) => {
-                tracing::warn!(session = %decision.session_id, %error, "cannot record an account rotation");
-                None
-            }
-        };
-        tracing::info!(
-            session = %decision.session_id,
-            from = %decision.from.id,
-            to = %decision.to.id,
-            class = decision.class.as_str(),
-            scope = %decision.scope,
-            until = decision.until_ms.map(crate::accounts::rest::iso_ms).as_deref().unwrap_or("-"),
-            interrupted = decision.interrupted_tasks,
-            outcome = decision.outcome.as_str(),
-            trigger = decision.trigger.as_str(),
-            used = ?decision.used_percent,
-            "decided an account rotation"
-        );
-        // Known limitation: the failed turn behind this decision has
-        // already sent its own "Run failed" notification a moment earlier, so
-        // a limit reaches the phone twice — the failure, then what was done
-        // about it. The second is the one that bypasses the throttle. A move
-        // ahead of a limit has no failure before it, and reaches it once.
-        // Every session on one account crosses the threshold together, so a
-        // move ahead tends to come in a burst: N sessions from A to B within a
-        // few minutes. One push per account pair per window says it; the rest
-        // would only bury it. A limit-driven rotation always pushes.
-        let ahead_burst = decision.trigger == droppen_sessions::account::RotationTrigger::Ahead
-            && !first_ahead_push(&decision.from.id, &decision.to.id, std::time::Instant::now());
-        if !ahead_burst {
-            if let Some(alerts) = self.alerts.get() {
-                alerts.rotation(
-                    self.paths.clone(),
-                    Source::Claude,
-                    decision.session_id.clone(),
-                    decision.outcome,
-                    decision.trigger,
-                    notice.to_string(),
-                );
-            }
-        }
-        self.announce(Source::Claude, &decision.session_id);
-        id
-    }
-}
-
-impl RunHost {
     /// Write a limit a driver saw into this instance's limit log.
     ///
     /// Phase 1 of account rotation, and only that: whatever the driver then
@@ -566,7 +507,8 @@ impl RunEntry {
 /// What every provider's runs share: the runs map and its journal, the
 /// receipts, questions and drafts, whom a change is told to, the accounts a
 /// start is placed on, and the watchdog's timings. Each provider's own runs
-/// reach it through themselves ([`InjectionRegistry`], [`acp::AcpRuns`]).
+/// reach it through themselves ([`app_server::CodexRuns`],
+/// [`resident::ClaudeCodeRuns`], [`acp::AcpRuns`]).
 pub struct RunHost {
     /// The stored logins, for one job only: taking the credentials this server
     /// injected back out of whatever the CLI printed. See
@@ -633,95 +575,18 @@ pub struct RunHost {
     gate: Mutex<Weak<gate::SpawnGate>>,
 }
 
-/// Claude Code's residents, on the host whose runs every provider shares
-/// ([`RunHost`]).
+/// Where the runs the previous server left behind are adopted
+/// ([`Self::adopt_all`]), each handed to its own provider's runs, on the host
+/// whose runs every provider shares ([`RunHost`]).
 pub struct InjectionRegistry {
     /// What its runs share with every provider's.
     host: Arc<RunHost>,
     /// Codex's runs, which its provider keeps, and adoption hands a surviving
     /// app server to until each provider adopts its own.
     codex: Arc<app_server::CodexRuns>,
-    /// The resident claude behind each session, keyed by session id alone —
-    /// there is no codex resident, so the source is not part of the key.
-    residents: Mutex<HashMap<String, resident::Handle>>,
-    /// How long a claude turn may make no progress before it is *marked*
-    /// stalled. Nothing is ever killed for it; see [`resident`].
-    stall_after: Duration,
-    /// How long a settings change may be parked behind claude's background work
-    /// before the process is restarted anyway; `None` to wait for ever.
-    ///
-    /// A ceiling rather than a policy: parking is right, and the tasks a
-    /// resident exists to protect can legitimately run for an hour. What this
-    /// stops is the *unbounded* case — a background set that is wrong about
-    /// work which is not there, holding a message nobody can stop or take back.
-    /// See [`resident::Driver::waited_long_enough`].
-    await_background: Option<Duration>,
-    /// `DROPPEN_ROTATE_AHEAD_PERCENT`: the used percent of a window at which a
-    /// session is moved off its account at the next quiet point, before the
-    /// limit refuses a turn; `None` when that is switched off. See
-    /// [`resident::Driver::rotate_ahead`].
-    rotate_ahead: Option<f64>,
-    /// Where claude drops a background task's output file.
-    ///
-    /// The CLI writes one `<task-id>.output` per background task under
-    /// `<root>/<cwd-slug>/<session-id>/tasks/`, and streams into it while the
-    /// task runs — so for a `local_bash` task, which has no subagent transcript
-    /// anywhere, this is the *only* place on disk that says it is still alive.
-    /// [`resident::Driver::subagents_recently_active`] reads it for exactly that
-    /// reason.
-    ///
-    /// A root rather than the directory itself because the slug in the middle is
-    /// the working directory with its separators and its non-ASCII mangled, and
-    /// reproducing that encoding is a guess; looking for the session id one level
-    /// down is not. Overridable so a test can point it at a directory it owns.
-    task_root: PathBuf,
-    /// How long a resident may sit idle before it is retired, or `None` — the
-    /// default — for never.
-    ///
-    /// Off by default because the resident model's whole promise is that the
-    /// next message goes into a process that is already there and that nothing
-    /// running in the background is ever cut off, and both are weakened by
-    /// ending idle processes. It exists because a resident costs three or four
-    /// hundred megabytes, and a machine with enough sessions open needs a way to
-    /// say so. See [`resident::Driver::idle_shutdown`].
-    resident_idle: Option<Duration>,
-    /// How long the recovery ladder waits before each restart of a resident
-    /// that died unexpectedly: one entry per death inside the breaker's window,
-    /// the last reused past the end.
-    ///
-    /// A field rather than the constant it defaults to so a test can walk the
-    /// whole ladder — resume, fork, breaker — without sitting out real
-    /// backoffs; production always runs [`resident::RECOVERY_BACKOFF`].
-    recovery_backoff: [Duration; 3],
-    /// How long a turn opened for a *steered* message is given to prove it
-    /// exists before the driver concludes claude answered the message inside
-    /// the turn it was handed to.
-    ///
-    /// The whole of the merged/deferred ambiguity is timed by this, so it is a
-    /// field for the same reason [`Self::recovery_backoff`] is: a test has to
-    /// be able to watch both outcomes without sitting out the real one.
-    /// Production runs [`resident::STEER_SETTLE`], or `DROPPEN_STEER_SETTLE_MS`.
-    steer_settle: Duration,
-    /// How often a resident holding steered messages looks in the transcript
-    /// for claude having taken them into the turn in flight.
-    ///
-    /// The backstop for a session nobody is watching: a watched one is told the
-    /// moment its transcript grows — see [`InjectionRegistry::transcript_grew`].
-    /// Production runs [`resident::ABSORB_POLL`], or `DROPPEN_ABSORB_POLL_MS`.
-    absorb_poll: Duration,
-    /// Where a session's flight recording goes, if it is being made at all.
-    ///
-    /// A factory rather than a recorder: one is opened per *resident*, lives on
-    /// its driver, and is what carries the session's life into
-    /// [`crate::record`]. See [`resident::Driver::recorder`].
-    recorders: record::Recorders,
-    /// What a claude spawn's environment gains before it starts: on the send
-    /// path, and for the process an automatic rotation moves a session to,
-    /// which a driver builds by itself.
-    decoration: Arc<dyn SpawnDecoration>,
-    /// When a quota reading last woke the residents holding a queue; see
-    /// [`InjectionRegistry::recheck_holds`].
-    reading_recheck: Mutex<Option<Instant>>,
+    /// Claude Code's runs, which its provider keeps, and adoption hands a
+    /// surviving resident to until each provider adopts its own.
+    claude: Arc<resident::ClaudeCodeRuns>,
 }
 
 /// The per-session feeds as the drivers see them: the open views of a session
@@ -804,47 +669,12 @@ impl InjectionRegistry {
         quota: Arc<crate::accounts::quota::QuotaCache>,
         decoration: Arc<dyn SpawnDecoration>,
     ) -> Arc<Self> {
-        let host = RunHost::new(paths.clone(), instance, accounts, quota);
+        let host = RunHost::new(paths, instance, accounts, quota);
         Arc::new(Self {
             codex: app_server::CodexRuns::new(host.clone()),
+            claude: resident::ClaudeCodeRuns::new(host.clone(), instance, decoration),
             host,
-            residents: Mutex::new(HashMap::new()),
-            // Ten minutes of silence is a *report*, not a sentence: the only
-            // thing that happens at this threshold is that the turn is marked.
-            stall_after: env_ms("DROPPEN_STALL_MS", Duration::from_secs(10 * 60)),
-            // Half an hour: past every background job short enough that waiting
-            // is the obvious answer, and well short of a session that is stuck.
-            // Zero means "wait for ever", which is why this does not go through
-            // `env_ms` either.
-            await_background: match droppen_base::env::var("DROPPEN_AWAIT_BACKGROUND_MS")
-                .and_then(|raw| raw.trim().parse::<u64>().ok())
-            {
-                Some(0) => None,
-                Some(ms) => Some(Duration::from_millis(ms)),
-                None => Some(Duration::from_secs(30 * 60)),
-            },
-            rotate_ahead: crate::accounts::rotation::ahead_threshold_from_env(),
-            // `/tmp`, not `TMPDIR`: claude writes here, and on macOS `TMPDIR` is
-            // a per-process directory under `/var/folders` that it never uses.
-            task_root: droppen_base::env::var("DROPPEN_TASK_ROOT").map(PathBuf::from).unwrap_or_else(|| {
-                // SAFETY: `getuid` reads the calling process' own uid and cannot fail.
-                PathBuf::from(format!("/tmp/claude-{}", unsafe { libc::getuid() }))
-            }),
-            // Zero, absent and unparseable all mean "never", which is why this
-            // is the one timing here that does not go through `env_ms`: its
-            // fallback is not a duration.
-            resident_idle: droppen_base::env::var("DROPPEN_RESIDENT_IDLE_MS")
-                .and_then(|raw| raw.trim().parse::<u64>().ok())
-                .filter(|ms| *ms > 0)
-                .map(Duration::from_millis),
-            recovery_backoff: resident::RECOVERY_BACKOFF,
-            steer_settle: env_ms("DROPPEN_STEER_SETTLE_MS", resident::STEER_SETTLE),
-            absorb_poll: env_ms("DROPPEN_ABSORB_POLL_MS", resident::ABSORB_POLL),
-            recorders: record::Recorders::new(paths, instance),
-            decoration,
-            reading_recheck: Mutex::new(None),
         })
-        .listed()
     }
 }
 
@@ -853,12 +683,6 @@ impl std::ops::Deref for InjectionRegistry {
 
     fn deref(&self) -> &RunHost {
         &self.host
-    }
-}
-
-impl ListsRuns for InjectionRegistry {
-    fn add_to(&self, states: &mut DriverStatesBuilder) {
-        self.claude_driver_states(states);
     }
 }
 
@@ -939,19 +763,6 @@ impl RunHost {
     pub(crate) fn poke_feed(&self, source: Source, id: &str) {
         let Some(listeners) = self.listeners.get() else { return };
         listeners.feeds.poke(&self.key_of(source, id));
-    }
-
-    /// The channel claude session `id`'s draft is published on.
-    ///
-    /// Its driver's [`drafts::DraftWriter`] is the only thing that writes to it
-    /// in a running server; a test of the feed stands in for that driver here.
-    pub(crate) fn draft_channel(&self, id: &str) -> Arc<tokio::sync::watch::Sender<drafts::Draft>> {
-        self.drafts.channel(&self.key_of(Source::Claude, id))
-    }
-
-    /// The writer a driver for session `id` publishes its draft through.
-    fn draft_writer(&self, id: &str) -> drafts::DraftWriter {
-        drafts::DraftWriter::new(self.draft_channel(id))
     }
 
     /// The idempotency claims and receipts of messages a client named.
@@ -1272,7 +1083,7 @@ impl InjectionRegistry {
         // never take the answer. Those are expired here, once every survivor is
         // in the map, and stay answerable as an ordinary message. A survivor's
         // own questions are its driver's to settle when its replay ends.
-        let held: std::collections::HashSet<String> = self.residents.lock().expect("residents poisoned").keys().cloned().collect();
+        let held: std::collections::HashSet<String> = self.claude.residents.lock().expect("residents poisoned").keys().cloned().collect();
         let expired = self.questions.expire_unheld(&held, questions::now_ms());
         if expired > 0 {
             tracing::info!(
@@ -1310,7 +1121,7 @@ impl InjectionRegistry {
                 if record.source == Source::Codex {
                     self.codex.codex_attached(record.clone(), link, claim);
                 } else {
-                    self.attached(record, sidecars, link, claim);
+                    self.claude.attached(record, sidecars, link, claim);
                 }
                 Reattached::Driving
             }
