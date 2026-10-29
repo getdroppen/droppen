@@ -16,7 +16,7 @@ import * as React from "react";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { StatusBadge } from "../src/features/sessions/sessions-layout.js";
-import { ActivityBar, AwaitingBackgroundNotice } from "../src/features/sessions/session-detail.js";
+import { ActivityBar, AwaitingBackgroundNotice } from "../src/features/sessions/activity-bar.js";
 import { BackgroundTaskPanel } from "../src/features/sessions/background-panel.js";
 import { createDraftStore, thinkingOf } from "../src/features/sessions/stream-draft.js";
 import type {

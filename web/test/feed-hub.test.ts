@@ -505,7 +505,7 @@ test("a tunneled transport, or a caller that says so, also means no compression;
   }
 });
 
-/** A feed pool over `hub`, as `session-detail.tsx` makes one. */
+/** A feed pool over `hub`, as `use-session-feed.ts` makes one. */
 function poolOver(hub: FeedHub, idleSockets = 2) {
   return createSessionFeedPool(
     {

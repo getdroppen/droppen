@@ -6,7 +6,7 @@
 // the server sent.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { sessionMetaFacts } from "../src/features/sessions/session-detail.js";
+import { sessionMetaFacts } from "../src/features/sessions/session-meta.js";
 
 test("sessionMetaFacts formats the session's reference facts", () => {
   const facts = sessionMetaFacts({

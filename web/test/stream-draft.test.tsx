@@ -192,7 +192,10 @@ test("a think with nothing to date the turn by is still said, and the old senten
  * reach the scroller at all — only the composer, for the activity bar.
  */
 test("the transcript draws nothing provisional: the draft store reaches only the activity bar", () => {
-  const source = readFileSync(new URL("../src/features/sessions/session-detail.tsx", import.meta.url), "utf8");
+  // The session view, across the files it is made of.
+  const source = ["session-detail.tsx", "composer.tsx", "activity-bar.tsx", "use-session-feed.ts", "session-meta.tsx"]
+    .map((file) => readFileSync(new URL(`../src/features/sessions/${file}`, import.meta.url), "utf8"))
+    .join("\n");
   const handedTo = [...source.matchAll(/drafts=\{/g)].map((match) => {
     const before = source.slice(0, match.index);
     return /<([A-Z]\w*)\b[^<]*$/.exec(before)?.[1];

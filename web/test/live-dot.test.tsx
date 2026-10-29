@@ -28,7 +28,8 @@ import test from "node:test";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { LiveDot } from "../src/components/live-dot.js";
 import type { components } from "../src/api/schema.js";
-import { ActivityBar, SubagentTool, ToolLine } from "../src/features/sessions/session-detail.js";
+import { ActivityBar } from "../src/features/sessions/activity-bar.js";
+import { SubagentTool, ToolLine } from "../src/features/sessions/session-detail.js";
 import { StatusBadge } from "../src/features/sessions/sessions-layout.js";
 import { BackgroundTaskPanel } from "../src/features/sessions/background-panel.js";
 import type {
