@@ -265,8 +265,9 @@ impl ProviderRegistry {
     /// a `control_request` that ends the *turn* and leaves the process — and
     /// anything it started in the background — alive. Only a CLI that will not
     /// answer gets signalled, and only by the driver that can tell whether the
-    /// turn ended in between. A run with no resident falls back to
-    /// [`InjectionRegistry::interrupt_legacy`].
+    /// turn ended in between. Claude and Codex fall back to
+    /// [`InjectionRegistry::interrupt_legacy`] when they hold no process for the
+    /// session; ACP never runs outside its agent.
     pub fn interrupt(&self, source: Source, id: &str) -> bool {
         self.run(source).is_some_and(|run| run.interrupt(id))
     }

@@ -294,8 +294,9 @@ impl Run for Codex {
     }
 
     /// The app server, when one is running; nothing, when the list still shows
-    /// a handle whose process is gone; otherwise a `codex exec` run adopted
-    /// from the previous server.
+    /// a handle whose process is gone, because `codex_dead` already closed that
+    /// turn as failed and removed its runs entry, so nothing is left to stop;
+    /// otherwise a `codex exec` run adopted from the previous server.
     fn interrupt(&self, id: &str) -> bool {
         if let Some(handle) = self.registry.codex_handle(id).filter(Handle::alive) {
             return handle.interrupt();

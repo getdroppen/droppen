@@ -954,6 +954,55 @@ async fn an_agent_is_not_removed_while_a_message_waits_for_its_turn() {
     server.stop().await;
 }
 
+/// A message queued behind a turn can be taken back from its row, and cannot be
+/// steered in: the agent takes the next message only when the turn in flight
+/// ends. Taken back, it never reaches the agent.
+#[tokio::test]
+async fn a_queued_message_can_be_dropped_and_not_steered() {
+    let home = tempfile::tempdir().expect("tempdir");
+    let program = install_fake(home.path());
+    let workdir = workdirs(home.path(), &["work"]).remove(0);
+    let server = TestServer::start_at(home.path(), None).await;
+    configure(&server, &program).await;
+    let id = start(&server, "fake", &workdir, "hello").await;
+    wait_for(&server, &id, "the first turn", finished).await;
+    let (status, body) = server
+        .json("POST", &format!("/api/sessions/acp/{id}/message"), &json!({"text": "wait for me"}))
+        .await;
+    assert_eq!(status, 200, "{body}");
+    wait_for(&server, &id, "the long turn to stream", |detail| {
+        texts(detail).last().is_some_and(|last| last.2 == "Working on it")
+    })
+    .await;
+
+    let (status, body) = server
+        .json("POST", &format!("/api/sessions/acp/{id}/message"), &json!({"text": "never sent"}))
+        .await;
+    assert_eq!(status, 200, "{body}");
+    let queued = wait_for(&server, &id, "the message to queue", |detail| detail["summary"]["resident"]["queued"] == 1).await;
+    let qid = queued["summary"]["resident"]["queuedMessages"][0]["id"].as_str().expect("a queue id").to_string();
+    let queue = format!("/api/sessions/acp/{id}/queue/{qid}");
+
+    let (status, body) = server.json("POST", &format!("{queue}/steer"), &json!({})).await;
+    assert_eq!(status, 409, "{body}");
+    assert!(body.contains("takes the next message when the turn in flight ends"), "{body}");
+    let (status, body) = server.json("DELETE", &queue, &json!({})).await;
+    assert_eq!(status, 200, "{body}");
+    wait_for(&server, &id, "the queue to empty", |detail| detail["summary"]["resident"]["queued"] == 0).await;
+
+    let (status, body) = server.json("POST", &format!("/api/sessions/acp/{id}/interrupt"), &json!({})).await;
+    assert_eq!(status, 200, "{body}");
+    wait_for(&server, &id, "the interruption", finished).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let prompts: Vec<String> = calls(&workdir)
+        .into_iter()
+        .filter(|call| call["method"] == "session/prompt")
+        .map(|call| call["params"]["prompt"][0]["text"].as_str().unwrap_or_default().to_string())
+        .collect();
+    assert_eq!(prompts, ["hello", "wait for me"], "the dropped message never reached the agent");
+    server.stop().await;
+}
+
 #[tokio::test]
 async fn a_changed_command_line_or_environment_reaches_the_next_process() {
     let home = tempfile::tempdir().expect("tempdir");
