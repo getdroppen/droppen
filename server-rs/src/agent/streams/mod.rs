@@ -42,11 +42,11 @@
 pub(crate) mod content;
 pub(crate) mod naming;
 pub(crate) mod retention;
+pub mod source;
 pub(crate) mod store;
 pub(crate) mod writer;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -58,13 +58,11 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use crate::drive::Drive;
-use crate::sessions::loader::{encode_fp, Transcript};
 use crate::agent::AgentFiles;
-use crate::sessions::{SessionSummary, Source};
 use droppen_base::time::now_ms_u64;
 use content::{Delta, Scope, SessionCursor, StatusBodyExt};
 use retention::HubPlan;
+use source::{Fingerprints, Items, ListedSession, SessionRow, StreamSource, Transcript};
 use store::{IndexDiff, Kind, PageRef, Row, Store};
 use writer::{Answer, PageSpec, Plan, Step, Writer};
 
@@ -246,7 +244,7 @@ pub fn committed_only(keys: BTreeMap<u32, zeroize::Zeroizing<[u8; 32]>>, check: 
 /// (the join handle says when its store is closed).
 pub fn spawn(
     files: &AgentFiles,
-    drive: Arc<Drive>,
+    source: Arc<dyn StreamSource>,
     signing: SigningKey,
     loopback: Arc<Loopback>,
     options: Options,
@@ -261,7 +259,7 @@ pub fn spawn(
     let env = Scope::from_env();
     let mut sync = Sync {
         files: files.clone(),
-        drive,
+        source,
         loopback,
         writer: Writer::new(store, signing),
         out: None,
@@ -333,7 +331,8 @@ impl Budget {
 
 struct Sync {
     files: AgentFiles,
-    drive: Arc<Drive>,
+    /// The sessions it copies.
+    source: Arc<dyn StreamSource>,
     loopback: Arc<Loopback>,
     writer: Writer,
     out: Option<mpsc::UnboundedSender<Frame>>,
@@ -350,7 +349,7 @@ struct Sync {
     budget: Budget,
     cli: Option<(Instant, Value)>,
     /// Session streams' names, for drafts: stream → (source, id).
-    names: HashMap<StreamId, (Source, String)>,
+    names: HashMap<StreamId, (String, String)>,
     /// What devices call this machine (`None`: its hostname).
     display_name: Option<String>,
     /// Chain alarms every device should see (status stream `alarms`).
@@ -975,15 +974,13 @@ impl Sync {
 
     // ------------------------------------------------------------ index and sessions
 
-    async fn list(&self) -> Vec<SessionSummary> {
-        let bindings = self.drive.accounts.session_account_map().await;
-        let drivers = self.drive.injections.driver_states();
-        let filter = if self.scope.external {
-            crate::sessions::ScopeFilter::All
-        } else {
-            crate::sessions::ScopeFilter::Owned
-        };
-        crate::sessions::list_and_filter(&self.drive.paths, &bindings, &drivers, None, None, filter).await
+    /// The CLI a session stream's row is for, when this server lists it.
+    fn source_of<'r>(&self, row: &'r Row) -> Option<&'r str> {
+        self.source.knows(&row.source).then_some(row.source.as_str())
+    }
+
+    async fn list(&self) -> Vec<Box<dyn ListedSession>> {
+        self.source.sessions(self.scope.external).await
     }
 
     /// Compare the session list with the copy; the sessions it listed
@@ -995,7 +992,7 @@ impl Sync {
         };
         let rows = self.list().await;
         let now = now_ms_u64();
-        let listed: HashMap<String, &SessionSummary> = rows.iter().map(|r| (r.row_key(), r)).collect();
+        let listed: HashMap<String, &dyn ListedSession> = rows.iter().map(|r| (r.row_key(), r.as_ref())).collect();
         // Space first: what it deletes leaves the index in this same round.
         self.space_round(&listed, now);
         let held_out = self.held_out(&listed, now);
@@ -1050,7 +1047,7 @@ impl Sync {
         let all = self.writer.store.all();
         let first = self.first_epoch();
         let sessions = naming::by_session(&all);
-        let in_scope: Vec<&SessionSummary> = rows
+        let in_scope: Vec<&Box<dyn ListedSession>> = rows
             .iter()
             .filter(|r| scope.admits(r, now) && !held_out.contains(&r.row_key()))
             .collect();
@@ -1062,19 +1059,18 @@ impl Sync {
             let row = match naming::current(group, first) {
                 Some(row) => row.clone(),
                 None => {
-                    let Ok(stream) = record::stream_id(&mk, summary.source.as_str(), &summary.id) else {
+                    let Ok(stream) = record::stream_id(&mk, summary.source(), summary.id()) else {
                         continue;
                     };
-                    self.row(stream, Kind::Session, summary.source.as_str(), &summary.id, self.name_for_new(target))
+                    self.row(stream, Kind::Session, summary.source(), summary.id(), self.name_for_new(target))
                 }
             };
             let stream = row.stream;
-            self.names.insert(stream, (summary.source, summary.id.clone()));
+            self.names.insert(stream, (summary.source().to_string(), summary.id().to_string()));
             if !self.ready(&row) {
                 continue;
             }
-            let path = Path::new(&summary.file_path);
-            let Some(sig) = crate::sessions::file_signature(path).await else {
+            let Some(sig) = summary.signature().await else {
                 continue;
             };
             if self.seen_sig.get(&stream) == Some(&sig) && !self.legacy_reencrypt(&stream) {
@@ -1083,7 +1079,7 @@ impl Sync {
             // A new name beside an old one (a migration that did not get to
             // rebuild it): pages, so the index never points at half of it.
             let as_pages = group.len() > 1;
-            if let Err(error) = self.session_round(&row, summary.source, path, &sig, as_pages).await {
+            if let Err(error) = self.session_round(&row, summary.as_ref(), &sig, as_pages).await {
                 tracing::warn!(stream = %short(&stream), %error, "cannot copy a session yet");
                 self.retry_at.insert(stream, Instant::now() + Duration::from_secs(30));
             }
@@ -1099,7 +1095,7 @@ impl Sync {
     /// The index's entries: the sessions in scope (less those held out for
     /// space), each — once a device reads epoch names — with the epoch its
     /// stream is named under (`se`).
-    fn index_entries(&self, rows: &[SessionSummary], held_out: &HashSet<String>, target: u32, now: u64) -> BTreeMap<String, String> {
+    fn index_entries(&self, rows: &[Box<dyn ListedSession>], held_out: &HashSet<String>, target: u32, now: u64) -> BTreeMap<String, String> {
         let mut wanted = content::index_rows(rows, &self.scope, now);
         wanted.retain(|key, _| !held_out.contains(key));
         if self.streams2 {
@@ -1123,7 +1119,7 @@ impl Sync {
     /// at it. Nothing goes for being missing from this round's list, which
     /// may be short ([`naming::migration_fate`]): a session it does not
     /// name keeps its old stream, for the window round to judge.
-    async fn migrate_round(&mut self, listed: &HashMap<String, &SessionSummary>, wanted: &BTreeMap<String, String>, target: u32, now: u64) {
+    async fn migrate_round(&mut self, listed: &HashMap<String, &dyn ListedSession>, wanted: &BTreeMap<String, String>, target: u32, now: u64) {
         use rand::seq::SliceRandom;
         let due = self
             .writer
@@ -1174,7 +1170,7 @@ impl Sync {
                     let Some(summary) = listed.get(&format!("{}/{}", row.source, row.id)) else {
                         continue;
                     };
-                    if let Err(error) = self.migrate_session(summary, target).await {
+                    if let Err(error) = self.migrate_session(*summary, target).await {
                         tracing::warn!(stream = %short(&old), %error, "cannot move a session to its new name yet");
                     }
                 }
@@ -1184,15 +1180,14 @@ impl Sync {
 
     /// Rebuild a session under its name in `target` from its transcript:
     /// manifest and pages from seq 0, under a fresh link.
-    async fn migrate_session(&mut self, summary: &SessionSummary, target: u32) -> Result<(), String> {
+    async fn migrate_session(&mut self, summary: &dyn ListedSession, target: u32) -> Result<(), String> {
         let mk = self.writer.key(target).copied().ok_or("no key for the target epoch")?;
-        let stream = record::stream_id(&mk, summary.source.as_str(), &summary.id).map_err(|e| e.to_string())?;
-        let row = self.row(stream, Kind::Session, summary.source.as_str(), &summary.id, Some(target));
-        self.names.insert(stream, (summary.source, summary.id.clone()));
-        let path = Path::new(&summary.file_path);
-        let sig = crate::sessions::file_signature(path).await.ok_or("unreadable")?;
-        let transcript = crate::sessions::loader::load_transcript(&self.drive.paths, summary.source, path, &sig).await;
-        self.rebuild_session(&row, &transcript, &sig, 0, true)
+        let stream = record::stream_id(&mk, summary.source(), summary.id()).map_err(|e| e.to_string())?;
+        let row = self.row(stream, Kind::Session, summary.source(), summary.id(), Some(target));
+        self.names.insert(stream, (summary.source().to_string(), summary.id().to_string()));
+        let sig = summary.signature().await.ok_or("unreadable")?;
+        let transcript = summary.transcript(&sig).await;
+        self.rebuild_session(&row, &*transcript, &sig, 0, true)
     }
 
     /// Copies of sessions outside the window go (relay-and-plans §3.4): the
@@ -1200,7 +1195,7 @@ impl Sync {
     /// no longer in scope; one not listed at all only once its copy has not
     /// been written for the whole window (a list that came back short must
     /// not delete what is still there). Out of the index in the same round.
-    fn window_round(&mut self, listed: &HashMap<String, &SessionSummary>, wanted: &BTreeMap<String, String>, now: u64) {
+    fn window_round(&mut self, listed: &HashMap<String, &dyn ListedSession>, wanted: &BTreeMap<String, String>, now: u64) {
         let horizon = now.saturating_sub(self.scope.days.saturating_mul(retention::DAY_MS));
         let mut gone = Vec::new();
         for row in self.writer.store.all() {
@@ -1236,7 +1231,7 @@ impl Sync {
     /// session copies go — never the index or status, never one updated in
     /// the last day — until the estimate is down to 85% (relay-and-plans
     /// §3.5). Each is remembered, so it is not copied again until it changes.
-    fn space_round(&mut self, listed: &HashMap<String, &SessionSummary>, now: u64) {
+    fn space_round(&mut self, listed: &HashMap<String, &dyn ListedSession>, now: u64) {
         if !self.plan_fresh {
             return;
         }
@@ -1254,7 +1249,7 @@ impl Sync {
                 continue;
             }
             let key = format!("{}/{}", row.source, row.id);
-            let updated_at = listed.get(&key).map(|s| s.updated_at.clone());
+            let updated_at = listed.get(&key).map(|s| s.updated_at().to_string());
             let updated_ms = updated_at.as_deref().and_then(iso_ms).unwrap_or(row.updated_ms);
             candidates.push(retention::Candidate {
                 stream: row.stream,
@@ -1287,13 +1282,13 @@ impl Sync {
     /// The sessions deleted for space that stay out of the copy: those not
     /// updated since. One updated since comes back while there is room; one
     /// out of the window (or long gone) is forgotten.
-    fn held_out(&mut self, listed: &HashMap<String, &SessionSummary>, now: u64) -> HashSet<String> {
+    fn held_out(&mut self, listed: &HashMap<String, &dyn ListedSession>, now: u64) -> HashSet<String> {
         let mut out = HashSet::new();
         let horizon = now.saturating_sub(self.scope.days.saturating_mul(retention::DAY_MS));
         for (key, (updated_at, at_ms)) in self.writer.store.evicted() {
             match listed.get(&key) {
                 Some(summary) if self.scope.admits(summary, now) => {
-                    let changed = iso_ms(&summary.updated_at) > iso_ms(&updated_at);
+                    let changed = iso_ms(summary.updated_at()) > iso_ms(&updated_at);
                     if changed && retention::space_allows(self.plan.as_ref(), self.freed) {
                         tracing::info!(session = %key, "a session whose copy was deleted for space changed: copying it again");
                         self.writer.store.clear_evicted(&key);
@@ -1312,30 +1307,23 @@ impl Sync {
     }
 
     /// Bring a session's copy up to its transcript; `as_pages`: a first upload goes up as pages whatever its size.
-    async fn session_round(&mut self, row: &Row, source: Source, path: &Path, sig: &str, as_pages: bool) -> Result<(), String> {
+    async fn session_round(&mut self, row: &Row, summary: &dyn ListedSession, sig: &str, as_pages: bool) -> Result<(), String> {
         let fresh = row.next_seq == 0 && row.manifest_upto.is_none() && row.cursor.is_empty();
-        let transcript: Arc<Transcript> = if fresh {
-            Arc::new(
-                crate::sessions::loader::read_transcript_uncached(&self.drive.paths, source, path)
-                    .await
-                    .ok_or("unreadable")?,
-            )
+        let transcript: Arc<dyn Transcript> = if fresh {
+            summary.read_transcript().await.ok_or("unreadable")?
         } else {
-            crate::sessions::loader::load_transcript(&self.drive.paths, source, path, sig).await
+            summary.transcript(sig).await
         };
-        let chain = transcript.chain().clone();
+        let chain = transcript.chain();
         let len = transcript.len();
         if self.legacy_reencrypt(&row.stream) && !fresh {
             // Past the head, so the hub drops every older record at once.
-            return self.rebuild_session(row, &transcript, sig, row.next_seq + 1, true);
+            return self.rebuild_session(row, &*transcript, sig, row.next_seq + 1, true);
         }
         if fresh {
             let cutoff = self.trim_cutoff();
-            let (start, windowed) = copy_start(&transcript.items, cutoff);
-            let size: usize = transcript.items[start..]
-                .iter()
-                .map(|i| serde_json::to_vec(i).map_or(0, |b| b.len()))
-                .sum();
+            let (start, windowed) = copy_start(transcript.items(), cutoff);
+            let size: usize = (start..len).map(|i| transcript.items().size(i)).sum();
             if size > PAGES_OVER || windowed || as_pages {
                 // A long history goes up as pages: one upload, no records to
                 // compact later — and so does one the retention window trims,
@@ -1343,32 +1331,29 @@ impl Sync {
                 // the empty stream's: a reader that subscribed before the
                 // stream existed holds the empty state at seq 0 and must not
                 // take this for a compaction it is already consistent with.
-                let (plan, _) = session_plan(row, &transcript, sig, start, 0, true, false, cutoff, self.epoch());
+                let (plan, _) = session_plan(row, &*transcript, sig, start, 0, true, false, cutoff, self.epoch());
                 self.checkpoint(row, plan)?;
             } else {
-                let steps = session_steps(&transcript, start, start, len, &chain, sig);
+                let steps = session_steps(&*transcript, start, start, len, chain, sig);
                 self.append(row, &steps);
             }
             self.seen_sig.insert(row.stream, sig.to_string());
             return Ok(());
         }
         let cursor = SessionCursor::parse(&row.cursor).unwrap_or_default();
-        match cursor.delta(&chain) {
+        match cursor.delta(chain) {
             Delta::None => {}
             Delta::From(from) if from >= cursor.start => {
-                let bytes: usize = transcript.items[from..]
-                    .iter()
-                    .map(|i| serde_json::to_vec(i).map_or(0, |b| b.len()))
-                    .sum();
+                let bytes: usize = (from..len).map(|i| transcript.items().size(i)).sum();
                 if bytes > REBUILD_OVER {
-                    return self.rebuild_session(row, &transcript, sig, row.next_seq, true);
+                    return self.rebuild_session(row, &*transcript, sig, row.next_seq, true);
                 }
-                let steps = session_steps(&transcript, cursor.start, from, len, &chain, sig);
+                let steps = session_steps(&*transcript, cursor.start, from, len, chain, sig);
                 self.append(row, &steps);
             }
             Delta::From(_) | Delta::Rebuild => {
                 tracing::info!(stream = %short(&row.stream), "a transcript changed under its copy; rebuilding it");
-                return self.rebuild_session(row, &transcript, sig, row.next_seq, true);
+                return self.rebuild_session(row, &*transcript, sig, row.next_seq, true);
             }
         }
         self.seen_sig.insert(row.stream, sig.to_string());
@@ -1400,7 +1385,7 @@ impl Sync {
         Ok(())
     }
 
-    fn rebuild_session(&mut self, row: &Row, transcript: &Transcript, sig: &str, upto: u64, fresh_link: bool) -> Result<(), String> {
+    fn rebuild_session(&mut self, row: &Row, transcript: &dyn Transcript, sig: &str, upto: u64, fresh_link: bool) -> Result<(), String> {
         let start = content::session_start(transcript.len());
         let (plan, _) = session_plan(row, transcript, sig, start, upto, fresh_link, false, self.trim_cutoff(), self.epoch());
         self.checkpoint(row, plan)?;
@@ -1426,17 +1411,16 @@ impl Sync {
                 self.checkpoint(&row, plan)
             }
             Kind::Session => {
-                let source = source_of(&row).ok_or("an unknown session stream")?;
+                let source = self.source_of(&row).ok_or("an unknown session stream")?;
                 let summary = self
                     .list()
                     .await
                     .into_iter()
-                    .find(|s| s.source == source && s.id == row.id)
+                    .find(|s| s.source() == source && s.id() == row.id)
                     .ok_or("the session is gone")?;
-                let path = Path::new(&summary.file_path);
-                let sig = crate::sessions::file_signature(path).await.ok_or("unreadable")?;
-                let transcript = crate::sessions::loader::load_transcript(&self.drive.paths, source, path, &sig).await;
-                self.rebuild_session(&row, &transcript, &sig, upto, true)
+                let sig = summary.signature().await.ok_or("unreadable")?;
+                let transcript = summary.transcript(&sig).await;
+                self.rebuild_session(&row, &*transcript, &sig, upto, true)
             }
         }
     }
@@ -1642,30 +1626,29 @@ impl Sync {
     }
 
     async fn compact_session(&mut self, row: &Row) -> Result<(), String> {
-        let source = source_of(row).ok_or("an unknown session stream")?;
+        let source = self.source_of(row).ok_or("an unknown session stream")?;
         let summary = self
             .list()
             .await
             .into_iter()
-            .find(|s| s.source == source && s.id == row.id)
+            .find(|s| s.source() == source && s.id() == row.id)
             .ok_or("the session is gone")?;
-        let path = Path::new(&summary.file_path);
-        let sig = crate::sessions::file_signature(path).await.ok_or("unreadable")?;
-        let transcript = crate::sessions::loader::load_transcript(&self.drive.paths, source, path, &sig).await;
+        let sig = summary.signature().await.ok_or("unreadable")?;
+        let transcript = summary.transcript(&sig).await;
         let cursor = SessionCursor::parse(&row.cursor).ok_or("no cursor")?;
         // The pages must be exactly what the records fold to: the transcript
         // still agrees with the copy through its end, and the pages stop there.
         let chain = transcript.chain();
         if cursor
             .end_fp()
-            .is_none_or(|fp| chain.get(cursor.end).is_none_or(|ours| encode_fp(ours) != fp))
+            .is_none_or(|fp| chain.at(cursor.end).is_none_or(|ours| ours != fp))
         {
             return Err("the transcript moved on; the next delta first".into());
         }
-        let truncated = Transcript::new(path, Arc::new(transcript.items[..cursor.end].to_vec()));
+        let truncated = transcript.prefix(cursor.end);
         let (mut plan, base) = session_plan(
             row,
-            &truncated,
+            &*truncated,
             &cursor.sig,
             cursor.start,
             row.next_seq,
@@ -1701,7 +1684,7 @@ impl Sync {
             if self.writer.store.get(&stream).is_none() {
                 continue;
             }
-            let Some(mut rx) = self.drive.injections.draft_watch(source, &id) else {
+            let Some(mut rx) = self.source.drafts(&source, &id) else {
                 continue;
             };
             let key = stream_key(&mk, &stream);
@@ -1711,14 +1694,14 @@ impl Sync {
                 stream,
                 tokio::spawn(async move {
                     let mut last_v = u64::MAX;
-                    while rx.changed().await.is_ok() {
+                    while rx.changed().await {
                         tokio::time::sleep(DRAFT_EVERY).await;
-                        let draft = rx.borrow_and_update().clone();
+                        let draft = rx.seen();
                         if draft.v == last_v {
                             continue;
                         }
                         last_v = draft.v;
-                        let mut body = serde_json::to_value(&draft).unwrap_or(Value::Null);
+                        let mut body = draft.body;
                         body["type"] = Value::String("draft".into());
                         let Ok(bytes) = serde_json::to_vec(&body) else { continue };
                         if bytes.len() > content::BODY_BUDGET {
@@ -1750,7 +1733,7 @@ impl Sync {
 #[allow(clippy::too_many_arguments)]
 fn session_plan(
     row: &Row,
-    transcript: &Transcript,
+    transcript: &dyn Transcript,
     sig: &str,
     start: usize,
     upto: u64,
@@ -1760,7 +1743,7 @@ fn session_plan(
     epoch: Option<u32>,
 ) -> (Plan, usize) {
     let chain = transcript.chain();
-    let items = &transcript.items;
+    let items = transcript.items();
     let len = transcript.len();
     let times = content::item_times(items);
     let k = cutoff.map_or(0, |c| retention::window_start(&times, c)).max(start).min(len);
@@ -1780,7 +1763,7 @@ fn session_plan(
     if base > content::session_start(len) {
         // The retention window, not the item cap, says where the copy
         // starts: the window-start page goes first.
-        let fp = chain.get(base).map(encode_fp).unwrap_or_default();
+        let fp = chain.at(base).unwrap_or_default();
         match row.pages.iter().find(|p| p.window) {
             Some(p) if reuse && same_epoch && p.from == base && p.fp == fp => pages.push(PageSpec::Reuse(p.clone())),
             _ => {
@@ -1799,7 +1782,7 @@ fn session_plan(
     }
     let mut at = base;
     for page in &old[first..] {
-        let unchanged = page.from == at && page.to <= len && page.to > page.from && chain.get(page.to).is_some_and(|fp| encode_fp(fp) == page.fp);
+        let unchanged = page.from == at && page.to <= len && page.to > page.from && chain.at(page.to).is_some_and(|fp| fp == page.fp);
         if !unchanged {
             break;
         }
@@ -1813,7 +1796,7 @@ fn session_plan(
             body,
             from,
             to,
-            fp: chain.get(to).map(encode_fp).unwrap_or_default(),
+            fp: chain.at(to).unwrap_or_default(),
             last_ms: retention::newest(&times[from.min(to)..to]),
             window: false,
         });
@@ -1831,8 +1814,8 @@ fn session_plan(
     (plan, base)
 }
 
-fn session_steps(transcript: &Transcript, start: usize, from: usize, len: usize, chain: &[crate::sessions::loader::Fp], sig: &str) -> Vec<Step> {
-    content::session_bodies(&transcript.items, from, len, chain)
+fn session_steps(transcript: &dyn Transcript, start: usize, from: usize, len: usize, chain: &dyn Fingerprints, sig: &str) -> Vec<Step> {
+    content::session_bodies(transcript.items(), from, len, chain)
         .into_iter()
         .map(|(end, body)| Step {
             fmt: FMT_FEED_V1,
@@ -1891,7 +1874,7 @@ async fn cli_version(cli: &str) -> Option<String> {
 /// Where a session's copy starts: past the newest [`content::MAX_ITEMS`],
 /// and past the entries older than `cutoff` (the retention window) — and
 /// whether it is the window that says so.
-fn copy_start(items: &[crate::sessions::util::TranscriptItem], cutoff: Option<u64>) -> (usize, bool) {
+fn copy_start(items: &dyn Items, cutoff: Option<u64>) -> (usize, bool) {
     let cap = content::session_start(items.len());
     let k = cutoff.map_or(0, |c| retention::window_start(&content::item_times(items), c));
     (cap.max(k), k > cap)
@@ -1908,11 +1891,6 @@ fn ms_iso(ms: u64) -> String {
     droppen_base::time::iso8601(std::time::UNIX_EPOCH + Duration::from_millis(ms))
 }
 
-/// The CLI a session stream's row is for.
-fn source_of(row: &Row) -> Option<Source> {
-    serde_json::from_value(Value::String(row.source.clone())).ok()
-}
-
 fn short(stream: &StreamId) -> String {
     droppen_base::text::hex(&stream.0[..4])
 }
@@ -1920,6 +1898,7 @@ fn short(stream: &StreamId) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sessions::loader::{encode_fp, Transcript};
 
     /// Host identity renewal (§5.4): the writer remembers which key it signs
     /// with; started with another — a renewed key — every stream with a
@@ -2112,8 +2091,8 @@ mod tests {
         assert_eq!(base, 20);
         assert_eq!(kinds(&rebuilt), ["window 20..20", "new 20..27", "new 27..30"]);
         assert_eq!(body_of(&rebuilt, 0)["base"], 20);
-        assert_eq!(copy_start(&transcript.items, cutoff), (20, true));
-        assert_eq!(copy_start(&transcript.items, None), (0, false));
+        assert_eq!(copy_start(&*transcript.items, cutoff), (20, true));
+        assert_eq!(copy_start(&*transcript.items, None), (0, false));
         // A session all within the window is not touched.
         let young = Transcript::new(path, Arc::new(dated_items(10, 0, 0, now)));
         let (plan, base) = session_plan(&r, &young, "sig", 0, 0, true, false, cutoff, Some(0));

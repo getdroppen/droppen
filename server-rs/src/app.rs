@@ -467,7 +467,7 @@ impl RemoteHandApp {
             cloud.attach(crate::agent::link::LinkEnv {
                 addr,
                 credential: auth_for_link.internal_credential().to_string(),
-                drive: drive_for_link,
+                streams: Arc::new(crate::cloud::SessionStreams::new(drive_for_link.paths.clone(), drive_for_link)),
                 host: Arc::new(PushLinkHost),
                 cancel: cancel.clone(),
                 aggregator_switch,
@@ -652,6 +652,39 @@ impl crate::agent::link::LinkHost for PushLinkHost {
 
     fn account_change(&self, paths: Arc<Paths>, title: String, body: String) {
         crate::push::notify_account_change(paths, title, body);
+    }
+}
+
+/// The link's streams read the account bindings, the drivers and the drafts
+/// from the drive, as the session list does.
+impl crate::cloud::LiveSessions for crate::drive::Drive {
+    fn bindings(&self) -> futures_util::future::BoxFuture<'_, std::collections::BTreeMap<String, String>> {
+        Box::pin(self.accounts.session_account_map())
+    }
+
+    fn driver_states(&self) -> DriverStates {
+        self.injections.driver_states()
+    }
+
+    fn drafts(&self, source: Source, id: &str) -> Option<Box<dyn crate::agent::streams::source::DraftFeed>> {
+        self.injections
+            .draft_watch(source, id)
+            .map(|rx| Box::new(rx) as Box<dyn crate::agent::streams::source::DraftFeed>)
+    }
+}
+
+/// A claude session's draft, as its driver publishes it.
+impl crate::agent::streams::source::DraftFeed for tokio::sync::watch::Receiver<crate::inject::drafts::Draft> {
+    fn changed(&mut self) -> futures_util::future::BoxFuture<'_, bool> {
+        Box::pin(async move { tokio::sync::watch::Receiver::changed(self).await.is_ok() })
+    }
+
+    fn seen(&mut self) -> crate::agent::streams::source::Draft {
+        let draft = self.borrow_and_update().clone();
+        crate::agent::streams::source::Draft {
+            v: draft.v,
+            body: serde_json::to_value(&draft).unwrap_or(serde_json::Value::Null),
+        }
     }
 }
 

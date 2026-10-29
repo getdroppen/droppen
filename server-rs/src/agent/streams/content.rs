@@ -20,8 +20,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::sessions::loader::{encode_fp, Fp, RESUME_OVERLAP};
-use crate::sessions::{SessionScope, SessionSummary};
+use super::source::{Fingerprints, Items, SessionRow};
 
 /// The most a body may be: under a record's and a page's largest body
 /// (`rh_proto::stream::MAX_PAGE_BODY`, a few hundred bytes more), with room for
@@ -64,22 +63,15 @@ impl Scope {
 
     /// Whether `row` is copied: its own (unless external ones are asked for)
     /// and updated recently enough. A row whose time does not parse is not.
-    pub fn admits(&self, row: &SessionSummary, now_ms: u64) -> bool {
-        if row.scope != SessionScope::Owned && !self.external {
+    pub fn admits<R: SessionRow + ?Sized>(&self, row: &R, now_ms: u64) -> bool {
+        if !row.owned() && !self.external {
             return false;
         }
-        let Some(updated) = droppen_base::time::parse_iso(&row.updated_at) else {
+        let Some(updated) = droppen_base::time::parse_iso(row.updated_at()) else {
             return false;
         };
         let updated_ms = updated.duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
         now_ms.saturating_sub(updated_ms) <= self.days * 24 * 60 * 60 * 1000
-    }
-}
-
-impl SessionSummary {
-    /// The key a row is filed under in the index: `source/id`.
-    pub fn row_key(&self) -> String {
-        format!("{}/{}", self.source.as_str(), self.id)
     }
 }
 
@@ -110,12 +102,12 @@ impl SessionCursor {
     }
 
     /// The cursor of a copy holding `[start, end)` of a transcript with `chain`.
-    pub fn at(start: usize, end: usize, chain: &[Fp], sig: &str) -> Self {
+    pub fn at(start: usize, end: usize, chain: &dyn Fingerprints, sig: &str) -> Self {
         let from = end.saturating_sub(CURSOR_FPS).max(start);
         Self {
             start,
             end,
-            fps: (from..=end).filter_map(|i| chain.get(i).map(|fp| (i, encode_fp(fp)))).collect(),
+            fps: (from..=end).filter_map(|i| chain.at(i).map(|fp| (i, fp))).collect(),
             sig: sig.to_string(),
         }
     }
@@ -141,10 +133,10 @@ pub enum Delta {
 impl SessionCursor {
     /// The newest position whose fingerprint the copy and the transcript agree
     /// on decides: from there to the end is the delta.
-    pub fn delta(&self, chain: &[Fp]) -> Delta {
+    pub fn delta(&self, chain: &dyn Fingerprints) -> Delta {
         let len = chain.len().saturating_sub(1);
         for (at, fp) in self.fps.iter().rev() {
-            if chain.get(*at).is_some_and(|ours| encode_fp(ours) == *fp) {
+            if chain.at(*at).is_some_and(|ours| ours == *fp) {
                 if *at == self.end && len == self.end {
                     return Delta::None;
                 }
@@ -209,10 +201,10 @@ fn longest_string(v: &mut Value) -> Option<&mut String> {
 }
 
 /// One session body: items `[from, to)` (already serialised, in order).
-fn session_body(from: usize, items: &[String], chain: &[Fp]) -> Vec<u8> {
+fn session_body(from: usize, items: &[String], chain: &dyn Fingerprints) -> Vec<u8> {
     let to = from + items.len();
-    let fp = chain.get(to).map(encode_fp).unwrap_or_default();
-    let prefix = chain.get(to.saturating_sub(RESUME_OVERLAP)).map(encode_fp).unwrap_or_default();
+    let fp = chain.at(to).unwrap_or_default();
+    let prefix = chain.resume(to).unwrap_or_default();
     let mut out = format!("{{\"fromIndex\":{from},\"items\":[");
     for (i, item) in items.iter().enumerate() {
         if i > 0 {
@@ -226,15 +218,15 @@ fn session_body(from: usize, items: &[String], chain: &[Fp]) -> Vec<u8> {
 
 /// Items `[from, to)` of `items` as bodies, each under [`BODY_BUDGET`], with
 /// the position each one ends at.
-pub fn session_bodies<T: Serialize>(items: &[T], from: usize, to: usize, chain: &[Fp]) -> Vec<(usize, Vec<u8>)> {
+pub fn session_bodies(items: &dyn Items, from: usize, to: usize, chain: &dyn Fingerprints) -> Vec<(usize, Vec<u8>)> {
     const ENVELOPE: usize = 200;
     let item_max = BODY_BUDGET - ENVELOPE;
     let mut out = Vec::new();
     let mut batch: Vec<String> = Vec::new();
     let mut batch_from = from;
     let mut size = ENVELOPE;
-    for (i, item) in items.iter().enumerate().take(to).skip(from) {
-        let value = serde_json::to_value(item).unwrap_or(Value::Null);
+    for i in (0..items.len()).take(to).skip(from) {
+        let value = items.json(i);
         let text = serde_json::to_string(&fit_item(value, item_max)).unwrap_or_else(|_| "null".into());
         if !batch.is_empty() && size + text.len() + 1 > BODY_BUDGET {
             let end = batch_from + batch.len();
@@ -259,13 +251,11 @@ pub fn session_start(len: usize) -> usize {
 }
 
 /// Each item's time (ms since the epoch), `None` where it has none that parses.
-pub fn item_times(items: &[crate::sessions::util::TranscriptItem]) -> Vec<Option<u64>> {
-    items
-        .iter()
-        .map(|item| {
-            item.timestamp
-                .0
-                .as_deref()
+pub fn item_times(items: &dyn Items) -> Vec<Option<u64>> {
+    (0..items.len())
+        .map(|i| {
+            items
+                .timestamp(i)
                 .and_then(droppen_base::time::parse_iso)
                 .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                 .map(|d| d.as_millis() as u64)
@@ -286,7 +276,7 @@ pub fn item_times(items: &[crate::sessions::util::TranscriptItem]) -> Vec<Option
 /// reads the trimmed copy as one that simply starts later; a reader that knows
 /// it also tells its user that the `base` earlier entries are only on the
 /// machine. Records never carry it.
-pub fn window_body(base: usize, before: Option<u64>, chain: &[Fp]) -> Vec<u8> {
+pub fn window_body(base: usize, before: Option<u64>, chain: &dyn Fingerprints) -> Vec<u8> {
     let mut body: Value = serde_json::from_slice(&session_body(base, &[], chain)).unwrap_or_else(|_| serde_json::json!({}));
     body["base"] = Value::from(base);
     body["before"] = before.map_or(Value::Null, |ms| {
@@ -298,10 +288,10 @@ pub fn window_body(base: usize, before: Option<u64>, chain: &[Fp]) -> Vec<u8> {
 // ------------------------------------------------------------------ index
 
 /// The rows to send: in-scope rows as `key → JSON`.
-pub fn index_rows(rows: &[SessionSummary], scope: &Scope, now_ms: u64) -> BTreeMap<String, String> {
+pub fn index_rows<R: SessionRow>(rows: &[R], scope: &Scope, now_ms: u64) -> BTreeMap<String, String> {
     rows.iter()
         .filter(|r| scope.admits(r, now_ms))
-        .filter_map(|r| serde_json::to_string(r).ok().map(|json| (r.row_key(), json)))
+        .filter_map(|r| r.json().map(|json| (r.row_key(), json)))
         .collect()
 }
 
@@ -525,8 +515,9 @@ pub fn status_fingerprint(body: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sessions::loader::fingerprint_chain;
+    use crate::sessions::loader::{encode_fp, fingerprint_chain, RESUME_OVERLAP};
     use crate::sessions::util::TranscriptItem;
+    use crate::sessions::{SessionScope, SessionSummary};
 
     fn items(n: usize, text_len: usize) -> Vec<TranscriptItem> {
         (0..n)

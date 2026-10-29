@@ -468,13 +468,6 @@
       ]
     },
     {
-      "why": "The agent publishes sessions and transcripts by calling into them (sessions, Drive). They go through the port the agent owns, StreamSource, which cloud implements over sessions.",
-      "edges": [
-        "agent -> drive",
-        "agent -> sessions"
-      ]
-    },
-    {
       "why": "agent::control goes to cloud, but the agent's rotation reads its machine_fingerprint, which stays with the agent.",
       "edges": [
         "agent -> agent::control"
