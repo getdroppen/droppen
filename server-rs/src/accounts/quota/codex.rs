@@ -18,8 +18,9 @@
 //!
 //! # Cost
 //!
-//! An app-server spawn is ~0.8 s, where a file read is microseconds, so it
-//! obeys the three rules the parent module's header sets out: one probe per
+//! An app-server spawn is ~0.8 s, where a file read is microseconds, so the
+//! reading is kept by the parent's [`super::CodexQuotaCache`], which obeys the
+//! three rules the parent module's header sets out: one probe per
 //! [`crate::accounts::quota::USAGE_TTL`], **failures cached too**, one probe in flight at
 //! a time, and a request waits only inside the collect budget it already had.
 //!
@@ -33,17 +34,14 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, SystemTime};
 
-use futures_util::future::{BoxFuture, FutureExt, Shared};
-use gotcha::Schematic;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{ChildStdin, ChildStdout};
 
-use super::{window, QuotaWindow, USAGE_TTL};
+use super::{window, CodexQuota, CodexQuotaSource, QuotaWindow};
 use droppen_http::openapi_ext::Nullable;
 use super::ProbeRoots;
 use droppen_base::process_env::{apply_env, clean_env_bare};
@@ -111,47 +109,6 @@ fn window_label(minutes: i64) -> String {
         m if m < 1440 => format!("{}h", (m as f64 / 60.0).round() as i64),
         m => format!("{}d", (m as f64 / 1440.0).round() as i64),
     }
-}
-
-// ----------------------------------------------------------------- the shapes
-
-/// Where a Codex reading came from.
-///
-/// On the wire, for the same reason `models::ModelListSource` is: the
-/// app server answers with the account's live numbers, while the session logs
-/// only say what some past turn was told. One shown as the other is how a panel
-/// tells a user they have 30% left of a week they have already spent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Schematic)]
-#[serde(rename_all = "snake_case")]
-pub enum CodexQuotaSource {
-    /// `codex app-server` answered `account/rateLimits/read` just now.
-    AppServer,
-    /// The app server could not be asked; these numbers come out of a rollout
-    /// file and are only as current as `updatedAt` says.
-    SessionLog,
-}
-
-/// Codex's rolling-window usage.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schematic)]
-#[serde(rename_all = "camelCase")]
-pub struct CodexQuota {
-    /// Plan name, e.g. `pro`.
-    pub plan: Nullable<String>,
-    /// ISO-8601 of the reading. For [`CodexQuotaSource::AppServer`] this is the
-    /// moment the app server answered; for the log fallback it is the timestamp
-    /// the rollout entry carried, which may be hours old.
-    pub updated_at: Nullable<String>,
-    /// The rolling windows.
-    pub windows: Vec<QuotaWindow>,
-    /// Which of the two readings above this is.
-    pub source: CodexQuotaSource,
-    /// Whether ordinary usage is blocked right now — the account is out, and
-    /// the next message will be refused rather than merely expensive.
-    ///
-    /// `null` is *unknown*, not "fine": only the app server is asked this, so
-    /// the log fallback always leaves it null rather than implying an account
-    /// with 0% left is still able to run.
-    pub blocked: Nullable<bool>,
 }
 
 // ------------------------------------------------------- the app-server reply
@@ -560,97 +517,10 @@ impl ProbeRoots {
     }
 }
 
-// ------------------------------------------------------------------ the cache
-
-/// A probe that is already running; awaiting it is free.
-type Pending = Shared<BoxFuture<'static, ()>>;
-
-/// One reading, successful or not.
-#[derive(Debug, Clone)]
-struct CacheEntry {
-    /// When the last attempt finished: this is what [`USAGE_TTL`] governs, so
-    /// an app server that hangs costs one probe per TTL, not one per request.
-    at: Instant,
-    /// The last reading actually produced, kept across a later failure. It
-    /// carries its own `updatedAt`, so keeping it is honest: the panel shows
-    /// the number it was given and the age it was given at.
-    quota: Option<CodexQuota>,
-}
-
-/// The Codex reading, cached for the process.
-///
-/// One entry, because Codex has one config root on this machine — unlike the
-/// Claude cache next door, which is keyed per login. Concurrent callers
-/// collapse onto the one probe in flight.
-pub struct CodexQuotaCache {
-    probe: ProbeRoots,
-    entry: Mutex<Option<CacheEntry>>,
-    in_flight: Mutex<Option<Pending>>,
-}
-
-impl CodexQuotaCache {
-    /// An empty cache for one server instance.
-    pub fn new(probe: ProbeRoots) -> Self {
-        Self {
-            probe,
-            entry: Mutex::new(None),
-            in_flight: Mutex::new(None),
-        }
-    }
-
-    /// What the cache holds right now; never spawns anything, never waits.
-    pub fn cached(&self) -> Option<CodexQuota> {
-        self.entry
-            .lock()
-            .expect("codex quota cache poisoned")
-            .as_ref()
-            .and_then(|entry| entry.quota.clone())
-    }
-
-    /// Start a probe when the reading has aged out, and hand back the run in
-    /// flight so a caller can wait for it — or not.
-    pub fn refresh(self: &Arc<Self>) -> Option<Pending> {
-        if let Some(entry) = self.entry.lock().expect("codex quota cache poisoned").as_ref() {
-            if entry.at.elapsed() < USAGE_TTL {
-                return None;
-            }
-        }
-        let mut in_flight = self.in_flight.lock().expect("codex quota probe poisoned");
-        if let Some(running) = in_flight.as_ref() {
-            return Some(running.clone());
-        }
-
-        let cache = self.clone();
-        let pending: Pending = async move {
-            let quota = cache.probe.codex().await;
-            cache.store(quota);
-            *cache.in_flight.lock().expect("codex quota probe poisoned") = None;
-        }
-        .boxed()
-        .shared();
-
-        // Driven even if nobody awaits it: a caller that gave up on the collect
-        // budget still wants the reading ready for the next poll.
-        tokio::spawn(pending.clone());
-        *in_flight = Some(pending.clone());
-        Some(pending)
-    }
-
-    /// Record a reading, keeping the last one behind a failure.
-    fn store(&self, quota: Option<CodexQuota>) {
-        let mut entry = self.entry.lock().expect("codex quota cache poisoned");
-        let kept = quota.or_else(|| entry.as_ref().and_then(|previous| previous.quota.clone()));
-        *entry = Some(CacheEntry {
-            at: Instant::now(),
-            quota: kept,
-        });
-    }
-}
-
 impl ProbeRoots {
     /// The live reading if the app server can be reached, the session logs if
     /// not.
-    async fn codex(&self) -> Option<CodexQuota> {
+    pub(crate) async fn codex(&self) -> Option<CodexQuota> {
         if let Some(live) = self.app_server().await {
             return Some(live);
         }
@@ -661,8 +531,10 @@ impl ProbeRoots {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::accounts::quota::CodexQuotaCache;
     use droppen_instance::paths::Paths;
     use serde_json::json;
+    use std::sync::Arc;
 
     /// `2026-09-20T12:00:00Z` — a fixed "now" for the readings below.
     const NOW_MS: u64 = 1_790_078_400_000;
@@ -915,7 +787,10 @@ mod tests {
 
     fn cache() -> (tempfile::TempDir, Arc<CodexQuotaCache>) {
         let home = tempfile::tempdir().expect("tempdir");
-        let cache = Arc::new(CodexQuotaCache::new(ProbeRoots::of(&Paths::new(home.path().to_path_buf()))));
+        let cache = Arc::new(CodexQuotaCache::new(
+            ProbeRoots::of(&Paths::new(home.path().to_path_buf())),
+            Arc::new(crate::accounts::login::codex::CodexLogin),
+        ));
         (home, cache)
     }
 

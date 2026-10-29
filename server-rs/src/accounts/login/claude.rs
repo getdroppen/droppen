@@ -6,7 +6,7 @@ use futures_util::future::BoxFuture;
 use super::Login;
 use crate::accounts::local_login::LocalLoginState;
 use crate::accounts::quota::readings::SharedReading;
-use crate::accounts::quota::{claude_plan_label, is_rate_limited, mentions_status, ProbeRoots, QuotaProbeError, UsageProbe};
+use crate::accounts::quota::{claude_plan_label, is_rate_limited, mentions_status, CodexQuota, ProbeRoots, QuotaProbeError, UsageProbe};
 use crate::accounts::store::{AccountError, AccountKind, AccountLaunch, AccountProvider};
 use droppen_base::env_block::EnvVar;
 use crate::accounts::verify::{reason, Scratch, Verdict, PROBE_PROMPT, PROBE_TIMEOUT};
@@ -244,6 +244,12 @@ impl Login for ClaudeCodeLogin {
             }
             (plan, tier)
         }))
+    }
+
+    /// None: claude's quota is read per login, by [`Login::probe`] and by its
+    /// sessions.
+    fn local_quota<'a>(&'a self, _roots: &'a ProbeRoots) -> Option<BoxFuture<'a, Option<CodexQuota>>> {
+        None
     }
 }
 

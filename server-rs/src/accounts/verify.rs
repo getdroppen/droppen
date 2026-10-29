@@ -262,6 +262,10 @@ mod tests {
             Box::pin(async { Verdict::Valid })
         }
 
+        fn local_quota<'a>(&'a self, _roots: &'a crate::accounts::quota::ProbeRoots) -> Option<BoxFuture<'a, Option<crate::accounts::quota::CodexQuota>>> {
+            None
+        }
+
         fn probe<'a>(
             &'a self,
             _roots: &'a crate::accounts::quota::ProbeRoots,
