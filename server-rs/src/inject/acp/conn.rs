@@ -56,16 +56,35 @@ pub(super) enum Event {
 #[derive(Clone)]
 struct Writer(Arc<tokio::sync::Mutex<Option<ChildStdin>>>);
 
+/// Why a message did not reach the agent.
+enum Unsent {
+    /// It will not encode (a path that is not UTF-8).
+    Unencodable,
+    /// The input is closed, or the write failed.
+    Closed,
+}
+
+impl From<Unsent> for InjectError {
+    fn from(unsent: Unsent) -> InjectError {
+        InjectError::message(match unsent {
+            Unsent::Unencodable => "a message to the agent would not encode",
+            Unsent::Closed => "the agent closed its input",
+        })
+    }
+}
+
 impl Writer {
-    /// Write one message. `false` when the input is closed, the write failed,
-    /// or the message will not encode (a path that is not UTF-8).
-    async fn send(&self, message: &impl Serialize) -> bool {
-        let Ok(mut line) = serde_json::to_string(message) else { return false };
+    /// Write one message.
+    async fn send(&self, message: &impl Serialize) -> Result<(), Unsent> {
+        let mut line = serde_json::to_string(message).map_err(|_| Unsent::Unencodable)?;
         line.push('\n');
         let mut stdin = self.0.lock().await;
-        let Some(pipe) = stdin.as_mut() else { return false };
+        let pipe = stdin.as_mut().ok_or(Unsent::Closed)?;
         let written = tokio::time::timeout(WRITE_TIMEOUT, async { pipe.write_all(line.as_bytes()).await.and(pipe.flush().await) }).await;
-        matches!(written, Ok(Ok(())))
+        match written {
+            Ok(Ok(())) => Ok(()),
+            _ => Err(Unsent::Closed),
+        }
     }
 
     async fn close(&self) {
@@ -145,9 +164,9 @@ impl Conn {
             method: method.into(),
             params: Some(params),
         };
-        if !self.writer.send(&JsonRpcMessage::wrap(request)).await {
+        if let Err(unsent) = self.writer.send(&JsonRpcMessage::wrap(request)).await {
             self.pending.lock().unwrap().replies.remove(&id);
-            return Err(InjectError::message("the agent closed its input"));
+            return Err(unsent.into());
         }
         match answer.await {
             Ok(Ok(result)) => Ok(result),
@@ -246,12 +265,7 @@ impl Conn {
             method: AGENT_METHOD_NAMES.session_prompt.into(),
             params: Some(PromptRequest::new(id.to_owned(), vec![ContentBlock::Text(TextContent::new(text))])),
         };
-        let sent = self.writer.send(&JsonRpcMessage::wrap(prompt)).await;
-        if sent {
-            Ok(())
-        } else {
-            Err(InjectError::message("the agent closed its input"))
-        }
+        Ok(self.writer.send(&JsonRpcMessage::wrap(prompt)).await?)
     }
 
     /// Ask the agent to end the turn in flight.
@@ -260,11 +274,7 @@ impl Conn {
             method: AGENT_METHOD_NAMES.session_cancel.into(),
             params: Some(CancelNotification::new(id.to_owned())),
         };
-        if self.writer.send(&JsonRpcMessage::wrap(cancel)).await {
-            Ok(())
-        } else {
-            Err(InjectError::message("the agent closed its input"))
-        }
+        Ok(self.writer.send(&JsonRpcMessage::wrap(cancel)).await?)
     }
 
     /// Close the agent's stdin: how an ACP agent over stdio is told to exit.
@@ -363,7 +373,7 @@ async fn read(stdout: ChildStdout, writer: Writer, pending: Arc<Mutex<Pending>>,
                             error: RpcError::invalid_request(),
                         }
                     };
-                    writer.send(&JsonRpcMessage::wrap(reply)).await;
+                    let _ = writer.send(&JsonRpcMessage::wrap(reply)).await;
                 });
             }
             (Some("session/update"), None) => match serde_json::from_value(message.get("params").cloned().unwrap_or(Value::Null)) {

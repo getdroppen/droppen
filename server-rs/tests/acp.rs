@@ -305,8 +305,8 @@ async fn an_acp_session_is_created_streamed_interrupted_reopened_and_archived() 
 
 /// What this client answers an agent's own requests, line for line: a
 /// permission is declined, files and terminals are served, and a method nobody
-/// offers is an error. Each answer echoes the request's id as it came, whatever
-/// its form.
+/// offers is an error. Each answer echoes a string, number or null id as it
+/// came; a request under any other id is not run and is refused under null.
 #[tokio::test]
 async fn the_agents_requests_are_answered_in_these_lines() {
     let home = tempfile::tempdir().expect("tempdir");
