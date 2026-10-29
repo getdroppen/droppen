@@ -317,6 +317,34 @@ mod tests {
         assert!(!root.exists(), "a channel that is off must stop advertising a tool that can only refuse");
     }
 
+    /// A Claude session gets its own channel under the `DROPPEN_*` names, and
+    /// nothing of a channel this server inherited: started inside an older
+    /// server's session, it holds that session's token under the old names too
+    /// ([`droppen_base::env::OLDER_HANDOFFS`]), and its sessions must not.
+    #[tokio::test]
+    async fn a_decorated_env_carries_its_own_channel_and_no_inherited_one() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let paths = Paths::for_instance(dir.path().to_path_buf(), "notifytest");
+        let instance = InstanceDirs::new(&paths.data_dir(), "notifytest").expect("instance");
+        instance.create().expect("create");
+        let live = store::StoredNotify { enabled: true, endpoint: "https://bark.invalid/key".into(), ..Default::default() };
+        store::write(&paths, &live).await.expect("store");
+        std::fs::write(instance.port_file(), "4321").expect("port");
+
+        let inherited = droppen_base::env::OLDER_HANDOFFS
+            .iter()
+            .chain(&[cli::URL_ENV, cli::TOKEN_ENV])
+            .map(|name| (name.to_string(), "outer".to_string()));
+        let mut env = droppen_base::process_env::clean_env_from(inherited, std::iter::empty::<(String, String)>());
+        decorate(&paths, &instance, Source::Claude, "s1", &mut env).await;
+
+        assert_eq!(env.get(cli::URL_ENV), Some(&format!("http://127.0.0.1:4321{}", super::super::NOTIFY_PATH)));
+        assert!(env.get(cli::TOKEN_ENV).is_some_and(|token| token != "outer"), "its own token");
+        for name in droppen_base::env::OLDER_HANDOFFS {
+            assert!(!env.contains_key(name), "{name}: another session's");
+        }
+    }
+
     /// The frontmatter is a contract with the CLI, not prose: a skill whose
     /// `name` does not match its directory, or whose `description` is missing,
     /// is a skill the model never hears about.

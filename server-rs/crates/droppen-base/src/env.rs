@@ -4,10 +4,47 @@
 //!
 //! The names from before the rename to Droppen (`REMOTE_HAND_*`, `RH_*`) are
 //! neither read nor set for the programs the server starts: every supported
-//! Droppen program reads the `DROPPEN_*` names.
+//! Droppen program reads the `DROPPEN_*` names. Two lists here still spell
+//! some of them, and this is the one file that may: what an older Droppen
+//! hands its children, which this server does not pass on
+//! ([`OLDER_HANDOFFS`]), and the two directory names `serve` warns about
+//! ([`unread_dirs`]).
 
 /// The settings whose empty value is a value ([`var_or_empty`]).
 const EMPTY_IS_A_VALUE: &[&str] = &["DROPPEN_AGENT_DIRECT_STUN"];
+
+/// What an older Droppen (0.2.125 to 0.2.134) sets, besides the `DROPPEN_*`
+/// name, under the name from before the rename for a program it starts: a
+/// session's notify channel and token, the desktop app's and `up`'s word to
+/// their server. This server reads none of them, and no child of it inherits
+/// them ([`crate::process_env::clean_env`]): a server started inside such a
+/// session would otherwise hand that session's token, a capability with no
+/// expiry, to every session of its own, and an older `droppen-notify` there
+/// would take that channel for its own.
+pub const OLDER_HANDOFFS: [&str; 4] = ["RH_NOTIFY_URL", "RH_NOTIFY_TOKEN", "RH_DESKTOP_APP", "RH_SUPERVISED"];
+
+/// The two old names that silently move a server's files when unread: a
+/// hand-written launchd plist or unit that sets only these, under an older
+/// `up` that self-upgrades its server to this one, would run that server on
+/// the default install's files. `(old, new)`.
+const UNREAD_DIRS: [(&str, &str); 2] = [("REMOTE_HAND_DATA_DIR", "DROPPEN_DATA_DIR"), ("REMOTE_HAND_CONFIG_DIR", "DROPPEN_CONFIG_DIR")];
+
+/// What `serve` says at start about [`UNREAD_DIRS`]: a line, by name and never
+/// by value, for each old name that is set while its new name is not. Nothing
+/// when both are set, as v0.2.134 asked: the new one is then read.
+pub fn unread_dirs() -> Vec<String> {
+    unread_dirs_in(|name| std::env::var(name).ok())
+}
+
+/// [`unread_dirs`], reading through `read`.
+fn unread_dirs_in(read: impl Fn(&str) -> Option<String>) -> Vec<String> {
+    let set = |name: &str| read(name).is_some_and(|value| !value.trim().is_empty());
+    UNREAD_DIRS
+        .iter()
+        .filter(|(old, new)| set(old) && !set(new))
+        .map(|(old, new)| format!("{old} is set but no longer read; set {new}"))
+        .collect()
+}
 
 /// The variable `name` (a `DROPPEN_*` name), trimmed, with an empty value
 /// unset.
@@ -95,6 +132,26 @@ mod tests {
         assert_eq!(var(NAME), None, "empty is unset");
         assert_eq!(read(NAME).as_deref(), Some(""), "where empty is a value, it is one");
         std::env::remove_var(NAME);
+    }
+
+    /// Each unread directory name is said by name, only while its new name is
+    /// unset.
+    #[test]
+    fn an_unread_directory_name_is_said_by_name() {
+        let said = |vars: &[(&str, &str)]| {
+            let vars: std::collections::HashMap<&str, &str> = vars.iter().copied().collect();
+            unread_dirs_in(|name| vars.get(name).map(|value| value.to_string()))
+        };
+        assert_eq!(
+            said(&[("REMOTE_HAND_DATA_DIR", "/secret/a"), ("REMOTE_HAND_CONFIG_DIR", "/secret/b")]),
+            [
+                "REMOTE_HAND_DATA_DIR is set but no longer read; set DROPPEN_DATA_DIR",
+                "REMOTE_HAND_CONFIG_DIR is set but no longer read; set DROPPEN_CONFIG_DIR",
+            ]
+        );
+        assert!(said(&[("REMOTE_HAND_DATA_DIR", "/d"), ("DROPPEN_DATA_DIR", "/d")]).is_empty(), "moved over already");
+        assert!(said(&[("REMOTE_HAND_DATA_DIR", " ")]).is_empty(), "empty is unset");
+        assert!(said(&[("RH_SESSION_LOG", "0")]).is_empty(), "only the two directory names");
     }
 
     /// No source names an `RH_*` or `REMOTE_HAND_*` variable in a string of

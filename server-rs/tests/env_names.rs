@@ -1,7 +1,8 @@
 //! The server's environment names are its `DROPPEN_*` ones: the names from
-//! before the rename to Droppen (`REMOTE_HAND_*`, `RH_*`) are ignored, nothing
-//! is said about them, and the programs the server starts get only the
-//! `DROPPEN_*` names.
+//! before the rename to Droppen (`REMOTE_HAND_*`, `RH_*`) are ignored, and the
+//! programs the server starts get only the `DROPPEN_*` names. Of the old
+//! names, `serve` says something only about the two directory names whose
+//! silence would move its files.
 //!
 //! Checked on the binary, each process started with nothing in its
 //! environment but what the case sets (so no case sees another's variables,
@@ -58,11 +59,15 @@ impl Serve {
         Serve { child, log }
     }
 
-    /// The port the server recorded under `data` once it listens there.
-    fn port_in(&mut self, data: &Path) -> u16 {
+    /// The port the server recorded under `data` once it listens there; a
+    /// failure at once if anything appears at a path of `not_in`.
+    fn port_in(&mut self, data: &Path, not_in: &[&Path]) -> u16 {
         let port_file = data.join("instances/default/server.port");
         let deadline = Instant::now() + BUDGET;
         loop {
+            if let Some(wrong) = not_in.iter().find(|path| path.exists()) {
+                panic!("the server wrote {} instead of {}: {}", wrong.display(), data.display(), self.said());
+            }
             if let Some(port) = std::fs::read_to_string(&port_file).ok().and_then(|t| t.trim().parse::<u16>().ok()) {
                 if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
                     return port;
@@ -128,12 +133,15 @@ fn a_server_with_the_new_names_uses_them() {
             ("DROPPEN_CONFIG_DIR", &config_s),
             ("DROPPEN_DESKTOP_APP", "1"),
             ("DROPPEN_SESSION_LOG", "0"),
+            // Moved over as v0.2.134 asked: both names, one value.
+            ("REMOTE_HAND_DATA_DIR", &data_s),
         ],
     );
-    let port = serve.port_in(&data);
+    let port = serve.port_in(&data, &[&home.join(".local/share/remote-hand")]);
     let status = get(port, "/api/auth/status");
     assert!(status.contains("\"desktopApp\":true"), "DROPPEN_DESKTOP_APP was read: {status}");
     let said = serve.stop();
+    assert!(!said.contains("REMOTE_HAND_DATA_DIR"), "nothing to say once the new name is set: {said}");
     assert!(config.is_dir(), "its configuration went to DROPPEN_CONFIG_DIR");
     assert!(!home.join(".local/share/remote-hand").exists(), "not to the default data directory: {said}");
     assert!(!home.join(".config/remote-hand").exists(), "nor the default configuration directory: {said}");
@@ -149,19 +157,23 @@ fn a_server_ignores_the_old_names() {
         ("REMOTE_HAND_DATA_DIR", data_s.as_str()),
         ("REMOTE_HAND_CONFIG_DIR", config_s.as_str()),
         ("RH_DESKTOP_APP", "1"),
-        ("RH_SUPERVISED", "1"),
     ];
     let mut serve = Serve::start(&home, &old);
     // The default install's files, under the scratch home.
-    let port = serve.port_in(&home.join(".local/share/remote-hand"));
+    let port = serve.port_in(&home.join(".local/share/remote-hand"), &[&data, &config]);
     let status = get(port, "/api/auth/status");
     assert!(status.contains("\"desktopApp\":false"), "RH_DESKTOP_APP was not read: {status}");
     let said = serve.stop();
     assert!(home.join(".config/remote-hand").is_dir(), "its configuration went to the default directory: {said}");
     assert!(!data.exists() && !config.exists(), "the old names' directories were not used: {said}");
-    for (name, _) in old {
-        assert!(!said.contains(name), "nothing is said about {name}: {said}");
+    // The two names that silently moved its files are said once each, by
+    // name only; the desktop app's old name is nobody's setting.
+    for (old, new) in [("REMOTE_HAND_DATA_DIR", "DROPPEN_DATA_DIR"), ("REMOTE_HAND_CONFIG_DIR", "DROPPEN_CONFIG_DIR")] {
+        let line = format!("{old} is set but no longer read; set {new}");
+        assert_eq!(said.lines().filter(|l| l.contains(&line)).count(), 1, "{line}: {said}");
     }
+    assert!(said.lines().filter(|l| l.contains("no longer read")).all(|l| !l.contains(&data_s) && !l.contains(&config_s)), "a name, never a value: {said}");
+    assert!(!said.contains("RH_DESKTOP_APP"), "{said}");
 }
 
 /// A command reads its files by the `DROPPEN_*` names only, and says nothing
