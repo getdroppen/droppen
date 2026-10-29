@@ -3,8 +3,9 @@
 
 use serde::Serialize;
 
-/// What a relay sends the Hub.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+/// What a relay sends the Hub. Its `Debug` leaves out the registration
+/// token and the signatures.
+#[derive(Clone, PartialEq, Serialize)]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum RelayToHub {
     /// The sign-in: `sig` (hex) over [`crate::sig::HubLogin`] with role
@@ -37,6 +38,41 @@ pub enum RelayToHub {
     /// Pin `new_key` instead of the signed-in key: `sig_new`, the new key's
     /// sign-in signature for the same challenge.
     Rotate { new_key: String, time_ms: u64, sig_new: String },
+}
+
+impl std::fmt::Debug for RelayToHub {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Login { id, time_ms, version, features, .. } => f
+                .debug_struct("Login")
+                .field("id", id)
+                .field("time_ms", time_ms)
+                .field("version", version)
+                .field("features", features)
+                .finish_non_exhaustive(),
+            Self::Register { sign_key, origin, version, time_ms, features, .. } => f
+                .debug_struct("Register")
+                .field("sign_key", sign_key)
+                .field("origin", origin)
+                .field("version", version)
+                .field("time_ms", time_ms)
+                .field("features", features)
+                .finish_non_exhaustive(),
+            Self::Health { conns, channels, bytes_in_per_s, bytes_out_per_s, load, version } => f
+                .debug_struct("Health")
+                .field("conns", conns)
+                .field("channels", channels)
+                .field("bytes_in_per_s", bytes_in_per_s)
+                .field("bytes_out_per_s", bytes_out_per_s)
+                .field("load", load)
+                .field("version", version)
+                .finish(),
+            Self::Usage(report) => f.debug_tuple("Usage").field(report).finish(),
+            Self::Draining { until_ms } => f.debug_struct("Draining").field("until_ms", until_ms).finish(),
+            Self::Deregister { reason } => f.debug_struct("Deregister").field("reason", reason).finish(),
+            Self::Rotate { new_key, time_ms, .. } => f.debug_struct("Rotate").field("new_key", new_key).field("time_ms", time_ms).finish_non_exhaustive(),
+        }
+    }
 }
 
 /// One usage report: `boot` is random per relay process and `seq` counts up
@@ -119,6 +155,29 @@ mod tests {
         ];
         for (message, want) in cases {
             assert_eq!(to_value(&message).unwrap(), want);
+        }
+    }
+
+    #[test]
+    fn debug_leaves_out_the_token_and_the_signatures() {
+        let secret = || "secret".to_string();
+        let messages = [
+            RelayToHub::Login { id: "r-1".into(), time_ms: 7, sig: secret(), version: "0.1.0".into(), features: vec![] },
+            RelayToHub::Register {
+                token: secret(),
+                sign_key: "cd".into(),
+                origin: "wss://r".into(),
+                version: "0.1.0".into(),
+                time_ms: 7,
+                sig: secret(),
+                features: vec![],
+            },
+            RelayToHub::Rotate { new_key: "ef".into(), time_ms: 7, sig_new: secret() },
+        ];
+        for message in messages {
+            let text = format!("{message:?}");
+            assert!(!text.contains("secret"), "{text}");
+            assert!(text.ends_with(", .. }"), "{text}");
         }
     }
 

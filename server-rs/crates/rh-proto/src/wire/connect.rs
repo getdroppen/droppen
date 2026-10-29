@@ -4,8 +4,9 @@
 
 use serde::{Deserialize, Serialize};
 
-/// What an agent or a device sends a relay.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// What an agent or a device sends a relay. Its `Debug` leaves out the
+/// ticket and the signature.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum PeerToRelay {
     /// The sign-in: the Hub's ticket, and the holder's signature (hex) over
@@ -13,6 +14,15 @@ pub enum PeerToRelay {
     Login { ticket: String, time_ms: u64, sig: String },
     /// A renewed ticket for the signed-in connection.
     Ticket { ticket: String },
+}
+
+impl std::fmt::Debug for PeerToRelay {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Login { time_ms, .. } => f.debug_struct("Login").field("time_ms", time_ms).finish_non_exhaustive(),
+            Self::Ticket { .. } => f.debug_struct("Ticket").finish_non_exhaustive(),
+        }
+    }
 }
 
 /// What a relay sends an agent or a device.
@@ -120,6 +130,16 @@ mod tests {
         for (message, want) in cases {
             assert_eq!(to_value(&message).unwrap(), want);
         }
+    }
+
+    #[test]
+    fn debug_leaves_out_the_ticket_and_the_signature() {
+        let login = PeerToRelay::Login { ticket: "secret-ticket".into(), time_ms: 7, sig: "secret-sig".into() };
+        let ticket = PeerToRelay::Ticket { ticket: "secret-ticket".into() };
+        for text in [format!("{login:?}"), format!("{ticket:?}")] {
+            assert!(!text.contains("secret"), "{text}");
+        }
+        assert_eq!(format!("{login:?}"), "Login { time_ms: 7, .. }");
     }
 
     #[test]
