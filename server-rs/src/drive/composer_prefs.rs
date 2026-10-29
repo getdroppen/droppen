@@ -36,6 +36,7 @@ use droppen_instance::db::{scope, Db};
 use droppen_http::openapi_ext::Optional;
 use droppen_instance::paths::Paths;
 use crate::sessions::reference::local_key;
+use crate::models::ModelRule;
 use crate::sessions::Source;
 use droppen_base::time::iso8601;
 
@@ -54,40 +55,6 @@ pub const MAX_SESSION_ENTRIES: usize = 300;
 /// `format!("{source}/{session_id}")` and therefore contains a `/`, and this
 /// does not.
 const DEFAULTS_KEY: &str = "defaults";
-
-/// What a model id may look like, here and on the send routes.
-///
-/// A word-ish name, optionally followed by one bracketed variant tag — the
-/// shape of `claude-opus-4-8[1m]`, which is how the CLI is asked for the
-/// long-context variant of a model that has one. The tag is spelled out rather
-/// than folded into the character class on purpose: the value is handed to a
-/// CLI as a flag value, and a class permissive enough to hold a bracket
-/// anywhere would also hold an unbalanced one. Alphanumerics only inside it, so
-/// nothing a shell would read as special can ever get in even if a caller one
-/// day builds a command line out of this instead of an argv.
-///
-/// The name itself is `[[:word:]]`, `.`, `:` and `-`. That POSIX class is the
-/// ASCII `\w` the original pattern was reaching for by writing `(?-u:\w)`
-/// *inside* a character class — where it is not a flag group at all: the `?-u`
-/// in the middle of it reads as a **range**, `?`(0x3F) through `u`(0x75), and
-/// that range quietly admitted `\`, `` ` ``, `^`, `@`, `(`, `)` and both
-/// brackets. So brackets were already getting through, by accident and
-/// unbalanced; this says what is meant instead.
-pub const MODEL_PATTERN: &str = r"^[A-Za-z0-9][[:word:].:-]*(?:\[[A-Za-z0-9]+\])?$";
-
-/// A model id as an ACP agent spells it: `provider:model`, where the model
-/// half is often a path (`openrouter:vendor/name`). Still nothing that could
-/// read as a flag or hold a space; the agent checks it against its own list.
-pub const ACP_MODEL_PATTERN: &str = r"^[A-Za-z0-9][[:word:].:/@+-]*$";
-
-/// The pattern and length a model id for `source` is held to.
-pub fn model_rule(source: Source) -> (&'static str, usize) {
-    if source == Source::Acp {
-        (ACP_MODEL_PATTERN, 200)
-    } else {
-        (MODEL_PATTERN, 100)
-    }
-}
 
 /// One remembered set of composer choices.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Schematic)]
@@ -121,28 +88,11 @@ pub struct ComposerPrefs {
 #[error("{0}")]
 pub struct ComposerPrefsError(pub String);
 
-fn matches(pattern: &'static str, value: &str) -> bool {
-    // The patterns are compile-time constants from the former TypeScript
-    // server's `schemas.ts`; building them per call is cheap next to the commit
-    // that follows.
-    regex::Regex::new(pattern).expect("valid composer pattern").is_match(value)
-}
-
-/// The bounds `ComposerChoiceSchema` puts on each field.
-fn validate(source: Source, choice: &ComposerChoice) -> Result<(), ComposerPrefsError> {
-    let (model_pattern, model_length) = model_rule(source);
-    let checks: [(&str, Option<&str>, &'static str, usize); 3] = [
-        ("model", choice.model.as_deref(), model_pattern, model_length),
-        ("effort", choice.effort.as_deref(), r"^[a-z]+$", 20),
-        ("permission", choice.permission.as_deref(), r"^[A-Za-z][A-Za-z-]*$", 40),
-    ];
-    for (field, value, pattern, max_length) in checks {
-        let Some(value) = value else { continue };
-        if value.chars().count() > max_length || !matches(pattern, value) {
-            return Err(ComposerPrefsError(format!("invalid {field}")));
-        }
-    }
-    Ok(())
+/// The bounds `ComposerChoiceSchema` puts on each field: the send routes' own
+/// ([`crate::drive::routes::validate_flags`]), so a choice the composer keeps
+/// is one a message can be sent with.
+fn validate(rule: ModelRule, choice: &ComposerChoice) -> Result<(), ComposerPrefsError> {
+    crate::drive::routes::validate_flags(rule, choice.model.as_deref(), choice.effort.as_deref(), choice.permission.as_deref()).map_err(ComposerPrefsError)
 }
 
 /// The composer preferences, over the machine-wide state database.
@@ -255,8 +205,8 @@ impl ComposerPrefsStore {
     /// The validation happens before anything is opened or written, so a value
     /// that could read as a flag leaves no trace at all — not a row, not a file,
     /// not a database where there was none.
-    pub async fn update(&self, source: Source, session_id: Option<&str>, patch: &ComposerChoice) -> Result<ComposerPrefs, ComposerPrefsError> {
-        validate(source, patch)?;
+    pub async fn update(&self, source: Source, rule: ModelRule, session_id: Option<&str>, patch: &ComposerChoice) -> Result<ComposerPrefs, ComposerPrefsError> {
+        validate(rule, patch)?;
         let _guard = self.write_lock.lock().await;
         let db = self.db();
         let mut prefs = self.read_stored().await;
@@ -342,7 +292,7 @@ mod tests {
     async fn a_session_pick_also_becomes_the_source_default() {
         let (_dir, store) = store();
         let prefs = store
-            .update(Source::Claude, Some("abc"), &choice(Some("opus"), None))
+            .update(Source::Claude, ModelRule::NAMED, Some("abc"), &choice(Some("opus"), None))
             .await
             .expect("update");
         assert_eq!(prefs.defaults["claude"].model.as_deref(), Some("opus"));
@@ -351,7 +301,7 @@ mod tests {
 
         // A later partial pick merges rather than replacing.
         let prefs = store
-            .update(Source::Claude, Some("abc"), &choice(None, Some("high")))
+            .update(Source::Claude, ModelRule::NAMED, Some("abc"), &choice(None, Some("high")))
             .await
             .expect("update");
         assert_eq!(
@@ -366,7 +316,7 @@ mod tests {
     #[tokio::test]
     async fn a_default_without_a_session_touches_only_the_default_bucket() {
         let (_dir, store) = store();
-        let prefs = store.update(Source::Codex, None, &choice(Some("gpt-5"), None)).await.expect("update");
+        let prefs = store.update(Source::Codex, ModelRule::NAMED, None, &choice(Some("gpt-5"), None)).await.expect("update");
         assert_eq!(prefs.defaults["codex"].model.as_deref(), Some("gpt-5"));
         assert!(prefs.sessions.is_empty());
     }
@@ -374,14 +324,15 @@ mod tests {
     #[tokio::test]
     async fn a_value_that_could_read_as_a_flag_is_refused() {
         let (_dir, store) = store();
-        assert!(store.update(Source::Claude, None, &choice(Some("--dangerously"), None)).await.is_err());
+        assert!(store.update(Source::Claude, ModelRule::NAMED, None, &choice(Some("--dangerously"), None)).await.is_err());
         assert!(
-            store.update(Source::Claude, None, &choice(None, Some("HIGH"))).await.is_err(),
+            store.update(Source::Claude, ModelRule::NAMED, None, &choice(None, Some("HIGH"))).await.is_err(),
             "effort is lowercase only"
         );
         assert!(store
             .update(
                 Source::Claude,
+                ModelRule::NAMED,
                 None,
                 &ComposerChoice {
                     permission: Optional(Some("--sandbox".into())),
@@ -405,15 +356,15 @@ mod tests {
     async fn a_long_context_variant_tag_survives_the_round_trip() {
         let (_dir, store) = store();
         let prefs = store
-            .update(Source::Claude, Some("abc"), &choice(Some("claude-opus-4-8[1m]"), None))
+            .update(Source::Claude, ModelRule::NAMED, Some("abc"), &choice(Some("claude-opus-4-8[1m]"), None))
             .await
             .expect("update");
         assert_eq!(prefs.sessions["claude/abc"].model.as_deref(), Some("claude-opus-4-8[1m]"));
         assert!(
-            store.update(Source::Claude, None, &choice(Some("opus[1m"), None)).await.is_err(),
+            store.update(Source::Claude, ModelRule::NAMED, None, &choice(Some("opus[1m"), None)).await.is_err(),
             "an unbalanced bracket is not a variant tag"
         );
-        assert!(store.update(Source::Claude, None, &choice(Some("opus[$(id)]"), None)).await.is_err());
+        assert!(store.update(Source::Claude, ModelRule::NAMED, None, &choice(Some("opus[$(id)]"), None)).await.is_err());
     }
 
     #[tokio::test]
@@ -422,7 +373,7 @@ mod tests {
         let paths = Paths::new(dir.path().to_path_buf());
         let store = ComposerPrefsStore::new(Arc::new(paths.clone()));
         store
-            .update(Source::Claude, Some("abc"), &choice(Some("opus"), None))
+            .update(Source::Claude, ModelRule::NAMED, Some("abc"), &choice(Some("opus"), None))
             .await
             .expect("update");
 

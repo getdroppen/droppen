@@ -4,10 +4,15 @@ use std::sync::Arc;
 
 use futures_util::future::BoxFuture;
 
-use super::{ModelInfo, ModelList, ModelListSource, Models, ModelsQuery};
+use super::{ModelInfo, ModelList, ModelListSource, ModelRule, Models, ModelsQuery};
 use crate::inject::InjectionRegistry;
 use droppen_http::openapi_ext::Nullable;
 use droppen_instance::paths::Paths;
+
+/// A model id as an ACP agent spells it: `provider:model`, where the model
+/// half is often a path (`openrouter:vendor/name`). Still nothing that could
+/// read as a flag or hold a space; the agent checks it against its own list.
+pub const ACP_MODEL_PATTERN: &str = r"^[A-Za-z0-9][[:word:].:/@+-]*$";
 
 /// The ACP agents' models, for [`Models`]: each agent's own list, asked of the
 /// agent ([`InjectionRegistry::acp_options`]).
@@ -60,6 +65,10 @@ impl Models for AcpModels {
     // An ACP agent has no permission modes to choose between.
     fn permission_is_known(&self, _permission: &str) -> bool {
         false
+    }
+
+    fn model_rule(&self) -> ModelRule {
+        ModelRule::new(ACP_MODEL_PATTERN, 200)
     }
 }
 

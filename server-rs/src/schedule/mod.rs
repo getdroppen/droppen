@@ -512,7 +512,7 @@ impl ScheduleState {
 /// The routes reach it through [`ScheduleState::check_cli`], which refuses a
 /// CLI that runs no scheduled tasks first.
 async fn validated_flags(models: &dyn crate::models::Models, source: Source, model: Option<&str>, effort: Option<&str>, permission: Option<&str>) -> Result<(), ApiError> {
-    crate::drive::routes::validate_flags(model, effort, permission).map_err(ApiError::bad_request)?;
+    crate::drive::routes::validate_flags(models.model_rule(), model, effort, permission).map_err(ApiError::bad_request)?;
 
     if let Some(effort) = effort.filter(|effort| !effort.is_empty()) {
         if let Some(accepted) = models.accepted_efforts(model).await {

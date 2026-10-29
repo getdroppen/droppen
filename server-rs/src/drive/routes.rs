@@ -30,6 +30,7 @@ use droppen_instance::paths::ClaudeRoot;
 use crate::sessions::delivery::{QuestionState, ReceiptLookup, ReceiptStatus, SessionQuestion};
 use crate::sessions::sidecars::{is_agent_id, AgentPath, Checklist};
 use crate::sessions::util::TranscriptItem;
+use crate::models::ModelRule;
 use crate::sessions::{chats_cwd, claude, file_signature, SessionScope, Source};
 
 /// `POST /api/sessions/{source}/{id}/message` body.
@@ -445,13 +446,19 @@ pub struct FirstUnreadQuery {
 
 // ------------------------------------------------------------------ validation
 
-/// The bounds `SendMessageSchema` and `NewSessionSchema` put on the flag values.
+/// The bounds `SendMessageSchema` and `NewSessionSchema` put on the flag values,
+/// and the composer's choices and a scheduled task's flags with them: a `model`
+/// spelled the way its CLI's `rule` allows (the provider's
+/// [`crate::models::Models::model_rule`]), then the effort and the permission
+/// mode.
 ///
 /// They are not cosmetic: the values become CLI arguments, so an unbounded
 /// `model` could read as a flag rather than as a model name.
-pub(crate) fn validate_flags(model: Option<&str>, effort: Option<&str>, permission: Option<&str>) -> Result<(), String> {
-    let checks: [(&str, Option<&str>, &'static str, usize); 3] = [
-        ("model", model, crate::drive::composer_prefs::MODEL_PATTERN, 100),
+pub(crate) fn validate_flags(rule: ModelRule, model: Option<&str>, effort: Option<&str>, permission: Option<&str>) -> Result<(), String> {
+    if model.is_some_and(|model| !rule.admits(model)) {
+        return Err("invalid model".to_string());
+    }
+    let checks: [(&str, Option<&str>, &'static str, usize); 2] = [
         ("effort", effort, r"^[a-z]+$", 20),
         ("permission", permission, r"^[A-Za-z][A-Za-z-]*$", 40),
     ];
@@ -476,11 +483,11 @@ pub(crate) fn validate_text(text: &str) -> Result<(), String> {
 
 /// Every bound the request schema puts on a send body, as one `400`.
 ///
-/// An ACP agent's model ids are held to its own rule
-/// ([`crate::drive::composer_prefs::model_rule`]), and to its own list when
-/// the message is delivered.
+/// The model id is held to its CLI's own `rule` (an ACP agent spells its ids
+/// its own way), and an ACP agent's to its own list when the message is
+/// delivered.
 fn validate_body(
-    source: Source,
+    rule: ModelRule,
     text: &str,
     model: Option<&str>,
     effort: Option<&str>,
@@ -488,14 +495,7 @@ fn validate_body(
     account_id: &Option<Option<String>>,
 ) -> Result<(), ApiError> {
     validate_text(text).map_err(ApiError::bad_request)?;
-    let (pattern, max_length) = crate::drive::composer_prefs::model_rule(source);
-    let model_ok = model.is_none_or(|model| {
-        model.chars().count() <= max_length && regex::Regex::new(pattern).expect("valid model pattern").is_match(model)
-    });
-    if !model_ok {
-        return Err(ApiError::bad_request("invalid model"));
-    }
-    validate_flags(None, effort, permission).map_err(ApiError::bad_request)?;
+    validate_flags(rule, model, effort, permission).map_err(ApiError::bad_request)?;
     // `accountId: z.string().uuid().nullable().optional()` — a malformed id is
     // a bad request; a well-formed one that names nothing is a 409 further down.
     if let Some(Some(id)) = account_id {
@@ -536,7 +536,7 @@ droppen_http::substate!(DriveState);
 #[api(id = "new_session", group = "sessions", summary = "Start a new session")]
 pub async fn new_session(State(state): State<DriveState>, ApiJson(body): ApiJson<NewSession>) -> Result<Json<NewSessionResult>, ApiError> {
     validate_body(
-        body.source,
+        state.drive.providers.model_rule(body.source),
         &body.text,
         body.model.as_deref(),
         body.effort.as_deref(),
@@ -635,7 +635,7 @@ pub async fn send_message(
     // (`@hono/zod-validator` answers `c.json(result, 400)`), so it is one here.
     // Before the claim, because none of it depends on anything that changes.
     validate_body(
-        source,
+        state.drive.providers.model_rule(source),
         &body.text,
         body.model.as_deref(),
         body.effort.as_deref(),
@@ -1573,7 +1573,7 @@ pub async fn put_composer_default(
     state
         .drive
         .composer
-        .update(source, None, &body)
+        .update(source, state.drive.providers.model_rule(source), None, &body)
         .await
         .map(Json)
         .map_err(|error| ApiError::bad_request(error.to_string()))
@@ -1592,7 +1592,7 @@ pub async fn put_composer_session(
     state
         .drive
         .composer
-        .update(source, Some(&id), &body)
+        .update(source, state.drive.providers.model_rule(source), Some(&id), &body)
         .await
         .map(Json)
         .map_err(|error| ApiError::bad_request(error.to_string()))
@@ -2208,11 +2208,11 @@ mod tests {
 
     #[test]
     fn a_flag_value_that_could_read_as_a_flag_is_refused() {
-        assert!(validate_flags(Some("claude-opus-4.5"), Some("high"), Some("acceptEdits")).is_ok());
-        assert!(validate_flags(Some("--add-dir"), None, None).is_err());
-        assert!(validate_flags(None, Some("High"), None).is_err(), "effort is lowercase only");
-        assert!(validate_flags(None, None, Some("-x")).is_err());
-        assert!(validate_flags(Some(&"m".repeat(200)), None, None).is_err());
+        assert!(validate_flags(ModelRule::NAMED, Some("claude-opus-4.5"), Some("high"), Some("acceptEdits")).is_ok());
+        assert!(validate_flags(ModelRule::NAMED, Some("--add-dir"), None, None).is_err());
+        assert!(validate_flags(ModelRule::NAMED, None, Some("High"), None).is_err(), "effort is lowercase only");
+        assert!(validate_flags(ModelRule::NAMED, None, None, Some("-x")).is_err());
+        assert!(validate_flags(ModelRule::NAMED, Some(&"m".repeat(200)), None, None).is_err());
     }
 
     /// `claude --model claude-opus-4-8[1m]` is how the CLI is asked for the
@@ -2227,12 +2227,12 @@ mod tests {
     /// *unbalanced* bracket. Hence the second half of this test.
     #[test]
     fn a_long_context_variant_tag_is_a_legal_model_name() {
-        assert!(validate_flags(Some("claude-opus-4-8[1m]"), None, None).is_ok());
-        assert!(validate_flags(Some("opus[1m]"), None, None).is_ok());
-        assert!(validate_flags(Some("claude-opus-5"), None, None).is_ok());
-        assert!(validate_flags(Some("claude-opus-4.5"), None, None).is_ok(), "a dotted name still passes");
+        assert!(validate_flags(ModelRule::NAMED, Some("claude-opus-4-8[1m]"), None, None).is_ok());
+        assert!(validate_flags(ModelRule::NAMED, Some("opus[1m]"), None, None).is_ok());
+        assert!(validate_flags(ModelRule::NAMED, Some("claude-opus-5"), None, None).is_ok());
+        assert!(validate_flags(ModelRule::NAMED, Some("claude-opus-4.5"), None, None).is_ok(), "a dotted name still passes");
         assert!(
-            validate_flags(Some("anthropic.claude-opus-5:0"), None, None).is_ok(),
+            validate_flags(ModelRule::NAMED, Some("anthropic.claude-opus-5:0"), None, None).is_ok(),
             "and a prefixed one"
         );
 
@@ -2258,7 +2258,7 @@ mod tests {
             "opus@x",
             "opus(x)",
         ] {
-            assert!(validate_flags(Some(hostile), None, None).is_err(), "{hostile} must be refused");
+            assert!(validate_flags(ModelRule::NAMED, Some(hostile), None, None).is_err(), "{hostile} must be refused");
         }
     }
 

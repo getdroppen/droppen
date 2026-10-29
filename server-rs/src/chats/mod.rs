@@ -240,7 +240,7 @@ pub async fn ensure_chats_cwd(paths: &Paths) -> std::io::Result<std::path::PathB
 /// characters.
 ///
 /// The optional bracketed tail is the variant tag
-/// [`crate::drive::composer_prefs::MODEL_PATTERN`] already accepts on the send
+/// [`crate::models::MODEL_PATTERN`] already accepts on the send
 /// routes: `claude-opus-5[1m]` is how the long-context variant of a model is
 /// asked for, and it is what the model picker now offers, so a chat started
 /// with the id the composer is showing has to be startable. It is matched as a
