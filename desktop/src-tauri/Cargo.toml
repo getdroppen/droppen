@@ -14,7 +14,7 @@ crate-type = ["rlib"]
 [dev-dependencies]
 tempfile = "3"
 # To make the updater's signature errors in `updater.rs`'s tests.
-minisign-verify = "0.2"
+minisign-verify = "0.3"
 
 [build-dependencies]
 tauri-build = { version = "=2.7.3", features = [] }
@@ -27,7 +27,7 @@ tauri = { version = "=2.12.4", features = ["tray-icon", "image-png"] }
 tauri-plugin-autostart = "=2.7.0"
 tauri-plugin-opener = "=2.7.2"
 # The app's own updates (`src/updater.rs`): signed archives from the releases.
-tauri-plugin-updater = "=2.13.2"
+tauri-plugin-updater = "=2.14.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Reading a release's notes for the update page (`src/updater.rs`). The

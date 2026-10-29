@@ -181,7 +181,7 @@ The trust boundaries:
   separated), from the key in Tauri's format (base64 of the encrypted
   minisign secret key, and its password). Its tests make keys the way
   `tauri signer generate` does, read a key tauri-cli made, and verify every
-  signature the way tauri-plugin-updater 2.13.2 does (minisign-verify, then
+  signature the way tauri-plugin-updater 2.14.1 does (minisign-verify, then
   the signed version against the announced one, `requireSignedVersion`);
   `desktop/core`'s `update.rs` tests check one of its signatures with the
   app's own checks, version and file name included. `signer` runs those

@@ -20,8 +20,8 @@ minisign = "0.9"
 base64 = "0.22"
 
 [dev-dependencies]
-# What the Tauri updater (tauri-plugin-updater 2.13) verifies with.
-minisign-verify = "0.2"
+# What the Tauri updater (tauri-plugin-updater 2.14) verifies with.
+minisign-verify = "0.3"
 
 [profile.release]
 strip = true
