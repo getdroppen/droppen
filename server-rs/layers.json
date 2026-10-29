@@ -398,9 +398,6 @@
     {
       "why": "The implementations share transcript helpers that sit in Claude Code's and Codex's modules today; the shared parts go to sessions or the provider base.",
       "edges": [
-        "sessions::acp_transcript -> sessions::transcript",
-        "sessions::codex -> sessions::transcript",
-        "sessions::codex_tools -> sessions::transcript",
         "sessions::subagents -> sessions::codex"
       ]
     },

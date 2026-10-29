@@ -32,9 +32,9 @@ use super::codex_tools::{CodexTools, Context};
 use droppen_instance::paths::Paths;
 use droppen_base::time::{iso8601, mtime_ms, now_ms};
 use super::sources::{TokenUsage, UsageFile, UsageFold};
-use super::transcript::title_line;
 use super::util::{
-    date_of, is_jsonl, make_item, num, read_head_lines, read_tail_lines, try_parse, FileCache, ItemKind, LossyLines, Role, TranscriptItem,
+    date_of, is_jsonl, make_item, num, read_head_lines, read_tail_lines, title_line, try_parse, FileCache, ItemKind, LossyLines, Role,
+    TranscriptItem,
 };
 use super::{owned_sessions, CliChoice, SessionActivity, SessionScope, SessionStatus, SessionSummary, Source};
 use droppen_http::openapi_ext::Nullable;

@@ -65,8 +65,7 @@ use super::mentions::resolve_within_home;
 use super::tool_display::{
     as_display_string, compact, diff_of, pick_preferred, pretty, redact_encrypted, shorten_tool_name, ChecklistLinesExt, QuestionLinesExt,
 };
-use super::transcript::is_renderable_image;
-use super::util::{first_line_of, make_tool_item, ItemKind, PatchHunk, Role, ToolDisplay, TranscriptItem};
+use super::util::{first_line_of, is_renderable_image, make_tool_item, ItemKind, PatchHunk, Role, ToolDisplay, TranscriptItem};
 use droppen_base::time::parse_iso_ms;
 use droppen_base::time::iso8601;
 

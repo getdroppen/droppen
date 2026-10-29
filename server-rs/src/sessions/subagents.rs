@@ -214,7 +214,7 @@ async fn claude_children(session: &SessionSummary, marks: &BTreeMap<String, Stri
             SessionChild {
                 id: agent.agent_id.clone(),
                 kind: SessionChildKind::Agent,
-                name: super::transcript::title_line(&name),
+                name: super::util::title_line(&name),
                 role: Nullable(agent.agent_type.clone()),
                 status,
                 // Decided once the tree is built, from the marks above it.
