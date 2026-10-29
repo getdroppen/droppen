@@ -328,13 +328,6 @@
   },
   "allowed": [
     {
-      "why": "sessions, attention and stats read each provider's transcripts and roots themselves. They go through the Transcripts port sessions owns, which each provider implements.",
-      "edges": [
-        "sessions -> claude_roots",
-        "sessions -> sessions::claude"
-      ]
-    },
-    {
       "why": "drive finds a Claude Code session by its id itself (sessions::claude), and Drive holds Claude Code's setup-token captures. They go through the provider base (Provider, Transcripts).",
       "edges": [
         "drive -> accounts::setup_token",

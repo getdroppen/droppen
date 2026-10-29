@@ -31,7 +31,7 @@
 //! Only whole lines are copied. A transcript whose CLI is mid-turn can end in a
 //! half-written line, and a JSONL append is not atomic; the fragment after the
 //! last newline is dropped, the same rule every reader in the crate applies
-//! ([`super::util::read_head_lines`]). The copy is a fork from that instant, so
+//! ([`crate::sessions::util::read_head_lines`]). The copy is a fork from that instant, so
 //! there is no later append to lose.
 //!
 //! # Where it may read and write
@@ -47,7 +47,7 @@
 
 use std::path::{Path, PathBuf};
 
-use super::{claude, reference};
+use crate::sessions::{claude, reference};
 use crate::claude_roots;
 use droppen_instance::paths::{ClaudeRoot, Paths};
 
