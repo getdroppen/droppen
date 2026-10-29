@@ -1123,7 +1123,6 @@ version = "0.1.0"
 dependencies = [
  "droppen-base",
  "gotcha_core",
- "libc",
  "rusqlite",
  "serde",
  "serde_json",

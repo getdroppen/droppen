@@ -93,9 +93,8 @@
 //!   with `process_group(0)` leaves the job's group, which is what makes the
 //!   default behaviour survivable.
 
-use std::fs::File;
+use std::fs::{File, TryLockError};
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 
 /// The instance a server owns when nothing says otherwise.
@@ -369,22 +368,22 @@ impl InstanceLock {
             .open(&path)
             .map_err(|source| InstanceError::io(&path, source))?;
 
-        // SAFETY: `file` is an open descriptor this process owns for the whole
-        // call, and `LOCK_EX | LOCK_NB` takes no other arguments.
-        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-            let error = std::io::Error::last_os_error();
+        match file.try_lock() {
+            Ok(()) => {}
             // Anything other than "someone else has it" is a real I/O failure —
             // a read-only filesystem, a path that is not a file — and reporting
             // it as contention would send the user hunting for a process that
             // does not exist.
-            if !matches!(error.raw_os_error(), Some(libc::EWOULDBLOCK) | Some(libc::EINTR)) {
+            Err(TryLockError::Error(error)) if error.kind() != std::io::ErrorKind::Interrupted => {
                 return Err(InstanceError::io(&path, error));
             }
-            return Err(InstanceError::Held {
-                holder: file.read_holder(),
-                name: dirs.name.clone(),
-                path,
-            });
+            Err(_) => {
+                return Err(InstanceError::Held {
+                    holder: file.read_holder(),
+                    name: dirs.name.clone(),
+                    path,
+                });
+            }
         }
 
         // The pid is only ever advisory — the lock is the truth — but it is what
