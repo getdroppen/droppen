@@ -36,6 +36,13 @@ mod auth_routes;
 /// every route the server registers.
 #[cfg(test)]
 mod bridge_routes;
+/// Cloud's link control (`crate::cloud::control`) with the link `app`
+/// attaches, and the aggregator gateway (`crate::cloud::gateway`) as the
+/// server serves it.
+#[cfg(test)]
+mod cloud_control;
+#[cfg(test)]
+mod cloud_gateway;
 
 /// The plugin routes (`droppen_plugins::routes`) and the plugin assets
 /// (`droppen_plugins::serve`), through the router as the server builds it.

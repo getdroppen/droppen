@@ -412,7 +412,7 @@ fn waiting_for_a_device(st: &AgentState) -> bool {
     !st.enrolled() && !st.removed()
 }
 
-/// What the tests of a running link reach (`cloud::control_tests`):
+/// What the tests of a running link reach (`api::cloud_control`):
 /// the link this control runs, the restart hook it hands the link, and the
 /// expiry of an enrollment's code.
 #[cfg(test)]
