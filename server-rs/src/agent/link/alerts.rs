@@ -211,7 +211,7 @@ pub(in crate::agent) fn alert_account_changes(shared: &Arc<Shared>, entries: &[E
         // reads what this machine saw change in the account.
         shared.state.lock().expect("agent state").note_change(now_ms_u64(), &what);
         noted = true;
-        crate::push::notify_account_change(Arc::new(shared.paths.clone()), "Droppen: account change".into(), what);
+        shared.host.account_change(Arc::new(shared.paths.clone()), "Droppen: account change".into(), what);
     }
     if noted {
         shared.save();
@@ -236,7 +236,7 @@ pub(in crate::agent) fn raise_alarm(shared: &Arc<Shared>, what: String) {
     };
     shared.save();
     shared.sync.send(super::streams::Event::Alarms(alarms));
-    crate::push::notify_account_change(Arc::new(shared.paths.clone()), "Droppen: device chain alarm".into(), what);
+    shared.host.account_change(Arc::new(shared.paths.clone()), "Droppen: device chain alarm".into(), what);
 }
 
 /// The hub sends each entry once a connection: an activation held back as too

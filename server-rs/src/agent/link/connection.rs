@@ -25,8 +25,9 @@ use droppen_base::time::now_ms_u64;
 
 /// What the link needs from the server it runs in: where its own loopback
 /// API listens, the per-boot credential the bridge presents there, the
-/// drive (for the streams' writer) and the server's cancellation token (the
-/// link runs under a child of it, so stopping the link never stops the server).
+/// drive (for the streams' writer), the server's push channels ([`LinkHost`])
+/// and the server's cancellation token (the link runs under a child of it, so
+/// stopping the link never stops the server).
 #[derive(Clone)]
 pub struct LinkEnv {
     /// The server's own listener.
@@ -35,11 +36,28 @@ pub struct LinkEnv {
     pub credential: String,
     /// The server's drive.
     pub drive: Arc<crate::drive::Drive>,
+    /// The server's push channels.
+    pub host: Arc<dyn LinkHost>,
     /// The server's token; the link takes a child of it.
     pub cancel: CancellationToken,
     /// Whether the owner wants the device role to work
     /// ([`crate::aggregator::Switch`]): the controller and the copies ask it.
     pub aggregator_switch: Arc<dyn crate::aggregator::Switch>,
+}
+
+/// What the link asks of the server's push channels, which sit above the
+/// agent: the entry implements it over them.
+pub trait LinkHost: Send + Sync {
+    /// A new push (VAPID) keypair, and every stored push subscription
+    /// forgotten, once this machine renewed its identity key; how many were
+    /// forgotten.
+    fn renew_push_keys<'a>(&'a self, paths: &'a Paths) -> futures_util::future::BoxFuture<'a, std::io::Result<usize>>;
+
+    /// Tell the phone about a change to who is in the account, or a chain
+    /// alarm. Returns at once and sends in the background: the link calls it
+    /// while it handles the chain, and a slow push service must not hold that
+    /// up.
+    fn account_change(&self, paths: Arc<Paths>, title: String, body: String);
 }
 
 /// A link that was started: stop it with [`Running::stop`].
@@ -162,6 +180,7 @@ pub fn start(
     let shared = Arc::new(Shared {
         paths: paths.clone(),
         files,
+        host: env.host.clone(),
         deferred_mail: Mutex::new(Vec::new()),
         identity: Arc::new(identity),
         loopback,
@@ -254,7 +273,7 @@ pub(in crate::agent) const PUSH_RENEW_AGAIN: [Duration; 4] = [
 
 /// Once a renewed identity key was promoted, a new VAPID
 /// keypair and every stored push subscription forgotten
-/// ([`crate::push::store::renew_vapid`]) — whoever copied the old VAPID key
+/// ([`LinkHost::renew_push_keys`]) — whoever copied the old VAPID key
 /// and endpoints reaches no device that subscribes again. Noted done only
 /// once it is (and by this link only while it runs: else the next start
 /// does it again, which is harmless). Until then the push key is refused
@@ -264,7 +283,7 @@ pub(in crate::agent) const PUSH_RENEW_AGAIN: [Duration; 4] = [
 pub(in crate::agent) async fn renew_push(shared: Arc<Shared>) {
     let mut tries = 0usize;
     loop {
-        match crate::push::store::renew_vapid(&shared.paths).await {
+        match shared.host.renew_push_keys(&shared.paths).await {
             Ok(forgotten) => {
                 tracing::warn!(forgotten, "renewed the push keys with the identity key: every device subscribes again");
                 if !shared.cancel.is_cancelled() {
@@ -301,6 +320,7 @@ pub(in crate::agent) fn test_shared(
     Arc::new(Shared {
         paths: paths.clone(),
         files: AgentFiles::of(paths),
+        host: Arc::new(crate::app::PushLinkHost),
         deferred_mail: Mutex::new(Vec::new()),
         identity: Arc::new(identity),
         loopback: Arc::new(Loopback::new("127.0.0.1:9".parse().expect("an address"), "test".into())),

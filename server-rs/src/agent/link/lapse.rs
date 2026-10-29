@@ -27,7 +27,7 @@ pub(in crate::agent) fn on_removed(shared: &Arc<Shared>, why: &str) {
     if news {
         shared.save();
         tracing::warn!("this machine was removed from the account ({why}): stopping the hub link");
-        crate::push::notify_account_change(
+        shared.host.account_change(
             Arc::new(shared.paths.clone()),
             "Droppen: this device was removed".into(),
             format!("this device was removed from the account ({why}); it no longer connects to Droppen"),

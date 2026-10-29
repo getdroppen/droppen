@@ -1533,6 +1533,7 @@ mod tests {
             addr,
             credential: "test".into(),
             drive: state.drive.clone(),
+            host: Arc::new(crate::app::PushLinkHost),
             cancel: tokio_util::sync::CancellationToken::new(),
             aggregator_switch: state.cloud.aggregator_switch(),
         });
@@ -1656,6 +1657,7 @@ mod tests {
             addr,
             credential: "test".into(),
             drive: state.drive.clone(),
+            host: Arc::new(crate::app::PushLinkHost),
             cancel: tokio_util::sync::CancellationToken::new(),
             aggregator_switch: state.cloud.aggregator_switch(),
         });
