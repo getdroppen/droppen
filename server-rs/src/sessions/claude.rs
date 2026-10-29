@@ -21,6 +21,9 @@ use droppen_http::openapi_ext::Nullable;
 use droppen_instance::paths::{ClaudeRoot, Paths};
 use droppen_base::time::{iso8601, mtime_ms};
 
+pub mod adoption_leftovers;
+pub mod continuation;
+
 const HEAD_BYTES: usize = 128 * 1024;
 const TAIL_BYTES: u64 = 64 * 1024;
 /// How far back [`claude_activity_status`] will look for an entry that decides

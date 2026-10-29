@@ -5,7 +5,6 @@
 
 pub mod account;
 pub mod acp_transcript;
-pub mod adoption_leftovers;
 pub mod archive;
 pub mod attention;
 pub mod checklist;
@@ -15,7 +14,6 @@ pub mod codex;
 pub mod codex_claims;
 pub mod codex_tools;
 pub mod context;
-pub mod continuation;
 pub mod delivery;
 pub mod index;
 pub mod loader;

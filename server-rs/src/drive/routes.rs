@@ -1734,12 +1734,12 @@ pub async fn continue_session_on_account(
     }
 
     let new_id = uuid::Uuid::new_v4().to_string();
-    let copy = crate::sessions::continuation::copy_local_session(&state.paths, &id, &new_id)
+    let copy = crate::sessions::claude::continuation::copy_local_session(&state.paths, &id, &new_id)
         .await
         .map_err(|error| match error {
-            crate::sessions::continuation::ContinueError::NotFound => ApiError::not_found("session not found"),
-            crate::sessions::continuation::ContinueError::Taken => ApiError::conflict(error.to_string()),
-            crate::sessions::continuation::ContinueError::Io(_) => {
+            crate::sessions::claude::continuation::ContinueError::NotFound => ApiError::not_found("session not found"),
+            crate::sessions::claude::continuation::ContinueError::Taken => ApiError::conflict(error.to_string()),
+            crate::sessions::claude::continuation::ContinueError::Io(_) => {
                 tracing::warn!(session = %id, %error, "cannot copy a local-login session into this instance's root");
                 ApiError::internal("cannot copy the conversation")
             }

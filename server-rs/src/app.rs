@@ -280,7 +280,7 @@ impl RemoteHandApp {
                 // an adoption by an earlier build, interrupted between its copy
                 // and its rename, leaves a full transcript nothing will ever
                 // list.
-                crate::sessions::adoption_leftovers::sweep_partial_adoptions(&paths);
+                crate::sessions::claude::adoption_leftovers::sweep_partial_adoptions(&paths);
                 // Who this server is, minted once and kept for ever after.
                 // Under the lock like everything else here: it writes to the
                 // instance's database, and a throwaway in-process server must
