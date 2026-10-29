@@ -668,7 +668,7 @@ pub struct SessionSummary {
     /// The subagents this session delegated work to, as a tree: each child
     /// with its own children, when the agent runtime records who spawned whom.
     ///
-    /// An overlay like `unread` ([`subagents::apply`]), never cached with the
+    /// An overlay like `unread` (`sessions::children::apply`), never cached with the
     /// row: a child writes to a file of its own, so the parent's transcript can
     /// sit still while its children change. Empty for a session with none, and
     /// for a runtime that keeps no parent links. Forks are not children — only
