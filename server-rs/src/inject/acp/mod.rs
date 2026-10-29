@@ -55,7 +55,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::common::{new_uuid, session_workdir, QueueOutcome, ResidentState};
-use super::{AccountChoice, Capabilities, DriverStatesBuilder, InjectError, InjectionRegistry, Provider, Run, SendOptions, Sent, SpawnPermit};
+use super::{AccountChoice, Capabilities, DriverStatesBuilder, InjectError, InjectionRegistry, Provider, Run, SendOptions, SendTo, Sent, SpawnPermit, StartAt};
 use futures_util::future::BoxFuture;
 use crate::acp::{category, option_for, ConfigOption, InitializeResponse};
 use crate::acp_agent::{AcpAgent, AcpAgentRegistry, AcpCheck, AcpCheckState};
@@ -325,6 +325,24 @@ impl Provider for Acp {
 }
 
 impl Run for Acp {
+    /// Reopened where it ran, whatever `cwd` says: see `acp_send`.
+    fn send<'a>(&'a self, to: SendTo<'a>) -> BoxFuture<'a, Result<Sent, InjectError>> {
+        Box::pin(self.registry.acp_send(to.id, to.text, to.options))
+    }
+
+    /// The id is this server's own and the transcript it is kept in is this
+    /// instance's, so there is no ownership to record.
+    fn start<'a>(&'a self, at: StartAt<'a>) -> BoxFuture<'a, Result<String, InjectError>> {
+        Box::pin(async move {
+            let agent = at
+                .options
+                .acp_agent
+                .as_deref()
+                .ok_or_else(|| InjectError::message("a new ACP session needs the agent it runs on"))?;
+            self.registry.acp_start(agent, at.cwd, at.text, at.options).await
+        })
+    }
+
     /// The agent process's own state: ACP runs are not journalled, so the runs
     /// map holds none of them.
     fn injection(&self, id: &str) -> Option<Injection> {

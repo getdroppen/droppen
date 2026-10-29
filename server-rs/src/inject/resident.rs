@@ -88,7 +88,7 @@ use super::shim::{self, Link, Output, Sidecars, Spawn};
 use super::common::{busy_message, new_uuid, AnswerOutcome, Phase, QueueOutcome, Reply, ResidentState, StopTaskOutcome};
 use super::drafts::Draft;
 use super::gate::{ClaimError, SessionLease};
-use super::{runs, Capabilities, DriverStatesBuilder, InjectError, InjectionRegistry, Provider, Run, RunEntry, RunState, SpawnPermit};
+use super::{runs, Capabilities, DriverStatesBuilder, InjectError, InjectionRegistry, Provider, Run, RunEntry, RunState, SendTo, Sent, SpawnDeps, SpawnPermit, StartAt};
 
 /// The mode flags every resident is started with.
 ///
@@ -688,6 +688,14 @@ impl Provider for ClaudeCode {
 }
 
 impl Run for ClaudeCode {
+    fn send<'a>(&'a self, to: SendTo<'a>) -> BoxFuture<'a, Result<Sent, InjectError>> {
+        Box::pin(async move { self.spawn_deps().send(to).await })
+    }
+
+    fn start<'a>(&'a self, at: StartAt<'a>) -> BoxFuture<'a, Result<String, InjectError>> {
+        Box::pin(async move { self.spawn_deps().start(at).await })
+    }
+
     /// A resident publishes each turn in the runs map, so that is where a
     /// claude session's run is.
     fn injection(&self, id: &str) -> Option<Injection> {
@@ -776,6 +784,16 @@ impl Run for ClaudeCode {
 }
 
 impl ClaudeCode {
+    /// What a send or a start reads, out of the registry this provider holds.
+    fn spawn_deps(&self) -> SpawnDeps<'_> {
+        SpawnDeps {
+            paths: &self.registry.paths,
+            instance: &self.registry.instance,
+            accounts: &self.registry.accounts,
+            injections: &self.registry,
+        }
+    }
+
     /// Whether this server holds a resident for session `id`.
     fn holds(&self, id: &str) -> bool {
         self.registry.residents.lock().expect("residents poisoned").contains_key(id)
@@ -12429,7 +12447,6 @@ done
             models: Arc::new(crate::models::ClaudeModelCache::new(paths.clone())),
             composer: crate::drive::composer_prefs::ComposerPrefsStore::new(paths.clone()),
             titles: crate::sessions::titles::TitlesStore::new(paths.clone()),
-            instance,
             paths,
             transcripts: crate::app::transcript_sources(),
             providers: crate::inject::ProviderRegistry::new(harness.registry.clone(), crate::app::register_providers),

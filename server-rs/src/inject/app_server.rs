@@ -26,8 +26,8 @@ use super::common::{busy_message, new_uuid, session_workdir, Phase, QueueOutcome
 use super::gate::{ClaimError, SessionLease};
 use crate::sessions::archive::ArchiveError;
 use super::{
-    codex_permission_flags, runs, shim, with_codex_files, Capabilities, CodexAccount, DriverStatesBuilder, InjectError, InjectionRegistry,
-    Provider, Run, SendOptions, Sent, SpawnPermit,
+    codex_permission_flags, require_provider, runs, shim, with_codex_files, AccountChoice, Capabilities, CodexAccount, DriverStatesBuilder,
+    InjectError, InjectionRegistry, Provider, Run, SendOptions, SendTo, Sent, SpawnPermit, StartAt,
 };
 
 const RPC_TIMEOUT: Duration = Duration::from_secs(30);
@@ -274,6 +274,46 @@ impl Provider for Codex {
 }
 
 impl Run for Codex {
+    fn send<'a>(&'a self, to: SendTo<'a>) -> BoxFuture<'a, Result<Sent, InjectError>> {
+        Box::pin(async move {
+            let SendTo { id, cwd, text, options } = to;
+            // Resolved before anything is built, exactly as claude's send does: an
+            // account that cannot be read must not reach a spawn.
+            let account = self.codex_account(Some(id), options).await?;
+            self
+                .registry
+                .codex_deliver(Some(id), cwd, text, options, account)
+                .await
+                .map(|(_, sent)| sent)
+        })
+    }
+
+    fn start<'a>(&'a self, at: StartAt<'a>) -> BoxFuture<'a, Result<String, InjectError>> {
+        Box::pin(async move {
+            let StartAt { cwd, text, options } = at;
+            let account = self.codex_account(None, options).await?;
+            let account_id = account.as_ref().map(|account| account.id.clone());
+            let (id, _) = self.registry.codex_deliver(None, Some(cwd), text, options, account).await?;
+            // Codex has one config root and no way to isolate it, so ownership of a
+            // thread is a record rather than a path — written the moment the CLI tells us
+            // which thread it actually made. A failure here costs the session its
+            // ownership (it lists as external) and nothing else, so it is logged rather
+            // than turned into a refusal of a run that has already started.
+            if let Err(error) = crate::sessions::owned_sessions::record(&self.registry.paths, Source::Codex, &id).await {
+                tracing::error!(session = %id, %error, "cannot record this codex session as ours; it will list as external");
+            }
+            // Written beside the ownership record and for the same reason: the thread id
+            // does not exist until `thread/start` answers, and the next message has to
+            // find the same login this one ran under.
+            if let Some(account_id) = account_id {
+                if let Err(error) = self.registry.accounts.bind_session_account(&id, Some(&account_id), AccountProvider::Codex).await {
+                    tracing::error!(session = %id, %error, "cannot bind this codex session to its account; the next message will fall back to the default");
+                }
+            }
+            Ok(id)
+        })
+    }
+
     fn injection(&self, id: &str) -> Option<Injection> {
         self.registry.codex_injection(id)
     }
@@ -316,6 +356,48 @@ impl Run for Codex {
     // the archive is codex's own, so the Codex app sees it too.
     fn archive<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Result<(), String>> {
         Box::pin(async move { self.registry.archive_codex(id).await.map_err(|error| error.to_string()) })
+    }
+}
+
+impl Codex {
+    /// Which account a codex spawn runs under, and what it puts into it.
+    ///
+    /// The same three-state resolution [`super::SpawnDeps::resume_claude_env`] does, and for the same
+    /// reason: `accountId: null` is "the machine's own codex login" even when a
+    /// default is configured, absent is "whatever this thread is already bound to",
+    /// and a named account both wins and is written down.
+    ///
+    /// `None` is the answer for a machine with no codex accounts, and it is the
+    /// answer that matters most: it must produce the bare spawn — no extra argv,
+    /// no extra environment, codex's own `~/.codex/auth.json` and nothing else.
+    async fn codex_account(&self, id: Option<&str>, options: &SendOptions) -> Result<Option<CodexAccount>, InjectError> {
+        let bound = match id {
+            Some(id) => self.registry.accounts.session_account_id(id).await,
+            None => None,
+        };
+        let chosen = match &options.account {
+            AccountChoice::Local => None,
+            AccountChoice::Account(id) => Some(id.clone()),
+            AccountChoice::Rule(named) => self.registry.rule_account(AccountProvider::Codex, named, options.model.as_deref()).await,
+            AccountChoice::Unset => match bound.clone() {
+                Some(bound) => Some(bound),
+                // The configured default, or — with none, and `~/.codex` known to
+                // be signed out — a codex account in the pool, if one is free.
+                None if options.use_default_account => self.registry.start_account(AccountProvider::Codex, options.model.as_deref()).await,
+                None => None,
+            },
+        };
+        let Some(account_id) = chosen else { return Ok(None) };
+        let launch = self.registry.accounts.account_env(&account_id).await?;
+        require_provider(&launch, AccountProvider::Codex)?;
+        // An explicit choice on a thread that already exists is also a re-binding:
+        // the next message must find the account this one asked for.
+        if let (Some(id), Some(named)) = (id, options.account.named()) {
+            if Some(named) != bound.as_deref() {
+                self.registry.accounts.bind_session_account(id, Some(named), AccountProvider::Codex).await?;
+            }
+        }
+        Ok(Some(CodexAccount { id: account_id, launch }))
     }
 }
 
