@@ -128,7 +128,7 @@ export class ChainTrust {
     return (await this.readHeld()).genesis;
   }
 
-  /** Trust this chain's genesis from now on (see the header: only for a reason). */
+  /** Trust this chain's genesis from now on (only for a reason: the **Pinning** note in `account.ts`'s header). */
   async pin(): Promise<void> {
     if (!this.basics.state) return;
     const state = this.basics.state;

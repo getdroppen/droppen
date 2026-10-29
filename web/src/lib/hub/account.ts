@@ -870,7 +870,7 @@ export class CloudAccount {
    * page read or wrote it (a pin, once set, never changes). So it can lag a
    * pin another page made: what must not lag reads the store itself
    * (`attestation`, `lacksKeys`), and the watch takes such a pin in
-   * ({@link recheckSeen}).
+   * (`ChainTrust.recheckSeen`).
    */
   get pinned(): boolean {
     return this.trust.pinned;
@@ -896,7 +896,7 @@ export class CloudAccount {
    * gone): hold it against this view now, whenever another page writes it
    * (the store says so: a `BroadcastChannel`; `storage` events where the
    * record is in `localStorage`), and whenever this page comes back into
-   * view ({@link recheckSeen}). What it cannot help: a record lowered while
+   * view (`ChainTrust.recheckSeen`). What it cannot help: a record lowered while
    * no page holding the higher view is open — the next load then trusts the
    * lower one.
    */
