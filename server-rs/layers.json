@@ -430,12 +430,6 @@
       ]
     },
     {
-      "why": "record's tail follows a recording with feed's file watcher (feed::watch), which names no session. It goes when the watcher moves below both.",
-      "edges": [
-        "record -> feed"
-      ]
-    },
-    {
       "why": "auth reads notify's caller classification. It goes when the caller classification moves to auth.",
       "edges": [
         "auth -> notify"

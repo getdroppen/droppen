@@ -13,10 +13,7 @@
 use std::path::Path;
 use std::time::Duration;
 
-// `::notify` rather than `notify`: this crate has a module of that name
-// (`crate::notify`, the agent-initiated notifications), and an unqualified path
-// would be ambiguous between the two.
-use ::notify::{RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use tokio::sync::mpsc;
 
 /// A debounced "the file changed" signal.
@@ -66,7 +63,7 @@ pub fn never() -> FileEvents {
 pub fn watch_file(path: &Path, debounce: Duration) -> FileEvents {
     let (raw_tx, raw_rx) = mpsc::channel::<()>(64);
 
-    let watcher = ::notify::recommended_watcher(move |event: ::notify::Result<::notify::Event>| {
+    let watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
         if event.is_ok() {
             // A full queue already means "a change is pending", so a drop here
             // loses nothing.
@@ -101,7 +98,7 @@ pub fn watch_file(path: &Path, debounce: Duration) -> FileEvents {
 pub fn watch_dirs(dirs: &[std::path::PathBuf], debounce: Duration) -> FileEvents {
     let (raw_tx, raw_rx) = mpsc::channel::<()>(64);
 
-    let watcher = ::notify::recommended_watcher(move |event: ::notify::Result<::notify::Event>| {
+    let watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
         if event.is_ok() {
             let _ = raw_tx.try_send(());
         }

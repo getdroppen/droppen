@@ -16,13 +16,15 @@ chrono = "0.4"
 # depend on rh-client, a crate of the layer above.
 hex = "0.4"
 libc = "0.2"
+# `watch`: the platform's filesystem events (FSEvents, inotify), debounced.
+notify = "7"
 regex = "1"
 # Only the client builder and `Url` (`outbound`). `default-features = false`
 # keeps `default-tls` (native-tls, OpenSSL) out: the server links nothing but
 # rustls.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 sha2 = "0.10"
-tokio = { version = "1", features = ["process", "rt", "time"] }
+tokio = { version = "1", features = ["process", "rt", "sync", "time"] }
 tracing = "0.1"
 uuid = { version = "1", features = ["v4"] }
 

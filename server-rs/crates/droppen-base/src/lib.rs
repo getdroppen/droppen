@@ -12,7 +12,8 @@
 //!   names and the ones they had before;
 //! * [`process_env`] — the environment a spawned CLI runs with, and the
 //!   redaction its output passes through;
-//! * [`program`] — the two names the binary answers to.
+//! * [`program`] — the two names the binary answers to;
+//! * [`watch`] — a debounced "this file or directory changed" signal.
 
 pub mod env;
 pub mod fsutil;
@@ -22,3 +23,4 @@ pub mod procs;
 pub mod program;
 pub mod text;
 pub mod time;
+pub mod watch;

@@ -33,7 +33,7 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 use super::mux::{encode, hello_frame, parse_client_message, MuxOptions, Subscriptions};
-use super::watch;
+use droppen_base::watch;
 use crate::drive::Drive;
 use droppen_http::extract::ApiQuery;
 use droppen_http::refresh::RefreshSink;
