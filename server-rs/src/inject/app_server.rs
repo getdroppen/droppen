@@ -27,7 +27,7 @@ use super::gate::{ClaimError, SessionLease, SpawnGate};
 use droppen_sessions::archive::ArchiveError;
 use super::{
     codex_permission_flags, require_provider, runs, shim, with_codex_files, AccountChoice, Capabilities, CodexAccount, DriverStatesBuilder,
-    InjectError, InjectionRegistry, Provider, Run, SendOptions, SendTo, Sent, SpawnPermit, StartAt,
+    InjectError, InjectionRegistry, ListsRuns, Provider, Run, RunHost, SendOptions, SendTo, Sent, SpawnPermit, StartAt,
 };
 
 const RPC_TIMEOUT: Duration = Duration::from_secs(30);
@@ -79,7 +79,7 @@ pub(super) struct Handle {
     /// authenticates as whoever it was spawned as, and there is no way to hand
     /// it another key over the socket. So the account is *part of the process*,
     /// and a message for a different one cannot be delivered into it — see
-    /// [`InjectionRegistry::codex_deliver`].
+    /// [`CodexRuns::codex_deliver`].
     account: Option<String>,
 }
 
@@ -391,7 +391,7 @@ async fn reject_request(link: &mut shim::Link, value: &Value) -> Result<(), Inje
     write(link, &answer).await
 }
 
-async fn rpc(registry: &InjectionRegistry, link: &mut shim::Link, method: &str, params: impl Serialize) -> Result<Value, InjectError> {
+async fn rpc(registry: &CodexRuns, link: &mut shim::Link, method: &str, params: impl Serialize) -> Result<Value, InjectError> {
     let id = new_uuid();
     write(link, &Request { id: &id, method, params }).await?;
     tokio::time::timeout(RPC_TIMEOUT, async {
@@ -418,17 +418,60 @@ async fn rpc(registry: &InjectionRegistry, link: &mut shim::Link, method: &str, 
 
 /// Codex, as the provider registry knows it.
 pub(crate) struct Codex {
-    /// The registry it reads its app servers from.
-    registry: Arc<InjectionRegistry>,
+    /// Its sessions' app servers.
+    runs: Arc<CodexRuns>,
     /// Its CLI's models.
     models: crate::models::codex::CodexModels,
 }
 
 impl Codex {
-    /// Codex over `registry`.
+    /// Codex, its runs `registry`'s.
     pub(crate) fn new(registry: Arc<InjectionRegistry>) -> Self {
         let models = crate::models::codex::CodexModels::new(registry.paths.clone());
-        Self { registry, models }
+        Self {
+            runs: registry.codex.clone(),
+            models,
+        }
+    }
+}
+
+/// Codex's runs: the app server behind each session. Kept here rather than
+/// on the host they run on, whose shared parts — the paths, the runs
+/// journal, the feeds — they reach through it.
+pub(crate) struct CodexRuns {
+    /// What they run on.
+    host: Arc<RunHost>,
+    /// The app server behind each session, by session id.
+    codex_servers: Mutex<HashMap<String, Handle>>,
+}
+
+impl CodexRuns {
+    /// None yet, on `host`, and in its session list from now on.
+    pub(super) fn new(host: Arc<RunHost>) -> Arc<Self> {
+        let runs = Arc::new(Self {
+            host,
+            codex_servers: Mutex::new(HashMap::new()),
+        });
+        let listed: Arc<dyn ListsRuns> = runs.clone();
+        runs.host.list(Source::Codex, Arc::downgrade(&listed));
+        runs
+    }
+}
+
+/// The host's shared parts — its paths, journal, feeds and keys — read as if
+/// they were the runs' own, so a method here reaches them as plainly as one of
+/// the host's does.
+impl std::ops::Deref for CodexRuns {
+    type Target = RunHost;
+
+    fn deref(&self) -> &RunHost {
+        &self.host
+    }
+}
+
+impl ListsRuns for CodexRuns {
+    fn add_to(&self, states: &mut DriverStatesBuilder) {
+        self.codex_driver_states(states);
     }
 }
 
@@ -469,7 +512,7 @@ impl Run for Codex {
             // account that cannot be read must not reach a spawn.
             let account = self.codex_account(Some(id), options).await?;
             self
-                .registry
+                .runs
                 .codex_deliver(gate, Some(id), cwd, text, options, account)
                 .await
                 .map(|(_, sent)| sent)
@@ -481,20 +524,20 @@ impl Run for Codex {
             let StartAt { cwd, text, options } = at;
             let account = self.codex_account(None, options).await?;
             let account_id = account.as_ref().map(|account| account.id.clone());
-            let (id, _) = self.registry.codex_deliver(gate, None, Some(cwd), text, options, account).await?;
+            let (id, _) = self.runs.codex_deliver(gate, None, Some(cwd), text, options, account).await?;
             // Codex has one config root and no way to isolate it, so ownership of a
             // thread is a record rather than a path — written the moment the CLI tells us
             // which thread it actually made. A failure here costs the session its
             // ownership (it lists as external) and nothing else, so it is logged rather
             // than turned into a refusal of a run that has already started.
-            if let Err(error) = crate::sessions::codex::CodexSessions.record_owned(&self.registry.paths, &id).await {
+            if let Err(error) = crate::sessions::codex::CodexSessions.record_owned(&self.runs.paths, &id).await {
                 tracing::error!(session = %id, %error, "cannot record this codex session as ours; it will list as external");
             }
             // Written beside the ownership record and for the same reason: the thread id
             // does not exist until `thread/start` answers, and the next message has to
             // find the same login this one ran under.
             if let Some(account_id) = account_id {
-                if let Err(error) = self.registry.accounts.bind_session_account(&id, Some(&account_id), AccountProvider::Codex).await {
+                if let Err(error) = self.runs.accounts.bind_session_account(&id, Some(&account_id), AccountProvider::Codex).await {
                     tracing::error!(session = %id, %error, "cannot bind this codex session to its account; the next message will fall back to the default");
                 }
             }
@@ -503,11 +546,11 @@ impl Run for Codex {
     }
 
     fn injection(&self, id: &str) -> Option<Injection> {
-        self.registry.codex_injection(id)
+        self.runs.codex_injection(id)
     }
 
     fn resident(&self, id: &str) -> Option<ResidentState> {
-        self.registry.codex_handle(id).filter(|h| h.visible()).map(|h| h.state())
+        self.runs.codex_handle(id).filter(|h| h.visible()).map(|h| h.state())
     }
 
     /// The schedule waits for the run to finish: whether it is still running
@@ -519,11 +562,11 @@ impl Run for Codex {
     }
 
     fn drop_queued<'a>(&'a self, id: &'a str, qid: &'a str) -> BoxFuture<'a, QueueOutcome> {
-        Box::pin(self.registry.codex_queue_action(id, qid, false))
+        Box::pin(self.runs.codex_queue_action(id, qid, false))
     }
 
     fn steer_queued<'a>(&'a self, id: &'a str, qid: &'a str) -> BoxFuture<'a, QueueOutcome> {
-        Box::pin(self.registry.codex_queue_action(id, qid, true))
+        Box::pin(self.runs.codex_queue_action(id, qid, true))
     }
 
     /// The app server, when one is running; nothing, when the list still shows
@@ -531,19 +574,19 @@ impl Run for Codex {
     /// turn as failed and removed its runs entry, so nothing is left to stop;
     /// otherwise a `codex exec` run adopted from the previous server.
     fn interrupt(&self, id: &str) -> bool {
-        if let Some(handle) = self.registry.codex_handle(id).filter(Handle::alive) {
+        if let Some(handle) = self.runs.codex_handle(id).filter(Handle::alive) {
             return handle.interrupt();
         }
-        if self.registry.codex_handle(id).is_some_and(|handle| handle.visible()) {
+        if self.runs.codex_handle(id).is_some_and(|handle| handle.visible()) {
             return false;
         }
-        self.registry.interrupt_legacy(Source::Codex, id)
+        self.runs.interrupt_legacy(Source::Codex, id)
     }
 
     // Through the session's app server, or `codex archive` when it has none:
     // the archive is codex's own, so the Codex app sees it too.
     fn archive<'a>(&'a self, gate: &'a SpawnGate, id: &'a str) -> BoxFuture<'a, Result<(), String>> {
-        Box::pin(async move { self.registry.archive_codex(gate, id).await.map_err(|error| error.to_string()) })
+        Box::pin(async move { self.runs.archive_codex(gate, id).await.map_err(|error| error.to_string()) })
     }
 }
 
@@ -560,36 +603,36 @@ impl Codex {
     /// no extra environment, codex's own `~/.codex/auth.json` and nothing else.
     async fn codex_account(&self, id: Option<&str>, options: &SendOptions) -> Result<Option<CodexAccount>, InjectError> {
         let bound = match id {
-            Some(id) => self.registry.accounts.session_account_id(id).await,
+            Some(id) => self.runs.accounts.session_account_id(id).await,
             None => None,
         };
         let chosen = match &options.account {
             AccountChoice::Local => None,
             AccountChoice::Account(id) => Some(id.clone()),
-            AccountChoice::Rule(named) => self.registry.rule_account(AccountProvider::Codex, named, options.model.as_deref()).await,
+            AccountChoice::Rule(named) => self.runs.rule_account(AccountProvider::Codex, named, options.model.as_deref()).await,
             AccountChoice::Unset => match bound.clone() {
                 Some(bound) => Some(bound),
                 // The configured default, or — with none, and `~/.codex` known to
                 // be signed out — a codex account in the pool, if one is free.
-                None if options.use_default_account => self.registry.start_account(AccountProvider::Codex, options.model.as_deref()).await,
+                None if options.use_default_account => self.runs.start_account(AccountProvider::Codex, options.model.as_deref()).await,
                 None => None,
             },
         };
         let Some(account_id) = chosen else { return Ok(None) };
-        let launch = self.registry.accounts.account_env(&account_id).await?;
+        let launch = self.runs.accounts.account_env(&account_id).await?;
         require_provider(&launch, AccountProvider::Codex)?;
         // An explicit choice on a thread that already exists is also a re-binding:
         // the next message must find the account this one asked for.
         if let (Some(id), Some(named)) = (id, options.account.named()) {
             if Some(named) != bound.as_deref() {
-                self.registry.accounts.bind_session_account(id, Some(named), AccountProvider::Codex).await?;
+                self.runs.accounts.bind_session_account(id, Some(named), AccountProvider::Codex).await?;
             }
         }
         Ok(Some(CodexAccount { id: account_id, launch }))
     }
 }
 
-impl InjectionRegistry {
+impl CodexRuns {
     /// The state of a codex session's run: its app server's, whenever there is
     /// a handle (even one that has nothing to say yet), and otherwise the runs
     /// map's, where a `codex exec` run adopted from the previous server is.
@@ -1010,7 +1053,7 @@ async fn retire(handle: &Handle) -> Result<(), InjectError> {
 const CODEX_ARCHIVE_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Archive an unloaded Codex session. Loaded sessions must go through
-/// `InjectionRegistry::archive_codex`, which routes to their owning App Server.
+/// `CodexRuns::archive_codex`, which routes to their owning App Server.
 ///
 /// `codex archive` writes the session, so it is started only under a permit
 /// that holds the gate and the session's claim.
@@ -1047,7 +1090,7 @@ fn claim_refusal(error: ClaimError) -> InjectError {
 }
 
 struct Driver {
-    registry: Arc<InjectionRegistry>,
+    registry: Arc<CodexRuns>,
     record: runs::RunRecord,
     link: shim::Link,
     /// The session's claim. Dropped with the driver, except on
@@ -1730,7 +1773,7 @@ mod tests {
             let (_tx, rx) = mpsc::unbounded_channel();
             let driver = Driver {
                 lease: providers.gate().lease(Source::Codex, "test-thread").unwrap(),
-                registry,
+                registry: registry.codex.clone(),
                 record,
                 link,
                 state: State::default(),
@@ -2591,7 +2634,7 @@ mod tests {
         let work = work.to_string_lossy().into_owned();
         let plain = SendOptions::default();
 
-        let (id, _) = registry.codex_deliver(gate, None, Some(&work), "hello", &plain, None).await.expect("a new thread");
+        let (id, _) = registry.codex.codex_deliver(gate, None, Some(&work), "hello", &plain, None).await.expect("a new thread");
         assert_eq!(
             registry.steps(),
             [
@@ -2604,7 +2647,7 @@ mod tests {
         assert!(registry.claim_held(Source::Codex, &id), "the driver holds the claim");
 
         for _ in 0..500 {
-            if registry.codex_handle(&id).is_some_and(|handle| !handle.busy()) {
+            if registry.codex.codex_handle(&id).is_some_and(|handle| !handle.busy()) {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -2618,7 +2661,7 @@ mod tests {
             },
         };
         registry
-            .codex_deliver(gate, Some(&id), Some(&work), "again", &plain, Some(other))
+            .codex.codex_deliver(gate, Some(&id), Some(&work), "again", &plain, Some(other))
             .await
             .expect("resumed under the other account");
         assert_eq!(
@@ -2631,7 +2674,7 @@ mod tests {
             ]
         );
 
-        registry.codex_deliver(gate, Some(RESUMED), Some(&work), "resume", &plain, None).await.expect("resumed");
+        registry.codex.codex_deliver(gate, Some(RESUMED), Some(&work), "resume", &plain, None).await.expect("resumed");
         assert_eq!(
             registry.steps()[7..],
             [
@@ -2641,7 +2684,7 @@ mod tests {
             ]
         );
 
-        registry.archive_codex(gate, UNLOADED).await.expect("archived");
+        registry.codex.archive_codex(gate, UNLOADED).await.expect("archived");
         assert_eq!(registry.steps()[10..], [step("codex archive", true, Some(true))]);
         assert!(!registry.gate_held());
         assert!(!registry.claim_held(Source::Codex, UNLOADED), "the claim went with the archive");
@@ -2651,7 +2694,7 @@ mod tests {
         std::fs::write(elsewhere.join("resume-thread.txt"), OTHER).expect("resume answer");
         let elsewhere = elsewhere.to_string_lossy().into_owned();
         let refused = registry
-            .codex_deliver(gate, Some(MISMATCHED), Some(&elsewhere), "resume", &plain, None)
+            .codex.codex_deliver(gate, Some(MISMATCHED), Some(&elsewhere), "resume", &plain, None)
             .await
             .expect_err("another thread is refused");
         assert_eq!(refused.to_string(), "Codex resumed a different thread");
@@ -2666,7 +2709,7 @@ mod tests {
         assert!(!registry.claim_held(Source::Codex, MISMATCHED));
 
         for thread in [id.as_str(), RESUMED] {
-            if let Some(handle) = registry.codex_handle(thread) {
+            if let Some(handle) = registry.codex.codex_handle(thread) {
                 for _ in 0..500 {
                     if !handle.busy() {
                         break;
@@ -2690,12 +2733,13 @@ mod tests {
         std::fs::create_dir_all(&work).expect("work");
         let work = work.to_string_lossy().into_owned();
         let (id, _) = registry
+            .codex
             .codex_deliver(providers.gate(), None, Some(&work), "hello", &SendOptions::default(), None)
             .await
             .expect("a new thread");
         assert!(registry.driver_states().resident(Source::Codex, &id).is_some(), "in the registry's snapshot");
         assert!(providers.driver_states().resident(Source::Codex, &id).is_some(), "in the providers' snapshot");
-        let handle = registry.codex_handle(&id).expect("its app server");
+        let handle = registry.codex.codex_handle(&id).expect("its app server");
         for _ in 0..500 {
             if !handle.busy() {
                 break;
@@ -2732,7 +2776,7 @@ mod tests {
             ..SendOptions::default()
         };
         registry
-            .codex_deliver(providers.gate(), Some(THREAD), Some(&work), "hi", &chat, Some(account))
+            .codex.codex_deliver(providers.gate(), Some(THREAD), Some(&work), "hi", &chat, Some(account))
             .await
             .expect("resumed");
 
@@ -2773,7 +2817,7 @@ mod tests {
             )
         );
 
-        let handle = registry.codex_handle(THREAD).expect("the resident");
+        let handle = registry.codex.codex_handle(THREAD).expect("the resident");
         for _ in 0..500 {
             if !handle.busy() {
                 break;
@@ -2799,7 +2843,7 @@ mod tests {
         let (_path, registry) = fake_codex_registry(&home, "codex-utf8");
         let providers = crate::inject::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
         let refused = registry
-            .codex_deliver(providers.gate(), Some(THREAD), None, "hi", &SendOptions::default(), None)
+            .codex.codex_deliver(providers.gate(), Some(THREAD), None, "hi", &SendOptions::default(), None)
             .await
             .expect_err("refused");
         assert_eq!(refused.to_string(), "the session's working directory is not valid UTF-8");

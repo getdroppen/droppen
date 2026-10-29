@@ -806,8 +806,7 @@ impl ClaudeCode {
 }
 
 impl InjectionRegistry {
-    /// Itself, listed with its host as Claude Code's runs: its residents,
-    /// and Codex's app servers until those are Codex's own
+    /// Itself, listed with its host as Claude Code's runs: its residents
     /// ([`super::RunHost::driver_states`]).
     pub(super) fn listed(self: Arc<Self>) -> Arc<Self> {
         let runs: Arc<dyn super::ListsRuns> = self.clone();
@@ -7177,7 +7176,7 @@ mod tests {
             paths: paths.clone(),
         });
         Arc::new(InjectionRegistry {
-            codex_servers: Mutex::new(HashMap::new()),
+            codex: crate::inject::app_server::CodexRuns::new(host.clone()),
             residents: Mutex::new(HashMap::new()),
             stall_after: stall,
             resident_idle: None,
