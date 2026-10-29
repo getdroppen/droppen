@@ -254,7 +254,7 @@ impl Device {
             wrap::seal_for_recovery(&self.dh, &self.id, &self.account, &rsk, epoch, &self.user_keys[&epoch], &mut OsRng).map_err(err("seal"))?;
         // Written once: a package this device sealed before stands. The name
         // carries the recovery key's tag and ends with its writer (the sender).
-        let tag: String = rsk[..8].iter().map(|b| format!("{b:02x}")).collect();
+        let tag = hex(&rsk[..8]);
         self.put_key(&format!("rk/{epoch}/{}/{tag}/{}", self.id, self.id), &sealed.encode())
             .await?;
         Ok(true)

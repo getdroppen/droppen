@@ -618,9 +618,8 @@ mod tests {
 
     #[test]
     fn only_an_image_whose_v_is_its_own_hash_is_pinned() {
-        use sha2::{Digest, Sha256};
         let body = b"\x89PNG fake".to_vec();
-        let hash: String = Sha256::digest(&body).iter().map(|byte| format!("{byte:02x}")).collect();
+        let hash = droppen_base::text::sha256_hex(&body);
         assert!(content_versioned("icon-192.png", &body, &hash[..12]));
         assert!(!content_versioned("icon-192.png", &body, "0123456789ab"), "a stale or made-up hash");
         assert!(!content_versioned("icon-192.png", &body, "x"), "not a hash at all");

@@ -50,6 +50,7 @@ tokio = { version = "1", features = ["sync", "rt", "macros", "rt-multi-thread", 
 # The canonical encodings of the eight small-order Edwards points, exported to
 # the TypeScript half so both sides refuse the same weak keys.
 curve25519-dalek = "4"
+hex = "0.4"
 
 [lints]
 workspace = true
