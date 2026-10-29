@@ -33,7 +33,7 @@ use gotcha::axum::response::{IntoResponse, Response};
 use gotcha::axum::extract::FromRef;
 use gotcha::{api, Event, GotchaRouter, Json, KeepAlive, Schematic, Sse, State};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 use droppen_http::error::ApiError;
@@ -489,9 +489,22 @@ fn parse_message_body(raw: &[u8]) -> Option<MessageRequest> {
     })
 }
 
-/// One `data:` frame.
-fn frame(payload: &Value) -> Event {
-    Event::default().data(payload.to_string())
+/// One `data:` frame of a turn's stream, tagged `type`.
+#[derive(Serialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+enum ChatEvent<'a> {
+    /// A chunk of the reply.
+    Delta { text: &'a str },
+    /// The whole reply, which ends the turn.
+    Done { content: &'a str },
+    /// Why the turn failed, which ends it too.
+    Error { error: &'a str },
+}
+
+impl ChatEvent<'_> {
+    fn event(&self) -> Event {
+        Event::default().data(serde_json::to_string(self).expect("chat events encode"))
+    }
 }
 
 /// The SSE stream's end of the channel, as something the store can push to.
@@ -499,7 +512,7 @@ struct EventSink(tokio::sync::mpsc::Sender<Event>);
 
 impl store::DeltaSink for EventSink {
     async fn delta(&self, text: String) -> bool {
-        self.0.send(frame(&json!({ "type": "delta", "text": text }))).await.is_ok()
+        self.0.send(ChatEvent::Delta { text: &text }.event()).await.is_ok()
     }
 }
 
@@ -538,8 +551,8 @@ pub async fn api_chat_message(State(state): State<ChatsState>, ApiPath(id): ApiP
             biased;
             () = cancel.cancelled() => return,
             outcome = turn => match outcome {
-                Ok(content) => frame(&json!({ "type": "done", "content": content })),
-                Err(error) => frame(&json!({ "type": "error", "error": error.client_message("chat request failed") })),
+                Ok(content) => ChatEvent::Done { content: &content }.event(),
+                Err(error) => ChatEvent::Error { error: &error.client_message("chat request failed") }.event(),
             },
         };
         let _ = sender.send(closing).await;
@@ -600,6 +613,7 @@ pub fn describe(reg: &mut ExtraResponses) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[tokio::test]
     async fn the_anchor_directory_carries_the_codex_persona() {

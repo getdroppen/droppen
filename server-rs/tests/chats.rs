@@ -351,6 +351,41 @@ async fn a_turn_streams_deltas_then_done_and_stores_both_messages() {
     server.stop().await;
 }
 
+/// Byte for byte, what the web reads and what the provider is asked: the
+/// frames of a turn and of a failed one, and the request of a second turn,
+/// which carries the first one's reply.
+#[tokio::test]
+async fn the_frames_and_the_provider_request_are_written_as_pinned() {
+    let provider = FakeProvider::start(|_| Reply::Pieces(vec![completion_frame("Hi"), b"data: [DONE]\n\n".to_vec()])).await;
+    let server = configured(&provider).await;
+    let id = new_api_chat(&server).await;
+    let payloads = |body: &str| -> Vec<String> {
+        body.lines()
+            .filter_map(|line| line.strip_prefix("data:"))
+            .map(|payload| payload.trim().to_string())
+            .collect()
+    };
+
+    for text in ["one", "two"] {
+        let (status, body) = server
+            .json("POST", &format!("/api/api-chats/{id}/message"), &json!({ "text": text }))
+            .await;
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(payloads(&body), [r#"{"type":"delta","text":"Hi"}"#, r#"{"type":"done","content":"Hi"}"#]);
+    }
+    assert_eq!(
+        provider.received().last().expect("a call").body,
+        r#"{"model":"gpt-4o","stream":true,"messages":[{"role":"user","content":"one"},{"role":"assistant","content":"Hi"},{"role":"user","content":"two"}]}"#
+    );
+
+    let (status, body) = server
+        .json("POST", "/api/api-chats/missing/message", &json!({ "text": "hello" }))
+        .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(payloads(&body), [r#"{"type":"error","error":"chat not found"}"#]);
+    server.stop().await;
+}
+
 #[tokio::test]
 async fn a_provider_failure_becomes_an_error_frame_and_leaves_the_user_turn() {
     let provider = FakeProvider::start(|_| Reply::Body(429, "slow down".into())).await;
