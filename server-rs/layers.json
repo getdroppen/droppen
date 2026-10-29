@@ -343,12 +343,11 @@
       "why": "drive finds a Claude Code session by its id itself (sessions::claude), and Drive holds Claude Code's setup-token captures. They go through the provider base (Provider, Transcripts).",
       "edges": [
         "drive -> accounts::setup_token",
-        "drive -> models::claude",
         "drive -> sessions::claude"
       ]
     },
     {
-      "why": "inject and models name each implementation: the registry starts them, models asks each for its list. They go when each provider registers itself from the entry (ClaudeCode::register, Codex::register, Acp::register) and brings its own model list.",
+      "why": "inject names each implementation: the registry starts them. They go when each provider registers itself from the entry (ClaudeCode::register, Codex::register, Acp::register).",
       "edges": [
         "inject -> acp",
         "inject -> inject::acp",
@@ -357,12 +356,7 @@
         "inject -> record",
         "inject -> sessions::acp_transcript",
         "inject -> sessions::claude",
-        "inject -> sessions::codex",
-        "models -> models::acp",
-        "models -> models::claude",
-        "models -> models::codex",
-        "models -> sessions::acp_transcript",
-        "models -> sessions::codex"
+        "inject -> sessions::codex"
       ]
     },
     {
@@ -380,12 +374,6 @@
       "edges": [
         "accounts::setup_token -> drive",
         "accounts::usage_login -> drive"
-      ]
-    },
-    {
-      "why": "A domain pair that points the wrong way: accounts checks a model against models::model_ids. It goes when that item moves to the crate that owns it.",
-      "edges": [
-        "accounts -> models"
       ]
     }
   ]

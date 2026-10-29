@@ -298,12 +298,15 @@ fn scratch(kind: &str) -> std::io::Result<ScratchDir> {
 pub(crate) struct Acp {
     /// The registry it reads its agent processes from.
     registry: Arc<InjectionRegistry>,
+    /// Each agent's models.
+    models: crate::models::acp::AcpModels,
 }
 
 impl Acp {
     /// The ACP agents over `registry`.
     pub(crate) fn new(registry: Arc<InjectionRegistry>) -> Self {
-        Self { registry }
+        let models = crate::models::acp::AcpModels::new(registry.paths.clone(), registry.clone());
+        Self { registry, models }
     }
 }
 
@@ -321,6 +324,10 @@ impl Provider for Acp {
 
     fn run(&self) -> &dyn Run {
         self
+    }
+
+    fn models(&self) -> &dyn crate::models::Models {
+        &self.models
     }
 }
 

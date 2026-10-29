@@ -1,11 +1,14 @@
 //! Codex's model list: the cache the CLI itself writes, `models_cache.json`.
 
 use std::path::Path;
+use std::sync::Arc;
 
+use futures_util::future::BoxFuture;
 use serde_json::Value;
 
-use super::{ModelInfo, ModelListSource};
+use super::{ModelInfo, ModelList, ModelListSource, Models, ModelsQuery};
 use droppen_http::openapi_ext::Nullable;
+use droppen_instance::paths::Paths;
 
 /// What the Codex list falls back to when its cache is missing or unusable.
 fn codex_fallback() -> Vec<ModelInfo> {
@@ -68,6 +71,73 @@ pub async fn codex_models(cache: &Path) -> (Vec<ModelInfo>, ModelListSource) {
         (codex_fallback(), ModelListSource::Fallback)
     } else {
         (models, ModelListSource::Cache)
+    }
+}
+
+/// Codex's models, for [`Models`]: its cache, read for every login alike,
+/// since Codex has one config root.
+pub(crate) struct CodexModels {
+    /// The instance's paths, which say where Codex's home is.
+    paths: Arc<Paths>,
+}
+
+impl CodexModels {
+    /// The models of the Codex under `paths`.
+    pub(crate) fn new(paths: Arc<Paths>) -> Self {
+        Self { paths }
+    }
+}
+
+impl Models for CodexModels {
+    fn list<'a>(&'a self, _query: &'a ModelsQuery) -> BoxFuture<'a, Result<ModelList, String>> {
+        Box::pin(async move {
+            let (models, source) = codex_models(&crate::sessions::codex::CodexHome::of(&self.paths).models_cache()).await;
+            Ok(ModelList {
+                models,
+                source,
+                hidden: None.into(),
+            })
+        })
+    }
+
+    fn ids<'a>(&'a self, _account_id: Option<&'a str>) -> BoxFuture<'a, Vec<String>> {
+        Box::pin(async move {
+            let (models, _) = codex_models(&crate::sessions::codex::CodexHome::of(&self.paths).models_cache()).await;
+            models.into_iter().map(|model| model.id).collect()
+        })
+    }
+
+    // Codex publishes nothing static. Its rungs come out of the cache the CLI
+    // itself writes, which is the *only* authority — so when that cache is
+    // missing, this answers `None` and the caller accepts whatever it was given.
+    fn accepted_efforts<'a>(&'a self, model: Option<&'a str>) -> BoxFuture<'a, Option<Vec<String>>> {
+        Box::pin(async move {
+            let (models, list) = codex_models(&crate::sessions::codex::CodexHome::of(&self.paths).models_cache()).await;
+            if list == ModelListSource::Fallback {
+                return None;
+            }
+            // A named model answers for itself; without one, anything any listed
+            // model accepts is accepted, because the model may be chosen later
+            // (or left to the CLI's own default).
+            let named = model.and_then(|wanted| models.iter().find(|entry| entry.id == wanted));
+            let efforts: Vec<String> = match named {
+                Some(entry) => entry.efforts.as_ref()?.clone(),
+                None => {
+                    let mut all: Vec<String> = models.iter().filter_map(|entry| entry.efforts.as_ref()).flatten().cloned().collect();
+                    all.sort();
+                    all.dedup();
+                    all
+                }
+            };
+            (!efforts.is_empty()).then_some(efforts)
+        })
+    }
+
+    // The CLI's own modes, asked of [`crate::inject::codex_permission_flags`] so
+    // the two cannot drift: that function is what turns the value into `argv`,
+    // and it already refuses what it does not know.
+    fn permission_is_known(&self, permission: &str) -> bool {
+        crate::inject::codex_permission_flags(permission).is_ok()
     }
 }
 

@@ -233,6 +233,15 @@ struct DuplicateAccount<'a> {
     existing_label: &'a str,
 }
 
+/// The model ids one login of a CLI lists: what a start that names no model
+/// is chosen against. Only the CLI's provider can list them, and the providers
+/// sit above accounts, so the entry hands an implementation in.
+pub trait ModelIds: Send + Sync {
+    /// The ids `GET /api/models` lists for one login of `source`, in its order;
+    /// `account_id` absent is the user's own login.
+    fn model_ids<'a>(&'a self, source: crate::sessions::Source, account_id: Option<&'a str>) -> futures_util::future::BoxFuture<'a, Vec<String>>;
+}
+
 /// What the account routes use of the server's state.
 #[derive(Clone)]
 pub struct AccountsState {
@@ -242,8 +251,8 @@ pub struct AccountsState {
     pub quota: Arc<quota::QuotaCache>,
     /// The instance's paths, which a secret is verified under.
     pub paths: Arc<droppen_instance::paths::Paths>,
-    /// What `model_ids` reads, for `GET /api/accounts/start`.
-    pub models: crate::models::ModelsState,
+    /// The model ids of one login, for `GET /api/accounts/start`.
+    pub model_ids: Arc<dyn ModelIds>,
     /// Re-checks the runs held for a usable account, after a write that may
     /// have made one usable. The runs sit above accounts, so the entry hands
     /// the call in.
@@ -492,7 +501,7 @@ pub async fn account_start(State(state): State<AccountsState>, ApiQuery(query): 
     let state = &state;
     let mut lists = futures_util::stream::iter(inputs.start_order())
         .map(|login| async move {
-            let models = crate::models::model_ids(&state.models, source, login.as_deref()).await;
+            let models = state.model_ids.model_ids(source, login.as_deref()).await;
             (login, models)
         })
         .buffered(START_PROBES);

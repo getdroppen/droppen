@@ -1,26 +1,22 @@
 //! The models each local CLI can be asked for.
 //!
-//! Port of the former TypeScript server's `models.ts` plus the `/api/models`
-//! route in its `app.ts`, and no longer only a port: the two CLIs are asked in
-//! two different ways, because they answer in two different ways.
+//! Every CLI is asked in its own way, because each answers in its own way: Codex
+//! publishes a cache file ([`codex`]), Claude Code answers over its control
+//! protocol ([`claude`]), and an ACP agent publishes a `model` option
+//! ([`acp`]). So each provider answers [`Models`] for its own CLI, and the
+//! route asks the provider of the source it is asked about.
 //!
-//! * **codex** publishes a file, `models_cache.json`, and it is simply read.
-//! * **claude** publishes nothing durable — the usage history this module used
-//!   to mine for concrete ids is a file the current CLI no longer writes — but
-//!   it will *answer*, over the control protocol in [`claude::probe`]. That answer is
-//!   account-scoped and current, which no file on this machine is.
-//!
-//! Both degrade to a static list rather than failing, because an empty model
-//! picker is worse than a slightly stale one, and both say which of the two the
-//! caller is looking at.
+//! A list degrades to a static guess rather than failing, because an empty
+//! model picker is worse than a slightly stale one, and says which of the two
+//! the caller is looking at.
 
 use std::sync::Arc;
 
+use futures_util::future::BoxFuture;
 use gotcha::axum::extract::FromRef;
 use gotcha::{api, GotchaRouter, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
-use crate::accounts::store::AccountsStore;
 use droppen_http::error::ApiError;
 use droppen_http::extract::ApiQuery;
 use droppen_http::openapi_ext::{ExtraResponses, Nullable, Optional};
@@ -96,17 +92,47 @@ pub struct ModelsQuery {
     pub acp_agent: Option<String>,
 }
 
+/// What one CLI says about its models: the list a picker offers, the ids a
+/// start is chosen against, and which efforts and permission modes it takes.
+/// Each provider answers for its own CLI ([`crate::inject::Provider::models`]).
+pub trait Models: Send + Sync {
+    /// The list `GET /api/models` serves for `query`, or why the query is
+    /// refused, in the words of the route's `400`.
+    fn list<'a>(&'a self, query: &'a ModelsQuery) -> BoxFuture<'a, Result<ModelList, String>>;
+
+    /// The ids [`Models::list`] gives for one login, in its order: the same
+    /// list a composer resolves its model against, so a model chosen from it on
+    /// the server is one the composer shows (`GET /api/accounts/start`).
+    /// `account_id` absent is the user's own login.
+    fn ids<'a>(&'a self, account_id: Option<&'a str>) -> BoxFuture<'a, Vec<String>>;
+
+    /// The efforts a CLI would actually accept, or `None` when nothing on this
+    /// machine can say.
+    ///
+    /// Only [`crate::schedule`] asks. The composer does not need it — a person
+    /// picking from a list cannot pick something that is not in it — but a task that
+    /// fires at three in the morning needs its flags checked at the moment somebody
+    /// is *there to fix them*, and this is the only place that knows what each CLI
+    /// takes.
+    ///
+    /// A CLI that cannot say answers `None`, and the caller accepts whatever it
+    /// was given. That is the rule this module states about its lists: too many
+    /// rungs offers one option the API will refuse, while too few silently hides
+    /// the rung a new model was released for, and refusing to schedule a valid
+    /// effort because this machine has never run a CLI would be the second kind
+    /// of wrong.
+    fn accepted_efforts<'a>(&'a self, model: Option<&'a str>) -> BoxFuture<'a, Option<Vec<String>>>;
+
+    /// Whether this CLI would take `permission` as the permission mode it is
+    /// spawned with.
+    fn permission_is_known(&self, permission: &str) -> bool;
+}
+
 /// What the model routes use of the server's state.
 #[derive(Clone)]
 pub struct ModelsState {
-    /// The instance's paths: codex's model cache and the ACP agents' configs.
-    pub paths: Arc<droppen_instance::paths::Paths>,
-    /// The lists Claude Code published, per config root.
-    pub models: Arc<claude::ClaudeModelCache>,
-    /// The live runs, which ask an ACP agent for its options.
-    pub injections: Arc<crate::inject::InjectionRegistry>,
-    /// The stored accounts, whose roots or env blocks name a login's models.
-    pub accounts: Arc<AccountsStore>,
+    /// Every CLI this server drives, each of which lists its own models.
+    pub providers: Arc<crate::inject::ProviderRegistry>,
 }
 droppen_http::substate!(ModelsState);
 
@@ -119,105 +145,12 @@ droppen_http::substate!(ModelsState);
 /// after a cold start or an expired reading waits for one.
 #[api(id = "list_models", group = "models", summary = "List models")]
 pub async fn list_models(State(state): State<ModelsState>, ApiQuery(query): ApiQuery<ModelsQuery>) -> Result<Json<ModelList>, ApiError> {
-    let paths = state.paths.as_ref();
-    let mut hidden = 0;
-    let (models, source) = match query.source {
-        Source::Codex => codex::codex_models(&crate::sessions::codex::CodexHome::of(&paths).models_cache()).await,
-        Source::Claude => claude::claude_models(&state, query.account_id.as_deref()).await,
-        Source::Acp => {
-            // Every agent has its own list: one served for another is a picker
-            // offering models the session cannot run.
-            let agent = query
-                .acp_agent
-                .as_deref()
-                .filter(|id| crate::sessions::acp_transcript::valid_agent_id(id))
-                .ok_or_else(|| ApiError::bad_request("acpAgent names the ACP agent to list models for"))?;
-            let (models, source, left_out) = acp::acp_models(&state, agent).await;
-            hidden = left_out;
-            (models, source)
-        }
-    };
-    Ok(Json(ModelList {
-        models,
-        source,
-        hidden: (hidden > 0).then_some(hidden).into(),
-    }))
-}
-
-/// The ids `GET /api/models` lists for one login of `source`, in its order — the
-/// same list a composer resolves its model against, so a model chosen from it
-/// on the server is one the composer shows (`GET /api/accounts/start`).
-pub(crate) async fn model_ids(state: &ModelsState, source: Source, account_id: Option<&str>) -> Vec<String> {
-    let (models, _) = match source {
-        Source::Codex => codex::codex_models(&crate::sessions::codex::CodexHome::of(&state.paths).models_cache()).await,
-        Source::Claude => claude::claude_models(state, account_id).await,
-        // An ACP agent has no logins; its list is asked for by agent.
-        Source::Acp => (Vec::new(), ModelListSource::Fallback),
-    };
-    models.into_iter().map(|model| model.id).collect()
-}
-
-/// The efforts a CLI would actually accept, or `None` when nothing on this
-/// machine can say.
-///
-/// Only [`crate::schedule`] asks. The composer does not need it — a person
-/// picking from a list cannot pick something that is not in it — but a task that
-/// fires at three in the morning needs its flags checked at the moment somebody
-/// is *there to fix them*, and this is the only place that knows what each CLI
-/// takes.
-///
-/// The two sources answer differently, and the difference is theirs rather than
-/// ours:
-///
-/// * **claude** publishes a ladder per model, in this file, derived from the id.
-///   A named model is checked against its own rungs, so an `--effort max` on a
-///   haiku is refused here rather than by the API at three in the morning; an
-///   unnamed model gets the full ladder.
-/// * **codex** publishes nothing static. Its rungs come out of the cache the CLI
-///   itself writes, which is the *only* authority — so when that cache is
-///   missing, this answers `None` and the caller accepts whatever it was given.
-///
-/// That asymmetry is deliberate and is the rule this module already states about
-/// its lists: too many rungs offers one option the API will refuse, while too
-/// few silently hides the rung a new model was released for. Refusing to
-/// schedule a valid effort because this machine has never run codex would be the
-/// second kind of wrong.
-pub async fn accepted_efforts(paths: &droppen_instance::paths::Paths, source: Source, model: Option<&str>) -> Option<Vec<String>> {
-    match source {
-        // The agent checks an effort against the model it runs when it is set.
-        Source::Acp => None,
-        Source::Claude => Some(claude::claude_efforts(model.unwrap_or_default())),
-        Source::Codex => {
-            let (models, list) = codex::codex_models(&crate::sessions::codex::CodexHome::of(&paths).models_cache()).await;
-            if list == ModelListSource::Fallback {
-                return None;
-            }
-            // A named model answers for itself; without one, anything any listed
-            // model accepts is accepted, because the model may be chosen later
-            // (or left to the CLI's own default).
-            let named = model.and_then(|wanted| models.iter().find(|entry| entry.id == wanted));
-            let efforts: Vec<String> = match named {
-                Some(entry) => entry.efforts.as_ref()?.clone(),
-                None => {
-                    let mut all: Vec<String> = models.iter().filter_map(|entry| entry.efforts.as_ref()).flatten().cloned().collect();
-                    all.sort();
-                    all.dedup();
-                    all
-                }
-            };
-            (!efforts.is_empty()).then_some(efforts)
-        }
-    }
-}
-
-/// Whether `permission` is one `source` would accept.
-pub fn permission_is_known(source: Source, permission: &str) -> bool {
-    match source {
-        Source::Claude => claude::CLAUDE_PERMISSIONS.contains(&permission),
-        Source::Codex => crate::inject::codex_permission_flags(permission).is_ok(),
-        // An ACP agent has no permission modes to choose between.
-        Source::Acp => false,
-    }
+    // A source no provider runs has no list to offer.
+    let models = state
+        .providers
+        .models(query.source)
+        .ok_or_else(|| ApiError::bad_request(format!("no provider runs {} sessions", query.source)))?;
+    models.list(&query).await.map(Json).map_err(ApiError::bad_request)
 }
 
 impl ModelsState {

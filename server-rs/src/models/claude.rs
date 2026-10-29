@@ -6,10 +6,14 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
-use super::{ModelInfo, ModelListSource, ModelsState};
-use crate::accounts::store::{Account, AccountKind};
+use futures_util::future::BoxFuture;
+
+use super::{ModelInfo, ModelList, ModelListSource, Models, ModelsQuery};
+use crate::accounts::store::{Account, AccountKind, AccountsStore};
 use droppen_http::openapi_ext::Nullable;
+use droppen_instance::paths::Paths;
 
 pub mod probe;
 
@@ -165,38 +169,40 @@ fn claude_env_models(vars: &BTreeMap<String, String>) -> Option<Vec<ModelInfo>> 
     Some(models)
 }
 
-/// The Claude list for one login: the local one, or a stored account's.
-///
-/// Three lanes, because the three kinds of login can be asked three different
-/// things. An OAuth account has a config root of its own and is *asked*. An env
-/// account has no root and usually no Anthropic behind it either, but it does
-/// have a block, and a block that names a model has answered the question — see
-/// [`claude_env_models`]. Everything else falls back.
-///
-/// An account that cannot be asked is not an error — an unknown id, a deleted
-/// account, one with no `/usage` login of its own — because the caller is a
-/// picker and a picker must always have something to show. It gets the same
-/// alias list and the same [`ModelListSource::Fallback`] as any other probe
-/// failure, which the composer already marks as a guess.
-pub(super) async fn claude_models(state: &ModelsState, account_id: Option<&str>) -> (Vec<ModelInfo>, ModelListSource) {
-    let Some(id) = account_id.map(str::trim).filter(|id| !id.is_empty()) else {
-        return state.models.models(None).await;
-    };
-    let accounts = &state.accounts;
-    let Some(account) = accounts.get(id).await else {
-        return (claude_fallback(), ModelListSource::Fallback);
-    };
-    if account.kind == AccountKind::Env {
-        // A block that names no model says nothing, and gets the guess it is.
-        return match claude_env_models(&accounts.env_values(id, &CLAUDE_MODEL_VARS).await) {
-            Some(models) => (models, ModelListSource::AccountEnv),
-            None => (claude_fallback(), ModelListSource::Fallback),
+impl ClaudeModels {
+    /// The Claude list for one login: the local one, or a stored account's.
+    ///
+    /// Three lanes, because the three kinds of login can be asked three different
+    /// things. An OAuth account has a config root of its own and is *asked*. An env
+    /// account has no root and usually no Anthropic behind it either, but it does
+    /// have a block, and a block that names a model has answered the question — see
+    /// [`claude_env_models`]. Everything else falls back.
+    ///
+    /// An account that cannot be asked is not an error — an unknown id, a deleted
+    /// account, one with no `/usage` login of its own — because the caller is a
+    /// picker and a picker must always have something to show. It gets the same
+    /// alias list and the same [`ModelListSource::Fallback`] as any other probe
+    /// failure, which the composer already marks as a guess.
+    async fn login_models(&self, account_id: Option<&str>) -> (Vec<ModelInfo>, ModelListSource) {
+        let Some(id) = account_id.map(str::trim).filter(|id| !id.is_empty()) else {
+            return self.cache.models(None).await;
         };
+        let accounts = &self.accounts;
+        let Some(account) = accounts.get(id).await else {
+            return (claude_fallback(), ModelListSource::Fallback);
+        };
+        if account.kind == AccountKind::Env {
+            // A block that names no model says nothing, and gets the guess it is.
+            return match claude_env_models(&accounts.env_values(id, &CLAUDE_MODEL_VARS).await) {
+                Some(models) => (models, ModelListSource::AccountEnv),
+                None => (claude_fallback(), ModelListSource::Fallback),
+            };
+        }
+        let Some(dir) = probe_dir(accounts, &account) else {
+            return (claude_fallback(), ModelListSource::Fallback);
+        };
+        self.cache.models(Some(&dir)).await
     }
-    let Some(dir) = probe_dir(accounts, &account) else {
-        return (claude_fallback(), ModelListSource::Fallback);
-    };
-    state.models.models(Some(&dir)).await
 }
 
 /// The directory an account's list can be asked of, when there is one.
@@ -229,12 +235,61 @@ fn probe_dir(accounts: &crate::accounts::store::AccountsStore, account: &Account
 /// scheduled until this list catches up; the benefit is that a typo in an
 /// unattended task is caught by the person who typed it rather than by a CLI at
 /// three in the morning. The same five the composer offers.
-pub(super) const CLAUDE_PERMISSIONS: [&str; 5] = ["acceptEdits", "auto", "plan", "dontAsk", "bypassPermissions"];
+const CLAUDE_PERMISSIONS: [&str; 5] = ["acceptEdits", "auto", "plan", "dontAsk", "bypassPermissions"];
+
+/// Claude Code's models, for [`Models`]: each login's list, asked of its
+/// config root and cached for the process ([`ClaudeModelCache`]).
+pub(crate) struct ClaudeModels {
+    /// The lists Claude Code published, per config root.
+    cache: Arc<ClaudeModelCache>,
+    /// The stored accounts, whose roots or env blocks name a login's models.
+    accounts: Arc<AccountsStore>,
+}
+
+impl ClaudeModels {
+    /// The models of the logins in `accounts`, asked of Claude Code under `paths`.
+    pub(crate) fn new(paths: Arc<Paths>, accounts: Arc<AccountsStore>) -> Self {
+        Self {
+            cache: Arc::new(ClaudeModelCache::new(paths)),
+            accounts,
+        }
+    }
+}
+
+impl Models for ClaudeModels {
+    // Per *login*: the query names the account whose credentials the run will
+    // use; absent is the user's own `~/.claude`.
+    fn list<'a>(&'a self, query: &'a ModelsQuery) -> BoxFuture<'a, Result<ModelList, String>> {
+        Box::pin(async move {
+            let (models, source) = self.login_models(query.account_id.as_deref()).await;
+            Ok(ModelList {
+                models,
+                source,
+                hidden: None.into(),
+            })
+        })
+    }
+
+    fn ids<'a>(&'a self, account_id: Option<&'a str>) -> BoxFuture<'a, Vec<String>> {
+        Box::pin(async move { self.login_models(account_id).await.0.into_iter().map(|model| model.id).collect() })
+    }
+
+    // A ladder per model, derived from the id ([`claude_efforts`]). A named
+    // model is checked against its own rungs, so an `--effort max` on a haiku
+    // is refused here rather than by the API at three in the morning; an
+    // unnamed model gets the full ladder.
+    fn accepted_efforts<'a>(&'a self, model: Option<&'a str>) -> BoxFuture<'a, Option<Vec<String>>> {
+        Box::pin(std::future::ready(Some(claude_efforts(model.unwrap_or_default()))))
+    }
+
+    fn permission_is_known(&self, permission: &str) -> bool {
+        CLAUDE_PERMISSIONS.contains(&permission)
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sessions::Source;
 
     fn all_five() -> Nullable<Vec<String>> {
         Nullable(Some(CLAUDE_EFFORTS.iter().map(|e| (*e).to_string()).collect()))
@@ -381,10 +436,11 @@ mod tests {
     /// refuse a task the CLI would have run.
     #[tokio::test]
     async fn a_model_this_build_has_never_heard_of_accepts_the_whole_ladder() {
-        let paths = droppen_instance::paths::Paths::new(PathBuf::from("/nonexistent"));
+        let paths = Arc::new(Paths::new(PathBuf::from("/nonexistent")));
+        let models = ClaudeModels::new(paths.clone(), Arc::new(AccountsStore::new(paths, crate::app::logins())));
         for model in ["GLM-5.3-CYBERSECURITY-FP8", "qwen3-max", "glm-5-air"] {
             assert_eq!(
-                crate::models::accepted_efforts(&paths, Source::Claude, Some(model)).await,
+                models.accepted_efforts(Some(model)).await,
                 Some(CLAUDE_EFFORTS.iter().map(|effort| (*effort).to_string()).collect::<Vec<_>>()),
                 "{model} is not a claude id and must not be given a claude id's ladder"
             );
