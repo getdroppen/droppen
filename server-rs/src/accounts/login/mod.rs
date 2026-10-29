@@ -12,7 +12,8 @@ pub mod codex;
 
 use std::sync::Arc;
 
-use super::store::{AccountError, AccountKind, AccountLaunch, AccountProvider, EnvVar};
+use super::store::{AccountError, AccountKind, AccountLaunch, AccountProvider};
+use droppen_base::env_block::EnvVar;
 
 /// One CLI's part of the accounts: how a credential starts it.
 pub trait Login: Send + Sync {
@@ -58,7 +59,7 @@ mod tests {
     use super::claude::ClaudeCodeLogin;
     use super::codex::{CodexLogin, CODEX_DEFAULT_BASE_URL};
     use super::*;
-    use crate::accounts::store::parse_env_block;
+    use droppen_base::env_block::parse_env_block;
 
     /// The entry files each login under the CLI it is for: a launch says which
     /// CLI it starts, and every spawn trusts that word only after the store has

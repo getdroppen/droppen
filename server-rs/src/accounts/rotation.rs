@@ -1672,7 +1672,8 @@ mod tests {
     async fn a_start_against_the_store_skips_a_signed_out_local_login_only_for_the_pool() {
         use crate::accounts::limits::Verdict;
         use crate::accounts::rest::{now_ms, Observation, LOCAL_CLAUDE, LOCAL_CODEX};
-        use crate::accounts::store::{parse_env_block, AccountPatch, Credential};
+        use crate::accounts::store::{AccountPatch, Credential};
+        use droppen_base::env_block::parse_env_block;
         use droppen_instance::paths::Paths;
 
         let dir = tempfile::tempdir().expect("tempdir");

@@ -401,7 +401,7 @@ async fn acp_models(state: &ModelsState, agent: &str) -> (Vec<ModelInfo>, ModelL
     // or is too long to show whole, is left out rather than shown altered
     // ([`crate::inject::InjectionRegistry::acp_id_shown`]).
     let injections = &state.injections;
-    let shown = |text: &str| crate::accounts::limits::clip(&injections.redact_acp(&agent, text), crate::acp_agent::MAX_AGENT_WORD);
+    let shown = |text: &str| droppen_base::text::clip(&injections.redact_acp(&agent, text), crate::acp_agent::MAX_AGENT_WORD);
     let usable = |id: &str| injections.acp_id_shown(id);
     let effort = option_for(&options, category::THOUGHT_LEVEL);
     let efforts = effort.map(|effort| {

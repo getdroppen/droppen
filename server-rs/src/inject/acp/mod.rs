@@ -446,7 +446,7 @@ impl InjectionRegistry {
     /// key looks like — and then cut to a few KB, as a session's error, its
     /// transcript and a push notification carry it.
     pub(crate) fn redact_acp(&self, agent: &AcpAgent, text: &str) -> String {
-        crate::accounts::limits::clip(&self.redact(&agent.without_values(text)), crate::acp_agent::MAX_CHECK_ERROR)
+        droppen_base::text::clip(&self.redact(&agent.without_values(text)), crate::acp_agent::MAX_CHECK_ERROR)
     }
 
     /// Whether a turn of the agent `agent` is running, in any of its sessions,
@@ -928,7 +928,7 @@ mod tests {
         std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).expect("chmod");
         AcpAgent {
             command: program.to_string_lossy().into_owned(),
-            env: vec![crate::accounts::store::EnvVar {
+            env: vec![droppen_base::env_block::EnvVar {
                 key: "RECORD".into(),
                 value: record.to_string_lossy().into_owned(),
             }],

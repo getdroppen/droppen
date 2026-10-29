@@ -6,7 +6,8 @@
 //! digest-to-hex spelling this crate uses. [`strip_ansi`] is the terminal
 //! cleaner the setup wizard and the installer-output reader share — every escape
 //! becomes a space, never nothing, so two words the escape sat between do not
-//! splice together.
+//! splice together. [`clip`] cuts text to a length, with an ellipsis where it
+//! was cut.
 
 use sha2::{Digest, Sha256};
 
@@ -86,6 +87,14 @@ pub fn is_image_ext(ext: &str) -> bool {
     IMAGE_EXTS.contains(&ext.to_ascii_lowercase().as_str())
 }
 
+/// The first `cap` characters of `text`, with an ellipsis where it was cut.
+pub fn clip(text: &str, cap: usize) -> String {
+    if text.chars().count() <= cap {
+        return text.to_string();
+    }
+    text.chars().take(cap.saturating_sub(1)).chain(['…']).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -102,5 +111,11 @@ mod tests {
         assert_eq!(strip_ansi(&format!("red{ESC}[31mgreen")), "red green");
         assert_eq!(strip_ansi(&format!("{ESC}[2J{ESC}[Hplain")), "  plain");
         assert_eq!(strip_ansi(&format!("{ESC}]0;a title\u{7}after")), " after");
+    }
+
+    #[test]
+    fn a_clip_keeps_short_text_and_marks_a_cut() {
+        assert_eq!(clip("abcdef", 4), "abc…");
+        assert_eq!(clip("abc", 4), "abc");
     }
 }

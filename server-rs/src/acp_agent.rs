@@ -49,7 +49,7 @@ use gotcha::axum::extract::FromRef;
 use gotcha::{api, GotchaRouter, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
-use crate::accounts::store::{parse_env_block, EnvVar};
+use droppen_base::env_block::{parse_env_block, EnvVar};
 use droppen_instance::db::scope;
 use droppen_http::error::ApiError;
 use droppen_http::extract::{ApiJson, ApiPath};
@@ -540,7 +540,7 @@ impl AcpCheck {
     /// lists the agents.
     pub fn ready(resolved: PathBuf, answer: &crate::acp::InitializeResponse, redact: impl Fn(&str) -> String) -> Self {
         let caps = &answer.agent_capabilities;
-        let said = |text: &str, cap: usize| crate::accounts::limits::clip(&redact(text), cap);
+        let said = |text: &str, cap: usize| droppen_base::text::clip(&redact(text), cap);
         let word = |text: &str| said(text, MAX_AGENT_WORD);
         Self {
             resolved_path: Some(resolved.to_string_lossy().into_owned()).into(),

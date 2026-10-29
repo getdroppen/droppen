@@ -10499,7 +10499,8 @@ done
     /// is in the pool by default, an env one is not — bind the session to the
     /// first, and describe a process started under it running `model`.
     async fn accounts_in(home: &Path, wanted: &[(&str, bool)], model: Option<&str>) -> (Vec<crate::accounts::store::Account>, Fingerprint) {
-        use crate::accounts::store::{parse_env_block, AccountsStore, Credential};
+        use crate::accounts::store::{AccountsStore, Credential};
+        use droppen_base::env_block::parse_env_block;
         let store = AccountsStore::new(Arc::new(Paths::new(home.to_path_buf())), crate::app::logins());
         let mut accounts = Vec::new();
         for (label, oauth) in wanted {

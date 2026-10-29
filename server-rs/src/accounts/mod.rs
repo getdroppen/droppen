@@ -320,9 +320,9 @@ fn credential_of(kind: AccountKind, secret: Option<&str>, env: Option<&str>) -> 
             require_secret(secret)?;
             Ok(Credential::Oauth(secret.trim().to_string()))
         }
-        (AccountKind::Env, None, Some(env)) => store::parse_env_block(env)
+        (AccountKind::Env, None, Some(env)) => droppen_base::env_block::parse_env_block(env)
             .map(Credential::Env)
-            .map_err(|error| store_error(error, "cannot read the environment block")),
+            .map_err(|error| store_error(error.into(), "cannot read the environment block")),
         (AccountKind::OauthToken, _, Some(_)) | (AccountKind::Env, Some(_), _) => Err(ApiError::bad_request(
             "an OAuth account takes a token and an env account takes an environment block; send one, not both",
         )),
@@ -1107,7 +1107,7 @@ mod tests {
             .create(
                 "codex",
                 AccountProvider::Codex,
-                Credential::Env(store::parse_env_block("OPENAI_API_KEY=sk-test-abcdefghijklmnop").expect("env block")),
+                Credential::Env(droppen_base::env_block::parse_env_block("OPENAI_API_KEY=sk-test-abcdefghijklmnop").expect("env block")),
             )
             .await
             .expect("codex account");
