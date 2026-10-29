@@ -409,7 +409,8 @@ mod tests {
         AcpAgentRegistry::of(&paths).update("fake", &agent).expect("saved");
         let accounts = Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins()));
         let quota = Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone()));
-        ProviderRegistry::new(InjectionRegistry::new(paths, &dirs, accounts, quota), register)
+        let decoration = crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone());
+        ProviderRegistry::new(InjectionRegistry::new(paths, &dirs, accounts, quota, decoration), register)
     }
 
     /// Claude Code alone.

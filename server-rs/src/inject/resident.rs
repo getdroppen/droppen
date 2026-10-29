@@ -88,7 +88,8 @@ use super::shim::{self, Link, Output, Sidecars, Spawn};
 use super::common::{busy_message, new_uuid, AnswerOutcome, Phase, QueueOutcome, Reply, ResidentState, StopTaskOutcome};
 use super::drafts::Draft;
 use super::gate::{ClaimError, SessionLease};
-use super::{runs, Capabilities, DriverStatesBuilder, InjectError, InjectionRegistry, Provider, Run, RunEntry, RunState, SendTo, Sent, SpawnDeps, SpawnPermit, StartAt};
+use super::{runs, Capabilities, DriverStatesBuilder, InjectError, InjectionRegistry, Provider, Run, RunEntry, RunState, SendTo, Sent, SpawnPermit, StartAt};
+mod spawn;
 
 /// The mode flags every resident is started with.
 ///
@@ -689,11 +690,11 @@ impl Provider for ClaudeCode {
 
 impl Run for ClaudeCode {
     fn send<'a>(&'a self, to: SendTo<'a>) -> BoxFuture<'a, Result<Sent, InjectError>> {
-        Box::pin(async move { self.spawn_deps().send(to).await })
+        Box::pin(self.registry.claude_send(to))
     }
 
     fn start<'a>(&'a self, at: StartAt<'a>) -> BoxFuture<'a, Result<String, InjectError>> {
-        Box::pin(async move { self.spawn_deps().start(at).await })
+        Box::pin(self.registry.claude_start(at))
     }
 
     /// A resident publishes each turn in the runs map, so that is where a
@@ -784,16 +785,6 @@ impl Run for ClaudeCode {
 }
 
 impl ClaudeCode {
-    /// What a send or a start reads, out of the registry this provider holds.
-    fn spawn_deps(&self) -> SpawnDeps<'_> {
-        SpawnDeps {
-            paths: &self.registry.paths,
-            instance: &self.registry.instance,
-            accounts: &self.registry.accounts,
-            injections: &self.registry,
-        }
-    }
-
     /// Whether this server holds a resident for session `id`.
     fn holds(&self, id: &str) -> bool {
         self.registry.residents.lock().expect("residents poisoned").contains_key(id)
@@ -7177,7 +7168,7 @@ mod tests {
             // the environment, and `a_session_records_its_whole_life` needs the
             // answer to be yes whatever the developer's shell says.
             recorders: crate::record::Recorders::new_at(dirs.session_logs(), None, paths.clone()),
-            instance: dirs,
+            decoration: crate::drive::NotifyDecoration::new(paths.clone(), dirs),
             listeners: std::sync::OnceLock::new(),
             alerts: std::sync::OnceLock::new(),
             reading_recheck: Mutex::new(None),
@@ -8474,7 +8465,7 @@ done
         let harness = Harness::ordinary().await;
         let paths = &harness.registry.paths;
         std::fs::write(paths.uploads_dir(), b"not a directory").unwrap();
-        let recipe = crate::inject::claude_recipe(paths, harness.bin.to_str(), &Default::default(), Env::new(), Default::default());
+        let recipe = super::spawn::claude_recipe(paths, harness.bin.to_str(), &Default::default(), Env::new(), Default::default());
         let recorder = harness.registry.recorders.open(SESSION);
         let permit = harness.registry.spawn_gate.empty_lease().respawn_permit();
         let result = harness.registry.spawn_link(&permit, SESSION, &recipe, Selector::Fresh, None, &[], &recorder).await;
@@ -8495,7 +8486,7 @@ done
         );
         harness.plan_claude(&script);
         let make_recipe = |options: &crate::inject::SendOptions| {
-            crate::inject::claude_recipe(
+            super::spawn::claude_recipe(
                 &harness.registry.paths,
                 harness.bin.to_str(),
                 options,
@@ -8527,7 +8518,7 @@ done
         .into_iter()
         .enumerate()
         {
-            let text = crate::inject::with_claude_attachments("next message", &options);
+            let text = super::spawn::with_claude_attachments("next message", &options);
             harness.send_with(&text, make_recipe(&options));
             until("the same process to receive the next message", || {
                 harness.after().len() == i + 2 && harness.state().phase == Phase::Idle

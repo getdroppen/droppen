@@ -762,7 +762,8 @@ mod tests {
         dirs.create().expect("instance dirs");
         let accounts = Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins()));
         let quota = Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone()));
-        let injections = crate::inject::InjectionRegistry::new(paths, &dirs, accounts, quota);
+        let decoration = crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone());
+        let injections = crate::inject::InjectionRegistry::new(paths, &dirs, accounts, quota, decoration);
         let providers = crate::inject::ProviderRegistry::new(injections, crate::app::register_providers);
         let with_chats: Vec<Source> = providers.sources().filter(|source| providers.capabilities(*source).chats).collect();
         assert!(!with_chats.is_empty());

@@ -16,8 +16,9 @@ mod support;
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use droppen_base::process_env::{claude_env, clean_env, Env};
 use serde_json::{json, Value};
@@ -31,6 +32,8 @@ const CLAUDE_BLOCK: &str = "ANTHROPIC_AUTH_TOKEN=spawn-env-gateway-token\nANTHRO
 const CODEX_BLOCK: &str = "OPENAI_API_KEY=spawn-env-codex-key\nOPENAI_BASE_URL=https://relay.example.com/v1";
 /// A codex block whose key is under the fallback name, with no endpoint.
 const CODEX_FALLBACK_BLOCK: &str = "CODEX_API_KEY=spawn-env-codex-fallback";
+/// The stand-in ACP agent of `tests/acp.rs`.
+const FAKE_ACP_AGENT: &str = include_str!("support/fake_acp_agent.py");
 /// A session in the root this server owns.
 const OWNED_ID: &str = "cccccccc-3333-4333-8333-cccccccccccc";
 /// The thread the fake App Server answers under unless told otherwise.
@@ -186,6 +189,75 @@ impl Server {
     async fn create(&self, body: Value) -> String {
         let created = self.send_ok("POST", "/api/accounts", body, 201).await;
         created["id"].as_str().expect("account id").to_string()
+    }
+
+    /// Make `account` what `provider`'s new sessions run on when they name none.
+    async fn make_default(&self, account: &str, provider: &str) {
+        self.send_ok("PUT", "/api/accounts/default", json!({"accountId": account, "provider": provider}), 200)
+            .await;
+    }
+
+    /// Rest `account` under `scope` until cleared, written where the limit log
+    /// writes a limit its CLI reported.
+    fn rest(&self, account: &str, scope: &str) {
+        let db = self.home().join(".local/share/remote-hand/instances/default/state.db");
+        let conn = rusqlite::Connection::open(&db).expect("the instance database");
+        let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).expect("after 1970").as_millis() as i64;
+        conn.execute(
+            "INSERT INTO account_rest (account_id, scope, class, until_ms, reason, source, observed_ms)
+             VALUES (?1, ?2, 'session', NULL, 'a limit the test reports', 'test', ?3)",
+            rusqlite::params![account, scope, now],
+        )
+        .expect("rest the account");
+    }
+
+    /// Turn the notify channel on, as the settings page does.
+    async fn notify_on(&self) {
+        self.send_ok("PUT", "/api/notify/config", json!({"enabled": true, "endpoint": "https://api.day.app/FAKEBARKDEVICEKEY0Wc31"}), 200)
+            .await;
+    }
+
+    /// `env` with what the notify channel gives claude session `id`: the
+    /// `droppen-notify` program's directory ahead of `PATH`, this server's
+    /// address, and a token that names the session.
+    async fn with_notify(&self, mut env: Env, id: &str) -> Env {
+        let bin = self.home().join(".local/share/remote-hand/instances/default/session-bin");
+        let path = format!("{}:{}", bin.display(), env.get("PATH").expect("a PATH"));
+        let paths = droppen_instance::paths::Paths::new(self.home().to_path_buf());
+        let secret = remote_hand_server::notify::store::secret(&paths).await.expect("the channel's secret");
+        let key = remote_hand_server::sessions::attention::seen::key_of(remote_hand_server::sessions::Source::Claude, id);
+        let token = remote_hand_server::notify::token::mint(&secret, droppen_instance::instance::DEFAULT_INSTANCE, &key);
+        env.insert("PATH".to_string(), path);
+        env.insert("DROPPEN_NOTIFY_URL".to_string(), format!("http://127.0.0.1:{}/api/notify", self.addr.port()));
+        env.insert("DROPPEN_NOTIFY_TOKEN".to_string(), token);
+        env
+    }
+
+    /// Where a chat's session runs.
+    fn chats_dir(&self) -> PathBuf {
+        self.home().join(".local/share/remote-hand/chats")
+    }
+
+    /// Bring every scheduled task's next run to a second ago, so the runner
+    /// fires it on its next tick rather than at the top of the next minute.
+    fn make_tasks_due(&self) {
+        let db = self.home().join(".local/share/remote-hand/instances/default/state.db");
+        let conn = rusqlite::Connection::open(&db).expect("the instance database");
+        let due = droppen_base::time::iso8601(SystemTime::now() - Duration::from_secs(1));
+        let rows: Vec<(i64, String)> = conn
+            .prepare("SELECT rowid, payload FROM scheduled_tasks")
+            .expect("the task table")
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .expect("the tasks")
+            .collect::<Result<_, _>>()
+            .expect("the tasks");
+        assert!(!rows.is_empty(), "no task to bring forward");
+        for (rowid, payload) in rows {
+            let mut task: Value = serde_json::from_str(&payload).expect("a task");
+            task["nextRunAt"] = json!(due);
+            conn.execute("UPDATE scheduled_tasks SET payload = ?1 WHERE rowid = ?2", rusqlite::params![task.to_string(), rowid])
+                .expect("bring the task forward");
+        }
     }
 
     /// Wait until no run is going on for this session, so the next message is
@@ -530,4 +602,269 @@ async fn a_codex_resume_on_an_env_account_restarts_the_app_server_under_it() {
     assert_eq!(resume["method"], "thread/resume");
     assert_eq!(resume["params"]["threadId"], CODEX_THREAD);
     assert_eq!(resume["params"]["modelProvider"], "remote_hand");
+}
+
+/// A chat names no account, so it runs on the default one, with the
+/// environment an explicit start under that account gets. The default is made
+/// after a pool account, so the first account is not mistaken for it.
+#[tokio::test]
+async fn a_claude_chat_runs_on_the_default_account() {
+    let server = Server::start().await;
+    server.create(json!({"label": "Gateway", "kind": "env", "env": CLAUDE_BLOCK, "rotation": true})).await;
+    let account = server.create(json!({"label": "Work", "kind": "oauth_token", "secret": OAUTH_SECRET})).await;
+    server.make_default(&account, "claude").await;
+    server.send_ok("POST", "/api/chats/new", json!({"backend": "claude", "text": "hi"}), 200).await;
+    let spawn = claude_spawn(&server.chats_dir(), 1).await;
+    let root = server.managed_root();
+    assert_env(
+        &spawn,
+        server.claude_env(&[("CLAUDE_CONFIG_DIR", &root), ("CLAUDE_CODE_OAUTH_TOKEN", OAUTH_SECRET)]),
+        "claude chat on the default account",
+    );
+}
+
+#[tokio::test]
+async fn a_codex_chat_runs_on_the_default_account() {
+    let server = Server::start().await;
+    server.create(json!({"label": "Fallback", "kind": "env", "env": CODEX_FALLBACK_BLOCK, "provider": "codex"})).await;
+    let account = server.create(json!({"label": "Relay", "kind": "env", "env": CODEX_BLOCK, "provider": "codex"})).await;
+    server.make_default(&account, "codex").await;
+    server.send_ok("POST", "/api/chats/new", json!({"backend": "codex", "text": "hi"}), 200).await;
+    let (spawn, _) = codex_spawn(&server.chats_dir(), 1).await;
+    assert_eq!(spawn.argv, provider_argv("https://relay.example.com/v1"));
+    assert_env(
+        &spawn,
+        server.clean_env(&[
+            ("OPENAI_API_KEY", "spawn-env-codex-key"),
+            ("OPENAI_BASE_URL", "https://relay.example.com/v1"),
+            ("DROPPEN_CODEX_API_KEY", "spawn-env-codex-key"),
+        ]),
+        "codex chat on the default account",
+    );
+}
+
+/// A scheduled task names no account either, and runs on the default one.
+#[tokio::test]
+async fn a_scheduled_claude_task_runs_on_the_default_account() {
+    let server = Server::start().await;
+    server.create(json!({"label": "Work", "kind": "oauth_token", "secret": OAUTH_SECRET})).await;
+    let account = server.create(json!({"label": "Gateway", "kind": "env", "env": CLAUDE_BLOCK})).await;
+    server.make_default(&account, "claude").await;
+    let workspace = server.workspace();
+    server
+        .send_ok(
+            "POST",
+            "/api/scheduled-tasks",
+            json!({"source": "claude", "expr": "* * * * *", "cwd": workspace.to_string_lossy(), "prompt": "tick"}),
+            200,
+        )
+        .await;
+    server.make_tasks_due();
+    let spawn = claude_spawn(&workspace, 1).await;
+    let root = server.managed_root();
+    assert_env(
+        &spawn,
+        server.claude_env(&[
+            ("CLAUDE_CONFIG_DIR", &root),
+            ("ANTHROPIC_AUTH_TOKEN", "spawn-env-gateway-token"),
+            ("ANTHROPIC_BASE_URL", "https://gateway.example.com"),
+        ]),
+        "scheduled task on the default account",
+    );
+}
+
+/// `accountFrom: "start"`: an account the start rule named, checked again at
+/// the spawn. The default rests on opus, so a start naming no model goes to
+/// the pool account, and one asking for sonnet stays on the default.
+///
+/// The rule names the pool account, so a start it named runs there, even
+/// asking for sonnet. A third account it does not name, so a start it named
+/// there goes where sonnet lands now: the default.
+#[tokio::test]
+async fn a_claude_start_the_rule_named_runs_where_the_rule_puts_it() {
+    let server = Server::start().await;
+    let pool = server.create(json!({"label": "Gateway", "kind": "env", "env": CLAUDE_BLOCK, "rotation": true})).await;
+    let default = server.create(json!({"label": "Work", "kind": "oauth_token", "secret": OAUTH_SECRET})).await;
+    let other = server
+        .create(json!({"label": "Other", "kind": "env", "env": "ANTHROPIC_AUTH_TOKEN=other-gateway-token\nANTHROPIC_BASE_URL=https://other.example.com"}))
+        .await;
+    server.make_default(&default, "claude").await;
+    server.rest(&default, "opus");
+    let root = server.managed_root();
+    let on_pool = server.claude_env(&[
+        ("CLAUDE_CONFIG_DIR", &root),
+        ("ANTHROPIC_AUTH_TOKEN", "spawn-env-gateway-token"),
+        ("ANTHROPIC_BASE_URL", "https://gateway.example.com"),
+    ]);
+
+    let spawn = start_claude(&server, json!({"accountId": pool, "accountFrom": "start", "model": "sonnet"})).await;
+    assert_env(&spawn, on_pool, "the account the rule still names");
+
+    let elsewhere = server.home().join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).expect("elsewhere");
+    server
+        .send_ok(
+            "POST",
+            "/api/sessions/new",
+            json!({
+                "source": "claude", "cwd": elsewhere.to_string_lossy(), "text": "start", "model": "sonnet",
+                "accountId": other, "accountFrom": "start",
+            }),
+            200,
+        )
+        .await;
+    assert_env(
+        &claude_spawn(&elsewhere, 1).await,
+        server.claude_env(&[("CLAUDE_CONFIG_DIR", &root), ("CLAUDE_CODE_OAUTH_TOKEN", OAUTH_SECRET)]),
+        "an account the rule does not name",
+    );
+}
+
+#[tokio::test]
+async fn a_codex_start_the_rule_named_runs_on_it() {
+    let server = Server::start().await;
+    server.create(json!({"label": "Fallback", "kind": "env", "env": CODEX_FALLBACK_BLOCK, "provider": "codex"})).await;
+    let account = server.create(json!({"label": "Relay", "kind": "env", "env": CODEX_BLOCK, "provider": "codex"})).await;
+    server.make_default(&account, "codex").await;
+    let workspace = server.workspace();
+    server
+        .send_ok(
+            "POST",
+            "/api/sessions/new",
+            json!({
+                "source": "codex", "cwd": workspace.to_string_lossy(), "text": "start", "permission": "read-only",
+                "accountId": account, "accountFrom": "start",
+            }),
+            200,
+        )
+        .await;
+    let (spawn, _) = codex_spawn(&workspace, 1).await;
+    assert_eq!(spawn.argv, provider_argv("https://relay.example.com/v1"));
+    assert_env(
+        &spawn,
+        server.clean_env(&[
+            ("OPENAI_API_KEY", "spawn-env-codex-key"),
+            ("OPENAI_BASE_URL", "https://relay.example.com/v1"),
+            ("DROPPEN_CODEX_API_KEY", "spawn-env-codex-key"),
+        ]),
+        "codex, the account the rule named",
+    );
+}
+
+/// What the stand-in ACP agent in `dir` was started with.
+async fn acp_spawn(dir: &Path) -> Spawn {
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        if let Ok(raw) = std::fs::read_to_string(dir.join("agent-spawn.json")) {
+            let spawned: Value = serde_json::from_str(&raw).expect("the agent's dump");
+            let strings = |value: &Value| value.as_str().expect("a string").to_string();
+            return Spawn {
+                argv: spawned["argv"].as_array().expect("argv").iter().map(strings).collect(),
+                env: spawned["env"].as_object().expect("env").iter().map(|(key, value)| (key.clone(), strings(value))).collect(),
+            };
+        }
+        assert!(std::time::Instant::now() < deadline, "the agent never started in {}", dir.display());
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+/// An ACP agent gets the server's environment and the variables its settings
+/// give it, and no account's.
+#[tokio::test]
+async fn an_acp_start_gets_the_server_environment_and_the_agents_own_variables() {
+    let server = Server::start().await;
+    let program = server.home().join("bin/fake-agent");
+    std::fs::create_dir_all(program.parent().expect("bin")).expect("bin dir");
+    std::fs::write(&program, FAKE_ACP_AGENT).expect("fake agent");
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    server
+        .send_ok(
+            "PUT",
+            "/api/acp/agents/fake",
+            json!({"command": program.to_string_lossy(), "args": ["--acp", "--stdio"], "env": "FAKE_AGENT_MARK=pinned"}),
+            200,
+        )
+        .await;
+    let workspace = server.workspace();
+    server
+        .send_ok(
+            "POST",
+            "/api/sessions/new",
+            json!({"source": "acp", "acpAgent": "fake", "cwd": workspace.to_string_lossy(), "text": "start"}),
+            200,
+        )
+        .await;
+    let spawn = acp_spawn(&workspace).await;
+    assert_eq!(spawn.argv, ["--acp", "--stdio"]);
+    assert_env(&spawn, server.clean_env(&[("FAKE_AGENT_MARK", "pinned")]), "acp agent");
+}
+
+/// With the notify channel on, a claude start gets `droppen-notify` ahead of
+/// its `PATH`, this server's address and a token for the session, and the
+/// skill goes into the managed root it runs in. A start on the local login gets
+/// the same variables and no skill: that root is the user's own. Codex is not
+/// decorated.
+#[tokio::test]
+async fn a_start_with_the_notify_channel_on_gets_the_channel_on_claude_only() {
+    let server = Server::start().await;
+    server.notify_on().await;
+    let account = server.create(json!({"label": "Work", "kind": "oauth_token", "secret": OAUTH_SECRET})).await;
+    let workspace = server.workspace();
+    let started = server
+        .send_ok(
+            "POST",
+            "/api/sessions/new",
+            json!({"source": "claude", "cwd": workspace.to_string_lossy(), "text": "start", "accountId": account}),
+            200,
+        )
+        .await;
+    let id = started["id"].as_str().expect("the session id");
+    let spawn = claude_spawn(&workspace, 1).await;
+    let root = server.managed_root();
+    let expected = server.claude_env(&[("CLAUDE_CONFIG_DIR", &root), ("CLAUDE_CODE_OAUTH_TOKEN", OAUTH_SECRET)]);
+    assert_env(&spawn, server.with_notify(expected, id).await, "claude start, notify on");
+    assert!(Path::new(&root).join("skills/droppen-notify/SKILL.md").exists(), "the skill is in the managed root");
+
+    let local = server.home().join("local");
+    std::fs::create_dir_all(&local).expect("local");
+    let started = server
+        .send_ok(
+            "POST",
+            "/api/sessions/new",
+            json!({"source": "claude", "cwd": local.to_string_lossy(), "text": "start", "accountId": null}),
+            200,
+        )
+        .await;
+    let id = started["id"].as_str().expect("the session id");
+    let spawn = claude_spawn(&local, 1).await;
+    assert_env(&spawn, server.with_notify(server.claude_env(&[]), id).await, "claude local login, notify on");
+    assert!(!server.home().join(".claude/skills/droppen-notify").exists(), "nothing is written into the user's own root");
+
+    let codex = server.home().join("codex");
+    std::fs::create_dir_all(&codex).expect("codex");
+    server
+        .send_ok(
+            "POST",
+            "/api/sessions/new",
+            json!({"source": "codex", "cwd": codex.to_string_lossy(), "text": "start", "permission": "read-only"}),
+            200,
+        )
+        .await;
+    let (spawn, _) = codex_spawn(&codex, 1).await;
+    assert_env(&spawn, server.clean_env(&[]), "codex, notify on");
+}
+
+/// A resume is decorated as a start is, with a token for the session it
+/// resumes.
+#[tokio::test]
+async fn a_claude_resume_with_the_notify_channel_on_gets_the_channel() {
+    let server = Server::start().await;
+    server.notify_on().await;
+    let account = server.create(json!({"label": "Work", "kind": "oauth_token", "secret": OAUTH_SECRET})).await;
+    let workspace = bound_session(&server, &account).await;
+    let spawn = resume_claude(&server, &workspace).await;
+    let root = server.managed_root();
+    let expected = server.claude_env(&[("CLAUDE_CONFIG_DIR", &root), ("CLAUDE_CODE_OAUTH_TOKEN", OAUTH_SECRET)]);
+    assert_env(&spawn, server.with_notify(expected, OWNED_ID).await, "claude resume, notify on");
+    assert!(Path::new(&root).join("skills/droppen-notify/SKILL.md").exists(), "the skill is in the managed root");
 }

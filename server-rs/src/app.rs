@@ -779,7 +779,8 @@ mod tests {
         dirs.create().expect("instance dirs");
         let accounts = Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), logins()));
         let quota = Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone()));
-        let providers = ProviderRegistry::new(InjectionRegistry::new(paths, &dirs, accounts, quota), register_providers);
+        let decoration = crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone());
+        let providers = ProviderRegistry::new(InjectionRegistry::new(paths, &dirs, accounts, quota, decoration), register_providers);
 
         let transcripts: Vec<Source> = transcript_sources().iter().map(|reader| reader.source()).collect();
         assert_eq!(providers.sources().collect::<Vec<_>>(), transcripts);
@@ -799,7 +800,8 @@ mod tests {
         dirs.create().expect("instance dirs");
         let accounts = Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), logins()));
         let quota = Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone()));
-        let providers = ProviderRegistry::new(InjectionRegistry::new(paths, &dirs, accounts, quota), register_providers);
+        let decoration = crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone());
+        let providers = ProviderRegistry::new(InjectionRegistry::new(paths, &dirs, accounts, quota, decoration), register_providers);
 
         let all = Capabilities {
             questions: true,

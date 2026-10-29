@@ -23,7 +23,11 @@ use crate::accounts::quota::QuotaCache;
 use crate::accounts::setup_token::Captures;
 use crate::accounts::store::AccountsStore;
 use crate::auth::Auth;
-use crate::inject::{InjectionRegistry, ProviderRegistry};
+use crate::inject::{InjectionRegistry, ProviderRegistry, SpawnDecoration};
+use crate::sessions::Source;
+use droppen_base::process_env::Env;
+use droppen_instance::instance::InstanceDirs;
+use futures_util::future::BoxFuture;
 use droppen_instance::paths::Paths;
 use crate::sessions::{titles, TranscriptSources};
 
@@ -92,7 +96,8 @@ impl Drive {
     ) -> Arc<Self> {
         let accounts = Arc::new(AccountsStore::new(paths.clone(), logins));
         let quota = Arc::new(QuotaCache::new(paths.clone()));
-        let injections = InjectionRegistry::new(paths.clone(), instance, accounts.clone(), quota.clone());
+        let decoration = NotifyDecoration::new(paths.clone(), instance.clone());
+        let injections = InjectionRegistry::new(paths.clone(), instance, accounts.clone(), quota.clone(), decoration);
         Arc::new(Self {
             auth,
             wizards: Captures::new(),
@@ -106,5 +111,28 @@ impl Drive {
             paths,
             transcripts,
         })
+    }
+}
+
+/// The notify channel, as a claude spawn's environment gains it: the
+/// `droppen-notify` program on its `PATH`, this server's address and a token
+/// for the session, when the channel is on (see [`crate::notify::inject`]).
+pub(crate) struct NotifyDecoration {
+    /// Where the channel's settings and secret are stored.
+    paths: Arc<Paths>,
+    /// This server's own instance directory: its port and the program.
+    instance: InstanceDirs,
+}
+
+impl NotifyDecoration {
+    /// The channel of the server at `paths` and `instance`.
+    pub(crate) fn new(paths: Arc<Paths>, instance: InstanceDirs) -> Arc<Self> {
+        Arc::new(Self { paths, instance })
+    }
+}
+
+impl SpawnDecoration for NotifyDecoration {
+    fn decorate<'a>(&'a self, source: Source, id: &'a str, env: &'a mut Env) -> BoxFuture<'a, ()> {
+        Box::pin(crate::notify::inject::decorate(&self.paths, &self.instance, source, id, env))
     }
 }

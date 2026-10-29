@@ -1018,7 +1018,7 @@ pub struct Spawn<'a> {
     /// The directory claude runs in.
     ///
     /// Applied as given. A caller that wants a fallback for a directory the user
-    /// has since deleted has to name one — see [`super::claude_recipe`] — because
+    /// has since deleted has to name one — see [`super::resident::spawn::claude_recipe`] — because
     /// the only fallback available *here* is the server's own working directory,
     /// and starting somebody's agent in the source tree of the server driving it
     /// is worse than not starting it at all.

@@ -362,7 +362,7 @@ impl Run for Codex {
 impl Codex {
     /// Which account a codex spawn runs under, and what it puts into it.
     ///
-    /// The same three-state resolution [`super::SpawnDeps::resume_claude_env`] does, and for the same
+    /// The same three-state resolution [`InjectionRegistry::resume_claude_env`] does, and for the same
     /// reason: `accountId: null` is "the machine's own codex login" even when a
     /// default is configured, absent is "whatever this thread is already bound to",
     /// and a named account both wins and is written down.
@@ -1463,7 +1463,8 @@ mod tests {
             dirs.create().unwrap();
             let accounts = Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins()));
             let quota = Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone()));
-            let registry = InjectionRegistry::new(paths, &dirs, accounts, quota);
+            let decoration = crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone());
+            let registry = InjectionRegistry::new(paths, &dirs, accounts, quota, decoration);
             let socket = home.path().join("mock.sock");
             let listener = UnixListener::bind(&socket).unwrap();
             let connector = tokio::spawn(async move { shim::connect_in_process(&socket).await.unwrap() });
@@ -2158,7 +2159,8 @@ mod tests {
         dirs.create().unwrap();
         let accounts = Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins()));
         let quota = Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone()));
-        let registry = InjectionRegistry::new(paths, &dirs, accounts, quota);
+        let decoration = crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone());
+        let registry = InjectionRegistry::new(paths, &dirs, accounts, quota, decoration);
         let work = home.path().join("work");
         std::fs::create_dir_all(&work).expect("work");
         let work = work.to_string_lossy().into_owned();
