@@ -107,6 +107,21 @@ fn calls(workdir: &Path) -> Vec<Value> {
         .collect()
 }
 
+/// Every line the stand-in in `workdir` read, as it came: the requests this
+/// client sent and its answers to the stand-in's own.
+fn stdin_lines(workdir: &Path) -> Vec<String> {
+    std::fs::read_to_string(workdir.join("agent-stdin.jsonl"))
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+/// `line` with `value` written as JSON (a path, escaped as the wire has it).
+fn with_json(line: &str, placeholder: &str, value: impl serde::Serialize) -> String {
+    line.replace(placeholder, &serde_json::to_string(&value).expect("json"))
+}
+
 /// Poll the session's detail until `done` says so.
 async fn wait_for(server: &TestServer, id: &str, what: &str, done: impl Fn(&Value) -> bool) -> Value {
     let deadline = std::time::Instant::now() + Duration::from_secs(20);
@@ -260,11 +275,81 @@ async fn an_acp_session_is_created_streamed_interrupted_reopened_and_archived() 
         .expect("reopened with session/load");
     assert_eq!(load["params"]["sessionId"], json!(SESSION));
 
+    // Every line it was sent, as the agent reads it: the requests' ids count up
+    // per process, and the version and the working directory are this run's.
+    let cwd = workdir.canonicalize().unwrap();
+    let wire = |line: &str| with_json(&with_json(line, "VERSION", env!("CARGO_PKG_VERSION")), "CWD", &cwd);
+    let initialize = wire(r#"{"jsonrpc":"2.0","id":"droppen-1","method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{"fs":{"readTextFile":true,"writeTextFile":true},"terminal":true},"clientInfo":{"name":"droppen","title":"Droppen","version":VERSION}}}"#);
+    assert_eq!(
+        stdin_lines(&workdir),
+        vec![
+            initialize.clone(),
+            wire(r#"{"jsonrpc":"2.0","id":"droppen-2","method":"session/new","params":{"cwd":CWD,"mcpServers":[]}}"#),
+            wire(r#"{"jsonrpc":"2.0","id":"droppen-3","method":"session/prompt","params":{"sessionId":"f00dfeed0123456789abcdef01234567","prompt":[{"type":"text","text":"hi there"}]}}"#),
+            wire(r#"{"jsonrpc":"2.0","id":"droppen-4","method":"session/prompt","params":{"sessionId":"f00dfeed0123456789abcdef01234567","prompt":[{"type":"text","text":"again"}]}}"#),
+            wire(r#"{"jsonrpc":"2.0","id":"droppen-5","method":"session/prompt","params":{"sessionId":"f00dfeed0123456789abcdef01234567","prompt":[{"type":"text","text":"wait for me"}]}}"#),
+            wire(r#"{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"f00dfeed0123456789abcdef01234567"}}"#),
+            initialize,
+            wire(r#"{"jsonrpc":"2.0","id":"droppen-2","method":"session/load","params":{"sessionId":"f00dfeed0123456789abcdef01234567","cwd":CWD,"mcpServers":[]}}"#),
+            wire(r#"{"jsonrpc":"2.0","id":"droppen-3","method":"session/prompt","params":{"sessionId":"f00dfeed0123456789abcdef01234567","prompt":[{"type":"text","text":"still there?"}]}}"#),
+        ]
+    );
+
     // Archived, it leaves the list.
     let (status, body) = server.json("POST", &format!("/api/sessions/acp/{id}/archive"), &json!({})).await;
     assert_eq!(status, 200, "{body}");
     let list = server.get_json("/api/sessions?source=acp").await;
     assert_eq!(list["sessions"], json!([]), "{list:#}");
+    server.stop().await;
+}
+
+/// What this client answers an agent's own requests, line for line: a
+/// permission is declined, files and terminals are served, and a method nobody
+/// offers is an error. Each answer echoes the request's id as it came, whatever
+/// its form.
+#[tokio::test]
+async fn the_agents_requests_are_answered_in_these_lines() {
+    let home = tempfile::tempdir().expect("tempdir");
+    let program = install_fake(home.path());
+    let workdir = home.path().join("work");
+    std::fs::create_dir_all(&workdir).expect("workdir");
+    std::fs::write(workdir.join("notes.txt"), "one\ntwo\nthree\n").expect("notes");
+    let server = TestServer::start_at(home.path(), None).await;
+    configure(&server, &program).await;
+
+    let id = start(&server, "fake", &workdir, "ask the client").await;
+    wait_for(&server, &id, "the turn", finished).await;
+    let answers: Vec<String> = stdin_lines(&workdir).into_iter().filter(|line| !line.contains("\"method\"")).collect();
+    assert_eq!(
+        answers,
+        [
+            r#"{"jsonrpc":"2.0","id":1,"result":{"outcome":{"outcome":"cancelled"}}}"#,
+            r#"{"jsonrpc":"2.0","id":2,"result":{"content":"two\n"}}"#,
+            r#"{"jsonrpc":"2.0","id":3,"result":{}}"#,
+            r#"{"jsonrpc":"2.0","id":4,"result":{"terminalId":"term-1"}}"#,
+            r#"{"jsonrpc":"2.0","id":5,"result":{"exitCode":3,"signal":null}}"#,
+            r#"{"jsonrpc":"2.0","id":6,"result":{"output":"done","truncated":false,"exitStatus":{"exitCode":3,"signal":null}}}"#,
+            r#"{"jsonrpc":"2.0","id":7,"result":{}}"#,
+            r#"{"jsonrpc":"2.0","id":8,"error":{"code":-32601,"message":"nope/method is not supported by Droppen"}}"#,
+            r#"{"jsonrpc":"2.0","id":"s-1","result":{}}"#,
+            r#"{"jsonrpc":"2.0","id":9223372036854775808,"result":{}}"#,
+            r#"{"jsonrpc":"2.0","id":1.5,"result":{}}"#,
+            r#"{"jsonrpc":"2.0","id":null,"result":{}}"#,
+            r#"{"jsonrpc":"2.0","id":true,"result":{}}"#,
+            r#"{"jsonrpc":"2.0","id":{"k":1},"result":{}}"#,
+            r#"{"jsonrpc":"2.0","id":[1],"result":{}}"#,
+        ]
+    );
+    assert_eq!(std::fs::read_to_string(workdir.join("out.txt")).expect("written"), "written");
+    // Which of the requests under each id form were run.
+    let ran: Vec<(&str, bool)> = ["string", "big", "fraction", "null", "boolean", "object", "array"]
+        .into_iter()
+        .map(|name| (name, std::fs::read_to_string(workdir.join(format!("id-{name}.txt"))).is_ok_and(|text| text == name)))
+        .collect();
+    assert_eq!(
+        ran,
+        [("string", true), ("big", true), ("fraction", true), ("null", true), ("boolean", true), ("object", true), ("array", true)]
+    );
     server.stop().await;
 }
 
@@ -494,6 +579,22 @@ async fn models_and_efforts_come_from_the_agent_and_are_set_before_the_turn() {
     let detail = wait_for(&server, &id, "the second turn", finished).await;
     assert_eq!(detail["cliChoice"]["effort"], "low");
     assert_eq!(log_calls()[before..], ["session/set_config_option", "session/prompt"]);
+    let configured: Vec<String> = std::fs::read_to_string(home.path().join("agent-stdin.jsonl"))
+        .expect("the agents' input")
+        .lines()
+        .filter(|line| line.contains("session/set_config_option") || line.contains("session/close"))
+        .map(str::to_owned)
+        .collect();
+    // As the agent reads them: the probe's close, then each option set.
+    assert_eq!(
+        configured,
+        [
+            r#"{"jsonrpc":"2.0","id":"droppen-3","method":"session/close","params":{"sessionId":"f00dfeed0123456789abcdef01234567"}}"#,
+            r#"{"jsonrpc":"2.0","id":"droppen-3","method":"session/set_config_option","params":{"sessionId":"f00dfeed0123456789abcdef01234567","configId":"model","value":"openrouter:vendor/big"}}"#,
+            r#"{"jsonrpc":"2.0","id":"droppen-4","method":"session/set_config_option","params":{"sessionId":"f00dfeed0123456789abcdef01234567","configId":"reasoning_effort","value":"high"}}"#,
+            r#"{"jsonrpc":"2.0","id":"droppen-6","method":"session/set_config_option","params":{"sessionId":"f00dfeed0123456789abcdef01234567","configId":"reasoning_effort","value":"low"}}"#,
+        ]
+    );
     // A switched session is nobody else's default: a new one still starts on the agent's.
     let models = server.get_json("/api/models?source=acp&acpAgent=fake").await;
     assert_eq!(models["models"][0]["defaultEffort"], "auto", "{models:#}");
