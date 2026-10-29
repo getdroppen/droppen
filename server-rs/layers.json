@@ -198,8 +198,7 @@
           "name": "droppen-cloud",
           "about": "The Droppen-link routes, the remote-view gate, link control, the StreamSource impl.",
           "modules": [
-            "cloud",
-            "agent::control"
+            "cloud"
           ],
           "mayUse": [
             "droppen-agent",
@@ -441,12 +440,6 @@
       "why": "record's tail follows a recording with feed's file watcher (feed::watch), which names no session. It goes when the watcher moves below both.",
       "edges": [
         "record -> feed"
-      ]
-    },
-    {
-      "why": "agent::control goes to cloud, but the agent's rotation reads its machine_fingerprint, which stays with the agent.",
-      "edges": [
-        "agent -> agent::control"
       ]
     },
     {

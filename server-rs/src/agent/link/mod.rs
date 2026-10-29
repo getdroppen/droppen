@@ -1655,8 +1655,8 @@ mod tests {
             let st = a.shared.state.lock().unwrap();
             assert!(st.enrolled() && st.not_hosting() && !st.hosting() && !st.removed());
             assert_eq!(
-                super::super::control::AgentStatus::of(&st).state,
-                super::super::control::Standing::NotHosting
+                super::super::status::AgentStatus::of(&st).state,
+                super::super::status::Standing::NotHosting
             );
         }
         assert!(!a.shared.cancel.is_cancelled(), "the link keeps running, to hear when it runs AI again");

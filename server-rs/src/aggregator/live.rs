@@ -400,7 +400,7 @@ fn status_info(status: &Value) -> StatusInfo {
 }
 
 /// The registry. One per server, on its link's handle
-/// ([`crate::agent::control::Control`]): it outlives a link that stops and
+/// ([`crate::cloud::control::Control`]): it outlives a link that stops and
 /// starts again.
 pub struct LiveCopies {
     inner: Mutex<Inner>,

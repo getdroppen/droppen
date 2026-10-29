@@ -52,7 +52,7 @@
 | 中继怎么认它 | 票据里写着 `sign_key`，中继要求持票人用这把钥签 `HubLogin` | `C/rh-proto/src/ticket.rs` | 提交时吊销旧票 |
 | 设备怎么连它 | Noise IK 的响应方静态钥取 `chain.machine(m).info.dh_key` | `C/rh-proto/src/handshake.rs` `start` | 链一换，旧钥就接不了握手 |
 | 它怎么连别人 | 别的 agent 用 `authorize_device(id, dh)` 按链准入，控制权看 `authorize_control` | `C/rh-proto/src/chain.rs`、`C/rh-proto/src/handshake.rs` | 同上 |
-| 运行中的身份 | `Shared.identity: Arc<MachineIdentity>` 一次运行内不变；S1-1 已能在进程内停、起链接 | `S/agent/link.rs`、`S/agent/control.rs` | 换钥 = 进程内重启链接与控制端 |
+| 运行中的身份 | `Shared.identity: Arc<MachineIdentity>` 一次运行内不变；S1-1 已能在进程内停、起链接 | `S/agent/link.rs`、`S/cloud/control.rs` | 换钥 = 进程内重启链接与控制端 |
 | 一个 id 只留一条连接 | 同一 id 后登录的顶掉先登录的（4001）。中继也一样。agent 不特别对待 4001 | Hub 一侧（`docs/hub-api/`）、`C/rh-relay/src/server.rs` | 窗口规则建在它上面（§3.3）；4001 可当克隆信号 |
 | 今天的提示 | `reEnrollCulprits` 只看**直接**能控制的设备，提示「先移除，再重新添加」。再用 host 自己记的 `controllers` 收窄（聚合器文档 D3） | `W/lib/hub/account.ts`、`W/features/cloud/devices.tsx` | 换成自动换钥；补上传递（§4.1） |
 | 移除时的 `MK` 轮换 | `removeDevice` → `rotate(…, {userKey: false})`。新 `MK` 封给 host **当前**的 DH 钥，持旧种子的人照样打得开（D3） | `W/lib/hub/account.ts`、`W/lib/hub/deliver.ts` | 换钥那一批再给一轮、只封给新钥 |
@@ -490,7 +490,7 @@ v2 没有这个动作。还在 v2 的账户照旧提示重新注册，先升级�
     - 停掉链接，发 `foreign_rotation` 告警（§3.5）；
     - 本机设置的「Droppen」一节给出「以新身份重新添加这台设备」；
     - 你确认后，它生成一颗**新**种子，旧种子改名留档，再走现有的注册流程：输入新的注册码，得到新 id。
-  - **任何注册路径都不复用退役的种子**。今天 `enroll`（`S/agent/control.rs`）沿用已有种子，只有断开（unenroll）才删。改为：当前种子在链上已退役（或已改名留档）时，注册前一律生成新种子。`load_or_create` 与崩溃恢复永远不加载留档的种子。
+  - **任何注册路径都不复用退役的种子**。今天 `enroll`（`S/cloud/control.rs`）沿用已有种子，只有断开（unenroll）才删。改为：当前种子在链上已退役（或已改名留档）时，注册前一律生成新种子。`load_or_create` 与崩溃恢复永远不加载留档的种子。
   - **页面批准加入时**：被 `KEY_RETIRED` 拒绝的，解释成「请以新身份添加那台电脑」。
 - **文案不能吓人，也不能误导**：这一状态也会出现在你把这台电脑**自己**换钥之前的备份恢复回来之后。所以本机与页面都写成「这台设备的身份密钥已在别处更换（比如从更换之前的备份恢复，或另一处握有它的旧钥）。要在这里继续用它，请以新身份重新添加」，不直接说「被冒充」。
 - **页面**：隔离的 host 行的第一步是「去看 {id} 上的 Droppen」。按它显示的，二选一作为主操作：

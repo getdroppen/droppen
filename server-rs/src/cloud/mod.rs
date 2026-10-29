@@ -51,7 +51,8 @@ use gotcha::axum::extract::FromRef;
 use gotcha::{api, GotchaRouter, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
-use crate::agent::control::{machine_fingerprint, AgentStatus, Control, ControlError, Standing};
+use crate::agent::fingerprint::machine_fingerprint;
+use crate::agent::status::{AgentStatus, Standing};
 use crate::aggregator::controller::AggregatorHost;
 use crate::auth::{MaybeIdentity, RETURN_ROUTE};
 use droppen_http::error::ApiError;
@@ -60,6 +61,7 @@ use droppen_http::openapi_ext::ExtraResponses;
 use droppen_instance::paths::Paths;
 
 mod access;
+pub mod control;
 mod file;
 pub mod gateway;
 pub mod hub_web;
@@ -73,6 +75,7 @@ pub use streams::{LiveSessions, SessionStreams};
 pub use link::{post_cancel, post_finish, post_link, post_return, web_origin, ATTEMPT_TTL_MS, DEFAULT_HUB};
 
 use access::*;
+use control::{Control, ControlError};
 use hub_web::HubWebs;
 use link::*;
 
@@ -80,7 +83,7 @@ use link::*;
 /// `cloud.json`. One per server, which the link's routes reach through
 /// [`CloudState`].
 pub struct Cloud {
-    /// The hub link ([`crate::agent::control`]).
+    /// The hub link ([`control`]).
     pub control: Arc<Control>,
     paths: Paths,
     attempt: Mutex<Option<Attempt>>,
