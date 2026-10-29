@@ -18,11 +18,13 @@
 
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::future::BoxFuture;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+use crate::accounts::login::Login;
 use droppen_base::process_env::{apply_env, Env};
 
 /// The most output kept from one stream of one invocation. A version string or
@@ -172,9 +174,13 @@ pub trait Runner: Send + Sync {
     fn rpc(&self, call: RpcCall) -> BoxFuture<'static, Option<serde_json::Value>>;
 }
 
-/// The runner the server uses: real processes, killed on timeout and on drop.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct SystemRunner;
+/// The runner the server uses: real processes, killed on timeout and on drop,
+/// and codex's app server asked through codex's own login.
+#[derive(Clone)]
+pub struct SystemRunner {
+    /// Codex's login, which is what knows how to talk to its app server.
+    pub codex: Arc<dyn Login>,
+}
 
 impl Runner for SystemRunner {
     fn run(&self, invocation: Invocation) -> BoxFuture<'static, RunOutput> {
@@ -182,7 +188,13 @@ impl Runner for SystemRunner {
     }
 
     fn rpc(&self, call: RpcCall) -> BoxFuture<'static, Option<serde_json::Value>> {
-        Box::pin(async move { crate::accounts::quota::codex::app_server_call(&call.program, &call.cwd, &call.env, call.method, call.timeout).await })
+        let codex = self.codex.clone();
+        Box::pin(async move {
+            match codex.app_server_call(&call.program, &call.cwd, &call.env, call.method, call.timeout) {
+                Some(ask) => ask.await,
+                None => None,
+            }
+        })
     }
 }
 

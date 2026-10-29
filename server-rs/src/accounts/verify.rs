@@ -262,6 +262,17 @@ mod tests {
             Box::pin(async { Verdict::Valid })
         }
 
+        fn app_server_call<'a>(
+            &'a self,
+            _program: &'a std::path::Path,
+            _cwd: &'a std::path::Path,
+            _env: &'a droppen_base::process_env::Env,
+            _method: &'a str,
+            _timeout: std::time::Duration,
+        ) -> Option<BoxFuture<'a, Option<serde_json::Value>>> {
+            None
+        }
+
         fn local_quota<'a>(&'a self, _roots: &'a crate::accounts::quota::ProbeRoots) -> Option<BoxFuture<'a, Option<crate::accounts::quota::CodexQuota>>> {
             None
         }

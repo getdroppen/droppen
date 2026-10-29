@@ -13,8 +13,11 @@ pub mod codex;
 
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
+use droppen_base::process_env::Env;
 use futures_util::future::BoxFuture;
+use serde_json::Value;
 
 use super::local_login::LocalLoginState;
 use super::quota::readings::SharedReading;
@@ -69,6 +72,19 @@ pub trait Login: Send + Sync {
     /// and windows, live or out of the CLI's own logs. `None` back is a CLI
     /// whose quota is read per login instead ([`Login::probe`]).
     fn local_quota<'a>(&'a self, roots: &'a ProbeRoots) -> Option<BoxFuture<'a, Option<CodexQuota>>>;
+
+    /// Ask this CLI's app server one JSON-RPC question about its login:
+    /// `program` is the binary, run in `cwd` with `env`, and the answer is the
+    /// `result`, or `None` for any failure. `None` back is a CLI with no app
+    /// server to ask.
+    fn app_server_call<'a>(
+        &'a self,
+        program: &'a Path,
+        cwd: &'a Path,
+        env: &'a Env,
+        method: &'a str,
+        timeout: Duration,
+    ) -> Option<BoxFuture<'a, Option<Value>>>;
 }
 
 /// Every CLI's [`Login`], one per [`AccountProvider`].

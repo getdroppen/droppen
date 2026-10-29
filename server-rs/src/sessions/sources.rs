@@ -138,6 +138,13 @@ pub trait Transcripts: Send + Sync {
         })
     }
 
+    /// Whether this server's own root of this CLI holds a session transcript,
+    /// which says the install has been used even where no ownership record
+    /// does. False for a CLI with no root of the server's own.
+    fn has_own_sessions<'a>(&'a self, _paths: &'a Paths) -> BoxFuture<'a, bool> {
+        Box::pin(async { false })
+    }
+
     /// The transcripts that count toward the token-usage stats and were
     /// written at or after `cutoff_ms`. None by default: a CLI whose
     /// transcripts report no tokens this server can price adds nothing.
