@@ -778,7 +778,7 @@ mod tests {
         )
         .expect("subagent");
         if recorded {
-            crate::sessions::owned_sessions::record(paths, Source::Claude, id).await.expect("record");
+            crate::sessions::claude::ClaudeCodeSessions.record_owned(paths, id).await.expect("record");
         }
         path
     }

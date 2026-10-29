@@ -740,6 +740,23 @@ async fn list_by_scanning(paths: &Paths) -> Vec<SessionSummary> {
 /// `~/.codex`, found through its state database or by walking them.
 pub struct CodexSessions;
 
+impl CodexSessions {
+    /// Record that this instance made thread `id`: in its ownership registry,
+    /// then as a claim in the shared directory ([`super::codex_claims::claim`]).
+    /// One call for both, and the only way a codex thread is recorded, so the
+    /// two cannot drift.
+    ///
+    /// The registry's outcome is the answer. The claim is a separate,
+    /// best-effort copy of what was just recorded, and it is re-attempted on a
+    /// second `record_owned` of the same id precisely so a claim that failed to
+    /// land once is not permanent.
+    pub async fn record_owned(&self, paths: &Paths, id: &str) -> std::io::Result<()> {
+        let outcome = owned_sessions::record(paths, Source::Codex, id).await;
+        super::codex_claims::claim(paths, id).await;
+        outcome
+    }
+}
+
 impl super::Transcripts for CodexSessions {
     fn source(&self) -> Source {
         Source::Codex
@@ -1364,7 +1381,7 @@ mod tests {
         assert_eq!((found.scope, found.server.as_str()), (SessionScope::External, "alice"));
 
         // Recorded as this instance's own: the value now comes off the row.
-        crate::sessions::codex_claims::record_thread(&paths, id).await.expect("record");
+        CodexSessions.record_owned(&paths, id).await.expect("record");
         let mine = find_codex_session(&paths, id).await.expect("the row");
         assert_eq!(mine.scope, SessionScope::Owned);
         assert_eq!(mine.server, "alice");

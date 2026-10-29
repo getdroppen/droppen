@@ -194,10 +194,13 @@ fn stored(db: &Db, local: &ServerId) -> OwnedSessions {
 /// the spawn, so it is recorded before it — a crash mid-launch leaves an entry
 /// for a session with no transcript, which nothing lists and nothing resumes.
 ///
-/// A codex thread also needs its claim in the shared `<data>/codex-claims`, or
-/// the sibling instances go on listing it: Codex records a thread through
-/// [`super::codex_claims::record_thread`], which writes both.
-pub async fn record(paths: &Paths, source: Source, id: &str) -> std::io::Result<()> {
+/// Private to sessions: each CLI records through its own reader.
+/// Claude Code calls [`super::claude::ClaudeCodeSessions::record_owned`].
+/// Codex calls [`super::codex::CodexSessions::record_owned`], which also writes
+/// the thread's claim in the shared `<data>/codex-claims`. Without the claim the
+/// sibling instances go on listing the thread, and that one call is how the
+/// two never come apart.
+pub(super) async fn record(paths: &Paths, source: Source, id: &str) -> std::io::Result<()> {
     // The server is stamped here rather than at the three call sites — a new
     // session, a new codex thread, the id claude answers an adoption with —
     // because all three are this process recording its own work, and there is
@@ -224,9 +227,7 @@ pub async fn record(paths: &Paths, source: Source, id: &str) -> std::io::Result<
 /// The caller is Claude Code's prune at boot
 /// (`crate::sessions::claude::ClaudeCodeSessions::prune_owned`): an entry for a
 /// transcript that is in neither root stands for a session nothing lists or
-/// resumes. (Adoption in earlier builds
-/// was the other caller, retiring the entry once the transcript had been copied
-/// into this server's own root, where the directory answers instead.)
+/// resumes.
 pub async fn forget(paths: &Paths, source: Source, id: &str) -> std::io::Result<()> {
     store(paths)
         .write(|tx| tx.execute("DELETE FROM owned_sessions WHERE source = ?1 AND session_id = ?2", (source.as_str(), id)))
@@ -252,9 +253,9 @@ mod tests {
     async fn each_cli_is_recorded_separately_and_recording_twice_is_a_no_op() {
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = paths(&dir);
-        record(&paths, Source::Codex, "thread-a").await.expect("record");
+        super::super::codex::CodexSessions.record_owned(&paths, "thread-a").await.expect("record");
         record(&paths, Source::Claude, "session-a").await.expect("record");
-        record(&paths, Source::Codex, "thread-a").await.expect("recording twice is fine");
+        super::super::codex::CodexSessions.record_owned(&paths, "thread-a").await.expect("recording twice is fine");
 
         let owned = read(&paths).await;
         assert!(owned.contains(Source::Codex, "thread-a"));
@@ -268,7 +269,7 @@ mod tests {
     async fn no_change_writes_the_file_back() {
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = paths(&dir);
-        record(&paths, Source::Codex, "thread-a").await.expect("record");
+        super::super::codex::CodexSessions.record_owned(&paths, "thread-a").await.expect("record");
         assert!(!paths.instance_dir().join("owned-sessions.json").exists(), "recording writes the table and nothing else");
         assert!(!paths.instance_dir().join("owned-sessions.json").with_extension("json.tmp").exists());
 
@@ -284,13 +285,32 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&file).expect("read"), planted);
     }
 
+    /// Only the sources the registry is written for are read back: a row naming
+    /// `acp`, whose sessions are owned by where their transcript is kept, or a
+    /// CLI this build has never heard of, owns nothing.
+    #[tokio::test]
+    async fn a_row_for_a_source_the_registry_is_not_written_for_owns_nothing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let paths = paths(&dir);
+        store(&paths)
+            .write(|tx| {
+                tx.execute("INSERT INTO owned_sessions (source, session_id) VALUES ('acp', 'x')", [])?;
+                tx.execute("INSERT INTO owned_sessions (source, session_id) VALUES ('gemini', 'y')", [])
+            })
+            .expect("rows written by hand");
+
+        let owned = read(&paths).await;
+        assert!(owned.is_empty(), "{owned:?}");
+        assert!(!owned.contains(Source::Acp, "x"));
+    }
+
     /// The registry is the one piece of ownership state that cannot be rebuilt
     /// from the filesystem, so surviving a restart is the whole of its job.
     #[tokio::test]
     async fn an_entry_survives_the_database_being_reopened() {
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = paths(&dir);
-        record(&paths, Source::Codex, "thread-a").await.expect("record");
+        super::super::codex::CodexSessions.record_owned(&paths, "thread-a").await.expect("record");
 
         let reopened = droppen_instance::db::Db::open(paths.instance_db());
         let source: String = reopened
@@ -306,7 +326,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = paths(&dir);
         record(&paths, Source::Claude, "shared-id").await.expect("record");
-        record(&paths, Source::Codex, "shared-id").await.expect("record");
+        super::super::codex::CodexSessions.record_owned(&paths, "shared-id").await.expect("record");
 
         let owned = read(&paths).await;
         assert!(owned.contains(Source::Claude, "shared-id"));
@@ -384,8 +404,8 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let a = Paths::for_instance(dir.path().to_path_buf(), "alice");
         let b = Paths::for_instance(dir.path().to_path_buf(), "bob");
-        record(&a, Source::Codex, "thread-a").await.expect("record");
-        record(&b, Source::Codex, "thread-b").await.expect("record");
+        super::super::codex::CodexSessions.record_owned(&a, "thread-a").await.expect("record");
+        super::super::codex::CodexSessions.record_owned(&b, "thread-b").await.expect("record");
 
         assert_eq!(read(&a).await.server_of(Source::Codex, "thread-a").map(ServerId::as_str), Some("alice"));
         assert_eq!(

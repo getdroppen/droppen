@@ -2,7 +2,7 @@
 mod support;
 
 use droppen_instance::paths::Paths;
-use remote_hand_server::sessions::codex_claims;
+use remote_hand_server::sessions::codex::CodexSessions;
 use serde_json::json;
 use support::Probe;
 
@@ -23,7 +23,7 @@ async fn fixture() -> Probe {
     )
     .unwrap();
     let paths = Paths::for_instance(probe.home.clone(), INSTANCE);
-    codex_claims::record_thread(&paths, ID).await.unwrap();
+    CodexSessions.record_owned(&paths, ID).await.unwrap();
     probe
 }
 

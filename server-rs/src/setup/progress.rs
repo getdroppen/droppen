@@ -515,8 +515,6 @@ mod tests {
 
     #[tokio::test]
     async fn sessions_the_app_ran_on_the_user_s_own_logins_are_its_own_too() {
-        use crate::sessions::{owned_sessions, Source};
-
         let _index = crate::sessions::index::exclusive().await;
         let fresh = SetupProgress::default();
 
@@ -535,7 +533,7 @@ mod tests {
         )
         .expect("transcript");
         assert!(answered(&SetupState::from_ref(&state), fresh.clone()).await.auto_open, "the user's own, so far");
-        owned_sessions::record(&state.drive.paths, Source::Claude, id).await.expect("record");
+        crate::sessions::claude::ClaudeCodeSessions.record_owned(&state.drive.paths, id).await.expect("record");
         assert!(!answered(&SetupState::from_ref(&state), fresh.clone()).await.auto_open, "started by this instance on the local login");
 
         // A Codex thread it started, in the one ~/.codex.
@@ -543,7 +541,7 @@ mod tests {
         let mut state = crate::api::test_support::state(home.path()).await;
         state.desktop_app = true;
         assert!(answered(&SetupState::from_ref(&state), fresh.clone()).await.auto_open);
-        crate::sessions::codex_claims::record_thread(&state.drive.paths, "0199a3b4-c5d6-7e8f-9a0b-1c2d3e4f5a6b")
+        crate::sessions::codex::CodexSessions.record_owned(&state.drive.paths, "0199a3b4-c5d6-7e8f-9a0b-1c2d3e4f5a6b")
             .await
             .expect("record");
         assert!(!answered(&SetupState::from_ref(&state), fresh).await.auto_open, "a Codex thread of its own");

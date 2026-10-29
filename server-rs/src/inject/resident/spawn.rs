@@ -321,7 +321,7 @@ impl InjectionRegistry {
             // to a session this server started would be absurd. Recorded before
             // the spawn, like the binding above and for the same reason.
             None => {
-                if let Err(error) = crate::sessions::owned_sessions::record(&self.paths, Source::Claude, &id).await {
+                if let Err(error) = crate::sessions::claude::ClaudeCodeSessions.record_owned(&self.paths, &id).await {
                     tracing::error!(session = %id, %error, "cannot record this claude session as ours; it will list as external");
                 }
             }

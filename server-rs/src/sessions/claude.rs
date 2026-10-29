@@ -632,6 +632,13 @@ pub async fn load_claude_summary(paths: &Paths, id: &str) -> Option<SessionSumma
 pub struct ClaudeCodeSessions;
 
 impl ClaudeCodeSessions {
+    /// Record that this instance created claude session `id`, in its ownership
+    /// registry ([`super::owned_sessions::record`]): for a session whose
+    /// transcript lands in a root this server does not own.
+    pub async fn record_owned(&self, paths: &Paths, id: &str) -> std::io::Result<()> {
+        super::owned_sessions::record(paths, Source::Claude, id).await
+    }
+
     /// Drop claude entries whose transcript is not in any root this server reads.
     ///
     /// Two things put one there. A claude id is recorded *before* the spawn, so a
@@ -890,7 +897,7 @@ mod tests {
         // Codex is left alone whatever the filesystem says: `~/.codex` hides
         // archived threads from every lookup cheap enough to run at boot, so
         // "not found" there is not "gone".
-        owned_sessions::record(&paths, Source::Codex, "archived-thread").await.expect("record");
+        crate::sessions::codex::CodexSessions.record_owned(&paths, "archived-thread").await.expect("record");
 
         ClaudeCodeSessions.prune_owned(&paths).await;
 
