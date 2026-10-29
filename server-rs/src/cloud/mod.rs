@@ -62,9 +62,6 @@ use droppen_instance::paths::Paths;
 
 mod access;
 pub mod control;
-/// The server's handle on its hub link against this instance's agent files.
-#[cfg(test)]
-mod control_tests;
 mod file;
 pub mod gateway;
 pub mod hub_web;
