@@ -156,12 +156,11 @@
             "push"
           ],
           "mayUse": [
-            "droppen-auth",
             "droppen-sessions",
             "droppen-accounts"
           ],
           "notes": [
-            "Answers droppen-auth's NotifyCredential port from the entry, and reads its caller back out of auth's NotifyGrant."
+            "Answers droppen-auth's NotifyCredential port from the entry; its caller travels in droppen-http's NotifyGrant, which neither crate has to name the other for."
           ]
         },
         {

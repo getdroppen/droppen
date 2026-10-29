@@ -145,7 +145,6 @@ pub mod setup;
 pub mod tickets;
 pub mod users;
 
-use std::any::Any;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -158,7 +157,7 @@ use gotcha::axum::response::{IntoResponse, Response};
 
 use droppen_http::config::AuthSettings;
 use droppen_http::error::ApiError;
-use droppen_http::identity::AuthIdentity;
+use droppen_http::identity::{AuthIdentity, NotifyGrant};
 use droppen_instance::instance::InstanceDirs;
 use droppen_instance::paths::Paths;
 use lockout::{LockoutPolicy, Lockouts};
@@ -242,28 +241,6 @@ pub trait NotifyCredential: Send + Sync {
         instance: &'a str,
         headers: &'a HeaderMap,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<NotifyGrant>> + Send + 'a>>;
-}
-
-/// What the notify capability proved about a request, which [`guard`] carries
-/// to the notify handler in the request extensions.
-///
-/// The one type the guard inserts for the capability: what it holds is opaque
-/// here, so whatever a [`NotifyCredential`] proves stays inside it and can never
-/// stand in the extensions as an [`AuthIdentity`] or anything else a handler
-/// reads. Only the code that made it reads it back ([`NotifyGrant::get`]).
-#[derive(Clone)]
-pub struct NotifyGrant(Arc<dyn Any + Send + Sync>);
-
-impl NotifyGrant {
-    /// A grant holding what the capability proved.
-    pub fn new<T: Any + Send + Sync>(proof: T) -> Self {
-        Self(Arc::new(proof))
-    }
-
-    /// What the grant holds, if it is a `T`.
-    pub fn get<T: Any>(&self) -> Option<&T> {
-        self.0.downcast_ref()
-    }
 }
 
 /// Everything the guard and the `/api/auth/*` routes need.

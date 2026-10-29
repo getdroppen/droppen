@@ -205,7 +205,7 @@ pub struct NotifyBody {
 /// The session a verified [`token`] names.
 ///
 /// Carried in the request extensions by [`crate::auth::guard`], inside the
-/// [`crate::auth::NotifyGrant`] it inserts, and read back out by the extractor
+/// [`droppen_http::identity::NotifyGrant`] it inserts, and read back out by the extractor
 /// below, so the handler never parses a header itself — the same
 /// arrangement [`crate::auth::Identity`] has, and deliberately *not* the same
 /// type. This is not an identity: it authorizes one operation on one session and
@@ -243,7 +243,7 @@ impl<S: Send + Sync> FromRequestParts<S> for NotifyCaller {
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         parts
             .extensions
-            .get::<crate::auth::NotifyGrant>()
+            .get::<droppen_http::identity::NotifyGrant>()
             .and_then(|grant| grant.get::<NotifyCaller>())
             .cloned()
             .ok_or_else(|| ApiError::new(StatusCode::UNAUTHORIZED, "unauthorized"))
