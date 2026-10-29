@@ -179,7 +179,7 @@ function BetaNote() {
     <div className="flex items-start gap-3 border-b border-border px-6 py-4 max-md:px-4">
       <Info className="mt-0.5 size-4 shrink-0 text-muted" />
       <p className="max-w-[60em] text-xs leading-5 text-pretty text-muted">
-        {t("Droppen is in beta: its encryption design has had internal security reviews, not an external audit. In a browser, the page code loaded each time can use your private keys and, if tampered with, could copy them out; for higher assurance, use the Mac app.")}
+        {t("Droppen is in beta: its encryption design has had internal security reviews, not an external audit. Due to browser limitations, we recommend the more secure Mac app.")}
         {gapBefore(active.language)}
         <a {...publicLink(SECURITY_PATH)} data-testid="landing-security" className="whitespace-nowrap text-fg underline underline-offset-4 hover:no-underline">
           {t("How the encryption works")}
