@@ -339,17 +339,10 @@ import {
 export type { AccountLocks, AccountStorage, CrossTab, SeenWatch } from "./account-storage";
 import type { ControllersRecord } from "./streams";
 
+/** A renewal superseded by a loss after it staged is started again at most this many times in all (§4.1 「清除」). */
 const RENEW_RESTARTS = 3;
 /** What `holdRenewal` answers while another tab of this browser holds the renewal of that host. */
 const BUSY: unique symbol = Symbol("busy");
-
-
-/**
- * How the tabs of this browser tell each other of disputes one of them
- * verified (§3.8): what one tab keeps reaches the others at
- * once — their channels to a host isolated now close — even where storage
- * cannot be written. `null`: no other tab to tell.
- */
 
 /** Renew the device session this long before it expires. */
 export const RENEW_MARGIN_MS = 5 * 60 * 1000;
