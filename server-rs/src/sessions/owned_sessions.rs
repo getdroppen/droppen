@@ -65,7 +65,7 @@ use std::sync::Arc;
 
 use serde::Deserialize;
 
-use super::Source;
+use super::{Source, Transcripts};
 use droppen_instance::db::Db;
 use droppen_instance::identity::ServerId;
 use droppen_instance::paths::Paths;
@@ -113,6 +113,27 @@ impl OwnedSessions {
     fn set(&self, source: Source) -> &BTreeMap<String, ServerId> {
         static NONE: BTreeMap<String, ServerId> = BTreeMap::new();
         self.by_source.get(&source).unwrap_or(&NONE)
+    }
+
+    /// Record that this instance created session `id` of `reader`'s CLI.
+    ///
+    /// For codex this is called on the *successful* end of the handshake, once the
+    /// CLI has announced the thread id it actually used; recording the provisional
+    /// id would own a session that never existed. For claude the id is minted before
+    /// the spawn, so it is recorded before it — a crash mid-launch leaves an entry
+    /// for a session with no transcript, which nothing lists and nothing resumes.
+    ///
+    /// The only way a row is written, and the row's source is the reader's own:
+    /// the reader's [`Transcripts::on_owned`] runs right after it, so no row is
+    /// written without what its CLI needs beside it. For Codex that is the
+    /// thread's claim in the shared `<data>/codex-claims`; without the claim the
+    /// sibling instances go on listing the thread. The row's outcome is the
+    /// answer: the step after it is best effort, and it runs whichever way the
+    /// row went, so a second record of the same id retries it.
+    pub async fn record(paths: &Paths, reader: &dyn Transcripts, id: &str) -> std::io::Result<()> {
+        let outcome = insert(paths, reader.source(), id).await;
+        reader.on_owned(paths, id).await;
+        outcome
     }
 }
 
@@ -186,21 +207,10 @@ fn stored(db: &Db, local: &ServerId) -> OwnedSessions {
     .unwrap_or_default()
 }
 
-/// Record that this instance created `id`.
-///
-/// For codex this is called on the *successful* end of the handshake, once the
-/// CLI has announced the thread id it actually used; recording the provisional
-/// id would own a session that never existed. For claude the id is minted before
-/// the spawn, so it is recorded before it — a crash mid-launch leaves an entry
-/// for a session with no transcript, which nothing lists and nothing resumes.
-///
-/// Private to sessions: each CLI records through its own reader.
-/// Claude Code calls [`super::claude::ClaudeCodeSessions::record_owned`].
-/// Codex calls [`super::codex::CodexSessions::record_owned`], which also writes
-/// the thread's claim in the shared `<data>/codex-claims`. Without the claim the
-/// sibling instances go on listing the thread, and that one call is how the
-/// two never come apart.
-pub(super) async fn record(paths: &Paths, source: Source, id: &str) -> std::io::Result<()> {
+/// The row that says this instance created session `id` of `source`. Written
+/// only by [`OwnedSessions::record`], which takes the source from the reader
+/// whose step runs after it.
+async fn insert(paths: &Paths, source: Source, id: &str) -> std::io::Result<()> {
     // The server is stamped here rather than at the three call sites — a new
     // session, a new codex thread, the id claude answers an adoption with —
     // because all three are this process recording its own work, and there is
@@ -254,7 +264,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = paths(&dir);
         super::super::codex::CodexSessions.record_owned(&paths, "thread-a").await.expect("record");
-        record(&paths, Source::Claude, "session-a").await.expect("record");
+        insert(&paths, Source::Claude, "session-a").await.expect("record");
         super::super::codex::CodexSessions.record_owned(&paths, "thread-a").await.expect("recording twice is fine");
 
         let owned = read(&paths).await;
@@ -279,7 +289,7 @@ mod tests {
         std::fs::create_dir_all(file.parent().expect("parent")).expect("instance dir");
         let planted = r#"{"claude":["planted"],"codex":[]}"#;
         std::fs::write(&file, planted).expect("plant");
-        record(&paths, Source::Claude, "session-b").await.expect("record");
+        insert(&paths, Source::Claude, "session-b").await.expect("record");
         forget(&paths, Source::Codex, "thread-a").await.expect("forget");
         assert!(!read(&paths).await.contains(Source::Claude, "planted"), "and it is not adopted");
         assert_eq!(std::fs::read_to_string(&file).expect("read"), planted);
@@ -325,7 +335,7 @@ mod tests {
     async fn one_id_under_two_sources_is_two_rows_and_not_a_collision() {
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = paths(&dir);
-        record(&paths, Source::Claude, "shared-id").await.expect("record");
+        insert(&paths, Source::Claude, "shared-id").await.expect("record");
         super::super::codex::CodexSessions.record_owned(&paths, "shared-id").await.expect("record");
 
         let owned = read(&paths).await;
@@ -362,7 +372,7 @@ mod tests {
         }
 
         // Opening migrates; recording is what this release does differently.
-        record(&paths, Source::Claude, "made-after").await.expect("record");
+        insert(&paths, Source::Claude, "made-after").await.expect("record");
 
         let owned = read(&paths).await;
         assert_eq!(
@@ -426,7 +436,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let a = Paths::for_instance(dir.path().to_path_buf(), "a");
         let b = Paths::for_instance(dir.path().to_path_buf(), "b");
-        record(&a, Source::Claude, "session-a").await.expect("record");
+        insert(&a, Source::Claude, "session-a").await.expect("record");
         assert!(read(&a).await.contains(Source::Claude, "session-a"));
         assert!(read(&b).await.is_empty(), "a sibling's registry is not this one's");
     }

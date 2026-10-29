@@ -87,9 +87,10 @@ fn named(raw: &str) -> Option<String> {
 
 /// Record that this instance made `id`, for the other instances to read.
 ///
-/// Called by [`super::codex::CodexSessions::record_owned`] right after the
-/// registry entry, so the two cannot drift: a registry entry with no claim is a
-/// thread a sibling still lists, which is the bug this exists to fix.
+/// Codex's [`on_owned`](super::Transcripts::on_owned): run by
+/// [`super::owned_sessions::OwnedSessions::record`] right after the registry
+/// entry, so the two cannot drift: a registry entry with no claim is a thread a
+/// sibling still lists, which is the bug this exists to fix.
 ///
 /// Best effort. Every failure is logged and none is propagated, because the run
 /// that just succeeded must not be reported as failed over bookkeeping a sibling
@@ -494,7 +495,7 @@ mod tests {
     async fn the_boot_migration_mirrors_the_registry_once_and_never_steals() {
         let dir = tempfile::tempdir().expect("tempdir");
         let (a, b) = instances(&dir);
-        super::super::owned_sessions::record(&a, Source::Claude, "session-a")
+        super::super::claude::ClaudeCodeSessions.record_owned(&a, "session-a")
             .await
             .expect("record");
         assert_eq!(migrate(&a).await, 0, "a claude session is not a codex thread");

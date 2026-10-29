@@ -742,18 +742,17 @@ pub struct CodexSessions;
 
 impl CodexSessions {
     /// Record that this instance made thread `id`: in its ownership registry,
-    /// then as a claim in the shared directory ([`super::codex_claims::claim`]).
-    /// One call for both, and the only way a codex thread is recorded, so the
-    /// two cannot drift.
+    /// then as a claim in the shared directory ([`super::codex_claims::claim`],
+    /// this reader's [`on_owned`](super::Transcripts::on_owned)).
+    /// [`OwnedSessions::record`](owned_sessions::OwnedSessions::record) writes
+    /// every row and runs the step after it, so the two cannot drift.
     ///
     /// The registry's outcome is the answer. The claim is a separate,
     /// best-effort copy of what was just recorded, and it is re-attempted on a
     /// second `record_owned` of the same id precisely so a claim that failed to
     /// land once is not permanent.
     pub async fn record_owned(&self, paths: &Paths, id: &str) -> std::io::Result<()> {
-        let outcome = owned_sessions::record(paths, Source::Codex, id).await;
-        super::codex_claims::claim(paths, id).await;
-        outcome
+        owned_sessions::OwnedSessions::record(paths, self, id).await
     }
 }
 
@@ -808,6 +807,12 @@ impl super::Transcripts for CodexSessions {
 
     fn foreign_sessions(&self) -> bool {
         true
+    }
+
+    // One `~/.codex` for every instance: the claim is what tells the siblings
+    // the thread is this one's.
+    fn on_owned<'a>(&'a self, paths: &'a Paths, id: &'a str) -> BoxFuture<'a, ()> {
+        Box::pin(super::codex_claims::claim(paths, id))
     }
 
     fn watch_dirs<'a>(&'a self, paths: &'a Paths) -> BoxFuture<'a, Vec<PathBuf>> {

@@ -102,6 +102,14 @@ pub trait Transcripts: Send + Sync {
     /// external one.
     fn foreign_sessions(&self) -> bool;
 
+    /// What this CLI adds once this instance has recorded making session
+    /// `id`, run by [`super::owned_sessions::OwnedSessions::record`] right
+    /// after the row. Codex writes the thread's claim in the shared data
+    /// directory, without which the sibling instances go on listing the
+    /// thread; a CLI the row alone settles adds nothing. Every reader answers,
+    /// so a new one cannot record a row without saying what it needs.
+    fn on_owned<'a>(&'a self, paths: &'a Paths, id: &'a str) -> BoxFuture<'a, ()>;
+
     /// The directories a new transcript of this CLI can appear in, for the
     /// session list's watcher. A watch on a missing directory fails, so a
     /// reader whose directory may not exist yet makes it here.
