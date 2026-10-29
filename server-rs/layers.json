@@ -387,12 +387,6 @@
       ]
     },
     {
-      "why": "inject adds notify's channel to a session's environment (notify::inject::decorate). It goes when the providers take the channel's environment through a port of their own, which the drive fills, instead of calling notify.",
-      "edges": [
-        "inject -> notify"
-      ]
-    },
-    {
       "why": "The login wizards take drive::Drive, which holds every service a spawn needs. They go when they take only the services they use, as a session's spawn asks its provider (ProviderRegistry) rather than the drive.",
       "edges": [
         "accounts::setup_token -> drive",

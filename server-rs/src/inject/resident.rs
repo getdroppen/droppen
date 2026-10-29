@@ -788,7 +788,6 @@ impl ClaudeCode {
     fn spawn_deps(&self) -> SpawnDeps<'_> {
         SpawnDeps {
             paths: &self.registry.paths,
-            instance: &self.registry.instance,
             accounts: &self.registry.accounts,
             injections: &self.registry,
         }
@@ -7177,7 +7176,7 @@ mod tests {
             // the environment, and `a_session_records_its_whole_life` needs the
             // answer to be yes whatever the developer's shell says.
             recorders: crate::record::Recorders::new_at(dirs.session_logs(), None, paths.clone()),
-            instance: dirs,
+            decoration: crate::drive::NotifyDecoration::new(paths.clone(), dirs),
             listeners: std::sync::OnceLock::new(),
             alerts: std::sync::OnceLock::new(),
             reading_recheck: Mutex::new(None),

@@ -10,6 +10,8 @@ use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use futures_util::future::BoxFuture;
+
 use crate::accounts::store::{AccountError, AccountLaunch, AccountProvider, AccountsStore};
 use crate::claude_roots;
 use droppen_instance::identity::ServerId;
@@ -331,16 +333,14 @@ fn claude_recipe(paths: &Paths, cwd: Option<&str>, options: &SendOptions, env: E
 }
 
 /// What a claude send or start reads: the stores that choose and bind the
-/// account a spawn runs under, the paths and instance it is pointed at, and the
-/// registry that runs it.
+/// account a spawn runs under, the paths it is pointed at, and the registry
+/// that runs and decorates it.
 ///
 /// Lent by [`ClaudeCode`] out of the registry it holds, which is built over the
 /// same stores the drive serves.
 struct SpawnDeps<'a> {
     /// Where everything is discovered and written.
     paths: &'a Arc<Paths>,
-    /// This server's own instance directory, for the `rh-notify` decoration.
-    instance: &'a InstanceDirs,
     /// The stored logins: which account a spawn runs under, and its credential.
     accounts: &'a Arc<AccountsStore>,
     /// Every run this server started.
@@ -543,14 +543,25 @@ impl SpawnDeps<'_> {
     /// `rh-notify` would work perfectly well on a `codex exec` command line, but
     /// nothing would ever tell codex that it exists — skills are a Claude Code
     /// mechanism, and a `codex` thread's id is not even known until after the spawn
-    /// that would have carried the token. See [`crate::notify::inject`].
+    /// that would have carried the token. See [`SpawnDecoration`].
     ///
     /// Deliberately infallible. A session that cannot notify is a session; a session
     /// that would not start because a notification channel could not be set up is a
     /// bug with a very unhappy user attached.
     async fn notify_decorate(&self, id: &str, env: &mut Env) {
-        crate::notify::inject::decorate(&self.paths, &self.instance, Source::Claude, id, env).await;
+        self.injections.decoration.decorate(Source::Claude, id, env).await;
     }
+}
+
+/// What a claude spawn's environment gains just before the CLI starts, beyond
+/// its root and its account: the channel to its user, when there is one.
+///
+/// A port, because what goes in is the channel's business and the spawn only
+/// knows when. Infallible: a session that cannot notify is still a session,
+/// and one refused for want of a channel would be worse.
+pub trait SpawnDecoration: Send + Sync {
+    /// Add to `env` what session `id` of `source` starts with.
+    fn decorate<'a>(&'a self, source: Source, id: &'a str, env: &'a mut Env) -> BoxFuture<'a, ()>;
 }
 
 // ------------------------------------------------------------------ operations
@@ -776,7 +787,7 @@ impl InjectionRegistry {
     /// from nothing: the managed root, the account, the `rh-notify` decoration.
     async fn account_spawn_env(&self, session: &str, account: &str) -> Result<Env, InjectError> {
         let mut env = managed_claude_env(&self.paths, &self.accounts, Some(account)).await?;
-        crate::notify::inject::decorate(&self.paths, &self.instance, Source::Claude, session, &mut env).await;
+        self.decoration.decorate(Source::Claude, session, &mut env).await;
         Ok(env)
     }
 
@@ -1113,10 +1124,10 @@ pub struct InjectionRegistry {
     /// its driver, and is what carries the session's life into
     /// [`crate::record`]. See [`resident::Driver::recorder`].
     recorders: record::Recorders,
-    /// This server's own instance directory, which [`crate::notify::inject`]
-    /// decorates a claude spawn with: on the send path, and for the process an
-    /// automatic rotation moves a session to, which a driver builds by itself.
-    instance: InstanceDirs,
+    /// What a claude spawn's environment gains before it starts: on the send
+    /// path, and for the process an automatic rotation moves a session to,
+    /// which a driver builds by itself.
+    decoration: Arc<dyn SpawnDecoration>,
     /// The session feed and the list feed, told when a driver changes something
     /// no file shows. Set once, at startup; empty in tests that build no app.
     listeners: std::sync::OnceLock<Listeners>,
@@ -1210,12 +1221,14 @@ impl InjectionRegistry {
     ///
     /// `instance` says where `runs.json` goes, and it is the only per-instance
     /// thing here: the session claims deliberately live one level up, in the
-    /// data directory every instance shares.
+    /// data directory every instance shares. `decoration` is what a claude
+    /// spawn's environment gains before it starts.
     pub fn new(
         paths: Arc<Paths>,
         instance: &InstanceDirs,
         accounts: Arc<crate::accounts::store::AccountsStore>,
         quota: Arc<crate::accounts::quota::QuotaCache>,
+        decoration: Arc<dyn SpawnDecoration>,
     ) -> Arc<Self> {
         let receipts = Arc::new(receipts::Receipts::new(droppen_instance::db::at(paths.instance_db())));
         let questions = Arc::new(questions::Questions::new(droppen_instance::db::at(paths.instance_db())));
@@ -1271,7 +1284,7 @@ impl InjectionRegistry {
             #[cfg(test)]
             steps: Mutex::new(Vec::new()),
             recorders: record::Recorders::new(paths.clone(), instance),
-            instance: instance.clone(),
+            decoration,
             listeners: std::sync::OnceLock::new(),
             alerts: std::sync::OnceLock::new(),
             reading_recheck: Mutex::new(None),
@@ -2283,11 +2296,13 @@ mod tests {
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Arc::new(Paths::new(home.path().to_path_buf()));
         let dirs = InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
+        let decoration = crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone());
         let registry = InjectionRegistry::new(
             paths.clone(),
             &dirs,
             Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins())),
             Arc::new(crate::accounts::quota::QuotaCache::new(paths)),
+            decoration,
         );
 
         // Alive, and emphatically not an agent run: the developer's `make`,
@@ -2370,11 +2385,13 @@ mod tests {
         let paths = Arc::new(Paths::new(home.path().to_path_buf()));
         let dirs = InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
         dirs.create().expect("instance dirs");
+        let decoration = crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone());
         let registry = InjectionRegistry::new(
             paths.clone(),
             &dirs,
             Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins())),
             Arc::new(crate::accounts::quota::QuotaCache::new(paths)),
+            decoration,
         );
         let providers = ProviderRegistry::new(registry.clone(), crate::app::register_providers);
 
@@ -2446,11 +2463,13 @@ mod tests {
         std::fs::write(&debris, b"1\n").expect("the dead run's lock file");
         let dirs = InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
         dirs.create().expect("instance dirs");
+        let decoration = crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone());
         let registry = InjectionRegistry::new(
             paths.clone(),
             &dirs,
             Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins())),
             Arc::new(crate::accounts::quota::QuotaCache::new(paths)),
+            decoration,
         );
         let spawn = |script: &str| {
             std::process::Command::new("/bin/sh")

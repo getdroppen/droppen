@@ -1463,7 +1463,8 @@ mod tests {
             dirs.create().unwrap();
             let accounts = Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins()));
             let quota = Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone()));
-            let registry = InjectionRegistry::new(paths, &dirs, accounts, quota);
+            let decoration = crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone());
+            let registry = InjectionRegistry::new(paths, &dirs, accounts, quota, decoration);
             let socket = home.path().join("mock.sock");
             let listener = UnixListener::bind(&socket).unwrap();
             let connector = tokio::spawn(async move { shim::connect_in_process(&socket).await.unwrap() });
@@ -2158,7 +2159,8 @@ mod tests {
         dirs.create().unwrap();
         let accounts = Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins()));
         let quota = Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone()));
-        let registry = InjectionRegistry::new(paths, &dirs, accounts, quota);
+        let decoration = crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone());
+        let registry = InjectionRegistry::new(paths, &dirs, accounts, quota, decoration);
         let work = home.path().join("work");
         std::fs::create_dir_all(&work).expect("work");
         let work = work.to_string_lossy().into_owned();
