@@ -1397,4 +1397,384 @@ mod tests {
             "a damaged index costs a re-read and nothing else"
         );
     }
+
+    /// Discovery hides what the archive holds: it reads the table
+    /// `sessions::archive` writes.
+    #[tokio::test]
+    async fn discovery_reads_the_archive_s_table() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let paths = Paths::new(dir.path().to_path_buf());
+        crate::sessions::archive::archive_claude_session(&paths, "one").await.expect("archive");
+        crate::sessions::archive::archive_claude_session(&paths, "two").await.expect("archive");
+        assert_eq!(
+            archived_ids(&paths).await,
+            ["one".to_string(), "two".to_string()].into_iter().collect(),
+            "discovery asks the same table"
+        );
+    }
+
+    /// What Claude Code says to the user: the speech the attention clock, the
+    /// unread count and the push read out of its transcripts
+    /// ([`Transcripts::spoken_texts`]). The sessions core's own tests read a
+    /// stand-in; these pin Claude Code's rules.
+    mod speech {
+        use super::*;
+        use crate::sessions::attention::derive::{echo, spoken, AssistantEcho};
+        use crate::sessions::attention::unread::{refresh, Ledger};
+        use crate::sessions::attention::{first_unread, FirstUnread};
+        use crate::sessions::Transcripts;
+
+        const FALLBACK: &str = "2026-01-01T09:59:59.000Z";
+
+        fn claude_echo(tail: &[String]) -> Option<AssistantEcho> {
+            echo(&ClaudeCodeSessions, tail)
+        }
+
+        fn lines(raw: &[&str]) -> Vec<String> {
+            raw.iter().map(|l| (*l).to_string()).collect()
+        }
+
+        fn at(n: u32) -> String {
+            format!("2026-01-01T10:{:02}:{:02}.000Z", n / 60, n % 60)
+        }
+
+        fn assistant(n: u32, text: &str) -> String {
+            format!(
+                r#"{{"type":"assistant","timestamp":"{}","message":{{"content":[{{"type":"text","text":"{text}"}}]}}}}"#,
+                at(n)
+            )
+        }
+
+        fn user(n: u32) -> String {
+            format!(
+                r#"{{"type":"user","timestamp":"{}","message":{{"content":[{{"type":"text","text":"go"}}]}}}}"#,
+                at(n)
+            )
+        }
+
+        fn write(dir: &Path, lines: &[String]) -> std::path::PathBuf {
+            let path = dir.join("t.jsonl");
+            let mut body = lines.join("\n");
+            body.push('\n');
+            std::fs::write(&path, body).expect("write");
+            path
+        }
+
+        fn size(path: &Path) -> u64 {
+            std::fs::metadata(path).expect("stat").len()
+        }
+
+        async fn ledger(reader: &dyn Transcripts, path: &Path, read_at: Option<&str>) -> Ledger {
+            refresh(reader, path, None, size(path), read_at, FALLBACK).await.expect("a ledger")
+        }
+
+        fn said(n: u32) -> String {
+            format!(r#"{{"type":"assistant","timestamp":"2026-01-01T10:00:{n:02}.000Z","message":{{"content":[{{"type":"text","text":"m{n}"}}]}}}}"#)
+        }
+
+        fn stamp(n: u32) -> String {
+            format!("2026-01-01T10:00:{n:02}.000Z")
+        }
+
+        /// The clock is about the assistant *speaking*. A turn that ends mid-tool is
+        /// the session working, and the newest text before it is still the last
+        /// thing the user was told.
+        #[test]
+        fn thinking_and_tool_entries_do_not_move_the_clock() {
+            let tail = lines(&[
+                r#"{"type":"assistant","timestamp":"2026-01-01T00:00:05.000Z","message":{"content":[{"type":"text","text":"working on it"}]}}"#,
+                r#"{"type":"assistant","timestamp":"2026-01-01T00:00:06.000Z","message":{"content":[{"type":"thinking","thinking":"hmm"}]}}"#,
+                r#"{"type":"assistant","timestamp":"2026-01-01T00:00:07.000Z","message":{"content":[{"type":"tool_use","name":"Bash","input":{}}]}}"#,
+                r#"{"type":"user","timestamp":"2026-01-01T00:00:08.000Z","message":{"content":[{"type":"tool_result","content":"ok"}]}}"#,
+            ]);
+            let echo = claude_echo(&tail).expect("an echo");
+            assert_eq!(echo.at.as_deref(), Some("2026-01-01T00:00:05.000Z"));
+            assert_eq!(echo.text, "working on it");
+        }
+
+        /// A Task subagent talks for as long as it runs, and the user never sees a
+        /// word of it. A clock that moved on those would mark a busy session unread
+        /// the whole time it was busy.
+        #[test]
+        fn a_sidechain_never_moves_the_clock() {
+            let tail = lines(&[
+                r#"{"type":"assistant","timestamp":"2026-01-01T00:00:05.000Z","message":{"content":[{"type":"text","text":"delegating"}]}}"#,
+                r#"{"type":"assistant","isSidechain":true,"timestamp":"2026-01-01T00:00:09.000Z","message":{"content":[{"type":"text","text":"subagent chatter"}]}}"#,
+            ]);
+            let echo = claude_echo(&tail).expect("an echo");
+            assert_eq!(echo.at.as_deref(), Some("2026-01-01T00:00:05.000Z"));
+            assert_eq!(echo.text, "delegating");
+        }
+
+        /// The CLI writing in the model's voice — a rate-limit wall, an API error —
+        /// is the last thing the session said, and both the echo and the count
+        /// read it as such. They share one predicate, so they cannot drift apart.
+        #[test]
+        fn a_synthetic_notice_is_what_the_session_last_said() {
+            let tail = lines(&[
+                r#"{"type":"assistant","timestamp":"2026-01-01T00:00:05.000Z","message":{"content":[{"type":"text","text":"on it"}]}}"#,
+                r#"{"type":"assistant","timestamp":"2026-01-01T00:00:06.000Z","message":{"model":"<synthetic>","content":[{"type":"text","text":"You've hit your limit"}]}}"#,
+            ]);
+            let echo = claude_echo(&tail).expect("an echo");
+            assert_eq!(echo.at.as_deref(), Some("2026-01-01T00:00:06.000Z"));
+            assert_eq!(echo.text, "You've hit your limit");
+            let entry = try_parse(&tail[1]).expect("parses");
+            assert_eq!(spoken(&ClaudeCodeSessions, &entry).map(|said| said.messages), Some(1));
+        }
+
+        #[test]
+        fn an_empty_text_block_is_not_speech() {
+            let tail = lines(&[
+                r#"{"type":"assistant","timestamp":"2026-01-01T00:00:05.000Z","message":{"content":[{"type":"text","text":"real"}]}}"#,
+                r#"{"type":"assistant","timestamp":"2026-01-01T00:00:06.000Z","message":{"content":[{"type":"text","text":"   "}]}}"#,
+            ]);
+            assert_eq!(claude_echo(&tail).expect("an echo").text, "real");
+        }
+
+
+        /// The unit is a message the user reads. Thinking, tool calls, tool results
+        /// and a subagent's chatter are not; the CLI's own `<synthetic>` notice — a
+        /// rate-limit wall — is, because it is how the session stopped.
+        #[tokio::test]
+        async fn only_assistant_text_counts() {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let path = write(
+                dir.path(),
+                &[
+                    user(0),
+                    assistant(1, "first"),
+                    format!(
+                        r#"{{"type":"assistant","timestamp":"{}","message":{{"content":[{{"type":"thinking","thinking":"hmm"}},{{"type":"tool_use","name":"Bash","input":{{}}}}]}}}}"#,
+                        at(2)
+                    ),
+                    format!(
+                        r#"{{"type":"user","timestamp":"{}","message":{{"content":[{{"type":"tool_result","content":"{{\"type\":\"assistant\"}}"}}]}}}}"#,
+                        at(3)
+                    ),
+                    format!(
+                        r#"{{"type":"assistant","isSidechain":true,"timestamp":"{}","message":{{"content":[{{"type":"text","text":"subagent"}}]}}}}"#,
+                        at(4)
+                    ),
+                    format!(
+                        r#"{{"type":"assistant","timestamp":"{}","message":{{"model":"<synthetic>","content":[{{"type":"text","text":"You've hit your limit"}}]}}}}"#,
+                        at(5)
+                    ),
+                    format!(
+                        r#"{{"type":"assistant","timestamp":"{}","message":{{"content":[{{"type":"text","text":"   "}}]}}}}"#,
+                        at(6)
+                    ),
+                    format!(
+                        r#"{{"type":"assistant","timestamp":"{}","message":{{"content":[{{"type":"text","text":"two"}},{{"type":"text","text":"blocks"}}]}}}}"#,
+                        at(7)
+                    ),
+                ],
+            );
+            let ledger = ledger(&ClaudeCodeSessions, &path, None).await;
+            assert_eq!(
+                ledger.stamps,
+                vec![at(1), at(5), at(7), at(7)],
+                "one per text block, the limit notice included"
+            );
+            assert_eq!(ledger.count(None), Some(4), "never read: every message counts");
+            assert_eq!(ledger.newest(), Some(at(7).as_str()));
+        }
+
+        /// A session that stopped on a rate limit or an API error has said its last
+        /// word, and the badge must show it — the push notification already does.
+        #[tokio::test]
+        async fn a_synthetic_notice_at_the_end_is_unread() {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let path = write(
+                dir.path(),
+                &[
+                    assistant(1, "working on it"),
+                    format!(
+                        r#"{{"type":"assistant","timestamp":"{}","message":{{"model":"<synthetic>","content":[{{"type":"text","text":"API Error: 529 overloaded"}}]}}}}"#,
+                        at(2)
+                    ),
+                ],
+            );
+            let ledger = ledger(&ClaudeCodeSessions, &path, Some(&at(1))).await;
+            assert_eq!(ledger.count(Some(&at(1))), Some(1));
+            assert_eq!(ledger.newest(), Some(at(2).as_str()));
+        }
+
+        /// Claude's string shorthand for a one-block message is still a message.
+        #[tokio::test]
+        async fn a_plain_string_message_counts() {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let path = write(
+                dir.path(),
+                &[format!(
+                    r#"{{"type":"assistant","timestamp":"{}","message":{{"content":"just a string"}}}}"#,
+                    at(1)
+                )],
+            );
+            assert_eq!(ledger(&ClaudeCodeSessions, &path, None).await.stamps, vec![at(1)]);
+        }
+
+
+        /// The jump and the count are one rule: the first unread item is the oldest
+        /// message the ledger counts, against any marker — thinking, tool calls and
+        /// a subagent's words count in neither, and a message with no timestamp
+        /// stands at the transcript's mtime in both.
+        #[tokio::test]
+        async fn the_first_unread_is_the_oldest_message_the_count_counts() {
+            let home = tempfile::tempdir().expect("tempdir");
+            let paths = Paths::new(home.path().to_path_buf());
+            let file = home.path().join("first.jsonl");
+            let ask = r#"{"type":"user","timestamp":"2026-01-01T09:59:00.000Z","message":{"content":"go"}}"#;
+            let tool = r#"{"type":"assistant","timestamp":"2026-01-01T10:00:02.500Z","message":{"content":[{"type":"thinking","thinking":"hmm"},{"type":"tool_use","id":"toolu_1","name":"Bash","input":{}}]}}"#;
+            let side = r#"{"type":"assistant","isSidechain":true,"timestamp":"2026-01-01T10:00:02.600Z","message":{"content":[{"type":"text","text":"a subagent"}]}}"#;
+            let undated = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"undated"}]}}"#;
+            std::fs::write(
+                &file,
+                format!("{ask}\n{}\n{}\n{tool}\n{side}\n{}\n{undated}\n", said(1), said(2), said(3)),
+            )
+            .expect("write");
+            let items = crate::sessions::transcript::parse_claude_transcript(&paths, &file, false)
+                .await
+                .expect("parse");
+            // The row's `updatedAt` is the transcript's mtime: the ledger's stand-in.
+            let mtime = "2026-01-01T10:00:04.000Z";
+            let full = refresh(&ClaudeCodeSessions, &file, None, size(&file), None, mtime)
+                .await
+                .expect("a ledger");
+
+            let markers = [None, Some(stamp(1)), Some(stamp(2)), Some(stamp(3)), Some(mtime.to_string())];
+            for read_at in &markers {
+                let first = first_unread(&items, read_at.as_deref(), mtime);
+                assert_eq!(
+                    Some(first.count as u32),
+                    full.count(read_at.as_deref()),
+                    "the same count against {read_at:?}"
+                );
+                assert_eq!(first.index.0.is_some(), first.count > 0, "an index exactly when there is a count");
+            }
+            let text_at = |found: FirstUnread| found.index.0.map(|index| items[index].text.clone());
+            assert_eq!(
+                text_at(first_unread(&items, None, mtime)).as_deref(),
+                Some("m1"),
+                "never read: the very first answer"
+            );
+            assert_eq!(text_at(first_unread(&items, Some(&stamp(1)), mtime)).as_deref(), Some("m2"));
+            assert_eq!(
+                text_at(first_unread(&items, Some(&stamp(2)), mtime)).as_deref(),
+                Some("m3"),
+                "past the tool call"
+            );
+            assert_eq!(
+                text_at(first_unread(&items, Some(&stamp(3)), mtime)).as_deref(),
+                Some("undated"),
+                "counted, as the badge counts it"
+            );
+            assert_eq!(
+                first_unread(&items, Some(mtime), mtime),
+                FirstUnread {
+                    index: Nullable(None),
+                    count: 0
+                }
+            );
+        }
+
+    }
+
+    /// Claude Code's token usage, one assistant entry at a time
+    /// ([`Transcripts::usage_fold`]). The sessions core adds the folds up by day
+    /// and model; these pin what each entry is.
+    mod usage {
+        use super::*;
+        use crate::sessions::Transcripts;
+        use serde_json::json;
+
+        /// What each entry of a literal transcript folds to, in order.
+        fn folds(entries: Value) -> Vec<Option<TokenUsage>> {
+            let mut fold = ClaudeCodeSessions.usage_fold();
+            entries
+                .as_array()
+                .expect("array")
+                .iter()
+                .map(|entry| fold.fold(entry.as_object().expect("object")))
+                .collect()
+        }
+
+        fn tokens(date: &str, model: &str, [input, output, cache_read, cache_write]: [f64; 4]) -> Option<TokenUsage> {
+            Some(TokenUsage {
+                date: date.to_string(),
+                model: model.to_string(),
+                input,
+                output,
+                cache_read,
+                cache_write,
+            })
+        }
+
+        #[test]
+        fn an_assistant_entry_s_usage_is_its_tokens_and_nothing_else_counts() {
+            let folded = folds(json!([
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-07-20T10:00:00.000Z",
+                    "message": {
+                        "model": "claude-fable-5",
+                        "usage": { "input_tokens": 10, "output_tokens": 5, "cache_read_input_tokens": 100, "cache_creation_input_tokens": 20 }
+                    }
+                },
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-07-20T11:00:00.000Z",
+                    "message": {
+                        "model": "claude-fable-5",
+                        "usage": { "input_tokens": 2, "output_tokens": 3, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0 }
+                    }
+                },
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-07-20T12:00:00.000Z",
+                    "message": { "model": "claude-opus-4-8", "usage": { "input_tokens": 7, "output_tokens": 1 } }
+                },
+                // A user turn and a usage-less assistant entry are ignored.
+                { "type": "user", "timestamp": "2026-07-20T10:30:00.000Z", "message": { "content": "hi" } },
+                { "type": "assistant", "timestamp": "2026-07-20T13:00:00.000Z", "message": { "model": "claude-fable-5" } }
+            ]));
+            assert_eq!(
+                folded,
+                vec![
+                    tokens("2026-07-20", "claude-fable-5", [10.0, 5.0, 100.0, 20.0]),
+                    tokens("2026-07-20", "claude-fable-5", [2.0, 3.0, 0.0, 0.0]),
+                    tokens("2026-07-20", "claude-opus-4-8", [7.0, 1.0, 0.0, 0.0]),
+                    None,
+                    None,
+                ]
+            );
+        }
+
+        #[test]
+        fn the_day_is_the_entry_s_utc_calendar_day() {
+            let folded = folds(json!([
+                { "type": "assistant", "timestamp": "2026-07-20T23:59:00.000Z", "message": { "model": "m", "usage": { "input_tokens": 1 } } },
+                { "type": "assistant", "timestamp": "2026-07-21T00:01:00.000Z", "message": { "model": "m", "usage": { "input_tokens": 4 } } }
+            ]));
+            assert_eq!(
+                folded,
+                vec![tokens("2026-07-20", "m", [1.0, 0.0, 0.0, 0.0]), tokens("2026-07-21", "m", [4.0, 0.0, 0.0, 0.0])]
+            );
+        }
+
+        #[test]
+        fn a_usage_less_or_zero_total_assistant_entry_is_skipped() {
+            let folded = folds(json!([
+                { "type": "assistant", "timestamp": "2026-07-20T10:00:00.000Z", "message": { "model": "m", "usage": { "input_tokens": 0 } } }
+            ]));
+            assert_eq!(folded, vec![None], "a zero-total delta adds nothing");
+        }
+
+        #[test]
+        fn an_entry_without_a_model_is_attributed_to_unknown() {
+            let folded = folds(json!([
+                { "type": "assistant", "timestamp": "2026-07-20T10:00:00.000Z", "message": { "usage": { "input_tokens": 3 } } }
+            ]));
+            assert_eq!(folded[0].as_ref().map(|usage| usage.model.as_str()), Some("unknown"));
+        }
+    }
 }

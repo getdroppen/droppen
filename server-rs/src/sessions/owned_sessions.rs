@@ -263,9 +263,9 @@ mod tests {
     async fn each_cli_is_recorded_separately_and_recording_twice_is_a_no_op() {
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = paths(&dir);
-        super::super::codex::CodexSessions.record_owned(&paths, "thread-a").await.expect("record");
+        insert(&paths, Source::Codex, "thread-a").await.expect("record");
         insert(&paths, Source::Claude, "session-a").await.expect("record");
-        super::super::codex::CodexSessions.record_owned(&paths, "thread-a").await.expect("recording twice is fine");
+        insert(&paths, Source::Codex, "thread-a").await.expect("recording twice is fine");
 
         let owned = read(&paths).await;
         assert!(owned.contains(Source::Codex, "thread-a"));
@@ -279,7 +279,7 @@ mod tests {
     async fn no_change_writes_the_file_back() {
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = paths(&dir);
-        super::super::codex::CodexSessions.record_owned(&paths, "thread-a").await.expect("record");
+        insert(&paths, Source::Codex, "thread-a").await.expect("record");
         assert!(!paths.instance_dir().join("owned-sessions.json").exists(), "recording writes the table and nothing else");
         assert!(!paths.instance_dir().join("owned-sessions.json").with_extension("json.tmp").exists());
 
@@ -320,7 +320,7 @@ mod tests {
     async fn an_entry_survives_the_database_being_reopened() {
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = paths(&dir);
-        super::super::codex::CodexSessions.record_owned(&paths, "thread-a").await.expect("record");
+        insert(&paths, Source::Codex, "thread-a").await.expect("record");
 
         let reopened = droppen_instance::db::Db::open(paths.instance_db());
         let source: String = reopened
@@ -336,7 +336,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = paths(&dir);
         insert(&paths, Source::Claude, "shared-id").await.expect("record");
-        super::super::codex::CodexSessions.record_owned(&paths, "shared-id").await.expect("record");
+        insert(&paths, Source::Codex, "shared-id").await.expect("record");
 
         let owned = read(&paths).await;
         assert!(owned.contains(Source::Claude, "shared-id"));
@@ -414,8 +414,8 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let a = Paths::for_instance(dir.path().to_path_buf(), "alice");
         let b = Paths::for_instance(dir.path().to_path_buf(), "bob");
-        super::super::codex::CodexSessions.record_owned(&a, "thread-a").await.expect("record");
-        super::super::codex::CodexSessions.record_owned(&b, "thread-b").await.expect("record");
+        insert(&a, Source::Codex, "thread-a").await.expect("record");
+        insert(&b, Source::Codex, "thread-b").await.expect("record");
 
         assert_eq!(read(&a).await.server_of(Source::Codex, "thread-a").map(ServerId::as_str), Some("alice"));
         assert_eq!(

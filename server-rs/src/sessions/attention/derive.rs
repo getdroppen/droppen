@@ -134,15 +134,12 @@ impl TranscriptSources {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sessions::claude::ClaudeCodeSessions;
-    use crate::sessions::codex::CodexSessions;
+    use crate::sessions::sources::test_reader::TestReader;
 
-    fn claude_echo(tail: &[String]) -> Option<AssistantEcho> {
-        echo(&ClaudeCodeSessions, tail)
-    }
-
-    fn codex_echo(tail: &[String]) -> Option<AssistantEcho> {
-        echo(&CodexSessions, tail)
+    /// The echo of the core's test reader; each CLI's own is pinned next to
+    /// its reader.
+    fn echo_of(tail: &[String]) -> Option<AssistantEcho> {
+        echo(&TestReader(Source::Claude), tail)
     }
 
     fn lines(raw: &[&str]) -> Vec<String> {
@@ -155,82 +152,15 @@ mod tests {
             r#"{"type":"user","timestamp":"2026-01-01T00:00:00.000Z","message":{"content":[{"type":"text","text":"go"}]}}"#,
             r#"{"type":"assistant","timestamp":"2026-01-01T00:00:05.000Z","message":{"content":[{"type":"text","text":"  all done  "}]}}"#,
         ]);
-        let echo = claude_echo(&tail).expect("an echo");
+        let echo = echo_of(&tail).expect("an echo");
         assert_eq!(echo.at.as_deref(), Some("2026-01-01T00:00:05.000Z"));
         assert_eq!(echo.text, "all done", "the body is trimmed");
-    }
-
-    /// The clock is about the assistant *speaking*. A turn that ends mid-tool is
-    /// the session working, and the newest text before it is still the last
-    /// thing the user was told.
-    #[test]
-    fn thinking_and_tool_entries_do_not_move_the_clock() {
-        let tail = lines(&[
-            r#"{"type":"assistant","timestamp":"2026-01-01T00:00:05.000Z","message":{"content":[{"type":"text","text":"working on it"}]}}"#,
-            r#"{"type":"assistant","timestamp":"2026-01-01T00:00:06.000Z","message":{"content":[{"type":"thinking","thinking":"hmm"}]}}"#,
-            r#"{"type":"assistant","timestamp":"2026-01-01T00:00:07.000Z","message":{"content":[{"type":"tool_use","name":"Bash","input":{}}]}}"#,
-            r#"{"type":"user","timestamp":"2026-01-01T00:00:08.000Z","message":{"content":[{"type":"tool_result","content":"ok"}]}}"#,
-        ]);
-        let echo = claude_echo(&tail).expect("an echo");
-        assert_eq!(echo.at.as_deref(), Some("2026-01-01T00:00:05.000Z"));
-        assert_eq!(echo.text, "working on it");
-    }
-
-    /// A Task subagent talks for as long as it runs, and the user never sees a
-    /// word of it. A clock that moved on those would mark a busy session unread
-    /// the whole time it was busy.
-    #[test]
-    fn a_sidechain_never_moves_the_clock() {
-        let tail = lines(&[
-            r#"{"type":"assistant","timestamp":"2026-01-01T00:00:05.000Z","message":{"content":[{"type":"text","text":"delegating"}]}}"#,
-            r#"{"type":"assistant","isSidechain":true,"timestamp":"2026-01-01T00:00:09.000Z","message":{"content":[{"type":"text","text":"subagent chatter"}]}}"#,
-        ]);
-        let echo = claude_echo(&tail).expect("an echo");
-        assert_eq!(echo.at.as_deref(), Some("2026-01-01T00:00:05.000Z"));
-        assert_eq!(echo.text, "delegating");
-    }
-
-    /// The CLI writing in the model's voice — a rate-limit wall, an API error —
-    /// is the last thing the session said, and both the echo and the count
-    /// read it as such. They share one predicate, so they cannot drift apart.
-    #[test]
-    fn a_synthetic_notice_is_what_the_session_last_said() {
-        let tail = lines(&[
-            r#"{"type":"assistant","timestamp":"2026-01-01T00:00:05.000Z","message":{"content":[{"type":"text","text":"on it"}]}}"#,
-            r#"{"type":"assistant","timestamp":"2026-01-01T00:00:06.000Z","message":{"model":"<synthetic>","content":[{"type":"text","text":"You've hit your limit"}]}}"#,
-        ]);
-        let echo = claude_echo(&tail).expect("an echo");
-        assert_eq!(echo.at.as_deref(), Some("2026-01-01T00:00:06.000Z"));
-        assert_eq!(echo.text, "You've hit your limit");
-        let entry = try_parse(&tail[1]).expect("parses");
-        assert_eq!(spoken(&ClaudeCodeSessions, &entry).map(|said| said.messages), Some(1));
-    }
-
-    /// A codex wrapper is instructions, for the echo as for the count.
-    #[test]
-    fn a_codex_wrapper_is_not_speech_for_either_reader() {
-        let tail = lines(&[
-            r#"{"type":"response_item","timestamp":"2026-01-01T00:00:01.000Z","payload":{"type":"message","role":"assistant","content":[{"text":"real"}]}}"#,
-            r#"{"type":"response_item","timestamp":"2026-01-01T00:00:02.000Z","payload":{"type":"message","role":"assistant","content":[{"text":"<environment_context>x</environment_context>"}]}}"#,
-        ]);
-        assert_eq!(codex_echo(&tail).expect("an echo").text, "real");
-        assert_eq!(spoken(&CodexSessions, &try_parse(&tail[1]).expect("parses")), None);
-    }
-
-    #[test]
-    fn an_empty_text_block_is_not_speech() {
-        let tail = lines(&[
-            r#"{"type":"assistant","timestamp":"2026-01-01T00:00:05.000Z","message":{"content":[{"type":"text","text":"real"}]}}"#,
-            r#"{"type":"assistant","timestamp":"2026-01-01T00:00:06.000Z","message":{"content":[{"type":"text","text":"   "}]}}"#,
-        ]);
-        assert_eq!(claude_echo(&tail).expect("an echo").text, "real");
     }
 
     #[test]
     fn a_transcript_with_no_assistant_text_has_no_clock() {
         let tail = lines(&[r#"{"type":"user","timestamp":"2026-01-01T00:00:00.000Z","message":{"content":[{"type":"text","text":"go"}]}}"#]);
-        assert_eq!(claude_echo(&tail), None);
-        assert_eq!(codex_echo(&tail), None);
+        assert_eq!(echo_of(&tail), None);
     }
 
     /// A half-written trailing line is normal while a CLI is mid-write, and a
@@ -242,29 +172,7 @@ mod tests {
             r#"{"type":"assistant","timestamp":"2026-01-01T00:00:05.000Z","message":{"content":[{"type":"text","text":"survived"}]}}"#,
             r#"{"type":"assistant","timestamp":"2026-01-01T00:00:0"#,
         ]);
-        assert_eq!(claude_echo(&tail).expect("an echo").text, "survived");
-    }
-
-    #[test]
-    fn codex_reads_assistant_messages_and_ignores_the_rest() {
-        let tail = lines(&[
-            r#"{"type":"response_item","timestamp":"2026-01-01T00:00:01.000Z","payload":{"type":"message","role":"assistant","content":[{"text":"the answer"}]}}"#,
-            r#"{"type":"response_item","timestamp":"2026-01-01T00:00:02.000Z","payload":{"type":"reasoning","summary":[{"text":"thinking"}]}}"#,
-            r#"{"type":"response_item","timestamp":"2026-01-01T00:00:03.000Z","payload":{"type":"function_call","name":"exec_command","arguments":"{}"}}"#,
-            r#"{"type":"event_msg","timestamp":"2026-01-01T00:00:04.000Z","payload":{"type":"token_count"}}"#,
-        ]);
-        let echo = codex_echo(&tail).expect("an echo");
-        assert_eq!(echo.at.as_deref(), Some("2026-01-01T00:00:01.000Z"));
-        assert_eq!(echo.text, "the answer");
-    }
-
-    #[test]
-    fn a_codex_user_message_is_not_the_assistant() {
-        let tail = lines(&[
-            r#"{"type":"response_item","timestamp":"2026-01-01T00:00:01.000Z","payload":{"type":"message","role":"assistant","content":[{"text":"mine"}]}}"#,
-            r#"{"type":"response_item","timestamp":"2026-01-01T00:00:02.000Z","payload":{"type":"message","role":"user","content":[{"text":"yours"}]}}"#,
-        ]);
-        assert_eq!(codex_echo(&tail).expect("an echo").text, "mine");
+        assert_eq!(echo_of(&tail).expect("an echo").text, "survived");
     }
 
     #[test]
@@ -301,7 +209,7 @@ mod tests {
     #[tokio::test]
     async fn a_missing_file_has_no_clock() {
         assert_eq!(
-            crate::app::transcript_sources()
+            TestReader::sources()
                 .read_echo(Source::Claude, Path::new("/nonexistent/x.jsonl"))
                 .await,
             None
