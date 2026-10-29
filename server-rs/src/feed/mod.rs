@@ -1455,7 +1455,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = Arc::new(Paths::new(dir.path().to_path_buf()));
         let instance = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
-        let auth = crate::auth::Auth::new(&paths, &instance, &droppen_http::config::AuthSettings::default(), false);
+        let auth = crate::auth::Auth::new(&paths, &instance, &droppen_http::config::AuthSettings::default(), false, std::sync::Arc::new(crate::app::NotifyTokens));
         let drive = Drive::new(paths.clone(), &instance, auth, crate::app::transcript_sources(), crate::app::register_providers);
         let feeds = FeedRegistry::new();
         drive.injections.attach_listeners(feeds.clone(), droppen_http::refresh::Refresh::new(global::GlobalFeed::new()));
@@ -1621,7 +1621,7 @@ mod tests {
     pub(crate) fn test_drive(dir: &Path) -> (Arc<Paths>, Arc<Drive>) {
         let paths = Arc::new(Paths::new(dir.to_path_buf()));
         let instance = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
-        let auth = crate::auth::Auth::new(&paths, &instance, &droppen_http::config::AuthSettings::default(), false);
+        let auth = crate::auth::Auth::new(&paths, &instance, &droppen_http::config::AuthSettings::default(), false, std::sync::Arc::new(crate::app::NotifyTokens));
         let drive = Drive::new(paths.clone(), &instance, auth, crate::app::transcript_sources(), crate::app::register_providers);
         (paths, drive)
     }
