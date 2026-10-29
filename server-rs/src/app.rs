@@ -834,7 +834,7 @@ mod tests {
         assert!(owned.ids(Source::Codex).all(claimed), "every codex row has its claim");
         assert_eq!(owned.ids(Source::Claude).collect::<Vec<_>>(), ["claude-a", "claude-b"]);
         assert!(!owned.ids(Source::Claude).any(claimed), "a claude row claims nothing");
-        assert!(!owned.contains(Source::Acp, "acp-a"), "nothing records an ACP session");
+        assert!(!owned.contains(Source::Acp, "acp-a"), "no ACP row is read back");
     }
 
     /// What each CLI's sessions are offered for: only Claude Code stops to ask
