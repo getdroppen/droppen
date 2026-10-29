@@ -32,7 +32,7 @@ fn main() -> std::process::ExitCode {
                 // owned, which gets `INSTANCE_HELD_EXIT` (75) so that `up` waits
                 // for the holder instead of blaming — and rolling back — the
                 // binary. The message above is the same either way.
-                std::process::ExitCode::from(remote_hand_server::supervisor::failure_exit_code(&error))
+                std::process::ExitCode::from(droppen_supervisor::supervisor::failure_exit_code(&error))
             }
         },
         Err(error) => {

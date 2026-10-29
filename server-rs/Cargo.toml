@@ -16,7 +16,7 @@ workspace = true
 # package stays the default member, so a bare `cargo build`/`cargo test` here
 # still means the server and nothing else.
 [workspace]
-members = [".", "crates/rh-proto", "crates/rh-relay", "crates/droppen-relay", "crates/rh-client", "crates/rh-devkit", "crates/droppen-plugin-sdk", "crates/droppen-search-path", "crates/droppen-base", "crates/droppen-instance", "crates/droppen-http", "crates/droppen-pty"]
+members = [".", "crates/rh-proto", "crates/rh-relay", "crates/droppen-relay", "crates/rh-client", "crates/rh-devkit", "crates/droppen-plugin-sdk", "crates/droppen-search-path", "crates/droppen-base", "crates/droppen-instance", "crates/droppen-http", "crates/droppen-pty", "crates/droppen-supervisor"]
 
 # Two causes of a program that waits on itself forever. In edition 2021 a
 # guard made in a match/if-let/while-let scrutinee lives until the end of the
@@ -63,6 +63,8 @@ droppen-instance = { path = "crates/droppen-instance" }
 # types, the websocket helpers, the OpenAPI helpers, the origin guard, the
 # configuration and the build's identity.
 droppen-http = { path = "crates/droppen-http" }
+# The supervising process (`up`) and self-update (`POST /api/server/self-upgrade`).
+droppen-supervisor = { path = "crates/droppen-supervisor" }
 # The pseudo-terminals that outlive the server: the shim this binary runs as
 # (`pty-shim`), and the server's end of the link to it.
 droppen-pty = { path = "crates/droppen-pty" }

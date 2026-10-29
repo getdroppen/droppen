@@ -88,7 +88,7 @@ impl UpArgs {
         // `child_args` is protocol, not parsing: launchd, systemd, containers
         // and the desktop app start `up`, `up serve` and `up -- serve`, and it
         // says which server command line each of those means.
-        crate::supervisor::run(crate::supervisor::child_args(&self.child))
+        droppen_supervisor::supervisor::run(droppen_supervisor::supervisor::child_args(&self.child))
     }
 }
 
@@ -461,7 +461,7 @@ pub(crate) mod tests {
                 assert!(args.flags_fit(), "{argv:?} runs");
             }
             if let Command::Up(up) = &parsed {
-                assert_eq!(crate::supervisor::child_args(&up.child), strings(&["serve"]), "{argv:?} supervises `serve`");
+                assert_eq!(droppen_supervisor::supervisor::child_args(&up.child), strings(&["serve"]), "{argv:?} supervises `serve`");
             }
             assert_eq!(parsed, expected, "{argv:?}");
         }

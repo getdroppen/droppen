@@ -58,10 +58,7 @@
         {
           "name": "droppen-supervisor",
           "about": "The supervising process and self-update.",
-          "modules": [
-            "supervisor",
-            "selfupdate"
-          ],
+          "modules": [],
           "mayUse": [
             "droppen-instance",
             "droppen-http"

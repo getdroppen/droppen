@@ -1095,7 +1095,10 @@ mod tests {
         let upload = regex::Regex::new(r#"upload_route\(\s*"(/api/[A-Za-z0-9_./{}-]*)""#).unwrap();
         let constant = regex::Regex::new(r#"const ([A-Z][A-Z0-9_]*): &str = "(/api/[^"]*)";"#).unwrap();
         let mut files = Vec::new();
-        let mut dirs = vec![std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src")];
+        // The server's sources, and those of the crates it is made of that
+        // register routes.
+        let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let mut dirs = vec![manifest.join("src"), manifest.join("crates/droppen-supervisor/src")];
         while let Some(dir) = dirs.pop() {
             for entry in std::fs::read_dir(&dir).unwrap() {
                 let path = entry.unwrap().path();

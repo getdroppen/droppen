@@ -8,7 +8,7 @@
 //!   inside its own bundle and is updated as a whole. `POST
 //!   /api/server/self-upgrade` would instead write `<data>/bin`, the store
 //!   every `up`-supervised instance on the device runs from, and leave the app
-//!   itself unchanged — so it is refused ([`crate::selfupdate`]).
+//!   itself unchanged — so it is refused ([`droppen_supervisor::selfupdate`]).
 //! * **Its login is the app's.** The app made the password and signs in with
 //!   it on every launch; nobody is meant to know it. `GET /api/auth/status`
 //!   says `desktopApp: true`, and the web app hides what would be a dead end

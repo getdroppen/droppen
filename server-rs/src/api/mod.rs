@@ -395,7 +395,7 @@ fn response_overrides() -> ExtraResponses {
     crate::accounts::quota::describe(&mut reg);
     crate::schedule::describe(&mut reg);
     crate::screens::describe(&mut reg);
-    crate::selfupdate::describe(&mut reg);
+    droppen_supervisor::selfupdate::describe(&mut reg);
     crate::setup::describe(&mut reg);
     crate::stats::describe(&mut reg);
     crate::terminals::describe(&mut reg);
@@ -429,7 +429,7 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
     let router = crate::accounts::quota::QuotaState::routes(router);
     let router = crate::schedule::ScheduleState::routes(router);
     let router = crate::screens::ScreensState::routes(router);
-    let router = crate::selfupdate::SelfUpdateState::routes(router);
+    let router = droppen_supervisor::selfupdate::SelfUpdateState::routes(router);
     let router = crate::setup::SetupState::routes(router);
     let router = crate::stats::StatsState::routes(router);
     let router = crate::terminals::TerminalsState::routes(router);

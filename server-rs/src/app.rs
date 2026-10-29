@@ -211,7 +211,7 @@ impl RemoteHandApp {
         let lock = if self.skip_lock {
             None
         } else {
-            let lock = InstanceLock::acquire(&dirs).map_err(crate::supervisor::typed_instance_error)?;
+            let lock = InstanceLock::acquire(&dirs).map_err(droppen_supervisor::supervisor::typed_instance_error)?;
             tracing::info!(instance = dirs.name(), lock = %lock.path().display(), "instance locked");
             Some(Arc::new(lock))
         };
@@ -261,7 +261,7 @@ impl RemoteHandApp {
                 // different things: this one clears a file left by a process that
                 // was killed outright, and the per-upgrade one keeps a server that
                 // is never restarted from accumulating them.
-                crate::selfupdate::store::BinStore::new(&paths).sweep_staging();
+                droppen_supervisor::selfupdate::store::BinStore::new(&paths).sweep_staging();
                 // The Claude root remote-hand owns may still be at the path
                 // every instance shared before roots were per-instance; the
                 // `default` instance claims it here, before anything lists a
@@ -559,7 +559,7 @@ impl Prepared {
     /// server, whose process can go on for a while after the serve task has
     /// returned. When the serve task fails on its own, nothing has cancelled
     /// the background tasks, and the scheduler's `fire` writes the instance
-    /// directory. Meanwhile `up` (`crate::supervisor`) starts a successor as
+    /// directory. Meanwhile `up` (`droppen_supervisor::supervisor`) starts a successor as
     /// soon as the flock is free, because it counts on the flock going only
     /// when its holder dies. Held here, it does.
     ///

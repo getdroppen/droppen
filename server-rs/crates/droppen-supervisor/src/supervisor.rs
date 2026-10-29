@@ -92,7 +92,7 @@ use droppen_instance::instance::InstanceError;
 use droppen_instance::paths::Paths;
 use crate::selfupdate;
 use crate::selfupdate::store::{BinStore, Fallback};
-use crate::GotchaError;
+use gotcha::GotchaError;
 
 /// The first wait after a failure.
 const MIN_BACKOFF: Duration = Duration::from_secs(2);
