@@ -24,7 +24,7 @@ pub fn machine_fingerprint_of(sign: &[u8; 32], dh: &[u8; 32]) -> String {
     let digest = h.finalize();
     digest[..16]
         .chunks(2)
-        .map(|pair| pair.iter().map(|b| format!("{b:02x}")).collect::<String>())
+        .map(droppen_base::text::hex)
         .collect::<Vec<_>>()
         .join(" ")
 }

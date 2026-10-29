@@ -110,7 +110,7 @@ async fn the_server_replaces_its_own_binary_without_dropping_a_terminal_or_a_run
 
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_remote-hand-server"));
     let bytes = std::fs::read(&binary).expect("read this test's own server binary");
-    let digest = sha256_hex(&bytes);
+    let digest = droppen_base::text::sha256_hex(&bytes);
     let (status, answer) = up.upload_binary(&bytes, Some(&digest)).await;
     assert_eq!(status, 200, "the upgrade was refused: {answer}");
     assert_eq!(answer["ok"], true, "{answer}");
@@ -579,11 +579,6 @@ fn alive(pid: u32) -> bool {
     droppen_base::procs::alive(pid)
 }
 
-fn sha256_hex(bytes: &[u8]) -> String {
-    use sha2::{Digest, Sha256};
-    Sha256::digest(bytes).iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
 /// Kills a process group when it goes out of scope.
 struct KillGroupOnDrop(u32);
 
@@ -922,7 +917,7 @@ async fn an_unsupervised_server_installs_the_binary_and_stays_up() {
     let server = Unsupervised::start_installed(home.path()).await;
     let bytes = std::fs::read(env!("CARGO_BIN_EXE_remote-hand-server")).expect("read this test's own binary");
 
-    let (status, answer) = post_upgrade(server.addr, &bytes, Some(&sha256_hex(&bytes))).await;
+    let (status, answer) = post_upgrade(server.addr, &bytes, Some(&droppen_base::text::sha256_hex(&bytes))).await;
     assert_eq!(status, 200, "{answer}");
     assert_eq!(answer["restart"], "manual", "nobody is watching this server: {answer}");
     assert!(

@@ -20,7 +20,6 @@ use crate::chain::{
     genesis_draft, machine_key_commit, user_key_commit, Action, Attestation, ChainClock, ChainError, ChainState, DeviceStatus, Entry, KeyCommit,
     KeyCommits, PausePhase, RecoveryKey, Signer, RECOVERY_DELAY_MS,
 };
-use crate::codec::hex;
 use crate::frame::Frame;
 use crate::handshake::{HelloBody, ReplyBody, ReplyStatus};
 use crate::identity::{fingerprint, fingerprint_text, EnrollCode, MachineIdentity};
@@ -2819,8 +2818,8 @@ fn key_vectors() -> Value {
         vec![0; 32],
         one.to_vec(),
         // The u-coordinates of the order-8 points.
-        hex::decode("e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b800"),
-        hex::decode("5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f1157"),
+        hex::decode("e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b800").expect("hex"),
+        hex::decode("5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f1157").expect("hex"),
     ];
     for key in &low_order {
         assert!(x25519_is_low_order(&key.clone().try_into().unwrap()));
@@ -2830,7 +2829,7 @@ fn key_vectors() -> Value {
     let message = b"rh/v1 strictness".to_vec();
     let sig = ed25519_dalek::Signer::sign(&key, &message).to_bytes();
     let mut high = sig;
-    let l = hex::decode("edd3f55c1a631258d69cf7a2def9de1400000000000000000000000000000010");
+    let l = hex::decode("edd3f55c1a631258d69cf7a2def9de1400000000000000000000000000000010").expect("hex");
     let mut carry = 0u16;
     for i in 0..32 {
         let sum = u16::from(high[32 + i]) + u16::from(l[i]) + carry;
@@ -3242,7 +3241,7 @@ fn rust_vector_dr_prefixed_texts_parse_to_the_same_values() {
 }
 
 fn hexv(v: &Value) -> Vec<u8> {
-    hex::decode(v.as_str().unwrap_or_else(|| panic!("hex string expected, got {v}")))
+    hex::decode(v.as_str().unwrap_or_else(|| panic!("hex string expected, got {v}"))).expect("hex")
 }
 
 fn arr32(v: &Value) -> [u8; 32] {

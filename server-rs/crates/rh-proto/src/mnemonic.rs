@@ -95,7 +95,7 @@ mod tests {
         assert!(list.windows(2).all(|w| w[0] < w[1]), "sorted, for lookup");
         let digest: [u8; 32] = Sha256::digest(LIST.as_bytes()).into();
         assert_eq!(
-            crate::codec::hex::encode(&digest),
+            hex::encode(digest),
             "2f5eed53a4727b4bf8880d8f3f199efc90e58503646d9ff8eff3a2ed3b24dbda"
         );
     }
@@ -112,7 +112,7 @@ mod tests {
             ),
         ];
         for (entropy, phrase) in cases {
-            let entropy = crate::codec::hex::decode(entropy);
+            let entropy = hex::decode(entropy).expect("hex");
             assert_eq!(encode(&entropy).unwrap().join(" "), phrase);
             assert_eq!(*decode(phrase).unwrap(), entropy);
         }

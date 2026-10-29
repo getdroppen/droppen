@@ -176,11 +176,7 @@ pub(crate) fn stem(session_id: &str) -> String {
         return session_id.to_string();
     }
     let digest = Sha256::digest(session_id.as_bytes());
-    let mut out = String::with_capacity(32);
-    for byte in digest.iter().take(16) {
-        out.push_str(&format!("{byte:02x}"));
-    }
-    out
+    droppen_base::text::hex(&digest[..16])
 }
 
 /// Whether `id` may be one path segment of its own.

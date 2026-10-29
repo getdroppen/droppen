@@ -750,7 +750,7 @@ fn random_key() -> String {
     use rand::RngCore;
     let mut bytes = [0u8; 16];
     rand::rngs::OsRng.fill_bytes(&mut bytes);
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    droppen_base::text::hex(&bytes)
 }
 
 /// Whether `key` is one this host could have made.

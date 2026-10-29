@@ -1300,7 +1300,7 @@ fn c16_a_chain_from_before_v3_verifies_to_the_same_head_genesis_and_pin() {
     let text = std::fs::read_to_string(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("vectors/rust.json")).unwrap();
     let v: serde_json::Value = serde_json::from_str(&text).unwrap();
     let c = &v["chain"];
-    let hexv = |x: &serde_json::Value| crate::codec::hex::decode(x.as_str().unwrap());
+    let hexv = |x: &serde_json::Value| hex::decode(x.as_str().unwrap()).expect("hex");
     let entries: Vec<Entry> = c["entries"]
         .as_array()
         .unwrap()

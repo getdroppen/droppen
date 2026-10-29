@@ -2962,6 +2962,7 @@ version = "0.1.0"
 dependencies = [
  "ed25519-dalek",
  "futures-util",
+ "hex",
  "rand 0.8.7",
  "reqwest",
  "rh-proto",
@@ -3002,6 +3003,7 @@ dependencies = [
  "curve25519-dalek",
  "ed25519-dalek",
  "flate2",
+ "hex",
  "hkdf",
  "hmac",
  "num-bigint",
@@ -3025,6 +3027,7 @@ dependencies = [
  "axum",
  "ed25519-dalek",
  "futures-util",
+ "hex",
  "rand 0.8.7",
  "rh-proto",
  "rustls",

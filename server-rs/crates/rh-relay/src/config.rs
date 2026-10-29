@@ -189,7 +189,7 @@ pub fn unhex(text: &str) -> Option<Vec<u8>> {
 }
 
 pub fn hex(data: &[u8]) -> String {
-    data.iter().map(|b| format!("{b:02x}")).collect()
+    ::hex::encode(data)
 }
 
 /// `wss://Host:443/x` → `wss://host`; `https` becomes `wss`. Plain `ws://` is

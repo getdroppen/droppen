@@ -136,7 +136,7 @@ fn state_dir() -> Result<PathBuf, String> {
 fn random_hex(bytes: usize) -> String {
     let mut b = vec![0u8; bytes];
     rand::rngs::OsRng.fill_bytes(&mut b);
-    b.iter().map(|x| format!("{x:02x}")).collect()
+    rh_devkit::hex(&b)
 }
 
 /// The room: `--room`, else the one kept in the state directory, else a new one.

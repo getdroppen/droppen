@@ -180,7 +180,6 @@ pub fn open(recipient: &DhKeypair, state: &[u8; STATE_LEN], ctx: &ReturnContext<
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::codec::hex;
     use crate::testing::rng;
 
     /// The fixed inputs of the interop vector (`web/test/link-browser-handoff.test.ts`

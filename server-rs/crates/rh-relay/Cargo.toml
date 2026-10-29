@@ -19,6 +19,7 @@ rh-proto = { path = "../rh-proto" }
 axum = { version = "0.8", features = ["ws"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time"] }
 tokio-util = { version = "0.7", features = ["rt"] }
+hex = "0.4"
 futures-util = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = { workspace = true }

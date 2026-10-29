@@ -43,7 +43,7 @@ pub fn now_ms() -> u64 {
 
 /// Lower-case hex.
 pub fn hex(data: &[u8]) -> String {
-    data.iter().map(|b| format!("{b:02x}")).collect()
+    ::hex::encode(data)
 }
 
 /// Bytes from hex.

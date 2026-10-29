@@ -187,21 +187,6 @@ pub mod base32 {
 }
 
 #[cfg(test)]
-pub(crate) mod hex {
-    pub fn encode(data: &[u8]) -> String {
-        data.iter().map(|b| format!("{b:02x}")).collect()
-    }
-
-    pub fn decode(text: &str) -> Vec<u8> {
-        assert!(text.len().is_multiple_of(2), "odd-length hex");
-        (0..text.len())
-            .step_by(2)
-            .map(|i| u8::from_str_radix(&text[i..i + 2], 16).expect("hex"))
-            .collect()
-    }
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
 

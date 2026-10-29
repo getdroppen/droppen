@@ -70,7 +70,6 @@ use std::path::{Component, Path, PathBuf};
 
 use droppen_plugin_sdk::{sdk_version, valid_id, Manifest};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 /// The most one `POST /api/plugins` (or one `plugin install`) may carry.
 pub const MAX_TARBALL_BYTES: usize = 32 * 1024 * 1024;
@@ -182,7 +181,7 @@ pub fn install(instance_dir: &Path, tarball: &[u8]) -> Result<Installed, Install
             MAX_TARBALL_BYTES as u64,
         ));
     }
-    let sha256 = hex(&Sha256::digest(tarball));
+    let sha256 = droppen_base::text::sha256_hex(tarball);
     let parent = packages_dir(instance_dir);
     fs::create_dir_all(&parent).map_err(|error| failed(format!("cannot make {}: {error}", parent.display())))?;
     // Held for the whole install: the sweep, the unpack and the swap. The CLI
@@ -788,10 +787,6 @@ impl Drop for TempDir {
             let _ = fs::remove_dir_all(&self.path);
         }
     }
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn refused(message: impl Into<String>) -> InstallError {
