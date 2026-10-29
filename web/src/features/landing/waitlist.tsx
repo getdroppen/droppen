@@ -2,12 +2,12 @@ import { type FormEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Check, Loader2 } from "lucide-react";
 import { CapsLabel } from "@/components/ui/caps-label";
-import { field, primary } from "@/features/cloud/ui";
+import { field } from "@/features/cloud/ui";
 import { type HubApi, HubApiError, type SignupMode, type WaitlistPlan } from "@/lib/hub/api";
 import { cn } from "@/lib/cn";
 import { PRO_PRICE } from "./pricing-plans";
 import { publicLink, PRIVACY_PATH } from "./route";
-import { cjkTracking } from "./page-kit";
+import { cjkTracking, landingPrimary } from "./page-kit";
 
 /*
  * The waitlist form on droppen.app/pricing (`#waitlist`): an e-mail address,
@@ -196,7 +196,7 @@ export function WaitlistForm({
         </p>
       )}
       <div className="flex flex-col gap-3">
-        <button type="submit" data-variant="primary" data-testid="waitlist-submit" disabled={sending} className={cn(primary, "w-full sm:w-fit")}>
+        <button type="submit" data-variant="primary" data-testid="waitlist-submit" disabled={sending} className={cn(landingPrimary, "w-full sm:w-fit")}>
           {sending && <Loader2 aria-hidden="true" className="size-3.5 animate-spin" />}
           {t("Join the waitlist")}
         </button>

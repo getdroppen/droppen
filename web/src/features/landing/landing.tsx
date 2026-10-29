@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import i18n from "i18next";
 import { useTranslation } from "react-i18next";
 import { ArrowRight, Bell, CalendarClock, Code, FolderOpen, Info, KeyRound, ListChecks, Lock, MessageSquareReply, SquarePlus } from "lucide-react";
-import { secondary } from "@/features/cloud/ui";
 import { appHost } from "@/lib/hub/hosts";
 import { cn } from "@/lib/cn";
 import { landingBundles } from "./copy";
@@ -77,10 +76,10 @@ function Hero({
   const { t } = useTranslation();
   return (
     <div className="flex flex-col px-10 pt-16 pb-12 max-lg:pt-12 max-md:px-4 max-md:pt-10 max-md:pb-8">
-      <h1 className="mb-6 max-w-[14em] text-6xl leading-display font-normal tracking-tighter text-balance text-fg [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-lg:text-5xl max-md:text-4xl">
+      <h1 className="mb-6 max-w-[14em] text-5xl leading-display font-normal tracking-tighter text-balance text-fg [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-md:text-4xl">
         {t("Your computer's AI, from your phone.")}
       </h1>
-      <p className="max-w-[36em] text-lg leading-7 text-pretty text-muted [overflow-wrap:anywhere] [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-md:text-base max-md:leading-6">
+      <p className="max-w-[36em] leading-6 text-pretty text-muted [overflow-wrap:anywhere] [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all]">
         {t("Claude Code and Codex keep running on your own computers. From a browser on your phone or another device, answer their questions, steer them and open a terminal on the computer.")}
       </p>
       {/* The way onto this device, and the account's way in (signed in: back into the app). */}
@@ -303,7 +302,7 @@ export default function LandingPage({
     };
   }, [offer, cpu]);
   return (
-    <div data-testid="landing" className="h-full w-full overflow-y-auto bg-bg [scrollbar-gutter:stable]">
+    <div data-testid="landing" className="h-full w-full overflow-y-auto bg-bg text-base [scrollbar-gutter:stable]">
       <PublicHeader signedIn={signedIn} />
       <div className="md:px-8">
         <main className="mx-auto max-w-[1360px] md:border-x md:border-border">

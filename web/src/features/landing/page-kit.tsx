@@ -25,6 +25,14 @@ import { APP_PATH, publicLink, PRICING_PATH, PRIVACY_PATH, SECURITY_PATH, SIGN_I
  * page.
  */
 
+/**
+ * The app's buttons at the public pages' size: `primary` and `secondary` carry
+ * the app's own 13px label, and the theme's `text-base` page does not borrow it.
+ * `cn` drops the narrower size in favour of the page's 14px.
+ */
+export const landingPrimary = cn(primary, "text-sm");
+export const landingSecondary = cn(secondary, "text-sm");
+
 /** The two marks where a section's top line meets the frame. */
 export function Seam() {
   return (
@@ -96,7 +104,7 @@ export function CommandLine({ command, label, testId, primaryCopy = false }: { c
             setTimeout(() => setCopied(false), 1500);
           });
         }}
-        className={cn(primaryCopy ? primary : secondary, "h-auto shrink-0 rounded-none border-0 max-sm:h-9 sm:border-l sm:border-border-strong")}
+        className={cn(primaryCopy ? landingPrimary : landingSecondary, "h-auto shrink-0 rounded-none border-0 max-sm:h-9 sm:border-l sm:border-border-strong")}
       >
         {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
         {copied ? t("copied") : label}

@@ -2,12 +2,11 @@ import { type ReactNode, useEffect, useMemo, useState } from "react";
 import i18n from "i18next";
 import { useTranslation } from "react-i18next";
 import { Check } from "lucide-react";
-import { primary, secondary } from "@/features/cloud/ui";
 import { HubApi, type SignupMode, type WaitlistPlan } from "@/lib/hub/api";
 import { cn } from "@/lib/cn";
 import { landingBundles } from "./copy";
 import { DOWNLOAD_PATH } from "./get-droppen";
-import { FooterLine, Points, PublicHeader, Section, SectionHead } from "./page-kit";
+import { FooterLine, landingPrimary, landingSecondary, Points, PublicHeader, Section, SectionHead } from "./page-kit";
 import { gb, PLAN_NUMBERS, PRO_PRICE, THROTTLED_KB_PER_SEC, yearlySaving } from "./pricing-plans";
 import { APP_PATH, publicLink, SIGN_UP_PATH } from "./route";
 import { type WaitlistState, WaitlistForm } from "./waitlist";
@@ -118,7 +117,7 @@ function Plans({ signedIn, signup, onChoose }: { signedIn: boolean; signup: Sign
           unit={t("forever")}
           note={t("No account, nothing to sign up for")}
           action={
-            <a {...publicLink(DOWNLOAD_PATH)} data-testid="plan-local-download" className={cn(secondary, "w-full")}>
+            <a {...publicLink(DOWNLOAD_PATH)} data-testid="plan-local-download" className={cn(landingSecondary, "w-full")}>
               {t("Download Droppen")}
             </a>
           }
@@ -139,15 +138,15 @@ function Plans({ signedIn, signup, onChoose }: { signedIn: boolean; signup: Sign
           note={signup === "invite" ? t("Sign-up is by invite for now") : signup === "closed" ? t("Sign-up is closed for now") : t("Sign up with an e-mail address")}
           action={
             signedIn ? (
-              <a {...publicLink(APP_PATH)} data-testid="plan-free-open" className={cn(secondary, "w-full")}>
+              <a {...publicLink(APP_PATH)} data-testid="plan-free-open" className={cn(landingSecondary, "w-full")}>
                 {t("Open app")}
               </a>
             ) : signup !== "open" ? (
-              <a href="#waitlist" onClick={choose("free")} data-testid="plan-free-waitlist" className={cn(secondary, "w-full")}>
+              <a href="#waitlist" onClick={choose("free")} data-testid="plan-free-waitlist" className={cn(landingSecondary, "w-full")}>
                 {t("Join the waitlist")}
               </a>
             ) : (
-              <a {...publicLink(SIGN_UP_PATH)} data-variant="primary" data-testid="plan-free-signup" className={cn(primary, "w-full")}>
+              <a {...publicLink(SIGN_UP_PATH)} data-variant="primary" data-testid="plan-free-signup" className={cn(landingPrimary, "w-full")}>
                 {t("Sign up")}
               </a>
             )
@@ -184,7 +183,7 @@ function Plans({ signedIn, signup, onChoose }: { signedIn: boolean; signup: Sign
               onClick={choose("pro")}
               data-variant={freeLeads ? undefined : "primary"}
               data-testid="plan-pro-waitlist"
-              className={cn(freeLeads ? secondary : primary, "w-full")}
+              className={cn(freeLeads ? landingSecondary : landingPrimary, "w-full")}
             >
               {t("Join the waitlist")}
             </a>
@@ -436,7 +435,7 @@ export default function PricingPage({
   // Open sign-up: Free needs no waitlist, so the form is Pro's.
   const plan = open ? "pro" : chosen;
   return (
-    <div data-testid="pricing" className="h-full w-full overflow-y-auto bg-bg [scrollbar-gutter:stable]">
+    <div data-testid="pricing" className="h-full w-full overflow-y-auto bg-bg text-base [scrollbar-gutter:stable]">
       <PublicHeader signedIn={signedIn} />
       <div className="md:px-8">
         <main className="mx-auto max-w-[1360px] md:border-x md:border-border">

@@ -3,7 +3,6 @@ import { Tabs as BaseTabs } from "@base-ui-components/react/tabs";
 import i18n from "i18next";
 import { useTranslation } from "react-i18next";
 import { Download, ExternalLink, Laptop, Monitor, Server } from "lucide-react";
-import { primary, secondary } from "@/features/cloud/ui";
 import { cn } from "@/lib/cn";
 import type { SignupMode } from "@/lib/hub/api";
 import type { LatestRelease } from "@/lib/hub/releases";
@@ -23,7 +22,7 @@ import {
   UNINSTALL_COMMAND,
   WSL_SYSTEMD_URL,
 } from "./get-droppen";
-import { cjkTracking, CommandLine, FooterLine, PublicHeader, Section, SectionHead } from "./page-kit";
+import { cjkTracking, CommandLine, FooterLine, landingPrimary, landingSecondary, PublicHeader, Section, SectionHead } from "./page-kit";
 import { fileFacts, fileLink, LinuxTarballs, useLatestRelease } from "./release-files";
 import { appHost } from "@/lib/hub/hosts";
 import { APP_PATH, publicLink, SECURITY_PATH, SIGN_IN_PATH, SIGN_UP_PATH, WAITLIST_HREF } from "./route";
@@ -163,7 +162,7 @@ function AppPanel({ availability, onPick, release }: { availability: Availabilit
       <PanelHead {...head}>
         <div className="flex flex-wrap items-center gap-3">
           {/* The file itself when the hub named it, downloaded in place; else the release page. */}
-          <a {...fileLink(dmg)} data-variant="primary" data-testid="app-download" className={primary}>
+          <a {...fileLink(dmg)} data-variant="primary" data-testid="app-download" className={landingPrimary}>
             <Download className="size-3.5" />
             {t("Download Droppen App (macOS)")}
           </a>
@@ -260,7 +259,7 @@ function LinuxPanel({
     return (
       <PanelHead {...head}>
         <Soon testId="linux-soon" label={t("coming")} body={t("Linux support, with no browser needed on the server, is on its way. Until then, run Droppen on a Mac.")}>
-          <button type="button" data-variant="primary" data-testid="to-macos-bg" onClick={() => onPick("macos-bg")} className={cn(primary, "w-fit")}>
+          <button type="button" data-variant="primary" data-testid="to-macos-bg" onClick={() => onPick("macos-bg")} className={cn(landingPrimary, "w-fit")}>
             {t("run it in the background on a Mac")}
           </button>
         </Soon>
@@ -330,14 +329,14 @@ function WindowsPanel({ availability, signedIn, onPick }: { availability: Availa
           ))}
         </ul>
         <div className="flex flex-wrap gap-2">
-          <a {...publicLink(into)} data-variant="primary" data-testid="use-in-browser" className={primary}>
+          <a {...publicLink(into)} data-variant="primary" data-testid="use-in-browser" className={landingPrimary}>
             {t("use {{app}} in this browser", { app: appHost() })}
           </a>
-          <button type="button" data-testid="to-macos-app" onClick={() => onPick("macos-app")} className={secondary}>
+          <button type="button" data-testid="to-macos-app" onClick={() => onPick("macos-app")} className={landingSecondary}>
             {t("the Mac options")}
           </button>
           {availability.linux && (
-            <button type="button" data-testid="to-linux" onClick={() => onPick("linux")} className={secondary}>
+            <button type="button" data-testid="to-linux" onClick={() => onPick("linux")} className={landingSecondary}>
               {t("the Linux server options")}
             </button>
           )}
@@ -369,7 +368,7 @@ function PhoneSection({ signedIn }: { signedIn: boolean }) {
         ]}
       />
       <div className="border-t border-border px-6 py-5 max-md:px-4">
-        <a {...publicLink(into)} data-testid="open-droppen" className={cn(secondary, "w-fit")}>
+        <a {...publicLink(into)} data-testid="open-droppen" className={cn(landingSecondary, "w-fit")}>
           {t("open {{app}}", { app: appHost() })}
         </a>
       </div>
@@ -730,7 +729,7 @@ export default function DownloadPage({
     };
   }, [os, onLinux, hints]);
   return (
-    <div data-testid="download" className="h-full w-full overflow-y-auto bg-bg [scrollbar-gutter:stable]">
+    <div data-testid="download" className="h-full w-full overflow-y-auto bg-bg text-base [scrollbar-gutter:stable]">
       <PublicHeader signedIn={signedIn} />
       <div className="md:px-8">
         <main className="mx-auto max-w-[1360px] md:border-x md:border-border">

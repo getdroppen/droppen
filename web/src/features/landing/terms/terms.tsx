@@ -90,7 +90,7 @@ export default function TermsPage({ signedIn = false }: { signedIn?: boolean }) 
     </a>
   );
   return (
-    <div data-testid="terms" className="h-full w-full overflow-y-auto bg-bg [scrollbar-gutter:stable]">
+    <div data-testid="terms" className="h-full w-full overflow-y-auto bg-bg text-base [scrollbar-gutter:stable]">
       <PublicHeader signedIn={signedIn} />
       <div className="md:px-8">
         <main className="mx-auto max-w-[1360px] md:border-x md:border-border">

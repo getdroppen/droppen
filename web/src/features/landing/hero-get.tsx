@@ -1,11 +1,10 @@
 import { useTranslation } from "react-i18next";
 import { ArrowRight, Download } from "lucide-react";
-import { primary, secondary } from "@/features/cloud/ui";
 import type { SignupMode } from "@/lib/hub/api";
 import type { LatestRelease, ReleaseFile } from "@/lib/hub/releases";
 import type { HeroOffer } from "./detect";
 import { type Availability, downloadHref, type DownloadOs, INSTALL_COMMAND, RELEASES_URL } from "./get-droppen";
-import { CommandLine } from "./page-kit";
+import { CommandLine, landingPrimary, landingSecondary } from "./page-kit";
 import { fileFacts, fileLink, LinuxTarballs } from "./release-files";
 import { appHost } from "@/lib/hub/hosts";
 import { APP_PATH, publicLink, SIGN_UP_PATH, WAITLIST_HREF } from "./route";
@@ -64,7 +63,7 @@ function ReleaseLink({ release }: { release: LatestRelease | null | undefined })
  */
 function Account({ signedIn, lead, closed }: { signedIn: boolean; lead: boolean; closed: boolean }) {
   const { t } = useTranslation();
-  const first = lead ? { "data-variant": "primary", className: primary } : { className: secondary };
+  const first = lead ? { "data-variant": "primary", className: landingPrimary } : { className: landingSecondary };
   if (signedIn) {
     return (
       <>
@@ -72,7 +71,7 @@ function Account({ signedIn, lead, closed }: { signedIn: boolean; lead: boolean;
           {t("Open app")}
         </a>
         {lead && (
-          <a href="#how" className={secondary}>
+          <a href="#how" className={landingSecondary}>
             {t("How it works")}
           </a>
         )}
@@ -126,7 +125,7 @@ export function HeroGet({
         <>
           <div className={row}>
             {/* The file itself when the hub named it (a click downloads it: the page stays), else this site's download page, on the Mac's tab. */}
-            <a {...macDownload(dmg)} data-variant="primary" data-testid="hero-download" className={primary}>
+            <a {...macDownload(dmg)} data-variant="primary" data-testid="hero-download" className={landingPrimary}>
               <Download className="size-3.5" />
               {t("Download for Mac")}
             </a>

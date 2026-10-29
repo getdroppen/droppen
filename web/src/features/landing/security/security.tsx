@@ -993,7 +993,7 @@ export default function SecurityPage({ signedIn = false }: { signedIn?: boolean 
     if (id) requestAnimationFrame(() => document.getElementById(id)?.scrollIntoView());
   }, []);
   return (
-    <div data-testid="security" className="h-full w-full overflow-y-auto bg-bg [scrollbar-gutter:stable]">
+    <div data-testid="security" className="h-full w-full overflow-y-auto bg-bg text-base [scrollbar-gutter:stable]">
       <PublicHeader signedIn={signedIn} />
       <div className="md:px-8">
         <main className="mx-auto max-w-[1360px] md:border-x md:border-border">
