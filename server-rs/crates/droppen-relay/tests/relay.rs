@@ -18,6 +18,7 @@ use rh_proto::frame::Frame;
 use rh_proto::sig::{HubLogin, LoginRole};
 use rh_proto::ticket::{RelayTicket, TicketLimits, TicketRole, TICKET_TTL_MS};
 use rh_relay::config::{hex, Config, Timing, TrustProxy};
+use rh_relay::server::now_ms;
 use serde_json::{json, Value};
 use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::Message;
@@ -25,10 +26,6 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 const HUB_KEY: [u8; 32] = [42; 32];
 const SECS: Duration = Duration::from_secs(5);
-
-fn now_ms() -> u64 {
-    rh_relay::server::now_ms()
-}
 
 fn hub_key() -> SigningKey {
     SigningKey::from_bytes(&HUB_KEY)
