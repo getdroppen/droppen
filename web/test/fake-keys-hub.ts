@@ -835,7 +835,7 @@ export async function createV2Genesis(account: CloudAccount, withRecovery: boole
     await verifyBatch(null, [genesis, keyEpochs]);
     await account.api.appendChain(account.session.token, [encodeEntry(genesis), encodeEntry(keyEpochs)]);
     await account.sync();
-    await (account as unknown as { pinMade(): Promise<void> }).pinMade();
+    await (account as unknown as { trust: { pinMade(): Promise<void> } }).trust.pinMade();
     await account.vault.put(0, uk);
     await (account as unknown as { sealForRecovery(epoch: number, raw: Uint8Array): Promise<boolean> }).sealForRecovery(0, uk);
   } finally {
