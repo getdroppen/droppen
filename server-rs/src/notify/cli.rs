@@ -41,10 +41,10 @@ use super::{Level, NotifyBody};
 /// A session outlives the server that started it, and this is read by
 /// whichever binary that server's path holds by then — older or newer — so
 /// the name is shared by every version.
-pub const URL_ENV: &str = "DROPPEN_NOTIFY_URL";
+pub const URL_ENV: &str = droppen_base::process_env::NOTIFY_URL_ENV;
 /// The session's capability, injected at spawn under a name as fixed as
 /// [`URL_ENV`]'s. See [`super::token`].
-pub const TOKEN_ENV: &str = "DROPPEN_NOTIFY_TOKEN";
+pub const TOKEN_ENV: &str = droppen_base::process_env::NOTIFY_TOKEN_ENV;
 
 /// How long the server is given to accept the notification.
 ///
