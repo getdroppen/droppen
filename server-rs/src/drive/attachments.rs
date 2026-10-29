@@ -60,3 +60,19 @@ pub fn resolve_attachments(paths: &Paths, images: Vec<String>, files: Vec<String
     };
     Ok((resolve(images)?, resolve(files)?))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The refusal, byte for byte: clients act on `error` and show `hint`.
+    #[test]
+    fn a_missing_attachment_is_refused_as_pinned() {
+        let refused = attachment_missing();
+        assert_eq!(refused.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            refused.body().to_string(),
+            r#"{"error":"attachment_missing","hint":"an attachment is no longer on this device; attach it again"}"#
+        );
+    }
+}

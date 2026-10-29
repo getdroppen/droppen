@@ -351,6 +351,28 @@ async fn a_session_binding_follows_the_root_the_session_lives_in() {
         .await;
     assert_eq!(status, 409);
     assert_eq!(body["error"], "local_session_cannot_use_account");
+    assert_eq!(
+        body,
+        json!({
+            "error": "local_session_cannot_use_account",
+            "hint": "this session runs on the local login and its transcript is in ~/.claude, so it cannot move onto an account. Continue it on the account instead, which copies the conversation into a new session.",
+        }),
+        "the whole refusal"
+    );
+    // Continuing onto an account is for a claude session on the local login.
+    for (source, refusal) in [
+        (
+            "codex",
+            (400, json!({"error": "continue_not_supported", "hint": "a codex session switches accounts in place; bind it to the account instead"})),
+        ),
+        (
+            "claude",
+            (409, json!({"error": "session_not_on_local_login", "hint": "this session already runs in this server's own root; switch its account instead"})),
+        ),
+    ] {
+        let path = format!("/api/sessions/{source}/{managed}/continue");
+        assert_eq!(probe.send("POST", &path, json!({"accountId": id})).await, refusal, "{source}");
+    }
 
     // Unbinding is always allowed.
     let unbound = probe

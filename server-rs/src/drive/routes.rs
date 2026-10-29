@@ -2158,6 +2158,47 @@ mod tests {
     use crate::drive::Drive;
     use std::sync::Arc;
 
+    /// The routes' own refusals, byte for byte: clients act on `error`, show
+    /// `hint`, and the settled question's screen reads `question`.
+    #[test]
+    fn the_session_refusals_are_written_as_pinned() {
+        let external = external_session(crate::app::transcript_sources().external_reason(Source::Codex));
+        assert_eq!(external.status(), gotcha::axum::http::StatusCode::CONFLICT);
+        assert_eq!(
+            external.body().to_string(),
+            r#"{"error":"external_session","hint":"this codex session was started elsewhere; continue it where it was started"}"#
+        );
+
+        let question = SessionQuestion {
+            request_id: "r-1".into(),
+            tool_use_id: Nullable(None),
+            questions: Vec::new(),
+            state: QuestionState::Answered,
+            answers: Nullable(None),
+            response: Nullable(Some("yes".into())),
+            answered_by: Nullable(Some("alice".into())),
+            answered_at: Nullable(Some("2026-01-01T00:00:00.000Z".into())),
+            created_at: "2026-01-01T00:00:00.000Z".into(),
+        };
+        let row = serde_json::to_string(&question).expect("a question");
+        let settled = already_settled(question);
+        assert_eq!(settled.status(), gotcha::axum::http::StatusCode::CONFLICT);
+        assert_eq!(
+            settled.body().to_string(),
+            format!(r#"{{"error":"question_settled","hint":"alice already answered it","question":{row}}}"#)
+        );
+
+        let restart = queue_result(inject::QueueOutcome::NeedsRestart {
+            differences: "another model".into(),
+        })
+        .expect_err("a refusal");
+        assert_eq!(restart.status(), gotcha::axum::http::StatusCode::CONFLICT);
+        assert_eq!(
+            restart.body().to_string(),
+            r#"{"error":"that message asks for different settings, so it needs a new process rather than a place in this one's queue","hint":"it wants another model, and a process is only replaced between turns. The session will restart for it when the turn in flight ends — or press Stop, and it will start sooner."}"#
+        );
+    }
+
     fn drive() -> (tempfile::TempDir, Arc<Drive>) {
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = Arc::new(droppen_instance::paths::Paths::new(dir.path().to_path_buf()));

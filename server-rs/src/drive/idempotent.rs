@@ -410,6 +410,31 @@ mod tests {
         assert_eq!(recorded(Kind::NewSession, flight("pending", Some("thread-0")), true), None);
     }
 
+    /// The two refusals a retry can get, byte for byte: older clients tell
+    /// them apart by `error` and show `hint`.
+    #[tokio::test]
+    async fn a_reused_or_running_id_is_refused_as_pinned() {
+        let in_progress = in_progress();
+        assert_eq!(in_progress.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            in_progress.body().to_string(),
+            r#"{"error":"in_progress","hint":"an earlier attempt with this clientMessageId is still being accepted; ask again shortly"}"#
+        );
+
+        let (_dir, receipts) = store();
+        assert!(matches!(begin(&receipts, message_key(), |_| false).await, Ok(Begun::Owned { .. })));
+        let elsewhere = Key {
+            session: Some("55555555-5555-4555-8555-555555555555"),
+            ..message_key()
+        };
+        let reused = begin(&receipts, elsewhere, |_| false).await.expect_err("another session's id");
+        assert_eq!(reused.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            reused.body().to_string(),
+            r#"{"error":"client_message_id_reused","hint":"this clientMessageId was already used for a different session or route; mint a new one"}"#
+        );
+    }
+
     #[test]
     fn only_a_uuid_is_a_client_message_id() {
         assert!(validate_id(ID).is_ok());
