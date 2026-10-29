@@ -291,6 +291,10 @@ mod tests {
             None
         }
 
+        fn plan_label(&self, _subscription: Option<&str>, _tier: Option<&str>) -> Option<String> {
+            None
+        }
+
         fn local_state(&self, _refused_at: Option<i64>, _local_reading: &crate::accounts::quota::readings::SharedReading) -> crate::accounts::local_login::LocalLoginState {
             crate::accounts::local_login::LocalLoginState::Unknown
         }

@@ -7,7 +7,7 @@ use super::{LocalPlan, Login};
 use crate::accounts::local_login::LocalLoginState;
 use crate::accounts::quota::readings::SharedReading;
 use crate::accounts::quota::claude::ClaudeUsageProbeExt;
-use crate::accounts::quota::{claude_plan_label, is_rate_limited, mentions_status, CodexQuota, ProbeRoots, QuotaProbeError, UsageProbe};
+use crate::accounts::quota::{is_rate_limited, mentions_status, CodexQuota, ProbeRoots, QuotaProbeError, UsageProbe};
 use crate::accounts::store::{AccountError, AccountKind, AccountLaunch, AccountProvider};
 use droppen_base::env_block::EnvVar;
 use crate::accounts::verify::{reason, Scratch, Verdict, PROBE_PROMPT, PROBE_TIMEOUT};
@@ -239,13 +239,33 @@ impl Login for ClaudeCodeLogin {
                             .filter(|t| !t.is_empty())
                             .map(str::to_owned);
                         if subscription_type.is_some() || tier.is_some() {
-                            plan = Some(claude_plan_label(subscription_type, tier.as_deref()));
+                            plan = self.plan_label(subscription_type, tier.as_deref());
                         }
                     }
                 }
             }
             LocalPlan { plan, tier }
         }))
+    }
+
+    /// `Max 20x` from `subscriptionType: "max"` plus `rateLimitTier: "…20x…"`,
+    /// as `claude auth status` and the credentials file report them. Always a
+    /// label: a login with neither is `Claude`.
+    fn plan_label(&self, subscription_type: Option<&str>, tier: Option<&str>) -> Option<String> {
+        let base = match subscription_type {
+            Some(value) if !value.is_empty() => {
+                let mut chars = value.chars();
+                let first = chars.next().expect("non-empty").to_uppercase().to_string();
+                format!("{first}{}", chars.as_str())
+            }
+            _ => "Claude".to_string(),
+        };
+        static MULT: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+        let re = MULT.get_or_init(|| regex::Regex::new(r"(\d+)x").expect("valid multiplier pattern"));
+        Some(match tier.and_then(|tier| re.captures(tier)) {
+            Some(caps) => format!("{base} {}x", &caps[1]),
+            None => base,
+        })
     }
 
     /// None: claude's quota is read per login, by [`Login::probe`] and by its
@@ -463,6 +483,15 @@ mod tests {
         assert!(!oauth.base_url_has_v1());
         let verdict = Verdict::Invalid("the token was refused".to_string());
         assert_eq!(oauth.with_base_url_hint(verdict.clone()), verdict);
+    }
+
+    #[test]
+    fn the_plan_label_joins_the_subscription_and_the_multiplier() {
+        let label = |subscription, tier| ClaudeCodeLogin.plan_label(subscription, tier);
+        assert_eq!(label(Some("max"), Some("default_max_20x")).as_deref(), Some("Max 20x"));
+        assert_eq!(label(Some("pro"), None).as_deref(), Some("Pro"));
+        assert_eq!(label(None, Some("tier_5x")).as_deref(), Some("Claude 5x"));
+        assert_eq!(label(None, None).as_deref(), Some("Claude"));
     }
 
     const MINUTE: i64 = 60_000;

@@ -25,6 +25,7 @@ use std::time::Duration;
 use serde_json::Value;
 
 use super::locate::{self, Search};
+use crate::accounts::login::Login;
 use super::runner::{Invocation, RpcCall, RunOutput, Runner};
 use super::{GitState, LoginState, SetupHelpers, SetupOs, ToolFound, ToolId, ToolLogin};
 use droppen_http::openapi_ext::Nullable;
@@ -126,8 +127,9 @@ fn signed_out() -> ToolLogin {
 ///
 /// `usable` is a best effort: `subscriptionType: "free"` is a
 /// login whose plan does not include Claude Code. Any other subscription says
-/// yes; no subscription (a Console or API-key login) says nothing.
-pub fn claude_login(output: &RunOutput) -> ToolLogin {
+/// yes; no subscription (a Console or API-key login) says nothing. The plan is
+/// named by `claude`, Claude Code's login, as the quota panel names it.
+pub fn claude_login(output: &RunOutput, claude: &dyn Login) -> ToolLogin {
     match output.code {
         Some(0) => {}
         Some(1) => return signed_out(),
@@ -154,7 +156,7 @@ pub fn claude_login(output: &RunOutput) -> ToolLogin {
         plan: Nullable(
             subscription
                 .as_deref()
-                .map(|plan| crate::accounts::quota::claude_plan_label(Some(plan), tier.as_deref())),
+                .and_then(|plan| claude.plan_label(Some(plan), tier.as_deref())),
         ),
         email: Nullable(text("email")),
         usable: Nullable(usable),
@@ -304,13 +306,14 @@ pub struct Detection {
     pub tools: Vec<ToolProbe>,
 }
 
-/// Ask everything, concurrently.
-pub async fn detect(runner: &Arc<dyn Runner>, probe: &Probe) -> Detection {
+/// Ask everything, concurrently. `claude` is Claude Code's login, which names
+/// the plan `claude auth status` reports.
+pub async fn detect(runner: &Arc<dyn Runner>, probe: &Probe, claude: &dyn Login) -> Detection {
     let (os, helpers, claude, codex) = tokio::join!(
         os(runner, probe),
         helpers(runner, probe),
-        tool(runner, probe, ToolId::Claude),
-        tool(runner, probe, ToolId::Codex)
+        tool(runner, probe, ToolId::Claude, claude),
+        tool(runner, probe, ToolId::Codex, claude)
     );
     Detection {
         os,
@@ -371,8 +374,8 @@ async fn helpers(runner: &Arc<dyn Runner>, probe: &Probe) -> SetupHelpers {
 }
 
 /// Locate one CLI, read its version, and — when it is new enough to have the
-/// command — ask it whether it is signed in.
-pub async fn tool(runner: &Arc<dyn Runner>, probe: &Probe, id: ToolId) -> ToolProbe {
+/// command — ask it whether it is signed in ([`login`]).
+pub async fn tool(runner: &Arc<dyn Runner>, probe: &Probe, id: ToolId, claude: &dyn Login) -> ToolProbe {
     let Some(found) = locate::locate(id, &probe.search()) else {
         return ToolProbe {
             id,
@@ -392,7 +395,7 @@ pub async fn tool(runner: &Arc<dyn Runner>, probe: &Probe, id: ToolId) -> ToolPr
     // An older CLI may not have the status command at all, and its usage error
     // would read as "signed out"; the card says "needs update" either way.
     let login = if supported {
-        login(runner, probe, id, &path).await
+        login(runner, probe, id, &path, claude).await
     } else {
         unknown_login()
     };
@@ -406,13 +409,15 @@ pub async fn tool(runner: &Arc<dyn Runner>, probe: &Probe, id: ToolId) -> ToolPr
 }
 
 /// The CLI's own answer to "who is signed in": `claude auth status --json`,
-/// or `codex login status` plus `account/read` for the plan and address.
-pub async fn login(runner: &Arc<dyn Runner>, probe: &Probe, id: ToolId, path: &Path) -> ToolLogin {
+/// its plan named by `claude`, Claude Code's login, or `codex login status`
+/// plus `account/read` for the plan and address.
+pub async fn login(runner: &Arc<dyn Runner>, probe: &Probe, id: ToolId, path: &Path, claude: &dyn Login) -> ToolLogin {
     match id {
         ToolId::Claude => claude_login(
             &runner
                 .run(probe.ask(path, &["auth", "status", "--json"], &probe.claude_env, CLAUDE_STATUS_TIMEOUT))
                 .await,
+            claude,
         ),
         ToolId::Codex => {
             let mut login = codex_status(runner, probe, path).await;
@@ -479,12 +484,13 @@ mod tests {
 
     #[test]
     fn claude_s_status_reads_signed_in_signed_out_and_a_banner() {
+        let claude = crate::app::logins().claude;
         let signed_in = RunOutput::exited(
             0,
             r#"{"loggedIn":true,"authMethod":"claude.ai","email":"ada@example.com","subscriptionType":"max","rateLimitTier":"default_claude_max_20x"}"#,
             "",
         );
-        let login = claude_login(&signed_in);
+        let login = claude_login(&signed_in, &*claude);
         assert_eq!(login.state, LoginState::SignedIn);
         assert_eq!(login.method.0.as_deref(), Some("claude.ai"));
         assert_eq!(login.plan.0.as_deref(), Some("Max 20x"));
@@ -496,27 +502,26 @@ mod tests {
             "Update available! Run claude update\n{\"loggedIn\": true, \"authMethod\": \"console\"}\nThanks\n",
             "",
         );
-        let login = claude_login(&banner);
+        let login = claude_login(&banner, &*claude);
         assert_eq!(login.state, LoginState::SignedIn);
         assert_eq!(login.method.0.as_deref(), Some("console"));
         assert_eq!(login.plan.0, None, "a Console login has no subscription to name");
         assert_eq!(login.usable.0, None, "and says nothing about one");
 
-        let out = claude_login(&RunOutput::exited(1, r#"{"loggedIn":false,"authMethod":"none"}"#, ""));
+        let out = claude_login(&RunOutput::exited(1, r#"{"loggedIn":false,"authMethod":"none"}"#, ""), &*claude);
         assert_eq!(out.state, LoginState::SignedOut);
         assert_eq!(out.method.0, None);
 
-        let free = claude_login(&RunOutput::exited(
-            0,
-            r#"{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":"free"}"#,
-            "",
-        ));
+        let free = claude_login(
+            &RunOutput::exited(0, r#"{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":"free"}"#, ""),
+            &*claude,
+        );
         assert_eq!(free.usable.0, Some(false), "H9: a free plan does not include Claude Code");
         assert_eq!(free.plan.0.as_deref(), Some("Free"));
 
-        assert_eq!(claude_login(&RunOutput::timeout()).state, LoginState::Unknown);
-        assert_eq!(claude_login(&RunOutput::failed_to_start()).state, LoginState::Unknown);
-        assert_eq!(claude_login(&RunOutput::exited(2, "", "boom")).state, LoginState::Unknown);
+        assert_eq!(claude_login(&RunOutput::timeout(), &*claude).state, LoginState::Unknown);
+        assert_eq!(claude_login(&RunOutput::failed_to_start(), &*claude).state, LoginState::Unknown);
+        assert_eq!(claude_login(&RunOutput::exited(2, "", "boom"), &*claude).state, LoginState::Unknown);
     }
 
     #[test]
@@ -617,7 +622,7 @@ mod tests {
     async fn detection_asks_exactly_these_questions_and_nothing_that_reads_a_credential() {
         let (_home, probe, fixture) = scene();
         let runner: Arc<dyn Runner> = fixture.clone();
-        let detection = detect(&runner, &probe).await;
+        let detection = detect(&runner, &probe, &*crate::app::logins().claude).await;
 
         let mut lines = fixture.lines();
         lines.sort();
@@ -668,7 +673,7 @@ mod tests {
         let (_home, probe, fixture) = scene();
         fixture.answer("claude --version", RunOutput::exited(0, "1.0.88 (Claude Code)\n", ""));
         let runner: Arc<dyn Runner> = fixture.clone();
-        let claude = tool(&runner, &probe, ToolId::Claude).await;
+        let claude = tool(&runner, &probe, ToolId::Claude, &*crate::app::logins().claude).await;
         assert_eq!(claude.version.as_deref(), Some("1.0.88"));
         assert!(!claude.supported);
         assert_eq!(claude.login.state, LoginState::Unknown);
@@ -691,7 +696,7 @@ mod tests {
         };
         let fixture = Fixture::new();
         let runner: Arc<dyn Runner> = fixture.clone();
-        let detection = detect(&runner, &probe).await;
+        let detection = detect(&runner, &probe, &*crate::app::logins().claude).await;
         assert!(detection.tools.iter().all(|tool| tool.found.is_none() && !tool.supported));
         assert_eq!(detection.helpers.git, GitState::Missing, "no git on the PATH off a Mac");
         assert!(fixture.lines().is_empty(), "nothing to ask: {:?}", fixture.lines());
