@@ -95,7 +95,7 @@ fn link_env(paths: &Paths) -> LinkEnv {
         credential: "test".into(),
         streams: {
             let drive = crate::drive::Drive::new(std::sync::Arc::new(paths.clone()), &instance, auth, crate::app::transcript_sources(), crate::app::register_providers, crate::app::logins());
-            std::sync::Arc::new(crate::cloud::SessionStreams::new(drive.paths.clone(), drive.transcripts.clone(), drive))
+            std::sync::Arc::new(crate::stream_source::SessionStreams::new(drive.paths.clone(), drive.transcripts.clone(), drive))
         },
         host: std::sync::Arc::new(crate::app::PushLinkHost),
         cancel: tokio_util::sync::CancellationToken::new(),

@@ -1,7 +1,8 @@
 //! What the link's streams copy, read from this server's sessions: the agent's
 //! [`StreamSource`] over the session list, the transcript parser and its
-//! cache. The account bindings, the drivers and the drafts sit above cloud,
-//! so the entry hands them in ([`LiveSessions`]).
+//! cache. The account bindings, the drivers and the drafts are the drive's,
+//! which `app` hands in ([`LiveSessions`]). It is the entry's, so neither
+//! cloud nor the agent names the sessions crate for it.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -15,7 +16,7 @@ use droppen_instance::paths::Paths;
 use droppen_sessions::loader::{self, encode_fp, RESUME_OVERLAP};
 use droppen_sessions::{DriverStates, ScopeFilter, SessionScope, SessionSummary, Source, TranscriptSources};
 
-/// What the session list and the drafts need from above cloud.
+/// What the session list and the drafts need of the drive.
 pub trait LiveSessions: Send + Sync {
     /// Which account each session is bound to, by session key.
     fn bindings(&self) -> BoxFuture<'_, BTreeMap<String, String>>;

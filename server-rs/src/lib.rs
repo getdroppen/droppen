@@ -95,3 +95,4 @@ pub mod sessions;
 pub mod setup;
 pub mod shutdown;
 pub mod static_files;
+pub mod stream_source;
