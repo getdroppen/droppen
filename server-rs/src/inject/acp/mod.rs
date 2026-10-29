@@ -1100,7 +1100,7 @@ mod tests {
         until("initialize", || was_sent(&dirs[0], "initialize")).await;
 
         let quickly = Duration::from_secs(10);
-        let gate = tokio::time::timeout(Duration::from_secs(1), injections.spawn_gate.lock()).await;
+        let gate = tokio::time::timeout(Duration::from_secs(1), injections.spawn_gate.permit()).await;
         assert!(gate.is_ok(), "the spawn gate is held while an agent starts");
         drop(gate);
         let other = tokio::time::timeout(quickly, injections.acp_start("other", &dirs[1].to_string_lossy(), "hi", &plain))

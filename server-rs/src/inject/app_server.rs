@@ -1372,7 +1372,7 @@ mod tests {
             };
             let (_tx, rx) = mpsc::unbounded_channel();
             let driver = Driver {
-                claim: Some(claim_session(&registry, "test-thread").unwrap()),
+                lease: registry.spawn_gate.lease(Source::Codex, "test-thread").unwrap(),
                 registry,
                 record,
                 link,
@@ -1587,7 +1587,7 @@ mod tests {
         assert!(error.to_string().contains("did not accept the shutdown"), "{error}");
 
         assert!(!h.driver.retiring, "the driver stays in its loop");
-        assert!(h.driver.claim.is_some(), "and keeps the whole-machine claim");
+        assert!(h.driver.lease.holds(), "and keeps the whole-machine claim");
         assert!(
             h.driver.registry.journal.read().iter().any(|record| record.run_id == run_id),
             "the run is still the one on disk"
@@ -1621,7 +1621,7 @@ mod tests {
         rx.await.unwrap().expect("the process is gone, so the session is free");
 
         assert!(h.driver.retiring, "the loop is asked to end without reporting a death");
-        assert!(h.driver.claim.is_none(), "the claim is released before the caller is told");
+        assert!(!h.driver.lease.holds(), "the claim is released before the caller is told");
         assert!(!h.driver.registry.journal.read().iter().any(|record| record.run_id == run_id));
         assert!(h.driver.registry.codex_handle("test-thread").is_none());
     }
@@ -1737,7 +1737,7 @@ mod tests {
         driver.await.unwrap();
         assert!(!handle.visible());
         assert!(registry.journal.read().is_empty());
-        assert!(claim_session(&registry, "test-thread").is_ok(), "the driver released its claim");
+        assert!(!registry.claim_held(Source::Codex, "test-thread"), "the driver released its claim");
     }
 
     #[tokio::test]

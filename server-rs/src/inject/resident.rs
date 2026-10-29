@@ -7072,7 +7072,7 @@ mod tests {
             acp_probes: Mutex::new(HashMap::new()),
             runs: Mutex::new(HashMap::new()),
             residents: Mutex::new(HashMap::new()),
-            spawn_gate: tokio::sync::Mutex::new(()),
+            spawn_gate: crate::inject::gate::SpawnGate::new(paths.data_dir().join("inject-locks")),
             shim_dir: dirs.session_shims(),
             idle_timeout: Duration::from_secs(600),
             stall_after: stall,
@@ -7092,7 +7092,6 @@ mod tests {
             steer_settle: settle,
             absorb_poll,
             journal: runs::RunsFile::new(dirs.runs_file()),
-            lock_dir: paths.data_dir().join("inject-locks"),
             steps: Mutex::new(Vec::new()),
             // Recording on, into this test's own instance directory, for the
             // same reason the timings are set by hand: `Recorders::new` reads
@@ -7703,7 +7702,7 @@ done
                     tx: tx.clone(),
                     rx,
                     shared: shared.clone(),
-                    claim: None,
+                    lease: registry.spawn_gate.empty_lease(),
                     queue,
                     delivered_ahead,
                     absorb: AbsorbWatch::default(),
@@ -8384,7 +8383,8 @@ done
         std::fs::write(paths.uploads_dir(), b"not a directory").unwrap();
         let recipe = crate::inject::claude_recipe(paths, harness.bin.to_str(), &Default::default(), Env::new(), Default::default());
         let recorder = harness.registry.recorders.open(SESSION);
-        let result = harness.registry.spawn_link(SESSION, &recipe, Selector::Fresh, None, &[], &recorder).await;
+        let permit = harness.registry.spawn_gate.empty_lease().respawn_permit();
+        let result = harness.registry.spawn_link(&permit, SESSION, &recipe, Selector::Fresh, None, &[], &recorder).await;
         assert!(matches!(result, Err(InjectError::Message(ref message)) if message.contains("cannot prepare the uploads directory")));
         assert!(harness.spawns().is_empty());
     }

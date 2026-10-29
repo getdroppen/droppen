@@ -2465,9 +2465,7 @@ mod tests {
             .spawn()
             .expect("spawn a stand-in");
 
-        let lock::Outcome::Acquired(claim) = lock::acquire(&registry.lock_dir, Source::Claude, SESSION).expect("claim") else {
-            panic!("a free session must be claimable");
-        };
+        let claim = registry.spawn_gate.lease(Source::Claude, SESSION).expect("a free session must be claimable");
         registry.clone().resume(
             runs::RunRecord {
                 codex: None,
