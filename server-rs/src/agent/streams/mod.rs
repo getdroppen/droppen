@@ -1517,7 +1517,7 @@ impl Sync {
         // chain's newest and hands the key over again if this machine lags.
         let mk_epoch = self.mk().map(|(e, _)| e);
         let controllers = (self.controllers)();
-        content::status_body(now_ms_u64(), name, mk_epoch, settings, accounts.as_ref(), quota, cli)
+        content::StatusBody::new(now_ms_u64(), name, mk_epoch, settings, accounts.as_ref(), quota, cli)
             .with_system(crate::agent::system::os(), droppen_http::SERVER_VERSION)
             .with_alarms(&self.alarms)
             .with_changes(&self.changes)

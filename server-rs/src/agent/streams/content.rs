@@ -395,7 +395,7 @@ pub fn as_of_body(as_of: u64) -> Vec<u8> {
 // ------------------------------------------------------------------ status
 
 /// The machine status body: what the UI shows about the machine, never a
-/// credential. [`status_body`] makes it, the `with_*` steps add what the
+/// credential. [`StatusBody::new`] makes it, the `with_*` steps add what the
 /// machine knows besides, and [`StatusBody::encode`] writes it.
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -520,45 +520,45 @@ impl<'a> LocalLogin<'a> {
     }
 }
 
-/// The status body as far as the server's own answers go. `accounts` is
-/// `/api/accounts`, of which only what names an account is kept. When the
-/// head is over [`BODY_BUDGET`] the quota goes, then the accounts.
-pub fn status_body<'a>(
-    as_of: u64,
-    display_name: Option<String>,
-    mk_epoch: Option<u32>,
-    settings: Option<Value>,
-    accounts: Option<&'a Value>,
-    quota: Option<Value>,
-    cli: Option<CliVersions>,
-) -> StatusBody<'a> {
-    let mut head = StatusHead {
-        as_of,
-        display_name,
-        mk_epoch,
-        settings,
-        accounts: accounts.map(AccountsDigest::of),
-        quota,
-        cli,
-    };
-    let len = |head: &StatusHead| serde_json::to_vec(head).map_or(0, |b| b.len());
-    if len(&head) > BODY_BUDGET {
-        head.quota = None;
-    }
-    if len(&head) > BODY_BUDGET {
-        head.accounts = None;
-    }
-    StatusBody {
-        head,
-        os: None,
-        agent_version: None,
-        alarms: &[],
-        changes: &[],
-        controllers: None,
-    }
-}
-
 impl<'a> StatusBody<'a> {
+    /// The status body as far as the server's own answers go. `accounts` is
+    /// `/api/accounts`, of which only what names an account is kept. When the
+    /// head is over [`BODY_BUDGET`] the quota goes, then the accounts.
+    pub fn new(
+        as_of: u64,
+        display_name: Option<String>,
+        mk_epoch: Option<u32>,
+        settings: Option<Value>,
+        accounts: Option<&'a Value>,
+        quota: Option<Value>,
+        cli: Option<CliVersions>,
+    ) -> Self {
+        let mut head = StatusHead {
+            as_of,
+            display_name,
+            mk_epoch,
+            settings,
+            accounts: accounts.map(AccountsDigest::of),
+            quota,
+            cli,
+        };
+        let len = |head: &StatusHead| serde_json::to_vec(head).map_or(0, |b| b.len());
+        if len(&head) > BODY_BUDGET {
+            head.quota = None;
+        }
+        if len(&head) > BODY_BUDGET {
+            head.accounts = None;
+        }
+        StatusBody {
+            head,
+            os: None,
+            agent_version: None,
+            alarms: &[],
+            changes: &[],
+            controllers: None,
+        }
+    }
+
     /// With what this computer runs: `os` (`{name, version, arch}`,
     /// [`crate::agent::system::os`]) and `agentVersion` (this server's
     /// version). Older readers ignore both; the web app falls back to
@@ -812,7 +812,7 @@ mod tests {
     #[test]
     fn the_status_keeps_no_credentials_and_its_fingerprint_ignores_the_time() {
         let accounts = serde_json::json!({"accounts": [{"id": "a1", "label": "work", "kind": "oauth", "provider": "anthropic", "email": "e@x", "usageEnabled": true, "token": "SECRET", "envKeys": ["K"]}], "defaultAccountId": "a1"});
-        let a = status_body(
+        let a = StatusBody::new(
             1,
             Some("mac".into()),
             Some(0),
@@ -825,7 +825,7 @@ mod tests {
             }),
         )
         .encode();
-        let b = status_body(
+        let b = StatusBody::new(
             2,
             Some("mac".into()),
             Some(0),
@@ -843,7 +843,7 @@ mod tests {
         assert_eq!(serde_json::from_slice::<Value>(&a).unwrap()["accounts"]["accounts"][0]["rotation"], Value::Null, "absent stays absent");
         assert_eq!(serde_json::from_slice::<Value>(&a).unwrap()["accounts"]["local"], Value::Null, "a list without local logins");
         assert_eq!(status_fingerprint(&a), status_fingerprint(&b));
-        let c = status_body(
+        let c = StatusBody::new(
             3,
             Some("mac".into()),
             Some(0),
@@ -854,7 +854,7 @@ mod tests {
         )
         .encode();
         assert_ne!(status_fingerprint(&a), status_fingerprint(&c));
-        let renamed = status_body(
+        let renamed = StatusBody::new(
             4,
             Some("studio".into()),
             Some(0),
@@ -880,7 +880,7 @@ mod tests {
                 "codex": {"state": "unknown", "isDefault": false, "rest": []},
             },
         });
-        let body = status_body(1, Some("mac".into()), Some(0), None, Some(&accounts), None, None).encode();
+        let body = StatusBody::new(1, Some("mac".into()), Some(0), None, Some(&accounts), None, None).encode();
         let parsed = serde_json::from_slice::<Value>(&body).unwrap();
         assert_eq!(parsed["accounts"]["accounts"][0]["rotation"], true, "whether each account may stand in");
         let local = &parsed["accounts"]["local"];
@@ -894,7 +894,7 @@ mod tests {
 
     #[test]
     fn the_status_says_what_the_computer_runs() {
-        let body = status_body(1, Some("box".into()), Some(0), None, None, None, None);
+        let body = StatusBody::new(1, Some("box".into()), Some(0), None, None, None, None);
         let os = Os {
             name: "macos".into(),
             version: Some("15.3".into()),
@@ -916,7 +916,7 @@ mod tests {
     #[test]
     fn account_changes_go_into_the_status_and_change_it() {
         use crate::agent::state::Alarm;
-        let body = status_body(1, Some("box".into()), Some(0), None, None, None, None);
+        let body = StatusBody::new(1, Some("box".into()), Some(0), None, None, None, None);
         assert_eq!(body.clone().with_changes(&[]).encode(), body.encode(), "no changes, no field");
         let changes = [Alarm {
             at_ms: 7,
@@ -933,7 +933,7 @@ mod tests {
     #[test]
     fn the_devices_that_opened_a_channel_are_always_in_the_status_and_change_it() {
         use crate::agent::state::{Controller, Controllers};
-        let body = status_body(1, Some("box".into()), Some(0), None, None, None, None);
+        let body = StatusBody::new(1, Some("box".into()), Some(0), None, None, None, None);
         let nobody = Controllers {
             from: 0,
             from_ms: 1_000,
@@ -973,7 +973,7 @@ mod tests {
     #[test]
     fn alarms_go_into_the_status_and_change_it() {
         use crate::agent::state::Alarm;
-        let body = status_body(5, Some("studio".into()), Some(0), None, None, None, None);
+        let body = StatusBody::new(5, Some("studio".into()), Some(0), None, None, None, None);
         assert_eq!(body.clone().with_alarms(&[]).encode(), body.encode(), "no alarms, no field");
         let alarms = [Alarm {
             at_ms: 4,
@@ -1019,7 +1019,7 @@ mod status_pins {
     /// Nothing known: no name, no epoch, no CLI versions, no chain yet.
     fn minimal() -> Vec<u8> {
         let os = crate::agent::system::detect("macos", "aarch64", |_| None);
-        status_body(1, None, None, None, None, None, None)
+        StatusBody::new(1, None, None, None, None, None, None)
             .with_system(&os, AGENT)
             .with_alarms(&[])
             .with_changes(&[])
@@ -1084,7 +1084,7 @@ mod status_pins {
     fn full(settings: Value, quota: Value) -> Vec<u8> {
         let os = crate::agent::system::detect("linux", "x86_64", |_| Some(OS_RELEASE.into()));
         let accounts = accounts();
-        status_body(1_761_700_000_000, Some("studio".into()), Some(3), Some(settings), Some(&accounts), Some(quota), cli())
+        StatusBody::new(1_761_700_000_000, Some("studio".into()), Some(3), Some(settings), Some(&accounts), Some(quota), cli())
             .with_system(&os, AGENT)
             .with_alarms(&alarms())
             .with_changes(&changes())
@@ -1110,7 +1110,7 @@ mod status_pins {
         let head = |note: usize| {
             let mut settings = settings();
             settings["note"] = json!("s".repeat(note));
-            status_body(9, Some("studio".into()), Some(3), Some(settings), Some(&accounts), Some(quota()), cli())
+            StatusBody::new(9, Some("studio".into()), Some(3), Some(settings), Some(&accounts), Some(quota()), cli())
         };
         let note = BODY_BUDGET - under - head(0).encode().len();
         let len = head(note).encode().len();
@@ -1186,7 +1186,7 @@ mod status_pins {
         settings["note"] = json!("s".repeat(BODY_BUDGET - 1_000));
         let os = crate::agent::system::detect("linux", "x86_64", |_| Some(OS_RELEASE.into()));
         let controllers = controllers();
-        let body = status_body(9, Some("studio".into()), Some(3), Some(settings), Some(&accounts), Some(quota()), cli())
+        let body = StatusBody::new(9, Some("studio".into()), Some(3), Some(settings), Some(&accounts), Some(quota()), cli())
             .with_system(&os, AGENT)
             .with_controllers(Some(&controllers))
             .encode();
