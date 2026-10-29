@@ -361,14 +361,18 @@ node docs/hub-api/check.mjs --traffic /tmp/traffic.jsonl
 
 It scans the open clients (`web/src/lib/hub`, `web/src/lib/e2e`,
 `web/src/features/cloud`, `server-rs/src/agent`, `server-rs/src/aggregator`,
-`rh-relay`, `rh-client`, `rh-devkit`) for
+`rh-relay`, `rh-client`, `rh-devkit`, `rh-proto`'s `wire`) for
 `/v1/…` paths in string literals (format strings and template literals
 included, their placeholders read as path parameters) and for control
 message types — `{t: "x"}` and `json!({"t": "x"})` sent, `.t === "x"`,
 `switch (m.t) { case "x" }`, `v["t"] == "x"`, `match v["t"].as_str() {
 Some("x") }` and `#[serde(tag = "t")]` enums matched — and fails when one is
 missing from `index.json` on a channel that file speaks, in the right
-direction. It also checks that `index.json` and both schemas list the same
+direction. The typed messages in `rh-proto`'s `wire` modules, one module per
+channel, are named after who sends them (`RelayToHub`, `PeerToRelay`,
+`RelayToPeer`, …): their direction comes from that name, whatever they
+derive, and a file that names one (`RelayToPeer::Welcome`) must speak its
+channel. It also checks that `index.json` and both schemas list the same
 routes and messages, and that the schemas only use the keywords its small
 validator implements. A short, commented ignore list in the script holds the
 few things that look like hub API and are not.

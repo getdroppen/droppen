@@ -37,6 +37,8 @@
 //! - [`sig`] — every signature's label and structure, in one place.
 //! - [`ticket`] — the Hub's signed relay tickets, and a relay's proof that it
 //!   answers at its origin; [`netpolicy`] — where a relay's origin may point.
+//! - [`wire`] — the JSON control messages on the Hub's and the relays'
+//!   websockets, typed by who sends them.
 //!
 //! The browser half is `web/src/lib/e2e/`, written against WebCrypto. The two
 //! are kept honest by test vectors in `vectors/`: `rust.json` is produced here
@@ -69,6 +71,7 @@ pub mod rtc;
 pub mod sig;
 pub mod stream;
 pub mod ticket;
+pub mod wire;
 pub mod wrap;
 
 #[cfg(test)]
