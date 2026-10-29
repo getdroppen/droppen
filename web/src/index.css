@@ -101,7 +101,10 @@
   --color-border-strong: #a3a3a3;
   --color-fg: #1a1e23;
   --color-muted: #666666;
-  --color-faint: #8f8f8f;
+  /* The least text there is still has to be read: 4.95:1 on the paper and
+     4.58:1 in a raised well, where #8f8f8f gave 3.23:1 and 2.99:1 (below AA).
+     The dark sheet's `faint` already clears it (5.4:1 / 4.78:1). */
+  --color-faint: #707070;
   --color-mark: #1a1e23;
   --color-accent: #1a1e23;
   --color-ok: #128a3c;

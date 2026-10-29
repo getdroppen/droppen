@@ -168,9 +168,30 @@ function Features() {
 }
 
 /**
+ * The one caveat the page owes a visitor before anything else: it is a beta,
+ * the encryption has not been audited, and a browser trusts the code it loaded.
+ * First line of the framed column, above the hero; it links the whole account
+ * of it (/security).
+ */
+function BetaNote() {
+  const { t, i18n: active } = useTranslation();
+  return (
+    <div className="flex items-start gap-3 border-b border-border px-6 py-4 max-md:px-4">
+      <Info className="mt-0.5 size-4 shrink-0 text-muted" />
+      <p className="max-w-[60em] text-xs leading-5 text-pretty text-muted">
+        {t("Droppen is in beta: its encryption design has had internal security reviews, not an external audit. In a browser, the page code loaded each time can use your private keys and, if tampered with, could copy them out; for higher assurance, use the Mac app.")}
+        {gapBefore(active.language)}
+        <a {...publicLink(SECURITY_PATH)} data-testid="landing-security" className="whitespace-nowrap text-fg underline underline-offset-4 hover:no-underline">
+          {t("How the encryption works")}
+        </a>
+      </p>
+    </div>
+  );
+}
+
+/**
  * End-to-end encryption and the open-source client, once and briefly: three
- * cards, the beta's caveat, and the way to the whole account (/security,
- * `security/security.tsx`).
+ * cards and the way to the whole account (/security, `security/security.tsx`).
  */
 function Security() {
   const { t, i18n: active } = useTranslation();
@@ -203,16 +224,6 @@ function Security() {
           </li>
         ))}
       </ul>
-      <div className="flex items-start gap-3 border-t border-border px-6 py-5 max-md:px-4">
-        <Info className="mt-1 size-4 shrink-0 text-muted" />
-        <p className="max-w-[60em] text-sm leading-6 text-pretty text-muted">
-          {t("Droppen is in beta: its encryption design has had internal security reviews, not an external audit. In a browser, the page code loaded each time can use your private keys and, if tampered with, could copy them out; for higher assurance, use the Mac app.")}
-          {gapBefore(active.language)}
-          <a {...publicLink(SECURITY_PATH)} data-testid="landing-security" className="whitespace-nowrap text-fg underline underline-offset-4 hover:no-underline">
-            {t("How the encryption works")}
-          </a>
-        </p>
-      </div>
     </Section>
   );
 }
@@ -305,6 +316,7 @@ export default function LandingPage({
       <PublicHeader signedIn={signedIn} />
       <div className="md:px-8">
         <main className="mx-auto max-w-[1360px] md:border-x md:border-border">
+          <BetaNote />
           <Hero signedIn={signedIn} signup={signup} offer={offer} availability={availability} release={latest} cpu={cpu === undefined ? detectedCpu : cpu} />
           <Section id="tour">
             <ProductTour />

@@ -180,9 +180,9 @@ const zhCN: Bundle = {
   "Have a prompt run automatically on the computer you choose, for example every morning or every hour on weekdays.":
     "让发给 AI 的 Prompt 按预设计划在指定的电脑上自动运行，例如每个工作日早晨定时触发。",
 
-  // The beta's caveat, under that section
+  // The beta's caveat, above the hero
   "Droppen is in beta: its encryption design has had internal security reviews, not an external audit. In a browser, the page code loaded each time can use your private keys and, if tampered with, could copy them out; for higher assurance, use the Mac app.":
-    "Droppen 目前是测试版：加密设计经过内部安全评审，尚未进行外部审计。在浏览器中，每次打开页面时加载的代码都能使用你的私钥，若被篡改，就可能把私钥复制出去；需要更高保障时，请使用 Mac 应用。",
+    "Droppen 正在测试中，其加密设计经过内部评审。受限于浏览器环境，我们推荐使用安全性更好的 Mac 版本。",
   // The same caveat, whole, on /security.
   "Droppen is in beta. Its encryption design has had internal security reviews, not an external audit. In a browser you trust the page code as it was loaded that time: that code can use your private keys, and could copy them out.":
     "Droppen 目前是测试版。加密设计经过了内部安全评审，还没有做过外部审计。在浏览器里使用时，你需要信任当次加载的页面代码：这份代码能使用你的私钥，也能把它们复制出去。",
@@ -315,7 +315,7 @@ const zhTW: Bundle = {
     "讓一個給 AI 的指令按排程在指定的電腦上自動執行，例如每天早上或工作日每小時。",
 
   "Droppen is in beta: its encryption design has had internal security reviews, not an external audit. In a browser, the page code loaded each time can use your private keys and, if tampered with, could copy them out; for higher assurance, use the Mac app.":
-    "Droppen 目前是測試版：加密設計經過內部安全審查，尚未進行外部稽核。在瀏覽器中，每次開啟頁面時載入的程式碼都能使用你的私密金鑰，若遭竄改，就可能把私密金鑰複製出去；需要更高保障時，請使用 Mac 應用程式。",
+    "Droppen 正在測試中，其加密設計經過內部審查。我們推薦使用安全性更好的 Mac 版本。",
   // The same caveat, whole, on /security.
   "Droppen is in beta. Its encryption design has had internal security reviews, not an external audit. In a browser you trust the page code as it was loaded that time: that code can use your private keys, and could copy them out.":
     "Droppen 目前是測試版。加密設計經過內部安全審查，還沒有做過外部稽核。在瀏覽器裡使用時，你需要信任當次載入的頁面程式碼：這份程式碼能使用你的私密金鑰，也能把它們複製出去。",

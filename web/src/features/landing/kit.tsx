@@ -272,7 +272,7 @@ export function InkMark({ size = 16 }: { size?: number }) {
 
 /**
  * A card as the app draws a ledger: a 26px head (icon, name, and a status
- * on the right), then rows of 11px mono metadata split by hairlines. Three
+ * on the right), then rows of 12px metadata split by hairlines. Three
  * or four rows at most. `ink`: the solid card (Droppen), paper on ink.
  */
 export function Ledger({
@@ -311,16 +311,16 @@ export function Ledger({
       )}
       style={{ left: Math.round(box.x), top: Math.round(box.y), width: Math.round(box.w), height: box.h === undefined ? undefined : Math.round(box.h) }}
     >
-      <div className="flex h-[26px] shrink-0 items-center gap-1.5 px-2.5 text-sm leading-4 font-semibold whitespace-nowrap">
+      <div className="flex h-[26px] shrink-0 items-center gap-1.5 px-2.5 text-sm leading-4 whitespace-nowrap">
         <span className="flex min-w-0 items-center gap-1.5 truncate">{head}</span>
-        {status && <span className="ml-auto flex shrink-0 items-center gap-1 font-mono text-xs font-normal">{status}</span>}
+        {status && <span className="ml-auto flex shrink-0 items-center gap-1 text-xs">{status}</span>}
       </div>
       {rows.map((row, i) => (
         <div
           key={i}
           ref={rowRefs?.[i]}
           className={cn(
-            "flex shrink-0 items-center gap-1.5 overflow-hidden border-t px-2.5 font-mono text-xs leading-4 data-[dim=true]:opacity-40",
+            "flex shrink-0 items-center gap-1.5 overflow-hidden border-t px-2.5 text-xs leading-4 data-[dim=true]:opacity-40",
             tall?.includes(i) ? "h-9 py-1" : "h-[22px] whitespace-nowrap",
             ink ? "border-bg/15" : "border-border",
           )}
@@ -342,7 +342,7 @@ export function Source({ children = "CLAUDE", ink, tone }: { children?: ReactNod
     <span
       data-signal={tone === "ok" ? "working" : undefined}
       className={cn(
-        "shrink-0 border px-1 text-xs leading-4 tracking-widest whitespace-nowrap",
+        "shrink-0 border px-1 font-sans text-xs leading-4 tracking-widest whitespace-nowrap",
         tone === "ok" ? "border-ok/60 text-ok" : ink ? "border-bg/30 opacity-80" : "border-border text-muted",
       )}
     >
