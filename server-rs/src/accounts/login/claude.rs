@@ -11,10 +11,11 @@ use crate::accounts::store::{AccountError, AccountKind, AccountLaunch, AccountPr
 use droppen_base::env_block::EnvVar;
 use crate::accounts::verify::{reason, Scratch, Verdict, PROBE_PROMPT, PROBE_TIMEOUT};
 use crate::claude_roots::ClaudeRoots;
+use droppen_base::process_env::{apply_env, claude_env, clean_env_bare, resolve_on_path, Env};
 use droppen_instance::paths::Paths;
 use serde_json::Value;
 use std::path::Path;
-use droppen_base::process_env::{apply_env, claude_env, clean_env_bare, resolve_on_path};
+use std::time::Duration;
 
 /// What `ANTHROPIC_BASE_URL` is called, for a claude account that names one.
 pub const CLAUDE_BASE_URL_ENV: &str = "ANTHROPIC_BASE_URL";
@@ -249,6 +250,18 @@ impl Login for ClaudeCodeLogin {
     /// None: claude's quota is read per login, by [`Login::probe`] and by its
     /// sessions.
     fn local_quota<'a>(&'a self, _roots: &'a ProbeRoots) -> Option<BoxFuture<'a, Option<CodexQuota>>> {
+        None
+    }
+
+    /// None: claude has no app server; its login is asked on its command line.
+    fn app_server_call<'a>(
+        &'a self,
+        _program: &'a Path,
+        _cwd: &'a Path,
+        _env: &'a Env,
+        _method: &'a str,
+        _timeout: Duration,
+    ) -> Option<BoxFuture<'a, Option<Value>>> {
         None
     }
 }

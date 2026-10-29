@@ -125,7 +125,8 @@ impl GotchaApp for RemoteHandApp {
                 async move { roots.sweep_uploads().await }
             });
             let auth = droppen_auth::Auth::new(&paths, &instance, &auth_settings, auth_disabled, Arc::new(NotifyTokens));
-            let drive = crate::drive::Drive::new(paths.clone(), &instance, auth, transcript_sources(), register_providers, logins());
+            let logins = logins();
+            let drive = crate::drive::Drive::new(paths.clone(), &instance, auth, transcript_sources(), register_providers, logins.clone());
             let feeds = FeedRegistry::new();
             let global = GlobalFeed::new();
             // A session's driver changes things no file shows — an automatic
@@ -146,7 +147,7 @@ impl GotchaApp for RemoteHandApp {
                 drive,
                 terminals: droppen_workbench::terminals::Registry::new(paths.clone(), instance.clone()),
                 apps: droppen_workbench::apps::Registry::new(paths.clone(), instance.clone()),
-                setup: crate::setup::Setup::new(paths.clone()),
+                setup: crate::setup::Setup::new(paths.clone(), &logins),
                 paths,
                 instance,
                 started_at: Arc::from(iso8601(std::time::SystemTime::now()).as_str()),

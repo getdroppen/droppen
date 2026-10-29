@@ -348,13 +348,6 @@
       ]
     },
     {
-      "why": "accounts (its quota too) and setup call the provider logins, probes and roots themselves. They go through the Login port accounts owns, which Claude Code and Codex implement.",
-      "edges": [
-        "setup -> accounts::quota::codex",
-        "setup -> claude_roots"
-      ]
-    },
-    {
       "why": "The login wizards take drive::Drive, which holds every service a spawn needs. They go when they take only the services they use, as a session's spawn asks its provider (ProviderRegistry) rather than the drive.",
       "edges": [
         "accounts::setup_token -> drive",

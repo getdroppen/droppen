@@ -5,14 +5,17 @@ use futures_util::future::BoxFuture;
 
 use super::Login;
 use crate::accounts::local_login::LocalLoginState;
+use crate::accounts::quota::codex::app_server_call;
 use crate::accounts::quota::readings::SharedReading;
 use crate::accounts::quota::{is_rate_limited, mentions_status, CodexQuota, ProbeRoots, UsageProbe};
 use crate::accounts::store::{AccountError, AccountKind, AccountLaunch, AccountProvider, CODEX_BASE_URL_VAR, CODEX_KEY_CANDIDATES};
 use droppen_base::env_block::EnvVar;
 use crate::accounts::verify::{reason, Scratch, Verdict, PROBE_PROMPT, PROBE_TIMEOUT};
+use droppen_base::process_env::{apply_env, clean_env, clean_env_bare, resolve_on_path, Env};
 use droppen_instance::paths::Paths;
+use serde_json::Value;
 use std::path::Path;
-use droppen_base::process_env::{apply_env, clean_env, clean_env_bare, resolve_on_path};
+use std::time::Duration;
 
 /// The environment variable a codex account's key is read from.
 ///
@@ -247,6 +250,18 @@ impl Login for CodexLogin {
     /// newest reading in the session logs when not ([`ProbeRoots::codex`]).
     fn local_quota<'a>(&'a self, roots: &'a ProbeRoots) -> Option<BoxFuture<'a, Option<CodexQuota>>> {
         Some(Box::pin(roots.codex()))
+    }
+
+    /// `codex app-server`, one handshake and one question ([`app_server_call`]).
+    fn app_server_call<'a>(
+        &'a self,
+        program: &'a Path,
+        cwd: &'a Path,
+        env: &'a Env,
+        method: &'a str,
+        timeout: Duration,
+    ) -> Option<BoxFuture<'a, Option<Value>>> {
+        Some(Box::pin(app_server_call(program, cwd, env, method, timeout)))
     }
 }
 

@@ -477,13 +477,16 @@ impl std::fmt::Debug for Setup {
 
 impl Setup {
     /// The guide for a server: real programs, the live environment, and the
-    /// desktop app's report from `DROPPEN_DESKTOP_SHELL_READ`.
+    /// desktop app's report from `DROPPEN_DESKTOP_SHELL_READ`. `logins` are
+    /// the CLIs' own code, which only the entry names.
     ///
     /// Touches nothing — no process, no database — until a request asks.
-    pub fn new(paths: Arc<Paths>) -> Arc<Self> {
+    pub fn new(paths: Arc<Paths>, logins: &crate::accounts::login::Logins) -> Arc<Self> {
         Self::with(
             paths,
-            Arc::new(SystemRunner),
+            Arc::new(SystemRunner {
+                codex: logins.codex.clone(),
+            }),
             Arc::new(|paths: &Paths, overlay| Probe::live(paths.home.clone(), overlay)),
             shell::login_shell(),
             PathRead::from_app(std::env::var(droppen_base::process_env::SHELL_READ_ENV).ok().as_deref()),
@@ -1521,5 +1524,34 @@ pub(crate) mod tests {
             ["let path = home.join(\".codex/auth.json\");"],
             "the scan would see one"
         );
+    }
+
+    /// The guide the entry builds asks codex's app server through codex's own
+    /// login: one real conversation with the stand-in app server
+    /// (`tests/support/fake_codex.py`), which answers every request with `{}`.
+    #[tokio::test]
+    async fn the_guide_asks_codex_s_app_server_through_codex_s_login() {
+        let home = tempfile::tempdir().expect("tempdir");
+        // The stand-in app server runs only under a test root.
+        std::fs::write(home.path().join(".rh-test-root"), b"").expect("test root");
+        let codex = home.path().join("codex");
+        let fake = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/support/fake_codex.py");
+        std::fs::write(&codex, format!("#!/bin/sh\nexec python3 {fake} \"$@\"\n")).expect("codex");
+        std::fs::set_permissions(&codex, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        let setup = Setup::new(Arc::new(Paths::new(home.path().to_path_buf())), &crate::app::logins());
+
+        let answer = setup
+            .runner
+            .rpc(runner::RpcCall {
+                program: codex,
+                cwd: home.path().to_path_buf(),
+                env: droppen_base::process_env::clean_env_bare(),
+                method: "account/read",
+                timeout: std::time::Duration::from_secs(10),
+            })
+            .await;
+        assert_eq!(answer, Some(serde_json::json!({})), "the app server's answer");
+        let asked = std::fs::read_to_string(home.path().join("codex-stdin.jsonl")).expect("the app server was started");
+        assert!(asked.contains("\"method\":\"account/read\""), "{asked}");
     }
 }

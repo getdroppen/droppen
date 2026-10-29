@@ -23,20 +23,17 @@
 //! route. The app keeps start at login itself (`desktop/`, on by default at a
 //! new install's first launch); the LAN is set in Settings → Security.
 
-use std::path::Path;
-
 use gotcha::{api, Json, Schematic, State};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use super::{Setup, SetupState};
-use crate::claude_roots;
+use crate::sessions::TranscriptSources;
 use droppen_instance::db::scope;
 use droppen_http::error::ApiError;
 use droppen_http::extract::ApiJson;
 use droppen_http::openapi_ext::Nullable;
-use droppen_instance::paths::ClaudeRoot;
 
 /// The `kv` key, under [`scope::SETUP`].
 const PROGRESS_KEY: &str = "progress";
@@ -281,33 +278,22 @@ fn lenient(raw: &str) -> SetupProgress {
 /// Claude login, and every Codex thread), or any transcript in that root.
 /// Sessions the user ran in their own `~/.claude` or `~/.codex` outside
 /// Droppen do not count: an install that only sees those is still a new one.
-async fn owns_sessions(paths: &droppen_instance::paths::Paths) -> bool {
+async fn owns_sessions(paths: &droppen_instance::paths::Paths, transcripts: &TranscriptSources) -> bool {
     if !crate::sessions::owned_sessions::read(paths).await.is_empty() {
         return true;
     }
-    let projects = claude_roots::ClaudeRoots::of(paths).projects_dir(ClaudeRoot::Managed);
-    tokio::task::spawn_blocking(move || has_transcript(&projects))
-        .await
-        .unwrap_or(true)
-}
-
-/// Whether a Claude root's `projects` directory holds a session transcript
-/// (`<project>/<id>.jsonl`).
-fn has_transcript(projects: &Path) -> bool {
-    let Ok(projects) = std::fs::read_dir(projects) else {
-        return false;
-    };
-    projects.flatten().any(|project| {
-        std::fs::read_dir(project.path()).is_ok_and(|mut files| {
-            files.any(|file| file.is_ok_and(|file| file.path().extension().is_some_and(|ext| ext == "jsonl")))
-        })
-    })
+    for reader in transcripts.iter() {
+        if reader.has_own_sessions(paths).await {
+            return true;
+        }
+    }
+    false
 }
 
 /// `progress` as answered: with `autoOpen` worked out. This instance's own
 /// records are only read when everything else already says yes.
 pub async fn answered(state: &SetupState, progress: SetupProgress) -> SetupProgress {
-    let auto_open = state.desktop_app && progress.started_at.0.is_none() && !owns_sessions(&state.paths).await;
+    let auto_open = state.desktop_app && progress.started_at.0.is_none() && !owns_sessions(&state.paths, &state.transcripts).await;
     SetupProgress { auto_open, ..progress }
 }
 
@@ -328,6 +314,8 @@ pub async fn put_progress(State(state): State<SetupState>, ApiJson(body): ApiJso
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::claude_roots;
+    use droppen_instance::paths::ClaudeRoot;
     use gotcha::axum::extract::FromRef;
 
     #[test]
@@ -545,18 +533,5 @@ mod tests {
             .await
             .expect("record");
         assert!(!answered(&SetupState::from_ref(&state), fresh).await.auto_open, "a Codex thread of its own");
-    }
-
-    #[test]
-    fn a_transcript_is_a_jsonl_file_in_a_project() {
-        let root = tempfile::tempdir().expect("tempdir");
-        let projects = root.path().join("projects");
-        assert!(!has_transcript(&projects), "no root yet");
-        std::fs::create_dir_all(projects.join("-w")).expect("project dir");
-        std::fs::write(projects.join("-w/notes.txt"), "x").expect("write");
-        std::fs::write(projects.join("stray.jsonl"), "x").expect("write");
-        assert!(!has_transcript(&projects), "an empty project, a stray file");
-        std::fs::write(projects.join("-w/1c2d3e4f-5061-4723-9b8c-0d1e2f3a4b5c.jsonl"), "{}").expect("write");
-        assert!(has_transcript(&projects));
     }
 }

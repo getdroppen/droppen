@@ -692,6 +692,25 @@ impl ClaudeCodeSessions {
     }
 }
 
+/// What a Claude root's `projects` directory says about the sessions in it.
+trait ProjectsDirExt {
+    /// Whether it holds a session transcript (`<project>/<id>.jsonl`).
+    fn has_transcript(&self) -> bool;
+}
+
+impl ProjectsDirExt for Path {
+    fn has_transcript(&self) -> bool {
+        let Ok(projects) = std::fs::read_dir(self) else {
+            return false;
+        };
+        projects.flatten().any(|project| {
+            std::fs::read_dir(project.path()).is_ok_and(|mut files| {
+                files.any(|file| file.is_ok_and(|file| file.path().extension().is_some_and(|ext| ext == "jsonl")))
+            })
+        })
+    }
+}
+
 impl super::Transcripts for ClaudeCodeSessions {
     fn source(&self) -> Source {
         Source::Claude
@@ -699,6 +718,16 @@ impl super::Transcripts for ClaudeCodeSessions {
 
     fn list<'a>(&'a self, paths: &'a Paths, bindings: &'a BTreeMap<String, String>) -> BoxFuture<'a, Vec<SessionSummary>> {
         Box::pin(list_claude_sessions(paths, bindings))
+    }
+
+    /// Any transcript in the instance's own Claude root, without reading one.
+    fn has_own_sessions<'a>(&'a self, paths: &'a Paths) -> BoxFuture<'a, bool> {
+        let projects = claude_roots::ClaudeRoots::of(paths).projects_dir(ClaudeRoot::Managed);
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || projects.has_transcript())
+                .await
+                .unwrap_or(true)
+        })
     }
 
     fn find<'a>(&'a self, paths: &'a Paths, id: &'a str) -> BoxFuture<'a, Option<SessionSummary>> {
@@ -918,6 +947,19 @@ mod tests {
         // Idempotent, and a no-op on a registry with nothing to drop.
         ClaudeCodeSessions.prune_owned(&paths).await;
         assert_eq!(owned_sessions::read(&paths).await, owned);
+    }
+
+    #[test]
+    fn a_transcript_is_a_jsonl_file_in_a_project() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let projects = root.path().join("projects");
+        assert!(!projects.has_transcript(), "no root yet");
+        std::fs::create_dir_all(projects.join("-w")).expect("project dir");
+        std::fs::write(projects.join("-w/notes.txt"), "x").expect("write");
+        std::fs::write(projects.join("stray.jsonl"), "x").expect("write");
+        assert!(!projects.has_transcript(), "an empty project, a stray file");
+        std::fs::write(projects.join("-w/1c2d3e4f-5061-4723-9b8c-0d1e2f3a4b5c.jsonl"), "{}").expect("write");
+        assert!(projects.has_transcript());
     }
 
     fn session(lines: &[&str]) -> (tempfile::TempDir, PathBuf) {
