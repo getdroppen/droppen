@@ -98,8 +98,8 @@ export function LinuxTarballs({
       {files.map((file, i) => (
         <Fragment key={file.name}>
           {i > 0 && " · "}
-          {/* A file's name is one token: never split at a hyphen, where the architecture is. */}
-          <span className="whitespace-nowrap">
+          {/* A file's name is one token where the line is wide; below 360px it may wrap at a hyphen rather than push the card past the screen. */}
+          <span className="whitespace-nowrap max-[360px]:whitespace-normal">
             <a
               href={file.href}
               data-testid={`${testId}-file`}
@@ -108,7 +108,7 @@ export function LinuxTarballs({
             >
               {file.name}
             </a>{" "}
-            ({formatSize(file.size)})
+            <span className="whitespace-nowrap">({formatSize(file.size)})</span>
           </span>
         </Fragment>
       ))}

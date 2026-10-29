@@ -176,6 +176,7 @@ export const downloadZhCN: Bundle = {
   // The end of the page
   "macOS 13 or later: Apple silicon or Intel.": "系统为 macOS 13 及以上（Apple 芯片或 Intel）。",
   "Linux on x86_64 or aarch64, with glibc 2.28 or later.": "系统为 Linux（x86_64 或 aarch64，glibc 2.28 及以上）。",
+  "System requirements": "系统要求",
   "Before you install:": "安装前需要：",
   "Mac app": "Mac 应用",
   "A Droppen account. Sign-up is closed for now.": "一个 Droppen 账户。目前暂停注册。",
@@ -205,7 +206,7 @@ export const downloadZhCN: Bundle = {
 
   // The page's own order: what the install needs, then the panels' words
   "App (recommended)": "App（推荐）",
-  "Replace <code> with the one-time code.": "把 <code> 替换为一次性注册码。",
+  "Replace <code> with the one-time code.": "把 <注册码> 替换为一次性注册码。",
   "Check the file before you open it": "打开前先核对文件",
   "Droppen App (recommended)": "Droppen App（推荐）",
   "If Droppen is not on a device yet, open {{url}} on the Mac or Linux device that runs your AI first.":
@@ -366,6 +367,7 @@ export const downloadZhTW: Bundle = {
 
   "macOS 13 or later: Apple silicon or Intel.": "系統為 macOS 13 以上（Apple 晶片或 Intel）。",
   "Linux on x86_64 or aarch64, with glibc 2.28 or later.": "系統為 Linux（x86_64 或 aarch64，glibc 2.28 以上）。",
+  "System requirements": "系統需求",
   "Before you install:": "安裝前需要：",
   "Mac app": "Mac 應用程式",
   "A Droppen account. Sign-up is closed for now.": "一個 Droppen 帳戶。目前暫停註冊。",
@@ -394,7 +396,7 @@ export const downloadZhTW: Bundle = {
   "Or download it:": "也可以直接下載：",
 
   "App (recommended)": "App（推薦）",
-  "Replace <code> with the one-time code.": "把 <code> 替換為一次性註冊碼。",
+  "Replace <code> with the one-time code.": "把 <註冊碼> 替換為一次性註冊碼。",
   "Check the file before you open it": "開啟前先核對檔案",
   "Droppen App (recommended)": "Droppen App（推薦）",
   "If Droppen is not on a device yet, open {{url}} on the Mac or Linux device that runs your AI first.":
@@ -560,6 +562,7 @@ export const downloadJa: Bundle = {
 
   "macOS 13 or later: Apple silicon or Intel.": "macOS 13 以降（Apple シリコンまたは Intel）。",
   "Linux on x86_64 or aarch64, with glibc 2.28 or later.": "Linux（x86_64 または aarch64、glibc 2.28 以降）。",
+  "System requirements": "システム要件",
   "Before you install:": "インストールの前に必要なもの：",
   "Mac app": "Mac アプリ",
   "A Droppen account. Sign-up is closed for now.": "Droppen アカウント。現在、新規登録を停止しています。",
@@ -588,7 +591,7 @@ export const downloadJa: Bundle = {
   "Or download it:": "直接ダウンロードもできます：",
 
   "App (recommended)": "App（推奨）",
-  "Replace <code> with the one-time code.": "<code> をワンタイムコードに置き換えます。",
+  "Replace <code> with the one-time code.": "<コード> をワンタイムコードに置き換えます。",
   "Check the file before you open it": "開く前にファイルを確認する",
   "Droppen App (recommended)": "Droppen App（推奨）",
   "If Droppen is not on a device yet, open {{url}} on the Mac or Linux device that runs your AI first.":

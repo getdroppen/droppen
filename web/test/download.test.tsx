@@ -421,6 +421,19 @@ test("`/download` is a public page of its own, signed in or not, and the landing
   assert.match(renderToStaticMarkup(<I18nextProvider i18n={i18n}><LandingPage /></I18nextProvider>), /data-testid="footer-download"[^>]*>下载 Droppen<\/a>/);
 });
 
+test("the one-time-code hint names the placeholder the command has, in every language", () => {
+  for (const [lng, table] of [
+    ["zh-CN", downloadZhCN],
+    ["zh-TW", downloadZhTW],
+    ["ja", downloadJa],
+  ] as const) {
+    assert.ok(
+      table["Replace <code> with the one-time code."].includes(table["<code>"]),
+      `${lng}: the hint names ${table["<code>"]}`,
+    );
+  }
+});
+
 test("a one-time code is never on a command line: the installer takes it from its environment, a running server from stdin", () => {
   const code = "RH1-ABCD-EFGH";
   assert.equal(codeInstallCommand(code), `curl -fsSL https://droppen.app/install.sh | DROPPEN_CODE=${code} sh`);

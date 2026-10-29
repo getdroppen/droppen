@@ -3,6 +3,7 @@ import { Tabs as BaseTabs } from "@base-ui-components/react/tabs";
 import i18n from "i18next";
 import { useTranslation } from "react-i18next";
 import { Download, ExternalLink, Info, Laptop, Monitor, Server } from "lucide-react";
+import { CapsLabel } from "@/components/ui/caps-label";
 import { cn } from "@/lib/cn";
 import type { LatestRelease } from "@/lib/hub/releases";
 import { landingBundles } from "./copy";
@@ -112,8 +113,11 @@ function Steps({ items, testId, stack = false }: { items: { title: string; body:
                 ),
           )}
         >
-          <span className="text-xs font-semibold text-faint tabular-nums">{String(i + 1).padStart(2, "0")}</span>
-          <span className="text-base leading-6 font-semibold text-fg">{s.title}</span>
+          {/* The number is the page's face (IBM Plex Sans), with tabular figures so 01/02/03 align; the command's mono is not used here. */}
+          <span className="flex min-w-0 items-baseline gap-2">
+            <span className="shrink-0 text-xs font-semibold text-faint tabular-nums">{String(i + 1).padStart(2, "0")}</span>
+            <span className="min-w-0 text-base leading-6 font-semibold text-fg">{s.title}</span>
+          </span>
           <div className={cn("text-base text-muted", stack && "max-w-[44rem]")}>{s.body}</div>
         </li>
       ))}
@@ -147,11 +151,11 @@ function Soon({ label, body, children, testId }: { label?: string; body: string;
   );
 }
 
-/** How to check the file before opening it: the checksum, and what it must match. */
-function Check() {
+/** How to check the file before opening it: the checksum, and what it must match. `flat`: inside a card that already draws the frame. */
+function Check({ flat = false }: { flat?: boolean }) {
   const { t } = useTranslation();
   return (
-    <details className="border border-border bg-raised px-4 py-3">
+    <details className={cn(!flat && "border border-border bg-raised px-4 py-3")}>
       <summary className="cursor-pointer text-sm font-semibold text-fg">{t("Check the file before you open it")}</summary>
       <div className="mt-2 flex flex-col gap-2 text-sm text-muted">
         <span>{t("Before you open the .dmg or extract the .tar.gz, check it in a terminal:")}</span>
@@ -292,50 +296,60 @@ function LinuxPanel({
     );
   }
   return (
-    <>
-      <PanelHead {...head}>
-        {arch && (
-          <p data-testid="linux-cpu" className="text-xs font-semibold text-faint">
-            {t("This browser reports Linux on {{arch}}.", { arch })}
-            {!(LINUX_CPUS as readonly string[]).includes(arch) && <> {t("Droppen's Linux builds are for x86_64 and aarch64.")}</>}
-          </p>
-        )}
-      </PanelHead>
-      {/* Two columns, like the Mac tab: the steps on the left, the command they use on the right. */}
-      <div className="grid lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)]">
-        <div className="lg:border-r lg:border-border">
-          <Steps
-            testId="linux-steps"
-            stack
-            items={[
-              {
-                title: t("Get a one-time code"),
-                body: (
-                  <span className="flex flex-col gap-2">
-                    {t("On {{app}}: my devices → add a device that runs AI → show a one-time code. It is good for 10 minutes, once.", { app: appHost() })}{" "}
-                    <a {...publicLink("/devices")} data-testid="linux-devices" className="w-fit text-fg underline underline-offset-4 hover:no-underline">
-                      {t("Open my devices")}
-                    </a>
-                  </span>
-                ),
-              },
-              {
-                title: t("Run the command on the server"),
-                // install.sh: a systemd user service, never root; it prints the linger command when the service would stop at logout.
-                body: t("The script installs Droppen, starts it as a systemd user service under your own user, never as root, and joins your account with the code. If it says so at the end, run sudo loginctl enable-linger to keep it running after you log out."),
-              },
-              { title: t("It is in my devices"), body: t("Within seconds it shows as online in my devices, on every phone and browser in your account.") },
-            ]}
-          />
-        </div>
-        <div className="flex flex-col gap-3 border-t border-border px-6 py-6 max-md:px-4">
-          <p className="text-base text-muted">{t("Replace <code> with the one-time code.")}</p>
-          <CommandLine command={codeInstallCommand(t("<code>"))} label={t("copy the command")} testId="install-command" primaryCopy />
-          <LinuxTarballs release={release} cpu={arch} testId="linux-tarballs" sayUnbuilt={false} />
-          <Check />
+    <div className="grid lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)]">
+      {/* The lead and the steps; the card beside them is the one object they act on. */}
+      <div className="lg:border-r lg:border-border">
+        <PanelHead title={head.title} body={head.body} />
+        <Steps
+          testId="linux-steps"
+          stack
+          items={[
+            {
+              title: t("Get a one-time code"),
+              body: (
+                <span className="flex flex-col gap-2">
+                  {t("On {{app}}: my devices → add a device that runs AI → show a one-time code. It is good for 10 minutes, once.", { app: appHost() })}{" "}
+                  <a {...publicLink("/devices")} data-testid="linux-devices" className="w-fit text-fg underline underline-offset-4 hover:no-underline">
+                    {t("Open my devices")}
+                  </a>
+                </span>
+              ),
+            },
+            {
+              title: t("Run the command on the server"),
+              // install.sh: a systemd user service, never root; it prints the linger command when the service would stop at logout.
+              body: t("The script installs Droppen, starts it as a systemd user service under your own user, never as root, and joins your account with the code. If it says so at the end, run sudo loginctl enable-linger to keep it running after you log out."),
+            },
+            { title: t("It is in my devices"), body: t("Within seconds it shows as online in my devices, on every phone and browser in your account.") },
+          ]}
+        />
+      </div>
+      {/* One card, from the title down: what the server has to be, then the command it runs and the file to check. It stays beside the steps as they scroll — below the 56px header, the 48px tab row and 16px between (7.5rem). */}
+      <div className="px-6 py-6 max-md:px-4">
+        <div data-testid="linux-card" className="flex flex-col gap-4 border border-border bg-raised p-4 lg:sticky lg:top-[7.5rem]">
+          <div className="flex flex-col gap-2">
+            <CapsLabel face="sans" className={cn(cjkTracking, "text-xs font-semibold")}>
+              {t("System requirements")}
+            </CapsLabel>
+            <Nonce>{head.note}</Nonce>
+            {arch && (
+              <p data-testid="linux-cpu" className="text-xs leading-5 font-semibold text-faint">
+                {t("This browser reports Linux on {{arch}}.", { arch })}
+                {!(LINUX_CPUS as readonly string[]).includes(arch) && <> {t("Droppen's Linux builds are for x86_64 and aarch64.")}</>}
+              </p>
+            )}
+          </div>
+          <div className="flex flex-col gap-2 border-t border-border pt-4">
+            <p className="text-base text-muted">{t("Replace <code> with the one-time code.")}</p>
+            <CommandLine command={codeInstallCommand(t("<code>"))} label={t("copy the command")} testId="install-command" primaryCopy />
+            <LinuxTarballs release={release} cpu={arch} testId="linux-tarballs" sayUnbuilt={false} />
+          </div>
+          <div className="border-t border-border pt-4">
+            <Check flat />
+          </div>
         </div>
       </div>
-    </>
+    </div>
   );
 }
 
@@ -477,7 +491,7 @@ function Environments({
             <Icon aria-hidden="true" className="size-4 shrink-0" />
             {label}
             {value === marked && (
-              <span data-testid="detected" className="border border-border px-1.5 text-xs font-semibold leading-4 font-normal text-muted">
+              <span data-testid="detected" className="border border-border px-1.5 text-xs font-semibold leading-4 font-normal text-muted max-[360px]:hidden">
                 {t("Detected")}
               </span>
             )}
@@ -537,8 +551,10 @@ function Nonce({ children }: { children: ReactNode }) {
 /** For whoever approves the install: what it puts on the computer, how it runs, and how to check the files. */
 function Verify({ platform, availability }: { platform: Platform; availability: Availability }) {
   const { t } = useTranslation();
-  const rows: { term: string; body: ReactNode }[] = [
-    ...(platform === "macos-app" && availability.app ? [{ term: t("Mac app"), body: t("Signed with a Developer ID and notarized by Apple. It installs only updates signed for that version.") }] : []),
+  const rows: { term: string; body: ReactNode; wide?: boolean }[] = [
+    ...(platform === "macos-app" && availability.app
+      ? [{ term: t("Mac app"), body: t("Signed with a Developer ID and notarized by Apple. It installs only updates signed for that version."), wide: true }]
+      : []),
     { term: t("Install script"), body: t("Runs as you, never as root, and checks the release's SHA-256 checksums before it installs anything.") },
     // install.sh: `--system` is Linux only, still runs as you, and `sctl` uses sudo for that service alone. The App's own port is not 8700 (`desktop/core/src/identity.rs`).
     {
@@ -561,22 +577,31 @@ function Verify({ platform, availability }: { platform: Platform; availability: 
       ),
     },
   ];
+  // The Mac app's row is the full width; the four that follow are a 2×2, so the rule between columns counts only those.
+  let column = 0;
+  const cells: { term: string; body: ReactNode; wide?: boolean; left?: boolean }[] = rows.map((row) => {
+    if (row.wide) return row;
+    const left = column % 2 === 0;
+    column += 1;
+    return { ...row, left };
+  });
   return (
     <Section id="verify">
-      <div className="grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1.55fr)]">
-        {/* The title stays with the rows it introduces, instead of leaving the column blank beside them. */}
-        <div className="lg:border-r lg:border-border">
-          <SectionHead title={t("What it installs, and how it connects")} />
-        </div>
-        <dl data-testid="download-verify" className="flex flex-col max-lg:border-t max-lg:border-border">
-          {rows.map((r) => (
-            <div key={r.term} className="grid grid-cols-[12rem_minmax(0,1fr)] items-baseline gap-4 border-b border-border px-6 py-3.5 last:border-b-0 max-md:grid-cols-1 max-md:gap-1 max-md:px-4">
-              <dt className="text-base leading-6 font-semibold text-fg">{r.term}</dt>
-              <dd className="min-w-0 max-w-[42em] text-base text-muted">{r.body}</dd>
-            </div>
-          ))}
-        </dl>
-      </div>
+      <SectionHead title={t("What it installs, and how it connects")} />
+      <dl data-testid="download-verify" className="grid border-t border-border sm:grid-cols-2">
+        {cells.map((r) => (
+          <div
+            key={r.term}
+            className={cn(
+              "flex min-w-0 flex-col gap-2 border-b border-border px-6 py-5 last:border-b-0 max-md:px-4 sm:[&:nth-last-child(2)]:border-b-0",
+              r.wide ? "sm:col-span-2" : r.left && "sm:border-r",
+            )}
+          >
+            <dt className="text-base leading-6 font-semibold text-fg">{r.term}</dt>
+            <dd className="min-w-0 max-w-[42em] text-base text-muted">{r.body}</dd>
+          </div>
+        ))}
+      </dl>
     </Section>
   );
 }
@@ -590,9 +615,12 @@ function Update({ platform, availability }: { platform: Platform; availability: 
       : t("To update, run the install command again: it upgrades in place and keeps your data.");
   return (
     <Section id="update">
-      <SectionHead title={t("Update")} lead={lead} />
-      <div className="border-t border-border px-6 py-5 max-md:px-4">
-        <div className="max-w-[44rem]">
+      {/* The lead on the left, the command it asks for on the right: the section uses the page's width instead of leaving half of it blank. */}
+      <div className="grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1.55fr)]">
+        <div className="lg:border-r lg:border-border">
+          <SectionHead title={t("Update")} lead={lead} />
+        </div>
+        <div className="grid grid-cols-1 items-center px-6 py-6 max-md:px-4 max-lg:border-t max-lg:border-border">
           <CommandLine command={INSTALL_COMMAND} label={t("copy the command")} testId="update-command" />
         </div>
       </div>
@@ -614,14 +642,18 @@ function Uninstall({ platform, availability }: { platform: Platform; availabilit
       <ol className="grid border-t border-border xl:grid-cols-3">
         {steps.map((s, i) => (
           <li key={s.title} className="flex flex-col gap-2 border-border px-6 py-6 max-xl:border-b max-md:px-4 xl:border-r">
-            <span className="text-xs font-semibold text-faint tabular-nums">0{i + 1}</span>
-            <span className="text-base leading-6 font-semibold text-fg">{s.title}</span>
+            <span className="flex min-w-0 items-baseline gap-2">
+              <span className="shrink-0 text-xs font-semibold text-faint tabular-nums">0{i + 1}</span>
+              <span className="min-w-0 text-base leading-6 font-semibold text-fg">{s.title}</span>
+            </span>
             <span className="max-w-[42em] text-base text-muted">{s.body}</span>
           </li>
         ))}
         <li className="flex min-w-0 flex-col gap-2 px-6 py-6 max-md:px-4">
-          <span className="text-xs font-semibold text-faint tabular-nums">03</span>
-          <span className="text-base leading-6 font-semibold text-fg">{t("Remove the program")}</span>
+          <span className="flex min-w-0 items-baseline gap-2">
+            <span className="shrink-0 text-xs font-semibold text-faint tabular-nums">03</span>
+            <span className="min-w-0 text-base leading-6 font-semibold text-fg">{t("Remove the program")}</span>
+          </span>
           {app && <span className="max-w-[42em] text-base text-muted">{t("The App: quit Droppen and drag it from Applications to the Trash.")}</span>}
           <span className="max-w-[42em] text-base text-muted">
             {app ? t("Command-line install (Mac or Linux): run this on that device, as the user who installed it:") : t("Run this on that device, as the user who installed it:")}
