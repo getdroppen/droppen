@@ -16,7 +16,7 @@
 
 use std::time::Duration;
 
-use serde_json::json;
+use serde::Serialize;
 
 use super::Nudge;
 
@@ -151,28 +151,42 @@ pub fn endpoint_mask(endpoint: &str) -> String {
 /// matters more here than usual: every field is optional to Bark and a
 /// misspelled key is silently ignored by it, so a typo would show up as a
 /// notification that is merely *plainer* than intended and nobody would notice.
+pub fn payload(nudge: &Nudge) -> BarkPayload<'_> {
+    fn said(value: &Option<String>) -> Option<&str> {
+        value.as_deref().filter(|value| !value.is_empty())
+    }
+    BarkPayload {
+        title: &nudge.title,
+        body: &nudge.body,
+        subtitle: said(&nudge.subtitle),
+        group: said(&nudge.group),
+        url: said(&nudge.url),
+        level: nudge.level.as_str(),
+        // The notification is worth keeping: the point of this feature is that
+        // the user is somewhere else when it arrives, so the history is where
+        // they will read it from.
+        is_archive: "1",
+    }
+}
+
+/// What bark-server reads.
 ///
 /// Absent fields are omitted rather than sent as `null`: bark-server parses the
 /// document into a struct of strings and a `null` where it expects one is a
 /// parse error for the whole request, not an empty value.
-pub fn payload(nudge: &Nudge) -> serde_json::Value {
-    let mut body = json!({ "title": nudge.title, "body": nudge.body });
-    let map = body.as_object_mut().expect("a json object");
-    if let Some(subtitle) = nudge.subtitle.as_deref().filter(|value| !value.is_empty()) {
-        map.insert("subtitle".into(), json!(subtitle));
-    }
-    if let Some(group) = nudge.group.as_deref().filter(|value| !value.is_empty()) {
-        map.insert("group".into(), json!(group));
-    }
-    if let Some(url) = nudge.url.as_deref().filter(|value| !value.is_empty()) {
-        map.insert("url".into(), json!(url));
-    }
-    map.insert("level".into(), json!(nudge.level.as_str()));
-    // The notification is worth keeping: the point of this feature is that the
-    // user is somewhere else when it arrives, so the history is where they will
-    // read it from.
-    map.insert("isArchive".into(), json!("1"));
-    body
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BarkPayload<'a> {
+    title: &'a str,
+    body: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    subtitle: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    group: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    url: Option<&'a str>,
+    level: &'static str,
+    is_archive: &'static str,
 }
 
 /// Deliver one nudge, or say why it did not go.
@@ -346,14 +360,15 @@ mod tests {
 
     #[test]
     fn the_payload_carries_what_bark_understands_and_omits_the_rest() {
-        let bare = payload(&Nudge {
+        let bare = serde_json::to_value(payload(&Nudge {
             title: "Blocked on a decision".into(),
             body: "Postgres or SQLite?".into(),
             subtitle: None,
             group: None,
             url: None,
             level: Level::Active,
-        });
+        }))
+        .unwrap();
         assert_eq!(bare["title"], "Blocked on a decision");
         assert_eq!(bare["body"], "Postgres or SQLite?");
         assert_eq!(bare["level"], "active");
@@ -363,14 +378,15 @@ mod tests {
         assert!(!map.contains_key("url"));
         assert!(!map.contains_key("group"));
 
-        let full = payload(&Nudge {
+        let full = serde_json::to_value(payload(&Nudge {
             title: "Done".into(),
             body: "All 41 tests pass.".into(),
             subtitle: Some("remote-hand · bark notifications".into()),
             group: Some("remote-hand".into()),
             url: Some("https://rh.example/sessions/claude/abc".into()),
             level: Level::TimeSensitive,
-        });
+        }))
+        .unwrap();
         assert_eq!(full["subtitle"], "remote-hand · bark notifications");
         assert_eq!(full["group"], "remote-hand");
         assert_eq!(full["url"], "https://rh.example/sessions/claude/abc");
@@ -378,14 +394,15 @@ mod tests {
 
         // An empty string is the shape a client sends for "I have nothing here",
         // and Bark renders it as a blank line rather than as nothing.
-        let empty = payload(&Nudge {
+        let empty = serde_json::to_value(payload(&Nudge {
             title: "Done".into(),
             body: "…".into(),
             subtitle: Some(String::new()),
             group: Some(String::new()),
             url: Some(String::new()),
             level: Level::Passive,
-        });
+        }))
+        .unwrap();
         let map = empty.as_object().expect("object");
         assert!(!map.contains_key("subtitle"));
         assert!(!map.contains_key("group"));

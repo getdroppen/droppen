@@ -213,6 +213,15 @@ pub fn vapid_public_b64(key: &SigningKey) -> String {
     b64url(key.verifying_key().to_encoded_point(false).as_bytes())
 }
 
+/// A VAPID JWT's claims (RFC 8292 §2): the push service's origin, when the
+/// token expires (epoch seconds), and whom to contact.
+#[derive(serde::Serialize)]
+struct VapidClaims<'a> {
+    aud: String,
+    exp: u64,
+    sub: &'a str,
+}
+
 /// The `Authorization` header for one push endpoint (RFC 8292 §3).
 ///
 /// An ES256 JWT whose `aud` is the push service's origin — not the full endpoint
@@ -224,11 +233,11 @@ pub fn vapid_auth(endpoint: &reqwest::Url, subject: &str, key: &SigningKey) -> S
     use p256::ecdsa::signature::Signer;
 
     let header = b64url(br#"{"typ":"JWT","alg":"ES256"}"#);
-    let claims = serde_json::json!({
-        "aud": endpoint.origin().ascii_serialization(),
-        "exp": now_unix() + VAPID_TTL_SECS,
-        "sub": subject,
-    });
+    let claims = VapidClaims {
+        aud: endpoint.origin().ascii_serialization(),
+        exp: now_unix() + VAPID_TTL_SECS,
+        sub: subject,
+    };
     let payload = b64url(&serde_json::to_vec(&claims).unwrap_or_default());
     let signing_input = format!("{header}.{payload}");
     let signature: p256::ecdsa::Signature = key.sign(signing_input.as_bytes());

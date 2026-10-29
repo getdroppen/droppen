@@ -32,7 +32,9 @@
 use std::time::Duration;
 
 use clap::Args;
-use serde_json::json;
+use droppen_http::openapi_ext::Optional;
+
+use super::{Level, NotifyBody};
 
 /// Where `POST /api/notify` is, injected at spawn.
 ///
@@ -174,11 +176,11 @@ impl NotifyArgs {
 /// `time-sensitive` as well as `timeSensitive` because a shell argument written
 /// by hand is kebab-case and one copied off the API is camelCase, and being
 /// refused over a hyphen is a bad way to find out a build has broken.
-fn level(raw: &str) -> Result<&'static str, String> {
+fn level(raw: &str) -> Result<Level, String> {
     match raw.trim().to_ascii_lowercase().replace(['-', '_'], "").as_str() {
-        "passive" | "low" => Ok("passive"),
-        "active" | "normal" | "default" => Ok("active"),
-        "timesensitive" | "urgent" | "high" => Ok("timeSensitive"),
+        "passive" | "low" => Ok(Level::Passive),
+        "active" | "normal" | "default" => Ok(Level::Active),
+        "timesensitive" | "urgent" | "high" => Ok(Level::TimeSensitive),
         other => Err(format!("unknown level {other:?}; use passive, active or time-sensitive")),
     }
 }
@@ -187,16 +189,13 @@ fn level(raw: &str) -> Result<&'static str, String> {
 ///
 /// Separate from [`NotifyArgs::run`] so the encoding can be asserted against the
 /// prose a model actually writes — quotes, newlines, `$`, CJK — without a server.
-pub fn payload(options: &Options) -> Result<serde_json::Value, String> {
-    let mut body = json!({ "title": options.title, "body": options.body });
-    let map = body.as_object_mut().expect("a json object");
-    if let Some(raw) = options.level.as_deref() {
-        map.insert("level".into(), json!(level(raw)?));
-    }
-    if let Some(group) = options.group.as_deref().filter(|group| !group.trim().is_empty()) {
-        map.insert("group".into(), json!(group));
-    }
-    Ok(body)
+pub fn payload(options: &Options) -> Result<NotifyBody, String> {
+    Ok(NotifyBody {
+        title: options.title.clone(),
+        body: options.body.clone(),
+        level: Optional(options.level.as_deref().map(level).transpose()?),
+        group: Optional(options.group.clone().filter(|group| !group.trim().is_empty())),
+    })
 }
 
 #[cfg(test)]
@@ -264,12 +263,12 @@ mod tests {
 
     #[test]
     fn the_level_spelling_a_shell_user_reaches_for_is_accepted() {
-        assert_eq!(level("time-sensitive"), Ok("timeSensitive"));
-        assert_eq!(level("timeSensitive"), Ok("timeSensitive"));
-        assert_eq!(level("TIME_SENSITIVE"), Ok("timeSensitive"));
-        assert_eq!(level("urgent"), Ok("timeSensitive"));
-        assert_eq!(level(" active "), Ok("active"));
-        assert_eq!(level("passive"), Ok("passive"));
+        assert_eq!(level("time-sensitive"), Ok(Level::TimeSensitive));
+        assert_eq!(level("timeSensitive"), Ok(Level::TimeSensitive));
+        assert_eq!(level("TIME_SENSITIVE"), Ok(Level::TimeSensitive));
+        assert_eq!(level("urgent"), Ok(Level::TimeSensitive));
+        assert_eq!(level(" active "), Ok(Level::Active));
+        assert_eq!(level("passive"), Ok(Level::Passive));
         assert!(level("critical").is_err(), "the one level this server does not offer");
         assert!(level("shout").is_err());
     }
@@ -285,7 +284,7 @@ mod tests {
             level: Some("urgent".into()),
             group: Some("deploy".into()),
         };
-        let payload = payload(&options).expect("payload");
+        let payload = serde_json::to_value(payload(&options).expect("payload")).unwrap();
         assert_eq!(payload["title"], hostile, "every byte survives the round trip");
         assert_eq!(payload["body"], hostile);
         assert_eq!(payload["level"], "timeSensitive");
@@ -323,13 +322,16 @@ mod tests {
 
     #[test]
     fn an_absent_flag_is_absent_from_the_body() {
-        let payload = payload(&Options {
-            title: "T".into(),
-            body: String::new(),
-            level: None,
-            group: Some("   ".into()),
-        })
-        .expect("payload");
+        let payload = serde_json::to_value(
+            payload(&Options {
+                title: "T".into(),
+                body: String::new(),
+                level: None,
+                group: Some("   ".into()),
+            })
+            .expect("payload"),
+        )
+        .unwrap();
         let map = payload.as_object().expect("object");
         assert!(!map.contains_key("level"), "the server owns the default");
         assert!(!map.contains_key("group"), "a blank group is no group");
