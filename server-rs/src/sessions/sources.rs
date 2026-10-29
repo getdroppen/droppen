@@ -17,6 +17,7 @@ use serde_json::{Map, Value};
 use super::context::ContextUsage;
 use super::util::TranscriptItem;
 use super::{CliChoice, SessionSummary, Source};
+use droppen_base::time::mtime_ms;
 use droppen_instance::paths::Paths;
 
 /// One CLI's transcripts: where its sessions are, and how one is read.
@@ -68,6 +69,78 @@ pub trait Transcripts: Send + Sync {
     /// remote-hand's own rows (task notifications, hand-backs) are user-side
     /// entries and never reach this test.
     fn spoken_texts(&self, entry: &Map<String, Value>) -> Vec<String>;
+
+    /// The transcripts that count toward the token-usage stats and were
+    /// written at or after `cutoff_ms`. None by default: a CLI whose
+    /// transcripts report no tokens this server can price adds nothing.
+    fn usage_files<'a>(&'a self, paths: &'a Paths, cutoff_ms: f64) -> BoxFuture<'a, Vec<UsageFile>> {
+        let _ = (paths, cutoff_ms);
+        Box::pin(std::future::ready(Vec::new()))
+    }
+
+    /// A fold of one transcript's token usage, fresh for each file.
+    fn usage_fold(&self) -> Box<dyn UsageFold> {
+        Box::new(NoUsage)
+    }
+}
+
+/// A transcript inside the usage window, with the mtime its fold is cached on.
+#[derive(Debug, Clone)]
+pub struct UsageFile {
+    /// Where it is.
+    pub path: PathBuf,
+    /// Its mtime, in milliseconds.
+    pub mtime: f64,
+}
+
+impl UsageFile {
+    /// `path`, when it was written at or after `cutoff_ms`.
+    pub async fn stat(path: PathBuf, cutoff_ms: f64) -> Option<Self> {
+        let metadata = tokio::fs::metadata(&path).await.ok()?;
+        let mtime = mtime_ms(&metadata);
+        (mtime >= cutoff_ms).then_some(Self { path, mtime })
+    }
+}
+
+/// The tokens one request used, as a transcript records them: what the usage
+/// stats add up by day and model.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TokenUsage {
+    /// The UTC calendar day of the entry, `YYYY-MM-DD`.
+    pub date: String,
+    /// The model that served the request.
+    pub model: String,
+    /// Fresh input tokens.
+    pub input: f64,
+    /// Generated output tokens.
+    pub output: f64,
+    /// Tokens served from the prompt cache.
+    pub cache_read: f64,
+    /// Tokens written into the prompt cache.
+    pub cache_write: f64,
+}
+
+impl TokenUsage {
+    /// The four counts added up.
+    pub fn total(&self) -> f64 {
+        self.input + self.output + self.cache_read + self.cache_write
+    }
+}
+
+/// One transcript read for its token usage an entry at a time, from its first
+/// line on, so a fold may carry what an earlier entry said.
+pub trait UsageFold: Send {
+    /// The tokens `entry` adds, if any.
+    fn fold(&mut self, entry: &Map<String, Value>) -> Option<TokenUsage>;
+}
+
+/// The fold of a transcript that reports no tokens this server can price.
+struct NoUsage;
+
+impl UsageFold for NoUsage {
+    fn fold(&mut self, _entry: &Map<String, Value>) -> Option<TokenUsage> {
+        None
+    }
 }
 
 /// The reader of every source, keyed by [`Source`].
@@ -82,6 +155,11 @@ impl TranscriptSources {
     /// Add `reader` under its own source, in place of any reader there.
     pub fn register(&mut self, reader: Arc<dyn Transcripts>) {
         Arc::make_mut(&mut self.0).insert(reader.source(), reader);
+    }
+
+    /// Every reader, in [`Source`]'s order.
+    pub fn iter(&self) -> impl Iterator<Item = &dyn Transcripts> {
+        self.0.values().map(|reader| reader.as_ref())
     }
 
     /// The reader of `source`, when one is registered.

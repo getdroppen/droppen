@@ -607,6 +607,25 @@ impl<R: tokio::io::AsyncBufRead + Unpin> LossyLines<R> {
     }
 }
 
+/// A finite JSON number, or zero — Node's `typeof v === "number" && isFinite(v)`.
+pub fn num(value: Option<&serde_json::Value>) -> f64 {
+    value.and_then(serde_json::Value::as_f64).filter(|n| n.is_finite()).unwrap_or(0.0)
+}
+
+/// UTC calendar day of an entry's `timestamp`, or `None` when it has none.
+pub fn date_of(entry: &serde_json::Map<String, serde_json::Value>) -> Option<String> {
+    entry
+        .get("timestamp")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|ts| ts.get(..10))
+        .map(str::to_owned)
+}
+
+/// Whether `path` names a JSONL file.
+pub fn is_jsonl(path: &Path) -> bool {
+    path.file_name().map(|name| name.to_string_lossy().ends_with(".jsonl")).unwrap_or(false)
+}
+
 /// Parse one JSONL line into an object, or `None` for anything else.
 ///
 /// Unparseable lines are skipped rather than failing the transcript: a

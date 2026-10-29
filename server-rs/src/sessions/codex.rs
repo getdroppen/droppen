@@ -31,8 +31,11 @@ use super::codex_claims::{Claims, Verdict};
 use super::codex_tools::{CodexTools, Context};
 use droppen_instance::paths::Paths;
 use droppen_base::time::{iso8601, mtime_ms, now_ms};
+use super::sources::{TokenUsage, UsageFile, UsageFold};
 use super::transcript::title_line;
-use super::util::{make_item, read_head_lines, read_tail_lines, try_parse, FileCache, ItemKind, LossyLines, Role, TranscriptItem};
+use super::util::{
+    date_of, is_jsonl, make_item, num, read_head_lines, read_tail_lines, try_parse, FileCache, ItemKind, LossyLines, Role, TranscriptItem,
+};
 use super::{owned_sessions, CliChoice, SessionActivity, SessionScope, SessionStatus, SessionSummary, Source};
 use droppen_http::openapi_ext::Nullable;
 
@@ -767,6 +770,108 @@ impl super::Transcripts for CodexSessions {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    // Codex nests rollouts under `sessions/YYYY/MM/DD`, so the tree is walked.
+    //
+    // An explicit stack rather than recursion: a recursive `async fn` needs its
+    // future boxed at every level, which buys nothing here.
+    fn usage_files<'a>(&'a self, paths: &'a Paths, cutoff_ms: f64) -> BoxFuture<'a, Vec<UsageFile>> {
+        Box::pin(async move {
+            let mut out = Vec::new();
+            let mut pending = vec![paths.codex_sessions()];
+            while let Some(dir) = pending.pop() {
+                let Ok(mut entries) = tokio::fs::read_dir(&dir).await else { continue };
+                while let Ok(Some(entry)) = entries.next_entry().await {
+                    let path = entry.path();
+                    let Ok(file_type) = entry.file_type().await else { continue };
+                    if file_type.is_dir() {
+                        pending.push(path);
+                    } else if is_jsonl(&path) {
+                        if let Some(reference) = UsageFile::stat(path, cutoff_ms).await {
+                            out.push(reference);
+                        }
+                    }
+                }
+            }
+            out
+        })
+    }
+
+    fn usage_fold(&self) -> Box<dyn UsageFold> {
+        Box::new(CodexUsage::default())
+    }
+}
+
+/// Codex emits *cumulative* `token_count` events; the per-turn delta lives in
+/// `last_token_usage`, and the active model comes from the preceding
+/// `turn_context`. Events can repeat, so only a strict increase of the running
+/// total is counted.
+#[derive(Debug)]
+struct CodexUsage {
+    model: String,
+    prev_total: f64,
+}
+
+impl Default for CodexUsage {
+    fn default() -> Self {
+        Self {
+            model: "codex".to_string(),
+            prev_total: 0.0,
+        }
+    }
+}
+
+impl UsageFold for CodexUsage {
+    fn fold(&mut self, entry: &serde_json::Map<String, Value>) -> Option<TokenUsage> {
+        let entry_type = entry.get("type").and_then(Value::as_str);
+        if entry_type == Some("turn_context") {
+            let model = entry
+                .get("payload")
+                .and_then(Value::as_object)
+                .and_then(|payload| payload.get("model"))
+                .and_then(Value::as_str)
+                .filter(|model| !model.is_empty());
+            if let Some(model) = model {
+                self.model = model.to_string();
+            }
+            return None;
+        }
+        if entry_type != Some("event_msg") {
+            return None;
+        }
+        let Some(payload) = entry.get("payload").and_then(Value::as_object) else {
+            return None;
+        };
+        if payload.get("type").and_then(Value::as_str) != Some("token_count") {
+            return None;
+        }
+        let Some(info) = payload.get("info").and_then(Value::as_object) else {
+            return None;
+        };
+        let total = info
+            .get("total_token_usage")
+            .and_then(Value::as_object)
+            .map(|usage| num(usage.get("total_tokens")))
+            .unwrap_or(0.0);
+        if total <= self.prev_total {
+            return None; // duplicate / non-progressing report
+        }
+        self.prev_total = total;
+        let Some(date) = date_of(entry) else { return None };
+        let Some(last) = info.get("last_token_usage").and_then(Value::as_object) else {
+            return None;
+        };
+        let cache_read = num(last.get("cached_input_tokens"));
+        Some(TokenUsage {
+            date,
+            model: self.model.clone(),
+            // `input_tokens` already includes whatever came out of the cache.
+            input: (num(last.get("input_tokens")) - cache_read).max(0.0),
+            output: num(last.get("output_tokens")),
+            cache_read,
+            cache_write: 0.0,
+        })
     }
 }
 
