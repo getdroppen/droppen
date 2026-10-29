@@ -73,8 +73,8 @@ test("the landing page leads with what you get, in zh-CN first", () => {
     "所有电脑，一个列表",
     "你的代码，Droppen 无法读取",
     // The deep sections, each headed by what it gets you.
-    "在手机上输入，响应及时",
-    "电脑离线时，会话仍可查看",
+    "直连快速响应，断连自动接管，手机输入不丢键",
+    "电脑合盖或离线，会话依然随时查阅",
     "免费注册",
     "登录",
   ]) {
@@ -505,7 +505,7 @@ test("the tour shows the product: six tabs of real screenshots, each in its fram
   assert.equal((tour.match(/role="tab"/g) ?? []).length, TOUR_TABS.length);
   assert.doesNotMatch(tour, /animate-/);
   assert.match(tour, /role="tab"[^>]*aria-selected="true"[^>]*data-tab="sessions"/);
-  for (const label of ["会话", "多栏", "终端", "我的设备", "手机", "添加设备"]) assert.ok(text(tour).includes(label), label);
+  for (const label of ["会话", "分屏并排", "终端", "我的设备", "移动端", "添加设备"]) assert.ok(text(tour).includes(label), label);
   // Its picture in both themes, the light one described.
   assert.match(tour, /<img src="\/tour\/app-session-zh-CN-light\.webp" alt="Mac 上的 Droppen[^"]*"/);
   assert.match(tour, /<img src="\/tour\/app-session-zh-CN-dark\.webp" alt="" aria-hidden="true"/);

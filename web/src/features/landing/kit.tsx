@@ -93,22 +93,14 @@ export function Lock({ open, size = 10, title, className, x, y }: { open?: boole
 }
 
 /**
- * What travels on a wire: a chip of ciphertext, an ink tag with a shut
- * padlock and the ciphertext's first group (`label`), never plaintext.
- * Without a label, just the padlock (a keystroke).
+ * What travels on a wire: an ink tag with a shut padlock, never plaintext —
+ * a keystroke, or a group of ciphertext whose contents the page never shows.
  */
-export const CipherChip = forwardRef<SVGGElement, { label?: string }>(function CipherChip({ label = "" }, ref) {
-  const w = label ? 16 + Math.ceil(label.length * 5.5) : 12;
-  const x = -Math.round(w / 2);
+export const CipherChip = forwardRef<SVGGElement>(function CipherChip(_props, ref) {
   return (
     <g ref={ref} opacity={0}>
-      <rect x={x} y={-6} width={w} height={12} fill="var(--color-fg)" />
-      <Lock x={x + 2.5} y={-4.2} size={7} className="text-bg" />
-      {label && (
-        <text x={x + 12} y={3} className="fill-bg font-mono text-[9px]">
-          {label}
-        </text>
-      )}
+      <rect x={-6} y={-6} width={12} height={12} fill="var(--color-fg)" />
+      <Lock x={-3.5} y={-4.2} size={7} className="text-bg" />
     </g>
   );
 });
@@ -133,7 +125,7 @@ export const WireTag = forwardRef<SVGGElement, { at: Pt; text: string }>(functio
         stroke="var(--color-ok)"
         className="[stroke-opacity:0.45] group-data-[on=true]:[stroke-opacity:1]"
       />
-      <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central" className="fill-ok font-mono text-[11px]">
+      <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central" className="fill-ok font-mono text-xs">
         {text}
       </text>
     </g>
@@ -265,7 +257,7 @@ export const Stage = forwardRef<
 export function StepBadge({ n, at }: { n: number; at: Pt }) {
   return (
     <span
-      className="absolute flex size-[18px] items-center justify-center bg-fg font-mono text-[10px] font-medium text-bg tabular-nums"
+      className="absolute flex size-[18px] items-center justify-center bg-fg font-mono text-xs font-medium text-bg tabular-nums"
       style={{ left: Math.round(at.x - 9), top: Math.round(at.y - 9) }}
     >
       {n}
@@ -319,16 +311,16 @@ export function Ledger({
       )}
       style={{ left: Math.round(box.x), top: Math.round(box.y), width: Math.round(box.w), height: box.h === undefined ? undefined : Math.round(box.h) }}
     >
-      <div className="flex h-[26px] shrink-0 items-center gap-1.5 px-2.5 text-[13px] leading-4 font-semibold whitespace-nowrap">
+      <div className="flex h-[26px] shrink-0 items-center gap-1.5 px-2.5 text-sm leading-4 font-semibold whitespace-nowrap">
         <span className="flex min-w-0 items-center gap-1.5 truncate">{head}</span>
-        {status && <span className="ml-auto flex shrink-0 items-center gap-1 font-mono text-[11px] font-normal">{status}</span>}
+        {status && <span className="ml-auto flex shrink-0 items-center gap-1 font-mono text-xs font-normal">{status}</span>}
       </div>
       {rows.map((row, i) => (
         <div
           key={i}
           ref={rowRefs?.[i]}
           className={cn(
-            "flex shrink-0 items-center gap-1.5 overflow-hidden border-t px-2.5 font-mono text-[11px] leading-[14px] data-[dim=true]:opacity-40",
+            "flex shrink-0 items-center gap-1.5 overflow-hidden border-t px-2.5 font-mono text-xs leading-4 data-[dim=true]:opacity-40",
             tall?.includes(i) ? "h-9 py-1" : "h-[22px] whitespace-nowrap",
             ink ? "border-bg/15" : "border-border",
           )}
@@ -350,7 +342,7 @@ export function Source({ children = "CLAUDE", ink, tone }: { children?: ReactNod
     <span
       data-signal={tone === "ok" ? "working" : undefined}
       className={cn(
-        "shrink-0 border px-1 text-[10px] leading-[14px] tracking-[0.08em] whitespace-nowrap",
+        "shrink-0 border px-1 text-xs leading-4 tracking-widest whitespace-nowrap",
         tone === "ok" ? "border-ok/60 text-ok" : ink ? "border-bg/30 opacity-80" : "border-border text-muted",
       )}
     >

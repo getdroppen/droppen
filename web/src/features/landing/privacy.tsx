@@ -64,7 +64,7 @@ export function marked(text: string): ReactNode {
 function Block({ title, items }: { title: string; items: string[] }) {
   return (
     <div className="flex min-w-0 flex-col gap-3 px-6 py-6 max-md:px-4">
-      <span className="text-[13px] leading-5 font-semibold text-fg">{title}</span>
+      <span className="text-sm leading-5 font-semibold text-fg">{title}</span>
       <Points items={items} render={marked} />
     </div>
   );
@@ -98,10 +98,10 @@ export default function PrivacyPage({ signedIn = false }: { signedIn?: boolean }
         <main className="mx-auto max-w-[1360px] md:border-x md:border-border">
           <div className="flex flex-col gap-5 px-10 pt-16 pb-10 max-lg:pt-12 max-md:px-4 max-md:pt-10 max-md:pb-8">
             <CapsLabel className={cjkTracking}>{t("Privacy notice")}</CapsLabel>
-            <h1 className="max-w-[18em] text-[44px] leading-[1.05] font-semibold tracking-[-0.035em] text-balance text-fg [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-md:text-[30px]">
+            <h1 className="max-w-[18em] text-5xl leading-display font-normal tracking-tight text-balance text-fg [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-md:text-3xl">
               {t("What we keep, and what we can't see.")}
             </h1>
-            <p className="max-w-[40em] text-[15px] leading-[26px] text-muted max-md:text-sm max-md:leading-6">
+            <p className="max-w-[40em] text-base leading-6 text-muted max-md:text-sm max-md:leading-6">
               {t("Droppen is end-to-end encrypted, so there is little to tell: here is all of it.")}
             </p>
             <p className="font-mono text-2xs text-faint">{t("Last updated {{date}}", { date: PRIVACY_UPDATED })}</p>

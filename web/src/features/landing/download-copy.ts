@@ -25,7 +25,7 @@ export const downloadZhCN: Bundle = {
 
   // Hero
   "Download": "下载",
-  "Install Droppen on the device that runs your AI.": "在运行 AI 的设备上安装 Droppen。",
+  "Install Droppen on the device that runs your AI.": "在运行 AI 的设备上安装 Droppen",
   "Droppen goes on the Mac or Linux device where Claude Code or Codex runs, alongside them. Your phone and other devices need nothing installed: open {{app}} in the browser to see every session, answer your AI's questions, steer it and open a terminal.":
     "Droppen 安装在运行 Claude Code 或 Codex 的 Mac 或 Linux 设备上，与它们一同运行。手机和其他设备无需安装：在浏览器中打开 {{app}}，即可查看所有会话、回答 AI 的提问、发送指令和打开终端。",
   "A Droppen account. Sign-up needs an invite code.": "一个 Droppen 账户。注册需要邀请码。",
@@ -193,10 +193,10 @@ export const downloadZhCN: Bundle = {
   "Paste it into a terminal on this device: Droppen installs, starts and opens its page.": "在这台设备的终端里粘贴运行：Droppen 会自动安装、启动，并打开它的页面。",
   "A server with no browser?": "服务器上没有浏览器？",
   "No Windows app yet. Droppen works in this browser: watch and answer your AI from here, while it runs on a Mac or a Linux server.":
-    "Windows 版 App 还没有。Droppen 在这个浏览器里就能用：在这里看 AI 干活、回答它的问题，AI 本身跑在 Mac 或 Linux 服务器上。",
+    "Windows 客户端正在准备中。无需安装客户端，在此浏览器中即可查看进度并回复提问；AI 保持在 Mac 或 Linux 服务器上运行。",
   "On your phone, Droppen works in the browser: open {{app}} and add it to your home screen. Your AI runs on a Mac or on Linux, with Droppen installed there.":
-    "在手机上，Droppen 直接在浏览器里用：打开 {{app}}，添加到主屏幕。AI 跑在 Mac 或 Linux 上，Droppen 装在那里。",
-  "how to set it up": "怎么设置",
+    "在手机上，Droppen 直接在浏览器里用：打开 {{app}} 并添加到主屏幕。AI 保持在已安装 Droppen 的 Mac 或 Linux 设备上运行。",
+  "how to set it up": "查看设置指南",
   "Get Droppen:": "获取 Droppen：",
   "Or download it:": "也可以直接下载：",
 };
@@ -207,7 +207,7 @@ export const downloadZhTW: Bundle = {
     "在執行 Claude Code 或 Codex 的 Mac 或 Linux 裝置上安裝 Droppen：Mac 應用程式，或一行指令。手機只需瀏覽器。",
 
   "Download": "下載",
-  "Install Droppen on the device that runs your AI.": "在執行 AI 的裝置上安裝 Droppen。",
+  "Install Droppen on the device that runs your AI.": "在執行 AI 的裝置上安裝 Droppen",
   "Droppen goes on the Mac or Linux device where Claude Code or Codex runs, alongside them. Your phone and other devices need nothing installed: open {{app}} in the browser to see every session, answer your AI's questions, steer it and open a terminal.":
     "Droppen 安裝在執行 Claude Code 或 Codex 的 Mac 或 Linux 裝置上，與它們一同執行。手機和其他裝置無需安裝：在瀏覽器中打開 {{app}}，即可查看所有工作階段、回答 AI 的提問、傳送指令和開啟終端機。",
   "A Droppen account. Sign-up needs an invite code.": "一個 Droppen 帳戶。註冊需要邀請碼。",

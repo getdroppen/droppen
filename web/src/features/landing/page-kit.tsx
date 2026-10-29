@@ -55,7 +55,7 @@ export function SectionHead({ label, title, lead, className }: { label?: string;
   return (
     <div className={cn("flex flex-col gap-3 px-6 pt-10 pb-8 max-md:px-4 max-md:pt-8 max-md:pb-6", className)}>
       {label && <CapsLabel className={cjkTracking}>{label}</CapsLabel>}
-      <h2 className="text-[32px] leading-[1.1] font-normal tracking-[-0.03em] text-balance text-fg [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-md:text-[26px]">{title}</h2>
+      <h2 className="text-3xl leading-tight font-normal tracking-tight text-balance text-fg [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-md:text-2xl">{title}</h2>
       {lead && <p className="max-w-[38em] text-sm leading-6 text-muted">{lead}</p>}
     </div>
   );
@@ -128,7 +128,7 @@ function GitHubMark({ className }: { className?: string }) {
 const MENU_POPUP =
   "popup-motion max-h-[min(var(--available-height),20rem)] min-w-[10rem] max-w-[20rem] overflow-y-auto border border-border-strong bg-bg py-1.5 outline-none";
 const MENU_ITEM =
-  "flex min-h-8 w-full cursor-pointer items-center gap-2 px-3 py-1 text-left text-[13px] text-fg outline-none pointer-coarse:min-h-11 data-[highlighted]:bg-hover";
+  "flex min-h-8 w-full cursor-pointer items-center gap-2 px-3 py-1 text-left text-sm text-fg outline-none pointer-coarse:min-h-11 data-[highlighted]:bg-hover";
 
 /**
  * The public pages' header: the mark (home), the site's other pages (download,

@@ -393,22 +393,24 @@ test("signed out the account it needs is a link to sign up; signed in it goes ba
   assert.ok(text(closed).includes("A Droppen account. Sign-up is closed for now."));
   assert.match(closed, /<a href="\/pricing#waitlist"[^>]*data-testid="download-waitlist"[^>]*>Join the waitlist<\/a>/);
   assert.doesNotMatch(closed, /href="\/signup"|Create a free account/);
-  assert.match(closed, /<a href="\/signin"[^>]*>Sign in<\/a>/);
+  // Sign-in stays in the header, now behind the account menu's trigger.
+  assert.match(closed, /aria-label="Sign in"/);
   assert.doesNotMatch(text(closed), /invite/i);
   assert.ok(text(draw("ja", { signup: "closed" })).includes("現在、新規登録を停止しています。"));
   const signedIn = draw("en", { signedIn: true, os: "windows" });
   assert.doesNotMatch(signedIn, /href="\/sign(in|up)"/);
+  assert.match(signedIn, /aria-label="Open app"/, "signed in, the header offers the app instead");
   assert.match(signedIn, /<a href="\/devices"[^>]*data-testid="download-open-devices"/);
   assert.match(signedIn, /<a href="\/sessions"[^>]*data-testid="use-in-browser"/);
 });
 
 test("it leads with where Droppen goes, and reads in zh-CN, zh-TW and ja", () => {
   const cn = text(draw("zh-CN", { os: "macos-bg" }));
-  assert.ok(cn.includes("在运行 AI 的设备上安装 Droppen。"));
+  assert.ok(cn.includes("在运行 AI 的设备上安装 Droppen"));
   assert.ok(cn.includes("手机和其他设备无需安装"));
   assert.ok(cn.indexOf("在运行 AI 的设备上安装") < cn.indexOf(INSTALL_COMMAND), "where it goes before the command");
   const tw = text(draw("zh-TW", { os: "linux" }));
-  assert.ok(tw.includes("在執行 AI 的裝置上安裝 Droppen。"));
+  assert.ok(tw.includes("在執行 AI 的裝置上安裝 Droppen"));
   assert.ok(tw.includes("即將支援"));
   const jp = text(draw("ja", { os: "mobile" }));
   assert.ok(jp.includes("AI が動くデバイスに Droppen をインストール。"));

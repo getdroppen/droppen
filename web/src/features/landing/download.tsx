@@ -105,7 +105,7 @@ function Steps({ items, testId }: { items: { title: string; body: ReactNode }[];
           )}
         >
           <span className="font-mono text-2xs text-faint tabular-nums">{String(i + 1).padStart(2, "0")}</span>
-          <span className="text-[13px] leading-5 font-semibold text-fg">{s.title}</span>
+          <span className="text-sm leading-5 font-semibold text-fg">{s.title}</span>
           <span className="text-xs leading-5 text-muted">{s.body}</span>
         </li>
       ))}
@@ -118,7 +118,7 @@ function PanelHead({ title, body, children }: { title: string; body: string; chi
   return (
     <div className="flex flex-col gap-4 px-6 py-6 max-md:px-4">
       <div className="flex max-w-[44rem] flex-col gap-2">
-        <h2 className="text-[20px] leading-7 font-semibold tracking-[-0.02em] text-fg">{title}</h2>
+        <h2 className="text-xl leading-7 font-semibold tracking-tight text-fg">{title}</h2>
         <p className="text-sm leading-6 text-muted">{body}</p>
       </div>
       {children}
@@ -130,7 +130,7 @@ function PanelHead({ title, body, children }: { title: string; body: string; chi
 function Soon({ label, body, children, testId }: { label?: string; body: string; children?: ReactNode; testId: string }) {
   return (
     <div data-testid={testId} className="flex max-w-[44rem] flex-col gap-3 border border-border bg-raised px-4 py-3.5">
-      {label && <span className="inline-flex w-fit items-center border border-fg px-1.5 font-mono text-[10px] leading-4 font-semibold tracking-wider text-fg uppercase">{label}</span>}
+      {label && <span className="inline-flex w-fit items-center border border-fg px-1.5 font-mono text-sm leading-4 font-semibold tracking-wider text-fg uppercase">{label}</span>}
       <p className="text-xs leading-5 text-fg">{body}</p>
       {children}
     </div>
@@ -591,7 +591,7 @@ function Verify({ availability }: { availability: Availability }) {
         <dl data-testid="download-verify" className="flex flex-col max-lg:border-t max-lg:border-border">
           {rows.map((r) => (
             <div key={r.term} className="grid grid-cols-[10rem_minmax(0,1fr)] items-baseline gap-4 border-b border-border px-6 py-3.5 last:border-b-0 max-md:grid-cols-1 max-md:gap-1 max-md:px-4">
-              <dt className="text-[13px] leading-5 font-semibold text-fg">{r.term}</dt>
+              <dt className="text-sm leading-5 font-semibold text-fg">{r.term}</dt>
               <dd className="min-w-0 text-xs leading-5 text-muted">{r.body}</dd>
             </div>
           ))}
@@ -622,13 +622,13 @@ function Uninstall({ availability }: { availability: Availability }) {
         {steps.map((s, i) => (
           <li key={s.title} className="flex flex-col gap-2 border-border px-6 py-6 max-md:border-b max-md:px-4 md:border-r">
             <span className="font-mono text-2xs text-faint tabular-nums">0{i + 1}</span>
-            <span className="text-[13px] leading-5 font-semibold text-fg">{s.title}</span>
+            <span className="text-sm leading-5 font-semibold text-fg">{s.title}</span>
             <span className="text-xs leading-5 text-muted">{s.body}</span>
           </li>
         ))}
         <li className="flex min-w-0 flex-col gap-2 px-6 py-6 max-md:px-4">
           <span className="font-mono text-2xs text-faint tabular-nums">03</span>
-          <span className="text-[13px] leading-5 font-semibold text-fg">{t("Remove the program")}</span>
+          <span className="text-sm leading-5 font-semibold text-fg">{t("Remove the program")}</span>
           {availability.app && <span className="text-xs leading-5 text-muted">{t("The App: quit Droppen and drag it from Applications to the Trash.")}</span>}
           <span className="text-xs leading-5 text-muted">
             {availability.app ? t("Command-line install (Mac or Linux): run this on that device, as the user who installed it:") : t("Run this on that device, as the user who installed it:")}
@@ -735,10 +735,10 @@ export default function DownloadPage({
       <div className="md:px-8">
         <main className="mx-auto max-w-[1360px] md:border-x md:border-border">
           <div className="flex flex-col gap-5 px-10 pt-16 pb-10 max-lg:pt-12 max-md:px-4 max-md:pt-10 max-md:pb-8">
-            <h1 className="max-w-[18em] text-[52px] leading-[1.02] font-semibold tracking-[-0.035em] text-balance text-fg [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-md:text-[34px] xl:text-[48px]">
+            <h1 className="max-w-[18em] text-5xl leading-display font-normal tracking-tight text-balance text-fg [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-md:text-4xl xl:text-5xl">
               {t("Install Droppen on the device that runs your AI.")}
             </h1>
-            <p className="max-w-[40em] text-[15px] leading-[26px] text-pretty text-muted [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-md:text-sm max-md:leading-6">
+            <p className="max-w-[40em] text-base leading-6 text-pretty text-muted [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-md:text-sm max-md:leading-6">
               {t(
                 "Droppen goes on the Mac or Linux device where Claude Code or Codex runs, alongside them. Your phone and other devices need nothing installed: open {{app}} in the browser to see every session, answer your AI's questions, steer it and open a terminal.",
                 { app: appHost() },

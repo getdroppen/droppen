@@ -160,7 +160,7 @@ export function HeroGet({
             {...publicLink(signedIn ? APP_PATH : closed ? WAITLIST_HREF : SIGN_UP_PATH)}
             data-variant="primary"
             data-testid="hero-web-signup"
-            className="group flex h-10 items-center justify-between gap-3 border border-fg bg-fg px-4 text-sm font-medium text-bg transition-colors hover:bg-fg/85"
+            className="group flex h-10 shrink-0 items-center justify-between gap-3 whitespace-nowrap border border-fg bg-fg px-4 text-sm font-medium text-bg transition-colors hover:bg-fg/85"
           >
             <span>{signedIn ? t("Open web app") : closed ? t("Join the web waitlist") : t("Sign up on the web")}</span>
             <ArrowRight className="size-4 shrink-0 transition-transform duration-150 group-hover:translate-x-0.5" />
@@ -168,7 +168,7 @@ export function HeroGet({
           <a
             {...publicLink(downloadHref("macos-app"))}
             data-testid="hero-mac-tab"
-            className="group flex h-10 items-center justify-between gap-3 border border-border-strong bg-bg px-4 text-sm font-medium text-fg transition-colors hover:border-fg hover:bg-hover"
+            className="group flex h-10 shrink-0 items-center justify-between gap-3 whitespace-nowrap border border-border-strong bg-bg px-4 text-sm font-medium text-fg transition-colors hover:border-fg hover:bg-hover"
           >
             <span>{t("Droppen for Mac")}</span>
             <ArrowRight className="size-4 shrink-0 transition-transform duration-150 group-hover:translate-x-0.5" />
@@ -176,7 +176,7 @@ export function HeroGet({
           <a
             {...publicLink(downloadHref("linux"))}
             data-testid="hero-linux-tab"
-            className="group flex h-10 items-center justify-between gap-3 border border-border-strong bg-bg px-4 text-sm font-medium text-fg transition-colors hover:border-fg hover:bg-hover"
+            className="group flex h-10 shrink-0 items-center justify-between gap-3 whitespace-nowrap border border-border-strong bg-bg px-4 text-sm font-medium text-fg transition-colors hover:border-fg hover:bg-hover"
           >
             <span>{t("Run Droppen on a Linux server")}</span>
             <ArrowRight className="size-4 shrink-0 transition-transform duration-150 group-hover:translate-x-0.5" />

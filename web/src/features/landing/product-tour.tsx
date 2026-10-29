@@ -81,7 +81,7 @@ function BrowserWindow({ children }: { children: ReactNode }) {
             <span key={i} className="size-3 rounded-full border border-border-strong bg-bg" />
           ))}
         </span>
-        <span className="mx-auto flex h-6 w-full max-w-[22rem] items-center justify-center gap-1.5 rounded-md border border-border bg-bg font-mono text-[11px] text-muted">
+        <span className="mx-auto flex h-6 w-full max-w-[22rem] items-center justify-center gap-1.5 rounded-md border border-border bg-bg font-mono text-xs text-muted">
           <Lock className="size-3" />
           my.droppen.app
         </span>
@@ -97,7 +97,7 @@ function Phone({ children }: { children: ReactNode }) {
   return (
     <div className="w-full max-w-[340px] rounded-[44px] border border-border-strong bg-raised p-[9px] shadow-[0_24px_60px_-28px_rgb(0_0_0/0.35)]">
       <div className="relative overflow-hidden rounded-[36px] border border-border bg-bg">
-        <div aria-hidden="true" className="relative flex h-9 items-center justify-between px-6 text-[11px] font-semibold text-fg tabular-nums">
+        <div aria-hidden="true" className="relative flex h-9 items-center justify-between px-6 text-xs font-semibold text-fg tabular-nums">
           <span>9:41</span>
           <span className="absolute top-2 left-1/2 h-[22px] w-[78px] -translate-x-1/2 rounded-full bg-fg" />
           {/* Signal and battery, drawn as the system draws them: bars and a pill. */}

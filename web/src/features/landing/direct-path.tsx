@@ -351,7 +351,7 @@ export function DirectPath() {
   );
 
   const readout =
-    "pointer-events-none absolute flex h-6 items-center gap-1.5 border bg-bg px-2 font-mono text-[11px] whitespace-nowrap tabular-nums data-[active=false]:border-dashed data-[active=false]:border-border-strong data-[active=true]:border-fg";
+    "pointer-events-none absolute flex h-6 items-center gap-1.5 border bg-bg px-2 font-mono text-xs whitespace-nowrap tabular-nums data-[active=false]:border-dashed data-[active=false]:border-border-strong data-[active=true]:border-fg";
   const value = "data-[latency=ok]:text-ok data-[latency=warn]:text-warn-fg data-[latency=danger]:text-danger";
   const scenarios: { id: Scenario; label: string }[] = [
     { id: "phone", label: t("phone on 4G") },
@@ -448,7 +448,7 @@ export function DirectPath() {
           ref={cut}
           data-on="false"
           data-signal="failed"
-          className="absolute flex size-4 items-center justify-center bg-bg font-mono text-[13px] leading-none text-danger data-[on=false]:hidden"
+          className="absolute flex size-4 items-center justify-center bg-bg font-mono text-sm leading-none text-danger data-[on=false]:hidden"
           style={{ left: L.cut.x - 8, top: L.cut.y - 8 }}
         >
           ×
@@ -486,7 +486,7 @@ export function DirectPath() {
           status={<LiveDot />}
           rows={[]}
         >
-          <span ref={term} className="block px-2.5 py-1.5 font-mono text-xs leading-[18px] whitespace-pre text-fg">
+          <span ref={term} className="block px-2.5 py-1.5 font-mono text-xs leading-5 whitespace-pre text-fg">
             {TERMINAL_HISTORY.join("\n")}
           </span>
         </Ledger>

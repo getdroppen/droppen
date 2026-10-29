@@ -91,7 +91,7 @@ const zhCN: Bundle = {
   // Hero
   "Your computer's AI, from your phone.": "电脑上的 AI，手机上接着用",
   "Claude Code and Codex keep running on your own computers. From a browser on your phone or another device, answer their questions, steer them and open a terminal on the computer.":
-    "Claude Code 和 Codex 仍在你自己的电脑上运行。在手机或其他设备的浏览器中，回答它们的提问、发送指令、打开电脑上的终端。",
+    "Claude Code 和 Codex 仍在你自己的电脑上运行。在手机或任意设备的浏览器中，随时查看进度、回复提问、发送指令，并直接调出本地终端。",
   "Create a free account": "免费注册",
   "Sign up on the web": "Web 免费注册",
   "Open web app": "在 Web 中打开",
@@ -104,27 +104,27 @@ const zhCN: Bundle = {
   "Sessions": "会话",
   "Droppen on a Mac: a list of Claude Code and Codex sessions, and a session waiting for an answer":
     "Mac 上的 Droppen：Claude Code 和 Codex 的会话列表，以及一个等你回答的会话",
-  "Side by side": "多栏",
+  "Side by side": "分屏并排",
   "Droppen with three panes: two sessions and a terminal": "Mac 上的 Droppen 分成三栏：两个会话和一个终端",
   "Terminal": "终端",
   "A terminal in Droppen": "Droppen 里的终端",
   "My devices": "我的设备",
   "my.droppen.app in a browser: three computers and the list of what needs you": "浏览器里的 my.droppen.app：三台电脑，以及「需要你」清单",
-  "Phone": "手机",
+  "Phone": "移动端",
   "Droppen on a phone: what needs you, and a session's question": "手机上的 Droppen：「需要你」清单，以及一个会话的提问",
   "Add a device": "添加设备",
   "A new device shows a QR code, and a device you already have approves it": "新设备显示二维码，由你已有的设备扫码批准",
   "Three steps to set up, then carry on away from your desk.": "三步完成设置，离开电脑也能继续",
-  "Install Droppen where Claude Code or Codex runs": "在运行 Claude Code 或 Codex 的电脑上安装 Droppen",
-  "Sign in on that computer": "在那台电脑上登录",
+  "Install Droppen where Claude Code or Codex runs": "在电脑端安装客户端",
+  "Sign in on that computer": "登录并关联设备",
 
   // How it works: three steps, each true of the build (first-host.tsx, add-computer.tsx, pairing-screen.tsx)
-  "Install it where your AI runs": "装在跑 AI 的电脑上",
+  "Install it where your AI runs": "在运行 AI 的电脑上安装",
   "The Mac app, or one install command on Linux. Sessions already on that computer appear in Droppen, with nothing to migrate.":
     "Mac 上安装应用，Linux 上执行一条安装命令。电脑上已有的会话会直接出现在 Droppen 中，无需迁移。",
   "Sign in from the Mac app. On a Linux server, run the command with a one-time code from a device that is already signed in. Add your other computers the same way.":
-    "在 Mac 应用中点击登录；在 Linux 服务器上，运行由已登录设备生成、带一次性口令的命令。其他电脑以同样方式加入同一账户。",
-  "Continue on your phone": "在手机上接着用",
+    "在 Mac 应用中点击登录；在 Linux 服务器上，运行由已登录设备生成、附带一次性注册码的命令。其他电脑以同样方式加入同一账户。",
+  "Continue on your phone": "手机扫码即刻使用",
   "Open {{app}} in your phone's browser, then scan the QR code it shows with a device that is already signed in.":
     "在手机浏览器中打开 {{app}}，再用一台已登录的设备扫描手机上显示的二维码，确认加入。",
 
@@ -143,7 +143,7 @@ const zhCN: Bundle = {
   "Read the source": "查看源代码",
 
   // Typing from your phone stays snappy (the direct path)
-  "Typing from your phone stays responsive.": "在手机上输入，响应及时",
+  "Typing from your phone stays responsive.": "直连快速响应，断连自动接管，手机输入不丢键",
   "When your phone can reach your computer directly, keystrokes go straight there; when it can't, a Droppen relay forwards them automatically. If the direct path drops, the relay takes over within 1.5 s and resends unconfirmed keystrokes in order, so none are lost.":
     "手机能直接连到你的电脑时，按键经直连送达；连不上时，自动改由 Droppen 中继转发。直连中断后，中继在 1.5 秒内接管，并按原顺序重发尚未确认的按键，不会丢失。",
   "browser on the same computer": "同一台电脑上的浏览器",
@@ -158,7 +158,7 @@ const zhCN: Bundle = {
   "keys {{sent}} · delivered {{delivered}} · in flight {{flight}} · lost 0": "按键 {{sent}} · 送达 {{delivered}} · 在途 {{flight}} · 丢失 0",
 
   // Lid closed? (the offline copy)
-  "Your sessions stay readable while your computer is offline.": "电脑离线时，会话仍可查看",
+  "Your sessions stay readable while your computer is offline.": "电脑合盖或离线，会话依然随时查阅",
   "While your computer is online, an encrypted copy of its sessions is kept on Droppen Hub in the cloud, and only your devices can decrypt it. When the computer is shut down, asleep or offline, your phone can still open the sessions updated in the last {{free}} days ({{pro}} on Pro); sending messages and using the terminal wait until that computer is back online.":
     "电脑在线时，会话的加密副本会保存到云端的 Droppen Hub，只有你的设备能解密。电脑关机、休眠或断网后，手机仍可查看最近 {{free}} 天内更新的会话（Pro 方案为 {{pro}} 天）；发送消息和使用终端，需等这台电脑重新上线。",
 
@@ -166,18 +166,19 @@ const zhCN: Bundle = {
   "Away from your computer, handle all of this from your phone.": "不在电脑前，这些事也能在手机上处理",
   "Every computer, one list": "所有电脑，一个列表",
   "Home and work computers on one account, with every session that is waiting for an answer, has unread messages or is running in one list.":
-    "家里和公司的电脑登录同一个账户，等你回答、有未读消息和正在运行的会话汇总在同一个列表中。",
+    "多台电脑绑定同一账户。所有正在运行、等待回复或有未读更新的会话，汇总在同一个列表中一览无余。",
   "Answer and steer": "回答提问，中途干预",
-  "Answer the AI's questions, add a message while it works, or stop the current run if it goes the wrong way.": "回答 AI 的提问，在它运行时追加消息，方向不对时可以停止当前的运行。",
+  "Answer the AI's questions, add a message while it works, or stop the current run if it goes the wrong way.":
+    "回答 AI 的提问；在它生成中随时追加补充指令，若发现偏离预期可立即中止。",
   "Notified when a session needs you": "需要你时，收到通知",
   "A notification when the AI asks a question, finishes a reply you haven't read, or fails.": "AI 向你提问、回复完成但你尚未查看，或运行失败时，都会通知你。",
   "Start a session from your phone": "在手机上新建会话",
   "Choose Claude Code or Codex, a computer and a folder, optionally attach a screenshot, and send.": "选择 Claude Code 或 Codex、电脑和文件夹，可附上截图，然后发送。",
   "Browse your files": "浏览项目文件",
   "Browse the folders on your computer and preview files from your phone.": "在手机上浏览电脑上的文件夹，并预览文件内容。",
-  "Run prompts on a schedule": "定时任务",
+  "Run prompts on a schedule": "按计划定时执行指令",
   "Have a prompt run automatically on the computer you choose, for example every morning or every hour on weekdays.":
-    "让一条给 AI 的指令按计划在指定的电脑上自动运行，例如每天早上或工作日每小时。",
+    "让发给 AI 的 Prompt 按预设计划在指定的电脑上自动运行，例如每个工作日早晨定时触发。",
 
   // The beta's caveat, under that section
   "Droppen is in beta: its encryption design has had internal security reviews, not an external audit. In a browser, the page code loaded each time can use your private keys and, if tampered with, could copy them out; for higher assurance, use the Mac app.":

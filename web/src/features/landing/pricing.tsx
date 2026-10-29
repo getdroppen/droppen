@@ -75,12 +75,12 @@ function PlanCard({
     // From 1024px the three cards share their rows (a subgrid), so prices, buttons and the lists below line up across them.
     <div data-testid={testId} className={cn("grid min-w-0 content-start gap-6 border-border px-6 py-8 max-md:px-4 max-md:py-7 lg:row-span-4 lg:grid-rows-subgrid", className)}>
       <div className="flex min-h-5 items-center gap-2">
-        <span className="text-[13px] leading-5 font-semibold text-fg">{name}</span>
-        {chip && <span className="inline-flex items-center border border-fg px-1.5 font-mono text-[10px] leading-4 font-semibold tracking-wider text-fg uppercase">{chip}</span>}
+        <span className="text-sm leading-5 font-semibold text-fg">{name}</span>
+        {chip && <span className="inline-flex items-center border border-fg px-1.5 font-mono text-sm leading-4 font-semibold tracking-wider text-fg uppercase">{chip}</span>}
       </div>
       <div className="flex flex-col gap-2">
         <p className="flex items-baseline gap-2">
-          <span className="text-[44px] leading-none font-semibold tracking-[-0.035em] text-fg tabular-nums max-md:text-[38px]">{price}</span>
+          <span className="text-5xl leading-none font-semibold tracking-tight text-fg tabular-nums max-md:text-4xl">{price}</span>
           <span className="font-mono text-2xs text-muted">{unit}</span>
         </p>
         <p className="font-mono text-2xs leading-4 text-faint">{note}</p>
@@ -243,14 +243,14 @@ function Compare({ signup }: { signup: SignupMode }) {
           <span role="columnheader" className="max-md:sr-only" />
           {heads.map((h, i) => (
             // The plans' names as their cards write them: in capitals, 「PRO」 read as another word beside 「免费版」.
-            <span key={h} role="columnheader" className={cn("px-6 py-3 text-[13px] leading-5 font-semibold text-fg max-md:px-4", i > 0 && "border-l border-border", "md:border-l md:border-border")}>
+            <span key={h} role="columnheader" className={cn("px-6 py-3 text-sm leading-5 font-semibold text-fg max-md:px-4", i > 0 && "border-l border-border", "md:border-l md:border-border")}>
               {h}
             </span>
           ))}
         </div>
         {rows.map((r) => (
           <div key={r.name} role="row" className="grid grid-cols-3 border-b border-border last:border-b-0 md:grid-cols-[minmax(0,1.4fr)_repeat(3,minmax(0,1fr))]">
-            <span role="rowheader" className="col-span-3 px-6 pt-3.5 text-[13px] leading-5 font-semibold text-fg max-md:px-4 md:col-span-1 md:pb-3.5">
+            <span role="rowheader" className="col-span-3 px-6 pt-3.5 text-sm leading-5 font-semibold text-fg max-md:px-4 md:col-span-1 md:pb-3.5">
               {r.name}
             </span>
             {r.values.map((v, i) => (
@@ -376,7 +376,7 @@ function Faq() {
       <dl data-testid="faq" className="grid border-t border-border lg:grid-cols-2">
         {items.map((item, i) => (
           <div key={item.q} className={cn("flex flex-col gap-2 border-border px-6 py-6 max-md:px-4", i > 0 && "max-lg:border-t", i > 1 && "lg:border-t", i % 2 === 1 && "lg:border-l")}>
-            <dt className="text-[13px] leading-5 font-semibold text-fg">{item.q}</dt>
+            <dt className="text-sm leading-5 font-semibold text-fg">{item.q}</dt>
             <dd className="text-xs leading-5 text-muted">{item.a}</dd>
           </div>
         ))}
@@ -441,10 +441,10 @@ export default function PricingPage({
       <div className="md:px-8">
         <main className="mx-auto max-w-[1360px] md:border-x md:border-border">
           <div className="flex flex-col gap-5 px-10 pt-16 pb-10 max-lg:pt-12 max-md:px-4 max-md:pt-10 max-md:pb-8">
-            <h1 className="max-w-[18em] text-[52px] leading-[1.02] font-normal tracking-[-0.035em] text-balance text-fg [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-md:text-[34px] xl:text-[48px]">
+            <h1 className="max-w-[18em] text-5xl leading-display font-normal tracking-tight text-balance text-fg [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-md:text-4xl xl:text-5xl">
               {t("Start free. Go Pro when you need more.")}
             </h1>
-            <p className="max-w-[40em] text-[15px] leading-[26px] text-muted max-md:text-sm max-md:leading-6">
+            <p className="max-w-[40em] text-base leading-6 text-muted max-md:text-sm max-md:leading-6">
               {t(
                 "Every plan is end-to-end encrypted: on none of them can we read your sessions, your code or your terminals. A plan decides only how many devices you can connect, how many days of sessions your phone can read while a device that runs AI is offline, and how much traffic goes through our servers each month.",
               )}

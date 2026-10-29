@@ -96,7 +96,7 @@ function PlanChoice({ plan, onPlan }: { plan: WaitlistPlan; onPlan: (plan: Waitl
           <label
             key={o.id}
             className={cn(
-              "flex h-9 cursor-pointer items-center justify-center gap-2 bg-bg px-3 text-[13px] font-medium text-fg hover:bg-hover",
+              "flex h-9 cursor-pointer items-center justify-center gap-2 bg-bg px-3 text-sm font-medium text-fg hover:bg-hover",
               "has-[:focus-visible]:outline-2 has-[:focus-visible]:-outline-offset-2 has-[:focus-visible]:outline-accent",
               plan === o.id && "bg-fg text-bg hover:bg-fg",
             )}
@@ -116,7 +116,7 @@ function Joined({ plan, signup, onAgain }: { plan: WaitlistPlan; signup: SignupM
   const { t } = useTranslation();
   return (
     <div role="status" data-testid="waitlist-done" data-plan={plan} className="flex max-w-[34rem] flex-col gap-3 border border-border bg-raised px-5 py-5 max-md:px-4">
-      <p className="flex items-start gap-2.5 text-[15px] leading-6 font-semibold text-fg">
+      <p className="flex items-start gap-2.5 text-base leading-6 font-semibold text-fg">
         <Check aria-hidden="true" className="mt-1 size-4 shrink-0" />
         <span>
           {plan === "pro"

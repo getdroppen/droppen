@@ -49,9 +49,6 @@ export interface Chip {
   at: number;
 }
 
-/** The first group of a ciphertext: what a chip on a wire has room for. */
-export const chipLabel = (c: string) => c.slice(0, 4);
-
 /** The text a row shows. */
 export function textOf(s: Shown, messages: readonly Message[], tick = 0): string {
   const m = messages[s.msg]!;

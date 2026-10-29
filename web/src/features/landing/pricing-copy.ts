@@ -137,7 +137,7 @@ export const pricingZhCN: Bundle = {
 
   // Privacy notice
   "Privacy notice — Droppen": "隐私说明 — Droppen",
-  "What we keep, and what we can't see.": "我们保存什么，又看不到什么。",
+  "What we keep, and what we can't see.": "我们保存什么，又看不到什么",
   "Droppen is end-to-end encrypted, so there is little to tell: here is all of it.": "Droppen 是端到端加密的，所以要说明的不多，全在这里了。",
   "Last updated {{date}}": "最后更新：{{date}}",
   "If you joined the waitlist": "如果你加入了等候名单",
@@ -339,7 +339,7 @@ export const pricingZhTW: Bundle = {
     "所有方案的安全性相同：都以同樣的方式端對端加密，無論哪個方案，我們都無法讀取你的工作階段、程式碼和終端機。方案只決定我們替你保存和轉送多少資料，不改變誰能讀取這些資料。",
 
   "Privacy notice — Droppen": "隱私權聲明 — Droppen",
-  "What we keep, and what we can't see.": "我們保存什麼，又看不到什麼。",
+  "What we keep, and what we can't see.": "我們保存什麼，又看不到什麼",
   "Droppen is end-to-end encrypted, so there is little to tell: here is all of it.": "Droppen 是端對端加密的，所以要說明的不多，全在這裡了。",
   "Last updated {{date}}": "最後更新：{{date}}",
   "If you joined the waitlist": "如果你加入了等候名單",
