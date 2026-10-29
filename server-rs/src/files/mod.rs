@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
 
 use crate::auth::MaybeIdentity;
-use droppen_http::error::ApiError;
+use droppen_http::error::{ApiError, Coded};
 use droppen_http::extract::ApiQuery;
 use droppen_http::openapi_ext::{ExtraResponses, Nullable};
 use droppen_instance::paths::Paths;
@@ -283,9 +283,12 @@ impl FsError {
     pub fn into_api(self, fallback: &'static str) -> ApiError {
         match self {
             FsError::Access(message) => ApiError::bad_request(message),
-            FsError::Private => ApiError::with_body(
+            FsError::Private => ApiError::refusal(
                 StatusCode::FORBIDDEN,
-                serde_json::json!({"error": "not_from_cloud", "message": PRIVATE_TO_THIS_COMPUTER}),
+                Coded {
+                    error: "not_from_cloud",
+                    message: PRIVATE_TO_THIS_COMPUTER,
+                },
             ),
             FsError::Other => ApiError::bad_request(fallback),
         }

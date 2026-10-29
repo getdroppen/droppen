@@ -263,7 +263,7 @@ fn file_response(path: &str, body: Vec<u8>, versioned: bool, if_none_match: Opti
 }
 
 fn json_error(status: StatusCode, message: &str) -> Response<Body> {
-    let body = serde_json::json!({ "error": message }).to_string();
+    let body = serde_json::to_string(&droppen_http::error::Error { error: message.to_string() }).unwrap_or_default();
     let mut response = Response::new(Body::from(body));
     *response.status_mut() = status;
     response

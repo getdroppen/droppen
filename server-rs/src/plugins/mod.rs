@@ -77,6 +77,25 @@ pub use store::{Store, StoreError};
 /// A key no plugin id can name: ids are lower-case, and this one is not.
 const ASSET_KEY_ROW: &str = "assetKey";
 
+/// What the host tells every client over the feed, tagged `type`.
+#[derive(Serialize)]
+#[serde(tag = "type", rename_all = "kebab-case")]
+enum FeedFrame<'a> {
+    /// A document moved: which, and to what revision.
+    PluginDoc { plugin: &'a str, name: &'a str, revision: u64 },
+    /// The current list, as `GET /api/plugins` answers it.
+    Plugins { plugins: Vec<PluginStatus> },
+}
+
+impl FeedFrame<'_> {
+    fn publish(&self, feed: &Refresh) {
+        // Strings, numbers and the plugin list, which always encode.
+        if let Ok(frame) = serde_json::to_string(self) {
+            feed.publish(frame);
+        }
+    }
+}
+
 /// Who turned a plugin on or off, and through what.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -579,7 +598,12 @@ impl Plugins {
     pub(crate) fn published(&self, id: &str, docs: &[Doc]) {
         if let Some(feed) = &self.feed {
             for doc in docs {
-                feed.publish(serde_json::json!({ "type": "plugin-doc", "plugin": id, "name": doc.name, "revision": doc.revision }).to_string());
+                FeedFrame::PluginDoc {
+                    plugin: id,
+                    name: &doc.name,
+                    revision: doc.revision,
+                }
+                .publish(feed);
             }
         }
     }
@@ -587,7 +611,7 @@ impl Plugins {
     /// Send every client the current list (`{"type":"plugins", …}`).
     pub fn announce_status(&self) {
         if let Some(feed) = &self.feed {
-            feed.publish(serde_json::json!({ "type": "plugins", "plugins": self.status() }).to_string());
+            FeedFrame::Plugins { plugins: self.status() }.publish(feed);
         }
     }
 

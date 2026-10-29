@@ -65,7 +65,7 @@ use sha2::{Digest, Sha256};
 use droppen_base::text::hex;
 use tokio::io::AsyncWriteExt;
 
-use droppen_http::error::ApiError;
+use droppen_http::error::{ApiError, Detailed};
 use droppen_http::openapi_ext::ExtraResponses;
 use droppen_instance::paths::Paths;
 
@@ -212,12 +212,12 @@ impl SelfUpdateState {
             return Ok(());
         }
         tracing::warn!("self-upgrade refused: this server is run by the Droppen desktop app, which updates it with the app");
-        Err(ApiError::with_body(
+        Err(ApiError::refusal(
             gotcha::axum::http::StatusCode::FORBIDDEN,
-            serde_json::json!({
-                "error": "self_upgrade_disabled",
-                "detail": "this server is run by the Droppen desktop app, which updates it with the app; update the app instead",
-            }),
+            Detailed {
+                error: "self_upgrade_disabled",
+                detail: "this server is run by the Droppen desktop app, which updates it with the app; update the app instead",
+            },
         ))
     }
 }
@@ -237,19 +237,22 @@ pub async fn self_upgrade(State(state): State<SelfUpdateState>, multipart: Multi
     // serving, which is no owner either.
     match state.lock.get().and_then(std::sync::Weak::upgrade) {
         None => {
-            return Err(ApiError::with_body(
+            return Err(ApiError::refusal(
                 gotcha::axum::http::StatusCode::CONFLICT,
-                serde_json::json!({
-                    "error": "instance_lock_lost",
-                    "detail": "this server holds no instance lock; refusing to replace the shared binary",
-                }),
+                Detailed {
+                    error: "instance_lock_lost",
+                    detail: "this server holds no instance lock; refusing to replace the shared binary",
+                },
             ));
         }
         Some(held) => {
             if let Err(lost) = held.verify_still_held() {
-                return Err(ApiError::with_body(
+                return Err(ApiError::refusal(
                     gotcha::axum::http::StatusCode::CONFLICT,
-                    serde_json::json!({ "error": "instance_lock_lost", "detail": lost.to_string() }),
+                    Detailed {
+                        error: "instance_lock_lost",
+                        detail: &lost.to_string(),
+                    },
                 ));
             }
         }

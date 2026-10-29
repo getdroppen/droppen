@@ -21,6 +21,42 @@ pub struct Error {
     pub error: String,
 }
 
+/// A refusal's code, and a sentence for the person saying what to do.
+#[derive(Debug, Clone, Serialize)]
+pub struct Hinted<'a> {
+    /// The code a client acts on.
+    pub error: &'a str,
+    /// What the person can do about it.
+    pub hint: &'a str,
+}
+
+/// A refusal's code, and a sentence saying what happened.
+#[derive(Debug, Clone, Serialize)]
+pub struct Coded<'a> {
+    /// The code a client acts on.
+    pub error: &'a str,
+    /// What happened, in words.
+    pub message: &'a str,
+}
+
+/// A refusal's code, and the detail behind it.
+#[derive(Debug, Clone, Serialize)]
+pub struct Detailed<'a> {
+    /// The code a client acts on.
+    pub error: &'a str,
+    /// The detail: a cause, or another program's own words.
+    pub detail: &'a str,
+}
+
+/// A refusal's code, and a second code saying why.
+#[derive(Debug, Clone, Serialize)]
+pub struct Reasoned<'a> {
+    /// The code a client acts on.
+    pub error: &'a str,
+    /// Why, as a code.
+    pub reason: &'a str,
+}
+
 /// A failure with the status code to render it at.
 ///
 /// The body is held as JSON rather than as [`Error`] because a few routes
@@ -36,9 +72,15 @@ pub struct ApiError {
 impl ApiError {
     /// `{ "error": message }` at the given status.
     pub fn new(status: StatusCode, message: impl Into<String>) -> Self {
+        Self::refusal(status, Error { error: message.into() })
+    }
+
+    /// `body` at the given status: one of the shapes above, or a route's own.
+    pub fn refusal(status: StatusCode, body: impl Serialize) -> Self {
         Self {
             status,
-            body: serde_json::json!({ "error": message.into() }),
+            // Strings and numbers, which always encode.
+            body: serde_json::to_value(body).unwrap_or_default(),
         }
     }
 

@@ -50,7 +50,7 @@ use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 use tokio::sync::oneshot;
 
-use droppen_http::error::ApiError;
+use droppen_http::error::{ApiError, Hinted};
 use droppen_http::extract::{ApiJson, ApiPath};
 use droppen_http::SendResult;
 use droppen_instance::instance::InstanceDirs;
@@ -183,9 +183,12 @@ impl AppError {
     fn into_api(self) -> ApiError {
         let message = self.to_string();
         match self {
-            AppError::Missing(kind) => ApiError::with_body(
+            AppError::Missing(kind) => ApiError::refusal(
                 StatusCode::CONFLICT,
-                serde_json::json!({ "error": kind.missing(), "hint": message }),
+                Hinted {
+                    error: kind.missing(),
+                    hint: &message,
+                },
             ),
             AppError::Failed(_) => ApiError::conflict(message),
         }

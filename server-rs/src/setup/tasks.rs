@@ -86,7 +86,7 @@ use super::runner::Invocation;
 use super::shell::{self, ShellSnapshot};
 use super::{Setup, SetupState, SetupTask, TaskFailure, TaskKind, ToolId, ToolLogin};
 use droppen_instance::db::scope;
-use droppen_http::error::ApiError;
+use droppen_http::error::{ApiError, Hinted, Reasoned};
 use droppen_http::openapi_ext::Nullable;
 use droppen_base::process_env::{self, Env};
 use crate::terminals::{CreateSpec, Registry};
@@ -325,9 +325,12 @@ fn busy() -> ApiError {
 
 /// `400 {"error":"unavailable","reason":…}`.
 pub fn unavailable(reason: &str) -> ApiError {
-    ApiError::with_body(
+    ApiError::refusal(
         gotcha::axum::http::StatusCode::BAD_REQUEST,
-        serde_json::json!({ "error": "unavailable", "reason": reason }),
+        Reasoned {
+            error: "unavailable",
+            reason,
+        },
     )
 }
 
@@ -508,9 +511,12 @@ impl Setup {
         let path = Path::new(path);
         let named = path.file_name().is_some_and(|name| name == tool.binary());
         if !path.is_absolute() || !named || resolve_executable(path).is_none() {
-            return Err(ApiError::with_body(
+            return Err(ApiError::refusal(
                 gotcha::axum::http::StatusCode::BAD_REQUEST,
-                serde_json::json!({ "error": "not_the_tool", "hint": format!("an executable file named {}", tool.binary()) }),
+                Hinted {
+                    error: "not_the_tool",
+                    hint: &format!("an executable file named {}", tool.binary()),
+                },
             ));
         }
         // The folder that goes on the PATH is the real one, links in it
@@ -524,22 +530,22 @@ impl Setup {
             .and_then(resolve_trusted)
             .and_then(|dir| std::fs::canonicalize(dir).ok());
         if dir.as_deref().is_some_and(|dir| dir.to_string_lossy().contains(':')) {
-            return Err(ApiError::with_body(
+            return Err(ApiError::refusal(
                 gotcha::axum::http::StatusCode::BAD_REQUEST,
-                serde_json::json!({
-                    "error": "colon_in_path",
-                    "hint": "a folder whose path has a ':' cannot go on a PATH; move the CLI or link it from another folder",
-                }),
+                Hinted {
+                    error: "colon_in_path",
+                    hint: "a folder whose path has a ':' cannot go on a PATH; move the CLI or link it from another folder",
+                },
             ));
         }
         let others_can_change_it = !dir.as_deref().is_some_and(trusted_folder);
         if others_can_change_it {
-            return Err(ApiError::with_body(
+            return Err(ApiError::refusal(
                 gotcha::axum::http::StatusCode::BAD_REQUEST,
-                serde_json::json!({
-                    "error": "not_yours",
-                    "hint": "the file and its folder must belong to you and be writable by nobody else",
-                }),
+                Hinted {
+                    error: "not_yours",
+                    hint: "the file and its folder must belong to you and be writable by nobody else",
+                },
             ));
         }
         let dir = dir.unwrap_or_default();
