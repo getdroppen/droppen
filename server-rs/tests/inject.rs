@@ -1099,3 +1099,51 @@ async fn a_new_session_needs_a_real_directory_inside_home() {
 
     probe.stop().await;
 }
+
+/// A Claude session's notify channel is added after its environment is
+/// scrubbed: `clean_env` drops the notify names, then `notify::inject::decorate`
+/// puts in the session's own. Nothing between that and the CLI may scrub again,
+/// or every session loses its channel without a word: the resident, the shim
+/// and the claude it starts carry it through. Checked on a resumed session and
+/// on a new one, the two ways a message reaches a claude.
+#[tokio::test]
+async fn a_claude_session_reaches_its_cli_with_the_channel_minted_for_it() {
+    let probe = Probe::start().await;
+    probe
+        .send_ok("PUT", "/api/notify/config", json!({"enabled": true, "endpoint": "testdevicekey01"}), 200)
+        .await;
+
+    let workspace = probe.workspace();
+    probe.seed_session(&probe.managed_root(), OWNED_ID, &workspace);
+    let (status, body) = message(&probe, "claude", OWNED_ID, json!({"text": "hello"})).await;
+    assert_eq!(status, 200, "{body}");
+    assert_own_channel(&probe, &probe.wait_for_spawn(&workspace).await, OWNED_ID).await;
+
+    let fresh = probe.home.join("fresh");
+    std::fs::create_dir_all(&fresh).expect("fresh workspace");
+    let created = probe
+        .send_ok("POST", "/api/sessions/new", json!({"source": "claude", "cwd": fresh.to_string_lossy(), "text": "start"}), 200)
+        .await;
+    let id = created["id"].as_str().expect("id");
+    assert_own_channel(&probe, &probe.wait_for_spawn(&fresh).await, id).await;
+
+    probe.stop().await;
+}
+
+/// `spawn`'s notify channel is this server's, and its token verifies as the one
+/// minted for the claude session `id`.
+async fn assert_own_channel(probe: &Probe, spawn: &support::Spawn, id: &str) {
+    let instance = droppen_instance::instance::DEFAULT_INSTANCE;
+    let paths = droppen_instance::paths::Paths::for_instance(probe.home.clone(), instance);
+    let dirs = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), instance).expect("instance");
+    let port = std::fs::read_to_string(dirs.port_file()).expect("the server's port");
+    let url = format!("http://127.0.0.1:{}/api/notify", port.trim());
+    assert_eq!(spawn.env("DROPPEN_NOTIFY_URL"), Some(url.as_str()), "this server's notify route");
+    let token = spawn.env("DROPPEN_NOTIFY_TOKEN").expect("the session's token reached claude");
+    let secret = remote_hand_server::notify::store::secret(&paths).await.expect("the notify secret");
+    assert_eq!(
+        remote_hand_server::notify::token::verify(&secret, instance, token),
+        Some(format!("claude/{id}")),
+        "minted by this server, for this session"
+    );
+}

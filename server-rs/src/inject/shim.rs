@@ -505,7 +505,9 @@ impl Args {
     let args = self;
     // The environment and working directory are this process's, inherited:
     // whoever spawned the shim scrubbed them once, and a second copy of that
-    // policy here could disagree with it after an upgrade.
+    // policy here could disagree with it after an upgrade. Scrubbing again
+    // would also drop the session's own notify channel, which the server adds
+    // after its scrub (`notify::inject::decorate`).
     let mut command = Command::new(&args.command);
     command
         .args(&args.args)

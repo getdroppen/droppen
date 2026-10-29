@@ -392,7 +392,7 @@ mod tests {
         for name in crate::env::OLDER_HANDOFFS {
             assert!(is_older_handoff(name), "{name}");
         }
-        assert!(!is_older_handoff("DROPPEN_NOTIFY_TOKEN"), "what a child is meant to have stays");
+        assert!(!is_older_handoff("DROPPEN_NOTIFY_TOKEN"), "not an older name");
         let inherited = crate::env::OLDER_HANDOFFS
             .iter()
             .map(|name| (name.to_string(), "outer".to_string()))
