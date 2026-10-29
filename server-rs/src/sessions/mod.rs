@@ -416,11 +416,13 @@ impl DriverStates {
     /// the one it must be computed from: a session whose resident is mid-turn
     /// is not waiting on the user, whatever the tail of its transcript looks
     /// like.
-    pub fn apply(&self, sessions: &mut [SessionSummary]) {
+    pub fn apply(&self, transcripts: &TranscriptSources, sessions: &mut [SessionSummary]) {
         for summary in sessions {
             let resident = self.resident(summary.source, &summary.id);
             let injecting = self.injecting(summary.source, &summary.id);
-            let finished_at = self.finished_at(summary.source, &summary.id);
+            let finished_at = self
+                .finished_at(summary.source, &summary.id)
+                .filter(|_| transcripts.settles_reaped_runs(summary.source));
             apply_driver(summary, resident.as_ref(), injecting, finished_at);
         }
     }
@@ -443,9 +445,11 @@ impl DriverStates {
 /// last write: no process remains, so a `task_started` tail is stale. A rollout
 /// written after that finish wins again, preserving the guard against a Codex
 /// process started somewhere else.
+///
+/// `finished_at` is when the driver's last run ended, given only for a source
+/// whose reader settles on it ([`Transcripts::settles_reaped_runs`]).
 pub fn apply_driver(summary: &mut SessionSummary, resident: Option<&ResidentInfo>, injecting: bool, finished_at: Option<&str>) {
-    let codex_run_ended_after_last_write =
-        summary.source == Source::Codex && finished_at.is_some_and(|finished_at| summary.updated_at.as_str() < finished_at);
+    let codex_run_ended_after_last_write = finished_at.is_some_and(|finished_at| summary.updated_at.as_str() < finished_at);
     summary.activity = match resident {
         Some(resident) => resident.activity(),
         None if injecting => SessionActivity::Working,
@@ -918,7 +922,7 @@ impl TranscriptSources {
         // `status`, and `unread` is computed *from* `status` — so a session whose
         // resident is mid-turn has to be known to be mid-turn before the badge is
         // decided, or the phone lights up for a session that is busy working.
-        drivers.apply(&mut sessions);
+        drivers.apply(self, &mut sessions);
         // After the driver: a Claude child counts as working only while its
         // parent is, and that is the driver's answer.
         subagents::apply(paths, &mut sessions).await;
@@ -1365,7 +1369,7 @@ mod tests {
         assert!(!elsewhere.injecting(Source::Codex, "c"));
 
         let mut rows = vec![row(SessionStatus::Waiting)];
-        states.apply(&mut rows);
+        states.apply(&crate::app::transcript_sources(), &mut rows);
         assert_eq!(rows[0].activity, SessionActivity::Working);
     }
 

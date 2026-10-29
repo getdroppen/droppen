@@ -70,6 +70,14 @@ pub trait Transcripts: Send + Sync {
     /// entries and never reach this test.
     fn spoken_texts(&self, entry: &Map<String, Value>) -> Vec<String>;
 
+    /// Whether a run the driver reaped after the transcript's last write
+    /// settles a tail that still reads as running. True for a CLI whose
+    /// process can die without writing its turn's end; see
+    /// [`super::apply_driver`].
+    fn settles_reaped_runs(&self) -> bool {
+        false
+    }
+
     /// The transcripts that count toward the token-usage stats and were
     /// written at or after `cutoff_ms`. None by default: a CLI whose
     /// transcripts report no tokens this server can price adds nothing.
@@ -185,6 +193,12 @@ impl TranscriptSources {
     /// [`Transcripts::find_file`].
     pub async fn find_file(&self, paths: &Paths, source: Source, id: &str) -> Option<PathBuf> {
         self.get(source)?.find_file(paths, id).await
+    }
+
+    /// See [`Transcripts::settles_reaped_runs`]; false for a source with no
+    /// reader.
+    pub fn settles_reaped_runs(&self, source: Source) -> bool {
+        self.get(source).is_some_and(|reader| reader.settles_reaped_runs())
     }
 
     /// See [`Transcripts::cli_choice`].

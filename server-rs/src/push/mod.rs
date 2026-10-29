@@ -477,7 +477,7 @@ async fn notify_inner(
         // The same overlay `TranscriptSources::list_and_filter` applies, on the one
         // row this is about, so a notification and a list row can never give two
         // accounts of one session.
-        driver.apply(std::slice::from_mut(summary));
+        driver.apply(&transcripts, std::slice::from_mut(summary));
     }
     let tag = attention::seen::key_of(source, &id);
 
