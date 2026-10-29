@@ -324,12 +324,13 @@ pub(crate) mod tests {
         }
     }
 
-    fn strings(words: &[&str]) -> Vec<String> {
+    /// `words` as the owned strings a command's own parse takes.
+    pub(crate) fn args(words: &[&str]) -> Vec<String> {
         words.iter().map(|word| (*word).to_string()).collect()
     }
 
     fn tail(words: &[&str]) -> RawTail {
-        RawTail { args: strings(words) }
+        RawTail { args: args(words) }
     }
 
     /// Every command, with the raw tails exactly as clap leaves them.
@@ -344,10 +345,10 @@ pub(crate) mod tests {
             (vec!["serve", "--version"], Command::Serve(tail(&["--version"]))),
             (vec!["preflight", "--help"], Command::Preflight(tail(&["--help"]))),
             (vec!["preflight", "junk"], Command::Preflight(tail(&["junk"]))),
-            (vec!["up", "--help"], Command::Up(UpArgs { child: strings(&["--help"]) })),
+            (vec!["up", "--help"], Command::Up(UpArgs { child: args(&["--help"]) })),
             (vec!["up", "--"], Command::Up(UpArgs { child: vec![] })),
-            (vec!["up", "--", "serve", "--flag"], Command::Up(UpArgs { child: strings(&["serve", "--flag"]) })),
-            (vec!["up", "serve", "--", "x"], Command::Up(UpArgs { child: strings(&["serve", "--", "x"]) })),
+            (vec!["up", "--", "serve", "--flag"], Command::Up(UpArgs { child: args(&["serve", "--flag"]) })),
+            (vec!["up", "serve", "--", "x"], Command::Up(UpArgs { child: args(&["serve", "--", "x"]) })),
         ] {
             assert_eq!(parse(&argv).expect("parses"), expected, "{argv:?}");
         }
@@ -428,7 +429,7 @@ pub(crate) mod tests {
 
     fn user(app: u8, yes: u8, command: UserCommand) -> Command {
         Command::User(UserArgs {
-            instance: strings(&["probe"]),
+            instance: args(&["probe"]),
             app,
             yes,
             command,
@@ -449,7 +450,7 @@ pub(crate) mod tests {
                 vec!["agent", "status", "--instance", "probe"],
                 Command::Agent(AgentArgs {
                     hub: None,
-                    instance: strings(&["probe"]),
+                    instance: args(&["probe"]),
                     command: AgentCommand::Status,
                 }),
             ),
@@ -457,13 +458,13 @@ pub(crate) mod tests {
                 vec!["agent", "enroll", "-", "--hub", "ws://127.0.0.1:1", "--instance", "probe"],
                 Command::Agent(AgentArgs {
                     hub: Some("ws://127.0.0.1:1".to_string()),
-                    instance: strings(&["probe"]),
+                    instance: args(&["probe"]),
                     command: AgentCommand::Enroll { code: "-".to_string() },
                 }),
             ),
-            (vec!["up", "--", "serve"], Command::Up(UpArgs { child: strings(&["serve"]) })),
+            (vec!["up", "--", "serve"], Command::Up(UpArgs { child: args(&["serve"]) })),
             (vec!["up"], Command::Up(UpArgs { child: vec![] })),
-            (vec!["up", "serve"], Command::Up(UpArgs { child: strings(&["serve"]) })),
+            (vec!["up", "serve"], Command::Up(UpArgs { child: args(&["serve"]) })),
             (vec!["serve"], Command::Serve(tail(&[]))),
             (vec![], Command::Serve(tail(&[]))),
             (vec!["preflight"], Command::Preflight(tail(&[]))),
@@ -473,7 +474,7 @@ pub(crate) mod tests {
                 assert!(args.flags_fit(), "{argv:?} runs");
             }
             if let Command::Up(up) = &parsed {
-                assert_eq!(droppen_supervisor::supervisor::child_args(&up.child), strings(&["serve"]), "{argv:?} supervises `serve`");
+                assert_eq!(droppen_supervisor::supervisor::child_args(&up.child), args(&["serve"]), "{argv:?} supervises `serve`");
             }
             assert_eq!(parsed, expected, "{argv:?}");
         }
@@ -524,7 +525,7 @@ pub(crate) mod tests {
                 exit_file: "/run/t.exit".into(),
                 cols: cols.map(Into::into),
                 rows: rows.map(Into::into),
-                command: strings(command),
+                command: args(command),
             })
         };
         let session = |buffer_bytes: Option<&str>, command: &[&str]| {
@@ -533,7 +534,7 @@ pub(crate) mod tests {
                 stderr_file: "/run/s.err".into(),
                 exit_file: "/run/s.exit".into(),
                 buffer_bytes: buffer_bytes.map(Into::into),
-                command: strings(command),
+                command: args(command),
             })
         };
         for (argv, expected) in [

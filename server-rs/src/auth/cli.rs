@@ -909,12 +909,8 @@ mod tests {
     use clap::error::ErrorKind;
 
     use super::*;
-    use crate::cli::tests::parse_words;
+    use crate::cli::tests::{args, parse_words};
     use crate::cli::Command;
-
-    fn args(words: &[&str]) -> Vec<String> {
-        words.iter().map(|word| (*word).to_string()).collect()
-    }
 
     fn parse_user(words: &[String]) -> Result<UserArgs, clap::Error> {
         match parse_words("user", words)? {

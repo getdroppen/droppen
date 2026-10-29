@@ -23,12 +23,14 @@ use droppen_instance::paths::Paths;
 use droppen_pty::proto::{self, Frame, Hello2, Meta};
 use droppen_pty::sidecar::Sidecars;
 use remote_hand_server::shutdown::Cleanups;
-use remote_hand_server::terminals::{Chunk, CreateSpec, Registry};
+use remote_hand_server::terminals::{Chunk, Registry};
 use serde_json::Value;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_util::sync::CancellationToken;
 
 mod common;
+
+use common::sh;
 
 // ------------------------------------------------------------------- harness
 
@@ -153,11 +155,6 @@ fn shim_dir(home: &Path, instance: &str) -> std::path::PathBuf {
 
 fn dirs(home: &Path, instance: &str) -> InstanceDirs {
     InstanceDirs::new(&Paths::new(home.to_path_buf()).data_dir(), instance).expect("instance name")
-}
-
-/// A terminal running `script` under `/bin/sh`.
-fn sh(script: &str) -> CreateSpec {
-    CreateSpec::new("/bin/sh", vec!["-c".to_string(), script.to_string()])
 }
 
 /// Everything one attached client would see: the replay, then every later chunk.

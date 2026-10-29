@@ -574,3 +574,24 @@ fn dechunk(body: &str) -> String {
     }
     out
 }
+
+/// Kills a process group when it goes out of scope.
+///
+/// Both the server and the CLI it spawns lead groups of their own — the server
+/// because [`spawn_server`] says so, the CLI because that is what lets it
+/// outlive the server — so a group signal is what reaches every child they
+/// forked.
+pub struct KillGroupOnDrop(pub u32);
+
+impl Drop for KillGroupOnDrop {
+    fn drop(&mut self) {
+        // SAFETY: a negative pid names a process group; killing one that has
+        // already gone is an ignored `ESRCH`.
+        unsafe { libc::kill(-(self.0 as libc::pid_t), libc::SIGKILL) };
+    }
+}
+
+/// A terminal running `script` under `/bin/sh`.
+pub fn sh(script: &str) -> remote_hand_server::terminals::CreateSpec {
+    remote_hand_server::terminals::CreateSpec::new("/bin/sh", vec!["-c".to_string(), script.to_string()])
+}
