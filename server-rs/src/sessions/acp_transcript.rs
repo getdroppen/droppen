@@ -637,6 +637,17 @@ impl super::Transcripts for AcpSessions {
         "this ACP session was started elsewhere; continue it where it was started".to_string()
     }
 
+    // An agent runs only under this server, so no live process of its own
+    // stands between the composer and a session.
+    fn live_block(&self, _status: SessionStatus) -> Option<String> {
+        None
+    }
+
+    // Every row is `SessionScope::Owned`: only this server runs an ACP agent.
+    fn foreign_sessions(&self) -> bool {
+        false
+    }
+
     // Made first, or the first ACP session would only reach the list on the
     // poll. One recursive watch covers every agent.
     fn watch_dirs<'a>(&'a self, paths: &'a Paths) -> BoxFuture<'a, Vec<PathBuf>> {
