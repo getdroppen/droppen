@@ -505,6 +505,190 @@ fn is_format(c: char) -> bool {
 /// The most a plugin pane's `state` may weigh, as JSON.
 const PLUGIN_PANE_STATE_BYTES: usize = 2048;
 
+/// What the sanitizers store, byte for byte: the `payload` column holds it and
+/// builds of other versions read it back.
+#[cfg(test)]
+mod stored_bytes {
+    use super::*;
+
+    fn bytes(layout: &Value) -> String {
+        serde_json::to_string(&(Some(layout)).sanitize_layout()).unwrap()
+    }
+
+    fn leaf(id: &str, content: Value) -> Value {
+        json!({ "type": "leaf", "id": id, "content": content, "extra": 1 })
+    }
+
+    fn split(id: &str, direction: &str, ratio: Value, a: Value, b: Value) -> Value {
+        json!({ "type": "split", "id": id, "direction": direction, "ratio": ratio, "children": [a, b], "extra": 1 })
+    }
+
+    /// Five splits (the most the budget allows), ratios clamped, a direction
+    /// that is not `column` read as `row`, and the kinds that keep their device.
+    #[test]
+    fn a_full_tree_with_the_kinds_on_a_device() {
+        let m = "d-7f3a";
+        let layout = split(
+            "s1",
+            "row",
+            json!(0.3),
+            split(
+                "s2",
+                "column",
+                json!(2),
+                leaf("l1", json!({ "kind": "session", "source": "claude", "id": "sess-1", "machine": m, "x": 1 })),
+                leaf("l2", json!({ "kind": "chat", "chatKind": "api", "id": "chat-1", "machine": m })),
+            ),
+            split(
+                "s3",
+                "diagonal",
+                Value::Null,
+                leaf("l3", json!({ "kind": "terminal", "id": "term-1", "machine": m })),
+                split(
+                    "s4",
+                    "column",
+                    json!(0.05),
+                    leaf("l4", json!({ "kind": "new-session", "machine": m })),
+                    split(
+                        "s5",
+                        "row",
+                        json!(0.5),
+                        leaf("l5", json!({ "kind": "files", "path": "/w/a b", "file": "/w/a b/c.png", "machine": m })),
+                        leaf("l6", json!({ "kind": "picker", "machine": m })),
+                    ),
+                ),
+            ),
+        );
+        assert_eq!(
+            bytes(&layout),
+            concat!(
+                r#"{"type":"split","id":"s1","direction":"row","ratio":0.3,"children":[{"type":"split","id":"s2","direction":"column","ratio":0.9,"children":[{"type":"leaf","id":"l1","content":{"kind":"session","source":"claude","id":"sess-1","machine":"d-7f3a"}},"#,
+                r#"{"type":"leaf","id":"l2","content":{"kind":"chat","chatKind":"api","id":"chat-1","machine":"d-7f3a"}}]},"#,
+                r#"{"type":"split","id":"s3","direction":"row","ratio":0.5,"children":[{"type":"leaf","id":"l3","content":{"kind":"terminal","id":"term-1","machine":"d-7f3a"}},"#,
+                r#"{"type":"split","id":"s4","direction":"column","ratio":0.1,"children":[{"type":"leaf","id":"l4","content":{"kind":"new-session","machine":"d-7f3a"}},"#,
+                r#"{"type":"split","id":"s5","direction":"row","ratio":0.5,"children":[{"type":"leaf","id":"l5","content":{"kind":"files","path":"/w/a b","file":"/w/a b/c.png","machine":"d-7f3a"}},"#,
+                r#"{"type":"leaf","id":"l6","content":{"kind":"picker","machine":"d-7f3a"}}]}]}]}]}"#,
+            )
+        );
+    }
+
+    /// The kinds that are on no device (their `machine` goes), a plugin
+    /// pane's state in the order it was sent, and content that degrades.
+    #[test]
+    fn a_tree_with_the_other_kinds_and_degraded_content() {
+        let m = "d-7f3a";
+        let layout = split(
+            "s1",
+            "column",
+            json!(0.25),
+            split(
+                "s2",
+                "row",
+                json!(0.5),
+                leaf("l1", json!({ "kind": "tasks", "machine": m })),
+                leaf("l2", json!({ "kind": "plugin", "plugin": "tasks", "pane": "checklist", "machine": m,
+                                  "state": { "zeta": 1, "alpha": "a", "on": true, "none": null } })),
+            ),
+            split(
+                "s3",
+                "row",
+                json!(0.5),
+                leaf("l3", json!({ "kind": "browser", "id": "b-1", "machine": m })),
+                split(
+                    "s4",
+                    "row",
+                    json!(0.5),
+                    leaf("l4", json!({ "kind": "gopher", "id": "x", "machine": m })),
+                    split(
+                        "s5",
+                        "row",
+                        json!(0.5),
+                        leaf("l5", json!({ "kind": "session", "source": "nope", "id": "s", "machine": m })),
+                        leaf("l6", json!("not an object")),
+                    ),
+                ),
+            ),
+        );
+        assert_eq!(
+            bytes(&layout),
+            concat!(
+                r#"{"type":"split","id":"s1","direction":"column","ratio":0.25,"children":[{"type":"split","id":"s2","direction":"row","ratio":0.5,"children":[{"type":"leaf","id":"l1","content":{"kind":"tasks"}},"#,
+                r#"{"type":"leaf","id":"l2","content":{"kind":"plugin","plugin":"tasks","pane":"checklist","state":{"zeta":1,"alpha":"a","on":true,"none":null}}}]},"#,
+                r#"{"type":"split","id":"s3","direction":"row","ratio":0.5,"children":[{"type":"leaf","id":"l3","content":{"kind":"browser","id":"b-1"}},"#,
+                r#"{"type":"split","id":"s4","direction":"row","ratio":0.5,"children":[{"type":"leaf","id":"l4","content":{"kind":"picker"}},"#,
+                r#"{"type":"split","id":"s5","direction":"row","ratio":0.5,"children":[{"type":"leaf","id":"l5","content":{"kind":"picker"}},"#,
+                r#"{"type":"leaf","id":"l6","content":{"kind":"picker"}}]}]}]}]}"#,
+            )
+        );
+    }
+
+    /// A split past the budget collapses into a leaf under its own id.
+    #[test]
+    fn a_split_past_the_budget_becomes_a_leaf() {
+        let t = |id: &str| leaf(id, json!({ "kind": "terminal", "id": id }));
+        let deep = split("s6", "row", json!(0.5), t("l6"), t("l7"));
+        let layout = split(
+            "s1",
+            "row",
+            json!(0.5),
+            t("l1"),
+            split("s2", "row", json!(0.5), t("l2"), split("s3", "row", json!(0.5), t("l3"), split("s4", "row", json!(0.5), t("l4"), split("s5", "row", json!(0.5), t("l5"), deep)))),
+        );
+        assert_eq!(
+            bytes(&layout),
+            concat!(
+                r#"{"type":"split","id":"s1","direction":"row","ratio":0.5,"children":[{"type":"leaf","id":"l1","content":{"kind":"terminal","id":"l1"}},"#,
+                r#"{"type":"split","id":"s2","direction":"row","ratio":0.5,"children":[{"type":"leaf","id":"l2","content":{"kind":"terminal","id":"l2"}},"#,
+                r#"{"type":"split","id":"s3","direction":"row","ratio":0.5,"children":[{"type":"leaf","id":"l3","content":{"kind":"terminal","id":"l3"}},"#,
+                r#"{"type":"split","id":"s4","direction":"row","ratio":0.5,"children":[{"type":"leaf","id":"l4","content":{"kind":"terminal","id":"l4"}},"#,
+                r#"{"type":"split","id":"s5","direction":"row","ratio":0.5,"children":[{"type":"leaf","id":"l5","content":{"kind":"terminal","id":"l5"}},"#,
+                r#"{"type":"leaf","id":"s6","content":{"kind":"picker"}}]}]}]}]}]}"#,
+            )
+        );
+    }
+
+    /// A stored row read back: what the next save writes into `payload`.
+    #[test]
+    fn a_screen_read_back_is_written_the_same() {
+        let row = json!({
+            "id": "screen-1", "title": "  Work  ", "emoji": "🧪", "createdAt": "2026-10-01T00:00:00.000Z",
+            "updatedAt": "2026-10-02T00:00:00.000Z", "revision": 9, "extra": true,
+            "layout": leaf("l1", json!({ "kind": "terminal", "id": "term-1", "machine": "d-1" })),
+        });
+        assert_eq!(
+            row.screen_in_row(0, 4).payload(),
+            r#"{"id":"screen-1","title":"Work","emoji":"🧪","layout":{"type":"leaf","id":"l1","content":{"kind":"terminal","id":"term-1","machine":"d-1"}},"createdAt":"2026-10-01T00:00:00.000Z","updatedAt":"2026-10-02T00:00:00.000Z","revision":4}"#
+        );
+    }
+
+    struct Frames(std::sync::Mutex<Vec<String>>);
+
+    impl droppen_http::refresh::RefreshSink for Frames {
+        fn request_refresh(&self, _: Option<(&dyn std::fmt::Display, &str)>) {}
+        fn publish(&self, frame: String) {
+            self.0.lock().unwrap().push(frame);
+        }
+    }
+
+    /// The feed frames that tell other devices to look again.
+    #[test]
+    fn the_screens_frames() {
+        let frames = Arc::new(Frames(std::sync::Mutex::new(Vec::new())));
+        let feed = Refresh::new(frames.clone());
+        feed.announce_changed("screen-1", 3, false);
+        feed.announce_changed("screen-1", 4, true);
+        feed.announce_list(7);
+        assert_eq!(
+            *frames.0.lock().unwrap(),
+            [
+                r#"{"type":"screens:changed","id":"screen-1","revision":3}"#,
+                r#"{"type":"screens:changed","id":"screen-1","revision":4,"deleted":true}"#,
+                r#"{"type":"screens:list","listRevision":7}"#,
+            ]
+        );
+    }
+}
+
 #[cfg(test)]
 mod plugin_pane_tests {
     use super::*;
