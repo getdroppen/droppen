@@ -6,7 +6,8 @@ session/set_config_option, session/close, session/prompt and session/cancel.
 Its sessions offer a model and a reasoning effort as configuration options,
 as real agents' do. Everything it is asked is appended to `agent-calls.jsonl` in its
 working directory — or to `$FAKE_AGENT_LOG`, which a probe's scratch directory
-needs — so a test can read what it was sent. A prompt containing "wait" holds
+needs — so a test can read what it was sent; the arguments and environment it was
+started with go to `agent-spawn.json` in its working directory. A prompt containing "wait" holds
 its turn open until it is cancelled. `FAKE_AGENT_SLOW=<method>=<seconds>,...`
 makes it take that long over a request, after writing it down, so a test can
 act while the request is in flight; `FAKE_AGENT_DEAF` the same, but after
@@ -30,6 +31,10 @@ if sys.argv[1:] != ["--acp", "--stdio"]:
 print("agent: loading plugins", flush=True)
 
 cwd = Path.cwd()
+# Renamed into place, so a reader never sees half of it.
+spawned = cwd / "agent-spawn.json.tmp"
+spawned.write_text(json.dumps({"argv": sys.argv[1:], "env": dict(os.environ)}))
+spawned.replace(cwd / "agent-spawn.json")
 calls = Path(os.environ["FAKE_AGENT_LOG"]) if os.environ.get("FAKE_AGENT_LOG") else cwd / "agent-calls.jsonl"
 lock = threading.Lock()
 waiting = {}
