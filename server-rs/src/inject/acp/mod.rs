@@ -373,6 +373,11 @@ impl Run for Acp {
     fn interrupt(&self, id: &str) -> bool {
         self.registry.acp_handle(id).filter(Handle::alive).is_some_and(|handle| handle.interrupt())
     }
+
+    // The transcript moves out of the agent's list (`archive_acp`).
+    fn archive<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Result<(), String>> {
+        Box::pin(async move { self.registry.archive_acp(id).await.map_err(|error| error.to_string()) })
+    }
 }
 
 impl InjectionRegistry {

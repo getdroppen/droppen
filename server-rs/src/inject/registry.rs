@@ -115,6 +115,11 @@ pub trait Run: Send + Sync {
     fn answer_question<'a>(&'a self, _id: &'a str, _request_id: &'a str, _reply: Reply, _by: Option<String>) -> BoxFuture<'a, AnswerOutcome> {
         Box::pin(std::future::ready(AnswerOutcome::NoResident))
     }
+
+    /// Put the session away, so it leaves the list; or why not, in the words
+    /// the archive route refuses with. Each CLI keeps its archive its own way,
+    /// so every provider answers.
+    fn archive<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Result<(), String>>;
 }
 
 /// Every provider, keyed by the [`Source`] it runs.
@@ -319,6 +324,15 @@ impl ProviderRegistry {
             None => AnswerOutcome::NoResident,
         }
     }
+
+    /// See [`Run::archive`]. A source no provider runs is refused: nothing
+    /// could put its session away.
+    pub async fn archive(&self, source: Source, id: &str) -> Result<(), String> {
+        match self.run(source) {
+            Some(run) => run.archive(id).await,
+            None => Err(format!("no provider runs {source} sessions")),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -459,5 +473,28 @@ mod tests {
             assert_eq!(providers.send_block(&row(source, Some("gone"))), None, "{source}");
             assert_eq!(providers.send_block(&row(source, None)), None, "{source}");
         }
+    }
+
+    /// Each provider puts its own sessions away: Claude Code onto this server's
+    /// hidden list, and ACP refuses, in its archive's own words, a session that
+    /// is not there. A source no provider runs is refused.
+    #[tokio::test]
+    async fn each_provider_archives_its_own_sessions() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let providers = providers(home.path());
+        let paths = Paths::new(home.path().to_path_buf());
+        providers.archive(Source::Claude, "c1").await.expect("archived");
+        assert!(crate::sessions::archive::archived_ids(&paths).contains("c1"));
+        assert_eq!(
+            providers.archive(Source::Acp, "a1").await,
+            Err(crate::sessions::archive::ArchiveError("cannot archive the ACP session: it is gone".to_string()).to_string())
+        );
+
+        let other = tempfile::tempdir().expect("tempdir");
+        let none = providers_from(other.path(), |_, _| {});
+        for source in [Source::Claude, Source::Codex, Source::Acp] {
+            assert_eq!(none.archive(source, "x").await, Err(format!("no provider runs {source} sessions")), "{source}");
+        }
+        assert!(crate::sessions::archive::archived_ids(&Paths::new(other.path().to_path_buf())).is_empty(), "nothing was archived");
     }
 }

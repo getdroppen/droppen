@@ -764,6 +764,15 @@ impl Run for ClaudeCode {
     fn answer_question<'a>(&'a self, id: &'a str, request_id: &'a str, reply: Reply, by: Option<String>) -> BoxFuture<'a, AnswerOutcome> {
         Box::pin(self.registry.answer_question(id, request_id, reply, by))
     }
+
+    // Onto this server's hidden list: claude keeps no archive of its own.
+    fn archive<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Result<(), String>> {
+        Box::pin(async move {
+            crate::sessions::archive::archive_claude_session(&self.registry.paths, id)
+                .await
+                .map_err(|_| "archive failed".to_string())
+        })
+    }
 }
 
 impl ClaudeCode {

@@ -31,7 +31,7 @@ use droppen_instance::paths::ClaudeRoot;
 use crate::sessions::delivery::{QuestionState, ReceiptLookup, ReceiptStatus, SessionQuestion};
 use crate::sessions::sidecars::{is_agent_id, AgentPath, Checklist};
 use crate::sessions::util::TranscriptItem;
-use crate::sessions::{archive, chats_cwd, claude, file_signature, SessionScope, Source};
+use crate::sessions::{chats_cwd, claude, file_signature, SessionScope, Source};
 
 /// `POST /api/sessions/{source}/{id}/message` body.
 #[derive(Debug, Clone, Serialize, Deserialize, Schematic)]
@@ -1301,27 +1301,7 @@ pub async fn archive_session(State(state): State<DriveState>, ApiPath((source, i
     // codex's updates the user's own state through its App Server or CLI. Neither is this
     // server's to do for a session it did not make.
     writable_session(drive, source, &id).await?;
-    match source {
-        Source::Claude => {
-            archive::archive_claude_session(&drive.paths, &id)
-                .await
-                .map_err(|_| ApiError::conflict("archive failed"))?;
-        }
-        Source::Codex => {
-            drive
-                .injections
-                .archive_codex(&id)
-                .await
-                .map_err(|error| ApiError::conflict(error.to_string()))?;
-        }
-        Source::Acp => {
-            drive
-                .injections
-                .archive_acp(&id)
-                .await
-                .map_err(|error| ApiError::conflict(error.to_string()))?;
-        }
-    }
+    drive.providers.archive(source, &id).await.map_err(ApiError::conflict)?;
     // An archived session leaves the list, so nothing is named to wait for.
     state.global.request_refresh(None);
     Ok(Json(SendResult { accepted: true }))
