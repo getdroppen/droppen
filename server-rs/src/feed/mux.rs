@@ -638,8 +638,11 @@ mod tests {
         let missing = parse_client_message(r#"{"type":"sub","feeds":[{"sub":9,"source":"claude","id":"00000000-0000-4000-8000-000000000000"}]}"#)
             .expect("a sub");
         subs.handle(missing);
-        let closed = next(&mut rx).await;
-        assert_eq!(closed, serde_json::json!({ "sub": 9, "type": "closed" }));
+        let closed = tokio::time::timeout(Duration::from_secs(10), rx.recv())
+            .await
+            .expect("a frame in time")
+            .expect("open");
+        assert_eq!(closed, r#"{"sub":9,"type":"closed"}"#, "byte for byte: pages of any version read it");
         assert_eq!(subs.handle(ClientMessage::Ping), vec![r#"{"type":"pong"}"#.to_string()]);
     }
 
