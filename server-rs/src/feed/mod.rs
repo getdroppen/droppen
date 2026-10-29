@@ -68,7 +68,6 @@
 pub mod global;
 pub mod mux;
 pub mod search;
-pub mod watch;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -86,6 +85,7 @@ use crate::sessions::account::AccountRef;
 use crate::sessions::loader::{encode_fp, Fp, Transcript, RESUME_OVERLAP};
 use crate::sessions::util::TranscriptItem;
 use crate::sessions::{file_signature, sendability, CliChoice, Injection, SessionDetail, SessionSummary, Source, TranscriptSources};
+use droppen_base::watch;
 
 /// How many items one page of transcript holds.
 pub const SESSION_PAGE_SIZE: usize = 200;

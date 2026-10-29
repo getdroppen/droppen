@@ -50,7 +50,7 @@
 //!
 //! # Timing
 //!
-//! `notify` plus a poll, exactly as [`crate::feed::watch`] does it and for the
+//! `notify` plus a poll, exactly as [`droppen_base::watch`] does it and for the
 //! same reason: the watcher is an optimisation (it makes a recording's
 //! timestamps match the moment the CLI wrote, which is what replay's pacing
 //! reads), and the poll is the correctness backstop for every filesystem and
@@ -66,7 +66,7 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::sync::mpsc;
 
 use super::{Event, Line, Stop, SCHEMA};
-use crate::feed::watch::{self, FileEvents};
+use droppen_base::watch::{self, FileEvents};
 use droppen_instance::paths::{ClaudeRoot, Paths};
 use crate::sessions::transcript::{SubagentFileKind, SubagentFilesExt};
 use droppen_base::time::{iso8601, mtime_ms};

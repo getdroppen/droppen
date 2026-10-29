@@ -123,7 +123,6 @@ serde_json = { workspace = true }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-notify = "7"
 sha2 = "0.10"
 base64 = "0.22"
 # Compressing the websocket frames a client asks to have compressed (see
