@@ -387,7 +387,10 @@ impl PaneContent {
         self
     }
 
-    /// See [`ScreenNode::sanitize_content`].
+    /// What a leaf shows: [`PaneContent::sanitize_kind`], with the device it is
+    /// on ([`ScreenContent::content_machine`]) kept on the kinds that are on
+    /// one — a session, a chat, a terminal, a folder, and a picker choosing
+    /// from one.
     fn sanitize(raw: Option<&Value>) -> Self {
         let content = Self::sanitize_kind(raw);
         if let Some(Value::Object(raw)) = raw {
@@ -401,7 +404,12 @@ impl PaneContent {
         content
     }
 
-    /// See [`ScreenNode::sanitize_kind`].
+    /// What a leaf shows, without the device it is on.
+    ///
+    /// Anything the server does not recognise — a newer client's pane kind, a
+    /// corrupt file, a leaf whose id went missing — degrades to an empty slot
+    /// the user can refill, which is always safe because the referenced
+    /// resource is never touched either way.
     fn sanitize_kind(raw: Option<&Value>) -> Self {
         let Some(Value::Object(raw)) = raw else { return Self::picker() };
         let id = raw.content_id().map(str::to_owned);
@@ -533,20 +541,6 @@ pub trait ScreenNode {
     /// budget is spent the node collapses to a leaf and the remaining subtree
     /// is dropped.
     fn sanitize_node(&self, budget: &mut u32) -> Value;
-
-    /// What a leaf shows: [`ScreenNode::sanitize_kind`], with the device it is
-    /// on ([`ScreenContent::content_machine`]) kept on the kinds that are on
-    /// one — a session, a chat, a terminal, a folder, and a picker choosing
-    /// from one.
-    fn sanitize_content(&self) -> Value;
-
-    /// What a leaf shows, without the device it is on.
-    ///
-    /// Anything the server does not recognise — a newer client's pane kind, a
-    /// corrupt file, a leaf whose id went missing — degrades to an empty slot
-    /// the user can refill, which is always safe because the referenced
-    /// resource is never touched either way.
-    fn sanitize_kind(&self) -> Value;
 }
 
 impl ScreenNode for Option<&Value> {
@@ -564,14 +558,6 @@ impl ScreenNode for Option<&Value> {
 
     fn sanitize_node(&self, budget: &mut u32) -> Value {
         Node::sanitize(*self, budget).to_value()
-    }
-
-    fn sanitize_content(&self) -> Value {
-        PaneContent::sanitize(*self).to_value()
-    }
-
-    fn sanitize_kind(&self) -> Value {
-        PaneContent::sanitize_kind(*self).to_value()
     }
 }
 
@@ -864,12 +850,12 @@ mod plugin_pane_tests {
             "kind": "plugin", "plugin": "tasks", "pane": "checklist",
             "state": { "group": "inbox", "limit": 20, "done": false, "since": null },
         });
-        assert_eq!((Some(&content)).sanitize_content(), content);
+        assert_eq!(PaneContent::sanitize(Some(&content)).to_value(), content);
         let mut extra = content.clone();
         extra["machine"] = json!("elsewhere");
-        assert_eq!((Some(&extra)).sanitize_content(), content, "unknown fields go, the pane stays");
+        assert_eq!(PaneContent::sanitize(Some(&extra)).to_value(), content, "unknown fields go, the pane stays");
         let bare = json!({ "kind": "plugin", "plugin": "tasks", "pane": "c" });
-        assert_eq!((Some(&bare)).sanitize_content(), bare);
+        assert_eq!(PaneContent::sanitize(Some(&bare)).to_value(), bare);
         let layout = json!({ "type": "leaf", "id": "plugin-1", "content": content });
         assert_eq!((Some(&layout)).sanitize_node(&mut 6), layout);
     }
@@ -885,12 +871,12 @@ mod plugin_pane_tests {
         ] {
             let mut content = bare.clone();
             content["state"] = state;
-            assert_eq!((Some(&content)).sanitize_content(), bare);
+            assert_eq!(PaneContent::sanitize(Some(&content)).to_value(), bare);
         }
         let mut fits = bare.clone();
         fits["state"] = json!({ "s": "x".repeat(PLUGIN_PANE_STATE_BYTES - 8) });
         assert_eq!(serde_json::to_string(&fits["state"]).unwrap().len(), PLUGIN_PANE_STATE_BYTES);
-        assert_eq!((Some(&fits)).sanitize_content(), fits, "exactly the limit is within it");
+        assert_eq!(PaneContent::sanitize(Some(&fits)).to_value(), fits, "exactly the limit is within it");
     }
 
     #[test]
@@ -906,13 +892,13 @@ mod plugin_pane_tests {
             (json!("tasks"), json!(7)),
         ] {
             let content = json!({ "kind": "plugin", "plugin": plugin, "pane": pane });
-            assert_eq!((Some(&content)).sanitize_content(), picker(), "{content}");
+            assert_eq!(PaneContent::sanitize(Some(&content)).to_value(), picker(), "{content}");
         }
     }
 
     #[test]
     fn the_legacy_tasks_pane_is_kept_for_ever() {
-        assert_eq!((Some(&json!({ "kind": "tasks" }))).sanitize_content(), json!({ "kind": "tasks" }));
+        assert_eq!(PaneContent::sanitize(Some(&json!({ "kind": "tasks" }))).to_value(), json!({ "kind": "tasks" }));
     }
 }
 
@@ -923,10 +909,10 @@ mod file_pane_tests {
     #[test]
     fn file_locations_survive_layout_sanitization_without_unrelated_fields() {
         let content = json!({ "kind": "files", "path": "/home/me/my files", "file": "/home/me/my files/a.png" });
-        assert_eq!((Some(&content)).sanitize_content(), content);
+        assert_eq!(PaneContent::sanitize(Some(&content)).to_value(), content);
         let mut input = content.clone();
         input["extra"] = json!("discard");
-        assert_eq!((Some(&input)).sanitize_content(), content);
+        assert_eq!(PaneContent::sanitize(Some(&input)).to_value(), content);
         let layout = json!({ "type": "leaf", "id": "files-1", "content": content });
         assert_eq!((Some(&layout)).sanitize_node(&mut 6), layout);
     }
@@ -941,18 +927,18 @@ mod file_pane_tests {
             json!({ "kind": "picker", "machine": "d-7f3a" }),
             json!({ "kind": "new-session", "machine": "d-7f3a" }),
         ] {
-            assert_eq!((Some(&content)).sanitize_content(), content, "{content}");
+            assert_eq!(PaneContent::sanitize(Some(&content)).to_value(), content, "{content}");
             let layout = json!({ "type": "leaf", "id": "p", "content": content });
             assert_eq!((Some(&layout)).sanitize_layout(), layout);
         }
         // Absent — every layout from before, and a page with one device — stays absent.
         let plain = json!({ "kind": "session", "source": "claude", "id": "s1" });
-        assert_eq!((Some(&plain)).sanitize_content(), plain);
+        assert_eq!(PaneContent::sanitize(Some(&plain)).to_value(), plain);
         let starting = json!({ "kind": "new-session" });
-        assert_eq!((Some(&starting)).sanitize_content(), starting, "a session being started stays one");
+        assert_eq!(PaneContent::sanitize(Some(&starting)).to_value(), starting, "a session being started stays one");
         let mut extra = starting.clone();
         extra["id"] = json!("s1");
-        assert_eq!((Some(&extra)).sanitize_content(), starting, "and carries nothing else");
+        assert_eq!(PaneContent::sanitize(Some(&extra)).to_value(), starting, "and carries nothing else");
     }
 
     #[test]
@@ -973,17 +959,18 @@ mod file_pane_tests {
         ] {
             let mut content = plain.clone();
             content["machine"] = machine.clone();
-            assert_eq!((Some(&content)).sanitize_content(), plain, "{machine}");
+            assert_eq!(PaneContent::sanitize(Some(&content)).to_value(), plain, "{machine}");
         }
         // Kinds that are on no device of their own never carry one.
-        let tasks = (Some(&json!({ "kind": "tasks", "machine": "d-7f3a" }))).sanitize_content();
+        let tasks = PaneContent::sanitize(Some(&json!({ "kind": "tasks", "machine": "d-7f3a" }))).to_value();
         assert_eq!(tasks, json!({ "kind": "tasks" }));
-        let plugin = (Some(
+        let plugin = PaneContent::sanitize(Some(
             &json!({ "kind": "plugin", "plugin": "tasks", "pane": "checklist", "machine": "d-7f3a" }),
-        )).sanitize_content();
+        ))
+        .to_value();
         assert_eq!(plugin, json!({ "kind": "plugin", "plugin": "tasks", "pane": "checklist" }));
         // A session that degrades to a picker does not take its device along.
-        let broken = (Some(&json!({ "kind": "session", "source": "nope", "id": "s1", "machine": "d-7f3a" }))).sanitize_content();
+        let broken = PaneContent::sanitize(Some(&json!({ "kind": "session", "source": "nope", "id": "s1", "machine": "d-7f3a" }))).to_value();
         assert_eq!(broken, picker());
     }
 
@@ -991,12 +978,12 @@ mod file_pane_tests {
     fn malformed_optional_locations_do_not_break_the_file_browser() {
         for path in [Value::Null, json!(123), json!(""), json!("bad\0path"), json!("a".repeat(4097))] {
             assert_eq!(
-                (Some(&json!({ "kind": "files", "path": path, "file": [] }))).sanitize_content(),
+                PaneContent::sanitize(Some(&json!({ "kind": "files", "path": path, "file": [] }))).to_value(),
                 json!({ "kind": "files" })
             );
         }
         assert_eq!(
-            (Some(&json!({ "kind": "files", "path": "~" }))).sanitize_content(),
+            PaneContent::sanitize(Some(&json!({ "kind": "files", "path": "~" }))).to_value(),
             json!({ "kind": "files", "path": "~" })
         );
     }
@@ -1299,7 +1286,7 @@ impl From<Refused> for ApiError {
     fn from(refused: Refused) -> Self {
         let conflict = |body: Result<Value, serde_json::Error>| match body {
             Ok(body) => ApiError::with_body(StatusCode::CONFLICT, body),
-            Err(_) => ApiError::new(StatusCode::CONFLICT, "conflict"),
+            Err(_) => ApiError::conflict("conflict"),
         };
         match refused {
             Refused::Missing => ApiError::not_found("screen not found"),
@@ -1896,8 +1883,8 @@ mod tests {
     /// Everything the server does not recognise still degrades.
     #[test]
     fn a_browser_leaf_without_an_id_is_still_an_empty_slot() {
-        assert_eq!((Some(&json!({ "kind": "browser" }))).sanitize_content(), picker());
-        assert_eq!((Some(&json!({ "kind": "gopher", "id": "x" }))).sanitize_content(), picker());
+        assert_eq!(PaneContent::sanitize(Some(&json!({ "kind": "browser" }))).to_value(), picker());
+        assert_eq!(PaneContent::sanitize(Some(&json!({ "kind": "gopher", "id": "x" }))).to_value(), picker());
     }
 
     // ---- two devices, one layout --------------------------------------
