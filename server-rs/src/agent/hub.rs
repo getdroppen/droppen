@@ -10,7 +10,9 @@ use rand::Rng;
 use rh_proto::frame::Frame;
 use rh_proto::identity::MachineIdentity;
 use rh_proto::sig::{HubLogin, LoginRole};
-use serde_json::{json, Value};
+use rh_proto::wire::agent::AgentToHub;
+use rh_proto::wire::connect::PeerToRelay;
+use serde_json::Value;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -184,9 +186,15 @@ pub async fn login(
 ) -> Result<Value, LoginError> {
     let time_ms = now_ms_u64();
     let sig = login_signature(identity, account, machine, origin, nonce, time_ms)?;
-    send_json(
+    send(
         sink,
-        &json!({"t": "login", "role": "agent", "account": account, "id": machine, "time_ms": time_ms, "sig": hex(&sig)}),
+        &AgentToHub::Login {
+            role: "agent".into(),
+            account: account.into(),
+            id: machine.into(),
+            time_ms,
+            sig: hex(&sig),
+        },
     )
     .await?;
     let welcome = next_json(source).await?;
@@ -197,9 +205,27 @@ pub async fn login(
 }
 
 /// Send one control message.
-pub async fn send_json(sink: &mut Sink, value: &Value) -> Result<(), String> {
-    crate::aggregator::traffic::agent_value(value);
+pub async fn send(sink: &mut Sink, message: &AgentToHub) -> Result<(), String> {
+    let value = serde_json::to_value(message).map_err(|e| e.to_string())?;
+    crate::aggregator::traffic::agent_value(&value);
     sink.send(Message::Text(value.to_string().into())).await.map_err(|e| e.to_string())
+}
+
+/// A message to the hub or a relay as the text that goes on its socket.
+pub(in crate::agent) trait WireText {
+    fn text(&self) -> String;
+}
+
+impl WireText for AgentToHub {
+    fn text(&self) -> String {
+        serde_json::to_string(self).expect("hub messages encode")
+    }
+}
+
+impl WireText for PeerToRelay {
+    fn text(&self) -> String {
+        serde_json::to_string(self).expect("relay messages encode")
+    }
 }
 
 /// Whose socket a JSON control message is read from: the hub's `/v1/agent`
@@ -256,7 +282,7 @@ pub async fn delete_streams(st: &AgentState, identity: &MachineIdentity) -> Resu
         .map_err(|e| DeleteError::Unreachable(e.to_string()))?;
     let mut deleted = 0;
     for _round in 0..3 {
-        send_json(&mut sink, &serde_json::json!({"t": "stream_list"}))
+        send(&mut sink, &AgentToHub::StreamList)
             .await
             .map_err(DeleteError::Unreachable)?;
         let streams: Vec<String> = loop {
@@ -283,7 +309,7 @@ pub async fn delete_streams(st: &AgentState, identity: &MachineIdentity) -> Resu
             break;
         }
         for stream in &streams {
-            send_json(&mut sink, &serde_json::json!({"t": "stream_delete", "stream": stream}))
+            send(&mut sink, &AgentToHub::StreamDelete { stream: stream.clone() })
                 .await
                 .map_err(DeleteError::Unreachable)?;
         }
@@ -407,8 +433,8 @@ impl BlankExt for Value {
         for key in keys {
             let was = self[*key].clone();
             self[*key] = match was {
-                Value::Number(n) if n.is_u64() => json!(0),
-                Value::String(s) if !s.is_empty() => json!(""),
+                Value::Number(n) if n.is_u64() => Value::from(0),
+                Value::String(s) if !s.is_empty() => Value::from(""),
                 other => panic!("{key}: {other} in {self}"),
             };
         }
@@ -419,6 +445,7 @@ impl BlankExt for Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn a_refusal_as_removed_is_told_apart() {

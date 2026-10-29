@@ -1,10 +1,12 @@
 use std::sync::Arc;
 
 use rh_proto::chain::ChainError;
+use rh_proto::wire::agent::AgentToHub;
 use rh_proto::wrap::{self, Purpose, SealContext, SealedKey, WrapError};
-use serde_json::{json, Value};
+use serde_json::Value;
 use tokio::sync::mpsc;
 
+use super::hub::WireText;
 use super::Shared;
 use droppen_base::text::unhex;
 
@@ -27,15 +29,15 @@ pub(in crate::agent) fn defer(deferred: &mut Vec<Value>, value: Value) -> Option
 /// agent is already past is settled, so acknowledged; any other is released
 /// — left in the mailbox for the next sign-in, and counted as answered so
 /// the next page comes.
-pub(in crate::agent) fn evicted_message(mail: &Value, mk_epoch: Option<u32>) -> Value {
+pub(in crate::agent) fn evicted_message(mail: &Value, mk_epoch: Option<u32>) -> AgentToHub {
     let epoch = mail["epoch"].as_u64();
     let moot = matches!((epoch, mk_epoch), (Some(e), Some(held)) if e <= u64::from(held));
     if moot {
         tracing::info!(id = %mail["id"], "a deferred machine key for an epoch this machine is past: acknowledged");
-        json!({"t": "mail_ack", "id": mail["id"]})
+        AgentToHub::MailAck { id: mail["id"].clone() }
     } else {
         tracing::warn!(id = %mail["id"], "too much mail waiting for the chain: leaving the oldest in the mailbox for the next sign-in");
-        json!({"t": "mail_release", "id": mail["id"]})
+        AgentToHub::MailRelease { id: mail["id"].clone() }
     }
 }
 
@@ -125,10 +127,10 @@ pub(in crate::agent) fn retry_mail(shared: &Arc<Shared>, text: &mpsc::UnboundedS
     for value in deferred {
         match open_mail(shared, &value) {
             MailVerdict::Ack => {
-                let _ = text.send(json!({"t": "mail_ack", "id": value["id"]}).to_string());
+                let _ = text.send(AgentToHub::MailAck { id: value["id"].clone() }.text());
             }
             MailVerdict::Release => {
-                let _ = text.send(json!({"t": "mail_release", "id": value["id"]}).to_string());
+                let _ = text.send(AgentToHub::MailRelease { id: value["id"].clone() }.text());
             }
             MailVerdict::Later => shared.deferred_mail.lock().expect("deferred mail").push(value),
         }

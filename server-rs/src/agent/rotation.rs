@@ -76,12 +76,14 @@ use rand::RngCore;
 use rh_proto::chain::{self, Assurance};
 use rh_proto::identity::MachineIdentity;
 use rh_proto::sig;
+use rh_proto::wire::agent::AgentToHub;
 use serde::Serialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tokio::sync::{mpsc, oneshot};
 use zeroize::Zeroizing;
 
+use super::hub::WireText;
 use super::link::Shared;
 use super::state::AgentState;
 use super::{AgentFiles, FileSeedStore, StagedSeed};
@@ -607,18 +609,17 @@ pub(super) async fn rotate(shared: &Arc<Shared>, device: &str, body: &[u8]) -> (
     let hash = hex(&nonce_hash(&req.nonce));
     let (tx, rx) = oneshot::channel();
     shared.rotation.lock().waiting.insert(hash.clone(), tx);
-    let stage = json!({
-        "t": "rotation_stage",
-        "nonce": hex(&req.nonce),
-        "staged_seq": staged.chain_seq,
-        "staged_head": hex(&staged.chain_head),
-        "sign_key": hex(&new.sign_public()),
-        "dh_key": hex(&new.dh_public()),
-        "assurance": staged.assurance.to_byte(),
-        "old_sig": hex(&old_sig),
-        "new_sig": hex(&new_sig),
-    });
-    if text.send(stage.to_string()).is_err() {
+    let stage = AgentToHub::RotationStage {
+        nonce: hex(&req.nonce),
+        staged_seq: staged.chain_seq,
+        staged_head: hex(&staged.chain_head),
+        sign_key: hex(&new.sign_public()),
+        dh_key: hex(&new.dh_public()),
+        assurance: staged.assurance.to_byte(),
+        old_sig: hex(&old_sig),
+        new_sig: hex(&new_sig),
+    };
+    if text.send(stage.text()).is_err() {
         shared.rotation.lock().waiting.remove(&hash);
         return (409, json!({"error": "hub_not_ready", "message": "this device's hub connection went"}));
     }
@@ -861,14 +862,19 @@ pub(super) fn on_pending(shared: &Shared, value: &Value, text: &mpsc::UnboundedS
     let reply = match ack {
         Some(sig) => {
             tracing::info!("the hub asks this sign-in to confirm the staged identity key: confirmed");
-            json!({"t": "rotation_ack", "sign_key": value["sign_key"], "sig": hex(&sig)})
+            AgentToHub::RotationAck {
+                sign_key: value["sign_key"].clone(),
+                sig: hex(&sig),
+            }
         }
         None => {
             tracing::warn!(sign_key = %value["sign_key"], "the hub asks to confirm an identity key this device does not hold");
-            json!({"t": "rotation_unknown", "sign_key": value["sign_key"]})
+            AgentToHub::RotationUnknown {
+                sign_key: value["sign_key"].clone(),
+            }
         }
     };
-    let _ = text.send(reply.to_string());
+    let _ = text.send(reply.text());
 }
 
 /// What the chain says about this device's own keys now, acted on: renewed

@@ -54,6 +54,7 @@ use ed25519_dalek::SigningKey;
 use rh_proto::frame::Frame;
 use rh_proto::record::{self, stream_key, StreamId, FMT_FEED_V1, FMT_INDEX_V1, FMT_STATUS_V1};
 use rh_proto::stream::{seal_ephemeral, INDEX_SOURCE, STATUS_SOURCE};
+use rh_proto::wire::agent::AgentToHub;
 use serde_json::Value;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -67,6 +68,7 @@ use store::{IndexDiff, Kind, PageRef, Row, Store};
 use writer::{Answer, PageSpec, Plan, Step, Writer};
 
 use super::bridge::Loopback;
+use super::hub::WireText;
 
 /// How often the session list and transcripts are compared with the copy.
 pub const LIST_EVERY: Duration = Duration::from_secs(3);
@@ -1470,7 +1472,7 @@ impl Sync {
 
     fn ask_stream_list(&self) {
         if let Some(text) = &self.text {
-            let _ = text.send(serde_json::json!({"t": "stream_list"}).to_string());
+            let _ = text.send(AgentToHub::StreamList.text());
         }
     }
 
@@ -1478,7 +1480,10 @@ impl Sync {
     /// so a session back in scope later is copied again from nothing.
     fn delete_on_hub(&mut self, stream: &StreamId) {
         if let Some(text) = &self.text {
-            let _ = text.send(serde_json::json!({"t": "stream_delete", "stream": droppen_base::text::hex(&stream.0)}).to_string());
+            let delete = AgentToHub::StreamDelete {
+                stream: droppen_base::text::hex(&stream.0),
+            };
+            let _ = text.send(delete.text());
         }
         self.forget(stream);
     }

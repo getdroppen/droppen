@@ -25,7 +25,7 @@ use futures_util::StreamExt;
 use rh_proto::chain::{Attestation, Entry};
 use rh_proto::frame::Frame;
 use rh_proto::identity::{display_fingerprint, EnrollCode, MachineIdentity};
-use serde_json::json;
+use rh_proto::wire::agent::AgentToHub;
 use tokio_tungstenite::tungstenite::Message;
 
 use super::hub;
@@ -89,7 +89,7 @@ impl AgentFiles {
         }
         let origin = hub::origin(hub_url).map_err(BeginError::Local)?;
         let (mut sink, mut source, nonce) = hub::dial(&origin).await.map_err(BeginError::Unreachable)?;
-        hub::send_json(&mut sink, &json!({"t": "enroll", "token": hex(&code.token())}))
+        hub::send(&mut sink, &AgentToHub::Enroll { token: hex(&code.token()) })
             .await
             .map_err(BeginError::Unreachable)?;
         let assigned = hub::next_json(&mut source).await.map_err(BeginError::Unreachable)?;
@@ -110,16 +110,15 @@ impl AgentFiles {
         let time_ms = now_ms_u64();
         let sig = hub::login_signature(identity, &account, &machine, &origin, nonce, time_ms).map_err(BeginError::Local)?;
         let proof = code.proof(&account, &machine, &identity.sign_public(), &identity.dh_public());
-        hub::send_json(
+        hub::send(
             &mut sink,
-            &json!({
-                "t": "enroll_proof",
-                "sign_key": hex(&identity.sign_public()),
-                "dh_key": hex(&identity.dh_public()),
-                "time_ms": time_ms,
-                "sig": hex(&sig),
-                "proof": hex(&proof),
-            }),
+            &AgentToHub::EnrollProof {
+                sign_key: hex(&identity.sign_public()),
+                dh_key: hex(&identity.dh_public()),
+                time_ms,
+                sig: hex(&sig),
+                proof: hex(&proof),
+            },
         )
         .await
         .map_err(BeginError::Unreachable)?;
@@ -210,12 +209,15 @@ impl AgentFiles {
         // Say first that this agent reads chain v3 (`docs/local-aggregator.md` §3.5): the
         // hub then sends it the v3 entry that adds it, and lets an account that
         // writes v3 add it at all.
-        hub::send_json(
+        hub::send(
             &mut sink,
-            &json!({"t": "agent_info", "version": droppen_http::SERVER_VERSION, "features": [super::CHAIN_V3_FEATURE, super::POLICY_FEATURE]}),
+            &AgentToHub::AgentInfo {
+                version: droppen_http::SERVER_VERSION.into(),
+                features: vec![super::CHAIN_V3_FEATURE.into(), super::POLICY_FEATURE.into()],
+            },
         )
         .await?;
-        hub::send_json(&mut sink, &json!({"t": "chain_sub", "from": 0})).await?;
+        hub::send(&mut sink, &AgentToHub::ChainSub { from: 0 }).await?;
         let deadline = tokio::time::Instant::now() + timeout;
         let mut ping = tokio::time::interval(Duration::from_secs(20));
         let mut nonce_n = 0u64;
@@ -285,6 +287,7 @@ mod tests {
 
     use super::*;
     use crate::agent::hub::BlankExt;
+    use serde_json::json;
 
     /// What a machine sends the hub while it enrolls, compared whole: the
     /// code's token, the proof, then what it reads and the chain it asks for.

@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
 use rh_proto::chain::{Action, ChainState, Entry, Signer};
-use serde_json::json;
+use rh_proto::wire::agent::AgentToHub;
 use tokio::sync::mpsc;
 
+use super::hub::WireText;
 use super::Shared;
 use droppen_base::time::now_ms_u64;
 
@@ -253,7 +254,7 @@ pub(in crate::agent) fn ask_again_for_held(shared: &Arc<Shared>, text: &mpsc::Un
     if due {
         let from = shared.state.lock().expect("agent state").seq().map_or(0, |s| s + 1);
         tracing::info!(from, "asking the hub again for the chain a held-back activation stopped");
-        let _ = text.send(json!({"t": "chain_sub", "from": from}).to_string());
+        let _ = text.send(AgentToHub::ChainSub { from }.text());
     }
 }
 

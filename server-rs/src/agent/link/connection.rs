@@ -6,7 +6,8 @@ use std::time::{Duration, Instant};
 use futures_util::{SinkExt, StreamExt};
 use rh_proto::frame::Frame;
 use rh_proto::identity::MachineIdentity;
-use serde_json::{json, Value};
+use rh_proto::wire::agent::AgentToHub;
+use serde_json::Value;
 use tokio::sync::{mpsc, Semaphore};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_util::sync::CancellationToken;
@@ -14,7 +15,7 @@ use tokio_util::sync::CancellationToken;
 use super::admit::{expire_pending, on_frame};
 use super::alerts::ask_again_for_held;
 use super::bridge::Loopback;
-use super::hub::{self, Backoff, WelcomeExt, HEARTBEAT, SILENCE};
+use super::hub::{self, Backoff, WelcomeExt, WireText, HEARTBEAT, SILENCE};
 use super::lapse::{drop_ended, drop_removed};
 use super::mail::{defer, evicted_message, open_mail, MailVerdict};
 use super::state::AgentState;
@@ -372,7 +373,7 @@ pub(in crate::agent) fn chain_resync(shared: &Arc<Shared>) -> Arc<dyn Fn() + Sen
         let text = shared.hub_text.lock().expect("hub text").clone();
         if let Some(text) = text {
             tracing::info!(from, "a copy stopped being readable: asking the hub for the chain again");
-            let _ = text.send(json!({"t": "chain_sub", "from": from}).to_string());
+            let _ = text.send(AgentToHub::ChainSub { from }.text());
         }
     })
 }
@@ -607,16 +608,19 @@ pub(in crate::agent) async fn connection(shared: &Arc<Shared>) -> Result<(), Str
     // However this connection ends — an error, or the link stopping it
     // mid-way — it is no longer the hub connection.
     let _session = super::rotation::SessionGuard(&shared.rotation);
-    let mut features: Vec<&str> = vec![super::CHAIN_V3_FEATURE, super::POLICY_FEATURE, super::ROTATE_FEATURE];
+    let mut features: Vec<String> = vec![super::CHAIN_V3_FEATURE.into(), super::POLICY_FEATURE.into(), super::ROTATE_FEATURE.into()];
     if shared.relays.lock().expect("relays").is_some() {
-        features.push(super::relays::FEATURE);
+        features.push(super::relays::FEATURE.into());
     }
-    hub::send_json(
+    hub::send(
         &mut sink,
-        &json!({"t": "agent_info", "version": droppen_http::SERVER_VERSION, "features": features}),
+        &AgentToHub::AgentInfo {
+            version: droppen_http::SERVER_VERSION.into(),
+            features,
+        },
     )
     .await?;
-    hub::send_json(&mut sink, &json!({"t": "chain_sub", "from": from})).await?;
+    hub::send(&mut sink, &AgentToHub::ChainSub { from }).await?;
     if session.staged_key {
         let signed_in = staged_key.expect("a staged key signed in");
         let result = staged_key_connection(shared, &mut source, &signed_in).await;
@@ -746,7 +750,7 @@ pub(in crate::agent) const ROTATED_SYNC: Duration = Duration::from_secs(10);
 /// ([`super::rotation::on_chain`]): a hub's word alone changes nothing.
 pub(in crate::agent) async fn rotated_sync(shared: &Arc<Shared>, sink: &mut hub::Sink, source: &mut hub::Source) {
     let from = shared.state.lock().expect("agent state").seq().map_or(0, |s| s + 1);
-    if hub::send_json(sink, &json!({"t": "chain_sub", "from": from})).await.is_err() {
+    if hub::send(sink, &AgentToHub::ChainSub { from }).await.is_err() {
         return;
     }
     read_chain_until(shared, source, tokio::time::Instant::now() + ROTATED_SYNC, || false).await;
@@ -868,16 +872,16 @@ pub(in crate::agent) fn on_control(shared: &Arc<Shared>, value: &Value, text: &m
     match value["t"].as_str() {
         Some("mail") => match open_mail(shared, value) {
             MailVerdict::Ack => {
-                let _ = text.send(json!({"t": "mail_ack", "id": value["id"]}).to_string());
+                let _ = text.send(AgentToHub::MailAck { id: value["id"].clone() }.text());
             }
             MailVerdict::Release => {
-                let _ = text.send(json!({"t": "mail_release", "id": value["id"]}).to_string());
+                let _ = text.send(AgentToHub::MailRelease { id: value["id"].clone() }.text());
             }
             MailVerdict::Later => {
                 let evicted = defer(&mut shared.deferred_mail.lock().expect("deferred mail"), value.clone());
                 if let Some(old) = evicted {
                     let mk_epoch = shared.state.lock().expect("agent state").mk_epoch;
-                    let _ = text.send(evicted_message(&old, mk_epoch).to_string());
+                    let _ = text.send(evicted_message(&old, mk_epoch).text());
                 }
             }
         },

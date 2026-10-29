@@ -31,8 +31,9 @@ use std::time::Duration;
 
 use rh_proto::chain;
 use rh_proto::identity::MachineIdentity;
+use rh_proto::wire::agent::DisputePost;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 
 use super::state::AgentState;
 use super::AgentFiles;
@@ -238,7 +239,11 @@ async fn post(http: &reqwest::Client, s: &Statement) -> Delivery {
         s.hub.http_base().trim_end_matches('/'),
         segment(&s.host)
     );
-    let body = json!({"seq": s.seq, "entry_hash": s.entry_hash, "sig": s.sig});
+    let body = DisputePost {
+        seq: s.seq,
+        entry_hash: s.entry_hash.clone(),
+        sig: s.sig.clone(),
+    };
     let sent = tokio::time::timeout(POST_WAIT, async {
         let response = http.post(&url).json(&body).send().await.map_err(|e| e.without_url().to_string())?;
         let status = response.status().as_u16();
@@ -425,6 +430,7 @@ mod tests {
 
     use super::*;
     use droppen_instance::paths::Paths;
+    use serde_json::json;
     use crate::agent::{FileSeedStore, StoredSeed};
 
     /// m-1's state: a chain that added it with `keys[0]` and renewed it to

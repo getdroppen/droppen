@@ -50,12 +50,14 @@ use futures_util::{SinkExt, StreamExt};
 use rh_proto::frame::Frame;
 use rh_proto::netpolicy;
 use rh_proto::sig::{HubLogin, LoginRole};
-use serde_json::{json, Value};
+use rh_proto::wire::agent::AgentToHub;
+use rh_proto::wire::connect::PeerToRelay;
+use serde_json::Value;
 use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_util::sync::CancellationToken;
 
-use super::hub::{self, Backoff, Peer, HEARTBEAT, SILENCE};
+use super::hub::{self, Backoff, Peer, WireText, HEARTBEAT, SILENCE};
 use super::link::{drop_ended, drop_removed, expire_pending, on_channel_frame, Pending, Routes, Shared};
 use droppen_base::text::{hex, unhex32};
 use droppen_base::time::now_ms_u64;
@@ -540,7 +542,8 @@ impl Manager {
         }
         self.asked_ms = now;
         for chunk in due.chunks(8) {
-            let _ = hub.send(json!({"t": "relay_tickets", "relays": chunk}).to_string());
+            let relays = chunk.iter().map(|id| id.to_string()).collect();
+            let _ = hub.send(AgentToHub::RelayTickets { relays }.text());
         }
     }
 
@@ -641,7 +644,11 @@ impl Manager {
         if !moved {
             return;
         }
-        let _ = hub.send(json!({"t": "relay_state", "rtts": self.rtts, "attached": self.attached}).to_string());
+        let state = AgentToHub::RelayState {
+            rtts: self.rtts.clone(),
+            attached: self.attached.clone(),
+        };
+        let _ = hub.send(state.text());
         self.reported = Some((self.rtts.clone(), self.attached.clone()));
     }
 }
@@ -787,11 +794,13 @@ async fn session(
     }
     .sign(shared.identity.signing_key())
     .map_err(|e| e.to_string())?;
-    sink.send(Message::Text(
-        crate::aggregator::traffic::relay_value(json!({"t": "login", "ticket": ticket, "time_ms": time_ms, "sig": hex(&sig)}))
-            .to_string()
-            .into(),
-    ))
+    let login = PeerToRelay::Login {
+        ticket: ticket.to_string(),
+        time_ms,
+        sig: hex(&sig),
+    };
+    let login = serde_json::to_value(&login).map_err(|e| e.to_string())?;
+    sink.send(Message::Text(crate::aggregator::traffic::relay_value(login).to_string().into()))
     .await
     .map_err(|e| e.to_string())?;
     let welcome = match hub::read_json(&mut source, Peer::Relay).await {
@@ -869,7 +878,7 @@ async fn session(
                 }
                 let next = tickets.borrow_and_update().clone();
                 if let Some((t, _)) = next {
-                    let _ = text_tx.send(json!({"t": "ticket", "ticket": t}).to_string());
+                    let _ = text_tx.send(PeerToRelay::Ticket { ticket: t }.text());
                 }
             }
             r = chain.changed() => {
@@ -902,6 +911,7 @@ async fn session(
 mod tests {
     use super::*;
     use axum::extract::ws::WebSocketUpgrade;
+    use serde_json::json;
     use axum::routing::get;
 
     fn pair(id: &str, origin: &str) -> (String, String) {
