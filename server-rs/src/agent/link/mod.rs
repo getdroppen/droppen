@@ -2580,6 +2580,12 @@ mod tests {
     /// `device`'s (keys `key`) first handshake message over the hub or a
     /// relay, at this agent's chain head, teaching `entries`.
     fn hello(a: &Account, key: &MachineIdentity, device: &str, entries: Vec<Entry>) -> Vec<u8> {
+        hello_from(a, key, device, entries).1
+    }
+
+    /// [`hello`], with the device's end of the handshake, which reads the
+    /// agent's reply.
+    fn hello_from(a: &Account, key: &MachineIdentity, device: &str, entries: Vec<Entry>) -> (rh_proto::noise::Initiator, Vec<u8>) {
         let binding = Binding {
             account: "a-1".into(),
             device: device.into(),
@@ -2592,51 +2598,69 @@ mod tests {
             entries,
             client: Vec::new(),
         };
-        initiator.write_hello(now_ms_u64(), &body.encode().unwrap()).unwrap()
+        let message = initiator.write_hello(now_ms_u64(), &body.encode().unwrap()).unwrap();
+        (initiator, message)
     }
 
-    /// The next frame the hub hears from the agent on a channel in `chs`,
-    /// within five seconds.
-    async fn heard_on(heard: &mut mpsc::UnboundedReceiver<Frame>, chs: &[u32]) -> Option<Frame> {
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-        loop {
-            let frame = tokio::time::timeout_at(deadline, heard.recv()).await.ok()??;
-            let ch = match &frame {
-                Frame::Data { ch, .. } | Frame::Close { ch, .. } | Frame::Credit { ch, .. } => *ch,
-                _ => continue,
-            };
-            if chs.contains(&ch) {
-                return Some(frame);
-            }
-        }
+    /// The next frame the hub heard from the agent on one channel, within
+    /// five seconds.
+    async fn next_heard(frames: &mut mpsc::UnboundedReceiver<Frame>) -> Option<Frame> {
+        tokio::time::timeout(Duration::from_secs(5), frames.recv()).await.ok().flatten()
     }
 
     /// The hub connection sweeps its own channels on every chain advance,
     /// wherever the entries were learnt. A removal that a device's hello on a
     /// relay, or a direct hello, teaches this agent — entries the hub
     /// connection never sees itself — still closes the removed device's
-    /// channel on the hub path at once (4403), and only that channel.
+    /// channel on the hub path at once (4403), and only that channel: d-1's,
+    /// open beside it, still serves.
     #[tokio::test]
     async fn a_removal_learnt_from_a_relay_or_direct_hello_closes_the_hub_paths_channels() {
         for via_relay in [true, false] {
             let via = if via_relay { "a relay hello" } else { "a direct hello" };
             let mut a = account();
+            // Each of the two admins vouches for this view, so each one's
+            // channel opens on the other's word.
             attest(&a, "d-1", &a.d1, 0);
+            attest(&a, "d-2", &d2(), 0);
             let (port, hub, mut heard) = carrying_hub().await;
             a.shared.state.lock().unwrap().hub = format!("ws://127.0.0.1:{port}");
             let link = tokio::spawn(run(a.shared.clone()));
 
-            // d-1 on channel 6 and d-2 on channel 7, carried by the hub.
-            for (ch, device, key) in [(6, "d-1", &a.d1), (7, "d-2", &d2())] {
+            // What the hub hears, by channel, so that nothing of d-1's is
+            // lost while the test waits on d-2's.
+            let (to_d1, mut on_d1) = mpsc::unbounded_channel::<Frame>();
+            let (to_d2, mut on_d2) = mpsc::unbounded_channel::<Frame>();
+            tokio::spawn(async move {
+                while let Some(frame) = heard.recv().await {
+                    let ch = match &frame {
+                        Frame::Data { ch, .. } | Frame::Close { ch, .. } | Frame::Credit { ch, .. } => *ch,
+                        _ => continue,
+                    };
+                    let _ = match ch {
+                        6 => to_d1.send(frame),
+                        7 => to_d2.send(frame),
+                        _ => Ok(()),
+                    };
+                }
+            });
+
+            // d-1 on channel 6 and d-2 on channel 7, carried by the hub, each
+            // opened: the agent's reply says so, rather than refusing.
+            let mut d1_transport = None;
+            for (ch, device, key, frames) in [(6, "d-1", &a.d1, &mut on_d1), (7, "d-2", &d2(), &mut on_d2)] {
                 hub.send(Frame::Open { ch, peer: device.into() }).unwrap();
-                hub.send(Frame::Data {
-                    ch,
-                    payload: hello(&a, key, device, Vec::new()),
-                })
-                .unwrap();
-                match heard_on(&mut heard, &[ch]).await {
-                    Some(Frame::Data { .. }) => {}
-                    other => panic!("{via}: channel {ch} did not open: {other:?}"),
+                let (initiator, first) = hello_from(&a, key, device, Vec::new());
+                hub.send(Frame::Data { ch, payload: first }).unwrap();
+                let reply = match next_heard(frames).await {
+                    Some(Frame::Data { payload, .. }) => payload,
+                    other => panic!("{via}: channel {ch} was not answered: {other:?}"),
+                };
+                let (transport, body) = initiator.read_reply(&reply, RekeyPolicy::default(), now_ms_u64()).unwrap();
+                let status = handshake::ReplyBody::decode(&body).unwrap().status;
+                assert_eq!(status, handshake::ReplyStatus::Accepted, "{via}: channel {ch} opened");
+                if ch == 6 {
+                    d1_transport = Some(transport);
                 }
             }
 
@@ -2681,14 +2705,24 @@ mod tests {
                 "{via}: the removal took effect"
             );
 
-            match heard_on(&mut heard, &[6, 7]).await {
+            match next_heard(&mut on_d2).await {
                 Some(Frame::Close { ch: 7, code: 4403, .. }) => {}
                 other => panic!("{via}: d-2's channel on the hub path was not closed: {other:?}"),
             }
-            tokio::time::sleep(Duration::from_millis(300)).await;
-            while let Ok(frame) = heard.try_recv() {
-                assert!(!matches!(frame, Frame::Close { ch: 6, .. }), "{via}: d-1's channel stays open");
-            }
+
+            // d-1's channel is still open: a request on it is served.
+            let session = Session::new(6, d1_transport.take().expect("d-1's channel"), Role::Initiator);
+            let (d1_out, mut d1_frames) = mpsc::unbounded_channel();
+            let (d1_channel, _incoming) = Channel::spawn(session, on_d1, d1_out);
+            let to_hub = hub.clone();
+            tokio::spawn(async move {
+                while let Some(frame) = d1_frames.recv().await {
+                    if to_hub.send(frame).is_err() {
+                        break;
+                    }
+                }
+            });
+            assert_eq!(served(&d1_channel).await, Some(200), "{via}: d-1's channel stays open");
             a.shared.cancel.cancel();
             let _ = link.await;
         }
