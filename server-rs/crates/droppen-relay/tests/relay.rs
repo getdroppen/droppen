@@ -87,6 +87,7 @@ struct Client {
     sink: SplitSink<Ws, Message>,
     stream: SplitStream<Ws>,
     nonce: [u8; 32],
+    challenge: Value,
     closed: Option<u16>,
     controls: Vec<Value>,
 }
@@ -105,6 +106,7 @@ impl Client {
             sink,
             stream,
             nonce,
+            challenge,
             closed: None,
             controls: Vec::new(),
         }
@@ -314,6 +316,10 @@ struct HubSeen {
     links: Vec<tokio::sync::mpsc::UnboundedSender<String>>,
     /// Do not say `replayed` after the welcome (a Hub from before it).
     no_replay: bool,
+    /// Every message the relay sent, in order.
+    messages: Vec<Value>,
+    /// Answer a `login` with `unknown_relay` until the relay registers.
+    unknown: bool,
 }
 
 struct FakeHub {
@@ -347,7 +353,26 @@ async fn hub_conn(socket: WebSocket, seen: Arc<Mutex<HubSeen>>, origin: String, 
             m = stream.next() => {
                 let Some(Ok(AxMessage::Text(t))) = m else { break };
                 let v: Value = serde_json::from_str(t.as_str()).unwrap();
+                let unknown = {
+                    let mut s = seen.lock().unwrap();
+                    s.messages.push(v.clone());
+                    s.unknown
+                };
                 match v["t"].as_str() {
+                    Some("login") if unknown => {
+                        let _ = tx.send(json!({"t": "error", "code": "unknown_relay", "message": "no such relay"}).to_string());
+                    }
+                    Some("register") => {
+                        seen.lock().unwrap().unknown = false;
+                        let _ = tx.send(json!({"t": "registered", "id": v["id"], "ticket_keys": [{"kid": 1, "key": hex(&hub_public())}]}).to_string());
+                        let _ = tx.send(json!({"t": "replayed", "revocations": 0}).to_string());
+                    }
+                    Some("deregister") => {
+                        let _ = tx.send(json!({"t": "deregistered"}).to_string());
+                    }
+                    Some("rotate") => {
+                        let _ = tx.send(json!({"t": "rotated"}).to_string());
+                    }
                     Some("login") => {
                         let no_replay = {
                             let mut s = seen.lock().unwrap();
@@ -1180,4 +1205,240 @@ async fn another_accounts_agent_with_the_same_machine_id_replaces_nothing() {
         "a-1's device heard nothing of a-2's machine: {:?}",
         dev.controls
     );
+}
+
+// ---------------------------------------------------------------- the messages' shapes
+
+/// `v` with each of `keys` checked (a number, or a string that is not empty)
+/// and blanked to `0` or `""`, so the rest compares exactly.
+fn blank(mut v: Value, keys: &[&str]) -> Value {
+    for key in keys {
+        let was = v[*key].clone();
+        v[*key] = match was {
+            Value::Number(n) if n.is_u64() => json!(0),
+            Value::String(s) if !s.is_empty() => json!(""),
+            other => panic!("{key}: {other} in {v}"),
+        };
+    }
+    v
+}
+
+/// The first text message on a fresh `/v1/connect`.
+async fn first_text(origin: &str) -> Value {
+    let (mut ws, _) = tokio_tungstenite::connect_async(format!("{origin}/v1/connect")).await.unwrap();
+    match tokio::time::timeout(SECS, ws.next()).await.unwrap().unwrap().unwrap() {
+        Message::Text(t) => serde_json::from_str(t.as_str()).unwrap(),
+        other => panic!("{other:?}"),
+    }
+}
+
+/// Every message a relay sends an agent or a device, compared whole: what
+/// changes per run (nonces, clocks) is blanked, everything else exact.
+#[tokio::test]
+async fn the_relays_messages_to_agents_and_devices_keep_their_shape() {
+    let timing = Timing {
+        renew_grace_ms: 100,
+        ..Timing::default()
+    };
+    let mut r = relay("sin-1", None, timing, |_| {}).await;
+    let o = r.origin.clone();
+    let o = o.as_str();
+
+    let agent_h = Holder::new("sin-1", "a-1", TicketRole::Agent, "m-1", 101, &[]);
+    let mut agent = Client::dial(o).await;
+    assert_eq!(
+        blank(agent.challenge.clone(), &["nonce"]),
+        json!({"t": "challenge", "nonce": "", "relay": "sin-1", "origin": o, "version": 1})
+    );
+    assert_eq!(
+        agent.login_with(&agent_h, &agent_h.text(), o).await,
+        json!({"t": "welcome", "relay": "sin-1", "id": "m-1", "expires_ms": agent_h.ticket.expires_ms})
+    );
+
+    // A device: its welcome, then every machine its ticket names.
+    let dev_h = Holder::new("sin-1", "a-1", TicketRole::Device, "d-1", 102, &["m-2", "m-1"]);
+    let mut dev = Client::dial(o).await;
+    assert_eq!(
+        dev.login_with(&dev_h, &dev_h.text(), o).await,
+        json!({"t": "welcome", "relay": "sin-1", "id": "d-1", "expires_ms": dev_h.ticket.expires_ms})
+    );
+    assert_eq!(
+        dev.next_text(SECS).await,
+        json!({"t": "presence", "machines": [{"id": "m-1", "state": "online"}, {"id": "m-2", "state": "offline"}]})
+    );
+    // A machine that comes: one entry, with when.
+    let _m2 = Client::login(o, &Holder::new("sin-1", "a-1", TicketRole::Agent, "m-2", 103, &[])).await;
+    let mut came = dev.next_text(SECS).await;
+    came["machines"][0] = blank(came["machines"][0].take(), &["since_ms"]);
+    assert_eq!(came, json!({"t": "presence", "machines": [{"id": "m-2", "state": "online", "since_ms": 0}]}));
+
+    // A renewal, and a ticket that is none.
+    let mut renewed = Holder::new("sin-1", "a-1", TicketRole::Device, "d-1", 102, &["m-1"]);
+    renewed.ticket.expires_ms = now_ms() + 60_000;
+    dev.send_json(json!({"t": "ticket", "ticket": renewed.text()})).await;
+    assert_eq!(dev.next_text(SECS).await, json!({"t": "ticket_ok", "expires_ms": renewed.ticket.expires_ms}));
+    dev.send_json(json!({"t": "ticket", "ticket": "x"})).await;
+    assert_eq!(dev.next_text(SECS).await, json!({"t": "error", "code": "bad_ticket", "message": "malformed ticket: not base64url"}));
+    // Signed in already.
+    dev.send_json(json!({"t": "login", "ticket": dev_h.text(), "time_ms": now_ms(), "sig": "00"})).await;
+    assert_eq!(dev.next_text(SECS).await, json!({"t": "error", "code": "unexpected", "message": "already signed in"}));
+
+    // Before a sign-in: no message the relay understands, no renewal, a refused sign-in.
+    let mut c = Client::dial(o).await;
+    c.send_json(json!({"t": "hello"})).await;
+    assert_eq!(
+        c.next_text(SECS).await,
+        json!({"t": "error", "code": "bad_message", "message": "not a message this relay understands"})
+    );
+    let mut c = Client::dial(o).await;
+    c.send_json(json!({"t": "ticket", "ticket": "x"})).await;
+    assert_eq!(c.next_text(SECS).await, json!({"t": "error", "code": "sign_in_first", "message": "sign in first"}));
+    let other = Holder::new("nrt-1", "a-1", TicketRole::Device, "d-1", 104, &[]);
+    let mut c = Client::dial(o).await;
+    assert_eq!(
+        c.login_with(&other, &other.text(), o).await,
+        json!({"t": "error", "code": "denied", "message": "sign-in refused"})
+    );
+
+    // A ticket that runs out.
+    let mut short = Holder::new("sin-1", "a-1", TicketRole::Device, "d-5", 105, &[]);
+    short.ticket.expires_ms = now_ms() + 300;
+    let mut c = Client::login(o, &short).await;
+    let _ = c.next_text(SECS).await;
+    assert_eq!(c.next_text(SECS).await, json!({"t": "error", "code": "expired", "message": "the ticket expired"}));
+
+    // Going away: goaway to everyone, then busy to anyone new.
+    r.server.goaway(1_000, "drain");
+    assert_eq!(agent.next_text(SECS).await, json!({"t": "goaway", "retry_ms": 1000, "reason": "drain"}));
+    assert_eq!(
+        first_text(o).await,
+        json!({"t": "error", "code": "busy", "message": "the relay is shutting down", "retry_ms": 1000})
+    );
+
+    // Stopping tells the Hub until when (here through a link the test holds).
+    let (link, mut to_hub) = tokio::sync::mpsc::unbounded_channel::<String>();
+    r.server.set_link(Some(link));
+    r.stop.take().unwrap().send(()).unwrap();
+    let draining: Value = serde_json::from_str(&tokio::time::timeout(SECS, to_hub.recv()).await.unwrap().unwrap()).unwrap();
+    assert_eq!(blank(draining, &["until_ms"]), json!({"t": "draining", "until_ms": 0}));
+    assert!(r.done.await.unwrap().is_ok());
+}
+
+/// Every message a relay sends the Hub, compared whole: the sign-in after a
+/// registration, health idle and busy, usage, and the operator's deregister
+/// and rotate-key.
+#[tokio::test]
+async fn the_relays_messages_to_the_hub_keep_their_shape() {
+    let seen = Arc::new(Mutex::new(HubSeen {
+        unknown: true,
+        ..HubSeen::default()
+    }));
+    let hub = FakeHub::start_on(None, seen.clone()).await;
+    let timing = Timing {
+        health_every: Duration::from_millis(200),
+        usage_every: Duration::from_millis(200),
+        ..Timing::default()
+    };
+    let r = relay("sin-1", Some(&hub.origin), timing, |c| {
+        c.registration_token = Some("tok-1".into());
+        c.max_conns = 10;
+    })
+    .await;
+    assert!(eventually(SECS, || r.server.has_keys()).await, "keys from the Hub");
+    let o = r.origin.as_str();
+    let agent_h = Holder::new("sin-1", "a-1", TicketRole::Agent, "m-1", 111, &[]);
+    let dev_h = Holder::new("sin-1", "a-1", TicketRole::Device, "d-1", 112, &["m-1"]);
+    let mut agent = Client::login(o, &agent_h).await;
+    let mut dev = Client::login(o, &dev_h).await;
+    let ch = pair(&mut dev, &mut agent, 1, "m-1").await;
+    traffic(&mut dev, &mut agent, 1, ch, 1000).await;
+    let busy = |v: &Value| v["t"] == "health" && v["conns"] == 2 && v["channels"] == 1;
+    let usage = |v: &Value| v["t"] == "usage";
+    assert!(
+        eventually(SECS, || {
+            let s = seen.lock().unwrap();
+            s.messages.iter().any(busy) && s.messages.iter().any(usage)
+        })
+        .await,
+        "health with the pair, and usage"
+    );
+    let version = rh_relay::uplink::VERSION;
+    let sign_key = hex(&SigningKey::from_bytes(&[7; 32]).verifying_key().to_bytes());
+    let messages = seen.lock().unwrap().messages.clone();
+    assert_eq!(
+        blank(messages[0].clone(), &["time_ms", "sig"]),
+        json!({"t": "login", "id": "sin-1", "time_ms": 0, "sig": "", "version": version, "features": ["revoke-role/1"]})
+    );
+    assert_eq!(
+        blank(messages[1].clone(), &["time_ms", "sig"]),
+        json!({
+            "t": "register", "token": "tok-1", "sign_key": sign_key, "origin": o, "version": version, "time_ms": 0, "sig": "",
+            "features": ["revoke-role/1"],
+        })
+    );
+    // The first health goes out at once, before any connection.
+    assert_eq!(
+        messages[2],
+        json!({"t": "health", "conns": 0, "channels": 0, "bytes_in_per_s": 0, "bytes_out_per_s": 0, "load": 0.0, "version": version})
+    );
+    // The load is the relay's f32, as the f64 it widens to.
+    let health = messages.iter().find(|v| busy(v)).unwrap().clone();
+    assert_eq!(
+        blank(health, &["bytes_in_per_s", "bytes_out_per_s"]),
+        json!({"t": "health", "conns": 2, "channels": 1, "bytes_in_per_s": 0, "bytes_out_per_s": 0, "load": 0.2f32, "version": version})
+    );
+    let mut report = messages.iter().find(|v| usage(v)).unwrap().clone();
+    report["accounts"][0] = blank(report["accounts"][0].take(), &["bytes"]);
+    assert_eq!(
+        blank(report, &["boot", "seq", "from_ms", "to_ms"]),
+        json!({"t": "usage", "boot": "", "seq": 0, "from_ms": 0, "to_ms": 0, "accounts": [{"account": "a-1", "bytes": 0}]})
+    );
+
+    // The operator's commands, each on a sign-in of its own.
+    rh_relay::uplink::deregister(&r.server.config, "moved").await.unwrap();
+    let new = SigningKey::from_bytes(&[8; 32]);
+    rh_relay::uplink::rotate(&r.server.config, &new).await.unwrap();
+    let messages = seen.lock().unwrap().messages.clone();
+    let deregister = messages.iter().find(|v| v["t"] == "deregister").unwrap();
+    assert_eq!(deregister, &json!({"t": "deregister", "reason": "moved"}));
+    let rotate = messages.iter().find(|v| v["t"] == "rotate").unwrap().clone();
+    assert_eq!(
+        blank(rotate, &["time_ms", "sig_new"]),
+        json!({"t": "rotate", "new_key": hex(&new.verifying_key().to_bytes()), "time_ms": 0, "sig_new": ""})
+    );
+    hub.stop.cancel();
+}
+
+/// What a relay answers over plain HTTP, compared whole: the proof of origin
+/// the Hub fetches, a malformed request, and the rate limit.
+#[tokio::test]
+async fn the_relays_http_answers_keep_their_shape() {
+    let r = relay("sin-1", None, Timing::default(), |_| {}).await;
+    let http = r.origin.replace("ws://", "http://");
+    let body = |resp: String| -> (String, Value) {
+        let (head, body) = resp.split_once("\r\n\r\n").unwrap();
+        (head.lines().next().unwrap().to_string(), serde_json::from_str(body).unwrap())
+    };
+    let (status, answer) = body(reqwest_lite(&format!("{http}/v1/relay-id?nonce={}", hex(&[9; 32]))).await);
+    assert_eq!(status, "HTTP/1.1 200 OK");
+    assert_eq!(
+        blank(answer, &["sig"]),
+        json!({
+            "relay_id": "sin-1", "sign_key": hex(&SigningKey::from_bytes(&[7; 32]).verifying_key().to_bytes()), "origin": r.origin, "sig": "",
+        })
+    );
+    let (status, answer) = body(reqwest_lite(&format!("{http}/v1/relay-id?nonce=zz")).await);
+    assert_eq!(status, "HTTP/1.1 400 Bad Request");
+    assert_eq!(answer, json!({"error": "bad_request", "message": "nonce: 64 hex"}));
+    // 120 a minute from one address, then 429.
+    let mut limited = None;
+    for _ in 0..130 {
+        let resp = reqwest_lite(&format!("{http}/v1/ping")).await;
+        if resp.starts_with("HTTP/1.1 429") {
+            limited = Some(body(resp).1);
+            break;
+        }
+    }
+    let limited = limited.expect("a 429 within 130 pings");
+    assert_eq!(blank(limited, &["retry_after_ms"]), json!({"error": "rate", "retry_after_ms": 0}));
 }

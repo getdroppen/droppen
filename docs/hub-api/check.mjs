@@ -73,6 +73,7 @@ const SPEAKS = [
   ["server-rs/src/aggregator/", [["/v1/client", "client"]]],
   ["server-rs/crates/rh-relay/src/uplink.rs", [["/v1/relay", "client"]]],
   ["server-rs/crates/rh-relay/src/meter.rs", [["/v1/relay", "client"]]],
+  ["server-rs/crates/rh-relay/src/traffic.rs", [["/v1/relay", "client"]]],
   ["server-rs/crates/rh-relay/src/lib.rs", [["/v1/relay", "client"]]],
   ["server-rs/crates/rh-relay/src/", [["/v1/connect", "server"]]],
   ["server-rs/crates/rh-client/src/", [["/v1/client", "client"], ["/v1/connect", "client"]]],
