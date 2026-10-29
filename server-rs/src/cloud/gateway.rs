@@ -543,6 +543,34 @@ mod tests {
         assert!(ask(&mut bucket, &mut subs).expect("refused").contains("busy"));
     }
 
+    /// The gateway's own frames, byte for byte: the directory, and the answer
+    /// to an `open`, which echoes the page's `p`.
+    #[tokio::test]
+    async fn the_directory_and_a_refused_open_are_written_as_pinned() {
+        let host = DirHost {
+            id: "m-2".into(),
+            name: Some("studio".into()),
+            state: "online",
+            since_ms: Some(1),
+            copy_as_of_ms: None,
+            os: Some("macOS 15.1 arm64".into()),
+            agent_version: Some("0.2.134".into()),
+        };
+        assert_eq!(
+            dir_frame(&[host]),
+            r#"{"t":"dir","machines":[{"id":"m-2","name":"studio","state":"online","sinceMs":1,"copyAsOfMs":null,"os":"macOS 15.1 arm64","agentVersion":"0.2.134"}]}"#
+        );
+        assert_eq!(dir_frame(&[]), r#"{"t":"dir","machines":[]}"#);
+
+        let live = LiveCopies::new();
+        let (out, _rx) = Outbox::new(16, OUTBOX_BYTES);
+        let open = handle(Ask::Open { p: json!("p-1") }, &live, &out, &mut HashMap::new(), &mut Bucket::new());
+        assert_eq!(
+            open.as_deref(),
+            Some(r#"{"t":"refused","p":"p-1","code":"unsupported","message":"this device shows other devices' copies only, read-only; using them live comes later"}"#)
+        );
+    }
+
     /// Review of S1-7: a session its device's index does not name is
     /// `missing` at once, through the outbox (after what went before), and
     /// is not followed for the page.
@@ -682,7 +710,7 @@ mod tests {
         let t0 = std::time::Instant::now();
         let _ = set(false).await.unwrap();
         let bye = next(&mut b).await;
-        assert_eq!((bye["t"].as_str(), bye["code"].as_str()), (Some("bye"), Some("no_remote_access")));
+        assert_eq!(bye, json!({"t": "bye", "code": "no_remote_access", "message": "this local account may not see your other devices here: the local account that signed this device in to Droppen can allow it in Settings → Droppen"}));
         assert_eq!(next(&mut b).await["closed"], 4403);
         assert!(t0.elapsed() < Duration::from_secs(1), "closed {:?} after", t0.elapsed());
         // alice stays.
@@ -695,7 +723,7 @@ mod tests {
         assert_eq!(next(&mut signed_in).await["t"], "dir");
         assert!(auth.sessions.revoke(&digest).await);
         let bye = next(&mut signed_in).await;
-        assert_eq!((bye["t"].as_str(), bye["code"].as_str()), (Some("bye"), Some("unauthorized")));
+        assert_eq!(bye, json!({"t": "bye", "code": "unauthorized", "message": "this login was signed out"}));
         assert_eq!(next(&mut signed_in).await["closed"], 4401);
         // The page opened by a login still signed in stays.
         a.send(WsMessage::Text(r#"{"t":"ping"}"#.into())).await.unwrap();
@@ -709,7 +737,7 @@ mod tests {
         .unwrap();
         // (Written behind the server's back: the next recheck sees it.)
         let bye = next(&mut a).await;
-        assert_eq!((bye["t"].as_str(), bye["code"].as_str()), (Some("bye"), Some("no_remote_access")));
+        assert_eq!(bye, json!({"t": "bye", "code": "no_remote_access", "message": "this local account may not see your other devices here: the local account that signed this device in to Droppen can allow it in Settings → Droppen"}));
         assert_eq!(status_of(connect(ticket("alice")).await), 403);
         // A file that does not read: nobody either.
         std::fs::write(crate::cloud::LinkFile::of(&state.paths).path(), "{not json").unwrap();

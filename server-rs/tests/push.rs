@@ -182,8 +182,13 @@ impl Browser {
 
     /// What the service worker would read out of a captured request.
     fn open(&self, captured: &Captured) -> Value {
+        serde_json::from_str(&self.plaintext(captured)).expect("the payload is JSON")
+    }
+
+    /// The same, as the bytes it decrypts to.
+    fn plaintext(&self, captured: &Captured) -> String {
         let plaintext = ece::decrypt(&self.private, &self.auth, &captured.body).expect("the payload decrypts under the subscription key");
-        serde_json::from_slice(&plaintext).expect("the payload is JSON")
+        String::from_utf8(plaintext).expect("the payload is UTF-8")
     }
 }
 
@@ -399,6 +404,13 @@ async fn a_finished_turn_delivers_one_notification_the_browser_can_open() {
     assert_eq!(
         payload["body"], "All three sections are done and the numbers reconcile.",
         "the last thing the assistant actually said"
+    );
+    assert_eq!(
+        browser.plaintext(request),
+        format!(
+            r#"{{"title":"summarise the report","body":"All three sections are done and the numbers reconcile.","tag":"claude/{DELIVERED_ID}","url":"/sessions/claude/{DELIVERED_ID}"}}"#
+        ),
+        "byte for byte"
     );
 
     // A second turn inside the window is the same session saying the same thing

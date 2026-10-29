@@ -1108,6 +1108,16 @@ mod tests {
         assert!(live.dir().borrow().is_empty());
     }
 
+    /// `copy_error`, byte for byte: what a page is told of a subscription
+    /// that cannot be, or no longer is.
+    #[test]
+    fn a_copy_error_is_written_as_pinned() {
+        assert_eq!(
+            error_frame(7, Ended::Gone.code(), Ended::Gone.message()),
+            r#"{"t":"copy_error","s":7,"code":"gone","message":"this device no longer shows that device's copies"}"#
+        );
+    }
+
     #[tokio::test]
     async fn a_session_subscribed_to_is_interest_that_lingers_once_let_go() {
         let live = LiveCopies::new();
