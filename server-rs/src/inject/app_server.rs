@@ -23,7 +23,7 @@ use droppen_base::procs;
 use droppen_base::time::iso8601;
 
 use super::common::{busy_message, new_uuid, session_workdir, Phase, QueueOutcome, ResidentState, CHAT_SYSTEM_PROMPT};
-use super::gate::{ClaimError, SessionLease};
+use super::gate::{ClaimError, SessionLease, SpawnGate};
 use droppen_sessions::archive::ArchiveError;
 use super::{
     codex_permission_flags, require_provider, runs, shim, with_codex_files, AccountChoice, Capabilities, CodexAccount, DriverStatesBuilder,
@@ -462,7 +462,7 @@ impl Provider for Codex {
 }
 
 impl Run for Codex {
-    fn send<'a>(&'a self, to: SendTo<'a>) -> BoxFuture<'a, Result<Sent, InjectError>> {
+    fn send<'a>(&'a self, gate: &'a SpawnGate, to: SendTo<'a>) -> BoxFuture<'a, Result<Sent, InjectError>> {
         Box::pin(async move {
             let SendTo { id, cwd, text, options } = to;
             // Resolved before anything is built, exactly as claude's send does: an
@@ -470,18 +470,18 @@ impl Run for Codex {
             let account = self.codex_account(Some(id), options).await?;
             self
                 .registry
-                .codex_deliver(Some(id), cwd, text, options, account)
+                .codex_deliver(gate, Some(id), cwd, text, options, account)
                 .await
                 .map(|(_, sent)| sent)
         })
     }
 
-    fn start<'a>(&'a self, at: StartAt<'a>) -> BoxFuture<'a, Result<String, InjectError>> {
+    fn start<'a>(&'a self, gate: &'a SpawnGate, at: StartAt<'a>) -> BoxFuture<'a, Result<String, InjectError>> {
         Box::pin(async move {
             let StartAt { cwd, text, options } = at;
             let account = self.codex_account(None, options).await?;
             let account_id = account.as_ref().map(|account| account.id.clone());
-            let (id, _) = self.registry.codex_deliver(None, Some(cwd), text, options, account).await?;
+            let (id, _) = self.registry.codex_deliver(gate, None, Some(cwd), text, options, account).await?;
             // Codex has one config root and no way to isolate it, so ownership of a
             // thread is a record rather than a path — written the moment the CLI tells us
             // which thread it actually made. A failure here costs the session its
@@ -542,8 +542,8 @@ impl Run for Codex {
 
     // Through the session's app server, or `codex archive` when it has none:
     // the archive is codex's own, so the Codex app sees it too.
-    fn archive<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Result<(), String>> {
-        Box::pin(async move { self.registry.archive_codex(id).await.map_err(|error| error.to_string()) })
+    fn archive<'a>(&'a self, gate: &'a SpawnGate, id: &'a str) -> BoxFuture<'a, Result<(), String>> {
+        Box::pin(async move { self.registry.archive_codex(gate, id).await.map_err(|error| error.to_string()) })
     }
 }
 
@@ -695,10 +695,10 @@ impl InjectionRegistry {
 
     /// A loaded thread's writer owns its archive operation too. A separate
     /// `codex archive` cannot acquire that writer lock, even between turns.
-    pub async fn archive_codex(self: &Arc<Self>, id: &str) -> Result<(), droppen_sessions::archive::ArchiveError> {
+    pub async fn archive_codex(self: &Arc<Self>, gate: &SpawnGate, id: &str) -> Result<(), droppen_sessions::archive::ArchiveError> {
         // Match delivery's gate: no new resident or accepted message can slip
         // between selecting the archive path and committing its result.
-        let mut permit = self.spawn_gate.permit().await;
+        let mut permit = gate.permit().await;
         if let Some(handle) = self.codex_handle(id) {
             {
                 let state = handle.shared.lock().unwrap();
@@ -754,6 +754,7 @@ impl InjectionRegistry {
 
     pub(super) async fn codex_deliver(
         self: &Arc<Self>,
+        gate: &SpawnGate,
         id: Option<&str>,
         cwd: Option<&str>,
         text: &str,
@@ -761,7 +762,7 @@ impl InjectionRegistry {
         account: Option<CodexAccount>,
     ) -> Result<(String, Sent), InjectError> {
         let message = message(text, options)?;
-        let mut permit = self.spawn_gate.permit().await;
+        let mut permit = gate.permit().await;
         if let Some(handle) = id.and_then(|id| self.codex_handle(id)) {
             let state = handle.shared.lock().unwrap();
             if state.archived || state.archive_request.is_some() {
@@ -1680,6 +1681,8 @@ mod tests {
         driver: Driver,
         input: BufReader<OwnedReadHalf>,
         output: OwnedWriteHalf,
+        /// The providers over the driver's registry, for their spawn gate.
+        providers: Arc<crate::inject::ProviderRegistry>,
         _home: tempfile::TempDir,
     }
 
@@ -1693,6 +1696,7 @@ mod tests {
             let quota = Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins()));
             let decoration = crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone());
             let registry = InjectionRegistry::new(paths, &dirs, accounts, quota, decoration);
+            let providers = crate::inject::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
             let socket = home.path().join("mock.sock");
             let listener = UnixListener::bind(&socket).unwrap();
             let connector = tokio::spawn(async move { shim::connect_in_process(&socket).await.unwrap() });
@@ -1725,7 +1729,7 @@ mod tests {
             };
             let (_tx, rx) = mpsc::unbounded_channel();
             let driver = Driver {
-                lease: registry.spawn_gate.lease(Source::Codex, "test-thread").unwrap(),
+                lease: providers.gate().lease(Source::Codex, "test-thread").unwrap(),
                 registry,
                 record,
                 link,
@@ -1747,6 +1751,7 @@ mod tests {
                 driver,
                 input,
                 output,
+                providers,
                 _home: home,
             }
         }
@@ -2235,8 +2240,8 @@ mod tests {
         };
         registry.codex_servers.lock().unwrap().insert("test-thread".into(), handle.clone());
         let driver = tokio::spawn(h.driver.run());
-        let archiver = registry.clone();
-        let archive = tokio::spawn(async move { archiver.archive_codex("test-thread").await });
+        let (archiver, providers) = (registry.clone(), h.providers.clone());
+        let archive = tokio::spawn(async move { archiver.archive_codex(providers.gate(), "test-thread").await });
         let mut line = String::new();
         tokio::time::timeout(Duration::from_secs(2), h.input.read_line(&mut line))
             .await
@@ -2244,10 +2249,10 @@ mod tests {
             .unwrap();
         let request: Value = serde_json::from_str(&line).unwrap();
         assert_eq!(request["method"], "thread/archive");
-        let sender = registry.clone();
+        let (sender, providers) = (registry.clone(), h.providers.clone());
         let send = tokio::spawn(async move {
             sender
-                .codex_deliver(Some("test-thread"), None, "stale send", &SendOptions::default(), None)
+                .codex_deliver(providers.gate(), Some("test-thread"), None, "stale send", &SendOptions::default(), None)
                 .await
         });
         h.output
@@ -2579,12 +2584,14 @@ mod tests {
         const OTHER: &str = "0199c1a1-0000-4000-8000-000000000004";
         let home = tempfile::tempdir().expect("tempdir");
         let (_path, registry) = fake_codex_registry(home.path(), "codex-steps");
+        let providers = crate::inject::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
+        let gate = providers.gate();
         let work = home.path().join("work");
         std::fs::create_dir_all(&work).expect("work");
         let work = work.to_string_lossy().into_owned();
         let plain = SendOptions::default();
 
-        let (id, _) = registry.codex_deliver(None, Some(&work), "hello", &plain, None).await.expect("a new thread");
+        let (id, _) = registry.codex_deliver(gate, None, Some(&work), "hello", &plain, None).await.expect("a new thread");
         assert_eq!(
             registry.steps(),
             [
@@ -2611,7 +2618,7 @@ mod tests {
             },
         };
         registry
-            .codex_deliver(Some(&id), Some(&work), "again", &plain, Some(other))
+            .codex_deliver(gate, Some(&id), Some(&work), "again", &plain, Some(other))
             .await
             .expect("resumed under the other account");
         assert_eq!(
@@ -2624,7 +2631,7 @@ mod tests {
             ]
         );
 
-        registry.codex_deliver(Some(RESUMED), Some(&work), "resume", &plain, None).await.expect("resumed");
+        registry.codex_deliver(gate, Some(RESUMED), Some(&work), "resume", &plain, None).await.expect("resumed");
         assert_eq!(
             registry.steps()[7..],
             [
@@ -2634,7 +2641,7 @@ mod tests {
             ]
         );
 
-        registry.archive_codex(UNLOADED).await.expect("archived");
+        registry.archive_codex(gate, UNLOADED).await.expect("archived");
         assert_eq!(registry.steps()[10..], [step("codex archive", true, Some(true))]);
         assert!(!registry.gate_held());
         assert!(!registry.claim_held(Source::Codex, UNLOADED), "the claim went with the archive");
@@ -2644,7 +2651,7 @@ mod tests {
         std::fs::write(elsewhere.join("resume-thread.txt"), OTHER).expect("resume answer");
         let elsewhere = elsewhere.to_string_lossy().into_owned();
         let refused = registry
-            .codex_deliver(Some(MISMATCHED), Some(&elsewhere), "resume", &plain, None)
+            .codex_deliver(gate, Some(MISMATCHED), Some(&elsewhere), "resume", &plain, None)
             .await
             .expect_err("another thread is refused");
         assert_eq!(refused.to_string(), "Codex resumed a different thread");
@@ -2680,6 +2687,7 @@ mod tests {
         const THREAD: &str = "0199c1a1-0000-4000-8000-000000000005";
         let home = tempfile::tempdir().expect("tempdir");
         let (_path, registry) = fake_codex_registry(home.path(), "codex-wire");
+        let providers = crate::inject::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
         let work = home.path().join("work");
         std::fs::create_dir_all(&work).expect("work");
         let log = work.join("codex-stdin.jsonl");
@@ -2697,7 +2705,7 @@ mod tests {
             ..SendOptions::default()
         };
         registry
-            .codex_deliver(Some(THREAD), Some(&work), "hi", &chat, Some(account))
+            .codex_deliver(providers.gate(), Some(THREAD), Some(&work), "hi", &chat, Some(account))
             .await
             .expect("resumed");
 
@@ -2762,8 +2770,9 @@ mod tests {
         let home = root.path().join(std::ffi::OsStr::from_bytes(b"\xff"));
         std::fs::create_dir_all(&home).expect("home");
         let (_path, registry) = fake_codex_registry(&home, "codex-utf8");
+        let providers = crate::inject::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
         let refused = registry
-            .codex_deliver(Some(THREAD), None, "hi", &SendOptions::default(), None)
+            .codex_deliver(providers.gate(), Some(THREAD), None, "hi", &SendOptions::default(), None)
             .await
             .expect_err("refused");
         assert_eq!(refused.to_string(), "the session's working directory is not valid UTF-8");

@@ -311,7 +311,7 @@ impl RemoteHandApp {
                 if adopted > 0 {
                     tracing::info!(adopted, "re-adopted surviving terminals");
                 }
-                let runs = state.drive.injections.adopt_all().await;
+                let runs = state.drive.providers.adopt_all().await;
                 if !runs.is_empty() {
                     tracing::info!(
                         recovered = runs.recovered,

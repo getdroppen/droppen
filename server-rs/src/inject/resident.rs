@@ -87,7 +87,7 @@ use super::questions::{self, PermissionRequest, Stored};
 use super::shim::{self, Link, Output, Sidecars, Spawn};
 use super::common::{busy_message, new_uuid, AnswerOutcome, Phase, QueueOutcome, Reply, ResidentState, StopTaskOutcome};
 use super::drafts::Draft;
-use super::gate::{ClaimError, SessionLease};
+use super::gate::{ClaimError, SessionLease, SpawnGate};
 use super::{runs, Capabilities, DriverStatesBuilder, InjectError, InjectionRegistry, Provider, Run, RunEntry, RunState, SendTo, Sent, SpawnPermit, StartAt};
 mod spawn;
 
@@ -700,12 +700,12 @@ impl Provider for ClaudeCode {
 }
 
 impl Run for ClaudeCode {
-    fn send<'a>(&'a self, to: SendTo<'a>) -> BoxFuture<'a, Result<Sent, InjectError>> {
-        Box::pin(self.registry.claude_send(to))
+    fn send<'a>(&'a self, gate: &'a SpawnGate, to: SendTo<'a>) -> BoxFuture<'a, Result<Sent, InjectError>> {
+        Box::pin(self.registry.claude_send(gate, to))
     }
 
-    fn start<'a>(&'a self, at: StartAt<'a>) -> BoxFuture<'a, Result<String, InjectError>> {
-        Box::pin(self.registry.claude_start(at))
+    fn start<'a>(&'a self, gate: &'a SpawnGate, at: StartAt<'a>) -> BoxFuture<'a, Result<String, InjectError>> {
+        Box::pin(self.registry.claude_start(gate, at))
     }
 
     /// A resident publishes each turn in the runs map, so that is where a
@@ -786,7 +786,8 @@ impl Run for ClaudeCode {
     }
 
     // Onto this server's hidden list: claude keeps no archive of its own.
-    fn archive<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Result<(), String>> {
+    // No gate: putting the transcript away starts no CLI.
+    fn archive<'a>(&'a self, _gate: &'a SpawnGate, id: &'a str) -> BoxFuture<'a, Result<(), String>> {
         Box::pin(async move {
             droppen_sessions::archive::archive_claude_session(&self.registry.paths, id)
                 .await
@@ -830,7 +831,7 @@ impl InjectionRegistry {
     /// Posting and returning, as this once did, answered `200` while the message
     /// was still sitting in the driver's inbox, and a `SIGKILL` in that window
     /// lost a message the user had been told was accepted.
-    pub(super) async fn deliver(self: &Arc<Self>, id: &str, text: &str, recipe: Recipe, qid: Option<String>) -> Result<Delivery, InjectError> {
+    pub(super) async fn deliver(self: &Arc<Self>, gate: &SpawnGate, id: &str, text: &str, recipe: Recipe, qid: Option<String>) -> Result<Delivery, InjectError> {
         let qid = qid.unwrap_or_else(new_uuid);
         // Twice at most: the second pass is only for a driver that ended with
         // this message still in its inbox, and by the time that is known its
@@ -842,7 +843,7 @@ impl InjectionRegistry {
             // a second claude against the same transcript. Spawns are rare and
             // take milliseconds, so a per-key lock map would cost more than it
             // saves.
-            let mut permit = self.spawn_gate.permit().await;
+            let mut permit = gate.permit().await;
             let Some((queued, recorded)) = self.post_to_existing(id, &qid, text, &recipe) else {
                 self.clone().start_resident(id, Box::new(Pending::with_id(qid, text, recipe)), &mut permit).await?;
                 return Ok(Delivery { queued: false });
@@ -7098,6 +7099,9 @@ mod tests {
     struct Harness {
         _home: tempfile::TempDir,
         registry: Arc<InjectionRegistry>,
+        /// Every provider over `registry`, as the routes and the feeds ask
+        /// them, and the spawn gate they lend.
+        providers: Arc<crate::inject::ProviderRegistry>,
         tx: mpsc::UnboundedSender<Cmd>,
         shared: Arc<Mutex<ResidentState>>,
         /// Every line the fake claude read off its stdin, in order.
@@ -7157,12 +7161,13 @@ mod tests {
             listeners: std::sync::OnceLock::new(),
             alerts: std::sync::OnceLock::new(),
             drafts: crate::inject::drafts::Drafts::default(),
+            steps: Mutex::new(Vec::new()),
+            gate: Mutex::new(std::sync::Weak::new()),
             paths: paths.clone(),
         });
         Arc::new(InjectionRegistry {
             codex_servers: Mutex::new(HashMap::new()),
             residents: Mutex::new(HashMap::new()),
-            spawn_gate: crate::inject::gate::SpawnGate::new(paths.data_dir().join("inject-locks")),
             stall_after: stall,
             resident_idle: None,
             // Short enough that the ceiling on a parked settings change can be
@@ -7177,7 +7182,6 @@ mod tests {
             recovery_backoff: [Duration::from_millis(30); 3],
             steer_settle: settle,
             absorb_poll,
-            steps: Mutex::new(Vec::new()),
             // Recording on, into this test's own instance directory, for the
             // same reason the timings are set by hand: `Recorders::new` reads
             // the environment, and `a_session_records_its_whole_life` needs the
@@ -7655,6 +7659,7 @@ done
                 absorb_poll,
             } = adoption;
             let registry = registry(home.path(), stall, tick, step, settle, absorb_poll);
+            let providers = crate::inject::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
             let log = home.path().join("stdin.log");
             let go = home.path().join("go");
             let bin = home.path().join("bin");
@@ -7785,7 +7790,7 @@ done
                     tx: tx.clone(),
                     rx,
                     shared: shared.clone(),
-                    lease: registry.spawn_gate.empty_lease(),
+                    lease: providers.gate().empty_lease(),
                     queue,
                     delivered_ahead,
                     absorb: AbsorbWatch::default(),
@@ -7829,6 +7834,7 @@ done
             Harness {
                 _home: home,
                 registry,
+                providers,
                 tx,
                 shared,
                 log,
@@ -8010,7 +8016,7 @@ done
         /// Every provider over this harness's registry, as the routes and the
         /// feeds ask them.
         fn providers(&self) -> Arc<crate::inject::ProviderRegistry> {
-            crate::inject::ProviderRegistry::new(self.registry.clone(), crate::app::register_providers)
+            self.providers.clone()
         }
 
         /// Every line the fake claude has read, in the order it read them.
@@ -8111,7 +8117,7 @@ done
 
         let delivery = harness
             .registry
-            .deliver(SESSION, "second", harness.recipe(Fingerprint::default()), None)
+            .deliver(harness.providers.gate(), SESSION, "second", harness.recipe(Fingerprint::default()), None)
             .await
             .expect("the running resident takes it");
         let record = harness.record();
@@ -8480,7 +8486,7 @@ done
         std::fs::write(paths.uploads_dir(), b"not a directory").unwrap();
         let recipe = super::spawn::claude_recipe(paths, harness.bin.to_str(), &Default::default(), Env::new(), Default::default());
         let recorder = harness.registry.recorders.open(SESSION);
-        let permit = harness.registry.spawn_gate.empty_lease().respawn_permit();
+        let permit = harness.providers.gate().empty_lease().respawn_permit();
         let result = harness.registry.spawn_link(&permit, SESSION, &recipe, Selector::Fresh, None, &[], &recorder).await;
         assert!(matches!(result, Err(InjectError::Message(ref message)) if message.contains("cannot prepare the uploads directory")));
         assert!(harness.spawns().is_empty());
@@ -12452,7 +12458,7 @@ done
             titles: droppen_sessions::titles::TitlesStore::new(paths.clone()),
             paths,
             transcripts: crate::app::transcript_sources(),
-            providers: crate::inject::ProviderRegistry::new(harness.registry.clone(), crate::app::register_providers),
+            providers: harness.providers(),
         });
         let feeds = crate::feed::FeedRegistry::new();
         harness.registry.attach_listeners(feeds.clone(), droppen_http::refresh::Refresh::new(crate::feed::global::GlobalFeed::new()));
@@ -12535,9 +12541,10 @@ done
         until("the init", || harness.state().phase == Phase::Idle).await;
         harness.plan_claude(&replacement_claude(OTHER, FORKED));
         let registry = &harness.registry;
+        let gate = harness.providers.gate();
 
         registry
-            .deliver(OTHER, "first", harness.recipe(Fingerprint::default()), None)
+            .deliver(gate, OTHER, "first", harness.recipe(Fingerprint::default()), None)
             .await
             .expect("a resident starts");
         assert_eq!(
@@ -12548,7 +12555,7 @@ done
         assert!(registry.claim_held(Source::Claude, OTHER), "the driver holds the claim");
 
         registry
-            .deliver(OTHER, "second", harness.recipe(Fingerprint::default()), None)
+            .deliver(gate, OTHER, "second", harness.recipe(Fingerprint::default()), None)
             .await
             .expect("the resident takes it");
         assert_eq!(registry.steps()[2..], [step("posted to the resident", false, Some(true))]);
@@ -12565,8 +12572,9 @@ done
         until("the init", || harness.state().phase == Phase::Idle).await;
         harness.plan_claude(&replacement_claude(OTHER, FORKED));
         let registry = &harness.registry;
+        let gate = harness.providers.gate();
         registry
-            .deliver(OTHER, "first", harness.recipe(Fingerprint::default()), None)
+            .deliver(gate, OTHER, "first", harness.recipe(Fingerprint::default()), None)
             .await
             .expect("a resident starts");
 
@@ -12575,7 +12583,7 @@ done
             model: Some("another-model".to_string()),
             ..Fingerprint::default()
         };
-        registry.deliver(OTHER, "second", harness.recipe(other_model), None).await.expect("taken");
+        registry.deliver(gate, OTHER, "second", harness.recipe(other_model), None).await.expect("taken");
         until("the replacement to answer", || harness.after().iter().any(|line| line.contains("second"))).await;
         assert_eq!(registry.steps()[3..], [step("claude started", false, Some(true))]);
 
@@ -12612,9 +12620,10 @@ done
         until("the init", || harness.state().phase == Phase::Idle).await;
         harness.plan_claude(&replacement_claude(RENAMED, RENAMED));
         let registry = &harness.registry;
+        let gate = harness.providers.gate();
 
         registry
-            .deliver(OTHER, "first", harness.recipe(Fingerprint::default()), None)
+            .deliver(gate, OTHER, "first", harness.recipe(Fingerprint::default()), None)
             .await
             .expect("a resident starts");
         until("the rename", || registry.steps().len() == 4).await;

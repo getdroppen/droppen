@@ -13,7 +13,7 @@ use std::sync::Arc;
 use futures_util::future::BoxFuture;
 use tokio::sync::watch;
 
-use super::{drafts, AnswerOutcome, InjectError, InjectionRegistry, QueueOutcome, Reply, ResidentState, SendOptions, Sent, StopTaskOutcome};
+use super::{drafts, AnswerOutcome, InjectError, InjectionRegistry, QueueOutcome, Reply, ResidentState, SendOptions, Sent, SpawnGate, StopTaskOutcome};
 use crate::models::Models;
 use droppen_sessions::{DriverStates, Injection, InjectionRunState, ResidentInfo, SessionSummary, Source};
 use droppen_http::error::ApiError;
@@ -80,11 +80,13 @@ pub struct StartAt<'a> {
 
 /// What a provider says about the sessions it runs, each named by its id.
 pub trait Run: Send + Sync {
-    /// Hand a message to the CLI that owns an existing session.
-    fn send<'a>(&'a self, to: SendTo<'a>) -> BoxFuture<'a, Result<Sent, InjectError>>;
+    /// Hand a message to the CLI that owns an existing session, starting one
+    /// under `gate` if it has to.
+    fn send<'a>(&'a self, gate: &'a SpawnGate, to: SendTo<'a>) -> BoxFuture<'a, Result<Sent, InjectError>>;
 
-    /// Start a brand-new session and resolve once its canonical id is known.
-    fn start<'a>(&'a self, at: StartAt<'a>) -> BoxFuture<'a, Result<String, InjectError>>;
+    /// Start a brand-new session under `gate` and resolve once its canonical
+    /// id is known.
+    fn start<'a>(&'a self, gate: &'a SpawnGate, at: StartAt<'a>) -> BoxFuture<'a, Result<String, InjectError>>;
 
     /// The state of the run for this session, if this server ever started one.
     fn injection(&self, id: &str) -> Option<Injection>;
@@ -157,8 +159,9 @@ pub trait Run: Send + Sync {
 
     /// Put the session away, so it leaves the list; or why not, in the words
     /// the archive route refuses with. Each CLI keeps its archive its own way,
-    /// so every provider answers.
-    fn archive<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Result<(), String>>;
+    /// so every provider answers. Under `gate` where the CLI must not start
+    /// meanwhile.
+    fn archive<'a>(&'a self, gate: &'a SpawnGate, id: &'a str) -> BoxFuture<'a, Result<(), String>>;
 }
 
 /// Every provider, keyed by the [`Source`] it runs.
@@ -169,6 +172,9 @@ pub struct ProviderRegistry {
     providers: BTreeMap<Source, Arc<dyn Provider>>,
     /// The runs map every provider reads its sessions' state from.
     injections: Arc<InjectionRegistry>,
+    /// The one spawn gate, lent to a provider for a call that may start its
+    /// CLI and kept by none: no driver can take it.
+    gate: Arc<SpawnGate>,
 }
 
 impl ProviderRegistry {
@@ -177,9 +183,13 @@ impl ProviderRegistry {
     /// `register` is the entry's `crate::app::register_providers`, the one
     /// place that names every provider; a test passes the same function.
     pub fn new(injections: Arc<InjectionRegistry>, register: fn(&mut ProviderRegistry, &Arc<InjectionRegistry>)) -> Arc<Self> {
+        let gate = Arc::new(SpawnGate::new(injections.paths.data_dir().join("inject-locks")));
+        #[cfg(test)]
+        injections.watch_gate(&gate);
         let mut registry = Self {
             providers: BTreeMap::new(),
             injections: injections.clone(),
+            gate,
         };
         register(&mut registry, &injections);
         Arc::new(registry)
@@ -188,6 +198,18 @@ impl ProviderRegistry {
     /// Add `provider` under its own source, in place of any provider there.
     pub fn register(&mut self, provider: Arc<dyn Provider>) {
         self.providers.insert(provider.source(), provider);
+    }
+
+    /// The spawn gate, for a provider's own route that starts or stops its
+    /// CLI outside a [`Run`] call.
+    pub(crate) fn gate(&self) -> &SpawnGate {
+        &self.gate
+    }
+
+    /// Re-attach to every run the previous server left behind; see
+    /// [`InjectionRegistry::adopt_all`].
+    pub async fn adopt_all(&self) -> super::Adopted {
+        self.injections.adopt_all(&self.gate).await
     }
 
     /// Every source a provider is registered for, in [`Source`]'s order.
@@ -209,7 +231,7 @@ impl ProviderRegistry {
     /// Hand a message to the CLI that owns an existing session.
     pub async fn send_to_session(&self, source: Source, id: &str, cwd: Option<&str>, text: &str, options: &SendOptions) -> Result<Sent, InjectError> {
         match self.run(source) {
-            Some(run) => run.send(SendTo { id, cwd, text, options }).await,
+            Some(run) => run.send(&self.gate, SendTo { id, cwd, text, options }).await,
             None => Err(InjectError::Internal(format!("no provider runs {source} sessions"))),
         }
     }
@@ -217,7 +239,7 @@ impl ProviderRegistry {
     /// Start a brand-new session in `cwd` and resolve once its canonical id is known.
     pub async fn start_new_session(&self, source: Source, cwd: &str, text: &str, options: &SendOptions) -> Result<String, InjectError> {
         match self.run(source) {
-            Some(run) => run.start(StartAt { cwd, text, options }).await,
+            Some(run) => run.start(&self.gate, StartAt { cwd, text, options }).await,
             None => Err(InjectError::Internal(format!("no provider runs {source} sessions"))),
         }
     }
@@ -401,7 +423,7 @@ impl ProviderRegistry {
     /// could put its session away.
     pub async fn archive(&self, source: Source, id: &str) -> Result<(), String> {
         match self.run(source) {
-            Some(run) => run.archive(id).await,
+            Some(run) => run.archive(&self.gate, id).await,
             None => Err(format!("no provider runs {source} sessions")),
         }
     }

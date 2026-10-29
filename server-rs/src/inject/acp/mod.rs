@@ -56,7 +56,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use super::common::{new_uuid, session_workdir, QueueOutcome, ResidentState};
-use super::{AccountChoice, Capabilities, DriverStatesBuilder, InjectError, InjectionRegistry, ListsRuns, Provider, Run, SendOptions, SendTo, Sent, SpawnPermit, StartAt};
+use super::{AccountChoice, Capabilities, DriverStatesBuilder, InjectError, InjectionRegistry, ListsRuns, Provider, Run, RunHost, SendOptions, SendTo, Sent, SpawnGate, SpawnPermit, StartAt};
 use futures_util::future::BoxFuture;
 use crate::acp::{category, option_for, ConfigOption, InitializeResponse};
 use crate::acp_agent::{AcpAgent, AcpAgentRegistry, AcpCheck, AcpCheckState};
@@ -304,9 +304,9 @@ pub(crate) struct Acp {
 }
 
 impl Acp {
-    /// The ACP agents, run on `registry`.
+    /// The ACP agents, run on `registry`'s host.
     pub(crate) fn new(registry: Arc<InjectionRegistry>) -> Self {
-        let runs = AcpRuns::new(registry);
+        let runs = AcpRuns::new(registry.host.clone());
         let models = crate::models::acp::AcpModels::new(runs.paths.clone(), runs.clone());
         Self { runs, models }
     }
@@ -318,12 +318,12 @@ impl Acp {
 }
 
 /// The ACP agents' runs: the agent process behind each session, what each
-/// agent offers, and the probes that ask it. Kept here rather than in the
-/// injection registry they run on, whose shared parts — the spawn gate, the
-/// paths, the runs journal, the feeds — they reach through it.
+/// agent offers, and the probes that ask it. Kept here rather than on the
+/// host they run on, whose shared parts — the paths, the runs journal, the
+/// feeds — they reach through it.
 pub(crate) struct AcpRuns {
     /// What they run on.
-    registry: Arc<InjectionRegistry>,
+    host: Arc<RunHost>,
     /// The agent process behind each ACP session, keyed
     /// [`super::RunHost::key_of`].
     acp_servers: Mutex<HashMap<String, Handle>>,
@@ -336,27 +336,27 @@ pub(crate) struct AcpRuns {
 }
 
 impl AcpRuns {
-    /// None yet, on `registry`, and in its session list from now on.
-    fn new(registry: Arc<InjectionRegistry>) -> Arc<Self> {
+    /// None yet, on `host`, and in its session list from now on.
+    fn new(host: Arc<RunHost>) -> Arc<Self> {
         let runs = Arc::new(Self {
-            registry,
+            host,
             acp_servers: Mutex::new(HashMap::new()),
             acp_options: Mutex::new(HashMap::new()),
             acp_probes: Mutex::new(HashMap::new()),
         });
         let listed: Arc<dyn ListsRuns> = runs.clone();
-        runs.registry.list(Arc::downgrade(&listed));
+        runs.host.list(Arc::downgrade(&listed));
         runs
     }
 }
 
-/// The injection registry's shared parts, read as if they were the runs' own:
-/// the method bodies that moved here from it read them as they did.
+/// The host's shared parts, read as if they were the runs' own: the method
+/// bodies that moved here from the injection registry read them as they did.
 impl std::ops::Deref for AcpRuns {
-    type Target = InjectionRegistry;
+    type Target = RunHost;
 
-    fn deref(&self) -> &InjectionRegistry {
-        &self.registry
+    fn deref(&self) -> &RunHost {
+        &self.host
     }
 }
 
@@ -393,20 +393,20 @@ impl Provider for Acp {
 
 impl Run for Acp {
     /// Reopened where it ran, whatever `cwd` says: see `acp_send`.
-    fn send<'a>(&'a self, to: SendTo<'a>) -> BoxFuture<'a, Result<Sent, InjectError>> {
-        Box::pin(self.runs.acp_send(to.id, to.text, to.options))
+    fn send<'a>(&'a self, gate: &'a SpawnGate, to: SendTo<'a>) -> BoxFuture<'a, Result<Sent, InjectError>> {
+        Box::pin(self.runs.acp_send(gate, to.id, to.text, to.options))
     }
 
     /// The id is this server's own and the transcript it is kept in is this
     /// instance's, so there is no ownership to record.
-    fn start<'a>(&'a self, at: StartAt<'a>) -> BoxFuture<'a, Result<String, InjectError>> {
+    fn start<'a>(&'a self, gate: &'a SpawnGate, at: StartAt<'a>) -> BoxFuture<'a, Result<String, InjectError>> {
         Box::pin(async move {
             let agent = at
                 .options
                 .acp_agent
                 .as_deref()
                 .ok_or_else(|| InjectError::message("a new ACP session needs the agent it runs on"))?;
-            self.runs.acp_start(agent, at.cwd, at.text, at.options).await
+            self.runs.acp_start(gate, agent, at.cwd, at.text, at.options).await
         })
     }
 
@@ -460,8 +460,8 @@ impl Run for Acp {
     }
 
     // The transcript moves out of the agent's list (`archive_acp`).
-    fn archive<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Result<(), String>> {
-        Box::pin(async move { self.runs.archive_acp(id).await.map_err(|error| error.to_string()) })
+    fn archive<'a>(&'a self, gate: &'a SpawnGate, id: &'a str) -> BoxFuture<'a, Result<(), String>> {
+        Box::pin(async move { self.runs.archive_acp(gate, id).await.map_err(|error| error.to_string()) })
     }
 }
 
@@ -574,8 +574,8 @@ impl AcpRuns {
     /// Under the spawn gate, which a start or a send holds from reading its
     /// agent until its message is handed over: no turn starts between the
     /// look and the removal, and none starts on the agent after it.
-    pub async fn remove_acp_agent(&self, agent: &AcpAgent) -> Result<bool, String> {
-        let _permit = self.spawn_gate.permit().await;
+    pub async fn remove_acp_agent(&self, gate: &SpawnGate, agent: &AcpAgent) -> Result<bool, String> {
+        let _permit = gate.permit().await;
         if self.acp_agent_busy(&agent.id) {
             return Err(format!(
                 "{} is running a turn or has a message waiting; stop it, or let it finish, then remove the agent",
@@ -594,8 +594,8 @@ impl AcpRuns {
     /// the spawn gate. When its command line or environment changed, its
     /// sessions' processes are renewed ([`AcpRuns::renew_acp_processes`]):
     /// a rotated key, say, reaches every session's next process.
-    pub async fn reconfigure_acp_agent(&self, id: &str, patch: &crate::acp_agent::AcpAgentUpdate) -> Result<AcpAgent, String> {
-        let _permit = self.spawn_gate.permit().await;
+    pub async fn reconfigure_acp_agent(&self, gate: &SpawnGate, id: &str, patch: &crate::acp_agent::AcpAgentUpdate) -> Result<AcpAgent, String> {
+        let _permit = gate.permit().await;
         let agents = AcpAgentRegistry::of(&self.paths);
         let before = agents.get(id);
         let after = agents.update(id, patch)?;
@@ -689,10 +689,10 @@ impl AcpRuns {
     /// on its way, and not while the agent starts or the driver takes the
     /// message: a slow agent, or one that never answers, holds up no other
     /// send.
-    pub(super) async fn acp_start(self: &Arc<Self>, agent: &str, cwd: &str, text: &str, options: &SendOptions) -> Result<String, InjectError> {
+    pub(super) async fn acp_start(self: &Arc<Self>, gate: &SpawnGate, agent: &str, cwd: &str, text: &str, options: &SendOptions) -> Result<String, InjectError> {
         // The agent is read under the gate, which its removal holds too
         // ([`AcpRuns::remove_acp_agent`]).
-        let mut permit = self.spawn_gate.permit().await;
+        let mut permit = gate.permit().await;
         let agent = AcpAgentRegistry::of(&self.paths)
             .get(agent)
             .ok_or_else(|| InjectError::message(format!("no ACP agent \"{agent}\" is configured; add it in Settings")))?;
@@ -717,11 +717,11 @@ impl AcpRuns {
     /// Hand a message to the session `id`, starting its own agent if needed:
     /// the one its transcript is kept under, whatever else is configured now.
     /// Under the gate as [`AcpRuns::acp_start`] is.
-    pub(super) async fn acp_send(self: &Arc<Self>, id: &str, text: &str, options: &SendOptions) -> Result<Sent, InjectError> {
+    pub(super) async fn acp_send(self: &Arc<Self>, gate: &SpawnGate, id: &str, text: &str, options: &SendOptions) -> Result<Sent, InjectError> {
         let (agent_id, file) = AcpTranscripts::of(&self.paths).locate(id)
             .await
             .ok_or_else(|| InjectError::message("ACP session not found"))?;
-        let mut permit = self.spawn_gate.permit().await;
+        let mut permit = gate.permit().await;
         let agent = AcpAgentRegistry::of(&self.paths)
             .get(&agent_id)
             .ok_or_else(|| InjectError::message(crate::acp_agent::removed(&agent_id)))?;
@@ -800,7 +800,7 @@ impl AcpRuns {
     ///
     /// Refused while a turn is running or a message is waiting, as the other
     /// archives are: the user is told rather than the work being dropped.
-    pub async fn archive_acp(&self, id: &str) -> Result<(), droppen_sessions::archive::ArchiveError> {
+    pub async fn archive_acp(&self, gate: &SpawnGate, id: &str) -> Result<(), droppen_sessions::archive::ArchiveError> {
         use droppen_sessions::archive::ArchiveError;
         let (agent_id, from) = AcpTranscripts::of(&self.paths).locate(id)
             .await
@@ -813,7 +813,7 @@ impl AcpRuns {
         };
         // The stop is asked for under the gate and waited for outside it, as a
         // send is; the move is made under it again, with nothing running.
-        let permit = self.spawn_gate.permit().await;
+        let permit = gate.permit().await;
         let stopping = match self.acp_handle(id).filter(Handle::alive) {
             Some(handle) if handle.busy() => return Err(busy()),
             Some(handle) => handle.request_stop(),
@@ -828,7 +828,7 @@ impl AcpRuns {
                 return Err(busy());
             }
         }
-        let _permit = self.spawn_gate.permit().await;
+        let _permit = gate.permit().await;
         if self.acp_handle(id).is_some_and(|handle| handle.alive()) {
             // A message started it again meanwhile.
             return Err(busy());
@@ -1172,16 +1172,17 @@ mod tests {
         let home = tempfile::tempdir().expect("tempdir");
         let state = crate::api::test_support::state(home.path()).await;
         let injections = acp_of(&state.drive);
+        let gate = state.drive.providers.gate();
         configure_fake(&state.paths, home.path(), "stuck", "FAKE_AGENT_SLOW=session/set_config_option=600");
         configure_fake(&state.paths, home.path(), "other", "");
         let dirs = workdirs(home.path(), &["stuck", "other"]);
         let (stuck_dir, other_dir) = (&dirs[0], &dirs[1]);
         let plain = SendOptions::default();
 
-        let id = injections.acp_start("stuck", &stuck_dir.to_string_lossy(), "hello", &plain).await.expect("started");
+        let id = injections.acp_start(gate, "stuck", &stuck_dir.to_string_lossy(), "hello", &plain).await.expect("started");
         until("the first turn", || injections.acp_handle(&id).is_some_and(|handle| !handle.busy())).await;
         // A turn that waits, with the switch and one more message queued behind it.
-        injections.acp_send(&id, "wait for me", &plain).await.expect("handed over");
+        injections.acp_send(gate, &id, "wait for me", &plain).await.expect("handed over");
         let running = || {
             injections
                 .acp_handle(&id)
@@ -1193,20 +1194,20 @@ mod tests {
             model: Some("openrouter:vendor/big".into()),
             ..SendOptions::default()
         };
-        assert!(injections.acp_send(&id, "switch", &switch).await.expect("handed over").queued);
-        assert!(injections.acp_send(&id, "queued behind", &plain).await.expect("handed over").queued);
+        assert!(injections.acp_send(gate, &id, "switch", &switch).await.expect("handed over").queued);
+        assert!(injections.acp_send(gate, &id, "queued behind", &plain).await.expect("handed over").queued);
         assert!(injections.acp_handle(&id).expect("a handle").interrupt());
         until("the switch", || was_sent(stuck_dir, "session/set_config_option")).await;
 
         // The driver is stuck on the switch, so the next message waits for it…
         let behind = tokio::spawn({
-            let (injections, id) = (injections.clone(), id.clone());
-            async move { injections.acp_send(&id, "behind it", &SendOptions::default()).await }
+            let (injections, providers, id) = (injections.clone(), state.drive.providers.clone(), id.clone());
+            async move { injections.acp_send(providers.gate(), &id, "behind it", &SendOptions::default()).await }
         });
         tokio::time::sleep(Duration::from_millis(300)).await;
         assert!(!behind.is_finished(), "it waits for the driver");
         // …and nobody else does.
-        let other = injections.acp_start("other", &other_dir.to_string_lossy(), "hi", &plain).await;
+        let other = injections.acp_start(gate, "other", &other_dir.to_string_lossy(), "hi", &plain).await;
         assert!(other.is_ok(), "{:?}", other.err());
         assert!(!behind.is_finished(), "another agent's session started while the switch was still unanswered");
 
@@ -1235,40 +1236,41 @@ mod tests {
         let home = tempfile::tempdir().expect("tempdir");
         let state = crate::api::test_support::state(home.path()).await;
         let injections = acp_of(&state.drive);
+        let gate = state.drive.providers.gate();
         configure_fake(&state.paths, home.path(), "hangs", "FAKE_AGENT_SLOW=initialize=600");
         configure_fake(&state.paths, home.path(), "other", "");
         let dirs = workdirs(home.path(), &["hangs", "other"]);
         let plain = SendOptions::default();
 
         let starting = tokio::spawn({
-            let (injections, dir) = (injections.clone(), dirs[0].to_string_lossy().into_owned());
-            async move { injections.acp_start("hangs", &dir, "hello", &SendOptions::default()).await }
+            let (injections, providers, dir) = (injections.clone(), state.drive.providers.clone(), dirs[0].to_string_lossy().into_owned());
+            async move { injections.acp_start(providers.gate(), "hangs", &dir, "hello", &SendOptions::default()).await }
         });
         until("initialize", || was_sent(&dirs[0], "initialize")).await;
 
         let quickly = Duration::from_secs(10);
-        let gate = tokio::time::timeout(Duration::from_secs(1), injections.spawn_gate.permit()).await;
-        assert!(gate.is_ok(), "the spawn gate is held while an agent starts");
-        drop(gate);
-        let other = tokio::time::timeout(quickly, injections.acp_start("other", &dirs[1].to_string_lossy(), "hi", &plain))
+        let permit = tokio::time::timeout(Duration::from_secs(1), gate.permit()).await;
+        assert!(permit.is_ok(), "the spawn gate is held while an agent starts");
+        drop(permit);
+        let other = tokio::time::timeout(quickly, injections.acp_start(gate, "other", &dirs[1].to_string_lossy(), "hi", &plain))
             .await
             .expect("not held up")
             .expect("started");
         until("the other turn", || injections.acp_handle(&other).is_some_and(|handle| !handle.busy())).await;
-        tokio::time::timeout(quickly, injections.acp_send(&other, "again", &plain))
+        tokio::time::timeout(quickly, injections.acp_send(gate, &other, "again", &plain))
             .await
             .expect("not held up")
             .expect("sent");
 
         let hangs = AcpAgentRegistry::of(&state.paths).get("hangs").expect("configured");
-        let refused = injections.remove_acp_agent(&hangs).await.expect_err("it is starting");
+        let refused = injections.remove_acp_agent(gate, &hangs).await.expect_err("it is starting");
         assert!(refused.contains("running a turn or has a message waiting"), "{refused}");
         assert!(!starting.is_finished());
 
         starting.abort();
         let _ = starting.await;
         assert!(!injections.acp_agent_busy("hangs"), "nothing of the start is left");
-        assert_eq!(injections.remove_acp_agent(&hangs).await, Ok(true));
+        assert_eq!(injections.remove_acp_agent(gate, &hangs).await, Ok(true));
     }
 
     /// A stop asked for while a message is on its way to the driver is
@@ -1278,10 +1280,11 @@ mod tests {
         let home = tempfile::tempdir().expect("tempdir");
         let state = crate::api::test_support::state(home.path()).await;
         let injections = acp_of(&state.drive);
+        let gate = state.drive.providers.gate();
         configure_fake(&state.paths, home.path(), "fake", "");
         let dir = workdirs(home.path(), &["work"]).remove(0);
         let id = injections
-            .acp_start("fake", &dir.to_string_lossy(), "hello", &SendOptions::default())
+            .acp_start(gate, "fake", &dir.to_string_lossy(), "hello", &SendOptions::default())
             .await
             .expect("started");
         until("the first turn", || injections.acp_handle(&id).is_some_and(|handle| !handle.busy())).await;
@@ -1321,9 +1324,10 @@ mod tests {
     async fn one_turn(home: &Path, env: &str, text: &str, options: &SendOptions) -> (crate::api::AppState, String, PathBuf) {
         let state = crate::api::test_support::state(home).await;
         let injections = acp_of(&state.drive);
+        let gate = state.drive.providers.gate();
         configure_fake(&state.paths, home, "fake", env);
         let dir = workdirs(home, &["work"]).remove(0);
-        let id = injections.acp_start("fake", &dir.to_string_lossy(), text, options).await.expect("started");
+        let id = injections.acp_start(gate, "fake", &dir.to_string_lossy(), text, options).await.expect("started");
         until("the turn", || injections.acp_handle(&id).is_some_and(|handle| !handle.busy())).await;
         (state, id, dir)
     }
@@ -1465,11 +1469,12 @@ mod tests {
         let home = tempfile::tempdir().expect("tempdir");
         let state = crate::api::test_support::state(home.path()).await;
         let injections = acp_of(&state.drive);
+        let gate = state.drive.providers.gate();
         configure_fake(&state.paths, home.path(), "fake", "");
         let dir = workdirs(home.path(), &["work"]).remove(0);
         let plain = SendOptions::default();
 
-        let id = injections.acp_start("fake", &dir.to_string_lossy(), "hello", &plain).await.expect("started");
+        let id = injections.acp_start(gate, "fake", &dir.to_string_lossy(), "hello", &plain).await.expect("started");
         assert_eq!(
             injections.steps(),
             [step("agent placeholder", true, Some(false)), step("agent started", false, Some(false))]
@@ -1480,14 +1485,14 @@ mod tests {
             let _ = stopping.await;
         }
         until("the process to go", || injections.acp_handle(&id).is_none_or(|handle| !handle.alive())).await;
-        injections.acp_send(&id, "again", &plain).await.expect("reopened");
+        injections.acp_send(gate, &id, "again", &plain).await.expect("reopened");
         assert_eq!(
             injections.steps()[2..],
             [step("agent placeholder", true, Some(false)), step("agent started", false, Some(false))]
         );
         until("the second turn", || injections.acp_handle(&id).is_some_and(|handle| !handle.busy())).await;
 
-        injections.archive_acp(&id).await.expect("archived");
+        injections.archive_acp(gate, &id).await.expect("archived");
         assert_eq!(injections.steps()[4..], [step("agent stopping", false, Some(false))]);
     }
     /// Asking an agent what it offers, or checking that it answers, starts it

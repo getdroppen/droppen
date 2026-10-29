@@ -57,7 +57,7 @@ impl Claims {
 /// between "no CLI for this session" and "one in the map", and spawns are rare
 /// enough that one lock costs less than a lock per session.
 #[derive(Debug)]
-pub(crate) struct SpawnGate {
+pub struct SpawnGate {
     lock: tokio::sync::Mutex<()>,
     claims: Arc<Claims>,
     /// Set once [`SpawnGate::boot`] has handed out the boot pass.
@@ -67,7 +67,7 @@ pub(crate) struct SpawnGate {
 impl SpawnGate {
     /// The gate, with its claims in `dir`: the **shared** data directory's,
     /// so a second instance contends with this one rather than ignoring it.
-    /// Only [`super::InjectionRegistry::new`] makes one.
+    /// Only [`super::ProviderRegistry::new`] makes one.
     pub(super) fn new(dir: PathBuf) -> Self {
         Self {
             lock: tokio::sync::Mutex::new(()),

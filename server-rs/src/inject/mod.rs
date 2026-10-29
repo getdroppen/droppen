@@ -38,7 +38,7 @@ pub mod shim;
 
 pub(crate) use app_server::Codex;
 pub use common::{AnswerOutcome, Phase, QueueOutcome, Reply, ResidentState, StopTaskOutcome};
-pub use gate::SpawnPermit;
+pub use gate::{SpawnGate, SpawnPermit};
 pub use registry::{Capabilities, Provider, ProviderRegistry, Run, SendTo, StartAt};
 pub(crate) use resident::ClaudeCode;
 
@@ -622,10 +622,18 @@ pub struct RunHost {
     /// What each resident claude is thinking right now, as a running count;
     /// written by the drivers, read by the session feeds. See [`drafts`].
     drafts: drafts::Drafts,
+    /// What the spawn gate and the session's claim were at each traced point
+    /// of a spawn; see [`Step`].
+    #[cfg(test)]
+    steps: Mutex<Vec<Step>>,
+    /// The spawn gate the steps are read off: the newest provider registry's
+    /// over this host ([`ProviderRegistry::new`]).
+    #[cfg(test)]
+    gate: Mutex<Weak<gate::SpawnGate>>,
 }
 
-/// Claude Code's residents and Codex's app servers, and the spawn gate, on
-/// the host whose runs every provider shares ([`RunHost`]).
+/// Claude Code's residents and Codex's app servers, on the host whose runs
+/// every provider shares ([`RunHost`]).
 pub struct InjectionRegistry {
     /// What its runs share with every provider's.
     host: Arc<RunHost>,
@@ -633,9 +641,6 @@ pub struct InjectionRegistry {
     /// The resident claude behind each session, keyed by session id alone —
     /// there is no codex resident, so the source is not part of the key.
     residents: Mutex<HashMap<String, resident::Handle>>,
-    /// Serializes the gap between "no resident for this session" and "one in the
-    /// map", and holds the per-session claims; see [`InjectionRegistry::deliver`].
-    spawn_gate: gate::SpawnGate,
     /// How long a claude turn may make no progress before it is *marked*
     /// stalled. Nothing is ever killed for it; see [`resident`].
     stall_after: Duration,
@@ -701,10 +706,6 @@ pub struct InjectionRegistry {
     /// moment its transcript grows — see [`InjectionRegistry::transcript_grew`].
     /// Production runs [`resident::ABSORB_POLL`], or `DROPPEN_ABSORB_POLL_MS`.
     absorb_poll: Duration,
-    /// What the spawn gate and the session's claim were at each traced point
-    /// of a spawn; see [`Step`].
-    #[cfg(test)]
-    steps: Mutex<Vec<Step>>,
     /// Where a session's flight recording goes, if it is being made at all.
     ///
     /// A factory rather than a recorder: one is opened per *resident*, lives on
@@ -804,7 +805,6 @@ impl InjectionRegistry {
             host: RunHost::new(paths.clone(), instance, accounts, quota),
             codex_servers: Mutex::new(HashMap::new()),
             residents: Mutex::new(HashMap::new()),
-            spawn_gate: gate::SpawnGate::new(paths.data_dir().join("inject-locks")),
             // Ten minutes of silence is a *report*, not a sentence: the only
             // thing that happens at this threshold is that the turn is marked.
             stall_after: env_ms("DROPPEN_STALL_MS", Duration::from_secs(10 * 60)),
@@ -836,8 +836,6 @@ impl InjectionRegistry {
             recovery_backoff: resident::RECOVERY_BACKOFF,
             steer_settle: env_ms("DROPPEN_STEER_SETTLE_MS", resident::STEER_SETTLE),
             absorb_poll: env_ms("DROPPEN_ABSORB_POLL_MS", resident::ABSORB_POLL),
-            #[cfg(test)]
-            steps: Mutex::new(Vec::new()),
             recorders: record::Recorders::new(paths, instance),
             decoration,
             reading_recheck: Mutex::new(None),
@@ -896,6 +894,10 @@ impl RunHost {
             listeners: std::sync::OnceLock::new(),
             alerts: std::sync::OnceLock::new(),
             drafts: drafts::Drafts::default(),
+            #[cfg(test)]
+            steps: Mutex::new(Vec::new()),
+            #[cfg(test)]
+            gate: Mutex::new(Weak::new()),
             paths,
         })
     }
@@ -1119,7 +1121,7 @@ pub(crate) struct Step {
 }
 
 #[cfg(test)]
-impl InjectionRegistry {
+impl RunHost {
     /// Note a [`Step`] of session `id`'s spawn.
     pub(crate) fn step(&self, what: &'static str, source: Source, id: Option<&str>) {
         let step = Step {
@@ -1137,13 +1139,23 @@ impl InjectionRegistry {
 
     /// Whether anyone holds the spawn gate.
     pub(crate) fn gate_held(&self) -> bool {
-        self.spawn_gate.held()
+        self.watched_gate().is_some_and(|gate| gate.held())
     }
 
     /// Whether anyone holds session `id`'s claim: a claim of our own would be
     /// refused. One that is granted is let go at once.
     pub(crate) fn claim_held(&self, source: Source, id: &str) -> bool {
-        self.spawn_gate.claim_held(source, id)
+        self.watched_gate().is_some_and(|gate| gate.claim_held(source, id))
+    }
+
+    /// Read the steps off `gate` from now on.
+    pub(crate) fn watch_gate(&self, gate: &Arc<gate::SpawnGate>) {
+        *self.gate.lock().expect("watched gate") = Arc::downgrade(gate);
+    }
+
+    /// The gate the steps are read off, while its registry lasts.
+    fn watched_gate(&self) -> Option<Arc<gate::SpawnGate>> {
+        self.gate.lock().expect("watched gate").upgrade()
     }
 }
 
@@ -1190,11 +1202,11 @@ impl InjectionRegistry {
     /// ownership for the same reason terminal adoption is — `export-openapi`
     /// runs a throwaway server in-process, and a throwaway server must not
     /// claim a real one's runs.
-    pub async fn adopt_all(self: &Arc<Self>) -> Adopted {
+    pub async fn adopt_all(self: &Arc<Self>, gate: &gate::SpawnGate) -> Adopted {
         let mut report = Adopted::default();
         // Its claims need no gate because it runs once, before the server
         // listens: no send can race it.
-        let Some(boot) = self.spawn_gate.boot() else {
+        let Some(boot) = gate.boot() else {
             tracing::warn!("adoption runs once per server; not adopting again");
             return report;
         };
@@ -1781,7 +1793,7 @@ mod tests {
 
         let providers = ProviderRegistry::new(registry.clone(), crate::app::register_providers);
         for (source, session) in [(Source::Claude, CLAUDE), (Source::Codex, CODEX)] {
-            let claim = registry.spawn_gate.lease(source, session).expect("a free session must be claimable");
+            let claim = providers.gate().lease(source, session).expect("a free session must be claimable");
             registry.clone().resume(
                 runs::RunRecord {
                     codex: None,
@@ -1896,7 +1908,7 @@ mod tests {
         let handle = registry.codex_handle(SESSION).expect("the handle stays");
         assert!(handle.visible() && !handle.alive(), "listed, with no process behind it");
 
-        let claim = registry.spawn_gate.lease(Source::Codex, SESSION).expect("a free session must be claimable");
+        let claim = providers.gate().lease(Source::Codex, SESSION).expect("a free session must be claimable");
         registry.clone().resume(adopted, claim);
 
         assert!(!providers.interrupt(Source::Codex, SESSION), "nothing is left to stop");
@@ -1935,6 +1947,7 @@ mod tests {
             Arc::new(crate::accounts::quota::QuotaCache::new(paths, crate::app::logins())),
             decoration,
         );
+        let providers = ProviderRegistry::new(registry.clone(), crate::app::register_providers);
         let spawn = |script: &str| {
             std::process::Command::new("/bin/sh")
                 .args(["-c", script])
@@ -1967,7 +1980,7 @@ mod tests {
         registry.journal.add(record(LIVE, live.id()));
         registry.journal.add(record(DEAD, dead.id()));
 
-        let adopted = registry.adopt_all().await;
+        let adopted = providers.adopt_all().await;
         assert_eq!((adopted.recovered, adopted.finished), (1, 1), "{adopted:?}");
         let step = |what, claim| Step { what, gate: false, claim: Some(claim) };
         assert_eq!(registry.steps(), [step("adoption claimed", true), step("buried", false)]);

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use crate::accounts::store::AccountProvider;
 use crate::claude_roots;
 use crate::inject::common::{new_uuid, session_workdir, CHAT_SYSTEM_PROMPT};
-use crate::inject::{claude_prompt, require_provider, resident, AccountChoice, InjectError, InjectionRegistry, SendOptions, SendTo, Sent, StartAt};
+use crate::inject::{claude_prompt, require_provider, resident, AccountChoice, InjectError, InjectionRegistry, SendOptions, SendTo, Sent, SpawnGate, StartAt};
 use crate::sessions::claude;
 use droppen_sessions::Source;
 use droppen_base::process_env::{claude_env, claude_env_bare, clean_env_bare, Env};
@@ -275,7 +275,7 @@ impl InjectionRegistry {
 
 impl InjectionRegistry {
     /// Hand a message to claude for an existing session.
-    pub(super) async fn claude_send(self: &Arc<Self>, to: SendTo<'_>) -> Result<Sent, InjectError> {
+    pub(super) async fn claude_send(self: &Arc<Self>, gate: &SpawnGate, to: SendTo<'_>) -> Result<Sent, InjectError> {
         let SendTo { id, cwd, text, options } = to;
         // Resolved before anything is built: an unusable account must not spawn.
         let (mut env, login) = self.resume_claude_env(id, options).await?;
@@ -284,12 +284,12 @@ impl InjectionRegistry {
         // claude has no image flag, so every attachment reaches it as a path in
         // the prompt, which travels over stdin.
         let prompt = with_claude_attachments(text, options);
-        let delivery = self.deliver(id, &prompt, recipe, options.message_id.clone()).await?;
+        let delivery = self.deliver(gate, id, &prompt, recipe, options.message_id.clone()).await?;
         Ok(Sent { queued: delivery.queued })
     }
 
     /// Start a brand-new claude session in `cwd` and resolve once its id is known.
-    pub(super) async fn claude_start(self: &Arc<Self>, at: StartAt<'_>) -> Result<String, InjectError> {
+    pub(super) async fn claude_start(self: &Arc<Self>, gate: &SpawnGate, at: StartAt<'_>) -> Result<String, InjectError> {
         let StartAt { cwd, text, options } = at;
         // The local-login default for a claude spawn; an account overwrites it
         // below with a managed environment, which carries the marker too.
@@ -335,7 +335,7 @@ impl InjectionRegistry {
         let login = self.login_of(chosen).await;
         let recipe = claude_recipe(&self.paths, Some(cwd), options, env, login);
         let prompt = with_claude_attachments(text, options);
-        self.deliver(&id, &prompt, recipe, options.message_id.clone()).await?;
+        self.deliver(gate, &id, &prompt, recipe, options.message_id.clone()).await?;
         Ok(id)
     }
 }

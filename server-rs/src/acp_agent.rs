@@ -656,10 +656,21 @@ pub struct AcpAgentUpdate {
 pub struct AcpAgentState {
     /// Where the agents' configuration lives.
     pub paths: Arc<droppen_instance::paths::Paths>,
-    /// The live runs, which check an agent and stop its sessions when it goes.
-    pub(crate) acp: Arc<crate::inject::acp::AcpRuns>,
+    /// The providers: the ACP agents' live runs, which check an agent and stop
+    /// its sessions when it goes, and the spawn gate they do that under.
+    pub(crate) providers: Arc<crate::inject::ProviderRegistry>,
 }
 droppen_http::substate!(AcpAgentState);
+
+impl AcpAgentState {
+    /// The ACP agents' live runs.
+    fn acp(&self) -> &crate::inject::acp::AcpRuns {
+        self.providers
+            .provider::<crate::inject::acp::Acp>()
+            .expect("the entry registers the ACP provider")
+            .runs()
+    }
+}
 
 /// The ACP agents configured on this machine, and the built-in descriptions.
 #[api(id = "acp_agents", group = "acp", summary = "ACP agents")]
@@ -682,8 +693,8 @@ pub async fn put_acp_agent(
     ApiJson(body): ApiJson<AcpAgentUpdate>,
 ) -> Result<Json<AcpAgentInfo>, ApiError> {
     let agent = state
-        .acp
-        .reconfigure_acp_agent(&id, &body)
+        .acp()
+        .reconfigure_acp_agent(state.providers.gate(), &id, &body)
         .await
         .map_err(ApiError::bad_request)?;
     Ok(Json(agent.info()))
@@ -699,7 +710,7 @@ pub async fn delete_acp_agent(State(state): State<AcpAgentState>, ApiPath(id): A
     let Some(agent) = AcpAgentRegistry::of(&state.paths).get(&id) else {
         return Err(ApiError::not_found("no such ACP agent"));
     };
-    match state.acp.remove_acp_agent(&agent).await {
+    match state.acp().remove_acp_agent(state.providers.gate(), &agent).await {
         Ok(true) => Ok(Json(SendResult { accepted: true })),
         Ok(false) => Err(ApiError::not_found("no such ACP agent")),
         Err(busy) => Err(ApiError::conflict(busy)),
@@ -712,7 +723,7 @@ pub async fn delete_acp_agent(State(state): State<AcpAgentState>, ApiPath(id): A
 #[api(id = "check_acp_agent", group = "acp", summary = "Check an ACP agent")]
 pub async fn check_acp_agent(State(state): State<AcpAgentState>, ApiPath(id): ApiPath<String>) -> Result<Json<AcpCheck>, ApiError> {
     let agent = AcpAgentRegistry::of(&state.paths).get(&id).ok_or_else(|| ApiError::not_found("no such ACP agent"))?;
-    let check = state.acp.check_acp_agent(&agent).await;
+    let check = state.acp().check_acp_agent(&agent).await;
     agent.record_check(&AcpAgentRegistry::of(&state.paths), &check);
     Ok(Json(check))
 }
