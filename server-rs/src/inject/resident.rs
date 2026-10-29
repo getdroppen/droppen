@@ -89,8 +89,6 @@ use super::common::{busy_message, new_uuid, AnswerOutcome, Phase, QueueOutcome, 
 use super::drafts::Draft;
 use super::gate::{ClaimError, SessionLease};
 use super::{runs, Capabilities, DriverStatesBuilder, InjectError, InjectionRegistry, Provider, Run, RunEntry, RunState, SendTo, Sent, SpawnPermit, StartAt};
-use spawn::SpawnDeps;
-
 mod spawn;
 
 /// The mode flags every resident is started with.
@@ -692,11 +690,11 @@ impl Provider for ClaudeCode {
 
 impl Run for ClaudeCode {
     fn send<'a>(&'a self, to: SendTo<'a>) -> BoxFuture<'a, Result<Sent, InjectError>> {
-        Box::pin(async move { self.spawn_deps().send(to).await })
+        Box::pin(self.registry.claude_send(to))
     }
 
     fn start<'a>(&'a self, at: StartAt<'a>) -> BoxFuture<'a, Result<String, InjectError>> {
-        Box::pin(async move { self.spawn_deps().start(at).await })
+        Box::pin(self.registry.claude_start(at))
     }
 
     /// A resident publishes each turn in the runs map, so that is where a
@@ -787,15 +785,6 @@ impl Run for ClaudeCode {
 }
 
 impl ClaudeCode {
-    /// What a send or a start reads, out of the registry this provider holds.
-    fn spawn_deps(&self) -> SpawnDeps<'_> {
-        SpawnDeps {
-            paths: &self.registry.paths,
-            accounts: &self.registry.accounts,
-            injections: &self.registry,
-        }
-    }
-
     /// Whether this server holds a resident for session `id`.
     fn holds(&self, id: &str) -> bool {
         self.registry.residents.lock().expect("residents poisoned").contains_key(id)

@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use crate::accounts::store::{AccountProvider, AccountsStore};
+use crate::accounts::store::AccountProvider;
 use crate::claude_roots;
 use crate::inject::common::{new_uuid, session_workdir, CHAT_SYSTEM_PROMPT};
 use crate::inject::{claude_prompt, require_provider, resident, AccountChoice, InjectError, InjectionRegistry, SendOptions, SendTo, Sent, StartAt};
@@ -108,21 +108,6 @@ pub(super) fn claude_recipe(paths: &Paths, cwd: Option<&str>, options: &SendOpti
     }
 }
 
-/// What a claude send or start reads: the stores that choose and bind the
-/// account a spawn runs under, the paths it is pointed at, and the registry
-/// that runs and decorates it.
-///
-/// Lent by [`ClaudeCode`] out of the registry it holds, which is built over the
-/// same stores the drive serves.
-pub(super) struct SpawnDeps<'a> {
-    /// Where everything is discovered and written.
-    pub(super) paths: &'a Arc<Paths>,
-    /// The stored logins: which account a spawn runs under, and its credential.
-    pub(super) accounts: &'a Arc<AccountsStore>,
-    /// Every run this server started.
-    pub(super) injections: &'a Arc<InjectionRegistry>,
-}
-
 /// Which login a claude spawn runs under, in the two parts a resident is
 /// compared by.
 ///
@@ -141,24 +126,9 @@ pub(super) struct ClaudeLogin {
     credential: Option<String>,
 }
 
-impl SpawnDeps<'_> {
-    /// That account, plus a name for the credential it holds right now.
-    ///
-    /// Read here rather than carried out of [`SpawnDeps::owned_claude_env`] because it is
-    /// wanted on the path that does not build an environment at all — a local-login
-    /// send — and because the store is the only thing that may answer it.
-    async fn claude_login(&self, account: Option<String>) -> ClaudeLogin {
-        let credential = match account.as_deref() {
-            Some(id) => self.accounts.credential_hash(id).await,
-            None => None,
-        };
-        ClaudeLogin { account, credential }
-    }
-}
-
 // ------------------------------------------------------------ account resolution
 
-impl SpawnDeps<'_> {
+impl InjectionRegistry {
     /// The environment a spawn against this instance's own Claude root runs with.
     ///
     /// Two independent pieces:
@@ -178,33 +148,26 @@ impl SpawnDeps<'_> {
     /// well. Refusing would only make the root's own login (which no-account
     /// sessions need) and account sessions mutually exclusive.
     async fn owned_claude_env(&self, account_id: Option<&str>) -> Result<Env, InjectError> {
-        managed_claude_env(&self.paths, &self.accounts, account_id).await
-    }
-}
-
-/// [`SpawnDeps::owned_claude_env`] from the two things it reads, for a caller that holds no
-/// [`SpawnDeps`] — a session's driver, rotating it onto another
-/// account.
-async fn managed_claude_env(paths: &Paths, accounts: &crate::accounts::store::AccountsStore, account_id: Option<&str>) -> Result<Env, InjectError> {
-    let dir = claude_roots::ClaudeRoots::of(paths).ensure_managed()
-        .await
-        .map_err(|error| InjectError::Internal(format!("cannot create this instance's Claude root: {error}")))?;
-    let mut vars = vec![("CLAUDE_CONFIG_DIR".to_string(), dir.to_string_lossy().into_owned())];
-    if let Some(account_id) = account_id {
-        if let Some(path) = claude_roots::ClaudeRoots::of(paths).managed_file_credentials().await {
-            tracing::warn!(
-                path = %path.display(),
-                account = account_id,
-                "the managed root holds file credentials; the account token in the environment takes precedence on current CLIs"
-            );
+        let dir = claude_roots::ClaudeRoots::of(&self.paths).ensure_managed()
+            .await
+            .map_err(|error| InjectError::Internal(format!("cannot create this instance's Claude root: {error}")))?;
+        let mut vars = vec![("CLAUDE_CONFIG_DIR".to_string(), dir.to_string_lossy().into_owned())];
+        if let Some(account_id) = account_id {
+            if let Some(path) = claude_roots::ClaudeRoots::of(&self.paths).managed_file_credentials().await {
+                tracing::warn!(
+                    path = %path.display(),
+                    account = account_id,
+                    "the managed root holds file credentials; the account token in the environment takes precedence on current CLIs"
+                );
+            }
+            let launch = self.accounts.account_env(account_id).await?;
+            // A codex key in `ANTHROPIC_API_KEY` would be a 401 under a label that
+            // says otherwise; refuse it here, where the account is still nameable.
+            require_provider(&launch, AccountProvider::Claude)?;
+            vars.extend(launch.env);
         }
-        let launch = accounts.account_env(account_id).await?;
-        // A codex key in `ANTHROPIC_API_KEY` would be a 401 under a label that
-        // says otherwise; refuse it here, where the account is still nameable.
-        require_provider(&launch, AccountProvider::Claude)?;
-        vars.extend(launch.env);
+        Ok(claude_env(vars))
     }
-    Ok(claude_env(vars))
 }
 
 /// A spawn environment with one account's variables swapped for another's.
@@ -215,7 +178,7 @@ async fn managed_claude_env(paths: &Paths, accounts: &crate::accounts::store::Ac
 /// environment would have supplied one of those names had no account set it,
 /// that value comes back (`inherited`, which never answers for the harness
 /// variables [`claude_env`] strips). Then `new`'s go in on top — the same
-/// "account last" order [`managed_claude_env`] builds in.
+/// "account last" order [`InjectionRegistry::owned_claude_env`] builds in.
 ///
 /// Known limitation: `old` is the old account's block as stored *now*. A key
 /// deleted from that block after the process started (say `ANTHROPIC_BASE_URL`)
@@ -240,7 +203,7 @@ fn inherited_var(key: &str) -> Option<String> {
     clean_env_bare().remove(key)
 }
 
-impl SpawnDeps<'_> {
+impl InjectionRegistry {
     /// Which login a resume runs under.
     ///
     /// A session is this server's own when its transcript sits in the root this
@@ -287,12 +250,12 @@ impl SpawnDeps<'_> {
                 self.accounts.rotation_log().note_hand_binding(id, crate::accounts::rest::now_ms());
             }
         }
-        let login = self.claude_login(account_id).await;
+        let login = self.login_of(account_id).await;
         Ok((env, login))
     }
 }
 
-impl SpawnDeps<'_> {
+impl InjectionRegistry {
     /// Give a claude spawn the means to notify its user, when there is a channel.
     ///
     /// Claude only, for now, and the reason is the skill rather than the program:
@@ -305,13 +268,13 @@ impl SpawnDeps<'_> {
     /// that would not start because a notification channel could not be set up is a
     /// bug with a very unhappy user attached.
     async fn notify_decorate(&self, id: &str, env: &mut Env) {
-        self.injections.decoration.decorate(Source::Claude, id, env).await;
+        self.decoration.decorate(Source::Claude, id, env).await;
     }
 }
 
-impl SpawnDeps<'_> {
+impl InjectionRegistry {
     /// Hand a message to claude for an existing session.
-    pub(super) async fn send(&self, to: SendTo<'_>) -> Result<Sent, InjectError> {
+    pub(super) async fn claude_send(self: &Arc<Self>, to: SendTo<'_>) -> Result<Sent, InjectError> {
         let SendTo { id, cwd, text, options } = to;
         // Resolved before anything is built: an unusable account must not spawn.
         let (mut env, login) = self.resume_claude_env(id, options).await?;
@@ -320,12 +283,12 @@ impl SpawnDeps<'_> {
         // claude has no image flag, so every attachment reaches it as a path in
         // the prompt, which travels over stdin.
         let prompt = with_claude_attachments(text, options);
-        let delivery = self.injections.deliver(id, &prompt, recipe, options.message_id.clone()).await?;
+        let delivery = self.deliver(id, &prompt, recipe, options.message_id.clone()).await?;
         Ok(Sent { queued: delivery.queued })
     }
 
     /// Start a brand-new claude session in `cwd` and resolve once its id is known.
-    pub(super) async fn start(&self, at: StartAt<'_>) -> Result<String, InjectError> {
+    pub(super) async fn claude_start(self: &Arc<Self>, at: StartAt<'_>) -> Result<String, InjectError> {
         let StartAt { cwd, text, options } = at;
         // The local-login default for a claude spawn; an account overwrites it
         // below with a managed environment, which carries the marker too.
@@ -336,11 +299,11 @@ impl SpawnDeps<'_> {
             // the local login known to be signed out — an account in the pool:
             // a chat or a scheduled task started there would fail its first turn.
             AccountChoice::Unset if options.use_default_account => {
-                self.injections.start_account(AccountProvider::Claude, options.model.as_deref()).await
+                self.start_account(AccountProvider::Claude, options.model.as_deref()).await
             }
             AccountChoice::Unset | AccountChoice::Local => None,
             AccountChoice::Account(id) => Some(id.clone()),
-            AccountChoice::Rule(named) => self.injections.rule_account(AccountProvider::Claude, named, options.model.as_deref()).await,
+            AccountChoice::Rule(named) => self.rule_account(AccountProvider::Claude, named, options.model.as_deref()).await,
         };
         match &chosen {
             Some(account_id) => {
@@ -368,10 +331,10 @@ impl SpawnDeps<'_> {
         // spawn is what is awaited — the id is ours either way, because a
         // session with no transcript is started with `--session-id`.
         self.notify_decorate(&id, &mut env).await;
-        let login = self.claude_login(chosen).await;
+        let login = self.login_of(chosen).await;
         let recipe = claude_recipe(&self.paths, Some(cwd), options, env, login);
         let prompt = with_claude_attachments(text, options);
-        self.injections.deliver(&id, &prompt, recipe, options.message_id.clone()).await?;
+        self.deliver(&id, &prompt, recipe, options.message_id.clone()).await?;
         Ok(id)
     }
 }
@@ -436,12 +399,16 @@ impl InjectionRegistry {
     /// The whole environment a spawn of `session` under `account` gets, built
     /// from nothing: the managed root, the account, the `rh-notify` decoration.
     async fn account_spawn_env(&self, session: &str, account: &str) -> Result<Env, InjectError> {
-        let mut env = managed_claude_env(&self.paths, &self.accounts, Some(account)).await?;
-        self.decoration.decorate(Source::Claude, session, &mut env).await;
+        let mut env = self.owned_claude_env(Some(account)).await?;
+        self.notify_decorate(session, &mut env).await;
         Ok(env)
     }
 
-    /// [`SpawnDeps::claude_login`], from the store this registry holds.
+    /// That account, plus a name for the credential it holds right now.
+    ///
+    /// Read here rather than carried out of [`InjectionRegistry::owned_claude_env`] because it is
+    /// wanted on the path that does not build an environment at all — a local-login
+    /// send — and because the store is the only thing that may answer it.
     async fn login_of(&self, account: Option<String>) -> ClaudeLogin {
         let credential = match account.as_deref() {
             Some(id) => self.accounts.credential_hash(id).await,
