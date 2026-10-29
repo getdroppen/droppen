@@ -203,14 +203,10 @@ import {
   acceptNames,
   admits,
   assuredRenewalAfter,
-  capDisputes,
   checkRotateAnswer,
   compareBytes,
   compareUtf8Ids,
-  disputeId,
-  disputeChecksOut,
   disputeIsolates,
-  disputesNotIn,
   edgeHeld,
   exposedControllers,
   exposedCycles,
@@ -219,9 +215,7 @@ import {
   hostsExposedBy,
   hostsToRotate,
   lastUserKeyLoss,
-  mergeDisputes,
   noDeviceRoleYet,
-  parseDisputes,
   parseRotateAnswer,
   pauseReturns,
   reEnrollCulprits,
@@ -334,7 +328,8 @@ import type { ChainAlert, FreshUserKey, HeldBack, HeldChange, RotationReport, Ve
 import { forgetBrowser } from "./account/wipe";
 import { ReEnrollWarnings } from "./account/re-enroll";
 import { ChainAlerts } from "./account/alerts";
-import { accountBasics } from "./account/basics";
+import { type AccountNote, accountBasics } from "./account/basics";
+import { RenewalNotes } from "./account/renewal-notes";
 export { deviceFingerprint, hasRunAi, joinAction, limitedDevice } from "./account/devices";
 export type { JoinKeys, PromoteBlock, Refusal, SelfRemoval, Standing } from "./account/devices";
 export { AccountError, hostAdminRefused, KeysUnreadableError, v3NotWritableError } from "./account/errors";
@@ -406,43 +401,9 @@ export class CloudAccount {
   missingUserKey: number | null = null;
   /** (Not an admin.) The current hosts whose newest committed key epoch this device cannot open; kept by `checkHostKeys`. */
   missingHostKeys: string[] = [];
-  /** What the renewal runner last said of the hosts (`noteRenewals`; docs/host-identity-rotation.md §4.2–§4.3, §3.8). */
-  private renewal: RenewalNote = { renews: new Set(), pending: new Set(), isolated: new Set(), flagged: new Set() };
-  /** {@link keptDisputes} as last read, by its stored text. */
-  private keptRaw: string | null | undefined = undefined;
-  private keptParsed: KeptDispute[] = [];
-  /**
-   * Every dispute this page kept or heard of from another tab, in memory too:
-   * a storage write that fails — full, or not allowed — never
-   * loses one, nor does another tab writing over it.
-   */
-  private keptMemory: KeptDispute[] = [];
-  /**
-   * What re-verifying a kept dispute on this page's chain found (R6 review), by
-   * {@link disputeId}: `ok`; `bad` (its signature does not check out:
-   * dropped, it isolates nothing); `checking`; or, for one about an entry
-   * past this page's chain, which it cannot judge yet, `ahead` — within what
-   * this browser has verified (its seen record), or the record would not
-   * read: another page of it may have checked it — or `beyond`, past that:
-   * none can have. Only `ok` and `ahead` count — `ahead` meanwhile (a page
-   * behind keeps the host isolated: isolation fails safe). `beyond` is kept,
-   * not counted, and placed again when the record may have moved; either is
-   * checked on the view that brings its entry before that view is taken
-   * ({@link install}).
-   */
-  private keptChecks = new Map<string, "ok" | "bad" | "checking" | "ahead" | "beyond">();
   /** Stop hearing the other tabs ({@link stopSession}). */
   private unhearCrossTab: (() => void) | null = null;
-  /**
-   * Bumped whenever what an automatic renewal may not go past changes:
-   * this device's guard turned on, a dispute kept or heard of, the
-   * hub's isolated hosts. An attempt in flight that sees it move checks again
-   * at once — and every attempt checks once more right before publication.
-   */
-  private assuranceGen = 0;
   private readonly crossTab: CrossTab | null;
-  /** {@link hostsToRotate} for the chain as it was last asked, by its head (and the narrowed groups it read). */
-  private exposureCache: { chain: ChainState; seq: number; exposed: Map<string, Exposure> } | null = null;
   private held: HeldBack | null = null;
   /**
    * The last hold a sync took in on this device's own clock (its day passed
@@ -496,6 +457,8 @@ export class CloudAccount {
     readAck: () => this.readAck(),
     writeAck: (ack) => this.writeAck(ack),
   });
+  /** What the renewal runner noted, the disputes kept here, and what an automatic renewal may not go past (`RenewalNotes`). */
+  private readonly renewalNotes: RenewalNotes;
 
   private constructor(
     readonly api: HubApi,
@@ -511,8 +474,18 @@ export class CloudAccount {
     this.seen = opts.seen ?? pageSeenStore(this.storage);
     this.locks = opts.locks === undefined ? defaultLocks() : opts.locks;
     this.crossTab = opts.crossTab === undefined ? defaultCrossTab(this.storage) : opts.crossTab;
+    this.renewalNotes = new RenewalNotes(
+      this.basics,
+      {
+        readHeld: () => this.readHeld(),
+        sync: () => this.sync(),
+        keptDisputes: this.note(keptDisputesKey(this.account)),
+        localAssured: this.note(localAssuredKey(this.account)),
+      },
+      this.crossTab,
+    );
     // Another tab kept disputes: merged here, and every listener (each channel among them) looks again once they are checked.
-    this.unhearCrossTab = this.crossTab?.subscribe((message) => this.heardDisputes(message)) ?? null;
+    this.unhearCrossTab = this.crossTab?.subscribe((message) => this.renewalNotes.heardDisputes(message)) ?? null;
     this.vault = new UserKeyVault(store, session.account);
     this.hostKeys = new HostKeyVault(store, session.account);
     this.renewalStash = new RenewalStash(store, session.account);
@@ -761,6 +734,11 @@ export class CloudAccount {
 
   private forget(key: string): void {
     forgetIn(this.storage, key);
+  }
+
+  /** This browser's note `key` for the account, bound to that key: what a collaborator that keeps a note is handed. */
+  private note(key: string): AccountNote {
+    return { read: () => this.read(key), write: (value) => this.write(key, value), forget: () => this.forget(key) };
   }
 
   private info(): DeviceInfo {
@@ -1269,11 +1247,11 @@ export class CloudAccount {
       // those checks ran too (the last look, finding none, is right before
       // the view is taken).
       do {
-        await this.checkDisputesOn(next);
-      } while (this.disputesDueOn(next).length);
+        await this.renewalNotes.checkDisputesOn(next);
+      } while (this.renewalNotes.disputesDueOn(next).length);
       // And those past it placed by the record just written, in the same step:
       // a reload holds a host isolated before any channel opens.
-      this.placeDisputesPast(next, recorded);
+      this.renewalNotes.placeDisputesPast(next, recorded);
       // A fork latched meanwhile (another call of this page) installs nothing either.
       this.assertNotForked();
       this.state = next;
@@ -3132,10 +3110,10 @@ export class CloudAccount {
     // A host that may have had its identity key copied, or is isolated, is let control no other one until it renewed it (§4.1, §7
     // decision 8). One that cannot renew (an older agent, the hub not taking renewals yet) stays under the re-enroll warning instead.
     // Checked here, and again on the chain every (re)built batch goes on.
-    this.refuseExposedAdmission(chain, host, accept);
+    this.renewalNotes.refuseExposedAdmission(chain, host, accept);
     const setAccept: Action = { type: "setAccept", host, from: accept };
     const checked = (c: ChainState): Action[] => {
-      this.refuseExposedAdmission(c, host, accept);
+      this.renewalNotes.refuseExposedAdmission(c, host, accept);
       return [setAccept];
     };
     if (shutOut.length) {
@@ -3367,15 +3345,7 @@ export class CloudAccount {
    * changes; the page re-renders.
    */
   noteRenewals(note: RenewalNote): void {
-    const same = (a: ReadonlySet<string>, b: ReadonlySet<string>) => a.size === b.size && [...a].every((x) => b.has(x));
-    const was = this.renewal;
-    const flagged = note.flagged ?? new Set<string>();
-    if (same(was.renews, note.renews) && same(was.pending, note.pending) && same(was.isolated, note.isolated) && same(was.flagged ?? new Set(), flagged)) return;
-    if ([...note.isolated].some((h) => !was.isolated.has(h)) || [...flagged].some((h) => !(was.flagged ?? new Set()).has(h))) this.assuranceGen++;
-    this.renewal = { renews: new Set(note.renews), pending: new Set(note.pending), isolated: new Set(note.isolated), flagged: new Set(flagged) };
-    // What can renew changes what is exposed (`hostsToRotate`).
-    this.exposureCache = null;
-    this.emit();
+    this.renewalNotes.noteRenewals(note);
   }
 
   /**
@@ -3384,19 +3354,12 @@ export class CloudAccount {
    * chain this device holds.
    */
   hostsToRotate(): Map<string, Exposure> {
-    const chain = this.state;
-    if (!chain) return new Map();
-    const cached = this.exposureCache;
-    if (cached && cached.chain === chain && cached.seq === chain.seq) return cached.exposed;
-    // Which hosts can renew decides what a renewal fixes (§4.1): an exposed host that cannot is a pass no renewal takes away.
-    const exposed = hostsToRotate(chain, (h) => this.renews(h));
-    this.exposureCache = { chain, seq: chain.seq, exposed };
-    return exposed;
+    return this.renewalNotes.hostsToRotate();
   }
 
   /** Whether host `id` renews its identity key (rather than being re-enrolled): see {@link noteRenewals}. Never on a v2 chain. */
   renews(id: string): boolean {
-    return this.state?.isV3 === true && this.renewal.renews.has(id);
+    return this.renewalNotes.renews(id);
   }
 
   /**
@@ -3406,7 +3369,7 @@ export class CloudAccount {
    * only with the code its screen shows.
    */
   isolated(id: string): boolean {
-    return this.renewal.isolated.has(id) || this.isolatedByKept(id);
+    return this.renewalNotes.isolated(id);
   }
 
   /**
@@ -3417,74 +3380,7 @@ export class CloudAccount {
    * ({@link disputeIsolates}), before any channel is opened or key sealed.
    */
   keepDisputes(found: readonly KeptDispute[]): void {
-    // Every one kept, those still being checked too: a write never drops another tab's.
-    const kept = this.keptAll();
-    const fresh = disputesNotIn(kept, found);
-    // Verified just now by the caller (`checkStatement`), on this page's chain —
-    // one another tab told of, and still being checked here, as well.
-    const confirmed = found.filter((d) => this.keptChecks.get(disputeId(d)) !== "ok");
-    for (const d of found) this.keptChecks.set(disputeId(d), "ok");
-    if (!fresh.length) {
-      if (confirmed.length) {
-        this.assuranceGen++;
-        this.exposureCache = null;
-        this.emit();
-      }
-      return;
-    }
-    this.assuranceGen++;
-    // Memory holds what storage is told: if the write fails, nothing is lost here.
-    this.keptMemory = capDisputes(this.state, mergeDisputes(kept, fresh));
-    this.write(keptDisputesKey(this.account), JSON.stringify(this.keptMemory));
-    this.crossTab?.post({ account: this.account, disputes: fresh });
-    this.exposureCache = null;
-    this.emit();
-  }
-
-  /**
-   * Another tab's disputes (or its storage write): kept in memory here too —
-   * so a storage write that failed there loses none — but counted only once
-   * this page has verified them on its own chain ({@link keptDisputes});
-   * then everyone here is told at once ({@link checkKept}). One about a
-   * renewal this page's chain does not hold yet counts meanwhile if this
-   * browser has verified that far, and this page catches up to check it;
-   * one placed past that before is placed again (the record may have moved).
-   */
-  private heardDisputes(message: unknown): void {
-    const m = (message && typeof message === "object" ? message : {}) as { account?: unknown; disputes?: unknown; storage?: unknown };
-    if (m.account === this.account) {
-      const heard = parseDisputes(m.disputes);
-      const fresh = disputesNotIn(this.keptAll(), heard);
-      if (fresh.length) this.keptMemory = capDisputes(this.state, mergeDisputes(this.keptAll(), fresh));
-    } else if (!("storage" in m)) return;
-    // What an automatic renewal may not go past may have moved (here, or once checked).
-    this.assuranceGen++;
-    this.exposureCache = null;
-    for (const [id, check] of this.keptChecks) if (check === "beyond") this.keptChecks.delete(id);
-    // The checks start now, not when someone next asks.
-    this.keptDisputes();
-    this.emit();
-  }
-
-  /**
-   * Every dispute kept for the account here that no check found bad — what
-   * storage holds, and what this page kept or heard of in memory, one each by
-   * host, renewal and signature — verified or not yet.
-   */
-  private keptAll(): KeptDispute[] {
-    const raw = this.read(keptDisputesKey(this.account));
-    if (raw !== this.keptRaw) {
-      let parsed: KeptDispute[] = [];
-      try {
-        parsed = parseDisputes(JSON.parse(raw ?? "[]") as unknown);
-      } catch {
-        parsed = [];
-      }
-      this.keptRaw = raw;
-      this.keptParsed = parsed;
-    }
-    const all = this.keptMemory.length ? mergeDisputes(this.keptParsed, this.keptMemory) : this.keptParsed;
-    return all.filter((d) => this.keptChecks.get(disputeId(d)) !== "bad");
+    this.renewalNotes.keepDisputes(found);
   }
 
   /**
@@ -3498,114 +3394,7 @@ export class CloudAccount {
    * (`ahead`, see {@link keptChecks}); one past that does not, but is kept.
    */
   keptDisputes(): KeptDispute[] {
-    const all = this.keptAll();
-    for (const d of all) this.checkKept(d);
-    return all.filter((d) => {
-      const check = this.keptChecks.get(disputeId(d));
-      return check === "ok" || check === "ahead";
-    });
-  }
-
-  /**
-   * Verify kept dispute `d` on this page's chain, once (R6 review): the statement
-   * must be signed by the key the renewal at `d.seq` retired. One that checks
-   * out counts from then on, and listeners (each channel among them) are
-   * told at once; one that does not is dropped. A chain that has no such
-   * entry yet cannot judge it: if this browser has verified a chain that long
-   * (its seen record), or the record will not read, another page of it may
-   * have checked it, so it counts meanwhile (`ahead`); if not, no page of it
-   * can have, and it does not count (`beyond`) — but it is kept: the record
-   * may lag. Either way this page catches up, and it is checked on the view
-   * that brings the entry ({@link checkDisputesOn}).
-   */
-  private checkKept(d: KeptDispute): void {
-    const id = disputeId(d);
-    const chain = this.state;
-    if (this.keptChecks.has(id) || !chain) return;
-    this.keptChecks.set(id, "checking");
-    void (async () => {
-      if (chain.seq >= d.seq) {
-        const ok = await disputeChecksOut(chain, d);
-        if (this.keptChecks.get(id) !== "checking") return;
-        this.settleKept(d, ok);
-        if (ok) this.assuranceGen++;
-      } else {
-        let through: number | null = null;
-        try {
-          through = await this.verifiedThrough();
-        } catch (error) {
-          // Unread: it fails safe — counted, as one within the record.
-          console.warn("cloud account: reading the seen record for a dispute:", error);
-        }
-        if (this.keptChecks.get(id) !== "checking") return;
-        const ahead = through === null || d.seq <= through;
-        this.keptChecks.set(id, ahead ? "ahead" : "beyond");
-        if (ahead) this.assuranceGen++;
-        void this.sync().catch((error: unknown) => console.warn("cloud account: catching up with a dispute another tab kept:", error));
-      }
-      this.exposureCache = null;
-      this.emit();
-    })();
-  }
-
-  /** The furthest entry this browser has verified of the account's chain (its seen record, any checkpoint of it); -1 when it pinned none. */
-  private async verifiedThrough(): Promise<number> {
-    const held = await this.readHeld();
-    return held.genesis === null ? -1 : Math.max(-1, ...checkpoints(held).map((mark) => mark.seenThrough));
-  }
-
-  /** What checking kept dispute `d`'s signature found: kept as `ok`, or as `bad` and dropped from memory. */
-  private settleKept(d: KeptDispute, ok: boolean): void {
-    const id = disputeId(d);
-    this.keptChecks.set(id, ok ? "ok" : "bad");
-    if (!ok) {
-      console.warn(`cloud account: a kept dispute of ${d.host}'s renewal at ${d.seq} does not check out: dropped`);
-      this.keptMemory = this.keptMemory.filter((k) => disputeId(k) !== id);
-    }
-  }
-
-  /**
-   * Place every kept dispute about an entry past `chain` that is not judged
-   * yet: `ahead` (counted meanwhile) within `through`, what this browser has
-   * verified — `beyond` (kept, not counted) past it. At once, no await.
-   */
-  private placeDisputesPast(chain: ChainState, through: number): void {
-    for (const d of this.keptAll()) {
-      const id = disputeId(d);
-      const check = this.keptChecks.get(id);
-      if (d.seq <= chain.seq || check === "ok" || check === "bad") continue;
-      const ahead = d.seq <= through;
-      if (ahead && check !== "ahead") this.assuranceGen++;
-      this.keptChecks.set(id, ahead ? "ahead" : "beyond");
-      this.exposureCache = null;
-    }
-  }
-
-  /** The kept disputes `chain` can judge that are not judged yet. */
-  private disputesDueOn(chain: ChainState): KeptDispute[] {
-    return this.keptAll().filter((d) => {
-      const check = this.keptChecks.get(disputeId(d));
-      return d.seq <= chain.seq && check !== "ok" && check !== "bad";
-    });
-  }
-
-  /** Check, on `chain`, every kept dispute it can judge that was not judged yet (a view about to be installed). */
-  private async checkDisputesOn(chain: ChainState): Promise<void> {
-    for (const d of this.disputesDueOn(chain)) {
-      const id = disputeId(d);
-      const ok = await disputeChecksOut(chain, d);
-      const now = this.keptChecks.get(id);
-      if (now === "ok" || now === "bad") continue;
-      this.settleKept(d, ok);
-      this.exposureCache = null;
-    }
-  }
-
-  /** Whether a kept dispute isolates host `id` on this page's chain. */
-  private isolatedByKept(id: string): boolean {
-    const chain = this.state;
-    if (!chain) return false;
-    return this.keptDisputes().some((d) => d.host === id && disputeIsolates(chain, d));
+    return this.renewalNotes.keptDisputes();
   }
 
   /**
@@ -3614,7 +3403,7 @@ export class CloudAccount {
    * confirmed on the device, but nothing here treats it as isolated.
    */
   flagged(id: string): boolean {
-    return this.renewal.flagged?.has(id) === true;
+    return this.renewalNotes.flagged(id);
   }
 
   /**
@@ -3625,10 +3414,7 @@ export class CloudAccount {
    * keeps getting them: it would never get them back.
    */
   keysWithheldFrom(id: string): boolean {
-    const record = this.state?.device(id);
-    if (!record?.host) return false;
-    if (this.isolated(id) || this.flagged(id) || this.renewal.pending.has(id)) return true;
-    return this.renews(id) && this.hostsToRotate().has(id);
+    return this.renewalNotes.keysWithheldFrom(id);
   }
 
   /**
@@ -3691,19 +3477,7 @@ export class CloudAccount {
         throw new RenewalError("superseded", `a device that could control ${host} was lost after its new key was staged: starting again`);
       }
     }
-    this.checkAssurance(chain, host, assurance);
-  }
-
-  /** What only a renewal confirmed on the device may go past (§3.8, §4.4): isolation, the hub's flag, the account's policy, this device's guard. */
-  private checkAssurance(chain: ChainState, host: string, assurance: Assurance): void {
-    if (assurance === ASSURANCE_ON_DEVICE) return;
-    if (this.renewal.isolated.has(host) || this.keptDisputes().some((d) => d.host === host && disputeIsolates(chain, d))) {
-      throw new RenewalError("needsAssurance", `${host} is isolated: renew its identity key with the code its screen shows`);
-    }
-    if (this.flagged(host)) throw new RenewalError("needsAssurance", `the hub holds ${host} isolated: renew its identity key with the code its screen shows`, "flagged");
-    if (chain.alwaysAssured || this.localAssured()) {
-      throw new RenewalError("needsAssurance", "renewals are confirmed on the device here", this.localAssured() ? "local" : "policy");
-    }
+    this.renewalNotes.checkAssurance(chain, host, assurance);
   }
 
   /**
@@ -3719,7 +3493,7 @@ export class CloudAccount {
     this.requireUpgraded(chain0);
     if (!chain0.machine(host)) throw new AccountError("notInChain", "{{host}} is not a device of the account that runs AI", undefined, undefined, { host });
     // Controllers first (§4.1): never ahead of an exposed host it lets control it — whoever asks, the runner or a person.
-    this.requireRenewFirst(host);
+    this.renewalNotes.requireRenewFirst(host);
     // The account chose how renewals are confirmed first (§5.6 「打开的顺序」).
     if (chain0.renewalPolicySeq === null) throw new RenewalError("policyUnset", "choose how identity key renewals are confirmed first");
     if (assurance !== ASSURANCE_ON_DEVICE && this.isolated(host)) {
@@ -3729,16 +3503,6 @@ export class CloudAccount {
     if (assurance !== ASSURANCE_ON_DEVICE && this.renewalsAssured) {
       throw new RenewalError("needsAssurance", "renewals are confirmed on the device here", this.localAssured() ? "local" : "policy");
     }
-  }
-
-  /** What an automatic renewal of `host` may not go past, as it stands now: when it moves, the attempt checks again at once. */
-  private assuranceRecheck(host: string, assurance: Assurance): () => void {
-    let gen = this.assuranceGen;
-    return () => {
-      if (gen === this.assuranceGen || !this.state) return;
-      gen = this.assuranceGen;
-      if (this.state.machine(host)) this.checkAssurance(this.state, host, assurance);
-    };
   }
 
   /**
@@ -3803,7 +3567,7 @@ export class CloudAccount {
     this.assertNotForked();
     const courier = this.guardedRenewal(unguarded);
     const assurance = opts.assurance;
-    const recheck = this.assuranceRecheck(host, assurance);
+    const recheck = this.renewalNotes.assuranceRecheck(host, assurance);
     this.requireRenewable(host, assurance);
     const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
     const now = opts.now ?? Date.now;
@@ -3939,7 +3703,7 @@ export class CloudAccount {
           if (!checked) return null;
           this.assertNotForked();
           const courier = this.guardedRenewal(unguarded);
-          const recheck = this.assuranceRecheck(host, assurance);
+          const recheck = this.renewalNotes.assuranceRecheck(host, assurance);
           this.requireRenewable(host, assurance);
           const nonce = fromHex(checked.nonce);
           if (!equal(await sha256(nonce), nonceHash)) throw new RenewalError("badAnswer", `what this browser kept of ${host}'s renewal is not its attempt`, "nonce");
@@ -4013,11 +3777,11 @@ export class CloudAccount {
       const { mkEpoch, ukEpoch, userKey } = issued;
       const seq = this.state!.deviceRecord(host)?.rotatedSeq ?? this.state!.seq;
       // No longer waiting: the hosts' keys go to its new key from here on. Confirmed on the device, it is no longer isolated either (§3.8).
-      const pending = new Set(this.renewal.pending);
+      const pending = new Set(this.renewalNotes.renewalNote.pending);
       pending.delete(host);
-      const isolated = new Set(this.renewal.isolated);
+      const isolated = new Set(this.renewalNotes.renewalNote.isolated);
       if (assurance === ASSURANCE_ON_DEVICE) isolated.delete(host);
-      this.noteRenewals({ ...this.renewal, pending, isolated });
+      this.noteRenewals({ ...this.renewalNotes.renewalNote, pending, isolated });
       opts.onStep?.("handing");
       // Its keys to the devices it lets control it (purpose 5), then the key to it — sealed to the new DH key only — with a re-encryption.
       await this.mailHostKey(host, mkEpoch, mk);
@@ -4223,7 +3987,7 @@ export class CloudAccount {
    * other (`RULES.rotateNeedsAssurance`).
    */
   get alwaysAssured(): boolean {
-    return this.state?.alwaysAssured === true;
+    return this.renewalNotes.alwaysAssured;
   }
 
   /** Whether an admin chose the account's renewal policy (a `SetRenewalPolicy` on the chain): nothing renews on its own before (§5.6 「打开的顺序」). */
@@ -4246,19 +4010,16 @@ export class CloudAccount {
    * chain says. Kept in this browser only.
    */
   localAssured(): boolean {
-    return this.read(localAssuredKey(this.account)) === "1";
+    return this.renewalNotes.localAssured();
   }
 
   setLocalAssured(on: boolean): void {
-    if (on) this.write(localAssuredKey(this.account), "1");
-    else this.forget(localAssuredKey(this.account));
-    if (on) this.assuranceGen++;
-    this.emit();
+    this.renewalNotes.setLocalAssured(on);
   }
 
   /** Whether renewals signed here must be confirmed on the device: the account's policy, or this device's own guard. */
   get renewalsAssured(): boolean {
-    return this.alwaysAssured || this.localAssured();
+    return this.renewalNotes.renewalsAssured;
   }
 
   /**
@@ -4268,7 +4029,7 @@ export class CloudAccount {
    * Save; `setAccept` refuses it.
    */
   mustRenewFirst(id: string): boolean {
-    return this.state ? this.mustRenewFirstOn(this.state, id) : false;
+    return this.renewalNotes.mustRenewFirst(id);
   }
 
   /**
@@ -4278,10 +4039,7 @@ export class CloudAccount {
    * reason to let it control another host either.
    */
   mustRenewFirstOn(chain: ChainState, id: string): boolean {
-    if (!chain.device(id)?.host) return false;
-    if (this.flagged(id) || this.renewal.isolated.has(id) || this.keptDisputes().some((d) => d.host === id && disputeIsolates(chain, d))) return true;
-    const exposed = chain === this.state ? this.hostsToRotate() : hostsToRotate(chain, (h) => this.renews(h));
-    return this.renews(id) && exposed.has(id);
+    return this.renewalNotes.mustRenewFirstOn(chain, id);
   }
 
   /**
@@ -4444,17 +4202,6 @@ export class CloudAccount {
     if (!returned) throw new AccountError("notInChain", "that pause has ended already");
   }
 
-  /** Refuse an accept list for `host` that lets in a host that must renew first, on `chain` (§4.1, §7 decision 8). */
-  private refuseExposedAdmission(chain: ChainState, host: string, accept: Accept): void {
-    const { admitted } = acceptChange(chain, host, accept);
-    const exposed = admitted.filter((id) => this.mustRenewFirstOn(chain, id));
-    if (exposed.length) {
-      throw new AccountError("exposed", "renew the identity key of {{ids}} first: a device that could control it no longer can, and may have copied it", undefined, undefined, {
-        ids: exposed.join(", "),
-      });
-    }
-  }
-
   /**
    * The exposed hosts that must renew their identity key before `host` does
    * (§4.1 「次序先于收窄」): those it lets control it that have not renewed
@@ -4462,18 +4209,7 @@ export class CloudAccount {
    * never held back.
    */
   renewFirst(host: string): string[] {
-    const chain = this.state;
-    if (!chain?.machine(host)) return [];
-    const exposed = this.hostsToRotate();
-    return exposed.has(host) ? exposedControllers(chain, exposed, host) : [];
-  }
-
-  /** {@link renewFirst}, as a refusal (`RenewalError` `renewFirst`). */
-  private requireRenewFirst(host: string): void {
-    const first = this.renewFirst(host);
-    if (first.length) {
-      throw new RenewalError("renewFirst", `renew the identity key of ${first.join(", ")} first: ${host} lets ${first.length > 1 ? "them" : "it"} control it`, undefined, first);
-    }
+    return this.renewalNotes.renewFirst(host);
   }
 
   /**

@@ -20,6 +20,16 @@ export interface AccountBasics {
 }
 
 /**
+ * One note this browser keeps for the account in `localStorage`, bound to its
+ * key: a collaborator handed it reaches that note and no other.
+ */
+export interface AccountNote {
+  read(): string | null;
+  write(value: string): void;
+  forget(): void;
+}
+
+/**
  * The basics over the account's own readers. Each value is read through when
  * used, never copied: the account sets its id and device from its constructor
  * and replaces its chain and clock as it syncs.
