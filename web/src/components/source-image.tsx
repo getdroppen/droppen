@@ -7,7 +7,7 @@
  * The proxy is called with the typed client rather than put in an `<img src>`:
  * an `<img>` cannot send the `Authorization` header, so a URL would need a
  * download ticket — and `/api/fs/download` is deliberately the only plain-GET
- * route that takes one (`server-rs/src/auth/mod.rs`, `ticket_offered`). A fetch
+ * route that takes one (`server-rs/crates/droppen-auth/src/lib.rs`, `ticket_offered`). A fetch
  * also gets to read *why* it failed, which is what lets the fallback card say
  * "gh is not logged in on the server" instead of showing a broken glyph.
  */

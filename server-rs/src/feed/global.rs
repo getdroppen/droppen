@@ -603,7 +603,7 @@ droppen_http::substate!(EventsState);
 /// or revoking a login ends its live feed too, not only its next request.
 pub async fn events_ws(
     State(state): State<EventsState>,
-    who: crate::auth::MaybeIdentity,
+    who: droppen_auth::MaybeIdentity,
     ApiQuery(query): ApiQuery<EventsQuery>,
     upgrade: WebSocketUpgrade,
 ) -> Response {
@@ -1171,14 +1171,14 @@ mod tests {
         let open = |digest: String| {
             let auth = auth.clone();
             async move {
-                let ticket = auth.tickets.issue("ada", &digest, crate::auth::tickets::TicketScope::Ws).unwrap().0;
+                let ticket = auth.tickets.issue("ada", &digest, droppen_auth::tickets::TicketScope::Ws).unwrap().0;
                 tokio_tungstenite::connect_async(format!("ws://{addr}/api/events?ticket={ticket}"))
                     .await
                     .expect("let in")
                     .0
             }
         };
-        let digest = |token: &str| crate::auth::sessions::digest_of(token);
+        let digest = |token: &str| droppen_auth::sessions::digest_of(token);
         let gone = digest(&auth.sessions.issue("ada", None).await.unwrap().token);
         let kept = digest(&auth.sessions.issue("ada", None).await.unwrap().token);
         let mut signed_out = open(gone.clone()).await;
@@ -1221,10 +1221,10 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let (state, addr) = crate::api::test_support::served(home.path()).await;
         let auth = state.drive.auth.clone();
-        let owner = crate::auth::sessions::digest_of(&auth.sessions.issue(crate::auth::LOCAL_OWNER, None).await.unwrap().token);
+        let owner = droppen_auth::sessions::digest_of(&auth.sessions.issue(droppen_auth::LOCAL_OWNER, None).await.unwrap().token);
         let ticket = auth
             .tickets
-            .issue(crate::auth::LOCAL_OWNER, &owner, crate::auth::tickets::TicketScope::Ws)
+            .issue(droppen_auth::LOCAL_OWNER, &owner, droppen_auth::tickets::TicketScope::Ws)
             .unwrap()
             .0;
         let (mut socket, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/api/events?ticket={ticket}"))

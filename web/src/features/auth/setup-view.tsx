@@ -29,12 +29,12 @@ export type SetupProblem =
 /** Where a refusal can send the person: the login page, or the app. */
 export type SetupAction = "sign-in" | "home";
 
-/** The server's rules for a name and a password (`server-rs/src/auth/users.rs`). */
+/** The server's rules for a name and a password (`server-rs/crates/droppen-auth/src/users.rs`). */
 export const MAX_USERNAME = 32;
 export const MIN_PASSWORD_CHARS = 12;
 export const MAX_PASSWORD_BYTES = 256;
 
-/** Crockford base32, the setup code's alphabet (`server-rs/src/auth/setup.rs`). */
+/** Crockford base32, the setup code's alphabet (`server-rs/crates/droppen-auth/src/setup.rs`). */
 const CODE_ALPHABET = /^[0-9A-HJKMNP-TV-Z]{16}$/;
 
 /**

@@ -19,7 +19,7 @@ import { Centered, Note, Panel } from "@/features/cloud/page";
  * the tab that opened this one, finishes adding the device.
  */
 
-/** The route that takes the answer (`server-rs/src/auth/mod.rs`, `RETURN_ROUTE`). */
+/** The route that takes the answer (`server-rs/crates/droppen-auth/src/lib.rs`, `RETURN_ROUTE`). */
 export const RETURN_API = "/api/cloud/link/return";
 
 export type ReturnState =

@@ -46,7 +46,7 @@ use serde_json::Value;
 
 use crate::aggregator::live::{error_frame, DirHost, Key, LiveCopies, Outbox, Subscription};
 use crate::aggregator::store::Kind;
-use crate::auth::MaybeIdentity;
+use droppen_auth::MaybeIdentity;
 use crate::cloud::CloudState;
 
 /// How often a connection looks again at whether its page may still see other devices.
@@ -680,7 +680,7 @@ mod tests {
         let login = |user: &'static str| {
             let auth = auth.clone();
             async move {
-                let digest = crate::auth::sessions::digest_of(&auth.sessions.issue(user, None).await.unwrap().token);
+                let digest = droppen_auth::sessions::digest_of(&auth.sessions.issue(user, None).await.unwrap().token);
                 let who = MaybeIdentity(Some(droppen_http::identity::AuthIdentity {
                     username: user.into(),
                     token_sha256: Some(digest.clone()),
@@ -688,7 +688,7 @@ mod tests {
                 (digest, who)
             }
         };
-        let ticket_for = |user: &str, digest: &str| Some(auth.tickets.issue(user, digest, crate::auth::tickets::TicketScope::Ws).unwrap().0);
+        let ticket_for = |user: &str, digest: &str| Some(auth.tickets.issue(user, digest, droppen_auth::tickets::TicketScope::Ws).unwrap().0);
         let (alice_login, alice) = login("alice").await;
         let (bob_login, _) = login("bob").await;
         let ticket = |user: &str| ticket_for(user, if user == "alice" { &alice_login } else { &bob_login });
@@ -702,7 +702,7 @@ mod tests {
         // A ticket whose login is not one (nothing live to check it against): refused.
         let unbound = Some(
             auth.tickets
-                .issue("alice", "no-such-login", crate::auth::tickets::TicketScope::Ws)
+                .issue("alice", "no-such-login", droppen_auth::tickets::TicketScope::Ws)
                 .unwrap()
                 .0,
         );
