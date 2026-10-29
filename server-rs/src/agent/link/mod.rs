@@ -255,26 +255,32 @@ mod tests {
 
     /// [`account_with`], its loopback server at `loopback`.
     fn account_at(sync: super::super::streams::Handle, loopback: std::net::SocketAddr) -> Account {
-        account_on(sync, loopback, Clock::wall())
+        account_on(sync, loopback, Clock::wall(), Arc::new(NoHost))
+    }
+
+    /// [`account`], the push keys and the phone's alerts asked of `host`.
+    fn hosted_account(host: Arc<dyn LinkHost>) -> Account {
+        account_on(super::super::streams::Handle::detached(), "127.0.0.1:9".parse().unwrap(), Clock::wall(), host)
     }
 
     /// [`account`], its channels' control lapse judged by tokio's clock
     /// ([`Clock::tokio`]). Under `start_paused`, a lapse comes when the test
     /// moves that clock past it, however long the work before it took.
     fn clocked_account() -> Account {
-        account_on(super::super::streams::Handle::detached(), "127.0.0.1:9".parse().unwrap(), Clock::tokio())
+        account_on(super::super::streams::Handle::detached(), "127.0.0.1:9".parse().unwrap(), Clock::tokio(), Arc::new(NoHost))
     }
 
     /// [`account`], its channels' control lapse judged by a clock the test
     /// moves by hand ([`Clock::manual`]), and that clock's offset.
     fn manual_account() -> (Account, Arc<std::sync::atomic::AtomicU64>) {
         let offset = Arc::new(std::sync::atomic::AtomicU64::new(0));
-        let a = account_on(super::super::streams::Handle::detached(), "127.0.0.1:9".parse().unwrap(), Clock::manual(offset.clone()));
+        let a = account_on(super::super::streams::Handle::detached(), "127.0.0.1:9".parse().unwrap(), Clock::manual(offset.clone()), Arc::new(NoHost));
         (a, offset)
     }
 
-    /// [`account_at`], its channels' control lapse judged by `clock`.
-    fn account_on(sync: super::super::streams::Handle, loopback: std::net::SocketAddr, clock: Clock) -> Account {
+    /// [`account_at`], its channels' control lapse judged by `clock`, its push
+    /// keys and alerts asked of `host`.
+    fn account_on(sync: super::super::streams::Handle, loopback: std::net::SocketAddr, clock: Clock, host: Arc<dyn LinkHost>) -> Account {
         let ak = MachineIdentity::from_seed(&[1; 32]);
         let d1 = MachineIdentity::from_seed(&[2; 32]);
         let d2 = MachineIdentity::from_seed(&[3; 32]);
@@ -297,10 +303,10 @@ mod tests {
         }
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths::for_instance(dir.path().to_path_buf(), "agentlink");
-        // Its databases exist, as a started server's do. An account change
-        // raises an alert whose task reads them on the runtime; creating them
-        // there, on first use, would hold up everything else on a test's one
-        // thread for as long as the disk takes to commit every schema step.
+        // Its databases exist, as a started server's do: a test whose host
+        // reads them on the runtime would otherwise create them there, on
+        // first use, holding up everything else on its one thread for as long
+        // as the disk takes to commit every schema step.
         droppen_instance::db::at(paths.instance_db());
         droppen_instance::db::at(paths.config_db());
         let mut st = AgentState::enrolling("wss://hub.example", "a-1", "m-1", fingerprint(&ak.sign_public()), clock.now_ms());
@@ -308,7 +314,7 @@ mod tests {
         let guard = st.replay_guard(clock.now_ms());
         let shared = Arc::new(Shared {
             files: AgentFiles::of(&paths),
-            host: Arc::new(crate::app::PushLinkHost),
+            host,
             paths,
             deferred_mail: Mutex::new(Vec::new()),
             identity: Arc::new(machine),
@@ -790,33 +796,74 @@ mod tests {
         assert_eq!(*reached.lock().unwrap(), vec!["GET /api/push/vapid HTTP/1.1".to_string()]);
     }
 
-    /// A renewal of the push keys that fails (the state database refusing the
-    /// write, here) is tried again while the link runs, after a back-off — not
-    /// only at the next
-    /// start, the push key refused until then — and `push_renew` clears once
-    /// it is done.
+    /// The link's host as the renewal test drives it: its first `refuse`
+    /// renewals fail (as the push store's write does when the state database
+    /// refuses it), the rest succeed, and it counts both.
+    struct RenewingHost(Mutex<Renewals>);
+
+    /// What [`RenewingHost`] still refuses, and has refused and renewed.
+    struct Renewals {
+        refuse: usize,
+        refused: usize,
+        renewed: usize,
+    }
+
+    impl RenewingHost {
+        fn refusing(refuse: usize) -> Arc<Self> {
+            Arc::new(Self(Mutex::new(Renewals {
+                refuse,
+                refused: 0,
+                renewed: 0,
+            })))
+        }
+
+        /// (refused, renewed) so far.
+        fn tries(&self) -> (usize, usize) {
+            let renewals = self.0.lock().unwrap();
+            (renewals.refused, renewals.renewed)
+        }
+    }
+
+    impl LinkHost for RenewingHost {
+        fn renew_push_keys<'a>(&'a self, _paths: &'a Paths) -> futures_util::future::BoxFuture<'a, std::io::Result<usize>> {
+            let mut renewals = self.0.lock().unwrap();
+            let answer = if renewals.refuse > 0 {
+                renewals.refuse -= 1;
+                renewals.refused += 1;
+                Err(std::io::Error::other("refused (test)"))
+            } else {
+                renewals.renewed += 1;
+                Ok(0)
+            };
+            Box::pin(async move { answer })
+        }
+
+        fn account_change(&self, _paths: Arc<Paths>, _title: String, _body: String) {}
+    }
+
+    /// A renewal of the push keys that fails is tried again while the link
+    /// runs, after a back-off — not only at the next start, the push key
+    /// refused until then — and `push_renew` clears once it is done. That the
+    /// server's host renews the VAPID keypair, and fails when the state
+    /// database refuses the write, is `app`'s
+    /// `the_push_link_host_renews_the_vapid_keys_and_fails_when_refused`.
     #[tokio::test(start_paused = true)]
     async fn the_push_keys_are_renewed_again_after_a_failure_without_a_restart() {
-        let a = account();
-        let paths = a.shared.paths.clone();
-        let old = crate::push::store::vapid_public(&paths).await.unwrap();
-        let db = droppen_instance::db::at(paths.instance_db());
-        db.write(|tx| tx.execute_batch("CREATE TRIGGER refuse_push BEFORE UPDATE ON kv WHEN NEW.scope = 'push' BEGIN SELECT RAISE(ABORT, 'refused (test)'); END;"))
-            .unwrap();
+        let host = RenewingHost::refusing(1);
+        let a = hosted_account(host.clone());
         a.shared.state.lock().unwrap().rotation.push_renew = true;
         let task = tokio::spawn(renew_push(a.shared.clone()));
         // The first try fails.
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(a.shared.state.lock().unwrap().rotation.push_renew);
-        assert_eq!(crate::push::store::vapid_public(&paths).await.unwrap(), old);
-        db.write(|tx| tx.execute_batch("DROP TRIGGER refuse_push")).unwrap();
+        assert_eq!(host.tries(), (1, 0), "refused once, nothing renewed");
         // Without a restart: tried again, renewed, noted done.
         tokio::time::sleep(Duration::from_secs(10)).await;
         assert!(
             !a.shared.state.lock().unwrap().rotation.push_renew,
             "not tried again: the push key stays refused until the next start"
         );
-        assert_ne!(crate::push::store::vapid_public(&paths).await.unwrap(), old, "a new push key");
+        assert_eq!(host.tries(), (1, 1), "a new push key");
         assert!(!AgentState::load(&a.shared.files).unwrap().unwrap().rotation.push_renew, "saved");
         tokio::time::timeout(Duration::from_secs(1), task).await.expect("done").unwrap();
     }

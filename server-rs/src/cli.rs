@@ -581,6 +581,10 @@ pub(crate) mod tests {
     /// (`droppen_plugins::cli`).
     mod plugins;
 
+    /// The `agent` command line as this binary parses and runs it
+    /// (`cli::agent`).
+    mod agent;
+
     /// The `pty-shim` command line as this binary parses it.
     mod pty_shim {
         use std::path::PathBuf;

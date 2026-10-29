@@ -307,6 +307,21 @@ pub(in crate::agent) async fn renew_push(shared: Arc<Shared>) {
     }
 }
 
+/// A link host that does nothing, for the agent's tests: none of them asserts
+/// anything about the push keys or the phone's account-change alerts (the
+/// one that asserts a renewal uses a host of its own).
+#[cfg(test)]
+pub(in crate::agent) struct NoHost;
+
+#[cfg(test)]
+impl LinkHost for NoHost {
+    fn renew_push_keys<'a>(&'a self, _paths: &'a Paths) -> futures_util::future::BoxFuture<'a, std::io::Result<usize>> {
+        Box::pin(async { Ok(0) })
+    }
+
+    fn account_change(&self, _paths: Arc<Paths>, _title: String, _body: String) {}
+}
+
 /// A link's shared state for tests elsewhere in the agent: `st` for this
 /// machine running with `identity`, its streams' events to `sync`, no
 /// relays and no direct paths, its restarts to `restart`.
@@ -322,7 +337,7 @@ pub(in crate::agent) fn test_shared(
     Arc::new(Shared {
         paths: paths.clone(),
         files: AgentFiles::of(paths),
-        host: Arc::new(crate::app::PushLinkHost),
+        host: Arc::new(NoHost),
         deferred_mail: Mutex::new(Vec::new()),
         identity: Arc::new(identity),
         loopback: Arc::new(Loopback::new("127.0.0.1:9".parse().expect("an address"), "test".into())),
