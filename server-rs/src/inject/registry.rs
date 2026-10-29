@@ -59,21 +59,16 @@ pub trait Run: Send + Sync {
     /// a bad request rather than a session that cannot start. A provider that
     /// runs no ACP agent takes a session that names none.
     fn check_start(&self, acp_agent: Option<&str>) -> Result<(), ApiError> {
-        no_agent(acp_agent)
+        match acp_agent {
+            None => Ok(()),
+            Some(_) => Err(ApiError::bad_request("acpAgent is only for ACP sessions")),
+        }
     }
 
     /// Why no message can go to this session whatever is running for it, or
     /// `None` when nothing in the provider stops one.
     fn send_block(&self, _summary: &SessionSummary) -> Option<String> {
         None
-    }
-}
-
-/// [`Run::check_start`] of a provider that runs no ACP agent.
-fn no_agent(acp_agent: Option<&str>) -> Result<(), ApiError> {
-    match acp_agent {
-        None => Ok(()),
-        Some(_) => Err(ApiError::bad_request("acpAgent is only for ACP sessions")),
     }
 }
 
@@ -183,19 +178,22 @@ impl ProviderRegistry {
         self.run(source)?.schedule_busy(id)
     }
 
-    /// See [`Run::check_start`]; a source with no provider takes no agent
-    /// either.
+    /// See [`Run::check_start`]. A source no provider runs is refused: nothing
+    /// could start its session.
     pub fn check_start(&self, source: Source, acp_agent: Option<&str>) -> Result<(), ApiError> {
         match self.run(source) {
             Some(run) => run.check_start(acp_agent),
-            None => no_agent(acp_agent),
+            None => Err(ApiError::bad_request(format!("no provider runs {source} sessions"))),
         }
     }
 
-    /// See [`Run::send_block`], asked of the provider of the session's source;
-    /// `None` for a source with no provider.
+    /// See [`Run::send_block`], asked of the provider of the session's source.
+    /// A session no provider runs is blocked: nothing could take the message.
     pub fn send_block(&self, summary: &SessionSummary) -> Option<String> {
-        self.run(summary.source)?.send_block(summary)
+        match self.run(summary.source) {
+            Some(run) => run.send_block(summary),
+            None => Some(format!("no provider runs {} sessions", summary.source)),
+        }
     }
 }
 
@@ -209,6 +207,12 @@ mod tests {
     /// Every provider over a fresh instance in `home`, as the entry registers
     /// them, with one ACP agent configured: `fake`.
     fn providers(home: &std::path::Path) -> Arc<ProviderRegistry> {
+        providers_from(home, crate::app::register_providers)
+    }
+
+    /// The providers `register` adds, over a fresh instance in `home` with one
+    /// ACP agent configured: `fake`.
+    fn providers_from(home: &std::path::Path, register: fn(&mut ProviderRegistry, &Arc<InjectionRegistry>)) -> Arc<ProviderRegistry> {
         let paths = Arc::new(Paths::new(home.to_path_buf()));
         let dirs = InstanceDirs::new(&paths.data_dir(), "registry-test").expect("valid name");
         dirs.create().expect("instance dirs");
@@ -221,7 +225,54 @@ mod tests {
         AcpAgentRegistry::of(&paths).update("fake", &agent).expect("saved");
         let accounts = Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins()));
         let quota = Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone()));
-        ProviderRegistry::new(InjectionRegistry::new(paths, &dirs, accounts, quota), crate::app::register_providers)
+        ProviderRegistry::new(InjectionRegistry::new(paths, &dirs, accounts, quota), register)
+    }
+
+    /// Claude Code alone.
+    fn claude_only(providers: &mut ProviderRegistry, registry: &Arc<InjectionRegistry>) {
+        providers.register(Arc::new(crate::inject::resident::ClaudeCode::new(registry.clone())));
+    }
+
+    /// A session row of `source` that ran on the ACP agent `agent`, if any.
+    fn row(source: &str, agent: Option<&str>) -> SessionSummary {
+        serde_json::from_value(serde_json::json!({
+            "pinned": false, "id": "s", "source": source, "scope": "owned", "server": "s", "title": "t",
+            "cwd": null, "repoKey": null, "gitBranch": null, "updatedAt": "", "createdAt": "",
+            "sizeBytes": 1, "filePath": "/x", "status": "idle", "activity": "idle", "resident": null,
+            "claudeRoot": null, "accountId": null, "attentionAt": null, "unread": false, "unreadCount": 0,
+            "acpAgent": agent,
+        }))
+        .unwrap_or_else(|error| panic!("a session row: {error}"))
+    }
+
+    /// A source no provider runs is refused at the start and blocked at a send,
+    /// whatever the request names: nothing could start or drive its session.
+    #[test]
+    fn a_source_no_provider_runs_is_refused() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let none = providers_from(home.path(), |_, _| {});
+        let other = tempfile::tempdir().expect("tempdir");
+        let claude = providers_from(other.path(), claude_only);
+        let refusal = |providers: &ProviderRegistry, source, agent| {
+            providers.check_start(source, agent).err().map(|error| {
+                assert_eq!(error.status(), gotcha::axum::http::StatusCode::BAD_REQUEST);
+                error.body()["error"].as_str().unwrap_or_default().to_string()
+            })
+        };
+        for source in [Source::Claude, Source::Codex, Source::Acp] {
+            for agent in [None, Some("fake")] {
+                assert_eq!(refusal(&none, source, agent), Some(format!("no provider runs {source} sessions")), "{source} {agent:?}");
+            }
+        }
+        assert_eq!(refusal(&claude, Source::Claude, None), None);
+        assert_eq!(refusal(&claude, Source::Acp, Some("fake")).as_deref(), Some("no provider runs acp sessions"));
+        assert_eq!(refusal(&claude, Source::Codex, None).as_deref(), Some("no provider runs codex sessions"));
+
+        assert_eq!(none.send_block(&row("claude", None)).as_deref(), Some("no provider runs claude sessions"));
+        assert_eq!(none.send_block(&row("acp", Some("fake"))).as_deref(), Some("no provider runs acp sessions"));
+        assert_eq!(claude.send_block(&row("claude", None)), None);
+        assert_eq!(claude.send_block(&row("codex", None)).as_deref(), Some("no provider runs codex sessions"));
+        assert_eq!(claude.send_block(&row("acp", Some("fake"))).as_deref(), Some("no provider runs acp sessions"));
     }
 
     /// A new session names an ACP agent exactly when it is an ACP session, and
@@ -257,16 +308,6 @@ mod tests {
     fn a_session_is_blocked_only_when_its_acp_agent_is_gone() {
         let home = tempfile::tempdir().expect("tempdir");
         let providers = providers(home.path());
-        let row = |source: &str, agent: Option<&str>| -> SessionSummary {
-            serde_json::from_value(serde_json::json!({
-                "pinned": false, "id": "s", "source": source, "scope": "owned", "server": "s", "title": "t",
-                "cwd": null, "repoKey": null, "gitBranch": null, "updatedAt": "", "createdAt": "",
-                "sizeBytes": 1, "filePath": "/x", "status": "idle", "activity": "idle", "resident": null,
-                "claudeRoot": null, "accountId": null, "attentionAt": null, "unread": false, "unreadCount": 0,
-                "acpAgent": agent,
-            }))
-            .unwrap_or_else(|error| panic!("a session row: {error}"))
-        };
         assert_eq!(providers.send_block(&row("acp", Some("fake"))), None);
         assert_eq!(providers.send_block(&row("acp", Some("gone"))), Some(crate::acp_agent::removed("gone")));
         assert_eq!(

@@ -696,7 +696,9 @@ async fn deliver_message(
     // message goes into that process' queue and is delivered when the turn in
     // flight ends. See [`sendability`] for why the live-process arm is lifted
     // too — the live process the probe can see is ours. An ACP session whose
-    // agent was removed is refused whatever is running.
+    // agent was removed is refused whatever is running. This is the refusal the
+    // client reads; `acp_send` looks the agent up again under the spawn gate,
+    // the backstop for one removed after this check.
     let (can_send, reason) = match drive.providers.send_block(&summary) {
         Some(reason) => (false, Some(reason)),
         None => drive.transcripts.sendability(
