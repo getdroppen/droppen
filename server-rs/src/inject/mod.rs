@@ -24,20 +24,22 @@ use droppen_base::time::iso8601;
 use gotcha::Schematic;
 
 pub mod acp;
-pub(crate) mod app_server;
+mod app_server;
 mod common;
 pub mod drafts;
 mod gate;
 pub mod questions;
 pub mod receipts;
 mod registry;
-pub(crate) mod resident;
+mod resident;
 mod runs;
 pub mod shim;
 
+pub(crate) use app_server::Codex;
 pub use common::{Phase, QueueOutcome, ResidentState, StopTaskOutcome};
 pub use gate::SpawnPermit;
 pub use registry::{Provider, ProviderRegistry, Run};
+pub(crate) use resident::ClaudeCode;
 pub use resident::{AnswerOutcome, Reply};
 
 use common::{new_uuid, session_workdir, CHAT_SYSTEM_PROMPT};
