@@ -274,10 +274,10 @@ mod tests {
         assert!(refusal.contains("has no local account"), "{refusal}");
         assert!(refusal.contains("user add <name> --instance enrolltest"), "says how: {refusal}");
         assert!(refusal.contains("setup-code --instance enrolltest"), "and where the code is: {refusal}");
-        assert!(refusal.contains(&crate::auth::setup::code_file(&paths).display().to_string()));
+        assert!(refusal.contains(&droppen_auth::setup::code_file(&paths).display().to_string()));
         assert!(!AgentFiles::of(&paths).machine_key().exists(), "refused before a machine key is made");
 
-        let users = crate::auth::users::UsersStore::new(&paths);
+        let users = droppen_auth::users::UsersStore::new(&paths);
         users.add_app("app", "correct horse battery").await.expect("the desktop app's account");
         assert!(
             refuse_enroll(&paths, None).await.is_some(),

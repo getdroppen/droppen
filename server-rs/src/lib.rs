@@ -37,7 +37,7 @@
 //! * [`droppen_instance::instance`] — which server owns the adoptable resources on this machine;
 //! * [`apps`] — a VS Code server per app, and the [`apps::embed`] reverse proxy
 //!   the iframe reaches it through;
-//! * [`auth`] — local accounts: who may talk to this server at all, and the
+//! * [`droppen_auth`] — local accounts: who may talk to this server at all, and the
 //!   guard every request passes through before [`droppen_http::origin`]'s;
 //! * [`attention`] — which sessions are waiting on you, and [`push`] — telling
 //!   a phone about it while the tab is closed;
@@ -81,7 +81,6 @@ pub mod api;
 pub mod app;
 pub mod apps;
 pub mod attention;
-pub mod auth;
 pub mod chats;
 pub mod claude_roots;
 pub mod cli;

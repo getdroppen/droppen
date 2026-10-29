@@ -34,11 +34,11 @@ pub enum Command {
     #[command(disable_help_flag = true)]
     Up(UpArgs),
     /// Manage the local accounts of one instance.
-    User(crate::auth::cli::UserArgs),
+    User(droppen_auth::cli::UserArgs),
     /// Show the one-time code of an instance that has no account yet.
-    SetupCode(crate::auth::cli::SetupCodeArgs),
+    SetupCode(droppen_auth::cli::SetupCodeArgs),
     /// Open an instance's page in this device's browser.
-    Open(crate::auth::cli::OpenArgs),
+    Open(droppen_auth::cli::OpenArgs),
     /// Manage the plugins installed in one instance.
     Plugin(crate::plugins::cli::PluginArgs),
     /// Join, run, inspect or leave the cloud agent.
@@ -113,9 +113,9 @@ impl Cli {
                 Name::Legacy => "Droppen server: `remote-hand-server` (the same program as `droppen`).",
             })
             .after_long_help(prose)
-            .mut_subcommand("user", |command| command.after_long_help(long(crate::auth::cli::USAGE)))
-            .mut_subcommand("setup-code", |command| command.after_long_help(long(crate::auth::cli::SETUP_CODE_USAGE)))
-            .mut_subcommand("open", |command| command.after_long_help(long(crate::auth::cli::OPEN_USAGE)))
+            .mut_subcommand("user", |command| command.after_long_help(long(droppen_auth::cli::USAGE)))
+            .mut_subcommand("setup-code", |command| command.after_long_help(long(droppen_auth::cli::SETUP_CODE_USAGE)))
+            .mut_subcommand("open", |command| command.after_long_help(long(droppen_auth::cli::OPEN_USAGE)))
             .mut_subcommand("plugin", |command| command.after_long_help(long(crate::plugins::cli::USAGE)))
             .mut_subcommand("agent", |command| command.after_long_help(long(agent::USAGE)))
             .mut_subcommand("replay", |command| command.after_long_help(long(crate::record::replay::USAGE)))
@@ -155,7 +155,7 @@ impl Command {
             // Local accounts. Outside the server on purpose: the first account has
             // to exist before anyone can log in to create one, and the trust anchor
             // for that is the operating system — whoever can run this binary already
-            // has everything the API could hand them. See `crate::auth::cli`.
+            // has everything the API could hand them. See `droppen_auth::cli`.
             Command::User(args) => args.run().await.map_err(GotchaError::message),
             // The one-time code a server in its setup state printed when it
             // started, read back from the file it wrote — for whoever missed the
@@ -164,7 +164,7 @@ impl Command {
             // The page, opened in this device's browser — signed in as the
             // device's owner while the instance has no account. The proof is the
             // operating system's: only this user can reach the running server's
-            // control socket (`crate::auth::local_open`).
+            // control socket (`droppen_auth::local_open`).
             Command::Open(args) => args.run().await.map_err(GotchaError::message),
             // The plugins installed in an instance: install, uninstall, switches,
             // and each one's document store. Outside the server for the reason
@@ -285,7 +285,7 @@ pub(crate) mod tests {
 
     use super::*;
     use super::agent::{AgentArgs, AgentCommand};
-    use crate::auth::cli::{UserArgs, UserCommand};
+    use droppen_auth::cli::{UserArgs, UserCommand};
 
     /// `argv` (everything after the program name) as this binary parses it.
     pub(crate) fn parse(argv: &[&str]) -> Result<Command, clap::Error> {
@@ -572,6 +572,10 @@ pub(crate) mod tests {
             assert_eq!(parse(&argv).expect("parses"), expected, "{argv:?}");
         }
     }
+
+    /// The `user`, `setup-code` and `open` command lines as this binary parses
+    /// them (`droppen_auth::cli`).
+    mod auth;
 
     /// The `pty-shim` command line as this binary parses it.
     mod pty_shim {

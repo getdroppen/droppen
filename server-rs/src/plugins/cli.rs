@@ -64,7 +64,7 @@ fn plugin_id(raw: &str) -> Result<String, String> {
 #[command(disable_help_subcommand = true, args_override_self = true)]
 pub struct PluginArgs {
     /// The instance, wherever among the arguments it is written.
-    #[arg(long, global = true, action = clap::ArgAction::Append, value_parser = crate::auth::cli::instance_name, allow_hyphen_values = true)]
+    #[arg(long, global = true, action = clap::ArgAction::Append, value_parser = droppen_auth::cli::instance_name, allow_hyphen_values = true)]
     pub instance: Vec<String>,
     /// What to do.
     #[command(subcommand)]
@@ -145,7 +145,7 @@ impl PluginArgs {
         if let PluginCommand::Purge { yes: 0, .. } = self.command {
             return Err("purge moves the plugin's data aside; say --yes to mean it".to_string());
         }
-        let (paths, config) = crate::auth::cli::cli_context(self.instance.last().map(String::as_str))?;
+        let (paths, config) = droppen_auth::cli::cli_context(self.instance.last().map(String::as_str))?;
         let plugins = Plugins::new(paths.instance_dir(), paths.instance_db(), &config.app.plugins, None);
         let command = self.command;
         tokio::task::spawn_blocking(move || command.execute(&plugins, &paths))

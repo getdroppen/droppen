@@ -124,7 +124,7 @@ impl GotchaApp for RemoteHandApp {
                 let roots = crate::files::FileRoots::of(&paths);
                 async move { roots.sweep_uploads().await }
             });
-            let auth = crate::auth::Auth::new(&paths, &instance, &auth_settings, auth_disabled, Arc::new(NotifyTokens));
+            let auth = droppen_auth::Auth::new(&paths, &instance, &auth_settings, auth_disabled, Arc::new(NotifyTokens));
             let drive = crate::drive::Drive::new(paths.clone(), &instance, auth, transcript_sources(), register_providers, logins());
             let feeds = FeedRegistry::new();
             let global = GlobalFeed::new();
@@ -180,7 +180,7 @@ pub struct Prepared {
     cancel: CancellationToken,
     cleanups: Cleanups,
     /// Held so a setup code can die with the server that minted it.
-    auth: Arc<crate::auth::Auth>,
+    auth: Arc<droppen_auth::Auth>,
     /// This server's claim on its instance directory. Held for the whole of
     /// `serve`; dropping it would let a second server adopt what this one owns.
     /// Shared, weakly, with [`crate::api::AppState`] so the self-upgrade handler
@@ -382,7 +382,7 @@ impl RemoteHandApp {
         // credentials on a preflight, and a `401` there would break every
         // cross-origin request before the real one was made.
         let auth_for_link = auth.clone();
-        let router = router.layer(crate::auth::layer(auth));
+        let router = router.layer(droppen_auth::layer(auth));
         // Outside even that: a request addressed to a name this server does
         // not answer to (`droppen_http::origin`, "Which names the server answers
         // to") reaches nothing, the exempt sign-in routes included.
@@ -409,7 +409,7 @@ impl RemoteHandApp {
             // no account yet — the one-time setup code for the first one.
             // Only the owner: a throwaway server must not mint a code into the
             // real one's file, nor shout about a port nobody will use.
-            let url = crate::auth::setup::local_url(&host, addr.port());
+            let url = droppen_auth::setup::local_url(&host, addr.port());
             if auth_for_link.is_off() {
                 warn_auth_off(&url);
             } else {
@@ -417,10 +417,10 @@ impl RemoteHandApp {
                 // setup state (its account is app-internal): a code on file
                 // there would let any process of that user make an account. Its
                 // first account is made on a page the app opens as the owner
-                // (`crate::auth::local_open`, "Not on the desktop app's
+                // (`droppen_auth::local_open`, "Not on the desktop app's
                 // instance").
                 if desktop_app {
-                    crate::auth::setup::remove_code_file(&crate::auth::setup::code_file(&paths));
+                    droppen_auth::setup::remove_code_file(&droppen_auth::setup::code_file(&paths));
                 } else {
                     auth_for_link.setup.arm_for(&paths, url);
                 }
@@ -428,9 +428,9 @@ impl RemoteHandApp {
                 // The local capability: `remote-hand-server open` asks this
                 // socket — which only the OS user running this server can
                 // reach — for a one-time token that opens the page signed in
-                // as this device's owner (`crate::auth::local_open`).
-                let page = crate::auth::local_open::page_url(addr);
-                if let Err(error) = crate::auth::local_open::ControlSocket::of(&paths).serve(auth_for_link.clone(), page, desktop_app, cancel.clone()) {
+                // as this device's owner (`droppen_auth::local_open`).
+                let page = droppen_auth::local_open::page_url(addr);
+                if let Err(error) = droppen_auth::local_open::ControlSocket::of(&paths).serve(auth_for_link.clone(), page, desktop_app, cancel.clone()) {
                     tracing::error!(%error, "cannot listen on the control socket; `remote-hand-server open` will not work");
                 }
                 // And again every few seconds, so that an account made or
@@ -446,7 +446,7 @@ impl RemoteHandApp {
                     let link_settings = link_settings.clone();
                     let cancel = cancel.clone();
                     async move {
-                        let mut tick = tokio::time::interval(crate::auth::SETUP_TICK);
+                        let mut tick = tokio::time::interval(droppen_auth::SETUP_TICK);
                         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
                         let mut was_setup = None;
                         loop {
@@ -455,7 +455,7 @@ impl RemoteHandApp {
                                 _ = tick.tick() => {
                                     let setup = auth.in_setup().await;
                                     if !setup && was_setup != Some(false) {
-                                        let ended = auth.sessions.revoke_user(crate::auth::LOCAL_OWNER, None).await;
+                                        let ended = auth.sessions.revoke_user(droppen_auth::LOCAL_OWNER, None).await;
                                         if ended > 0 {
                                             tracing::info!(ended, "this device has an account: the owner's open pages are signed out");
                                         }
@@ -715,7 +715,7 @@ impl crate::feed::global::PluginStatuses for PluginHost {
 /// request's [`droppen_http::identity::NotifyGrant`].
 pub(crate) struct NotifyTokens;
 
-impl crate::auth::NotifyCredential for NotifyTokens {
+impl droppen_auth::NotifyCredential for NotifyTokens {
     fn is_notify_request(&self, method: &gotcha::axum::http::Method, path: &str) -> bool {
         crate::notify::is_notify_request(method, path)
     }

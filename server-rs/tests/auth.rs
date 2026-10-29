@@ -24,7 +24,7 @@ mod common;
 use common::header;
 use std::path::Path;
 
-use remote_hand_server::auth::users::UsersStore;
+use droppen_auth::users::UsersStore;
 use droppen_instance::instance::DEFAULT_INSTANCE;
 use droppen_instance::paths::Paths;
 use serde_json::{json, Value};
@@ -379,7 +379,7 @@ async fn remote_hand_server_open_signs_the_page_in_as_the_owner() {
     let server = common::TestServer::start_guarded().await;
     let control = server.paths.instance_dir().join("control");
     assert_eq!(std::fs::metadata(&control).expect("control dir").permissions().mode() & 0o777, 0o700);
-    let socket = remote_hand_server::auth::local_open::ControlSocket::of(&server.paths).path();
+    let socket = droppen_auth::local_open::ControlSocket::of(&server.paths).path();
     assert_eq!(std::fs::metadata(&socket).expect("control socket").permissions().mode() & 0o777, 0o600);
 
     let out = cli_beside(&server, &["open", "--print"]).await;

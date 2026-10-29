@@ -19,7 +19,7 @@ use droppen_http::app_window::AppWindow;
 use crate::models::ModelsState;
 use crate::apps::AppsState;
 use crate::attention::AttentionState;
-use crate::auth::AuthState;
+use droppen_auth::AuthState;
 use crate::chats::ChatsState;
 use crate::cloud::CloudState;
 use crate::drive::DriveState;

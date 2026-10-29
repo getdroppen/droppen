@@ -3,8 +3,8 @@
 //! `POST /api/notify` reaches out of this machine and onto the user's lock
 //! screen, so it cannot be open — and the caller is a process inside an agent's
 //! session, which has no account, no login and no browser to hold one. This is
-//! the third kind of credential in the server, beside [`crate::auth::sessions`]'
-//! bearer tokens and [`crate::auth::tickets`]' scoped ones, and it is shaped by
+//! the third kind of credential in the server, beside [`droppen_auth::sessions`]'
+//! bearer tokens and [`droppen_auth::tickets`]' scoped ones, and it is shaped by
 //! two constraints neither of those has:
 //!
 //! * **It must survive a server restart.** A resident claude outlives the
@@ -23,7 +23,7 @@
 //! # What it is not
 //!
 //! Not an identity: it authorizes one operation on one session and nothing else,
-//! and [`super::NotifyCaller`] is deliberately not an [`crate::auth::Identity`].
+//! and [`super::NotifyCaller`] is deliberately not an [`droppen_auth::Identity`].
 //! Whoever holds one can put notifications on the user's phone, attributed to
 //! that session, and can do nothing else at all — not read a transcript, not
 //! send a message, not learn the device key. That is the blast radius of the
@@ -82,7 +82,7 @@ pub fn mint(secret: &[u8], instance: &str, session_key: &str) -> String {
 
 /// The session a token names, or `None` for anything this server did not mint.
 ///
-/// The comparison is constant-time for [`crate::auth::sessions`]' reason: a
+/// The comparison is constant-time for [`droppen_auth::sessions`]' reason: a
 /// byte-by-byte early exit is a timing oracle a caller can walk a forgery
 /// through, and the cost of not having one is a fixed 32-byte compare.
 pub fn verify(secret: &[u8], instance: &str, token: &str) -> Option<String> {

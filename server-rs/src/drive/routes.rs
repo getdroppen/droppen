@@ -17,7 +17,7 @@ use super::composer_prefs::{ComposerChoice, ComposerPrefs};
 use super::idempotent::{self, Begun, Key};
 use crate::accounts::store::{AccountError, AccountProvider};
 use crate::accounts::{account_not_found, provider_mismatch, require_uuid};
-use crate::auth::MaybeIdentity;
+use droppen_auth::MaybeIdentity;
 use crate::feed;
 use crate::files;
 use droppen_http::error::{ApiError, Hinted};
@@ -2202,7 +2202,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = Arc::new(droppen_instance::paths::Paths::new(dir.path().to_path_buf()));
         let instance = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
-        let auth = crate::auth::Auth::new(&paths, &instance, &droppen_http::config::AuthSettings::default(), false, std::sync::Arc::new(crate::app::NotifyTokens));
+        let auth = droppen_auth::Auth::new(&paths, &instance, &droppen_http::config::AuthSettings::default(), false, std::sync::Arc::new(crate::app::NotifyTokens));
         let drive = Drive::new(paths, &instance, auth, crate::app::transcript_sources(), register, crate::app::logins());
         (dir, drive)
     }

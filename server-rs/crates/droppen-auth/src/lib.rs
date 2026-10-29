@@ -24,12 +24,15 @@
 //! * [`cli`] — `remote-hand-server user add|list|passwd|rm`, the local-admin
 //!   path to an account that needs no code: whoever has a shell here is trusted.
 //!
+//! A name in backticks such as `cloud` or `notify` in these docs is a module
+//! of the server, which this crate cannot link to.
+//!
 //! # Where the guard is mounted, and why it matters
 //!
-//! [`layer`] goes on in [`crate::app::RemoteHandApp::prepare`], **after** the
+//! [`layer`] goes on in `app::RemoteHandApp::prepare`, **after** the
 //! last `fallback_service`. `axum::Router::layer` wraps the routes and the
 //! fallback *as they stand when it is called*, so a guard registered inside
-//! [`crate::api::routes`] — where [`droppen_http::origin`]'s is — would cover the
+//! `api::routes` — where [`droppen_http::origin`]'s is — would cover the
 //! documented routes and miss `/openapi.json`, `/redoc`, `/scalar`, the SPA
 //! fallback and the `/embed/{id}/*` proxy. Those are exactly the paths an
 //! unauthenticated caller would try first.
@@ -88,7 +91,7 @@
 //!   browser has no login here). It is its own credential: it opens only with
 //!   the attempt's one-off key, held in this process, and its state, which
 //!   only the page that opened the attempt was given
-//!   ([`crate::cloud::link_handoff`]); the handler refuses everything else;
+//!   (`cloud::link_handoff`); the handler refuses everything else;
 //! * `OPTIONS` — answered by [`droppen_http::origin`]'s CORS preflight, which a browser
 //!   never sends credentials on;
 //! * `GET`/`HEAD` outside `/api/`, minus the three documentation paths — the SPA
@@ -107,7 +110,7 @@
 //! # The cloud agent's internal credential
 //!
 //! An enrolled server bridges a device's end-to-end channel to its own
-//! loopback listener ([`crate::agent::bridge`]) so that no handler changes.
+//! loopback listener (`agent::bridge`) so that no handler changes.
 //! Those requests carry `x-rh-agent: <credential>`, a random value minted per
 //! boot that exists only in this process's memory ([`Auth::internal_credential`]),
 //! plus `x-rh-agent-device: <device id>`. [`guard`] accepts the pair **only
@@ -198,7 +201,7 @@ enum Mode {
 /// Not an account name — a colon is not allowed in one ([`users::valid_name`]),
 /// so no account can ever be mistaken for it, nor it for an account. Valid only
 /// while the instance has no user account ([`Auth::still_valid`]); every session
-/// of it is revoked when the first one is made. [`crate::cloud`] treats it
+/// of it is revoked when the first one is made. `cloud` treats it
 /// as the manager of the Droppen link, which is the one place outside this
 /// module that has to know it exists ([`is_local_owner`]).
 pub const LOCAL_OWNER: &str = "local:owner";
@@ -209,7 +212,7 @@ pub fn is_local_owner(username: &str) -> bool {
 }
 
 /// What creating the first account asks of the Droppen link: that a link the
-/// device's owner signed in becomes that account's. The link (`crate::cloud`)
+/// device's owner signed in becomes that account's. The link (`cloud`)
 /// sits above auth, so it implements this and the entry hands it to the routes
 /// ([`AuthState`]).
 pub trait LinkHandOver: Send + Sync {
@@ -245,7 +248,7 @@ pub trait NotifyCredential: Send + Sync {
 
 /// Everything the guard and the `/api/auth/*` routes need.
 ///
-/// Hangs off [`crate::drive::Drive`], like every other registry in this server,
+/// Hangs off `drive::Drive`, like every other registry in this server,
 /// so two servers in one process cannot see each other's sessions, tickets or
 /// failure counts.
 pub struct Auth {
@@ -300,7 +303,7 @@ impl Auth {
     /// process and reads `/openapi.json` back off it, which on a developer's own
     /// machine — where accounts exist — would otherwise be a `401` and a failed
     /// `pnpm gen:api`. It is the same escape hatch
-    /// [`crate::app::RemoteHandApp::skip_lock`] is, for the same command.
+    /// `app::RemoteHandApp::skip_lock` is, for the same command.
     pub fn new(
         paths: &Paths,
         instance: &InstanceDirs,
@@ -642,7 +645,7 @@ trait ResponseExt {
     /// third party which host and path the person clicked it from.
     ///
     /// And no framing by another site, on everything but an embedded app —
-    /// whose proxy (`crate::apps::embed`) answers for itself, since the page
+    /// whose proxy (`apps::embed`) answers for itself, since the page
     /// frames it: a page somebody else serves must not be able to lay this
     /// one, signed in, under a transparent frame and have its clicks land here.
     fn with_guard_headers(self, path: &str) -> Response;
@@ -663,7 +666,7 @@ impl ResponseExt for Response {
 }
 
 /// `POST` here hands back droppen.app's answer from the browser; it is the
-/// one route of [`crate::cloud`] the login guard lets through without a login
+/// one route of `cloud` the login guard lets through without a login
 /// (`exempt`): the reply is its own credential.
 pub const RETURN_ROUTE: &str = "/api/cloud/link/return";
 
@@ -689,7 +692,7 @@ fn exempt(method: &Method, path: &str) -> bool {
 }
 
 /// The `/embed/{id}` prefix, matched exactly as
-/// [`crate::apps::embed`] matches it, so the exemption and the proxy cannot
+/// `apps::embed` matches it, so the exemption and the proxy cannot
 /// disagree about what an embed path is.
 fn is_embed(path: &str) -> bool {
     let Some(rest) = path.strip_prefix("/embed/") else { return false };
@@ -794,6 +797,33 @@ fn write_json_private(path: &Path, value: &serde_json::Value) -> std::io::Result
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A notify capability no request carries: these tests never call its route.
+    struct NoNotify;
+
+    impl NotifyCredential for NoNotify {
+        fn is_notify_request(&self, _method: &Method, _path: &str) -> bool {
+            false
+        }
+
+        fn caller<'a>(
+            &'a self,
+            _paths: &'a Paths,
+            _instance: &'a str,
+            _headers: &'a HeaderMap,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<NotifyGrant>> + Send + 'a>> {
+            Box::pin(async { None })
+        }
+    }
+
+    /// The subsystem a server with the default settings builds for its
+    /// instance `unittest` under `home`, and that instance's paths.
+    pub(crate) fn auth_at(home: &Path) -> (Paths, Arc<Auth>) {
+        let paths = Paths::for_instance(home.to_path_buf(), "unittest");
+        let instance = InstanceDirs::new(&paths.data_dir(), "unittest").expect("instance");
+        let auth = Auth::new(&paths, &instance, &AuthSettings::default(), false, Arc::new(NoNotify));
+        (paths, auth)
+    }
 
     fn headers(pairs: &[(header::HeaderName, &str)]) -> HeaderMap {
         let mut map = HeaderMap::new();
@@ -945,8 +975,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_login_ends_for_its_sockets_when_it_stops_standing() {
         let home = tempfile::tempdir().expect("tempdir");
-        let state = crate::api::test_support::state(home.path()).await;
-        let auth = state.drive.auth.clone();
+        let (_, auth) = auth_at(home.path());
         let token = auth.sessions.issue(LOCAL_OWNER, None).await.expect("session").token;
         let digest = sessions::digest_of(&token);
         let watch = tokio::spawn(auth.clone().watch_login(Some((LOCAL_OWNER.into(), digest))));

@@ -1050,7 +1050,7 @@ mod tests {
         let cwd = dir.path().join("w");
         std::fs::create_dir_all(&cwd).expect("cwd");
         let instance = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
-        let auth = crate::auth::Auth::new(&paths, &instance, &droppen_http::config::AuthSettings::default(), false, Arc::new(crate::app::NotifyTokens));
+        let auth = droppen_auth::Auth::new(&paths, &instance, &droppen_http::config::AuthSettings::default(), false, Arc::new(crate::app::NotifyTokens));
         let drive = crate::drive::Drive::new(paths.clone(), &instance, auth, crate::app::transcript_sources(), register, crate::app::logins());
         let state = ScheduleState {
             paths,

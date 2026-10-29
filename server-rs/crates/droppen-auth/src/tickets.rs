@@ -97,7 +97,7 @@ pub struct Redeemed {
 
 /// Every live ticket this server has minted.
 ///
-/// Lives in [`crate::drive::Drive`] rather than in a `static`, like every other
+/// Lives in `drive::Drive` rather than in a `static`, like every other
 /// registry in this server: two servers in one process — which is what the
 /// integration tests run — must not be able to redeem each other's tickets.
 #[derive(Default)]

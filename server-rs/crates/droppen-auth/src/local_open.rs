@@ -47,10 +47,10 @@
 //! state — its only account, the app's own (`droppen-app`), is app-internal —
 //! so a socket that answered there would hand an owner session to any process
 //! of that macOS user, for as long as the app runs. Its server
-//! (`crate::desktop_app`) answers the socket with a refusal and mints nothing
+//! (`desktop_app`) answers the socket with a refusal and mints nothing
 //! there; the app's *Open in Browser* asks for the token over HTTP instead,
 //! signed in as its own account (`POST /api/auth/local-open/grant`,
-//! [`crate::auth::routes::local_open_grant`]).
+//! [`crate::routes::local_open_grant`]).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -183,7 +183,7 @@ pub async fn ask(paths: &Paths) -> Result<OpenAnswer, String> {
 impl ControlSocket {
     /// Listen on the control socket until `cancel`, answering for `auth`;
     /// `page` is this server's address. Only the server that owns its instance
-    /// calls this ([`crate::app::RemoteHandApp::prepare`]).
+    /// calls this (`app::RemoteHandApp::prepare`).
     ///
     /// On a server the desktop app runs (`desktop_app`), the socket refuses
     /// every request: see the module notes.
@@ -714,21 +714,20 @@ mod tests {
     async fn the_control_socket_hands_this_user_a_token_while_there_is_no_account() {
         use std::os::unix::fs::PermissionsExt;
         let home = tempfile::tempdir().unwrap();
-        let state = crate::api::test_support::state(home.path()).await;
-        let auth = state.drive.auth.clone();
+        let (paths, auth) = crate::tests::auth_at(home.path());
         let cancel = CancellationToken::new();
-        let socket = ControlSocket::of(&state.paths).serve(auth.clone(), "http://127.0.0.1:9/".into(), false, cancel.clone()).expect("serve");
-        let dir = ControlSocket::of(&state.paths).dir();
+        let socket = ControlSocket::of(&paths).serve(auth.clone(), "http://127.0.0.1:9/".into(), false, cancel.clone()).expect("serve");
+        let dir = ControlSocket::of(&paths).dir();
         assert_eq!(std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777, 0o700);
         assert_eq!(std::fs::metadata(&socket).unwrap().permissions().mode() & 0o777, 0o600);
         if let Some(parent) = socket.parent().filter(|p| *p != dir) {
             assert_eq!(std::fs::metadata(parent).unwrap().permissions().mode() & 0o777, 0o700);
         }
 
-        droppen_instance::instance::InstanceDirs::new(&state.paths.data_dir(), state.paths.instance())
+        droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), paths.instance())
             .unwrap()
             .write_port(9);
-        let answer = ask(&state.paths).await.expect("an answer");
+        let answer = ask(&paths).await.expect("an answer");
         assert!(!answer.accounts);
         let url = answer.url.expect("a url");
         let token = url.split_once("#local-open=").expect("a token in the fragment").1.to_string();
@@ -740,7 +739,7 @@ mod tests {
         assert!(!redirect.exists(), "gone with the token");
 
         auth.users.add("ada", "correct horse battery").await.unwrap();
-        let answer = ask(&state.paths).await.expect("an answer");
+        let answer = ask(&paths).await.expect("an answer");
         assert!(answer.accounts, "with an account there is only the login page");
         assert_eq!(answer.url, None);
 
@@ -752,7 +751,7 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
         assert!(!socket.exists(), "the socket goes with the server");
-        assert!(ask(&state.paths).await.is_err());
+        assert!(ask(&paths).await.is_err());
     }
 
     /// The desktop app's instance never leaves its setup state, so its
@@ -762,8 +761,7 @@ mod tests {
     async fn the_desktop_apps_control_socket_opens_nothing() {
         let home = tempfile::tempdir().unwrap();
         let paths = Paths::for_instance(home.path().to_path_buf(), "droppen-app");
-        let state = crate::api::test_support::state(home.path()).await;
-        let auth = state.drive.auth.clone();
+        let (_, auth) = crate::tests::auth_at(home.path());
         let cancel = CancellationToken::new();
         ControlSocket::of(&paths).serve(auth.clone(), "http://127.0.0.1:9/".into(), true, cancel.clone()).expect("serve");
         droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), paths.instance()).unwrap().write_port(9);

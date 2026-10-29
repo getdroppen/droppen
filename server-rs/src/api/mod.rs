@@ -17,6 +17,7 @@ use tokio_util::sync::CancellationToken;
 use crate::cloud;
 use crate::drive::Drive;
 use crate::feed;
+use crate::plugins::CloudIdentityExt;
 use droppen_http::error::ApiError;
 use droppen_http::extract::{ApiPath, ApiQuery};
 use droppen_http::{close_within, hostname, node_platform, send_within, Heartbeat, CLOSE_LIMIT, RUNTIME_VERSION, SERVER_VERSION};
@@ -25,6 +26,11 @@ use droppen_instance::paths::Paths;
 use crate::sessions::{self, claude, codex, SessionDetail, SessionList, Settings, Source};
 
 mod state;
+
+/// The login guard and the `/api/auth/*` routes (`droppen_auth`), through the
+/// router as the server builds it.
+#[cfg(test)]
+mod auth_routes;
 
 /// The router every subsystem's `routes` function extends.
 ///
@@ -199,7 +205,7 @@ pub async fn session_detail(
 /// `docs/plugins/runtime.md` §5 gives: the cloud sees neither the list, the
 /// code nor the documents. The device's own pages still get it.
 #[api(id = "settings", group = "meta", summary = "Server settings")]
-pub async fn settings(State(state): State<AppState>, #[api(skip)] who: crate::auth::MaybeIdentity) -> Json<Settings> {
+pub async fn settings(State(state): State<AppState>, #[api(skip)] who: droppen_auth::MaybeIdentity) -> Json<Settings> {
     let paths = state.paths.as_ref();
     let bindings = state.drive.accounts.session_account_map().await;
     let (claude_sessions, codex_sessions) = tokio::join!(claude::list_claude_sessions(paths, &bindings), codex::list_codex_sessions(paths));
@@ -241,10 +247,10 @@ pub async fn settings(State(state): State<AppState>, #[api(skip)] who: crate::au
 /// see the module docs of [`crate::feed`] for the frames.
 ///
 /// A socket opened by a login closes with 4401 once that login no longer
-/// stands ([`crate::auth::Auth::watch_login`]).
+/// stands ([`droppen_auth::Auth::watch_login`]).
 pub async fn session_feed_ws(
     State(state): State<AppState>,
-    who: crate::auth::MaybeIdentity,
+    who: droppen_auth::MaybeIdentity,
     ApiPath((source, id)): ApiPath<(Source, String)>,
     ApiQuery(query): ApiQuery<SessionFeedQuery>,
     upgrade: WebSocketUpgrade,
@@ -300,7 +306,7 @@ async fn run_session_socket(
     loop {
         tokio::select! {
             () = &mut ended => {
-                let _ = send_within(&mut sender, Message::Close(Some(crate::auth::signed_out_frame())), limit, shutdown).await;
+                let _ = send_within(&mut sender, Message::Close(Some(droppen_auth::signed_out_frame())), limit, shutdown).await;
                 break;
             }
             frame = attachment.next_frame() => match frame {
@@ -380,7 +386,7 @@ fn response_overrides() -> ExtraResponses {
     crate::acp_agent::describe(&mut reg);
     crate::apps::describe(&mut reg);
     crate::attention::describe(&mut reg);
-    crate::auth::describe(&mut reg);
+    droppen_auth::describe(&mut reg);
     crate::chats::describe(&mut reg);
     cloud::describe(&mut reg);
     crate::drive::describe(&mut reg);
@@ -413,7 +419,7 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
     let router = crate::acp_agent::AcpAgentState::routes(router);
     let router = crate::apps::AppsState::routes(router);
     let router = crate::attention::AttentionState::routes(router);
-    let router = crate::auth::AuthState::routes(router);
+    let router = droppen_auth::AuthState::routes(router);
     let router = crate::chats::ChatsState::routes(router);
     let router = cloud::CloudState::routes(router);
     let router = crate::cloud::gateway::routes(router);
@@ -489,7 +495,7 @@ pub(crate) mod test_support {
             })
             .await
             .expect("router");
-        (state, router.layer(crate::auth::layer(auth)))
+        (state, router.layer(droppen_auth::layer(auth)))
     }
 
     /// The handlers' state for a server whose home is `home`.
@@ -523,7 +529,7 @@ pub(crate) mod test_support {
             })
             .await
             .expect("router")
-            .layer(crate::auth::layer(auth));
+            .layer(droppen_auth::layer(auth));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
         let addr = listener.local_addr().expect("addr");
         state.setup.set_listen_port(addr.port());
@@ -537,10 +543,10 @@ pub(crate) mod test_support {
     /// account yet lets in.
     pub(crate) async fn owner_ticket(state: &super::AppState) -> String {
         let auth = &state.drive.auth;
-        let token = auth.sessions.issue(crate::auth::LOCAL_OWNER, None).await.expect("an owner login").token;
-        let digest = crate::auth::sessions::digest_of(&token);
+        let token = auth.sessions.issue(droppen_auth::LOCAL_OWNER, None).await.expect("an owner login").token;
+        let digest = droppen_auth::sessions::digest_of(&token);
         auth.tickets
-            .issue(crate::auth::LOCAL_OWNER, &digest, crate::auth::tickets::TicketScope::Ws)
+            .issue(droppen_auth::LOCAL_OWNER, &digest, droppen_auth::tickets::TicketScope::Ws)
             .expect("a ticket")
             .0
     }
@@ -594,13 +600,13 @@ mod tests {
             None,
         ));
 
-        let local = settings(State(state.clone()), crate::auth::MaybeIdentity(None)).await.0;
+        let local = settings(State(state.clone()), droppen_auth::MaybeIdentity(None)).await.0;
         assert_eq!(local.plugins.len(), 1, "a local caller sees the instance's plugins");
 
         for device in ["agent-sync", "d-1"] {
             let bridged = settings(
                 State(state.clone()),
-                crate::auth::MaybeIdentity(Some(droppen_http::identity::AuthIdentity {
+                droppen_auth::MaybeIdentity(Some(droppen_http::identity::AuthIdentity {
                     username: format!("cloud:{device}"),
                     token_sha256: None,
                 })),

@@ -22,7 +22,7 @@ use crate::accounts::login::Logins;
 use crate::accounts::quota::QuotaCache;
 use crate::accounts::setup_token::Captures;
 use crate::accounts::store::AccountsStore;
-use crate::auth::Auth;
+use droppen_auth::Auth;
 use crate::inject::{InjectionRegistry, ProviderRegistry, SpawnDecoration};
 use crate::sessions::Source;
 use droppen_base::process_env::Env;
