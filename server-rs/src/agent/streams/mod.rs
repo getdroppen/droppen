@@ -61,7 +61,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::agent::AgentFiles;
 use droppen_base::time::now_ms_u64;
-use content::{Delta, Scope, SessionCursor, StatusBodyExt};
+use content::{CliVersions, Delta, Scope, SessionCursor};
 use retention::HubPlan;
 use source::{Fingerprints, Items, ListedSession, SessionRow, StreamSource, Transcript};
 use store::{IndexDiff, Kind, PageRef, Row, Store};
@@ -349,7 +349,7 @@ struct Sync {
     last_status: Option<Instant>,
     beats: HashMap<StreamId, Instant>,
     budget: Budget,
-    cli: Option<(Instant, Value)>,
+    cli: Option<(Instant, Option<CliVersions>)>,
     /// Session streams' names, for drafts: stream → (source, id).
     names: HashMap<StreamId, (String, String)>,
     /// What devices call this machine (`None`: its hostname).
@@ -1516,23 +1516,28 @@ impl Sync {
         // The machine key epoch it writes under: a device compares it with the
         // chain's newest and hands the key over again if this machine lags.
         let mk_epoch = self.mk().map(|(e, _)| e);
-        content::status_body(now_ms_u64(), name, mk_epoch, settings, accounts, quota, cli)
+        let controllers = (self.controllers)();
+        content::status_body(now_ms_u64(), name, mk_epoch, settings, accounts.as_ref(), quota, cli)
             .with_system(crate::agent::system::os(), droppen_http::SERVER_VERSION)
             .with_alarms(&self.alarms)
             .with_changes(&self.changes)
-            .with_controllers((self.controllers)().as_ref())
+            .with_controllers(controllers.as_ref())
+            .encode()
     }
 
-    async fn cli_versions(&mut self) -> Value {
+    async fn cli_versions(&mut self) -> Option<CliVersions> {
         if let Some((at, v)) = &self.cli {
             if at.elapsed() < Duration::from_secs(60 * 60) {
                 return v.clone();
             }
         }
         let v = if droppen_base::env::var("DROPPEN_AGENT_STATUS_CLI").as_deref() == Some("0") {
-            Value::Null
+            None
         } else {
-            serde_json::json!({"claude": cli_version("claude").await, "codex": cli_version("codex").await})
+            Some(CliVersions {
+                claude: cli_version("claude").await,
+                codex: cli_version("codex").await,
+            })
         };
         self.cli = Some((Instant::now(), v.clone()));
         v

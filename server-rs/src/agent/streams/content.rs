@@ -7,7 +7,7 @@
 //! | stream | body |
 //! |---|---|
 //! | index | `{"reset"?: true, "upserts": [SessionSummary…], "removed": ["source/id"…], "asOf"}`, or just `{"asOf"}` ([`as_of_body`]) |
-//! | status | `{"asOf", "displayName", "mkEpoch", "settings", "accounts", "quota", "cli", "alarms"?, "changes"?}`, whole each time |
+//! | status | `{"asOf", "displayName", "mkEpoch", "settings", "accounts", "quota", "cli", "os", "agentVersion", "alarms"?, "changes"?, "controllers"}` ([`StatusBody`]), whole each time |
 //! | session | `{"fromIndex", "items", "endIndex", "fp", "prefixFp"}`, replace-from; a trimmed copy's first page adds `"base"`, `"before"` ([`window_body`]) |
 //!
 //! Every body fits one record ([`BODY_BUDGET`]); a transcript item too big for
@@ -21,6 +21,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::source::{Fingerprints, Items, SessionRow};
+use crate::agent::state::{Alarm, Controllers};
+use crate::agent::system::Os;
 
 /// The most a body may be: under a record's and a page's largest body
 /// (`rh_proto::stream::MAX_PAGE_BODY`, a few hundred bytes more), with room for
@@ -172,14 +174,39 @@ pub fn fit_item(item: Value, max: usize) -> Value {
     if len(&item) <= max {
         return item;
     }
-    serde_json::json!({
-        "role": item.get("role").cloned().unwrap_or(Value::String("system".into())),
-        "kind": item.get("kind").cloned().unwrap_or(Value::String("text".into())),
-        "text": "[too large for the offline copy]",
-        "detail": null, "toolName": null, "meta": null, "isError": false, "question": null,
-        "timestamp": item.get("timestamp").cloned().unwrap_or(Value::Null),
-        "truncated": true, "rhOfflineTruncated": true,
-    })
+    let stand_in = StandIn {
+        role: item.get("role").cloned().unwrap_or(Value::String("system".into())),
+        kind: item.get("kind").cloned().unwrap_or(Value::String("text".into())),
+        text: "[too large for the offline copy]",
+        detail: (),
+        tool_name: (),
+        meta: (),
+        is_error: false,
+        question: (),
+        timestamp: item.get("timestamp").cloned().unwrap_or(Value::Null),
+        truncated: true,
+        rh_offline_truncated: true,
+    };
+    serde_json::to_value(stand_in).unwrap_or(Value::Null)
+}
+
+/// What an offline copy holds in place of an item no halving brings under its
+/// limit: an item of the same role, kind and time that says so. The unit
+/// fields are written as `null`.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StandIn {
+    role: Value,
+    kind: Value,
+    text: &'static str,
+    detail: (),
+    tool_name: (),
+    meta: (),
+    is_error: bool,
+    question: (),
+    timestamp: Value,
+    truncated: bool,
+    rh_offline_truncated: bool,
 }
 
 fn longest_string(v: &mut Value) -> Option<&mut String> {
@@ -277,7 +304,7 @@ pub fn item_times(items: &dyn Items) -> Vec<Option<u64>> {
 /// it also tells its user that the `base` earlier entries are only on the
 /// machine. Records never carry it.
 pub fn window_body(base: usize, before: Option<u64>, chain: &dyn Fingerprints) -> Vec<u8> {
-    let mut body: Value = serde_json::from_slice(&session_body(base, &[], chain)).unwrap_or_else(|_| serde_json::json!({}));
+    let mut body: Value = serde_json::from_slice(&session_body(base, &[], chain)).unwrap_or_else(|_| Value::Object(serde_json::Map::new()));
     body["base"] = Value::from(base);
     body["before"] = before.map_or(Value::Null, |ms| {
         Value::String(droppen_base::time::iso8601(std::time::UNIX_EPOCH + std::time::Duration::from_millis(ms)))
@@ -368,136 +395,216 @@ pub fn as_of_body(as_of: u64) -> Vec<u8> {
 // ------------------------------------------------------------------ status
 
 /// The machine status body: what the UI shows about the machine, never a
-/// credential. `accounts` keeps only what names an account.
-pub fn status_body(
+/// credential. [`status_body`] makes it, the `with_*` steps add what the
+/// machine knows besides, and [`StatusBody::encode`] writes it.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatusBody<'a> {
+    #[serde(flatten)]
+    head: StatusHead<'a>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    os: Option<&'a Os>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    agent_version: Option<&'a str>,
+    #[serde(skip_serializing_if = "<[Alarm]>::is_empty")]
+    alarms: &'a [Alarm],
+    #[serde(skip_serializing_if = "<[Alarm]>::is_empty")]
+    changes: &'a [Alarm],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    controllers: Option<Option<&'a Controllers>>,
+}
+
+/// What [`BODY_BUDGET`] is measured on: the body but for what the `with_*`
+/// steps add.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StatusHead<'a> {
     as_of: u64,
     display_name: Option<String>,
     mk_epoch: Option<u32>,
     settings: Option<Value>,
-    accounts: Option<Value>,
+    accounts: Option<AccountsDigest<'a>>,
     quota: Option<Value>,
-    cli: Value,
-) -> Vec<u8> {
-    let accounts = accounts.map(|a| {
-        let list: Vec<Value> = a["accounts"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .map(|acc| {
-                serde_json::json!({
-                    "id": acc["id"], "label": acc["label"], "kind": acc["kind"], "provider": acc["provider"],
-                    "email": acc["email"], "usageEnabled": acc["usageEnabled"],
-                    // Whether it may stand in for a signed-out local login: an
-                    // offline page that cannot tell says so wrongly.
-                    "rotation": acc["rotation"],
-                })
-            })
-            .collect();
-        // Each local login's state and whether somebody chose it as the
-        // default — what an offline Settings needs to show which default is set
-        // — but not its rests: their reasons are a CLI's own words, and the
-        // body has a budget.
-        let login = |cli: &str| {
-            let login = &a["local"][cli];
-            if login.is_object() {
-                serde_json::json!({"state": login["state"], "isDefault": login["isDefault"]})
-            } else {
-                Value::Null
-            }
-        };
-        let local = if a["local"].is_object() {
-            serde_json::json!({"claude": login("claude"), "codex": login("codex")})
-        } else {
-            Value::Null
-        };
-        serde_json::json!({
-            "accounts": list,
-            "defaultAccountId": a["defaultAccountId"],
-            "defaultCodexAccountId": a["defaultCodexAccountId"],
-            "local": local,
+    cli: Option<CliVersions>,
+}
+
+/// The status's `cli`: the first line each CLI prints for `--version`, `null`
+/// for one that is not there or prints nothing usable.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CliVersions {
+    /// `claude --version`.
+    pub claude: Option<String>,
+    /// `codex --version`.
+    pub codex: Option<String>,
+}
+
+/// What the status keeps of `/api/accounts`: what names each account, the
+/// defaults, and the local logins. Every field is the answer's own value, or
+/// `null` where the answer has none.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AccountsDigest<'a> {
+    accounts: Vec<AccountDigest<'a>>,
+    default_account_id: &'a Value,
+    default_codex_account_id: &'a Value,
+    local: Option<LocalLogins<'a>>,
+}
+
+impl<'a> AccountsDigest<'a> {
+    fn of(answer: &'a Value) -> Self {
+        let local = &answer["local"];
+        Self {
+            accounts: answer["accounts"].as_array().into_iter().flatten().map(AccountDigest::of).collect(),
+            default_account_id: &answer["defaultAccountId"],
+            default_codex_account_id: &answer["defaultCodexAccountId"],
+            local: local.is_object().then(|| LocalLogins {
+                claude: LocalLogin::of(&local["claude"]),
+                codex: LocalLogin::of(&local["codex"]),
+            }),
+        }
+    }
+}
+
+/// One account as the status names it: no secret, env key or rest.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AccountDigest<'a> {
+    id: &'a Value,
+    label: &'a Value,
+    kind: &'a Value,
+    provider: &'a Value,
+    email: &'a Value,
+    usage_enabled: &'a Value,
+    /// Whether it may stand in for a signed-out local login: an offline page
+    /// that cannot tell says so wrongly.
+    rotation: &'a Value,
+}
+
+impl<'a> AccountDigest<'a> {
+    fn of(account: &'a Value) -> Self {
+        Self {
+            id: &account["id"],
+            label: &account["label"],
+            kind: &account["kind"],
+            provider: &account["provider"],
+            email: &account["email"],
+            usage_enabled: &account["usageEnabled"],
+            rotation: &account["rotation"],
+        }
+    }
+}
+
+/// Each local login's state and whether somebody chose it as the default —
+/// what an offline Settings needs to show which default is set — but not its
+/// rests: their reasons are a CLI's own words, and the body has a budget.
+#[derive(Clone, Serialize)]
+struct LocalLogins<'a> {
+    claude: Option<LocalLogin<'a>>,
+    codex: Option<LocalLogin<'a>>,
+}
+
+/// One local login in [`LocalLogins`].
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LocalLogin<'a> {
+    state: &'a Value,
+    is_default: &'a Value,
+}
+
+impl<'a> LocalLogin<'a> {
+    fn of(login: &'a Value) -> Option<Self> {
+        login.is_object().then(|| Self {
+            state: &login["state"],
+            is_default: &login["isDefault"],
         })
-    });
-    let mut body = serde_json::json!({"asOf": as_of, "displayName": display_name, "mkEpoch": mk_epoch, "settings": settings, "accounts": accounts, "quota": quota, "cli": cli});
-    if serde_json::to_vec(&body).map_or(0, |b| b.len()) > BODY_BUDGET {
-        body["quota"] = Value::Null;
     }
-    if serde_json::to_vec(&body).map_or(0, |b| b.len()) > BODY_BUDGET {
-        body["accounts"] = Value::Null;
-    }
-    serde_json::to_vec(&body).unwrap_or_default()
 }
 
-/// A status body as JSON bytes, so adding a field is a step in the builder
-/// chain and the parse/set/re-encode lives in one place.
-pub(crate) trait StatusBodyExt {
-    /// `self` with `key` set to `value`; a body that does not parse, or a
-    /// `None`, is left untouched.
-    fn with_field(self, key: &str, value: Option<Value>) -> Self;
+/// The status body as far as the server's own answers go. `accounts` is
+/// `/api/accounts`, of which only what names an account is kept. When the
+/// head is over [`BODY_BUDGET`] the quota goes, then the accounts.
+pub fn status_body<'a>(
+    as_of: u64,
+    display_name: Option<String>,
+    mk_epoch: Option<u32>,
+    settings: Option<Value>,
+    accounts: Option<&'a Value>,
+    quota: Option<Value>,
+    cli: Option<CliVersions>,
+) -> StatusBody<'a> {
+    let mut head = StatusHead {
+        as_of,
+        display_name,
+        mk_epoch,
+        settings,
+        accounts: accounts.map(AccountsDigest::of),
+        quota,
+        cli,
+    };
+    let len = |head: &StatusHead| serde_json::to_vec(head).map_or(0, |b| b.len());
+    if len(&head) > BODY_BUDGET {
+        head.quota = None;
+    }
+    if len(&head) > BODY_BUDGET {
+        head.accounts = None;
+    }
+    StatusBody {
+        head,
+        os: None,
+        agent_version: None,
+        alarms: &[],
+        changes: &[],
+        controllers: None,
+    }
+}
 
-    /// A status body with what this computer runs in it: `os` (`{name,
-    /// version, arch}`, [`crate::agent::system::os`]) and `agentVersion` (this
-    /// server's version). Older readers ignore both; the web app falls back to
+impl<'a> StatusBody<'a> {
+    /// With what this computer runs: `os` (`{name, version, arch}`,
+    /// [`crate::agent::system::os`]) and `agentVersion` (this server's
+    /// version). Older readers ignore both; the web app falls back to
     /// `settings.platform` and `settings.serverVersion` without them.
-    fn with_system(self, os: &Value, agent_version: &str) -> Self;
-
-    /// A status body with the machine's chain alarms in it (`alarms`: `[{atMs,
-    /// what}]`, oldest first; left out when there are none). Every device of the
-    /// account reads the status stream, so this is how a fork this machine saw
-    /// reaches all of them — the hub can withhold the record, but not forge or
-    /// alter it, and the machine-signed head says when it is behind.
-    fn with_alarms(self, alarms: &[crate::agent::state::Alarm]) -> Self;
-
-    /// A status body with the account changes this machine saw in it
-    /// (`changes`: `[{atMs, what}]`, oldest first, at most
-    /// [`crate::agent::state::MAX_CHANGES`]; left out when there are none):
-    /// machines and devices added or removed, recovery joins — every device of
-    /// the account reads them, whoever made the change.
-    fn with_changes(self, changes: &[crate::agent::state::Alarm]) -> Self;
-
-    /// A status body with which devices ever opened a channel to this machine in
-    /// it (`controllers`: `{from, fromMs, seq, devices: [{id, firstMs}]}`,
-    /// [`crate::agent::state::Controllers`]), always — an empty list included,
-    /// `null` before the agent has a chain; a body without the field is from an
-    /// agent that does not keep the record. When a device that could control
-    /// this machine no longer can, the page says whether it ever connected. A
-    /// new device, or the chain moving on, is a new record.
-    fn with_controllers(self, controllers: Option<&crate::agent::state::Controllers>) -> Self;
-}
-
-impl StatusBodyExt for Vec<u8> {
-    fn with_field(self, key: &str, value: Option<Value>) -> Self {
-        let Some(value) = value else {
-            return self;
-        };
-        let Ok(mut v) = serde_json::from_slice::<Value>(&self) else {
-            return self;
-        };
-        v[key] = value;
-        serde_json::to_vec(&v).unwrap_or(self)
+    pub fn with_system(self, os: &'a Os, agent_version: &'a str) -> Self {
+        Self {
+            os: Some(os),
+            agent_version: Some(agent_version),
+            ..self
+        }
     }
 
-    fn with_system(self, os: &Value, agent_version: &str) -> Self {
-        self.with_field("os", Some(os.clone()))
-            .with_field("agentVersion", Some(Value::String(agent_version.to_string())))
+    /// With the machine's chain alarms (`alarms`: `[{atMs, what}]`, oldest
+    /// first; left out when there are none). Every device of the account reads
+    /// the status stream, so this is how a fork this machine saw reaches all of
+    /// them — the hub can withhold the record, but not forge or alter it, and
+    /// the machine-signed head says when it is behind.
+    pub fn with_alarms(self, alarms: &'a [Alarm]) -> Self {
+        Self { alarms, ..self }
     }
 
-    fn with_alarms(self, alarms: &[crate::agent::state::Alarm]) -> Self {
-        self.with_field(
-            "alarms",
-            (!alarms.is_empty()).then(|| serde_json::to_value(alarms).unwrap_or(Value::Null)),
-        )
+    /// With the account changes this machine saw (`changes`: `[{atMs, what}]`,
+    /// oldest first, at most [`crate::agent::state::MAX_CHANGES`]; left out when
+    /// there are none): machines and devices added or removed, recovery joins —
+    /// every device of the account reads them, whoever made the change.
+    pub fn with_changes(self, changes: &'a [Alarm]) -> Self {
+        Self { changes, ..self }
     }
 
-    fn with_changes(self, changes: &[crate::agent::state::Alarm]) -> Self {
-        self.with_field(
-            "changes",
-            (!changes.is_empty()).then(|| serde_json::to_value(changes).unwrap_or(Value::Null)),
-        )
+    /// With which devices ever opened a channel to this machine (`controllers`:
+    /// `{from, fromMs, seq, devices: [{id, firstMs}]}`, [`Controllers`]),
+    /// always — an empty list included, `null` before the agent has a chain; a
+    /// body without the field is from an agent that does not keep the record.
+    /// When a device that could control this machine no longer can, the page
+    /// says whether it ever connected. A new device, or the chain moving on, is
+    /// a new record.
+    pub fn with_controllers(self, controllers: Option<&'a Controllers>) -> Self {
+        Self {
+            controllers: Some(controllers),
+            ..self
+        }
     }
 
-    fn with_controllers(self, controllers: Option<&crate::agent::state::Controllers>) -> Self {
-        let value = controllers.and_then(|c| serde_json::to_value(c).ok()).unwrap_or(Value::Null);
-        self.with_field("controllers", Some(value))
+    /// The body as it is written.
+    pub fn encode(&self) -> Vec<u8> {
+        serde_json::to_vec(self).unwrap_or_default()
     }
 }
 
@@ -710,19 +817,27 @@ mod tests {
             Some("mac".into()),
             Some(0),
             Some(serde_json::json!({"hostname": "mac"})),
-            Some(accounts.clone()),
+            Some(&accounts),
             None,
-            serde_json::json!({"claude": "2.0"}),
-        );
+            Some(CliVersions {
+                claude: Some("2.0".into()),
+                codex: None,
+            }),
+        )
+        .encode();
         let b = status_body(
             2,
             Some("mac".into()),
             Some(0),
             Some(serde_json::json!({"hostname": "mac"})),
-            Some(accounts),
+            Some(&accounts),
             None,
-            serde_json::json!({"claude": "2.0"}),
-        );
+            Some(CliVersions {
+                claude: Some("2.0".into()),
+                codex: None,
+            }),
+        )
+        .encode();
         let text = String::from_utf8(a.clone()).unwrap();
         assert!(!text.contains("SECRET") && !text.contains("envKeys"));
         assert_eq!(serde_json::from_slice::<Value>(&a).unwrap()["accounts"]["accounts"][0]["rotation"], Value::Null, "absent stays absent");
@@ -735,8 +850,9 @@ mod tests {
             Some(serde_json::json!({"hostname": "other"})),
             None,
             None,
-            Value::Null,
-        );
+            None,
+        )
+        .encode();
         assert_ne!(status_fingerprint(&a), status_fingerprint(&c));
         let renamed = status_body(
             4,
@@ -745,8 +861,9 @@ mod tests {
             Some(serde_json::json!({"hostname": "mac"})),
             None,
             None,
-            Value::Null,
-        );
+            None,
+        )
+        .encode();
         assert_eq!(serde_json::from_slice::<Value>(&renamed).unwrap()["displayName"], "studio");
     }
 
@@ -763,7 +880,7 @@ mod tests {
                 "codex": {"state": "unknown", "isDefault": false, "rest": []},
             },
         });
-        let body = status_body(1, Some("mac".into()), Some(0), None, Some(accounts), None, Value::Null);
+        let body = status_body(1, Some("mac".into()), Some(0), None, Some(&accounts), None, None).encode();
         let parsed = serde_json::from_slice::<Value>(&body).unwrap();
         assert_eq!(parsed["accounts"]["accounts"][0]["rotation"], true, "whether each account may stand in");
         let local = &parsed["accounts"]["local"];
@@ -777,9 +894,15 @@ mod tests {
 
     #[test]
     fn the_status_says_what_the_computer_runs() {
-        let body = status_body(1, Some("box".into()), Some(0), None, None, None, Value::Null);
-        let os = serde_json::json!({"name": "macos", "version": "15.3", "arch": "aarch64"});
-        let with = body.clone().with_system(&os, "0.2.122");
+        let body = status_body(1, Some("box".into()), Some(0), None, None, None, None);
+        let os = Os {
+            name: "macos".into(),
+            version: Some("15.3".into()),
+            distro: None,
+            arch: "aarch64".into(),
+        };
+        let with = body.clone().with_system(&os, "0.2.122").encode();
+        let body = body.encode();
         let v: Value = serde_json::from_slice(&with).unwrap();
         assert_eq!((v["os"]["name"].as_str(), v["agentVersion"].as_str()), (Some("macos"), Some("0.2.122")));
         assert_eq!(v["displayName"], "box", "the rest is as it was");
@@ -788,19 +911,19 @@ mod tests {
             status_fingerprint(&with),
             "an upgrade is a change worth writing"
         );
-        assert_eq!(b"not json".to_vec().with_system(&os, "x"), b"not json".to_vec());
     }
 
     #[test]
     fn account_changes_go_into_the_status_and_change_it() {
         use crate::agent::state::Alarm;
-        let body = status_body(1, Some("box".into()), Some(0), None, None, None, Value::Null);
-        assert_eq!(body.clone().with_changes(&[]), body, "no changes, no field");
+        let body = status_body(1, Some("box".into()), Some(0), None, None, None, None);
+        assert_eq!(body.clone().with_changes(&[]).encode(), body.encode(), "no changes, no field");
         let changes = [Alarm {
             at_ms: 7,
             what: "device m-2 (runs AI) was added by d-1".into(),
         }];
-        let with = body.clone().with_changes(&changes);
+        let with = body.clone().with_changes(&changes).encode();
+        let body = body.encode();
         let v: Value = serde_json::from_slice(&with).unwrap();
         assert_eq!(v["changes"][0]["atMs"], 7);
         assert_eq!(v["changes"][0]["what"], "device m-2 (runs AI) was added by d-1");
@@ -810,14 +933,14 @@ mod tests {
     #[test]
     fn the_devices_that_opened_a_channel_are_always_in_the_status_and_change_it() {
         use crate::agent::state::{Controller, Controllers};
-        let body = status_body(1, Some("box".into()), Some(0), None, None, None, Value::Null);
+        let body = status_body(1, Some("box".into()), Some(0), None, None, None, None);
         let nobody = Controllers {
             from: 0,
             from_ms: 1_000,
             seq: 4,
             devices: Vec::new(),
         };
-        let empty = body.clone().with_controllers(Some(&nobody));
+        let empty = body.clone().with_controllers(Some(&nobody)).encode();
         let v: Value = serde_json::from_slice(&empty).unwrap();
         assert_eq!(
             v["controllers"],
@@ -825,7 +948,7 @@ mod tests {
             "there even when nobody opened a channel: its absence means an agent that does not say"
         );
         assert_eq!(v["displayName"], "box", "the rest is as it was");
-        assert_ne!(status_fingerprint(&empty), status_fingerprint(&body));
+        assert_ne!(status_fingerprint(&empty), status_fingerprint(&body.encode()));
         let one = Controllers {
             devices: vec![Controller {
                 id: "d-1".into(),
@@ -833,31 +956,31 @@ mod tests {
             }],
             ..nobody.clone()
         };
-        let named: Value = serde_json::from_slice(&body.clone().with_controllers(Some(&one))).unwrap();
+        let named: Value = serde_json::from_slice(&body.clone().with_controllers(Some(&one)).encode()).unwrap();
         assert_eq!(named["controllers"]["devices"], serde_json::json!([{"id": "d-1", "firstMs": 2_000}]));
-        let with_one = body.clone().with_controllers(Some(&one));
+        let with_one = body.clone().with_controllers(Some(&one)).encode();
         assert_ne!(status_fingerprint(&with_one), status_fingerprint(&empty), "a device that opened a channel is a new record");
         let moved = Controllers { seq: 5, ..nobody };
         assert_ne!(
-            status_fingerprint(&body.clone().with_controllers(Some(&moved))),
+            status_fingerprint(&body.clone().with_controllers(Some(&moved)).encode()),
             status_fingerprint(&empty),
             "and so is the chain moving on"
         );
-        let unknown: Value = serde_json::from_slice(&body.clone().with_controllers(None)).unwrap();
+        let unknown: Value = serde_json::from_slice(&body.clone().with_controllers(None).encode()).unwrap();
         assert_eq!(unknown["controllers"], Value::Null, "no chain yet: nothing to say");
-        assert_eq!(b"not json".to_vec().with_controllers(Some(&one)), b"not json".to_vec());
     }
 
     #[test]
     fn alarms_go_into_the_status_and_change_it() {
         use crate::agent::state::Alarm;
-        let body = status_body(5, Some("studio".into()), Some(0), None, None, None, Value::Null);
-        assert_eq!(body.clone().with_alarms(&[]), body, "no alarms, no field");
+        let body = status_body(5, Some("studio".into()), Some(0), None, None, None, None);
+        assert_eq!(body.clone().with_alarms(&[]).encode(), body.encode(), "no alarms, no field");
         let alarms = [Alarm {
             at_ms: 4,
             what: "the hub served a device chain that conflicts with this device's".into(),
         }];
-        let with = body.clone().with_alarms(&alarms);
+        let with = body.clone().with_alarms(&alarms).encode();
+        let body = body.encode();
         let v: Value = serde_json::from_slice(&with).unwrap();
         assert_eq!(v["alarms"][0]["atMs"], 4);
         assert!(v["alarms"][0]["what"].as_str().unwrap().contains("conflicts"));
@@ -878,6 +1001,13 @@ mod status_pins {
     const AGENT: &str = "0.2.134";
     const OS_RELEASE: &str = "NAME=\"Ubuntu\"\nVERSION_ID=\"24.04\"\nID=ubuntu\n";
 
+    fn cli() -> Option<CliVersions> {
+        Some(CliVersions {
+            claude: Some("2.1.3 (Claude Code)".into()),
+            codex: None,
+        })
+    }
+
     fn sha(bytes: &[u8]) -> String {
         Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
     }
@@ -889,11 +1019,12 @@ mod status_pins {
     /// Nothing known: no name, no epoch, no CLI versions, no chain yet.
     fn minimal() -> Vec<u8> {
         let os = crate::agent::system::detect("macos", "aarch64", |_| None);
-        status_body(1, None, None, None, None, None, Value::Null)
+        status_body(1, None, None, None, None, None, None)
             .with_system(&os, AGENT)
             .with_alarms(&[])
             .with_changes(&[])
             .with_controllers(None)
+            .encode()
     }
 
     /// The `/api/accounts` answer the full fixture digests: credentials,
@@ -952,12 +1083,13 @@ mod status_pins {
     /// Every field set, as a linked machine with a chain writes it.
     fn full(settings: Value, quota: Value) -> Vec<u8> {
         let os = crate::agent::system::detect("linux", "x86_64", |_| Some(OS_RELEASE.into()));
-        let cli = json!({"claude": "2.1.3 (Claude Code)", "codex": null});
-        status_body(1_761_700_000_000, Some("studio".into()), Some(3), Some(settings), Some(accounts()), Some(quota), cli)
+        let accounts = accounts();
+        status_body(1_761_700_000_000, Some("studio".into()), Some(3), Some(settings), Some(&accounts), Some(quota), cli())
             .with_system(&os, AGENT)
             .with_alarms(&alarms())
             .with_changes(&changes())
             .with_controllers(Some(&controllers()))
+            .encode()
     }
 
     fn settings() -> Value {
@@ -974,15 +1106,16 @@ mod status_pins {
     /// short of [`BODY_BUDGET`], with `alarms` added after.
     fn near_budget(under: usize, alarms: &[Alarm]) -> (usize, Vec<u8>) {
         let os = crate::agent::system::detect("linux", "x86_64", |_| Some(OS_RELEASE.into()));
+        let accounts = accounts();
         let head = |note: usize| {
             let mut settings = settings();
             settings["note"] = json!("s".repeat(note));
-            let cli = json!({"claude": "2.1.3 (Claude Code)", "codex": null});
-            status_body(9, Some("studio".into()), Some(3), Some(settings), Some(accounts()), Some(quota()), cli)
+            status_body(9, Some("studio".into()), Some(3), Some(settings), Some(&accounts), Some(quota()), cli())
         };
-        let note = BODY_BUDGET - under - head(0).len();
-        let len = head(note).len();
-        (len, head(note).with_system(&os, AGENT).with_alarms(alarms).with_controllers(Some(&controllers())))
+        let note = BODY_BUDGET - under - head(0).encode().len();
+        let len = head(note).encode().len();
+        let controllers = controllers();
+        (len, head(note).with_system(&os, AGENT).with_alarms(alarms).with_controllers(Some(&controllers)).encode())
     }
 
     #[test]
@@ -1052,10 +1185,11 @@ mod status_pins {
         let mut settings = settings();
         settings["note"] = json!("s".repeat(BODY_BUDGET - 1_000));
         let os = crate::agent::system::detect("linux", "x86_64", |_| Some(OS_RELEASE.into()));
-        let cli = json!({"claude": "2.1.3 (Claude Code)", "codex": null});
-        let body = status_body(9, Some("studio".into()), Some(3), Some(settings), Some(accounts), Some(quota()), cli)
+        let controllers = controllers();
+        let body = status_body(9, Some("studio".into()), Some(3), Some(settings), Some(&accounts), Some(quota()), cli())
             .with_system(&os, AGENT)
-            .with_controllers(Some(&controllers()));
+            .with_controllers(Some(&controllers))
+            .encode();
         let v: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!((v["quota"].is_null(), v["accounts"].is_null()), (true, true));
         assert_eq!(
