@@ -6,7 +6,8 @@
 
 use ed25519_dalek::SigningKey;
 use rh_proto::sig::{HubLogin, LoginRole};
-use serde_json::{json, Value};
+use rh_proto::wire::client::{SessionChallengeRequest, SessionRequest};
+use serde_json::Value;
 use zeroize::Zeroizing;
 
 use crate::http::{post, HttpError};
@@ -32,7 +33,11 @@ pub async fn mint(http: &reqwest::Client, hub: &HubUrl, account: &str, device: &
         http,
         &format!("{}/v1/session/challenge", hub.http),
         None,
-        &json!({"account": account, "device": device}),
+        &serde_json::to_value(SessionChallengeRequest {
+            account: account.into(),
+            device: device.into(),
+        })
+        .expect("a session challenge request encodes"),
     )
     .await?;
     let nonce = v["nonce"]
@@ -53,7 +58,14 @@ pub async fn mint(http: &reqwest::Client, hub: &HubUrl, account: &str, device: &
         http,
         &format!("{}/v1/session", hub.http),
         None,
-        &json!({"account": account, "device": device, "time_ms": time_ms, "nonce": hex(&nonce), "signature": hex(&signature)}),
+        &serde_json::to_value(SessionRequest {
+            account: account.into(),
+            device: device.into(),
+            time_ms,
+            nonce: hex(&nonce),
+            signature: hex(&signature),
+        })
+        .expect("a session request encodes"),
     )
     .await?;
     let token = v["token"].as_str().ok_or_else(|| HttpError::Answer("no device token".into()))?;
