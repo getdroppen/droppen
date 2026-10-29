@@ -402,10 +402,10 @@ pub async fn load_session_detail(drive: &Arc<Drive>, source: Source, id: &str) -
     let page = transcript_page(&items, items.len());
     Some(SessionDetail {
         summary: state.summary,
-        injection: crate::openapi_ext::Nullable(state.injection),
+        injection: droppen_http::openapi_ext::Nullable(state.injection),
         can_send: state.can_send,
-        send_block_reason: crate::openapi_ext::Nullable(state.send_block_reason),
-        cli_choice: crate::openapi_ext::Nullable(state.cli_choice),
+        send_block_reason: droppen_http::openapi_ext::Nullable(state.send_block_reason),
+        cli_choice: droppen_http::openapi_ext::Nullable(state.cli_choice),
         context_tokens: state.context_tokens,
         context_window: state.context_window,
         claude_root: state.claude_root,
@@ -1462,10 +1462,10 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = Arc::new(Paths::new(dir.path().to_path_buf()));
         let instance = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
-        let auth = crate::auth::Auth::new(&paths, &instance, &crate::config::AuthSettings::default(), false);
+        let auth = crate::auth::Auth::new(&paths, &instance, &droppen_http::config::AuthSettings::default(), false);
         let drive = Drive::new(paths.clone(), &instance, auth, crate::app::transcript_sources());
         let feeds = FeedRegistry::new();
-        drive.injections.attach_listeners(feeds.clone(), crate::http::refresh::Refresh::new(global::GlobalFeed::new()));
+        drive.injections.attach_listeners(feeds.clone(), droppen_http::refresh::Refresh::new(global::GlobalFeed::new()));
 
         let id = "33333333-3333-4333-8333-333333333333";
         let project = crate::claude_roots::ClaudeRoots::of(&paths).managed_projects().join("-w-repo");
@@ -1628,7 +1628,7 @@ mod tests {
     pub(crate) fn test_drive(dir: &Path) -> (Arc<Paths>, Arc<Drive>) {
         let paths = Arc::new(Paths::new(dir.to_path_buf()));
         let instance = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
-        let auth = crate::auth::Auth::new(&paths, &instance, &crate::config::AuthSettings::default(), false);
+        let auth = crate::auth::Auth::new(&paths, &instance, &droppen_http::config::AuthSettings::default(), false);
         let drive = Drive::new(paths.clone(), &instance, auth, crate::app::transcript_sources());
         (paths, drive)
     }

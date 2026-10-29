@@ -191,7 +191,7 @@ pub async fn apply(sessions: &mut [SessionSummary]) {
 
     for session in sessions.iter_mut() {
         let key = session.cwd.as_ref().and_then(|cwd| keys.get(cwd.as_str())).cloned().unwrap_or_default();
-        session.repo_key = crate::openapi_ext::Nullable(key);
+        session.repo_key = droppen_http::openapi_ext::Nullable(key);
     }
 }
 

@@ -30,11 +30,11 @@ use gotcha::axum::extract::FromRef;
 use gotcha::{api, GotchaRouter, Json, State, WebSocketUpgrade};
 use serde::Deserialize;
 
-use crate::http::error::ApiError;
-use crate::http::extract::{ApiJson, ApiPath};
-use crate::http::{send_within, WsSender as Sender};
-use crate::http::SendResult;
-use crate::openapi_ext::ExtraResponses;
+use droppen_http::error::ApiError;
+use droppen_http::extract::{ApiJson, ApiPath};
+use droppen_http::{send_within, WsSender as Sender};
+use droppen_http::SendResult;
+use droppen_http::openapi_ext::ExtraResponses;
 
 use super::{Chunk, TerminalCreate, TerminalError, TerminalInfo, TerminalList, TerminalRename, SLOW_NOTE};
 
@@ -62,7 +62,7 @@ pub struct TerminalsState {
     /// Cancelled by the shutdown supervisor; the socket closes on it.
     pub cancel: tokio_util::sync::CancellationToken,
 }
-crate::http::substate!(TerminalsState);
+droppen_http::substate!(TerminalsState);
 
 /// Every terminal whose process is still running.
 #[api(id = "list_terminals", group = "terminals", summary = "List terminals")]
@@ -178,7 +178,7 @@ async fn run_terminal_socket(socket: WebSocket, state: TerminalsState, id: Strin
     // would send the client into its reconnect loop; left open, `[process
     // exited]` stays the last thing on screen.
     let mut live = true;
-    let mut heartbeat = crate::http::Heartbeat::default();
+    let mut heartbeat = droppen_http::Heartbeat::default();
     loop {
         tokio::select! {
             () = &mut ended => {

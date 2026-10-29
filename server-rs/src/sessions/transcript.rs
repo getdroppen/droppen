@@ -15,7 +15,7 @@ use super::tool_display::{display_claude_tool_result, display_claude_tool_use, e
 use super::util::{
     clip, first_line_of, make_item, make_tool_item, try_parse, ItemKind, LossyLines, PatchHunk, Role, ToolDisplay, TranscriptItem, DETAIL_LIMIT,
 };
-use crate::openapi_ext::Nullable;
+use droppen_http::openapi_ext::Nullable;
 use droppen_base::text::is_image_ext;
 
 type Json = Map<String, Value>;

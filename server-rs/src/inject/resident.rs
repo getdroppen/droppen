@@ -73,7 +73,7 @@ use crate::accounts::quota::readings::RateLimitWindows;
 use crate::accounts::rest::{self, Observation};
 use crate::accounts::rotation::{self, AheadGuards, AheadPlan, Plan, Wait};
 use crate::accounts::store::AccountProvider;
-use crate::openapi_ext::Optional;
+use droppen_http::openapi_ext::Optional;
 use droppen_base::process_env::Env;
 use droppen_base::procs;
 use crate::record::{Recorder, SpawnSummary, Stage};
@@ -538,7 +538,7 @@ impl From<ResidentState> for crate::sessions::ResidentInfo {
             tasks: state.tasks,
             awaiting_background: state.awaiting_background,
             stalled: state.stalled,
-            turn_started_at: crate::openapi_ext::Nullable(state.turn_started_at),
+            turn_started_at: droppen_http::openapi_ext::Nullable(state.turn_started_at),
             asking: state.question.is_some(),
         }
     }
@@ -12233,7 +12233,7 @@ done
         let paths = Arc::new(Paths::new(harness._home.path().to_path_buf()));
         let instance = InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
         let drive = Arc::new(crate::drive::Drive {
-            auth: crate::auth::Auth::new(&paths, &instance, &crate::config::AuthSettings::default(), false),
+            auth: crate::auth::Auth::new(&paths, &instance, &droppen_http::config::AuthSettings::default(), false),
             wizards: crate::accounts::setup_token::Captures::new(),
             injections: harness.registry.clone(),
             accounts: Arc::new(crate::accounts::store::AccountsStore::new(paths.clone())),
@@ -12246,7 +12246,7 @@ done
             transcripts: crate::app::transcript_sources(),
         });
         let feeds = crate::feed::FeedRegistry::new();
-        harness.registry.attach_listeners(feeds.clone(), crate::http::refresh::Refresh::new(crate::feed::global::GlobalFeed::new()));
+        harness.registry.attach_listeners(feeds.clone(), droppen_http::refresh::Refresh::new(crate::feed::global::GlobalFeed::new()));
         until("the init", || harness.state().phase == Phase::Idle).await;
         let mut attached = crate::feed::attach_session_feed(&feeds, &drive, Source::Claude, SESSION, None)
             .await

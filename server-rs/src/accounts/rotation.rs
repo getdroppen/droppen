@@ -53,7 +53,7 @@ use super::quota::{QuotaCache, QuotaWindow};
 use super::rest::iso_ms;
 use super::store::{Account, AccountProvider, AccountsStore};
 use droppen_instance::db::Db;
-use crate::openapi_ext::Nullable;
+use droppen_http::openapi_ext::Nullable;
 use crate::sessions::account::{AccountRef, LimitClass, RotationOutcome, RotationTrigger, SessionRotation};
 
 /// At most this many automatic switches for one message and the continuations
@@ -1151,7 +1151,7 @@ impl RotationLog {
 mod tests {
     use super::*;
     use crate::accounts::store::AccountKind;
-    use crate::openapi_ext::Optional;
+    use droppen_http::openapi_ext::Optional;
     use chrono::FixedOffset;
 
     const NOW: i64 = 1_790_000_000_000;

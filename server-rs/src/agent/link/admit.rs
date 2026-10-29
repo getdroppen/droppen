@@ -39,7 +39,7 @@ impl ChainErrorExt for ChainError {
 }
 
 pub(in crate::agent) fn server_info(direct: bool) -> Vec<u8> {
-    json!({"agent": "remote-hand", "version": crate::http::SERVER_VERSION, "features": super::direct::features(direct)})
+    json!({"agent": "remote-hand", "version": droppen_http::SERVER_VERSION, "features": super::direct::features(direct)})
         .to_string()
         .into_bytes()
 }

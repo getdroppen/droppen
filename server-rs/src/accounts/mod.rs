@@ -28,11 +28,11 @@ use gotcha::axum::http::StatusCode;
 use gotcha::{api, GotchaRouter, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
-use crate::http::created::Created;
-use crate::http::error::ApiError;
-use crate::http::extract::{ApiJson, ApiPath, ApiQuery};
-use crate::http::SendResult;
-use crate::openapi_ext::{required_nullable, ExtraResponses, Nullable, Optional};
+use droppen_http::created::Created;
+use droppen_http::error::ApiError;
+use droppen_http::extract::{ApiJson, ApiPath, ApiQuery};
+use droppen_http::SendResult;
+use droppen_http::openapi_ext::{required_nullable, ExtraResponses, Nullable, Optional};
 use droppen_base::process_env::{apply_env, claude_env};
 use rest::AccountLimitEventList;
 use store::{Account, AccountError, AccountKind, AccountList, AccountPatch, AccountProvider, Credential};
@@ -270,7 +270,7 @@ pub struct AccountsState {
     /// the call in.
     pub recheck_holds: Arc<dyn Fn() + Send + Sync>,
 }
-crate::http::substate!(AccountsState);
+droppen_http::substate!(AccountsState);
 
 /// Stored Claude accounts (secrets never leave the server).
 #[api(id = "list_accounts", group = "accounts", summary = "List accounts")]

@@ -34,7 +34,7 @@ use std::borrow::Cow;
 use gotcha::Schematic;
 use serde::{Deserialize, Serialize};
 
-use crate::openapi_ext::Nullable;
+use droppen_http::openapi_ext::Nullable;
 use crate::sessions::util::{ItemKind, Role, TranscriptItem};
 
 /// How many matches a search returns when the client does not say.

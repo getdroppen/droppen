@@ -11,7 +11,7 @@ use gotcha::Schematic;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
-use crate::openapi_ext::Nullable;
+use droppen_http::openapi_ext::Nullable;
 use droppen_base::text::is_image_ext;
 
 /// Body text must never be cut in practice — there is no way to read the rest.

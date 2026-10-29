@@ -41,7 +41,7 @@
 //! name resolution says they are, so a device on the same network that
 //! controls that resolution can still reach the routes that answer without a
 //! session (sign-in, first-run setup, status); everything else needs a
-//! session ([`crate::auth`]).
+//! session (the server's `auth`).
 //!
 //! Before the `Origin` is looked at, a browser's own word on where a request
 //! came from is: `Sec-Fetch-Site: cross-site` — another site's page, an
@@ -53,7 +53,7 @@
 //! at all. This is what keeps a request that carries no `Origin` — a simple
 //! `GET` — from being somebody else's page acting with this device's
 //! permissions, which matters most where this device's own browser needs no
-//! login ([`crate::auth`]). WebSocket handshakes are `GET`s under `/api/` and
+//! login (the server's `auth`). WebSocket handshakes are `GET`s under `/api/` and
 //! pass through both checks like every other request.
 //!
 //! It is a layer over the whole router rather than a route-scoped one, because
@@ -70,7 +70,7 @@ use gotcha::axum::http::{header, HeaderValue, Method, StatusCode};
 use gotcha::axum::middleware::{FromFnLayer, Next};
 use gotcha::axum::response::{IntoResponse, Response};
 
-use crate::http::error::ApiError;
+use crate::error::ApiError;
 
 /// The methods the CORS preflight advertises: every method the API answers.
 const ALLOW_METHODS: &str = "GET,HEAD,PUT,POST,DELETE,PATCH";
@@ -242,7 +242,7 @@ type HostFuture = std::pin::Pin<Box<dyn std::future::Future<Output = Response> +
 /// ([`layer`]'s trick).
 type HostFn = fn(State<Arc<HostPolicy>>, Request, Next) -> HostFuture;
 
-/// [`host_guard`] as a router layer, for the whole router (`crate::app`).
+/// [`host_guard`] as a router layer, for the whole router (the server's `app`).
 pub fn host_layer(policy: Arc<HostPolicy>) -> FromFnLayer<HostFn, Arc<HostPolicy>, (State<Arc<HostPolicy>>, Request)> {
     fn boxed(State(policy): State<Arc<HostPolicy>>, request: Request, next: Next) -> HostFuture {
         Box::pin(host_guard(policy, request, next))

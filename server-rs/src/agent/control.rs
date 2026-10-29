@@ -773,7 +773,7 @@ mod tests {
     /// What a link needs, for a server of these paths that listens nowhere.
     fn link_env(paths: &Paths) -> LinkEnv {
         let instance = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), paths.instance()).unwrap();
-        let auth = crate::auth::Auth::new(paths, &instance, &crate::config::AuthSettings::default(), false);
+        let auth = crate::auth::Auth::new(paths, &instance, &droppen_http::config::AuthSettings::default(), false);
         LinkEnv {
             addr: "127.0.0.1:9".parse().unwrap(),
             credential: "test".into(),

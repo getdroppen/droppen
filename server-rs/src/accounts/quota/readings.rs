@@ -53,7 +53,7 @@ use serde_json::Value;
 use super::{window, QuotaProbeError, QuotaWindow, UsageProbe, RATE_LIMIT_BACKOFF};
 use crate::accounts::rest::iso_ms;
 use crate::accounts::store::{account_dir_in, usage_config_dir_in};
-use crate::openapi_ext::{Nullable, Optional};
+use droppen_http::openapi_ext::{Nullable, Optional};
 use droppen_instance::paths::{ClaudeRoot, Paths};
 
 /// How long after a failed probe — `not_logged_in` or `probe_failed` — the

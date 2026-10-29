@@ -37,7 +37,7 @@ use gotcha::Schematic;
 use serde::{Deserialize, Serialize};
 
 use droppen_instance::identity::ServerId;
-use crate::openapi_ext::{Nullable, Optional};
+use droppen_http::openapi_ext::{Nullable, Optional};
 use droppen_instance::paths::{ClaudeRoot, Paths};
 use droppen_base::time::mtime_ms;
 pub use reference::SessionRef;

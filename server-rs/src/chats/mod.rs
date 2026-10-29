@@ -36,11 +36,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
-use crate::http::error::ApiError;
-use crate::http::extract::{ApiJson, ApiPath};
-use crate::http::SendResult;
+use droppen_http::error::ApiError;
+use droppen_http::extract::{ApiJson, ApiPath};
+use droppen_http::SendResult;
 use crate::inject::SendOptions;
-use crate::openapi_ext::{ExtraResponses, Nullable, Optional};
+use droppen_http::openapi_ext::{ExtraResponses, Nullable, Optional};
 use droppen_instance::paths::Paths;
 use crate::sessions::{chats_cwd, claude, codex, Source};
 
@@ -209,7 +209,7 @@ pub struct ChatNew {
     /// Run a CLI chat under a stored account of its CLI; `null` means the local
     /// login. Absent follows the CLI's default — and, with none, skips a local
     /// login known to be signed out (see `accounts::rotation::start_for`).
-    #[serde(default, deserialize_with = "crate::openapi_ext::double_option", skip_serializing_if = "Option::is_none")]
+    #[serde(default, deserialize_with = "droppen_http::openapi_ext::double_option", skip_serializing_if = "Option::is_none")]
     pub account_id: Option<Option<String>>,
     /// `"start"`: `accountId` is the account `GET /api/accounts/start` named
     /// for a pair no model-less start reaches (`placed: false`), not a pick —
@@ -314,7 +314,7 @@ pub struct ChatsState {
     /// The shared session-list feed, told when a chat's session appears.
     pub global: Arc<crate::feed::global::GlobalFeed>,
 }
-crate::http::substate!(ChatsState);
+droppen_http::substate!(ChatsState);
 
 /// Instant chats from both backends, newest first.
 #[api(id = "list_chats", group = "chats", summary = "List chats")]

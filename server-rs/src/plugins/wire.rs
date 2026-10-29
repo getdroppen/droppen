@@ -16,7 +16,7 @@ use gotcha::Schematic;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::openapi_ext::Nullable;
+use droppen_http::openapi_ext::Nullable;
 
 /// A display name: one string, or one per language with `en` required.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

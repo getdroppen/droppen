@@ -139,9 +139,9 @@ mod tests {
             label: label.to_string(),
             used_percent: 10.0,
             remaining_percent: 90.0,
-            resets_at: crate::openapi_ext::Nullable(None),
+            resets_at: droppen_http::openapi_ext::Nullable(None),
             window_minutes: 300,
-            updated_at: crate::openapi_ext::Optional(None),
+            updated_at: droppen_http::openapi_ext::Optional(None),
         }
     }
 

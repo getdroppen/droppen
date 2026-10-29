@@ -31,7 +31,7 @@ use serde::{Deserialize, Serialize};
 use super::limits::{self, Rest, Verdict};
 use super::store::AccountProvider;
 use droppen_instance::db::Db;
-use crate::openapi_ext::Nullable;
+use droppen_http::openapi_ext::Nullable;
 use crate::sessions::account::LimitClass;
 use droppen_base::time::iso8601;
 

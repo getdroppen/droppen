@@ -42,12 +42,7 @@
         {
           "name": "droppen-http",
           "about": "Errors, extractors, response types, the OpenAPI helpers, the origin guard, the config.",
-          "modules": [
-            "http",
-            "openapi_ext",
-            "origin",
-            "config"
-          ],
+          "modules": [],
           "mayUse": [
             "droppen-instance"
           ]

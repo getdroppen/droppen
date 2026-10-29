@@ -8,10 +8,10 @@ use gotcha::axum::extract::FromRef;
 use gotcha::{api, GotchaRouter, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
-use crate::http::error::ApiError;
-use crate::http::extract::ApiPath;
-use crate::http::refresh::Refresh;
-use crate::openapi_ext::{ExtraResponses, Nullable};
+use droppen_http::error::ApiError;
+use droppen_http::extract::ApiPath;
+use droppen_http::refresh::Refresh;
+use droppen_http::openapi_ext::{ExtraResponses, Nullable};
 use droppen_instance::paths::Paths;
 use crate::sessions::attention::seen;
 use crate::sessions::Source;
@@ -25,7 +25,7 @@ pub struct AttentionState {
     /// The global feed's inputs, told when a session's unread state changes.
     pub refresh: Refresh,
 }
-crate::http::substate!(AttentionState);
+droppen_http::substate!(AttentionState);
 
 /// Mark a session as read, as of now.
 ///

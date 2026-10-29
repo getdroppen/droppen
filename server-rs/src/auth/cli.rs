@@ -250,8 +250,8 @@ pub(crate) fn home_paths(requested: Option<&str>) -> Result<Paths, String> {
 ///
 /// A command that needs both — the paths to find the instance, the config for
 /// its own switches — used to load and merge every source twice.
-pub(crate) fn cli_context(requested: Option<&str>) -> Result<(Paths, gotcha::ConfigWrapper<crate::config::AppConfig>), String> {
-    let config = crate::config::load(std::env::var("GOTCHA_ACTIVE_PROFILE").ok()).map_err(|error| error.to_string())?;
+pub(crate) fn cli_context(requested: Option<&str>) -> Result<(Paths, gotcha::ConfigWrapper<droppen_http::config::AppConfig>), String> {
+    let config = droppen_http::config::load(std::env::var("GOTCHA_ACTIVE_PROFILE").ok()).map_err(|error| error.to_string())?;
     let instance = match requested {
         Some(name) => name.to_string(),
         None => named(config.app.instance())?,

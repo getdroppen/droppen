@@ -78,10 +78,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use droppen_instance::db::Db;
-use crate::http::error::ApiError;
-use crate::http::extract::{ApiJson, ApiPath};
-use crate::http::SendResult;
-use crate::openapi_ext::{ExtraResponses, Nullable, Optional};
+use droppen_http::error::ApiError;
+use droppen_http::extract::{ApiJson, ApiPath};
+use droppen_http::SendResult;
+use droppen_http::openapi_ext::{ExtraResponses, Nullable, Optional};
 use droppen_instance::paths::Paths;
 use crate::sessions::Source;
 use droppen_base::time::iso8601;
@@ -555,7 +555,7 @@ pub struct ScheduleState {
     /// Cancelled by the shutdown supervisor; the runner stops on it.
     pub cancel: tokio_util::sync::CancellationToken,
 }
-crate::http::substate!(ScheduleState);
+droppen_http::substate!(ScheduleState);
 
 /// Every scheduled task this instance runs.
 #[api(id = "list_scheduled_tasks", group = "schedule", summary = "List scheduled tasks")]

@@ -4,10 +4,10 @@
 use rand::RngCore;
 
 use crate::agent::enroll::BeginError;
-use crate::http::SendResult;
+use droppen_http::SendResult;
 use crate::cloud::link_handoff::{self, Handoff, HandoffMachine, PageOrigin, Reply};
 
-use crate::http::created::Accepted;
+use droppen_http::created::Accepted;
 use super::*;
 
 /// How long an attempt waits for its code.
@@ -194,7 +194,7 @@ pub async fn post_link(
     let aggregator: Option<LinkAggregator> = None;
     let id = random_hex(16);
     let expires_ms = droppen_base::time::now_ms_u64() + ATTEMPT_TTL_MS;
-    let hostname = crate::http::hostname();
+    let hostname = droppen_http::hostname();
     // The browser hand-off (§4.9), for a page that said where it is: the
     // reply comes back to that origin, which the `/api/*` origin check has
     // already accepted as this server's.

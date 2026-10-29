@@ -44,7 +44,7 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{ChildStdin, ChildStdout};
 
 use super::{window, QuotaWindow, USAGE_TTL};
-use crate::openapi_ext::Nullable;
+use droppen_http::openapi_ext::Nullable;
 use super::ProbeRoots;
 use droppen_base::process_env::{apply_env, clean_env_bare};
 use droppen_base::time::parse_iso_ms;

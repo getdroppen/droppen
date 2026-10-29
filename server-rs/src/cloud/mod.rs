@@ -28,7 +28,7 @@
 //!    who can reach the port. Every request without a session is refused
 //!    before it gets here, so this is only ever reached with
 //!    `auth.enabled = false`.
-//! 3. The `/api/*` Origin check ([`crate::origin`]) and the bearer token
+//! 3. The `/api/*` Origin check ([`droppen_http::origin`]) and the bearer token
 //!    ([`crate::auth`]) apply as everywhere; there are no cookies, so there
 //!    is no CSRF surface, and the attempt's nonce is a second binding.
 //!
@@ -54,9 +54,9 @@ use serde::{Deserialize, Serialize};
 use crate::agent::control::{machine_fingerprint, AgentStatus, Control, ControlError, Standing};
 use crate::aggregator::controller::AggregatorHost;
 use crate::auth::{MaybeIdentity, RETURN_ROUTE};
-use crate::http::error::ApiError;
-use crate::http::extract::ApiJson;
-use crate::openapi_ext::ExtraResponses;
+use droppen_http::error::ApiError;
+use droppen_http::extract::ApiJson;
+use droppen_http::openapi_ext::ExtraResponses;
 use droppen_instance::paths::Paths;
 
 mod access;
@@ -612,7 +612,7 @@ async fn status_for(state: &CloudState, user: Option<&str>) -> CloudStatus {
         }),
         machine: CloudMachine {
             id: agent.machine.clone(),
-            hostname: crate::http::hostname(),
+            hostname: droppen_http::hostname(),
             fingerprint,
         },
         link: has_state.then(|| CloudLinkHealth {
@@ -693,7 +693,7 @@ pub struct CloudState {
     /// Cancelled by the shutdown supervisor; the gateway's sockets close on it.
     pub cancel: tokio_util::sync::CancellationToken,
 }
-crate::http::substate!(CloudState);
+droppen_http::substate!(CloudState);
 
 /// Where this computer stands with Droppen.
 #[api(id = "cloud_status", group = "cloud", summary = "Droppen link status")]
@@ -1081,12 +1081,12 @@ mod tests {
 
     #[test]
     fn a_bridged_device_is_refused_before_anything_else() {
-        let bridged = MaybeIdentity(Some(crate::http::identity::AuthIdentity {
+        let bridged = MaybeIdentity(Some(droppen_http::identity::AuthIdentity {
             username: "cloud:d-abc".into(),
             token_sha256: None,
         }));
         assert_eq!(code_of(caller(&bridged).unwrap_err()), (403, "not_from_cloud".into()));
-        let local = MaybeIdentity(Some(crate::http::identity::AuthIdentity {
+        let local = MaybeIdentity(Some(droppen_http::identity::AuthIdentity {
             username: "alice".into(),
             token_sha256: None,
         }));
@@ -1103,7 +1103,7 @@ mod tests {
         let state = crate::api::test_support::state(home.path()).await;
         state.drive.auth.users.add("alice", "correct horse battery staple").await.unwrap();
         let alice = || {
-            MaybeIdentity(Some(crate::http::identity::AuthIdentity {
+            MaybeIdentity(Some(droppen_http::identity::AuthIdentity {
                 username: "alice".into(),
                 token_sha256: None,
             }))
@@ -1166,7 +1166,7 @@ mod tests {
         let state = crate::api::test_support::state(home.path()).await;
         state.drive.auth.users.add("alice", "correct horse battery staple").await.unwrap();
         let alice = || {
-            MaybeIdentity(Some(crate::http::identity::AuthIdentity {
+            MaybeIdentity(Some(droppen_http::identity::AuthIdentity {
                 username: "alice".into(),
                 token_sha256: None,
             }))
@@ -1278,7 +1278,7 @@ mod tests {
     /// A caller as the guard hands it over: signed in, with its login's digest.
     async fn signed_in(state: &AppState, user: &str) -> MaybeIdentity {
         let login = state.drive.auth.sessions.issue(user, None).await.unwrap();
-        MaybeIdentity(Some(crate::http::identity::AuthIdentity {
+        MaybeIdentity(Some(droppen_http::identity::AuthIdentity {
             username: user.into(),
             token_sha256: Some(crate::auth::sessions::digest_of(&login.token)),
         }))
@@ -1341,7 +1341,7 @@ mod tests {
             code_of(remote_viewer(&CloudState::from_ref(&state), &signed_in(&state, "bob").await).await.unwrap_err()),
             (403, "no_remote_access".into())
         );
-        let bridged = MaybeIdentity(Some(crate::http::identity::AuthIdentity {
+        let bridged = MaybeIdentity(Some(droppen_http::identity::AuthIdentity {
             username: "cloud:d-1".into(),
             token_sha256: None,
         }));
@@ -1350,7 +1350,7 @@ mod tests {
             (403, "not_from_cloud".into())
         );
         // A caller whose login cannot be named: refused (fail closed).
-        let unnamed = MaybeIdentity(Some(crate::http::identity::AuthIdentity {
+        let unnamed = MaybeIdentity(Some(droppen_http::identity::AuthIdentity {
             username: "alice".into(),
             token_sha256: None,
         }));
@@ -1615,7 +1615,7 @@ mod tests {
         // A device bridged from Droppen never answers, even with the right reply.
         let bridged = post_return(
             State(CloudState::from_ref(&state)),
-            MaybeIdentity(Some(crate::http::identity::AuthIdentity {
+            MaybeIdentity(Some(droppen_http::identity::AuthIdentity {
                 username: "cloud:d-1".into(),
                 token_sha256: None,
             })),

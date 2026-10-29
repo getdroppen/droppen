@@ -587,7 +587,7 @@ mod tests {
     fn an_item_too_big_for_a_record_is_cut_down_and_marked() {
         let path = std::path::Path::new("/tmp/t.jsonl");
         let mut list = items(3, 10);
-        list[1].detail = crate::openapi_ext::Nullable(Some("é".repeat(200_000)));
+        list[1].detail = droppen_http::openapi_ext::Nullable(Some("é".repeat(200_000)));
         let chain = fingerprint_chain(path, &list);
         let bodies = session_bodies(&list, 0, 3, &chain);
         let all: Vec<Value> = bodies
@@ -697,8 +697,8 @@ mod tests {
         assert_eq!(undated["before"], Value::Null);
         // Item times: what parses, and nothing for what does not.
         let mut dated = items(3, 1);
-        dated[0].timestamp = crate::openapi_ext::Nullable(Some("2026-10-15T08:00:01.000Z".into()));
-        dated[2].timestamp = crate::openapi_ext::Nullable(Some("not a time".into()));
+        dated[0].timestamp = droppen_http::openapi_ext::Nullable(Some("2026-10-15T08:00:01.000Z".into()));
+        dated[2].timestamp = droppen_http::openapi_ext::Nullable(Some("not a time".into()));
         assert_eq!(item_times(&dated), vec![Some(1_792_051_201_000), None, None]);
     }
 

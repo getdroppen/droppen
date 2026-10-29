@@ -59,7 +59,7 @@ use serde_json::Value;
 
 use crate::accounts::store::{Account, AccountKind};
 use crate::claude_roots;
-use crate::openapi_ext::{Nullable, Optional};
+use droppen_http::openapi_ext::{Nullable, Optional};
 use droppen_instance::paths::Paths;
 use droppen_base::process_env::{apply_env, claude_env};
 use crate::sessions::util::try_parse;

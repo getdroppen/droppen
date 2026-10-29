@@ -15,7 +15,7 @@ use crate::accounts::setup_token::TokenWizardState;
 use crate::accounts::usage_login::UsageLoginState;
 use crate::accounts::AccountsState;
 use crate::acp_agent::AcpAgentState;
-use crate::http::app_window::AppWindow;
+use droppen_http::app_window::AppWindow;
 use crate::models::ModelsState;
 use crate::apps::AppsState;
 use crate::attention::AttentionState;

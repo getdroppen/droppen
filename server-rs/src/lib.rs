@@ -38,7 +38,7 @@
 //! * [`apps`] — a VS Code server per app, and the [`apps::embed`] reverse proxy
 //!   the iframe reaches it through;
 //! * [`auth`] — local accounts: who may talk to this server at all, and the
-//!   guard every request passes through before [`origin`]'s;
+//!   guard every request passes through before [`droppen_http::origin`]'s;
 //! * [`attention`] — which sessions are waiting on you, and [`push`] — telling
 //!   a phone about it while the tab is closed;
 //! * [`notify`] — the other direction of the same idea: the notification an
@@ -49,15 +49,16 @@
 //!   device has, and the `PATH` that finds them;
 //! * [`prefs`] / [`screens`] — the sidecar stores;
 //! * [`stats`] / [`models`] — token accounting and the model list;
-//! * [`origin`] — the guard every `/api/*` request passes through.
+//! * [`droppen_http::origin`] — the guard every `/api/*` request passes through.
 //!
 //! # Shared contract plumbing
 //!
 //! Four pieces exist for every subsystem, not just the ones that added them:
-//! [`openapi_ext::Nullable`] / [`openapi_ext::Optional`] for zod's two flavours
-//! of "may be absent", [`api::created::Created`] for a `201`, and
-//! [`api::extract`] for extractors whose rejection is a JSON `400` rather than
-//! axum's `422`/`415` text.
+//! [`droppen_http::openapi_ext::Nullable`] /
+//! [`droppen_http::openapi_ext::Optional`] for zod's two flavours of "may be
+//! absent", [`droppen_http::created::Created`] for a `201`, and
+//! [`droppen_http::extract`] for extractors whose rejection is a JSON `400`
+//! rather than axum's `422`/`415` text.
 //!
 //! # What is deliberately absent
 //!
@@ -85,19 +86,15 @@ pub mod chats;
 pub mod claude_roots;
 pub mod cli;
 pub mod cloud;
-pub mod config;
 pub mod desktop_app;
 pub mod drive;
 pub mod export;
 pub mod feed;
 pub mod files;
-pub mod http;
 pub mod inject;
 pub mod media;
 pub mod models;
 pub mod notify;
-pub mod openapi_ext;
-pub mod origin;
 pub mod plugins;
 pub mod prefs;
 pub mod push;

@@ -11,7 +11,7 @@
 use serde_json::{Map, Value};
 
 use super::util::{first_line_of, QuestionEntry, QuestionOption, ToolDisplay};
-use crate::openapi_ext::Nullable;
+use droppen_http::openapi_ext::Nullable;
 
 type Json = Map<String, Value>;
 

@@ -33,7 +33,7 @@ use gotcha::Schematic;
 use serde::{Deserialize, Serialize};
 
 use droppen_instance::db::{scope, Db};
-use crate::openapi_ext::Optional;
+use droppen_http::openapi_ext::Optional;
 use droppen_instance::paths::Paths;
 use crate::sessions::reference::local_key;
 use crate::sessions::Source;

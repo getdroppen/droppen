@@ -73,11 +73,11 @@ use gotcha::{api, GotchaRouter, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
 use crate::sessions::attention::{self, derive};
-use crate::http::created::Created;
-use crate::http::error::ApiError;
-use crate::http::extract::ApiJson;
-use crate::http::SendResult;
-use crate::openapi_ext::{ExtraResponses, Optional};
+use droppen_http::created::Created;
+use droppen_http::error::ApiError;
+use droppen_http::extract::ApiJson;
+use droppen_http::SendResult;
+use droppen_http::openapi_ext::{ExtraResponses, Optional};
 use droppen_instance::paths::Paths;
 use crate::sessions::{DriverStates, InjectionRunState, ResidentInfo, Source, TranscriptSources};
 
@@ -180,7 +180,7 @@ pub struct PushState {
     /// The instance's paths, under which the key and the subscriptions live.
     pub paths: Arc<Paths>,
 }
-crate::http::substate!(PushState);
+droppen_http::substate!(PushState);
 
 /// The public key browsers subscribe against, minting the keypair on first ask.
 #[api(id = "push_vapid_key", group = "push", summary = "Web Push application server key")]
@@ -819,7 +819,7 @@ mod tests {
             tasks: Vec::new(),
             awaiting_background: false,
             stalled: false,
-            turn_started_at: crate::openapi_ext::Nullable(None),
+            turn_started_at: droppen_http::openapi_ext::Nullable(None),
             asking: false,
         }
     }
@@ -895,7 +895,7 @@ mod tests {
     /// — the precise case the overlay was added to describe.
     #[test]
     fn the_overlay_rewrites_the_row_without_moving_the_unread_gate() {
-        use crate::openapi_ext::Nullable;
+        use droppen_http::openapi_ext::Nullable;
         use crate::sessions::{apply_driver, SessionActivity, SessionScope, SessionStatus};
 
         let mut summary = SessionSummary {

@@ -165,7 +165,7 @@ export type CallbackTier = "local" | "warn" | "public" | "refuse";
 /**
  * Names that are not on the public internet: mDNS, the home network's, private
  * use, a tailnet's. The local server answers to the same ones
- * (`LOCAL_SUFFIXES` in `server-rs/src/origin.rs`).
+ * (`LOCAL_SUFFIXES` in `server-rs/crates/droppen-http/src/origin.rs`).
  */
 const PRIVATE_SUFFIXES = [".local", ".lan", ".home.arpa", ".internal", ".ts.net"];
 

@@ -35,7 +35,7 @@ use serde_json::Value;
 
 use super::{ChatError, Chats};
 use droppen_instance::db::{scope, Db};
-use crate::openapi_ext::Optional;
+use droppen_http::openapi_ext::Optional;
 use droppen_instance::paths::Paths;
 
 /// How long the provider's `/models` call may take.

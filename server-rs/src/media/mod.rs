@@ -47,9 +47,9 @@ use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
 
 use crate::files::{FileBytes, INLINE_CSP};
-use crate::http::error::ApiError;
-use crate::http::extract::ApiQuery;
-use crate::openapi_ext::ExtraResponses;
+use droppen_http::error::ApiError;
+use droppen_http::extract::ApiQuery;
+use droppen_http::openapi_ext::ExtraResponses;
 use droppen_base::process_env::{apply_env, clean_env_bare, resolve_on_path, Env};
 
 /// The route, written once for the router, the spec and the tests.

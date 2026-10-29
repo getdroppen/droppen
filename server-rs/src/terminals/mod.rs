@@ -48,7 +48,7 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 use droppen_instance::instance::InstanceDirs;
-use crate::openapi_ext::Optional;
+use droppen_http::openapi_ext::Optional;
 use droppen_instance::paths::Paths;
 use droppen_base::process_env::{self, Env};
 use droppen_pty::client::{self, Link};

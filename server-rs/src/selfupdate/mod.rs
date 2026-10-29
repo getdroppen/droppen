@@ -48,7 +48,7 @@
 //! commands as this user; a route that swaps the binary adds persistence to
 //! that, not a new capability. Persistence is still a meaningful escalation, so
 //! the port itself belongs behind an SSH tunnel or a private network. Same-origin
-//! checks (`crate::origin`) apply here as to every other route, so a web page the
+//! checks (`droppen_http::origin`) apply here as to every other route, so a web page the
 //! user visits cannot post to it.
 
 pub mod store;
@@ -65,8 +65,8 @@ use sha2::{Digest, Sha256};
 use droppen_base::text::hex;
 use tokio::io::AsyncWriteExt;
 
-use crate::http::error::ApiError;
-use crate::openapi_ext::ExtraResponses;
+use droppen_http::error::ApiError;
+use droppen_http::openapi_ext::ExtraResponses;
 use droppen_instance::paths::Paths;
 
 use store::BinStore;
@@ -202,7 +202,7 @@ pub struct SelfUpdateState {
     /// Cancelled to stop the server so its supervisor starts the new binary.
     pub cancel: tokio_util::sync::CancellationToken,
 }
-crate::http::substate!(SelfUpdateState);
+droppen_http::substate!(SelfUpdateState);
 
 impl SelfUpdateState {
     /// The refusal a server run by the desktop app gives: `403` with a reason a
@@ -315,7 +315,7 @@ pub async fn self_upgrade(State(state): State<SelfUpdateState>, multipart: Multi
     Ok(Json(SelfUpgrade {
         ok: true,
         version,
-        previous_version: crate::http::SERVER_VERSION.to_string(),
+        previous_version: droppen_http::SERVER_VERSION.to_string(),
         restart: restart.as_str().to_string(),
         detail,
     }))

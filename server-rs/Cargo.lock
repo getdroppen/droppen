@@ -1099,6 +1099,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "droppen-http"
+version = "0.1.0"
+dependencies = [
+ "droppen-base",
+ "droppen-instance",
+ "futures-util",
+ "gotcha",
+ "gotcha_core",
+ "libc",
+ "mofa",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "droppen-instance"
 version = "0.1.0"
 dependencies = [
@@ -2808,6 +2826,7 @@ dependencies = [
  "clap",
  "croner",
  "droppen-base",
+ "droppen-http",
  "droppen-instance",
  "droppen-plugin-sdk",
  "droppen-pty",
@@ -2824,7 +2843,6 @@ dependencies = [
  "libc",
  "memchr",
  "mime_guess",
- "mofa",
  "notify",
  "p256",
  "rand 0.8.7",

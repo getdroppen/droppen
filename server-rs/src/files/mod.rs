@@ -25,9 +25,9 @@ use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
 
 use crate::auth::MaybeIdentity;
-use crate::http::error::ApiError;
-use crate::http::extract::ApiQuery;
-use crate::openapi_ext::{ExtraResponses, Nullable};
+use droppen_http::error::ApiError;
+use droppen_http::extract::ApiQuery;
+use droppen_http::openapi_ext::{ExtraResponses, Nullable};
 use droppen_instance::paths::Paths;
 use droppen_base::time::iso8601;
 
@@ -116,7 +116,7 @@ pub enum FsKind {
 
 // Inline in `FsEntry`: the contract spells `kind` as an inline string enum,
 // not a named component.
-crate::inline_string_enum!(FsKind, ["file", "dir", "symlink", "other"]);
+droppen_http::inline_string_enum!(FsKind, ["file", "dir", "symlink", "other"]);
 
 /// One row of a directory listing.
 #[derive(Debug, Clone, Serialize, Deserialize, Schematic)]
@@ -997,7 +997,7 @@ pub struct FilesState {
     /// attachment store.
     pub paths: Arc<Paths>,
 }
-crate::http::substate!(FilesState);
+droppen_http::substate!(FilesState);
 
 /// List a directory under the home directory.
 #[api(id = "fs_list", group = "files", summary = "List a directory")]
@@ -1393,7 +1393,7 @@ mod tests {
         std::fs::create_dir_all(key.parent().unwrap()).unwrap();
         std::fs::write(&key, b"{}").unwrap();
         let who = |name: &str| {
-            MaybeIdentity(Some(crate::http::identity::AuthIdentity {
+            MaybeIdentity(Some(droppen_http::identity::AuthIdentity {
                 username: name.into(),
                 token_sha256: None,
             }))
@@ -1710,7 +1710,7 @@ mod tests {
     #[test]
     fn a_requests_reach_is_cloud_only_for_bridged_devices() {
         let who = |name: &str| {
-            MaybeIdentity(Some(crate::http::identity::AuthIdentity {
+            MaybeIdentity(Some(droppen_http::identity::AuthIdentity {
                 username: name.into(),
                 token_sha256: None,
             }))

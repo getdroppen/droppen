@@ -8,7 +8,7 @@
 use gotcha::Schematic;
 use serde::{Deserialize, Serialize};
 
-use crate::openapi_ext::Nullable;
+use droppen_http::openapi_ext::Nullable;
 
 /// The account a session runs under, as the session payloads name it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Schematic)]
@@ -99,7 +99,7 @@ impl RotationOutcome {
 // Inline in `SessionRotation`, the way the contract spells `outcome`, rather
 // than a schema of its own. (`///` here would be an unused doc comment: rustdoc
 // does not document macro invocations.)
-crate::inline_string_enum!(RotationOutcome, ["switched", "no_candidate", "cap_reached"]);
+droppen_http::inline_string_enum!(RotationOutcome, ["switched", "no_candidate", "cap_reached"]);
 
 /// What set a rotation off.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -133,7 +133,7 @@ impl RotationTrigger {
 }
 
 // Inline in `SessionRotation`, like `RotationOutcome`.
-crate::inline_string_enum!(RotationTrigger, ["limit", "ahead"]);
+droppen_http::inline_string_enum!(RotationTrigger, ["limit", "ahead"]);
 
 /// One automatic account rotation of a session, as `SessionDetail.rotation`
 /// reports it.

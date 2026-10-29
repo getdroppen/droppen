@@ -57,11 +57,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::http::refresh::Refresh;
-use crate::http::error::ApiError;
-use crate::http::extract::{ApiJson, ApiPath, ApiQuery};
-use crate::http::SendResult;
-use crate::openapi_ext::{AnyValue, ExtraResponses, Optional};
+use droppen_http::refresh::Refresh;
+use droppen_http::error::ApiError;
+use droppen_http::extract::{ApiJson, ApiPath, ApiQuery};
+use droppen_http::SendResult;
+use droppen_http::openapi_ext::{AnyValue, ExtraResponses, Optional};
 use droppen_instance::paths::Paths;
 use droppen_base::time::iso8601;
 
@@ -972,7 +972,13 @@ fn write_failed(error: rusqlite::Error) -> ApiError {
     ApiError::internal(format!("failed to write screens: {error}"))
 }
 
-impl Refresh {
+/// The screens' frames on the global feed.
+trait AnnounceScreensExt {
+    fn announce_changed(&self, id: &str, revision: u64, deleted: bool);
+    fn announce_list(&self, list_revision: u64);
+}
+
+impl AnnounceScreensExt for Refresh {
     /// Tell every open client that one screen changed, or went.
     fn announce_changed(&self, id: &str, revision: u64, deleted: bool) {
         let mut frame = json!({ "type": "screens:changed", "id": id, "revision": revision });
@@ -1015,7 +1021,7 @@ pub struct ScreensState {
     /// The global feed's inputs, which carry `screens:changed` and `screens:list`.
     pub refresh: Refresh,
 }
-crate::http::substate!(ScreensState);
+droppen_http::substate!(ScreensState);
 
 /// Persistent screens, saved pane layouts.
 #[api(id = "list_screens", group = "screens", summary = "List screens")]

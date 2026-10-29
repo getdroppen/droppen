@@ -27,7 +27,7 @@ use serde_json::Value;
 use super::locate::{self, Search};
 use super::runner::{Invocation, RpcCall, RunOutput, Runner};
 use super::{GitState, LoginState, SetupHelpers, SetupOs, ToolFound, ToolId, ToolLogin};
-use crate::openapi_ext::Nullable;
+use droppen_http::openapi_ext::Nullable;
 use droppen_base::process_env::{resolve_on_path, Env};
 
 /// The oldest `claude` this server's session driver is known to work with.
@@ -333,7 +333,7 @@ async fn os(runner: &Arc<dyn Runner>, probe: &Probe) -> SetupOs {
         None
     };
     SetupOs {
-        platform: crate::http::node_platform().to_string(),
+        platform: droppen_http::node_platform().to_string(),
         macos: Nullable(macos),
         arch: match std::env::consts::ARCH {
             "aarch64" => "arm64".to_string(),
