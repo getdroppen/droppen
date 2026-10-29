@@ -85,11 +85,9 @@ pub trait Transcripts: Send + Sync {
 
     /// Why a session this instance owns cannot be sent to while its
     /// transcript reads `status`, or `None` when that blocks nothing: the
-    /// live-process arm of [`TranscriptSources::sendability`].
-    fn live_block(&self, status: SessionStatus) -> Option<String> {
-        let _ = status;
-        None
-    }
+    /// live-process arm of [`TranscriptSources::sendability`]. Every reader
+    /// answers, so a new one cannot let a send through by leaving it out.
+    fn live_block(&self, status: SessionStatus) -> Option<String>;
 
     /// The Claude root a session's detail reports, or `None` for a CLI whose
     /// sessions live in no Claude root.
@@ -99,11 +97,10 @@ pub trait Transcripts: Send + Sync {
     }
 
     /// Whether a session of this CLI that this instance did not start was run
-    /// in the CLI itself, outside Droppen. False for a CLI only Droppen runs:
-    /// its other sessions are another instance's.
-    fn foreign_sessions(&self) -> bool {
-        false
-    }
+    /// in the CLI itself, outside Droppen. A CLI only Droppen runs lists every
+    /// session as owned, so it answers false and is never asked about an
+    /// external one.
+    fn foreign_sessions(&self) -> bool;
 
     /// The directories a new transcript of this CLI can appear in, for the
     /// session list's watcher. A watch on a missing directory fails, so a

@@ -329,14 +329,14 @@
     }
   ],
   "sourceMatches": {
-    "about": "Matches of Source::Claude, Source::Codex or Source::Acp in code outside the provider crates. Outside them Source is only the key that picks a provider, so the number may only go down.",
+    "about": "Matches of Source::Claude, Source::Codex or Source::Acp in code outside the provider crates. Outside them Source is only the key that picks a provider, so the number may only go down. Two stay on purpose: schedule's task_at reads a stored task's source by name (\"codex\" as Codex, anything else as Claude Code), because decoding it through the providers would put the provider registry into the task store.",
     "providers": [
       "droppen-provider",
       "droppen-provider-claude-code",
       "droppen-provider-codex",
       "droppen-provider-acp"
     ],
-    "count": 42
+    "count": 35
   },
   "allowed": [
     {
@@ -350,8 +350,6 @@
     {
       "why": "drive, feed and chats call each provider's transcript, roots, checklist and agent code themselves (the ACP agent registry too), and Drive holds Claude Code's setup-token captures. They go through the provider base (Provider, Transcripts).",
       "edges": [
-        "chats -> sessions::claude",
-        "chats -> sessions::codex",
         "drive -> accounts::setup_token",
         "drive -> sessions::claude",
         "feed -> claude_roots"

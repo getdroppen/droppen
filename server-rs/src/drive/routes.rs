@@ -694,11 +694,12 @@ async fn deliver_message(
     let summary = writable_session(drive, source, &id).await?;
     // A session with a resident behind it is never refused for being busy: the
     // message goes into that process' queue and is delivered when the turn in
-    // flight ends. See [`sendability`] for why the live-process arm is lifted
-    // too — the live process the probe can see is ours. An ACP session whose
-    // agent was removed is refused whatever is running. This is the refusal the
-    // client reads; `acp_send` looks the agent up again under the spawn gate,
-    // the backstop for one removed after this check.
+    // flight ends. See [`TranscriptSources::sendability`] for why the
+    // live-process arm is lifted too — the live process the probe can see is
+    // ours. An ACP session whose agent was removed is refused whatever is
+    // running. This is the refusal the client reads; `acp_send` looks the agent
+    // up again under the spawn gate, the backstop for one removed after this
+    // check.
     let (can_send, reason) = match drive.providers.send_block(&summary) {
         Some(reason) => (false, Some(reason)),
         None => drive.transcripts.sendability(
@@ -713,9 +714,10 @@ async fn deliver_message(
         return Err(ApiError::conflict(reason.unwrap_or_else(|| "cannot send".to_string())));
     }
 
-    // claude instant chats run with every tool disabled, so attachments can't be read.
+    // Some CLIs run an instant chat with every tool disabled, so it cannot read
+    // an attachment.
     let chat = summary.cwd.as_ref().map(Path::new) == Some(chats_cwd(&drive.paths).as_path());
-    if chat && source == Source::Claude && !(images.is_empty() && attachments.is_empty()) {
+    if chat && drive.providers.chat_refuses_attachments(source) && !(images.is_empty() && attachments.is_empty()) {
         return Err(ApiError::conflict("attachments are not supported in claude instant chats"));
     }
 
@@ -2212,11 +2214,16 @@ mod tests {
     }
 
     fn drive() -> (tempfile::TempDir, Arc<Drive>) {
+        drive_with(crate::app::register_providers)
+    }
+
+    /// [`drive`], with the providers `register` adds.
+    fn drive_with(register: fn(&mut crate::inject::ProviderRegistry, &Arc<crate::inject::InjectionRegistry>)) -> (tempfile::TempDir, Arc<Drive>) {
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = Arc::new(droppen_instance::paths::Paths::new(dir.path().to_path_buf()));
         let instance = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
         let auth = crate::auth::Auth::new(&paths, &instance, &droppen_http::config::AuthSettings::default(), false, std::sync::Arc::new(crate::app::NotifyTokens));
-        let drive = Drive::new(paths, &instance, auth, crate::app::transcript_sources(), crate::app::register_providers, crate::app::logins());
+        let drive = Drive::new(paths, &instance, auth, crate::app::transcript_sources(), register, crate::app::logins());
         (dir, drive)
     }
 
@@ -2432,6 +2439,49 @@ mod tests {
         .await
         .expect_err("no such session");
         assert_eq!(error.status().as_u16(), 404);
+    }
+
+    /// A message with an attachment to a Claude Code instant chat is refused:
+    /// the chat runs with every tool off. So is one to a chat no provider runs,
+    /// which the send block turns away before the chat check is reached.
+    #[tokio::test]
+    async fn a_chat_that_cannot_read_an_attachment_refuses_one() {
+        let cases: [(fn(&mut crate::inject::ProviderRegistry, &Arc<crate::inject::InjectionRegistry>), &str); 2] = [
+            (crate::app::register_providers, "attachments are not supported in claude instant chats"),
+            (|_, _| {}, "no provider runs claude sessions"),
+        ];
+        for (register, expected) in cases {
+            let (_dir, drive) = drive_with(register);
+            let id = "11111111-2222-4333-8444-555555555555";
+            let project = crate::claude_roots::ClaudeRoots::of(&drive.paths).managed_projects().join("-chats");
+            std::fs::create_dir_all(&project).expect("project");
+            let chats = chats_cwd(&drive.paths).to_string_lossy().into_owned();
+            let line = serde_json::json!({
+                "type": "user", "sessionId": id, "cwd": chats, "uuid": "u1", "timestamp": "2026-10-01T10:00:00Z",
+                "message": {"role": "user", "content": "hi"},
+            });
+            std::fs::write(project.join(format!("{id}.jsonl")), format!("{line}\n")).expect("transcript");
+            let state = DriveState {
+                drive: drive.clone(),
+                paths: drive.paths.clone(),
+                global: crate::feed::global::GlobalFeed::new(),
+                refresh: droppen_http::refresh::Refresh::new(crate::feed::global::GlobalFeed::new()),
+            };
+            let body = SendMessage {
+                text: "look".into(),
+                images: Optional(Some(vec![uploaded(&drive, "a.png")])),
+                files: Optional(None),
+                model: Optional(None),
+                effort: Optional(None),
+                permission: Optional(None),
+                account_id: None,
+                client_message_id: Optional(None),
+            };
+            let error = send_message(State(state), MaybeIdentity(None), ApiPath((Source::Claude, id.to_string())), ApiJson(body))
+                .await
+                .expect_err("refused");
+            assert_eq!((error.status().as_u16(), error.body()["error"].as_str()), (409, Some(expected)));
+        }
     }
 
     /// A `POST /api/sessions/new` body as a client sends it, with attachments.

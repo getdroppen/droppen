@@ -111,7 +111,9 @@ pub fn recent_from(sessions: &[SessionSummary], transcripts: &TranscriptSources,
         let Some(cwd) = session.cwd.0.as_deref().filter(|cwd| !cwd.is_empty()) else {
             continue;
         };
-        // A session of a CLI only Droppen runs is another instance's.
+        // An external session was run in its CLI, when the user runs that CLI
+        // outside Droppen too. ACP rows are always `Owned`, so the external arm
+        // never sees one.
         let tool = match session.scope {
             SessionScope::External if transcripts.foreign_sessions(session.source) => {
                 FolderTool::of(session.source).unwrap_or(FolderTool::Droppen)

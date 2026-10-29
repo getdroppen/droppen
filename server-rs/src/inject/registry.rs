@@ -35,6 +35,14 @@ pub struct Capabilities {
     /// Its sessions stop to ask the user questions, which this server keeps
     /// and answers into the turn that asked.
     pub questions: bool,
+    /// It runs instant chats: its sessions in the chats directory are listed
+    /// as chats.
+    pub chats: bool,
+    /// Its instant chats can read what is attached to a message. Only asked of
+    /// a provider with `chats`.
+    pub chat_attachments: bool,
+    /// Scheduled tasks can run on it.
+    pub schedules: bool,
 }
 
 /// What a provider says about the sessions it runs, each named by its id.
@@ -238,6 +246,19 @@ impl ProviderRegistry {
         self.providers.get(&source).map(|provider| provider.capabilities()).unwrap_or_default()
     }
 
+    /// Whether an instant chat of `source` turns away a message with
+    /// attachments: one whose provider runs chats that cannot read them, and
+    /// one no provider runs, since nothing can say it reads them.
+    pub fn chat_refuses_attachments(&self, source: Source) -> bool {
+        match self.providers.get(&source) {
+            Some(provider) => {
+                let capabilities = provider.capabilities();
+                capabilities.chats && !capabilities.chat_attachments
+            }
+            None => true,
+        }
+    }
+
     /// Take a message out of a session's queue before it is written to the CLI.
     ///
     /// Both resident protocols hold durable queues. Legacy exec runs do not.
@@ -376,6 +397,23 @@ mod tests {
         assert_eq!(claude.send_block(&row("claude", None)), None);
         assert_eq!(claude.send_block(&row("codex", None)).as_deref(), Some("no provider runs codex sessions"));
         assert_eq!(claude.send_block(&row("acp", Some("fake"))).as_deref(), Some("no provider runs acp sessions"));
+    }
+
+    /// An instant chat turns attachments away when its CLI's chats cannot read
+    /// them (Claude Code's), and when no provider runs its source. Codex's chats
+    /// read them, and ACP runs no instant chats to refuse them in.
+    #[test]
+    fn a_chat_refuses_the_attachments_its_cli_cannot_read() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let providers = providers(home.path());
+        assert!(providers.chat_refuses_attachments(Source::Claude));
+        assert!(!providers.chat_refuses_attachments(Source::Codex));
+        assert!(!providers.chat_refuses_attachments(Source::Acp));
+        let other = tempfile::tempdir().expect("tempdir");
+        let claude = providers_from(other.path(), claude_only);
+        assert!(claude.chat_refuses_attachments(Source::Claude));
+        assert!(claude.chat_refuses_attachments(Source::Codex), "no provider runs codex here");
+        assert!(claude.chat_refuses_attachments(Source::Acp), "no provider runs acp here");
     }
 
     /// A new session names an ACP agent exactly when it is an ACP session, and

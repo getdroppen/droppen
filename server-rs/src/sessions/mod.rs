@@ -1003,21 +1003,19 @@ pub const EXTERNAL_SESSION_ERROR: &str = "external_session";
 impl TranscriptSources {
     /// Whether the composer may send to this session, and why not.
     ///
-    /// Port of `sendability` in the former TypeScript server's `session-feed.ts`,
-    /// plus the arms the TypeScript never had. `scope` is the ownership arm: a
-    /// session this server did not make is browse-only, because resuming it would
-    /// interleave this server's turns with those of whoever actually owns it.
-    /// `injecting` is the injection arm the probe left out: a one-shot run
-    /// remote-hand started blocks the composer regardless of what the CLI's own
-    /// registration says. `status` is the live-process arm, which each CLI
-    /// answers itself ([`Transcripts::live_block`]).
+    /// `scope` is the ownership arm: a session this server did not make is
+    /// browse-only, because resuming it would interleave this server's turns
+    /// with those of whoever actually owns it. `injecting` is the injection arm:
+    /// a one-shot run remote-hand started blocks the composer regardless of what
+    /// the CLI's own registration says. `status` is the live-process arm, which
+    /// each CLI answers itself ([`Transcripts::live_block`]).
     ///
     /// `resident` is what a session driven by a process rather than a run needs, and
     /// it lifts both of the other two block arms:
     ///
     /// * **the injection arm.** A second `claude --print` against one transcript
-    ///   would be two agents writing over each other, which is why an in-flight run
-    ///   used to be a refusal. One process taking messages in order cannot do that,
+    ///   would be two agents writing over each other, which is what an in-flight
+    ///   run is refused for. One process taking messages in order cannot do that,
     ///   so a message sent mid-turn is queued behind it and the composer stays open.
     /// * **the live-process arm.** That arm exists to keep remote-hand out of a
     ///   conversation the user has open in their own terminal — and a resident
@@ -1126,34 +1124,41 @@ mod tests {
     }
 
     /// Each CLI's refusals, word for word: the composer shows them as they are.
+    /// Every registered reader is checked, and the `match` makes a new source
+    /// say its words here before this compiles.
     #[test]
     fn every_source_refuses_in_its_own_words() {
+        type Live = fn(SessionStatus) -> Option<&'static str>;
         let sources = crate::app::transcript_sources();
-        let external = |source| sources.sendability(source, SessionScope::External, SessionStatus::Idle, false, false);
-        assert_eq!(
-            external(Source::Claude),
-            (false, Some("this session was not started by this instance; continue it where it was started".to_string()))
-        );
-        assert_eq!(
-            external(Source::Codex),
-            (false, Some("this codex session was started elsewhere; continue it where it was started".to_string()))
-        );
-        assert_eq!(
-            external(Source::Acp),
-            (false, Some("this ACP session was started elsewhere; continue it where it was started".to_string()))
-        );
-        let owned = |source, status| sources.sendability(source, SessionScope::Owned, status, false, false);
-        for status in [SessionStatus::Running, SessionStatus::Waiting] {
-            assert_eq!(owned(Source::Claude, status), (false, Some("attached to a live local Claude Code process".to_string())));
+        for reader in sources.iter() {
+            let source = reader.source();
+            let (external, live): (&str, Live) = match source {
+                Source::Claude => (
+                    "this session was not started by this instance; continue it where it was started",
+                    |status| (status != SessionStatus::Idle).then_some("attached to a live local Claude Code process"),
+                ),
+                Source::Codex => (
+                    "this codex session was started elsewhere; continue it where it was started",
+                    |status| (status == SessionStatus::Running).then_some("session is currently running"),
+                ),
+                Source::Acp => ("this ACP session was started elsewhere; continue it where it was started", |_| None),
+            };
+            assert_eq!(
+                sources.sendability(source, SessionScope::External, SessionStatus::Idle, false, false),
+                (false, Some(external.to_string())),
+                "{source}"
+            );
+            for status in [SessionStatus::Idle, SessionStatus::Running, SessionStatus::Waiting] {
+                let expected = live(status).map_or((true, None), |reason| (false, Some(reason.to_string())));
+                assert_eq!(sources.sendability(source, SessionScope::Owned, status, false, false), expected, "{source} {status:?}");
+            }
         }
-        assert_eq!(owned(Source::Claude, SessionStatus::Idle), (true, None));
-        assert_eq!(owned(Source::Codex, SessionStatus::Running), (false, Some("session is currently running".to_string())));
-        for status in [SessionStatus::Idle, SessionStatus::Waiting] {
-            assert_eq!(owned(Source::Codex, status), (true, None));
-        }
-        for status in [SessionStatus::Idle, SessionStatus::Running, SessionStatus::Waiting] {
-            assert_eq!(owned(Source::Acp, status), (true, None), "an ACP session has no live-process arm");
-        }
+        // A source with no reader lists no sessions, but its fallback wording
+        // still says what happened.
+        assert_eq!(
+            TranscriptSources::default().sendability(Source::Claude, SessionScope::External, SessionStatus::Idle, false, false),
+            (false, Some("this claude session was started elsewhere; continue it where it was started".to_string()))
+        );
     }
 
     /// A row with nothing driving it, so the transcript heuristic is all there is.

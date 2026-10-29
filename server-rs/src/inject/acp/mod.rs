@@ -313,7 +313,8 @@ impl Provider for Acp {
     }
 
     /// Every permission request an agent makes is answered by the client:
-    /// an agent never stops to ask the user.
+    /// an agent never stops to ask the user. Its sessions are conversations
+    /// only: no instant chats, and no scheduled tasks.
     fn capabilities(&self) -> Capabilities {
         Capabilities::default()
     }
