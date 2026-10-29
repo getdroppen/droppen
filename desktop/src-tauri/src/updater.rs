@@ -113,7 +113,9 @@ pub const ENDPOINT_ENV: &str = "DROPPEN_DESKTOP_UPDATE_ENDPOINT";
 #[cfg(feature = "e2e")]
 pub const PUBKEY_ENV: &str = "DROPPEN_DESKTOP_UPDATE_PUBKEY";
 
-type Watcher = Box<dyn Fn(&Status) + Send + Sync>;
+// Shared so `changed` can clone the list out from under the lock: a watcher
+// that calls `watch` or `changed` itself would otherwise deadlock on it.
+type Watcher = Arc<dyn Fn(&Status) + Send + Sync>;
 
 struct Updater<R: Runtime> {
     updates: Mutex<Updates>,
@@ -257,7 +259,7 @@ pub fn status<R: Runtime>(app: &AppHandle<R>) -> Option<Status> {
 /// Call `watcher` with every change — from any thread, so it must not block.
 pub fn watch<R: Runtime>(app: &AppHandle<R>, watcher: impl Fn(&Status) + Send + Sync + 'static) {
     if let Some(me) = app.try_state::<Updater<R>>() {
-        lock(&me.watchers).push(Box::new(watcher));
+        lock(&me.watchers).push(Arc::new(watcher));
     }
 }
 
@@ -748,7 +750,9 @@ fn changed<R: Runtime>(app: &AppHandle<R>) {
             }
         }
     });
-    for watcher in lock(&me.watchers).iter() {
+    // Cloned out of the lock: a watcher may call `watch` or `changed`.
+    let watchers: Vec<Watcher> = lock(&me.watchers).clone();
+    for watcher in watchers {
         watcher(&status);
     }
 }

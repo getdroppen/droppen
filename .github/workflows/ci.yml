@@ -269,8 +269,15 @@ jobs:
       # Source matches outside the provider crates may only shrink.
       - run: node --test ../scripts/check-module-layers.test.mjs
       - run: node ../scripts/check-module-layers.mjs
-      # No `cargo fmt --check` or clippy gate while the product is young:
-      # development speed first; bring them back once it settles.
+      # No `cargo fmt --check`, and of clippy only the two deadlock lints
+      # `server-rs/Cargo.toml`'s `[workspace.lints.clippy]` denies gate CI:
+      # a guard made in a match/if-let scrutinee lives through the whole
+      # block, and a std guard held across an `.await` blocks the thread —
+      # either can wait on itself forever (the class behind the updater
+      # deadlock). The rest of clippy stays advisory while the product is
+      # young; `-A warnings` keeps this step's log to the denied lints.
+      - run: cargo clippy --locked --workspace --all-targets --features rh-devkit/p2p-probe -- -A warnings
+        timeout-minutes: 20
       # The tests run under cargo-nextest, which runs every test in its own
       # process (settings: server-rs/.config/nextest.toml, profile `ci`).
       # That is what makes them safe to run in parallel: the harness mutates
@@ -336,6 +343,10 @@ jobs:
           workspaces: desktop -> target
           cache-on-failure: true
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      # The deadlock-lint gate (`desktop/Cargo.toml`'s
+      # `[workspace.lints.clippy]`), core only: `src-tauri` does not build on
+      # Linux. `-A warnings` keeps the log to the denied lints.
+      - run: cargo clippy --locked --manifest-path desktop/Cargo.toml -p droppen-desktop-core --all-targets -- -A warnings
       - run: cargo test --locked --manifest-path desktop/Cargo.toml -p droppen-desktop-core -- --test-threads=1
 
 

@@ -460,7 +460,8 @@ impl FakeHub {
                                     Some("rotation_stage") => {
                                         let nonce = droppen_base::text::unhex(v["nonce"].as_str().unwrap()).unwrap();
                                         let hash = hex(&Sha256::digest(&nonce));
-                                        let reply = match script.lock().unwrap().stage {
+                                        let stage = script.lock().unwrap().stage;
+                                        let reply = match stage {
                                             StageAnswer::Staged => json!({"t": "rotation_staged", "nonce_hash": hash, "ready_ms": 123}),
                                             StageAnswer::Refused(reason) => json!({"t": "rotation_refused", "nonce_hash": hash, "reason": reason}),
                                             StageAnswer::Silent => continue,
@@ -486,7 +487,8 @@ impl FakeHub {
 
     /// Send `m` to the connection signed in now, if there is one.
     fn send(&self, m: Message) {
-        if let Some(tx) = self.current.lock().unwrap().clone() {
+        let tx = self.current.lock().unwrap().clone();
+        if let Some(tx) = tx {
             let _ = tx.send(m);
         }
     }
@@ -1624,10 +1626,11 @@ async fn a_hub_saying_rotated_is_believed_only_with_a_verified_renewal() {
     );
     let task = tokio::spawn(link::run(shared.clone()));
     tokio::time::timeout(Duration::from_secs(10), task).await.expect("the link stops").unwrap();
-    let st = shared.state.lock().unwrap();
-    assert_eq!(st.rotation.foreign_reason.as_deref(), Some(rotation::FOREIGN_RENEWED_ELSEWHERE));
-    assert!(st.alarms.iter().any(|al| al.what.contains("replaced elsewhere") && al.what.contains("backup")), "{:?}", st.alarms);
-    drop(st);
+    {
+        let st = shared.state.lock().unwrap();
+        assert_eq!(st.rotation.foreign_reason.as_deref(), Some(rotation::FOREIGN_RENEWED_ELSEWHERE));
+        assert!(st.alarms.iter().any(|al| al.what.contains("replaced elsewhere") && al.what.contains("backup")), "{:?}", st.alarms);
+    }
     // That refused sign-in is no evidence; the retired key's dispute
     // statement is, delivered on its own — no other sign-in.
     until("the dispute statement", || !hub.disputes().is_empty()).await;

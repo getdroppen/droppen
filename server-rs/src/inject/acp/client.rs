@@ -143,7 +143,8 @@ impl Client {
             }
             "terminal/release" => {
                 let id = params::<TerminalParams>(request)?.terminal_id;
-                if let Some(terminal) = self.terminals.lock().unwrap().remove(&id) {
+                let terminal = self.terminals.lock().unwrap().remove(&id);
+                if let Some(terminal) = terminal {
                     terminal.kill();
                 }
                 Ok(json!({}))

@@ -6,6 +6,10 @@ publish = false
 description = "Droppen local server"
 license = "AGPL-3.0-only"
 
+# The lints in `[workspace.lints]` below apply to this package too.
+[lints]
+workspace = true
+
 # A workspace so the cloud protocol crate (`crates/rh-proto`), the device side
 # of the hub API (`crates/rh-client`) and the headless test device
 # (`crates/rh-devkit`) share this lockfile and target directory. The root
@@ -13,6 +17,15 @@ license = "AGPL-3.0-only"
 # still means the server and nothing else.
 [workspace]
 members = [".", "crates/rh-proto", "crates/rh-relay", "crates/droppen-relay", "crates/rh-client", "crates/rh-devkit", "crates/droppen-plugin-sdk", "crates/droppen-search-path", "crates/droppen-base"]
+
+# Two causes of a program that waits on itself forever. In edition 2021 a
+# guard made in a match/if-let/while-let scrutinee lives until the end of the
+# whole block, so code reached there (a hook, a callback) can take the same
+# lock again; and a std guard held across an `.await` blocks the thread. Both
+# are denied for every member, each opted in with `[lints] workspace = true`.
+[workspace.lints.clippy]
+significant_drop_in_scrutinee = "deny"
+await_holding_lock = "deny"
 
 [features]
 default = ["embed"]

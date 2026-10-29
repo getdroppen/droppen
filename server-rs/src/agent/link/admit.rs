@@ -480,8 +480,12 @@ pub(in crate::agent) fn accept(
         Err(NoChain) => return refuse(out, ch, 4503, "this device has not been added to the account yet"),
     };
     #[cfg(test)]
-    if let Some(hook) = shared.after_admission.lock().expect("hook").take() {
-        hook();
+    {
+        // Without the lock: a hook may take it.
+        let hook = shared.after_admission.lock().expect("hook").take();
+        if let Some(hook) = hook {
+            hook();
+        }
     }
     if !learnt.is_empty() {
         tracing::info!(applied = learnt.len(), "caught up on the device chain from a hello");
