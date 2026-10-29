@@ -619,13 +619,19 @@ pub async fn find_subagent_file(session_file: &Path, agent_id: &str) -> Option<P
     tokio::fs::metadata(&file.path).await.ok().map(|_| file.path)
 }
 
-impl SubagentMeta {
+/// Claude Code's `agent-<id>.meta.json` beside a subagent's transcript, read
+/// into the [`SubagentMeta`] the sessions core keeps.
+trait SubagentMetaExt: Sized {
     /// The meta at `path`, or `None` when it is missing or half-written.
     ///
     /// A *subagent's* children are metas in the same directory as the subagent
     /// itself — they name it in `parentAgentId` rather than living under a
     /// directory of their own — so tagging a subagent's transcript reads the same
     /// folder from a different file.
+    async fn read(path: &Path, agent_id: String) -> Option<Self>;
+}
+
+impl SubagentMetaExt for SubagentMeta {
     async fn read(path: &Path, agent_id: String) -> Option<Self> {
         let raw = tokio::fs::read_to_string(path).await.ok()?;
         let Value::Object(meta) = serde_json::from_str::<Value>(&raw).ok()? else {
@@ -743,24 +749,6 @@ impl Subagents for super::claude::ClaudeCodeSessions {
         file_path: &'a Path,
     ) -> BoxFuture<'a, std::io::Result<Vec<TranscriptItem>>> {
         Box::pin(parse_claude_transcript(paths, file_path, true))
-    }
-}
-
-impl AgentEntry {
-    fn new(agent_id: &str) -> Self {
-        Self {
-            agent_id: agent_id.to_string(),
-            ..Self::default()
-        }
-    }
-
-    fn absorb(&mut self, meta: SubagentMeta) {
-        self.agent_type = meta.agent_type;
-        self.description = meta.description;
-        self.tool_use_id = meta.tool_use_id;
-        self.parent_agent_id = meta.parent_agent_id;
-        self.spawn_depth = meta.spawn_depth;
-        self.model = meta.model;
     }
 }
 

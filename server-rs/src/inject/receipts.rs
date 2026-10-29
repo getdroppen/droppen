@@ -68,18 +68,6 @@ pub const STALE_AFTER_MS: i64 = 30 * 60 * 1000;
 /// How often the seven-day prune runs, at most.
 const PRUNE_EVERY_MS: i64 = 10 * 60 * 1000;
 
-impl ReceiptStatus {
-    /// The receipt a stored status reads as. `pending` only ever reaches a
-    /// reader for a row whose answer was written, which accepted it.
-    fn from_stored(stored: &str) -> ReceiptStatus {
-        match stored {
-            "sent" => ReceiptStatus::Sent,
-            "failed" => ReceiptStatus::Failed,
-            _ => ReceiptStatus::Queued,
-        }
-    }
-}
-
 /// Which route a claim was made by. A retry must come back the same way.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {

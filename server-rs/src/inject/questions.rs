@@ -77,20 +77,6 @@ pub const DISMISSED: &str = "The user chose not to answer this question. Use you
 /// still waiting on it after all — see [`crate::inject`]'s replay.
 pub const ANSWERED_ELSEWHERE: &str = "The user answered this question in a separate message; read it and carry on.";
 
-impl QuestionState {
-    /// A stored word, read back. Anything unrecognised is a question nobody can
-    /// do anything with any more, which is what `cancelled` says.
-    fn from_stored(stored: &str) -> QuestionState {
-        match stored {
-            "pending" => QuestionState::Pending,
-            "answered" => QuestionState::Answered,
-            "dismissed" => QuestionState::Dismissed,
-            "expired" => QuestionState::Expired,
-            _ => QuestionState::Cancelled,
-        }
-    }
-}
-
 /// What the user chose, as it is kept and as it is written to the CLI.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Answer {

@@ -115,6 +115,26 @@ pub struct AgentEntry {
     pub updated_at: Option<String>,
 }
 
+impl AgentEntry {
+    /// An agent found under its id, before anything is known about it.
+    pub fn new(agent_id: &str) -> Self {
+        Self {
+            agent_id: agent_id.to_string(),
+            ..Self::default()
+        }
+    }
+
+    /// Take what the agent's meta says about it.
+    pub fn absorb(&mut self, meta: SubagentMeta) {
+        self.agent_type = meta.agent_type;
+        self.description = meta.description;
+        self.tool_use_id = meta.tool_use_id;
+        self.parent_agent_id = meta.parent_agent_id;
+        self.spawn_depth = meta.spawn_depth;
+        self.model = meta.model;
+    }
+}
+
 /// One task in a session's checklist.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Schematic)]
 pub struct ChecklistItem {
