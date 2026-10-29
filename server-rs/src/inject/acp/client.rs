@@ -39,20 +39,20 @@ const MAX_OUTPUT_LIMIT: usize = 16 * 1024 * 1024;
 const MAX_TERMINALS: usize = 32;
 
 /// JSON-RPC's codes for the refusals below, and ACP's for a missing resource.
-const METHOD_NOT_FOUND: i64 = -32601;
-const INVALID_PARAMS: i64 = -32602;
-const INTERNAL_ERROR: i64 = -32603;
-const RESOURCE_NOT_FOUND: i64 = -32002;
+const METHOD_NOT_FOUND: i32 = -32601;
+const INVALID_PARAMS: i32 = -32602;
+const INTERNAL_ERROR: i32 = -32603;
+const RESOURCE_NOT_FOUND: i32 = -32002;
 
 /// A refusal, as a JSON-RPC error carries it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Error {
-    pub(super) code: i64,
+    pub(super) code: i32,
     pub(super) message: String,
 }
 
 impl Error {
-    fn new(code: i64, message: impl Into<String>) -> Self {
+    fn new(code: i32, message: impl Into<String>) -> Self {
         Self {
             code,
             message: message.into(),

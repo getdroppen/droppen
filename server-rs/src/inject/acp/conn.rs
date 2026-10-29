@@ -22,18 +22,20 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use agent_client_protocol_schema::v1::{
-    CancelNotification, CloseSessionRequest, ContentBlock, JsonRpcMessage, NewSessionRequest, Notification, PromptRequest, Request,
-    RequestId, SetSessionConfigOptionRequest, TextContent, AGENT_METHOD_NAMES,
+    CancelNotification, ClientCapabilities, CloseSessionRequest, ContentBlock, Error as RpcError, FileSystemCapabilities, Implementation,
+    InitializeRequest, JsonRpcMessage, LoadSessionRequest, NewSessionRequest, Notification, PromptRequest, Request, RequestId,
+    SetSessionConfigOptionRequest, TextContent, AGENT_METHOD_NAMES,
 };
+use agent_client_protocol_schema::ProtocolVersion;
 use serde::Serialize;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{ChildStdin, ChildStdout};
 use tokio::sync::{mpsc, oneshot};
 
 use super::client::Client;
 use super::{absolute, InjectError, Replay};
-use crate::acp::{config_options, ConfigOption, PromptResponse, SessionNotification, PROTOCOL_VERSION};
+use crate::acp::{config_options, ConfigOption, PromptResponse, SessionNotification};
 
 /// How long a write to the agent's stdin may block.
 const WRITE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
@@ -159,11 +161,13 @@ impl Conn {
         let init = self
             .call(
                 AGENT_METHOD_NAMES.initialize,
-                json!({
-                    "protocolVersion": PROTOCOL_VERSION,
-                    "clientCapabilities": {"fs": {"readTextFile": true, "writeTextFile": true}, "terminal": true},
-                    "clientInfo": {"name": "droppen", "title": "Droppen", "version": env!("CARGO_PKG_VERSION")},
-                }),
+                InitializeRequest::new(ProtocolVersion::V1)
+                    .client_capabilities(
+                        ClientCapabilities::new()
+                            .fs(FileSystemCapabilities::new().read_text_file(true).write_text_file(true))
+                            .terminal(true),
+                    )
+                    .client_info(Implementation::new("droppen", env!("CARGO_PKG_VERSION")).title("Droppen")),
             )
             .await?;
         self.can_close = init["agentCapabilities"]["sessionCapabilities"]["close"].is_object();
@@ -191,9 +195,7 @@ impl Conn {
                 if init["agentCapabilities"]["loadSession"].as_bool() != Some(true) {
                     return Err(InjectError::message("this agent cannot reopen a session"));
                 }
-                let loaded = self
-                    .call(AGENT_METHOD_NAMES.session_load, json!({"sessionId": id, "cwd": cwd, "mcpServers": []}))
-                    .await?;
+                let loaded = self.call(AGENT_METHOD_NAMES.session_load, LoadSessionRequest::new(id.to_owned(), cwd)).await?;
                 // Every update the replay sent was read before the answer
                 // that ended it, so it is already on the channel.
                 let mut replayed = Vec::new();
@@ -323,6 +325,16 @@ impl<R: tokio::io::AsyncRead + Unpin> Lines<R> {
     }
 }
 
+/// An answer to one of the agent's own requests, under the id it came with.
+/// Not the crate's `Response`: its id takes neither a fraction nor an
+/// integer past `i64`, and JSON-RPC allows both.
+#[derive(Serialize)]
+#[serde(untagged)]
+enum Reply {
+    Result { id: Value, result: Value },
+    Error { id: Value, error: RpcError },
+}
+
 /// Read everything the agent writes; see the module note.
 async fn read(stdout: ChildStdout, writer: Writer, pending: Arc<Mutex<Pending>>, events: mpsc::UnboundedSender<Event>, client: Arc<Client>) {
     let mut lines = Lines::new(stdout, MAX_LINE);
@@ -334,11 +346,24 @@ async fn read(stdout: ChildStdout, writer: Writer, pending: Arc<Mutex<Pending>>,
                 let (method, id, params) = (method.to_string(), id.clone(), message.get("params").cloned().unwrap_or(Value::Null));
                 let (client, writer) = (client.clone(), writer.clone());
                 tokio::spawn(async move {
-                    let reply = match client.handle(&method, params).await {
-                        Ok(result) => json!({"jsonrpc": "2.0", "id": id, "result": result}),
-                        Err(error) => json!({"jsonrpc": "2.0", "id": id, "error": {"code": error.code, "message": error.message}}),
+                    // JSON-RPC allows a string, a number or null as an id. A
+                    // request with any other is not run, and is answered as an
+                    // invalid request.
+                    let reply = if matches!(id, Value::String(_) | Value::Number(_) | Value::Null) {
+                        match client.handle(&method, params).await {
+                            Ok(result) => Reply::Result { id, result },
+                            Err(error) => Reply::Error {
+                                id,
+                                error: RpcError::new(error.code, error.message),
+                            },
+                        }
+                    } else {
+                        Reply::Error {
+                            id: Value::Null,
+                            error: RpcError::invalid_request(),
+                        }
                     };
-                    writer.send(&reply).await;
+                    writer.send(&JsonRpcMessage::wrap(reply)).await;
                 });
             }
             (Some("session/update"), None) => match serde_json::from_value(message.get("params").cloned().unwrap_or(Value::Null)) {

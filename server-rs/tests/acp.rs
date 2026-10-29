@@ -279,7 +279,7 @@ async fn an_acp_session_is_created_streamed_interrupted_reopened_and_archived() 
     // per process, and the version and the working directory are this run's.
     let cwd = workdir.canonicalize().unwrap();
     let wire = |line: &str| with_json(&with_json(line, "VERSION", env!("CARGO_PKG_VERSION")), "CWD", &cwd);
-    let initialize = wire(r#"{"jsonrpc":"2.0","id":"droppen-1","method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{"fs":{"readTextFile":true,"writeTextFile":true},"terminal":true},"clientInfo":{"name":"droppen","title":"Droppen","version":VERSION}}}"#);
+    let initialize = wire(r#"{"jsonrpc":"2.0","id":"droppen-1","method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{"fs":{"readTextFile":true,"writeTextFile":true},"terminal":true,"auth":{"terminal":false}},"clientInfo":{"name":"droppen","title":"Droppen","version":VERSION}}}"#);
     assert_eq!(
         stdin_lines(&workdir),
         vec![
@@ -290,7 +290,7 @@ async fn an_acp_session_is_created_streamed_interrupted_reopened_and_archived() 
             wire(r#"{"jsonrpc":"2.0","id":"droppen-5","method":"session/prompt","params":{"sessionId":"f00dfeed0123456789abcdef01234567","prompt":[{"type":"text","text":"wait for me"}]}}"#),
             wire(r#"{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"f00dfeed0123456789abcdef01234567"}}"#),
             initialize,
-            wire(r#"{"jsonrpc":"2.0","id":"droppen-2","method":"session/load","params":{"sessionId":"f00dfeed0123456789abcdef01234567","cwd":CWD,"mcpServers":[]}}"#),
+            wire(r#"{"jsonrpc":"2.0","id":"droppen-2","method":"session/load","params":{"mcpServers":[],"cwd":CWD,"sessionId":"f00dfeed0123456789abcdef01234567"}}"#),
             wire(r#"{"jsonrpc":"2.0","id":"droppen-3","method":"session/prompt","params":{"sessionId":"f00dfeed0123456789abcdef01234567","prompt":[{"type":"text","text":"still there?"}]}}"#),
         ]
     );
@@ -335,9 +335,9 @@ async fn the_agents_requests_are_answered_in_these_lines() {
             r#"{"jsonrpc":"2.0","id":9223372036854775808,"result":{}}"#,
             r#"{"jsonrpc":"2.0","id":1.5,"result":{}}"#,
             r#"{"jsonrpc":"2.0","id":null,"result":{}}"#,
-            r#"{"jsonrpc":"2.0","id":true,"result":{}}"#,
-            r#"{"jsonrpc":"2.0","id":{"k":1},"result":{}}"#,
-            r#"{"jsonrpc":"2.0","id":[1],"result":{}}"#,
+            r#"{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Invalid request"}}"#,
+            r#"{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Invalid request"}}"#,
+            r#"{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Invalid request"}}"#,
         ]
     );
     assert_eq!(std::fs::read_to_string(workdir.join("out.txt")).expect("written"), "written");
@@ -348,7 +348,7 @@ async fn the_agents_requests_are_answered_in_these_lines() {
         .collect();
     assert_eq!(
         ran,
-        [("string", true), ("big", true), ("fraction", true), ("null", true), ("boolean", true), ("object", true), ("array", true)]
+        [("string", true), ("big", true), ("fraction", true), ("null", true), ("boolean", false), ("object", false), ("array", false)]
     );
     server.stop().await;
 }

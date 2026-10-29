@@ -16,9 +16,6 @@ use std::path::PathBuf;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
-/// The protocol version this client speaks.
-pub const PROTOCOL_VERSION: u64 = 1;
-
 /// `session/update`: something an agent says about a session.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
