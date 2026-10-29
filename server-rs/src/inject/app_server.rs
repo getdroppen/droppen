@@ -282,9 +282,27 @@ enum SandboxPolicy {
 #[serde(rename_all = "camelCase")]
 struct TurnStartOnThread<'a> {
     #[serde(flatten)]
-    params: &'a Value,
+    params: StoredParams<'a>,
     thread_id: &'a str,
     client_user_message_id: &'a str,
+}
+
+/// A queued message's stored params, less the `threadId` and
+/// `clientUserMessageId` [`TurnStartOnThread`] writes after them: a row that
+/// holds its own must not name either twice, and the ones written now win.
+struct StoredParams<'a>(&'a Value);
+
+impl Serialize for StoredParams<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self.0 {
+            Value::Object(params) => serializer.collect_map(
+                params
+                    .iter()
+                    .filter(|(key, _)| !matches!(key.as_str(), "threadId" | "clientUserMessageId")),
+            ),
+            other => other.serialize(serializer),
+        }
+    }
 }
 
 /// `turn/steer`'s params: a queued message's input, into the turn it expects
@@ -1113,7 +1131,7 @@ impl Driver {
                 id: &id,
                 method: "turn/start",
                 params: TurnStartOnThread {
-                    params: &message.params,
+                    params: StoredParams(&message.params),
                     thread_id,
                     client_user_message_id: &message.id,
                 },
@@ -1921,34 +1939,49 @@ mod tests {
         .is_err());
     }
 
-    /// The sandbox is the one security boundary a headless turn has, so every
-    /// permission mode's turn params are pinned byte for byte. A chat is
-    /// read-only whatever mode it names; no mode at all names no sandbox and
+    /// The sandbox is the one security boundary a headless turn has, so the
+    /// turn params of every permission mode, of none and of one codex does not
+    /// know are pinned byte for byte, outside a chat and in one. A chat is
+    /// read-only whatever mode it names, an unknown one included; outside a
+    /// chat an unknown mode is refused, and no mode at all names no sandbox and
     /// leaves the thread's own in force.
     #[test]
     fn turn_params_name_the_sandbox_each_permission_mode_maps_to() {
+        const UNNAMED: &str = r#"{"input":[{"type":"text","text":"hi"}],"approvalPolicy":"never"}"#;
+        const WRITE: &str = r#"{"input":[{"type":"text","text":"hi"}],"approvalPolicy":"never","sandboxPolicy":{"type":"workspaceWrite"}}"#;
+        const READ: &str = r#"{"input":[{"type":"text","text":"hi"}],"approvalPolicy":"never","sandboxPolicy":{"type":"readOnly"}}"#;
+        const FULL: &str = r#"{"input":[{"type":"text","text":"hi"}],"approvalPolicy":"never","sandboxPolicy":{"type":"dangerFullAccess"}}"#;
+        const REFUSED: &str = "unknown codex permission mode: invalid";
         let params = |permission: Option<&str>, chat: bool| {
             let options = SendOptions {
                 permission: permission.map(str::to_owned),
                 chat,
                 ..Default::default()
             };
-            serde_json::to_string(&message("hi", &options).unwrap().params).unwrap()
+            message("hi", &options)
+                .map(|message| serde_json::to_string(&message.params).unwrap())
+                .map_err(|error| error.to_string())
         };
         let cases = [
-            (None, false, r#"{"input":[{"type":"text","text":"hi"}],"approvalPolicy":"never"}"#),
-            (Some("auto"), false, r#"{"input":[{"type":"text","text":"hi"}],"approvalPolicy":"never","sandboxPolicy":{"type":"workspaceWrite"}}"#),
-            (Some("workspace-write"), false, r#"{"input":[{"type":"text","text":"hi"}],"approvalPolicy":"never","sandboxPolicy":{"type":"workspaceWrite"}}"#),
-            (Some("read-only"), false, r#"{"input":[{"type":"text","text":"hi"}],"approvalPolicy":"never","sandboxPolicy":{"type":"readOnly"}}"#),
-            (Some("full-access"), false, r#"{"input":[{"type":"text","text":"hi"}],"approvalPolicy":"never","sandboxPolicy":{"type":"dangerFullAccess"}}"#),
-            (Some("danger-full-access"), false, r#"{"input":[{"type":"text","text":"hi"}],"approvalPolicy":"never","sandboxPolicy":{"type":"dangerFullAccess"}}"#),
-            (Some("bypass-all"), false, r#"{"input":[{"type":"text","text":"hi"}],"approvalPolicy":"never","sandboxPolicy":{"type":"dangerFullAccess"}}"#),
-            (None, true, r#"{"input":[{"type":"text","text":"hi"}],"approvalPolicy":"never","sandboxPolicy":{"type":"readOnly"}}"#),
-            (Some("auto"), true, r#"{"input":[{"type":"text","text":"hi"}],"approvalPolicy":"never","sandboxPolicy":{"type":"readOnly"}}"#),
-            (Some("full-access"), true, r#"{"input":[{"type":"text","text":"hi"}],"approvalPolicy":"never","sandboxPolicy":{"type":"readOnly"}}"#),
-            (Some("bypass-all"), true, r#"{"input":[{"type":"text","text":"hi"}],"approvalPolicy":"never","sandboxPolicy":{"type":"readOnly"}}"#),
+            (None, false, Ok(UNNAMED)),
+            (Some("auto"), false, Ok(WRITE)),
+            (Some("workspace-write"), false, Ok(WRITE)),
+            (Some("read-only"), false, Ok(READ)),
+            (Some("full-access"), false, Ok(FULL)),
+            (Some("danger-full-access"), false, Ok(FULL)),
+            (Some("bypass-all"), false, Ok(FULL)),
+            (Some("invalid"), false, Err(REFUSED)),
+            (None, true, Ok(READ)),
+            (Some("auto"), true, Ok(READ)),
+            (Some("workspace-write"), true, Ok(READ)),
+            (Some("read-only"), true, Ok(READ)),
+            (Some("full-access"), true, Ok(READ)),
+            (Some("danger-full-access"), true, Ok(READ)),
+            (Some("bypass-all"), true, Ok(READ)),
+            (Some("invalid"), true, Ok(READ)),
         ];
         for (permission, chat, expected) in cases {
+            let expected = expected.map(str::to_owned).map_err(str::to_owned);
             assert_eq!(params(permission, chat), expected, "permission {permission:?}, chat {chat}");
         }
     }
@@ -2020,6 +2053,37 @@ mod tests {
         );
         h.event(json!({"id":id,"result":{}})).await;
         rx.await.unwrap().unwrap();
+    }
+
+    /// A stored row that already names a thread and a message, where the
+    /// turn's request puts them, is sent naming each once: the thread it runs
+    /// on and the message it is.
+    #[tokio::test]
+    async fn a_stored_rows_own_thread_and_message_give_way_to_the_ones_sent() {
+        let mut h = Harness::new().await;
+        let stored: Message = serde_json::from_value(json!({
+            "id": "queued-1",
+            "text": "first",
+            "params": {
+                "input": [{"type": "text", "text": "first"}],
+                "approvalPolicy": "never",
+                "threadId": "stale-thread",
+                "clientUserMessageId": "stale-message",
+            },
+            "request": null,
+        }))
+        .unwrap();
+        let (reply, rx) = oneshot::channel();
+        h.driver.command(Cmd::Deliver(stored, reply)).await.unwrap();
+        rx.await.unwrap().unwrap();
+        h.driver.submit(0, false).await.unwrap();
+        assert_eq!(
+            h.raw().await,
+            wire(
+                r#"{"id":"start:queued-1","method":"turn/start","params":{"input":[{"type":"text","text":"first"}],"approvalPolicy":"never","threadId":"test-thread","clientUserMessageId":"queued-1"}}"#,
+                &[]
+            )
+        );
     }
 
     /// Switching account retires the running process — but only when it has
@@ -2678,5 +2742,29 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         retire(&handle).await.expect("retired");
+    }
+
+    /// A thread request names its directory as a JSON string, which a path
+    /// that is not UTF-8 cannot be written as: such a session is refused
+    /// before codex is started, and its claim goes with the refusal. Linux
+    /// only, because macOS will not create a directory under such a name.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn a_working_directory_that_is_not_utf8_is_refused_before_codex_starts() {
+        use std::os::unix::ffi::OsStrExt;
+        const THREAD: &str = "0199c1a1-0000-4000-8000-000000000006";
+        let root = tempfile::tempdir().expect("tempdir");
+        // The send names no directory, so the session runs in the home.
+        let home = root.path().join(std::ffi::OsStr::from_bytes(b"\xff"));
+        std::fs::create_dir_all(&home).expect("home");
+        let (_path, registry) = fake_codex_registry(&home, "codex-utf8");
+        let refused = registry
+            .codex_deliver(Some(THREAD), None, "hi", &SendOptions::default(), None)
+            .await
+            .expect_err("refused");
+        assert_eq!(refused.to_string(), "the session's working directory is not valid UTF-8");
+        assert!(registry.steps().is_empty(), "codex was started: {:?}", registry.steps());
+        assert!(!registry.gate_held());
+        assert!(!registry.claim_held(Source::Codex, THREAD));
     }
 }
