@@ -317,7 +317,8 @@ fn updater<R: Runtime>(app: &AppHandle<R>) -> Result<tauri_plugin_updater::Updat
     builder.build()
 }
 
-/// The client the updater's requests (the manifest, the archive) go out on.
+/// The client the updater's requests (the manifest, the archive, the
+/// release's notes) go out on.
 trait UpdateClientExt {
     fn for_updates(self) -> Self;
 }
@@ -473,7 +474,7 @@ fn fetch_notes<R: Runtime>(app: AppHandle<R>, version: String) {
         };
         tauri::async_runtime::spawn(async move {
             let client = match reqwest::Client::builder()
-                .connect_timeout(CONNECT_TIMEOUT)
+                .for_updates()
                 .timeout(NOTES_TIMEOUT)
                 .user_agent(droppen_desktop_core::server::USER_AGENT)
                 .build()
