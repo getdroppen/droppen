@@ -372,6 +372,36 @@ mod tests {
         assert_eq!(begin(&before, key, |_| false).await.expect("begin"), Begun::Owned { qid: stranded });
     }
 
+    /// What a stranded attempt is answered with is stored and replayed to
+    /// clients of any version, so it is pinned byte for byte.
+    #[test]
+    fn a_stranded_answer_is_recorded_as_pinned() {
+        let flight = |status: &str, session_id: Option<&str>| InFlight {
+            qid: "q-1".into(),
+            status: status.into(),
+            session_id: session_id.map(str::to_string),
+            created_ms: 0,
+            stale: true,
+        };
+        let recorded = |kind: Kind, flight: InFlight, held: bool| stranded_answer(kind, &flight, &|_: &str| held).map(|answer| answer.to_string());
+
+        assert_eq!(
+            recorded(Kind::Message, flight("pending", None), true).as_deref(),
+            Some(r#"{"accepted":true,"queued":true,"qid":"q-1"}"#)
+        );
+        assert_eq!(
+            recorded(Kind::Message, flight("sent", None), false).as_deref(),
+            Some(r#"{"accepted":true,"queued":false,"qid":"q-1"}"#)
+        );
+        assert_eq!(recorded(Kind::Message, flight("pending", None), false), None);
+        assert_eq!(
+            recorded(Kind::NewSession, flight("sent", Some("thread-0")), false).as_deref(),
+            Some(r#"{"id":"thread-0"}"#)
+        );
+        assert_eq!(recorded(Kind::NewSession, flight("sent", None), false), None);
+        assert_eq!(recorded(Kind::NewSession, flight("pending", Some("thread-0")), true), None);
+    }
+
     #[test]
     fn only_a_uuid_is_a_client_message_id() {
         assert!(validate_id(ID).is_ok());

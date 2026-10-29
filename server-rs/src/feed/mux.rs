@@ -436,6 +436,20 @@ mod tests {
         assert_eq!(off["compress"], Value::Null);
     }
 
+    /// The socket's own frames, byte for byte: pages of any version read them.
+    #[test]
+    fn hello_and_a_refusal_are_written_as_pinned() {
+        assert_eq!(
+            hello_frame(MuxOptions::from_query(Some("2"), Some("1"))),
+            r#"{"type":"hello","features":["sub","ping"],"compress":"deflate-raw"}"#
+        );
+        assert_eq!(
+            hello_frame(MuxOptions::from_query(Some("2"), None)),
+            r#"{"type":"hello","features":["sub","ping"],"compress":null}"#
+        );
+        assert_eq!(refused(9, "limit"), r#"{"sub":9,"type":"closed","reason":"limit"}"#);
+    }
+
     #[test]
     fn a_sub_batch_keeps_its_good_entries_and_clamps_the_limit() {
         let text = r#"{"type":"sub","feeds":[

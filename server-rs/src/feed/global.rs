@@ -840,6 +840,41 @@ mod tests {
         assert_eq!(frame["plugins"], route);
     }
 
+    /// The list's frames, byte for byte: the envelope around the summaries, and
+    /// every field of `settings` in the order it is written.
+    #[test]
+    fn the_list_frames_are_written_as_pinned() {
+        let paths = Paths::new(PathBuf::from("/home/someone"));
+        assert_eq!(
+            settings_frame(&paths, "default", "2026-01-01T00:00:00.000Z", &[]),
+            serde_json::json!({
+                "type": "settings",
+                "instance": "default",
+                "serverId": droppen_instance::identity::ServerId::local(&paths).to_string(),
+                "hostname": droppen_http::hostname(),
+                "platform": droppen_http::node_platform(),
+                "nodeVersion": droppen_http::RUNTIME_VERSION,
+                "serverVersion": droppen_http::SERVER_VERSION,
+                "homeDir": "/home/someone",
+                "claudeDir": crate::claude_roots::ClaudeRoots::of(&paths).local_projects().to_string_lossy(),
+                "claudeManagedDir": crate::claude_roots::ClaudeRoots::of(&paths).managed_projects().to_string_lossy(),
+                "codexDir": paths.codex_sessions().to_string_lossy(),
+                "serverStartedAt": "2026-01-01T00:00:00.000Z",
+                "plugins": [],
+            })
+            .to_string()
+        );
+
+        let before = vec![summary("a", "2026-01-01T00:00:00.000Z"), summary("b", "2026-01-01T00:00:00.000Z")];
+        let after = vec![summary("a", "2026-01-02T00:00:00.000Z")];
+        let row = serde_json::to_string(&after[0]).expect("a summary");
+        assert_eq!(
+            delta_frame(&index(&before), &after, &index(&after)).expect("a delta"),
+            format!(r#"{{"type":"sessions:delta","upserts":[{row}],"removed":["claude/b"]}}"#)
+        );
+        assert_eq!(snapshot_frame(&after), format!(r#"{{"type":"sessions:snapshot","sessions":[{row}]}}"#));
+    }
+
     /// The filter is by type, not by the word: a session's title is arbitrary
     /// text and may well contain `"plugin`.
     #[test]
