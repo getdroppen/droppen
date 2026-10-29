@@ -106,13 +106,13 @@ pub struct AuthStatus {
     /// `cloud:<device>` for a device bridged in through Droppen.
     pub user: Nullable<String>,
     /// Whether the Droppen desktop app runs this server and owns its login
-    /// (`crate::desktop_app`): the web app then shows no password change, no
+    /// (the server's `desktop_app` module): the web app then shows no password change, no
     /// sign-out and no sign-in to Droppen through a browser popup.
     pub desktop_app: bool,
     /// How a person on this device runs this server's binary, for the commands
     /// the web app asks them to type (`<droppenPath> user add <name>`): the
     /// `droppen` link beside the running binary if there is one, else the
-    /// binary itself, with the home directory as `~` (`crate::program`). A
+    /// binary itself, with the home directory as `~` (`droppen_base::program`). A
     /// path, not yet quoted for a shell. Servers older than this field send
     /// none; the web app then says `remote-hand-server`.
     pub droppen_path: String,
@@ -120,7 +120,7 @@ pub struct AuthStatus {
     /// instance, to put before `droppenPath` (`APP_INSTANCE=bob …/droppen
     /// setup-code`): the instance when it is not `default`, and where this
     /// server keeps its files when that is not the usual place
-    /// [`crate::sessions::Paths::droppen_env`]. Empty for the usual install;
+    /// (`droppen_instance::paths::Paths::droppen_env`). Empty for the usual install;
     /// values not yet quoted for a shell. Servers older than this field send
     /// none.
     pub droppen_env: Vec<CommandEnv>,

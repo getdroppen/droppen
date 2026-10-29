@@ -47,7 +47,7 @@ pub enum SessionGrouping {
 /// Whether the session list shows the subagents each session delegated to.
 ///
 /// Opt-in: off until somebody turns it on, and while it is off the subagents are
-/// not even looked for ([`crate::sessions::subagents`]).
+/// not even looked for (`sessions::subagents`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Schematic)]
 #[serde(rename_all = "lowercase")]
 pub enum SubagentTree {

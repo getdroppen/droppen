@@ -1144,18 +1144,18 @@
             "type": "boolean"
           },
           "desktopApp": {
-            "description": "Whether the Droppen desktop app runs this server and owns its login\n(`crate::desktop_app`): the web app then shows no password change, no\nsign-out and no sign-in to Droppen through a browser popup.",
+            "description": "Whether the Droppen desktop app runs this server and owns its login\n(the server's `desktop_app` module): the web app then shows no password change, no\nsign-out and no sign-in to Droppen through a browser popup.",
             "type": "boolean"
           },
           "droppenEnv": {
-            "description": "What those commands need in their environment to act on this server's\ninstance, to put before `droppenPath` (`APP_INSTANCE=bob …/droppen\nsetup-code`): the instance when it is not `default`, and where this\nserver keeps its files when that is not the usual place\n[`crate::sessions::Paths::droppen_env`]. Empty for the usual install;\nvalues not yet quoted for a shell. Servers older than this field send\nnone.",
+            "description": "What those commands need in their environment to act on this server's\ninstance, to put before `droppenPath` (`APP_INSTANCE=bob …/droppen\nsetup-code`): the instance when it is not `default`, and where this\nserver keeps its files when that is not the usual place\n(`droppen_instance::paths::Paths::droppen_env`). Empty for the usual install;\nvalues not yet quoted for a shell. Servers older than this field send\nnone.",
             "items": {
               "$ref": "#/components/schemas/CommandEnv"
             },
             "type": "array"
           },
           "droppenPath": {
-            "description": "How a person on this device runs this server's binary, for the commands\nthe web app asks them to type (`<droppenPath> user add <name>`): the\n`droppen` link beside the running binary if there is one, else the\nbinary itself, with the home directory as `~` (`crate::program`). A\npath, not yet quoted for a shell. Servers older than this field send\nnone; the web app then says `remote-hand-server`.",
+            "description": "How a person on this device runs this server's binary, for the commands\nthe web app asks them to type (`<droppenPath> user add <name>`): the\n`droppen` link beside the running binary if there is one, else the\nbinary itself, with the home directory as `~` (`droppen_base::program`). A\npath, not yet quoted for a shell. Servers older than this field send\nnone; the web app then says `remote-hand-server`.",
             "type": "string"
           },
           "setupRequired": {
@@ -1386,7 +1386,7 @@
         "type": "object"
       },
       "ChatRole": {
-        "description": "Who said something.\n\nSpelled `ChatRole` rather than `Role` because `Schematic::name()` is the\nRust identifier and the schema registry has one component per name: a second\n`Role` would silently merge with [`crate::sessions::util::Role`], whose\nvalues are `user | assistant | system`. The contract inlines this enum, so\nthe component name itself is free.",
+        "description": "Who said something.\n\nSpelled `ChatRole` rather than `Role` because `Schematic::name()` is the\nRust identifier and the schema registry has one component per name: a second\n`Role` would silently merge with `sessions::util::Role`, whose\nvalues are `user | assistant | system`. The contract inlines this enum, so\nthe component name itself is free.",
         "enum": [
           "user",
           "assistant"
@@ -1951,7 +1951,7 @@
         "type": "object"
       },
       "CodexQuotaSource": {
-        "description": "Where a Codex reading came from.\n\nOn the wire, for the same reason [`crate::models::ModelListSource`] is: the\napp server answers with the account's live numbers, while the session logs\nonly say what some past turn was told. One shown as the other is how a panel\ntells a user they have 30% left of a week they have already spent.",
+        "description": "Where a Codex reading came from.\n\nOn the wire, for the same reason `models::ModelListSource` is: the\napp server answers with the account's live numbers, while the session logs\nonly say what some past turn was told. One shown as the other is how a panel\ntells a user they have 30% left of a week they have already spent.",
         "enum": [
           "app_server",
           "session_log"
@@ -2436,7 +2436,7 @@
         "type": "string"
       },
       "Injection": {
-        "description": "State of a message remote-hand injected into a session.\n\nFilled in by `crate::inject::InjectionRegistry`; `null` for a session\nremote-hand has never driven.",
+        "description": "State of a message remote-hand injected into a session.\n\nFilled in by `inject::InjectionRegistry`; `null` for a session\nremote-hand has never driven.",
         "nullable": true,
         "properties": {
           "error": {
@@ -3076,7 +3076,7 @@
         "type": "object"
       },
       "NotifyConfigInfo": {
-        "description": "What a client is allowed to learn about the configuration.\n\nThe endpoint is not in it. Its last path segment is the Bark device key,\nwhich is the entirety of Bark's authorization, so what comes back is a mask:\nenough to recognise the endpoint you configured, and not enough to send to\nit. Same rule as [`crate::chats::provider::ChatProviderInfo`]'s `hasKey`, one\nstep friendlier because there is only ever one of these and a user with two\nphones should be able to tell which one is armed.",
+        "description": "What a client is allowed to learn about the configuration.\n\nThe endpoint is not in it. Its last path segment is the Bark device key,\nwhich is the entirety of Bark's authorization, so what comes back is a mask:\nenough to recognise the endpoint you configured, and not enough to send to\nit. Same rule as `chats::provider::ChatProviderInfo`'s `hasKey`, one\nstep friendlier because there is only ever one of these and a user with two\nphones should be able to tell which one is armed.",
         "properties": {
           "baseUrl": {
             "description": "How a phone reaches this server, for the link a notification carries.\nNot a secret, and returned in full so the settings page can edit it.",
@@ -4076,7 +4076,7 @@
             "type": "boolean"
           },
           "tasks": {
-            "description": "Those tasks, oldest first, as far as the CLI described them.\n\nEmpty whenever `background` is zero, and never longer than the cap the\ndriver publishes — see [`crate::inject::resident::TASKS_ON_THE_WIRE`].",
+            "description": "Those tasks, oldest first, as far as the CLI described them.\n\nEmpty whenever `background` is zero, and never longer than the cap the\ndriver publishes — see `inject::resident::TASKS_ON_THE_WIRE`.",
             "items": {
               "$ref": "#/components/schemas/BackgroundTask"
             },
@@ -4101,7 +4101,7 @@
         "type": "object"
       },
       "ResidentPhase": {
-        "description": "Where a resident process is in its cycle.\n\nThe wire form of `crate::inject::resident::Phase`. A separate type because\nthe driver's is an internal enum that the injection subsystem is free to\ngrow states on, and this one is a contract.",
+        "description": "Where a resident process is in its cycle.\n\nThe wire form of `inject::common::Phase`. A separate type because\nthe driver's is an internal enum that the injection subsystem is free to\ngrow states on, and this one is a contract.",
         "enum": [
           "starting",
           "working",
@@ -5371,11 +5371,11 @@
             "description": "Whether anything is in flight, and if not, what is holding it up.\n\nThe field a list row should render \"busy\" from. Unlike `status` it can\ntell a queued message from an idle session, and background work from\nnothing at all."
           },
           "asking": {
-            "description": "Whether the agent has stopped to ask the user something, and cannot go\non without an answer.\n\nMuch narrower than `status: waiting`, which only says a live process\nfinished its turn — and this server keeps a finished session's process\nalive, so that is true of nearly every session it drives. For a session\nthis server drives it is the resident's own word ([`ResidentInfo::asking`]):\ntrue from the moment claude's `AskUserQuestion` arrives until it is\nanswered, dismissed or withdrawn — mid-turn, so while `activity` says\n`working`. For any other live claude it is read off the transcript: a\ntail ending on an `AskUserQuestion` no result has answered yet, and never\nwhile [`apply_driver`] knows a turn is in flight. Always false for codex:\nit runs with approvals off, and every interactive request its app server\nmakes is refused, so it has no way to stop and ask.\n\n`#[serde(default)]` for the summaries [`crate::sessions::index`] cached before\nthis field existed; the live overlay fills it in.",
+            "description": "Whether the agent has stopped to ask the user something, and cannot go\non without an answer.\n\nMuch narrower than `status: waiting`, which only says a live process\nfinished its turn — and this server keeps a finished session's process\nalive, so that is true of nearly every session it drives. For a session\nthis server drives it is the resident's own word ([`ResidentInfo::asking`]):\ntrue from the moment claude's `AskUserQuestion` arrives until it is\nanswered, dismissed or withdrawn — mid-turn, so while `activity` says\n`working`. For any other live claude it is read off the transcript: a\ntail ending on an `AskUserQuestion` no result has answered yet, and never\nwhile [`apply_driver`] knows a turn is in flight. Always false for codex:\nit runs with approvals off, and every interactive request its app server\nmakes is refused, so it has no way to stop and ask.\n\n`#[serde(default)]` for the summaries `sessions::index` cached before\nthis field existed; the live overlay fills it in.",
             "type": "boolean"
           },
           "attentionAt": {
-            "description": "When the assistant last spoke on the main chain, ISO-8601.\n\nDerived from the transcript by [`crate::sessions::attention`], not stored; `null`\nfor a session the assistant has not said anything in yet.",
+            "description": "When the assistant last spoke on the main chain, ISO-8601.\n\nDerived from the transcript by `sessions::attention`, not stored; `null`\nfor a session the assistant has not said anything in yet.",
             "nullable": true,
             "type": "string"
           },
@@ -5388,7 +5388,7 @@
           },
           "claudeRoot": {
             "$ref": "#/components/schemas/ClaudeRoot",
-            "description": "Which Claude config root holds the session file (claude sessions only).\n\nAdded with the accounts subsystem (`crate::claude_roots`); `None` for\ncodex, which has one root."
+            "description": "Which Claude config root holds the session file (claude sessions only).\n\nAdded with the accounts subsystem (`claude_roots`); `None` for\ncodex, which has one root."
           },
           "createdAt": {
             "description": "When the session was started, ISO-8601.\n\nThe first timestamp its own transcript recorded, falling back to the\nfile's mtime for a transcript too odd to date. Appending to a session\nmoves `updatedAt` and never this, which is what lets recent directories\nbe ranked by where work was started rather than by what is loudest.",
@@ -5435,7 +5435,7 @@
             "description": "Whether this server made the session, or is only looking at it."
           },
           "server": {
-            "description": "Which remote-hand server this row came from, as [`ServerId`] spells it.\n\nIt answers two subtly different questions depending on `scope`, and the\ndifference is worth stating because a client will eventually route on\nthis:\n\n* **`owned`** — the server that *made* the session. Read from the\nsession's own ownership row ([`owned_sessions`]), so it survives a\nrestart and is a claim about history.\n* **`external`** — the server the session is *reachable through*. A\ndiscovered transcript (the user's own `~/.claude`, a codex thread\nstarted from a terminal) was made by nobody here; what is true of it\nis that this server can see the file and serve its contents, so this\nserver names itself.\n\nBoth answers are \"the server to ask about this row\", which is what makes\none field reasonable; neither is \"the machine the work happened on\", and\nnothing should read it as that.\n\nFilled in by the ownership overlay — `claude::mark_owned` and\n`codex::apply_ownership` — alongside `scope`, because both can change\nwithout the transcript being touched and neither may be cached against\nit. `#[serde(default)]` for the summaries [`crate::sessions::index`] cached\nbefore this field existed: they parse, and the overlay fills them in.",
+            "description": "Which remote-hand server this row came from, as [`ServerId`] spells it.\n\nIt answers two subtly different questions depending on `scope`, and the\ndifference is worth stating because a client will eventually route on\nthis:\n\n* **`owned`** — the server that *made* the session. Read from the\nsession's own ownership row ([`owned_sessions`]), so it survives a\nrestart and is a claim about history.\n* **`external`** — the server the session is *reachable through*. A\ndiscovered transcript (the user's own `~/.claude`, a codex thread\nstarted from a terminal) was made by nobody here; what is true of it\nis that this server can see the file and serve its contents, so this\nserver names itself.\n\nBoth answers are \"the server to ask about this row\", which is what makes\none field reasonable; neither is \"the machine the work happened on\", and\nnothing should read it as that.\n\nFilled in by the ownership overlay — `claude::mark_owned` and\n`codex::apply_ownership` — alongside `scope`, because both can change\nwithout the transcript being touched and neither may be cached against\nit. `#[serde(default)]` for the summaries `sessions::index` cached\nbefore this field existed: they parse, and the overlay fills them in.",
             "type": "string"
           },
           "sizeBytes": {
@@ -5459,7 +5459,7 @@
             "type": "boolean"
           },
           "unreadCount": {
-            "description": "How many agent messages arrived since the user last looked, at most 99.\n\nAssistant text only — not tool calls or results, not thinking, not the\nCLI's own synthetic notices — counted from the start for a session never\nopened. Not suppressed while a turn runs, unlike `unread`: a working\nsession can be holding answers nobody has read. `unread` is never true\nwith a count of zero. See [`crate::sessions::attention::unread`].",
+            "description": "How many agent messages arrived since the user last looked, at most 99.\n\nAssistant text only — not tool calls or results, not thinking, not the\nCLI's own synthetic notices — counted from the start for a session never\nopened. Not suppressed while a turn runs, unlike `unread`: a working\nsession can be holding answers nobody has read. `unread` is never true\nwith a count of zero. See `sessions::attention::unread`.",
             "type": "integer"
           },
           "updatedAt": {
@@ -6044,7 +6044,7 @@
         "type": "object"
       },
       "SubagentTree": {
-        "description": "Whether the session list shows the subagents each session delegated to.\n\nOpt-in: off until somebody turns it on, and while it is off the subagents are\nnot even looked for ([`crate::sessions::subagents`]).",
+        "description": "Whether the session list shows the subagents each session delegated to.\n\nOpt-in: off until somebody turns it on, and while it is off the subagents are\nnot even looked for (`sessions::subagents`).",
         "enum": [
           "off",
           "on"
@@ -11782,7 +11782,7 @@
     "/api/sessions/{source}/{id}/continue": {
       "post": {
         "deprecated": false,
-        "description": "Carry a local-login claude session onto an account, as a new session.\n\nThe answer to `local_session_cannot_use_account`, for the moment it matters:\nthe local login stopped working and the conversation is stuck on it. The\nsession's transcript is copied into this instance's own root under a new id\n([`crate::sessions::continuation`]), the copy is bound to the account, and\nthe first message sent to it resumes the whole conversation there. The\noriginal is read and never written; it stays as it was, on the local login.\n\nOnly a session this server started (`external_session` otherwise) and only\none on the local login: a session already in this instance's root switches\naccounts in place, and so does every codex thread.",
+        "description": "Carry a local-login claude session onto an account, as a new session.\n\nThe answer to `local_session_cannot_use_account`, for the moment it matters:\nthe local login stopped working and the conversation is stuck on it. The\nsession's transcript is copied into this instance's own root under a new id\n(`sessions::continuation`), the copy is bound to the account, and\nthe first message sent to it resumes the whole conversation there. The\noriginal is read and never written; it stays as it was, on the local login.\n\nOnly a session this server started (`external_session` otherwise) and only\none on the local login: a session already in this instance's root switches\naccounts in place, and so does every codex thread.",
         "operationId": "continue_session_on_account",
         "parameters": [
           {
@@ -11875,7 +11875,7 @@
     "/api/sessions/{source}/{id}/first-unread": {
       "get": {
         "deprecated": false,
-        "description": "Where the messages a visit has not read yet begin.\n\nThe client asks once per arrival at a session, with the read marker its\narrival's seen report replaced (`previousReadAt` on that report's answer) —\nso the answer is about what was unread *before* the reader got there, and\nno later report can move it. Read-only and ungated like search, and answered\nover the same cached parse, so the index is one the history route can page\nto. See [`crate::sessions::attention::first_unread`].",
+        "description": "Where the messages a visit has not read yet begin.\n\nThe client asks once per arrival at a session, with the read marker its\narrival's seen report replaced (`previousReadAt` on that report's answer) —\nso the answer is about what was unread *before* the reader got there, and\nno later report can move it. Read-only and ungated like search, and answered\nover the same cached parse, so the index is one the history route can page\nto. See `sessions::attention::first_unread`.",
         "operationId": "session_first_unread",
         "parameters": [
           {

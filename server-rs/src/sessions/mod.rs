@@ -136,7 +136,7 @@ impl SessionActivity {
 
 /// Where a resident process is in its cycle.
 ///
-/// The wire form of `crate::inject::resident::Phase`. A separate type because
+/// The wire form of `inject::common::Phase`. A separate type because
 /// the driver's is an internal enum that the injection subsystem is free to
 /// grow states on, and this one is a contract.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Schematic)]
@@ -292,7 +292,7 @@ pub struct ResidentInfo {
     /// Those tasks, oldest first, as far as the CLI described them.
     ///
     /// Empty whenever `background` is zero, and never longer than the cap the
-    /// driver publishes — see [`crate::inject::resident::TASKS_ON_THE_WIRE`].
+    /// driver publishes — see `inject::resident::TASKS_ON_THE_WIRE`.
     pub tasks: Vec<BackgroundTask>,
     /// Whether the head of the queue is parked waiting for that background work.
     ///
@@ -564,7 +564,7 @@ pub struct SessionSummary {
     /// Filled in by the ownership overlay — `claude::mark_owned` and
     /// `codex::apply_ownership` — alongside `scope`, because both can change
     /// without the transcript being touched and neither may be cached against
-    /// it. `#[serde(default)]` for the summaries [`crate::sessions::index`] cached
+    /// it. `#[serde(default)]` for the summaries `sessions::index` cached
     /// before this field existed: they parse, and the overlay fills them in.
     #[serde(default)]
     pub server: String,
@@ -620,7 +620,7 @@ pub struct SessionSummary {
     pub resident: Nullable<ResidentInfo>,
     /// Which Claude config root holds the session file (claude sessions only).
     ///
-    /// Added with the accounts subsystem (`crate::claude_roots`); `None` for
+    /// Added with the accounts subsystem (`claude_roots`); `None` for
     /// codex, which has one root.
     pub claude_root: Option<ClaudeRoot>,
     /// The id of the ACP agent an acp session runs on; null for claude and
@@ -631,7 +631,7 @@ pub struct SessionSummary {
     pub account_id: Option<String>,
     /// When the assistant last spoke on the main chain, ISO-8601.
     ///
-    /// Derived from the transcript by [`crate::sessions::attention`], not stored; `null`
+    /// Derived from the transcript by `sessions::attention`, not stored; `null`
     /// for a session the assistant has not said anything in yet.
     pub attention_at: Nullable<String>,
     /// Whether the session is waiting on the user: the assistant has spoken
@@ -643,7 +643,7 @@ pub struct SessionSummary {
     /// CLI's own synthetic notices — counted from the start for a session never
     /// opened. Not suppressed while a turn runs, unlike `unread`: a working
     /// session can be holding answers nobody has read. `unread` is never true
-    /// with a count of zero. See [`crate::sessions::attention::unread`].
+    /// with a count of zero. See `sessions::attention::unread`.
     pub unread_count: u32,
     /// Whether the agent has stopped to ask the user something, and cannot go
     /// on without an answer.
@@ -660,7 +660,7 @@ pub struct SessionSummary {
     /// it runs with approvals off, and every interactive request its app server
     /// makes is refused, so it has no way to stop and ask.
     ///
-    /// `#[serde(default)]` for the summaries [`crate::sessions::index`] cached before
+    /// `#[serde(default)]` for the summaries `sessions::index` cached before
     /// this field existed; the live overlay fills it in.
     #[serde(default)]
     pub asking: bool,
@@ -692,7 +692,7 @@ pub struct SessionList {
 
 /// State of a message remote-hand injected into a session.
 ///
-/// Filled in by `crate::inject::InjectionRegistry`; `null` for a session
+/// Filled in by `inject::InjectionRegistry`; `null` for a session
 /// remote-hand has never driven.
 #[derive(Debug, Clone, Serialize, Deserialize, Schematic)]
 #[serde(rename_all = "camelCase")]
