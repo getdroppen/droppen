@@ -57,13 +57,12 @@ use futures_util::future::{BoxFuture, FutureExt, Shared};
 use gotcha::Schematic;
 use serde::{Deserialize, Serialize};
 
-use crate::accounts::login::Logins;
+use crate::accounts::login::{Login, Logins};
 use crate::accounts::store::{Account, AccountKind};
 use droppen_http::openapi_ext::{Nullable, Optional};
 use droppen_instance::paths::Paths;
 use droppen_base::time::now_ms;
 
-pub use codex::{CodexQuota, CodexQuotaCache, CodexQuotaSource};
 pub use readings::{QuotaReadingSource, UsageLogin};
 pub use routes::{describe, QuotaState};
 
@@ -166,6 +165,45 @@ pub struct AccountQuota {
     // The fallback probe's last verdict, and only for an account it probes.
     #[serde(default, skip_serializing_if = "Optional::is_none")]
     pub error: Optional<QuotaProbeError>,
+}
+
+/// Where a Codex reading came from.
+///
+/// On the wire, for the same reason `models::ModelListSource` is: the
+/// app server answers with the account's live numbers, while the session logs
+/// only say what some past turn was told. One shown as the other is how a panel
+/// tells a user they have 30% left of a week they have already spent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Schematic)]
+#[serde(rename_all = "snake_case")]
+pub enum CodexQuotaSource {
+    /// `codex app-server` answered `account/rateLimits/read` just now.
+    AppServer,
+    /// The app server could not be asked; these numbers come out of a rollout
+    /// file and are only as current as `updatedAt` says.
+    SessionLog,
+}
+
+/// Codex's rolling-window usage.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schematic)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexQuota {
+    /// Plan name, e.g. `pro`.
+    pub plan: Nullable<String>,
+    /// ISO-8601 of the reading. For [`CodexQuotaSource::AppServer`] this is the
+    /// moment the app server answered; for the log fallback it is the timestamp
+    /// the rollout entry carried, which may be hours old.
+    pub updated_at: Nullable<String>,
+    /// The rolling windows.
+    pub windows: Vec<QuotaWindow>,
+    /// Which of the two readings above this is.
+    pub source: CodexQuotaSource,
+    /// Whether ordinary usage is blocked right now — the account is out, and
+    /// the next message will be refused rather than merely expensive.
+    ///
+    /// `null` is *unknown*, not "fine": only the app server is asked this, so
+    /// the log fallback always leaves it null rather than implying an account
+    /// with 0% left is still able to run.
+    pub blocked: Nullable<bool>,
 }
 
 /// `GET /api/stats/quota`.
@@ -393,7 +431,7 @@ impl QuotaCache {
     /// own login.
     pub fn new(paths: Arc<Paths>, logins: Logins) -> Self {
         Self {
-            codex: Arc::new(CodexQuotaCache::new(ProbeRoots::of(&paths))),
+            codex: Arc::new(CodexQuotaCache::new(ProbeRoots::of(&paths), logins.codex.clone())),
             paths,
             logins,
             in_flight: Mutex::new(HashMap::new()),
@@ -662,6 +700,97 @@ impl QuotaCache {
             codex: Nullable(self.codex.cached()),
             accounts: self.account_quotas(&accounts),
         }
+    }
+}
+
+// ------------------------------------------------------------- codex's reading
+
+/// One reading, successful or not.
+#[derive(Debug, Clone)]
+struct CacheEntry {
+    /// When the last attempt finished: this is what [`USAGE_TTL`] governs, so
+    /// an app server that hangs costs one probe per TTL, not one per request.
+    at: Instant,
+    /// The last reading actually produced, kept across a later failure. It
+    /// carries its own `updatedAt`, so keeping it is honest: the panel shows
+    /// the number it was given and the age it was given at.
+    quota: Option<CodexQuota>,
+}
+
+/// The Codex reading, cached for the process.
+///
+/// One entry, because Codex has one config root on this machine — unlike the
+/// Claude cache next door, which is keyed per login. Concurrent callers
+/// collapse onto the one probe in flight.
+pub struct CodexQuotaCache {
+    probe: ProbeRoots,
+    /// Codex's login, which reads the reading.
+    login: Arc<dyn Login>,
+    entry: Mutex<Option<CacheEntry>>,
+    in_flight: Mutex<Option<Pending>>,
+}
+
+impl CodexQuotaCache {
+    /// An empty cache for one server instance, filled by `login`'s reading
+    /// of its own login ([`Login::local_quota`]).
+    pub fn new(probe: ProbeRoots, login: Arc<dyn Login>) -> Self {
+        Self {
+            probe,
+            login,
+            entry: Mutex::new(None),
+            in_flight: Mutex::new(None),
+        }
+    }
+
+    /// What the cache holds right now; never spawns anything, never waits.
+    pub fn cached(&self) -> Option<CodexQuota> {
+        self.entry
+            .lock()
+            .expect("codex quota cache poisoned")
+            .as_ref()
+            .and_then(|entry| entry.quota.clone())
+    }
+
+    /// Start a probe when the reading has aged out, and hand back the run in
+    /// flight so a caller can wait for it — or not.
+    pub fn refresh(self: &Arc<Self>) -> Option<Pending> {
+        if let Some(entry) = self.entry.lock().expect("codex quota cache poisoned").as_ref() {
+            if entry.at.elapsed() < USAGE_TTL {
+                return None;
+            }
+        }
+        let mut in_flight = self.in_flight.lock().expect("codex quota probe poisoned");
+        if let Some(running) = in_flight.as_ref() {
+            return Some(running.clone());
+        }
+
+        let cache = self.clone();
+        let pending: Pending = async move {
+            let quota = match cache.login.local_quota(&cache.probe) {
+                Some(read) => read.await,
+                None => None,
+            };
+            cache.store(quota);
+            *cache.in_flight.lock().expect("codex quota probe poisoned") = None;
+        }
+        .boxed()
+        .shared();
+
+        // Driven even if nobody awaits it: a caller that gave up on the collect
+        // budget still wants the reading ready for the next poll.
+        tokio::spawn(pending.clone());
+        *in_flight = Some(pending.clone());
+        Some(pending)
+    }
+
+    /// Record a reading, keeping the last one behind a failure.
+    fn store(&self, quota: Option<CodexQuota>) {
+        let mut entry = self.entry.lock().expect("codex quota cache poisoned");
+        let kept = quota.or_else(|| entry.as_ref().and_then(|previous| previous.quota.clone()));
+        *entry = Some(CacheEntry {
+            at: Instant::now(),
+            quota: kept,
+        });
     }
 }
 

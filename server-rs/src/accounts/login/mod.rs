@@ -18,7 +18,7 @@ use futures_util::future::BoxFuture;
 
 use super::local_login::LocalLoginState;
 use super::quota::readings::SharedReading;
-use super::quota::{ProbeRoots, UsageProbe};
+use super::quota::{CodexQuota, ProbeRoots, UsageProbe};
 use super::store::{AccountError, AccountKind, AccountLaunch, AccountProvider};
 use droppen_base::env_block::EnvVar;
 use super::verify::Verdict;
@@ -64,6 +64,11 @@ pub trait Login: Send + Sync {
     /// names it, and the raw tier it was read from. `None` back is a CLI whose
     /// plan arrives with its quota reading instead.
     fn local_plan<'a>(&'a self, paths: &'a Paths) -> Option<BoxFuture<'a, (Option<String>, Option<String>)>>;
+
+    /// The quota of the user's own login of this CLI, read whole: its plan
+    /// and windows, live or out of the CLI's own logs. `None` back is a CLI
+    /// whose quota is read per login instead ([`Login::probe`]).
+    fn local_quota<'a>(&'a self, roots: &'a ProbeRoots) -> Option<BoxFuture<'a, Option<CodexQuota>>>;
 }
 
 /// Every CLI's [`Login`], one per [`AccountProvider`].
