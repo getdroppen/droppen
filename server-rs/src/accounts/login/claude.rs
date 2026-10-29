@@ -6,11 +6,14 @@ use futures_util::future::BoxFuture;
 use super::Login;
 use crate::accounts::local_login::LocalLoginState;
 use crate::accounts::quota::readings::SharedReading;
-use crate::accounts::quota::{is_rate_limited, mentions_status, QuotaProbeError};
+use crate::accounts::quota::{claude_plan_label, is_rate_limited, mentions_status, ProbeRoots, QuotaProbeError, UsageProbe};
 use crate::accounts::store::{AccountError, AccountKind, AccountLaunch, AccountProvider};
 use droppen_base::env_block::EnvVar;
 use crate::accounts::verify::{reason, Scratch, Verdict, PROBE_PROMPT, PROBE_TIMEOUT};
+use crate::claude_roots::ClaudeRoots;
 use droppen_instance::paths::Paths;
+use serde_json::Value;
+use std::path::Path;
 use droppen_base::process_env::{apply_env, claude_env, clean_env_bare, resolve_on_path};
 
 /// What `ANTHROPIC_BASE_URL` is called, for a claude account that names one.
@@ -209,6 +212,38 @@ impl Login for ClaudeCodeLogin {
             (None, Some(_)) => LocalLoginState::SignedIn,
             (None, None) => LocalLoginState::Unknown,
         }
+    }
+
+    /// `claude -p /usage` against that config root ([`ProbeRoots::claude_usage`]).
+    fn probe<'a>(&'a self, roots: &'a ProbeRoots, config_dir: Option<&'a Path>) -> Option<BoxFuture<'a, UsageProbe>> {
+        Some(Box::pin(roots.claude_usage(config_dir)))
+    }
+
+    /// The two fields of the user's own `~/.claude/.credentials.json` that
+    /// name the plan.
+    fn local_plan<'a>(&'a self, paths: &'a Paths) -> Option<BoxFuture<'a, (Option<String>, Option<String>)>> {
+        Some(Box::pin(async move {
+            let mut plan = None;
+            let mut tier = None;
+            // Read-only, and only these two fields: the credentials file is the
+            // user's own login and nothing here may touch the rest of it.
+            if let Ok(raw) = tokio::fs::read_to_string(ClaudeRoots::of(paths).local_credentials()).await {
+                if let Ok(Value::Object(root)) = serde_json::from_str::<Value>(&raw) {
+                    if let Some(Value::Object(oauth)) = root.get("claudeAiOauth") {
+                        let subscription_type = oauth.get("subscriptionType").and_then(Value::as_str).filter(|s| !s.is_empty());
+                        tier = oauth
+                            .get("rateLimitTier")
+                            .and_then(Value::as_str)
+                            .filter(|t| !t.is_empty())
+                            .map(str::to_owned);
+                        if subscription_type.is_some() || tier.is_some() {
+                            plan = Some(claude_plan_label(subscription_type, tier.as_deref()));
+                        }
+                    }
+                }
+            }
+            (plan, tier)
+        }))
     }
 }
 

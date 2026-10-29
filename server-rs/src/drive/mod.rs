@@ -92,8 +92,8 @@ impl Drive {
         providers: fn(&mut ProviderRegistry, &Arc<InjectionRegistry>),
         logins: Logins,
     ) -> Arc<Self> {
-        let accounts = Arc::new(AccountsStore::new(paths.clone(), logins));
-        let quota = Arc::new(QuotaCache::new(paths.clone()));
+        let accounts = Arc::new(AccountsStore::new(paths.clone(), logins.clone()));
+        let quota = Arc::new(QuotaCache::new(paths.clone(), logins));
         let decoration = NotifyDecoration::new(paths.clone(), instance.clone());
         let injections = InjectionRegistry::new(paths.clone(), instance, accounts.clone(), quota.clone(), decoration);
         Arc::new(Self {

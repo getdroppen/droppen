@@ -11,12 +11,14 @@
 pub mod claude;
 pub mod codex;
 
+use std::path::Path;
 use std::sync::Arc;
 
 use futures_util::future::BoxFuture;
 
 use super::local_login::LocalLoginState;
 use super::quota::readings::SharedReading;
+use super::quota::{ProbeRoots, UsageProbe};
 use super::store::{AccountError, AccountKind, AccountLaunch, AccountProvider};
 use droppen_base::env_block::EnvVar;
 use super::verify::Verdict;
@@ -52,6 +54,16 @@ pub trait Login: Send + Sync {
     /// (`<data>/local-usage.json`), whichever CLI is asked: no other CLI keeps
     /// one, so every other login ignores it and weighs the refusal alone.
     fn local_state(&self, refused_at: Option<i64>, local_reading: &SharedReading) -> LocalLoginState;
+
+    /// Run this CLI's usage probe against one of its logins: `config_dir` is an
+    /// account's usage login, `None` the user's own. `None` back is a CLI with
+    /// no such probe: only claude's logins keep readings for it to refresh.
+    fn probe<'a>(&'a self, roots: &'a ProbeRoots, config_dir: Option<&'a Path>) -> Option<BoxFuture<'a, UsageProbe>>;
+
+    /// The plan the user's own login of this CLI is on, as the quota panel
+    /// names it, and the raw tier it was read from. `None` back is a CLI whose
+    /// plan arrives with its quota reading instead.
+    fn local_plan<'a>(&'a self, paths: &'a Paths) -> Option<BoxFuture<'a, (Option<String>, Option<String>)>>;
 }
 
 /// Every CLI's [`Login`], one per [`AccountProvider`].
