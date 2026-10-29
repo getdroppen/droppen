@@ -335,6 +335,7 @@ fn fill(summary: &mut SessionSummary, ledger: Option<&Ledger>, read_at: Option<&
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sessions::sources::test_reader::TestReader;
     use crate::sessions::Source;
 
     const OLD: &str = "2026-01-01T00:00:00.000Z";
@@ -462,7 +463,7 @@ mod tests {
         };
         index.remember_unread_ledger(&summary.file_path, &summary.updated_at, summary.size_bytes, &stored);
 
-        let ledger = ledger_for(Some(&index), &crate::app::transcript_sources(), &summary, None)
+        let ledger = ledger_for(Some(&index), &TestReader::sources(), &summary, None)
             .await
             .expect("a ledger");
         assert_eq!(ledger, stored, "same watermark: no re-parse");
@@ -496,7 +497,7 @@ mod tests {
         body.push('\n');
         std::fs::write(&file, body).expect("append");
         let after = row(&file, "2026-01-01T10:00:07.000Z", SessionStatus::Idle);
-        let ledger = ledger_for(Some(&index), &crate::app::transcript_sources(), &after, None)
+        let ledger = ledger_for(Some(&index), &TestReader::sources(), &after, None)
             .await
             .expect("a ledger");
         assert_eq!(ledger.stamps, vec![stamp(1), stamp(2), stamp(7)]);
@@ -514,7 +515,7 @@ mod tests {
         std::fs::write(&file, format!("{}\n{}\n{}\n", said(1), said(2), said(3))).expect("write");
 
         let mut idle = row(&file, "2026-01-01T10:00:03.000Z", SessionStatus::Idle);
-        let ledger = ledger_for(None, &crate::app::transcript_sources(), &idle, Some(&stamp(1)))
+        let ledger = ledger_for(None, &TestReader::sources(), &idle, Some(&stamp(1)))
             .await
             .expect("a ledger");
         fill(&mut idle, Some(&ledger), Some(&stamp(1)));
@@ -533,73 +534,9 @@ mod tests {
 
         // Never opened: every message counts.
         let mut never = row(&file, "2026-01-01T10:00:03.000Z", SessionStatus::Waiting);
-        let full = ledger_for(None, &crate::app::transcript_sources(), &never, None).await.expect("a ledger");
+        let full = ledger_for(None, &TestReader::sources(), &never, None).await.expect("a ledger");
         fill(&mut never, Some(&full), None);
         assert_eq!((never.unread, never.unread_count), (true, 3));
-    }
-
-    /// The jump and the count are one rule: the first unread item is the oldest
-    /// message the ledger counts, against any marker — thinking, tool calls and
-    /// a subagent's words count in neither, and a message with no timestamp
-    /// stands at the transcript's mtime in both.
-    #[tokio::test]
-    async fn the_first_unread_is_the_oldest_message_the_count_counts() {
-        let home = tempfile::tempdir().expect("tempdir");
-        let paths = Paths::new(home.path().to_path_buf());
-        let file = home.path().join("first.jsonl");
-        let ask = r#"{"type":"user","timestamp":"2026-01-01T09:59:00.000Z","message":{"content":"go"}}"#;
-        let tool = r#"{"type":"assistant","timestamp":"2026-01-01T10:00:02.500Z","message":{"content":[{"type":"thinking","thinking":"hmm"},{"type":"tool_use","id":"toolu_1","name":"Bash","input":{}}]}}"#;
-        let side = r#"{"type":"assistant","isSidechain":true,"timestamp":"2026-01-01T10:00:02.600Z","message":{"content":[{"type":"text","text":"a subagent"}]}}"#;
-        let undated = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"undated"}]}}"#;
-        std::fs::write(
-            &file,
-            format!("{ask}\n{}\n{}\n{tool}\n{side}\n{}\n{undated}\n", said(1), said(2), said(3)),
-        )
-        .expect("write");
-        let items = crate::sessions::transcript::parse_claude_transcript(&paths, &file, false)
-            .await
-            .expect("parse");
-        // The row's `updatedAt` is the transcript's mtime: the ledger's stand-in.
-        let mtime = "2026-01-01T10:00:04.000Z";
-        let summary = row(&file, mtime, SessionStatus::Idle);
-        let full = ledger_for(None, &crate::app::transcript_sources(), &summary, None)
-            .await
-            .expect("a ledger");
-
-        let markers = [None, Some(stamp(1)), Some(stamp(2)), Some(stamp(3)), Some(mtime.to_string())];
-        for read_at in &markers {
-            let first = first_unread(&items, read_at.as_deref(), mtime);
-            assert_eq!(
-                Some(first.count as u32),
-                full.count(read_at.as_deref()),
-                "the same count against {read_at:?}"
-            );
-            assert_eq!(first.index.0.is_some(), first.count > 0, "an index exactly when there is a count");
-        }
-        let text_at = |found: FirstUnread| found.index.0.map(|index| items[index].text.clone());
-        assert_eq!(
-            text_at(first_unread(&items, None, mtime)).as_deref(),
-            Some("m1"),
-            "never read: the very first answer"
-        );
-        assert_eq!(text_at(first_unread(&items, Some(&stamp(1)), mtime)).as_deref(), Some("m2"));
-        assert_eq!(
-            text_at(first_unread(&items, Some(&stamp(2)), mtime)).as_deref(),
-            Some("m3"),
-            "past the tool call"
-        );
-        assert_eq!(
-            text_at(first_unread(&items, Some(&stamp(3)), mtime)).as_deref(),
-            Some("undated"),
-            "counted, as the badge counts it"
-        );
-        assert_eq!(
-            first_unread(&items, Some(mtime), mtime),
-            FirstUnread {
-                index: Nullable(None),
-                count: 0
-            }
-        );
     }
 
     /// The count stops at 99; the walk to the first unread does not, because a
@@ -630,7 +567,7 @@ mod tests {
         let file = home.path().join("both.jsonl");
         std::fs::write(&file, format!("{}\n{}\n", said(1), said(2))).expect("write");
         let summary = row(&file, "2026-01-01T10:00:02.000Z", SessionStatus::Idle);
-        let transcripts = crate::app::transcript_sources();
+        let transcripts = TestReader::sources();
         let (a, b) = tokio::join!(
             ledger_for(None, &transcripts, &summary, None),
             ledger_for(None, &transcripts, &summary, None)
@@ -655,11 +592,11 @@ mod tests {
         std::fs::write(&file, format!("{}\n{notice}\n", said(1))).expect("write");
         let mut summary = row(&file, "2026-01-01T10:00:09.000Z", SessionStatus::Waiting);
         let read_at = Some("2026-01-01T10:00:05.000Z");
-        let clock = clock_of(&summary, read_at, &crate::app::transcript_sources()).await;
+        let clock = clock_of(&summary, read_at, &TestReader::sources()).await;
         assert_eq!(clock.as_deref(), Some("2026-01-01T10:00:09.000Z"));
-        let echo = crate::app::transcript_sources().read_echo(Source::Claude, &file).await.expect("an echo");
+        let echo = TestReader::sources().read_echo(Source::Claude, &file).await.expect("an echo");
         assert_eq!(echo.at, clock, "the notification's words come from the message the clock was read from");
-        let ledger = ledger_for(None, &crate::app::transcript_sources(), &summary, read_at).await;
+        let ledger = ledger_for(None, &TestReader::sources(), &summary, read_at).await;
         fill(&mut summary, ledger.as_ref(), read_at);
         assert!(
             summary.unread && is_unread(clock.as_deref(), read_at, SessionStatus::Waiting),

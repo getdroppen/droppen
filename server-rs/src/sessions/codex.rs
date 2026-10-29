@@ -1427,4 +1427,206 @@ mod tests {
         );
         assert_eq!(after.cwd.as_deref(), Some("/w"), "and the rest of the row round-trips intact");
     }
+
+    /// What Codex says to the user: the speech the attention clock, the unread
+    /// count and the push read out of its rollouts ([`Transcripts::spoken_texts`]).
+    /// The sessions core's own tests read a stand-in; these pin Codex's rules.
+    mod speech {
+        use super::*;
+        use crate::sessions::attention::derive::{echo, spoken, AssistantEcho};
+        use crate::sessions::attention::unread::{refresh, Ledger};
+        use crate::sessions::util::try_parse;
+        use crate::sessions::Transcripts;
+
+        const FALLBACK: &str = "2026-01-01T09:59:59.000Z";
+
+        fn codex_echo(tail: &[String]) -> Option<AssistantEcho> {
+            echo(&CodexSessions, tail)
+        }
+
+        fn lines(raw: &[&str]) -> Vec<String> {
+            raw.iter().map(|l| (*l).to_string()).collect()
+        }
+
+        fn at(n: u32) -> String {
+            format!("2026-01-01T10:{:02}:{:02}.000Z", n / 60, n % 60)
+        }
+
+        fn write(dir: &Path, lines: &[String]) -> std::path::PathBuf {
+            let path = dir.join("t.jsonl");
+            let mut body = lines.join("\n");
+            body.push('\n');
+            std::fs::write(&path, body).expect("write");
+            path
+        }
+
+        fn size(path: &Path) -> u64 {
+            std::fs::metadata(path).expect("stat").len()
+        }
+
+        async fn ledger(reader: &dyn Transcripts, path: &Path, read_at: Option<&str>) -> Ledger {
+            refresh(reader, path, None, size(path), read_at, FALLBACK).await.expect("a ledger")
+        }
+
+        #[test]
+        fn a_transcript_with_no_assistant_text_has_no_clock() {
+            let tail = lines(&[r#"{"type":"user","timestamp":"2026-01-01T00:00:00.000Z","message":{"content":[{"type":"text","text":"go"}]}}"#]);
+            assert_eq!(codex_echo(&tail), None);
+        }
+
+        /// A codex wrapper is instructions, for the echo as for the count.
+        #[test]
+        fn a_codex_wrapper_is_not_speech_for_either_reader() {
+            let tail = lines(&[
+                r#"{"type":"response_item","timestamp":"2026-01-01T00:00:01.000Z","payload":{"type":"message","role":"assistant","content":[{"text":"real"}]}}"#,
+                r#"{"type":"response_item","timestamp":"2026-01-01T00:00:02.000Z","payload":{"type":"message","role":"assistant","content":[{"text":"<environment_context>x</environment_context>"}]}}"#,
+            ]);
+            assert_eq!(codex_echo(&tail).expect("an echo").text, "real");
+            assert_eq!(spoken(&CodexSessions, &try_parse(&tail[1]).expect("parses")), None);
+        }
+
+        #[test]
+        fn codex_reads_assistant_messages_and_ignores_the_rest() {
+            let tail = lines(&[
+                r#"{"type":"response_item","timestamp":"2026-01-01T00:00:01.000Z","payload":{"type":"message","role":"assistant","content":[{"text":"the answer"}]}}"#,
+                r#"{"type":"response_item","timestamp":"2026-01-01T00:00:02.000Z","payload":{"type":"reasoning","summary":[{"text":"thinking"}]}}"#,
+                r#"{"type":"response_item","timestamp":"2026-01-01T00:00:03.000Z","payload":{"type":"function_call","name":"exec_command","arguments":"{}"}}"#,
+                r#"{"type":"event_msg","timestamp":"2026-01-01T00:00:04.000Z","payload":{"type":"token_count"}}"#,
+            ]);
+            let echo = codex_echo(&tail).expect("an echo");
+            assert_eq!(echo.at.as_deref(), Some("2026-01-01T00:00:01.000Z"));
+            assert_eq!(echo.text, "the answer");
+        }
+
+        #[test]
+        fn a_codex_user_message_is_not_the_assistant() {
+            let tail = lines(&[
+                r#"{"type":"response_item","timestamp":"2026-01-01T00:00:01.000Z","payload":{"type":"message","role":"assistant","content":[{"text":"mine"}]}}"#,
+                r#"{"type":"response_item","timestamp":"2026-01-01T00:00:02.000Z","payload":{"type":"message","role":"user","content":[{"text":"yours"}]}}"#,
+            ]);
+            assert_eq!(codex_echo(&tail).expect("an echo").text, "mine");
+        }
+
+
+        #[tokio::test]
+        async fn codex_counts_assistant_text_parts_only() {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let path = write(
+                dir.path(),
+                &[
+                    format!(
+                        r#"{{"type":"response_item","timestamp":"{}","payload":{{"type":"message","role":"user","content":[{{"text":"go"}}]}}}}"#,
+                        at(0)
+                    ),
+                    format!(
+                        r#"{{"type":"response_item","timestamp":"{}","payload":{{"type":"message","role":"assistant","content":[{{"type":"output_text","text":"the answer"}}]}}}}"#,
+                        at(1)
+                    ),
+                    format!(
+                        r#"{{"type":"response_item","timestamp":"{}","payload":{{"type":"reasoning","summary":[{{"text":"thinking"}}]}}}}"#,
+                        at(2)
+                    ),
+                    format!(
+                        r#"{{"type":"response_item","timestamp":"{}","payload":{{"type":"function_call","name":"exec_command","arguments":"{{}}"}}}}"#,
+                        at(3)
+                    ),
+                    format!(
+                        r#"{{"type":"event_msg","timestamp":"{}","payload":{{"type":"agent_message","message":"the answer"}}}}"#,
+                        at(4)
+                    ),
+                    format!(
+                        r#"{{"type":"response_item","timestamp":"{}","payload":{{"type":"message","role":"assistant","content":[{{"text":"<environment_context>x</environment_context>"}},{{"text":"more"}}]}}}}"#,
+                        at(5)
+                    ),
+                ],
+            );
+            let ledger = ledger(&CodexSessions, &path, None).await;
+            assert_eq!(ledger.stamps, vec![at(1), at(5)], "the event_msg echo and the wrapper are not messages");
+            assert_eq!(ledger.count(Some(&at(1))), Some(1));
+        }
+
+    }
+
+    /// Codex's token usage, one rollout entry at a time
+    /// ([`Transcripts::usage_fold`]). The sessions core adds the folds up by day
+    /// and model; these pin what each entry is.
+    mod usage {
+        use super::*;
+        use crate::sessions::Transcripts;
+        use serde_json::json;
+
+        /// What each entry of a literal rollout folds to, in order.
+        fn folds(entries: Value) -> Vec<Option<TokenUsage>> {
+            let mut fold = CodexSessions.usage_fold();
+            entries
+                .as_array()
+                .expect("array")
+                .iter()
+                .map(|entry| fold.fold(entry.as_object().expect("object")))
+                .collect()
+        }
+
+        fn tokens(date: &str, model: &str, [input, output, cache_read, cache_write]: [f64; 4]) -> Option<TokenUsage> {
+            Some(TokenUsage {
+                date: date.to_string(),
+                model: model.to_string(),
+                input,
+                output,
+                cache_read,
+                cache_write,
+            })
+        }
+
+        #[test]
+        fn codex_usage_counts_per_turn_deltas_and_attributes_the_active_model() {
+            let folded = folds(json!([
+                { "type": "turn_context", "timestamp": "2026-07-22T02:00:00.000Z", "payload": { "model": "gpt-5.6-sol" } },
+                {
+                    "type": "event_msg",
+                    "timestamp": "2026-07-22T02:01:00.000Z",
+                    "payload": {
+                        "type": "token_count",
+                        "info": {
+                            "total_token_usage": { "total_tokens": 9958 },
+                            "last_token_usage": { "input_tokens": 9865, "cached_input_tokens": 7552, "output_tokens": 93 }
+                        }
+                    }
+                },
+                {
+                    "type": "event_msg",
+                    "timestamp": "2026-07-22T02:02:00.000Z",
+                    "payload": {
+                        "type": "token_count",
+                        "info": {
+                            "total_token_usage": { "total_tokens": 22391 },
+                            "last_token_usage": { "input_tokens": 12395, "cached_input_tokens": 7552, "output_tokens": 38 }
+                        }
+                    }
+                }
+            ]));
+            assert_eq!(
+                folded,
+                vec![
+                    None,
+                    // fresh input = input - cached: 9865-7552, then 12395-7552
+                    tokens("2026-07-22", "gpt-5.6-sol", [2313.0, 93.0, 7552.0, 0.0]),
+                    tokens("2026-07-22", "gpt-5.6-sol", [4843.0, 38.0, 7552.0, 0.0]),
+                ]
+            );
+        }
+
+        #[test]
+        fn codex_usage_ignores_duplicate_token_count_reports() {
+            let repeated = json!({
+                "type": "event_msg",
+                "timestamp": "2026-07-22T02:01:00.000Z",
+                "payload": {
+                    "type": "token_count",
+                    "info": { "total_token_usage": { "total_tokens": 100 }, "last_token_usage": { "input_tokens": 100, "output_tokens": 0 } }
+                }
+            });
+            let folded = folds(json!([repeated, repeated]));
+            assert_eq!(folded, vec![tokens("2026-07-22", "codex", [100.0, 0.0, 0.0, 0.0]), None], "the default model until a turn_context is seen");
+        }
+    }
 }

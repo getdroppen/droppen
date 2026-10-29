@@ -428,8 +428,12 @@ async fn complete_end(path: &Path) -> std::io::Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sessions::claude::ClaudeCodeSessions;
-    use crate::sessions::codex::CodexSessions;
+    use crate::sessions::sources::test_reader::TestReader;
+    use crate::sessions::Source;
+
+    /// The core's test reader; what each CLI counts is pinned next to its
+    /// reader.
+    const READER: TestReader = TestReader(Source::Claude);
 
     const FALLBACK: &str = "2026-01-01T09:59:59.000Z";
 
@@ -467,87 +471,6 @@ mod tests {
         refresh(reader, path, None, size(path), read_at, FALLBACK).await.expect("a ledger")
     }
 
-    /// The unit is a message the user reads. Thinking, tool calls, tool results
-    /// and a subagent's chatter are not; the CLI's own `<synthetic>` notice — a
-    /// rate-limit wall — is, because it is how the session stopped.
-    #[tokio::test]
-    async fn only_assistant_text_counts() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = write(
-            dir.path(),
-            &[
-                user(0),
-                assistant(1, "first"),
-                format!(
-                    r#"{{"type":"assistant","timestamp":"{}","message":{{"content":[{{"type":"thinking","thinking":"hmm"}},{{"type":"tool_use","name":"Bash","input":{{}}}}]}}}}"#,
-                    at(2)
-                ),
-                format!(
-                    r#"{{"type":"user","timestamp":"{}","message":{{"content":[{{"type":"tool_result","content":"{{\"type\":\"assistant\"}}"}}]}}}}"#,
-                    at(3)
-                ),
-                format!(
-                    r#"{{"type":"assistant","isSidechain":true,"timestamp":"{}","message":{{"content":[{{"type":"text","text":"subagent"}}]}}}}"#,
-                    at(4)
-                ),
-                format!(
-                    r#"{{"type":"assistant","timestamp":"{}","message":{{"model":"<synthetic>","content":[{{"type":"text","text":"You've hit your limit"}}]}}}}"#,
-                    at(5)
-                ),
-                format!(
-                    r#"{{"type":"assistant","timestamp":"{}","message":{{"content":[{{"type":"text","text":"   "}}]}}}}"#,
-                    at(6)
-                ),
-                format!(
-                    r#"{{"type":"assistant","timestamp":"{}","message":{{"content":[{{"type":"text","text":"two"}},{{"type":"text","text":"blocks"}}]}}}}"#,
-                    at(7)
-                ),
-            ],
-        );
-        let ledger = ledger(&ClaudeCodeSessions, &path, None).await;
-        assert_eq!(
-            ledger.stamps,
-            vec![at(1), at(5), at(7), at(7)],
-            "one per text block, the limit notice included"
-        );
-        assert_eq!(ledger.count(None), Some(4), "never read: every message counts");
-        assert_eq!(ledger.newest(), Some(at(7).as_str()));
-    }
-
-    /// A session that stopped on a rate limit or an API error has said its last
-    /// word, and the badge must show it — the push notification already does.
-    #[tokio::test]
-    async fn a_synthetic_notice_at_the_end_is_unread() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = write(
-            dir.path(),
-            &[
-                assistant(1, "working on it"),
-                format!(
-                    r#"{{"type":"assistant","timestamp":"{}","message":{{"model":"<synthetic>","content":[{{"type":"text","text":"API Error: 529 overloaded"}}]}}}}"#,
-                    at(2)
-                ),
-            ],
-        );
-        let ledger = ledger(&ClaudeCodeSessions, &path, Some(&at(1))).await;
-        assert_eq!(ledger.count(Some(&at(1))), Some(1));
-        assert_eq!(ledger.newest(), Some(at(2).as_str()));
-    }
-
-    /// Claude's string shorthand for a one-block message is still a message.
-    #[tokio::test]
-    async fn a_plain_string_message_counts() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = write(
-            dir.path(),
-            &[format!(
-                r#"{{"type":"assistant","timestamp":"{}","message":{{"content":"just a string"}}}}"#,
-                at(1)
-            )],
-        );
-        assert_eq!(ledger(&ClaudeCodeSessions, &path, None).await.stamps, vec![at(1)]);
-    }
-
     /// An adoption copies one transcript over another, and the copy can be as
     /// long as or longer than what was read. Resuming at the old offset would
     /// graft the old count onto the middle of a different file; the first
@@ -556,7 +479,7 @@ mod tests {
     async fn a_replacement_of_equal_or_greater_length_is_scanned_again() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = write(dir.path(), &[user(0), assistant(1, "a"), assistant(2, "b")]);
-        let first = ledger(&ClaudeCodeSessions, &path, None).await;
+        let first = ledger(&READER, &path, None).await;
         assert!(first.head.is_some(), "a complete first line is fingerprinted");
 
         // Longer, and a different first line.
@@ -564,26 +487,26 @@ mod tests {
             dir.path(),
             &[user(10), assistant(11, "x"), assistant(12, "y"), assistant(13, "z"), assistant(14, "w")],
         );
-        let again = refresh(&ClaudeCodeSessions, &path, Some(first.clone()), size(&path), None, FALLBACK)
+        let again = refresh(&READER, &path, Some(first.clone()), size(&path), None, FALLBACK)
             .await
             .expect("a ledger");
         assert_eq!(again.stamps, vec![at(11), at(12), at(13), at(14)], "a fresh scan, nothing grafted on");
 
         // Same first line, but the old `end` now lands mid-line.
         let path = write(dir.path(), &[user(0), assistant(1, "a much longer first answer"), assistant(3, "c")]);
-        let shifted = refresh(&ClaudeCodeSessions, &path, Some(first), size(&path), None, FALLBACK)
+        let shifted = refresh(&READER, &path, Some(first), size(&path), None, FALLBACK)
             .await
             .expect("a ledger");
         assert_eq!(shifted.stamps, vec![at(1), at(3)]);
 
         // And the genuine article — the same file, appended to — still resumes.
         let path = write(dir.path(), &[user(0), assistant(1, "a")]);
-        let original = ledger(&ClaudeCodeSessions, &path, None).await;
+        let original = ledger(&READER, &path, None).await;
         let mut body = std::fs::read_to_string(&path).expect("read");
         body.push_str(&assistant(4, "d"));
         body.push('\n');
         std::fs::write(&path, body).expect("append");
-        let grown = refresh(&ClaudeCodeSessions, &path, Some(original.clone()), size(&path), None, FALLBACK)
+        let grown = refresh(&READER, &path, Some(original.clone()), size(&path), None, FALLBACK)
             .await
             .expect("a ledger");
         assert_eq!(grown.stamps, vec![at(1), at(4)]);
@@ -594,7 +517,7 @@ mod tests {
     async fn only_messages_after_the_read_marker_count() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = write(dir.path(), &[assistant(1, "a"), user(2), assistant(3, "b"), assistant(4, "c")]);
-        let ledger = ledger(&ClaudeCodeSessions, &path, Some(&at(2))).await;
+        let ledger = ledger(&READER, &path, Some(&at(2))).await;
         assert_eq!(ledger.count(Some(&at(2))), Some(2));
         assert_eq!(ledger.count(Some(&at(3))), Some(1), "looked at the very moment of the message: read");
         assert_eq!(ledger.count(Some(&at(9))), Some(0), "a read marker newer than everything");
@@ -606,7 +529,7 @@ mod tests {
         let lines: Vec<String> = (0..150).map(|n| assistant(n, "x")).collect();
         let path = write(dir.path(), &lines);
 
-        let never = ledger(&ClaudeCodeSessions, &path, None).await;
+        let never = ledger(&READER, &path, None).await;
         assert_eq!(never.stamps.len(), CAP, "the scan stops at the cap");
         assert_eq!(never.count(None), Some(99), "never read: counts from the start, still capped");
         assert_eq!(never.count(Some(&at(10))), Some(99), "older than everything kept is still 99+");
@@ -619,7 +542,7 @@ mod tests {
     async fn a_scan_that_stopped_at_the_read_marker_answers_only_from_there() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = write(dir.path(), &[assistant(1, "a"), assistant(2, "b"), assistant(3, "c"), assistant(4, "d")]);
-        let ledger = ledger(&ClaudeCodeSessions, &path, Some(&at(2))).await;
+        let ledger = ledger(&READER, &path, Some(&at(2))).await;
         assert_eq!(ledger.stamps, vec![at(2), at(3), at(4)], "nothing older than the marker was read");
         assert_eq!(ledger.floor.as_deref(), Some(at(2).as_str()));
         assert_eq!(ledger.count(Some(&at(2))), Some(2));
@@ -628,7 +551,7 @@ mod tests {
         assert_eq!(ledger.count(None), None, "nor can 'never read'");
 
         // …and asking anyway re-scans rather than guessing.
-        let rescanned = refresh(&ClaudeCodeSessions, &path, Some(ledger), size(&path), None, FALLBACK)
+        let rescanned = refresh(&READER, &path, Some(ledger), size(&path), None, FALLBACK)
             .await
             .expect("a ledger");
         assert_eq!(rescanned.count(None), Some(4));
@@ -640,7 +563,7 @@ mod tests {
     async fn appended_messages_are_read_forward_and_half_lines_wait() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = write(dir.path(), &[assistant(1, "a")]);
-        let first = ledger(&ClaudeCodeSessions, &path, None).await;
+        let first = ledger(&READER, &path, None).await;
         assert_eq!(first.count(None), Some(1));
 
         let whole = assistant(2, "b");
@@ -648,7 +571,7 @@ mod tests {
         let mut body = std::fs::read_to_string(&path).expect("read");
         body.push_str(head);
         std::fs::write(&path, &body).expect("half a line");
-        let mid = refresh(&ClaudeCodeSessions, &path, Some(first.clone()), size(&path), None, FALLBACK)
+        let mid = refresh(&READER, &path, Some(first.clone()), size(&path), None, FALLBACK)
             .await
             .expect("a ledger");
         assert_eq!(mid.count(None), Some(1), "half a line is not a message yet");
@@ -657,7 +580,7 @@ mod tests {
         body.push_str(tail);
         body.push('\n');
         std::fs::write(&path, &body).expect("rest of the line");
-        let after = refresh(&ClaudeCodeSessions, &path, Some(mid), size(&path), None, FALLBACK)
+        let after = refresh(&READER, &path, Some(mid), size(&path), None, FALLBACK)
             .await
             .expect("a ledger");
         assert_eq!(after.stamps, vec![at(1), at(2)]);
@@ -670,7 +593,7 @@ mod tests {
         let path = dir.path().join("t.jsonl");
         let whole = assistant(2, "b");
         std::fs::write(&path, format!("{}\n{}", assistant(1, "a"), &whole[..20])).expect("write");
-        let ledger = ledger(&ClaudeCodeSessions, &path, None).await;
+        let ledger = ledger(&READER, &path, None).await;
         assert_eq!(ledger.count(None), Some(1));
         assert_eq!(ledger.end, assistant(1, "a").len() as u64 + 1, "it stops at the last newline");
     }
@@ -679,49 +602,12 @@ mod tests {
     async fn a_replaced_transcript_is_scanned_again() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = write(dir.path(), &[assistant(1, "a"), assistant(2, "b"), assistant(3, "c")]);
-        let first = ledger(&ClaudeCodeSessions, &path, None).await;
+        let first = ledger(&READER, &path, None).await;
         let path = write(dir.path(), &[assistant(5, "z")]);
-        let again = refresh(&ClaudeCodeSessions, &path, Some(first), size(&path), None, FALLBACK)
+        let again = refresh(&READER, &path, Some(first), size(&path), None, FALLBACK)
             .await
             .expect("a ledger");
         assert_eq!(again.stamps, vec![at(5)], "shorter than what was read means it is a different file");
-    }
-
-    #[tokio::test]
-    async fn codex_counts_assistant_text_parts_only() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = write(
-            dir.path(),
-            &[
-                format!(
-                    r#"{{"type":"response_item","timestamp":"{}","payload":{{"type":"message","role":"user","content":[{{"text":"go"}}]}}}}"#,
-                    at(0)
-                ),
-                format!(
-                    r#"{{"type":"response_item","timestamp":"{}","payload":{{"type":"message","role":"assistant","content":[{{"type":"output_text","text":"the answer"}}]}}}}"#,
-                    at(1)
-                ),
-                format!(
-                    r#"{{"type":"response_item","timestamp":"{}","payload":{{"type":"reasoning","summary":[{{"text":"thinking"}}]}}}}"#,
-                    at(2)
-                ),
-                format!(
-                    r#"{{"type":"response_item","timestamp":"{}","payload":{{"type":"function_call","name":"exec_command","arguments":"{{}}"}}}}"#,
-                    at(3)
-                ),
-                format!(
-                    r#"{{"type":"event_msg","timestamp":"{}","payload":{{"type":"agent_message","message":"the answer"}}}}"#,
-                    at(4)
-                ),
-                format!(
-                    r#"{{"type":"response_item","timestamp":"{}","payload":{{"type":"message","role":"assistant","content":[{{"text":"<environment_context>x</environment_context>"}},{{"text":"more"}}]}}}}"#,
-                    at(5)
-                ),
-            ],
-        );
-        let ledger = ledger(&CodexSessions, &path, None).await;
-        assert_eq!(ledger.stamps, vec![at(1), at(5)], "the event_msg echo and the wrapper are not messages");
-        assert_eq!(ledger.count(Some(&at(1))), Some(1));
     }
 
     #[tokio::test]
@@ -731,14 +617,14 @@ mod tests {
             dir.path(),
             &[r#"{"type":"assistant","message":{"content":[{"type":"text","text":"undated"}]}}"#.to_string()],
         );
-        let ledger = ledger(&ClaudeCodeSessions, &path, None).await;
+        let ledger = ledger(&READER, &path, None).await;
         assert_eq!(ledger.stamps, vec![FALLBACK.to_string()]);
     }
 
     #[tokio::test]
     async fn a_missing_file_has_no_ledger() {
         assert_eq!(
-            refresh(&ClaudeCodeSessions, Path::new("/nonexistent/x.jsonl"), None, 0, None, FALLBACK).await,
+            refresh(&READER, Path::new("/nonexistent/x.jsonl"), None, 0, None, FALLBACK).await,
             None
         );
     }

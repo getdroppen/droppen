@@ -329,3 +329,125 @@ impl TranscriptSources {
         }
     }
 }
+
+/// A reader for the sessions core's own tests.
+///
+/// The core reads every CLI through [`Transcripts`], and the real readers are
+/// the providers', which the core's tests do not name. This one stands in for
+/// a CLI. Its lines are shaped like Claude Code's, so a fixture still reads as
+/// a transcript, and it reads as little of them as those tests need: an
+/// `assistant` entry speaks the trimmed, non-empty text of its text blocks,
+/// and an entry's `usage` object is the tokens it used, field for field. What
+/// a real CLI counts as speech or as usage is pinned next to its reader.
+#[cfg(test)]
+pub(crate) mod test_reader {
+    use std::collections::BTreeMap;
+    use std::path::{Path, PathBuf};
+    use std::sync::Arc;
+
+    use futures_util::future::BoxFuture;
+    use serde_json::{Map, Value};
+
+    use super::{TokenUsage, TranscriptSources, Transcripts, UsageFold};
+    use crate::sessions::context::ContextUsage;
+    use crate::sessions::util::{num, TranscriptItem};
+    use crate::sessions::{CliChoice, SessionStatus, SessionSummary, Source};
+    use droppen_instance::paths::Paths;
+
+    /// The stand-in, answering for `source`.
+    pub(crate) struct TestReader(pub(crate) Source);
+
+    impl TestReader {
+        /// The readers a core test reads its rows through: this one, for the
+        /// claude rows the fixtures make.
+        pub(crate) fn sources() -> TranscriptSources {
+            let mut sources = TranscriptSources::default();
+            sources.register(Arc::new(TestReader(Source::Claude)));
+            sources
+        }
+    }
+
+    impl Transcripts for TestReader {
+        fn source(&self) -> Source {
+            self.0
+        }
+
+        fn list<'a>(&'a self, _paths: &'a Paths, _bindings: &'a BTreeMap<String, String>) -> BoxFuture<'a, Vec<SessionSummary>> {
+            Box::pin(std::future::ready(Vec::new()))
+        }
+
+        fn find<'a>(&'a self, _paths: &'a Paths, _id: &'a str) -> BoxFuture<'a, Option<SessionSummary>> {
+            Box::pin(std::future::ready(None))
+        }
+
+        fn parse<'a>(&'a self, _paths: &'a Paths, _file_path: &'a Path) -> BoxFuture<'a, std::io::Result<Vec<TranscriptItem>>> {
+            Box::pin(std::future::ready(Ok(Vec::new())))
+        }
+
+        fn cli_choice<'a>(&'a self, _file_path: &'a Path) -> BoxFuture<'a, Option<CliChoice>> {
+            Box::pin(std::future::ready(None))
+        }
+
+        fn context<'a>(&'a self, _file_path: &'a Path) -> BoxFuture<'a, Option<ContextUsage>> {
+            Box::pin(std::future::ready(None))
+        }
+
+        fn spoken_texts(&self, entry: &Map<String, Value>) -> Vec<String> {
+            if entry.get("type").and_then(Value::as_str) != Some("assistant") {
+                return Vec::new();
+            }
+            let blocks = entry.get("message").and_then(|message| message.get("content")).and_then(Value::as_array);
+            blocks
+                .into_iter()
+                .flatten()
+                .filter(|block| block.get("type").and_then(Value::as_str) == Some("text"))
+                .filter_map(|block| block.get("text").and_then(Value::as_str))
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+                .map(str::to_owned)
+                .collect()
+        }
+
+        fn external_reason(&self) -> String {
+            "this session was started elsewhere".to_string()
+        }
+
+        fn live_block(&self, _status: SessionStatus) -> Option<String> {
+            None
+        }
+
+        fn foreign_sessions(&self) -> bool {
+            false
+        }
+
+        fn on_owned<'a>(&'a self, _paths: &'a Paths, _id: &'a str) -> BoxFuture<'a, ()> {
+            Box::pin(std::future::ready(()))
+        }
+
+        fn watch_dirs<'a>(&'a self, _paths: &'a Paths) -> BoxFuture<'a, Vec<PathBuf>> {
+            Box::pin(std::future::ready(Vec::new()))
+        }
+
+        fn usage_fold(&self) -> Box<dyn UsageFold> {
+            Box::new(PlainUsage)
+        }
+    }
+
+    /// An entry's `usage` object: `date`, `model` and the four counts by
+    /// their [`TokenUsage`] names.
+    struct PlainUsage;
+
+    impl UsageFold for PlainUsage {
+        fn fold(&mut self, entry: &Map<String, Value>) -> Option<TokenUsage> {
+            let usage = entry.get("usage")?.as_object()?;
+            Some(TokenUsage {
+                date: usage.get("date")?.as_str()?.to_owned(),
+                model: usage.get("model")?.as_str()?.to_owned(),
+                input: num(usage.get("input")),
+                output: num(usage.get("output")),
+                cache_read: num(usage.get("cache_read")),
+                cache_write: num(usage.get("cache_write")),
+            })
+        }
+    }
+}

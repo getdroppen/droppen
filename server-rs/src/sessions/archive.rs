@@ -88,10 +88,6 @@ mod tests {
             ["one".to_string(), "two".to_string()].into_iter().collect(),
             "a repeat archive is a no-op, and earlier ids survive"
         );
-        assert!(
-            crate::sessions::claude::archived_ids(&paths).await.contains("two"),
-            "discovery asks the same table"
-        );
     }
 
     /// The bug this store moved for. Two archives used to read the same list,
@@ -114,10 +110,7 @@ mod tests {
         assert!(hidden.contains_key("two"), "and the second survived the first");
 
         // …and the session list agrees, because it reads the same rows.
-        assert_eq!(
-            crate::sessions::claude::archived_ids(&paths).await,
-            ["one".to_string(), "two".to_string()].into_iter().collect()
-        );
+        assert_eq!(archived_ids(&paths), ["one".to_string(), "two".to_string()].into_iter().collect());
     }
 
     #[tokio::test]

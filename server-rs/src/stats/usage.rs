@@ -680,8 +680,7 @@ impl TranscriptSources {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sessions::claude::ClaudeCodeSessions;
-    use crate::sessions::codex::CodexSessions;
+    use crate::sessions::sources::test_reader::TestReader;
     use serde_json::json;
 
     /// Fold a literal transcript the way `parse_file` folds a real one.
@@ -696,50 +695,33 @@ mod tests {
         rows.rows
     }
 
-    fn claude_rows(entries: Value) -> Vec<UsageRow> {
-        rows_of(&ClaudeCodeSessions, entries)
-    }
-
-    fn codex_rows(entries: Value) -> Vec<UsageRow> {
-        rows_of(&CodexSessions, entries)
-    }
-
+    /// The rows add each fold up by day, source and model, in the order they
+    /// were first seen. What one entry of a real CLI's transcript folds to is
+    /// pinned next to that CLI's reader.
     #[test]
-    fn claude_usage_sums_per_day_and_model_ignoring_non_usage_entries() {
-        let rows = claude_rows(json!([
-            {
-                "type": "assistant",
-                "timestamp": "2026-07-20T10:00:00.000Z",
-                "message": {
-                    "model": "claude-fable-5",
-                    "usage": { "input_tokens": 10, "output_tokens": 5, "cache_read_input_tokens": 100, "cache_creation_input_tokens": 20 }
-                }
-            },
-            {
-                "type": "assistant",
-                "timestamp": "2026-07-20T11:00:00.000Z",
-                "message": {
-                    "model": "claude-fable-5",
-                    "usage": { "input_tokens": 2, "output_tokens": 3, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0 }
-                }
-            },
-            // A different model on the same day is its own row.
-            {
-                "type": "assistant",
-                "timestamp": "2026-07-20T12:00:00.000Z",
-                "message": { "model": "claude-opus-4-8", "usage": { "input_tokens": 7, "output_tokens": 1 } }
-            },
-            // A user turn and a usage-less assistant entry are ignored.
-            { "type": "user", "timestamp": "2026-07-20T10:30:00.000Z", "message": { "content": "hi" } },
-            { "type": "assistant", "timestamp": "2026-07-20T13:00:00.000Z", "message": { "model": "claude-fable-5" } }
-        ]));
+    fn usage_sums_per_day_source_and_model() {
+        let rows = rows_of(
+            &TestReader(Source::Claude),
+            json!([
+                { "usage": { "date": "2026-07-20", "model": "claude-fable-5", "input": 10, "output": 5, "cache_read": 100, "cache_write": 20 } },
+                { "usage": { "date": "2026-07-20", "model": "claude-fable-5", "input": 2, "output": 3 } },
+                // A different model on the same day is its own row, and so is
+                // the same model on the next day.
+                { "usage": { "date": "2026-07-20", "model": "claude-opus-4-8", "input": 7, "output": 1 } },
+                { "usage": { "date": "2026-07-21", "model": "claude-fable-5", "input": 4 } },
+                // An entry the fold has nothing for adds nothing.
+                { "type": "user" }
+            ]),
+        );
 
-        assert_eq!(rows.len(), 2);
-        let fable = rows.iter().find(|row| row.model == "claude-fable-5").expect("fable row");
-        assert_eq!(fable.date, "2026-07-20");
-        assert_eq!(fable.source, Source::Claude);
+        let keys: Vec<(&str, &str)> = rows.iter().map(|row| (row.date.as_str(), row.model.as_str())).collect();
         assert_eq!(
-            fable.bucket,
+            keys,
+            [("2026-07-20", "claude-fable-5"), ("2026-07-20", "claude-opus-4-8"), ("2026-07-21", "claude-fable-5")]
+        );
+        assert!(rows.iter().all(|row| row.source == Source::Claude));
+        assert_eq!(
+            rows[0].bucket,
             Bucket {
                 input: 12.0,
                 output: 8.0,
@@ -747,95 +729,8 @@ mod tests {
                 cache_write: 20.0
             }
         );
-        let opus = rows.iter().find(|row| row.model == "claude-opus-4-8").expect("opus row");
-        assert_eq!(opus.bucket.input, 7.0);
-    }
-
-    #[test]
-    fn claude_usage_splits_the_same_model_across_calendar_days() {
-        let rows = claude_rows(json!([
-            { "type": "assistant", "timestamp": "2026-07-20T23:59:00.000Z", "message": { "model": "m", "usage": { "input_tokens": 1 } } },
-            { "type": "assistant", "timestamp": "2026-07-21T00:01:00.000Z", "message": { "model": "m", "usage": { "input_tokens": 4 } } }
-        ]));
-        let mut seen: Vec<(String, f64)> = rows.iter().map(|row| (row.date.clone(), row.bucket.input)).collect();
-        seen.sort_by(|a, b| a.0.cmp(&b.0));
-        assert_eq!(seen, vec![("2026-07-20".to_string(), 1.0), ("2026-07-21".to_string(), 4.0)]);
-    }
-
-    #[test]
-    fn a_usage_less_or_zero_total_assistant_entry_is_skipped() {
-        let rows = claude_rows(json!([
-            { "type": "assistant", "timestamp": "2026-07-20T10:00:00.000Z", "message": { "model": "m", "usage": { "input_tokens": 0 } } }
-        ]));
-        assert!(rows.is_empty(), "a zero-total delta adds nothing");
-    }
-
-    #[test]
-    fn an_entry_without_a_model_is_attributed_to_unknown() {
-        let rows = claude_rows(json!([
-            { "type": "assistant", "timestamp": "2026-07-20T10:00:00.000Z", "message": { "usage": { "input_tokens": 3 } } }
-        ]));
-        assert_eq!(rows[0].model, "unknown");
-    }
-
-    #[test]
-    fn codex_usage_counts_per_turn_deltas_and_attributes_the_active_model() {
-        let rows = codex_rows(json!([
-            { "type": "turn_context", "timestamp": "2026-07-22T02:00:00.000Z", "payload": { "model": "gpt-5.6-sol" } },
-            {
-                "type": "event_msg",
-                "timestamp": "2026-07-22T02:01:00.000Z",
-                "payload": {
-                    "type": "token_count",
-                    "info": {
-                        "total_token_usage": { "total_tokens": 9958 },
-                        "last_token_usage": { "input_tokens": 9865, "cached_input_tokens": 7552, "output_tokens": 93 }
-                    }
-                }
-            },
-            {
-                "type": "event_msg",
-                "timestamp": "2026-07-22T02:02:00.000Z",
-                "payload": {
-                    "type": "token_count",
-                    "info": {
-                        "total_token_usage": { "total_tokens": 22391 },
-                        "last_token_usage": { "input_tokens": 12395, "cached_input_tokens": 7552, "output_tokens": 38 }
-                    }
-                }
-            }
-        ]));
-
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].date, "2026-07-22");
-        assert_eq!(rows[0].source, Source::Codex);
-        assert_eq!(rows[0].model, "gpt-5.6-sol");
-        assert_eq!(
-            rows[0].bucket,
-            Bucket {
-                // fresh input = (9865-7552) + (12395-7552)
-                input: 7156.0,
-                output: 131.0,
-                cache_read: 15104.0,
-                cache_write: 0.0,
-            }
-        );
-    }
-
-    #[test]
-    fn codex_usage_ignores_duplicate_token_count_reports() {
-        let repeated = json!({
-            "type": "event_msg",
-            "timestamp": "2026-07-22T02:01:00.000Z",
-            "payload": {
-                "type": "token_count",
-                "info": { "total_token_usage": { "total_tokens": 100 }, "last_token_usage": { "input_tokens": 100, "output_tokens": 0 } }
-            }
-        });
-        let rows = codex_rows(json!([repeated, repeated]));
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].bucket.input, 100.0);
-        assert_eq!(rows[0].model, "codex", "the default until a turn_context is seen");
+        assert_eq!(rows[1].bucket.input, 7.0);
+        assert_eq!(rows[2].bucket.input, 4.0);
     }
 
     #[test]
@@ -912,20 +807,12 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("session.jsonl");
         let mut file = std::fs::File::create(&path).expect("create");
-        writeln!(
-            file,
-            r#"{{"type":"assistant","timestamp":"2026-07-20T10:00:00.000Z","message":{{"model":"m","usage":{{"input_tokens":1}}}}}}"#
-        )
-        .expect("write");
+        writeln!(file, r#"{{"usage":{{"date":"2026-07-20","model":"m","input":1}}}}"#).expect("write");
         file.write_all(b"{\"type\":\"assistant\",\"note\":\"\xff\"}\n").expect("write");
-        writeln!(
-            file,
-            r#"{{"type":"assistant","timestamp":"2026-07-20T11:00:00.000Z","message":{{"model":"m","usage":{{"input_tokens":4}}}}}}"#
-        )
-        .expect("write");
+        writeln!(file, r#"{{"usage":{{"date":"2026-07-20","model":"m","input":4}}}}"#).expect("write");
         drop(file);
 
-        let rows = parse_file(&path, &ClaudeCodeSessions).await.expect("parse");
+        let rows = parse_file(&path, &TestReader(Source::Claude)).await.expect("parse");
         let total: f64 = rows.iter().map(|row| row.bucket.input).sum();
         assert_eq!(total, 5.0, "the turns after the bad byte must still be counted");
     }

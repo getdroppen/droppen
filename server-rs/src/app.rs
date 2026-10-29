@@ -934,4 +934,104 @@ mod tests {
         let refused = InstanceLock::acquire(&dirs).expect_err("the instance is still claimed after serving");
         assert!(refused.to_string().contains(&format!("pid {}", std::process::id())), "by this process: {refused}");
     }
+
+    /// Whether a session can be sent to, through the readers registered here:
+    /// each CLI's refusals are its own reader's ([`TranscriptSources::sendability`]).
+    mod sendability {
+        use super::*;
+        use crate::sessions::{SessionScope, SessionStatus};
+
+        #[test]
+        fn a_live_claude_session_cannot_be_sent_to() {
+            let sources = crate::app::transcript_sources();
+            let owned = SessionScope::Owned;
+            assert!(sources.sendability(Source::Claude, owned, SessionStatus::Idle, false, false).0);
+            assert!(!sources.sendability(Source::Claude, owned, SessionStatus::Waiting, false, false).0);
+            assert!(sources.sendability(Source::Codex, owned, SessionStatus::Waiting, false, false).0);
+            assert!(!sources.sendability(Source::Codex, owned, SessionStatus::Running, false, false).0);
+        }
+
+        #[test]
+        fn an_in_flight_injection_outranks_every_other_verdict() {
+            let sources = crate::app::transcript_sources();
+            let (can_send, reason) = sources.sendability(Source::Codex, SessionScope::Owned, SessionStatus::Idle, true, false);
+            assert!(!can_send);
+            assert_eq!(reason.as_deref(), Some("a message from Droppen is still running"));
+        }
+
+        /// The two arms a resident lifts, and the one it does not.
+        ///
+        /// Both of the block arms below would fire for a healthy resident, and each
+        /// would be wrong in the same way: the busy CLI they are describing is this
+        /// server's own, taking messages in order. If either survived, a session
+        /// would answer its first message and refuse every one after it.
+        #[test]
+        fn a_resident_session_takes_messages_while_it_is_busy() {
+            let sources = crate::app::transcript_sources();
+            let owned = SessionScope::Owned;
+            assert!(
+                sources.sendability(Source::Claude, owned, SessionStatus::Idle, true, true).0,
+                "a turn in flight is queued behind, not refused"
+            );
+            assert!(
+                sources.sendability(Source::Claude, owned, SessionStatus::Waiting, false, true).0,
+                "the live claude the probe found is the resident this server started"
+            );
+            // Ownership is the one thing it does not lift.
+            assert!(!sources.sendability(Source::Claude, SessionScope::External, SessionStatus::Idle, false, true).0);
+        }
+
+        /// An idle, unlocked, perfectly healthy session this server did not make is
+        /// still not this server's to drive.
+        #[test]
+        fn somebody_elses_session_is_never_sendable() {
+            let sources = crate::app::transcript_sources();
+            for source in [Source::Claude, Source::Codex] {
+                let (can_send, reason) = sources.sendability(source, SessionScope::External, SessionStatus::Idle, false, false);
+                assert!(!can_send, "{source} external sessions are browse-only");
+                assert!(reason.is_some_and(|reason| !reason.is_empty()));
+            }
+            // And ownership is checked before the injection state, which cannot
+            // meaningfully exist for a session this server never started.
+            assert!(!sources.sendability(Source::Claude, SessionScope::External, SessionStatus::Idle, true, false).0);
+        }
+
+        /// Each CLI's refusals, word for word: the composer shows them as they are.
+        /// Every registered reader is checked, and the `match` makes a new source
+        /// say its words here before this compiles.
+        #[test]
+        fn every_source_refuses_in_its_own_words() {
+            type Live = fn(SessionStatus) -> Option<&'static str>;
+            let sources = crate::app::transcript_sources();
+            for reader in sources.iter() {
+                let source = reader.source();
+                let (external, live): (&str, Live) = match source {
+                    Source::Claude => (
+                        "this session was not started by this instance; continue it where it was started",
+                        |status| (status != SessionStatus::Idle).then_some("attached to a live local Claude Code process"),
+                    ),
+                    Source::Codex => (
+                        "this codex session was started elsewhere; continue it where it was started",
+                        |status| (status == SessionStatus::Running).then_some("session is currently running"),
+                    ),
+                    Source::Acp => ("this ACP session was started elsewhere; continue it where it was started", |_| None),
+                };
+                assert_eq!(
+                    sources.sendability(source, SessionScope::External, SessionStatus::Idle, false, false),
+                    (false, Some(external.to_string())),
+                    "{source}"
+                );
+                for status in [SessionStatus::Idle, SessionStatus::Running, SessionStatus::Waiting] {
+                    let expected = live(status).map_or((true, None), |reason| (false, Some(reason.to_string())));
+                    assert_eq!(sources.sendability(source, SessionScope::Owned, status, false, false), expected, "{source} {status:?}");
+                }
+            }
+            // A source with no reader lists no sessions, but its fallback wording
+            // still says what happened.
+            assert_eq!(
+                TranscriptSources::default().sendability(Source::Claude, SessionScope::External, SessionStatus::Idle, false, false),
+                (false, Some("this claude session was started elsewhere; continue it where it was started".to_string()))
+            );
+        }
+    }
 }
