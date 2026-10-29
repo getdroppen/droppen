@@ -17,6 +17,16 @@ use gotcha::Schematic;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
+// `substate!` and `inline_string_enum!` name these through `$crate`, so a
+// crate that calls the macros needs no dependency of its own on gotcha,
+// gotcha_core or serde_json for them.
+#[doc(hidden)]
+pub use gotcha;
+#[doc(hidden)]
+pub use gotcha_core;
+#[doc(hidden)]
+pub use serde_json;
+
 pub mod app_window;
 pub mod bridge;
 pub mod config;
@@ -217,12 +227,12 @@ pub fn hostname() -> String {
 #[macro_export]
 macro_rules! substate {
     ($t:ty) => {
-        impl<S: Clone + Send + Sync + 'static> ::gotcha::axum::extract::FromRef<::gotcha::GotchaContext<S, $crate::config::AppConfig>> for $t
+        impl<S: Clone + Send + Sync + 'static> $crate::gotcha::axum::extract::FromRef<$crate::gotcha::GotchaContext<S, $crate::config::AppConfig>> for $t
         where
-            $t: ::gotcha::axum::extract::FromRef<S>,
+            $t: $crate::gotcha::axum::extract::FromRef<S>,
         {
-            fn from_ref(context: &::gotcha::GotchaContext<S, $crate::config::AppConfig>) -> Self {
-                <$t as ::gotcha::axum::extract::FromRef<S>>::from_ref(&context.state)
+            fn from_ref(context: &$crate::gotcha::GotchaContext<S, $crate::config::AppConfig>) -> Self {
+                <$t as $crate::gotcha::axum::extract::FromRef<S>>::from_ref(&context.state)
             }
         }
     };

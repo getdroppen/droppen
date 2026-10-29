@@ -297,12 +297,24 @@ pub(crate) mod tests {
     }
 
     /// `--version` and `preflight` print the HTTP kit's version, which has to
-    /// be this binary's build and not the kit crate's own `0.1.0`.
+    /// be this binary's build and not the kit crate's own `0.1.0`, and in a git
+    /// checkout it names the commit, which self-update tells builds apart by.
     #[test]
     fn the_version_printed_is_the_servers_own() {
         assert_eq!(droppen_http::RUNTIME_VERSION, concat!("rust/", env!("CARGO_PKG_VERSION")));
         let rev = droppen_http::SERVER_VERSION.strip_prefix(env!("CARGO_PKG_VERSION")).expect("the server's version first");
-        assert!(rev.is_empty() || rev.starts_with("+g"), "{rev}");
+        // The build script asks git from this same checkout. A tree with no
+        // commit to name (a source tarball, a copy without `.git`) has no rev.
+        let checkout = std::process::Command::new("git")
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .args(["rev-parse", "--short", "HEAD"])
+            .output()
+            .is_ok_and(|out| out.status.success() && !out.stdout.trim_ascii().is_empty());
+        if checkout {
+            assert!(rev.starts_with("+g") && rev.len() > "+g".len(), "a build in a git checkout names its commit: {rev:?}");
+        } else {
+            assert!(rev.is_empty() || rev.starts_with("+g"), "{rev:?}");
+        }
     }
 
     fn kind(argv: &[&str]) -> ErrorKind {

@@ -838,7 +838,7 @@ pub struct Settings {
     pub node_version: String,
     /// Exactly which build this is: the crate version, plus the commit it was
     /// built from. A client that watches this can tell that the server it is
-    /// talking to has been replaced under it — see [`crate::selfupdate`].
+    /// talking to has been replaced under it — see `droppen_supervisor::selfupdate`.
     pub server_version: String,
     /// The home directory sessions are discovered under.
     pub home_dir: String,
