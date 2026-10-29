@@ -952,6 +952,7 @@ dependencies = [
  "objc2-service-management",
  "objc2-web-kit",
  "reqwest",
+ "rustls",
  "serde",
  "serde_json",
  "signal-hook",

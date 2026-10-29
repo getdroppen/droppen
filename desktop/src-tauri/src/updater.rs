@@ -306,7 +306,7 @@ fn updater<R: Runtime>(app: &AppHandle<R>) -> Result<tauri_plugin_updater::Updat
     let mut builder = app
         .updater_builder()
         .timeout(CHECK_TIMEOUT)
-        .configure_client(|client| client.connect_timeout(CONNECT_TIMEOUT).read_timeout(READ_TIMEOUT));
+        .configure_client(|client| client.for_updates());
     #[cfg(feature = "e2e")]
     if let Some(endpoint) = std::env::var(ENDPOINT_ENV).ok().and_then(|endpoint| url::Url::parse(&endpoint).ok()) {
         builder = builder.endpoints(vec![endpoint])?;
@@ -315,6 +315,23 @@ fn updater<R: Runtime>(app: &AppHandle<R>) -> Result<tauri_plugin_updater::Updat
         }
     }
     builder.build()
+}
+
+/// The client the updater's requests (the manifest, the archive, the
+/// release's notes) go out on.
+trait UpdateClientExt {
+    fn for_updates(self) -> Self;
+}
+
+impl UpdateClientExt for reqwest::ClientBuilder {
+    /// The time limits, and https only, every redirect included: the checks
+    /// on an address (the plugin's on the endpoint, `check_download_url` on
+    /// the archive) see only the first one, and reqwest follows a redirect
+    /// from https to http. A test build's manifest and archive are on a
+    /// loopback `http://` server.
+    fn for_updates(self) -> Self {
+        self.connect_timeout(CONNECT_TIMEOUT).read_timeout(READ_TIMEOUT).https_only(!cfg!(feature = "e2e"))
+    }
 }
 
 /// The public key the app verifies updates with.
@@ -332,7 +349,9 @@ pub fn problem(error: &tauri_plugin_updater::Error) -> Problem {
     use std::io::ErrorKind;
     use tauri_plugin_updater::Error as E;
     match error {
-        E::Reqwest(error) if error.is_status() || error.is_decode() => Problem::Service,
+        // A redirect the client refuses (to `http://`, or too many) is the
+        // service's doing.
+        E::Reqwest(error) if error.is_status() || error.is_decode() || error.is_redirect() => Problem::Service,
         E::Reqwest(_) => Problem::Offline,
         // The plugin's own words for a download answered with an error status.
         E::Network(message) if message.contains("status") => Problem::Service,
@@ -455,7 +474,7 @@ fn fetch_notes<R: Runtime>(app: AppHandle<R>, version: String) {
         };
         tauri::async_runtime::spawn(async move {
             let client = match reqwest::Client::builder()
-                .connect_timeout(CONNECT_TIMEOUT)
+                .for_updates()
                 .timeout(NOTES_TIMEOUT)
                 .user_agent(droppen_desktop_core::server::USER_AGENT)
                 .build()
@@ -915,5 +934,49 @@ mod tests {
         for (error, expected) in cases {
             assert_eq!(problem(&error), expected, "{error}");
         }
+    }
+
+    /// The built client, after the crypto provider the plugin installs before it builds its own.
+    fn client(builder: reqwest::ClientBuilder) -> reqwest::Client {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        builder.build().expect("the client")
+    }
+
+    // The client refuses an `http://` address without connecting to it.
+    // reqwest holds every redirect to the same `https_only`, so this is also
+    // what refuses a redirect from https to http. That redirect itself is not
+    // made here: it needs a loopback TLS server with a certificate the client
+    // trusts, a certificate generator or a committed private key.
+    #[cfg(not(feature = "e2e"))]
+    #[test]
+    fn the_updates_never_go_over_plain_http() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+        listener.set_nonblocking(true).expect("non-blocking");
+        let url = format!("http://{}/Droppen.app.tar.gz", listener.local_addr().expect("its address"));
+        let client = client(reqwest::Client::builder().for_updates());
+        let error = tauri::async_runtime::block_on(async { client.get(&url).send().await }).expect_err("http is refused");
+        assert!(error.is_builder(), "{error}");
+        assert_eq!(error.url().map(|refused| refused.as_str()), Some(url.as_str()));
+        let accepted = listener.accept().map(|_| ());
+        assert_eq!(accepted.map_err(|error| error.kind()), Err(std::io::ErrorKind::WouldBlock), "nothing connected");
+    }
+
+    #[test]
+    fn a_refused_redirect_is_the_services_failure() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+        let url = format!("http://{}/", listener.local_addr().expect("its address"));
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("the request");
+            let _ = stream.read(&mut [0; 4096]);
+            stream
+                .write_all(b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:1/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .expect("the redirect");
+        });
+        let client = client(reqwest::Client::builder().redirect(reqwest::redirect::Policy::custom(|attempt| attempt.error("refused"))));
+        let error = tauri::async_runtime::block_on(async { client.get(&url).send().await }).expect_err("the redirect is refused");
+        server.join().expect("the server");
+        assert!(error.is_redirect(), "{error}");
+        assert_eq!(problem(&E::Reqwest(error)), Problem::Service);
     }
 }
