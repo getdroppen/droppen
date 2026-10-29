@@ -424,12 +424,6 @@
       ]
     },
     {
-      "why": "inject resolves a run's attachments with files' upload guard (FileRoots). It goes when the send routes in drive, which may use files, resolve them before they reach the provider.",
-      "edges": [
-        "inject -> files"
-      ]
-    },
-    {
       "why": "The session-list socket reads the plugin host's status once per socket, for a local client's opening settings frame; live plugins frames arrive through the GlobalFeed broadcast. It goes when the feed takes that one reading through a port the entry fills.",
       "edges": [
         "feed -> plugins"
