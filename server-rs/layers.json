@@ -373,8 +373,6 @@
         "accounts -> accounts::local_login",
         "accounts -> accounts::quota::codex",
         "accounts -> accounts::quota::readings",
-        "accounts -> accounts::setup_token",
-        "accounts -> accounts::usage_login",
         "accounts -> claude_roots",
         "setup -> accounts::quota::codex",
         "setup -> claude_roots"
