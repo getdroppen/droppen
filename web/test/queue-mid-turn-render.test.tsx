@@ -18,7 +18,7 @@ import { I18nextProvider } from "react-i18next";
 import { renderToStaticMarkup } from "react-dom/server";
 import { zhCN } from "../src/i18n/zh-CN.js";
 import { StatusBadge } from "../src/features/sessions/sessions-layout.js";
-import { ActivityBar } from "../src/features/sessions/session-detail.js";
+import { ActivityBar } from "../src/features/sessions/activity-bar.js";
 import { ServerQueueList, noticeInForce, type QueueNotice } from "../src/features/sessions/server-queue.js";
 import { DeliveryPreviews } from "../src/features/sessions/delivery-preview-view.js";
 import {

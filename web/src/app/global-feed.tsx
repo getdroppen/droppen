@@ -22,7 +22,7 @@ import type { PluginStatus } from "@/plugins/types";
 /**
  * A machine's one websocket — its session list, and every session feed riding
  * on it (`feed-hub.ts`). Started and stopped by that machine's
- * {@link GlobalFeedProvider}; `session-detail.tsx` opens its feeds' channels on
+ * {@link GlobalFeedProvider}; `use-session-feed.ts` opens its feeds' channels on
  * it. Each attempt goes through whatever the machine's transport is at the time
  * (`lib/machines`).
  */
