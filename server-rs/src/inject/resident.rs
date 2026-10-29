@@ -6037,8 +6037,7 @@ async fn newest_write(dir: &Path) -> Option<SystemTime> {
 fn user_line(text: &str) -> String {
     StdinLine::User {
         message: UserMessage {
-            role: "user",
-            content: [TextBlock { kind: "text", text }],
+            content: [TextBlock { text }],
         },
     }
     .line()
@@ -6057,16 +6056,15 @@ enum StdinLine<'a> {
 
 /// A user message with one text block.
 #[derive(serde::Serialize)]
+#[serde(tag = "role", rename = "user")]
 struct UserMessage<'a> {
-    role: &'static str,
     content: [TextBlock<'a>; 1],
 }
 
 /// One text block of a message.
 #[derive(serde::Serialize)]
+#[serde(tag = "type", rename = "text")]
 struct TextBlock<'a> {
-    #[serde(rename = "type")]
-    kind: &'static str,
     text: &'a str,
 }
 
@@ -6083,8 +6081,9 @@ enum ControlRequest<'a> {
 impl StdinLine<'_> {
     /// The line, without its newline.
     fn line(&self) -> String {
-        // Strings only: always encodes.
-        serde_json::to_string(self).unwrap_or_default()
+        // Strings only. An empty line would be a prompt or a stop claude
+        // never got.
+        serde_json::to_string(self).expect("stdin lines encode")
     }
 }
 
