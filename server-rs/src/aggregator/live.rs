@@ -334,7 +334,20 @@ impl Ended {
 
 /// `copy_error` for subscription `s`.
 pub fn error_frame(s: u32, code: &str, message: &str) -> String {
-    serde_json::json!({"t": "copy_error", "s": s, "code": code, "message": message}).to_string()
+    let frame = CopyFrame::CopyError {
+        s,
+        code: code.to_owned(),
+        message: message.to_owned(),
+    };
+    serde_json::to_string(&frame).expect("gateway frames encode")
+}
+
+/// What this module tells a gateway page of a subscription, tagged `t`.
+#[derive(Serialize)]
+#[serde(tag = "t", rename_all = "snake_case")]
+enum CopyFrame {
+    /// A subscription that cannot be, or no longer is.
+    CopyError { s: u32, code: String, message: String },
 }
 
 fn missing_frame(s: u32) -> String {

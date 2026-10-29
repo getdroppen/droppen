@@ -41,7 +41,8 @@ use gotcha::axum::extract::ws::{CloseFrame, Message, WebSocket};
 use gotcha::axum::response::{IntoResponse, Response};
 use gotcha::axum::extract::FromRef;
 use gotcha::{GotchaRouter, State, WebSocketUpgrade};
-use serde_json::{json, Value};
+use serde::Serialize;
+use serde_json::Value;
 
 use crate::aggregator::live::{error_frame, DirHost, Key, LiveCopies, Outbox, Subscription};
 use crate::aggregator::store::Kind;
@@ -162,7 +163,25 @@ fn parse(text: &str) -> Ask {
 }
 
 fn dir_frame(dir: &[DirHost]) -> String {
-    json!({"t": "dir", "machines": dir}).to_string()
+    GatewayFrame::Dir { machines: dir.to_vec() }.encode()
+}
+
+/// What the gateway itself tells a page, tagged `t`.
+#[derive(Serialize)]
+#[serde(tag = "t", rename_all = "snake_case")]
+enum GatewayFrame {
+    /// Every device this computer shows.
+    Dir { machines: Vec<DirHost> },
+    /// Why the page may no longer see other devices, before it is closed.
+    Bye { code: String, message: String },
+    /// An `open` this gateway does not do, under the page's own `p`.
+    Refused { p: Value, code: &'static str, message: &'static str },
+}
+
+impl GatewayFrame {
+    fn encode(&self) -> String {
+        serde_json::to_string(self).expect("gateway frames encode")
+    }
 }
 
 fn bad_message(code: &str) -> &'static str {
@@ -317,7 +336,7 @@ async fn run(socket: WebSocket, state: CloudState, user: String, who: MaybeIdent
         tracing::info!(%user, %error, "gateway: the page may no longer see other devices; closing it");
         let _ = send(
             &mut sink,
-            Message::Text(json!({"t": "bye", "code": error, "message": message}).to_string().into()),
+            Message::Text(GatewayFrame::Bye { code: error.clone(), message }.encode().into()),
             &state.cancel,
         )
         .await;
@@ -347,8 +366,12 @@ fn handle(ask: Ask, live: &Arc<LiveCopies>, out: &Arc<Outbox>, subs: &mut HashMa
         Ask::Ping => Some(r#"{"t":"pong"}"#.into()),
         Ask::Ignore => None,
         Ask::Open { p } => Some(
-            json!({"t": "refused", "p": p, "code": "unsupported", "message": "this device shows other devices' copies only, read-only; using them live comes later"})
-                .to_string(),
+            GatewayFrame::Refused {
+                p,
+                code: "unsupported",
+                message: "this device shows other devices' copies only, read-only; using them live comes later",
+            }
+            .encode(),
         ),
         Ask::Unsub { s } => {
             subs.remove(&s);
@@ -394,6 +417,7 @@ fn ended_message(ended: crate::aggregator::live::Ended) -> &'static str {
 #[cfg(test)]
 mod tests {
     use futures_util::SinkExt;
+    use serde_json::json;
 
     use super::*;
 
