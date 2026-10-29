@@ -39,20 +39,20 @@ const MAX_OUTPUT_LIMIT: usize = 16 * 1024 * 1024;
 const MAX_TERMINALS: usize = 32;
 
 /// JSON-RPC's codes for the refusals below, and ACP's for a missing resource.
-const METHOD_NOT_FOUND: i64 = -32601;
-const INVALID_PARAMS: i64 = -32602;
-const INTERNAL_ERROR: i64 = -32603;
-const RESOURCE_NOT_FOUND: i64 = -32002;
+const METHOD_NOT_FOUND: i32 = -32601;
+const INVALID_PARAMS: i32 = -32602;
+const INTERNAL_ERROR: i32 = -32603;
+const RESOURCE_NOT_FOUND: i32 = -32002;
 
 /// A refusal, as a JSON-RPC error carries it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Error {
-    pub(super) code: i64,
+    pub(super) code: i32,
     pub(super) message: String,
 }
 
 impl Error {
-    fn new(code: i64, message: impl Into<String>) -> Self {
+    fn new(code: i32, message: impl Into<String>) -> Self {
         Self {
             code,
             message: message.into(),
@@ -403,6 +403,44 @@ mod tests {
         client.handle("terminal/wait_for_exit", json!({"terminalId": id})).await.expect("exited");
         let output = client.handle("terminal/output", json!({"terminalId": id})).await.expect("output");
         assert_eq!((output["output"].as_str(), output["truncated"].as_bool()), (Some("ghij"), Some(true)));
+    }
+
+    /// Each answer as the agent reads it, byte for byte: what it is sent
+    /// back, `null`s included.
+    #[tokio::test]
+    async fn each_answer_in_its_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("notes.txt");
+        let client = client(dir.path());
+        let ask = |method: &'static str, params: Value| {
+            let client = client.clone();
+            async move { client.handle(method, params).await.expect(method).to_string() }
+        };
+        let written = ask("fs/write_text_file", json!({"sessionId": "s", "path": file, "content": "one\ntwo\n"})).await;
+        assert_eq!(written, "{}");
+        let read = ask("fs/read_text_file", json!({"sessionId": "s", "path": file, "line": 2})).await;
+        assert_eq!(read, r#"{"content":"two\n"}"#);
+        let created = ask("terminal/create", json!({"command": "/bin/sh", "args": ["-c", "printf done; exit 3"]})).await;
+        assert_eq!(created, r#"{"terminalId":"term-1"}"#);
+        let exited = ask("terminal/wait_for_exit", json!({"terminalId": "term-1"})).await;
+        assert_eq!(exited, r#"{"exitCode":3,"signal":null}"#);
+        let output = ask("terminal/output", json!({"terminalId": "term-1"})).await;
+        assert_eq!(output, r#"{"output":"done","truncated":false,"exitStatus":{"exitCode":3,"signal":null}}"#);
+        assert_eq!(ask("terminal/kill", json!({"terminalId": "term-1"})).await, "{}");
+        assert_eq!(ask("terminal/release", json!({"terminalId": "term-1"})).await, "{}");
+
+        let running = ask("terminal/create", json!({"command": "/bin/sh", "args": ["-c", "sleep 30"]})).await;
+        assert_eq!(running, r#"{"terminalId":"term-2"}"#);
+        let early = ask("terminal/output", json!({"terminalId": "term-2"})).await;
+        assert_eq!(early, r#"{"output":"","truncated":false,"exitStatus":null}"#);
+        assert_eq!(ask("terminal/kill", json!({"terminalId": "term-2"})).await, "{}");
+        let killed = ask("terminal/wait_for_exit", json!({"terminalId": "term-2"})).await;
+        assert_eq!(killed, r#"{"exitCode":null,"signal":"SIGKILL"}"#);
+
+        let permission = ask("session/request_permission", json!({})).await;
+        assert_eq!(permission, r#"{"outcome":{"outcome":"cancelled"}}"#);
+        let refused = client.handle("nope", json!({})).await.unwrap_err();
+        assert_eq!((refused.code, refused.message.as_str()), (METHOD_NOT_FOUND, "nope is not supported by Droppen"));
     }
 
     #[tokio::test]

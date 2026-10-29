@@ -1,13 +1,12 @@
 //! The part of the [Agent Client Protocol](https://agentclientprotocol.com)
-//! this server speaks, as Rust types.
+//! this server reads, as Rust types.
 //!
-//! Defined here rather than taken from the official schema crate on purpose:
-//! that crate turns on `serde_json`'s `preserve_order`, and Cargo features
-//! apply to the whole build, so depending on it would change the key order of
-//! every JSON document this server writes — the API contract and every
-//! fingerprint taken over a re-serialized `Value` included.
+//! What [`crate::inject::acp`] sends is the official schema crate's
+//! (`agent_client_protocol_schema`). What it reads is defined here, because
+//! the crate's tagged enums have no fallback: one update kind, content block
+//! or stop reason newer than the crate would fail the whole message.
 //!
-//! Only what [`crate::inject::acp`] sends or reads is here, and reading is
+//! Only what [`crate::inject::acp`] reads is here, and reading is
 //! lenient the way ACP asks clients to be: an update kind, content block,
 //! tool kind or stop reason this build does not know is kept as `Other`
 //! rather than failing the message, and unknown fields are ignored.
@@ -16,9 +15,6 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 use serde_json::{Map, Value};
-
-/// The protocol version this client speaks.
-pub const PROTOCOL_VERSION: u64 = 1;
 
 /// `session/update`: something an agent says about a session.
 #[derive(Debug, Clone, Deserialize)]
