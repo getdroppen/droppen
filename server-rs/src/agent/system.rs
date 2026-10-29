@@ -40,7 +40,7 @@ fn os_release(text: &str, key: &str) -> Option<String> {
 }
 
 /// The system `os` (Rust's name for it) on `arch`, reading files with `read`.
-fn detect(os: &str, arch: &str, read: impl Fn(&str) -> Option<String>) -> Value {
+pub(crate) fn detect(os: &str, arch: &str, read: impl Fn(&str) -> Option<String>) -> Value {
     match os {
         "macos" => {
             let version = read("/System/Library/CoreServices/SystemVersion.plist").and_then(|t| plist_string(&t, "ProductVersion"));
@@ -88,5 +88,26 @@ mod tests {
         assert_eq!(os_release(&long, "VERSION_ID").unwrap().len(), MAX_FIELD);
         assert_eq!(os_release("VERSION_ID=\"\"", "VERSION_ID"), None);
         assert!(os()["name"].is_string());
+    }
+
+    /// The exact bytes each system writes into the status, which its
+    /// fingerprint covers: `distro` only on Linux, and `null` there when
+    /// os-release names no `ID`.
+    #[test]
+    fn each_system_writes_the_same_bytes() {
+        let bytes = |os: &str, arch: &str, file: Option<&str>| serde_json::to_string(&detect(os, arch, |_| file.map(str::to_string))).unwrap();
+        let plist = "<key>ProductVersion</key><string>15.3.1</string>";
+        assert_eq!(bytes("macos", "aarch64", Some(plist)), r#"{"name":"macos","version":"15.3.1","arch":"aarch64"}"#);
+        assert_eq!(bytes("macos", "x86_64", None), r#"{"name":"macos","version":null,"arch":"x86_64"}"#);
+        assert_eq!(
+            bytes("linux", "x86_64", Some("VERSION_ID=\"24.04\"\nID=ubuntu\n")),
+            r#"{"name":"linux","version":"24.04","distro":"ubuntu","arch":"x86_64"}"#
+        );
+        assert_eq!(
+            bytes("linux", "aarch64", Some("VERSION_ID=12\n")),
+            r#"{"name":"linux","version":"12","distro":null,"arch":"aarch64"}"#
+        );
+        assert_eq!(bytes("linux", "x86_64", None), r#"{"name":"linux","version":null,"distro":null,"arch":"x86_64"}"#);
+        assert_eq!(bytes("freebsd", "x86_64", Some("ID=freebsd\n")), r#"{"name":"freebsd","version":null,"arch":"x86_64"}"#);
     }
 }

@@ -864,3 +864,235 @@ mod tests {
         assert_ne!(status_fingerprint(&with), status_fingerprint(&body), "a new alarm is a new record");
     }
 }
+
+/// Today's status bodies, byte for byte, with their fingerprints: the status
+/// stream writes a new record whenever the fingerprint moves, so a change to
+/// how the body is built must leave both alone.
+#[cfg(test)]
+mod status_pins {
+    use super::*;
+    use crate::agent::state::{Alarm, Controller, Controllers};
+    use serde_json::json;
+    use sha2::{Digest, Sha256};
+
+    const AGENT: &str = "0.2.134";
+    const OS_RELEASE: &str = "NAME=\"Ubuntu\"\nVERSION_ID=\"24.04\"\nID=ubuntu\n";
+
+    fn sha(bytes: &[u8]) -> String {
+        Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    fn text(bytes: &[u8]) -> &str {
+        std::str::from_utf8(bytes).unwrap()
+    }
+
+    /// Nothing known: no name, no epoch, no CLI versions, no chain yet.
+    fn minimal() -> Vec<u8> {
+        let os = crate::agent::system::detect("macos", "aarch64", |_| None);
+        status_body(1, None, None, None, None, None, Value::Null)
+            .with_system(&os, AGENT)
+            .with_alarms(&[])
+            .with_changes(&[])
+            .with_controllers(None)
+    }
+
+    /// The `/api/accounts` answer the full fixture digests: credentials,
+    /// rests and a malformed entry the digest must not carry or choke on.
+    fn accounts() -> Value {
+        json!({
+            "accounts": [
+                {"id": "a1", "label": "work", "kind": "oauth", "provider": "anthropic", "email": "w@example.com",
+                 "usageEnabled": true, "rotation": true, "token": "SECRET-TOKEN", "secretSha256": "SECRET-HASH",
+                 "envKeys": ["ANTHROPIC_API_KEY"], "rest": [{"scope": "all", "reason": "weekly limit"}],
+                 "createdAt": "2026-10-01T00:00:00.000Z"},
+                {"id": "a2", "kind": "env", "provider": "openai"},
+                "not an account"
+            ],
+            "defaultAccountId": "a1",
+            "local": {
+                "claude": {"state": "signed_in", "isDefault": false, "email": "me@example.com",
+                           "rest": [{"scope": "all", "reason": "OAuth session expired"}]},
+                "codex": null
+            }
+        })
+    }
+
+    fn alarms() -> [Alarm; 1] {
+        [Alarm {
+            at_ms: 4,
+            what: "the hub served a device chain that conflicts with this device's".into(),
+        }]
+    }
+
+    fn changes() -> [Alarm; 2] {
+        [
+            Alarm {
+                at_ms: 7,
+                what: "device m-2 (runs AI) was added by d-1".into(),
+            },
+            Alarm {
+                at_ms: 9,
+                what: "device d-3 was removed by d-1".into(),
+            },
+        ]
+    }
+
+    fn controllers() -> Controllers {
+        Controllers {
+            from: 2,
+            from_ms: 1_000,
+            seq: 9,
+            devices: vec![Controller {
+                id: "d-1".into(),
+                first_ms: 2_000,
+            }],
+        }
+    }
+
+    /// Every field set, as a linked machine with a chain writes it.
+    fn full(settings: Value, quota: Value) -> Vec<u8> {
+        let os = crate::agent::system::detect("linux", "x86_64", |_| Some(OS_RELEASE.into()));
+        let cli = json!({"claude": "2.1.3 (Claude Code)", "codex": null});
+        status_body(1_761_700_000_000, Some("studio".into()), Some(3), Some(settings), Some(accounts()), Some(quota), cli)
+            .with_system(&os, AGENT)
+            .with_alarms(&alarms())
+            .with_changes(&changes())
+            .with_controllers(Some(&controllers()))
+    }
+
+    fn settings() -> Value {
+        json!({"hostname": "studio", "platform": "linux", "serverVersion": "0.2.134",
+               "plugins": [{"id": "tasks", "switchedOn": true}], "load": 0.1, "note": "é \"quoted\"\n"})
+    }
+
+    fn quota() -> Value {
+        json!({"claude": {"windows": [{"label": "5h", "usedPercent": 12.5, "resetsAt": "2026-10-29T10:00:00.000Z"}], "plan": "max"},
+               "codex": null})
+    }
+
+    /// A body whose head (what the budget is measured on) is `under` bytes
+    /// short of [`BODY_BUDGET`], with `alarms` added after.
+    fn near_budget(under: usize, alarms: &[Alarm]) -> (usize, Vec<u8>) {
+        let os = crate::agent::system::detect("linux", "x86_64", |_| Some(OS_RELEASE.into()));
+        let head = |note: usize| {
+            let mut settings = settings();
+            settings["note"] = json!("s".repeat(note));
+            let cli = json!({"claude": "2.1.3 (Claude Code)", "codex": null});
+            status_body(9, Some("studio".into()), Some(3), Some(settings), Some(accounts()), Some(quota()), cli)
+        };
+        let note = BODY_BUDGET - under - head(0).len();
+        let len = head(note).len();
+        (len, head(note).with_system(&os, AGENT).with_alarms(alarms).with_controllers(Some(&controllers())))
+    }
+
+    #[test]
+    fn a_body_with_nothing_known() {
+        let body = minimal();
+        assert_eq!(
+            text(&body),
+            r#"{"asOf":1,"displayName":null,"mkEpoch":null,"settings":null,"accounts":null,"quota":null,"cli":null,"os":{"name":"macos","version":null,"arch":"aarch64"},"agentVersion":"0.2.134","controllers":null}"#
+        );
+        assert_eq!(status_fingerprint(&body), "9cdc04650e2700c0d1df7a0c0ea2f9be");
+    }
+
+    #[test]
+    fn a_body_with_every_field_and_no_credential() {
+        let body = full(settings(), quota());
+        assert_eq!(
+            text(&body),
+            concat!(
+                r#"{"asOf":1761700000000,"displayName":"studio","mkEpoch":3,"#,
+                r#""settings":{"hostname":"studio","platform":"linux","serverVersion":"0.2.134","plugins":[{"id":"tasks","switchedOn":true}],"load":0.1,"note":"é \"quoted\"\n"},"#,
+                r#""accounts":{"accounts":[{"id":"a1","label":"work","kind":"oauth","provider":"anthropic","email":"w@example.com","usageEnabled":true,"rotation":true},"#,
+                r#"{"id":"a2","label":null,"kind":"env","provider":"openai","email":null,"usageEnabled":null,"rotation":null},"#,
+                r#"{"id":null,"label":null,"kind":null,"provider":null,"email":null,"usageEnabled":null,"rotation":null}],"#,
+                r#""defaultAccountId":"a1","defaultCodexAccountId":null,"local":{"claude":{"state":"signed_in","isDefault":false},"codex":null}},"#,
+                r#""quota":{"claude":{"windows":[{"label":"5h","usedPercent":12.5,"resetsAt":"2026-10-29T10:00:00.000Z"}],"plan":"max"},"codex":null},"#,
+                r#""cli":{"claude":"2.1.3 (Claude Code)","codex":null},"#,
+                r#""os":{"name":"linux","version":"24.04","distro":"ubuntu","arch":"x86_64"},"agentVersion":"0.2.134","#,
+                r#""alarms":[{"atMs":4,"what":"the hub served a device chain that conflicts with this device's"}],"#,
+                r#""changes":[{"atMs":7,"what":"device m-2 (runs AI) was added by d-1"},{"atMs":9,"what":"device d-3 was removed by d-1"}],"#,
+                r#""controllers":{"from":2,"fromMs":1000,"seq":9,"devices":[{"id":"d-1","firstMs":2000}]}}"#,
+            )
+        );
+        assert_eq!(status_fingerprint(&body), "8a6cbd4466e55af3e5a60c556785087c");
+        for secret in ["SECRET", "ANTHROPIC_API_KEY", "envKeys", "weekly limit", "OAuth session expired", "me@example.com", "createdAt"] {
+            assert!(!text(&body).contains(secret), "{secret}");
+        }
+    }
+
+    #[test]
+    fn a_quota_over_the_budget_is_left_out() {
+        let body = full(settings(), json!({"claude": {"note": "q".repeat(BODY_BUDGET)}}));
+        assert_eq!(
+            text(&body),
+            concat!(
+                r#"{"asOf":1761700000000,"displayName":"studio","mkEpoch":3,"#,
+                r#""settings":{"hostname":"studio","platform":"linux","serverVersion":"0.2.134","plugins":[{"id":"tasks","switchedOn":true}],"load":0.1,"note":"é \"quoted\"\n"},"#,
+                r#""accounts":{"accounts":[{"id":"a1","label":"work","kind":"oauth","provider":"anthropic","email":"w@example.com","usageEnabled":true,"rotation":true},"#,
+                r#"{"id":"a2","label":null,"kind":"env","provider":"openai","email":null,"usageEnabled":null,"rotation":null},"#,
+                r#"{"id":null,"label":null,"kind":null,"provider":null,"email":null,"usageEnabled":null,"rotation":null}],"#,
+                r#""defaultAccountId":"a1","defaultCodexAccountId":null,"local":{"claude":{"state":"signed_in","isDefault":false},"codex":null}},"#,
+                r#""quota":null,"#,
+                r#""cli":{"claude":"2.1.3 (Claude Code)","codex":null},"#,
+                r#""os":{"name":"linux","version":"24.04","distro":"ubuntu","arch":"x86_64"},"agentVersion":"0.2.134","#,
+                r#""alarms":[{"atMs":4,"what":"the hub served a device chain that conflicts with this device's"}],"#,
+                r#""changes":[{"atMs":7,"what":"device m-2 (runs AI) was added by d-1"},{"atMs":9,"what":"device d-3 was removed by d-1"}],"#,
+                r#""controllers":{"from":2,"fromMs":1000,"seq":9,"devices":[{"id":"d-1","firstMs":2000}]}}"#,
+            )
+        );
+        assert_eq!(status_fingerprint(&body), "b907b9b11e3a05b0724d34374544b764");
+    }
+
+    /// Over the budget without the quota too: the accounts go as well.
+    #[test]
+    fn accounts_over_the_budget_go_after_the_quota() {
+        let mut accounts = accounts();
+        accounts["accounts"][1]["label"] = json!("l".repeat(2_000));
+        let mut settings = settings();
+        settings["note"] = json!("s".repeat(BODY_BUDGET - 1_000));
+        let os = crate::agent::system::detect("linux", "x86_64", |_| Some(OS_RELEASE.into()));
+        let cli = json!({"claude": "2.1.3 (Claude Code)", "codex": null});
+        let body = status_body(9, Some("studio".into()), Some(3), Some(settings), Some(accounts), Some(quota()), cli)
+            .with_system(&os, AGENT)
+            .with_controllers(Some(&controllers()));
+        let v: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!((v["quota"].is_null(), v["accounts"].is_null()), (true, true));
+        assert_eq!(
+            (body.len(), sha(&body).as_str(), status_fingerprint(&body).as_str()),
+            (59_456, "4388154ae7ac05a6ee1fbf23103d9b94343cdfa6c5fbb3e08233d9059bbedc25", "88d900500dde7d30cb2d330a1e48ed26")
+        );
+    }
+
+    /// The budget is measured on the head alone: what the system, the alarms,
+    /// the changes and the controllers add after it may take the body past
+    /// [`BODY_BUDGET`] without costing the quota or the accounts.
+    #[test]
+    fn the_budget_is_measured_before_the_system_and_the_alarms() {
+        let alarms: Vec<Alarm> = (0..5).map(|i| Alarm { at_ms: i, what: "a".repeat(200) }).collect();
+        let (head, body) = near_budget(40, &alarms);
+        assert!(head <= BODY_BUDGET && body.len() > BODY_BUDGET, "{head} {}", body.len());
+        let v: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!((v["quota"]["claude"]["plan"].as_str(), v["accounts"]["defaultAccountId"].as_str()), (Some("max"), Some("a1")));
+        assert_eq!(
+            (body.len(), sha(&body).as_str(), status_fingerprint(&body).as_str()),
+            (61_262, "569b1357a399cd6f2812bbabef0776241e3d457952b2b0685eab60060a45d9d9", "baf957ef260af6950017edc65111d451")
+        );
+    }
+
+    /// An item no halving brings under the limit is replaced by a stand-in
+    /// that keeps its role, kind and time.
+    #[test]
+    fn an_item_too_big_to_cut_becomes_a_stand_in() {
+        let numbers: Vec<u32> = (0..400).collect();
+        let item = json!({"role": "assistant", "kind": "tool_result", "text": "short", "detail": numbers, "timestamp": "2026-10-29T05:00:00.000Z"});
+        assert_eq!(
+            serde_json::to_string(&fit_item(item, 200)).unwrap(),
+            r#"{"role":"assistant","kind":"tool_result","text":"[too large for the offline copy]","detail":null,"toolName":null,"meta":null,"isError":false,"question":null,"timestamp":"2026-10-29T05:00:00.000Z","truncated":true,"rhOfflineTruncated":true}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&fit_item(json!(numbers), 200)).unwrap(),
+            r#"{"role":"system","kind":"text","text":"[too large for the offline copy]","detail":null,"toolName":null,"meta":null,"isError":false,"question":null,"timestamp":null,"truncated":true,"rhOfflineTruncated":true}"#
+        );
+    }
+}
