@@ -88,7 +88,10 @@ use super::shim::{self, Link, Output, Sidecars, Spawn};
 use super::common::{busy_message, new_uuid, AnswerOutcome, Phase, QueueOutcome, Reply, ResidentState, StopTaskOutcome};
 use super::drafts::Draft;
 use super::gate::{ClaimError, SessionLease};
-use super::{runs, Capabilities, DriverStatesBuilder, InjectError, InjectionRegistry, Provider, Run, RunEntry, RunState, SendTo, Sent, SpawnDeps, SpawnPermit, StartAt};
+use super::{runs, Capabilities, DriverStatesBuilder, InjectError, InjectionRegistry, Provider, Run, RunEntry, RunState, SendTo, Sent, SpawnPermit, StartAt};
+use spawn::SpawnDeps;
+
+mod spawn;
 
 /// The mode flags every resident is started with.
 ///
@@ -8473,7 +8476,7 @@ done
         let harness = Harness::ordinary().await;
         let paths = &harness.registry.paths;
         std::fs::write(paths.uploads_dir(), b"not a directory").unwrap();
-        let recipe = crate::inject::claude_recipe(paths, harness.bin.to_str(), &Default::default(), Env::new(), Default::default());
+        let recipe = super::spawn::claude_recipe(paths, harness.bin.to_str(), &Default::default(), Env::new(), Default::default());
         let recorder = harness.registry.recorders.open(SESSION);
         let permit = harness.registry.spawn_gate.empty_lease().respawn_permit();
         let result = harness.registry.spawn_link(&permit, SESSION, &recipe, Selector::Fresh, None, &[], &recorder).await;
@@ -8494,7 +8497,7 @@ done
         );
         harness.plan_claude(&script);
         let make_recipe = |options: &crate::inject::SendOptions| {
-            crate::inject::claude_recipe(
+            super::spawn::claude_recipe(
                 &harness.registry.paths,
                 harness.bin.to_str(),
                 options,
@@ -8526,7 +8529,7 @@ done
         .into_iter()
         .enumerate()
         {
-            let text = crate::inject::with_claude_attachments("next message", &options);
+            let text = super::spawn::with_claude_attachments("next message", &options);
             harness.send_with(&text, make_recipe(&options));
             until("the same process to receive the next message", || {
                 harness.after().len() == i + 2 && harness.state().phase == Phase::Idle

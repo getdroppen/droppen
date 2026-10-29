@@ -358,7 +358,6 @@
       "why": "inject and models name each implementation: the registry starts them, models asks each for its list. They go when each provider registers itself from the entry (ClaudeCode::register, Codex::register, Acp::register) and brings its own model list.",
       "edges": [
         "inject -> acp",
-        "inject -> claude_roots",
         "inject -> inject::acp",
         "inject -> inject::app_server",
         "inject -> inject::resident",
