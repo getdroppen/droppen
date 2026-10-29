@@ -56,7 +56,7 @@ mod lapse;
 mod local;
 mod mail;
 
-pub use connection::{enabled, start, LinkEnv, Running};
+pub use connection::{enabled, start, LinkEnv, LinkHost, Running};
 #[cfg(test)]
 pub(super) use connection::run;
 #[cfg(test)]
@@ -84,6 +84,8 @@ pub(super) struct Shared {
     pub(super) paths: Paths,
     /// This instance's agent files, of `paths`.
     pub(super) files: AgentFiles,
+    /// The server's push channels: the VAPID renewal, and the account alerts.
+    pub(super) host: Arc<dyn LinkHost>,
     /// Mailed machine keys this agent could not judge yet (the chain had not
     /// caught up with their commitment or sender): tried again as it does.
     deferred_mail: Mutex<Vec<Value>>,
@@ -277,6 +279,7 @@ mod tests {
         let guard = st.replay_guard(now_ms_u64());
         let shared = Arc::new(Shared {
             files: AgentFiles::of(&paths),
+            host: Arc::new(crate::app::PushLinkHost),
             paths,
             deferred_mail: Mutex::new(Vec::new()),
             identity: Arc::new(machine),

@@ -468,6 +468,7 @@ impl RemoteHandApp {
                 addr,
                 credential: auth_for_link.internal_credential().to_string(),
                 drive: drive_for_link,
+                host: Arc::new(PushLinkHost),
                 cancel: cancel.clone(),
                 aggregator_switch,
             });
@@ -635,6 +636,22 @@ impl crate::inject::Alerts for PushAlerts {
 
     fn rotation(&self, paths: Arc<Paths>, source: Source, id: String, outcome: RotationOutcome, trigger: RotationTrigger, text: String) {
         crate::push::notify_rotation(paths, source, id, outcome, trigger, text);
+    }
+}
+
+/// The link's push channels, as [`crate::push`] runs them: the VAPID renewal
+/// in the instance's state database, and the account alerts to Web Push and
+/// Bark. `notify_account_change` spawns its sending and returns, as
+/// [`crate::agent::link::LinkHost::account_change`] asks.
+pub(crate) struct PushLinkHost;
+
+impl crate::agent::link::LinkHost for PushLinkHost {
+    fn renew_push_keys<'a>(&'a self, paths: &'a Paths) -> futures_util::future::BoxFuture<'a, std::io::Result<usize>> {
+        Box::pin(crate::push::store::renew_vapid(paths))
+    }
+
+    fn account_change(&self, paths: Arc<Paths>, title: String, body: String) {
+        crate::push::notify_account_change(paths, title, body);
     }
 }
 

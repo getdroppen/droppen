@@ -468,10 +468,9 @@
       ]
     },
     {
-      "why": "The agent publishes sessions and transcripts, raises alerts and renews its VAPID key by calling into them (sessions, push, Drive). They go through the ports the agent owns: StreamSource (cloud implements it over sessions), LinkHost and LinkEvent (notify subscribes).",
+      "why": "The agent publishes sessions and transcripts by calling into them (sessions, Drive). They go through the port the agent owns, StreamSource, which cloud implements over sessions.",
       "edges": [
         "agent -> drive",
-        "agent -> push",
         "agent -> sessions"
       ]
     },
