@@ -224,6 +224,9 @@ fn app_menu<R: Runtime>(app: &AppHandle<R>, words: &Words) -> tauri::Result<Menu
 /// opens the app in the menu bar without a window at login. A turn-on that
 /// macOS takes but has to be approved opens System Settings → Login Items.
 /// Returns whether it is on now (registered, approved or not yet).
+///
+/// On the main thread only: it updates menu items, and Tauri's menu calls
+/// block when made from another thread.
 pub fn toggle_autostart<R: Runtime>(app: &AppHandle<R>) -> bool {
     let Some(login) = app.try_state::<LoginItem>() else { return false };
     let on = !login.status(app).registered();
@@ -239,7 +242,7 @@ pub fn toggle_autostart<R: Runtime>(app: &AppHandle<R>) -> bool {
 }
 
 /// Read the login item's status again and show it — at most once per
-/// [`HOVER_READS`].
+/// [`HOVER_READS`]. On the main thread only, like [`show_login_item`].
 pub fn refresh_login_item<R: Runtime>(app: &AppHandle<R>) {
     let (Some(login), Some(items)) = (app.try_state::<LoginItem>(), app.try_state::<Items<R>>()) else {
         return;
@@ -254,6 +257,8 @@ pub fn refresh_login_item<R: Runtime>(app: &AppHandle<R>) {
     show_login_item(app, login.status(app));
 }
 
+/// Show `status` in the menu bar's login item. On the main thread only: the
+/// menu calls below block when made from another thread.
 fn show_login_item<R: Runtime>(app: &AppHandle<R>, status: login_item::Status) {
     let Some(items) = app.try_state::<Items<R>>() else { return };
     let turn_on_failed = {
@@ -274,7 +279,9 @@ fn show_login_item<R: Runtime>(app: &AppHandle<R>, status: login_item::Status) {
 }
 
 /// Put the line to System Settings under *Start at Login*, worded for `note`,
-/// or take it out.
+/// or take it out. On the main thread only: the menu calls below block when
+/// made from another thread, and the main thread's tray handlers take the
+/// same `items.login` lock.
 fn show_note<R: Runtime>(app: &AppHandle<R>, note: Option<Note>) {
     let Some(items) = app.try_state::<Items<R>>() else { return };
     let mut login = items.login.lock().unwrap_or_else(|poisoned| poisoned.into_inner());

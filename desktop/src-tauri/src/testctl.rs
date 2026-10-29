@@ -147,7 +147,16 @@ fn run<R: Runtime>(app: &AppHandle<R>, reply: &Reply, command: &str) {
             crate::tray::quit(app);
         }
         "autostart" => {
-            let on = crate::tray::toggle_autostart(app);
+            // On the main thread: the menu calls behind it block off it, and
+            // the main thread's tray handlers take the lock it holds.
+            let (tx, rx) = std::sync::mpsc::channel();
+            let handle = app.clone();
+            if let Err(error) = app.run_on_main_thread(move || {
+                let _ = tx.send(crate::tray::toggle_autostart(&handle));
+            }) {
+                log::warn!("test control: {error}");
+            }
+            let on = rx.recv_timeout(Duration::from_secs(30)).unwrap_or(false);
             reply.send(json!({ "command": "autostart", "ok": true, "on": on }));
         }
         "open-in-browser" => {
