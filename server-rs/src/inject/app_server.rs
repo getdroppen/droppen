@@ -17,14 +17,16 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::accounts::store::AccountProvider;
 use crate::sessions::{Injection, InjectionRunState, Source};
-use droppen_base::process_env::{clean_env, clean_env_bare};
+use droppen_base::process_env::{apply_env, clean_env, clean_env_bare};
 use droppen_base::procs;
 use droppen_base::time::iso8601;
 
 use super::common::{busy_message, new_uuid, session_workdir, Phase, QueueOutcome, ResidentState, CHAT_SYSTEM_PROMPT};
+use super::gate::{ClaimError, SessionLease};
+use crate::sessions::archive::ArchiveError;
 use super::{
-    codex_permission_flags, lock, runs, shim, with_codex_files, CodexAccount, DriverStatesBuilder, InjectError, InjectionRegistry, Provider, Run,
-    SendOptions, Sent,
+    codex_permission_flags, runs, shim, with_codex_files, CodexAccount, DriverStatesBuilder, InjectError, InjectionRegistry, Provider, Run,
+    SendOptions, Sent, SpawnPermit,
 };
 
 const RPC_TIMEOUT: Duration = Duration::from_secs(30);
@@ -384,10 +386,9 @@ impl InjectionRegistry {
     /// A loaded thread's writer owns its archive operation too. A separate
     /// `codex archive` cannot acquire that writer lock, even between turns.
     pub async fn archive_codex(self: &Arc<Self>, id: &str) -> Result<(), crate::sessions::archive::ArchiveError> {
-        use crate::sessions::archive::{archive_codex_session, ArchiveError};
         // Match delivery's gate: no new resident or accepted message can slip
         // between selecting the archive path and committing its result.
-        let _gate = self.spawn_gate.lock().await;
+        let mut permit = self.spawn_gate.permit().await;
         if let Some(handle) = self.codex_handle(id) {
             {
                 let state = handle.shared.lock().unwrap();
@@ -411,10 +412,12 @@ impl InjectionRegistry {
             }
         }
         // Includes legacy or unreachable residents and other server instances.
-        let _claim = claim_session(self, id).map_err(|error| ArchiveError(error.to_string()))?;
+        permit
+            .claim(Source::Codex, id)
+            .map_err(|error| ArchiveError(claim_refusal(error).to_string()))?;
         #[cfg(test)]
         self.step("codex archive", Source::Codex, Some(id));
-        archive_codex_session(&self.paths, id).await?;
+        archive_codex_session(&permit, &self.paths, id).await?;
         let (tx, rx) = mpsc::unbounded_channel();
         drop(rx);
         self.codex_servers.lock().unwrap().insert(
@@ -448,7 +451,7 @@ impl InjectionRegistry {
         account: Option<CodexAccount>,
     ) -> Result<(String, Sent), InjectError> {
         let message = message(text, options)?;
-        let _gate = self.spawn_gate.lock().await;
+        let mut permit = self.spawn_gate.permit().await;
         if let Some(handle) = id.and_then(|id| self.codex_handle(id)) {
             let state = handle.shared.lock().unwrap();
             if state.archived || state.archive_request.is_some() {
@@ -476,7 +479,7 @@ impl InjectionRegistry {
             .filter(|(_, handle)| handle.runs_as(wanted))
         {
             Some(existing) => existing,
-            None => self.codex_spawn(id, cwd, options, account).await?,
+            None => self.codex_spawn(&mut permit, id, cwd, options, account).await?,
         };
         let (reply, rx) = oneshot::channel();
         handle
@@ -489,6 +492,7 @@ impl InjectionRegistry {
 
     async fn codex_spawn(
         self: &Arc<Self>,
+        permit: &mut SpawnPermit<'_>,
         id: Option<&str>,
         cwd: Option<&str>,
         options: &SendOptions,
@@ -498,10 +502,9 @@ impl InjectionRegistry {
         if id.is_some_and(|id| self.codex_injection(id).is_some_and(|i| i.state == InjectionRunState::Running)) {
             return Err(InjectError::message("a message is already running for this session"));
         }
-        let claim = match id {
-            Some(id) => Some(claim_session(self, id)?),
-            None => None,
-        };
+        if let Some(id) = id {
+            permit.claim(Source::Codex, id).map_err(claim_refusal)?;
+        }
         let sidecars = shim::Sidecars::new(self.shim_dir.clone(), new_uuid());
         let cwd = session_workdir(&self.paths, cwd);
         // With no account, argv and environment are byte for byte what they
@@ -518,6 +521,7 @@ impl InjectionRegistry {
             None => clean_env_bare(),
         };
         let mut link = shim::spawn_via_shim(shim::Spawn {
+            permit,
             sidecars: &sidecars,
             program: "codex",
             args: &args,
@@ -559,18 +563,20 @@ impl InjectionRegistry {
             if id.is_some_and(|id| id != resolved) {
                 return Err(InjectError::message("Codex resumed a different thread"));
             }
-            let claim = match claim {
-                Some(claim) => claim,
-                None => claim_session(self, &resolved)?,
-            };
+            if id.is_none() {
+                permit.claim(Source::Codex, &resolved).map_err(claim_refusal)?;
+            }
             #[cfg(test)]
             self.step("codex thread", Source::Codex, Some(&resolved));
-            Ok::<_, InjectError>((resolved, result, claim))
+            Ok::<_, InjectError>((resolved, result))
         }
         .await;
-        let (id, result, claim) = match setup {
+        let (id, result) = match setup {
             Ok(setup) => setup,
             Err(error) => {
+                // The session goes before the stdin, as it did when the claim
+                // was the setup's own.
+                permit.unclaim();
                 let _ = link.close_stdin().await;
                 return Err(error);
             }
@@ -618,11 +624,11 @@ impl InjectionRegistry {
         if let Some(old) = old {
             self.journal.remove(&old.run_id);
         }
-        let handle = self.codex_attached(record, link, claim);
+        let handle = self.codex_attached(record, link, permit.lease());
         Ok((id, handle))
     }
 
-    pub(super) fn codex_attached(self: &Arc<Self>, record: runs::RunRecord, link: shim::Link, claim: lock::InjectLock) -> Handle {
+    pub(super) fn codex_attached(self: &Arc<Self>, record: runs::RunRecord, link: shim::Link, lease: SessionLease) -> Handle {
         // A finished legacy exec entry must not overwrite this driver's newer
         // finish time in the list snapshot after the session migrates.
         self.runs.lock().unwrap().remove(&self.key_of(Source::Codex, &record.session_id));
@@ -640,7 +646,7 @@ impl InjectionRegistry {
             registry: self.clone(),
             record,
             link,
-            claim: Some(claim),
+            lease,
             state,
             shared: handle.shared.clone(),
             rx,
@@ -672,11 +678,42 @@ async fn retire(handle: &Handle) -> Result<(), InjectError> {
         .map_err(|_| InjectError::message("Codex App Server disconnected before shutting down"))?
 }
 
-fn claim_session(registry: &InjectionRegistry, id: &str) -> Result<lock::InjectLock, InjectError> {
-    match lock::acquire(&registry.lock_dir, Source::Codex, id) {
-        Ok(lock::Outcome::Acquired(claim)) => Ok(claim),
-        Ok(lock::Outcome::Busy { holder }) => Err(InjectError::message(busy_message(holder))),
-        Err(e) => Err(InjectError::Internal(e.to_string())),
+const CODEX_ARCHIVE_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Archive an unloaded Codex session. Loaded sessions must go through
+/// `InjectionRegistry::archive_codex`, which routes to their owning App Server.
+///
+/// `codex archive` writes the session, so it is started only under a permit
+/// that holds the gate and the session's claim.
+async fn archive_codex_session(_permit: &SpawnPermit<'_>, paths: &Arc<droppen_instance::paths::Paths>, id: &str) -> Result<(), ArchiveError> {
+    let mut command = tokio::process::Command::new("codex");
+    command.args(["archive", id]).current_dir(&paths.home).kill_on_drop(true);
+    apply_env(&mut command, &clean_env_bare());
+
+    let output: Result<std::io::Result<std::process::Output>, _> = tokio::time::timeout(CODEX_ARCHIVE_TIMEOUT, command.output()).await;
+    match output {
+        Ok(Ok(output)) if output.status.success() => Ok(()),
+        Ok(Ok(output)) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let trimmed = stderr.trim();
+            let message = if trimmed.is_empty() {
+                format!("codex exited with {}", output.status)
+            } else {
+                let lines: Vec<&str> = trimmed.split('\n').collect();
+                lines[lines.len().saturating_sub(2)..].join(" ")
+            };
+            Err(ArchiveError(message))
+        }
+        Ok(Err(error)) => Err(ArchiveError(error.to_string())),
+        Err(_) => Err(ArchiveError("the CLI did not answer within 15 seconds".to_string())),
+    }
+}
+
+/// What a send or an archive is told when its codex session cannot be claimed.
+fn claim_refusal(error: ClaimError) -> InjectError {
+    match error {
+        ClaimError::Busy { holder } => InjectError::message(busy_message(holder)),
+        ClaimError::Io(e) => InjectError::Internal(e.to_string()),
     }
 }
 
@@ -684,10 +721,10 @@ struct Driver {
     registry: Arc<InjectionRegistry>,
     record: runs::RunRecord,
     link: shim::Link,
-    /// Dropped with the driver, except on [`Cmd::Retire`] — which hands the
-    /// session straight to a replacement and so has to let go of the claim
-    /// before it answers.
-    claim: Option<lock::InjectLock>,
+    /// The session's claim. Dropped with the driver, except on
+    /// [`Cmd::Retire`] — which hands the session straight to a replacement and
+    /// so has to let go of the claim before it answers.
+    lease: SessionLease,
     state: State,
     shared: Arc<Mutex<State>>,
     rx: mpsc::UnboundedReceiver<Cmd>,
@@ -921,7 +958,7 @@ impl Driver {
                 self.registry.codex_servers.lock().unwrap().remove(&self.record.session_id);
                 // Released before the reply, because the caller's very next move
                 // is to claim this session for the process it is about to start.
-                drop(self.claim.take());
+                self.lease.release();
                 #[cfg(test)]
                 self.registry.step("codex retired", Source::Codex, Some(&self.record.session_id));
                 let _ = reply.send(Ok(()));

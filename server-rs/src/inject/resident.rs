@@ -86,7 +86,8 @@ use super::questions::{self, PermissionRequest, Stored};
 use super::shim::{self, Link, Output, Sidecars, Spawn};
 use super::common::{busy_message, new_uuid, Phase, QueueOutcome, ResidentState, StopTaskOutcome};
 use super::drafts::Draft;
-use super::{lock, runs, DriverStatesBuilder, InjectError, InjectionRegistry, Provider, Run, RunEntry, RunState};
+use super::gate::{ClaimError, SessionLease};
+use super::{runs, DriverStatesBuilder, InjectError, InjectionRegistry, Provider, Run, RunEntry, RunState, SpawnPermit};
 
 /// The mode flags every resident is started with.
 ///
@@ -803,15 +804,15 @@ impl InjectionRegistry {
             // a second claude against the same transcript. Spawns are rare and
             // take milliseconds, so a per-key lock map would cost more than it
             // saves.
-            let gate = self.spawn_gate.lock().await;
+            let mut permit = self.spawn_gate.permit().await;
             let Some((queued, recorded)) = self.post_to_existing(id, &qid, text, &recipe) else {
-                self.clone().start_resident(id, Box::new(Pending::with_id(qid, text, recipe))).await?;
+                self.clone().start_resident(id, Box::new(Pending::with_id(qid, text, recipe)), &mut permit).await?;
                 return Ok(Delivery { queued: false });
             };
             // The message is in a driver's inbox, so the gap the gate guards is
             // closed. Waiting for the journal under it would hold every other
             // session's sends behind one driver that is busy recovering.
-            drop(gate);
+            drop(permit);
             #[cfg(test)]
             self.step("posted to the resident", Source::Claude, Some(id));
             if wait_recorded(id, queued, recorded).await.is_ok() {
@@ -847,16 +848,15 @@ impl InjectionRegistry {
     }
 
     /// Start a resident for this session and give it the first message.
-    async fn start_resident(self: Arc<Self>, id: &str, first: Box<Pending>) -> Result<(), InjectError> {
+    async fn start_resident(self: Arc<Self>, id: &str, first: Box<Pending>, permit: &mut SpawnPermit<'_>) -> Result<(), InjectError> {
         // The whole-machine claim, held for as long as the process lives rather
         // than for one turn: a resident *is* the session's occupancy, and a
         // second instance starting its own against the same transcript is the
         // interleaving this lock exists to stop.
-        let claim = match lock::acquire(&self.lock_dir, Source::Claude, id) {
-            Ok(lock::Outcome::Acquired(claim)) => claim,
-            Ok(lock::Outcome::Busy { holder }) => return Err(InjectError::message(busy_message(holder))),
-            Err(error) => return Err(InjectError::Internal(format!("cannot claim this session: {error}"))),
-        };
+        permit.claim(Source::Claude, id).map_err(|error| match error {
+            ClaimError::Busy { holder } => InjectError::message(busy_message(holder)),
+            ClaimError::Io(error) => InjectError::Internal(format!("cannot claim this session: {error}")),
+        })?;
 
         // A session that already has a transcript is resumed; one that does not
         // is being created, and `--session-id` is what makes the id the client
@@ -878,7 +878,7 @@ impl InjectionRegistry {
         // The record is born holding this message, so the window in which a send
         // has been accepted and nothing on disk knows about it is the spawn
         // itself rather than the whole of the CLI's start-up.
-        let spawned = self.spawn_link(id, &recipe, selector, None, &[first.recorded(false)], &recorder).await?;
+        let spawned = self.spawn_link(permit, id, &recipe, selector, None, &[first.recorded(false)], &recorder).await?;
 
         let shared = Arc::new(Mutex::new(ResidentState {
             phase: Phase::Starting,
@@ -926,7 +926,7 @@ impl InjectionRegistry {
             tx,
             rx,
             shared,
-            claim: Some(claim),
+            lease: permit.lease(),
             queue: VecDeque::from([*first]),
             delivered_ahead: VecDeque::new(),
             absorb: AbsorbWatch::default(),
@@ -968,6 +968,7 @@ impl InjectionRegistry {
     /// keeps the journal record and the sidecar naming identical between them.
     async fn spawn_link(
         &self,
+        permit: &SpawnPermit<'_>,
         id: &str,
         recipe: &Recipe,
         selector: Selector,
@@ -1000,6 +1001,7 @@ impl InjectionRegistry {
         args.extend(recipe.args.iter().cloned());
 
         let link = shim::spawn_via_shim(Spawn {
+            permit,
             sidecars: &sidecars,
             program: "claude",
             args: &args,
@@ -1247,7 +1249,7 @@ impl InjectionRegistry {
     /// The claim is the caller's to have taken — adoption takes it before
     /// dialling, because a socket that does not answer still leaves a process
     /// running that nobody else may talk to.
-    pub(super) fn attached(self: &Arc<Self>, record: &runs::RunRecord, sidecars: Sidecars, link: Link, claim: lock::InjectLock) {
+    pub(super) fn attached(self: &Arc<Self>, record: &runs::RunRecord, sidecars: Sidecars, link: Link, lease: SessionLease) {
         // A record from before the fingerprint was written down says *unknown*,
         // and is carried through as unknown rather than as the default. The
         // default is "no flags at all", which is a real and very specific
@@ -1324,7 +1326,7 @@ impl InjectionRegistry {
             tx,
             rx,
             shared,
-            claim: Some(claim),
+            lease,
             queue,
             delivered_ahead,
             absorb: AbsorbWatch::default(),
@@ -1758,8 +1760,8 @@ struct Driver {
     tx: mpsc::UnboundedSender<Cmd>,
     rx: mpsc::UnboundedReceiver<Cmd>,
     shared: Arc<Mutex<ResidentState>>,
-    /// Released when the process is gone, and not before.
-    claim: Option<lock::InjectLock>,
+    /// The session's claim: released when the process is gone, and not before.
+    lease: SessionLease,
     queue: VecDeque<Pending>,
     /// Messages already written to claude's stdin whose turn has not opened yet.
     ///
@@ -2865,13 +2867,14 @@ impl Driver {
         self.recorder
             .lifecycle(Stage::Adopt, Some(&format!("claude answered as {id} instead of {}", self.id)));
         self.recorder.follow(id);
-        let claim = match lock::acquire(&self.registry.lock_dir, Source::Claude, id) {
-            Ok(lock::Outcome::Acquired(claim)) => Some(claim),
-            other => {
+        let claim = match self.lease.claim_other(Source::Claude, id) {
+            Ok(claim) => Some(claim),
+            Err(error) => {
                 // Losing the claim degrades a cross-instance guarantee for a
                 // process that is already running, which is not worth killing a
                 // live session over.
-                tracing::warn!(session = %id, busy = ?other.is_ok(), "cannot claim the session claude adopted");
+                let busy = matches!(error, ClaimError::Busy { .. });
+                tracing::warn!(session = %id, busy = ?busy, "cannot claim the session claude adopted");
                 None
             }
         };
@@ -2898,7 +2901,7 @@ impl Driver {
         #[cfg(test)]
         let old = self.id.clone();
         self.id = id.to_string();
-        drop(std::mem::replace(&mut self.claim, claim));
+        self.lease.replace(claim);
         #[cfg(test)]
         {
             self.registry.step("adopted: the new id", Source::Claude, Some(id));
@@ -5226,7 +5229,7 @@ impl Driver {
         let queued = self.backlog(Pending::recorded);
         let spawned = self
             .registry
-            .spawn_link(&self.id, recipe, selector, Some(&self.record), &queued, &self.recorder)
+            .spawn_link(&self.lease.respawn_permit(), &self.id, recipe, selector, Some(&self.record), &queued, &self.recorder)
             .await?;
         let _ = std::fs::remove_file(self.sidecars.exit());
         let _ = std::fs::remove_file(self.sidecars.stderr());
@@ -5700,7 +5703,7 @@ impl Driver {
         self.registry.journal.remove(&self.record);
         // The claim goes last, and outside every other lock: dropping it
         // unlinks a file, and until it is gone this session is still ours.
-        drop(self.claim.take());
+        self.lease.release();
         #[cfg(test)]
         self.registry.step("resident ended", Source::Claude, Some(&self.id));
         let _ = std::fs::remove_file(self.sidecars.exit());

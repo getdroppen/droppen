@@ -225,7 +225,7 @@
             "droppen-accounts"
           ],
           "notes": [
-            "inject's own items, inject::receipts and inject::questions, drafts, runs and lock.",
+            "inject's own items, inject::receipts and inject::questions, drafts, runs, and the spawn gate with its claims (inject::gate).",
             "inject::shim, the session shim: Claude Code and Codex both start their CLI through it.",
             "models keeps its routes here; each provider gets its own model list (models::probe)."
           ]
