@@ -95,9 +95,16 @@ pub async fn apply(paths: &Paths, transcripts: &TranscriptSources, sessions: &mu
     }
 }
 
-/// The reader's mark on `id`, if they ever opened it.
-pub(super) fn read_at<'a>(marks: &'a BTreeMap<String, String>, source: Source, id: &str) -> Option<&'a str> {
-    marks.get(&seen::key_of(source, id)).map(String::as_str)
+/// The reader's read marks, as [`seen::read`] returns them.
+pub(super) trait ReadMarksExt {
+    /// The reader's mark on `id`, if they ever opened it.
+    fn read_at(&self, source: Source, id: &str) -> Option<&str>;
+}
+
+impl ReadMarksExt for BTreeMap<String, String> {
+    fn read_at(&self, source: Source, id: &str) -> Option<&str> {
+        self.get(&seen::key_of(source, id)).map(String::as_str)
+    }
 }
 
 /// The id a Claude subagent's read mark is kept under: within its session.
@@ -105,21 +112,31 @@ pub fn agent_seen_id(session_id: &str, agent_id: &str) -> String {
     format!("{session_id}/agents/{agent_id}")
 }
 
-/// Whether a child has output its reader has not seen, given the later of its
-/// own mark and its parent's.
-pub(super) fn unread(status: SessionChildStatus, updated_at: &str, own: Option<&str>, parent: Option<&str>) -> bool {
-    if status == SessionChildStatus::Working {
-        return false;
-    }
-    match own.max(parent) {
-        Some(read) => updated_at > read,
-        None => true,
+impl SessionChildStatus {
+    /// Whether a child at this status, which last wrote at `updated_at`, has
+    /// output its reader has not seen, given the later of its own mark and its
+    /// parent's.
+    pub(super) fn is_unread(self, updated_at: &str, own: Option<&str>, parent: Option<&str>) -> bool {
+        if self == SessionChildStatus::Working {
+            return false;
+        }
+        match own.max(parent) {
+            Some(read) => updated_at > read,
+            None => true,
+        }
     }
 }
 
-/// Spawn order, as near as the files tell it: oldest write first, then id.
-pub(super) fn sort(children: &mut [SessionChild]) {
-    children.sort_by(|a, b| a.updated_at.cmp(&b.updated_at).then_with(|| a.id.cmp(&b.id)));
+/// Children put in the order they were spawned.
+pub(super) trait SpawnOrderExt {
+    /// Spawn order, as near as the files tell it: oldest write first, then id.
+    fn sort_by_spawn(&mut self);
+}
+
+impl SpawnOrderExt for [SessionChild] {
+    fn sort_by_spawn(&mut self) {
+        self.sort_by(|a, b| a.updated_at.cmp(&b.updated_at).then_with(|| a.id.cmp(&b.id)));
+    }
 }
 
 #[cfg(test)]
@@ -129,21 +146,16 @@ mod tests {
     #[test]
     fn a_child_is_unread_until_it_or_its_parent_is_opened_after_it_wrote() {
         let wrote = "2026-10-01T10:00:00Z";
-        assert!(unread(SessionChildStatus::Done, wrote, None, None), "never opened");
+        assert!(SessionChildStatus::Done.is_unread(wrote, None, None), "never opened");
         assert!(
-            !unread(SessionChildStatus::Done, wrote, None, Some("2026-10-01T11:00:00Z")),
+            !SessionChildStatus::Done.is_unread(wrote, None, Some("2026-10-01T11:00:00Z")),
             "the parent was read since"
         );
         assert!(
-            !unread(SessionChildStatus::Done, wrote, Some("2026-10-01T10:30:00Z"), None),
+            !SessionChildStatus::Done.is_unread(wrote, Some("2026-10-01T10:30:00Z"), None),
             "it was read since"
         );
-        assert!(unread(
-            SessionChildStatus::Failed,
-            wrote,
-            Some("2026-10-01T09:00:00Z"),
-            Some("2026-10-01T09:30:00Z")
-        ));
-        assert!(!unread(SessionChildStatus::Working, wrote, None, None), "not while it is still working");
+        assert!(SessionChildStatus::Failed.is_unread(wrote, Some("2026-10-01T09:00:00Z"), Some("2026-10-01T09:30:00Z")));
+        assert!(!SessionChildStatus::Working.is_unread(wrote, None, None), "not while it is still working");
     }
 }

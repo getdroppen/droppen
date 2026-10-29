@@ -28,7 +28,7 @@ use std::time::{Duration, SystemTime};
 use futures_util::future::BoxFuture;
 use serde_json::Value;
 
-use super::children::{read_at, sort, unread, SessionChild, SessionChildKind, SessionChildStatus};
+use super::children::{ReadMarksExt, SessionChild, SessionChildKind, SessionChildStatus, SpawnOrderExt};
 use super::codex_claims::{Claims, Verdict};
 use super::codex_tools::{CodexTools, Context};
 use droppen_instance::paths::Paths;
@@ -382,15 +382,15 @@ fn query_thread_row(db: &Path, id: &str) -> Option<Option<ThreadRow>> {
 /// `source` says subagent but which has no edge — Codex's own guardian review,
 /// which no conversation delegated — is not one of these, and stays hidden.
 #[derive(Debug, Clone)]
-pub(super) struct SpawnedThread {
-    pub(super) id: String,
-    pub(super) parent_id: String,
+struct SpawnedThread {
+    id: String,
+    parent_id: String,
     /// The name Codex gave it (`agent_nickname`), or its title.
-    pub(super) name: String,
+    name: String,
     /// What it was spawned as (`agent_role`), when Codex says.
-    pub(super) role: Option<String>,
-    pub(super) rollout_path: String,
-    pub(super) updated_ms: i64,
+    role: Option<String>,
+    rollout_path: String,
+    updated_ms: i64,
 }
 
 /// The parent of every delegated subagent thread, or nothing without the
@@ -425,13 +425,13 @@ fn spawned_threads_from_state_db(db: &Path) -> Option<Vec<SpawnedThread>> {
 }
 
 /// Every delegated subagent thread Codex knows of.
-pub(super) async fn spawned_threads(paths: &Paths) -> Vec<SpawnedThread> {
+async fn spawned_threads(paths: &Paths) -> Vec<SpawnedThread> {
     CodexHome::of(paths).on_state_db(spawned_threads_from_state_db).await.flatten().unwrap_or_default()
 }
 
 /// How a subagent thread is doing: whether it is still working, and whether
 /// its last turn ended in an error or was aborted.
-pub(super) async fn spawned_thread_state(thread: &SpawnedThread) -> (bool, bool) {
+async fn spawned_thread_state(thread: &SpawnedThread) -> (bool, bool) {
     let path = Path::new(&thread.rollout_path);
     let failed = match read_tail_lines(path, TAIL_BYTES).await {
         Ok(lines) => lines
@@ -476,7 +476,7 @@ async fn codex_children(
             (false, false) => SessionChildStatus::Done,
         };
         let updated_at = iso8601(SystemTime::UNIX_EPOCH + Duration::from_millis(thread.updated_ms.max(0) as u64));
-        let own = read_at(marks, Source::Codex, &thread.id);
+        let own = marks.read_at(Source::Codex, &thread.id);
         let read = own.max(parent_read);
         let grandchildren = Box::pin(codex_children(&thread.id, by_parent, marks, read, depth + 1)).await;
         children.push(SessionChild {
@@ -485,12 +485,12 @@ async fn codex_children(
             name: thread.name.clone(),
             role: Nullable(thread.role.clone()),
             status,
-            unread: unread(status, &updated_at, own, parent_read),
+            unread: status.is_unread(&updated_at, own, parent_read),
             updated_at,
             children: grandchildren,
         });
     }
-    sort(&mut children);
+    children.sort_by_spawn();
     children
 }
 
@@ -878,7 +878,7 @@ impl super::Transcripts for CodexSessions {
                 threads_by_parent.entry(thread.parent_id.as_str()).or_default().push(thread);
             }
             for session in sessions {
-                session.children = codex_children(&session.id, &threads_by_parent, marks, read_at(marks, Source::Codex, &session.id), 0).await;
+                session.children = codex_children(&session.id, &threads_by_parent, marks, marks.read_at(Source::Codex, &session.id), 0).await;
             }
         })
     }

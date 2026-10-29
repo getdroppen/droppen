@@ -702,7 +702,11 @@ impl super::Transcripts for ClaudeCodeSessions {
     }
 
     fn children<'a>(&'a self, _paths: &'a Paths, sessions: Vec<&'a mut SessionSummary>, marks: &'a BTreeMap<String, String>) -> BoxFuture<'a, ()> {
-        Box::pin(super::subagents::children(sessions, marks))
+        Box::pin(async move {
+            for session in sessions {
+                session.children = self.subagent_tree(session, marks).await;
+            }
+        })
     }
 
     fn context<'a>(&'a self, file_path: &'a Path) -> BoxFuture<'a, Option<super::context::ContextUsage>> {

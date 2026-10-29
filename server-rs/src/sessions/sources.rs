@@ -123,14 +123,14 @@ pub trait Transcripts: Send + Sync {
 
     /// Fill in `children` on `sessions`, every one of them this CLI's: the
     /// subagents each delegated work to, as a tree under it, read against the
-    /// reader's marks `marks` (see [`super::children`]). A CLI that keeps no
+    /// reader's read marks (see [`super::children`]). A CLI that keeps no
     /// links between its sessions leaves each with none.
-    fn children<'a>(&'a self, paths: &'a Paths, sessions: Vec<&'a mut SessionSummary>, marks: &'a BTreeMap<String, String>) -> BoxFuture<'a, ()> {
-        let _ = (paths, marks);
-        for session in sessions {
-            session.children = Vec::new();
-        }
-        Box::pin(std::future::ready(()))
+    fn children<'a>(&'a self, _paths: &'a Paths, sessions: Vec<&'a mut SessionSummary>, _marks: &'a BTreeMap<String, String>) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            for session in sessions {
+                session.children = Vec::new();
+            }
+        })
     }
 
     /// The transcripts that count toward the token-usage stats and were

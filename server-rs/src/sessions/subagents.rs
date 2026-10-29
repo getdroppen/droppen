@@ -14,7 +14,7 @@ use std::time::{Duration, SystemTime};
 
 use serde_json::Value;
 
-use super::children::{agent_seen_id, read_at, sort, unread, SessionChild, SessionChildKind, SessionChildStatus};
+use super::children::{agent_seen_id, ReadMarksExt, SessionChild, SessionChildKind, SessionChildStatus, SpawnOrderExt};
 use super::{transcript, SessionActivity, SessionSummary, Source};
 use droppen_http::openapi_ext::Nullable;
 
@@ -31,61 +31,56 @@ static ENDINGS: LazyLock<Mutex<HashMap<PathBuf, (u64, Option<SystemTime>, bool)>
 /// Past this many transcripts the remembered endings are dropped and read again.
 const ENDINGS_LIMIT: usize = 20_000;
 
-/// Fill in `children` on Claude sessions: each one's subagents, nested.
-pub(super) async fn children(sessions: Vec<&mut SessionSummary>, marks: &BTreeMap<String, String>) {
-    for session in sessions {
-        session.children = claude_children(session, marks).await;
+impl super::claude::ClaudeCodeSessions {
+    /// Claude children of one session, nested by `parentAgentId`.
+    pub(super) async fn subagent_tree(&self, session: &SessionSummary, marks: &BTreeMap<String, String>) -> Vec<SessionChild> {
+        let file = Path::new(&session.file_path);
+        let agents = transcript::list_session_agents(file).await;
+        if agents.is_empty() {
+            return Vec::new();
+        }
+        let parent_working = matches!(session.activity, SessionActivity::Working | SessionActivity::Background);
+        let known: std::collections::HashSet<&str> = agents.iter().map(|agent| agent.agent_id.as_str()).collect();
+        let mut flat: Vec<(Option<String>, SessionChild)> = Vec::with_capacity(agents.len());
+        for agent in &agents {
+            let updated_at = agent.updated_at.clone().unwrap_or_default();
+            let status = claude_status(agent.transcript_path.as_deref(), &updated_at, parent_working).await;
+            let name = agent
+                .description
+                .clone()
+                .filter(|text| !text.trim().is_empty())
+                .or_else(|| agent.agent_type.clone())
+                .unwrap_or_else(|| format!("agent {}", agent.agent_id.chars().take(8).collect::<String>()));
+            // An agent whose parent left no trace hangs off the session itself
+            // rather than vanishing with its missing parent.
+            let parent = agent.parent_agent_id.clone().filter(|parent| known.contains(parent.as_str()));
+            flat.push((
+                parent,
+                SessionChild {
+                    id: agent.agent_id.clone(),
+                    kind: SessionChildKind::Agent,
+                    name: super::util::title_line(&name),
+                    role: Nullable(agent.agent_type.clone()),
+                    status,
+                    // Decided once the tree is built, from the marks above it.
+                    unread: false,
+                    updated_at,
+                    children: Vec::new(),
+                },
+            ));
+        }
+        let mut tree = nest(flat);
+        mark_unread(&mut tree, &session.id, marks, marks.read_at(Source::Claude, &session.id));
+        tree
     }
-}
-
-/// Claude children of one session, nested by `parentAgentId`.
-async fn claude_children(session: &SessionSummary, marks: &BTreeMap<String, String>) -> Vec<SessionChild> {
-    let file = Path::new(&session.file_path);
-    let agents = transcript::list_session_agents(file).await;
-    if agents.is_empty() {
-        return Vec::new();
-    }
-    let parent_working = matches!(session.activity, SessionActivity::Working | SessionActivity::Background);
-    let known: std::collections::HashSet<&str> = agents.iter().map(|agent| agent.agent_id.as_str()).collect();
-    let mut flat: Vec<(Option<String>, SessionChild)> = Vec::with_capacity(agents.len());
-    for agent in &agents {
-        let updated_at = agent.updated_at.clone().unwrap_or_default();
-        let status = claude_status(agent.transcript_path.as_deref(), &updated_at, parent_working).await;
-        let name = agent
-            .description
-            .clone()
-            .filter(|text| !text.trim().is_empty())
-            .or_else(|| agent.agent_type.clone())
-            .unwrap_or_else(|| format!("agent {}", agent.agent_id.chars().take(8).collect::<String>()));
-        // An agent whose parent left no trace hangs off the session itself
-        // rather than vanishing with its missing parent.
-        let parent = agent.parent_agent_id.clone().filter(|parent| known.contains(parent.as_str()));
-        flat.push((
-            parent,
-            SessionChild {
-                id: agent.agent_id.clone(),
-                kind: SessionChildKind::Agent,
-                name: super::util::title_line(&name),
-                role: Nullable(agent.agent_type.clone()),
-                status,
-                // Decided once the tree is built, from the marks above it.
-                unread: false,
-                updated_at,
-                children: Vec::new(),
-            },
-        ));
-    }
-    let mut tree = nest(flat);
-    mark_unread(&mut tree, &session.id, marks, read_at(marks, Source::Claude, &session.id));
-    tree
 }
 
 /// Decide `unread` down a Claude tree, each child against its own mark and
 /// the latest one above it.
 fn mark_unread(children: &mut [SessionChild], session: &str, marks: &BTreeMap<String, String>, above: Option<&str>) {
     for child in children {
-        let own = read_at(marks, Source::Claude, &agent_seen_id(session, &child.id));
-        child.unread = unread(child.status, &child.updated_at, own, above);
+        let own = marks.read_at(Source::Claude, &agent_seen_id(session, &child.id));
+        child.unread = child.status.is_unread(&child.updated_at, own, above);
         let below = own.max(above);
         mark_unread(&mut child.children, session, marks, below);
     }
@@ -104,7 +99,7 @@ fn nest(flat: Vec<(Option<String>, SessionChild)>) -> Vec<SessionChild> {
                 child.children = attach(Some(child.id.clone()), by_parent, depth + 1);
             }
         }
-        sort(&mut children);
+        children.sort_by_spawn();
         children
     }
     attach(None, &mut by_parent, 0)
