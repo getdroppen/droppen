@@ -23,6 +23,7 @@ mod support;
 use std::path::Path;
 use std::time::Duration;
 
+use droppen_base::procs::alive;
 use droppen_instance::instance::DEFAULT_INSTANCE;
 use serde_json::{json, Value};
 use support::{common, plan_slow_cli, Probe};
@@ -716,11 +717,6 @@ fn queued_texts(record: &Value) -> Vec<&str> {
         .iter()
         .map(|queued| queued["text"].as_str().expect("a queued message has text"))
         .collect()
-}
-
-fn alive(pid: u32) -> bool {
-    // SAFETY: signal 0 delivers nothing; it is the existence probe.
-    unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
 }
 
 /// Whether nobody holds this lock file — asked by taking it and letting go.

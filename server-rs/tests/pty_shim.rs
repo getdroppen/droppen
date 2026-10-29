@@ -17,6 +17,7 @@ use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use remote_hand_server::app::RemoteHandApp;
+use droppen_base::procs::alive;
 use droppen_instance::instance::{InstanceDirs, InstanceLock, DEFAULT_INSTANCE};
 use droppen_instance::paths::Paths;
 use droppen_pty::proto::{self, Frame, Hello2, Meta};
@@ -232,10 +233,6 @@ async fn peek_shell_pid(shims: &Path, id: &str) -> u32 {
         .await
         .expect("connect to the shim");
     link.shell_pid
-}
-
-fn alive(pid: u32) -> bool {
-    droppen_base::procs::alive(pid)
 }
 
 /// Whether a shim is ready for whoever dials it next: it accepts a connection,

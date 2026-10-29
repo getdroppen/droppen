@@ -33,6 +33,7 @@ use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
+use droppen_base::procs::alive;
 use droppen_instance::instance::DEFAULT_INSTANCE;
 use support::{common, plan_held_cli, release_turn, Probe};
 use tokio::io::AsyncWriteExt;
@@ -573,10 +574,6 @@ async fn wait_for_record(db: &Path) -> Value {
         assert!(std::time::Instant::now() < deadline, "no run was ever recorded in {}", db.display());
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-}
-
-fn alive(pid: u32) -> bool {
-    droppen_base::procs::alive(pid)
 }
 
 /// Kills a process group when it goes out of scope.

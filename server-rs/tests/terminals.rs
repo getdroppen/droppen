@@ -14,6 +14,7 @@ use std::time::Duration;
 use futures_util::{SinkExt, StreamExt};
 use remote_hand_server::auth::users::UsersStore;
 use remote_hand_server::feed::global::LOGIN_RECHECK;
+use droppen_base::procs::alive;
 use droppen_instance::instance::{InstanceDirs, DEFAULT_INSTANCE};
 use droppen_instance::paths::Paths;
 use droppen_pty::proto::Meta;
@@ -211,10 +212,6 @@ async fn seed_mute_shim(shims: &Path, n: usize) -> tokio::net::UnixListener {
     let sidecars = seed_identity(shims, n).await;
     sidecars.ensure_socket_dir().expect("the shim socket directory");
     tokio::net::UnixListener::bind(sidecars.socket()).expect("bind a mute shim socket")
-}
-
-fn alive(pid: u32) -> bool {
-    droppen_base::procs::alive(pid)
 }
 
 fn kill_pid(pid: u32) {
