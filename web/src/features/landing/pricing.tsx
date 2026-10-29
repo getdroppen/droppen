@@ -82,7 +82,7 @@ function PlanCard({
       <div className="flex min-h-6 items-center gap-2">
         <h3 id={`${testId}-name`} className="text-base leading-6 font-semibold text-fg">{name}</h3>
         {recommended && (
-          <span className={cn("inline-flex items-center bg-fg px-1.5 py-0.5 text-2xs font-semibold tracking-wider text-bg uppercase", cjkTracking)}>
+          <span className={cn("inline-flex items-center bg-fg px-1.5 py-0.5 text-xs font-semibold tracking-wider text-bg uppercase", cjkTracking)}>
             {t("Recommended")}
           </span>
         )}
