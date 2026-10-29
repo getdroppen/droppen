@@ -1019,8 +1019,8 @@ impl Driver {
                         self.note_turn_completed();
                     }
                     if self.link.at() > self.link.total() {
-                        if let Some(injection) = &self.state.injection {
-                            crate::push::notify_turn(
+                        if let (Some(injection), Some(alerts)) = (&self.state.injection, self.registry.alerts.get()) {
+                            alerts.turn(
                                 self.registry.paths.clone(),
                                 Source::Codex,
                                 self.record.session_id.clone(),

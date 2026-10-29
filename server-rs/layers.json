@@ -430,13 +430,9 @@
       ]
     },
     {
-      "why": "The runs tell push about a turn, a question or a rotation themselves (push::notify_turn, notify_question, notify_rotation), and inject adds notify's channel to a session's environment (notify::inject::decorate). They go when the runs broadcast RunEvent and RotationEvent for notify to subscribe to, and the channel's environment reaches a spawn through the spawn dependencies (SpawnDeps).",
+      "why": "inject adds notify's channel to a session's environment (notify::inject::decorate). It goes when the channel's environment reaches a spawn through the spawn dependencies (SpawnDeps).",
       "edges": [
-        "inject -> notify",
-        "inject -> push",
-        "inject::acp -> push",
-        "inject::app_server -> push",
-        "inject::resident -> push"
+        "inject -> notify"
       ]
     },
     {

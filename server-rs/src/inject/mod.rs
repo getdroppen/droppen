@@ -1011,14 +1011,16 @@ impl InjectionRegistry {
         let ahead_burst = decision.trigger == crate::sessions::account::RotationTrigger::Ahead
             && !first_ahead_push(&decision.from.id, &decision.to.id, std::time::Instant::now());
         if !ahead_burst {
-            crate::push::notify_rotation(
-                self.paths.clone(),
-                Source::Claude,
-                decision.session_id.clone(),
-                decision.outcome,
-                decision.trigger,
-                notice.to_string(),
-            );
+            if let Some(alerts) = self.alerts.get() {
+                alerts.rotation(
+                    self.paths.clone(),
+                    Source::Claude,
+                    decision.session_id.clone(),
+                    decision.outcome,
+                    decision.trigger,
+                    notice.to_string(),
+                );
+            }
         }
         self.announce(Source::Claude, &decision.session_id);
         id
@@ -1305,6 +1307,9 @@ pub struct InjectionRegistry {
     /// The session feed and the list feed, told when a driver changes something
     /// no file shows. Set once, at startup; empty in tests that build no app.
     listeners: std::sync::OnceLock<Listeners>,
+    /// Where the drivers send a turn's end, a question and a rotation for the
+    /// phone. Set once, at startup; empty in tests that build no app.
+    alerts: std::sync::OnceLock<Arc<dyn Alerts>>,
     /// When a quota reading last woke the residents holding a queue; see
     /// [`InjectionRegistry::recheck_holds`].
     reading_recheck: Mutex<Option<Instant>>,
@@ -1327,6 +1332,34 @@ pub struct InjectionRegistry {
 pub trait SessionFeeds: Send + Sync {
     /// Wake the open views of the session `key` names, if it has any.
     fn poke(&self, key: &str);
+}
+
+/// The alerts a run raises for the user's phone. The alert channels sit above
+/// the drivers, so the entry implements this over them and hands it in
+/// ([`InjectionRegistry::attach_alerts`]).
+///
+/// Every method returns at once and sends in the background: a driver calls
+/// them while it holds a run's lock or is about to respawn a session, and a
+/// slow push service must not hold either up.
+pub trait Alerts: Send + Sync {
+    /// A run reached its final state. `driver` is the caller's snapshot of the
+    /// drivers, taken synchronously after the finished turn was written back
+    /// as idle, so the alert cannot describe the next queued turn.
+    fn turn(&self, paths: Arc<Paths>, source: Source, id: String, outcome: InjectionRunState, error: Option<String>, driver: crate::sessions::DriverStates);
+    /// The agent stopped to ask `question`. Called once per question, the
+    /// first time it is put on record.
+    fn question(&self, paths: Arc<Paths>, source: Source, id: String, question: String);
+    /// The session was moved to another account, or could not be; `text` is
+    /// the notice the session shows.
+    fn rotation(
+        &self,
+        paths: Arc<Paths>,
+        source: Source,
+        id: String,
+        outcome: crate::sessions::account::RotationOutcome,
+        trigger: crate::sessions::account::RotationTrigger,
+        text: String,
+    );
 }
 
 /// Whoever follows a session from outside the driver: the per-session feed and
@@ -1426,6 +1459,7 @@ impl InjectionRegistry {
             recorders: record::Recorders::new(paths.clone(), instance),
             instance: instance.clone(),
             listeners: std::sync::OnceLock::new(),
+            alerts: std::sync::OnceLock::new(),
             reading_recheck: Mutex::new(None),
             drafts: drafts::Drafts::default(),
             paths,
@@ -1436,6 +1470,13 @@ impl InjectionRegistry {
     /// state is assembled; a second call is ignored.
     pub fn attach_listeners(&self, feeds: Arc<dyn SessionFeeds>, refresh: crate::http::refresh::Refresh) {
         let _ = self.listeners.set(Listeners { feeds, refresh });
+    }
+
+    /// Give the drivers somewhere to send their alerts. Called once, when the
+    /// application state is assembled and before any driver runs; a second
+    /// call is ignored.
+    pub fn attach_alerts(&self, alerts: Arc<dyn Alerts>) {
+        let _ = self.alerts.set(alerts);
     }
 
     /// Tell the session's feed and the session list that it changed in a way

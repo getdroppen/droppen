@@ -775,14 +775,16 @@ impl Driver {
             finished_at: crate::openapi_ext::Nullable(Some(iso8601(SystemTime::now()))),
         });
         self.publish();
-        crate::push::notify_turn(
-            self.registry.paths.clone(),
-            Source::Acp,
-            self.id.clone(),
-            outcome,
-            error,
-            self.registry.driver_states(),
-        );
+        if let Some(alerts) = self.registry.alerts.get() {
+            alerts.turn(
+                self.registry.paths.clone(),
+                Source::Acp,
+                self.id.clone(),
+                outcome,
+                error,
+                self.registry.driver_states(),
+            );
+        }
     }
 
     /// What the agent said, fit to be stored and shown.

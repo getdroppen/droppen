@@ -4083,7 +4083,9 @@ impl Driver {
         self.recorder
             .lifecycle(Stage::Question, Some(&format!("{} asked: {headline}", question.request_id)));
         if fresh {
-            crate::push::notify_question(self.registry.paths.clone(), Source::Claude, self.id.clone(), headline);
+            if let Some(alerts) = self.registry.alerts.get() {
+                alerts.question(self.registry.paths.clone(), Source::Claude, self.id.clone(), headline);
+            }
         }
         if !self.asked.iter().any(|open| open.request_id == question.request_id) {
             self.asked.push(question);
@@ -5903,7 +5905,9 @@ impl Driver {
         // A resident answering ten messages now sends ten notifications, and the
         // throttle in [`crate::push`] is what keeps that from being ten lines in
         // the notification shade.
-        crate::push::notify_turn(self.registry.paths.clone(), Source::Claude, self.id.clone(), outcome, error, driver);
+        if let Some(alerts) = self.registry.alerts.get() {
+            alerts.turn(self.registry.paths.clone(), Source::Claude, self.id.clone(), outcome, error, driver);
+        }
     }
 
     /// Record that claude is alive and talking.
@@ -7194,6 +7198,7 @@ mod tests {
             recorders: crate::record::Recorders::new_at(dirs.session_logs(), None, paths.clone()),
             instance: dirs,
             listeners: std::sync::OnceLock::new(),
+            alerts: std::sync::OnceLock::new(),
             reading_recheck: Mutex::new(None),
             drafts: crate::inject::drafts::Drafts::default(),
             paths,
