@@ -734,6 +734,12 @@ impl super::Transcripts for CodexSessions {
         Box::pin(read_codex_cli_choice(file_path))
     }
 
+    // A killed Codex process may never append `turn_aborted`, leaving a recent
+    // `task_started` as the rollout's last word.
+    fn settles_reaped_runs(&self) -> bool {
+        true
+    }
+
     fn context<'a>(&'a self, file_path: &'a Path) -> BoxFuture<'a, Option<super::context::ContextUsage>> {
         Box::pin(super::context::read_codex_context(file_path))
     }

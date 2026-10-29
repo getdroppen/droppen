@@ -1155,7 +1155,7 @@ pub(crate) async fn writable_session(drive: &crate::drive::Drive, source: Source
     // as the list and detail paths before a mutating route decides from this
     // row; in particular, a reaped Codex run outranks the stale `task_started`
     // tail an interrupt can leave behind.
-    drive.injections.driver_states().apply(std::slice::from_mut(&mut summary));
+    drive.injections.driver_states().apply(&drive.transcripts, std::slice::from_mut(&mut summary));
     if summary.scope == SessionScope::External {
         return Err(external_session(source));
     }

@@ -306,11 +306,14 @@ pub async fn load_session_state(drive: &Arc<Drive>, source: Source, id: &str) ->
         .as_ref()
         .map(|i| i.state == crate::sessions::InjectionRunState::Running)
         .unwrap_or(false);
-    let finished_at = injection.as_ref().and_then(|i| {
-        (i.state != crate::sessions::InjectionRunState::Running)
-            .then(|| i.finished_at.as_ref().map(String::as_str))
-            .flatten()
-    });
+    let finished_at = injection
+        .as_ref()
+        .and_then(|i| {
+            (i.state != crate::sessions::InjectionRunState::Running)
+                .then(|| i.finished_at.as_ref().map(String::as_str))
+                .flatten()
+        })
+        .filter(|_| drive.transcripts.settles_reaped_runs(source));
     let resident = drive.injections.resident_info(source, id);
     // Before `sendability`, and before `attention::apply` further down, for the
     // same reason the list applies it before both: `status` is what they read,
