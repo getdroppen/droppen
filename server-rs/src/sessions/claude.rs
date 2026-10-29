@@ -299,24 +299,6 @@ pub async fn summarize_file(file_path: &Path, id: &str, root: ClaudeRoot) -> std
     Ok(summary)
 }
 
-/// Whether a pid still names a live process.
-///
-/// `kill(pid, 0)` succeeds for a live process we own and fails with `EPERM` for
-/// a live process we do not — both mean "alive", which is what the TypeScript's
-/// `process.kill(pid, 0)` / `EPERM` check encodes.
-fn is_process_alive(pid: i32) -> bool {
-    if pid <= 0 {
-        return false;
-    }
-    // SAFETY: signal 0 performs only the permission/existence check and never
-    // delivers a signal, so this cannot affect the target process.
-    let result = unsafe { libc::kill(pid, 0) };
-    if result == 0 {
-        return true;
-    }
-    std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
-}
-
 /// Session ids that have a live Claude Code process attached right now.
 ///
 /// Both roots are scanned: a managed session registers its pid under the managed
@@ -347,7 +329,9 @@ async fn collect_live_ids(dir: &Path, out: &mut HashSet<String>) {
         let (Some(pid), Some(session_id)) = (data.get("pid").and_then(Value::as_i64), data.get("sessionId").and_then(Value::as_str)) else {
             continue;
         };
-        if is_process_alive(pid as i32) {
+        // `exists`, not `alive`: the pid is Claude Code's own, not a child of
+        // this server, so pid 1 (Claude as a container's init) counts.
+        if u32::try_from(pid as i32).is_ok_and(droppen_base::procs::exists) {
             out.insert(session_id.to_string());
         }
     }

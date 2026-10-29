@@ -60,16 +60,23 @@ const PS_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Whether a process is still there.
 ///
+/// Pid 1 is refused as well as [`exists`]'s pid 0: `kill(1, …)` is init, which
+/// is never a child this server is tracking.
+pub fn alive(pid: u32) -> bool {
+    pid != 1 && exists(pid)
+}
+
+/// Whether some process has this pid, ours or not.
+///
 /// `kill(pid, 0)` performs the permission and existence checks and delivers
 /// nothing, which is exactly the question a corpse guard asks. `EPERM` counts as
 /// alive: the process exists, it simply is not ours — which is the case for a
 /// shim adopted across a user switch, and refusing to attach then would be a
 /// false negative.
 ///
-/// Pids 0 and 1 are refused: `kill(0, …)` addresses this process's own group
-/// and `kill(1, …)` init, and neither is ever a child this server is tracking.
-pub fn alive(pid: u32) -> bool {
-    if pid <= 1 {
+/// Pid 0 is refused: `kill(0, …)` addresses this process's own group.
+pub fn exists(pid: u32) -> bool {
+    if pid == 0 {
         return false;
     }
     // SAFETY: signal 0 is the existence probe; it delivers nothing and touches

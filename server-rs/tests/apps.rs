@@ -23,6 +23,7 @@ use futures_util::{SinkExt, StreamExt};
 use gotcha::axum::http::{header, HeaderValue};
 use remote_hand_server::apps::record::{self, AppRecord};
 use remote_hand_server::apps::AppType;
+use droppen_base::procs::alive;
 use droppen_instance::instance::{InstanceDirs, DEFAULT_INSTANCE};
 use droppen_instance::paths::Paths;
 use serde_json::Value;
@@ -557,10 +558,6 @@ fn free_port() -> u16 {
     let port = listener.local_addr().expect("addr").port();
     drop(listener);
     port
-}
-
-fn alive(pid: u32) -> bool {
-    droppen_base::procs::alive(pid)
 }
 
 /// `SIGKILL` a whole process group, for a test's own cleanup.
