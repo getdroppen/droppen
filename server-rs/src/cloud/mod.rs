@@ -55,7 +55,7 @@ use crate::agent::fingerprint::machine_fingerprint;
 use crate::agent::status::{AgentStatus, Standing};
 use crate::aggregator::controller::AggregatorHost;
 use crate::auth::{MaybeIdentity, RETURN_ROUTE};
-use droppen_http::error::ApiError;
+use droppen_http::error::{ApiError, Coded};
 use droppen_http::extract::ApiJson;
 use droppen_http::openapi_ext::ExtraResponses;
 use droppen_instance::paths::Paths;
@@ -139,7 +139,7 @@ impl Cloud {
 
 /// `{error: code, message}` at `status`.
 fn refusal(status: StatusCode, code: &str, message: &str) -> ApiError {
-    ApiError::with_body(status, serde_json::json!({"error": code, "message": message}))
+    ApiError::refusal(status, Coded { error: code, message })
 }
 
 // ---------------------------------------------------------------- bodies
