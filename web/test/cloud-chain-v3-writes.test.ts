@@ -1563,6 +1563,87 @@ test("write gate: approving a held passkey activation takes the hub's chain on t
   assert.equal(b.chain!.seq, hub.state!.seq, "nothing was appended: the activation is the hub's");
 });
 
+test("pins: a held activation that grows is told to the page, and keeps this device from taking itself out until it is settled", async () => {
+  const { a, b, p } = await heldPasskeyAccount();
+  await b.sync();
+  assert.equal(b.heldBack?.device, p.deviceId);
+  assert.equal(b.selfRemoval(), "heldBack", "settle the hold first");
+  // a takes the activation in on the person's word and changes the account again: both past b's hold.
+  await a.sync();
+  assert.equal(a.heldBack?.device, p.deviceId);
+  await a.approveDevice(p.deviceId);
+  await a.setRecoveryWords();
+  const before = b.heldBack!.entries.length;
+  let told = 0;
+  b.onChange(() => void told++);
+  await b.sync();
+  assert.ok(b.heldBack!.entries.length > before, "the hold grew");
+  assert.ok(told > 0, "and the page is told");
+  await b.approveDevice(p.deviceId);
+  assert.equal(b.heldBack, null);
+  assert.equal(b.selfRemoval(), "removable", "settled: nothing holds it back now");
+});
+
+test("pins: while the page keeps its session fresh, a held activation is looked at again once it may be taken — at most six hours ahead — and not while it does not", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+  const { b } = await heldPasskeyAccount();
+  const timers = t.mock.method(globalThis, "setTimeout");
+  const delays = () => timers.mock.calls.map((c) => c.arguments[1] as number);
+  const sixHours = 6 * 60 * 60 * 1000;
+  await b.sync();
+  const readyMs = b.heldBack!.readyMs;
+  assert.ok(readyMs - Date.now() > sixHours, "a day away");
+  assert.ok(!delays().includes(sixHours), "nothing scheduled while the page does not keep its session");
+  b.keepSessionFresh();
+  t.after(() => b.stopSession());
+  assert.ok(delays().includes(sixHours), "looked at again in six hours");
+  t.mock.timers.setTime(readyMs - 60 * 60 * 1000);
+  await b.sync();
+  assert.ok(b.heldBack, "not yet");
+  assert.ok(delays().includes(60 * 60 * 1000 + 1000), "a second after it may be taken");
+});
+
+test("pins: stopping the session stops looking at a held activation again — its timer is cleared", async (t) => {
+  const { b } = await heldPasskeyAccount();
+  await b.sync();
+  assert.ok(b.heldBack);
+  const timers = t.mock.method(globalThis, "setTimeout");
+  b.keepSessionFresh();
+  const handle = timers.mock.calls.find((c) => c.arguments[1] === 6 * 60 * 60 * 1000)?.result;
+  assert.ok(handle, "looked at again in six hours");
+  const clears = t.mock.method(globalThis, "clearTimeout");
+  b.stopSession();
+  assert.ok(
+    clears.mock.calls.some((c) => c.arguments[0] === handle),
+    "cleared as the session stops: a sign-out or a wipe comes next, and nothing may sync the account after it",
+  );
+});
+
+test("pins: a page holding an activation back that another page of this browser took in vouches for nothing — a held view, not a fork", async () => {
+  const { hub, b, p } = await heldPasskeyAccount();
+  await b.sync();
+  assert.equal(b.heldBack?.device, p.deviceId);
+  const other = await hub.reload(b);
+  assert.equal(other.heldBack?.device, p.deviceId, "the other page holds it back too");
+  await other.approveDevice(p.deviceId);
+  assert.equal(other.heldBack, null);
+  await assert.rejects(b.attestation(), (e: unknown) => e instanceof AccountError && e.kind === "heldBack");
+  assert.equal(b.forked, null, "no fork alarm");
+  assert.equal(b.heldBack?.device, p.deviceId);
+});
+
+test("pins: a served chain that repeats an entry with other bytes is a fork, latched — not merely refused", async () => {
+  const { hub, a } = await account();
+  const other = new FakeKeysHub();
+  const o = await other.device("tok");
+  await createV2Genesis(o, true);
+  await a.sync();
+  hub.chainServed = async () => [...hub.chain, other.chain[0]!];
+  await assert.rejects(a.sync(), (e: unknown) => e instanceof AccountError && e.kind === "fork");
+  hub.chainServed = null;
+  assert.ok(a.forked, "latched: this page uses the chain no more");
+});
+
 test("write gate: vetoing a held passkey activation takes out what came in through a passkey slot after it — what a trusted admin signed stands", async (t) => {
   const t0 = Date.now();
   t.mock.timers.enable({ apis: ["Date"], now: t0 });
