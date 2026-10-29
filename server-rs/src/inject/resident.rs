@@ -7995,6 +7995,20 @@ done
         panic!("timed out waiting for {what}");
     }
 
+    /// A control request this driver wrote, with the uuid in its
+    /// `request_id` replaced by `<uuid>`: the one part of it that is fresh
+    /// every time. Checked to be a lowercase, hyphenated v4 uuid right after
+    /// `prefix`, so the mask hides nothing else.
+    fn masked_request_id(line: &str, prefix: &str) -> String {
+        let value: Value = serde_json::from_str(line).expect("one JSON object");
+        let id = value["request_id"].as_str().expect("a request id");
+        let fresh = id.strip_prefix(prefix).unwrap_or_else(|| panic!("{id} starts with {prefix}"));
+        let uuid = uuid::Uuid::parse_str(fresh).expect("a uuid");
+        assert_eq!(fresh, uuid.hyphenated().to_string(), "lowercase and hyphenated");
+        assert_eq!(uuid.get_version_num(), 4, "a random uuid");
+        line.replacen(fresh, "<uuid>", 1)
+    }
+
     // ------------------------------------------------------- durability
 
     /// A message sent behind a running turn is in the journal by the time its
@@ -8539,6 +8553,30 @@ done
         assert_eq!(value["message"]["role"], "user");
         assert_eq!(value["message"]["content"][0]["type"], "text");
         assert_eq!(value["message"]["content"][0]["text"], "hello \"world\"");
+    }
+
+    /// The line a message goes in as, whole, sent and steered alike: key
+    /// order is part of what claude is handed, and a parsed `Value` compares
+    /// equal in any order. Quotes, control characters and non-ASCII text are
+    /// where two ways of writing it could differ.
+    #[tokio::test]
+    async fn a_sent_and_a_steered_message_reach_claude_as_exactly_these_bytes() {
+        let harness = Harness::ordinary().await;
+        until("the init", || harness.state().phase == Phase::Idle).await;
+        harness.send("hello \"world\"\nsecond line — 你好");
+        until("the turn", || harness.state().phase == Phase::Working).await;
+        harness.send("urgent\tnow");
+        until("it to be queued", || harness.state().queued == 1).await;
+        assert_eq!(harness.steer(&harness.qid("urgent")).await, QueueOutcome::Done);
+        harness.release();
+        until("the steered message to be read", || harness.seen().len() == 2).await;
+        assert_eq!(
+            harness.seen(),
+            [
+                r#"{"type":"user","message":{"role":"user","content":[{"type":"text","text":"hello \"world\"\nsecond line — 你好"}]}}"#,
+                r#"{"type":"user","message":{"role":"user","content":[{"type":"text","text":"urgent\tnow"}]}}"#,
+            ]
+        );
     }
 
     // ----------------------------------------------------------- the queue
@@ -9550,6 +9588,21 @@ await() {{ n=0; while [ ! -f "$dir/$1" ] && [ "$n" -lt 400 ]; do [ -d "$dir" ] |
         assert!(harness.state().tasks.is_empty(), "the description goes with the task");
     }
 
+    /// The request that stops one background task, whole, uuid aside.
+    #[tokio::test]
+    async fn a_stop_task_request_reaches_claude_as_exactly_these_bytes() {
+        let harness = Harness::ordinary_with(&describes_its_background_work()).await;
+        until("the init", || harness.state().phase == Phase::Idle).await;
+        harness.nudge("started");
+        until("the task", || harness.state().background == 1).await;
+        assert_eq!(harness.registry.stop_resident_task(SESSION, "a8725c02"), StopTaskOutcome::Asked);
+        until("the request to be read", || harness.seen().len() == 1).await;
+        assert_eq!(
+            masked_request_id(&harness.seen()[0], "stop-"),
+            r#"{"type":"control_request","request_id":"stop-<uuid>","request":{"subtype":"stop_task","task_id":"a8725c02"}}"#
+        );
+    }
+
     /// A message that needs a different process from the one running.
     fn a_settings_change() -> Fingerprint {
         Fingerprint {
@@ -9870,6 +9923,37 @@ done
         assert!(!harness.driver.is_finished());
         harness.send("and the session goes on");
         until("the next message to be read", || harness.seen().len() == 3).await;
+    }
+
+    /// The polite request, whole, uuid aside.
+    #[tokio::test]
+    async fn an_interrupt_reaches_claude_as_exactly_these_bytes() {
+        let harness = Harness::start(
+            r#"
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG"
+  case "$line" in
+    *control_request*)
+       printf '%s\n' '{"type":"control_response","response":{"subtype":"success"}}'
+       printf '%s\n' '{"type":"result","subtype":"interrupted","is_error":false}' ;;
+    *) : ;;
+  esac
+done
+"#,
+            Duration::from_secs(3600),
+            Duration::from_secs(3600),
+            Duration::from_secs(3600),
+        )
+        .await;
+        until("the init", || harness.state().phase == Phase::Idle).await;
+        harness.send("something long");
+        until("the turn", || harness.state().phase == Phase::Working).await;
+        assert!(harness.registry.interrupt_resident(SESSION));
+        until("the request to be read", || harness.seen().len() == 2).await;
+        assert_eq!(
+            masked_request_id(&harness.seen()[1], "int-"),
+            r#"{"type":"control_request","request_id":"int-<uuid>","request":{"subtype":"interrupt"}}"#
+        );
     }
 
     /// A CLI that will not answer gets signalled, rung by rung. The script traps
@@ -11624,6 +11708,87 @@ done
         assert_eq!(line["response"]["response"], questions::deny(questions::DISMISSED));
     }
 
+    /// The questions [`asks_a_question`] asks, in the bytes its request line
+    /// carries them in, which is what an answer echoes.
+    const COLOURS_AND_TOPPINGS: &str = r#"[{"question":"Which colour do you prefer?","header":"Colour","options":[{"label":"Red","description":"Warm"},{"label":"Blue","description":"Cool"}],"multiSelect":false},{"question":"Which toppings?","header":"Toppings","options":[{"label":"Cheese"},{"label":"Olives"}],"multiSelect":true}]"#;
+
+    /// An answer with notes, as the line claude reads, whole: key order is
+    /// part of it, and a parsed `Value` compares equal in any order. Words
+    /// beside the choices ride as a note on the last question answered.
+    #[tokio::test]
+    async fn an_answer_with_notes_reaches_claude_as_exactly_these_bytes() {
+        let harness = Harness::ordinary_with(&asks_a_question()).await;
+        until("the init", || harness.state().phase == Phase::Idle).await;
+        harness.send("pick for me");
+        until("the question", || harness.state().question.is_some()).await;
+        let answer = questions::Answer {
+            notes: std::collections::BTreeMap::from([
+                ("Which colour do you prefer?".to_string(), "for the header".to_string()),
+                ("Which toppings?".to_string(), "no \"extra\" cheese".to_string()),
+            ]),
+            response: Some("thanks — 谢谢".to_string()),
+            ..blue_with_cheese_and_olives()
+        };
+        let outcome = harness.registry.answer_question(SESSION, "req-q1", Reply::Answer(answer), None).await;
+        assert!(matches!(outcome, AnswerOutcome::Delivered(_)), "{outcome:?}");
+        until("the turn to end", || harness.state().phase == Phase::Idle).await;
+        assert_eq!(
+            harness.seen()[1..],
+            [[
+                r#"{"type":"control_response","response":{"subtype":"success","request_id":"req-q1","response":{"behavior":"allow","updatedInput":{"questions":"#,
+                COLOURS_AND_TOPPINGS,
+                r#","answers":{"Which colour do you prefer?":"Blue","Which toppings?":"Cheese, Olives"},"#,
+                r#""annotations":{"Which colour do you prefer?":{"notes":"for the header"},"Which toppings?":{"notes":"no \"extra\" cheese; thanks — 谢谢"}}}}}}"#,
+            ]
+            .concat()]
+        );
+    }
+
+    /// Words typed in place of a choice, as the line claude reads, whole:
+    /// `answers` still there and empty, the words trimmed as `response`, and
+    /// no `annotations`.
+    #[tokio::test]
+    async fn a_typed_response_reaches_claude_as_exactly_these_bytes() {
+        let harness = Harness::ordinary_with(&asks_a_question()).await;
+        until("the init", || harness.state().phase == Phase::Idle).await;
+        harness.send("pick for me");
+        until("the question", || harness.state().question.is_some()).await;
+        let said = questions::Answer {
+            response: Some("  just pick one  ".to_string()),
+            ..questions::Answer::default()
+        };
+        let outcome = harness.registry.answer_question(SESSION, "req-q1", Reply::Answer(said), None).await;
+        assert!(matches!(outcome, AnswerOutcome::Delivered(_)), "{outcome:?}");
+        until("the turn to end", || harness.state().phase == Phase::Idle).await;
+        assert_eq!(
+            harness.seen()[1..],
+            [[
+                r#"{"type":"control_response","response":{"subtype":"success","request_id":"req-q1","response":{"behavior":"allow","updatedInput":{"questions":"#,
+                COLOURS_AND_TOPPINGS,
+                r#","answers":{},"response":"just pick one"}}}}"#,
+            ]
+            .concat()]
+        );
+    }
+
+    /// A dismissed question, as the line claude reads, whole.
+    #[tokio::test]
+    async fn a_dismissal_reaches_claude_as_exactly_these_bytes() {
+        let harness = Harness::ordinary_with(&asks_a_question()).await;
+        until("the init", || harness.state().phase == Phase::Idle).await;
+        harness.send("pick for me");
+        until("the question", || harness.state().question.is_some()).await;
+        let outcome = harness.registry.answer_question(SESSION, "req-q1", Reply::Dismiss, None).await;
+        assert!(matches!(outcome, AnswerOutcome::Delivered(_)), "{outcome:?}");
+        until("the turn to end", || harness.state().phase == Phase::Idle).await;
+        assert_eq!(
+            harness.seen()[1..],
+            [
+                r#"{"type":"control_response","response":{"subtype":"success","request_id":"req-q1","response":{"behavior":"deny","message":"The user chose not to answer this question. Use your own judgement and carry on."}}}"#
+            ]
+        );
+    }
+
     /// Every prompt but a question is refused the moment it arrives, as
     /// `--permission-mode auto` refused it before the prompt tool existed: a
     /// write outside the workspace is not something a phone gets asked about.
@@ -11674,6 +11839,37 @@ done
             "a permission prompt is not a question"
         );
         assert_eq!(harness.injection().map(|run| run.state), Some(InjectionRunState::Ok));
+    }
+
+    /// A refused permission prompt and a declined control request, as the
+    /// lines claude reads, whole and in the order it asked.
+    #[tokio::test]
+    async fn a_refusal_and_a_declined_request_reach_claude_as_exactly_these_bytes() {
+        let write = r#"{"type":"control_request","request_id":"req-w1","request":{"subtype":"can_use_tool","tool_name":"Write","input":{"file_path":"/etc/hosts","content":"x"},"tool_use_id":"toolu_w1","decision_reason":"outside the workspace"}}"#;
+        let hook = r#"{"type":"control_request","request_id":"hook-1","request":{"subtype":"hook_callback","callback_id":"x"}}"#;
+        let harness = Harness::ordinary_with(&format!(
+            r#"
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG"
+  case "$line" in
+    *control_response*) : ;;
+    *) printf '%s\n' '{write}'
+       printf '%s\n' '{hook}' ;;
+  esac
+done
+"#
+        ))
+        .await;
+        until("the init", || harness.state().phase == Phase::Idle).await;
+        harness.send("write it to /etc/hosts");
+        until("both to be answered", || harness.seen().len() == 3).await;
+        assert_eq!(
+            harness.seen()[1..],
+            [
+                r#"{"type":"control_response","response":{"subtype":"success","request_id":"req-w1","response":{"behavior":"deny","message":"Permission to use Write was denied (outside the workspace). This session runs under Droppen, which does not grant interactive permissions; do it another way or ask the user to."}}}"#,
+                r#"{"type":"control_response","response":{"subtype":"error","request_id":"hook-1","error":"Droppen does not handle this request"}}"#,
+            ]
+        );
     }
 
     /// The two clocks that would throw a question's turn away, and must not.
@@ -11882,6 +12078,19 @@ done
         until("the stored answer to be written", || response_to(&harness.seen(), "req-q1").is_some()).await;
         let line = response_to(&harness.seen(), "req-q1").expect("written");
         assert_eq!(line["response"]["response"], delivery, "the very answer the user gave");
+        // Whole, because the answer went through the database on the way:
+        // what comes back out has to be the bytes a live answer is.
+        assert_eq!(
+            harness.seen().into_iter().find(|line| line.contains("control_response")),
+            Some(
+                [
+                    r#"{"type":"control_response","response":{"subtype":"success","request_id":"req-q1","response":{"behavior":"allow","updatedInput":{"questions":"#,
+                    COLOURS_AND_TOPPINGS,
+                    r#","answers":{"Which colour do you prefer?":"Blue","Which toppings?":"Cheese, Olives"}}}}}"#,
+                ]
+                .concat()
+            )
+        );
         until("the turn to end", || harness.state().phase == Phase::Idle).await;
         assert_eq!(harness.state().question, None, "nothing is left open");
         assert_eq!(

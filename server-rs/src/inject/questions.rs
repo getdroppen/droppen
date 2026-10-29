@@ -805,6 +805,142 @@ mod tests {
         );
     }
 
+    /// One question, in the bytes the CLI writes it with.
+    const COLOUR: &str = r#"[{"question":"Which colour do you prefer?","header":"Colour","options":[{"label":"Red","description":"Warm"},{"label":"Blue","description":"Cool"}],"multiSelect":false}]"#;
+
+    /// The line an answer goes out as, whole, because key order is part of
+    /// what the CLI is handed and a `Value` compares equal in any order.
+    ///
+    /// Asked toppings first, so the sorted order of `answers` and
+    /// `annotations` is visibly not the asked one; read off the CLI's own
+    /// request line, so the echoed questions keep the CLI's key order.
+    #[test]
+    fn an_answer_with_notes_goes_out_as_exactly_these_bytes() {
+        let line: Value = serde_json::from_str(concat!(
+            r#"{"type":"control_request","request_id":"req-1","request":{"subtype":"can_use_tool","tool_name":"AskUserQuestion","input":{"questions":["#,
+            r#"{"question":"Which toppings?","header":"Toppings","options":[{"label":"Cheese","description":"Mild"},{"label":"Olives"}],"multiSelect":true},"#,
+            r#"{"question":"Which colour do you prefer?","header":"Colour","options":[{"label":"Red"},{"label":"Blue"}],"multiSelect":false}"#,
+            r#"]},"tool_use_id":"toolu_1"}}"#,
+        ))
+        .expect("json");
+        let request = PermissionRequest::parse(&line).expect("a permission request");
+        let answer = Answer {
+            answers: BTreeMap::from([
+                ("Which toppings?".to_string(), "Cheese, Olives".to_string()),
+                ("Which colour do you prefer?".to_string(), "Blue".to_string()),
+            ]),
+            notes: BTreeMap::from([("Which toppings?".to_string(), "no \"extra\" cheese".to_string())]),
+            response: Some("thanks — 谢谢".to_string()),
+        };
+        assert_eq!(
+            control_response(&request.request_id, &allow(&request.questions(), &answer)),
+            concat!(
+                r#"{"type":"control_response","response":{"subtype":"success","request_id":"req-1","response":"#,
+                r#"{"behavior":"allow","updatedInput":{"questions":["#,
+                r#"{"question":"Which toppings?","header":"Toppings","options":[{"label":"Cheese","description":"Mild"},{"label":"Olives"}],"multiSelect":true},"#,
+                r#"{"question":"Which colour do you prefer?","header":"Colour","options":[{"label":"Red"},{"label":"Blue"}],"multiSelect":false}],"#,
+                r#""answers":{"Which colour do you prefer?":"Blue","Which toppings?":"Cheese, Olives"},"#,
+                r#""annotations":{"Which colour do you prefer?":{"notes":"thanks — 谢谢"},"Which toppings?":{"notes":"no \"extra\" cheese"}}}}}}"#,
+            )
+        );
+    }
+
+    /// Words typed instead of a choice: `answers` is still there, empty, and
+    /// `response` comes after it.
+    #[test]
+    fn a_response_typed_instead_of_a_choice_goes_out_as_exactly_these_bytes() {
+        let questions: Value = serde_json::from_str(COLOUR).expect("json");
+        let said = Answer {
+            response: Some("  just pick one  ".to_string()),
+            ..Answer::default()
+        };
+        assert_eq!(
+            allow(&questions, &said).to_string(),
+            [
+                r#"{"behavior":"allow","updatedInput":{"questions":"#,
+                COLOUR,
+                r#","answers":{},"response":"just pick one"}}"#
+            ]
+            .concat()
+        );
+    }
+
+    /// Which keys an answer leaves out, rather than sending as `null`: no
+    /// `annotations` without a note, and no `response` beside a choice or
+    /// when only blanks were typed. With a note and words but no choice,
+    /// all four go out, in this order.
+    #[test]
+    fn an_answer_leaves_out_the_keys_it_has_nothing_for() {
+        let questions: Value = serde_json::from_str(COLOUR).expect("json");
+        let blue = || BTreeMap::from([("Which colour do you prefer?".to_string(), "Blue".to_string())]);
+        let chosen = [
+            r#"{"behavior":"allow","updatedInput":{"questions":"#,
+            COLOUR,
+            r#","answers":{"Which colour do you prefer?":"Blue"}}}"#,
+        ]
+        .concat();
+        let only_a_choice = Answer {
+            answers: blue(),
+            ..Answer::default()
+        };
+        assert_eq!(allow(&questions, &only_a_choice).to_string(), chosen);
+        let a_choice_and_blanks = Answer {
+            answers: blue(),
+            response: Some("   ".to_string()),
+            ..Answer::default()
+        };
+        assert_eq!(allow(&questions, &a_choice_and_blanks).to_string(), chosen);
+        let only_blanks = Answer {
+            response: Some("   ".to_string()),
+            ..Answer::default()
+        };
+        assert_eq!(
+            allow(&questions, &only_blanks).to_string(),
+            [r#"{"behavior":"allow","updatedInput":{"questions":"#, COLOUR, r#","answers":{}}}"#].concat()
+        );
+        let a_note_and_words = Answer {
+            notes: BTreeMap::from([("Which colour do you prefer?".to_string(), "for the header".to_string())]),
+            response: Some("you pick".to_string()),
+            ..Answer::default()
+        };
+        assert_eq!(
+            allow(&questions, &a_note_and_words).to_string(),
+            [
+                r#"{"behavior":"allow","updatedInput":{"questions":"#,
+                COLOUR,
+                r#","answers":{},"annotations":{"Which colour do you prefer?":{"notes":"for the header"}},"response":"you pick"}}"#,
+            ]
+            .concat()
+        );
+    }
+
+    /// Every refusal this server writes, and the error for a request it does
+    /// not handle, whole.
+    #[test]
+    fn refusals_and_errors_go_out_as_exactly_these_bytes() {
+        assert_eq!(
+            control_response("req-2", &deny(DISMISSED)),
+            r#"{"type":"control_response","response":{"subtype":"success","request_id":"req-2","response":{"behavior":"deny","message":"The user chose not to answer this question. Use your own judgement and carry on."}}}"#
+        );
+        assert_eq!(
+            control_response("req-3", &deny(ANSWERED_ELSEWHERE)),
+            r#"{"type":"control_response","response":{"subtype":"success","request_id":"req-3","response":{"behavior":"deny","message":"The user answered this question in a separate message; read it and carry on."}}}"#
+        );
+        let write: Value = serde_json::from_str(
+            r#"{"type":"control_request","request_id":"req-4","request":{"subtype":"can_use_tool","tool_name":"Write","input":{"file_path":"/etc/x"},"decision_reason":"outside the workspace"}}"#,
+        )
+        .expect("json");
+        let write = PermissionRequest::parse(&write).expect("a permission request");
+        assert_eq!(
+            control_response(&write.request_id, &deny(&permission_denial(&write))),
+            r#"{"type":"control_response","response":{"subtype":"success","request_id":"req-4","response":{"behavior":"deny","message":"Permission to use Write was denied (outside the workspace). This session runs under Droppen, which does not grant interactive permissions; do it another way or ask the user to."}}}"#
+        );
+        assert_eq!(
+            control_error("hook-1", "Droppen does not handle this request"),
+            r#"{"type":"control_response","response":{"subtype":"error","request_id":"hook-1","error":"Droppen does not handle this request"}}"#
+        );
+    }
+
     #[test]
     fn an_answer_must_answer_what_was_asked() {
         let questions = colours();
