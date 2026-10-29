@@ -17,7 +17,7 @@ use tokio_util::sync::CancellationToken;
 use crate::cloud;
 use crate::drive::Drive;
 use crate::feed;
-use crate::plugins::CloudIdentityExt;
+use droppen_plugins::CloudIdentityExt;
 use droppen_http::error::ApiError;
 use droppen_http::extract::{ApiPath, ApiQuery};
 use droppen_http::{close_within, hostname, node_platform, send_within, Heartbeat, CLOSE_LIMIT, RUNTIME_VERSION, SERVER_VERSION};
@@ -31,6 +31,13 @@ mod state;
 /// router as the server builds it.
 #[cfg(test)]
 mod auth_routes;
+
+/// The plugin routes (`droppen_plugins::routes`) and the plugin assets
+/// (`droppen_plugins::serve`), through the router as the server builds it.
+#[cfg(test)]
+mod plugins_routes;
+#[cfg(test)]
+mod plugins_serve;
 
 /// The router every subsystem's `routes` function extends.
 ///
@@ -49,7 +56,7 @@ const API_DESCRIPTION: &str = "Browse local Claude Code and Codex sessions plus 
 pub struct AppState {
     /// The plugins installed in this instance, their switches and document
     /// stores.
-    pub plugins: Arc<crate::plugins::Plugins>,
+    pub plugins: Arc<droppen_plugins::Plugins>,
     /// Where sessions are discovered.
     pub paths: Arc<Paths>,
     /// The instance directory this server owns, and the name it reports.
@@ -212,7 +219,7 @@ pub async fn settings(State(state): State<AppState>, #[api(skip)] who: droppen_a
     // The agent's own status mirror reads this route as `cloud:agent-sync`, so
     // the hub's offline copy gets the same empty list (`docs/plugins/
     // runtime.md` §5).
-    let plugins: Vec<crate::plugins::wire::PluginStatus> = if who.is_cloud() {
+    let plugins: Vec<droppen_plugins::wire::PluginStatus> = if who.is_cloud() {
         Vec::new()
     } else {
         state.plugins.status_async().await.into_iter().map(Into::into).collect()
@@ -397,7 +404,7 @@ fn response_overrides() -> ExtraResponses {
     droppen_files::media::describe(&mut reg);
     crate::models::describe(&mut reg);
     crate::notify::describe(&mut reg);
-    crate::plugins::routes::describe(&mut reg);
+    droppen_plugins::routes::describe(&mut reg);
     droppen_workbench::prefs::describe(&mut reg);
     crate::push::describe(&mut reg);
     crate::accounts::quota::describe(&mut reg);
@@ -433,7 +440,7 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
     let router = droppen_files::media::routes(router);
     let router = crate::models::ModelsState::routes(router);
     let router = crate::notify::NotifyState::routes(router);
-    let router = crate::plugins::routes::PluginsState::routes(router);
+    let router = droppen_plugins::routes::PluginsState::routes(router);
     let router = droppen_workbench::prefs::PrefsState::routes(router);
     let router = crate::push::PushState::routes(router);
     let router = crate::accounts::quota::QuotaState::routes(router);
@@ -597,7 +604,7 @@ mod tests {
     async fn a_bridged_settings_says_there_are_no_plugins() {
         let home = tempfile::tempdir().unwrap();
         let mut state = test_support::state(home.path()).await;
-        state.plugins = Arc::new(crate::plugins::tests::installed_host(
+        state.plugins = Arc::new(droppen_plugins::testing::installed_host(
             home.path(),
             &["tasks"],
             droppen_http::config::PluginSettings::default(),

@@ -1125,6 +1125,7 @@ mod tests {
             manifest.join("crates/droppen-auth/src"),
             manifest.join("crates/droppen-files/src"),
             manifest.join("crates/droppen-workbench/src"),
+            manifest.join("crates/droppen-plugins/src"),
         ];
         while let Some(dir) = dirs.pop() {
             for entry in std::fs::read_dir(&dir).unwrap() {

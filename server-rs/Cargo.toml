@@ -16,7 +16,7 @@ workspace = true
 # package stays the default member, so a bare `cargo build`/`cargo test` here
 # still means the server and nothing else.
 [workspace]
-members = [".", "crates/rh-proto", "crates/rh-relay", "crates/droppen-relay", "crates/rh-client", "crates/rh-devkit", "crates/droppen-plugin-sdk", "crates/droppen-search-path", "crates/droppen-base", "crates/droppen-instance", "crates/droppen-http", "crates/droppen-pty", "crates/droppen-supervisor", "crates/droppen-auth", "crates/droppen-files", "crates/droppen-workbench"]
+members = [".", "crates/rh-proto", "crates/rh-relay", "crates/droppen-relay", "crates/rh-client", "crates/rh-devkit", "crates/droppen-plugin-sdk", "crates/droppen-search-path", "crates/droppen-base", "crates/droppen-instance", "crates/droppen-http", "crates/droppen-pty", "crates/droppen-supervisor", "crates/droppen-auth", "crates/droppen-files", "crates/droppen-workbench", "crates/droppen-plugins"]
 
 # Every member takes serde_json from here, so `preserve_order` is on in every
 # build: a `Value` writes its keys in insertion order rather than sorted. Cargo
@@ -84,6 +84,8 @@ droppen-auth = { path = "crates/droppen-auth" }
 droppen-files = { path = "crates/droppen-files" }
 # The panes and the layout around sessions: terminals, apps, screens, prefs.
 droppen-workbench = { path = "crates/droppen-workbench" }
+# The plugin host: installed packages, their switches, store, routes and assets.
+droppen-plugins = { path = "crates/droppen-plugins" }
 # Machine-signed stream heads and manifests (the agent's streams).
 ed25519-dalek = "2"
 # The agent's one outbound websocket to the hub, and its loopback sockets to
@@ -130,13 +132,6 @@ base64 = "0.22"
 # server and a browser compresses a websocket for it. The backend is the one
 # already in the graph.
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
-# Reading a plugin package's tar (`crate::plugins::install`). The gzip half is
-# `flate2` above. Hand-rolling the header parser (ustar, GNU long names, PAX
-# extensions, checksums) would be exactly the kind of security-sensitive parsing
-# a vetted crate should do instead; the installer still reads entries itself,
-# refusing anything but regular files and directories rather than extracting
-# with the tar's own modes and links.
-tar = "0.4"
 
 # Web Push (`crate::push`), hand-rolled on RustCrypto rather than taken from the
 # `web-push` crate: that one reaches ECE and from there `openssl-sys`, and this
@@ -216,3 +211,6 @@ droppen-pty = { path = "crates/droppen-pty", features = ["test-support"] }
 # The live setup code and a hold on the account store's writes, for the tests
 # of the guard and the `/api/auth/*` routes (`api::auth_routes`).
 droppen-auth = { path = "crates/droppen-auth", features = ["test-support"] }
+# Plugin packages built in code and a host with some installed
+# (`droppen_plugins::testing`), for the feed's and the settings route's tests.
+droppen-plugins = { path = "crates/droppen-plugins", features = ["test-support"] }

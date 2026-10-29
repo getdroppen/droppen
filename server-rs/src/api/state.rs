@@ -26,7 +26,7 @@ use crate::drive::DriveState;
 use crate::feed::global::{ClaudeDirs, EventsState};
 use droppen_files::FilesState;
 use crate::notify::NotifyState;
-use crate::plugins::routes::PluginsState;
+use droppen_plugins::routes::PluginsState;
 use droppen_workbench::prefs::PrefsState;
 use crate::push::PushState;
 use crate::schedule::ScheduleState;

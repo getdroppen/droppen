@@ -808,7 +808,7 @@ fn too_large(message: impl Into<String>, limit: u64) -> InstallError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plugins::testing::{package, tarball, Entry};
+    use crate::testing::{package, tarball, Entry};
 
     fn temp() -> (tempfile::TempDir, PathBuf) {
         let dir = tempfile::tempdir().unwrap();
@@ -890,7 +890,7 @@ mod tests {
     #[test]
     fn a_package_may_not_ship_the_install_record_in_any_case() {
         for name in [".droppen-install.json", ".DROPPEN-INSTALL.JSON"] {
-            let message = refusal(&crate::plugins::testing::raw_tarball(&[
+            let message = refusal(&crate::testing::raw_tarball(&[
                 Entry::file("package/package.json", package("tasks", "0.1.0").to_string().into_bytes()),
                 Entry::file(format!("package/{name}"), b"{}"),
             ]));
@@ -905,7 +905,7 @@ mod tests {
     #[test]
     fn a_gnu_long_name_header_that_claims_a_gigabyte_is_refused_cheaply() {
         let started = std::time::Instant::now();
-        let message = refusal(&crate::plugins::testing::raw_tarball(&[Entry::long_name(
+        let message = refusal(&crate::testing::raw_tarball(&[Entry::long_name(
             vec![b'a'; 2 * 1024 * 1024],
             1024 * 1024 * 1024,
         )]));
@@ -921,7 +921,7 @@ mod tests {
         name.extend(std::iter::repeat(b'a').take(MAX_ENTRY_PATH + 1));
         name.extend_from_slice(b".js");
         let declared = name.len() as u64;
-        let message = refusal(&crate::plugins::testing::raw_tarball(&[
+        let message = refusal(&crate::testing::raw_tarball(&[
             Entry::long_name(name, declared),
             Entry::file("package/short.js", b"x"),
         ]));
@@ -944,7 +944,7 @@ mod tests {
             Entry::file("package/short.js", b"export default {};\n".to_vec()),
             Entry::file("package/package.json", serde_json::to_vec(&pkg).unwrap()),
         ];
-        let installed = install(&instance, &crate::plugins::testing::raw_tarball(&entries)).unwrap();
+        let installed = install(&instance, &crate::testing::raw_tarball(&entries)).unwrap();
         assert_eq!(installed.entry, deep);
         assert!(package_dir(&instance, "tasks").join(&deep).is_file(), "the whole name was written");
     }
@@ -964,7 +964,7 @@ mod tests {
     /// gzip'd tar": the bound is checked before the tar error is reported.
     #[test]
     fn exceeding_the_decompression_bound_is_too_large() {
-        let message = refusal(&crate::plugins::testing::streamed_long_name(
+        let message = refusal(&crate::testing::streamed_long_name(
             100 * 1024 * 1024,
             MAX_DECOMPRESSED_BYTES + 1024 * 1024,
         ));
@@ -976,7 +976,7 @@ mod tests {
     #[test]
     fn a_directory_header_with_a_huge_size_is_refused_at_the_header() {
         let started = std::time::Instant::now();
-        let message = refusal(&crate::plugins::testing::raw_tarball(&[Entry::dir_with_size(
+        let message = refusal(&crate::testing::raw_tarball(&[Entry::dir_with_size(
             "package/dist",
             33 * 1024 * 1024 * 1024,
         )]));
@@ -1060,22 +1060,22 @@ mod tests {
         let js = ("dist/index.js", &b"export {};\n"[..]);
         let cases: Vec<(Vec<u8>, &str)> = vec![
             (
-                crate::plugins::testing::raw_tarball(&[Entry::symlink("package/dist/index.js", "../../../etc/passwd")]),
+                crate::testing::raw_tarball(&[Entry::symlink("package/dist/index.js", "../../../etc/passwd")]),
                 "not a regular file or a directory",
             ),
             (
-                crate::plugins::testing::raw_tarball(&[Entry::hardlink("package/dist/index.js", "package/package.json")]),
+                crate::testing::raw_tarball(&[Entry::hardlink("package/dist/index.js", "package/package.json")]),
                 "not a regular file or a directory",
             ),
             (
-                crate::plugins::testing::raw_tarball(&[Entry::file("/etc/passwd", b"x")]),
+                crate::testing::raw_tarball(&[Entry::file("/etc/passwd", b"x")]),
                 "is an absolute path",
             ),
             (
-                crate::plugins::testing::raw_tarball(&[Entry::file("package/../escape.js", b"x")]),
+                crate::testing::raw_tarball(&[Entry::file("package/../escape.js", b"x")]),
                 "steps out of the package",
             ),
-            (crate::plugins::testing::raw_tarball(&[Entry::file("package/dist/index.js", b"x")]), "no package/package.json"),
+            (crate::testing::raw_tarball(&[Entry::file("package/dist/index.js", b"x")]), "no package/package.json"),
             (tarball(&serde_json::json!({"version": "0.1.0"}), &[js]), "no \"droppen\" manifest"),
             (
                 tarball(&with_manifest(serde_json::json!({"id": "Tasks", "engines": {"droppen": "^0.1.0"}})), &[js]),
@@ -1112,20 +1112,20 @@ mod tests {
             (tarball(&entry_package("dist/index.ts"), &[js]), "not a .js or .mjs file"),
             (tarball(&entry_package("dist/missing.js"), &[js]), "does not exist"),
             (
-                crate::plugins::testing::raw_tarball(&[Entry::file("other/package.json", b"{}")]),
+                crate::testing::raw_tarball(&[Entry::file("other/package.json", b"{}")]),
                 "not under package/",
             ),
             (
-                crate::plugins::testing::raw_tarball(&[Entry::file("package/package.json", b"{}"), Entry::file("package/package.json", b"{}")]),
+                crate::testing::raw_tarball(&[Entry::file("package/package.json", b"{}"), Entry::file("package/package.json", b"{}")]),
                 "appears twice",
             ),
             (
-                crate::plugins::testing::raw_tarball(&[Entry::file("package/.droppen-install.json", b"{}")]),
+                crate::testing::raw_tarball(&[Entry::file("package/.droppen-install.json", b"{}")]),
                 "reserved for the install's own record",
             ),
             (b"not a tarball at all".to_vec(), "not a gzip'd tar"),
             (
-                crate::plugins::testing::raw_tarball(&[Entry::file_with_size("package/big.bin", MAX_UNPACKED_BYTES + 1, b"")]),
+                crate::testing::raw_tarball(&[Entry::file_with_size("package/big.bin", MAX_UNPACKED_BYTES + 1, b"")]),
                 "unpacks to more than",
             ),
             // Over the tarball cap: the check runs before the gzip is read.
@@ -1143,7 +1143,7 @@ mod tests {
         for index in 0..MAX_FILES + 1 {
             entries.push(Entry::file(format!("package/dist/{index}.js"), b"x".to_vec()));
         }
-        let message = refusal(&crate::plugins::testing::raw_tarball(&entries));
+        let message = refusal(&crate::testing::raw_tarball(&entries));
         assert!(message.contains("more than 2000 files"), "{message}");
     }
 

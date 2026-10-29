@@ -141,7 +141,7 @@ impl GotchaApp for RemoteHandApp {
                 // Touches nothing yet: the installed packages are read by the
                 // first status, the instance database by the first switch or
                 // store, and `boot` below.
-                plugins: crate::plugins::Plugins::load(&paths, &plugins_config, Some(refresh.clone())),
+                plugins: droppen_plugins::Plugins::load(&paths, &plugins_config, Some(refresh.clone())),
                 chats: crate::chats::Chats::new(paths.clone()),
                 drive,
                 terminals: droppen_workbench::terminals::Registry::new(paths.clone(), instance.clone()),
@@ -701,7 +701,7 @@ impl crate::agent::link::LinkHost for PushLinkHost {
 
 /// The plugin host's status, for the session-list socket's opening `settings`
 /// frame: the same reading `/api/settings` takes.
-pub(crate) struct PluginHost(pub(crate) Arc<crate::plugins::Plugins>);
+pub(crate) struct PluginHost(pub(crate) Arc<droppen_plugins::Plugins>);
 
 impl crate::feed::global::PluginStatuses for PluginHost {
     fn status(&self) -> futures_util::future::BoxFuture<'_, Vec<droppen_plugin_sdk::PluginStatus>> {

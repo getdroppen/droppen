@@ -7,6 +7,12 @@
 //! through a builder so those cases carry exactly the bytes they mean to.
 
 use std::io::Write;
+use std::path::Path;
+
+use droppen_http::config::PluginSettings;
+use droppen_http::refresh::Refresh;
+
+use crate::Plugins;
 
 /// A `package/package.json` naming the entry `./dist/index.js`, with the
 /// `droppen` manifest a package must carry. No `name`: a package that leaves
@@ -232,4 +238,27 @@ fn header(path: &[u8], typeflag: u8, size: u64, link: &[u8]) -> [u8; 512] {
     let sum: u32 = header.iter().map(|byte| u32::from(*byte)).sum();
     header[148..156].copy_from_slice(format!("{sum:06o}\0 ").as_bytes());
     header
+}
+
+/// A valid package of `id`, at `version`, with an entry and a chunk.
+pub fn package_bytes(id: &str, version: &str) -> Vec<u8> {
+    tarball(
+        &package(id, version),
+        &[("dist/index.js", b"export default {};\n"), ("dist/page-abc.js", b"export const page = 1;\n")],
+    )
+}
+
+/// A host for an instance `t` under `dir`, with nothing installed.
+pub fn host(dir: &Path, config: PluginSettings, feed: Option<Refresh>) -> Plugins {
+    let instance = dir.join("instances").join("t");
+    Plugins::new(instance.clone(), instance.join("state.db"), &config, feed)
+}
+
+/// [`host`], with a valid package of each of `ids` installed at `0.1.0`.
+pub fn installed_host(dir: &Path, ids: &[&str], config: PluginSettings, feed: Option<Refresh>) -> Plugins {
+    let plugins = host(dir, config, feed);
+    for id in ids {
+        plugins.install(&package_bytes(id, "0.1.0"), None).expect("installs");
+    }
+    plugins
 }

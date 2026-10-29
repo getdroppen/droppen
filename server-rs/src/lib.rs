@@ -91,7 +91,6 @@ pub mod feed;
 pub mod inject;
 pub mod models;
 pub mod notify;
-pub mod plugins;
 pub mod push;
 pub mod record;
 pub mod schedule;

@@ -1189,6 +1189,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "droppen-plugins"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "clap",
+ "droppen-auth",
+ "droppen-base",
+ "droppen-http",
+ "droppen-instance",
+ "droppen-plugin-sdk",
+ "flate2",
+ "gotcha",
+ "gotcha_core",
+ "libc",
+ "rand 0.8.7",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "subtle",
+ "tar",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tower-service",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "droppen-pty"
 version = "0.1.0"
 dependencies = [
@@ -2930,6 +2960,7 @@ dependencies = [
  "droppen-http",
  "droppen-instance",
  "droppen-plugin-sdk",
+ "droppen-plugins",
  "droppen-pty",
  "droppen-search-path",
  "droppen-supervisor",
@@ -2956,7 +2987,6 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "subtle",
- "tar",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
