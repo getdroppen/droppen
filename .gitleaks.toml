@@ -18,12 +18,13 @@ paths = ['''^server-rs/crates/rh-proto/vectors/[^/]+\.json$''']
 
 # `dGhlIHNhbXBsZSBub25jZQ==` is the `Sec-WebSocket-Key` of RFC 6455 §1.3 ("the
 # sample nonce"), which the auth tests send to make a request a WebSocket
-# handshake: a published example, not a credential.
+# handshake: a published example, not a credential. Both files the tests have
+# lived in stay named: the history scan reads every commit of every branch.
 [[allowlists]]
 description = "RFC 6455's sample WebSocket key in the auth tests"
 condition = "AND"
 targetRules = ["generic-api-key"]
-paths = ['''^server-rs/src/auth/routes\.rs$''']
+paths = ['''^server-rs/src/auth/routes\.rs$''', '''^server-rs/src/api/auth_routes\.rs$''']
 regexTarget = "secret"
 regexes = ['''^dGhlIHNhbXBsZSBub25jZQ==$''']
 
