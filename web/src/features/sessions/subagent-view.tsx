@@ -7,7 +7,8 @@ import { feedRow, useGlobalFeedSelector, type GlobalFeedState } from "@/app/glob
 import { MachineLink } from "@/app/machine-route";
 import { SourceIcon } from "@/components/source-icon";
 import { Spinner } from "@/components/ui/spinner";
-import { AgentTranscriptBody, useAgentTranscript, type SubagentCtx } from "@/features/sessions/session-detail";
+import type { SubagentCtx } from "@/features/sessions/transcript-context";
+import { AgentTranscriptBody, useAgentTranscript } from "@/features/sessions/transcript-rows";
 import { SessionHeader } from "@/features/sessions/session-header";
 import { ChildStatusMark } from "@/features/sessions/subagent-marks";
 import { useMachine } from "@/lib/machines/context";
