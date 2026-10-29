@@ -21,6 +21,11 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use agent_client_protocol_schema::v1::{
+    CancelNotification, CloseSessionRequest, ContentBlock, JsonRpcMessage, NewSessionRequest, Notification, PromptRequest, Request,
+    RequestId, SetSessionConfigOptionRequest, TextContent, AGENT_METHOD_NAMES,
+};
+use serde::Serialize;
 use serde_json::{json, Map, Value};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{ChildStdin, ChildStdout};
@@ -50,9 +55,10 @@ pub(super) enum Event {
 struct Writer(Arc<tokio::sync::Mutex<Option<ChildStdin>>>);
 
 impl Writer {
-    /// Write one message. `false` when the input is closed or the write failed.
-    async fn send(&self, value: &Value) -> bool {
-        let mut line = value.to_string();
+    /// Write one message. `false` when the input is closed, the write failed,
+    /// or the message will not encode (a path that is not UTF-8).
+    async fn send(&self, message: &impl Serialize) -> bool {
+        let Ok(mut line) = serde_json::to_string(message) else { return false };
         line.push('\n');
         let mut stdin = self.0.lock().await;
         let Some(pipe) = stdin.as_mut() else { return false };
@@ -128,15 +134,16 @@ impl Conn {
     }
 
     /// Send a request and wait for its answer.
-    async fn call(&self, method: &str, params: Value) -> Result<Value, InjectError> {
+    async fn call(&self, method: &str, params: impl Serialize) -> Result<Value, InjectError> {
         let id = self.next_id();
         let (reply, answer) = oneshot::channel();
         self.pending.lock().unwrap().replies.insert(id.clone(), reply);
-        if !self
-            .writer
-            .send(&json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}))
-            .await
-        {
+        let request = Request {
+            id: RequestId::Str(id.clone()),
+            method: method.into(),
+            params: Some(params),
+        };
+        if !self.writer.send(&JsonRpcMessage::wrap(request)).await {
             self.pending.lock().unwrap().replies.remove(&id);
             return Err(InjectError::message("the agent closed its input"));
         }
@@ -151,7 +158,7 @@ impl Conn {
     pub(super) async fn initialize(&mut self) -> Result<Value, InjectError> {
         let init = self
             .call(
-                "initialize",
+                AGENT_METHOD_NAMES.initialize,
                 json!({
                     "protocolVersion": PROTOCOL_VERSION,
                     "clientCapabilities": {"fs": {"readTextFile": true, "writeTextFile": true}, "terminal": true},
@@ -169,7 +176,7 @@ impl Conn {
         let cwd = absolute(workdir);
         match id {
             None => {
-                let created = self.call("session/new", json!({"cwd": cwd, "mcpServers": []})).await?;
+                let created = self.call(AGENT_METHOD_NAMES.session_new, NewSessionRequest::new(cwd)).await?;
                 let id = created["sessionId"]
                     .as_str()
                     .filter(|id| crate::sessions::acp_transcript::valid_id(id))
@@ -181,10 +188,12 @@ impl Conn {
                 })
             }
             Some(id) => {
-                if init["agentCapabilities"]["loadSession"] != json!(true) {
+                if init["agentCapabilities"]["loadSession"].as_bool() != Some(true) {
                     return Err(InjectError::message("this agent cannot reopen a session"));
                 }
-                let loaded = self.call("session/load", json!({"sessionId": id, "cwd": cwd, "mcpServers": []})).await?;
+                let loaded = self
+                    .call(AGENT_METHOD_NAMES.session_load, json!({"sessionId": id, "cwd": cwd, "mcpServers": []}))
+                    .await?;
                 // Every update the replay sent was read before the answer
                 // that ended it, so it is already on the channel.
                 let mut replayed = Vec::new();
@@ -208,8 +217,8 @@ impl Conn {
     pub(super) async fn set_config_option(&self, id: &str, config_id: &str, value: &str) -> Result<Vec<ConfigOption>, InjectError> {
         let answer = self
             .call(
-                "session/set_config_option",
-                json!({"sessionId": id, "configId": config_id, "value": value}),
+                AGENT_METHOD_NAMES.session_set_config_option,
+                SetSessionConfigOptionRequest::new(id.to_owned(), config_id.to_owned(), value),
             )
             .await?;
         Ok(config_options(&answer))
@@ -219,7 +228,7 @@ impl Conn {
     /// its options is not a conversation anybody should find later.
     pub(super) async fn close_session(&self, id: &str) {
         if self.can_close {
-            if self.call("session/close", json!({ "sessionId": id })).await.is_err() {
+            if self.call(AGENT_METHOD_NAMES.session_close, CloseSessionRequest::new(id.to_owned())).await.is_err() {
                 // Not what it said: the agent's own words are not logged.
                 tracing::debug!("the agent did not close a probe session");
             }
@@ -230,13 +239,12 @@ impl Conn {
     pub(super) async fn prompt(&self, id: &str, text: String) -> Result<(), InjectError> {
         let request = self.next_id();
         self.pending.lock().unwrap().prompt = Some(request.clone());
-        let sent = self
-            .writer
-            .send(&json!({
-                "jsonrpc": "2.0", "id": request, "method": "session/prompt",
-                "params": {"sessionId": id, "prompt": [{"type": "text", "text": text}]},
-            }))
-            .await;
+        let prompt = Request {
+            id: RequestId::Str(request),
+            method: AGENT_METHOD_NAMES.session_prompt.into(),
+            params: Some(PromptRequest::new(id.to_owned(), vec![ContentBlock::Text(TextContent::new(text))])),
+        };
+        let sent = self.writer.send(&JsonRpcMessage::wrap(prompt)).await;
         if sent {
             Ok(())
         } else {
@@ -246,11 +254,11 @@ impl Conn {
 
     /// Ask the agent to end the turn in flight.
     pub(super) async fn cancel(&self, id: &str) -> Result<(), InjectError> {
-        if self
-            .writer
-            .send(&json!({"jsonrpc": "2.0", "method": "session/cancel", "params": {"sessionId": id}}))
-            .await
-        {
+        let cancel = Notification {
+            method: AGENT_METHOD_NAMES.session_cancel.into(),
+            params: Some(CancelNotification::new(id.to_owned())),
+        };
+        if self.writer.send(&JsonRpcMessage::wrap(cancel)).await {
             Ok(())
         } else {
             Err(InjectError::message("the agent closed its input"))
