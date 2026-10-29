@@ -603,7 +603,7 @@ function Verify({ availability }: { availability: Availability }) {
 
 function Uninstall({ availability }: { availability: Availability }) {
   const { t } = useTranslation();
-  // Every key it held is replaced (the security page's 2.8); removal stops its link but leaves its files (`agent/control.rs`): the disconnect deletes them.
+  // Every key it held is replaced (the security page's 2.8); removal stops its link but leaves its files (`cloud/control.rs`): the disconnect deletes them.
   const steps = [
     { title: t("Remove it from your account"), body: t("On {{app}}, open my devices and remove the device. Every key it held is replaced, so it cannot decrypt anything written afterwards.", { app: appHost() }) },
     { title: t("Disconnect it"), body: t("On that device, open Droppen's Settings → Access → Droppen → Disconnect this device. It deletes the Droppen keys stored there, which removing it from the account leaves in place.") },

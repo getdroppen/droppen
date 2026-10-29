@@ -96,7 +96,7 @@ test("the host name a request carries is shown as plain, short text", () => {
 });
 
 test("the machine fingerprint matches the local server's", async () => {
-  // `machine_fingerprint_of(&[1; 32], &[2; 32])` in server-rs/src/agent/control.rs.
+  // `machine_fingerprint_of(&[1; 32], &[2; 32])` in server-rs/src/agent/fingerprint.rs.
   assert.equal(await machineFingerprint(new Uint8Array(32).fill(1), new Uint8Array(32).fill(2)), "d4c7 841d 009c f90b 2395 fcd4 4a5a 52fd");
 });
 
