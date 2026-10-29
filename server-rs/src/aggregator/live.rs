@@ -333,21 +333,23 @@ impl Ended {
 }
 
 /// `copy_error` for subscription `s`.
-pub fn error_frame(s: u32, code: &str, message: &str) -> String {
-    let frame = CopyFrame::CopyError {
-        s,
-        code: code.to_owned(),
-        message: message.to_owned(),
-    };
-    serde_json::to_string(&frame).expect("gateway frames encode")
+pub fn error_frame(s: u32, code: &'static str, message: &'static str) -> String {
+    CopyFrame::CopyError { s, code, message }.encode()
 }
 
 /// What this module tells a gateway page of a subscription, tagged `t`.
+// Not generic: docs/hub-api/check.mjs reads the variants of a non-generic enum only.
 #[derive(Serialize)]
 #[serde(tag = "t", rename_all = "snake_case")]
 enum CopyFrame {
     /// A subscription that cannot be, or no longer is.
-    CopyError { s: u32, code: String, message: String },
+    CopyError { s: u32, code: &'static str, message: &'static str },
+}
+
+impl CopyFrame {
+    fn encode(&self) -> String {
+        serde_json::to_string(self).expect("gateway frames encode")
+    }
 }
 
 fn missing_frame(s: u32) -> String {

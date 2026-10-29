@@ -162,11 +162,8 @@ fn parse(text: &str) -> Ask {
     }
 }
 
-fn dir_frame(dir: &[DirHost]) -> String {
-    GatewayFrame::Dir { machines: dir.to_vec() }.encode()
-}
-
 /// What the gateway itself tells a page, tagged `t`.
+// Its fields are owned: docs/hub-api/check.mjs reads the variants of a non-generic enum only.
 #[derive(Serialize)]
 #[serde(tag = "t", rename_all = "snake_case")]
 enum GatewayFrame {
@@ -251,7 +248,7 @@ async fn run(socket: WebSocket, state: CloudState, user: String, who: MaybeIdent
         // Out of the directory's borrow before anything else (sending it may wait).
         let first = {
             let now = dir.borrow_and_update().clone();
-            dir_frame(&now)
+            GatewayFrame::Dir { machines: now.to_vec() }.encode()
         };
         if send(&mut sink, Message::Text(first.into()), &state.cancel).await {
             loop {
@@ -288,7 +285,7 @@ async fn run(socket: WebSocket, state: CloudState, user: String, who: MaybeIdent
                         // registry holds while it sends a new list (a deadlock otherwise).
                         let now = dir.borrow_and_update().clone();
                         subs.retain(|_, sub| now.iter().any(|h| h.id == sub.key().host));
-                        if !send(&mut sink, Message::Text(dir_frame(&now).into()), &state.cancel).await {
+                        if !send(&mut sink, Message::Text(GatewayFrame::Dir { machines: now.to_vec() }.encode().into()), &state.cancel).await {
                             break;
                         }
                     }
@@ -581,10 +578,10 @@ mod tests {
             agent_version: Some("0.2.134".into()),
         };
         assert_eq!(
-            dir_frame(&[host]),
+            GatewayFrame::Dir { machines: vec![host] }.encode(),
             r#"{"t":"dir","machines":[{"id":"m-2","name":"studio","state":"online","sinceMs":1,"copyAsOfMs":null,"os":"macOS 15.1 arm64","agentVersion":"0.2.134"}]}"#
         );
-        assert_eq!(dir_frame(&[]), r#"{"t":"dir","machines":[]}"#);
+        assert_eq!(GatewayFrame::Dir { machines: Vec::new() }.encode(), r#"{"t":"dir","machines":[]}"#);
 
         let live = LiveCopies::new();
         let (out, _rx) = Outbox::new(16, OUTBOX_BYTES);
@@ -592,6 +589,22 @@ mod tests {
         assert_eq!(
             open.as_deref(),
             Some(r#"{"t":"refused","p":"p-1","code":"unsupported","message":"this device shows other devices' copies only, read-only; using them live comes later"}"#)
+        );
+    }
+
+    /// The `bye` a page that may no longer see other devices is sent, byte
+    /// for byte.
+    const NO_REMOTE_ACCESS_BYE: &str = r#"{"t":"bye","code":"no_remote_access","message":"this local account may not see your other devices here: the local account that signed this device in to Droppen can allow it in Settings → Droppen"}"#;
+
+    /// A refusal at 409, local authentication turned off, closes with 4409,
+    /// its code and words in the `bye` before it.
+    #[test]
+    fn local_auth_turned_off_closes_with_4409() {
+        let (code, error, message) = closing(&crate::cloud::access::local_auth_off());
+        assert_eq!(code, 4409);
+        assert_eq!(
+            GatewayFrame::Bye { code: error, message }.encode(),
+            r#"{"t":"bye","code":"local_auth_required","message":"local authentication is off on this device (auth.enabled = false): turn it back on and sign in first, because once it is signed in to Droppen, other devices are reachable from here"}"#
         );
     }
 
@@ -629,6 +642,12 @@ mod tests {
     async fn the_gateway_serves_only_the_local_accounts_that_may_see_other_devices() {
         use tokio_tungstenite::tungstenite::{self, Message as WsMessage};
         type Ws = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+        async fn next_text(ws: &mut Ws) -> String {
+            match tokio::time::timeout(Duration::from_secs(5), ws.next()).await.expect("a frame in time") {
+                Some(Ok(WsMessage::Text(t))) => t.as_str().to_string(),
+                other => panic!("{other:?}"),
+            }
+        }
         async fn next(ws: &mut Ws) -> Value {
             match tokio::time::timeout(Duration::from_secs(5), ws.next()).await.expect("a frame in time") {
                 Some(Ok(WsMessage::Text(t))) => serde_json::from_str::<Value>(t.as_str()).unwrap(),
@@ -733,8 +752,7 @@ mod tests {
         assert_eq!(next(&mut b).await["machines"][0]["id"], "m-2");
         let t0 = std::time::Instant::now();
         let _ = set(false).await.unwrap();
-        let bye = next(&mut b).await;
-        assert_eq!(bye, json!({"t": "bye", "code": "no_remote_access", "message": "this local account may not see your other devices here: the local account that signed this device in to Droppen can allow it in Settings → Droppen"}));
+        assert_eq!(next_text(&mut b).await, NO_REMOTE_ACCESS_BYE);
         assert_eq!(next(&mut b).await["closed"], 4403);
         assert!(t0.elapsed() < Duration::from_secs(1), "closed {:?} after", t0.elapsed());
         // alice stays.
@@ -746,8 +764,10 @@ mod tests {
         let mut signed_in = connect(ticket_for("alice", &digest)).await.expect("alice's login is let in");
         assert_eq!(next(&mut signed_in).await["t"], "dir");
         assert!(auth.sessions.revoke(&digest).await);
-        let bye = next(&mut signed_in).await;
-        assert_eq!(bye, json!({"t": "bye", "code": "unauthorized", "message": "this login was signed out"}));
+        assert_eq!(
+            next_text(&mut signed_in).await,
+            r#"{"t":"bye","code":"unauthorized","message":"this login was signed out"}"#
+        );
         assert_eq!(next(&mut signed_in).await["closed"], 4401);
         // The page opened by a login still signed in stays.
         a.send(WsMessage::Text(r#"{"t":"ping"}"#.into())).await.unwrap();
@@ -760,8 +780,7 @@ mod tests {
         )
         .unwrap();
         // (Written behind the server's back: the next recheck sees it.)
-        let bye = next(&mut a).await;
-        assert_eq!(bye, json!({"t": "bye", "code": "no_remote_access", "message": "this local account may not see your other devices here: the local account that signed this device in to Droppen can allow it in Settings → Droppen"}));
+        assert_eq!(next_text(&mut a).await, NO_REMOTE_ACCESS_BYE);
         assert_eq!(status_of(connect(ticket("alice")).await), 403);
         // A file that does not read: nobody either.
         std::fs::write(crate::cloud::LinkFile::of(&state.paths).path(), "{not json").unwrap();
