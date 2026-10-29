@@ -34,6 +34,7 @@ use tokio::sync::{mpsc, Semaphore};
 
 use crate::bridge::{self, Kind, MessageReader, RequestHead, ResponseHead};
 use crate::chain::{ChainClock, ChainState};
+use crate::clock::now_ms;
 use crate::driver::{Channel, DirectPipe, Stream, StreamEvent, StreamWriter};
 use crate::handshake::{self, HandshakeError};
 use crate::keys::DhKeypair;
@@ -44,13 +45,6 @@ use crate::rtc::{Peer, PeerEvent, RtcOptions};
 
 /// How long an attempt may take from offer to attached.
 pub const ATTEMPT_TIMEOUT: Duration = Duration::from_secs(15);
-
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
-}
 
 /// What the agent decided about a direct hello.
 pub enum Admission {

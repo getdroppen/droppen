@@ -35,6 +35,7 @@
 //!   (CPace over X25519), and the MAC'd key delivery.
 //! - [`mnemonic`] — the recovery key as BIP-39 words.
 //! - [`sig`] — every signature's label and structure, in one place.
+//! - [`clock`] — the wall clock the code running the protocol hands to it.
 //! - [`ticket`] — the Hub's signed relay tickets, and a relay's proof that it
 //!   answers at its origin; [`netpolicy`] — where a relay's origin may point.
 //! - [`wire`] — the JSON control messages on the Hub's and the relays'
@@ -47,6 +48,7 @@
 pub mod bridge;
 pub mod chain;
 pub mod channel;
+pub mod clock;
 pub mod codec;
 #[cfg(feature = "rtc")]
 pub mod direct;
