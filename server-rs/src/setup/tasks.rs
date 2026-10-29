@@ -86,8 +86,8 @@ use super::runner::Invocation;
 use super::shell::{self, ShellSnapshot};
 use super::{Setup, SetupState, SetupTask, TaskFailure, TaskKind, ToolId, ToolLogin};
 use droppen_instance::db::scope;
-use crate::http::error::ApiError;
-use crate::openapi_ext::Nullable;
+use droppen_http::error::ApiError;
+use droppen_http::openapi_ext::Nullable;
 use droppen_base::process_env::{self, Env};
 use crate::terminals::{CreateSpec, Registry};
 

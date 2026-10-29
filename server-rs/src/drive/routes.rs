@@ -19,13 +19,13 @@ use crate::accounts::{account_not_found, provider_mismatch, require_uuid};
 use crate::auth::MaybeIdentity;
 use crate::feed;
 use crate::files;
-use crate::http::error::ApiError;
-use crate::http::SendResult;
-use crate::http::extract::{ApiJson, ApiPath, ApiQuery};
+use droppen_http::error::ApiError;
+use droppen_http::SendResult;
+use droppen_http::extract::{ApiJson, ApiPath, ApiQuery};
 use crate::inject::questions::{self, Answer};
 use crate::inject::receipts::{Kind, LOOKUP_CAP};
 use crate::inject::{self, AccountChoice, AnswerOutcome, Reply, SendOptions};
-use crate::openapi_ext::{double_option, required_nullable, ExtraResponses, Nullable, Optional};
+use droppen_http::openapi_ext::{double_option, required_nullable, ExtraResponses, Nullable, Optional};
 use droppen_instance::paths::ClaudeRoot;
 use crate::sessions::checklist::{self, Checklist};
 use crate::sessions::delivery::{QuestionState, ReceiptLookup, ReceiptStatus, SessionQuestion};
@@ -78,13 +78,13 @@ pub struct SendMessageResult {
     pub queued: bool,
     /// The queue id the message travels under (`resident.queuedMessages[].id`),
     /// when the request carried a `clientMessageId`.
-    #[serde(default, skip_serializing_if = "crate::openapi_ext::Optional::is_none")]
-    pub qid: crate::openapi_ext::Optional<String>,
+    #[serde(default, skip_serializing_if = "droppen_http::openapi_ext::Optional::is_none")]
+    pub qid: droppen_http::openapi_ext::Optional<String>,
     /// `true` when this answers a retry: the `clientMessageId` was already
     /// accepted, nothing was enqueued again, and this is what the first
     /// attempt answered.
-    #[serde(default, skip_serializing_if = "crate::openapi_ext::Optional::is_none")]
-    pub duplicate: crate::openapi_ext::Optional<bool>,
+    #[serde(default, skip_serializing_if = "droppen_http::openapi_ext::Optional::is_none")]
+    pub duplicate: droppen_http::openapi_ext::Optional<bool>,
     /// `true` when the agent was blocked on a question and the message went in
     /// as its answer (the question's free-text `response`) rather than into the
     /// queue behind the turn it would otherwise have waited for; `false` when a
@@ -92,8 +92,8 @@ pub struct SendMessageResult {
     /// moment before, stopped, or the session still reconnecting — so it was
     /// delivered as an ordinary message (`queued` says whether it waits).
     /// Absent when no question was open.
-    #[serde(default, skip_serializing_if = "crate::openapi_ext::Optional::is_none")]
-    pub answered: crate::openapi_ext::Optional<bool>,
+    #[serde(default, skip_serializing_if = "droppen_http::openapi_ext::Optional::is_none")]
+    pub answered: droppen_http::openapi_ext::Optional<bool>,
 }
 
 /// `POST /api/sessions/new` body.
@@ -560,9 +560,9 @@ pub struct DriveState {
     /// The shared session-list feed, told when a session appears or changes.
     pub global: Arc<feed::global::GlobalFeed>,
     /// The same feed's inputs, which the session-binding routes tell.
-    pub refresh: crate::http::refresh::Refresh,
+    pub refresh: droppen_http::refresh::Refresh,
 }
-crate::http::substate!(DriveState);
+droppen_http::substate!(DriveState);
 
 /// Start a new session in the given directory.
 #[api(id = "new_session", group = "sessions", summary = "Start a new session")]
@@ -2198,7 +2198,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = Arc::new(droppen_instance::paths::Paths::new(dir.path().to_path_buf()));
         let instance = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
-        let auth = crate::auth::Auth::new(&paths, &instance, &crate::config::AuthSettings::default(), false);
+        let auth = crate::auth::Auth::new(&paths, &instance, &droppen_http::config::AuthSettings::default(), false);
         let drive = Drive::new(paths, &instance, auth, crate::app::transcript_sources());
         (dir, drive)
     }

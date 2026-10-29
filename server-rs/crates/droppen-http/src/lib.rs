@@ -1,11 +1,15 @@
 //! The HTTP kit every route module builds on: the error body and its status
 //! codes ([`error`]), the extractors that answer a bad request with that body
 //! ([`extract`]), the `201`/`202` responses ([`created`]), the websocket
-//! keepalive and bounded sends, the build's identity, and `substate!`, which
-//! lets a subsystem's routes take a state of their own.
+//! keepalive and bounded sends, the build's identity, and [`substate!`], which
+//! lets a subsystem's routes take a state of their own. With it, the server's
+//! configuration ([`config`]), the OpenAPI helpers ([`openapi_ext`]) and the
+//! guard every `/api/*` request passes ([`origin`]).
 //!
 //! It sits below the subsystems and the router alike, so a subsystem can
-//! answer a request without depending on the router that mounts it.
+//! answer a request without depending on the router that mounts it. A name in
+//! backticks such as `auth` or `api` in these docs is a module of the server,
+//! which this crate cannot link to.
 
 use futures_util::SinkExt;
 use gotcha::axum::extract::ws::{Message, WebSocket};
@@ -15,10 +19,13 @@ use tokio_util::sync::CancellationToken;
 
 pub mod app_window;
 pub mod bridge;
+pub mod config;
 pub mod created;
 pub mod error;
 pub mod extract;
 pub mod identity;
+pub mod openapi_ext;
+pub mod origin;
 pub mod refresh;
 
 // Defined here rather than in whichever subsystem needed it first, because
@@ -105,8 +112,8 @@ impl Heartbeat {
 /// bound, a client that stopped reading altogether parked its socket task on
 /// a full TCP window for good, with its queue, and the heartbeat could not
 /// fire while the send was waiting. Every socket reads it from
-/// [`AppState::send_limit`](crate::api::AppState::send_limit).
-pub(crate) const SEND_LIMIT: std::time::Duration = IDLE_LIMIT;
+/// the server's `AppState::send_limit`.
+pub const SEND_LIMIT: std::time::Duration = IDLE_LIMIT;
 
 /// How long a feed socket's close may take, after its last frame.
 ///
@@ -115,17 +122,17 @@ pub(crate) const SEND_LIMIT: std::time::Duration = IDLE_LIMIT;
 /// reading takes it at once. Only one that has stopped reading keeps it
 /// waiting, and after a send that already waited out the limit for it, a
 /// second full limit would only hold the socket task for nothing.
-pub(crate) const CLOSE_LIMIT: std::time::Duration = std::time::Duration::from_secs(2);
+pub const CLOSE_LIMIT: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// A websocket's write half.
-pub(crate) type WsSender = futures_util::stream::SplitSink<WebSocket, Message>;
+pub type WsSender = futures_util::stream::SplitSink<WebSocket, Message>;
 
 /// Send one frame, and say whether it went: `false` for a closed socket, a
 /// frame that did not leave within `limit`, or a server shutting down.
 ///
 /// Biased toward the send, so a frame that can go at once still goes during
 /// a shutdown; only one that would have to wait gives way to it.
-pub(crate) async fn send_within(sender: &mut WsSender, message: Message, limit: std::time::Duration, shutdown: &CancellationToken) -> bool {
+pub async fn send_within(sender: &mut WsSender, message: Message, limit: std::time::Duration, shutdown: &CancellationToken) -> bool {
     tokio::select! {
         biased;
         sent = tokio::time::timeout(limit, sender.send(message)) => match sent {
@@ -147,7 +154,7 @@ pub(crate) async fn send_within(sender: &mut WsSender, message: Message, limit: 
 /// stopped reading leaves no room for the close frame either. Biased toward
 /// the close, so on shutdown one that can go at once still goes. Nothing
 /// waits for the client's answer; the socket is dropped right after.
-pub(crate) async fn close_within(sender: &mut WsSender, limit: std::time::Duration, shutdown: &CancellationToken) {
+pub async fn close_within(sender: &mut WsSender, limit: std::time::Duration, shutdown: &CancellationToken) {
     tokio::select! {
         biased;
         _ = tokio::time::timeout(limit, sender.close()) => {}
@@ -156,7 +163,7 @@ pub(crate) async fn close_within(sender: &mut WsSender, limit: std::time::Durati
 }
 
 /// What this server reports where the contract asks for `nodeVersion`.
-pub const RUNTIME_VERSION: &str = concat!("rust/", env!("CARGO_PKG_VERSION"));
+pub const RUNTIME_VERSION: &str = concat!("rust/", env!("DROPPEN_SERVER_VERSION"));
 
 /// Exactly which build of the server this is.
 ///
@@ -166,17 +173,17 @@ pub const RUNTIME_VERSION: &str = concat!("rust/", env!("CARGO_PKG_VERSION"));
 /// commit is part of the identity, stamped in by `build.rs`; see there for where
 /// it comes from and what happens when there is none.
 ///
-/// This is not the OpenAPI document's version (`API_VERSION` in [`crate::api`]), which is the
+/// This is not the OpenAPI document's version (`API_VERSION` in the server's `api`), which is the
 /// *contract*'s and must stay stable across commits or every build would
 /// re-generate the exported spec.
 pub const SERVER_VERSION: &str = if env!("DROPPEN_BUILD_REV").is_empty() {
-    env!("CARGO_PKG_VERSION")
+    env!("DROPPEN_SERVER_VERSION")
 } else {
-    concat!(env!("CARGO_PKG_VERSION"), "+g", env!("DROPPEN_BUILD_REV"))
+    concat!(env!("DROPPEN_SERVER_VERSION"), "+g", env!("DROPPEN_BUILD_REV"))
 };
 
 /// Node's `process.platform` naming, so the field means the same thing it did.
-pub(crate) fn node_platform() -> &'static str {
+pub fn node_platform() -> &'static str {
     match std::env::consts::OS {
         "macos" => "darwin",
         "windows" => "win32",
@@ -184,7 +191,8 @@ pub(crate) fn node_platform() -> &'static str {
     }
 }
 
-pub(crate) fn hostname() -> String {
+/// This machine's host name, or an empty one when the system does not say.
+pub fn hostname() -> String {
     let mut buffer = vec![0u8; 256];
     // SAFETY: the buffer is owned, correctly sized, and the call only writes a
     // NUL-terminated name into it.
@@ -206,6 +214,7 @@ pub(crate) fn hostname() -> String {
 /// own, the entry cannot write the impl per sub-state either: `GotchaContext`
 /// and the sub-state are both foreign there, which the orphan rule forbids. The
 /// sub-state's own crate may, so it generates the impl here, generic over `S`.
+#[macro_export]
 macro_rules! substate {
     ($t:ty) => {
         impl<S: Clone + Send + Sync + 'static> ::gotcha::axum::extract::FromRef<::gotcha::GotchaContext<S, $crate::config::AppConfig>> for $t
@@ -218,7 +227,6 @@ macro_rules! substate {
         }
     };
 }
-pub(crate) use substate;
 
 #[cfg(test)]
 mod tests {

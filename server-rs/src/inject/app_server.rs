@@ -237,13 +237,13 @@ impl InjectionRegistry {
         if unfinished {
             state.injection = Some(Injection {
                 state: InjectionRunState::Failed,
-                error: crate::openapi_ext::Nullable(Some(
+                error: droppen_http::openapi_ext::Nullable(Some(
                     "Codex App Server exited. Queued messages are retained; inspect the transcript before resending any unacknowledged delivery."
                         .into(),
                 )),
                 interrupted,
                 started_at: record.started_at.clone(),
-                finished_at: crate::openapi_ext::Nullable(Some(iso8601(SystemTime::now()))),
+                finished_at: droppen_http::openapi_ext::Nullable(Some(iso8601(SystemTime::now()))),
             });
         }
         record.codex = Some(state.clone());
@@ -629,10 +629,10 @@ impl Driver {
     fn running(&mut self) {
         self.state.injection = Some(Injection {
             state: InjectionRunState::Running,
-            error: crate::openapi_ext::Nullable(None),
+            error: droppen_http::openapi_ext::Nullable(None),
             interrupted: false,
             started_at: iso8601(SystemTime::now()),
-            finished_at: crate::openapi_ext::Nullable(None),
+            finished_at: droppen_http::openapi_ext::Nullable(None),
         });
     }
 
@@ -649,10 +649,10 @@ impl Driver {
             } else {
                 InjectionRunState::Ok
             },
-            error: crate::openapi_ext::Nullable(error),
+            error: droppen_http::openapi_ext::Nullable(error),
             interrupted,
             started_at,
-            finished_at: crate::openapi_ext::Nullable(Some(iso8601(SystemTime::now()))),
+            finished_at: droppen_http::openapi_ext::Nullable(Some(iso8601(SystemTime::now()))),
         });
     }
 

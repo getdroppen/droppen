@@ -17,7 +17,7 @@ use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 
 use crate::api::AppState;
-use crate::config::AppConfig;
+use droppen_http::config::AppConfig;
 use crate::feed::global::GlobalFeed;
 use crate::feed::FeedRegistry;
 use droppen_instance::instance::{InstanceDirs, InstanceLock};
@@ -72,7 +72,7 @@ impl GotchaApp for RemoteHandApp {
         let instance_override = self.instance_override.clone();
         let auth_enabled_override = self.auth_enabled_override;
         async move {
-            let mut config = crate::config::load(std::env::var("GOTCHA_ACTIVE_PROFILE").ok())?;
+            let mut config = droppen_http::config::load(std::env::var("GOTCHA_ACTIVE_PROFILE").ok())?;
             if let Some(home) = home_override {
                 config.app.home_dir = Some(home.to_string_lossy().into_owned());
             }
@@ -127,7 +127,7 @@ impl GotchaApp for RemoteHandApp {
             // A session's driver changes things no file shows — an automatic
             // account rotation above all — and has to be able to say so to the
             // two feeds that would otherwise only notice on their next poll.
-            let refresh = crate::http::refresh::Refresh::new(global.clone());
+            let refresh = droppen_http::refresh::Refresh::new(global.clone());
             drive.injections.attach_listeners(feeds.clone(), refresh.clone());
             drive.injections.attach_alerts(Arc::new(PushAlerts {
                 transcripts: drive.transcripts.clone(),
@@ -152,7 +152,7 @@ impl GotchaApp for RemoteHandApp {
                 cancel: CancellationToken::new(),
                 lock: Arc::new(std::sync::OnceLock::new()),
                 desktop_app: self.desktop_app_override.unwrap_or_else(crate::desktop_app::from_env),
-                send_limit: crate::http::SEND_LIMIT,
+                send_limit: droppen_http::SEND_LIMIT,
             })
         }
     }
@@ -365,7 +365,7 @@ impl RemoteHandApp {
         // `fallback_service`, and that ordering is the whole point.
         // `axum::Router::layer` wraps the routes and the fallback *as they stand
         // when it is called*; mounting the guard inside `crate::api::routes` —
-        // where `crate::origin`'s sits — would cover the documented routes and
+        // where `droppen_http::origin`'s sits — would cover the documented routes and
         // leave `/openapi.json`, `/redoc`, `/scalar`, the SPA fallback and the
         // `/embed/{id}/*` proxy outside it. Those are the first paths anyone
         // without a token would try.
@@ -377,9 +377,9 @@ impl RemoteHandApp {
         let auth_for_link = auth.clone();
         let router = router.layer(crate::auth::layer(auth));
         // Outside even that: a request addressed to a name this server does
-        // not answer to (`crate::origin`, "Which names the server answers
+        // not answer to (`droppen_http::origin`, "Which names the server answers
         // to") reaches nothing, the exempt sign-in routes included.
-        let router = router.layer(crate::origin::host_layer(std::sync::Arc::new(crate::origin::HostPolicy::from_env(
+        let router = router.layer(droppen_http::origin::host_layer(std::sync::Arc::new(droppen_http::origin::HostPolicy::from_env(
             &config.server.host,
         ))));
 

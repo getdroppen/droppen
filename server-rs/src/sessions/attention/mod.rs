@@ -49,7 +49,7 @@ use std::sync::{Arc, LazyLock, Mutex};
 use gotcha::Schematic;
 use serde::{Deserialize, Serialize};
 
-use crate::openapi_ext::Nullable;
+use droppen_http::openapi_ext::Nullable;
 use droppen_instance::paths::Paths;
 use crate::sessions::index::Index;
 use crate::sessions::util::{ItemKind, Role, TranscriptItem};

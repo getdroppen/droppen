@@ -41,7 +41,7 @@ use std::sync::Arc;
 use rusqlite::OptionalExtension;
 
 use droppen_instance::db::Db;
-use crate::openapi_ext::Optional;
+use droppen_http::openapi_ext::Optional;
 use crate::sessions::delivery::{MessageReceipt, ReceiptLookup, ReceiptStatus};
 use crate::sessions::Source;
 

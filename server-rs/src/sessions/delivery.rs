@@ -13,7 +13,7 @@ use gotcha::Schematic;
 use serde::{Deserialize, Serialize};
 
 use super::util::QuestionEntry;
-use crate::openapi_ext::{Nullable, Optional};
+use droppen_http::openapi_ext::{Nullable, Optional};
 
 /// What became of a message, as far as this server knows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Schematic)]

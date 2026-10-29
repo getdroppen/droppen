@@ -47,7 +47,7 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{ChildStdin, ChildStdout};
 
 use super::{claude_fallback, ModelInfo, ModelListSource, CLAUDE_DEFAULT_EFFORT};
-use crate::openapi_ext::Nullable;
+use droppen_http::openapi_ext::Nullable;
 use droppen_instance::paths::Paths;
 use droppen_base::process_env::{apply_env, claude_env};
 

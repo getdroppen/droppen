@@ -51,10 +51,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::accounts::store::{parse_env_block, EnvVar};
 use droppen_instance::db::scope;
-use crate::http::error::ApiError;
-use crate::http::extract::{ApiJson, ApiPath};
-use crate::http::SendResult;
-use crate::openapi_ext::{ExtraResponses, Optional};
+use droppen_http::error::ApiError;
+use droppen_http::extract::{ApiJson, ApiPath};
+use droppen_http::SendResult;
+use droppen_http::openapi_ext::{ExtraResponses, Optional};
 use droppen_instance::paths::Paths;
 use droppen_base::process_env::{clean_env_bare, resolve_on_path, Env};
 use crate::sessions::acp_transcript::{valid_agent_id, MAX_AGENT_ID};
@@ -659,7 +659,7 @@ pub struct AcpAgentState {
     /// The live runs, which check an agent and stop its sessions when it goes.
     pub injections: Arc<crate::inject::InjectionRegistry>,
 }
-crate::http::substate!(AcpAgentState);
+droppen_http::substate!(AcpAgentState);
 
 /// The ACP agents configured on this machine, and the built-in descriptions.
 #[api(id = "acp_agents", group = "acp", summary = "ACP agents")]
@@ -1025,8 +1025,8 @@ mod tests {
         assert!(agents.get("x").unwrap().record_check(&agents, &failed));
         let credential = state.drive.auth.internal_credential().to_string();
         let device = [
-            (crate::http::bridge::CREDENTIAL_HEADER, credential.as_str()),
-            (crate::http::bridge::DEVICE_HEADER, "d-1"),
+            (droppen_http::bridge::CREDENTIAL_HEADER, credential.as_str()),
+            (droppen_http::bridge::DEVICE_HEADER, "d-1"),
         ];
 
         // This computer, and a device bridged in: how the check ended, not why.

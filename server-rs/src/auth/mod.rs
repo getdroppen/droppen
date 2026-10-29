@@ -29,7 +29,7 @@
 //! [`layer`] goes on in [`crate::app::RemoteHandApp::prepare`], **after** the
 //! last `fallback_service`. `axum::Router::layer` wraps the routes and the
 //! fallback *as they stand when it is called*, so a guard registered inside
-//! [`crate::api::routes`] — where [`crate::origin`]'s is — would cover the
+//! [`crate::api::routes`] — where [`droppen_http::origin`]'s is — would cover the
 //! documented routes and miss `/openapi.json`, `/redoc`, `/scalar`, the SPA
 //! fallback and the `/embed/{id}/*` proxy. Those are exactly the paths an
 //! unauthenticated caller would try first.
@@ -89,7 +89,7 @@
 //!   the attempt's one-off key, held in this process, and its state, which
 //!   only the page that opened the attempt was given
 //!   ([`crate::cloud::link_handoff`]); the handler refuses everything else;
-//! * `OPTIONS` — answered by [`crate::origin`]'s CORS preflight, which a browser
+//! * `OPTIONS` — answered by [`droppen_http::origin`]'s CORS preflight, which a browser
 //!   never sends credentials on;
 //! * `GET`/`HEAD` outside `/api/`, minus the three documentation paths — the SPA
 //!   shell and its assets, because an unauthenticated browser has to be able to
@@ -154,9 +154,9 @@ use gotcha::axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode, Uri
 use gotcha::axum::middleware::{FromFnLayer, Next};
 use gotcha::axum::response::{IntoResponse, Response};
 
-use crate::config::AuthSettings;
-use crate::http::error::ApiError;
-use crate::http::identity::AuthIdentity;
+use droppen_http::config::AuthSettings;
+use droppen_http::error::ApiError;
+use droppen_http::identity::AuthIdentity;
 use droppen_instance::instance::InstanceDirs;
 use droppen_instance::paths::Paths;
 use lockout::{LockoutPolicy, Lockouts};
@@ -459,14 +459,14 @@ trait RequestCredentialsExt {
 
 impl RequestCredentialsExt for HeaderMap {
     fn bridged_identity(&self, expected: &str, peer: Option<std::net::SocketAddr>) -> Option<AuthIdentity> {
-        let offered = self.get(crate::http::bridge::CREDENTIAL_HEADER)?.as_bytes();
+        let offered = self.get(droppen_http::bridge::CREDENTIAL_HEADER)?.as_bytes();
         if !peer.is_some_and(|p| p.ip().is_loopback()) {
             return None;
         }
         if !bool::from(subtle::ConstantTimeEq::ct_eq(offered, expected.as_bytes())) {
             return None;
         }
-        let device = self.get(crate::http::bridge::DEVICE_HEADER)?.to_str().ok()?;
+        let device = self.get(droppen_http::bridge::DEVICE_HEADER)?.to_str().ok()?;
         let valid = !device.is_empty() && device.len() <= 64 && device.bytes().all(|b| b.is_ascii_graphic());
         valid.then(|| AuthIdentity {
             username: format!("cloud:{device}"),
@@ -498,7 +498,7 @@ type GuardFn = fn(State<Arc<Auth>>, Request, Next) -> GuardFuture;
 
 /// [`guard`] as a router layer.
 ///
-/// The explicit return type is [`crate::origin::layer`]'s trick and exists for
+/// The explicit return type is [`droppen_http::origin::layer`]'s trick and exists for
 /// the same reason: `from_fn_with_state` leaves its extractor-tuple parameter to
 /// be inferred from the `Service` bound at the call site, which rustc will not do
 /// backwards through the impl (`axum-0.8.9/src/middleware/from_fn.rs:259`).
@@ -518,7 +518,7 @@ pub async fn guard(auth: Arc<Auth>, mut request: Request, next: Next) -> Respons
     // A preflight carries no credentials — the browser strips them by
     // specification — so answering it with a `401` would break every
     // cross-origin request before the real one was ever sent. It goes straight
-    // through to `crate::origin`, which answers it without routing.
+    // through to `droppen_http::origin`, which answers it without routing.
     if method == Method::OPTIONS {
         return next.run(request).await.with_guard_headers(&path);
     }
@@ -530,8 +530,8 @@ pub async fn guard(auth: Arc<Auth>, mut request: Request, next: Next) -> Respons
         .get::<gotcha::axum::extract::ConnectInfo<std::net::SocketAddr>>()
         .map(|c| c.0);
     let bridged = auth.bridged(request.headers(), peer);
-    request.headers_mut().remove(crate::http::bridge::CREDENTIAL_HEADER);
-    request.headers_mut().remove(crate::http::bridge::DEVICE_HEADER);
+    request.headers_mut().remove(droppen_http::bridge::CREDENTIAL_HEADER);
+    request.headers_mut().remove(droppen_http::bridge::DEVICE_HEADER);
 
     let is_exempt = exempt(&method, &path);
     // Resolved wherever it could matter, which is two overlapping sets. Every
@@ -884,8 +884,8 @@ mod tests {
         let cred = "ab".repeat(32);
         let with = |value: &str, device: &str| {
             let mut h = HeaderMap::new();
-            h.insert(crate::http::bridge::CREDENTIAL_HEADER, HeaderValue::from_str(value).unwrap());
-            h.insert(crate::http::bridge::DEVICE_HEADER, HeaderValue::from_str(device).unwrap());
+            h.insert(droppen_http::bridge::CREDENTIAL_HEADER, HeaderValue::from_str(value).unwrap());
+            h.insert(droppen_http::bridge::DEVICE_HEADER, HeaderValue::from_str(device).unwrap());
             h
         };
         let local: std::net::SocketAddr = "127.0.0.1:5000".parse().unwrap();

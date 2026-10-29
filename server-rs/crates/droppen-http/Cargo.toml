@@ -1,0 +1,47 @@
+[package]
+name = "droppen-http"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+publish = false
+description = "The Droppen server's HTTP kit: errors, extractors, response types, websocket helpers, the OpenAPI helpers, the origin guard and the configuration"
+# The server's version and commit (`SERVER_VERSION`), read from its manifest
+# and its tree: see the script.
+build = "build.rs"
+
+# What every route module of the server builds on, below the subsystems and
+# the router alike, so it names none of them.
+[dependencies]
+droppen-base = { path = "../droppen-base" }
+droppen-instance = { path = "../droppen-instance" }
+futures-util = "0.3"
+gotcha = { version = "0.4.1", features = ["openapi"] }
+# `openapi_ext` opens a schema-collection scope (`registry::collect`), which
+# gotcha re-exports the traits for but not the registry.
+gotcha_core = "0.4.1"
+libc = "0.2"
+# gotcha's own config loader has no defaults source, which makes
+# `APP_SERVER__PORT` unusable — see `config`. Driving mofa directly is the fix;
+# the version is pinned to gotcha's so there is only ever one copy.
+mofa = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "time"] }
+tokio-util = "0.7"
+tracing = "0.1"
+
+[dev-dependencies]
+# `start_paused` runtimes, so the heartbeat's minute-scale schedule is asserted
+# without a test that takes minutes.
+tokio = { version = "1", features = ["macros", "rt", "test-util"] }
+
+[lints.rust]
+missing_docs = "deny"
+unreachable_pub = "deny"
+
+# `[lints] workspace = true` cannot be mixed with the rust lints above, so the
+# workspace's two clippy denials (`server-rs/Cargo.toml` `[workspace.lints]`)
+# are repeated here: keep them in step.
+[lints.clippy]
+significant_drop_in_scrutinee = "deny"
+await_holding_lock = "deny"

@@ -27,10 +27,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use droppen_instance::db::scope;
-use crate::http::error::ApiError;
-use crate::http::extract::ApiJson;
-use crate::http::refresh::Refresh;
-use crate::openapi_ext::ExtraResponses;
+use droppen_http::error::ApiError;
+use droppen_http::extract::ApiJson;
+use droppen_http::refresh::Refresh;
+use droppen_http::openapi_ext::ExtraResponses;
 use droppen_instance::paths::Paths;
 
 /// How the session list is grouped.
@@ -309,7 +309,7 @@ pub struct PrefsState {
     /// The global feed's inputs, told when a write changes what the list shows.
     pub refresh: Refresh,
 }
-crate::http::substate!(PrefsState);
+droppen_http::substate!(PrefsState);
 
 /// The stored UI preferences.
 #[api(id = "get_prefs", group = "prefs", summary = "UI preferences")]

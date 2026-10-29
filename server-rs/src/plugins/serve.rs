@@ -43,7 +43,7 @@ use gotcha::State;
 
 use super::routes::PluginsState;
 use crate::auth::MaybeIdentity;
-use crate::http::extract::ApiPath;
+use droppen_http::extract::ApiPath;
 
 /// The route, as gotcha registers it. The build id inside the URL makes the
 /// answer immutable, so the path is also its own cache key.
@@ -219,7 +219,7 @@ mod tests {
         use gotcha::axum::extract::Request;
 
         async fn as_cloud(mut request: Request, next: Next) -> HttpResponse<Body> {
-            request.extensions_mut().insert(crate::http::identity::AuthIdentity {
+            request.extensions_mut().insert(droppen_http::identity::AuthIdentity {
                 username: "cloud:device-1".into(),
                 token_sha256: None,
             });

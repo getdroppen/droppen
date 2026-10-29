@@ -52,7 +52,7 @@ use tokio::time::MissedTickBehavior;
 use super::{cron, ScheduleState, ScheduledTask, TaskStatus};
 use crate::inject::SendOptions;
 use crate::notify::{self, Level, Nudge};
-use crate::openapi_ext::Nullable;
+use droppen_http::openapi_ext::Nullable;
 use droppen_instance::paths::Paths;
 use crate::sessions::{ResidentPhase, Source};
 use droppen_base::time::{iso8601, parse_iso};

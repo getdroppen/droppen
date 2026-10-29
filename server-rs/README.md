@@ -28,8 +28,6 @@ cargo clippy --all-targets --all-features -- -D warnings
 | --- | --- |
 | `api/` | HTTP + websocket 表面：`AppState`、扁平的路由注册、错误体、`Created`、返回 JSON 400 的抽取器 |
 | `app.rs` | 应用装配：config / state / routes / bind，以及取代 `GotchaApp::run` 的可停机 serve loop |
-| `config.rs` | 手工组装的配置加载器，带类型化默认值（loopback 8700） |
-| `origin.rs` | 每个 `/api/*` 请求都要过的同源守卫 |
 | `sessions/` | 会话发现、transcript 归一化与线上数据形状 |
 | `feed/` | 单会话 websocket feed；`feed/global.rs` 是 `GET /api/events` 背后的会话列表 feed |
 | `drive/` | 驱动会话的路由，以及所有进程类子系统挂靠的 `Drive` 状态 |
@@ -50,13 +48,14 @@ cargo clippy --all-targets --all-features -- -D warnings
 | `supervisor.rs` | `remote-hand-server up`：重启子进程、回滚坏二进制、收孤儿 |
 | `crates/droppen-base/` | 各子系统都用、却不属于任何一个的底层工具：时钟（`time`）、文本编码（`text`）、只有本用户可读的文件（`fsutil`）、「文件里那个 pid 还是当初那个进程吗」的两道守卫（`procs`）、出站 webhook 的守卫（`outbound`）、环境变量的新旧名字（`env`）、spawn 的环境与输出脱敏（`process_env`）、二进制的两个名字（`program`） |
 | `crates/droppen-instance/` | 实例的底座：各子系统共用的路径（`paths`）、一个服务端独占的实例目录与宣示所有权的 `flock`（`instance`）、改名也不变的服务端身份（`identity`），以及实例自己的 SQLite 状态库和只增不改的 schema（`db`） |
+| `crates/droppen-http/` | 每个路由模块都站在上面的 HTTP 工具：错误体与状态码、出错即 `400` 的提取器、`201`/`202` 响应、websocket 保活与限时发送、构建身份（`SERVER_VERSION`）、`substate!`；以及手工组装的配置加载器（`config`，带类型化默认值，loopback 8700）、OpenAPI 补丁（`openapi_ext`）和每个 `/api/*` 请求都要过的同源守卫（`origin`） |
 | `crates/droppen-pty/` | 活过服务端重启的 pty：shim 进程（本二进制的隐藏子命令 `pty-shim`）、它的帧格式、环形缓冲与屏幕模型、留在磁盘上的边车文件，以及服务端这一侧的连接 |
 
 ## 四个「填坑」模块
 
 框架给不了的东西集中在这四个文件里，而不是散落在各子系统：
 
-- **`openapi_ext.rs`** — 一个声明式的补丁注册表，在唯一一次 `GotchaRouter::openapi(..)`
+- **`crates/droppen-http/src/openapi_ext.rs`** — 一个声明式的补丁注册表，在唯一一次 `GotchaRouter::openapi(..)`
   里统一应用。承担：额外状态码、把派生出的 `200` 改成 `201`、二进制与 multipart 请求体、
   重写描述，以及 `Nullable<T>` / `Optional<T>` / `AnyValue` 这三个 zod 对齐包装。
 - **`export.rs`** — `export-openapi` 命令。在 0 号端口上把**真实的** router 跑起来，

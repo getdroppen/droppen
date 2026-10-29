@@ -613,7 +613,7 @@ pub(in crate::agent) async fn connection(shared: &Arc<Shared>) -> Result<(), Str
     }
     hub::send_json(
         &mut sink,
-        &json!({"t": "agent_info", "version": crate::http::SERVER_VERSION, "features": features}),
+        &json!({"t": "agent_info", "version": droppen_http::SERVER_VERSION, "features": features}),
     )
     .await?;
     hub::send_json(&mut sink, &json!({"t": "chain_sub", "from": from})).await?;

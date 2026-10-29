@@ -332,7 +332,7 @@ mod tests {
     use clap::error::ErrorKind;
 
     use super::*;
-    use crate::config::PluginSettings;
+    use droppen_http::config::PluginSettings;
     use crate::plugins::tests::{host, installed_host};
     use serde_json::json;
 

@@ -50,11 +50,11 @@ use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 use tokio::sync::oneshot;
 
-use crate::http::error::ApiError;
-use crate::http::extract::{ApiJson, ApiPath};
-use crate::http::SendResult;
+use droppen_http::error::ApiError;
+use droppen_http::extract::{ApiJson, ApiPath};
+use droppen_http::SendResult;
 use droppen_instance::instance::InstanceDirs;
-use crate::openapi_ext::ExtraResponses;
+use droppen_http::openapi_ext::ExtraResponses;
 use droppen_instance::paths::Paths;
 use droppen_base::process_env::{self, Env};
 use droppen_base::procs;
@@ -1030,7 +1030,7 @@ pub struct AppsState {
     /// Every running embedded app.
     pub apps: Arc<Registry>,
 }
-crate::http::substate!(AppsState);
+droppen_http::substate!(AppsState);
 
 /// Running embedded app instances.
 #[api(id = "list_apps", group = "apps", summary = "List apps")]

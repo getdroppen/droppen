@@ -15,7 +15,7 @@ use gotcha::Schematic;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::openapi_ext::Nullable;
+use droppen_http::openapi_ext::Nullable;
 use droppen_instance::paths::Paths;
 use crate::sessions::util::{try_parse, LossyLines};
 use crate::sessions::Source;

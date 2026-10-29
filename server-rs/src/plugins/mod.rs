@@ -19,7 +19,7 @@
 //! design exists to avoid. In order:
 //!
 //! 1. the configuration (`[plugins] disable` beats `enable`; see
-//!    [`crate::config::PluginSettings`]), which also makes the switch read-only;
+//!    [`droppen_http::config::PluginSettings`]), which also makes the switch read-only;
 //! 2. the instance's own decision, a row in its `state.db` (`kv`, scope
 //!    `plugins`), written by the settings page or the CLI — and by an install,
 //!    which switches the plugin on;
@@ -67,7 +67,7 @@ use droppen_plugin_sdk::{sdk_version, valid_id, Doc, DocMeta, DocWrite, Manifest
 use serde::{Deserialize, Serialize};
 
 use droppen_instance::db::scope;
-use crate::http::refresh::Refresh;
+use droppen_http::refresh::Refresh;
 use droppen_instance::paths::Paths;
 use install::{Installed, InstallError};
 pub use store::{Store, StoreError};
@@ -191,7 +191,7 @@ impl Plugins {
     pub fn new(
         instance_dir: impl Into<PathBuf>,
         instance_db: impl Into<PathBuf>,
-        config: &crate::config::PluginSettings,
+        config: &droppen_http::config::PluginSettings,
         feed: Option<Refresh>,
     ) -> Self {
         Self {
@@ -206,7 +206,7 @@ impl Plugins {
     }
 
     /// The host of the instance `paths` names.
-    pub fn load(paths: &Paths, config: &crate::config::PluginSettings, feed: Option<Refresh>) -> Arc<Self> {
+    pub fn load(paths: &Paths, config: &droppen_http::config::PluginSettings, feed: Option<Refresh>) -> Arc<Self> {
         Arc::new(Self::new(paths.instance_dir(), paths.instance_db(), config, feed))
     }
 
@@ -761,7 +761,7 @@ fn valid_key(key: &str) -> bool {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::config::PluginSettings;
+    use droppen_http::config::PluginSettings;
     use crate::feed::global::GlobalFeed;
     use crate::plugins::testing::{package, tarball};
     use serde_json::json;

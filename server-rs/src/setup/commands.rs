@@ -45,7 +45,7 @@ use serde::{Deserialize, Serialize};
 
 use super::detect::Detection;
 use super::{GitState, InstallMethod, TaskKind, ToolId};
-use crate::openapi_ext::Nullable;
+use droppen_http::openapi_ext::Nullable;
 
 /// What a command is for: one of the two CLIs, or git.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Schematic)]

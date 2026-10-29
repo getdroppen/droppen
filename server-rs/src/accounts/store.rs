@@ -44,7 +44,7 @@ use serde::{Deserialize, Serialize};
 
 use super::rest::{AccountRest, LimitLog};
 use droppen_instance::db::{self, Db};
-use crate::openapi_ext::{Nullable, Optional};
+use droppen_http::openapi_ext::{Nullable, Optional};
 use droppen_instance::paths::Paths;
 use crate::sessions::account::{AccountRef, LimitClass};
 use droppen_base::time::iso8601;

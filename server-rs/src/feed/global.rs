@@ -35,10 +35,10 @@ use tokio_util::sync::CancellationToken;
 use super::mux::{encode, hello_frame, parse_client_message, MuxOptions, Subscriptions};
 use super::watch;
 use crate::drive::Drive;
-use crate::http::extract::ApiQuery;
-use crate::http::refresh::RefreshSink;
-use crate::http::{close_within, send_within, CLOSE_LIMIT};
-use crate::openapi_ext::ExtraResponses;
+use droppen_http::extract::ApiQuery;
+use droppen_http::refresh::RefreshSink;
+use droppen_http::{close_within, send_within, CLOSE_LIMIT};
+use droppen_http::openapi_ext::ExtraResponses;
 use droppen_instance::paths::Paths;
 use crate::sessions::{self, SessionSummary, Source};
 
@@ -177,7 +177,7 @@ impl GlobalFeed {
 }
 
 /// The inputs the subsystems below the feed reach it through
-/// ([`crate::http::refresh::Refresh`]): the same two calls as the inherent
+/// ([`droppen_http::refresh::Refresh`]): the same two calls as the inherent
 /// methods, under the same lock.
 impl RefreshSink for GlobalFeed {
     fn request_refresh(&self, expected: Option<(&dyn std::fmt::Display, &str)>) {
@@ -473,13 +473,13 @@ fn settings_frame(paths: &Paths, instance: &str, started_at: &str, plugins: &[dr
         // The same name, as a session reference scopes it. See
         // `crate::sessions::Settings::server_id`.
         "serverId": droppen_instance::identity::ServerId::local(paths).to_string(),
-        "hostname": crate::http::hostname(),
-        "platform": crate::http::node_platform(),
-        "nodeVersion": crate::http::RUNTIME_VERSION,
+        "hostname": droppen_http::hostname(),
+        "platform": droppen_http::node_platform(),
+        "nodeVersion": droppen_http::RUNTIME_VERSION,
         // The one field a client re-reads *for* its value rather than to
         // display it: a reconnect that brings back a different build is how the
         // web knows a self-upgrade happened underneath it.
-        "serverVersion": crate::http::SERVER_VERSION,
+        "serverVersion": droppen_http::SERVER_VERSION,
         "homeDir": paths.home.to_string_lossy(),
         "claudeDir": crate::claude_roots::ClaudeRoots::of(&paths).local_projects().to_string_lossy(),
         "claudeManagedDir": crate::claude_roots::ClaudeRoots::of(&paths).managed_projects().to_string_lossy(),
@@ -537,7 +537,7 @@ pub struct EventsState {
     /// Every live session feed, which a subscription attaches to.
     pub feeds: Arc<super::FeedRegistry>,
 }
-crate::http::substate!(EventsState);
+droppen_http::substate!(EventsState);
 
 /// The live session-list feed. Deliberately **not** annotated with `#[api]`:
 /// `WebSocketUpgrade` is not a `ParameterProvider`, so the macro's generated
@@ -613,7 +613,7 @@ async fn run_socket(socket: WebSocket, state: EventsState, options: MuxOptions, 
     // Declared after the attachment so that it is dropped first: every
     // subscription detaches before the list feed does.
     let (mut subscriptions, mut session_frames) = Subscriptions::new(state.feeds.clone(), state.drive.clone());
-    let mut heartbeat = crate::http::Heartbeat::default();
+    let mut heartbeat = droppen_http::Heartbeat::default();
     let mut recheck = tokio::time::interval_at(Instant::now() + LOGIN_RECHECK, LOGIN_RECHECK);
     recheck.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut signed_out = false;
@@ -718,7 +718,7 @@ mod tests {
 
     use super::*;
     use crate::api::AppState;
-    use crate::openapi_ext::Nullable;
+    use droppen_http::openapi_ext::Nullable;
     use crate::sessions::{SessionStatus, Settings};
 
     /// The only fields `GET /api/settings` may have that the frame does not.
@@ -895,7 +895,7 @@ mod tests {
             state.plugins = Arc::new(crate::plugins::tests::installed_host(
                 home.path(),
                 &["tasks"],
-                crate::config::PluginSettings::default(),
+                droppen_http::config::PluginSettings::default(),
                 None,
             ));
         })
@@ -903,7 +903,7 @@ mod tests {
 
         let mut request = format!("ws://{addr}/api/events").into_client_request().expect("a request");
         request.headers_mut().insert(
-            crate::http::bridge::CREDENTIAL_HEADER,
+            droppen_http::bridge::CREDENTIAL_HEADER,
             state
                 .drive
                 .auth
@@ -913,7 +913,7 @@ mod tests {
                 .expect("a header value"),
         );
         request.headers_mut().insert(
-            crate::http::bridge::DEVICE_HEADER,
+            droppen_http::bridge::DEVICE_HEADER,
             "d-1".parse().expect("a header value"),
         );
         let (mut cloud, _) = tokio_tungstenite::connect_async(request).await.expect("a bridged socket");
@@ -1197,7 +1197,7 @@ mod tests {
     async fn a_shutdown_does_not_wait_for_a_list_client_that_never_reads() {
         let home = tempfile::tempdir().unwrap();
         let (state, addr) = crate::api::test_support::served(home.path()).await;
-        assert_eq!(state.send_limit, crate::http::SEND_LIMIT);
+        assert_eq!(state.send_limit, droppen_http::SEND_LIMIT);
         let _client = never_reading_list(&state, addr).await;
         // As many as the broadcast holds, so the socket is handed every one:
         // megabytes more than the kernel's buffers take.

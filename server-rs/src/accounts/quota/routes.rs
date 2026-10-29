@@ -7,7 +7,7 @@ use gotcha::{api, GotchaRouter, Json, State};
 
 use super::{Quota, QuotaCache};
 use crate::accounts::store::AccountsStore;
-use crate::openapi_ext::ExtraResponses;
+use droppen_http::openapi_ext::ExtraResponses;
 
 /// What the quota route uses of the server's state.
 #[derive(Clone)]
@@ -17,7 +17,7 @@ pub struct QuotaState {
     /// The stored accounts, whose readings are collected.
     pub accounts: Arc<AccountsStore>,
 }
-crate::http::substate!(QuotaState);
+droppen_http::substate!(QuotaState);
 
 /// Subscription quota: Codex rolling-window usage and the Claude plan.
 #[api(id = "quota", group = "stats", summary = "Subscription quota")]

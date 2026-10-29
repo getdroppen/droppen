@@ -34,7 +34,7 @@ use droppen_base::time::{iso8601, mtime_ms, now_ms};
 use super::transcript::title_line;
 use super::util::{make_item, read_head_lines, read_tail_lines, try_parse, FileCache, ItemKind, LossyLines, Role, TranscriptItem};
 use super::{owned_sessions, CliChoice, SessionActivity, SessionScope, SessionStatus, SessionSummary, Source};
-use crate::openapi_ext::Nullable;
+use droppen_http::openapi_ext::Nullable;
 
 /// The files in `~/.codex` that only the session list and the model list read:
 /// Codex's thread index, its per-thread name index and its model cache.

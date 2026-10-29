@@ -23,7 +23,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-/// How the lockout is configured, resolved from [`crate::config::AuthSettings`].
+/// How the lockout is configured, resolved from [`droppen_http::config::AuthSettings`].
 #[derive(Debug, Clone, Copy)]
 pub struct LockoutPolicy {
     /// Consecutive failures that trip the lock.

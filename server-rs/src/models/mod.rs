@@ -24,9 +24,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::accounts::store::{Account, AccountKind, AccountsStore};
-use crate::http::error::ApiError;
-use crate::http::extract::ApiQuery;
-use crate::openapi_ext::{ExtraResponses, Nullable, Optional};
+use droppen_http::error::ApiError;
+use droppen_http::extract::ApiQuery;
+use droppen_http::openapi_ext::{ExtraResponses, Nullable, Optional};
 use crate::sessions::Source;
 
 pub mod probe;
@@ -325,7 +325,7 @@ pub struct ModelsState {
     /// The stored accounts, whose roots or env blocks name a login's models.
     pub accounts: Arc<AccountsStore>,
 }
-crate::http::substate!(ModelsState);
+droppen_http::substate!(ModelsState);
 
 /// The models this machine's CLI publishes for `source`.
 ///

@@ -650,10 +650,10 @@ impl Driver {
         self.state.turn_started_at = Some(now.clone());
         self.state.injection = Some(Injection {
             state: InjectionRunState::Running,
-            error: crate::openapi_ext::Nullable(None),
+            error: droppen_http::openapi_ext::Nullable(None),
             interrupted: false,
             started_at: now,
-            finished_at: crate::openapi_ext::Nullable(None),
+            finished_at: droppen_http::openapi_ext::Nullable(None),
         });
         self.publish();
     }
@@ -769,10 +769,10 @@ impl Driver {
         };
         self.state.injection = Some(Injection {
             state: outcome,
-            error: crate::openapi_ext::Nullable(error.clone()),
+            error: droppen_http::openapi_ext::Nullable(error.clone()),
             interrupted,
             started_at,
-            finished_at: crate::openapi_ext::Nullable(Some(iso8601(SystemTime::now()))),
+            finished_at: droppen_http::openapi_ext::Nullable(Some(iso8601(SystemTime::now()))),
         });
         self.publish();
         if let Some(alerts) = self.registry.alerts.get() {

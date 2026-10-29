@@ -30,7 +30,7 @@
 //! [`submit_setup_token_code`] and is typed into the pty.
 //!
 //! The one exception is the desktop app asking its own server from this very
-//! device ([`AppWindow::app_caller`](crate::http::app_window::AppWindow::app_caller)):
+//! device ([`AppWindow::app_caller`](droppen_http::app_window::AppWindow::app_caller)):
 //! there the browser the CLI opens *is* the user's, so the stubs are left out
 //! and the authorization page simply opens. The URL is still scraped and shown,
 //! as the fallback for a browser that did not come up.
@@ -73,12 +73,12 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
 use crate::drive::Drive;
-use crate::http::created::Created;
-use crate::http::error::ApiError;
-use crate::http::extract::{ApiJson, ApiPath};
-use crate::http::app_window::AppWindow;
-use crate::http::SendResult;
-use crate::openapi_ext::Optional;
+use droppen_http::created::Created;
+use droppen_http::error::ApiError;
+use droppen_http::extract::{ApiJson, ApiPath};
+use droppen_http::app_window::AppWindow;
+use droppen_http::SendResult;
+use droppen_http::openapi_ext::Optional;
 use droppen_base::process_env::{claude_env, clean_env_bare, resolve_on_path};
 use crate::terminals::{CreateSpec, Registry};
 use droppen_base::text::strip_ansi;
@@ -973,7 +973,7 @@ pub struct TokenWizardState {
     /// The desktop app's window, which may let the CLI open the browser.
     pub app_window: AppWindow,
 }
-crate::http::substate!(TokenWizardState);
+droppen_http::substate!(TokenWizardState);
 
 impl TokenWizardState {
     /// The desktop app's window as this server knows it.
@@ -986,7 +986,7 @@ impl TokenWizardState {
 #[api(id = "start_setup_token", group = "accounts", summary = "Start the setup-token wizard")]
 pub async fn start_setup_token(
     State(state): State<TokenWizardState>,
-    #[api(skip)] caller: crate::http::app_window::Caller,
+    #[api(skip)] caller: droppen_http::app_window::Caller,
     ApiJson(body): ApiJson<SetupTokenStart>,
 ) -> Result<Created<SetupTokenStarted>, ApiError> {
     // `z.string().min(1).max(100)`, which fails in the validator before the
@@ -1007,7 +1007,7 @@ pub async fn start_setup_token(
 #[api(id = "reauth_account", group = "accounts", summary = "Re-authorize an account")]
 pub async fn reauth_account(
     State(state): State<TokenWizardState>,
-    #[api(skip)] caller: crate::http::app_window::Caller,
+    #[api(skip)] caller: droppen_http::app_window::Caller,
     ApiPath(id): ApiPath<String>,
 ) -> Result<Created<SetupTokenStarted>, ApiError> {
     super::require_uuid(&id)?;

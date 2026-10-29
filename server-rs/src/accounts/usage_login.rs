@@ -18,9 +18,9 @@ use gotcha::{api, Schematic, State};
 use serde::{Deserialize, Serialize};
 
 use crate::drive::Drive;
-use crate::http::created::Created;
-use crate::http::error::ApiError;
-use crate::http::extract::ApiPath;
+use droppen_http::created::Created;
+use droppen_http::error::ApiError;
+use droppen_http::extract::ApiPath;
 use droppen_base::process_env::{claude_env, clean_env_bare, resolve_on_path};
 use crate::terminals::{CreateSpec, Registry};
 
@@ -97,7 +97,7 @@ pub struct UsageLoginState {
     /// Every live web terminal; the login runs in one.
     pub terminals: Arc<Registry>,
 }
-crate::http::substate!(UsageLoginState);
+droppen_http::substate!(UsageLoginState);
 
 /// Start `claude auth login` for one account, in a terminal.
 #[api(id = "start_usage_login", group = "accounts", summary = "Start an account's usage login")]

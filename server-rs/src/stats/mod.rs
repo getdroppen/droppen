@@ -12,8 +12,8 @@ use gotcha::axum::extract::FromRef;
 use gotcha::{api, GotchaRouter, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
-use crate::http::extract::ApiQuery;
-use crate::openapi_ext::ExtraResponses;
+use droppen_http::extract::ApiQuery;
+use droppen_http::openapi_ext::ExtraResponses;
 use droppen_instance::paths::Paths;
 use usage::UsageStats;
 
@@ -31,7 +31,7 @@ pub struct StatsState {
     /// Where sessions are discovered.
     pub paths: Arc<Paths>,
 }
-crate::http::substate!(StatsState);
+droppen_http::substate!(StatsState);
 
 /// Token usage aggregated by day and model over the recent window.
 #[api(id = "usage_stats", group = "stats", summary = "Token usage")]

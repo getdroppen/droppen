@@ -39,9 +39,9 @@ use super::wire::{
 };
 use super::{DecisionReason, PluginError, Plugins};
 use crate::auth::MaybeIdentity;
-use crate::http::error::ApiError;
-use crate::http::extract::{ApiJson, ApiPath, ApiQuery};
-use crate::openapi_ext::ExtraResponses;
+use droppen_http::error::ApiError;
+use droppen_http::extract::{ApiJson, ApiPath, ApiQuery};
+use droppen_http::openapi_ext::ExtraResponses;
 use droppen_plugin_sdk::codes;
 
 const LIST: &str = "/api/plugins";
@@ -221,7 +221,7 @@ impl MaybeIdentity {
 async fn refuse_cloud_requests(request: Request, next: Next) -> Response {
     if request
         .extensions()
-        .get::<crate::http::identity::AuthIdentity>()
+        .get::<droppen_http::identity::AuthIdentity>()
         .is_some_and(|identity| identity.username.starts_with("cloud:"))
     {
         return coded(
@@ -242,7 +242,7 @@ pub struct PluginsState {
     /// stores.
     pub plugins: Arc<Plugins>,
 }
-crate::http::substate!(PluginsState);
+droppen_http::substate!(PluginsState);
 
 /// Every plugin installed in this instance, as this instance sees it.
 #[api(id = "list_plugins", group = "plugins", summary = "List plugins")]
@@ -733,7 +733,7 @@ mod tests {
         use gotcha::axum::response::Response as HttpResponse;
 
         async fn as_cloud(mut request: ExtractRequest, next: Next) -> HttpResponse<Body> {
-            request.extensions_mut().insert(crate::http::identity::AuthIdentity {
+            request.extensions_mut().insert(droppen_http::identity::AuthIdentity {
                 username: "cloud:device-1".into(),
                 token_sha256: None,
             });
@@ -741,7 +741,7 @@ mod tests {
         }
 
         // The handler-level check is the second lock on the same door.
-        let cloud = MaybeIdentity(Some(crate::http::identity::AuthIdentity {
+        let cloud = MaybeIdentity(Some(droppen_http::identity::AuthIdentity {
             username: "cloud:device-1".into(),
             token_sha256: None,
         }));

@@ -17,10 +17,10 @@ use tokio_util::sync::CancellationToken;
 use crate::cloud;
 use crate::drive::Drive;
 use crate::feed;
-use crate::http::error::ApiError;
-use crate::http::extract::{ApiPath, ApiQuery};
-use crate::http::{close_within, hostname, node_platform, send_within, Heartbeat, CLOSE_LIMIT, RUNTIME_VERSION, SERVER_VERSION};
-use crate::openapi_ext::{self, ExtraResponses};
+use droppen_http::error::ApiError;
+use droppen_http::extract::{ApiPath, ApiQuery};
+use droppen_http::{close_within, hostname, node_platform, send_within, Heartbeat, CLOSE_LIMIT, RUNTIME_VERSION, SERVER_VERSION};
+use droppen_http::openapi_ext::{self, ExtraResponses};
 use droppen_instance::paths::Paths;
 use crate::sessions::{self, claude, codex, SessionDetail, SessionList, Settings, Source};
 
@@ -30,7 +30,7 @@ mod state;
 ///
 /// Spelled out once here so a subsystem's registration reads as one line rather
 /// than three of generics.
-pub type ApiRouter = GotchaRouter<gotcha::GotchaContext<AppState, crate::config::AppConfig>>;
+pub type ApiRouter = GotchaRouter<gotcha::GotchaContext<AppState, droppen_http::config::AppConfig>>;
 
 /// The title and version `openapi/openapi.json` carries.
 const API_TITLE: &str = "remote-hand API";
@@ -56,7 +56,7 @@ pub struct AppState {
     pub global: Arc<feed::global::GlobalFeed>,
     /// The same feed's inputs, for the subsystems that sit below it and so
     /// may not name it.
-    pub refresh: crate::http::refresh::Refresh,
+    pub refresh: droppen_http::refresh::Refresh,
     /// Cancelled by the shutdown supervisor; live sockets close on it.
     pub cancel: CancellationToken,
     /// Accounts, injections, quota and composer preferences — the one field the
@@ -93,7 +93,7 @@ pub struct AppState {
     /// The first-run guide: tool detection and the children's `PATH`.
     pub setup: Arc<crate::setup::Setup>,
     /// How long one frame on any of this server's websockets may take to
-    /// leave before its socket is given up on: [`SEND_LIMIT`](crate::http::SEND_LIMIT), except in a test
+    /// leave before its socket is given up on: [`SEND_LIMIT`](droppen_http::SEND_LIMIT), except in a test
     /// that cannot wait that long.
     pub send_limit: std::time::Duration,
 }
@@ -440,7 +440,7 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
             spec.info.description = Some(API_DESCRIPTION.to_string());
             openapi_ext::apply(spec, &response_overrides())
         })
-        .layer(crate::origin::layer())
+        .layer(droppen_http::origin::layer())
         .fallback_service(crate::static_files::service())
 }
 
@@ -583,7 +583,7 @@ mod tests {
         state.plugins = Arc::new(crate::plugins::tests::installed_host(
             home.path(),
             &["tasks"],
-            crate::config::PluginSettings::default(),
+            droppen_http::config::PluginSettings::default(),
             None,
         ));
 
@@ -593,7 +593,7 @@ mod tests {
         for device in ["agent-sync", "d-1"] {
             let bridged = settings(
                 State(state.clone()),
-                crate::auth::MaybeIdentity(Some(crate::http::identity::AuthIdentity {
+                crate::auth::MaybeIdentity(Some(droppen_http::identity::AuthIdentity {
                     username: format!("cloud:{device}"),
                     token_sha256: None,
                 })),
@@ -697,7 +697,7 @@ mod tests {
     async fn a_shutdown_does_not_wait_for_a_session_feed_client_that_never_reads() {
         let home = tempfile::tempdir().expect("tempdir");
         let (state, addr) = test_support::served(home.path()).await;
-        assert_eq!(state.send_limit, crate::http::SEND_LIMIT);
+        assert_eq!(state.send_limit, droppen_http::SEND_LIMIT);
         // An opening snapshot of megabytes, more than the kernel's buffers hold.
         wide_session(&state, crate::feed::SESSION_PAGE_SIZE / 2, crate::sessions::util::TEXT_LIMIT);
         let _client = never_reading_feed(&state, addr).await;

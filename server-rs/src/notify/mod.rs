@@ -61,10 +61,10 @@ use gotcha::axum::http::{header, HeaderMap, Method, StatusCode};
 use gotcha::{api, GotchaRouter, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
-use crate::http::error::ApiError;
-use crate::http::extract::ApiJson;
-use crate::http::SendResult;
-use crate::openapi_ext::{ExtraResponses, Optional};
+use droppen_http::error::ApiError;
+use droppen_http::extract::ApiJson;
+use droppen_http::SendResult;
+use droppen_http::openapi_ext::{ExtraResponses, Optional};
 use droppen_instance::paths::Paths;
 use crate::sessions::Source;
 
@@ -348,7 +348,7 @@ pub struct NotifyState {
     /// What a nudge reads the session it came from through.
     pub transcripts: crate::sessions::TranscriptSources,
 }
-crate::http::substate!(NotifyState);
+droppen_http::substate!(NotifyState);
 
 /// Where the stored configuration currently points.
 #[api(id = "notify_config", group = "notify", summary = "Read the notification channel")]

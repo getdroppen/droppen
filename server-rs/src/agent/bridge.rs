@@ -20,7 +20,7 @@ use rh_proto::mux::StreamClass;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
 
-use crate::http::bridge::{CREDENTIAL_HEADER, DEVICE_HEADER};
+use droppen_http::bridge::{CREDENTIAL_HEADER, DEVICE_HEADER};
 
 /// The largest rpc request body the bridge buffers.
 const MAX_BODY: usize = 64 * 1024 * 1024;

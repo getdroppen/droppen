@@ -33,9 +33,9 @@ use serde_json::{Map, Value};
 use super::{Setup, SetupState};
 use crate::claude_roots;
 use droppen_instance::db::scope;
-use crate::http::error::ApiError;
-use crate::http::extract::ApiJson;
-use crate::openapi_ext::Nullable;
+use droppen_http::error::ApiError;
+use droppen_http::extract::ApiJson;
+use droppen_http::openapi_ext::Nullable;
 use droppen_instance::paths::ClaudeRoot;
 
 /// The `kv` key, under [`scope::SETUP`].

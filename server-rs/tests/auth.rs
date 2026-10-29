@@ -143,7 +143,7 @@ async fn with_no_accounts_nobody_gets_in_without_a_session() {
         assert_eq!(status, 401, "Host: {host} through a relay is nobody");
     }
     // A name the server does not answer to gets no further than that
-    // (`crate::origin`, "Which names the server answers to").
+    // (`droppen_http::origin`, "Which names the server answers to").
     let (status, _) = raw_get(&server, "/api/settings", "evil.example").await;
     assert_eq!(status, 403, "Host: evil.example is not this server's name");
 

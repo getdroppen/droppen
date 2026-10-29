@@ -20,10 +20,10 @@ use gotcha::axum::http::{header, StatusCode};
 use gotcha::{api, GotchaRouter, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
-use crate::http::error::ApiError;
-use crate::http::extract::{ApiJson, ApiPath};
-use crate::http::SendResult;
-use crate::openapi_ext::{ExtraResponses, Nullable, Optional};
+use droppen_http::error::ApiError;
+use droppen_http::extract::{ApiJson, ApiPath};
+use droppen_http::SendResult;
+use droppen_http::openapi_ext::{ExtraResponses, Nullable, Optional};
 use droppen_base::time::iso8601;
 
 use super::setup::Refused;
@@ -291,7 +291,7 @@ pub struct AuthState {
     /// The Droppen link, which the first account takes over from the owner.
     pub link: Arc<dyn super::LinkHandOver>,
 }
-crate::http::substate!(AuthState);
+droppen_http::substate!(AuthState);
 
 /// Exchange a name and a password for a bearer token.
 #[api(id = "auth_login", group = "auth", summary = "Log in")]
@@ -1257,7 +1257,7 @@ mod tests {
         let mut state = crate::api::test_support::state(home.path()).await;
         state.drive.auth.users.add_app("droppen-app", PASSWORD).await.expect("app account");
         let who = |name: &str| {
-            Identity(crate::http::identity::AuthIdentity {
+            Identity(droppen_http::identity::AuthIdentity {
                 username: name.into(),
                 token_sha256: None,
             })
@@ -1486,8 +1486,8 @@ mod tests {
         let (_home, state, mut router) = server(None).await;
         let credential = state.drive.auth.internal_credential().to_string();
         let bridged = [
-            (crate::http::bridge::CREDENTIAL_HEADER, credential.as_str()),
-            (crate::http::bridge::DEVICE_HEADER, "d-1"),
+            (droppen_http::bridge::CREDENTIAL_HEADER, credential.as_str()),
+            (droppen_http::bridge::DEVICE_HEADER, "d-1"),
         ];
         let (status, _, body) = send(&mut router, From::ThisDevice, "GET", STATUS_PATH, None, None, &bridged).await;
         assert_eq!(status, 200, "{body}");

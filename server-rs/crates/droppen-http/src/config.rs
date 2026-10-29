@@ -90,7 +90,7 @@ pub struct AppConfig {
 /// carry a typed empty-string default in [`DefaultsSource`]. A plugin named in
 /// `disable` is off whatever else says so; one named only in `enable` is on;
 /// either way the switch in the settings is read-only for it
-/// ([`crate::plugins`]).
+/// (the server's `plugins`).
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct PluginSettings {
     /// Plugin ids to force on.
@@ -122,7 +122,7 @@ fn split_ids(list: Option<&str>) -> std::collections::BTreeSet<String> {
         .collect()
 }
 
-/// What [`crate::auth`] reads out of the configuration.
+/// What the server's `auth` reads out of the configuration.
 ///
 /// Every field is optional and every default is expressed twice: once as the
 /// accessor's fallback below, and once — typed — in [`DefaultsSource`]. The
@@ -136,7 +136,7 @@ pub struct AuthSettings {
     /// Force authentication on (`true`) or off (`false`).
     ///
     /// Unset means on, the same as `true`: an instance with a user account asks
-    /// for a login, one without is in its setup state ([`crate::auth::setup`]).
+    /// for a login, one without is in its setup state (the server's `auth::setup`).
     /// `false` switches authentication off: development and tests only.
     ///
     /// The one field with no typed default — there is no TOML value meaning

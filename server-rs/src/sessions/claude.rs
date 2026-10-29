@@ -16,7 +16,7 @@ use super::transcript::{content_blocks, title_line, user_title_candidate};
 use super::util::{self, read_head_lines, read_tail_lines, try_parse, FileCache};
 use super::{SessionActivity, SessionScope, SessionStatus, SessionSummary, Source};
 use crate::claude_roots;
-use crate::openapi_ext::Nullable;
+use droppen_http::openapi_ext::Nullable;
 use droppen_instance::paths::{ClaudeRoot, Paths};
 use droppen_base::time::{iso8601, mtime_ms};
 

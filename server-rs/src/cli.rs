@@ -15,7 +15,7 @@ use crate::{GotchaError, GotchaResult};
 
 /// The top-level command line. No command means `serve`.
 #[derive(Debug, PartialEq, Parser)]
-#[command(name = "remote-hand-server", version = crate::http::SERVER_VERSION, disable_help_subcommand = true)]
+#[command(name = "remote-hand-server", version = droppen_http::SERVER_VERSION, disable_help_subcommand = true)]
 pub struct Cli {
     /// The command to run.
     #[command(subcommand)]
@@ -128,7 +128,7 @@ impl Cli {
                 // `POST /api/server/self-upgrade` runs exactly this on a binary
                 // it is deciding whether to install and reads the whole of
                 // stdout as the answer; clap's would put the name in front.
-                println!("{}", crate::http::SERVER_VERSION);
+                println!("{}", droppen_http::SERVER_VERSION);
                 std::process::exit(0);
             }
             error.exit()
@@ -177,8 +177,8 @@ impl Command {
             // for the same reason `pty-shim` is — it exists for one caller, and
             // that caller is us.
             Command::Preflight(_) => {
-                let config = crate::config::load(std::env::var("GOTCHA_ACTIVE_PROFILE").ok())?;
-                println!("{} ok (instance {})", crate::http::SERVER_VERSION, config.app.instance());
+                let config = droppen_http::config::load(std::env::var("GOTCHA_ACTIVE_PROFILE").ok())?;
+                println!("{} ok (instance {})", droppen_http::SERVER_VERSION, config.app.instance());
                 Ok(())
             }
             // Hidden on purpose: nothing but the server itself should ever run
@@ -294,6 +294,15 @@ pub(crate) mod tests {
     pub(crate) fn parse_words(command: &str, words: &[String]) -> Result<Command, clap::Error> {
         let argv: Vec<&str> = std::iter::once(command).chain(words.iter().map(String::as_str)).collect();
         parse(&argv)
+    }
+
+    /// `--version` and `preflight` print the HTTP kit's version, which has to
+    /// be this binary's build and not the kit crate's own `0.1.0`.
+    #[test]
+    fn the_version_printed_is_the_servers_own() {
+        assert_eq!(droppen_http::RUNTIME_VERSION, concat!("rust/", env!("CARGO_PKG_VERSION")));
+        let rev = droppen_http::SERVER_VERSION.strip_prefix(env!("CARGO_PKG_VERSION")).expect("the server's version first");
+        assert!(rev.is_empty() || rev.starts_with("+g"), "{rev}");
     }
 
     fn kind(argv: &[&str]) -> ErrorKind {

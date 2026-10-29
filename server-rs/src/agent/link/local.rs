@@ -112,7 +112,7 @@ impl AgentLocal {
                 let st = shared.state.lock().expect("agent state");
                 (
                     200,
-                    json!({"displayName": st.display_name, "hostname": crate::http::hostname(), "mkEpoch": st.mk_epoch, "machine": st.machine, "alarms": st.alarms, "controllers": st.controllers()}),
+                    json!({"displayName": st.display_name, "hostname": droppen_http::hostname(), "mkEpoch": st.mk_epoch, "machine": st.machine, "alarms": st.alarms, "controllers": st.controllers()}),
                 )
             }
             (_, "/rh/display-name" | "/rh/machine-key") if !full => (

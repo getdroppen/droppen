@@ -15,7 +15,7 @@
 //!   tests run none of them;
 //! * [`commands`] / [`tasks`] — the whitelisted installs, updates and
 //!   sign-ins, and the terminals they run in, for the desktop app only
-//!   ([`AppWindow::app_caller`](crate::http::app_window::AppWindow::app_caller));
+//!   ([`AppWindow::app_caller`](droppen_http::app_window::AppWindow::app_caller));
 //! * [`progress`] — where the guide stands, kept here rather than in the
 //!   page, whose origin moves with the port;
 //! * [`folders`] — step 03's folders: recent ones, and a practice folder.
@@ -62,11 +62,11 @@ use gotcha::{api, GotchaRouter, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
 use droppen_instance::db::scope;
-use crate::http::app_window::{AppWindow, Caller, ListenPort};
-use crate::http::created::Created;
-use crate::http::error::ApiError;
-use crate::http::extract::{ApiJson, ApiPath};
-use crate::openapi_ext::{ExtraResponses, Nullable, Optional};
+use droppen_http::app_window::{AppWindow, Caller, ListenPort};
+use droppen_http::created::Created;
+use droppen_http::error::ApiError;
+use droppen_http::extract::{ApiJson, ApiPath};
+use droppen_http::openapi_ext::{ExtraResponses, Nullable, Optional};
 use droppen_instance::paths::Paths;
 use detect::{Detection, Probe};
 use runner::{Runner, SystemRunner};
@@ -462,7 +462,7 @@ pub struct Setup {
     logins: Mutex<tasks::LoginCache>,
     /// The port this server listens on, once it does: what a request from the
     /// app's own window names as its `Host` and `Origin`
-    /// ([`AppWindow`](crate::http::app_window::AppWindow)).
+    /// ([`AppWindow`](droppen_http::app_window::AppWindow)).
     listen_port: Arc<OnceLock<u16>>,
 }
 
@@ -519,7 +519,7 @@ impl Setup {
     }
 
     /// The port cell [`Self::set_listen_port`] fills, as a handle the
-    /// desktop-window gate ([`AppWindow`](crate::http::app_window::AppWindow))
+    /// desktop-window gate ([`AppWindow`](droppen_http::app_window::AppWindow))
     /// can read but not write.
     pub fn listen_port(&self) -> ListenPort {
         ListenPort::new(self.listen_port.clone())
@@ -743,7 +743,7 @@ pub struct SetupState {
     /// Whether the Droppen desktop app runs this server.
     pub desktop_app: bool,
 }
-crate::http::substate!(SetupState);
+droppen_http::substate!(SetupState);
 
 impl SetupState {
     /// The desktop app's window as this server knows it: the guide's port cell
@@ -1017,7 +1017,7 @@ pub fn describe(reg: &mut ExtraResponses) {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::http::identity::AuthIdentity;
+    use droppen_http::identity::AuthIdentity;
     use gotcha::axum::http::StatusCode;
     use std::net::SocketAddr;
     use droppen_base::process_env::Env;

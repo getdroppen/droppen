@@ -30,7 +30,7 @@ use serde_json::Value;
 
 use super::{codex, transcript, SessionActivity, SessionSummary, Source};
 use crate::sessions::attention::seen;
-use crate::openapi_ext::Nullable;
+use droppen_http::openapi_ext::Nullable;
 use droppen_instance::paths::Paths;
 use droppen_base::time::iso8601;
 

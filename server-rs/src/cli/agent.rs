@@ -102,7 +102,7 @@ impl AgentArgs {
         let enrolling = matches!(self.command, AgentCommand::Enroll { .. });
         let paths = crate::auth::cli::home_paths(self.instance.last().map(String::as_str))?;
         if enrolling {
-            let config = crate::config::load(std::env::var("GOTCHA_ACTIVE_PROFILE").ok()).map_err(|error| error.to_string())?;
+            let config = droppen_http::config::load(std::env::var("GOTCHA_ACTIVE_PROFILE").ok()).map_err(|error| error.to_string())?;
             if let Some(refusal) = refuse_enroll(&paths, config.app.auth.enabled()).await {
                 return Err(refusal);
             }

@@ -13,7 +13,7 @@ use std::time::{Duration, Instant, SystemTime};
 use crate::accounts::quota::QuotaCache;
 use crate::accounts::store::{AccountError, AccountLaunch, AccountProvider, AccountsStore};
 use crate::claude_roots;
-use crate::http::error::ApiError;
+use droppen_http::error::ApiError;
 use droppen_instance::identity::ServerId;
 use droppen_instance::instance::InstanceDirs;
 use droppen_instance::paths::{ClaudeRoot, Paths};
@@ -1143,10 +1143,10 @@ impl RunState {
     fn to_injection(&self) -> Injection {
         Injection {
             state: self.state,
-            error: crate::openapi_ext::Nullable(self.error.clone()),
+            error: droppen_http::openapi_ext::Nullable(self.error.clone()),
             interrupted: self.interrupted,
             started_at: self.started_at.clone(),
-            finished_at: crate::openapi_ext::Nullable(self.finished_at.clone()),
+            finished_at: droppen_http::openapi_ext::Nullable(self.finished_at.clone()),
         }
     }
 }
@@ -1366,7 +1366,7 @@ pub trait Alerts: Send + Sync {
 /// the session list.
 struct Listeners {
     feeds: Arc<dyn SessionFeeds>,
-    refresh: crate::http::refresh::Refresh,
+    refresh: droppen_http::refresh::Refresh,
 }
 
 /// A duration from the environment, in milliseconds, or the fallback; under
@@ -1468,7 +1468,7 @@ impl InjectionRegistry {
 
     /// Give the drivers someone to tell. Called once, when the application
     /// state is assembled; a second call is ignored.
-    pub fn attach_listeners(&self, feeds: Arc<dyn SessionFeeds>, refresh: crate::http::refresh::Refresh) {
+    pub fn attach_listeners(&self, feeds: Arc<dyn SessionFeeds>, refresh: droppen_http::refresh::Refresh) {
         let _ = self.listeners.set(Listeners { feeds, refresh });
     }
 

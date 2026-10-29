@@ -556,7 +556,7 @@ fn next_backoff(current: Duration) -> Duration {
 /// The data directory the store lives under, and the instance the server will
 /// claim, from the same configuration the server itself will load.
 fn load_paths() -> Result<Paths, String> {
-    let config = crate::config::load(std::env::var("GOTCHA_ACTIVE_PROFILE").ok()).map_err(|error| format!("cannot load configuration: {error}"))?;
+    let config = droppen_http::config::load(std::env::var("GOTCHA_ACTIVE_PROFILE").ok()).map_err(|error| format!("cannot load configuration: {error}"))?;
     Ok(Paths::for_instance(config.app.home(), &config.app.instance()))
 }
 

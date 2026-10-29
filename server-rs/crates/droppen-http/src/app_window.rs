@@ -2,8 +2,8 @@
 //! apart from every other caller.
 //!
 //! The routes it guards are in more than one subsystem: the first-run guide's
-//! installs and sign-ins (`crate::setup`) and Claude Code's setup-token wizard
-//! (`crate::accounts::setup_token`). So the gate sits in the HTTP kit, below
+//! installs and sign-ins (the server's `setup`) and Claude Code's setup-token wizard
+//! (the server's `accounts::setup_token`). So the gate sits in the HTTP kit, below
 //! both.
 
 use std::net::SocketAddr;
@@ -23,7 +23,7 @@ use super::identity::AuthIdentity;
 /// OpenAPI document.
 #[derive(Debug, Clone, Default)]
 pub struct Caller {
-    /// The peer's address, when the listener recorded one (`crate::app`
+    /// The peer's address, when the listener recorded one (the server's `app`
     /// serves with connect info; a router driven without a socket has none).
     pub peer: Option<SocketAddr>,
     /// Who it is signed in as, if anyone.

@@ -58,7 +58,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
 use droppen_instance::db::Db;
-use crate::openapi_ext::Nullable;
+use droppen_http::openapi_ext::Nullable;
 use crate::sessions::delivery::{QuestionState, SessionQuestion};
 use crate::sessions::util::QuestionEntry;
 
