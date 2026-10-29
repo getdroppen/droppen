@@ -139,9 +139,9 @@ impl Scratch {
 }
 
 /// The cleanup is a `Drop` rather than a call at the end of the happy path,
-/// because there is no happy path to put it on: every early return above is a
-/// probe that failed, and those are exactly the runs that would leave a
-/// directory behind. Synchronous removal inside an async fn is fine here — the
+/// because there is no happy path to put it on: every early return in a login's
+/// check after the scratch is made is a probe that failed, and those are exactly
+/// the runs that would leave a directory behind. Synchronous removal inside an async fn is fine here — the
 /// tree is two empty directories plus whatever the CLI wrote into a throwaway
 /// config, so it is a handful of syscalls, not a walk of a project.
 impl Drop for Scratch {

@@ -33,89 +33,47 @@ const PROBE_ARGS: [&str; 5] = ["-p", PROBE_PROMPT, "--output-format", "json", "-
 /// are still the evidence.
 const CLAUDE_BASE_URL_HINT: &str = "ANTHROPIC_BASE_URL ends with /v1 — claude appends /v1/messages itself, so drop the trailing /v1. ";
 
-/// Whether this launch's `ANTHROPIC_BASE_URL` is a root with `/v1` already on it.
+/// The hint, as what a launch can say about its own `ANTHROPIC_BASE_URL`.
 ///
-/// The scheme is stripped first so that `https://v1` — a host called `v1`, which
-/// is legal and would otherwise end in the same three characters — is not read
-/// as a path. A trailing slash is the same URL, so it goes too.
-fn base_url_has_v1(env: &[(String, String)]) -> bool {
-    let Some((_, value)) = env.iter().find(|(key, _)| key == CLAUDE_BASE_URL_ENV) else {
-        return false;
-    };
-    let url = value.trim().trim_end_matches('/');
-    let path = url.strip_prefix("https://").or_else(|| url.strip_prefix("http://")).unwrap_or(url);
-    path.ends_with("/v1")
+/// An extension trait rather than inherent methods: the launch is the
+/// accounts' type, and the hint is Claude Code's.
+trait BaseUrlHintExt {
+    /// Whether this launch's `ANTHROPIC_BASE_URL` is a root with `/v1` already on it.
+    ///
+    /// The scheme is stripped first so that `https://v1` — a host called `v1`, which
+    /// is legal and would otherwise end in the same three characters — is not read
+    /// as a path. A trailing slash is the same URL, so it goes too.
+    fn base_url_has_v1(&self) -> bool;
+
+    /// Put the hint in front of a verdict that did not go well.
+    ///
+    /// Never a refusal of its own: a `/v1` root is unusual rather than wrong — a
+    /// relay is free to serve `/v1/v1/messages` — and this function only ever
+    /// changes what a failure *says*. A credential that works is left alone, hint
+    /// or no hint, because there is nothing to explain.
+    fn with_base_url_hint(&self, verdict: Verdict) -> Verdict;
 }
 
-/// Put the hint in front of a verdict that did not go well.
-///
-/// Never a refusal of its own: a `/v1` root is unusual rather than wrong — a
-/// relay is free to serve `/v1/v1/messages` — and this function only ever
-/// changes what a failure *says*. A credential that works is left alone, hint
-/// or no hint, because there is nothing to explain.
-fn with_base_url_hint(verdict: Verdict, launch: &AccountLaunch) -> Verdict {
-    if !base_url_has_v1(&launch.env) {
-        return verdict;
-    }
-    match verdict {
-        Verdict::Valid => Verdict::Valid,
-        Verdict::Invalid(reason) => Verdict::Invalid(format!("{CLAUDE_BASE_URL_HINT}{reason}")),
-        Verdict::Unverifiable(why) => Verdict::Unverifiable(format!("{CLAUDE_BASE_URL_HINT}{why}")),
-    }
-}
-
-/// One `claude -p ping` with the credential in the environment.
-async fn verify_claude(paths: &Paths, launch: &AccountLaunch, secrets: &[&str]) -> Verdict {
-    if resolve_on_path("claude", &clean_env_bare()).is_none() {
-        return Verdict::Unverifiable("the `claude` CLI is not on PATH, so the token cannot be checked".to_string());
-    }
-    let scratch = match Scratch::make(paths).await {
-        Ok(scratch) => scratch,
-        Err(error) => return Verdict::Unverifiable(format!("cannot prepare the check's config directory: {error}")),
-    };
-
-    let mut command = tokio::process::Command::new("claude");
-    command
-        .args(PROBE_ARGS)
-        .current_dir(scratch.cwd())
-        .stdin(std::process::Stdio::null())
-        // Dropping the future on timeout must take the CLI with it, or a probe
-        // outlives the request that started it.
-        .kill_on_drop(true);
-    apply_env(
-        &mut command,
-        &claude_env(
-            [("CLAUDE_CONFIG_DIR".to_string(), scratch.config_dir().to_string_lossy().into_owned())]
-                .into_iter()
-                .chain(launch.env.iter().cloned()),
-        ),
-    );
-
-    let output = match tokio::time::timeout(PROBE_TIMEOUT, command.output()).await {
-        Ok(Ok(output)) => output,
-        Ok(Err(error)) => return Verdict::Unverifiable(format!("the `claude` CLI could not be started: {error}")),
-        Err(_) => return Verdict::Unverifiable("the check timed out before the CLI answered".to_string()),
-    };
-    if output.status.success() {
-        return Verdict::Valid;
+impl BaseUrlHintExt for AccountLaunch {
+    fn base_url_has_v1(&self) -> bool {
+        let Some((_, value)) = self.env.iter().find(|(key, _)| key == CLAUDE_BASE_URL_ENV) else {
+            return false;
+        };
+        let url = value.trim().trim_end_matches('/');
+        let path = url.strip_prefix("https://").or_else(|| url.strip_prefix("http://")).unwrap_or(url);
+        path.ends_with("/v1")
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-    // An account over its request limit is a working account, and a refusal here
-    // would send the user back through a wizard that cannot help.
-    if is_rate_limited(&stdout) || is_rate_limited(&stderr) {
-        return Verdict::Unverifiable("the account is rate-limited, so the token could not be checked".to_string());
+    fn with_base_url_hint(&self, verdict: Verdict) -> Verdict {
+        if !self.base_url_has_v1() {
+            return verdict;
+        }
+        match verdict {
+            Verdict::Valid => Verdict::Valid,
+            Verdict::Invalid(reason) => Verdict::Invalid(format!("{CLAUDE_BASE_URL_HINT}{reason}")),
+            Verdict::Unverifiable(why) => Verdict::Unverifiable(format!("{CLAUDE_BASE_URL_HINT}{why}")),
+        }
     }
-    let quoted = reason(&stderr, &stdout, secrets);
-    // A non-zero exit is not a verdict on the credential unless the CLI said so.
-    // An older CLI that does not know one of these flags, a DNS failure behind a
-    // proxy, a crash — all exit non-zero, and turning any of them into a refusal
-    // would lock the user out of adding an account at all.
-    if is_credential_refusal(&stdout) || is_credential_refusal(&stderr) {
-        return Verdict::Invalid(format!("the token was refused: {quoted}"));
-    }
-    Verdict::Unverifiable(format!("the check itself failed, so the token was not tested: {quoted}"))
 }
 
 /// Whether the CLI's complaint is about the *credential* rather than about
@@ -145,6 +103,62 @@ fn is_credential_refusal(text: &str) -> bool {
 /// Claude Code's [`Login`].
 pub struct ClaudeCodeLogin;
 
+impl ClaudeCodeLogin {
+    /// One `claude -p ping` with the credential in the environment.
+    async fn check(&self, paths: &Paths, launch: &AccountLaunch, secrets: &[&str]) -> Verdict {
+        if resolve_on_path("claude", &clean_env_bare()).is_none() {
+            return Verdict::Unverifiable("the `claude` CLI is not on PATH, so the token cannot be checked".to_string());
+        }
+        let scratch = match Scratch::make(paths).await {
+            Ok(scratch) => scratch,
+            Err(error) => return Verdict::Unverifiable(format!("cannot prepare the check's config directory: {error}")),
+        };
+
+        let mut command = tokio::process::Command::new("claude");
+        command
+            .args(PROBE_ARGS)
+            .current_dir(scratch.cwd())
+            .stdin(std::process::Stdio::null())
+            // Dropping the future on timeout must take the CLI with it, or a probe
+            // outlives the request that started it.
+            .kill_on_drop(true);
+        apply_env(
+            &mut command,
+            &claude_env(
+                [("CLAUDE_CONFIG_DIR".to_string(), scratch.config_dir().to_string_lossy().into_owned())]
+                    .into_iter()
+                    .chain(launch.env.iter().cloned()),
+            ),
+        );
+
+        let output = match tokio::time::timeout(PROBE_TIMEOUT, command.output()).await {
+            Ok(Ok(output)) => output,
+            Ok(Err(error)) => return Verdict::Unverifiable(format!("the `claude` CLI could not be started: {error}")),
+            Err(_) => return Verdict::Unverifiable("the check timed out before the CLI answered".to_string()),
+        };
+        if output.status.success() {
+            return Verdict::Valid;
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        // An account over its request limit is a working account, and a refusal here
+        // would send the user back through a wizard that cannot help.
+        if is_rate_limited(&stdout) || is_rate_limited(&stderr) {
+            return Verdict::Unverifiable("the account is rate-limited, so the token could not be checked".to_string());
+        }
+        let quoted = reason(&stderr, &stdout, secrets);
+        // A non-zero exit is not a verdict on the credential unless the CLI said so.
+        // An older CLI that does not know one of these flags, a DNS failure behind a
+        // proxy, a crash — all exit non-zero, and turning any of them into a refusal
+        // would lock the user out of adding an account at all.
+        if is_credential_refusal(&stdout) || is_credential_refusal(&stderr) {
+            return Verdict::Invalid(format!("the token was refused: {quoted}"));
+        }
+        Verdict::Unverifiable(format!("the check itself failed, so the token was not tested: {quoted}"))
+    }
+}
+
 impl Login for ClaudeCodeLogin {
     /// The credential as it stands, and nothing on the command line: claude
     /// reads a token or a block out of its environment by itself.
@@ -164,7 +178,7 @@ impl Login for ClaudeCodeLogin {
     /// One `claude -p ping`, with a hint in front of a failure when the block's
     /// `ANTHROPIC_BASE_URL` already ends in `/v1`.
     fn verify<'a>(&'a self, paths: &'a Paths, launch: &'a AccountLaunch, secrets: &'a [&'a str]) -> BoxFuture<'a, Verdict> {
-        Box::pin(async move { with_base_url_hint(verify_claude(paths, launch, secrets).await, launch) })
+        Box::pin(async move { launch.with_base_url_hint(self.check(paths, launch, secrets).await) })
     }
 }
 
@@ -215,19 +229,19 @@ mod tests {
             " https://gw.example.com/api/v1 ",
             "http://10.0.0.2:8000/v1",
         ] {
-            assert!(base_url_has_v1(&launch(url).env), "{url} needs the hint");
+            assert!(launch(url).base_url_has_v1(), "{url} needs the hint");
         }
-        let refused = with_base_url_hint(Verdict::Invalid("the token was refused: 401".to_string()), &launch("https://gw/v1"));
+        let refused = launch("https://gw/v1").with_base_url_hint(Verdict::Invalid("the token was refused: 401".to_string()));
         assert_eq!(
             refused,
             Verdict::Invalid(format!("{CLAUDE_BASE_URL_HINT}the token was refused: 401")),
             "a prefix, not a replacement: the CLI's own words are still the evidence"
         );
-        let unchecked = with_base_url_hint(Verdict::Unverifiable("the check itself failed".to_string()), &launch("https://gw/v1/"));
+        let unchecked = launch("https://gw/v1/").with_base_url_hint(Verdict::Unverifiable("the check itself failed".to_string()));
         assert_eq!(unchecked, Verdict::Unverifiable(format!("{CLAUDE_BASE_URL_HINT}the check itself failed")));
         // And it is a hint, never a refusal: a relay is free to serve
         // /v1/v1/messages, and one that works is one that works.
-        assert_eq!(with_base_url_hint(Verdict::Valid, &launch("https://gw/v1")), Verdict::Valid);
+        assert_eq!(launch("https://gw/v1").with_base_url_hint(Verdict::Valid), Verdict::Valid);
     }
 
     #[test]
@@ -240,7 +254,7 @@ mod tests {
             "https://v1",
             "https://v2",
         ] {
-            assert!(!base_url_has_v1(&launch(url).env), "{url} must not be second-guessed");
+            assert!(!launch(url).base_url_has_v1(), "{url} must not be second-guessed");
         }
         // An OAuth account names no base URL at all.
         let oauth = AccountLaunch {
@@ -248,8 +262,8 @@ mod tests {
             env: vec![("CLAUDE_CODE_OAUTH_TOKEN".to_string(), "sk-ant-oat01-whatever".to_string())],
             codex_args: Vec::new(),
         };
-        assert!(!base_url_has_v1(&oauth.env));
+        assert!(!oauth.base_url_has_v1());
         let verdict = Verdict::Invalid("the token was refused".to_string());
-        assert_eq!(with_base_url_hint(verdict.clone(), &oauth), verdict);
+        assert_eq!(oauth.with_base_url_hint(verdict.clone()), verdict);
     }
 }
