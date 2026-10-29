@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 
 use super::util::TranscriptItem;
 use super::{Source, TranscriptSources};
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 
 /// How many of a client's newest items a resume re-sends: `K` in
 /// [`crate::feed`]'s module docs. Those are the items the parser may still

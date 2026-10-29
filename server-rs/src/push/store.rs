@@ -4,7 +4,7 @@
 //! subscription is a permission one browser granted to one *origin*, and the
 //! VAPID key is that origin's identity to the push service. Two servers sharing
 //! the file would each sign with the other's key and deliver to the other's
-//! devices. See [`crate::instance`] for why the sidecars are per-instance.
+//! devices. See [`droppen_instance::instance`] for why the sidecars are per-instance.
 //!
 //! Stored `0600`, because it holds a private key — the same rule (and the same
 //! reasoning) as [`crate::accounts::store`]. The mode is now the database's; see
@@ -25,7 +25,7 @@
 //!
 //! # Where the file actually is
 //!
-//! In [`crate::db`], and split the way the two halves of `push.json` deserve:
+//! In [`droppen_instance::db`], and split the way the two halves of `push.json` deserve:
 //! the subscriptions are rows in `push_subscriptions` keyed by that same
 //! endpoint, so a re-subscribe is an `UPSERT` rather than a rewrite of every
 //! device; the VAPID private scalar is one string, so it is a `kv` row under
@@ -46,8 +46,8 @@ use p256::ecdsa::SigningKey;
 use serde::{Deserialize, Serialize};
 
 use super::ece;
-use crate::db::{scope, Db};
-use crate::paths::Paths;
+use droppen_instance::db::{scope, Db};
+use droppen_instance::paths::Paths;
 use droppen_base::time::iso8601;
 
 /// Serializes the one check-then-write left in this module: [`vapid_key`] looks
@@ -147,7 +147,7 @@ fn current(db: &Db) -> PushFile {
 
 /// Everything stored, as the file used to hold it.
 pub async fn read(paths: &Paths) -> PushFile {
-    current(&crate::db::at(paths.instance_db()))
+    current(&droppen_instance::db::at(paths.instance_db()))
 }
 
 /// The VAPID signing key, generating and persisting one on first use.
@@ -158,7 +158,7 @@ pub async fn read(paths: &Paths) -> PushFile {
 /// surprising way to lose every device at once.
 pub async fn vapid_key(paths: &Paths) -> std::io::Result<SigningKey> {
     let _guard = WRITE_LOCK.lock().await;
-    let db = crate::db::at(paths.instance_db());
+    let db = droppen_instance::db::at(paths.instance_db());
     if let Some(encoded) = db.kv_get(scope::PUSH, VAPID_PRIVATE) {
         return ece::b64url_decode(&encoded)
             .and_then(|bytes| SigningKey::from_slice(&bytes).ok())
@@ -169,7 +169,7 @@ pub async fn vapid_key(paths: &Paths) -> std::io::Result<SigningKey> {
     // carries on: a key that was minted but not stored is a *different* key on
     // the next call, and the subscriptions minted against the first one would
     // never be delivered to again. The caller has to hear about that.
-    db.write(|tx| crate::db::kv_set_in(tx, scope::PUSH, VAPID_PRIVATE, &ece::b64url(&key.to_bytes())))
+    db.write(|tx| droppen_instance::db::kv_set_in(tx, scope::PUSH, VAPID_PRIVATE, &ece::b64url(&key.to_bytes())))
         .map_err(std::io::Error::other)?;
     Ok(key)
 }
@@ -182,7 +182,7 @@ pub async fn vapid_public(paths: &Paths) -> std::io::Result<String> {
 
 /// Store a subscription, replacing any earlier one with the same endpoint.
 pub async fn upsert(paths: &Paths, endpoint: String, p256dh: String, auth: String, label: Option<String>) -> std::io::Result<()> {
-    let db = crate::db::at(paths.instance_db());
+    let db = droppen_instance::db::at(paths.instance_db());
     let now = iso8601(std::time::SystemTime::now());
     db.write(|tx| {
         let stored: Option<Subscription> = tx
@@ -235,7 +235,7 @@ pub async fn upsert(paths: &Paths, endpoint: String, p256dh: String, auth: Strin
 /// Forget a subscription. `Ok(false)` when there was nothing to forget, which is
 /// not an error — an unsubscribe is allowed to be idempotent.
 pub async fn remove(paths: &Paths, endpoint: &str) -> std::io::Result<bool> {
-    let db = crate::db::at(paths.instance_db());
+    let db = droppen_instance::db::at(paths.instance_db());
     let removed = db
         .write(|tx| tx.execute("DELETE FROM push_subscriptions WHERE endpoint = ?1", (endpoint,)))
         .map_err(std::io::Error::other)?;
@@ -257,7 +257,7 @@ pub async fn subscriptions(paths: &Paths) -> Vec<Subscription> {
 /// subscriptions were forgotten.
 pub async fn renew_vapid(paths: &Paths) -> std::io::Result<usize> {
     let _guard = WRITE_LOCK.lock().await;
-    let db = crate::db::at(paths.instance_db());
+    let db = droppen_instance::db::at(paths.instance_db());
     let key = SigningKey::random(&mut rand::rngs::OsRng);
     db.write(|tx| {
         let forgotten = tx.execute("DELETE FROM push_subscriptions", [])?;
@@ -383,7 +383,7 @@ mod tests {
     #[tokio::test]
     async fn a_corrupt_private_key_is_an_error_not_a_silent_rotation() {
         let (_dir, paths) = paths();
-        crate::db::at(paths.instance_db()).kv_set(scope::PUSH, VAPID_PRIVATE, "not-a-scalar");
+        droppen_instance::db::at(paths.instance_db()).kv_set(scope::PUSH, VAPID_PRIVATE, "not-a-scalar");
         assert!(vapid_key(&paths).await.is_err(), "regenerating here would drop every device");
     }
 

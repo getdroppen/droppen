@@ -70,8 +70,8 @@ use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 
-use crate::instance::InstanceDirs;
-use crate::paths::Paths;
+use droppen_instance::instance::InstanceDirs;
+use droppen_instance::paths::Paths;
 use droppen_base::time::iso8601;
 
 mod tail;
@@ -751,7 +751,7 @@ mod tests {
 
     fn recorders(home: &Path) -> (Recorders, InstanceDirs) {
         let paths = Arc::new(Paths::new(home.to_path_buf()));
-        let dirs = InstanceDirs::new(&paths.data_dir(), crate::instance::DEFAULT_INSTANCE).expect("valid name");
+        let dirs = InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
         dirs.create().expect("instance directories");
         let recorders = Recorders::new_at(dirs.session_logs(), Some(64 * 1024), paths);
         (recorders, dirs)
@@ -882,7 +882,7 @@ mod tests {
     async fn a_recording_that_reaches_its_ceiling_stops_and_leaves_a_note() {
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Arc::new(Paths::new(home.path().to_path_buf()));
-        let dirs = InstanceDirs::new(&paths.data_dir(), crate::instance::DEFAULT_INSTANCE).expect("valid name");
+        let dirs = InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
         dirs.create().expect("dirs");
         let recorders = Recorders::new_at(dirs.session_logs(), Some(2_000), paths);
         let recorder = recorders.open("session-cap");
@@ -923,7 +923,7 @@ mod tests {
     async fn replayed_history_is_recorded_up_to_a_budget_and_then_owned_up_to() {
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Arc::new(Paths::new(home.path().to_path_buf()));
-        let dirs = InstanceDirs::new(&paths.data_dir(), crate::instance::DEFAULT_INSTANCE).expect("valid name");
+        let dirs = InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
         dirs.create().expect("dirs");
         // No ceiling here: the budget under test is the *replay* one, and a
         // ceiling low enough to keep this test quick would stop the recording

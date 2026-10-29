@@ -26,7 +26,7 @@ use crate::inject::questions::{self, Answer};
 use crate::inject::receipts::{Kind, LOOKUP_CAP};
 use crate::inject::{self, AccountChoice, AnswerOutcome, Reply, SendOptions};
 use crate::openapi_ext::{double_option, required_nullable, ExtraResponses, Nullable, Optional};
-use crate::paths::ClaudeRoot;
+use droppen_instance::paths::ClaudeRoot;
 use crate::sessions::checklist::{self, Checklist};
 use crate::sessions::delivery::{QuestionState, ReceiptLookup, ReceiptStatus, SessionQuestion};
 use crate::sessions::util::TranscriptItem;
@@ -556,7 +556,7 @@ pub struct DriveState {
     /// Accounts, injections, quota, titles and composer preferences.
     pub drive: Arc<super::Drive>,
     /// Where sessions are discovered.
-    pub paths: Arc<crate::paths::Paths>,
+    pub paths: Arc<droppen_instance::paths::Paths>,
     /// The shared session-list feed, told when a session appears or changes.
     pub global: Arc<feed::global::GlobalFeed>,
     /// The same feed's inputs, which the session-binding routes tell.
@@ -2196,8 +2196,8 @@ mod tests {
 
     fn drive() -> (tempfile::TempDir, Arc<Drive>) {
         let dir = tempfile::tempdir().expect("tempdir");
-        let paths = Arc::new(crate::paths::Paths::new(dir.path().to_path_buf()));
-        let instance = crate::instance::InstanceDirs::new(&paths.data_dir(), crate::instance::DEFAULT_INSTANCE).expect("valid name");
+        let paths = Arc::new(droppen_instance::paths::Paths::new(dir.path().to_path_buf()));
+        let instance = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
         let auth = crate::auth::Auth::new(&paths, &instance, &crate::config::AuthSettings::default(), false);
         let drive = Drive::new(paths, &instance, auth, crate::app::transcript_sources());
         (dir, drive)

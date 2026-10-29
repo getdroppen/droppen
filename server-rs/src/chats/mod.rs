@@ -41,7 +41,7 @@ use crate::http::extract::{ApiJson, ApiPath};
 use crate::http::SendResult;
 use crate::inject::SendOptions;
 use crate::openapi_ext::{ExtraResponses, Nullable, Optional};
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 use crate::sessions::{chats_cwd, claude, codex, Source};
 
 pub use provider::{ChatModelList, ChatProviderInfo, ChatProviderUpdate};
@@ -308,7 +308,7 @@ pub struct ChatsState {
     /// The provider configuration and the API-backed store.
     pub chats: Arc<Chats>,
     /// Where sessions are discovered.
-    pub paths: Arc<crate::paths::Paths>,
+    pub paths: Arc<droppen_instance::paths::Paths>,
     /// Accounts and the spawn dependencies a CLI-backed chat starts with.
     pub drive: Arc<crate::drive::Drive>,
     /// The shared session-list feed, told when a chat's session appears.

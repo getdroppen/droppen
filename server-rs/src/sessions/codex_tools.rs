@@ -1928,7 +1928,7 @@ fn push_call(items: &mut Vec<TranscriptItem>, display: ToolDisplay, id: Option<S
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::paths::Paths;
+    use droppen_instance::paths::Paths;
     use serde_json::json;
 
     /// One rollout line: `{"timestamp", "type", "payload"}`.

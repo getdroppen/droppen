@@ -29,7 +29,7 @@ use serde_json::Value;
 
 use super::codex_claims::{Claims, Verdict};
 use super::codex_tools::{CodexTools, Context};
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 use droppen_base::time::{iso8601, mtime_ms, now_ms};
 use super::transcript::title_line;
 use super::util::{make_item, read_head_lines, read_tail_lines, try_parse, FileCache, ItemKind, LossyLines, Role, TranscriptItem};
@@ -658,7 +658,7 @@ impl FinishExt for Vec<SessionSummary> {
 async fn apply_ownership(paths: &Paths, summaries: &mut Vec<SessionSummary>, claims: Claims) {
     let owned = owned_sessions::read(paths).await;
     let me = paths.instance();
-    let local = crate::identity::ServerId::local(paths);
+    let local = droppen_instance::identity::ServerId::local(paths);
     summaries.retain_mut(|summary| {
         // Named before the verdict, and for every row that survives it: a thread
         // this instance recorded says the server that recorded it, and the

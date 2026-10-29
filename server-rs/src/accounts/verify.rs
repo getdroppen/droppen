@@ -37,7 +37,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 use droppen_base::process_env::{apply_env, claude_env, clean_env, clean_env_bare, redact_secrets, redact_values, resolve_on_path};
 
 use super::quota::{is_rate_limited, mentions_status};

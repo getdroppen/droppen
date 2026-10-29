@@ -17,7 +17,7 @@ use super::util::{self, read_head_lines, read_tail_lines, try_parse, FileCache};
 use super::{SessionActivity, SessionScope, SessionStatus, SessionSummary, Source};
 use crate::claude_roots;
 use crate::openapi_ext::Nullable;
-use crate::paths::{ClaudeRoot, Paths};
+use droppen_instance::paths::{ClaudeRoot, Paths};
 use droppen_base::time::{iso8601, mtime_ms};
 
 const HEAD_BYTES: usize = 128 * 1024;
@@ -58,7 +58,7 @@ pub fn scope_of(root: ClaudeRoot) -> SessionScope {
 /// So there is no early return on an empty registry any more: the rows still
 /// have to be told which server is answering for them.
 pub(super) async fn mark_owned(paths: &Paths, summaries: &mut [SessionSummary]) {
-    let local = crate::identity::ServerId::local(paths);
+    let local = droppen_instance::identity::ServerId::local(paths);
     let owned = super::owned_sessions::read(paths).await;
     for summary in summaries {
         match owned.server_of(Source::Claude, &summary.id) {

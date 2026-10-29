@@ -12,7 +12,7 @@ use crate::http::error::ApiError;
 use crate::http::extract::ApiPath;
 use crate::http::refresh::Refresh;
 use crate::openapi_ext::{ExtraResponses, Nullable};
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 use crate::sessions::attention::seen;
 use crate::sessions::Source;
 

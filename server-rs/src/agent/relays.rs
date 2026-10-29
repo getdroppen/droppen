@@ -1169,7 +1169,7 @@ mod tests {
         ))
         .await;
         let dir = tempfile::tempdir().unwrap();
-        let paths = crate::paths::Paths::for_instance(dir.path().to_path_buf(), "relays");
+        let paths = droppen_instance::paths::Paths::for_instance(dir.path().to_path_buf(), "relays");
         let st = super::super::state::AgentState::enrolling("http://hub.invalid", "a-1", "m-1", [0; 16], now_ms_u64());
         let identity = rh_proto::identity::MachineIdentity::from_seed(&[5; 32]);
         let shared = super::super::link::test_shared(
@@ -1222,7 +1222,7 @@ mod tests {
     #[tokio::test]
     async fn the_manager_asks_for_a_fresh_ticket_once_one_is_revoked() {
         let dir = tempfile::tempdir().unwrap();
-        let paths = crate::paths::Paths::for_instance(dir.path().to_path_buf(), "relays");
+        let paths = droppen_instance::paths::Paths::for_instance(dir.path().to_path_buf(), "relays");
         let st = super::super::state::AgentState::enrolling("http://hub.invalid", "a-1", "m-1", [0; 16], now_ms_u64());
         let shared = super::super::link::test_shared(
             &paths,

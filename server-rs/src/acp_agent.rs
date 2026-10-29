@@ -50,12 +50,12 @@ use gotcha::{api, GotchaRouter, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
 use crate::accounts::store::{parse_env_block, EnvVar};
-use crate::db::scope;
+use droppen_instance::db::scope;
 use crate::http::error::ApiError;
 use crate::http::extract::{ApiJson, ApiPath};
 use crate::http::SendResult;
 use crate::openapi_ext::{ExtraResponses, Optional};
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 use droppen_base::process_env::{clean_env_bare, resolve_on_path, Env};
 use crate::sessions::acp_transcript::{valid_agent_id, MAX_AGENT_ID};
 use crate::sessions::{SessionSummary, Source};
@@ -180,7 +180,7 @@ impl AcpAgent {
     /// configured, and is dropped. `false` when it was not kept.
     pub fn record_check(&self, agents: &AcpAgentRegistry, check: &AcpCheck) -> bool {
         let _writing = WRITES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let db = crate::db::at(&agents.0);
+        let db = droppen_instance::db::at(&agents.0);
         let Some(mut stored) = db.kv_get(scope::ACP_AGENTS, &self.id).and_then(|raw| serde_json::from_str::<Stored>(&raw).ok()) else {
             return false;
         };
@@ -281,7 +281,7 @@ impl AcpAgentRegistry {
 impl AcpAgentRegistry {
     /// Every configured agent, in id order.
     pub fn list(&self) -> Vec<AcpAgent> {
-        crate::db::at(&self.0)
+        droppen_instance::db::at(&self.0)
             .kv_scope(scope::ACP_AGENTS)
             .into_iter()
             .filter(|(id, _)| valid_agent_id(id))
@@ -294,7 +294,7 @@ impl AcpAgentRegistry {
         if !valid_agent_id(id) {
             return None;
         }
-        let raw = crate::db::at(&self.0).kv_get(scope::ACP_AGENTS, id)?;
+        let raw = droppen_instance::db::at(&self.0).kv_get(scope::ACP_AGENTS, id)?;
         parse(id, &raw)
     }
 
@@ -325,7 +325,7 @@ impl AcpAgentRegistry {
             ));
         }
         let _writing = WRITES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let db = crate::db::at(&self.0);
+        let db = droppen_instance::db::at(&self.0);
         let rows = db.kv_scope(scope::ACP_AGENTS);
         let mut next = match rows.get(id).and_then(|raw| serde_json::from_str::<Stored>(raw).ok()) {
             Some(stored) => stored,
@@ -380,7 +380,7 @@ impl AcpAgentRegistry {
             return false;
         }
         let _writing = WRITES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let db = crate::db::at(&self.0);
+        let db = droppen_instance::db::at(&self.0);
         if db.kv_get(scope::ACP_AGENTS, id).is_none() {
             return false;
         }
@@ -655,7 +655,7 @@ pub struct AcpAgentUpdate {
 #[derive(Clone)]
 pub struct AcpAgentState {
     /// Where the agents' configuration lives.
-    pub paths: Arc<crate::paths::Paths>,
+    pub paths: Arc<droppen_instance::paths::Paths>,
     /// The live runs, which check an agent and stop its sessions when it goes.
     pub injections: Arc<crate::inject::InjectionRegistry>,
 }

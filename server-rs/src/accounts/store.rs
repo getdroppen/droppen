@@ -10,7 +10,7 @@
 //!
 //! # Where the accounts live
 //!
-//! In [`crate::db`], at `<config>/state.db`. `accounts.json` was a mirror for
+//! In [`droppen_instance::db`], at `<config>/state.db`. `accounts.json` was a mirror for
 //! one version — `0600`, tmp+rename, key names and pretty printing kept
 //! compatible with the TypeScript store — so that a build rolled back onto this
 //! machine would still find the logins. The rollback floor has since risen to a
@@ -43,9 +43,9 @@ use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 use super::rest::{AccountRest, LimitLog};
-use crate::db::{self, Db};
+use droppen_instance::db::{self, Db};
 use crate::openapi_ext::{Nullable, Optional};
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 use crate::sessions::account::{AccountRef, LimitClass};
 use droppen_base::time::iso8601;
 
@@ -1236,7 +1236,7 @@ impl AccountsStore {
             .db
             .write(|tx| match id {
                 None => {
-                    crate::db::kv_set_in(tx, SETTINGS_SCOPE, key, LOCAL_DEFAULT)?;
+                    droppen_instance::db::kv_set_in(tx, SETTINGS_SCOPE, key, LOCAL_DEFAULT)?;
                     Ok(Ok(true))
                 }
                 Some(id) => {
@@ -1252,7 +1252,7 @@ impl AccountsStore {
                             provider.label()
                         ))));
                     }
-                    crate::db::kv_set_in(tx, SETTINGS_SCOPE, key, id)?;
+                    droppen_instance::db::kv_set_in(tx, SETTINGS_SCOPE, key, id)?;
                     Ok(Ok(true))
                 }
             })
@@ -1266,7 +1266,7 @@ impl AccountsStore {
     /// ([`super::rotation::start_choice`]).
     pub async fn clear_default(&self, provider: AccountProvider) -> Result<(), AccountError> {
         self.db
-            .write(|tx| crate::db::kv_remove_in(tx, SETTINGS_SCOPE, provider.default_key()))
+            .write(|tx| droppen_instance::db::kv_remove_in(tx, SETTINGS_SCOPE, provider.default_key()))
             .map_err(store_db)?;
         Ok(())
     }
@@ -2067,7 +2067,7 @@ mod tests {
             .expect("bind");
 
         // A second connection to the same file, as another process would open it.
-        let reopened = crate::db::Db::open(paths.config_db());
+        let reopened = droppen_instance::db::Db::open(paths.config_db());
         let bound: String = reopened
             .read(|conn| {
                 conn.query_row("SELECT account_id FROM session_accounts WHERE session_id = 'session-a'", [], |row| {

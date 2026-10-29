@@ -270,7 +270,7 @@ fn ensure_fake_clis_on_path() -> &'static Path {
 /// the sessions it seeds must be the next server's own — an external one is
 /// browse-only and could not be sent to.
 pub fn owned_claude_root(home: &Path) -> PathBuf {
-    remote_hand_server::paths::Paths::new(home.to_path_buf()).claude_root(remote_hand_server::paths::ClaudeRoot::Managed)
+    droppen_instance::paths::Paths::new(home.to_path_buf()).claude_root(droppen_instance::paths::ClaudeRoot::Managed)
 }
 
 /// A running server plus its synthetic home.
@@ -367,7 +367,7 @@ impl Probe {
         // The marker the fake `claude` walks up to find the test's own root.
         std::fs::write(home.path().join(".rh-test-root"), "").expect("marker");
         let server = common::TestServer::start_at(home.path(), instance).await;
-        let instance = instance.unwrap_or(remote_hand_server::instance::DEFAULT_INSTANCE).to_string();
+        let instance = instance.unwrap_or(droppen_instance::instance::DEFAULT_INSTANCE).to_string();
         Probe {
             home: home.path().to_path_buf(),
             residents: ResidentReaper {
@@ -385,7 +385,7 @@ impl Probe {
     /// because it was seeded before one existed or because a second server is
     /// about to be pointed at it.
     pub async fn start_at(home: &Path) -> Probe {
-        Probe::start_named_at(home, remote_hand_server::instance::DEFAULT_INSTANCE).await
+        Probe::start_named_at(home, droppen_instance::instance::DEFAULT_INSTANCE).await
     }
 
     /// The same, under an explicit instance name.

@@ -53,7 +53,7 @@ use super::{cron, ScheduleState, ScheduledTask, TaskStatus};
 use crate::inject::SendOptions;
 use crate::notify::{self, Level, Nudge};
 use crate::openapi_ext::Nullable;
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 use crate::sessions::{ResidentPhase, Source};
 use droppen_base::time::{iso8601, parse_iso};
 

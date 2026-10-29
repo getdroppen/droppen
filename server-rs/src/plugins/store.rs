@@ -28,9 +28,9 @@ use droppen_plugin_sdk::{valid_doc_name, Doc, DocMeta, DocVersion, DocWrite, Plu
 use rusqlite::{OptionalExtension, Transaction};
 use serde_json::Value;
 
-use crate::db::{Db, Durability};
+use droppen_instance::db::{Db, Durability};
 
-/// The store's schema, under the same append-only rule as [`crate::db::SCHEMA`]:
+/// The store's schema, under the same append-only rule as [`droppen_instance::db::SCHEMA`]:
 /// an older binary must be able to open what a newer one wrote.
 ///
 /// `doc_history` is a rowid table on purpose: "the newest fifty" is insertion
@@ -343,12 +343,12 @@ pub struct Store {
 impl Store {
     /// Open — or make — the store at `path`, once per process.
     ///
-    /// Through [`crate::db::at_with`], so it is WAL, `synchronous = FULL`,
+    /// Through [`droppen_instance::db::at_with`], so it is WAL, `synchronous = FULL`,
     /// `0600`, and a file that will not open is set aside as
     /// `store.corrupt-<time>` rather than refused.
     pub fn open(path: impl Into<PathBuf>) -> Self {
         let path = path.into();
-        let db = crate::db::at_with(&path, STORE_SCHEMA, Durability::Committed);
+        let db = droppen_instance::db::at_with(&path, STORE_SCHEMA, Durability::Committed);
         Self {
             path,
             db,

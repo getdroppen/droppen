@@ -46,10 +46,10 @@ cargo clippy --all-targets --all-features -- -D warnings
 | `prefs/` `screens/` | 两个边车存储：界面偏好、持久化分屏布局 |
 | `stats/` `models.rs` | token 用量统计与模型列表 |
 | `claude_roots.rs` | 一次 spawn 跑在什么根目录下（带什么环境见下面 `droppen-base` 的 `process_env`） |
-| `instance.rs` | 一个服务端独占的实例目录，以及宣示所有权的 `flock` |
 | `selfupdate/` | `POST /api/server/self-upgrade`，以及 `<data>/bin` 这个二进制仓库 |
 | `supervisor.rs` | `remote-hand-server up`：重启子进程、回滚坏二进制、收孤儿 |
 | `crates/droppen-base/` | 各子系统都用、却不属于任何一个的底层工具：时钟（`time`）、文本编码（`text`）、只有本用户可读的文件（`fsutil`）、「文件里那个 pid 还是当初那个进程吗」的两道守卫（`procs`）、出站 webhook 的守卫（`outbound`）、环境变量的新旧名字（`env`）、spawn 的环境与输出脱敏（`process_env`）、二进制的两个名字（`program`） |
+| `crates/droppen-instance/` | 实例的底座：各子系统共用的路径（`paths`）、一个服务端独占的实例目录与宣示所有权的 `flock`（`instance`）、改名也不变的服务端身份（`identity`），以及实例自己的 SQLite 状态库和只增不改的 schema（`db`） |
 | `crates/droppen-pty/` | 活过服务端重启的 pty：shim 进程（本二进制的隐藏子命令 `pty-shim`）、它的帧格式、环形缓冲与屏幕模型、留在磁盘上的边车文件，以及服务端这一侧的连接 |
 
 ## 四个「填坑」模块

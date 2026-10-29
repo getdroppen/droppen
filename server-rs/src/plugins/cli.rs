@@ -18,7 +18,7 @@ use clap::{Args, Subcommand};
 use droppen_plugin_sdk::{valid_id, PluginId, StoreExport, EXPORT_FORMAT};
 
 use super::{DecisionReason, PluginError, Plugins, StoreError};
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 
 /// The rest of `plugin --help`, after the options clap lists.
 pub const USAGE: &str = "\
@@ -319,7 +319,7 @@ impl PluginCommand {
                     .unwrap_or_default();
                 let aside = plugins.instance_dir().join("plugins").join(format!("{id}.purged-{stamp}"));
                 std::fs::rename(&dir, &aside).map_err(|error| format!("cannot move {} aside: {error}", dir.display()))?;
-                crate::db::forget(&plugins.store_path(&id));
+                droppen_instance::db::forget(&plugins.store_path(&id));
                 println!("moved {id}'s data on instance {instance} to {}", aside.display());
                 Ok(())
             }

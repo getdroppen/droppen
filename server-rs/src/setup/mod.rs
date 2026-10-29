@@ -61,13 +61,13 @@ use gotcha::axum::extract::FromRef;
 use gotcha::{api, GotchaRouter, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
-use crate::db::scope;
+use droppen_instance::db::scope;
 use crate::http::app_window::{AppWindow, Caller, ListenPort};
 use crate::http::created::Created;
 use crate::http::error::ApiError;
 use crate::http::extract::{ApiJson, ApiPath};
 use crate::openapi_ext::{ExtraResponses, Nullable, Optional};
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 use detect::{Detection, Probe};
 use runner::{Runner, SystemRunner};
 use shell::ShellSnapshot;
@@ -508,8 +508,8 @@ impl Setup {
         })
     }
 
-    fn db(&self) -> Arc<crate::db::Db> {
-        crate::db::at(self.paths.instance_db())
+    fn db(&self) -> Arc<droppen_instance::db::Db> {
+        droppen_instance::db::at(self.paths.instance_db())
     }
 
     /// Record the port this server listens on, once it is bound. Until then —

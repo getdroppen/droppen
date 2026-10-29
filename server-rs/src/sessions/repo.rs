@@ -300,7 +300,7 @@ mod tests {
     async fn a_remembered_repository_key_costs_no_process() {
         let _guard = crate::sessions::index::exclusive().await;
         let home = tempfile::tempdir().expect("tempdir");
-        let paths = crate::paths::Paths::new(home.path().to_path_buf());
+        let paths = droppen_instance::paths::Paths::new(home.path().to_path_buf());
         crate::sessions::index::install(&paths);
 
         let cwd = home.path().join("some-checkout");

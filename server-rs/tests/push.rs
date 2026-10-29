@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use p256::elliptic_curve::sec1::ToEncodedPoint;
-use remote_hand_server::db::scope;
+use droppen_instance::db::scope;
 use remote_hand_server::push::ece;
 use serde_json::{json, Value};
 use support::{common, plan_dying_cli, Probe};

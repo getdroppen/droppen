@@ -54,7 +54,7 @@ use std::time::{Duration, Instant};
 
 use rand::RngCore;
 
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 
 pub use super::routes::SETUP_PATH;
 
@@ -200,7 +200,7 @@ struct Armed {
     url: String,
     /// What the commands it suggests need before them to reach this instance
     /// (`APP_INSTANCE=bob `), or nothing
-    /// ([`crate::paths::command_prefix`]).
+    /// ([`droppen_instance::paths::command_prefix`]).
     env: String,
 }
 
@@ -284,7 +284,7 @@ impl Setup {
     /// [`Setup::arm`] for the instance `paths` names: its code file, and the
     /// commands it suggests made to reach it.
     pub fn arm_for(&self, paths: &Paths, url: String) {
-        self.arm_with(code_file(paths), url, crate::paths::command_prefix(paths));
+        self.arm_with(code_file(paths), url, droppen_instance::paths::command_prefix(paths));
     }
 
     fn arm_with(&self, file: PathBuf, url: String, env: String) {

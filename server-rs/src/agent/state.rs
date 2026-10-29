@@ -788,7 +788,7 @@ impl AgentFiles {
         let store = self.streams_db();
         // The process's connection to the old store goes with it, or the next
         // open would hand it back (the file deleted, its rows not).
-        crate::db::forget(&store);
+        droppen_instance::db::forget(&store);
         let mut leftovers = vec![self.keys(), store.clone()];
         for suffix in ["-wal", "-shm"] {
             let mut name = store.clone().into_os_string();
@@ -830,7 +830,7 @@ impl crate::aggregator::Enrollment for std::sync::Mutex<AgentState> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::paths::Paths;
+    use droppen_instance::paths::Paths;
     use rh_proto::chain::{genesis_draft, Action, DeviceInfo, Signer};
     use rh_proto::identity::{fingerprint, MachineIdentity};
 

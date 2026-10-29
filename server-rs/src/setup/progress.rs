@@ -32,11 +32,11 @@ use serde_json::{Map, Value};
 
 use super::{Setup, SetupState};
 use crate::claude_roots;
-use crate::db::scope;
+use droppen_instance::db::scope;
 use crate::http::error::ApiError;
 use crate::http::extract::ApiJson;
 use crate::openapi_ext::Nullable;
-use crate::paths::ClaudeRoot;
+use droppen_instance::paths::ClaudeRoot;
 
 /// The `kv` key, under [`scope::SETUP`].
 const PROGRESS_KEY: &str = "progress";
@@ -281,7 +281,7 @@ fn lenient(raw: &str) -> SetupProgress {
 /// Claude login, and every Codex thread), or any transcript in that root.
 /// Sessions the user ran in their own `~/.claude` or `~/.codex` outside
 /// Droppen do not count: an install that only sees those is still a new one.
-async fn owns_sessions(paths: &crate::paths::Paths) -> bool {
+async fn owns_sessions(paths: &droppen_instance::paths::Paths) -> bool {
     if !crate::sessions::owned_sessions::read(paths).await.is_empty() {
         return true;
     }

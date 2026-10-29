@@ -20,7 +20,7 @@ use super::mail::{defer, evicted_message, open_mail, MailVerdict};
 use super::state::AgentState;
 use super::{Health, Pending, Routes, Shared, ROTATED};
 use crate::agent::AgentFiles;
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 use droppen_base::time::now_ms_u64;
 
 /// What the link needs from the server it runs in: where its own loopback

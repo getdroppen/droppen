@@ -57,7 +57,7 @@ use crate::auth::{MaybeIdentity, RETURN_ROUTE};
 use crate::http::error::ApiError;
 use crate::http::extract::ApiJson;
 use crate::openapi_ext::ExtraResponses;
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 
 mod access;
 mod file;

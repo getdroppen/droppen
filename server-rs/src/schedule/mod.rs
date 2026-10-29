@@ -59,7 +59,7 @@
 //!
 //! # Where the tasks actually are
 //!
-//! One row each in [`crate::db`]'s `scheduled_tasks`, in this instance's state
+//! One row each in [`droppen_instance::db`]'s `scheduled_tasks`, in this instance's state
 //! database. `scheduled-tasks.json` was written for a while after the move, so
 //! that a [`crate::supervisor`] demotion to a `.prev` binary — one that had
 //! never heard of the database — would not come back having forgotten every
@@ -77,12 +77,12 @@ use gotcha::{api, GotchaRouter, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::db::Db;
+use droppen_instance::db::Db;
 use crate::http::error::ApiError;
 use crate::http::extract::{ApiJson, ApiPath};
 use crate::http::SendResult;
 use crate::openapi_ext::{ExtraResponses, Nullable, Optional};
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 use crate::sessions::Source;
 use droppen_base::time::iso8601;
 
@@ -358,7 +358,7 @@ fn payload(task: &ScheduledTask) -> String {
 
 /// This instance's database.
 fn store(paths: &Paths) -> Arc<Db> {
-    crate::db::at(paths.instance_db())
+    droppen_instance::db::at(paths.instance_db())
 }
 
 /// Every saved task, in the order they were created in.
@@ -879,7 +879,7 @@ mod tests {
     async fn an_update_that_changes_nothing_does_not_write() {
         let (_dir, paths) = paths();
         write_tasks(&paths, &[task("a")]).await.expect("write");
-        let db = crate::db::at(paths.instance_db());
+        let db = droppen_instance::db::at(paths.instance_db());
         let changes_before: i64 = db
             .read(|conn| conn.query_row("SELECT total_changes()", [], |row| row.get(0)))
             .expect("total_changes");

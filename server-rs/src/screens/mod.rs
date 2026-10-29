@@ -8,7 +8,7 @@
 //! A screen belongs to one instance rather than being shared like most sidecars:
 //! those leaf ids name terminals and resident sessions that only their own
 //! server can resolve, so a layout from a sibling instance is a screen of dead
-//! panes ([`crate::instance`]). The layouts are rows in the instance database;
+//! panes ([`droppen_instance::instance`]). The layouts are rows in the instance database;
 //! nothing reads or writes `screens.json`.
 //!
 //! The tree arrives from the web client, which makes the sanitizers below the
@@ -19,7 +19,7 @@
 //!
 //! # Where a screen actually lives
 //!
-//! In [`crate::db`], one row per layout. A `screens.json` written *in place* —
+//! In [`droppen_instance::db`], one row per layout. A `screens.json` written *in place* —
 //! `tokio::fs::write` straight over the live file with no lock of any kind — is
 //! truncated by a crash in that window, and a reader that turns a truncated
 //! file into an empty list loses every layout at once rather than one. A
@@ -62,7 +62,7 @@ use crate::http::error::ApiError;
 use crate::http::extract::{ApiJson, ApiPath, ApiQuery};
 use crate::http::SendResult;
 use crate::openapi_ext::{AnyValue, ExtraResponses, Optional};
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 use droppen_base::time::iso8601;
 
 /// How many leaves one layout may hold. A split turns one pending slot into
@@ -691,7 +691,7 @@ impl Screen {
     }
 }
 
-/// Where the list revision lives, inside [`crate::db::scope::SCREENS`].
+/// Where the list revision lives, inside [`droppen_instance::db::scope::SCREENS`].
 const LIST_REVISION: &str = "list-revision";
 
 /// Reading screens and the list revision.
@@ -733,7 +733,7 @@ impl ScreenReads for Connection {
         let value: Option<String> = self
             .query_row(
                 "SELECT value FROM kv WHERE scope = ?1 AND key = ?2",
-                (crate::db::scope::SCREENS, LIST_REVISION),
+                (droppen_instance::db::scope::SCREENS, LIST_REVISION),
                 |row| row.get(0),
             )
             .optional()?;
@@ -767,7 +767,7 @@ impl ScreenWrite for Transaction<'_> {
         let next = self.list_revision_in()? + 1;
         self.execute(
             "INSERT OR REPLACE INTO kv (scope, key, value) VALUES (?1, ?2, ?3)",
-            (crate::db::scope::SCREENS, LIST_REVISION, next.to_string()),
+            (droppen_instance::db::scope::SCREENS, LIST_REVISION, next.to_string()),
         )?;
         Ok(next)
     }
@@ -795,7 +795,7 @@ impl ScreenStore {
     }
     /// Every saved screen and the list's revision, from one read.
     pub async fn read_list(&self) -> ScreenList {
-        let db = crate::db::at(&self.0);
+        let db = droppen_instance::db::at(&self.0);
         db.read(|conn| conn.list_in()).unwrap_or(ScreenList {
             screens: vec![],
             list_revision: 1,
@@ -804,7 +804,7 @@ impl ScreenStore {
     /// Create a screen holding one empty pane: one row inserted, nothing else
     /// rewritten.
     async fn create(&self, feed: &Refresh, body: ScreenCreate) -> Result<Screen, ApiError> {
-        let db = crate::db::at(&self.0);
+        let db = droppen_instance::db::at(&self.0);
         let (screen, list_revision) = db
             .write(|tx| {
                 if let Some(stale) = tx.stale_list(body.base_list_revision.0)? {
@@ -839,7 +839,7 @@ impl ScreenStore {
     /// Patch one screen, if the client's `baseRevision` is still its revision.
     async fn update(&self, feed: &Refresh, id: &str, body: ScreenUpdate) -> Result<Screen, ApiError> {
         let emoji = body.emoji.as_deref().map(parse_emoji).transpose().map_err(ApiError::bad_request)?;
-        let db = crate::db::at(&self.0);
+        let db = droppen_instance::db::at(&self.0);
         // A layout autosave and an icon change can arrive together. Read and patch
         // this row in one transaction so neither rewrites the other's old value —
         // and refuse either one that was made against a revision since replaced.
@@ -884,7 +884,7 @@ impl ScreenStore {
     }
     /// Delete one screen: one row removed, nothing else rewritten.
     async fn delete(&self, feed: &Refresh, id: &str, base_list_revision: Option<u64>) -> Result<(), ApiError> {
-        let db = crate::db::at(&self.0);
+        let db = droppen_instance::db::at(&self.0);
         let (revision, list_revision) = db
             .write(|tx| {
                 if let Some(stale) = tx.stale_list(base_list_revision)? {
@@ -905,7 +905,7 @@ impl ScreenStore {
     }
     /// Move screens' positions, in one transaction, without touching any payload.
     async fn reorder(&self, feed: &Refresh, body: ScreenOrder) -> Result<ScreenList, ApiError> {
-        let db = crate::db::at(&self.0);
+        let db = droppen_instance::db::at(&self.0);
         let (list, moved) = db
             .write(|tx| {
                 if let Some(stale) = tx.stale_list(body.base_list_revision.0)? {
@@ -1293,7 +1293,7 @@ mod tests {
     /// One `screens` row exactly as an older build left it: a payload the
     /// sanitizer has not touched, at the ordinal given.
     fn seed_payload(paths: &Paths, id: &str, ordinal: i64, body: &str) {
-        crate::db::at(paths.instance_db())
+        droppen_instance::db::at(paths.instance_db())
             .write(|tx| tx.execute("INSERT INTO screens (id, ordinal, payload) VALUES (?1, ?2, ?3)", (id, ordinal, body)))
             .expect("seed a row");
     }
@@ -1406,7 +1406,7 @@ mod tests {
         )
         .await;
 
-        let reopened = crate::db::Db::open(paths.instance_db());
+        let reopened = droppen_instance::db::Db::open(paths.instance_db());
         let (stored, revision): (Value, i64) = reopened
             .read(|conn| {
                 conn.query_row("SELECT payload, revision FROM screens", [], |row| {
@@ -1527,7 +1527,7 @@ mod tests {
     /// Rows exactly as given, one each, at the revisions they carry — the
     /// shape a build that predates this one leaves behind.
     async fn seed(paths: &Paths, screens: &[Screen]) {
-        let db = crate::db::at(paths.instance_db());
+        let db = droppen_instance::db::at(paths.instance_db());
         db.write(|tx| {
             for (ordinal, screen) in screens.iter().enumerate() {
                 tx.execute(
@@ -1867,7 +1867,7 @@ mod tests {
         std::fs::create_dir_all(paths.instance_db().parent().expect("parent")).expect("instance dir");
         {
             let conn = Connection::open(paths.instance_db()).expect("open");
-            for step in &crate::db::SCHEMA[..7] {
+            for step in &droppen_instance::db::SCHEMA[..7] {
                 conn.execute_batch(step).expect("a step the previous release shipped");
             }
             conn.pragma_update(None, "user_version", 7).expect("version");

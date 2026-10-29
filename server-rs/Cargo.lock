@@ -1099,6 +1099,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "droppen-instance"
+version = "0.1.0"
+dependencies = [
+ "droppen-base",
+ "gotcha_core",
+ "libc",
+ "rusqlite",
+ "serde",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "droppen-plugin-sdk"
 version = "0.1.0"
 dependencies = [
@@ -2793,6 +2808,7 @@ dependencies = [
  "clap",
  "croner",
  "droppen-base",
+ "droppen-instance",
  "droppen-plugin-sdk",
  "droppen-pty",
  "droppen-search-path",

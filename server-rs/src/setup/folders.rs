@@ -24,7 +24,7 @@ use gotcha::{api, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
 use super::SetupState;
-use crate::db::scope;
+use droppen_instance::db::scope;
 use crate::http::created::Created;
 use crate::http::error::ApiError;
 use crate::openapi_ext::Nullable;

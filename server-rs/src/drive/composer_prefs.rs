@@ -11,7 +11,7 @@
 //!
 //! # Where it lives
 //!
-//! In the machine-wide state database ([`crate::db`]) under [`scope::COMPOSER`],
+//! In the machine-wide state database ([`droppen_instance::db`]) under [`scope::COMPOSER`],
 //! split the way the document was: [`DEFAULTS_KEY`] holds the per-source
 //! defaults as one row, and every session gets a row of its own keyed
 //! `"<source>/<sessionId>"`. Session rows are separate because there are
@@ -32,9 +32,9 @@ use std::sync::Arc;
 use gotcha::Schematic;
 use serde::{Deserialize, Serialize};
 
-use crate::db::{scope, Db};
+use droppen_instance::db::{scope, Db};
 use crate::openapi_ext::Optional;
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 use crate::sessions::reference::local_key;
 use crate::sessions::Source;
 use droppen_base::time::iso8601;
@@ -225,7 +225,7 @@ impl ComposerPrefsStore {
 
     /// The machine-wide database the picks live in.
     fn db(&self) -> Arc<Db> {
-        crate::db::at(self.paths.config_db())
+        droppen_instance::db::at(self.paths.config_db())
     }
 
     async fn read_stored(&self) -> StoredPrefs {
@@ -426,7 +426,7 @@ mod tests {
             .await
             .expect("update");
 
-        let reopened = crate::db::Db::open(paths.config_db());
+        let reopened = droppen_instance::db::Db::open(paths.config_db());
         let rows = reopened.kv_scope(scope::COMPOSER);
         assert!(rows.contains_key(DEFAULTS_KEY), "the defaults are one row: {rows:?}");
         assert!(

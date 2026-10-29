@@ -1,7 +1,7 @@
 //! Archive must use the live writer, not start a competing Codex process.
 mod support;
 
-use remote_hand_server::paths::Paths;
+use droppen_instance::paths::Paths;
 use remote_hand_server::sessions::{owned_sessions, Source};
 use serde_json::json;
 use support::Probe;

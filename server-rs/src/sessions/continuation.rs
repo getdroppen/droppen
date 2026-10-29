@@ -49,7 +49,7 @@ use std::path::{Path, PathBuf};
 
 use super::{claude, reference};
 use crate::claude_roots;
-use crate::paths::{ClaudeRoot, Paths};
+use droppen_instance::paths::{ClaudeRoot, Paths};
 
 /// Suffix the copy wears until it is complete; swept at boot by
 /// [`super::adoption_leftovers::sweep_partial_adoptions`].

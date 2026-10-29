@@ -55,7 +55,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 
 use super::Source;
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 
 /// What one instance may conclude about one codex thread.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,7 +82,7 @@ async fn owner_at(path: &Path) -> Option<String> {
 /// usable.
 fn named(raw: &str) -> Option<String> {
     let name = raw.trim();
-    crate::instance::valid_name(name).then(|| name.to_string())
+    droppen_instance::instance::valid_name(name).then(|| name.to_string())
 }
 
 /// Record that this instance made `id`, for the other instances to read.

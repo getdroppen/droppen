@@ -874,7 +874,7 @@ async fn agent_metas_for(file_path: &Path, sidechain: bool) -> Vec<SubagentMeta>
 /// `paths` is threaded through for the mentioned-file annotation, which resolves
 /// relative paths against the session's own `cwd` and refuses anything outside
 /// the home directory.
-pub async fn parse_claude_transcript(paths: &crate::paths::Paths, file_path: &Path, sidechain: bool) -> std::io::Result<Vec<TranscriptItem>> {
+pub async fn parse_claude_transcript(paths: &droppen_instance::paths::Paths, file_path: &Path, sidechain: bool) -> std::io::Result<Vec<TranscriptItem>> {
     let mut lines = LossyLines::open(file_path).await?;
 
     let mut items: Vec<TranscriptItem> = Vec::new();
@@ -1167,7 +1167,7 @@ mod tests {
             r#"{"type":"assistant","timestamp":"2024-01-01T00:00:00Z","message":{"content":[{"type":"thinking","thinking":"hmm"},{"type":"text","text":"hello"},{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"ls"}}]}}"#,
             r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"a\nb"}]}}"#,
         ]);
-        let items = parse_claude_transcript(&crate::paths::Paths::new(dir.path().to_path_buf()), &path, false)
+        let items = parse_claude_transcript(&droppen_instance::paths::Paths::new(dir.path().to_path_buf()), &path, false)
             .await
             .expect("parse");
         assert_eq!(items.len(), 4);
@@ -1195,7 +1195,7 @@ mod tests {
             br#"{"type":"assistant","message":{"content":[{"type":"text","text":"kept"}]}}"#,
             b"",
         ]);
-        let items = parse_claude_transcript(&crate::paths::Paths::new(dir.path().to_path_buf()), &path, false)
+        let items = parse_claude_transcript(&droppen_instance::paths::Paths::new(dir.path().to_path_buf()), &path, false)
             .await
             .expect("parse");
         // The bad-bytes line still parses as JSON — the replacement characters
@@ -1221,7 +1221,7 @@ mod tests {
         file.write_all(&[0xe4, 0xbd]).expect("write");
         drop(file);
 
-        let items = parse_claude_transcript(&crate::paths::Paths::new(dir.path().to_path_buf()), &path, false)
+        let items = parse_claude_transcript(&droppen_instance::paths::Paths::new(dir.path().to_path_buf()), &path, false)
             .await
             .expect("parse");
         assert_eq!(items.len(), 2, "a half-written character must not blank the transcript");
@@ -1232,7 +1232,7 @@ mod tests {
         let (dir, path) = write_jsonl(&[
             r#"{"type":"user","message":{"content":[{"type":"text","text":"<command-name>/review</command-name>\n<command-args>main</command-args>"}]}}"#,
         ]);
-        let items = parse_claude_transcript(&crate::paths::Paths::new(dir.path().to_path_buf()), &path, false)
+        let items = parse_claude_transcript(&droppen_instance::paths::Paths::new(dir.path().to_path_buf()), &path, false)
             .await
             .expect("parse");
         assert_eq!((items[0].role, items[0].kind), (Role::System, ItemKind::Command));
@@ -1249,7 +1249,7 @@ mod tests {
             r#"{"type":"system","subtype":"compact_boundary","content":"Conversation compacted","isMeta":false,"timestamp":"2026-08-30T07:20:00.853Z","compactMetadata":{"trigger":"manual","preTokens":540084,"durationMs":135461,"postTokens":5180}}"#,
             r#"{"type":"user","isCompactSummary":true,"timestamp":"2026-08-30T07:20:00.852Z","message":{"role":"user","content":"This session is being continued from a previous conversation that ran out of context."}}"#,
         ]);
-        let items = parse_claude_transcript(&crate::paths::Paths::new(dir.path().to_path_buf()), &path, false)
+        let items = parse_claude_transcript(&droppen_instance::paths::Paths::new(dir.path().to_path_buf()), &path, false)
             .await
             .expect("parse");
         assert_eq!(items.len(), 2, "the summary folds into the boundary rather than adding a turn");
@@ -1277,7 +1277,7 @@ mod tests {
         let (dir, path) = write_jsonl(&[
             r#"{"type":"user","isCompactSummary":true,"message":{"role":"user","content":"This session is being continued from a previous conversation."}}"#,
         ]);
-        let items = parse_claude_transcript(&crate::paths::Paths::new(dir.path().to_path_buf()), &path, false)
+        let items = parse_claude_transcript(&droppen_instance::paths::Paths::new(dir.path().to_path_buf()), &path, false)
             .await
             .expect("parse");
         assert_eq!((items[0].role, items[0].kind), (Role::System, ItemKind::Compact));
@@ -1294,7 +1294,7 @@ mod tests {
             r#"{"type":"user","timestamp":"2026-08-30T07:17:45.391Z","message":{"role":"user","content":"<command-name>/compact</command-name>\n            <command-message>compact</command-message>\n            <command-args></command-args>"}}"#,
             r#"{"type":"user","timestamp":"2026-08-30T07:20:02.684Z","message":{"role":"user","content":"<local-command-stdout>Compacted </local-command-stdout>"}}"#,
         ]);
-        let items = parse_claude_transcript(&crate::paths::Paths::new(dir.path().to_path_buf()), &path, false)
+        let items = parse_claude_transcript(&droppen_instance::paths::Paths::new(dir.path().to_path_buf()), &path, false)
             .await
             .expect("parse");
         assert_eq!(items.len(), 1, "the command and its output are one event");
@@ -1310,7 +1310,7 @@ mod tests {
         let (dir, path) = write_jsonl(&[
             r#"{"type":"user","message":{"role":"user","content":"<local-command-stdout>Goal set: ship the PWA</local-command-stdout>"}}"#,
         ]);
-        let items = parse_claude_transcript(&crate::paths::Paths::new(dir.path().to_path_buf()), &path, false)
+        let items = parse_claude_transcript(&droppen_instance::paths::Paths::new(dir.path().to_path_buf()), &path, false)
             .await
             .expect("parse");
         assert_eq!((items[0].role, items[0].kind), (Role::System, ItemKind::Text));
@@ -1323,7 +1323,7 @@ mod tests {
             r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"q1","name":"AskUserQuestion","input":{"questions":[{"question":"Which?","options":[{"label":"a"}]}]}}]}}"#,
             r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"q1","content":"a"}]}}"#,
         ]);
-        let items = parse_claude_transcript(&crate::paths::Paths::new(dir.path().to_path_buf()), &path, false)
+        let items = parse_claude_transcript(&droppen_instance::paths::Paths::new(dir.path().to_path_buf()), &path, false)
             .await
             .expect("parse");
         assert!(items[0].question.as_ref().is_none(), "the answer clears the pending question");
@@ -1334,7 +1334,7 @@ mod tests {
         let (dir, path) = write_jsonl(&[
             r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"q1","name":"AskUserQuestion","input":{"questions":[{"question":"Which?","options":[{"label":"a","description":"first"}]}]}}]}}"#,
         ]);
-        let items = parse_claude_transcript(&crate::paths::Paths::new(dir.path().to_path_buf()), &path, false)
+        let items = parse_claude_transcript(&droppen_instance::paths::Paths::new(dir.path().to_path_buf()), &path, false)
             .await
             .expect("parse");
         let questions = items[0].question.as_ref().expect("still pending");
@@ -1355,7 +1355,7 @@ mod tests {
             r#"{"type":"attachment","attachment":{"type":"task_reminder","content":"remember the todos"}}"#,
             r#"{"type":"assistant","message":{"content":[{"type":"text","text":"结论一句话"}]}}"#,
         ]);
-        let items = parse_claude_transcript(&crate::paths::Paths::new(dir.path().to_path_buf()), &path, false)
+        let items = parse_claude_transcript(&droppen_instance::paths::Paths::new(dir.path().to_path_buf()), &path, false)
             .await
             .expect("parse");
         assert_eq!(items.len(), 3, "the steer is one item; the task reminder is still chatter");
@@ -1378,7 +1378,7 @@ mod tests {
             r#"{"type":"queue-operation","operation":"dequeue","timestamp":"2026-08-30T16:38:35.053Z"}"#,
             r#"{"type":"user","timestamp":"2026-08-30T16:38:35.623Z","message":{"role":"user","content":[{"text":"重新分析一下","type":"text"}]}}"#,
         ]);
-        let items = parse_claude_transcript(&crate::paths::Paths::new(dir.path().to_path_buf()), &path, false)
+        let items = parse_claude_transcript(&droppen_instance::paths::Paths::new(dir.path().to_path_buf()), &path, false)
             .await
             .expect("parse");
         assert_eq!(items.len(), 1, "queue bookkeeping is not a message");
@@ -1397,7 +1397,7 @@ mod tests {
             r#"{"type":"attachment","attachment":{"type":"queued_command","prompt":"<task-notification>\n<task-id>a8b3d66d57d198163</task-id>\n</task-notification>","commandMode":"task-notification","timestamp":"2026-08-29T03:18:19.907Z"}}"#,
             r#"{"type":"queue-operation","operation":"remove","timestamp":"2026-08-30T16:47:23.869Z","content":"<task-notification>\n<task-id>a5e409e73c8959cec</task-id>\n</task-notification>"}"#,
         ]);
-        let items = parse_claude_transcript(&crate::paths::Paths::new(dir.path().to_path_buf()), &path, false)
+        let items = parse_claude_transcript(&droppen_instance::paths::Paths::new(dir.path().to_path_buf()), &path, false)
             .await
             .expect("parse");
         assert_eq!(items.len(), 1, "only the assistant said anything");
@@ -1420,7 +1420,7 @@ mod tests {
             r#"{"type":"queue-operation","operation":"remove","timestamp":"2026-09-30T02:14:21.000Z"}"#,
             r#"{"type":"attachment","attachment":{"type":"queued_command","prompt":"所以结论呢？","commandMode":"prompt"}}"#,
         ]);
-        let items = parse_claude_transcript(&crate::paths::Paths::new(dir.path().to_path_buf()), &path, false)
+        let items = parse_claude_transcript(&droppen_instance::paths::Paths::new(dir.path().to_path_buf()), &path, false)
             .await
             .expect("parse");
         let report = items
@@ -1446,7 +1446,7 @@ mod tests {
         let (dir, path) = write_jsonl(&[
             r#"{"type":"attachment","attachment":{"type":"queued_command","prompt":[{"type":"text","text":"[Image #2] 这个占比有点低"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgoAAAANSUhEUg"}}],"commandMode":"prompt"}}"#,
         ]);
-        let items = parse_claude_transcript(&crate::paths::Paths::new(dir.path().to_path_buf()), &path, false)
+        let items = parse_claude_transcript(&droppen_instance::paths::Paths::new(dir.path().to_path_buf()), &path, false)
             .await
             .expect("parse");
         assert_eq!(items.len(), 1);
@@ -1463,7 +1463,7 @@ mod tests {
             r#"{"type":"attachment","attachment":{"type":"queued_command","prompt":"<command-name>/review</command-name>\n<command-args>main</command-args>","commandMode":"prompt"}}"#,
             r#"{"type":"attachment","attachment":{"type":"queued_command","prompt":"   ","commandMode":"prompt"}}"#,
         ]);
-        let items = parse_claude_transcript(&crate::paths::Paths::new(dir.path().to_path_buf()), &path, false)
+        let items = parse_claude_transcript(&droppen_instance::paths::Paths::new(dir.path().to_path_buf()), &path, false)
             .await
             .expect("parse");
         assert_eq!(items.len(), 2, "an empty prompt has nothing to show");
@@ -1517,7 +1517,7 @@ mod tests {
         let (dir, path) = write_jsonl(&[
             r#"{"type":"user","message":{"content":[{"type":"text","text":"look\n\n[2 attached file(s) — view with the Read tool:]\n- /tmp/a.png\n- /tmp/b.txt"}]}}"#,
         ]);
-        let items = parse_claude_transcript(&crate::paths::Paths::new(dir.path().to_path_buf()), &path, false)
+        let items = parse_claude_transcript(&droppen_instance::paths::Paths::new(dir.path().to_path_buf()), &path, false)
             .await
             .expect("parse");
         assert_eq!(items[0].text, "look");
@@ -1534,7 +1534,7 @@ mod tests {
         let (dir, path) = write_jsonl(&[
             r#"{"type":"assistant","timestamp":"2026-08-01T10:00:00Z","message":{"role":"assistant","model":"claude-opus-4-8","content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"cargo check","description":"type-check","run_in_background":true}}]}}"#,
         ]);
-        let items = parse_claude_transcript(&crate::paths::Paths::new(dir.path().to_path_buf()), &path, false)
+        let items = parse_claude_transcript(&droppen_instance::paths::Paths::new(dir.path().to_path_buf()), &path, false)
             .await
             .expect("parse");
         let call = items.iter().find(|item| item.kind == ItemKind::ToolUse).expect("the tool call");
@@ -1543,7 +1543,7 @@ mod tests {
         let (dir, path) = write_jsonl(&[
             r#"{"type":"assistant","timestamp":"2026-08-01T10:00:00Z","message":{"role":"assistant","model":"claude-opus-4-8","content":[{"type":"tool_use","id":"toolu_2","name":"Bash","input":{"command":"ls"}}]}}"#,
         ]);
-        let items = parse_claude_transcript(&crate::paths::Paths::new(dir.path().to_path_buf()), &path, false)
+        let items = parse_claude_transcript(&droppen_instance::paths::Paths::new(dir.path().to_path_buf()), &path, false)
             .await
             .expect("parse");
         let call = items.iter().find(|item| item.kind == ItemKind::ToolUse).expect("the tool call");
@@ -1573,7 +1573,7 @@ mod tests {
         });
         let (dir, path) = write_jsonl(&[&entry.to_string()]);
 
-        let items = parse_claude_transcript(&crate::paths::Paths::new(dir.path().to_path_buf()), &path, false)
+        let items = parse_claude_transcript(&droppen_instance::paths::Paths::new(dir.path().to_path_buf()), &path, false)
             .await
             .expect("parse");
         let note = items
@@ -1616,7 +1616,7 @@ mod tests {
         });
         let (dir, path) = write_jsonl(&[&entry.to_string()]);
 
-        let items = parse_claude_transcript(&crate::paths::Paths::new(dir.path().to_path_buf()), &path, false)
+        let items = parse_claude_transcript(&droppen_instance::paths::Paths::new(dir.path().to_path_buf()), &path, false)
             .await
             .expect("parse");
         let note = items.iter().find(|item| item.background == Some(true)).expect("the notification");
@@ -1651,7 +1651,7 @@ mod tests {
         });
         let (dir, path) = write_jsonl(&[&entry.to_string()]);
 
-        let items = parse_claude_transcript(&crate::paths::Paths::new(dir.path().to_path_buf()), &path, false)
+        let items = parse_claude_transcript(&droppen_instance::paths::Paths::new(dir.path().to_path_buf()), &path, false)
             .await
             .expect("parse");
         let note = items.iter().find(|item| item.background == Some(true)).expect("the notification");
@@ -1680,7 +1680,7 @@ mod tests {
     async fn parse(lines: &[String]) -> Vec<TranscriptItem> {
         let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
         let (dir, path) = write_jsonl(&refs);
-        parse_claude_transcript(&crate::paths::Paths::new(dir.path().to_path_buf()), &path, false)
+        parse_claude_transcript(&droppen_instance::paths::Paths::new(dir.path().to_path_buf()), &path, false)
             .await
             .expect("parse")
     }
@@ -1787,7 +1787,7 @@ mod tests {
         });
         let (dir, path) = write_jsonl(&[&entry.to_string()]);
 
-        let items = parse_claude_transcript(&crate::paths::Paths::new(dir.path().to_path_buf()), &path, false)
+        let items = parse_claude_transcript(&droppen_instance::paths::Paths::new(dir.path().to_path_buf()), &path, false)
             .await
             .expect("parse");
         let note = items.iter().find(|item| item.background == Some(true)).expect("the notification");
@@ -1842,7 +1842,7 @@ mod tests {
         }
         drop(file);
 
-        let items = parse_claude_transcript(&crate::paths::Paths::new(dir.path().to_path_buf()), &path, false)
+        let items = parse_claude_transcript(&droppen_instance::paths::Paths::new(dir.path().to_path_buf()), &path, false)
             .await
             .expect("parse");
         let results: Vec<&TranscriptItem> = items.iter().filter(|item| item.kind == ItemKind::ToolResult).collect();
@@ -1897,7 +1897,7 @@ mod tests {
             &[r#"{"type":"assistant","isSidechain":true,"message":{"content":[{"type":"text","text":"found it"}]}}"#],
         );
 
-        let items = parse_claude_transcript(&crate::paths::Paths::new(dir.path().to_path_buf()), &path, false)
+        let items = parse_claude_transcript(&droppen_instance::paths::Paths::new(dir.path().to_path_buf()), &path, false)
             .await
             .expect("parse");
         let call = items.iter().find(|item| item.kind == ItemKind::ToolUse).expect("the call");
@@ -1927,7 +1927,7 @@ mod tests {
         )
         .expect("transcript");
 
-        let items = parse_claude_transcript(&crate::paths::Paths::new(dir.path().to_path_buf()), &path, false)
+        let items = parse_claude_transcript(&droppen_instance::paths::Paths::new(dir.path().to_path_buf()), &path, false)
             .await
             .expect("parse");
         let call = items.iter().find(|item| item.kind == ItemKind::ToolUse).expect("the call");
@@ -1981,7 +1981,7 @@ mod tests {
             &[r#"{"type":"assistant","isSidechain":true,"message":{"content":[{"type":"text","text":"verified"}]}}"#],
         );
 
-        let paths = crate::paths::Paths::new(dir.path().to_path_buf());
+        let paths = droppen_instance::paths::Paths::new(dir.path().to_path_buf());
         let parent = parse_claude_transcript(&paths, &subagent_path(&path, "parent"), true)
             .await
             .expect("parse");
@@ -2048,7 +2048,7 @@ mod tests {
             r#"{"type":"assistant","timestamp":"2026-08-30T07:22:16.000Z","message":{"content":[{"type":"text","text":"before"}]}}"#,
             r#"{"type":"system","subtype":"compact_boundary","timestamp":"2026-08-30T07:20:00.853Z","content":"Conversation compacted","compactMetadata":{"trigger":"auto"}}"#,
         ]);
-        let items = parse_claude_transcript(&crate::paths::Paths::new(dir.path().to_path_buf()), &path, false)
+        let items = parse_claude_transcript(&droppen_instance::paths::Paths::new(dir.path().to_path_buf()), &path, false)
             .await
             .expect("parse");
         assert_eq!(
@@ -2066,7 +2066,7 @@ mod tests {
             r#"{"type":"assistant","message":{"model":"<synthetic>","content":[{"type":"text","text":"You've hit your session limit"}]}}"#,
             r#"{"type":"assistant","message":{"model":"claude-fable-5","content":[{"type":"text","text":"on it"}]}}"#,
         ]);
-        let items = parse_claude_transcript(&crate::paths::Paths::new(dir.path().to_path_buf()), &path, false)
+        let items = parse_claude_transcript(&droppen_instance::paths::Paths::new(dir.path().to_path_buf()), &path, false)
             .await
             .expect("parse");
         assert_eq!(items[0].synthetic, Some(true));
@@ -2087,7 +2087,7 @@ mod tests {
             r#"{"type":"assistant","message":{"model":"claude-sonnet-5","content":[{"type":"text","text":"second"}]}}"#,
             r#"{"type":"assistant","message":{"content":[{"type":"text","text":"third"}]}}"#,
         ]);
-        let items = parse_claude_transcript(&crate::paths::Paths::new(dir.path().to_path_buf()), &path, false)
+        let items = parse_claude_transcript(&droppen_instance::paths::Paths::new(dir.path().to_path_buf()), &path, false)
             .await
             .expect("parse");
         assert_eq!(items.len(), 7);
@@ -2113,7 +2113,7 @@ mod tests {
         let (dir, path) = write_jsonl(&[
             r#"{"type":"assistant","isSidechain":true,"message":{"model":"claude-haiku-5","content":[{"type":"text","text":"child here"}]}}"#,
         ]);
-        let items = parse_claude_transcript(&crate::paths::Paths::new(dir.path().to_path_buf()), &path, true)
+        let items = parse_claude_transcript(&droppen_instance::paths::Paths::new(dir.path().to_path_buf()), &path, true)
             .await
             .expect("parse");
         assert_eq!(items[0].model.as_deref(), Some("claude-haiku-5"));
@@ -2126,7 +2126,7 @@ mod tests {
         let (dir, path) = write_jsonl(&[
             r#"{"type":"assistant","message":{"model":"claude-opus-4-8","content":[{"type":"fallback","from":{"model":"claude-fable-5"},"to":{"model":"claude-opus-4-8"}}]}}"#,
         ]);
-        let items = parse_claude_transcript(&crate::paths::Paths::new(dir.path().to_path_buf()), &path, false)
+        let items = parse_claude_transcript(&droppen_instance::paths::Paths::new(dir.path().to_path_buf()), &path, false)
             .await
             .expect("parse");
         assert_eq!(items.len(), 1, "the fallback is an item rather than nothing");

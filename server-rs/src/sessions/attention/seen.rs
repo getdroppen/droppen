@@ -1,6 +1,6 @@
 //! `read_at`: when the user last looked at a session.
 //!
-//! One row per session in the machine-wide state database ([`crate::db`]), under
+//! One row per session in the machine-wide state database ([`droppen_instance::db`]), under
 //! [`scope::SEEN`] and keyed `"<source>/<id>"` — the same key the global feed
 //! diffs its rows by (`crate::feed::global`) and the same one a push
 //! notification's `tag` carries, so the three never have to be translated into
@@ -38,8 +38,8 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use crate::db::{scope, Db};
-use crate::paths::Paths;
+use droppen_instance::db::{scope, Db};
+use droppen_instance::paths::Paths;
 use crate::sessions::Source;
 use droppen_base::time::iso8601;
 
@@ -75,7 +75,7 @@ static WRITE_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> = std::sync::Lazy
 
 /// The machine-wide database the marks live in.
 fn store(paths: &Paths) -> Arc<Db> {
-    crate::db::at(paths.config_db())
+    droppen_instance::db::at(paths.config_db())
 }
 
 /// Every remembered `read_at`. A store with nothing in it reads as empty, which
@@ -222,7 +222,7 @@ mod tests {
             .await
             .expect("mark");
 
-        let reopened = crate::db::Db::open(paths.config_db());
+        let reopened = droppen_instance::db::Db::open(paths.config_db());
         assert_eq!(
             reopened.kv_scope(scope::SEEN).get("claude/abc").map(String::as_str),
             Some("2026-01-01T00:00:00.000Z"),

@@ -24,7 +24,7 @@ use rh_proto::record::{SealedRecord, StreamId};
 use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
-use crate::db::{Db, Durability};
+use droppen_instance::db::{Db, Durability};
 use crate::agent::AgentFiles;
 
 pub const SCHEMA: &[&str] = &[
@@ -283,7 +283,7 @@ impl Store {
 
     pub fn at(file: &Path) -> Self {
         Self {
-            db: crate::db::at_with(file, SCHEMA, Durability::Committed),
+            db: droppen_instance::db::at_with(file, SCHEMA, Durability::Committed),
         }
     }
 

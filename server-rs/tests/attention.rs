@@ -12,7 +12,7 @@ mod common;
 use std::path::{Path, PathBuf};
 
 use common::TestServer;
-use remote_hand_server::db::scope;
+use droppen_instance::db::scope;
 use serde_json::{json, Value};
 
 const IDLE_ID: &str = "11111111-1111-4111-8111-111111111111";

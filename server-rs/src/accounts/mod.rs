@@ -262,7 +262,7 @@ pub struct AccountsState {
     /// The cached quota readings, which say where a start would run.
     pub quota: Arc<quota::QuotaCache>,
     /// The instance's paths, which a secret is verified under.
-    pub paths: Arc<crate::paths::Paths>,
+    pub paths: Arc<droppen_instance::paths::Paths>,
     /// What `model_ids` reads, for `GET /api/accounts/start`.
     pub models: crate::models::ModelsState,
     /// Re-checks the runs held for a usable account, after a write that may
@@ -841,7 +841,7 @@ mod tests {
     use super::*;
     use crate::api::AppState;
     use crate::drive::routes::{bind_session_account, continue_session_on_account, ContinuedSession, SessionAccount, SessionContinue};
-    use crate::paths::ClaudeRoot;
+    use droppen_instance::paths::ClaudeRoot;
     use crate::sessions::{claude, Source};
 
     #[test]
@@ -960,7 +960,7 @@ mod tests {
 
     /// A claude session this server started on the local login, in the user's
     /// own `~/.claude`, with a subagent transcript beside it.
-    async fn local_session(paths: &crate::paths::Paths, id: &str, recorded: bool) -> std::path::PathBuf {
+    async fn local_session(paths: &droppen_instance::paths::Paths, id: &str, recorded: bool) -> std::path::PathBuf {
         let project = crate::claude_roots::ClaudeRoots::of(paths).projects_dir(ClaudeRoot::Local).join("-w");
         std::fs::create_dir_all(project.join(id).join("subagents")).expect("sidecar");
         let path = project.join(format!("{id}.jsonl"));

@@ -30,7 +30,7 @@ use serde::{Deserialize, Serialize};
 
 use super::limits::{self, Rest, Verdict};
 use super::store::AccountProvider;
-use crate::db::Db;
+use droppen_instance::db::Db;
 use crate::openapi_ext::Nullable;
 use crate::sessions::account::LimitClass;
 use droppen_base::time::iso8601;
@@ -79,10 +79,10 @@ pub fn account_key(account: Option<&str>, provider: AccountProvider) -> String {
 /// failure that was never its. Such a limit — and one whose root cannot be told
 /// — is not filed at all, which is what [`super::quota::readings::session_login`]
 /// already does with its readings.
-pub fn claude_limit_account(account: Option<&str>, root: Option<crate::paths::ClaudeRoot>) -> Option<String> {
+pub fn claude_limit_account(account: Option<&str>, root: Option<droppen_instance::paths::ClaudeRoot>) -> Option<String> {
     match (account.filter(|id| !id.is_empty()), root) {
         (Some(id), _) => Some(id.to_string()),
-        (None, Some(crate::paths::ClaudeRoot::Local)) => Some(LOCAL_CLAUDE.to_string()),
+        (None, Some(droppen_instance::paths::ClaudeRoot::Local)) => Some(LOCAL_CLAUDE.to_string()),
         (None, _) => None,
     }
 }
@@ -872,7 +872,7 @@ mod tests {
         assert_eq!(account_key(Some(""), AccountProvider::Codex), LOCAL_CODEX);
         assert_eq!(account_key(Some(ACCOUNT), AccountProvider::Claude), ACCOUNT);
 
-        use crate::paths::ClaudeRoot;
+        use droppen_instance::paths::ClaudeRoot;
         assert_eq!(claude_limit_account(Some(ACCOUNT), Some(ClaudeRoot::Managed)).as_deref(), Some(ACCOUNT));
         assert_eq!(claude_limit_account(Some(ACCOUNT), None).as_deref(), Some(ACCOUNT));
         assert_eq!(

@@ -55,7 +55,7 @@ use super::access::{self, Want};
 use super::live::{Key, LiveCopies, Published, Slot};
 use super::store::{CopyStore, Kind, Row};
 use super::{Enrollment, Switch, View};
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 
 /// A session copy larger than this (its folded JSON) is not kept: its row
 /// says so, and it is not followed again until the next run.

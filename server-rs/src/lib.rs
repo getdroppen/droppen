@@ -34,7 +34,7 @@
 //!   host's own `gh` login so a transcript can show what an agent pushed;
 //! * [`terminals`] — PTYs the browser drives over a websocket, each one owned
 //!   by a detached [`droppen_pty`] shim so it survives a server restart;
-//! * [`instance`] — which server owns the adoptable resources on this machine;
+//! * [`droppen_instance::instance`] — which server owns the adoptable resources on this machine;
 //! * [`apps`] — a VS Code server per app, and the [`apps::embed`] reverse proxy
 //!   the iframe reaches it through;
 //! * [`auth`] — local accounts: who may talk to this server at all, and the
@@ -86,22 +86,18 @@ pub mod claude_roots;
 pub mod cli;
 pub mod cloud;
 pub mod config;
-pub mod db;
 pub mod desktop_app;
 pub mod drive;
 pub mod export;
 pub mod feed;
 pub mod files;
 pub mod http;
-pub mod identity;
 pub mod inject;
-pub mod instance;
 pub mod media;
 pub mod models;
 pub mod notify;
 pub mod openapi_ext;
 pub mod origin;
-pub mod paths;
 pub mod plugins;
 pub mod prefs;
 pub mod push;

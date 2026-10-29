@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use super::{ChatError, Chats};
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 use droppen_base::time::iso8601;
 
 /// How long a completion may take.

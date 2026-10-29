@@ -19,8 +19,8 @@
 //!
 //! # Where the sessions live
 //!
-//! In this instance's [`crate::db`], at `<instance>/state.db` — the database
-//! [`crate::paths::Paths::instance_db`] names.
+//! In this instance's [`droppen_instance::db`], at `<instance>/state.db` — the database
+//! [`droppen_instance::paths::Paths::instance_db`] names.
 //!
 //! Expiry is the reason this store has a *column* and not just a payload.
 //! Answering "which of these are still alive" from a payload alone costs
@@ -43,7 +43,7 @@ use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 
-use crate::db::{self, Db};
+use droppen_instance::db::{self, Db};
 use droppen_base::time::iso8601;
 
 /// How many random bytes a token carries. 256 bits, base64url'd to 43
@@ -109,7 +109,7 @@ pub struct SessionsStore {
 impl SessionsStore {
     /// A store over one instance's state database.
     ///
-    /// `db` is [`crate::paths::Paths::instance_db`] — `<instance>/state.db` —
+    /// `db` is [`droppen_instance::paths::Paths::instance_db`] — `<instance>/state.db` —
     /// so a store built for an instance, as [`super::cli`] builds one per
     /// instance it finds, reaches that instance's sessions and nobody else's.
     pub fn new(db: PathBuf, ttl: Duration) -> Self {

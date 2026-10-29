@@ -1,7 +1,7 @@
 //! Instance ownership: the directory one server owns, and the lock that says so.
 //!
 //! Everything remote-hand can *adopt* after a restart — the pty shims of
-//! [`crate::terminals`], injected runs and embedded apps — is a resource that
+//! the server's `terminals`, injected runs and embedded apps — is a resource that
 //! survives the process that made it. Two servers started on one machine would
 //! therefore both find it and both believe it is theirs: they would adopt the
 //! same shim socket, race on the same cursor file and kill each other's shells.
@@ -14,29 +14,29 @@
 //! disjoint directory, so there is nothing left to race over.
 //!
 //! Shared, non-adoptable state deliberately stays where it is: the stored CLI
-//! accounts (`<config>/state.db`, [`crate::accounts::store`]), UI preferences,
+//! accounts (`<config>/state.db`, the server's `accounts::store`), UI preferences,
 //! session titles, the seen and archived lists, uploads and `notify.json` are
 //! files two instances may legitimately both read. They are
 //! keyed by globally unique session ids or hold settings the user meant
 //! everywhere, so one copy is the right number. `notify.json` is the clearest
 //! case of the latter: it names the phone the user wants notifications on, and
 //! that is the same phone whichever instance an agent happens to be running
-//! under (see [`crate::notify::store`]).
+//! under (see the server's `notify::store`).
 //!
 //! Two shared directories go further than "may both read": they exist *to* be
 //! read by the server that did not write them, and making either per-instance
 //! would cut the only channel a constraint travels down.
 //!
 //! * `inject-locks` — one instance's claim on a running session, which is what
-//!   stops another spawning a second CLI against it ([`crate::inject::lock`]).
+//!   stops another spawning a second CLI against it (the server's `inject::lock`).
 //! * `codex-claims` — which instance made which codex thread
-//!   ([`crate::sessions::codex_claims`]). Every other kind of ownership can be a
+//!   (the server's `sessions::codex_claims`). Every other kind of ownership can be a
 //!   directory; this one cannot, because `~/.codex` is one directory for the
 //!   whole machine, so a sibling can only tell A's thread from the user's own if
 //!   A says so somewhere the sibling reads.
 //!
 //! `session-bin` is a third instance-private directory, created on demand by
-//! [`crate::notify::inject`] rather than by [`InstanceDirs::create`]: it holds
+//! the server's `notify::inject` rather than by [`InstanceDirs::create`]: it holds
 //! the `rh-notify` a spawned CLI finds on its `PATH`, and that script names
 //! *this* server's binary and is reached with tokens minted for *this*
 //! instance.
@@ -54,7 +54,7 @@
 //!   *one origin*. Sharing it has the second instance signing with the first
 //!   one's identity and delivering its notifications to the first one's PWA.
 //! * `scheduled-tasks.json` — the cron tasks this server *acts on*
-//!   ([`crate::schedule`]). The sharpest of the three: the other two would merely
+//!   (the server's `schedule`). The sharpest of the three: the other two would merely
 //!   confuse, while a shared schedule is read by every server on the machine and
 //!   fired by every one of them, so one nine-o'clock task becomes one session per
 //!   instance.
@@ -69,7 +69,7 @@
 //! names resources the other server does not have. A shared account set is
 //! wrong the moment an instance is handed to somebody else, because one
 //! `user add` then puts both servers behind one person's password. That is the
-//! boundary this module exists to draw, and [`crate::auth::users`] draws it:
+//! boundary this module exists to draw, and the server's `auth::users` draws it:
 //! the reasoning, and why the machine-wide set an older build kept is left on
 //! disk rather than moved or deleted, are in its module note.
 //!
@@ -83,7 +83,7 @@
 //! * On a normal Linux or macOS desktop the reaper is pid 1 (systemd, launchd)
 //!   and there is nothing to do.
 //! * **In a container the entrypoint can be this server's own `up`**, which is
-//!   pid 1 and waits on every child it did not start ([`crate::supervisor`]).
+//!   pid 1 and waits on every child it did not start (the server's `supervisor`).
 //!   A plain shell entrypoint is not a reaper: run `up`, or give the container an
 //!   init (`docker run --init`, `tini`, `dumb-init`) or a `wait` loop. Without
 //!   that, every restarted terminal leaves a zombie.
@@ -120,11 +120,11 @@ pub enum InstanceError {
     },
     /// Another process already owns this instance.
     ///
-    /// `serve` exits with [`crate::supervisor::INSTANCE_HELD_EXIT`] for this one
+    /// `serve` exits with the server's `supervisor::INSTANCE_HELD_EXIT` for this one
     /// error rather than the generic failure code, so `up` can tell "somebody
     /// else is serving this instance" from "this binary is broken": the first
     /// is waited out, the second rolls the binary back. That only works while
-    /// the error reaches `main` typed, which is why `crate::app` hands it over
+    /// the error reaches `main` typed, which is why the server's `app` hands it over
     /// as `GotchaError::Other` instead of flattening it into a message.
     #[error(
         "another Droppen server ({holder}) already owns instance {name:?} ({path}).\n\
@@ -235,7 +235,7 @@ impl InstanceDirs {
     /// Instance-scoped like the shims above, and for the same reason: the file
     /// is appended to by whichever server owns the session, and two servers
     /// interleaving lines into one recording would produce a file that replays
-    /// as neither session. See [`crate::record`].
+    /// as neither session. See the server's `record`.
     pub fn session_logs(&self) -> PathBuf {
         self.root.join("session-logs")
     }
@@ -289,7 +289,7 @@ impl InstanceDirs {
 /// [`InstanceLock::verify_still_held`] is how a caller finds out, and
 /// [`InstanceLock::identity`] is what makes the answer possible: the file's
 /// `(device, inode)` is recorded at acquire time, exactly as
-/// `crate::inject::lock` records its own.
+/// the server's `inject::lock` records its own.
 #[derive(Debug)]
 pub struct InstanceLock {
     /// Kept open: closing it is what releases the `flock`. Also read by
@@ -624,22 +624,6 @@ mod tests {
         // accident from finding nothing there.
         let error = held.verify_still_held().expect_err("a replaced lock file must not verify either");
         assert!(matches!(error, LockLost::Replaced { .. }), "{error:?}");
-    }
-
-    /// Each sidecar is per instance: a path that went through the config
-    /// directory would be one shared file again.
-    #[test]
-    fn the_moved_sidecars_are_disjoint_between_instances() {
-        let a = crate::paths::Paths::for_instance(PathBuf::from("/home/me"), "a");
-        let b = crate::paths::Paths::for_instance(PathBuf::from("/home/me"), "b");
-
-        assert_ne!(a.instance_dir().join("scheduled-tasks.json"), b.instance_dir().join("scheduled-tasks.json"));
-
-        // And the sidecars that are shared by design did not move with them.
-        assert_eq!(crate::prefs::PrefsStore::of(&a).file(), crate::prefs::PrefsStore::of(&b).file());
-        assert_eq!(a.config_dir().join("titles.json"), b.config_dir().join("titles.json"));
-        assert_eq!(a.config_dir().join("seen.json"), b.config_dir().join("seen.json"));
-        assert_eq!(a.config_dir().join("archived.json"), b.config_dir().join("archived.json"));
     }
 
     #[test]

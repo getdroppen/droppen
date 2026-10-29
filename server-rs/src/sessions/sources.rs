@@ -15,7 +15,7 @@ use futures_util::future::BoxFuture;
 
 use super::util::TranscriptItem;
 use super::{SessionSummary, Source};
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 
 /// One CLI's transcripts: where its sessions are, and how one is read.
 ///

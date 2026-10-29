@@ -23,12 +23,12 @@
 //! construction, so a test can point a whole server at a synthetic tree without
 //! touching process-global state. The `DROPPEN_CLAUDE_*_ROOT` environment seams
 //! also answer to their pre-rename names, `REMOTE_HAND_CLAUDE_*_ROOT`, through
-//! [`droppen_base::env`]; [`crate::paths::env_dir`] is the only place they — or any
+//! [`droppen_base::env`]; [`droppen_instance::paths::env_dir`] is the only place they — or any
 //! other directory override — are read.
 
 use std::path::PathBuf;
 
-use crate::paths::{ClaudeRoot, Paths};
+use droppen_instance::paths::{ClaudeRoot, Paths};
 
 /// The two roots of one instance, as its [`Paths`] resolved them when it was
 /// built, and where Claude Code keeps things under them.
@@ -143,7 +143,7 @@ pub fn migrate_legacy_root(paths: &Paths) -> LegacyMigration {
     if owned == legacy {
         return LegacyMigration::Nothing;
     }
-    if paths.instance() != crate::instance::DEFAULT_INSTANCE {
+    if paths.instance() != droppen_instance::instance::DEFAULT_INSTANCE {
         tracing::warn!(
             legacy = %legacy.display(),
             instance = paths.instance(),
@@ -241,12 +241,12 @@ mod tests {
         );
     }
 
-    /// The layout is spelled once, in `crate::instance`; `Paths` must agree with
+    /// The layout is spelled once, in `droppen_instance::instance`; `Paths` must agree with
     /// the directory the lock and the shims actually live in.
     #[test]
     fn the_paths_and_the_instance_dirs_agree_on_the_root() {
         let paths = Paths::for_instance(PathBuf::from("/home/me"), "ci-1");
-        let dirs = crate::instance::InstanceDirs::new(&paths.data_dir(), "ci-1").expect("valid name");
+        let dirs = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), "ci-1").expect("valid name");
         assert_eq!(paths.instance_dir(), dirs.root());
     }
 

@@ -38,7 +38,7 @@ use std::time::Duration;
 
 use clap::{Args, Subcommand};
 
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 
 use super::sessions::SessionsStore;
 use super::users::{UserError, UsersStore};
@@ -218,12 +218,12 @@ pub(crate) fn instance_name(raw: &str) -> Result<String, String> {
     named(raw.to_string())
 }
 
-/// An instance name, or the same refusal [`crate::instance`] gives for one.
+/// An instance name, or the same refusal [`droppen_instance::instance`] gives for one.
 ///
 /// Shared with `agent`'s parser: `--instance` is taken out of that command's
 /// arguments the same way, and validated before it can become a path segment.
 pub(crate) fn named(name: String) -> Result<String, String> {
-    if crate::instance::valid_name(&name) {
+    if droppen_instance::instance::valid_name(&name) {
         Ok(name)
     } else {
         Err(format!("instance name {name:?} must be 1-32 characters of a-z, 0-9 or '-'"))
@@ -446,7 +446,7 @@ impl SetupCodeArgs {
                  Start it, or create the account here: remote-hand-server user add <name> --instance {name}"
             ));
         };
-        let port = crate::instance::InstanceDirs::new(&paths.data_dir(), name)
+        let port = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), name)
             .ok()
             .and_then(|dirs| std::fs::read_to_string(dirs.port_file()).ok())
             .and_then(|text| text.trim().parse::<u16>().ok());
@@ -520,7 +520,7 @@ impl OpenArgs {
             #[cfg(not(target_os = "macos"))]
             say!(
                 "If the browser shows nothing, run `{}remote-hand-server open --print` and open the link it prints instead.",
-                crate::paths::command_prefix(&paths)
+                droppen_instance::paths::command_prefix(&paths)
             );
             return Ok(());
         }

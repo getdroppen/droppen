@@ -4,7 +4,7 @@
 //!
 //! Every store this replaces was a *whole-file rewrite of a small map*: read
 //! `runs.json`, change one record, encode the lot, `fsync`, rename over the top.
-//! That shape is correct on its own — [`crate::inject::runs`] wrote it carefully,
+//! That shape is correct on its own — the server's `inject::runs` wrote it carefully,
 //! down to syncing the directory after the rename — and it is the reason none of
 //! these files has ever been found torn. What it cannot do is any of the three
 //! things a database does for free:
@@ -26,7 +26,7 @@
 //! `read(2)` it replaces.** The largest is `runs.json` at 7.7 KB, and the warm
 //! session list already answers in under four milliseconds. What this module
 //! buys is the first two — atomicity, and safety between processes. The *speed*
-//! claim belongs entirely to [`crate::sessions::index`], which is a different file
+//! claim belongs entirely to the server's `sessions::index`, which is a different file
 //! about a different problem: 194 MB of somebody else's transcripts, re-read
 //! from scratch after every restart because every cache in this server is a
 //! `LazyLock<Mutex<HashMap>>` that dies with the process.
@@ -35,9 +35,9 @@
 //!
 //! It is not a place to put the transcripts. Those belong to claude and codex,
 //! they are hundreds of megabytes, and remote-hand only ever reads them — see
-//! [`crate::sessions::index`] for the durable *index* over them, which is where the
+//! the server's `sessions::index` for the durable *index* over them, which is where the
 //! speed actually comes from. It is also not where the session recordings go:
-//! [`crate::record`] appends NDJSON, an append is already crash-safe, and a
+//! The server's `record` appends NDJSON, an append is already crash-safe, and a
 //! 1.4 GB table of lines nothing queries would be a database used as a bucket.
 //!
 //! # Durability
@@ -67,7 +67,7 @@ use rusqlite::Connection;
 mod kv;
 mod migrations;
 
-pub(crate) use kv::{kv_remove_in, kv_set_in};
+pub use kv::{kv_remove_in, kv_set_in};
 pub use kv::scope;
 pub use migrations::SCHEMA;
 
@@ -78,7 +78,7 @@ pub use migrations::SCHEMA;
 /// query is against a primary key or a covering index, and the server they serve
 /// answers a handful of requests a second from one or two people. A pool would
 /// add a dependency and a lifetime to every call site to remove contention that
-/// cannot be measured. [`crate::sessions::index`] is the one store that will grow, and it is
+/// cannot be measured. The server's `sessions::index` is the one store that will grow, and it is
 /// read far more than written; if it ever wants readers of its own, WAL is
 /// already on and a second connection is three lines here — not a change to any
 /// caller.

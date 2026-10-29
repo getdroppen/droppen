@@ -6,7 +6,7 @@ use rh_proto::identity::{display_fingerprint, fingerprint_text, EnrollCode, Mach
 
 use super::seed::{load_or_create, FileSeedStore};
 use super::{control, enroll, rotation, state, AgentFiles};
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 use droppen_base::time::now_ms_u64;
 
 pub(super) fn describe(paths: &Paths, identity: &MachineIdentity, created: bool) {

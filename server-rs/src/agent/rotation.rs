@@ -85,7 +85,7 @@ use zeroize::Zeroizing;
 use super::link::Shared;
 use super::state::AgentState;
 use super::{AgentFiles, FileSeedStore, StagedSeed};
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 use droppen_base::text::{hex, unhex32};
 use droppen_base::time::now_ms_u64;
 
@@ -1398,7 +1398,7 @@ mod tests {
 
     fn staged(paths: &Paths, seed: u8, assurance: Assurance, created_ms: u64) -> StagedSeed {
         StagedSeed {
-            uuid: crate::identity::ensure(paths).unwrap().uuid,
+            uuid: droppen_instance::identity::ensure(paths).unwrap().uuid,
             seed: Zeroizing::new([seed; 32]),
             nonce: [3; 16],
             chain_seq: 2,

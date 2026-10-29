@@ -12,7 +12,7 @@ use clap::{Args, Subcommand};
 
 use crate::agent::cli::{enroll_cli, print_status};
 use crate::agent::{hub, state, AgentFiles};
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 
 /// The rest of `agent --help`, after the options clap lists.
 pub const USAGE: &str = "\
@@ -122,8 +122,8 @@ impl AgentArgs {
             AgentCommand::Unenroll => {
                 // A running server holds the link and its files open, and would
                 // write them back: it is stopped first, or the local settings do it.
-                let dirs = crate::instance::InstanceDirs::new(&paths.data_dir(), paths.instance()).map_err(|e| e.to_string())?;
-                let _lock = crate::instance::InstanceLock::acquire(&dirs).map_err(|e| {
+                let dirs = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), paths.instance()).map_err(|e| e.to_string())?;
+                let _lock = droppen_instance::instance::InstanceLock::acquire(&dirs).map_err(|e| {
                     format!("{e}\nStop the instance's server first, or disconnect it from its settings (Droppen → Disconnect this device).")
                 })?;
                 let before = unenroll_instance(&paths)?;

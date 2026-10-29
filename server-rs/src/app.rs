@@ -20,8 +20,8 @@ use crate::api::AppState;
 use crate::config::AppConfig;
 use crate::feed::global::GlobalFeed;
 use crate::feed::FeedRegistry;
-use crate::instance::{InstanceDirs, InstanceLock};
-use crate::paths::Paths;
+use droppen_instance::instance::{InstanceDirs, InstanceLock};
+use droppen_instance::paths::Paths;
 use crate::sessions::account::{RotationOutcome, RotationTrigger};
 use crate::sessions::{DriverStates, InjectionRunState, Source, TranscriptSources};
 use crate::shutdown::{self, Cleanups};
@@ -278,9 +278,9 @@ impl RemoteHandApp {
                 // Under the lock like everything else here: it writes to the
                 // instance's database, and a throwaway in-process server must
                 // not mint an identity into the real one's file. Nothing reads
-                // the uuid yet — see [`crate::identity`] for why it is written
+                // the uuid yet — see [`droppen_instance::identity`] for why it is written
                 // before anything does.
-                crate::identity::ensure(&paths);
+                droppen_instance::identity::ensure(&paths);
                 // The directories the user adopted for a CLI found off the
                 // PATH, back on every child's PATH. Under the lock because the
                 // PATH is the whole process's: a throwaway in-process server
@@ -741,7 +741,7 @@ mod tests {
         cleanups.run();
         serving.await.expect("the serve task").expect("serve");
 
-        let dirs = InstanceDirs::new(&Paths::new(home.path().to_path_buf()).data_dir(), crate::instance::DEFAULT_INSTANCE)
+        let dirs = InstanceDirs::new(&Paths::new(home.path().to_path_buf()).data_dir(), droppen_instance::instance::DEFAULT_INSTANCE)
             .expect("the default instance name is valid");
         InstanceLock::acquire(&dirs).expect("the instance is free once its server has stopped serving");
         drop(lingering);
@@ -772,7 +772,7 @@ mod tests {
         cleanups.run();
         serving.await.expect("the serve task").expect("serve");
 
-        let dirs = InstanceDirs::new(&Paths::new(home.path().to_path_buf()).data_dir(), crate::instance::DEFAULT_INSTANCE)
+        let dirs = InstanceDirs::new(&Paths::new(home.path().to_path_buf()).data_dir(), droppen_instance::instance::DEFAULT_INSTANCE)
             .expect("the default instance name is valid");
         let refused = InstanceLock::acquire(&dirs).expect_err("the instance is still claimed after serving");
         assert!(refused.to_string().contains(&format!("pid {}", std::process::id())), "by this process: {refused}");

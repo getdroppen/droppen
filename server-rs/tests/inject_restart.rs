@@ -23,7 +23,7 @@ mod support;
 use std::path::Path;
 use std::time::Duration;
 
-use remote_hand_server::instance::DEFAULT_INSTANCE;
+use droppen_instance::instance::DEFAULT_INSTANCE;
 use serde_json::{json, Value};
 use support::{common, plan_slow_cli, Probe};
 
@@ -94,7 +94,7 @@ fn seed_run(db: &Path, session: &str, pid: u32, pid_token: Option<&str>) {
     if let Some(token) = pid_token {
         record["pid_token"] = json!(token);
     }
-    remote_hand_server::db::at(db)
+    droppen_instance::db::at(db)
         .write(|tx| {
             tx.execute(
                 "INSERT INTO runs (run_id, session_id, ordinal, payload) VALUES (?1, ?2, 0, ?3)",

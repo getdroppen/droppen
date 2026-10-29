@@ -3,7 +3,7 @@
 //!
 //! Port of the "OpenAI-compatible provider configuration" half of
 //! the former TypeScript server's `chats.ts`. Three rows in the machine-wide
-//! state database ([`crate::db`]) under [`scope::CHAT_PROVIDER`], keyed by the
+//! state database ([`droppen_instance::db`]) under [`scope::CHAT_PROVIDER`], keyed by the
 //! wire's own `baseUrl`, `apiKey` and `model`. Three properties are
 //! load-bearing and are what the tests in this module pin down:
 //!
@@ -24,7 +24,7 @@
 //!   and a second copy of an API key is not a thing to keep on disk for a reason
 //!   that no longer exists. Nothing reads the file any more. The remaining copy
 //!   is the database, which is `0600` for exactly the reason the file was; see
-//!   [`crate::db::Db`].
+//!   [`droppen_instance::db::Db`].
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -34,9 +34,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{ChatError, Chats};
-use crate::db::{scope, Db};
+use droppen_instance::db::{scope, Db};
 use crate::openapi_ext::Optional;
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 
 /// How long the provider's `/models` call may take.
 ///
@@ -97,7 +97,7 @@ pub struct ChatModelList {
 
 /// The database the provider configuration lives in.
 fn store(paths: &Paths) -> Arc<Db> {
-    crate::db::at(paths.config_db())
+    droppen_instance::db::at(paths.config_db())
 }
 
 /// The three fields out of arbitrary JSON, coercing anything unusable to `""`.
@@ -372,7 +372,7 @@ mod tests {
             .await
             .expect("update");
 
-        let reopened = crate::db::Db::open(chats.paths.config_db());
+        let reopened = droppen_instance::db::Db::open(chats.paths.config_db());
         let rows = reopened.kv_scope(scope::CHAT_PROVIDER);
         assert_eq!(rows.get("apiKey").map(String::as_str), Some("sk-secret-value"));
         assert_eq!(rows.get("baseUrl").map(String::as_str), Some("https://api.example.test/v1"));

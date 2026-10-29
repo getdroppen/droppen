@@ -6419,11 +6419,11 @@ fn answered_in(line: &str) -> Vec<String> {
 /// see `owned_claude_env` — and the server's own value never leaks through,
 /// because `claude_env` strips every inherited `CLAUDE_*`. So its absence is the
 /// user's own `~/.claude`, and its presence is the managed root.
-fn recipe_root(env: &Env) -> crate::paths::ClaudeRoot {
+fn recipe_root(env: &Env) -> droppen_instance::paths::ClaudeRoot {
     if env.contains_key("CLAUDE_CONFIG_DIR") {
-        crate::paths::ClaudeRoot::Managed
+        droppen_instance::paths::ClaudeRoot::Managed
     } else {
-        crate::paths::ClaudeRoot::Local
+        droppen_instance::paths::ClaudeRoot::Local
     }
 }
 
@@ -6456,8 +6456,8 @@ mod tests {
     use std::collections::HashMap;
     use std::path::Path;
 
-    use crate::instance::InstanceDirs;
-    use crate::paths::Paths;
+    use droppen_instance::instance::InstanceDirs;
+    use droppen_instance::paths::Paths;
 
     /// The id every fake claude in this module answers under.
     const SESSION: &str = "11111111-1111-4111-8111-111111111111";
@@ -7080,7 +7080,7 @@ mod tests {
     fn a_usage_reading_goes_to_the_login_the_process_runs_on() {
         use crate::accounts::quota::readings::session_login;
         use crate::accounts::quota::UsageLogin;
-        use crate::paths::ClaudeRoot;
+        use droppen_instance::paths::ClaudeRoot;
 
         let local = droppen_base::process_env::claude_env_bare();
         let managed = droppen_base::process_env::claude_env([("CLAUDE_CONFIG_DIR", "/data/instances/default/claude")]);
@@ -7156,14 +7156,14 @@ mod tests {
     /// process-global and shared with every other test in this binary.
     fn registry(home: &Path, stall: Duration, tick: Duration, step: Duration, settle: Duration, absorb_poll: Duration) -> Arc<InjectionRegistry> {
         let paths = Arc::new(Paths::new(home.to_path_buf()));
-        let dirs = InstanceDirs::new(&paths.data_dir(), crate::instance::DEFAULT_INSTANCE).expect("valid name");
+        let dirs = InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
         dirs.create().expect("instance directories");
         Arc::new(InjectionRegistry {
-            receipts: Arc::new(crate::inject::receipts::Receipts::new(crate::db::at(paths.instance_db()))),
-            questions: Arc::new(crate::inject::questions::Questions::new(crate::db::at(paths.instance_db()))),
+            receipts: Arc::new(crate::inject::receipts::Receipts::new(droppen_instance::db::at(paths.instance_db()))),
+            questions: Arc::new(crate::inject::questions::Questions::new(droppen_instance::db::at(paths.instance_db()))),
             accounts: Arc::new(crate::accounts::store::AccountsStore::new(paths.clone())),
             quota: Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone())),
-            server: crate::identity::ServerId::local(&paths),
+            server: droppen_instance::identity::ServerId::local(&paths),
             codex_servers: Mutex::new(HashMap::new()),
             acp_servers: Mutex::new(HashMap::new()),
             acp_options: Mutex::new(HashMap::new()),
@@ -8034,7 +8034,7 @@ done
         /// This session's flight recording, in the order it was written.
         fn recording(&self) -> Vec<crate::record::Event> {
             let paths = Paths::new(self._home.path().to_path_buf());
-            let dirs = InstanceDirs::new(&paths.data_dir(), crate::instance::DEFAULT_INSTANCE).expect("valid name");
+            let dirs = InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
             crate::record::read_log(&dirs.session_logs().join(format!("{SESSION}.ndjson")))
                 .unwrap_or_default()
                 .into_iter()
@@ -11923,11 +11923,11 @@ done
     async fn an_answer_the_last_server_never_wrote_is_written_after_the_restart() {
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(home.path().to_path_buf());
-        InstanceDirs::new(&paths.data_dir(), crate::instance::DEFAULT_INSTANCE)
+        InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE)
             .expect("valid name")
             .create()
             .expect("instance directories");
-        let store = questions::Questions::new(crate::db::at(paths.instance_db()));
+        let store = questions::Questions::new(droppen_instance::db::at(paths.instance_db()));
         let now = questions::now_ms();
         store.open("req-q1", SESSION, Some("toolu_q1"), &colours_and_toppings(), now);
         let delivery = questions::allow(&colours_and_toppings(), &blue_with_cheese_and_olives());
@@ -11980,11 +11980,11 @@ done
     fn home_with_a_question(state: QuestionState) -> tempfile::TempDir {
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(home.path().to_path_buf());
-        InstanceDirs::new(&paths.data_dir(), crate::instance::DEFAULT_INSTANCE)
+        InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE)
             .expect("valid name")
             .create()
             .expect("instance directories");
-        let store = questions::Questions::new(crate::db::at(paths.instance_db()));
+        let store = questions::Questions::new(droppen_instance::db::at(paths.instance_db()));
         let now = questions::now_ms();
         store.open("req-q1", SESSION, Some("toolu_q1"), &colours_and_toppings(), now);
         if state != QuestionState::Pending {
@@ -12231,7 +12231,7 @@ done
         );
         std::fs::write(harness.transcript(), format!("{prompt}\n")).expect("transcript");
         let paths = Arc::new(Paths::new(harness._home.path().to_path_buf()));
-        let instance = InstanceDirs::new(&paths.data_dir(), crate::instance::DEFAULT_INSTANCE).expect("valid name");
+        let instance = InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
         let drive = Arc::new(crate::drive::Drive {
             auth: crate::auth::Auth::new(&paths, &instance, &crate::config::AuthSettings::default(), false),
             wizards: crate::accounts::setup_token::Captures::new(),

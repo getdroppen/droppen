@@ -1,0 +1,39 @@
+[package]
+name = "droppen-instance"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+publish = false
+description = "The Droppen server's instance: its paths, the directory and lock it owns, its identity and its databases"
+
+# What nearly every subsystem of the server stands on, so it names none of
+# them: a subsystem adds the paths and tables of its own files where it reads
+# them.
+[dependencies]
+droppen-base = { path = "../droppen-base" }
+# `paths::ClaudeRoot` is an API schema. gotcha_core holds the `Schematic` trait
+# and its derive, which gotcha re-exports; without its `axum` feature it brings
+# no web framework into this crate.
+gotcha_core = { version = "0.4.1", default-features = false }
+libc = "0.2"
+# `bundled` compiles SQLite itself rather than linking the platform's.
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+thiserror = "1"
+tracing = "0.1"
+# The server's identity is a v4 uuid, minted once.
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints.rust]
+missing_docs = "deny"
+unreachable_pub = "deny"
+
+# `[lints] workspace = true` cannot be mixed with the rust lints above, so the
+# workspace's two clippy denials (`server-rs/Cargo.toml` `[workspace.lints]`)
+# are repeated here: keep them in step.
+[lints.clippy]
+significant_drop_in_scrutinee = "deny"
+await_holding_lock = "deny"

@@ -12,7 +12,7 @@
 //! identity: the uuid says *which* server, for ever; the name says what that
 //! server is currently called, so a log line or a UI has something to show.
 //!
-//! **The uuid is what a machine key is bound to.** [`crate::agent`] refuses a
+//! **The uuid is what a machine key is bound to.** The server's `agent` refuses a
 //! stored key whose recorded uuid differs, so a key cannot be carried onto a
 //! server wearing another identity. It is otherwise local: not on the wire, not
 //! in any row but its own.
