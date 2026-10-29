@@ -27,10 +27,10 @@ use crate::inject::receipts::{Kind, LOOKUP_CAP};
 use crate::inject::{self, AccountChoice, AnswerOutcome, Reply, SendOptions};
 use droppen_http::openapi_ext::{double_option, required_nullable, ExtraResponses, Nullable, Optional};
 use droppen_instance::paths::ClaudeRoot;
-use crate::sessions::checklist::{self, Checklist};
 use crate::sessions::delivery::{QuestionState, ReceiptLookup, ReceiptStatus, SessionQuestion};
+use crate::sessions::sidecars::Checklist;
 use crate::sessions::util::TranscriptItem;
-use crate::sessions::{archive, chats_cwd, claude, file_signature, sendability, transcript, SessionScope, Source};
+use crate::sessions::{archive, chats_cwd, claude, file_signature, sendability, SessionScope, Source};
 
 /// `POST /api/sessions/{source}/{id}/message` body.
 #[derive(Debug, Clone, Serialize, Deserialize, Schematic)]
@@ -1478,10 +1478,10 @@ pub async fn session_agents(
     ApiPath((source, id)): ApiPath<(Source, String)>,
 ) -> Result<Json<SessionAgents>, ApiError> {
     let drive = &state.drive;
-    if source != Source::Claude {
+    let Some(subagents) = drive.transcripts.subagents(source) else {
         return Err(ApiError::not_found("subagents exist only for claude sessions"));
-    }
-    let Some(file_path) = claude::find_claude_session_file(&drive.paths, &id).await else {
+    };
+    let Some(file_path) = drive.transcripts.find_file(&drive.paths, source, &id).await else {
         return Err(ApiError::not_found("session not found"));
     };
     // Which ids the session's own transcript can point at. Parsed through the
@@ -1497,7 +1497,8 @@ pub async fn session_agents(
             .collect(),
         None => HashSet::new(),
     };
-    let agents = transcript::list_session_agents(&file_path)
+    let agents = subagents
+        .agents(&file_path)
         .await
         .into_iter()
         .map(|agent| SessionAgent {
@@ -1523,31 +1524,29 @@ pub async fn agent_transcript(
     ApiPath(AgentPath { source, id, agent_id }): ApiPath<AgentPath>,
 ) -> Result<Json<AgentTranscript>, ApiError> {
     let drive = &state.drive;
-    if source != Source::Claude {
+    let Some(subagents) = drive.transcripts.subagents(source) else {
         return Err(ApiError::not_found("subagents exist only for claude sessions"));
-    }
+    };
     if !is_agent_id(&agent_id) {
         return Err(ApiError::bad_request("invalid agent id"));
     }
-    let Some(file_path) = claude::find_claude_session_file(&drive.paths, &id).await else {
+    let Some(file_path) = drive.transcripts.find_file(&drive.paths, source, &id).await else {
         return Err(ApiError::not_found("session not found"));
     };
     // Searched rather than composed: an agent the CLI filed under a
     // subdirectory of `subagents/` is still this session's, and answering 404
     // for it is how a whole class of children stayed unreadable.
-    let Some(sub_path) = transcript::find_subagent_file(&file_path, &agent_id).await else {
+    let Some(sub_path) = subagents.agent_file(&file_path, &agent_id).await else {
         return Err(ApiError::not_found("subagent not found"));
     };
     // The meta sits beside the transcript, which for a nested agent is not the
     // top-level directory — reading only that one described it as anonymous.
     let meta = match sub_path.parent() {
-        Some(dir) => transcript::list_agent_metas(dir).await.into_iter().find(|meta| meta.agent_id == agent_id),
+        Some(dir) => subagents.agent_metas(dir).await.into_iter().find(|meta| meta.agent_id == agent_id),
         None => None,
     };
 
-    let items = transcript::parse_claude_transcript(&drive.paths, &sub_path, true)
-        .await
-        .unwrap_or_default();
+    let items = subagents.agent_items(&drive.paths, &sub_path).await.unwrap_or_default();
     let (kept, omitted) = feed::truncate_items(&items);
     Ok(Json(AgentTranscript {
         agent_type: Nullable(meta.as_ref().and_then(|m| m.agent_type.clone())),
@@ -1565,18 +1564,14 @@ pub async fn agent_transcript(
 /// session simply has not planned anything yet.
 #[api(id = "session_checklist", group = "sessions", summary = "Session checklist")]
 pub async fn session_checklist(State(state): State<DriveState>, ApiPath((source, id)): ApiPath<(Source, String)>) -> Result<Json<Checklist>, ApiError> {
-    if source != Source::Claude {
+    let Some(checklists) = state.drive.transcripts.checklists(source) else {
         return Err(ApiError::not_found("checklists exist only for claude sessions"));
-    }
+    };
     let paths = &state.drive.paths;
-    let Some(found) = claude::find_claude_session(paths, &id).await else {
+    let Some(checklist) = checklists.read(paths, &id).await else {
         return Err(ApiError::not_found("session not found"));
     };
-    // The sidecar lives under the same config root the transcript was found in.
-    let Some(dir) = checklist::tasks_dir(paths, found.root, &id) else {
-        return Err(ApiError::not_found("session not found"));
-    };
-    Ok(Json(checklist::read_checklist(&dir).await))
+    Ok(Json(checklist))
 }
 
 /// Query for `GET /api/sessions/recent-cwds`.

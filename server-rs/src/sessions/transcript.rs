@@ -9,8 +9,10 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use futures_util::future::BoxFuture;
 use serde_json::{Map, Value};
 
+use super::sidecars::{AgentEntry, SubagentMeta, Subagents};
 use super::tool_display::{display_claude_tool_result, display_claude_tool_use, extract_questions, shorten_tool_name};
 use super::util::{
     clip, first_line_of, make_item, make_tool_item, try_parse, ItemKind, LossyLines, PatchHunk, Role, ToolDisplay, TranscriptItem, DETAIL_LIMIT,
@@ -514,32 +516,6 @@ fn structured_patch(entry: &Json) -> Option<Vec<PatchHunk>> {
     (!hunks.is_empty()).then_some(hunks)
 }
 
-/// Metadata a subagent transcript writes next to the session file.
-#[derive(Debug, Clone)]
-pub struct SubagentMeta {
-    /// The subagent's id.
-    pub agent_id: String,
-    /// The `tool_use` id of the Task call that spawned it.
-    pub tool_use_id: Option<String>,
-    /// What the Task call asked for.
-    pub description: Option<String>,
-    /// Which agent type answered.
-    pub agent_type: Option<String>,
-    /// How deep the spawn chain is: `1` for a child of the session itself, `2`
-    /// for a child of a child.
-    ///
-    /// The field that explains an unattachable `toolUseId`: at depth 2 and below
-    /// the id names a `tool_use` in the *parent agent's* transcript, not in the
-    /// session's, so looking for it in the main file finds nothing and the whole
-    /// subtree goes missing. One real session (`b16232e3`) had eleven agents and
-    /// 2.5 MB of work invisible for exactly that reason.
-    pub spawn_depth: Option<u32>,
-    /// The agent that spawned it, for anything deeper than the session.
-    pub parent_agent_id: Option<String>,
-    /// Which model the child ran on, when the meta says.
-    pub model: Option<String>,
-}
-
 /// Subagent transcripts live next to the session file: `<dir>/<sid>/subagents/agent-<id>.jsonl`.
 pub fn subagent_dir(session_file: &Path) -> PathBuf {
     let stem = session_file.to_string_lossy();
@@ -746,31 +722,29 @@ pub async fn list_session_agents(session_file: &Path) -> Vec<AgentEntry> {
     agents
 }
 
-/// One agent found on disk under a session, meta or no meta.
-#[derive(Debug, Clone, Default)]
-pub struct AgentEntry {
-    /// The agent's id, which is what `/agents/{agentId}` takes.
-    pub agent_id: String,
-    /// Which agent type answered, from the meta.
-    pub agent_type: Option<String>,
-    /// What the spawning call asked for, from the meta.
-    pub description: Option<String>,
-    /// The `tool_use` id the meta recorded, if any.
-    pub tool_use_id: Option<String>,
-    /// The agent that spawned it, for anything deeper than the session.
-    pub parent_agent_id: Option<String>,
-    /// How deep the spawn chain is; `1` is a direct child of the session.
-    pub spawn_depth: Option<u32>,
-    /// Which model it ran on.
-    pub model: Option<String>,
-    /// Whether a transcript file exists beside the meta.
-    pub has_transcript: bool,
-    /// Where that transcript is, when it exists.
-    pub transcript_path: Option<PathBuf>,
-    /// Size of that transcript, in bytes.
-    pub bytes: u64,
-    /// When it was last written, by the filesystem's clock.
-    pub updated_at: Option<String>,
+/// Claude Code's subagents, for [`super::Transcripts::subagents`]: the
+/// transcripts under each session's `subagents/` directory.
+impl Subagents for super::claude::ClaudeCodeSessions {
+    fn agents<'a>(&'a self, session_file: &'a Path) -> BoxFuture<'a, Vec<AgentEntry>> {
+        Box::pin(list_session_agents(session_file))
+    }
+
+    fn agent_file<'a>(&'a self, session_file: &'a Path, agent_id: &'a str) -> BoxFuture<'a, Option<PathBuf>> {
+        Box::pin(find_subagent_file(session_file, agent_id))
+    }
+
+    fn agent_metas<'a>(&'a self, dir: &'a Path) -> BoxFuture<'a, Vec<SubagentMeta>> {
+        Box::pin(list_agent_metas(dir))
+    }
+
+    // The sidechain kept: an agent's own transcript is all sidechain.
+    fn agent_items<'a>(
+        &'a self,
+        paths: &'a droppen_instance::paths::Paths,
+        file_path: &'a Path,
+    ) -> BoxFuture<'a, std::io::Result<Vec<TranscriptItem>>> {
+        Box::pin(parse_claude_transcript(paths, file_path, true))
+    }
 }
 
 impl AgentEntry {

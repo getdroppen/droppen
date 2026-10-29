@@ -23,6 +23,7 @@ pub mod owned_sessions;
 pub mod pins;
 pub mod reference;
 pub mod repo;
+pub mod sidecars;
 pub mod sources;
 pub mod subagents;
 pub mod titles;

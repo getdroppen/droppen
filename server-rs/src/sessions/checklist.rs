@@ -11,38 +11,14 @@
 
 use std::path::{Path, PathBuf};
 
-use gotcha::Schematic;
-use serde::{Deserialize, Serialize};
+use futures_util::future::BoxFuture;
 use serde_json::Value;
 
+use super::sidecars::{Checklist, ChecklistItem, Checklists};
 use droppen_instance::paths::{ClaudeRoot, Paths};
 
 /// The status the CLI writes for a finished task.
 const DONE: &str = "completed";
-
-/// One task in a session's checklist.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Schematic)]
-pub struct ChecklistItem {
-    /// The task's own id, as the CLI numbered it.
-    pub id: String,
-    /// What the task is; the sidecar calls this field `subject`.
-    pub title: String,
-    /// Where it got to: `pending`, `in_progress`, `completed`. Carried as free
-    /// text rather than an enum because the vocabulary is the CLI's own — a word
-    /// this server has not seen should reach the UI, not fail the request.
-    pub status: String,
-}
-
-/// A session's checklist.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Schematic)]
-pub struct Checklist {
-    /// The tasks, in the order the CLI numbered them.
-    pub items: Vec<ChecklistItem>,
-    /// How many tasks there are.
-    pub total: usize,
-    /// How many are finished.
-    pub done: usize,
-}
 
 /// Whether an id may name a directory under `tasks/`.
 ///
@@ -53,6 +29,19 @@ pub struct Checklist {
 fn is_session_dir_name(id: &str) -> bool {
     // One rule for every id that becomes a path segment of its own.
     super::reference::is_path_segment_id(id)
+}
+
+/// Claude Code's checklists, for [`super::Transcripts::checklists`]: the task
+/// files under the session's root's `tasks/` directory.
+impl Checklists for super::claude::ClaudeCodeSessions {
+    fn read<'a>(&'a self, paths: &'a Paths, id: &'a str) -> BoxFuture<'a, Option<Checklist>> {
+        Box::pin(async move {
+            let found = super::claude::find_claude_session(paths, id).await?;
+            // The sidecar lives under the same config root the transcript was found in.
+            let dir = tasks_dir(paths, found.root, id)?;
+            Some(read_checklist(&dir).await)
+        })
+    }
 }
 
 /// `<root>/tasks/<session-id>` — one directory per session, one JSON per task.
