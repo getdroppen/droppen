@@ -63,7 +63,7 @@ export function SectionHead({ label, title, lead, className }: { label?: string;
   return (
     <div className={cn("flex flex-col gap-3 px-6 pt-10 pb-8 max-md:px-4 max-md:pt-8 max-md:pb-6", className)}>
       {label && <CapsLabel face="sans" className={cn(cjkTracking, "text-xs font-semibold")}>{label}</CapsLabel>}
-      <h2 className="text-3xl leading-tight font-normal tracking-tight text-balance text-fg max-[359px]:text-pretty [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-md:text-2xl">{title}</h2>
+      <h2 className="text-3xl leading-tight font-normal tracking-tight text-balance text-fg max-[359px]:text-pretty [word-break:auto-phrase] md:[&:lang(zh)]:[word-break:keep-all] max-md:text-2xl">{title}</h2>
       {lead && <p className="max-w-[38em] text-sm leading-6 text-muted">{lead}</p>}
     </div>
   );

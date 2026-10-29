@@ -1,7 +1,8 @@
-import { Fragment, type ReactNode, useEffect } from "react";
-import i18n from "i18next";
+import { Fragment, type ComponentProps, type ReactNode, type RefObject, useEffect, useRef, useState } from "react";
+import i18n, { type TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
-import { Info } from "lucide-react";
+import { Dialog as BaseDialog } from "@base-ui-components/react/dialog";
+import { ChevronDown, Info, X } from "lucide-react";
 import { CapsLabel } from "@/components/ui/caps-label";
 import { cn } from "@/lib/cn";
 import { landingBundles } from "../copy";
@@ -56,6 +57,27 @@ export const RENEWAL_PARTS = ["renewal-why", "renewal-entry", "renewal-staging",
  * lists) takes the topic's whole width, so it is not wrapped short beside empty space.
  */
 const prose = "max-w-[46em] text-base text-muted";
+
+/** Below xl the 44px contents bar sits under the 56px header; an anchor stops below both. */
+const sectionScroll = "max-xl:scroll-mt-[6.25rem]";
+
+/** A section's head, with this page's 16px reading size for its lead (the shared head's is 14px). */
+function Head(props: ComponentProps<typeof SectionHead>) {
+  return <SectionHead {...props} className={cn("[&>p]:text-base", props.className)} />;
+}
+
+/** A word joined by hyphens (`end-to-end`) stays whole: a line never ends on its hyphen. */
+function titleWords(text: string): ReactNode {
+  return text.split(/(\s+)/).map((part, i) =>
+    part.includes("-") ? (
+      <span key={i} className="whitespace-nowrap">
+        {part}
+      </span>
+    ) : (
+      <Fragment key={i}>{part}</Fragment>
+    ),
+  );
+}
 
 /**
  * A translated line in the page's mini-markup, written the same way in every
@@ -206,7 +228,7 @@ function Line({ children }: { children: ReactNode }) {
 
 /** A small caps chip: what is still in testing. */
 function Chip({ children }: { children: ReactNode }) {
-  return <span className="inline-flex shrink-0 items-center border border-fg px-1.5 text-sm leading-4 font-semibold tracking-wider text-fg uppercase">{children}</span>;
+  return <span className="inline-flex shrink-0 items-center border border-fg px-1.5 text-xs leading-4 font-semibold tracking-wider text-fg uppercase">{children}</span>;
 }
 
 /** One mechanism: its number and name on the left (above, when narrow), what it does on the right; `#t2-6` and the like unless it has an id of its own. */
@@ -236,15 +258,20 @@ function Pair({ left, right }: { left: { title: string; items: string[] }; right
   );
 }
 
-/** A table that reads row by row: a grid from 768px, each row's cells stacked under its name below. */
+/**
+ * A table that reads row by row: a grid from 1024px for the five-column key table, from 768px for the
+ * three-column threat model (five columns need the width); each row's cells stack under its name below.
+ */
 function Table({ label, heads, rows }: { label: string; heads: string[]; rows: string[][] }) {
-  const cols = heads.length;
-  const grid = cols === 3 ? "md:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)_minmax(0,1.6fr)]" : "md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.3fr)_minmax(0,1.3fr)_minmax(0,1fr)]";
+  const wide = heads.length >= 5;
+  const grid = wide
+    ? "lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.3fr)_minmax(0,1.3fr)_minmax(0,1fr)]"
+    : "md:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)_minmax(0,1.6fr)]";
   return (
     <div role="table" aria-label={label} className="border-t border-border">
-      <div role="row" className={cn("grid border-b border-border max-md:hidden", grid)}>
+      <div role="row" className={cn("grid border-b border-border", wide ? "max-lg:hidden" : "max-md:hidden", grid)}>
         {heads.map((h, i) => (
-          <span key={h} role="columnheader" className={cn("px-6 py-3", i > 0 && "border-l border-border")}>
+          <span key={h} role="columnheader" className={cn("px-6 py-3", wide ? "max-lg:px-4" : "max-md:px-4", i > 0 && "border-l border-border")}>
             <CapsLabel face="sans" className={cn("text-fg", cjkTracking, "text-xs font-semibold")}>{h}</CapsLabel>
           </span>
         ))}
@@ -256,13 +283,16 @@ function Table({ label, heads, rows }: { label: string; heads: string[]; rows: s
               key={i}
               role={i === 0 ? "rowheader" : "cell"}
               className={cn(
-                "min-w-0 px-6 text-sm leading-6 max-md:px-4",
-                i === 0 ? "pt-3.5 font-semibold text-fg md:pb-3.5" : "py-3.5 text-muted max-md:pt-1 max-md:pb-0 max-md:last:pb-3.5",
-                i > 0 && "md:border-l md:border-border",
+                "min-w-0 px-6 text-sm leading-6",
+                wide ? "max-lg:px-4" : "max-md:px-4",
+                i === 0
+                  ? cn("pt-3.5 font-semibold text-fg", wide ? "lg:pb-3.5" : "md:pb-3.5")
+                  : cn("py-3.5 text-muted", wide ? "max-lg:pt-1 max-lg:pb-0 max-lg:last:pb-3.5" : "max-md:pt-1 max-md:pb-0 max-md:last:pb-3.5"),
+                i > 0 && (wide ? "lg:border-l lg:border-border" : "md:border-l md:border-border"),
               )}
             >
               {i > 0 && (
-                <CapsLabel size="xs" face="sans" className={cn("block pb-0.5 md:hidden", cjkTracking)}>
+                <CapsLabel face="sans" className={cn("block pb-0.5", wide ? "lg:hidden" : "md:hidden", cjkTracking)}>
                   {heads[i]}
                 </CapsLabel>
               )}
@@ -290,8 +320,8 @@ function Hero() {
   const { t } = useTranslation();
   return (
     <div className="flex flex-col gap-5 px-10 pt-16 pb-10 max-lg:pt-12 max-md:px-4 max-md:pt-10 max-md:pb-8">
-      <h1 className="max-w-[18em] text-5xl leading-display font-normal tracking-tight text-balance text-fg [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-md:text-3xl">
-        {t("How Droppen's end-to-end encryption works.")}
+      <h1 className="max-w-[18em] text-5xl leading-display font-normal tracking-tight text-balance text-fg [word-break:auto-phrase] md:[&:lang(zh)]:[word-break:keep-all] max-md:text-3xl">
+        {titleWords(t("How Droppen's end-to-end encryption works."))}
       </h1>
       <p className="max-w-[44em] text-base leading-6 text-muted">
         {t("A technical description for anyone who wants to verify our claims: who holds which key, how your devices agree on which devices belong to your account, what our servers can and cannot see, and what each of them could still do if it were malicious or compelled. It describes what Droppen does today; the parts that are not live yet, or still in testing, are marked as such.")}
@@ -335,14 +365,14 @@ function Definitions() {
     },
   ];
   return (
-    <div role="group" aria-label={t("Two words this page uses")} data-testid="security-terms" className="grid border-t border-border md:grid-cols-2">
+    <div role="group" aria-label={t("Two words this page uses")} data-testid="security-terms" className="grid border-t border-border lg:grid-cols-2">
       {cards.map((card, i) => (
-        <div key={card.id} data-concept-def={card.id} className={cn("flex flex-col gap-2.5 border-border px-6 py-5 max-md:px-4", i > 0 && "max-md:border-t md:border-l")}>
+        <div key={card.id} data-concept-def={card.id} className={cn("flex flex-col gap-2.5 border-border px-6 py-5 max-md:px-4", i > 0 && "max-lg:border-t lg:border-l")}>
           <dfn className="text-base leading-6 font-semibold text-fg not-italic">{card.name}</dfn>
-          <dl className="grid grid-cols-[minmax(0,auto)_minmax(0,1fr)] gap-x-4 gap-y-1.5">
+          <dl className="flex flex-col gap-3 sm:gap-2">
             {card.rows.map(([label, text]) => (
-              <div key={label} className="contents">
-                <dt className={cn("uppercase tracking-label pt-[3px] text-sm leading-4 text-faint", cjkTracking)}>{label}</dt>
+              <div key={label} className="grid gap-1 sm:grid-cols-[7.5rem_minmax(0,1fr)] sm:gap-x-4 sm:gap-y-0">
+                <dt className={cn("uppercase tracking-label text-xs leading-4 text-faint sm:pt-[3px]", cjkTracking)}>{label}</dt>
                 <dd className="text-base text-muted">{withConcepts(text!)}</dd>
               </div>
             ))}
@@ -353,9 +383,11 @@ function Definitions() {
   );
 }
 
-function Contents() {
-  const { t } = useTranslation();
-  const entries: { id: (typeof SECURITY_SECTIONS)[number]; title: string; line: string; chip?: string }[] = [
+type TocEntry = { id: (typeof SECURITY_SECTIONS)[number]; title: string; line: string; chip?: string };
+
+/** The eight sections, with the words the page already translates for its contents. */
+function tocEntries(t: TFunction): TocEntry[] {
+  return [
     { id: "overview", title: t("Overview"), line: t("What Droppen Hub and the relays see, and what they never see.") },
     { id: "chain", title: t("The device chain"), line: t("The signed list every device checks for itself.") },
     { id: "keys", title: t("Keys"), line: t("Every key, where it lives, how it is delivered, and the recovery words.") },
@@ -365,35 +397,179 @@ function Contents() {
     { id: "threats", title: t("Threat model"), line: t("What a hostile Hub, a thief or the network can and cannot do.") },
     { id: "verify", title: t("Verify it yourself"), line: t("Algorithms, labels, code, test vectors, and how to report a flaw.") },
   ];
+}
+
+/**
+ * Which section the reader is in, and how far down the page they are. The page
+ * scrolls in its own container (`data-testid="security"`), not the window; the
+ * bar below xl takes a second line under the header.
+ */
+function useReadingPosition(scroller: RefObject<HTMLDivElement | null>) {
+  const [active, setActive] = useState<(typeof SECURITY_SECTIONS)[number]>("overview");
+  const [progress, setProgress] = useState(0);
+  useEffect(() => {
+    const root = scroller.current;
+    if (!root) return;
+    const sections = SECURITY_SECTIONS.map((id) => document.getElementById(id)).filter((e): e is HTMLElement => e !== null);
+    let frame = 0;
+    const update = () => {
+      frame = 0;
+      const header = document.querySelector("header");
+      const bar = document.querySelector<HTMLElement>("[data-security-toc-bar]");
+      const line = root.scrollTop + (header?.getBoundingClientRect().height ?? 56) + (bar?.offsetHeight ?? 0) + 16;
+      let next: (typeof SECURITY_SECTIONS)[number] = "overview";
+      for (const section of sections) {
+        const top = section.getBoundingClientRect().top - root.getBoundingClientRect().top + root.scrollTop;
+        if (top <= line) {
+          const id = SECURITY_SECTIONS.find((candidate) => candidate === section.id);
+          if (id) next = id;
+        }
+      }
+      setActive((prev) => (prev === next ? prev : next));
+      const max = root.scrollHeight - root.clientHeight;
+      setProgress(max > 0 ? Math.min(1, Math.max(0, root.scrollTop / max)) : 0);
+    };
+    const onScroll = () => {
+      if (!frame) frame = requestAnimationFrame(update);
+    };
+    update();
+    root.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onScroll);
+    return () => {
+      if (frame) cancelAnimationFrame(frame);
+      root.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onScroll);
+    };
+  }, [scroller]);
+  return { active, progress };
+}
+
+/** The desktop chapter rail: sticky under the header, with the section the reader is in and a hairline progress. */
+function TocSidebar({ scroller }: { scroller: RefObject<HTMLDivElement | null> }) {
+  const { t } = useTranslation();
+  const entries = tocEntries(t);
+  const { active, progress } = useReadingPosition(scroller);
+  const percent = Math.round(progress * 100);
   return (
-    <Section id="contents">
-      <nav aria-label={t("On this page")}>
-        <ol data-testid="security-contents" className="grid sm:grid-cols-2 lg:grid-cols-4">
-          {entries.map((e, i) => (
-            <li
-              key={e.id}
-              className={cn(
-                "border-border",
-                i > 0 && "max-sm:border-t",
-                i % 2 === 1 && "sm:max-lg:border-l",
-                i > 1 && "sm:max-lg:border-t",
-                i % 4 > 0 && "lg:border-l",
-                i > 3 && "lg:border-t",
-              )}
-            >
-              <a href={`#${e.id}`} className="group flex h-full flex-col gap-1.5 px-6 py-5 hover:bg-hover max-md:px-4">
-                <span className="flex items-center gap-2">
-                  <span className="text-xs font-semibold leading-4 text-faint tabular-nums">{String(i + 1).padStart(2, "0")}</span>
-                  <span className="text-base leading-6 font-semibold text-fg group-hover:underline group-hover:underline-offset-4">{e.title}</span>
-                  {e.chip && <Chip>{e.chip}</Chip>}
-                </span>
-                <span className="text-base text-muted">{e.line}</span>
-              </a>
-            </li>
-          ))}
-        </ol>
-      </nav>
-    </Section>
+    <aside className="hidden border-r border-border xl:block">
+      <div className="sticky top-14 max-h-[calc(100dvh-3.5rem)] overflow-y-auto px-6 pt-10 pb-8">
+        <div className="flex items-center justify-between gap-2">
+          <CapsLabel face="sans" className={cn(cjkTracking, "text-xs font-semibold")}>
+            {t("On this page")}
+          </CapsLabel>
+          <span className="font-mono text-[11px] leading-4 tabular-nums text-faint">{String(percent).padStart(2, "0")}%</span>
+        </div>
+        <div aria-hidden="true" className="mt-3 h-px bg-border">
+          <div className="h-px bg-fg" style={{ width: `${percent}%` }} />
+        </div>
+        <nav aria-label={t("On this page")} data-testid="security-contents" className="mt-4">
+          <ol className="flex flex-col">
+            {entries.map((e, i) => (
+              <li key={e.id}>
+                <a
+                  href={`#${e.id}`}
+                  aria-current={active === e.id ? "location" : undefined}
+                  className={cn(
+                    "flex gap-3 border-l-2 py-2 pr-2 pl-3 text-[13px] leading-5 transition-colors",
+                    active === e.id ? "border-fg text-fg" : "border-transparent text-muted hover:text-fg",
+                  )}
+                >
+                  <span className="w-5 shrink-0 font-mono text-[11px] leading-5 tabular-nums text-faint">{String(i + 1).padStart(2, "0")}</span>
+                  <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
+                    <span className="min-w-0">{e.title}</span>
+                    {e.chip && <Chip>{e.chip}</Chip>}
+                  </span>
+                </a>
+              </li>
+            ))}
+          </ol>
+        </nav>
+      </div>
+    </aside>
+  );
+}
+
+/** The phone/tablet chapter sheet: the same eight entries, with their one-line descriptions. */
+function TocSheet({ active, open, onClose }: { active: (typeof SECURITY_SECTIONS)[number]; open: boolean; onClose: () => void }) {
+  const { t } = useTranslation();
+  const entries = tocEntries(t);
+  const activeRef = useRef<HTMLAnchorElement>(null);
+  // Opening at chapter 06 should show 06, not the top of the list. The portal's
+  // refs land after this effect, so scroll on the next frame.
+  useEffect(() => {
+    if (!open) return;
+    const frame = requestAnimationFrame(() => activeRef.current?.scrollIntoView({ block: "center" }));
+    return () => cancelAnimationFrame(frame);
+  }, [open]);
+  return (
+    <BaseDialog.Portal>
+      <BaseDialog.Backdrop className="fixed inset-0 z-40 bg-black/20 dark:bg-black/60" />
+      <BaseDialog.Popup className="fixed inset-x-0 bottom-0 z-50 max-h-[80dvh] overflow-y-auto border-t border-border-strong bg-bg outline-none md:right-auto md:left-1/2 md:w-[min(32rem,calc(100vw-2rem))] md:-translate-x-1/2 md:border-x">
+        <div className="sticky top-0 z-10 flex h-9 items-center justify-between gap-2 border-b border-border bg-bg px-4">
+          <BaseDialog.Title className="min-w-0 py-1.5 text-[13px] leading-5 font-semibold text-fg">{t("On this page")}</BaseDialog.Title>
+          <BaseDialog.Close aria-label={t("close")} className="flex size-5 shrink-0 items-center justify-center text-muted hover:bg-hover hover:text-fg">
+            <X className="size-3.5" />
+          </BaseDialog.Close>
+        </div>
+        <nav aria-label={t("On this page")} data-testid="security-contents-sheet">
+          <ol className="divide-y divide-border">
+            {entries.map((e, i) => (
+              <li key={e.id}>
+                <a
+                  href={`#${e.id}`}
+                  onClick={onClose}
+                  ref={active === e.id ? activeRef : undefined}
+                  aria-current={active === e.id ? "location" : undefined}
+                  className={cn(
+                    "flex gap-3 border-l-2 py-3 pr-4 pl-3 transition-colors",
+                    active === e.id ? "border-fg bg-raised" : "border-transparent hover:bg-hover",
+                  )}
+                >
+                  <span className="w-5 shrink-0 font-mono text-[11px] leading-5 tabular-nums text-faint">{String(i + 1).padStart(2, "0")}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex flex-wrap items-center gap-2 text-[13px] leading-5 font-medium text-fg">
+                      {e.title}
+                      {e.chip && <Chip>{e.chip}</Chip>}
+                    </span>
+                    <span className="mt-0.5 block text-xs leading-5 text-muted">{e.line}</span>
+                  </span>
+                </a>
+              </li>
+            ))}
+          </ol>
+        </nav>
+      </BaseDialog.Popup>
+    </BaseDialog.Portal>
+  );
+}
+
+/** Below xl: a 44px bar under the header that opens the chapter sheet. */
+function TocBar({ scroller }: { scroller: RefObject<HTMLDivElement | null> }) {
+  const { t } = useTranslation();
+  const entries = tocEntries(t);
+  const { active } = useReadingPosition(scroller);
+  const [open, setOpen] = useState(false);
+  const current = entries.find((e) => e.id === active) ?? entries[0]!;
+  const index = entries.findIndex((e) => e.id === current.id);
+  return (
+    <div data-security-toc-bar className="sticky top-14 z-30 border-b border-border bg-bg xl:hidden">
+      <BaseDialog.Root open={open} onOpenChange={setOpen}>
+        <BaseDialog.Trigger
+          data-testid="security-toc-trigger"
+          className="flex h-11 w-full items-center gap-3 bg-bg px-4 text-left transition-colors hover:bg-hover data-[popup-open]:bg-hover md:px-6"
+        >
+          <CapsLabel face="sans" className={cn(cjkTracking, "shrink-0 text-xs font-semibold")}>
+            {t("On this page")}
+          </CapsLabel>
+          <span className="flex min-w-0 flex-1 items-center gap-2 text-[13px] text-fg">
+            <span className="font-mono text-[11px] tabular-nums text-faint">{String(index + 1).padStart(2, "0")}</span>
+            <span className="truncate">{current.title}</span>
+          </span>
+          <ChevronDown className="size-4 shrink-0 text-muted" />
+        </BaseDialog.Trigger>
+        <TocSheet active={active} open={open} onClose={() => setOpen(false)} />
+      </BaseDialog.Root>
+    </div>
   );
 }
 
@@ -424,7 +600,7 @@ function Overview() {
   );
   return (
     <div className="border-t border-border" data-diagram="security-overview">
-      <svg viewBox="0 0 1040 304" role="img" aria-label={label} className="block w-full max-md:hidden">
+      <svg viewBox="0 0 1040 304" role="img" aria-label={label} className="block w-full max-lg:hidden">
         {/* The end-to-end span over the three. */}
         <path d="M140.5 34v8M900.5 34v8M140.5 34.5H900.5" className="stroke-muted" strokeWidth={1} fill="none" />
         <text x={520} y={26} textAnchor="middle" className="fill-fg text-sm">
@@ -439,7 +615,7 @@ function Overview() {
           {wire}
         </text>
         {/* The copy: dashed, 1.5px, an L each way. */}
-        <path d="M900 136V242.75H636M404 242.75H140V136" className="stroke-fg" strokeWidth={1.5} strokeDasharray="5 4" fill="none" />
+        <path d="M900 136V242.75H660M380 242.75H140V136" className="stroke-fg" strokeWidth={1.5} strokeDasharray="5 4" fill="none" />
         <text x={768} y={232} textAnchor="middle" className="fill-muted text-sm">
           {sealed}
         </text>
@@ -449,9 +625,9 @@ function Overview() {
         {card(24, 48, 232, 88, devices)}
         {card(404, 48, 232, 88, relay)}
         {card(784, 48, 232, 88, host)}
-        {card(404, 200, 232, 88, hub)}
+        {card(380, 200, 280, 88, hub)}
       </svg>
-      <ol className="flex flex-col gap-0 px-4 py-5 md:hidden" aria-label={label}>
+      <ol className="flex flex-col gap-0 px-4 py-5 lg:hidden" aria-label={label}>
         {[
           { c: devices, next: wire },
           { c: relay, next: wire },
@@ -482,9 +658,9 @@ function Overview() {
 function OverviewSection() {
   const { t } = useTranslation();
   return (
-    <Section id="overview">
+    <Section id="overview" className={sectionScroll}>
       <MentionScope>
-        <SectionHead
+        <Head
           label={`01 · ${t("Overview")}`}
           title={withConcepts(t("Your devices hold the keys. Our servers carry ciphertext."))}
           lead={withConcepts(t("Droppen runs Claude Code and Codex on your devices that run AI (in the protocol, hosts), and your browsers and phones control them over channels encrypted end to end. Droppen Hub, at droppen.app, keeps your account, the device chain and the encrypted copies, and serves the web app at my.droppen.app. Droppen relays pass a channel's ciphertext on; Droppen Hub carries no channel (Hub). Neither holds a key that can decrypt anything. Droppen Hub is not open source: lines that rest on its own behaviour or policy are marked (Hub)."))}
@@ -539,7 +715,7 @@ function ChainFigure() {
     { kind: "KeyEpochs", by: t("signed by a full device"), what: t("commits the new epochs, before any is sent") },
   ];
   return (
-    <ol data-diagram="security-chain" aria-label={t("A device chain: six entries, each naming the one before by its hash")} className="grid grid-cols-2 border-t border-border md:grid-cols-3 lg:grid-cols-6">
+    <ol data-diagram="security-chain" aria-label={t("A device chain: six entries, each naming the one before by its hash")} className="grid grid-cols-2 border-t border-border md:grid-cols-3 xl:grid-cols-6">
       {entries.map((e, i) => (
         <li
           key={i}
@@ -547,9 +723,9 @@ function ChainFigure() {
             "flex min-w-0 flex-col gap-1.5 border-border px-6 py-4 max-md:px-4",
             i % 2 === 1 && "max-md:border-l",
             i > 1 && "max-md:border-t",
-            i % 3 > 0 && "md:max-lg:border-l",
-            i > 2 && "md:max-lg:border-t",
-            i > 0 && "lg:border-l",
+            i % 3 > 0 && "md:max-xl:border-l",
+            i > 2 && "md:max-xl:border-t",
+            i > 0 && "xl:border-l",
           )}
         >
           <span className="text-xs font-semibold leading-4 text-faint tabular-nums">#{i}</span>
@@ -566,9 +742,9 @@ function ChainFigure() {
 function ChainSection() {
   const { t } = useTranslation();
   return (
-    <Section id="chain">
+    <Section id="chain" className={sectionScroll}>
       <MentionScope>
-        <SectionHead
+        <Head
           label={`02 · ${t("The device chain")}`}
           title={withConcepts(t("One signed list decides who is in your account."))}
           lead={withConcepts(t("The device chain is an append-only, hash-linked log of the account's devices and their public keys. Each entry is signed; every device, and every device that runs AI, checks the whole chain for itself, with the same rules implemented twice, in Rust and in TypeScript. Droppen Hub stores the chain and passes it on, but cannot add to it."))}
@@ -628,9 +804,9 @@ function KeysSection() {
     [t("Recovery key RK"), t("128 random bits, shown as 12 words"), t("You only: no device stores it"), t("Derives the recovery signing key, whose X25519 twin opens the user keys sealed to it"), t("When you make new words")],
   ];
   return (
-    <Section id="keys">
+    <Section id="keys" className={sectionScroll}>
       <MentionScope>
-        <SectionHead
+        <Head
           label={`03 · ${t("Keys")}`}
           title={withConcepts(t("Every key, where it lives, and what it opens."))}
           lead={withConcepts(t("No server holds a key that can decrypt anything, and nothing is held in escrow: if you lose every browser and phone and have no recovery words, the copies on Droppen Hub can never be read again, not even by us; only what is still on your devices that run AI remains."))}
@@ -679,9 +855,9 @@ function KeysSection() {
 function ChannelsSection() {
   const { t } = useTranslation();
   return (
-    <Section id="channels">
+    <Section id="channels" className={sectionScroll}>
       <MentionScope>
-        <SectionHead
+        <Head
           label={`04 · ${t("Channels and relays")}`}
           title={withConcepts(t("Every channel is end to end, whichever path it takes."))}
           lead={withConcepts(t("Your device and a device that runs AI talk over one Noise channel. A Droppen relay only forwards its frames, and Droppen Hub carries no channel (Hub); when the two ends can reach each other, the same channel can also take a direct path."))}
@@ -712,9 +888,9 @@ function ChannelsSection() {
 function OfflineSection() {
   const { t } = useTranslation();
   return (
-    <Section id="offline">
+    <Section id="offline" className={sectionScroll}>
       <MentionScope>
-        <SectionHead
+        <Head
           label={`05 · ${t("Offline copies")}`}
           title={withConcepts(t("History that you, and only you, can read while the device that runs AI is offline."))}
           lead={withConcepts(t("A device that runs AI writes its session list, its status and its sessions as encrypted, append-only streams that Droppen Hub stores and cannot read. Your devices read them back and accept a record only once a head signed by the device that runs AI covers it: each record is authenticated under the stream key and linked to the one before, and the signed head gives the newest link value."))}
@@ -742,9 +918,9 @@ function OfflineSection() {
 function RenewalSection() {
   const { t } = useTranslation();
   return (
-    <Section id="renewal">
+    <Section id="renewal" className={sectionScroll}>
       <MentionScope>
-        <SectionHead
+        <Head
           label={`06 · ${t("Identity renewal")}`}
           title={withConcepts(t("Renewing the identity key of a device that runs AI."))}
           lead={
@@ -865,9 +1041,9 @@ function ThreatsSection() {
     ],
   ];
   return (
-    <Section id="threats">
+    <Section id="threats" className={sectionScroll}>
       <MentionScope>
-        <SectionHead
+        <Head
           label={`07 · ${t("Threat model")}`}
           title={withConcepts(t("Who could attack, and what each of them can do."))}
           lead={withConcepts(t("The design assumes Droppen Hub may be malicious, or compelled. Here is what each position can and cannot do, as the protocol stands today."))}
@@ -918,19 +1094,19 @@ function VerifySection() {
     [t("Recovery words"), t("BIP-39 encoding, 12 words")],
   ];
   return (
-    <Section id="verify">
+    <Section id="verify" className={sectionScroll}>
       <MentionScope>
-        <SectionHead
+        <Head
           label={`08 · ${t("Verify it yourself")}`}
           title={withConcepts(t("Don't take our word for it."))}
           lead={withConcepts(t("Statements about the protocol, the apps and the local program come from this repository's code and design notes; Droppen Hub is not open source, and lines that rest on its own behaviour or policy, or on test results on droppen.app, are marked (Hub). Here is where to look."))}
         />
         <Topic n="8.1" title={t("Algorithms")}>
-          <dl className="grid grid-cols-[minmax(0,auto)_minmax(0,1fr)] gap-x-6 gap-y-1.5">
+          <dl className="grid grid-cols-[minmax(0,auto)_minmax(0,1fr)] gap-x-6 gap-y-2">
             {choices.map(([name, value]) => (
               <div key={name} className="contents">
                 <dt className="text-base leading-6 font-semibold text-fg">{name}</dt>
-                <dd className="text-xs font-semibold leading-5 text-muted [overflow-wrap:anywhere]">{value}</dd>
+                <dd className="text-sm leading-6 text-muted [overflow-wrap:anywhere]">{value}</dd>
               </div>
             ))}
           </dl>
@@ -987,28 +1163,34 @@ function useDocumentMeta() {
 /** droppen.app/security, signed in or not. */
 export default function SecurityPage({ signedIn = false }: { signedIn?: boolean }) {
   useDocumentMeta();
+  const scrollRef = useRef<HTMLDivElement>(null);
   // Arrived at a part of the page (`/security#renewal`): the page was not there to scroll to yet.
   useEffect(() => {
     const id = location.hash.slice(1);
     if (id) requestAnimationFrame(() => document.getElementById(id)?.scrollIntoView());
   }, []);
   return (
-    <div data-testid="security" className="h-full w-full overflow-y-auto bg-bg text-base [scrollbar-gutter:stable]">
+    <div ref={scrollRef} data-testid="security" className="h-full w-full overflow-y-auto bg-bg text-base [scrollbar-gutter:stable]">
       <PublicHeader signedIn={signedIn} />
       <div className="md:px-8">
         <main className="mx-auto max-w-[1360px] md:border-x md:border-border">
+          <TocBar scroller={scrollRef} />
           <FormulaProvider>
             <Hero />
             <Definitions />
-            <Contents />
-            <OverviewSection />
-            <ChainSection />
-            <KeysSection />
-            <ChannelsSection />
-            <OfflineSection />
-            <RenewalSection />
-            <ThreatsSection />
-            <VerifySection />
+            <div className="xl:grid xl:grid-cols-[13.5rem_minmax(0,1fr)]">
+              <TocSidebar scroller={scrollRef} />
+              <div className="min-w-0">
+                <OverviewSection />
+                <ChainSection />
+                <KeysSection />
+                <ChannelsSection />
+                <OfflineSection />
+                <RenewalSection />
+                <ThreatsSection />
+                <VerifySection />
+              </div>
+            </div>
           </FormulaProvider>
           <FooterLine />
         </main>

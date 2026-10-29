@@ -32,6 +32,11 @@ Options:
 
 Outputs in `--out`: `measurements.json`, `report.txt`, and
 `settings-<theme>-<viewport>.png`, `select-open-…`, `select-empty-…`, `devices-<theme>-<viewport>.png`, `devices-hover-…`.
+A live page measured with `--url` is captured from the top in viewport-sized
+steps: `live-<viewport>.png`, `live-<viewport>-2.png`, … . The app scrolls a
+container inside a fixed body, so a full-page screenshot is mostly blank below
+the fold (the `/security` page came out 1440×20602) and too tall for an image
+viewer or a model.
 For a UI change, keep the before and after directories and compare the same
 state, theme, viewport and scroll position.
 

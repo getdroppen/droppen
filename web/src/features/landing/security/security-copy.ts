@@ -1992,6 +1992,7 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "你查看和操控的地方：瀏覽器或手機上的 my.droppen.app。你現在配對的每一台都是完整裝置：它持有使用者金鑰，並簽署帳戶的鏈項目。",
     "見たり操作したりする場所：ブラウザやスマホで開く my.droppen.app。いまペアリングするものはすべてフルデバイスで、ユーザー鍵を持ち、アカウントのチェーンのエントリに署名します。",
   ],
+  ["close", "关闭", "關閉", "閉じる"],
 ];
 
 const column = (i: 1 | 2 | 3): Bundle => Object.fromEntries(LINES.map((line) => [line[0], line[i]]));

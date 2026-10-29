@@ -122,6 +122,8 @@ test("the sections come in order, each with an anchor the table of contents link
   }
   const contents = html.slice(html.indexOf('data-testid="security-contents"'), html.indexOf('id="overview"'));
   assert.deepEqual([...contents.matchAll(/href="#([a-z-]+)"/g)].map((m) => m[1]), [...SECURITY_SECTIONS]);
+  // Below xl the same contents open as a sheet from the sticky bar.
+  assert.match(html, /data-testid="security-toc-trigger"/);
   const renewal = html.slice(html.indexOf('id="renewal"'), html.indexOf('id="threats"'));
   for (const id of RENEWAL_PARTS) assert.match(renewal, new RegExp(`id="${id}"`), id);
   assert.equal(RENEWAL_PARTS.length, 7);

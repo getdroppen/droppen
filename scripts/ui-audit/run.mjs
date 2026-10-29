@@ -45,13 +45,21 @@ if (has("help")) {
 
 const out = path.resolve(flag("out", `/tmp/droppen-ui-audit-${new Date().toISOString().slice(0, 10).replaceAll("-", "")}`));
 const themes = flag("theme", "both") === "both" ? ["light", "dark"] : [flag("theme", "light")];
+const VIEWPORTS = {
+  desktop: { name: "desktop", width: 1440, height: 1000 },
+  mobile: { name: "mobile", width: 390, height: 844 },
+};
+const viewportArg = flag("viewport", "both");
 const views =
-  flag("viewport", "both") === "both"
-    ? [
-        { name: "desktop", width: 1440, height: 1000 },
-        { name: "mobile", width: 390, height: 844 },
-      ]
-    : [{ name: flag("viewport", "desktop"), width: 390, height: 844 }];
+  viewportArg === "both"
+    ? [VIEWPORTS.desktop, VIEWPORTS.mobile]
+    : Object.hasOwn(VIEWPORTS, viewportArg)
+      ? [VIEWPORTS[viewportArg]]
+      : [];
+if (!views.length) {
+  console.error(`ui-audit: unknown --viewport "${viewportArg}" (desktop, mobile, or both)`);
+  process.exit(2);
+}
 const channel = flag("channel", process.env.UI_AUDIT_CHANNEL ?? "");
 const liveUrl = flag("url", "");
 const check = has("check");
@@ -322,6 +330,73 @@ async function auditSettings(theme, view) {
   await page.close();
 }
 
+/**
+ * The element the page scrolls, and its size. The app keeps `body` fixed and
+ * scrolls a container inside it; a plain page scrolls the window instead.
+ * `fullPage` cannot see that container — it leaves everything below the first
+ * viewport blank — so the live screenshots walk it in viewport-sized steps.
+ */
+async function liveScroller(page) {
+  const handle = await page.evaluateHandle(() => {
+    const scrollers = [...document.querySelectorAll("*")].filter((e) => {
+      const style = getComputedStyle(e);
+      return /(auto|scroll)/.test(style.overflowY) && e.scrollHeight > e.clientHeight + 1;
+    });
+    // The outermost scroller is the page's; a nested one is a panel inside it.
+    return scrollers.find((e) => !scrollers.some((other) => other !== e && other.contains(e))) ?? null;
+  });
+  const element = handle.asElement();
+  const size = element
+    ? await element.evaluate((e) => ({ height: e.scrollHeight, viewport: e.clientHeight }))
+    : await page.evaluate(() => ({ height: document.body.scrollHeight, viewport: window.innerHeight }));
+  // Sticky bars (the header, and the security page's contents bar) cover the
+  // top of every scrolled viewport. Step by less than a viewport so what they
+  // hide was already visible at the previous slice's bottom.
+  const overlap = await page.evaluate(() => {
+    const sticky = [...document.querySelectorAll("*")].filter((e) => {
+      if (e === document.body || e === document.documentElement) return false;
+      const style = getComputedStyle(e);
+      const rect = e.getBoundingClientRect();
+      const top = parseFloat(style.top);
+      // The header sticks at 0, a second bar at 56: both are at their own top.
+      const stuck = rect.top <= 1 || (Number.isFinite(top) && Math.abs(rect.top - top) <= 1);
+      return (
+        (style.position === "sticky" || style.position === "fixed") &&
+        stuck &&
+        rect.height > 0 &&
+        // Not the fixed body or a full-height rail: a top bar is short and wide.
+        rect.height < window.innerHeight &&
+        rect.width >= window.innerWidth / 2
+      );
+    });
+    // Stacked bars (the header and the security page's contents bar) add up;
+    // overlapping ones count once. Summing heights would double a nested bar.
+    const spans = sticky
+      .map((e) => {
+        const rect = e.getBoundingClientRect();
+        return [Math.max(0, rect.top), Math.min(window.innerHeight, rect.bottom)];
+      })
+      .filter(([top, bottom]) => bottom > top)
+      .sort((a, b) => a[0] - b[0]);
+    let total = 0;
+    let end = 0;
+    for (const [top, bottom] of spans) {
+      const from = Math.max(top, end);
+      if (bottom > from) total += bottom - from;
+      end = Math.max(end, bottom);
+    }
+    return total;
+  });
+  return { handle, element, ...size, overlap };
+}
+
+/** Scroll the page's own scroller (or the window) to `top` and let it paint. */
+async function scrollLive(page, scroller, top) {
+  if (scroller) await scroller.evaluate((e, top) => (e.scrollTop = top), top);
+  else await page.evaluate((top) => window.scrollTo(0, top), top);
+  await page.waitForTimeout(100);
+}
+
 async function auditLive(view) {
   const page = await browser.newPage({ viewport: { width: view.width, height: view.height }, deviceScaleFactor: 1 });
   await page.goto(liveUrl, { waitUntil: "networkidle" });
@@ -345,7 +420,25 @@ async function auditLive(view) {
     }));
   });
   results.push({ mode: "live", url: liveUrl, viewport: view.name, controls: snapshot });
-  await page.screenshot({ path: `${out}/live-${view.name}.png`, fullPage: true });
+  // One image per viewport, from the top: a `fullPage` image of this app is
+  // 1440×20602 and mostly blank, because the scroll container inside the fixed
+  // body never paints below the fold, and it is too tall for a model to accept.
+  const { handle, element, height, viewport, overlap } = await liveScroller(page);
+  try {
+    await scrollLive(page, element, 0);
+    await page.screenshot({ path: `${out}/live-${view.name}.png` });
+    const step = Math.max(1, viewport - Math.ceil(overlap));
+    if (height > viewport && viewport > 0) {
+      let part = 2;
+      for (let top = step; top < height; top += step) {
+        await scrollLive(page, element, Math.min(top, height - viewport));
+        await page.screenshot({ path: `${out}/live-${view.name}-${part}.png` });
+        part += 1;
+      }
+    }
+  } finally {
+    await handle.dispose();
+  }
   await page.close();
 }
 
