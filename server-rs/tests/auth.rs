@@ -1255,3 +1255,47 @@ async fn a_token_is_a_claim_on_one_instance() {
     second.stop().await;
     first.stop().await;
 }
+
+/// The notify capability (`rh-notify`'s token) opens `POST /api/notify` and
+/// nothing else, and only a token this instance minted for a session of a CLI
+/// it knows opens it.
+///
+/// A token that gets past the guard reaches the handler, which refuses it with
+/// `400` because no channel is configured; one the guard refuses is a `401`.
+#[tokio::test]
+async fn the_notify_capability_opens_its_one_route_and_no_other() {
+    let server = common::TestServer::start_guarded().await;
+    let secret = remote_hand_server::notify::store::secret(&server.paths).await.expect("mint the token secret");
+    let mint = |instance: &str, key: &str| remote_hand_server::notify::token::mint(&secret, instance, key);
+    let nudge = json!({ "title": "done" });
+
+    let (status, body) = json_as(&server, "POST", "/api/notify", &mint(DEFAULT_INSTANCE, "claude/abc"), &nudge).await;
+    assert_eq!(status, 400, "a claude session's token reaches the handler: {body}");
+    let (status, body) = json_as(&server, "POST", "/api/notify", &mint(DEFAULT_INSTANCE, "codex/019a"), &nudge).await;
+    assert_eq!(status, 400, "so does a codex session's: {body}");
+
+    let encoded = serde_json::to_vec(&nudge).expect("encode");
+    let (status, _) = server.request("POST", "/api/notify", &[("Content-Type", "application/json")], &encoded).await;
+    assert_eq!(status, 401, "no token");
+    for (token, what) in [
+        (mint("staging", "claude/abc"), "a token another instance minted"),
+        (mint(DEFAULT_INSTANCE, "acp/abc"), "a token for a session of no CLI the capability knows"),
+        (mint(DEFAULT_INSTANCE, "claude/"), "a token for no session"),
+        ("rhn1.abc.def".to_string(), "a token nobody minted"),
+    ] {
+        let (status, body) = json_as(&server, "POST", "/api/notify", &token, &nudge).await;
+        assert_eq!(status, 401, "{what}: {body}");
+    }
+
+    let token = mint(DEFAULT_INSTANCE, "claude/abc");
+    for (method, path) in [
+        ("POST", "/api/notify/test"),
+        ("GET", "/api/notify/config"),
+        ("PUT", "/api/notify/config"),
+        ("GET", "/api/settings"),
+    ] {
+        let (status, body) = json_as(&server, method, path, &token, &json!({})).await;
+        assert_eq!(status, 401, "{method} {path} is not the capability's route: {body}");
+    }
+    server.stop().await;
+}
