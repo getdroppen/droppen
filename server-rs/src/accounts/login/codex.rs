@@ -4,6 +4,8 @@
 use futures_util::future::BoxFuture;
 
 use super::Login;
+use crate::accounts::local_login::LocalLoginState;
+use crate::accounts::quota::readings::SharedReading;
 use crate::accounts::quota::{is_rate_limited, mentions_status};
 use crate::accounts::store::{AccountError, AccountKind, AccountLaunch, AccountProvider, CODEX_BASE_URL_VAR, CODEX_KEY_CANDIDATES};
 use droppen_base::env_block::EnvVar;
@@ -217,6 +219,17 @@ impl Login for CodexLogin {
     /// One `codex exec ping` through the account's own model provider.
     fn verify<'a>(&'a self, paths: &'a Paths, launch: &'a AccountLaunch, secrets: &'a [&'a str]) -> BoxFuture<'a, Verdict> {
         Box::pin(self.check(paths, launch, secrets))
+    }
+
+    /// Codex has no reading of its login (its readings are another protocol's
+    /// and say nothing about who is signed in), so a refused credential is
+    /// the only evidence: signed out on one, unknown otherwise.
+    fn local_state(&self, refused_at: Option<i64>, _local_reading: &SharedReading) -> LocalLoginState {
+        if refused_at.is_some() {
+            LocalLoginState::SignedOut
+        } else {
+            LocalLoginState::Unknown
+        }
     }
 }
 

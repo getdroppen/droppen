@@ -231,7 +231,6 @@
             "accounts::quota::claude",
             "accounts::setup_token",
             "accounts::usage_login",
-            "accounts::local_login",
             "accounts::login::claude",
             "record",
             "models::claude"
@@ -360,7 +359,6 @@
     {
       "why": "accounts (its quota too) and setup call the provider logins, probes and roots themselves. They go through the Login port accounts owns, which Claude Code and Codex implement.",
       "edges": [
-        "accounts -> accounts::local_login",
         "accounts -> accounts::quota::codex",
         "accounts -> claude_roots",
         "setup -> accounts::quota::codex",

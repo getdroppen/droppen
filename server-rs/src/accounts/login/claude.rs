@@ -4,7 +4,9 @@
 use futures_util::future::BoxFuture;
 
 use super::Login;
-use crate::accounts::quota::{is_rate_limited, mentions_status};
+use crate::accounts::local_login::LocalLoginState;
+use crate::accounts::quota::readings::SharedReading;
+use crate::accounts::quota::{is_rate_limited, mentions_status, QuotaProbeError};
 use crate::accounts::store::{AccountError, AccountKind, AccountLaunch, AccountProvider};
 use droppen_base::env_block::EnvVar;
 use crate::accounts::verify::{reason, Scratch, Verdict, PROBE_PROMPT, PROBE_TIMEOUT};
@@ -186,6 +188,28 @@ impl Login for ClaudeCodeLogin {
     fn verify<'a>(&'a self, paths: &'a Paths, launch: &'a AccountLaunch, secrets: &'a [&'a str]) -> BoxFuture<'a, Verdict> {
         Box::pin(async move { launch.with_base_url_hint(self.check(paths, launch, secrets).await) })
     }
+
+    /// The local login's state from its evidence, newest first: a refused
+    /// credential (`refused_at`, when an active `auth` rest on it was seen), a
+    /// `/usage` probe that found nobody signed in, and every reading a session
+    /// or a probe made (`local_reading`, Claude Code's own reading of that
+    /// login). Ties go to the refusal, the direction that costs a click rather
+    /// than a failed session.
+    fn local_state(&self, refused_at: Option<i64>, local_reading: &SharedReading) -> LocalLoginState {
+        let refused_by_probe = match (local_reading.probe_error, local_reading.probe_error_at_ms) {
+            // `probe_failed` only says the reading did not happen.
+            (Some(QuotaProbeError::NotLoggedIn), Some(at)) => Some(at),
+            _ => None,
+        };
+        let refused = refused_at.max(refused_by_probe);
+        let worked = local_reading.newest().map(|window| window.read_at_ms);
+        match (refused, worked) {
+            (Some(refused), Some(worked)) if worked > refused => LocalLoginState::SignedIn,
+            (Some(_), _) => LocalLoginState::SignedOut,
+            (None, Some(_)) => LocalLoginState::SignedIn,
+            (None, None) => LocalLoginState::Unknown,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -194,6 +218,7 @@ mod tests {
     use droppen_base::env_block::parse_env_block;
     use crate::accounts::verify::StubCli;
     use droppen_base::process_env::set_child_path;
+    use crate::accounts::quota::{QuotaReadingSource, QuotaWindow};
 
     /// A CLI that fell over is not a CLI that turned the credential down.
     ///
@@ -383,5 +408,77 @@ mod tests {
         assert!(!oauth.base_url_has_v1());
         let verdict = Verdict::Invalid("the token was refused".to_string());
         assert_eq!(oauth.with_base_url_hint(verdict.clone()), verdict);
+    }
+
+    const MINUTE: i64 = 60_000;
+
+    fn window(label: &str) -> QuotaWindow {
+        QuotaWindow {
+            label: label.to_string(),
+            used_percent: 10.0,
+            remaining_percent: 90.0,
+            resets_at: droppen_http::openapi_ext::Nullable(None),
+            window_minutes: 300,
+            updated_at: droppen_http::openapi_ext::Optional(None),
+        }
+    }
+
+    fn read_at(at: i64) -> SharedReading {
+        let mut reading = SharedReading::default();
+        reading.merge(vec![window("5h")], at, QuotaReadingSource::Session);
+        reading
+    }
+
+    fn not_logged_in_at(mut reading: SharedReading, at: i64) -> SharedReading {
+        reading.probe_error = Some(QuotaProbeError::NotLoggedIn);
+        reading.probe_error_at_ms = Some(at);
+        reading
+    }
+
+    #[test]
+    fn nothing_known_is_unknown_and_a_reading_is_signed_in() {
+        assert_eq!(ClaudeCodeLogin.local_state(None, &SharedReading::default()), LocalLoginState::Unknown);
+        assert_eq!(ClaudeCodeLogin.local_state(None, &read_at(5 * MINUTE)), LocalLoginState::SignedIn);
+    }
+
+    /// A login whose OAuth token expired weeks ago: the probe found nobody
+    /// signed in, a turn on it was refused, and nothing has worked since.
+    #[test]
+    fn a_refused_credential_or_an_empty_probe_is_signed_out() {
+        let old_reading = read_at(MINUTE);
+        assert_eq!(ClaudeCodeLogin.local_state(Some(10 * MINUTE), &old_reading), LocalLoginState::SignedOut);
+        assert_eq!(
+            ClaudeCodeLogin.local_state(None, &not_logged_in_at(old_reading.clone(), 10 * MINUTE)),
+            LocalLoginState::SignedOut,
+            "the probe's verdict alone is enough"
+        );
+        assert_eq!(ClaudeCodeLogin.local_state(Some(10 * MINUTE), &SharedReading::default()), LocalLoginState::SignedOut);
+        assert_eq!(
+            ClaudeCodeLogin.local_state(Some(10 * MINUTE), &read_at(10 * MINUTE)),
+            LocalLoginState::SignedOut,
+            "a tie goes to the refusal"
+        );
+    }
+
+    /// Signing in again and running one turn is the whole fix: the reading that
+    /// turn makes is newer than the rest, and nobody has to clear anything.
+    #[test]
+    fn a_reading_newer_than_the_refusal_heals_it() {
+        assert_eq!(ClaudeCodeLogin.local_state(Some(MINUTE), &read_at(10 * MINUTE)), LocalLoginState::SignedIn);
+        assert_eq!(
+            ClaudeCodeLogin.local_state(None, &not_logged_in_at(read_at(10 * MINUTE), MINUTE)),
+            LocalLoginState::SignedIn
+        );
+    }
+
+    /// A probe that failed to run says nothing about the login.
+    #[test]
+    fn a_probe_that_failed_to_run_is_not_a_verdict() {
+        let reading = SharedReading {
+            probe_error: Some(QuotaProbeError::ProbeFailed),
+            probe_error_at_ms: Some(MINUTE),
+            ..Default::default()
+        };
+        assert_eq!(ClaudeCodeLogin.local_state(None, &reading), LocalLoginState::Unknown);
     }
 }
