@@ -54,7 +54,9 @@ use gotcha::axum::extract::FromRef;
 use gotcha::{api, GotchaRouter, Json, Schematic, State};
 use rusqlite::{Connection, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
+#[cfg(test)]
+use serde_json::json;
 use unicode_segmentation::UnicodeSegmentation;
 
 use droppen_http::refresh::Refresh;
@@ -220,13 +222,257 @@ fn now() -> String {
 }
 
 /// The content of a pane showing nothing yet.
+#[cfg(test)]
 fn picker() -> Value {
-    json!({ "kind": "picker" })
+    PaneContent::picker().to_value()
 }
 
 /// A leaf holding nothing — the shape an unusable node degrades to.
 fn picker_leaf() -> Value {
-    json!({ "type": "leaf", "id": new_id(), "content": picker() })
+    Node::picker_leaf().to_value()
+}
+
+/// One node of a pane tree as the server stores and serves it (a [`Screen`]'s
+/// `layout`), every field rebuilt from a value just checked.
+#[derive(Debug, Serialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+enum Node {
+    /// Two panes side by side (`row`) or stacked (`column`), `ratio` the first
+    /// one's share.
+    Split {
+        id: String,
+        direction: Direction,
+        ratio: f64,
+        children: Box<[Node; 2]>,
+    },
+    /// One pane.
+    Leaf { id: String, content: PaneContent },
+}
+
+/// How a split lays out its two children.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum Direction {
+    Row,
+    Column,
+}
+
+/// What a leaf shows, tagged `kind`. `machine` is there only on the kinds that
+/// are on a device, and only when the client sent one ([`PaneContent::on`]).
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", rename_all_fields = "camelCase")]
+enum PaneContent {
+    Picker {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        machine: Option<String>,
+    },
+    Session {
+        source: String,
+        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        machine: Option<String>,
+    },
+    Chat {
+        chat_kind: String,
+        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        machine: Option<String>,
+    },
+    Terminal {
+        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        machine: Option<String>,
+    },
+    NewSession {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        machine: Option<String>,
+    },
+    Tasks,
+    /// `state` is the pane's own and opaque to the server: kept as sent, in the
+    /// order sent, when [`ScreenContent::plugin_content`] lets it through.
+    Plugin {
+        plugin: String,
+        pane: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        state: Option<serde_json::Map<String, Value>>,
+    },
+    Files {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        path: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        file: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        machine: Option<String>,
+    },
+    Browser { id: String },
+}
+
+impl Node {
+    /// A leaf holding nothing.
+    fn picker_leaf() -> Self {
+        Node::Leaf {
+            id: new_id(),
+            content: PaneContent::picker(),
+        }
+    }
+
+    /// See [`ScreenNode::sanitize_node`].
+    fn sanitize(raw: Option<&Value>, budget: &mut u32) -> Self {
+        let Some(Value::Object(raw)) = raw else { return Self::picker_leaf() };
+
+        let children = raw.get("children").and_then(Value::as_array).filter(|c| c.len() == 2);
+        if let Some(children) = children {
+            if raw.get("type").and_then(Value::as_str) == Some("split") && *budget >= 2 {
+                *budget -= 1;
+                let ratio = raw.get("ratio").and_then(Value::as_f64).unwrap_or(0.5).clamp(MIN_RATIO, 1.0 - MIN_RATIO);
+                let direction = if raw.get("direction").and_then(Value::as_str) == Some("column") {
+                    Direction::Column
+                } else {
+                    Direction::Row
+                };
+                return Node::Split {
+                    id: raw.get("id").sanitize_id(),
+                    direction,
+                    ratio,
+                    children: Box::new([Self::sanitize(children.first(), budget), Self::sanitize(children.get(1), budget)]),
+                };
+            }
+        }
+        Node::Leaf {
+            id: raw.get("id").sanitize_id(),
+            content: PaneContent::sanitize(raw.get("content")),
+        }
+    }
+
+    /// As a [`Screen`]'s `layout` holds it.
+    fn to_value(&self) -> Value {
+        // Strings, clamped ratios and the plugin state, which always encode.
+        serde_json::to_value(self).unwrap_or_default()
+    }
+}
+
+impl PaneContent {
+    /// The content of a pane showing nothing yet.
+    fn picker() -> Self {
+        PaneContent::Picker { machine: None }
+    }
+
+    /// The `kind` it is written under.
+    fn kind(&self) -> &'static str {
+        match self {
+            PaneContent::Picker { .. } => "picker",
+            PaneContent::Session { .. } => "session",
+            PaneContent::Chat { .. } => "chat",
+            PaneContent::Terminal { .. } => "terminal",
+            PaneContent::NewSession { .. } => "new-session",
+            PaneContent::Tasks => "tasks",
+            PaneContent::Plugin { .. } => "plugin",
+            PaneContent::Files { .. } => "files",
+            PaneContent::Browser { .. } => "browser",
+        }
+    }
+
+    /// On `machine`, for the kinds that are on a device — a session, a chat, a
+    /// terminal, a folder, and a picker choosing from one; the others as they are.
+    fn on(mut self, machine: &str) -> Self {
+        match &mut self {
+            PaneContent::Picker { machine: on }
+            | PaneContent::Session { machine: on, .. }
+            | PaneContent::Chat { machine: on, .. }
+            | PaneContent::Terminal { machine: on, .. }
+            | PaneContent::NewSession { machine: on }
+            | PaneContent::Files { machine: on, .. } => *on = Some(machine.to_owned()),
+            PaneContent::Tasks | PaneContent::Plugin { .. } | PaneContent::Browser { .. } => {}
+        }
+        self
+    }
+
+    /// What a leaf shows: [`PaneContent::sanitize_kind`], with the device it is
+    /// on ([`ScreenContent::content_machine`]) kept on the kinds that are on
+    /// one — a session, a chat, a terminal, a folder, and a picker choosing
+    /// from one.
+    fn sanitize(raw: Option<&Value>) -> Self {
+        let content = Self::sanitize_kind(raw);
+        if let Some(Value::Object(raw)) = raw {
+            // Only on the kind that was sent: content that degraded (to a picker) is nobody's.
+            if raw.get("kind").and_then(Value::as_str) == Some(content.kind()) {
+                if let Some(machine) = raw.content_machine() {
+                    return content.on(machine);
+                }
+            }
+        }
+        content
+    }
+
+    /// What a leaf shows, without the device it is on.
+    ///
+    /// Anything the server does not recognise — a newer client's pane kind, a
+    /// corrupt file, a leaf whose id went missing — degrades to an empty slot
+    /// the user can refill, which is always safe because the referenced
+    /// resource is never touched either way.
+    fn sanitize_kind(raw: Option<&Value>) -> Self {
+        let Some(Value::Object(raw)) = raw else { return Self::picker() };
+        let id = raw.content_id().map(str::to_owned);
+        match raw.get("kind").and_then(Value::as_str) {
+            Some("session") => match (id, raw.get("source").and_then(Value::as_str)) {
+                (Some(id), Some(source @ ("claude" | "codex"))) => PaneContent::Session {
+                    source: source.to_owned(),
+                    id,
+                    machine: None,
+                },
+                _ => Self::picker(),
+            },
+            Some("chat") => match (id, raw.get("chatKind").and_then(Value::as_str)) {
+                (Some(id), Some(kind @ ("claude" | "codex" | "api"))) => PaneContent::Chat {
+                    chat_kind: kind.to_owned(),
+                    id,
+                    machine: None,
+                },
+                _ => Self::picker(),
+            },
+            Some("terminal") => id.map_or_else(Self::picker, |id| PaneContent::Terminal { id, machine: None }),
+            // The empty session view a session is started from: nothing of its own
+            // to check, and it names no resource — it becomes a `session` pane
+            // once its first message has started one.
+            Some("new-session") => PaneContent::NewSession { machine: None },
+            // The built-in task checklist. Kept for ever: a layout saved by an
+            // older build still holds it, and the web reads it as the `tasks`
+            // plugin's `checklist` pane.
+            Some("tasks") => PaneContent::Tasks,
+            // A plugin's pane. Kept whether or not that plugin is on — or even
+            // bundled — for the reason `browser` below is: the server does not own
+            // these ids, and degrading one would rewrite the user's layout on the
+            // next save, so turning a plugin back on would not bring its pane back.
+            Some("plugin") => raw.plugin_content().unwrap_or_else(Self::picker),
+            Some("files") => {
+                // Locations only; file API containment and authorization still
+                // apply when the pane actually requests a directory or file.
+                let location = |key: &str| {
+                    raw.get(key)
+                        .and_then(Value::as_str)
+                        .filter(|s| !s.is_empty() && s.len() <= 4096 && !s.contains('\0'))
+                        .map(str::to_owned)
+                };
+                PaneContent::Files {
+                    path: location("path"),
+                    file: location("file"),
+                    machine: None,
+                }
+            }
+            // No route serves a browser pane, but a row written by an older build
+            // still holds one and the web still renders it as a picker. Degrading it
+            // here would silently rewrite the user's layout on the next save; the
+            // server does not own these ids and must not.
+            Some("browser") => id.map_or_else(Self::picker, |id| PaneContent::Browser { id }),
+            _ => Self::picker(),
+        }
+    }
+
+    /// As a leaf's `content` holds it.
+    fn to_value(&self) -> Value {
+        // Checked strings and the plugin state, which always encode.
+        serde_json::to_value(self).unwrap_or_default()
+    }
 }
 
 /// Reading a stored screen's JSON.
@@ -295,20 +541,6 @@ pub trait ScreenNode {
     /// budget is spent the node collapses to a leaf and the remaining subtree
     /// is dropped.
     fn sanitize_node(&self, budget: &mut u32) -> Value;
-
-    /// What a leaf shows: [`ScreenNode::sanitize_kind`], with the device it is
-    /// on ([`ScreenContent::content_machine`]) kept on the kinds that are on
-    /// one — a session, a chat, a terminal, a folder, and a picker choosing
-    /// from one.
-    fn sanitize_content(&self) -> Value;
-
-    /// What a leaf shows, without the device it is on.
-    ///
-    /// Anything the server does not recognise — a newer client's pane kind, a
-    /// corrupt file, a leaf whose id went missing — degrades to an empty slot
-    /// the user can refill, which is always safe because the referenced
-    /// resource is never touched either way.
-    fn sanitize_kind(&self) -> Value;
 }
 
 impl ScreenNode for Option<&Value> {
@@ -325,92 +557,7 @@ impl ScreenNode for Option<&Value> {
     }
 
     fn sanitize_node(&self, budget: &mut u32) -> Value {
-        let Some(Value::Object(raw)) = *self else { return picker_leaf() };
-
-        let children = raw.get("children").and_then(Value::as_array).filter(|c| c.len() == 2);
-        if let Some(children) = children {
-            if raw.get("type").and_then(Value::as_str) == Some("split") && *budget >= 2 {
-                *budget -= 1;
-                let ratio = raw.get("ratio").and_then(Value::as_f64).unwrap_or(0.5).clamp(MIN_RATIO, 1.0 - MIN_RATIO);
-                let direction = if raw.get("direction").and_then(Value::as_str) == Some("column") {
-                    "column"
-                } else {
-                    "row"
-                };
-                return json!({
-                    "type": "split",
-                    "id": raw.get("id").sanitize_id(),
-                    "direction": direction,
-                    "ratio": ratio,
-                    "children": [children.first().sanitize_node(budget), children.get(1).sanitize_node(budget)],
-                });
-            }
-        }
-        json!({ "type": "leaf", "id": raw.get("id").sanitize_id(), "content": raw.get("content").sanitize_content() })
-    }
-
-    fn sanitize_content(&self) -> Value {
-        let mut content = self.sanitize_kind();
-        if let (Some(Value::Object(raw)), Some(kind)) = (*self, content.get("kind").and_then(Value::as_str)) {
-            // Only on the kind that was sent: content that degraded (to a picker) is nobody's.
-            let sent = raw.get("kind").and_then(Value::as_str);
-            if sent == Some(kind) && matches!(kind, "session" | "new-session" | "chat" | "terminal" | "files" | "picker") {
-                if let Some(machine) = raw.content_machine() {
-                    content["machine"] = json!(machine);
-                }
-            }
-        }
-        content
-    }
-
-    fn sanitize_kind(&self) -> Value {
-        let Some(Value::Object(raw)) = *self else { return picker() };
-        let id = raw.content_id();
-        match raw.get("kind").and_then(Value::as_str) {
-            Some("session") => match (id, raw.get("source").and_then(Value::as_str)) {
-                (Some(id), Some(source @ ("claude" | "codex"))) => json!({ "kind": "session", "source": source, "id": id }),
-                _ => picker(),
-            },
-            Some("chat") => match (id, raw.get("chatKind").and_then(Value::as_str)) {
-                (Some(id), Some(kind @ ("claude" | "codex" | "api"))) => json!({ "kind": "chat", "chatKind": kind, "id": id }),
-                _ => picker(),
-            },
-            Some("terminal") => id.map_or_else(picker, |id| json!({ "kind": "terminal", "id": id })),
-            // The empty session view a session is started from: nothing of its own
-            // to check, and it names no resource — it becomes a `session` pane
-            // once its first message has started one.
-            Some("new-session") => json!({ "kind": "new-session" }),
-            // The built-in task checklist. Kept for ever: a layout saved by an
-            // older build still holds it, and the web reads it as the `tasks`
-            // plugin's `checklist` pane.
-            Some("tasks") => json!({ "kind": "tasks" }),
-            // A plugin's pane. Kept whether or not that plugin is on — or even
-            // bundled — for the reason `browser` below is: the server does not own
-            // these ids, and degrading one would rewrite the user's layout on the
-            // next save, so turning a plugin back on would not bring its pane back.
-            Some("plugin") => raw.plugin_content().unwrap_or_else(picker),
-            Some("files") => {
-                // Locations only; file API containment and authorization still
-                // apply when the pane actually requests a directory or file.
-                let mut content = json!({ "kind": "files" });
-                for key in ["path", "file"] {
-                    if let Some(path) = raw
-                        .get(key)
-                        .and_then(Value::as_str)
-                        .filter(|s| !s.is_empty() && s.len() <= 4096 && !s.contains('\0'))
-                    {
-                        content[key] = json!(path);
-                    }
-                }
-                content
-            }
-            // No route serves a browser pane, but a row written by an older build
-            // still holds one and the web still renders it as a picker. Degrading it
-            // here would silently rewrite the user's layout on the next save; the
-            // server does not own these ids and must not.
-            Some("browser") => id.map_or_else(picker, |id| json!({ "kind": "browser", "id": id })),
-            _ => picker(),
-        }
+        Node::sanitize(*self, budget).to_value()
     }
 }
 
@@ -433,7 +580,7 @@ trait ScreenContent {
     /// pane's own, opaque to the server — only when it is a flat object of strings,
     /// numbers, booleans and nulls of at most [`PLUGIN_PANE_STATE_BYTES`] as JSON.
     /// A state that is not is dropped, and the pane kept.
-    fn plugin_content(&self) -> Option<Value>;
+    fn plugin_content(&self) -> Option<PaneContent>;
 }
 
 impl ScreenContent for serde_json::Map<String, Value> {
@@ -449,7 +596,7 @@ impl ScreenContent for serde_json::Map<String, Value> {
         })
     }
 
-    fn plugin_content(&self) -> Option<Value> {
+    fn plugin_content(&self) -> Option<PaneContent> {
         let plugin = self.get("plugin").and_then(Value::as_str).filter(|id| droppen_plugin_sdk::valid_id(id))?;
         let pane = self.get("pane").and_then(Value::as_str).filter(|pane| {
             let bytes = pane.as_bytes();
@@ -457,17 +604,21 @@ impl ScreenContent for serde_json::Map<String, Value> {
                 && bytes[0].is_ascii_lowercase()
                 && bytes.iter().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'-')
         })?;
-        let mut content = json!({ "kind": "plugin", "plugin": plugin, "pane": pane });
-        if let Some(Value::Object(state)) = self.get("state") {
-            let flat = state
-                .values()
-                .all(|value| matches!(value, Value::String(_) | Value::Number(_) | Value::Bool(_) | Value::Null));
-            let small = serde_json::to_string(state).is_ok_and(|text| text.len() <= PLUGIN_PANE_STATE_BYTES);
-            if flat && small {
-                content["state"] = Value::Object(state.clone());
+        let state = match self.get("state") {
+            Some(Value::Object(state)) => {
+                let flat = state
+                    .values()
+                    .all(|value| matches!(value, Value::String(_) | Value::Number(_) | Value::Bool(_) | Value::Null));
+                let small = serde_json::to_string(state).is_ok_and(|text| text.len() <= PLUGIN_PANE_STATE_BYTES);
+                (flat && small).then(|| state.clone())
             }
-        }
-        Some(content)
+            _ => None,
+        };
+        Some(PaneContent::Plugin {
+            plugin: plugin.to_owned(),
+            pane: pane.to_owned(),
+            state,
+        })
     }
 }
 
@@ -505,6 +656,190 @@ fn is_format(c: char) -> bool {
 /// The most a plugin pane's `state` may weigh, as JSON.
 const PLUGIN_PANE_STATE_BYTES: usize = 2048;
 
+/// What the sanitizers store, byte for byte: the `payload` column holds it and
+/// builds of other versions read it back.
+#[cfg(test)]
+mod stored_bytes {
+    use super::*;
+
+    fn bytes(layout: &Value) -> String {
+        serde_json::to_string(&(Some(layout)).sanitize_layout()).unwrap()
+    }
+
+    fn leaf(id: &str, content: Value) -> Value {
+        json!({ "type": "leaf", "id": id, "content": content, "extra": 1 })
+    }
+
+    fn split(id: &str, direction: &str, ratio: Value, a: Value, b: Value) -> Value {
+        json!({ "type": "split", "id": id, "direction": direction, "ratio": ratio, "children": [a, b], "extra": 1 })
+    }
+
+    /// Five splits (the most the budget allows), ratios clamped, a direction
+    /// that is not `column` read as `row`, and the kinds that keep their device.
+    #[test]
+    fn a_full_tree_with_the_kinds_on_a_device() {
+        let m = "d-7f3a";
+        let layout = split(
+            "s1",
+            "row",
+            json!(0.3),
+            split(
+                "s2",
+                "column",
+                json!(2),
+                leaf("l1", json!({ "kind": "session", "source": "claude", "id": "sess-1", "machine": m, "x": 1 })),
+                leaf("l2", json!({ "kind": "chat", "chatKind": "api", "id": "chat-1", "machine": m })),
+            ),
+            split(
+                "s3",
+                "diagonal",
+                Value::Null,
+                leaf("l3", json!({ "kind": "terminal", "id": "term-1", "machine": m })),
+                split(
+                    "s4",
+                    "column",
+                    json!(0.05),
+                    leaf("l4", json!({ "kind": "new-session", "machine": m })),
+                    split(
+                        "s5",
+                        "row",
+                        json!(0.5),
+                        leaf("l5", json!({ "kind": "files", "path": "/w/a b", "file": "/w/a b/c.png", "machine": m })),
+                        leaf("l6", json!({ "kind": "picker", "machine": m })),
+                    ),
+                ),
+            ),
+        );
+        assert_eq!(
+            bytes(&layout),
+            concat!(
+                r#"{"type":"split","id":"s1","direction":"row","ratio":0.3,"children":[{"type":"split","id":"s2","direction":"column","ratio":0.9,"children":[{"type":"leaf","id":"l1","content":{"kind":"session","source":"claude","id":"sess-1","machine":"d-7f3a"}},"#,
+                r#"{"type":"leaf","id":"l2","content":{"kind":"chat","chatKind":"api","id":"chat-1","machine":"d-7f3a"}}]},"#,
+                r#"{"type":"split","id":"s3","direction":"row","ratio":0.5,"children":[{"type":"leaf","id":"l3","content":{"kind":"terminal","id":"term-1","machine":"d-7f3a"}},"#,
+                r#"{"type":"split","id":"s4","direction":"column","ratio":0.1,"children":[{"type":"leaf","id":"l4","content":{"kind":"new-session","machine":"d-7f3a"}},"#,
+                r#"{"type":"split","id":"s5","direction":"row","ratio":0.5,"children":[{"type":"leaf","id":"l5","content":{"kind":"files","path":"/w/a b","file":"/w/a b/c.png","machine":"d-7f3a"}},"#,
+                r#"{"type":"leaf","id":"l6","content":{"kind":"picker","machine":"d-7f3a"}}]}]}]}]}"#,
+            )
+        );
+    }
+
+    /// The kinds that are on no device (their `machine` goes), a plugin
+    /// pane's state in the order it was sent, and content that degrades.
+    #[test]
+    fn a_tree_with_the_other_kinds_and_degraded_content() {
+        let m = "d-7f3a";
+        let layout = split(
+            "s1",
+            "column",
+            json!(0.25),
+            split(
+                "s2",
+                "row",
+                json!(0.5),
+                leaf("l1", json!({ "kind": "tasks", "machine": m })),
+                leaf("l2", json!({ "kind": "plugin", "plugin": "tasks", "pane": "checklist", "machine": m,
+                                  "state": { "zeta": 1, "alpha": "a", "on": true, "none": null } })),
+            ),
+            split(
+                "s3",
+                "row",
+                json!(0.5),
+                leaf("l3", json!({ "kind": "browser", "id": "b-1", "machine": m })),
+                split(
+                    "s4",
+                    "row",
+                    json!(0.5),
+                    leaf("l4", json!({ "kind": "gopher", "id": "x", "machine": m })),
+                    split(
+                        "s5",
+                        "row",
+                        json!(0.5),
+                        leaf("l5", json!({ "kind": "session", "source": "nope", "id": "s", "machine": m })),
+                        leaf("l6", json!("not an object")),
+                    ),
+                ),
+            ),
+        );
+        assert_eq!(
+            bytes(&layout),
+            concat!(
+                r#"{"type":"split","id":"s1","direction":"column","ratio":0.25,"children":[{"type":"split","id":"s2","direction":"row","ratio":0.5,"children":[{"type":"leaf","id":"l1","content":{"kind":"tasks"}},"#,
+                r#"{"type":"leaf","id":"l2","content":{"kind":"plugin","plugin":"tasks","pane":"checklist","state":{"zeta":1,"alpha":"a","on":true,"none":null}}}]},"#,
+                r#"{"type":"split","id":"s3","direction":"row","ratio":0.5,"children":[{"type":"leaf","id":"l3","content":{"kind":"browser","id":"b-1"}},"#,
+                r#"{"type":"split","id":"s4","direction":"row","ratio":0.5,"children":[{"type":"leaf","id":"l4","content":{"kind":"picker"}},"#,
+                r#"{"type":"split","id":"s5","direction":"row","ratio":0.5,"children":[{"type":"leaf","id":"l5","content":{"kind":"picker"}},"#,
+                r#"{"type":"leaf","id":"l6","content":{"kind":"picker"}}]}]}]}]}"#,
+            )
+        );
+    }
+
+    /// A split past the budget collapses into a leaf under its own id.
+    #[test]
+    fn a_split_past_the_budget_becomes_a_leaf() {
+        let t = |id: &str| leaf(id, json!({ "kind": "terminal", "id": id }));
+        let deep = split("s6", "row", json!(0.5), t("l6"), t("l7"));
+        let layout = split(
+            "s1",
+            "row",
+            json!(0.5),
+            t("l1"),
+            split("s2", "row", json!(0.5), t("l2"), split("s3", "row", json!(0.5), t("l3"), split("s4", "row", json!(0.5), t("l4"), split("s5", "row", json!(0.5), t("l5"), deep)))),
+        );
+        assert_eq!(
+            bytes(&layout),
+            concat!(
+                r#"{"type":"split","id":"s1","direction":"row","ratio":0.5,"children":[{"type":"leaf","id":"l1","content":{"kind":"terminal","id":"l1"}},"#,
+                r#"{"type":"split","id":"s2","direction":"row","ratio":0.5,"children":[{"type":"leaf","id":"l2","content":{"kind":"terminal","id":"l2"}},"#,
+                r#"{"type":"split","id":"s3","direction":"row","ratio":0.5,"children":[{"type":"leaf","id":"l3","content":{"kind":"terminal","id":"l3"}},"#,
+                r#"{"type":"split","id":"s4","direction":"row","ratio":0.5,"children":[{"type":"leaf","id":"l4","content":{"kind":"terminal","id":"l4"}},"#,
+                r#"{"type":"split","id":"s5","direction":"row","ratio":0.5,"children":[{"type":"leaf","id":"l5","content":{"kind":"terminal","id":"l5"}},"#,
+                r#"{"type":"leaf","id":"s6","content":{"kind":"picker"}}]}]}]}]}]}"#,
+            )
+        );
+    }
+
+    /// A stored row read back: what the next save writes into `payload`.
+    #[test]
+    fn a_screen_read_back_is_written_the_same() {
+        let row = json!({
+            "id": "screen-1", "title": "  Work  ", "emoji": "🧪", "createdAt": "2026-10-01T00:00:00.000Z",
+            "updatedAt": "2026-10-02T00:00:00.000Z", "revision": 9, "extra": true,
+            "layout": leaf("l1", json!({ "kind": "terminal", "id": "term-1", "machine": "d-1" })),
+        });
+        assert_eq!(
+            row.screen_in_row(0, 4).payload(),
+            r#"{"id":"screen-1","title":"Work","emoji":"🧪","layout":{"type":"leaf","id":"l1","content":{"kind":"terminal","id":"term-1","machine":"d-1"}},"createdAt":"2026-10-01T00:00:00.000Z","updatedAt":"2026-10-02T00:00:00.000Z","revision":4}"#
+        );
+    }
+
+    struct Frames(std::sync::Mutex<Vec<String>>);
+
+    impl droppen_http::refresh::RefreshSink for Frames {
+        fn request_refresh(&self, _: Option<(&dyn std::fmt::Display, &str)>) {}
+        fn publish(&self, frame: String) {
+            self.0.lock().unwrap().push(frame);
+        }
+    }
+
+    /// The feed frames that tell other devices to look again.
+    #[test]
+    fn the_screens_frames() {
+        let frames = Arc::new(Frames(std::sync::Mutex::new(Vec::new())));
+        let feed = Refresh::new(frames.clone());
+        feed.announce_changed("screen-1", 3, false);
+        feed.announce_changed("screen-1", 4, true);
+        feed.announce_list(7);
+        assert_eq!(
+            *frames.0.lock().unwrap(),
+            [
+                r#"{"type":"screens:changed","id":"screen-1","revision":3}"#,
+                r#"{"type":"screens:changed","id":"screen-1","revision":4,"deleted":true}"#,
+                r#"{"type":"screens:list","listRevision":7}"#,
+            ]
+        );
+    }
+}
+
 #[cfg(test)]
 mod plugin_pane_tests {
     use super::*;
@@ -515,12 +850,12 @@ mod plugin_pane_tests {
             "kind": "plugin", "plugin": "tasks", "pane": "checklist",
             "state": { "group": "inbox", "limit": 20, "done": false, "since": null },
         });
-        assert_eq!((Some(&content)).sanitize_content(), content);
+        assert_eq!(PaneContent::sanitize(Some(&content)).to_value(), content);
         let mut extra = content.clone();
         extra["machine"] = json!("elsewhere");
-        assert_eq!((Some(&extra)).sanitize_content(), content, "unknown fields go, the pane stays");
+        assert_eq!(PaneContent::sanitize(Some(&extra)).to_value(), content, "unknown fields go, the pane stays");
         let bare = json!({ "kind": "plugin", "plugin": "tasks", "pane": "c" });
-        assert_eq!((Some(&bare)).sanitize_content(), bare);
+        assert_eq!(PaneContent::sanitize(Some(&bare)).to_value(), bare);
         let layout = json!({ "type": "leaf", "id": "plugin-1", "content": content });
         assert_eq!((Some(&layout)).sanitize_node(&mut 6), layout);
     }
@@ -536,12 +871,12 @@ mod plugin_pane_tests {
         ] {
             let mut content = bare.clone();
             content["state"] = state;
-            assert_eq!((Some(&content)).sanitize_content(), bare);
+            assert_eq!(PaneContent::sanitize(Some(&content)).to_value(), bare);
         }
         let mut fits = bare.clone();
         fits["state"] = json!({ "s": "x".repeat(PLUGIN_PANE_STATE_BYTES - 8) });
         assert_eq!(serde_json::to_string(&fits["state"]).unwrap().len(), PLUGIN_PANE_STATE_BYTES);
-        assert_eq!((Some(&fits)).sanitize_content(), fits, "exactly the limit is within it");
+        assert_eq!(PaneContent::sanitize(Some(&fits)).to_value(), fits, "exactly the limit is within it");
     }
 
     #[test]
@@ -557,13 +892,13 @@ mod plugin_pane_tests {
             (json!("tasks"), json!(7)),
         ] {
             let content = json!({ "kind": "plugin", "plugin": plugin, "pane": pane });
-            assert_eq!((Some(&content)).sanitize_content(), picker(), "{content}");
+            assert_eq!(PaneContent::sanitize(Some(&content)).to_value(), picker(), "{content}");
         }
     }
 
     #[test]
     fn the_legacy_tasks_pane_is_kept_for_ever() {
-        assert_eq!((Some(&json!({ "kind": "tasks" }))).sanitize_content(), json!({ "kind": "tasks" }));
+        assert_eq!(PaneContent::sanitize(Some(&json!({ "kind": "tasks" }))).to_value(), json!({ "kind": "tasks" }));
     }
 }
 
@@ -574,10 +909,10 @@ mod file_pane_tests {
     #[test]
     fn file_locations_survive_layout_sanitization_without_unrelated_fields() {
         let content = json!({ "kind": "files", "path": "/home/me/my files", "file": "/home/me/my files/a.png" });
-        assert_eq!((Some(&content)).sanitize_content(), content);
+        assert_eq!(PaneContent::sanitize(Some(&content)).to_value(), content);
         let mut input = content.clone();
         input["extra"] = json!("discard");
-        assert_eq!((Some(&input)).sanitize_content(), content);
+        assert_eq!(PaneContent::sanitize(Some(&input)).to_value(), content);
         let layout = json!({ "type": "leaf", "id": "files-1", "content": content });
         assert_eq!((Some(&layout)).sanitize_node(&mut 6), layout);
     }
@@ -592,18 +927,18 @@ mod file_pane_tests {
             json!({ "kind": "picker", "machine": "d-7f3a" }),
             json!({ "kind": "new-session", "machine": "d-7f3a" }),
         ] {
-            assert_eq!((Some(&content)).sanitize_content(), content, "{content}");
+            assert_eq!(PaneContent::sanitize(Some(&content)).to_value(), content, "{content}");
             let layout = json!({ "type": "leaf", "id": "p", "content": content });
             assert_eq!((Some(&layout)).sanitize_layout(), layout);
         }
         // Absent — every layout from before, and a page with one device — stays absent.
         let plain = json!({ "kind": "session", "source": "claude", "id": "s1" });
-        assert_eq!((Some(&plain)).sanitize_content(), plain);
+        assert_eq!(PaneContent::sanitize(Some(&plain)).to_value(), plain);
         let starting = json!({ "kind": "new-session" });
-        assert_eq!((Some(&starting)).sanitize_content(), starting, "a session being started stays one");
+        assert_eq!(PaneContent::sanitize(Some(&starting)).to_value(), starting, "a session being started stays one");
         let mut extra = starting.clone();
         extra["id"] = json!("s1");
-        assert_eq!((Some(&extra)).sanitize_content(), starting, "and carries nothing else");
+        assert_eq!(PaneContent::sanitize(Some(&extra)).to_value(), starting, "and carries nothing else");
     }
 
     #[test]
@@ -624,17 +959,18 @@ mod file_pane_tests {
         ] {
             let mut content = plain.clone();
             content["machine"] = machine.clone();
-            assert_eq!((Some(&content)).sanitize_content(), plain, "{machine}");
+            assert_eq!(PaneContent::sanitize(Some(&content)).to_value(), plain, "{machine}");
         }
         // Kinds that are on no device of their own never carry one.
-        let tasks = (Some(&json!({ "kind": "tasks", "machine": "d-7f3a" }))).sanitize_content();
+        let tasks = PaneContent::sanitize(Some(&json!({ "kind": "tasks", "machine": "d-7f3a" }))).to_value();
         assert_eq!(tasks, json!({ "kind": "tasks" }));
-        let plugin = (Some(
+        let plugin = PaneContent::sanitize(Some(
             &json!({ "kind": "plugin", "plugin": "tasks", "pane": "checklist", "machine": "d-7f3a" }),
-        )).sanitize_content();
+        ))
+        .to_value();
         assert_eq!(plugin, json!({ "kind": "plugin", "plugin": "tasks", "pane": "checklist" }));
         // A session that degrades to a picker does not take its device along.
-        let broken = (Some(&json!({ "kind": "session", "source": "nope", "id": "s1", "machine": "d-7f3a" }))).sanitize_content();
+        let broken = PaneContent::sanitize(Some(&json!({ "kind": "session", "source": "nope", "id": "s1", "machine": "d-7f3a" }))).to_value();
         assert_eq!(broken, picker());
     }
 
@@ -642,12 +978,12 @@ mod file_pane_tests {
     fn malformed_optional_locations_do_not_break_the_file_browser() {
         for path in [Value::Null, json!(123), json!(""), json!("bad\0path"), json!("a".repeat(4097))] {
             assert_eq!(
-                (Some(&json!({ "kind": "files", "path": path, "file": [] }))).sanitize_content(),
+                PaneContent::sanitize(Some(&json!({ "kind": "files", "path": path, "file": [] }))).to_value(),
                 json!({ "kind": "files" })
             );
         }
         assert_eq!(
-            (Some(&json!({ "kind": "files", "path": "~" }))).sanitize_content(),
+            PaneContent::sanitize(Some(&json!({ "kind": "files", "path": "~" }))).to_value(),
             json!({ "kind": "files", "path": "~" })
         );
     }
@@ -948,8 +1284,9 @@ enum Refused {
 
 impl From<Refused> for ApiError {
     fn from(refused: Refused) -> Self {
-        let conflict = |body: Result<Value, serde_json::Error>| {
-            ApiError::with_body(StatusCode::CONFLICT, body.unwrap_or_else(|_| json!({ "error": "conflict" })))
+        let conflict = |body: Result<Value, serde_json::Error>| match body {
+            Ok(body) => ApiError::with_body(StatusCode::CONFLICT, body),
+            Err(_) => ApiError::conflict("conflict"),
         };
         match refused {
             Refused::Missing => ApiError::not_found("screen not found"),
@@ -972,6 +1309,32 @@ fn write_failed(error: rusqlite::Error) -> ApiError {
     ApiError::internal(format!("failed to write screens: {error}"))
 }
 
+/// The screens' frames on the global feed, tagged `type`.
+#[derive(Serialize)]
+#[serde(tag = "type")]
+enum ScreensFrame<'a> {
+    /// One screen changed, or went (`deleted`).
+    #[serde(rename = "screens:changed")]
+    Changed {
+        id: &'a str,
+        revision: u64,
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        deleted: bool,
+    },
+    /// The list's membership or order changed.
+    #[serde(rename = "screens:list", rename_all = "camelCase")]
+    List { list_revision: u64 },
+}
+
+impl ScreensFrame<'_> {
+    fn publish(&self, feed: &Refresh) {
+        // Strings and numbers, which always encode.
+        if let Ok(frame) = serde_json::to_string(self) {
+            feed.publish(frame);
+        }
+    }
+}
+
 /// The screens' frames on the global feed.
 trait AnnounceScreensExt {
     fn announce_changed(&self, id: &str, revision: u64, deleted: bool);
@@ -981,16 +1344,12 @@ trait AnnounceScreensExt {
 impl AnnounceScreensExt for Refresh {
     /// Tell every open client that one screen changed, or went.
     fn announce_changed(&self, id: &str, revision: u64, deleted: bool) {
-        let mut frame = json!({ "type": "screens:changed", "id": id, "revision": revision });
-        if deleted {
-            frame["deleted"] = json!(true);
-        }
-        self.publish(frame.to_string());
+        ScreensFrame::Changed { id, revision, deleted }.publish(self);
     }
 
     /// Tell every open client that the list's membership or order changed.
     fn announce_list(&self, list_revision: u64) {
-        self.publish(json!({ "type": "screens:list", "listRevision": list_revision }).to_string());
+        ScreensFrame::List { list_revision }.publish(self);
     }
 }
 
@@ -1524,8 +1883,8 @@ mod tests {
     /// Everything the server does not recognise still degrades.
     #[test]
     fn a_browser_leaf_without_an_id_is_still_an_empty_slot() {
-        assert_eq!((Some(&json!({ "kind": "browser" }))).sanitize_content(), picker());
-        assert_eq!((Some(&json!({ "kind": "gopher", "id": "x" }))).sanitize_content(), picker());
+        assert_eq!(PaneContent::sanitize(Some(&json!({ "kind": "browser" }))).to_value(), picker());
+        assert_eq!(PaneContent::sanitize(Some(&json!({ "kind": "gopher", "id": "x" }))).to_value(), picker());
     }
 
     // ---- two devices, one layout --------------------------------------
