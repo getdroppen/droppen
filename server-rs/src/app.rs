@@ -778,7 +778,7 @@ mod tests {
         let dirs = InstanceDirs::new(&paths.data_dir(), "providers-test").expect("valid name");
         dirs.create().expect("instance dirs");
         let accounts = Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), logins()));
-        let quota = Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone()));
+        let quota = Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins()));
         let decoration = crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone());
         let providers = ProviderRegistry::new(InjectionRegistry::new(paths, &dirs, accounts, quota, decoration), register_providers);
 
@@ -799,7 +799,7 @@ mod tests {
         let dirs = InstanceDirs::new(&paths.data_dir(), "capabilities-test").expect("valid name");
         dirs.create().expect("instance dirs");
         let accounts = Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), logins()));
-        let quota = Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone()));
+        let quota = Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins()));
         let decoration = crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone());
         let providers = ProviderRegistry::new(InjectionRegistry::new(paths, &dirs, accounts, quota, decoration), register_providers);
 

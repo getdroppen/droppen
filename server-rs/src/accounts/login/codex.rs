@@ -6,11 +6,12 @@ use futures_util::future::BoxFuture;
 use super::Login;
 use crate::accounts::local_login::LocalLoginState;
 use crate::accounts::quota::readings::SharedReading;
-use crate::accounts::quota::{is_rate_limited, mentions_status};
+use crate::accounts::quota::{is_rate_limited, mentions_status, ProbeRoots, UsageProbe};
 use crate::accounts::store::{AccountError, AccountKind, AccountLaunch, AccountProvider, CODEX_BASE_URL_VAR, CODEX_KEY_CANDIDATES};
 use droppen_base::env_block::EnvVar;
 use crate::accounts::verify::{reason, Scratch, Verdict, PROBE_PROMPT, PROBE_TIMEOUT};
 use droppen_instance::paths::Paths;
+use std::path::Path;
 use droppen_base::process_env::{apply_env, clean_env, clean_env_bare, resolve_on_path};
 
 /// The environment variable a codex account's key is read from.
@@ -230,6 +231,16 @@ impl Login for CodexLogin {
         } else {
             LocalLoginState::Unknown
         }
+    }
+
+    /// None: codex keeps no reading per login to refresh.
+    fn probe<'a>(&'a self, _roots: &'a ProbeRoots, _config_dir: Option<&'a Path>) -> Option<BoxFuture<'a, UsageProbe>> {
+        None
+    }
+
+    /// None: codex's plan arrives with its own login's quota reading.
+    fn local_plan<'a>(&'a self, _paths: &'a Paths) -> Option<BoxFuture<'a, (Option<String>, Option<String>)>> {
+        None
     }
 }
 

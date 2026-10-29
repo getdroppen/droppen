@@ -1698,7 +1698,7 @@ mod tests {
             paths.clone(),
             &dirs,
             Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins())),
-            Arc::new(crate::accounts::quota::QuotaCache::new(paths)),
+            Arc::new(crate::accounts::quota::QuotaCache::new(paths, crate::app::logins())),
             decoration,
         );
 
@@ -1787,7 +1787,7 @@ mod tests {
             paths.clone(),
             &dirs,
             Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins())),
-            Arc::new(crate::accounts::quota::QuotaCache::new(paths)),
+            Arc::new(crate::accounts::quota::QuotaCache::new(paths, crate::app::logins())),
             decoration,
         );
         let providers = ProviderRegistry::new(registry.clone(), crate::app::register_providers);
@@ -1865,7 +1865,7 @@ mod tests {
             paths.clone(),
             &dirs,
             Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins())),
-            Arc::new(crate::accounts::quota::QuotaCache::new(paths)),
+            Arc::new(crate::accounts::quota::QuotaCache::new(paths, crate::app::logins())),
             decoration,
         );
         let spawn = |script: &str| {

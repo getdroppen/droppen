@@ -826,7 +826,7 @@ mod tests {
         let dirs = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
         dirs.create().expect("instance dirs");
         let accounts = Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins()));
-        let quota = Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone()));
+        let quota = Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins()));
         let decoration = crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone());
         let injections = crate::inject::InjectionRegistry::new(paths, &dirs, accounts, quota, decoration);
         let providers = crate::inject::ProviderRegistry::new(injections, crate::app::register_providers);

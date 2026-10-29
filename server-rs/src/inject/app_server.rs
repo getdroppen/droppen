@@ -1686,7 +1686,7 @@ mod tests {
             let dirs = InstanceDirs::new(&paths.data_dir(), "codex-test").unwrap();
             dirs.create().unwrap();
             let accounts = Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins()));
-            let quota = Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone()));
+            let quota = Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins()));
             let decoration = crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone());
             let registry = InjectionRegistry::new(paths, &dirs, accounts, quota, decoration);
             let socket = home.path().join("mock.sock");
@@ -2549,7 +2549,7 @@ mod tests {
         let dirs = InstanceDirs::new(&paths.data_dir(), instance).unwrap();
         dirs.create().unwrap();
         let accounts = Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins()));
-        let quota = Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone()));
+        let quota = Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins()));
         let decoration = crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone());
         (guard, InjectionRegistry::new(paths, &dirs, accounts, quota, decoration))
     }

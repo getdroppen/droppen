@@ -262,6 +262,18 @@ mod tests {
             Box::pin(async { Verdict::Valid })
         }
 
+        fn probe<'a>(
+            &'a self,
+            _roots: &'a crate::accounts::quota::ProbeRoots,
+            _config_dir: Option<&'a std::path::Path>,
+        ) -> Option<BoxFuture<'a, crate::accounts::quota::UsageProbe>> {
+            None
+        }
+
+        fn local_plan<'a>(&'a self, _paths: &'a Paths) -> Option<BoxFuture<'a, (Option<String>, Option<String>)>> {
+            None
+        }
+
         fn local_state(&self, _refused_at: Option<i64>, _local_reading: &crate::accounts::quota::readings::SharedReading) -> crate::accounts::local_login::LocalLoginState {
             crate::accounts::local_login::LocalLoginState::Unknown
         }
