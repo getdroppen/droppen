@@ -2430,7 +2430,7 @@ mod tests {
         );
 
         assert!(
-            !registry.interrupt(Source::Claude, SESSION),
+            !registry.interrupt_legacy(Source::Claude, SESSION),
             "a pid that fails the identity guard has nothing to interrupt"
         );
 
