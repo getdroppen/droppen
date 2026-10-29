@@ -160,7 +160,7 @@
             "droppen-accounts"
           ],
           "notes": [
-            "Gives its caller classification to droppen-auth."
+            "Answers droppen-auth's NotifyCredential port from the entry; its caller travels in droppen-http's NotifyGrant, which neither crate has to name the other for."
           ]
         },
         {
@@ -407,12 +407,6 @@
       "edges": [
         "accounts::setup_token -> drive",
         "accounts::usage_login -> drive"
-      ]
-    },
-    {
-      "why": "auth reads notify's caller classification. It goes when the caller classification moves to auth.",
-      "edges": [
-        "auth -> notify"
       ]
     },
     {

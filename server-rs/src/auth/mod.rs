@@ -126,14 +126,15 @@
 //! port.
 //!
 //! Instead [`guard`] recognises one more credential on that one path: the keyed,
-//! stateless capability [`crate::notify::token`] mints per session and injects
+//! stateless capability `notify::token` mints per session and injects
 //! into the spawn's environment. Stateless because a resident CLI outlives the
 //! server that started it and cannot be handed a new in-memory table; scoped to
 //! one route because it is not an identity and must never satisfy anything that
-//! asks who you are. It yields a [`crate::notify::NotifyCaller`] in the request
-//! extensions rather than an [`AuthIdentity`], so no handler can mistake one for
-//! the other, and the notify handler requires it — which is what keeps the route
-//! closed on a server where authentication is off entirely.
+//! asks who you are. It yields a [`NotifyGrant`] in the request extensions
+//! rather than an [`AuthIdentity`], so no handler can mistake one for the
+//! other, and the notify handler requires it — which is what keeps the route
+//! closed on a server where authentication is off entirely. The guard asks for
+//! it through [`NotifyCredential`], which the entry answers from notify.
 
 pub mod cli;
 pub mod local_open;
@@ -156,7 +157,7 @@ use gotcha::axum::response::{IntoResponse, Response};
 
 use droppen_http::config::AuthSettings;
 use droppen_http::error::ApiError;
-use droppen_http::identity::AuthIdentity;
+use droppen_http::identity::{AuthIdentity, NotifyGrant};
 use droppen_instance::instance::InstanceDirs;
 use droppen_instance::paths::Paths;
 use lockout::{LockoutPolicy, Lockouts};
@@ -220,6 +221,28 @@ pub trait LinkHandOver: Send + Sync {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>>;
 }
 
+/// The capability `POST /api/notify` is called with (see the module docs),
+/// which [`guard`] asks for on that one route. Notify owns the token format,
+/// its secret and the caller a token proves, and sits above auth, so the entry
+/// answers this from notify and hands it to [`Auth::new`].
+pub trait NotifyCredential: Send + Sync {
+    /// Whether this request is the one an agent's `rh-notify` makes. Asked
+    /// before any work, so the extra file read is paid on one route and not on
+    /// every request.
+    fn is_notify_request(&self, method: &Method, path: &str) -> bool;
+
+    /// The session this request's `Authorization: Bearer` proves it is, as the
+    /// grant that carries it to the notify handler, or `None` for any miss.
+    /// `paths` is where the token secret is stored, and `instance` the instance
+    /// a token must have been minted for.
+    fn caller<'a>(
+        &'a self,
+        paths: &'a Paths,
+        instance: &'a str,
+        headers: &'a HeaderMap,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<NotifyGrant>> + Send + 'a>>;
+}
+
 /// Everything the guard and the `/api/auth/*` routes need.
 ///
 /// Hangs off [`crate::drive::Drive`], like every other registry in this server,
@@ -248,12 +271,14 @@ pub struct Auth {
     pub login_gate: tokio::sync::Mutex<()>,
     policy: LockoutPolicy,
     mode: Mode,
-    /// Where [`crate::notify`]'s token secret is stored, and which instance a
+    /// Where `notify`'s token secret is stored, and which instance a
     /// session token must have been minted for. Held here rather than reached
     /// through the application state because [`guard`] runs as a layer over the
     /// router and only ever sees this struct.
     paths: Paths,
     instance: String,
+    /// How [`guard`] checks the notify capability on its one route.
+    notify: Arc<dyn NotifyCredential>,
     /// The cloud agent's per-boot loopback credential (hex), see the module docs.
     internal: String,
 }
@@ -276,7 +301,13 @@ impl Auth {
     /// machine — where accounts exist — would otherwise be a `401` and a failed
     /// `pnpm gen:api`. It is the same escape hatch
     /// [`crate::app::RemoteHandApp::skip_lock`] is, for the same command.
-    pub fn new(paths: &Paths, instance: &InstanceDirs, settings: &AuthSettings, disabled: bool) -> Arc<Self> {
+    pub fn new(
+        paths: &Paths,
+        instance: &InstanceDirs,
+        settings: &AuthSettings,
+        disabled: bool,
+        notify: Arc<dyn NotifyCredential>,
+    ) -> Arc<Self> {
         let mode = match (disabled, settings.enabled()) {
             (true, _) | (_, Some(false)) => Mode::Off,
             (_, Some(true) | None) => Mode::Accounts,
@@ -296,6 +327,7 @@ impl Auth {
             mode,
             paths: paths.clone(),
             instance: instance.name().to_string(),
+            notify,
             internal: {
                 use rand::RngCore;
                 let mut bytes = [0u8; 32];
@@ -379,14 +411,15 @@ impl Auth {
         self.sessions.alive(digest).as_deref() == Some(user) && self.still_valid(user).await
     }
 
-    /// The session a `POST /api/notify` proves it is, if any.
+    /// The session a `POST /api/notify` proves it is, if any, as the grant that
+    /// carries it.
     ///
-    /// Delegated to [`crate::notify::caller`] rather than implemented here: the
-    /// secret, the MAC and the token format are that module's, and this one has
-    /// no business knowing any of them. What belongs here is *where* the
+    /// Delegated to notify ([`NotifyCredential`]) rather than implemented here:
+    /// the secret, the MAC and the token format are that module's, and this one
+    /// has no business knowing any of them. What belongs here is *where* the
     /// question is asked, which is the guard and nowhere else.
-    async fn notify_caller(&self, headers: &HeaderMap) -> Option<crate::notify::NotifyCaller> {
-        crate::notify::caller(&self.paths, &self.instance, headers).await
+    async fn notify_caller(&self, headers: &HeaderMap) -> Option<NotifyGrant> {
+        self.notify.caller(&self.paths, &self.instance, headers).await
     }
 }
 
@@ -576,7 +609,7 @@ pub async fn guard(auth: Arc<Auth>, mut request: Request, next: Next) -> Respons
     // The third credential, and only ever on its own route. Asked after the two
     // above so a logged-in browser calling the same path is simply itself, and
     // gated on the path so no other request pays for the file read.
-    let caller = if crate::notify::is_notify_request(&method, &path) {
+    let caller = if auth.notify.is_notify_request(&method, &path) {
         auth.notify_caller(request.headers()).await
     } else {
         None
@@ -933,5 +966,78 @@ mod tests {
         assert_eq!(uri("/x?a=1&ticket=T&b=2").query_param("ticket").as_deref(), Some("T"));
         assert_eq!(uri("/x?ticketing=T").query_param("ticket"), None);
         assert_eq!(uri("/x").query_param("ticket"), None);
+    }
+
+    /// A notify capability that proves whatever its function returns, on the
+    /// `POST /api/notify` route only.
+    struct Proves(fn() -> Option<NotifyGrant>);
+
+    impl NotifyCredential for Proves {
+        fn is_notify_request(&self, method: &Method, path: &str) -> bool {
+            method == Method::POST && path == "/api/notify"
+        }
+
+        fn caller<'a>(
+            &'a self,
+            _paths: &'a Paths,
+            _instance: &'a str,
+            _headers: &'a HeaderMap,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<NotifyGrant>> + Send + 'a>> {
+            let grant = (self.0)();
+            Box::pin(async move { grant })
+        }
+    }
+
+    /// The notify capability reaches a handler only as the [`NotifyGrant`] the
+    /// guard inserts. A port that proves an [`AuthIdentity`] leaves no identity
+    /// in the request, only a grant holding it; a port that proves nothing
+    /// admits nothing; and the capability opens no other route.
+    #[tokio::test]
+    async fn the_notify_capability_reaches_a_handler_only_as_a_grant() {
+        use gotcha::axum::body::Body;
+        use tower_service::Service;
+
+        /// What the handler finds in its request: a grant, an identity inside
+        /// the grant, an identity of its own.
+        async fn found(request: Request) -> String {
+            let extensions = request.extensions();
+            let grant = extensions.get::<NotifyGrant>();
+            format!(
+                "{} {} {}",
+                grant.is_some(),
+                grant.and_then(|grant| grant.get::<AuthIdentity>()).is_some(),
+                extensions.get::<AuthIdentity>().is_some()
+            )
+        }
+
+        async fn send(proves: Proves, method: &str, path: &str) -> (StatusCode, String) {
+            let home = tempfile::tempdir().expect("tempdir");
+            let paths = Paths::for_instance(home.path().to_path_buf(), "unittest");
+            let instance = InstanceDirs::new(&paths.data_dir(), "unittest").expect("instance");
+            let auth = Auth::new(&paths, &instance, &AuthSettings::default(), false, Arc::new(proves));
+            let mut router = gotcha::axum::Router::new()
+                .route("/api/notify", gotcha::axum::routing::post(found))
+                .route("/api/settings", gotcha::axum::routing::get(found))
+                .layer(layer(auth));
+            let request = gotcha::axum::http::Request::builder().method(method).uri(path).body(Body::empty()).expect("request");
+            let response = router.call(request).await.expect("infallible");
+            let status = response.status();
+            let body = gotcha::axum::body::to_bytes(response.into_body(), 1 << 16).await.expect("body");
+            (status, String::from_utf8_lossy(&body).into_owned())
+        }
+
+        let planted = || {
+            Some(NotifyGrant::new(AuthIdentity {
+                username: "ada".into(),
+                token_sha256: None,
+            }))
+        };
+        assert_eq!(
+            send(Proves(planted), "POST", "/api/notify").await,
+            (StatusCode::OK, "true true false".to_string()),
+            "what the port proved stays inside the grant"
+        );
+        assert_eq!(send(Proves(|| None), "POST", "/api/notify").await.0, StatusCode::UNAUTHORIZED, "no grant, no admission");
+        assert_eq!(send(Proves(planted), "GET", "/api/settings").await.0, StatusCode::UNAUTHORIZED, "and no other route");
     }
 }

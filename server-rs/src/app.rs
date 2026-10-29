@@ -124,7 +124,7 @@ impl GotchaApp for RemoteHandApp {
                 let roots = crate::files::FileRoots::of(&paths);
                 async move { roots.sweep_uploads().await }
             });
-            let auth = crate::auth::Auth::new(&paths, &instance, &auth_settings, auth_disabled);
+            let auth = crate::auth::Auth::new(&paths, &instance, &auth_settings, auth_disabled, Arc::new(NotifyTokens));
             let drive = crate::drive::Drive::new(paths.clone(), &instance, auth, transcript_sources(), register_providers, logins());
             let feeds = FeedRegistry::new();
             let global = GlobalFeed::new();
@@ -706,6 +706,27 @@ pub(crate) struct PluginHost(pub(crate) Arc<crate::plugins::Plugins>);
 impl crate::feed::global::PluginStatuses for PluginHost {
     fn status(&self) -> futures_util::future::BoxFuture<'_, Vec<droppen_plugin_sdk::PluginStatus>> {
         Box::pin(self.0.status_async())
+    }
+}
+
+/// `POST /api/notify`'s capability as [`crate::notify`] checks it: the token
+/// it mints per session, verified against its stored secret, and the
+/// [`crate::notify::NotifyCaller`] the notify handler reads back out of the
+/// request's [`droppen_http::identity::NotifyGrant`].
+pub(crate) struct NotifyTokens;
+
+impl crate::auth::NotifyCredential for NotifyTokens {
+    fn is_notify_request(&self, method: &gotcha::axum::http::Method, path: &str) -> bool {
+        crate::notify::is_notify_request(method, path)
+    }
+
+    fn caller<'a>(
+        &'a self,
+        paths: &'a Paths,
+        instance: &'a str,
+        headers: &'a gotcha::axum::http::HeaderMap,
+    ) -> futures_util::future::BoxFuture<'a, Option<droppen_http::identity::NotifyGrant>> {
+        Box::pin(async move { crate::notify::caller(paths, instance, headers).await.map(droppen_http::identity::NotifyGrant::new) })
     }
 }
 
