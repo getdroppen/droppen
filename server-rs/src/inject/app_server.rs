@@ -311,6 +311,12 @@ impl Run for Codex {
         }
         self.registry.interrupt_legacy(Source::Codex, id)
     }
+
+    // Through the session's app server, or `codex archive` when it has none:
+    // the archive is codex's own, so the Codex app sees it too.
+    fn archive<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Result<(), String>> {
+        Box::pin(async move { self.registry.archive_codex(id).await.map_err(|error| error.to_string()) })
+    }
 }
 
 impl InjectionRegistry {
