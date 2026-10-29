@@ -337,6 +337,17 @@ async fn send_one(client: &reqwest::Client, key: &p256::ecdsa::SigningKey, subje
     }
 }
 
+/// What `web/public/sw.js` reads out of a notification.
+#[derive(Serialize)]
+struct PushPayload<'a> {
+    title: &'a str,
+    body: &'a str,
+    /// The notification's tag: a later one under the same tag replaces it.
+    tag: &'a str,
+    /// Where tapping it goes.
+    url: &'a str,
+}
+
 /// Encrypt and deliver one notification to every stored subscription.
 ///
 /// Nothing here is fatal to anything: a push service being down is not a reason
@@ -358,7 +369,13 @@ async fn deliver(paths: &Paths, title: String, body: String, tag: String, url: S
         return;
     };
     let subject = contact();
-    let payload = serde_json::json!({ "title": title, "body": body, "tag": tag, "url": url }).to_string();
+    let payload = serde_json::to_string(&PushPayload {
+        title: &title,
+        body: &body,
+        tag: &tag,
+        url: &url,
+    })
+    .expect("push payloads encode");
 
     for row in subscriptions {
         match send_one(client, &key, &subject, &row, payload.as_bytes()).await {

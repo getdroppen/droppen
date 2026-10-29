@@ -333,8 +333,23 @@ impl Ended {
 }
 
 /// `copy_error` for subscription `s`.
-pub fn error_frame(s: u32, code: &str, message: &str) -> String {
-    serde_json::json!({"t": "copy_error", "s": s, "code": code, "message": message}).to_string()
+pub fn error_frame(s: u32, code: &'static str, message: &'static str) -> String {
+    CopyFrame::CopyError { s, code, message }.encode()
+}
+
+/// What this module tells a gateway page of a subscription, tagged `t`.
+// Not generic: docs/hub-api/check.mjs reads the variants of a non-generic enum only.
+#[derive(Serialize)]
+#[serde(tag = "t", rename_all = "snake_case")]
+enum CopyFrame {
+    /// A subscription that cannot be, or no longer is.
+    CopyError { s: u32, code: &'static str, message: &'static str },
+}
+
+impl CopyFrame {
+    fn encode(&self) -> String {
+        serde_json::to_string(self).expect("gateway frames encode")
+    }
 }
 
 fn missing_frame(s: u32) -> String {
@@ -1106,6 +1121,16 @@ mod tests {
         assert_eq!(drain(&mut rx)[0]["code"], "gone");
         assert_eq!(live.held(), 0);
         assert!(live.dir().borrow().is_empty());
+    }
+
+    /// `copy_error`, byte for byte: what a page is told of a subscription
+    /// that cannot be, or no longer is.
+    #[test]
+    fn a_copy_error_is_written_as_pinned() {
+        assert_eq!(
+            error_frame(7, Ended::Gone.code(), Ended::Gone.message()),
+            r#"{"t":"copy_error","s":7,"code":"gone","message":"this device no longer shows that device's copies"}"#
+        );
     }
 
     #[tokio::test]
