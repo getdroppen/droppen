@@ -44,7 +44,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 | `prefs/` `screens/` | 两个边车存储：界面偏好、持久化分屏布局 |
 | `stats/` `models.rs` | token 用量统计与模型列表 |
 | `claude_roots.rs` | 一次 spawn 跑在什么根目录下（带什么环境见下面 `droppen-base` 的 `process_env`） |
-| `crates/droppen-base/` | 各子系统都用、却不属于任何一个的底层工具：时钟（`time`）、文本编码（`text`）、只有本用户可读的文件（`fsutil`）、「文件里那个 pid 还是当初那个进程吗」的两道守卫（`procs`）、出站 webhook 的守卫（`outbound`）、环境变量的新旧名字（`env`）、spawn 的环境与输出脱敏（`process_env`）、二进制的两个名字（`program`） |
+| `crates/droppen-base/` | 各子系统都用、却不属于任何一个的底层工具：时钟（`time`）、文本编码（`text`）、只有本用户可读的文件（`fsutil`）、「文件里那个 pid 还是当初那个进程吗」的两道守卫（`procs`）、出站 webhook 的守卫（`outbound`）、读环境变量（`env`）、spawn 的环境与输出脱敏（`process_env`）、二进制的两个名字（`program`） |
 | `crates/droppen-instance/` | 实例的底座：各子系统共用的路径（`paths`）、一个服务端独占的实例目录与宣示所有权的 `flock`（`instance`）、改名也不变的服务端身份（`identity`），以及实例自己的 SQLite 状态库和只增不改的 schema（`db`） |
 | `crates/droppen-http/` | 每个路由模块都站在上面的 HTTP 工具：错误体与状态码、出错即 `400` 的提取器、`201`/`202` 响应、websocket 保活与限时发送、构建身份（`SERVER_VERSION`）、`substate!`；以及手工组装的配置加载器（`config`，带类型化默认值，loopback 8700）、OpenAPI 补丁（`openapi_ext`）和每个 `/api/*` 请求都要过的同源守卫（`origin`） |
 | `crates/droppen-supervisor/` | `remote-hand-server up`：重启子进程、回滚坏二进制、收孤儿（`supervisor`）；`POST /api/server/self-upgrade`，以及 `<data>/bin` 这个二进制仓库（`selfupdate`） |
@@ -108,8 +108,7 @@ serve 那一个 pid：
   重启**（退出的是 A 的 serve 进程，A 的 supervisor 把它拉起来）；
 - 实例 B 继续跑着旧二进制，直到它自己下一次重启为止；
 - 因此「升级完成」在多实例部署里意味着「每个实例都重启过一次」。要立刻生效就逐个重启，
-  或者干脆给每个实例配一个自己的 `DROPPEN_DATA_DIR`，让它们连二进制也不共享（旧名
-  `REMOTE_HAND_DATA_DIR` 已弃用，v0.2.135 起不再生效）。
+  或者干脆给每个实例配一个自己的 `DROPPEN_DATA_DIR`，让它们连二进制也不共享。
 
 回滚阶梯（`.prev` → 镜像里那份）同样是共享的：A 触发的回滚会改变 B 下次重启时跑的东西。
 
@@ -143,7 +142,7 @@ to」）。不用写的：IP 地址、`localhost` 和 `*.localhost`、本地网�
   订阅归属于一个 origin，所以这个库按实例分开存：同机第二个实例有自己的密钥和自己的
   设备列表，不会把通知推到另一个实例的 PWA 上。老版本留下的
   `~/.config/remote-hand/push.json` 与实例目录里的 `push.json` 都不再被读入。
-- **`DROPPEN_PUSH_CONTACT`**（旧名 `REMOTE_HAND_PUSH_CONTACT` 已弃用，v0.2.135 起不再生效）覆盖 VAPID 的 `sub`（RFC 8292 §2.1：push service 出事时
+- **`DROPPEN_PUSH_CONTACT`** 覆盖 VAPID 的 `sub`（RFC 8292 §2.1：push service 出事时
   联系谁）。只接受 `mailto:` 或 `https:` 开头的值——Apple 的 push service 会直接拒掉别的
   形式——缺省是项目主页。
 

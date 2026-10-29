@@ -64,8 +64,8 @@ pub fn gap_note(lost: u64) -> String {
 /// server, so there is nothing else to find. Two escapes exist for tests, which
 /// run inside a test harness rather than inside the server:
 ///
-/// * `DROPPEN_SHIM_BIN` (or its old name, `REMOTE_HAND_SHIM_BIN`) names the
-///   binary outright, which is what the cross-process survival test uses;
+/// * `DROPPEN_SHIM_BIN` names the binary outright, which is what the
+///   cross-process survival test uses;
 /// * failing that, a `current_exe` inside cargo's `deps/` directory is a test
 ///   binary, and the server it links sits one level up under its own name.
 ///

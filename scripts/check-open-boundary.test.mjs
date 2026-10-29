@@ -130,8 +130,11 @@ describe("sources", () => {
     assert.equal(found.length, 2);
     assert.match(found[0], /`DROPPEN_HUB_ORIGIN` — the hub's environment/);
     assert.match(found[1], /`RH_HUB_` —/);
-    for (const name of ["RH_HUB_DEFAULT", "DROPPEN_HUB_DEFAULT", "RH_HUB_API_TRAFFIC", "DROPPEN_HUB_API_TRAFFIC"]) {
+    for (const name of ["DROPPEN_HUB_DEFAULT", "DROPPEN_HUB_API_TRAFFIC"]) {
       assert.deepEqual(sourceProblems(`std::env::var("${name}")`, "rs", "server-rs/src/a.rs"), [], name);
+    }
+    for (const name of ["RH_HUB_DEFAULT", "RH_HUB_API_TRAFFIC"]) {
+      assert.equal(sourceProblems(`std::env::var("${name}")`, "rs", "server-rs/src/a.rs").length, 1, `${name}, which nothing reads any more`);
     }
     assert.deepEqual(sourceProblems("/** off unless `RH_HUB_CHANNEL_RELAY` */\nexport {};", "js", "web/src/a.ts"), []);
   });

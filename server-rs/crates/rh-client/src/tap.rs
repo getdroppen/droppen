@@ -46,37 +46,16 @@ pub fn set(tap: Box<dyn Tap>) -> bool {
     TAP.set(tap).is_ok()
 }
 
-/// The capture file: `DROPPEN_HUB_API_TRAFFIC`, else its name before the
-/// rename to Droppen, `RH_HUB_API_TRAFFIC`. The rule is the one every
-/// Droppen binary reads a renamed variable by: trimmed, an empty value
-/// unset, and the old name — or both names set to different values, when
-/// the new one wins — said once on stderr, by name. The devkit's own capture
-/// reads its path here too.
+/// The capture file: `DROPPEN_HUB_API_TRAFFIC`, trimmed, an empty value
+/// unset, as every Droppen binary reads its variables. The devkit's own
+/// capture reads its path here too.
 pub fn traffic_path() -> Option<std::path::PathBuf> {
-    static SAID: std::sync::Once = std::sync::Once::new();
-    let (path, line) = traffic_path_in(|name| std::env::var(name).ok());
-    if let Some(line) = line {
-        SAID.call_once(|| eprintln!("warning: {line}"));
-    }
-    path
+    traffic_path_in(|name| std::env::var(name).ok())
 }
 
-/// [`traffic_path`] through `read`, and the line to say, if any.
-fn traffic_path_in(read: impl Fn(&str) -> Option<String>) -> (Option<std::path::PathBuf>, Option<String>) {
-    const NEW: &str = "DROPPEN_HUB_API_TRAFFIC";
-    const OLD: &str = "RH_HUB_API_TRAFFIC";
-    let get = |name: &str| read(name).map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
-    match (get(NEW), get(OLD)) {
-        (None, Some(was)) => (
-            Some(was.into()),
-            Some(format!("{OLD} is deprecated: rename it {NEW} (the old name is still read, for now)")),
-        ),
-        (Some(path), Some(was)) if path != was => (
-            Some(path.into()),
-            Some(format!("{NEW} and the deprecated {OLD} are both set, to different values: {NEW} is used; remove {OLD}")),
-        ),
-        (path, _) => (path.map(Into::into), None),
-    }
+/// [`traffic_path`] through `read`.
+fn traffic_path_in(read: impl Fn(&str) -> Option<String>) -> Option<std::path::PathBuf> {
+    read("DROPPEN_HUB_API_TRAFFIC").map(|v| v.trim().to_string()).filter(|v| !v.is_empty()).map(Into::into)
 }
 
 /// The default: [`traffic_path`]'s file, or nothing.
@@ -294,22 +273,20 @@ mod absent_keys_tests {
 mod traffic_path_tests {
     use super::traffic_path_in;
 
-    fn path_in(vars: &[(&str, &str)]) -> (Option<String>, Option<String>) {
+    fn path_in(vars: &[(&str, &str)]) -> Option<String> {
         let vars: std::collections::HashMap<&str, &str> = vars.iter().copied().collect();
-        let (path, line) = traffic_path_in(|name| vars.get(name).map(|v| v.to_string()));
-        (path.map(|p| p.display().to_string()), line)
+        traffic_path_in(|name| vars.get(name).map(|v| v.to_string())).map(|p| p.display().to_string())
     }
 
     #[test]
-    fn the_capture_path_is_read_by_the_rename_rule() {
-        assert_eq!(path_in(&[("DROPPEN_HUB_API_TRAFFIC", " /tmp/x.jsonl ")]), (Some("/tmp/x.jsonl".into()), None));
-        let (path, line) = path_in(&[("RH_HUB_API_TRAFFIC", "/tmp/old.jsonl")]);
-        assert_eq!(path.as_deref(), Some("/tmp/old.jsonl"));
-        assert!(line.is_some_and(|l| l.starts_with("RH_HUB_API_TRAFFIC is deprecated") && !l.contains("/tmp")));
-        let (path, line) = path_in(&[("DROPPEN_HUB_API_TRAFFIC", "/tmp/new"), ("RH_HUB_API_TRAFFIC", "/tmp/old")]);
-        assert_eq!(path.as_deref(), Some("/tmp/new"));
-        assert!(line.is_some_and(|l| l.contains("DROPPEN_HUB_API_TRAFFIC is used")));
-        assert_eq!(path_in(&[("DROPPEN_HUB_API_TRAFFIC", "/tmp/x"), ("RH_HUB_API_TRAFFIC", "/tmp/x")]), (Some("/tmp/x".into()), None));
-        assert_eq!(path_in(&[("DROPPEN_HUB_API_TRAFFIC", ""), ("RH_HUB_API_TRAFFIC", " ")]), (None, None));
+    fn the_capture_path_is_read_by_its_droppen_name_only() {
+        assert_eq!(path_in(&[("DROPPEN_HUB_API_TRAFFIC", " /tmp/x.jsonl ")]), Some("/tmp/x.jsonl".into()));
+        assert_eq!(path_in(&[("DROPPEN_HUB_API_TRAFFIC", " ")]), None, "empty is unset");
+        let asked = std::cell::RefCell::new(Vec::new());
+        traffic_path_in(|name| {
+            asked.borrow_mut().push(name.to_string());
+            None
+        });
+        assert_eq!(asked.into_inner(), ["DROPPEN_HUB_API_TRAFFIC"], "no other name, the one from before the rename included");
     }
 }

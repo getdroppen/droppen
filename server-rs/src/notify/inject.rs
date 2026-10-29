@@ -219,14 +219,8 @@ pub async fn decorate(paths: &Paths, instance: &InstanceDirs, source: Source, id
     let key = crate::sessions::attention::seen::key_of(source, id);
     env.insert("PATH".to_string(), path_with(&dir, env.get("PATH").map(String::as_str)));
     let token = token::mint(&secret, instance.name(), &key);
-    // Under both names: whatever binary runs `notify` later may be from before
-    // the rename to Droppen (a rollback), and an older one reads only the old.
-    for name in droppen_base::env::with_old_name(cli::URL_ENV) {
-        env.insert(name.to_string(), url.clone());
-    }
-    for name in droppen_base::env::with_old_name(cli::TOKEN_ENV) {
-        env.insert(name.to_string(), token.clone());
-    }
+    env.insert(cli::URL_ENV.to_string(), url);
+    env.insert(cli::TOKEN_ENV.to_string(), token);
 }
 
 /// Where this server is listening, as an address a child on this host can reach.

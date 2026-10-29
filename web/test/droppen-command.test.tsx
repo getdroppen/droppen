@@ -67,19 +67,22 @@ test("a server that is not the usual one says what the command needs to reach it
     droppenCommand({
       droppenPath: "~/.local/share/bob-remote-hand/bin/droppen",
       droppenEnv: [
-        { name: "REMOTE_HAND_DATA_DIR", value: "~/.local/share/bob-remote-hand" },
-        { name: "REMOTE_HAND_CONFIG_DIR", value: "~/My Config/bob" },
+        { name: "DROPPEN_DATA_DIR", value: "~/.local/share/bob-remote-hand" },
+        { name: "DROPPEN_CONFIG_DIR", value: "~/My Config/bob" },
       ],
     }),
-    "REMOTE_HAND_DATA_DIR=~/.local/share/bob-remote-hand REMOTE_HAND_CONFIG_DIR=~/'My Config/bob' ~/.local/share/bob-remote-hand/bin/droppen",
+    "DROPPEN_DATA_DIR=~/.local/share/bob-remote-hand DROPPEN_CONFIG_DIR=~/'My Config/bob' ~/.local/share/bob-remote-hand/bin/droppen",
   );
-  // The names the rename moves the directories to are taken too.
+  // An older server sends each directory under its old name too: only the
+  // name every server reads is shown.
   assert.equal(
     droppenCommand({
       droppenPath: INSTALLED,
       droppenEnv: [
         { name: "DROPPEN_DATA_DIR", value: "~/d" },
+        { name: "REMOTE_HAND_DATA_DIR", value: "~/d" },
         { name: "DROPPEN_CONFIG_DIR", value: "~/c" },
+        { name: "REMOTE_HAND_CONFIG_DIR", value: "~/c" },
       ],
     }),
     `DROPPEN_DATA_DIR=~/d DROPPEN_CONFIG_DIR=~/c ${INSTALLED}`,

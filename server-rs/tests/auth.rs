@@ -433,8 +433,6 @@ fn cli(home: &Path, args: &[&str]) -> std::process::Output {
         .env_remove("APP_AUTH__ENABLED")
         .env_remove("DROPPEN_CONFIG_DIR")
         .env_remove("DROPPEN_DATA_DIR")
-        .env_remove("REMOTE_HAND_CONFIG_DIR")
-        .env_remove("REMOTE_HAND_DATA_DIR")
         .env_remove("DISPLAY")
         .env_remove("WAYLAND_DISPLAY")
         .stdin(std::process::Stdio::null())

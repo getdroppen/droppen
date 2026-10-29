@@ -75,8 +75,7 @@ use crate::error::ApiError;
 /// The methods the CORS preflight advertises: every method the API answers.
 const ALLOW_METHODS: &str = "GET,HEAD,PUT,POST,DELETE,PATCH";
 
-/// Extra trusted origins, comma-separated, from `DROPPEN_ALLOWED_ORIGINS`.
-/// Its old name, `RH_ALLOWED_ORIGINS`, is still read until v0.2.135
+/// Extra trusted origins, comma-separated, from `DROPPEN_ALLOWED_ORIGINS`
 /// ([`droppen_base::env`]).
 fn configured_origins() -> &'static [String] {
     static ORIGINS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();

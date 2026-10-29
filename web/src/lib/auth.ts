@@ -258,7 +258,7 @@ export function authRequired(): boolean {
 
 /**
  * Whether the Droppen desktop app runs this page's server and owns its login
- * (`desktop/` in the repository; `RH_DESKTOP_APP` on the server). The app made
+ * (`desktop/` in the repository; `DROPPEN_DESKTOP_APP` on the server). The app made
  * the password nobody knows and signs in again by itself, so a password change
  * and a sign-out are dead ends there; and its window has no popups, so it signs
  * in to Droppen through the system browser (`features/link/browser-sign-in.tsx`).

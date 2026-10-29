@@ -106,10 +106,7 @@ const MAX_VERSION: usize = 200;
 ///
 /// The presence of a supervisor is not something a process can ask the kernel —
 /// "my parent is a `remote-hand-server up`" is not knowable portably, and being
-/// pid 1's child means nothing after a reparent. So the supervisor says so —
-/// under this name and its old one, `RH_SUPERVISED`, the only one a pre-rename
-/// `up` sets; such an `up` stays the parent of every server a self-upgrade
-/// brings ([`droppen_base::env`]).
+/// pid 1's child means nothing after a reparent. So the supervisor says so.
 pub const SUPERVISED_ENV: &str = "DROPPEN_SUPERVISED";
 
 /// What happens to this server once the new binary is installed.

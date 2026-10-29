@@ -1288,8 +1288,8 @@ struct Listeners {
     refresh: droppen_http::refresh::Refresh,
 }
 
-/// A duration from the environment, in milliseconds, or the fallback; under
-/// its old name too ([`droppen_base::env::var`]).
+/// A duration from the environment, in milliseconds, or the fallback
+/// ([`droppen_base::env::var`]).
 fn env_ms(name: &str, fallback: Duration) -> Duration {
     droppen_base::env::var(name)
         .and_then(|raw| raw.parse::<f64>().ok())

@@ -46,7 +46,8 @@ use serde::{Deserialize, Serialize};
 
 /// Environment variables never passed from the app's own environment to the
 /// server, by prefix: the server's configuration (`APP_*`, `GOTCHA_*`), its
-/// own switches and paths (`RH_*`, `REMOTE_HAND_*`, `DROPPEN_*`), and the
+/// own switches and paths (`DROPPEN_*`, and the `RH_*` / `REMOTE_HAND_*`
+/// names an older Droppen started in one of its sessions still reads), and the
 /// variables that mark a shell as running inside a Claude Code session. An app
 /// started from a terminal inside another Droppen session would otherwise hand
 /// that session's instance, port and data directory to this server.
@@ -72,19 +73,13 @@ pub fn server_env(inherited: impl IntoIterator<Item = (String, String)>, path: &
     // The server is run by the app: no self-upgrade (it would replace the
     // shared `<data>/bin`, not the app), and the web app hides what would be a
     // dead end for a login nobody types (`server-rs/src/desktop_app.rs`).
-    // Under the name since the rename to Droppen and the one before it, which
-    // a server from before the rename reads instead
-    // (`server-rs/crates/droppen-base/src/env.rs`).
-    for name in DESKTOP_APP_ENV {
-        env.push((name.into(), "1".into()));
-    }
+    env.push((DESKTOP_APP_ENV.into(), "1".into()));
     env.sort();
     env
 }
 
-/// What tells the server the app runs it, under its name since the rename to
-/// Droppen and its old one (`server-rs/src/desktop_app.rs`).
-pub const DESKTOP_APP_ENV: [&str; 2] = ["DROPPEN_DESKTOP_APP", "RH_DESKTOP_APP"];
+/// What tells the server the app runs it (`server-rs/src/desktop_app.rs`).
+pub const DESKTOP_APP_ENV: &str = "DROPPEN_DESKTOP_APP";
 
 /// What `serve` exits with when another server already holds its instance
 /// (`EX_TEMPFAIL`; `server-rs/crates/droppen-supervisor/src/supervisor.rs`, `INSTANCE_HELD_EXIT`).
@@ -664,12 +659,12 @@ mod tests {
         assert_eq!(get("PATH"), Some("/Users/ada/.local/bin:/usr/bin"));
         assert_eq!(get("APP_INSTANCE"), Some(crate::INSTANCE));
         assert_eq!(get("DROPPEN_DESKTOP_APP"), Some("1"));
-        assert_eq!(get("RH_DESKTOP_APP"), Some("1"), "and under its old name, for a server from before the rename");
         assert_eq!(get("APP_SERVER__HOST"), Some("127.0.0.1"));
         assert_eq!(get("APP_SERVER__PORT"), Some("51234"));
         for gone in [
             "APP_HOME_DIR",
             "RH_SUPERVISED",
+            "RH_DESKTOP_APP",
             "DROPPEN_SUPERVISED",
             "RH_NOTIFY_TOKEN",
             "DROPPEN_NOTIFY_TOKEN",
@@ -686,13 +681,11 @@ mod tests {
         }
         assert_eq!(env.iter().filter(|(key, _)| key == "PATH").count(), 1);
         assert_eq!(env.iter().filter(|(key, _)| key == "APP_INSTANCE").count(), 1);
-        for name in DESKTOP_APP_ENV {
-            assert_eq!(
-                env.iter().filter(|(key, _)| key == name).count(),
-                1,
-                "{name}: the app's own value, not the inherited one"
-            );
-        }
+        assert_eq!(
+            env.iter().filter(|(key, _)| key == DESKTOP_APP_ENV).count(),
+            1,
+            "{DESKTOP_APP_ENV}: the app's own value, not the inherited one"
+        );
     }
 
     #[test]

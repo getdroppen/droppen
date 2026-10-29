@@ -56,17 +56,13 @@ impl ClaudeRoot {
     }
 }
 
-/// Test seam: point the user's own root at a scratch directory. Its old name,
-/// `REMOTE_HAND_CLAUDE_LOCAL_ROOT`, is still read until v0.2.135
-/// ([`droppen_base::env`]).
+/// Test seam: point the user's own root at a scratch directory.
 pub const LOCAL_ROOT_ENV: &str = "DROPPEN_CLAUDE_LOCAL_ROOT";
-/// Test seam: point the managed root at a scratch directory. Its old name,
-/// `REMOTE_HAND_CLAUDE_MANAGED_ROOT`, is still read until v0.2.135
-/// ([`droppen_base::env`]).
+/// Test seam: point the managed root at a scratch directory.
 pub const MANAGED_ROOT_ENV: &str = "DROPPEN_CLAUDE_MANAGED_ROOT";
 
-/// An environment override, honoured only when it is a non-empty value; under
-/// its old name too ([`droppen_base::env::var`]).
+/// An environment override, honoured only when it is a non-empty value
+/// ([`droppen_base::env::var`]).
 ///
 /// Kept as its own function (rather than inlined `std::env::var`) so the
 /// precedence rule is unit-testable without mutating the process environment.
@@ -90,8 +86,7 @@ pub fn override_dir(value: Option<&str>) -> Option<PathBuf> {
 /// through [`env_dir`] — the one reader of those overrides.
 /// `DROPPEN_CONFIG_DIR` and `DROPPEN_DATA_DIR` name remote-hand's own roots;
 /// `DROPPEN_CLAUDE_LOCAL_ROOT` and `DROPPEN_CLAUDE_MANAGED_ROOT` name the two
-/// Claude ones (each still read under its old `REMOTE_HAND_*` name,
-/// [`droppen_base::env`]). Resolving them
+/// Claude ones. Resolving them
 /// here rather than on each access is what makes a `Paths` a value: two of them
 /// can disagree, and neither changes under a handler because something else
 /// touched the process environment.
@@ -268,12 +263,6 @@ impl Paths {
     /// second install beside the first). Nothing for the usual install. Paths
     /// have the home directory as `~`, for the reason [`droppen_path`](droppen_base::program::droppen_path) does.
     ///
-    /// Each directory under its old name too, `REMOTE_HAND_DATA_DIR` /
-    /// `REMOTE_HAND_CONFIG_DIR`, with the same value: the `droppen` a person's
-    /// shell finds may be another install's pre-rename binary, which reads only
-    /// the old names and would act on its own files instead
-    /// ([`droppen_base::env`]).
-    ///
     /// Without these, `open`, `setup-code` and `user add` typed as the page says
     /// would act on the default instance of the default install: another
     /// server's setup code, typed here, is a wrong one that counts against the
@@ -302,15 +291,11 @@ pub fn droppen_env_for(paths: &Paths, home: Option<&Path>) -> Vec<(String, Strin
     }
     let usual = |rest: &[&str]| home.map(|home| rest.iter().fold(home.to_path_buf(), |path, part| path.join(part)));
     let (data, config) = (paths.data_dir(), paths.config_dir());
-    let mut both = |name: &'static str, path: &Path| {
-        let value = abbreviate_home(path, home);
-        env.extend(droppen_base::env::with_old_name(name).map(|name| (name.to_string(), value.clone())));
-    };
     if usual(&[".local", "share", "remote-hand"]).as_deref() != Some(data.as_path()) {
-        both("DROPPEN_DATA_DIR", &data);
+        env.push(("DROPPEN_DATA_DIR".to_string(), abbreviate_home(&data, home)));
     }
     if usual(&[".config", "remote-hand"]).as_deref() != Some(config.as_path()) {
-        both("DROPPEN_CONFIG_DIR", &config);
+        env.push(("DROPPEN_CONFIG_DIR".to_string(), abbreviate_home(&config, home)));
     }
     env
 }
@@ -337,17 +322,12 @@ mod tests {
         assert_eq!(droppen_env_for(&other_instance, Some(home)), vec![pair("APP_INSTANCE", "bob")]);
 
         // A second install, its files under another root.
-        // Under both names: the `droppen` a shell finds may be a pre-rename
-        // binary, which reads only the old ones.
         let second = crate::paths::Paths::for_instance(home.join("bob"), "default");
-        let (data, config) = (droppen_base::env::old_name("DROPPEN_DATA_DIR").unwrap(), droppen_base::env::old_name("DROPPEN_CONFIG_DIR").unwrap());
         assert_eq!(
             droppen_env_for(&second, Some(home)),
             vec![
                 pair("DROPPEN_DATA_DIR", "~/bob/.local/share/remote-hand"),
-                pair(data, "~/bob/.local/share/remote-hand"),
                 pair("DROPPEN_CONFIG_DIR", "~/bob/.config/remote-hand"),
-                pair(config, "~/bob/.config/remote-hand"),
             ]
         );
         // With no home directory to compare with, the files are named outright.
@@ -355,9 +335,7 @@ mod tests {
             droppen_env_for(&usual, None),
             vec![
                 pair("DROPPEN_DATA_DIR", "/home/ada/.local/share/remote-hand"),
-                pair(data, "/home/ada/.local/share/remote-hand"),
                 pair("DROPPEN_CONFIG_DIR", "/home/ada/.config/remote-hand"),
-                pair(config, "/home/ada/.config/remote-hand"),
             ]
         );
     }

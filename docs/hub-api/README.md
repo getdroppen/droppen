@@ -377,9 +377,7 @@ routes and messages, and that the schemas only use the keywords its small
 validator implements. A short, commented ignore list in the script holds the
 few things that look like hub API and are not.
 
-**Traffic.** With `DROPPEN_HUB_API_TRAFFIC=<file>` set (`RH_HUB_API_TRAFFIC`
-before the rename to Droppen, deprecated: it stops working in v0.2.135),
-`rh-client` (its HTTP
+**Traffic.** With `DROPPEN_HUB_API_TRAFFIC=<file>` set, `rh-client` (its HTTP
 helpers and `/v1/client` / `/v1/connect` sockets, `"src": "client"`),
 `rh-devkit` (the echo agent), the agent (`/v1/agent`, its relay connections,
 and its device role through `rh-client`, with device session tokens

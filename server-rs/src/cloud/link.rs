@@ -108,8 +108,7 @@ impl Cloud {
     }
 }
 
-/// The hub a sign-in uses: the request's, else `DROPPEN_HUB_DEFAULT` (or its
-/// old name, `RH_HUB_DEFAULT`), else
+/// The hub a sign-in uses: the request's, else `DROPPEN_HUB_DEFAULT`, else
 /// api.droppen.app; as the agent signs in to it, `wss://…`. Where a browser
 /// signs in to it is the hub's to say ([`crate::cloud::hub_web`]).
 pub(super) fn resolve_hub(requested: Option<&str>) -> Result<String, ApiError> {

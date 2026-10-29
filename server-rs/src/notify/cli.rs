@@ -38,12 +38,12 @@ use super::{Level, NotifyBody};
 
 /// Where `POST /api/notify` is, injected at spawn.
 ///
-/// Injected under its old name too, `RH_NOTIFY_URL` (and read under both,
-/// [`droppen_base::env`]): a session outlives the server that started it, and this is
-/// run by whichever binary that server's path holds by then — older or newer.
+/// A session outlives the server that started it, and this is read by
+/// whichever binary that server's path holds by then — older or newer — so
+/// the name is shared by every version.
 pub const URL_ENV: &str = "DROPPEN_NOTIFY_URL";
-/// The session's capability, injected at spawn (and as `RH_NOTIFY_TOKEN`, for
-/// the reason [`URL_ENV`] is). See [`super::token`].
+/// The session's capability, injected at spawn under a name as fixed as
+/// [`URL_ENV`]'s. See [`super::token`].
 pub const TOKEN_ENV: &str = "DROPPEN_NOTIFY_TOKEN";
 
 /// How long the server is given to accept the notification.

@@ -1,9 +1,7 @@
-//! The rename to Droppen: the server reads
-//! `DROPPEN_*` first and the old `REMOTE_HAND_*` / `RH_*` names when those are
-//! unset, saying once per old name that it is deprecated and stops working in
-//! v0.2.135 — by name, never by value, and never on stdout; and what one
-//! Droppen program hands another is written under both names and read under
-//! either without a word.
+//! The server's environment names are its `DROPPEN_*` ones: the names from
+//! before the rename to Droppen (`REMOTE_HAND_*`, `RH_*`) are ignored, nothing
+//! is said about them, and the programs the server starts get only the
+//! `DROPPEN_*` names.
 //!
 //! Checked on the binary, each process started with nothing in its
 //! environment but what the case sets (so no case sees another's variables,
@@ -38,16 +36,6 @@ fn run(home: &Path, args: &[&str], env: &[(&str, &str)]) -> (bool, String, Strin
     let out = server(home, args, env).output().expect("run the server binary");
     let text = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
     (out.status.success(), text(&out.stdout), text(&out.stderr))
-}
-
-/// How many lines say `old` is deprecated.
-fn deprecations(said: &str, old: &str) -> usize {
-    said.lines().filter(|l| l.contains(&format!("{old} is deprecated"))).count()
-}
-
-/// The lines about an old name, which must never carry a value.
-fn notices(said: &str) -> Vec<&str> {
-    said.lines().filter(|l| l.contains("deprecated")).collect()
 }
 
 /// A running `serve`, stopped (and its log kept for the assertions) on drop.
@@ -128,7 +116,7 @@ fn get(port: u16, path: &str) -> String {
 }
 
 #[test]
-fn a_server_with_only_the_new_names_works() {
+fn a_server_with_the_new_names_uses_them() {
     let root = tempfile::tempdir().expect("tempdir");
     let (home, data, config) = (root.path().join("home"), root.path().join("data-new"), root.path().join("config-new"));
     std::fs::create_dir_all(&home).expect("home");
@@ -146,91 +134,40 @@ fn a_server_with_only_the_new_names_works() {
     let status = get(port, "/api/auth/status");
     assert!(status.contains("\"desktopApp\":true"), "DROPPEN_DESKTOP_APP was read: {status}");
     let said = serve.stop();
-    assert!(notices(&said).is_empty(), "nothing deprecated: {said}");
     assert!(config.is_dir(), "its configuration went to DROPPEN_CONFIG_DIR");
     assert!(!home.join(".local/share/remote-hand").exists(), "not to the default data directory: {said}");
     assert!(!home.join(".config/remote-hand").exists(), "nor the default configuration directory: {said}");
 }
 
 #[test]
-fn a_server_with_only_the_old_names_still_works_and_says_so_once() {
+fn a_server_ignores_the_old_names() {
     let root = tempfile::tempdir().expect("tempdir");
     let (home, data, config) = (root.path().join("home"), root.path().join("data-old"), root.path().join("config-old"));
     std::fs::create_dir_all(&home).expect("home");
     let (data_s, config_s) = (data.to_string_lossy().into_owned(), config.to_string_lossy().into_owned());
-    let mut serve = Serve::start(
-        &home,
-        &[
-            ("REMOTE_HAND_DATA_DIR", &data_s),
-            ("REMOTE_HAND_CONFIG_DIR", &config_s),
-            ("RH_SESSION_LOG", "0"),
-            // What an app or an `up` from before the rename sets: read, and
-            // nothing said about it — nobody wrote it into a configuration.
-            ("RH_DESKTOP_APP", "1"),
-            ("RH_SUPERVISED", "1"),
-        ],
-    );
-    let port = serve.port_in(&data);
+    let old = [
+        ("REMOTE_HAND_DATA_DIR", data_s.as_str()),
+        ("REMOTE_HAND_CONFIG_DIR", config_s.as_str()),
+        ("RH_DESKTOP_APP", "1"),
+        ("RH_SUPERVISED", "1"),
+    ];
+    let mut serve = Serve::start(&home, &old);
+    // The default install's files, under the scratch home.
+    let port = serve.port_in(&home.join(".local/share/remote-hand"));
     let status = get(port, "/api/auth/status");
-    assert!(status.contains("\"desktopApp\":true"), "RH_DESKTOP_APP was read: {status}");
+    assert!(status.contains("\"desktopApp\":false"), "RH_DESKTOP_APP was not read: {status}");
     let said = serve.stop();
-    // `Paths` is built more than once at boot; each old name is said once.
-    for (old, new) in [
-        ("REMOTE_HAND_DATA_DIR", "DROPPEN_DATA_DIR"),
-        ("REMOTE_HAND_CONFIG_DIR", "DROPPEN_CONFIG_DIR"),
-        ("RH_SESSION_LOG", "DROPPEN_SESSION_LOG"),
-    ] {
-        assert_eq!(deprecations(&said, old), 1, "{old}: {said}");
-        assert!(
-            said.contains(&format!("{old} is deprecated: add {new} with the same value; {old} stops working in v0.2.135")),
-            "{said}"
-        );
+    assert!(home.join(".config/remote-hand").is_dir(), "its configuration went to the default directory: {said}");
+    assert!(!data.exists() && !config.exists(), "the old names' directories were not used: {said}");
+    for (name, _) in old {
+        assert!(!said.contains(name), "nothing is said about {name}: {said}");
     }
-    for handoff in ["RH_DESKTOP_APP", "RH_SUPERVISED"] {
-        assert!(!said.contains(handoff), "{handoff} is a handoff, not a setting: {said}");
-    }
-    for line in notices(&said) {
-        assert!(!line.contains(&data_s) && !line.contains(&config_s), "a name, never a value: {line}");
-    }
-    assert!(config.is_dir(), "its configuration went to REMOTE_HAND_CONFIG_DIR");
-    assert!(!home.join(".local/share/remote-hand").exists(), "not to the default data directory: {said}");
 }
 
+/// A command reads its files by the `DROPPEN_*` names only, and says nothing
+/// about an old name on either stream.
 #[test]
-fn the_new_name_wins_when_both_are_set_to_different_values() {
-    let root = tempfile::tempdir().expect("tempdir");
-    let home = root.path().join("home");
-    std::fs::create_dir_all(&home).expect("home");
-    let (new, old) = (root.path().join("data-new"), root.path().join("data-old"));
-    let (new_s, old_s) = (new.to_string_lossy().into_owned(), old.to_string_lossy().into_owned());
-    let config_s = root.path().join("config").to_string_lossy().into_owned();
-    let mut serve = Serve::start(
-        &home,
-        &[
-            ("DROPPEN_DATA_DIR", &new_s),
-            ("REMOTE_HAND_DATA_DIR", &old_s),
-            ("DROPPEN_CONFIG_DIR", &config_s),
-            // The switch-over: both names, one value. Nothing to say.
-            ("REMOTE_HAND_CONFIG_DIR", &config_s),
-        ],
-    );
-    serve.port_in(&new);
-    let said = serve.stop();
-    assert!(!old.exists(), "the old name's directory was not used: {said}");
-    let both = "DROPPEN_DATA_DIR and the deprecated REMOTE_HAND_DATA_DIR are both set, to different values: DROPPEN_DATA_DIR is used";
-    assert_eq!(said.lines().filter(|l| l.contains(both)).count(), 1, "{said}");
-    // (The setup banner does name it: the commands it suggests carry both.)
-    assert!(
-        notices(&said).iter().all(|line| !line.contains("REMOTE_HAND_CONFIG_DIR")),
-        "the same value under both names says nothing: {said}"
-    );
-    assert_eq!(notices(&said).len(), 1, "{said}");
-}
-
-/// A command that prints its answer on stdout says what it has to say about an
-/// old name on stderr: a script reading the answer gets the answer.
-#[test]
-fn a_command_says_it_on_stderr_and_answers_on_stdout() {
+fn a_command_ignores_the_old_names() {
     let root = tempfile::tempdir().expect("tempdir");
     let home = root.path().join("home");
     std::fs::create_dir_all(&home).expect("home");
@@ -243,75 +180,53 @@ fn a_command_says_it_on_stderr_and_answers_on_stdout() {
         &[("REMOTE_HAND_DATA_DIR", &old_data), ("REMOTE_HAND_CONFIG_DIR", &old_config)],
     );
     assert!(ok, "{stdout}{stderr}");
-    assert!(stdout.starts_with("no accounts on instance default") && stdout.contains("-old"), "the old names' files: {stdout}");
-    assert!(notices(&stdout).is_empty(), "nothing but the answer on stdout: {stdout}");
-    assert_eq!(deprecations(&stderr, "REMOTE_HAND_DATA_DIR"), 1, "{stderr}");
-    assert_eq!(deprecations(&stderr, "REMOTE_HAND_CONFIG_DIR"), 1, "{stderr}");
-    assert!(
-        stderr.lines().all(|l| l.starts_with("remote-hand: warning: ")),
-        "prefixed like this binary's errors: {stderr}"
-    );
+    assert!(stdout.starts_with("no accounts on instance default") && !stdout.contains("-old"), "the default install's files: {stdout}");
+    assert!(stderr.is_empty(), "nothing to say: {stderr}");
 
     let (ok, stdout, stderr) = run(&home, &["user", "list"], &[("DROPPEN_DATA_DIR", &new_data), ("DROPPEN_CONFIG_DIR", &new_config)]);
     assert!(ok, "{stdout}{stderr}");
-    assert!(stdout.contains("-new") && !stdout.contains("-old"), "the new names' files: {stdout}");
+    assert!(stdout.contains("-new"), "the new names' files: {stdout}");
     assert!(stderr.is_empty(), "nothing to say: {stderr}");
-
-    // `--version` reads nothing renamed and says nothing, whatever is set: a
-    // self-upgrade reads all of its stdout as the version.
-    let (ok, stdout, stderr) = run(&home, &["--version"], &[("REMOTE_HAND_DATA_DIR", &old_data)]);
-    assert!(ok && stdout.lines().count() == 1 && stderr.is_empty(), "{stdout:?} {stderr:?}");
 }
 
-/// A session's `droppen-notify` runs `notify` with what the server that
-/// started the session injected: both names from a server since the rename,
-/// only the old ones from a server before it. Either reaches the server, and
-/// an agent reading the answer is not told about names it did not choose.
+/// A session's `droppen-notify` runs `notify` with the channel the server
+/// injected under the `DROPPEN_*` names; the old names are no channel, and
+/// they lose to the new ones when both are set.
 #[test]
-fn notify_reads_what_a_server_old_or_new_handed_its_session() {
+fn notify_reads_only_the_new_names() {
     let root = tempfile::tempdir().expect("tempdir");
     // A port nothing listens on: reaching for it proves the channel was read.
     let closed = std::net::TcpListener::bind("127.0.0.1:0").expect("bind").local_addr().expect("addr").port();
     let url = format!("http://127.0.0.1:{closed}/api/notify");
-    for env in [
-        vec![("RH_NOTIFY_URL", url.as_str()), ("RH_NOTIFY_TOKEN", "t")],
-        vec![("DROPPEN_NOTIFY_URL", url.as_str()), ("DROPPEN_NOTIFY_TOKEN", "t")],
-        vec![("DROPPEN_NOTIFY_URL", url.as_str()), ("DROPPEN_NOTIFY_TOKEN", "t"), ("RH_NOTIFY_URL", url.as_str()), ("RH_NOTIFY_TOKEN", "t")],
-    ] {
-        let (ok, stdout, stderr) = run(root.path(), &["notify", "done"], &env);
-        assert!(!ok && stderr.contains("cannot reach the Droppen server"), "{env:?}: {stdout}{stderr}");
-        assert!(!stderr.contains("deprecated") && !stderr.contains("RH_"), "{env:?}: {stderr}");
-    }
-    let (ok, _, stderr) = run(root.path(), &["notify", "done"], &[]);
+
+    let (ok, stdout, stderr) = run(root.path(), &["notify", "done"], &[("DROPPEN_NOTIFY_URL", &url), ("DROPPEN_NOTIFY_TOKEN", "t")]);
+    assert!(!ok && stderr.contains("cannot reach the Droppen server"), "{stdout}{stderr}");
+
+    let (ok, _, stderr) = run(root.path(), &["notify", "done"], &[("RH_NOTIFY_URL", &url), ("RH_NOTIFY_TOKEN", "t")]);
     assert!(!ok && stderr.contains("no channel was configured"), "{stderr}");
 
-    // A session started by a server from before the rename, itself running in
-    // a newer server's session: the old names are its own channel, written
-    // over the new ones it inherited from outside. The old names win.
     let (ok, stdout, stderr) = run(
         root.path(),
         &["notify", "done"],
         &[
-            ("DROPPEN_NOTIFY_URL", "http://outer.invalid/api/notify"),
-            ("DROPPEN_NOTIFY_TOKEN", "outer"),
-            ("RH_NOTIFY_URL", url.as_str()),
-            ("RH_NOTIFY_TOKEN", "inner"),
+            ("DROPPEN_NOTIFY_URL", url.as_str()),
+            ("DROPPEN_NOTIFY_TOKEN", "t"),
+            ("RH_NOTIFY_URL", "http://outer.invalid/api/notify"),
+            ("RH_NOTIFY_TOKEN", "outer"),
         ],
     );
     assert!(!ok && stderr.contains("cannot reach the Droppen server"), "{stdout}{stderr}");
-    assert!(stderr.contains(&closed.to_string()) && !stderr.contains("outer.invalid"), "the inner channel: {stderr}");
-    assert!(!stderr.contains("deprecated") && !stderr.contains("RH_"), "{stderr}");
+    assert!(stderr.contains(&closed.to_string()) && !stderr.contains("outer.invalid"), "the DROPPEN_ channel: {stderr}");
+    assert!(!stderr.contains("RH_"), "{stderr}");
 }
 
-/// `up` tells the server it runs that it is supervised under both names, and
-/// hands on each setting it was given under a new name under the old one
-/// too, so a server from before the rename — which `up` runs after a rollback
-/// to `.prev` — still knows it may restart itself, and still runs on this
-/// install's files rather than the default install's. The installed binary
-/// here is a script standing in for such a server: it writes down what it was
-/// given.
+/// `up` tells the server it runs that it is supervised, and hands on what it
+/// was given, under the `DROPPEN_*` names only: nothing is copied to an old
+/// name, and an old name set by hand reaches the child as it is, untranslated.
+/// The installed binary here is a script standing in for the server: it
+/// writes down what it was given.
 #[test]
-fn up_hands_its_server_both_names() {
+fn up_hands_its_server_only_the_new_names() {
     let root = tempfile::tempdir().expect("tempdir");
     let (home, data) = (root.path().join("home"), root.path().join("data"));
     let bin = data.join("bin");
@@ -328,9 +243,7 @@ fn up_hands_its_server_both_names() {
         ("DROPPEN_DATA_DIR", data_s.as_str()),
         ("DROPPEN_CONFIG_DIR", config_s.as_str()),
         ("APP_INSTANCE", "bob"),
-        // Only under the old name: the child inherits it as it is.
         ("RH_STALL_MS", "5000"),
-        // Empty, which for this one is a value ("no STUN servers").
         ("DROPPEN_AGENT_DIRECT_STUN", ""),
     ];
     let mut up = server(&home, &["up", "--", "serve"], &env)
@@ -362,20 +275,17 @@ fn up_hands_its_server_both_names() {
     let _ = up.wait();
 
     let seen = std::fs::read_to_string(&seen).expect("the child's environment");
-    let expected = [
+    for line in [
         "DROPPEN_SUPERVISED=1".to_string(),
-        "RH_SUPERVISED=1".to_string(),
         format!("DROPPEN_DATA_DIR={data_s}"),
-        format!("REMOTE_HAND_DATA_DIR={data_s}"),
         format!("DROPPEN_CONFIG_DIR={config_s}"),
-        format!("REMOTE_HAND_CONFIG_DIR={config_s}"),
         "APP_INSTANCE=bob".to_string(),
         "RH_STALL_MS=5000".to_string(),
         "DROPPEN_AGENT_DIRECT_STUN=".to_string(),
-        "RH_AGENT_DIRECT_STUN=".to_string(),
-    ];
-    for line in &expected {
+    ] {
         assert!(seen.lines().any(|l| l == line), "{line} missing from {seen}");
     }
-    assert!(!seen.lines().any(|l| l.starts_with("DROPPEN_STALL_MS=")), "nothing added under a new name: {seen}");
+    for name in ["RH_SUPERVISED", "REMOTE_HAND_DATA_DIR", "REMOTE_HAND_CONFIG_DIR", "RH_AGENT_DIRECT_STUN", "DROPPEN_STALL_MS"] {
+        assert!(!seen.lines().any(|l| l.starts_with(&format!("{name}="))), "{name} was not added: {seen}");
+    }
 }

@@ -21,10 +21,9 @@
 //!
 //! The roots hang off a [`Paths`], which resolves both of them once at
 //! construction, so a test can point a whole server at a synthetic tree without
-//! touching process-global state. The `DROPPEN_CLAUDE_*_ROOT` environment seams
-//! also answer to their pre-rename names, `REMOTE_HAND_CLAUDE_*_ROOT`, through
-//! [`droppen_base::env`]; [`droppen_instance::paths::env_dir`] is the only place they — or any
-//! other directory override — are read.
+//! touching process-global state. [`droppen_instance::paths::env_dir`] is the
+//! only place the `DROPPEN_CLAUDE_*_ROOT` environment seams — or any other
+//! directory override — are read.
 
 use std::path::PathBuf;
 
