@@ -783,7 +783,7 @@ impl AccountsStore {
             .reading_file(&self.paths)
             .map(|path| super::quota::readings::load(&path))
             .unwrap_or_default();
-        let mut logins = super::local_login::local_logins(&self.logins, &self.limit_log(), &reading, super::rest::now_ms());
+        let mut logins = self.logins.local_logins(&self.limit_log(), &reading, super::rest::now_ms());
         logins.claude.is_default = self.local_is_default(AccountProvider::Claude);
         logins.codex.is_default = self.local_is_default(AccountProvider::Codex);
         logins
@@ -2199,6 +2199,33 @@ mod tests {
             replaced.env_keys.as_ref().map(Vec::as_slice),
             Some(["ANTHROPIC_AUTH_TOKEN".to_string(), "ANTHROPIC_BASE_URL".to_string()].as_slice()),
             "the block is replaced whole: what is not in the text is not set"
+        );
+    }
+
+    /// A replacement is held to the rule a new row is: a codex block with no key
+    /// variable never reaches the table, and the block it would have replaced
+    /// is still the one stored.
+    #[tokio::test]
+    async fn a_replacement_nothing_could_spawn_is_refused_before_it_is_stored() {
+        let (_dir, store) = store();
+        let codex = store
+            .create("Codex", AccountProvider::Codex, env("OPENAI_API_KEY=not-a-real-openai-key"))
+            .await
+            .expect("create");
+        let refused = store
+            .update(
+                &codex.id,
+                AccountPatch {
+                    credential: Some(env("SOMETHING_ELSE=x")),
+                    ..Default::default()
+                },
+            )
+            .await;
+        assert!(matches!(refused, Err(AccountError::Invalid(_))), "{refused:?}");
+        assert_eq!(
+            parse_env_block(&store.env_block(&codex.id).await.expect("the block")).expect("a block"),
+            parse_env_block("OPENAI_API_KEY=not-a-real-openai-key").expect("a block"),
+            "the stored block is untouched"
         );
     }
 

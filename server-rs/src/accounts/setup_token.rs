@@ -85,7 +85,7 @@ use droppen_workbench::terminals::{CreateSpec, Registry};
 use droppen_base::text::strip_ansi;
 
 use super::store::{AccountError, AccountKind, AccountPatch, AccountProvider, Credential};
-use super::verify::{verify_secret, Verdict};
+use super::verify::Verdict;
 
 /// How long a finished capture stays pollable.
 const EXPIRY: Duration = Duration::from_secs(60 * 60);
@@ -900,7 +900,8 @@ async fn accepted_reading(drive: &Arc<Drive>, found: &TokenMatch) -> Result<Read
         let logins = logins.clone();
         async move {
             // A reading with nothing to check is a refused one: never stored.
-            verify_secret(&logins, &paths, AccountProvider::Claude, &Credential::Oauth(candidate))
+            logins
+                .verify_secret(&paths, AccountProvider::Claude, &Credential::Oauth(candidate))
                 .await
                 .unwrap_or_else(|error| Verdict::Invalid(error.to_string()))
         }

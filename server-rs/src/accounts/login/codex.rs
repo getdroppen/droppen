@@ -24,7 +24,7 @@ use std::time::Duration;
 /// else. The one lever left that keeps `~/.codex` — and therefore every session
 /// this server discovers — exactly where it is, is a *custom model provider*
 /// whose key comes from an environment variable of our choosing. This is that
-/// variable, and [`codex_provider_args`] is what tells codex to look at it.
+/// variable, and [`CodexBaseUrl::provider_args`] is what tells codex to look at it.
 ///
 /// `REMOTE_HAND_CODEX_API_KEY` before the rename to Droppen, and renamed
 /// outright, with no fallback: the spawn that sets it is the spawn that names
@@ -36,52 +36,68 @@ pub const CODEX_PROVIDER_ID: &str = "remote_hand";
 /// Where a codex account talks when it names no base URL of its own.
 pub const CODEX_DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
 
-/// The `-c` overrides that point one `codex` spawn at an account's own key.
-///
-/// Inline TOML on the command line, which is why [`normalize_base_url`] refuses
-/// a quote, a backslash and anything that is not printable: the base URL is
-/// interpolated into the table below, and a value that could close the string
-/// would be an injection into the CLI's own configuration.
-///
-/// `wire_api = "responses"` because that is the API the OpenAI-compatible
-/// endpoints codex speaks to expose; `name` is only ever shown to a human.
-pub fn codex_provider_args(base_url: &str) -> Vec<String> {
-    vec![
-        "-c".to_string(),
-        format!(
-            "model_providers.{CODEX_PROVIDER_ID}={{name=\"remote-hand\",base_url=\"{base_url}\",env_key=\"{CODEX_API_KEY_ENV}\",wire_api=\"responses\"}}"
-        ),
-        "-c".to_string(),
-        format!("model_provider={CODEX_PROVIDER_ID}"),
-    ]
-}
-
 const MAX_BASE_URL_LENGTH: usize = 512;
 
-/// A base URL fit to be interpolated into codex's inline TOML, or a refusal.
+/// A base URL fit to be interpolated into codex's inline TOML.
 ///
-/// The rules are narrow on purpose: this string is put inside a quoted TOML
-/// value on a command line, so a quote, a backslash or a control character in
-/// it is a way to say something to the child that nobody typed.
-pub fn normalize_base_url(raw: &str) -> Result<String, AccountError> {
-    let url = raw.trim();
-    if url.len() > MAX_BASE_URL_LENGTH {
-        return Err(AccountError::Invalid(format!("{CODEX_BASE_URL_VAR} is implausibly long")));
+/// Its own type so that the only way to the command line is through
+/// [`CodexBaseUrl::parse`]: a value that could close the TOML string would be
+/// an injection into the CLI's own configuration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodexBaseUrl(String);
+
+impl CodexBaseUrl {
+    /// Where a codex account talks when it names no base URL of its own
+    /// ([`CODEX_DEFAULT_BASE_URL`]).
+    pub fn vendor_default() -> Self {
+        Self(CODEX_DEFAULT_BASE_URL.to_string())
     }
-    let Some(rest) = url.strip_prefix("https://").or_else(|| url.strip_prefix("http://")) else {
-        return Err(AccountError::Invalid(format!("{CODEX_BASE_URL_VAR} must start with http:// or https://")));
-    };
-    // `https:///v1` parses as a URL with no host, and a CLI pointed at one
-    // fails somewhere far away from the field that was typed wrong.
-    if rest.is_empty() || rest.starts_with('/') {
-        return Err(AccountError::Invalid(format!("{CODEX_BASE_URL_VAR} has no host")));
+
+    /// `raw`, if it is fit to be interpolated into codex's inline TOML, or a refusal.
+    ///
+    /// The rules are narrow on purpose: this string is put inside a quoted TOML
+    /// value on a command line, so a quote, a backslash or a control character in
+    /// it is a way to say something to the child that nobody typed.
+    pub fn parse(raw: &str) -> Result<Self, AccountError> {
+        let url = raw.trim();
+        if url.len() > MAX_BASE_URL_LENGTH {
+            return Err(AccountError::Invalid(format!("{CODEX_BASE_URL_VAR} is implausibly long")));
+        }
+        let Some(rest) = url.strip_prefix("https://").or_else(|| url.strip_prefix("http://")) else {
+            return Err(AccountError::Invalid(format!("{CODEX_BASE_URL_VAR} must start with http:// or https://")));
+        };
+        // `https:///v1` parses as a URL with no host, and a CLI pointed at one
+        // fails somewhere far away from the field that was typed wrong.
+        if rest.is_empty() || rest.starts_with('/') {
+            return Err(AccountError::Invalid(format!("{CODEX_BASE_URL_VAR} has no host")));
+        }
+        if url.chars().any(|c| c.is_whitespace() || c.is_control() || c == '"' || c == '\\') {
+            return Err(AccountError::Invalid(format!(
+                "{CODEX_BASE_URL_VAR} cannot contain whitespace, a quote or a backslash"
+            )));
+        }
+        Ok(Self(url.to_string()))
     }
-    if url.chars().any(|c| c.is_whitespace() || c.is_control() || c == '"' || c == '\\') {
-        return Err(AccountError::Invalid(format!(
-            "{CODEX_BASE_URL_VAR} cannot contain whitespace, a quote or a backslash"
-        )));
+
+    /// The `-c` overrides that point one `codex` spawn at an account's own key.
+    ///
+    /// Inline TOML on the command line, which is why [`CodexBaseUrl::parse`]
+    /// refuses a quote, a backslash and anything that is not printable: the base
+    /// URL is interpolated into the table below.
+    ///
+    /// `wire_api = "responses"` because that is the API the OpenAI-compatible
+    /// endpoints codex speaks to expose; `name` is only ever shown to a human.
+    pub fn provider_args(&self) -> Vec<String> {
+        let base_url = &self.0;
+        vec![
+            "-c".to_string(),
+            format!(
+                "model_providers.{CODEX_PROVIDER_ID}={{name=\"remote-hand\",base_url=\"{base_url}\",env_key=\"{CODEX_API_KEY_ENV}\",wire_api=\"responses\"}}"
+            ),
+            "-c".to_string(),
+            format!("model_provider={CODEX_PROVIDER_ID}"),
+        ]
     }
-    Ok(url.to_string())
 }
 
 /// What a codex probe runs. `--skip-git-repo-check` because the scratch
@@ -118,7 +134,7 @@ impl CodexLogin {
     ///   deleted afterwards rather than appearing in the session list — and so the
     ///   probe cannot fall back on the user's own `auth.json` and answer for a login
     ///   that is not the one being checked;
-    /// * the provider override from [`crate::accounts::login::codex::codex_provider_args`],
+    /// * the provider override from [`crate::accounts::login::codex::CodexBaseUrl::provider_args`],
     ///   which is the whole of how a key reaches codex: `app-server` reads neither
     ///   `OPENAI_API_KEY` nor `CODEX_API_KEY`, so a probe that only set a variable
     ///   would be checking nothing at all.
@@ -209,10 +225,10 @@ impl Login for CodexLogin {
         // is not overriding anything, and v0.2.58 read it that way.
         let named = env.iter().find(|var| var.key == CODEX_BASE_URL_VAR && !var.value.trim().is_empty());
         let base_url = match named {
-            Some(var) => normalize_base_url(&var.value)?,
-            None => CODEX_DEFAULT_BASE_URL.to_string(),
+            Some(var) => CodexBaseUrl::parse(&var.value)?,
+            None => CodexBaseUrl::vendor_default(),
         };
-        let codex_args = codex_provider_args(&base_url);
+        let codex_args = base_url.provider_args();
         Ok(AccountLaunch {
             provider: AccountProvider::Codex,
             env: vars,
@@ -322,7 +338,7 @@ mod tests {
         let launch = AccountLaunch {
             provider: AccountProvider::Codex,
             env: vec![("OPENAI_API_KEY".to_string(), "not-a-real-key".to_string())],
-            codex_args: codex_provider_args(CODEX_DEFAULT_BASE_URL),
+            codex_args: CodexBaseUrl::vendor_default().provider_args(),
         };
         let verdict = CodexLogin.verify(&paths, &launch, &[]).await;
         assert_eq!(
