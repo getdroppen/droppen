@@ -61,13 +61,6 @@ pub struct Drive {
     pub composer: composer_prefs::ComposerPrefsStore,
     /// User-set session titles.
     pub titles: titles::TitlesStore,
-    /// This server's own instance directory.
-    ///
-    /// Held so the send path can reach [`crate::notify::inject`], which puts the
-    /// `rh-notify` program and this instance's port and tokens into a spawn.
-    /// Cloned rather than shared behind an `Arc` because it is three paths and a
-    /// name, and cloning it once per server costs less than the indirection.
-    pub instance: droppen_instance::instance::InstanceDirs,
     /// Local accounts, live logins, tickets and failed-login counters.
     ///
     /// Here rather than as a field of its own on
@@ -110,20 +103,8 @@ impl Drive {
             models: Arc::new(crate::models::ClaudeModelCache::new(paths.clone())),
             composer: composer_prefs::ComposerPrefsStore::new(paths.clone()),
             titles: titles::TitlesStore::new(paths.clone()),
-            instance: instance.clone(),
             paths,
             transcripts,
         })
-    }
-
-    /// What a send or a start reads from this subsystem, lent for one spawn.
-    pub fn spawn_deps(&self) -> crate::inject::SpawnDeps<'_> {
-        crate::inject::SpawnDeps {
-            paths: &self.paths,
-            instance: &self.instance,
-            accounts: &self.accounts,
-            quota: &self.quota,
-            injections: &self.injections,
-        }
     }
 }

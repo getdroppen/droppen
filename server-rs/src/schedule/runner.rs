@@ -294,7 +294,7 @@ async fn fire(state: &ScheduleState, task: ScheduledTask) {
         ..Default::default()
     };
 
-    match state.drive.spawn_deps().start_new_session(task.source, &cwd, &task.prompt, &options).await {
+    match state.drive.providers.start_new_session(task.source, &cwd, &task.prompt, &options).await {
         Ok(id) => {
             tracing::info!(task = %task.name, source = %task.source, session = %id, "a scheduled task started a session");
             record(&paths, &task.id, |stored| {

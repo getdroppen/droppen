@@ -13,7 +13,7 @@ use std::sync::Arc;
 use futures_util::future::BoxFuture;
 use tokio::sync::watch;
 
-use super::{drafts, AnswerOutcome, InjectionRegistry, QueueOutcome, Reply, ResidentState, StopTaskOutcome};
+use super::{drafts, AnswerOutcome, InjectError, InjectionRegistry, QueueOutcome, Reply, ResidentState, SendOptions, Sent, StopTaskOutcome};
 use crate::sessions::{DriverStates, Injection, InjectionRunState, ResidentInfo, SessionSummary, Source};
 use droppen_http::error::ApiError;
 
@@ -45,8 +45,38 @@ pub struct Capabilities {
     pub schedules: bool,
 }
 
+/// A message for one of a provider's sessions.
+#[derive(Debug, Clone, Copy)]
+pub struct SendTo<'a> {
+    /// The session.
+    pub id: &'a str,
+    /// The directory the session ran in, as the session list knows it.
+    pub cwd: Option<&'a str>,
+    /// What the user wrote.
+    pub text: &'a str,
+    /// Everything else the composer asked for.
+    pub options: &'a SendOptions,
+}
+
+/// The first message of a session a provider is to start.
+#[derive(Debug, Clone, Copy)]
+pub struct StartAt<'a> {
+    /// The directory the session runs in.
+    pub cwd: &'a str,
+    /// What the user wrote.
+    pub text: &'a str,
+    /// Everything else the composer asked for.
+    pub options: &'a SendOptions,
+}
+
 /// What a provider says about the sessions it runs, each named by its id.
 pub trait Run: Send + Sync {
+    /// Hand a message to the CLI that owns an existing session.
+    fn send<'a>(&'a self, to: SendTo<'a>) -> BoxFuture<'a, Result<Sent, InjectError>>;
+
+    /// Start a brand-new session and resolve once its canonical id is known.
+    fn start<'a>(&'a self, at: StartAt<'a>) -> BoxFuture<'a, Result<String, InjectError>>;
+
     /// The state of the run for this session, if this server ever started one.
     fn injection(&self, id: &str) -> Option<Injection>;
 
@@ -159,6 +189,22 @@ impl ProviderRegistry {
     /// The runs of `source`'s provider, when one is registered.
     fn run(&self, source: Source) -> Option<&dyn Run> {
         self.providers.get(&source).map(|provider| provider.run())
+    }
+
+    /// Hand a message to the CLI that owns an existing session.
+    pub async fn send_to_session(&self, source: Source, id: &str, cwd: Option<&str>, text: &str, options: &SendOptions) -> Result<Sent, InjectError> {
+        match self.run(source) {
+            Some(run) => run.send(SendTo { id, cwd, text, options }).await,
+            None => Err(InjectError::Internal(format!("no provider runs {source} sessions"))),
+        }
+    }
+
+    /// Start a brand-new session in `cwd` and resolve once its canonical id is known.
+    pub async fn start_new_session(&self, source: Source, cwd: &str, text: &str, options: &SendOptions) -> Result<String, InjectError> {
+        match self.run(source) {
+            Some(run) => run.start(StartAt { cwd, text, options }).await,
+            None => Err(InjectError::Internal(format!("no provider runs {source} sessions"))),
+        }
     }
 
     /// The state of the run for this session, if this server ever started one.
