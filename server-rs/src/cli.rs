@@ -40,7 +40,7 @@ pub enum Command {
     /// Open an instance's page in this device's browser.
     Open(droppen_auth::cli::OpenArgs),
     /// Manage the plugins installed in one instance.
-    Plugin(crate::plugins::cli::PluginArgs),
+    Plugin(droppen_plugins::cli::PluginArgs),
     /// Join, run, inspect or leave the cloud agent.
     Agent(agent::AgentArgs),
     /// Send a push notification from a session.
@@ -116,7 +116,7 @@ impl Cli {
             .mut_subcommand("user", |command| command.after_long_help(long(droppen_auth::cli::USAGE)))
             .mut_subcommand("setup-code", |command| command.after_long_help(long(droppen_auth::cli::SETUP_CODE_USAGE)))
             .mut_subcommand("open", |command| command.after_long_help(long(droppen_auth::cli::OPEN_USAGE)))
-            .mut_subcommand("plugin", |command| command.after_long_help(long(crate::plugins::cli::USAGE)))
+            .mut_subcommand("plugin", |command| command.after_long_help(long(droppen_plugins::cli::USAGE)))
             .mut_subcommand("agent", |command| command.after_long_help(long(agent::USAGE)))
             .mut_subcommand("replay", |command| command.after_long_help(long(crate::record::replay::USAGE)))
     }
@@ -168,7 +168,7 @@ impl Command {
             Command::Open(args) => args.run().await.map_err(GotchaError::message),
             // The plugins installed in an instance: install, uninstall, switches,
             // and each one's document store. Outside the server for the reason
-            // `user` is, and safe beside a running one (`crate::plugins::cli`).
+            // `user` is, and safe beside a running one (`droppen_plugins::cli`).
             Command::Plugin(args) => args.run().await.map_err(GotchaError::message),
             // The cloud agent. Outside `serve` entirely, so an instance nobody
             // enrolls is unchanged.
@@ -576,6 +576,10 @@ pub(crate) mod tests {
     /// The `user`, `setup-code` and `open` command lines as this binary parses
     /// them (`droppen_auth::cli`).
     mod auth;
+
+    /// The `plugin` command line as this binary parses it
+    /// (`droppen_plugins::cli`).
+    mod plugins;
 
     /// The `pty-shim` command line as this binary parses it.
     mod pty_shim {

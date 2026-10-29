@@ -916,7 +916,7 @@ mod tests {
             std::slice::from_ref(&status),
         ))
         .expect("a JSON frame");
-        let route = serde_json::to_value(vec![crate::plugins::wire::PluginStatus::from(status)]).expect("JSON");
+        let route = serde_json::to_value(vec![droppen_plugins::wire::PluginStatus::from(status)]).expect("JSON");
         assert_eq!(frame["plugins"], route);
     }
 
@@ -995,7 +995,7 @@ mod tests {
         let (state, addr) = crate::api::test_support::served_with(home.path(), |state| {
             // One plugin this instance has, so `settings` differs visibly
             // between the two subscribers.
-            state.plugins = Arc::new(crate::plugins::tests::installed_host(
+            state.plugins = Arc::new(droppen_plugins::testing::installed_host(
                 home.path(),
                 &["tasks"],
                 droppen_http::config::PluginSettings::default(),

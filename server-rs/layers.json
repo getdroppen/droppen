@@ -106,9 +106,7 @@
         {
           "name": "droppen-plugins",
           "about": "The plugin store, installs and serving.",
-          "modules": [
-            "plugins"
-          ],
+          "modules": [],
           "mayUse": [
             "droppen-auth"
           ]

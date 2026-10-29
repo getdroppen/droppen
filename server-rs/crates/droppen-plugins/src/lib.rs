@@ -2,6 +2,9 @@
 //! it has on, where their code is served from, and each one's private document
 //! store.
 //!
+//! A name in backticks such as `agent::bridge` in these docs is a module of the
+//! server, which this crate cannot link to.
+//!
 //! # What a plugin is here
 //!
 //! A plugin is a front-end package installed into one instance at runtime
@@ -55,8 +58,8 @@ pub mod install;
 pub mod routes;
 pub mod serve;
 pub mod store;
-#[cfg(test)]
-pub(crate) mod testing;
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing;
 pub mod wire;
 
 use std::collections::{BTreeSet, HashMap};
@@ -196,7 +199,7 @@ impl<T> LockRecoverExt<T> for Mutex<T> {
 /// Whether this request came over the cloud agent's bridge and speaks for a
 /// device (`droppen_auth` resolves it from the agent's headers). Nothing of the
 /// plugin host is served to one.
-pub(crate) trait CloudIdentityExt {
+pub trait CloudIdentityExt {
     /// Whether this request came over the cloud agent's bridge and speaks for
     /// a device. Nothing of the plugin host is served to one.
     fn is_cloud(&self) -> bool;
@@ -790,36 +793,32 @@ fn valid_key(key: &str) -> bool {
 pub(crate) mod tests {
     use super::*;
     use droppen_http::config::PluginSettings;
-    use crate::feed::global::GlobalFeed;
-    use crate::plugins::testing::{package, tarball};
+    use crate::testing::{host, installed_host, package_bytes};
     use serde_json::json;
 
-    /// A valid package of `id`, at `version`, with an entry and a chunk.
-    pub(crate) fn package_bytes(id: &str, version: &str) -> Vec<u8> {
-        tarball(
-            &package(id, version),
-            &[("dist/index.js", b"export default {};\n"), ("dist/page-abc.js", b"export const page = 1;\n")],
-        )
-    }
+    /// The frames a host publishes, in order: what a feed client would hear.
+    #[derive(Default)]
+    struct Frames(Mutex<std::collections::VecDeque<String>>);
 
-    pub(crate) fn host(dir: &Path, config: PluginSettings, feed: Option<Refresh>) -> Plugins {
-        let instance = dir.join("instances").join("t");
-        Plugins::new(instance.clone(), instance.join("state.db"), &config, feed)
-    }
-
-    pub(crate) fn installed_host(dir: &Path, ids: &[&str], config: PluginSettings, feed: Option<Refresh>) -> Plugins {
-        let plugins = host(dir, config, feed);
-        for id in ids {
-            plugins.install(&package_bytes(id, "0.1.0"), None).expect("installs");
+    impl Frames {
+        /// The oldest frame not yet read.
+        fn next(&self) -> String {
+            self.0.lock().unwrap().pop_front().expect("a frame")
         }
-        plugins
+    }
+
+    impl droppen_http::refresh::RefreshSink for Frames {
+        fn request_refresh(&self, _expected: Option<(&dyn std::fmt::Display, &str)>) {}
+
+        fn publish(&self, frame: String) {
+            self.0.lock().unwrap().push_back(frame);
+        }
     }
 
     #[test]
     fn installing_switches_a_plugin_on_and_announces_it() {
         let dir = tempfile::tempdir().unwrap();
-        let feed = GlobalFeed::new();
-        let mut rx = feed.listen();
+        let feed = Arc::new(Frames::default());
         let plugins = host(dir.path(), PluginSettings::default(), Some(Refresh::new(feed.clone())));
         let status = plugins.install(&package_bytes("tasks", "0.1.0"), Some("ada")).unwrap();
         assert!(status.enabled && status.compatible && !status.forced);
@@ -832,7 +831,7 @@ pub(crate) mod tests {
         let decision = plugins.decision("tasks").unwrap();
         assert_eq!((decision.enabled, decision.by.as_deref(), decision.reason), (true, Some("ada"), DecisionReason::Install));
 
-        let frame: serde_json::Value = serde_json::from_str(&rx.try_recv().unwrap()).unwrap();
+        let frame: serde_json::Value = serde_json::from_str(&feed.next()).unwrap();
         assert_eq!(frame["type"], "plugins");
         assert_eq!(frame["plugins"][0]["build"], json!(status.build));
         assert_eq!(frame["plugins"][0]["entry"], json!(entry));
@@ -887,10 +886,9 @@ pub(crate) mod tests {
     #[test]
     fn a_disabled_plugin_never_makes_a_store_and_a_switch_is_seen_at_once() {
         let dir = tempfile::tempdir().unwrap();
-        let feed = GlobalFeed::new();
+        let feed = Arc::new(Frames::default());
         let plugins = installed_host(dir.path(), &["notes"], PluginSettings::default(), None);
         plugins.set_enabled("notes", false, Some("ada"), DecisionReason::Settings).unwrap();
-        let mut rx = feed.listen();
         let switched = installed_host(dir.path(), &[], PluginSettings::default(), Some(Refresh::new(feed.clone())));
         // The same instance directory, the switch the first host wrote.
         let store = switched.store_path("notes");
@@ -903,7 +901,7 @@ pub(crate) mod tests {
 
         let status = switched.set_enabled("notes", true, Some("ada"), DecisionReason::Settings).unwrap();
         assert!(status.enabled);
-        let raw = rx.try_recv().unwrap();
+        let raw = feed.next();
         // The frame's bytes: its type first, then the list as the route writes it.
         assert_eq!(&*raw, format!(r#"{{"type":"plugins","plugins":{}}}"#, serde_json::to_string(&switched.status()).unwrap()));
         let frame: serde_json::Value = serde_json::from_str(&raw).unwrap();
@@ -928,7 +926,7 @@ pub(crate) mod tests {
             )
             .unwrap();
         assert_eq!(doc.revision, 1);
-        let raw = rx.try_recv().unwrap();
+        let raw = feed.next();
         assert_eq!(&*raw, r#"{"type":"plugin-doc","plugin":"notes","name":"state","revision":1}"#);
         let frame: serde_json::Value = serde_json::from_str(&raw).unwrap();
         assert_eq!(frame, json!({"type": "plugin-doc", "plugin": "notes", "name": "state", "revision": 1}));
@@ -1093,7 +1091,7 @@ pub(crate) mod tests {
         let plugins = Arc::new(host(dir.path(), config, None));
         // Place the package without `Plugins::install`, which would make the
         // key itself.
-        crate::plugins::install::install(plugins.instance_dir(), &package_bytes("tasks", "0.1.0")).unwrap();
+        crate::install::install(plugins.instance_dir(), &package_bytes("tasks", "0.1.0")).unwrap();
 
         let (first, second) = (plugins.clone(), plugins.clone());
         let first = std::thread::spawn(move || first.status_of("tasks").unwrap().entry.unwrap());

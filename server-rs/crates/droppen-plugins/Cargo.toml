@@ -1,0 +1,72 @@
+[package]
+name = "droppen-plugins"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+publish = false
+description = "The Droppen server's plugin host: installed packages, their switches and document store, their routes and assets, and the plugin command line"
+
+# Runtime-installed plugins: the host links the plugin contract
+# (droppen-plugin-sdk) and stands on the instance, the HTTP kit and the login
+# guard's identity. It names none of the server's other subsystems; the feed
+# reads its status through a port the entry fills.
+[dependencies]
+chrono = "0.4"
+# The `plugin` command line, which the server mounts. The features are the
+# server's, so they parse alike.
+clap = { version = "4.5", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
+droppen-auth = { path = "../droppen-auth" }
+droppen-base = { path = "../droppen-base" }
+droppen-http = { path = "../droppen-http" }
+droppen-instance = { path = "../droppen-instance" }
+# The plugin contract (manifest, ids, document-store wire format).
+droppen-plugin-sdk = { path = "../droppen-plugin-sdk" }
+# The gzip half of a plugin package's tarball. The backend is the server's.
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
+gotcha = { version = "0.4.1", features = ["openapi"] }
+# What gotcha's `Schematic` derive expands to names it.
+gotcha_core = "0.4.1"
+libc = "0.2"
+rand = "0.8"
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { workspace = true }
+# A package's digest, which names its build.
+sha2 = "0.10"
+# Constant-time comparison of the asset key. Already in the graph; named here
+# because the host uses it directly, and an implicit dependency is one
+# `cargo update` away from disappearing.
+subtle = "2"
+# Reading a plugin package's tar (`install`). Hand-rolling the header parser
+# (ustar, GNU long names, PAX extensions, checksums) would be exactly the kind of
+# security-sensitive parsing a vetted crate should do instead; the installer
+# still reads entries itself, refusing anything but regular files and
+# directories rather than extracting with the tar's own modes and links.
+tar = "0.4"
+thiserror = "1"
+tokio = { version = "1", features = ["rt"] }
+tracing = "0.1"
+uuid = { version = "1", features = ["v4"] }
+
+# `testing` (plugin packages built in code, and a host with some installed),
+# for the server's tests of the feed and the settings route. Only the server's
+# [dev-dependencies] turn it on.
+[features]
+test-support = []
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt"] }
+# Driving a router in the route tests.
+tower-service = "0.3"
+
+[lints.rust]
+missing_docs = "deny"
+unreachable_pub = "deny"
+
+# `[lints] workspace = true` cannot be mixed with the rust lints above, so the
+# workspace's two clippy denials (`server-rs/Cargo.toml` `[workspace.lints]`)
+# are repeated here: keep them in step.
+[lints.clippy]
+significant_drop_in_scrutinee = "deny"
+await_holding_lock = "deny"

@@ -177,7 +177,7 @@ fn respond_to(path: &str, query: Option<&str>, if_none_match: Option<&str>) -> R
             response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
             response
         }
-        // A `/plugins/…` request the asset route (`crate::plugins::serve`) did
+        // A `/plugins/…` request the asset route (`droppen_plugins::serve`) did
         // not match — too few segments, say — must not be handed the shell for
         // the same reason a missing hashed chunk is not: a module loader would
         // cache `index.html` under the script's name and feed it to `import()`.
