@@ -517,7 +517,8 @@ mod tests {
             acp_agent: agent.map(str::to_owned),
         };
         let acp = providers.models(Source::Acp).expect("the ACP provider");
-        for agent in [None, Some("../fake"), Some("Fake")] {
+        let too_long = "x".repeat(crate::sessions::acp_transcript::MAX_AGENT_ID + 1);
+        for agent in [None, Some("../fake"), Some("Fake"), Some(""), Some("a/b"), Some("a\0b"), Some(too_long.as_str())] {
             assert_eq!(
                 acp.list(&query(Source::Acp, agent)).await.err().as_deref(),
                 Some("acpAgent names the ACP agent to list models for"),

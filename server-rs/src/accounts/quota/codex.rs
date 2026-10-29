@@ -274,7 +274,7 @@ impl ProbeRoots {
     /// the restart-safe shim, and it exists to keep a turn alive across a server
     /// restart — it claims the session lock, writes a run journal record and leaves
     /// shim sidecars on disk. None of that belongs to a read that needs no thread
-    /// at all. This is the [`crate::models::probe`] shape instead: timeout,
+    /// at all. This is the [`crate::models::claude::probe`] shape instead: timeout,
     /// `kill_on_drop`, an explicit close, cached and TTL'd, fallback on any failure.
     ///
     /// `None` for every failure there is — no CLI, one that will not start, one

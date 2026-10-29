@@ -6,9 +6,9 @@
 //! ([`acp`]). So each provider answers [`Models`] for its own CLI, and the
 //! route asks the provider of the source it is asked about.
 //!
-//! A list degrades to a static guess rather than failing, because an empty
-//! model picker is worse than a slightly stale one, and says which of the two
-//! the caller is looking at.
+//! Claude's and Codex's lists degrade to a static guess rather than failing,
+//! because an empty model picker is worse than a slightly stale one, and say
+//! which of the two the caller is looking at.
 
 use std::sync::Arc;
 

@@ -20,8 +20,8 @@
 //! [`crate::inject::ProviderRegistry::start_new_session`] already takes a [`Source`] and there is
 //! nothing about a timer that prefers one. The two differ in three places, all of
 //! them handled rather than papered over — the flag values each accepts (see
-//! [`crate::models::accepted_efforts`] and
-//! [`crate::models::permission_is_known`]), what "still busy" means (see
+//! [`crate::models::Models::accepted_efforts`] and
+//! [`crate::models::Models::permission_is_known`]), what "still busy" means (see
 //! [`runner`]), and the fact that only a claude spawn is decorated with the
 //! `rh-notify` skill, so a codex session started by a task cannot nudge a phone
 //! from inside itself. That last one is Claude Code's own mechanism and not
@@ -73,6 +73,7 @@ pub mod runner;
 use std::sync::Arc;
 use std::time::SystemTime;
 
+use futures_util::future::BoxFuture;
 use gotcha::axum::extract::FromRef;
 use gotcha::{api, GotchaRouter, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
@@ -471,7 +472,7 @@ impl ScheduleState {
     /// The CLI has to take scheduled tasks, and that is checked first: the flags
     /// mean nothing to a CLI that runs none, and a task stored on one would read
     /// back as Claude Code ([`task_at`]) and start a run nobody asked for. A
-    /// source no provider runs takes none. Then the flags ([`validated_flags`]).
+    /// source no provider runs takes none. Then the flags ([`TaskFlagsExt::check_task_flags`]).
     /// Both routes check a task only through here, so neither can store one on
     /// a CLI the other would refuse.
     async fn check_cli(&self, source: Source, model: Option<&str>, effort: Option<&str>, permission: Option<&str>) -> Result<(), ApiError> {
@@ -480,57 +481,66 @@ impl ScheduleState {
             Some(models) if providers.capabilities(source).schedules => models,
             _ => return Err(ApiError::bad_request("scheduled tasks run on Claude Code or Codex")),
         };
-        validated_flags(models, source, model, effort, permission).await
+        models.check_task_flags(source, model, effort, permission).await
     }
 }
 
-/// The flag values, checked now rather than at the moment of the spawn, and
-/// checked against the CLI that will actually be handed them.
-///
-/// Two layers, and they answer different questions:
-///
-/// 1. **shape** — the composer's own check
-///    ([`crate::drive::routes::validate_flags`]), reused rather than restated so
-///    the two surfaces cannot drift. These values become `argv`, and this is what
-///    stops a `model` from reading as a flag. Identical for both CLIs, because
-///    the hazard is.
-/// 2. **meaning** — whether *this* CLI takes that effort and that permission
-///    mode. Not identical, and not something one rule can cover: claude's efforts
-///    are a ladder that narrows per model and its permission modes are its own
-///    five, while codex reads its rungs out of the cache the CLI writes and
-///    names its sandbox modes differently. See [`crate::models::accepted_efforts`]
-///    for why a codex machine with no cache is let through.
-///
-/// The second layer is what this feature is *for*. The composer has a person in
-/// front of it who can read a refusal and try again; a task at three in the
-/// morning has nobody, so the moment to refuse is while they are still looking at
-/// the form. The `model` itself is deliberately left to the shape check: both
-/// model lists are open by construction — claude's concrete ids come out of usage
-/// history, codex's out of a cache — so a model this machine has not run yet is
-/// not a model that does not exist.
-///
-/// The routes reach it through [`ScheduleState::check_cli`], which refuses a
-/// CLI that runs no scheduled tasks first.
-async fn validated_flags(models: &dyn crate::models::Models, source: Source, model: Option<&str>, effort: Option<&str>, permission: Option<&str>) -> Result<(), ApiError> {
-    crate::drive::routes::validate_flags(models.model_rule(), model, effort, permission).map_err(ApiError::bad_request)?;
+/// What a scheduled task asks of its CLI's [`crate::models::Models`].
+trait TaskFlagsExt {
+    /// The flag values, checked now rather than at the moment of the spawn, and
+    /// checked against the CLI that will actually be handed them.
+    ///
+    /// Two layers, and they answer different questions:
+    ///
+    /// 1. **shape** — the composer's own check
+    ///    ([`crate::drive::routes::validate_flags`]), reused rather than restated so
+    ///    the two surfaces cannot drift. These values become `argv`, and this is what
+    ///    stops a `model` from reading as a flag. Identical for both CLIs, because
+    ///    the hazard is.
+    /// 2. **meaning** — whether *this* CLI takes that effort and that permission
+    ///    mode. Not identical, and not something one rule can cover: claude's efforts
+    ///    are a ladder that narrows per model and its permission modes are its own
+    ///    five, while codex reads its rungs out of the cache the CLI writes and
+    ///    names its sandbox modes differently. See [`crate::models::Models::accepted_efforts`]
+    ///    for why a codex machine with no cache is let through.
+    ///
+    /// The second layer is what this feature is *for*. The composer has a person in
+    /// front of it who can read a refusal and try again; a task at three in the
+    /// morning has nobody, so the moment to refuse is while they are still looking at
+    /// the form. The `model` itself is deliberately left to the shape check: both
+    /// model lists are open by construction — claude's concrete ids come out of usage
+    /// history, codex's out of a cache — so a model this machine has not run yet is
+    /// not a model that does not exist.
+    ///
+    /// The routes reach it through [`ScheduleState::check_cli`], which refuses a
+    /// CLI that runs no scheduled tasks first.
+    fn check_task_flags<'a>(&'a self, source: Source, model: Option<&'a str>, effort: Option<&'a str>, permission: Option<&'a str>) -> BoxFuture<'a, Result<(), ApiError>>;
+}
 
-    if let Some(effort) = effort.filter(|effort| !effort.is_empty()) {
-        if let Some(accepted) = models.accepted_efforts(model).await {
-            if !accepted.iter().any(|known| known == effort) {
-                return Err(ApiError::bad_request(match accepted.is_empty() {
-                    true => format!("{source} takes no effort for that model"),
-                    false => format!("unknown {source} effort: {effort} (expected one of {})", accepted.join(", ")),
-                }));
+impl TaskFlagsExt for dyn crate::models::Models + '_ {
+    fn check_task_flags<'a>(&'a self, source: Source, model: Option<&'a str>, effort: Option<&'a str>, permission: Option<&'a str>) -> BoxFuture<'a, Result<(), ApiError>> {
+        Box::pin(async move {
+            crate::drive::routes::validate_flags(self.model_rule(), model, effort, permission).map_err(ApiError::bad_request)?;
+
+            if let Some(effort) = effort.filter(|effort| !effort.is_empty()) {
+                if let Some(accepted) = self.accepted_efforts(model).await {
+                    if !accepted.iter().any(|known| known == effort) {
+                        return Err(ApiError::bad_request(match accepted.is_empty() {
+                            true => format!("{source} takes no effort for that model"),
+                            false => format!("unknown {source} effort: {effort} (expected one of {})", accepted.join(", ")),
+                        }));
+                    }
+                }
             }
-        }
-    }
 
-    if let Some(permission) = permission.filter(|permission| !permission.is_empty()) {
-        if !models.permission_is_known(permission) {
-            return Err(ApiError::bad_request(format!("unknown {source} permission mode: {permission}")));
-        }
+            if let Some(permission) = permission.filter(|permission| !permission.is_empty()) {
+                if !self.permission_is_known(permission) {
+                    return Err(ApiError::bad_request(format!("unknown {source} permission mode: {permission}")));
+                }
+            }
+            Ok(())
+        })
     }
-    Ok(())
 }
 
 /// The expression, checked now, for the same reason.
@@ -809,7 +819,7 @@ mod tests {
         (dir, paths)
     }
 
-    /// [`validated_flags`] for `source`, against the model list of the
+    /// [`TaskFlagsExt::check_task_flags`] for `source`, against the model list of the
     /// provider the entry registers for it over `paths`.
     async fn flags(paths: &Paths, source: Source, model: Option<&str>, effort: Option<&str>, permission: Option<&str>) -> Result<(), ApiError> {
         let paths = Arc::new(paths.clone());
@@ -820,7 +830,7 @@ mod tests {
         let decoration = crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone());
         let injections = crate::inject::InjectionRegistry::new(paths, &dirs, accounts, quota, decoration);
         let providers = crate::inject::ProviderRegistry::new(injections, crate::app::register_providers);
-        validated_flags(providers.models(source).expect("a provider"), source, model, effort, permission).await
+        providers.models(source).expect("a provider").check_task_flags(source, model, effort, permission).await
     }
 
     fn task(id: &str) -> ScheduledTask {
