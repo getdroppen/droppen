@@ -194,6 +194,7 @@ pub fn start(
         held_until: Mutex::new(None),
         chain_version: tokio::sync::watch::channel(0).0,
         lapses: Mutex::new(Vec::new()),
+        clock: super::Clock::wall(),
         #[cfg(test)]
         after_admission: Mutex::new(None),
         hub_text: Mutex::new(None),
@@ -334,6 +335,7 @@ pub(in crate::agent) fn test_shared(
         held_until: Mutex::new(None),
         chain_version: tokio::sync::watch::channel(0).0,
         lapses: Mutex::new(Vec::new()),
+        clock: super::Clock::wall(),
         after_admission: Mutex::new(None),
         hub_text: Mutex::new(None),
         relays: Mutex::new(None),

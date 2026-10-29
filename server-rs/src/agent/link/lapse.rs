@@ -191,6 +191,35 @@ impl ChainStateExt for ChainState {
     }
 }
 
+/// The clock a channel's control lapse is judged by (local-aggregator §3.4):
+/// at the channel's admission, while it is open, and at each request on it.
+/// The wall clock; a test brings one it can move on, so that it reaches a
+/// lapse without waiting for the wall clock to.
+#[derive(Clone)]
+pub(in crate::agent) struct Clock(Arc<dyn Fn() -> u64 + Send + Sync>);
+
+impl Clock {
+    /// Milliseconds since the Unix epoch, from the system clock.
+    pub(in crate::agent) fn wall() -> Self {
+        Self(Arc::new(now_ms_u64))
+    }
+
+    /// Now, in milliseconds since the Unix epoch.
+    pub(in crate::agent) fn now_ms(&self) -> u64 {
+        (self.0)()
+    }
+}
+
+#[cfg(test)]
+impl Clock {
+    /// The wall clock as it stood when made, moved on since by tokio's clock:
+    /// under `start_paused`, only as far as the test moves that clock.
+    pub(in crate::agent) fn tokio() -> Self {
+        let (wall, start) = (now_ms_u64(), tokio::time::Instant::now());
+        Self(Arc::new(move || wall + start.elapsed().as_millis() as u64))
+    }
+}
+
 /// When an open channel's control lapses (local-aggregator §3.4):
 /// [`rh_proto::chain::CONTROL_FRESHNESS_MS`] after the newest word that
 /// counts for its device ([`word_of`]), kept per admin. A channel is
