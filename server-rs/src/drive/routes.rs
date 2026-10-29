@@ -687,7 +687,8 @@ pub async fn send_message(
         session: Some(&id),
     };
     let injections = state.drive.injections.clone();
-    let begun = idempotent::begin(&receipts, key, |qid| injections.holds_queued(source, &id, qid)).await?;
+    let providers = state.drive.providers.clone();
+    let begun = idempotent::begin(&receipts, key, |qid| providers.holds_queued(source, &id, qid)).await?;
     let answer = match begun {
         Begun::Replay(answer) => idempotent::duplicate(answer),
         Begun::Owned { qid } => {
@@ -734,8 +735,8 @@ async fn deliver_message(
             source,
             summary.scope,
             summary.status,
-            drive.injections.is_running(source, &id),
-            drive.injections.has_resident(source, &id),
+            drive.providers.is_running(source, &id),
+            drive.providers.has_resident(source, &id),
         ),
     };
     if !can_send {
@@ -1015,8 +1016,8 @@ async fn settle_expired(
         source,
         summary.scope,
         summary.status,
-        drive.injections.is_running(source, id),
-        drive.injections.has_resident(source, id),
+        drive.providers.is_running(source, id),
+        drive.providers.has_resident(source, id),
     );
     if !can_send {
         return Err(ApiError::conflict(reason.unwrap_or_else(|| "cannot send".to_string())));
@@ -1156,7 +1157,7 @@ pub(crate) async fn writable_session(drive: &crate::drive::Drive, source: Source
     // as the list and detail paths before a mutating route decides from this
     // row; in particular, a reaped Codex run outranks the stale `task_started`
     // tail an interrupt can leave behind.
-    drive.injections.driver_states().apply(&drive.transcripts, std::slice::from_mut(&mut summary));
+    drive.providers.driver_states().apply(&drive.transcripts, std::slice::from_mut(&mut summary));
     if summary.scope == SessionScope::External {
         return Err(external_session(source));
     }
@@ -2196,7 +2197,7 @@ mod tests {
         let paths = Arc::new(droppen_instance::paths::Paths::new(dir.path().to_path_buf()));
         let instance = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
         let auth = crate::auth::Auth::new(&paths, &instance, &droppen_http::config::AuthSettings::default(), false);
-        let drive = Drive::new(paths, &instance, auth, crate::app::transcript_sources());
+        let drive = Drive::new(paths, &instance, auth, crate::app::transcript_sources(), crate::app::register_providers);
         (dir, drive)
     }
 

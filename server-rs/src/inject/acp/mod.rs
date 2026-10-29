@@ -54,12 +54,12 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::common::{new_uuid, session_workdir, QueueOutcome};
-use super::{AccountChoice, InjectError, InjectionRegistry, SendOptions, Sent};
+use super::common::{new_uuid, session_workdir, QueueOutcome, ResidentState};
+use super::{AccountChoice, DriverStatesBuilder, InjectError, InjectionRegistry, Provider, Run, SendOptions, Sent};
 use crate::acp::{category, option_for, ConfigOption, InitializeResponse};
 use crate::acp_agent::{AcpAgent, AcpAgentRegistry, AcpCheck, AcpCheckState};
 use crate::sessions::acp_transcript::{has_conversation, read_header, record, AcpTranscripts, Translator};
-use crate::sessions::Source;
+use crate::sessions::{Injection, Source};
 use droppen_base::process_env::clean_env_bare;
 use client::Client;
 use conn::Conn;
@@ -271,7 +271,63 @@ fn scratch(kind: &str) -> std::io::Result<tempfile::TempDir> {
     tempfile::Builder::new().prefix(&format!("droppen-acp-{kind}-")).tempdir()
 }
 
+/// Every configured ACP agent, as the provider registry knows them.
+pub(crate) struct Acp {
+    /// The registry it reads its agent processes from.
+    registry: Arc<InjectionRegistry>,
+}
+
+impl Acp {
+    /// The ACP agents over `registry`.
+    pub(crate) fn new(registry: Arc<InjectionRegistry>) -> Self {
+        Self { registry }
+    }
+}
+
+impl Provider for Acp {
+    fn source(&self) -> Source {
+        Source::Acp
+    }
+
+    fn run(&self) -> &dyn Run {
+        self
+    }
+}
+
+impl Run for Acp {
+    /// The agent process's own state: ACP runs are not journalled, so the runs
+    /// map holds none of them.
+    fn injection(&self, id: &str) -> Option<Injection> {
+        self.registry.acp_handle(id).and_then(|handle| handle.injection())
+    }
+
+    fn resident(&self, id: &str) -> Option<ResidentState> {
+        self.registry.acp_handle(id).filter(|h| h.visible()).map(|h| h.state())
+    }
+
+    /// Never asked: a schedule cannot start an ACP session, so no task's
+    /// previous session is one.
+    fn schedule_busy(&self, _id: &str) -> Option<&'static str> {
+        None
+    }
+}
+
 impl InjectionRegistry {
+    /// ACP's part of [`InjectionRegistry::driver_states`]: the agent processes
+    /// the list is to show, and the state of every one's run.
+    pub(super) fn acp_driver_states(&self, states: &mut DriverStatesBuilder) {
+        // Already keyed `key_of`, so the keys go in as they are.
+        let acp: Vec<(String, Handle)> = self.acp_servers.lock().unwrap().iter().map(|(key, h)| (key.clone(), h.clone())).collect();
+        for (key, handle) in acp.iter().filter(|(_, h)| h.visible()) {
+            states.resident(key.clone(), handle.info());
+        }
+        for (key, handle) in acp {
+            if let Some(injection) = handle.injection() {
+                states.run(key, injection);
+            }
+        }
+    }
+
     /// The configuration options `agent` offers, for the composer: the model
     /// list and the effort ladder.
     ///

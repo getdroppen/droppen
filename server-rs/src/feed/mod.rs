@@ -301,7 +301,7 @@ pub struct SessionState {
 pub async fn load_session_state(drive: &Arc<Drive>, source: Source, id: &str) -> Option<SessionState> {
     let paths = drive.paths.as_ref();
     let mut summary = drive.transcripts.find_summary(paths, source, id).await?;
-    let injection = drive.injections.injection_for(source, id);
+    let injection = drive.providers.injection_for(source, id);
     let running = injection
         .as_ref()
         .map(|i| i.state == crate::sessions::InjectionRunState::Running)
@@ -314,7 +314,7 @@ pub async fn load_session_state(drive: &Arc<Drive>, source: Source, id: &str) ->
                 .flatten()
         })
         .filter(|_| drive.transcripts.settles_reaped_runs(source));
-    let resident = drive.injections.resident_info(source, id);
+    let resident = drive.providers.resident_info(source, id);
     // Before `sendability`, and before `attention::apply` further down, for the
     // same reason the list applies it before both: `status` is what they read,
     // and the driver's answer is the one that is not a guess. Sendability is
@@ -646,7 +646,7 @@ pub async fn attach_session_feed_with(
                 // receiver has seen — which is what a client attaching now is
                 // opened with, or older — so that nothing newer is ever held
                 // back.
-                let drafts = drive.injections.draft_watch(source, id);
+                let drafts = drive.providers.draft_watch(source, id);
                 let sent_draft = drafts.as_ref().map(|rx| draft_frame(&rx.borrow())).unwrap_or_default();
                 let (tx, rx) = broadcast::channel(BROADCAST_CAPACITY);
                 let cancel = CancellationToken::new();
@@ -709,7 +709,7 @@ pub async fn attach_session_feed_with(
     // Read after subscribing, for the same reason: a draft that changes from
     // here on is on the broadcast, and one that changed before is in this.
     // Sent only when there is something in it — a client starts with none.
-    let draft = drive.injections.draft_watch(source, id).and_then(|draft| {
+    let draft = drive.providers.draft_watch(source, id).and_then(|draft| {
         let draft = draft.borrow();
         (!draft.is_empty()).then(|| draft_frame(&draft))
     });
@@ -1009,7 +1009,7 @@ async fn watch_session(target: WatchTarget, mut last_sig: String, tx: broadcast:
                 // running turn. Its resident takes it off the queue and pokes
                 // this feed, so the state frame saying so follows the transcript
                 // frame that shows it rather than a poll later.
-                drive.injections.transcript_grew(source, &id);
+                drive.providers.transcript_grew(source, &id);
             }
             Some(false) => {}
         }
@@ -1456,7 +1456,7 @@ mod tests {
         let paths = Arc::new(Paths::new(dir.path().to_path_buf()));
         let instance = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
         let auth = crate::auth::Auth::new(&paths, &instance, &droppen_http::config::AuthSettings::default(), false);
-        let drive = Drive::new(paths.clone(), &instance, auth, crate::app::transcript_sources());
+        let drive = Drive::new(paths.clone(), &instance, auth, crate::app::transcript_sources(), crate::app::register_providers);
         let feeds = FeedRegistry::new();
         drive.injections.attach_listeners(feeds.clone(), droppen_http::refresh::Refresh::new(global::GlobalFeed::new()));
 
@@ -1622,7 +1622,7 @@ mod tests {
         let paths = Arc::new(Paths::new(dir.to_path_buf()));
         let instance = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
         let auth = crate::auth::Auth::new(&paths, &instance, &droppen_http::config::AuthSettings::default(), false);
-        let drive = Drive::new(paths.clone(), &instance, auth, crate::app::transcript_sources());
+        let drive = Drive::new(paths.clone(), &instance, auth, crate::app::transcript_sources(), crate::app::register_providers);
         (paths, drive)
     }
 
@@ -1892,7 +1892,7 @@ mod tests {
         let draft: Value = serde_json::from_str(&attached.opening[2]).expect("json");
         assert_eq!(draft["blocks"], serde_json::json!([{"index": 0, "kind": "thinking", "thinkingTokens": 300}]));
 
-        assert!(drive.injections.draft_watch(Source::Codex, id).is_none(), "codex has no draft");
+        assert!(drive.providers.draft_watch(Source::Codex, id).is_none(), "codex has no draft");
     }
 
     /// Live: the count goes out as it moves, and the model moving on — a

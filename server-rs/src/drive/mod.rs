@@ -22,7 +22,7 @@ use crate::accounts::quota::QuotaCache;
 use crate::accounts::setup_token::Captures;
 use crate::accounts::store::AccountsStore;
 use crate::auth::Auth;
-use crate::inject::InjectionRegistry;
+use crate::inject::{InjectionRegistry, ProviderRegistry};
 use droppen_instance::paths::Paths;
 use crate::sessions::{titles, TranscriptSources};
 
@@ -45,6 +45,9 @@ pub struct Drive {
     pub wizards: Arc<Captures>,
     /// Every run remote-hand started.
     pub injections: Arc<InjectionRegistry>,
+    /// Every CLI this server drives: what the routes, the feeds and the
+    /// schedules ask about a session's runs, whichever CLI it is.
+    pub providers: Arc<ProviderRegistry>,
     /// Claude quota readings per login — off the sessions' own
     /// `rate_limit_event`s first, the `claude -p /usage` fallback second.
     ///
@@ -82,13 +85,23 @@ impl Drive {
     /// records its in-flight runs in the instance directory, so a restart can
     /// find them again. `auth` is built by the caller rather than here, because
     /// the middleware needs the same handle and is mounted outside the router.
-    pub fn new(paths: Arc<Paths>, instance: &droppen_instance::instance::InstanceDirs, auth: Arc<Auth>, transcripts: TranscriptSources) -> Arc<Self> {
+    /// `providers` is the entry's `crate::app::register_providers`, which
+    /// names every CLI.
+    pub fn new(
+        paths: Arc<Paths>,
+        instance: &droppen_instance::instance::InstanceDirs,
+        auth: Arc<Auth>,
+        transcripts: TranscriptSources,
+        providers: fn(&mut ProviderRegistry, &Arc<InjectionRegistry>),
+    ) -> Arc<Self> {
         let accounts = Arc::new(AccountsStore::new(paths.clone()));
         let quota = Arc::new(QuotaCache::new(paths.clone()));
+        let injections = InjectionRegistry::new(paths.clone(), instance, accounts.clone(), quota.clone());
         Arc::new(Self {
             auth,
             wizards: Captures::new(),
-            injections: InjectionRegistry::new(paths.clone(), instance, accounts.clone(), quota.clone()),
+            providers: ProviderRegistry::new(injections.clone(), providers),
+            injections,
             accounts,
             quota,
             models: Arc::new(crate::models::ClaudeModelCache::new(paths.clone())),

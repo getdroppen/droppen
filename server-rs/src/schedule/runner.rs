@@ -54,7 +54,6 @@ use crate::inject::SendOptions;
 use crate::notify::{self, Level, Nudge};
 use droppen_http::openapi_ext::Nullable;
 use droppen_instance::paths::Paths;
-use crate::sessions::{ResidentPhase, Source};
 use droppen_base::time::{iso8601, parse_iso};
 
 /// How often the clock is consulted.
@@ -319,33 +318,12 @@ async fn fire(state: &ScheduleState, task: ScheduledTask) {
 /// `None` — not busy — covers every way there is nothing to wait for: the task
 /// has never run, or the process it started has since exited.
 ///
-/// The question is the same for both CLIs and the answer comes from different
-/// places, because the two run differently rather than because one is
-/// half-supported:
-///
-/// * **claude** keeps a resident between turns, so the honest reading is its
-///   phase *and* its queue. A phase that is not `idle` means a turn is in flight
-///   or the process is still coming up; a queue that is not empty means work is
-///   already waiting behind it, and adding to that is how a backlog starts —
-///   remote-hand's queue never refuses a message, it waits, so nothing else
-///   would ever apply the brake.
-/// * **codex** has no resident and no queue: one process per message, alive
-///   exactly while it works. "Is the run still running" is the whole question
-///   there, and the injection registry is where it is asked.
+/// The question is the same for every CLI and each answers it from where it
+/// keeps its runs ([`crate::inject::Run::schedule_busy`]), because they run
+/// differently rather than because one is half-supported.
 fn still_busy(state: &ScheduleState, task: &ScheduledTask) -> Option<&'static str> {
     let previous = task.last_session_id.as_ref()?;
-    if task.source == Source::Codex {
-        return state
-            .drive
-            .injections
-            .is_running(Source::Codex, previous)
-            .then_some("the previous run has not finished");
-    }
-    let info = state.drive.injections.resident_info(Source::Claude, previous)?;
-    if info.phase != ResidentPhase::Idle {
-        return Some("a turn is still in flight");
-    }
-    (info.queued > 0).then_some("messages are still queued")
+    state.drive.providers.schedule_busy(task.source, previous)
 }
 
 /// Record a failure, and tell the user's phone if there is one to tell.
@@ -422,6 +400,7 @@ async fn alert(paths: &Paths, task_name: &str, reason: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sessions::Source;
 
     fn task(expr: &str, enabled: bool) -> ScheduledTask {
         ScheduledTask {

@@ -20,6 +20,7 @@ use crate::api::AppState;
 use droppen_http::config::AppConfig;
 use crate::feed::global::GlobalFeed;
 use crate::feed::FeedRegistry;
+use crate::inject::{InjectionRegistry, ProviderRegistry};
 use droppen_instance::instance::{InstanceDirs, InstanceLock};
 use droppen_instance::paths::Paths;
 use crate::sessions::account::{RotationOutcome, RotationTrigger};
@@ -121,7 +122,7 @@ impl GotchaApp for RemoteHandApp {
                 async move { roots.sweep_uploads().await }
             });
             let auth = crate::auth::Auth::new(&paths, &instance, &auth_settings, auth_disabled);
-            let drive = crate::drive::Drive::new(paths.clone(), &instance, auth, transcript_sources());
+            let drive = crate::drive::Drive::new(paths.clone(), &instance, auth, transcript_sources(), register_providers);
             let feeds = FeedRegistry::new();
             let global = GlobalFeed::new();
             // A session's driver changes things no file shows — an automatic
@@ -636,6 +637,15 @@ pub fn transcript_sources() -> TranscriptSources {
     sources
 }
 
+/// Every CLI this server drives, over the runs they read their state from.
+/// Each provider names its own [`Source`]; this is the one place that names
+/// all of them.
+pub fn register_providers(providers: &mut ProviderRegistry, registry: &Arc<InjectionRegistry>) {
+    providers.register(Arc::new(crate::inject::resident::ClaudeCode::new(registry.clone())));
+    providers.register(Arc::new(crate::inject::app_server::Codex::new(registry.clone())));
+    providers.register(Arc::new(crate::inject::acp::Acp::new(registry.clone())));
+}
+
 /// The drivers' alerts, sent by [`crate::push`]: Web Push to every subscribed
 /// browser, and the Bark endpoint too for a question or a rotation. Each push
 /// function spawns its sending and returns, as [`crate::inject::Alerts`] asks.
@@ -682,11 +692,11 @@ impl crate::cloud::LiveSessions for crate::drive::Drive {
     }
 
     fn driver_states(&self) -> DriverStates {
-        self.injections.driver_states()
+        self.providers.driver_states()
     }
 
     fn drafts(&self, source: Source, id: &str) -> Option<Box<dyn crate::agent::streams::source::DraftFeed>> {
-        self.injections
+        self.providers
             .draft_watch(source, id)
             .map(|rx| Box::new(rx) as Box<dyn crate::agent::streams::source::DraftFeed>)
     }
@@ -710,6 +720,25 @@ impl crate::agent::streams::source::DraftFeed for tokio::sync::watch::Receiver<c
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Each CLI is registered twice, for its transcripts and for its runs, in
+    /// two functions here. A CLI in one and not the other would list sessions
+    /// nothing can drive, or drive sessions nothing lists, and both lists are
+    /// in [`Source`]'s order.
+    #[test]
+    fn every_provider_is_registered_with_its_transcripts() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let paths = Arc::new(Paths::new(home.path().to_path_buf()));
+        let dirs = InstanceDirs::new(&paths.data_dir(), "providers-test").expect("valid name");
+        dirs.create().expect("instance dirs");
+        let accounts = Arc::new(crate::accounts::store::AccountsStore::new(paths.clone()));
+        let quota = Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone()));
+        let providers = ProviderRegistry::new(InjectionRegistry::new(paths, &dirs, accounts, quota), register_providers);
+
+        let transcripts: Vec<Source> = transcript_sources().iter().map(|reader| reader.source()).collect();
+        assert_eq!(providers.sources().collect::<Vec<_>>(), transcripts);
+        assert_eq!(transcripts, [Source::Claude, Source::Codex, Source::Acp], "every source has both");
+    }
 
     /// The instance is free as soon as the serve task ends, whatever still holds
     /// the server's state.
