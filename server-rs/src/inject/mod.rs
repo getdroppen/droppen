@@ -577,7 +577,7 @@ impl SpawnDeps<'_> {
         self.notify_decorate(id, &mut env).await;
         let recipe = claude_recipe(&self.paths, cwd, options, env, login);
         // claude has no image flag, so every attachment reaches it as a path in
-        // the prompt — which now travels over stdin rather than in argv.
+        // the prompt, which travels over stdin.
         let prompt = with_claude_attachments(text, options);
         let delivery = self.injections.deliver(id, &prompt, recipe, options.message_id.clone()).await?;
         Ok(Sent { queued: delivery.queued })
@@ -704,9 +704,7 @@ impl InjectionRegistry {
         }
         to
     }
-}
 
-impl InjectionRegistry {
     /// A CLI's own words, fit to be stored and shown.
     ///
     /// Both layers, in the order that matters: the exact stored credentials

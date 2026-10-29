@@ -368,9 +368,8 @@ impl Codex {
     /// and a named account both wins and is written down.
     ///
     /// `None` is the answer for a machine with no codex accounts, and it is the
-    /// answer that matters most: it must produce exactly the spawn this server made
-    /// before any of this existed — no extra argv, no extra environment, codex's own
-    /// `~/.codex/auth.json` and nothing else.
+    /// answer that matters most: it must produce the bare spawn — no extra argv,
+    /// no extra environment, codex's own `~/.codex/auth.json` and nothing else.
     async fn codex_account(&self, id: Option<&str>, options: &SendOptions) -> Result<Option<CodexAccount>, InjectError> {
         let bound = match id {
             Some(id) => self.registry.accounts.session_account_id(id).await,
