@@ -696,6 +696,16 @@ impl crate::agent::link::LinkHost for PushLinkHost {
     }
 }
 
+/// The plugin host's status, for the session-list socket's opening `settings`
+/// frame: the same reading `/api/settings` takes.
+pub(crate) struct PluginHost(pub(crate) Arc<crate::plugins::Plugins>);
+
+impl crate::feed::global::PluginStatuses for PluginHost {
+    fn status(&self) -> futures_util::future::BoxFuture<'_, Vec<droppen_plugin_sdk::PluginStatus>> {
+        Box::pin(self.0.status_async())
+    }
+}
+
 /// The link's streams read the account bindings, the drivers and the drafts
 /// from the drive, as the session list does.
 impl crate::cloud::LiveSessions for crate::drive::Drive {

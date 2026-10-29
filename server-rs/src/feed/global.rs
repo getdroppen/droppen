@@ -496,6 +496,14 @@ fn plugin_frame(frame: &str) -> bool {
     )
 }
 
+/// The plugin host's status, which a local client's opening `settings` frame
+/// carries. The host is not below the feed, so the entry answers this from it.
+pub trait PluginStatuses: Send + Sync {
+    /// Every installed plugin as this instance sees it, read off the async
+    /// runtime.
+    fn status(&self) -> futures_util::future::BoxFuture<'_, Vec<droppen_plugin_sdk::PluginStatus>>;
+}
+
 /// What the session-list socket uses of the server's state.
 #[derive(Clone)]
 pub struct EventsState {
@@ -504,7 +512,7 @@ pub struct EventsState {
     /// Cancelled by the shutdown supervisor; the socket closes on it.
     pub cancel: CancellationToken,
     /// The plugins, whose status a local client is sent.
-    pub plugins: Arc<crate::plugins::Plugins>,
+    pub plugins: Arc<dyn PluginStatuses>,
     /// The shared session-list feed the socket attaches to.
     pub global: Arc<GlobalFeed>,
     /// The drivers a subscription follows, and the logins a socket rechecks.
@@ -580,7 +588,7 @@ async fn run_socket(socket: WebSocket, state: EventsState, options: MuxOptions, 
     // A cloud subscriber is told there are no plugins, so `settings` says
     // `plugins: []` just as `/api/settings` does for it (`docs/plugins/
     // runtime.md` §5); the live frames are filtered below.
-    let plugins = if cloud { Vec::new() } else { state.plugins.status_async().await };
+    let plugins = if cloud { Vec::new() } else { state.plugins.status().await };
     let attached = attach(&state.global, &state.drive, state.instance.name(), state.started_at.as_ref(), &plugins).await;
     let mut attachment = attached.attachment;
     for frame in attached.opening {

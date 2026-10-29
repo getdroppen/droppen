@@ -257,7 +257,7 @@ impl FromRef<AppState> for EventsState {
         Self {
             send_limit: state.send_limit,
             cancel: state.cancel.clone(),
-            plugins: state.plugins.clone(),
+            plugins: Arc::new(crate::app::PluginHost(state.plugins.clone())),
             global: state.global.clone(),
             drive: state.drive.clone(),
             instance: state.instance.clone(),
