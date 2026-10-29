@@ -57,7 +57,7 @@ use futures_util::future::{BoxFuture, FutureExt, Shared};
 use gotcha::Schematic;
 use serde::{Deserialize, Serialize};
 
-use crate::accounts::login::{Login, Logins};
+use crate::accounts::login::{LocalPlan, Login, Logins};
 use crate::accounts::store::{Account, AccountKind};
 use droppen_http::openapi_ext::{Nullable, Optional};
 use droppen_instance::paths::Paths;
@@ -406,8 +406,9 @@ fn fallback_after_from_env() -> Duration {
 /// readings not yet written to them — and the fallback probe.
 pub struct QuotaCache {
     paths: Arc<Paths>,
-    /// The CLIs whose probes fill this cache: the readings per login are
-    /// claude's, the local reading beside them is codex's.
+    /// The CLIs' logins. Claude's probes the readings per login and reads the
+    /// local plan; Codex's reading has a cache of its own (`codex`), which is
+    /// handed Codex's login when this one is made.
     logins: Logins,
     /// The fallback probe running for each login, if any.
     in_flight: Mutex<HashMap<UsageLogin, Pending>>,
@@ -427,8 +428,8 @@ pub struct QuotaCache {
 }
 
 impl QuotaCache {
-    /// An empty cache for one server instance, probing through each CLI's
-    /// own login.
+    /// An empty cache for one server instance: Claude's login probes the
+    /// readings per login, and Codex's fills Codex's own cache.
     pub fn new(paths: Arc<Paths>, logins: Logins) -> Self {
         Self {
             codex: Arc::new(CodexQuotaCache::new(ProbeRoots::of(&paths), logins.codex.clone())),
@@ -599,6 +600,7 @@ impl QuotaCache {
         // login`, and the local one is the user's own `~/.claude`.
         let roots = ProbeRoots::of(&self.paths);
         let Some(run) = self.logins.claude.probe(&roots, target.config_dir.as_deref()) else {
+            tracing::warn!(login = ?login, "claude's login offers no /usage probe, so this login's readings are not refreshed");
             return;
         };
         let probe = run.await;
@@ -667,9 +669,9 @@ impl QuotaCache {
 
     /// Reads only; call after the probes have had their budget.
     async fn claude_quota(&self) -> Option<ClaudeQuota> {
-        let (plan, tier) = match self.logins.claude.local_plan(&self.paths) {
+        let LocalPlan { plan, tier } = match self.logins.claude.local_plan(&self.paths) {
             Some(read) => read.await,
-            None => (None, None),
+            None => LocalPlan::default(),
         };
         let reading = self.cached(&UsageLogin::Local);
         if plan.is_none() && reading.windows.is_empty() {

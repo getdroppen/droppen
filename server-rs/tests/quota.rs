@@ -55,6 +55,50 @@ async fn the_local_plan_and_windows_come_back_together() {
     probe.stop().await;
 }
 
+/// Either field of the user's own credentials names a plan on its own: a
+/// subscription with no tier, and a tier with no subscription.
+#[tokio::test]
+async fn either_credentials_field_names_the_local_plan() {
+    let probe = Probe::start().await;
+    std::fs::create_dir_all(probe.local_root()).expect("local root");
+    for (credentials, plan, tier) in [
+        (r#"{"claudeAiOauth": {"subscriptionType": "pro"}}"#, json!("Pro"), Value::Null),
+        (r#"{"claudeAiOauth": {"rateLimitTier": "default_max_5x"}}"#, json!("Claude 5x"), json!("default_max_5x")),
+    ] {
+        std::fs::write(probe.local_root().join(".credentials.json"), credentials).expect("credentials");
+        let quota = probe.get_json("/api/stats/quota").await;
+        assert_eq!(quota["claude"]["plan"], plan, "{credentials}");
+        assert_eq!(quota["claude"]["tier"], tier, "{credentials}");
+    }
+    probe.stop().await;
+}
+
+/// What a `/usage` probe runs: the same command line for every login, an
+/// account's under that account's own config dir, the local login's under the
+/// user's own (no `CLAUDE_CONFIG_DIR` at all), and both in UTC, which is what
+/// the reset times are parsed in.
+#[tokio::test]
+async fn each_usage_probe_runs_under_its_own_login() {
+    let probe = Probe::start().await;
+    let id = probing_account(&probe, "Probed", "sk-ant-oat01-SILENT01234567").await;
+    plan_usage(&probe.home, USAGE);
+    probe.get_json("/api/stats/quota").await;
+    let usage_args = ["-p", "/usage", "--output-format", "json", "--no-session-persistence"];
+
+    let config_dir = probe.data_dir().join("accounts").join(&id).join("claude");
+    let account = support::Spawn::read(&config_dir).expect("the account's probe ran");
+    assert_eq!(account.argv, usage_args);
+    assert_eq!(account.env("CLAUDE_CONFIG_DIR"), Some(config_dir.to_str().expect("utf-8 path")));
+    assert_eq!(account.env("TZ"), Some("UTC"));
+
+    let local = support::Spawn::read(&probe.home).expect("the local probe ran");
+    assert_eq!(local.argv, usage_args);
+    assert_eq!(local.env("CLAUDE_CONFIG_DIR"), None, "the user's own ~/.claude");
+    assert_eq!(local.env("TZ"), Some("UTC"));
+
+    probe.stop().await;
+}
+
 #[tokio::test]
 async fn a_config_dir_that_reports_nothing_is_not_logged_in() {
     let probe = Probe::start().await;

@@ -3,7 +3,7 @@
 
 use futures_util::future::BoxFuture;
 
-use super::Login;
+use super::{LocalPlan, Login};
 use crate::accounts::local_login::LocalLoginState;
 use crate::accounts::quota::readings::SharedReading;
 use crate::accounts::quota::{claude_plan_label, is_rate_limited, mentions_status, CodexQuota, ProbeRoots, QuotaProbeError, UsageProbe};
@@ -222,7 +222,7 @@ impl Login for ClaudeCodeLogin {
 
     /// The two fields of the user's own `~/.claude/.credentials.json` that
     /// name the plan.
-    fn local_plan<'a>(&'a self, paths: &'a Paths) -> Option<BoxFuture<'a, (Option<String>, Option<String>)>> {
+    fn local_plan<'a>(&'a self, paths: &'a Paths) -> Option<BoxFuture<'a, LocalPlan>> {
         Some(Box::pin(async move {
             let mut plan = None;
             let mut tier = None;
@@ -243,7 +243,7 @@ impl Login for ClaudeCodeLogin {
                     }
                 }
             }
-            (plan, tier)
+            LocalPlan { plan, tier }
         }))
     }
 

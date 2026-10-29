@@ -285,7 +285,7 @@ mod tests {
             None
         }
 
-        fn local_plan<'a>(&'a self, _paths: &'a Paths) -> Option<BoxFuture<'a, (Option<String>, Option<String>)>> {
+        fn local_plan<'a>(&'a self, _paths: &'a Paths) -> Option<BoxFuture<'a, crate::accounts::login::LocalPlan>> {
             None
         }
 
