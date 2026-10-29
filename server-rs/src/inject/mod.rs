@@ -2518,7 +2518,8 @@ mod tests {
     }
     /// Adoption claims each session it takes back without the spawn gate: it
     /// runs before the server listens, so no send can race it. A run whose CLI
-    /// is gone is swept the same way, its claim taken and let go at once.
+    /// is gone is swept the same way, its claim taken and let go at once, and
+    /// its lock file goes with it.
     #[tokio::test]
     async fn adoption_claims_a_live_run_and_sweeps_a_dead_one_without_the_gate() {
         const LIVE: &str = "ffffffff-6666-4666-8666-ffffffffffff";
@@ -2526,6 +2527,10 @@ mod tests {
 
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Arc::new(Paths::new(home.path().to_path_buf()));
+        let locks = paths.data_dir().join("inject-locks");
+        let debris = locks.join(crate::sessions::reference::lock_name(Source::Claude.as_str(), DEAD));
+        std::fs::create_dir_all(&locks).expect("inject-locks");
+        std::fs::write(&debris, b"1\n").expect("the dead run's lock file");
         let dirs = InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
         dirs.create().expect("instance dirs");
         let registry = InjectionRegistry::new(
@@ -2570,6 +2575,7 @@ mod tests {
         assert_eq!((adopted.recovered, adopted.finished), (1, 1), "{adopted:?}");
         let step = |what, claim| Step { what, gate: false, claim: Some(claim) };
         assert_eq!(registry.steps(), [step("adoption claimed", true), step("buried", false)]);
+        assert!(!debris.exists(), "the sweep took the dead run's lock file");
         assert!(registry.claim_held(Source::Claude, LIVE), "the watcher holds the claim");
 
         let _ = live.kill();

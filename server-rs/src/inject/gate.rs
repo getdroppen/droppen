@@ -212,10 +212,17 @@ impl SpawnGate {
         self.lock.try_lock().is_err()
     }
 
-    /// Whether anyone holds session `id`'s claim: a claim of our own would be
-    /// refused. One that is granted is let go at once.
+    /// Whether anyone holds session `id`'s claim: its file is locked. The probe
+    /// neither creates the file nor removes it, so a test still sees what the
+    /// server left behind.
     pub(crate) fn claim_held(&self, source: Source, id: &str) -> bool {
-        matches!(self.claims.take(source, id), Err(ClaimError::Busy { .. }))
+        use std::os::fd::AsRawFd;
+        let path = self.claims.dir.join(crate::sessions::reference::lock_name(source.as_str(), id));
+        let Ok(file) = std::fs::File::open(path) else { return false };
+        // SAFETY: `file` is an open descriptor owned for the whole call, and
+        // `LOCK_EX | LOCK_NB` takes no further arguments. A lock that is
+        // granted goes when `file` closes.
+        unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) != 0 }
     }
 
     /// A lease with no claim, for a driver a test builds by hand.
@@ -258,7 +265,15 @@ mod tests {
                     walk(&path, found);
                 } else if path.extension().is_some_and(|ext| ext == "rs") && !path.ends_with("inject/gate.rs") {
                     let text = std::fs::read_to_string(&path).expect("source");
-                    if text.contains(concat!("without_a", "_session(")) {
+                    // The name as a whole identifier, so a call spelt
+                    // `without_a_session ()` or passed as a function is found
+                    // too, and a test named `…_without_a_session_…` is not.
+                    const NAME: &str = "without_a_session";
+                    let ident = |c: char| c.is_alphanumeric() || c == '_';
+                    let named = text
+                        .match_indices(NAME)
+                        .any(|(at, _)| !text[..at].ends_with(ident) && !text[at + NAME.len()..].starts_with(ident));
+                    if named {
                         found.push(path.display().to_string());
                     }
                 }

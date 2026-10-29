@@ -577,6 +577,8 @@ impl InjectionRegistry {
                 // The session goes before the stdin, as it did when the claim
                 // was the setup's own.
                 permit.unclaim();
+                #[cfg(test)]
+                self.step("codex setup failed", Source::Codex, id);
                 let _ = link.close_stdin().await;
                 return Err(error);
             }
@@ -2006,11 +2008,14 @@ mod tests {
     /// goes. A process retired for another account lets its claim go before it
     /// answers, while the send that retires it still holds the gate. An
     /// unloaded session is archived with `codex archive` under the gate and its
-    /// claim, and the claim goes first.
+    /// claim, and the claim goes first. A resume the app server answers with
+    /// another thread lets its claim go before the app server's stdin closes.
     #[tokio::test]
     async fn codex_starts_retires_and_archives_under_the_gate_and_the_claim() {
         const RESUMED: &str = "0199c1a1-0000-4000-8000-000000000001";
         const UNLOADED: &str = "0199c1a1-0000-4000-8000-000000000002";
+        const MISMATCHED: &str = "0199c1a1-0000-4000-8000-000000000003";
+        const OTHER: &str = "0199c1a1-0000-4000-8000-000000000004";
         let _path = crate::setup::tests::ChildPathGuard::take();
         let home = tempfile::tempdir().expect("tempdir");
         // The stand-in app server runs only under a test root.
@@ -2091,6 +2096,25 @@ mod tests {
         assert_eq!(registry.steps()[10..], [step("codex archive", true, Some(true))]);
         assert!(!registry.gate_held());
         assert!(!registry.claim_held(Source::Codex, UNLOADED), "the claim went with the archive");
+
+        let elsewhere = home.path().join("elsewhere");
+        std::fs::create_dir_all(&elsewhere).expect("elsewhere");
+        std::fs::write(elsewhere.join("resume-thread.txt"), OTHER).expect("resume answer");
+        let elsewhere = elsewhere.to_string_lossy().into_owned();
+        let refused = registry
+            .codex_deliver(Some(MISMATCHED), Some(&elsewhere), "resume", &plain, None)
+            .await
+            .expect_err("another thread is refused");
+        assert_eq!(refused.to_string(), "Codex resumed a different thread");
+        assert_eq!(
+            registry.steps()[11..],
+            [
+                step("codex started", true, Some(true)),
+                step("codex setup failed", true, Some(false)),
+            ]
+        );
+        assert!(!registry.gate_held());
+        assert!(!registry.claim_held(Source::Codex, MISMATCHED));
 
         for thread in [id.as_str(), RESUMED] {
             if let Some(handle) = registry.codex_handle(thread) {

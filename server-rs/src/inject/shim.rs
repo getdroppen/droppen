@@ -1002,8 +1002,10 @@ impl Link {
 /// What [`spawn_via_shim`] needs to know.
 #[derive(Debug)]
 pub struct Spawn<'a> {
-    /// What a session's CLI starts under: its slot reserved under the spawn
-    /// gate, and its claim. There is no other way to start one here.
+    /// Where the start's right to run comes from: the spawn gate, or the lease
+    /// of a driver that already holds its session. The permit need not carry
+    /// the claim: a new Codex thread is claimed once the app server names it,
+    /// and a respawn's claim stays with its driver's lease.
     pub permit: &'a super::SpawnPermit<'a>,
     /// Where the shim's three files go.
     pub sidecars: &'a Sidecars,
