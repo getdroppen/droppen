@@ -12,32 +12,16 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
 
-use serde::Serialize;
+use rh_proto::wire::relay::{UsageLine, UsageReport};
 
 /// The most accounts in one report; more go in further reports.
 pub const MAX_ACCOUNTS_PER_REPORT: usize = 500;
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct UsageLine {
-    pub account: String,
-    pub bytes: u64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct Report {
-    pub t: &'static str,
-    pub boot: String,
-    pub seq: u64,
-    pub from_ms: u64,
-    pub to_ms: u64,
-    pub accounts: Vec<UsageLine>,
-}
 
 struct Inner {
     counts: HashMap<String, u64>,
     since_ms: u64,
     next_seq: u64,
-    pending: VecDeque<Report>,
+    pending: VecDeque<UsageReport>,
     /// Totals since start, for the health report's rates.
     total: u64,
 }
@@ -97,8 +81,7 @@ impl Meter {
         for chunk in lines.chunks(MAX_ACCOUNTS_PER_REPORT) {
             let seq = inner.next_seq;
             inner.next_seq += 1;
-            inner.pending.push_back(Report {
-                t: "usage",
+            inner.pending.push_back(UsageReport {
                 boot: self.boot.clone(),
                 seq,
                 from_ms,
@@ -113,7 +96,7 @@ impl Meter {
     }
 
     /// The reports not acknowledged yet, oldest first.
-    pub fn pending(&self) -> Vec<Report> {
+    pub fn pending(&self) -> Vec<UsageReport> {
         self.inner.lock().expect("meter").pending.iter().cloned().collect()
     }
 

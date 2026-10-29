@@ -29,8 +29,8 @@ use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
-use serde::Deserialize;
-use serde_json::json;
+use rh_proto::wire::relay::RelayIdAnswer;
+use serde::{Deserialize, Serialize};
 
 use crate::config::{hex, unhex, TrustProxy};
 use crate::limit::{address_key, Keyed, FORGET_AFTER};
@@ -96,12 +96,26 @@ fn client_ip(trust: TrustProxy, headers: &HeaderMap, peer: Option<SocketAddr>) -
         .or(peer.map(|p| p.ip()))
 }
 
+/// A 429: `error` is always `rate`.
+#[derive(Serialize)]
+struct RateLimited {
+    error: &'static str,
+    retry_after_ms: u64,
+}
+
+/// A request this relay cannot read.
+#[derive(Serialize)]
+struct BadRequest {
+    error: &'static str,
+    message: &'static str,
+}
+
 fn too_many(wait: Duration) -> Response {
-    let mut r = (
-        StatusCode::TOO_MANY_REQUESTS,
-        Json(json!({"error": "rate", "retry_after_ms": wait.as_millis() as u64})),
-    )
-        .into_response();
+    let body = RateLimited {
+        error: "rate",
+        retry_after_ms: wait.as_millis() as u64,
+    };
+    let mut r = (StatusCode::TOO_MANY_REQUESTS, Json(body)).into_response();
     if let Ok(v) = HeaderValue::from_str(&wait.as_secs().max(1).to_string()) {
         r.headers_mut().insert(header::RETRY_AFTER, v);
     }
@@ -139,17 +153,21 @@ async fn relay_id(
         return too_many(wait);
     }
     let Some(nonce) = unhex(&q.nonce).and_then(|n| <[u8; 32]>::try_from(n).ok()) else {
-        return (StatusCode::BAD_REQUEST, Json(json!({"error": "bad_request", "message": "nonce: 64 hex"}))).into_response();
+        let body = BadRequest {
+            error: "bad_request",
+            message: "nonce: 64 hex",
+        };
+        return (StatusCode::BAD_REQUEST, Json(body)).into_response();
     };
     let Ok(sig) = rh_proto::ticket::sign_origin_proof(&server.config.key, &server.config.origin, &nonce) else {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     };
-    Json(json!({
-        "relay_id": server.config.id,
-        "sign_key": hex(&server.config.key.verifying_key().to_bytes()),
-        "origin": server.config.origin,
-        "sig": hex(&sig),
-    }))
+    Json(RelayIdAnswer {
+        relay_id: server.config.id.clone(),
+        sign_key: hex(&server.config.key.verifying_key().to_bytes()),
+        origin: server.config.origin.clone(),
+        sig: hex(&sig),
+    })
     .into_response()
 }
 

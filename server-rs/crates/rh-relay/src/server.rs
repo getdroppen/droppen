@@ -24,7 +24,8 @@ use std::time::{Duration, Instant};
 use rh_proto::frame::Frame;
 use rh_proto::sig::HubLogin;
 use rh_proto::ticket::{RelayTicket, SignedTicket, TicketError, TicketRole};
-use serde_json::json;
+use rh_proto::wire::connect::{MachinePresence, PresenceState, RelayToPeer};
+use rh_proto::wire::relay::RelayToHub;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
@@ -231,12 +232,9 @@ impl Server {
     }
 
     /// Tell the Hub, if the control link is up.
-    pub fn tell_hub(&self, message: &serde_json::Value) -> bool {
-        self.uplink
-            .lock()
-            .expect("uplink")
-            .as_ref()
-            .is_some_and(|tx| tx.send(message.to_string()).is_ok())
+    pub fn tell_hub(&self, message: &RelayToHub) -> bool {
+        let text = serde_json::to_string(message).expect("relay messages serialize");
+        self.uplink.lock().expect("uplink").as_ref().is_some_and(|tx| tx.send(text).is_ok())
     }
 
     /// Whether the control link has been down long enough that established
@@ -392,14 +390,15 @@ impl Server {
         };
         let mut peers: Vec<&String> = info.peers.iter().collect();
         peers.sort();
-        let machines: Vec<serde_json::Value> = peers
+        let machines = peers
             .into_iter()
-            .map(|m| {
-                let online = inner.route.agent(&info.account, m).is_some();
-                json!({"id": m, "state": if online { "online" } else { "offline" }})
+            .map(|m| MachinePresence {
+                id: m.clone(),
+                state: if inner.route.agent(&info.account, m).is_some() { PresenceState::Online } else { PresenceState::Offline },
+                since_ms: None,
             })
             .collect();
-        info.out.text(&json!({"t": "presence", "machines": machines}));
+        info.out.text(&RelayToPeer::Presence { machines });
     }
 
     /// A renewal on connection `conn`: the same holder, a fresh expiry and
@@ -600,9 +599,10 @@ impl Server {
     /// Tell everyone to move on (`goaway`), and take no new sign-ins.
     pub fn goaway(&self, retry_ms: u64, reason: &str) {
         self.draining.store(true, Ordering::Relaxed);
+        let message = RelayToPeer::Goaway { retry_ms, reason: reason.into() };
         let inner = self.lock();
         for info in inner.conns.values() {
-            info.out.text(&json!({"t": "goaway", "retry_ms": retry_ms, "reason": reason}));
+            info.out.text(&message);
         }
     }
 
@@ -642,7 +642,13 @@ fn set_throttle(inner: &mut Inner, account: &str, bytes_per_sec: Option<u64>) {
 /// Tell the account's devices on this relay whose ticket names `machine`
 /// that it came or went.
 fn presence_change(inner: &Inner, account: &str, machine: &str, online: bool) {
-    let message = json!({"t": "presence", "machines": [{"id": machine, "state": if online { "online" } else { "offline" }, "since_ms": now_ms()}]});
+    let message = RelayToPeer::Presence {
+        machines: vec![MachinePresence {
+            id: machine.into(),
+            state: if online { PresenceState::Online } else { PresenceState::Offline },
+            since_ms: Some(now_ms()),
+        }],
+    };
     for c in inner.by_account.get(account).into_iter().flatten() {
         if let Some(info) = inner.conns.get(c) {
             if info.role == TicketRole::Device && info.peers.contains(machine) {
