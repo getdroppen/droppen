@@ -126,13 +126,13 @@
 //! port.
 //!
 //! Instead [`guard`] recognises one more credential on that one path: the keyed,
-//! stateless capability [`crate::notify::token`] mints per session and injects
+//! stateless capability `notify::token` mints per session and injects
 //! into the spawn's environment. Stateless because a resident CLI outlives the
 //! server that started it and cannot be handed a new in-memory table; scoped to
 //! one route because it is not an identity and must never satisfy anything that
-//! asks who you are. It yields a [`crate::notify::NotifyCaller`] in the request
-//! extensions rather than an [`AuthIdentity`], so no handler can mistake one for
-//! the other, and the notify handler requires it — which is what keeps the route
+//! asks who you are. It yields a [`NotifyGrant`] in the request extensions
+//! rather than an [`AuthIdentity`], so no handler can mistake one for the
+//! other, and the notify handler requires it — which is what keeps the route
 //! closed on a server where authentication is off entirely. The guard asks for
 //! it through [`NotifyCredential`], which the entry answers from notify.
 
@@ -145,13 +145,14 @@ pub mod setup;
 pub mod tickets;
 pub mod users;
 
+use std::any::Any;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
 use gotcha::axum::extract::{FromRequestParts, Request, State};
 use gotcha::axum::http::request::Parts;
-use gotcha::axum::http::{header, Extensions, HeaderMap, HeaderValue, Method, StatusCode, Uri};
+use gotcha::axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode, Uri};
 use gotcha::axum::middleware::{FromFnLayer, Next};
 use gotcha::axum::response::{IntoResponse, Response};
 
@@ -232,15 +233,37 @@ pub trait NotifyCredential: Send + Sync {
     fn is_notify_request(&self, method: &Method, path: &str) -> bool;
 
     /// The session this request's `Authorization: Bearer` proves it is, as the
-    /// request extensions that carry it to the notify handler, or `None` for
-    /// any miss. `paths` is where the token secret is stored, and `instance`
-    /// the instance a token must have been minted for.
+    /// grant that carries it to the notify handler, or `None` for any miss.
+    /// `paths` is where the token secret is stored, and `instance` the instance
+    /// a token must have been minted for.
     fn caller<'a>(
         &'a self,
         paths: &'a Paths,
         instance: &'a str,
         headers: &'a HeaderMap,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<Extensions>> + Send + 'a>>;
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<NotifyGrant>> + Send + 'a>>;
+}
+
+/// What the notify capability proved about a request, which [`guard`] carries
+/// to the notify handler in the request extensions.
+///
+/// The one type the guard inserts for the capability: what it holds is opaque
+/// here, so whatever a [`NotifyCredential`] proves stays inside it and can never
+/// stand in the extensions as an [`AuthIdentity`] or anything else a handler
+/// reads. Only the code that made it reads it back ([`NotifyGrant::get`]).
+#[derive(Clone)]
+pub struct NotifyGrant(Arc<dyn Any + Send + Sync>);
+
+impl NotifyGrant {
+    /// A grant holding what the capability proved.
+    pub fn new<T: Any + Send + Sync>(proof: T) -> Self {
+        Self(Arc::new(proof))
+    }
+
+    /// What the grant holds, if it is a `T`.
+    pub fn get<T: Any>(&self) -> Option<&T> {
+        self.0.downcast_ref()
+    }
 }
 
 /// Everything the guard and the `/api/auth/*` routes need.
@@ -271,7 +294,7 @@ pub struct Auth {
     pub login_gate: tokio::sync::Mutex<()>,
     policy: LockoutPolicy,
     mode: Mode,
-    /// Where [`crate::notify`]'s token secret is stored, and which instance a
+    /// Where `notify`'s token secret is stored, and which instance a
     /// session token must have been minted for. Held here rather than reached
     /// through the application state because [`guard`] runs as a layer over the
     /// router and only ever sees this struct.
@@ -411,14 +434,14 @@ impl Auth {
         self.sessions.alive(digest).as_deref() == Some(user) && self.still_valid(user).await
     }
 
-    /// The session a `POST /api/notify` proves it is, if any, as the request
-    /// extensions that carry it.
+    /// The session a `POST /api/notify` proves it is, if any, as the grant that
+    /// carries it.
     ///
     /// Delegated to notify ([`NotifyCredential`]) rather than implemented here:
     /// the secret, the MAC and the token format are that module's, and this one
     /// has no business knowing any of them. What belongs here is *where* the
     /// question is asked, which is the guard and nowhere else.
-    async fn notify_caller(&self, headers: &HeaderMap) -> Option<Extensions> {
+    async fn notify_caller(&self, headers: &HeaderMap) -> Option<NotifyGrant> {
         self.notify.caller(&self.paths, &self.instance, headers).await
     }
 }
@@ -619,7 +642,7 @@ pub async fn guard(auth: Arc<Auth>, mut request: Request, next: Next) -> Respons
         request.extensions_mut().insert(found);
     }
     if let Some(found) = caller.clone() {
-        request.extensions_mut().extend(found);
+        request.extensions_mut().insert(found);
     }
 
     // Nobody is let through for where they connect from: an identity, the
@@ -966,5 +989,78 @@ mod tests {
         assert_eq!(uri("/x?a=1&ticket=T&b=2").query_param("ticket").as_deref(), Some("T"));
         assert_eq!(uri("/x?ticketing=T").query_param("ticket"), None);
         assert_eq!(uri("/x").query_param("ticket"), None);
+    }
+
+    /// A notify capability that proves whatever its function returns, on the
+    /// `POST /api/notify` route only.
+    struct Proves(fn() -> Option<NotifyGrant>);
+
+    impl NotifyCredential for Proves {
+        fn is_notify_request(&self, method: &Method, path: &str) -> bool {
+            method == Method::POST && path == "/api/notify"
+        }
+
+        fn caller<'a>(
+            &'a self,
+            _paths: &'a Paths,
+            _instance: &'a str,
+            _headers: &'a HeaderMap,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<NotifyGrant>> + Send + 'a>> {
+            let grant = (self.0)();
+            Box::pin(async move { grant })
+        }
+    }
+
+    /// The notify capability reaches a handler only as the [`NotifyGrant`] the
+    /// guard inserts. A port that proves an [`AuthIdentity`] leaves no identity
+    /// in the request, only a grant holding it; a port that proves nothing
+    /// admits nothing; and the capability opens no other route.
+    #[tokio::test]
+    async fn the_notify_capability_reaches_a_handler_only_as_a_grant() {
+        use gotcha::axum::body::Body;
+        use tower_service::Service;
+
+        /// What the handler finds in its request: a grant, an identity inside
+        /// the grant, an identity of its own.
+        async fn found(request: Request) -> String {
+            let extensions = request.extensions();
+            let grant = extensions.get::<NotifyGrant>();
+            format!(
+                "{} {} {}",
+                grant.is_some(),
+                grant.and_then(|grant| grant.get::<AuthIdentity>()).is_some(),
+                extensions.get::<AuthIdentity>().is_some()
+            )
+        }
+
+        async fn send(proves: Proves, method: &str, path: &str) -> (StatusCode, String) {
+            let home = tempfile::tempdir().expect("tempdir");
+            let paths = Paths::for_instance(home.path().to_path_buf(), "unittest");
+            let instance = InstanceDirs::new(&paths.data_dir(), "unittest").expect("instance");
+            let auth = Auth::new(&paths, &instance, &AuthSettings::default(), false, Arc::new(proves));
+            let mut router = gotcha::axum::Router::new()
+                .route("/api/notify", gotcha::axum::routing::post(found))
+                .route("/api/settings", gotcha::axum::routing::get(found))
+                .layer(layer(auth));
+            let request = gotcha::axum::http::Request::builder().method(method).uri(path).body(Body::empty()).expect("request");
+            let response = router.call(request).await.expect("infallible");
+            let status = response.status();
+            let body = gotcha::axum::body::to_bytes(response.into_body(), 1 << 16).await.expect("body");
+            (status, String::from_utf8_lossy(&body).into_owned())
+        }
+
+        let planted = || {
+            Some(NotifyGrant::new(AuthIdentity {
+                username: "ada".into(),
+                token_sha256: None,
+            }))
+        };
+        assert_eq!(
+            send(Proves(planted), "POST", "/api/notify").await,
+            (StatusCode::OK, "true true false".to_string()),
+            "what the port proved stays inside the grant"
+        );
+        assert_eq!(send(Proves(|| None), "POST", "/api/notify").await.0, StatusCode::UNAUTHORIZED, "no grant, no admission");
+        assert_eq!(send(Proves(planted), "GET", "/api/settings").await.0, StatusCode::UNAUTHORIZED, "and no other route");
     }
 }

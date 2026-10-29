@@ -712,7 +712,7 @@ impl crate::feed::global::PluginStatuses for PluginHost {
 /// `POST /api/notify`'s capability as [`crate::notify`] checks it: the token
 /// it mints per session, verified against its stored secret, and the
 /// [`crate::notify::NotifyCaller`] the notify handler reads back out of the
-/// request.
+/// request's [`crate::auth::NotifyGrant`].
 pub(crate) struct NotifyTokens;
 
 impl crate::auth::NotifyCredential for NotifyTokens {
@@ -725,13 +725,8 @@ impl crate::auth::NotifyCredential for NotifyTokens {
         paths: &'a Paths,
         instance: &'a str,
         headers: &'a gotcha::axum::http::HeaderMap,
-    ) -> futures_util::future::BoxFuture<'a, Option<gotcha::axum::http::Extensions>> {
-        Box::pin(async move {
-            let caller = crate::notify::caller(paths, instance, headers).await?;
-            let mut extensions = gotcha::axum::http::Extensions::new();
-            extensions.insert(caller);
-            Some(extensions)
-        })
+    ) -> futures_util::future::BoxFuture<'a, Option<crate::auth::NotifyGrant>> {
+        Box::pin(async move { crate::notify::caller(paths, instance, headers).await.map(crate::auth::NotifyGrant::new) })
     }
 }
 
