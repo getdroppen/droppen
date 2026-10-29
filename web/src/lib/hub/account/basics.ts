@@ -1,8 +1,10 @@
 /*
  * What every collaborator of `CloudAccount` may read of it: who it is, its
- * verified chain and chain clock as they stand now, the notes this browser
- * keeps for it, and how its page is told. Nothing here signs, seals or opens:
- * keys, vaults, the session and the hub API stay with the account.
+ * verified chain and chain clock as they stand now, and how its page is told.
+ * Nothing here signs, seals or opens, nor reaches this browser's storage: keys,
+ * vaults, the session, the hub API and the notes kept in `localStorage` (the
+ * hub session among them) stay with the account. A collaborator that keeps a
+ * note gets it bound to that note's key, in its own dependencies.
  */
 import type { ChainClock, ChainState } from "@/lib/e2e";
 
@@ -13,9 +15,6 @@ export interface AccountBasics {
   readonly state: ChainState | null;
   /** The chain clock (when this device first saw each entry): read through on every use, as the account replaces it. */
   readonly clock: ChainClock;
-  /** This browser's note `key` for the account (`localStorage`; never throws). */
-  readonly read: (key: string) => string | null;
-  readonly write: (key: string, value: string) => void;
   /** Tell the page the account changed. */
   readonly emit: () => void;
 }
@@ -30,8 +29,6 @@ export function accountBasics(of: {
   deviceId: () => string;
   state: () => ChainState | null;
   clock: () => ChainClock;
-  read: (key: string) => string | null;
-  write: (key: string, value: string) => void;
   emit: () => void;
 }): AccountBasics {
   return Object.freeze({
@@ -47,8 +44,6 @@ export function accountBasics(of: {
     get clock() {
       return of.clock();
     },
-    read: of.read,
-    write: of.write,
     emit: of.emit,
   });
 }

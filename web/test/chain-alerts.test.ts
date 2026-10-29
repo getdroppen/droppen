@@ -7,7 +7,7 @@
 // the account.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { PASSKEY_DELAY_MS, PAUSE_CANCELLED, PAUSE_START, RECOVERY_DELAY_MS } from "../src/lib/e2e/index.js";
+import { PASSKEY_DELAY_MS, PAUSE_CANCELLED, PAUSE_COMPLETED, PAUSE_START, RECOVERY_DELAY_MS } from "../src/lib/e2e/index.js";
 import type { CloudAccount } from "../src/lib/hub/account.js";
 import { SeenStoreError } from "../src/lib/hub/seen-store.js";
 import { addPasskeySlot, browserSeen, browserStorage, createV2Genesis, FakeCourier, FakeKeysHub, pairBrowser, passkeyJoin, postAsPasskey, RecordingKeyStore } from "./fake-keys-hub.js";
@@ -31,6 +31,8 @@ const ackOf = (x: CloudAccount) => {
 /** Acknowledge `x`'s alerts newest first: each goes alone, the older ones stay as they were. */
 function acknowledgeNewestFirst(x: CloudAccount): void {
   const all = x.alerts();
+  let told = 0;
+  const stop = x.onChange(() => void told++);
   for (let i = all.length - 1; i >= 0; i--) {
     x.acknowledge(all[i]!.seq);
     assert.deepEqual(
@@ -38,7 +40,9 @@ function acknowledgeNewestFirst(x: CloudAccount): void {
       all.slice(0, i).map((a) => a.seq),
       `acknowledging the ${all[i]!.kind} at ${all[i]!.seq} takes it alone`,
     );
+    assert.equal(told, all.length - i, "and the page is told, once each time");
   }
+  stop();
 }
 
 test("alerts: every kind another admin's change raises — from the upgrade to chain v3 on — appears in order and is acknowledged on its own", async () => {
@@ -200,8 +204,7 @@ test("alerts start where a device pinned the account — unless it already kept 
       ["recoveryJoin", y.deviceId],
     ],
     "z's alerts start where it kept them, not where it pinned",
-  );
-});
+  );});
 
 test("alerts start where the founding device pinned its genesis, also when the seen store would not take the pin", async (t) => {
   const warned = t.mock.method(console, "warn", () => undefined);
@@ -225,6 +228,25 @@ test("alerts start where the founding device pinned its genesis, also when the s
   await c.setRecoveryWords();
   await a.sync();
   assert.deepEqual(a.alerts().map((x) => [x.kind, x.by]), [["setRecoveryKey", c.deviceId]]);
+});
+
+test("alerts: the founding device's fallback pin leaves where its alerts start as it was, when it kept that already", async (t) => {
+  t.mock.method(console, "warn", () => undefined);
+  const hub = new FakeKeysHub();
+  hub.chainV3Mode = "write";
+  const store = new RecordingKeyStore();
+  const a = await hub.device("tok", store);
+  browserStorage(store).setItem(`rh.hub.ack.${a.account}.${a.deviceId}`, JSON.stringify({ through: 0, extra: [] }));
+  const seen = browserSeen(store);
+  const update = seen.update;
+  seen.update = async () => {
+    throw new SeenStoreError("the store is full");
+  };
+  await a.createGenesis(true, { writable: true });
+  seen.update = update;
+  assert.equal(a.pinned, true, "pinned where older pages keep it");
+  assert.ok(a.chain!.seq > 0);
+  assert.deepEqual(ackOf(a), { through: 0, extra: [] }, "kept as it was, not moved to the genesis it made");
 });
 
 test("alerts: a waiting recovery join acknowledged by its seq keeps where alerts start below it", async () => {
@@ -256,4 +278,55 @@ test("alerts: a device whose browser no longer trusts the account's genesis is t
   assert.equal(again.standing, "active");
   assert.ok(ackOf(again)!.through < again.chain!.seq, "its acknowledgements are still kept");
   assert.deepEqual(again.alerts(), [], "an unpinned view is told of no change");
+});
+
+test("alerts: setAdmin offers to remove a device made full, not one taken back; a completed pause names only control still let in; each alert dates from when this device first saw it", async (t) => {
+  const t0 = Date.now();
+  t.mock.timers.enable({ apis: ["Date"], now: t0 });
+  const { hub, a } = await v2Account();
+  await a.upgradeToV3({ writable: true });
+  const c = await pairBrowser(hub, a, { admin: true });
+  await c.receiveMail();
+  await hub.enroll(a, "m-2", { writable: true });
+  const b = await pairBrowser(hub, a, { admin: false });
+  const [d, e] = [(await pairBrowser(hub, a, { admin: false })).deviceId, (await pairBrowser(hub, a, { admin: false })).deviceId].sort();
+  await a.setAdmin(b.deviceId, true);
+  await a.setAdmin(b.deviceId, false);
+  await a.setAccept("m-1", { type: "devices", ids: [d!, e!] });
+  await a.setAccept("m-2", { type: "devices", ids: [d!] });
+  const op = new Uint8Array(16).fill(9);
+  await a.append({ type: "renewalPause", op, phase: PAUSE_START, removals: [{ host: "m-1", ids: [d!, e!] }, { host: "m-2", ids: [d!] }] });
+  // By hand during the pause: d is let into m-1 and m-2 no more, so the completion gives back e's control of m-1 alone.
+  await a.setAccept("m-1", { type: "devices", ids: [e!] }, new FakeCourier());
+  await a.setAccept("m-2", { type: "admins" }, new FakeCourier());
+  await a.append({ type: "renewalPause", op, phase: PAUSE_COMPLETED, removals: [] });
+  // c sees all of it five seconds after it was written.
+  t.mock.timers.setTime(t0 + 5_000);
+  await c.sync();
+  const by = a.deviceId;
+  assert.deepEqual(
+    c.alerts().map((x) => [x.kind, x.by, x.subject, x.on, x.remove, x.pause]),
+    [
+      ["addDevice", by, "m-2", undefined, "m-2", undefined],
+      ["addDevice", by, b.deviceId, undefined, b.deviceId, undefined],
+      ["addDevice", by, d, undefined, d, undefined],
+      ["addDevice", by, e, undefined, e, undefined],
+      ["setAdmin", by, b.deviceId, true, b.deviceId, undefined],
+      ["setAdmin", by, b.deviceId, false, null, undefined],
+      ["setAccept", by, "m-1", undefined, null, undefined],
+      ["setAccept", by, "m-2", undefined, null, undefined],
+      ["renewalPause", by, null, undefined, null, { phase: "start", removals: [{ host: "m-1", ids: [d, e] }, { host: "m-2", ids: [d] }] }],
+      ["setAccept", by, "m-1", undefined, null, undefined],
+      ["keyEpochs", by, null, undefined, by, undefined],
+      ["setAccept", by, "m-2", undefined, null, undefined],
+      ["keyEpochs", by, null, undefined, by, undefined],
+      ["renewalPause", by, null, undefined, null, { phase: "completed", removals: [{ host: "m-1", ids: [e] }] }],
+    ],
+  );
+  for (const x of c.alerts()) {
+    assert.equal(c.chain!.entryAt(x.seq)!.draft.createdMs, t0, "written at t0");
+    assert.equal(x.atMs, t0 + 5_000, `the ${x.kind} at ${x.seq} dates from when c first saw it`);
+  }
+  acknowledgeNewestFirst(c);
+  assert.deepEqual(ackOf(c), { through: c.chain!.seq, extra: [] });
 });

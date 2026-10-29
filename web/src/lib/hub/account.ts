@@ -487,8 +487,6 @@ export class CloudAccount {
     deviceId: () => this.deviceId,
     state: () => this.state,
     clock: () => this.clock,
-    read: (key) => this.read(key),
-    write: (key, value) => this.write(key, value),
     emit: () => this.emit(),
   });
   /** The device-change alerts and their acknowledgement. */
