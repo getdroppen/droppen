@@ -254,6 +254,18 @@ mod tests {
 
     /// [`account_with`], its loopback server at `loopback`.
     fn account_at(sync: super::super::streams::Handle, loopback: std::net::SocketAddr) -> Account {
+        account_on(sync, loopback, Clock::wall())
+    }
+
+    /// [`account`], its channels' control lapse judged by tokio's clock
+    /// ([`Clock::tokio`]). Under `start_paused`, a lapse comes when the test
+    /// moves that clock past it, however long the work before it took.
+    fn clocked_account() -> Account {
+        account_on(super::super::streams::Handle::detached(), "127.0.0.1:9".parse().unwrap(), Clock::tokio())
+    }
+
+    /// [`account_at`], its channels' control lapse judged by `clock`.
+    fn account_on(sync: super::super::streams::Handle, loopback: std::net::SocketAddr, clock: Clock) -> Account {
         let ak = MachineIdentity::from_seed(&[1; 32]);
         let d1 = MachineIdentity::from_seed(&[2; 32]);
         let d2 = MachineIdentity::from_seed(&[3; 32]);
@@ -282,9 +294,9 @@ mod tests {
         // thread for as long as the disk takes to commit every schema step.
         droppen_instance::db::at(paths.instance_db());
         droppen_instance::db::at(paths.config_db());
-        let mut st = AgentState::enrolling("wss://hub.example", "a-1", "m-1", fingerprint(&ak.sign_public()), now_ms_u64());
-        assert!(st.absorb(&entries, now_ms_u64()).error.is_none());
-        let guard = st.replay_guard(now_ms_u64());
+        let mut st = AgentState::enrolling("wss://hub.example", "a-1", "m-1", fingerprint(&ak.sign_public()), clock.now_ms());
+        assert!(st.absorb(&entries, clock.now_ms()).error.is_none());
+        let guard = st.replay_guard(clock.now_ms());
         let shared = Arc::new(Shared {
             files: AgentFiles::of(&paths),
             host: Arc::new(crate::app::PushLinkHost),
@@ -301,7 +313,7 @@ mod tests {
             held_until: Mutex::new(None),
             chain_version: tokio::sync::watch::channel(0).0,
             lapses: Mutex::new(Vec::new()),
-            clock: Clock::wall(),
+            clock,
             after_admission: Mutex::new(None),
             hub_text: Mutex::new(None),
             relays: Mutex::new(None),
@@ -403,7 +415,7 @@ mod tests {
 
     /// `device` (keys `key`) vouches for this agent's chain head, `age_ms` ago.
     fn attest(a: &Account, device: &str, key: &MachineIdentity, age_ms: u64) {
-        let att = Attestation::create(&a.hub, device, key.signing_key(), now_ms_u64() - age_ms);
+        let att = Attestation::create(&a.hub, device, key.signing_key(), a.shared.clock.now_ms() - age_ms);
         assert!(a.shared.state.lock().unwrap().attest(att));
     }
 
@@ -443,7 +455,7 @@ mod tests {
             entries: Vec::new(),
             client: Vec::new(),
         };
-        let hello = initiator.write_hello(now_ms_u64(), &body.encode().unwrap()).unwrap();
+        let hello = initiator.write_hello(a.shared.clock.now_ms(), &body.encode().unwrap()).unwrap();
         let (out_tx, mut out_rx) = mpsc::unbounded_channel();
         let (text_tx, _text_rx) = mpsc::unbounded_channel();
         accept(&a.shared, ch, device.into(), &hello, routes, &out_tx, &text_tx);
@@ -458,7 +470,7 @@ mod tests {
             }
             Err(_) => return Err(Vec::new()),
         };
-        let (transport, _) = initiator.read_reply(&reply, RekeyPolicy::default(), now_ms_u64()).unwrap();
+        let (transport, _) = initiator.read_reply(&reply, RekeyPolicy::default(), a.shared.clock.now_ms()).unwrap();
         let session = Session::new(ch, transport, Role::Initiator);
         let (to_device, from_agent) = mpsc::unbounded_channel();
         let (device_out, mut device_frames) = mpsc::unbounded_channel();
@@ -1260,13 +1272,14 @@ mod tests {
     /// no admin has vouched for this machine's view for that long, the agent
     /// closes it (4412) — however long the hub keeps the connection up and
     /// a removal to itself — and a new one is refused.
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn an_open_channel_closes_once_no_admin_vouched_for_this_view_in_seven_days() {
-        let a = account();
+        let a = clocked_account();
         attest(&a, "d-1", &a.d1, SEVEN_DAYS - 1_500);
         let mut routes = Routes::new();
         let channel = connect(&a, &d2(), "d-2", 4, &mut routes).await.expect("fresh enough to open");
         assert_eq!(served(&channel).await, Some(200));
+        // The paused clock moves on 2.5 s: past a lapse that was 1.5 s off.
         tokio::time::sleep(Duration::from_millis(2_500)).await;
         assert_eq!(*a.heard_closes.lock().unwrap(), vec![(4, CHANNEL_STALE)], "closed once its seven days ran out");
         assert_eq!(served(&channel).await, None, "nothing is served on it");
@@ -1281,13 +1294,14 @@ mod tests {
 
     /// An admin vouching again before the seven days are out keeps an open
     /// channel going.
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn a_newer_attestation_keeps_an_open_channel_going() {
-        let a = account();
+        let a = clocked_account();
         attest(&a, "d-1", &a.d1, SEVEN_DAYS - 1_500);
         let mut routes = Routes::new();
         let channel = connect(&a, &d2(), "d-2", 4, &mut routes).await.expect("fresh enough to open");
         attest(&a, "d-1", &a.d1, 0);
+        // The paused clock moves on 2.5 s: past a lapse that was 1.5 s off.
         tokio::time::sleep(Duration::from_millis(2_500)).await;
         assert!(a.heard_closes.lock().unwrap().is_empty());
         assert_eq!(served(&channel).await, Some(200));
@@ -1341,7 +1355,7 @@ mod tests {
     /// of what `lapse` knew.
     fn lapse_at(a: &Account, lapse: &mut ChannelLapse) -> Option<u64> {
         let st = a.shared.state.lock().unwrap();
-        lapse.update(&st, now_ms_u64());
+        lapse.update(&st, a.shared.clock.now_ms());
         lapse.at()
     }
 
@@ -1451,9 +1465,9 @@ mod tests {
     /// channel heard of the chain change: the renewal is the channel's all
     /// the same — kept as it arrived — and the channel stays open past its
     /// first word's seven days.
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn a_renewal_replaced_before_the_channel_looked_still_keeps_it_open() {
-        let mut a = account();
+        let mut a = clocked_account();
         take(
             &mut a,
             vec![Action::SetAdmin {
@@ -1475,7 +1489,7 @@ mod tests {
             on_frame(&a.shared, frame, &mut Routes::new(), &mut Pending::new(), &out, &text);
         };
         // It renews (still the sole admin)…
-        relayed(&a, Attestation::create(&a.hub, "d-1", a.d1.signing_key(), now_ms_u64()));
+        relayed(&a, Attestation::create(&a.hub, "d-1", a.d1.signing_key(), a.shared.clock.now_ms()));
         // …pairs a second admin, and vouches for that head, before the channel heard of the change.
         take(
             &mut a,
@@ -1484,8 +1498,9 @@ mod tests {
                 admin: true,
             }],
         );
-        relayed(&a, Attestation::create(&a.hub, "d-1", a.d1.signing_key(), now_ms_u64()));
+        relayed(&a, Attestation::create(&a.hub, "d-1", a.d1.signing_key(), a.shared.clock.now_ms()));
         a.shared.chain_version.send_modify(|v| *v += 1);
+        // The paused clock moves on 2.5 s: past a lapse that was 1.5 s off.
         tokio::time::sleep(Duration::from_millis(2_500)).await;
         assert!(a.heard_closes.lock().unwrap().is_empty(), "{:?}", a.heard_closes.lock().unwrap());
         assert_eq!(served(&channel).await, Some(200), "open past its first word's seven days");
@@ -1495,9 +1510,9 @@ mod tests {
     /// admission — before the channel's own task ran, and replaced at once by
     /// a word that does not count — still reaches the channel: its lapse was
     /// seeded and registered under the admission's state lock.
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn a_renewal_arriving_just_after_admission_reaches_the_channel() {
-        let mut a = account();
+        let mut a = clocked_account();
         take(
             &mut a,
             vec![Action::SetAdmin {
@@ -1506,7 +1521,7 @@ mod tests {
             }],
         );
         attest(&a, "d-1", &a.d1, SEVEN_DAYS - 1_500);
-        let renewal = Attestation::create(&a.hub, "d-1", a.d1.signing_key(), now_ms_u64());
+        let renewal = Attestation::create(&a.hub, "d-1", a.d1.signing_key(), a.shared.clock.now_ms());
         let pairing = a
             .hub
             .draft(
@@ -1519,16 +1534,17 @@ mod tests {
             )
             .sign(a.d1.signing_key());
         a.hub.apply(&pairing, &mut ChainClock::history()).unwrap();
-        let replacing = Attestation::create(&a.hub, "d-1", a.d1.signing_key(), now_ms_u64());
+        let replacing = Attestation::create(&a.hub, "d-1", a.d1.signing_key(), a.shared.clock.now_ms());
         let shared = a.shared.clone();
         *a.shared.after_admission.lock().unwrap() = Some(Box::new(move || {
             assert!(take_attestation(&shared, renewal));
-            assert!(shared.state.lock().unwrap().absorb(std::slice::from_ref(&pairing), now_ms_u64()).error.is_none());
+            assert!(shared.state.lock().unwrap().absorb(std::slice::from_ref(&pairing), shared.clock.now_ms()).error.is_none());
             assert!(take_attestation(&shared, replacing));
         }));
         let mut routes = Routes::new();
         let channel = connect(&a, &a.d1, "d-1", 4, &mut routes).await.expect("the sole admin's own word");
         a.shared.chain_version.send_modify(|v| *v += 1);
+        // The paused clock moves on 2.5 s: past a lapse that was 1.5 s off.
         tokio::time::sleep(Duration::from_millis(2_500)).await;
         assert!(a.heard_closes.lock().unwrap().is_empty(), "{:?}", a.heard_closes.lock().unwrap());
         assert_eq!(served(&channel).await, Some(200), "open past its first word's seven days");
@@ -1536,14 +1552,15 @@ mod tests {
 
     /// Third look: a channel that ended leaves the lapse registry
     /// then, not only once an attestation arrives.
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn an_ended_channel_leaves_the_lapse_registry() {
-        let a = account();
+        let a = clocked_account();
         attest(&a, "d-1", &a.d1, SEVEN_DAYS - 1_500);
         let mut routes = Routes::new();
         let channel = connect(&a, &d2(), "d-2", 4, &mut routes).await.expect("fresh enough to open");
         assert_eq!(served(&channel).await, Some(200));
         assert_eq!(a.shared.lapses.lock().unwrap().len(), 1);
+        // The paused clock moves on 2.5 s: past a lapse that was 1.5 s off.
         tokio::time::sleep(Duration::from_millis(2_500)).await;
         assert_eq!(*a.heard_closes.lock().unwrap(), vec![(4, CHANNEL_STALE)]);
         assert!(a.shared.lapses.lock().unwrap().is_empty(), "gone with its channel");
@@ -1617,9 +1634,9 @@ mod tests {
     /// and forwards its fresh words about it cannot keep an open channel
     /// going past seven days from the last word given before this agent
     /// moved on.
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn fresh_words_about_a_head_this_agent_moved_past_do_not_keep_a_channel_open() {
-        let mut a = account();
+        let mut a = clocked_account();
         attest(&a, "d-1", &a.d1, SEVEN_DAYS - 1_500);
         let at_n = a.hub.clone();
         let mut routes = Routes::new();
@@ -1629,12 +1646,13 @@ mod tests {
             let mut st = a.shared.state.lock().unwrap();
             let next = st.chain.as_ref().unwrap().seq();
             let mut seen = st.clock.first_seen().clone();
-            seen.insert(next, now_ms_u64() - 60 * 60 * 1000);
+            seen.insert(next, a.shared.clock.now_ms() - 60 * 60 * 1000);
             st.clock.restore(seen);
         }
         a.shared.chain_version.send_modify(|v| *v += 1);
-        let fresh = Attestation::create(&at_n, "d-1", a.d1.signing_key(), now_ms_u64());
+        let fresh = Attestation::create(&at_n, "d-1", a.d1.signing_key(), a.shared.clock.now_ms());
         assert!(a.shared.state.lock().unwrap().attest(fresh));
+        // The paused clock moves on 2.5 s: past a lapse that was 1.5 s off.
         tokio::time::sleep(Duration::from_millis(2_500)).await;
         assert_eq!(*a.heard_closes.lock().unwrap(), vec![(4, CHANNEL_STALE)]);
         assert_eq!(served(&channel).await, None);

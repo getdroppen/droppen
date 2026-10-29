@@ -210,6 +210,16 @@ impl Clock {
     }
 }
 
+#[cfg(test)]
+impl Clock {
+    /// The wall clock as it stood when made, moved on since by tokio's clock:
+    /// under `start_paused`, only as far as the test moves that clock.
+    pub(in crate::agent) fn tokio() -> Self {
+        let (wall, start) = (now_ms_u64(), tokio::time::Instant::now());
+        Self(Arc::new(move || wall + start.elapsed().as_millis() as u64))
+    }
+}
+
 /// When an open channel's control lapses (local-aggregator §3.4):
 /// [`rh_proto::chain::CONTROL_FRESHNESS_MS`] after the newest word that
 /// counts for its device ([`word_of`]), kept per admin. A channel is
