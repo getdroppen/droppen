@@ -652,3 +652,20 @@ pub(in crate::agent) fn accept(
     }
 }
 
+#[cfg(test)]
+mod server_info_tests {
+    use serde_json::{json, Value};
+
+    /// What the handshake reply carries, compared whole: device pages of any
+    /// version read `features` from it.
+    #[test]
+    fn server_info_has_its_documented_shape() {
+        for direct in [false, true] {
+            let info: Value = serde_json::from_slice(&super::server_info(direct)).unwrap();
+            assert_eq!(
+                info,
+                json!({"agent": "remote-hand", "version": droppen_http::SERVER_VERSION, "features": crate::agent::direct::features(direct)})
+            );
+        }
+    }
+}

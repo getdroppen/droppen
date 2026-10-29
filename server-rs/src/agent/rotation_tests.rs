@@ -630,6 +630,13 @@ async fn a_renewal_request_stages_a_new_seed_and_proves_it() {
     let new_dh = unhex32(answer["dhKey"].as_str().unwrap()).unwrap();
     assert_eq!((answer["stagedSeq"].as_u64(), answer["readyMs"].as_u64()), (Some(a.hub.seq()), Some(123)));
     assert_eq!(answer["stagedHead"].as_str(), Some(hex(&a.hub.head()).as_str()));
+    assert_eq!(
+        answer.clone().blank(&["signKey", "dhKey", "oldSig", "newSig", "mac"]),
+        json!({
+            "signKey": "", "dhKey": "", "oldSig": "", "newSig": "", "mac": "", "stagedSeq": a.hub.seq(), "stagedHead": hex(&a.hub.head()),
+            "readyMs": 123,
+        })
+    );
     // Both keys signed the R1 proof; the MAC proves the new DH key.
     let old = machine();
     let r = HostRotation {
@@ -679,7 +686,10 @@ async fn a_renewal_request_stages_a_new_seed_and_proves_it() {
     assert_eq!((status, &again), (200, &answer));
     assert_eq!(hub.heard("rotation_stage").len(), 1);
     // The same nonce with another view or assurance is not the same request.
-    assert_eq!(rotate(&shared, &a.request([7; 16], &eph, 1)).await.0, 400);
+    assert_eq!(
+        rotate(&shared, &a.request([7; 16], &eph, 1)).await,
+        (400, json!({"error": "bad_request", "message": "this nonce came before with another chain view or assurance"}))
+    );
     // A new nonce: a new seed, staged beside the one the hub took (which it
     // may still commit: kept).
     let (status, other) = rotate(&shared, &a.request([8; 16], &eph, 0)).await;
@@ -693,12 +703,14 @@ async fn a_renewal_request_stages_a_new_seed_and_proves_it() {
     hub.script.lock().unwrap().stage = StageAnswer::Refused("conflict");
     let (status, refused) = rotate(&shared, &a.request([9; 16], &eph, 0)).await;
     assert_eq!((status, refused["error"].as_str(), refused["reason"].as_str()), (409, Some("hub_refused"), Some("conflict")));
+    assert_eq!(refused, json!({"error": "hub_refused", "reason": "conflict", "message": "the hub refused to stage this renewal"}));
     assert_eq!(a.nonces(), vec![[7; 16], [8; 16]]);
     // One the hub did not answer in time (504) is kept for the attempt's ten
     // minutes, unanswered; its late answer makes it one the hub took.
     hub.script.lock().unwrap().stage = StageAnswer::Silent;
     let (status, lost) = rotate(&shared, &a.request([10; 16], &eph, 0)).await;
     assert_eq!((status, lost["error"].as_str()), (504, Some("hub_timeout")));
+    assert_eq!(lost, json!({"error": "hub_timeout", "message": "the hub did not answer the staging in time: ask again"}));
     assert_eq!(a.nonces(), vec![[7; 16], [8; 16], [10; 16]]);
     assert!(a.staged().unwrap().accepted_ms.is_none());
     hub.send_json(json!({"t": "rotation_staged", "nonce_hash": hex(&Sha256::digest([10u8; 16])), "ready_ms": 1}));
@@ -744,10 +756,18 @@ async fn a_renewal_request_is_checked_and_a_high_assurance_one_shows_its_code() 
     let off_chain = json!({"nonce": hex(&[7; 16]), "eph": hex(&eph.public()), "chainSeq": a.hub.seq(), "chainHead": hex(&[3; 32]), "assurance": 0});
     let (status, body) = rotate(&shared, off_chain.to_string().as_bytes()).await;
     assert_eq!((status, body["error"].as_str()), (409, Some("not_on_chain")));
+    assert_eq!(
+        body,
+        json!({"error": "not_on_chain", "message": "that chain view is not on this device's chain: sync and retry", "chainSeq": a.hub.seq()})
+    );
     let ahead = json!({"nonce": hex(&[7; 16]), "eph": hex(&eph.public()), "chainSeq": a.hub.seq() + 1, "chainHead": hex(&a.hub.head()), "assurance": 0});
     assert_eq!(rotate(&shared, ahead.to_string().as_bytes()).await.1["error"], "not_on_chain");
-    for bad in [&b"nope"[..], br#"{"nonce":"00"}"#, br#"{"nonce":"07070707070707070707070707070707","eph":"00","chainSeq":1,"chainHead":"00","assurance":2}"#] {
-        assert_eq!(rotate(&shared, bad).await.0, 400);
+    for (bad, message) in [
+        (&b"nope"[..], "JSON expected"),
+        (br#"{"nonce":"00"}"#, "nonce: 16 bytes of hex expected"),
+        (br#"{"nonce":"07070707070707070707070707070707","eph":"00","chainSeq":1,"chainHead":"00","assurance":2}"#, "eph: 32 bytes of hex expected"),
+    ] {
+        assert_eq!(rotate(&shared, bad).await, (400, json!({"error": "bad_request", "message": message})));
     }
     let refused = |answer: &(u16, Value)| (answer.0, answer.1["error"].as_str().map(str::to_string), answer.1["reason"].as_str().map(str::to_string));
     let lapsed = (412, Some("stale".to_string()), Some("lapsed".to_string()));
@@ -807,9 +827,14 @@ async fn a_hub_that_does_not_offer_rotate_gets_no_staging() {
     let eph = DhKeypair::from_secret([5; 32]);
     let (status, body) = rotate(&shared, &a.request([7; 16], &eph, 0)).await;
     assert_eq!((status, body["error"].as_str()), (409, Some("hub_not_ready")), "no connection");
+    let not_ready = json!({
+        "error": "hub_not_ready", "message": "this device's hub connection is down, or its hub does not stage identity renewals yet",
+    });
+    assert_eq!(body, not_ready);
     let task = signed_in(&shared).await;
     let (status, body) = rotate(&shared, &a.request([7; 16], &eph, 0)).await;
     assert_eq!((status, body["error"].as_str()), (409, Some("hub_not_ready")), "{body}");
+    assert_eq!(body, not_ready);
     assert!(a.staged().is_none());
     // `rotation_pending` from such a hub is not answered either.
     hub.send_json(json!({"t": "rotation_pending", "sign_key": hex(&[1; 32]), "dh_key": hex(&[2; 32])}));
@@ -1078,6 +1103,10 @@ async fn with_the_renewal_policy_on_only_a_renewal_confirmed_on_the_device_is_st
     let eph = DhKeypair::from_secret([5; 32]);
     let (status, body) = rotate(&shared, &a.request([7; 16], &eph, 0)).await;
     assert_eq!((status, body["error"].as_str()), (409, Some("assurance_required")), "{body}");
+    assert_eq!(
+        body,
+        json!({"error": "assurance_required", "message": "this account renews identity keys only when confirmed on the device (assurance 1)"})
+    );
     assert!(a.staged().is_none() && hub.heard("rotation_stage").is_empty(), "nothing staged");
     let (status, body) = rotate(&shared, &a.request([8; 16], &eph, 1)).await;
     assert_eq!(status, 200, "{body}");
