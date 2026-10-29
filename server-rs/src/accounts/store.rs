@@ -2202,6 +2202,33 @@ mod tests {
         );
     }
 
+    /// A replacement is held to the rule a new row is: a codex block with no key
+    /// variable never reaches the table, and the block it would have replaced
+    /// is still the one stored.
+    #[tokio::test]
+    async fn a_replacement_nothing_could_spawn_is_refused_before_it_is_stored() {
+        let (_dir, store) = store();
+        let codex = store
+            .create("Codex", AccountProvider::Codex, env("OPENAI_API_KEY=not-a-real-openai-key"))
+            .await
+            .expect("create");
+        let refused = store
+            .update(
+                &codex.id,
+                AccountPatch {
+                    credential: Some(env("SOMETHING_ELSE=x")),
+                    ..Default::default()
+                },
+            )
+            .await;
+        assert!(matches!(refused, Err(AccountError::Invalid(_))), "{refused:?}");
+        assert_eq!(
+            parse_env_block(&store.env_block(&codex.id).await.expect("the block")).expect("a block"),
+            parse_env_block("OPENAI_API_KEY=not-a-real-openai-key").expect("a block"),
+            "the stored block is untouched"
+        );
+    }
+
     /// Two CLIs, two defaults, one delete.
     #[tokio::test]
     async fn each_cli_keeps_its_own_default_and_a_deletion_clears_only_its_own() {
