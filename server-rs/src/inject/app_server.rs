@@ -5,12 +5,24 @@
 //! the output cursor and outstanding request IDs together; replay can therefore
 //! finish an acknowledged delivery without ever submitting it twice.
 
-use super::*;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant, SystemTime};
+
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 #[cfg(test)]
 use tokio::io::AsyncBufReadExt;
 use tokio::sync::{mpsc, oneshot};
+
+use crate::accounts::store::AccountProvider;
+use crate::sessions::{Injection, InjectionRunState, Source};
+use droppen_base::process_env::{clean_env, clean_env_bare};
+use droppen_base::procs;
+use droppen_base::time::iso8601;
+
+use super::common::{busy_message, new_uuid, session_workdir, Phase, QueueOutcome, ResidentState, CHAT_SYSTEM_PROMPT};
+use super::{codex_permission_flags, lock, runs, shim, with_codex_files, CodexAccount, InjectError, InjectionRegistry, SendOptions, Sent};
 
 const RPC_TIMEOUT: Duration = Duration::from_secs(30);
 /// How long a retiring app-server is given to actually exit.
@@ -422,7 +434,7 @@ impl InjectionRegistry {
             None => None,
         };
         let sidecars = shim::Sidecars::new(self.shim_dir.clone(), new_uuid());
-        let cwd = claude_workdir(&self.paths, cwd);
+        let cwd = session_workdir(&self.paths, cwd);
         // With no account, argv and environment are byte for byte what they
         // have always been: `codex app-server`, the process environment, and
         // whatever `~/.codex/auth.json` holds. An account adds a model
@@ -1190,6 +1202,8 @@ impl Driver {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use droppen_instance::instance::InstanceDirs;
+    use droppen_instance::paths::Paths;
     use tokio::io::{AsyncWriteExt, BufReader};
     use tokio::net::{
         unix::{OwnedReadHalf, OwnedWriteHalf},

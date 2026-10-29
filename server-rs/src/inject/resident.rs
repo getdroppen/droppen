@@ -84,7 +84,8 @@ use droppen_base::time::iso8601;
 
 use super::questions::{self, PermissionRequest, Stored};
 use super::shim::{self, Link, Output, Sidecars, Spawn};
-use super::{lock, new_uuid, runs, InjectError, InjectionRegistry, Run, RunState};
+use super::common::{busy_message, new_uuid, Phase, QueueOutcome, ResidentState, StopTaskOutcome};
+use super::{lock, runs, InjectError, InjectionRegistry, RunEntry, RunState};
 
 /// The mode flags every resident is started with.
 ///
@@ -426,84 +427,6 @@ pub(super) struct Recipe {
 
 // ---------------------------------------------------------------- the mirror
 
-/// Where a resident is in its cycle.
-///
-/// "Stalled" is deliberately not one of these: a turn that has gone quiet is
-/// still a turn in flight, and making it a state would mean every reader had to
-/// know that two of them mean "working". It is a flag beside the phase instead.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Phase {
-    /// Spawned, but `system:init` has not arrived: nothing may be written yet.
-    Starting,
-    /// A turn is in flight; its end is a `result` line.
-    Working,
-    /// Between turns. The process is alive and costs nothing.
-    Idle,
-}
-
-/// The driver's state, readable without awaiting it.
-///
-/// A synchronous mirror rather than the truth: the routes and the feed ask "is
-/// this session busy" from inside handlers that cannot block on a task, and the
-/// answer only has to be good enough to render. Every *decision* is made in the
-/// driver, against the real thing.
-#[derive(Debug, Clone)]
-pub struct ResidentState {
-    /// Where the resident is in its cycle.
-    pub phase: Phase,
-    /// Set when a working turn has been silent past the threshold; cleared by
-    /// the next line claude writes. Never a reason to kill anything.
-    pub stalled: bool,
-    /// How many messages are waiting behind the turn in flight, steered ones
-    /// included: a message written to claude's stdin ahead of its turn has not
-    /// run yet, so the session is not finished with it.
-    pub queued: usize,
-    /// Those messages, in the order they will run, as the API reports them.
-    ///
-    /// Held on the mirror rather than asked of the driver because that is what
-    /// the mirror is for: a route that wanted the queue would otherwise have to
-    /// await a task which may be inside a thirty-second recovery backoff.
-    pub queued_messages: Vec<crate::sessions::QueuedMessage>,
-    /// How many background tasks claude is still minding.
-    ///
-    /// Deliberately *not* a phase. A turn that dispatched background work ends
-    /// like any other — the composer unblocks, the next message goes in — and
-    /// the tasks outlive it. What this count changes is only what may end the
-    /// *process*: see [`Driver::minding_background`].
-    pub background: usize,
-    /// What those tasks are, oldest first, capped at [`TASKS_ON_THE_WIRE`].
-    ///
-    /// The count above stays the authoritative one: this is the description of
-    /// the work, and a row that showed a hundred of anything is already telling
-    /// the user something has gone wrong.
-    pub tasks: Vec<crate::sessions::BackgroundTask>,
-    /// Set when a settings change is waiting for that background work.
-    ///
-    /// The message that wants the new settings is at the head of the queue and
-    /// has not been sent anywhere. Without this the session would read as
-    /// simply idle with something queued, which is indistinguishable from a bug.
-    pub awaiting_background: bool,
-    /// When the turn in flight began, ISO-8601: set on leaving `Idle`, kept
-    /// through a recovery inside the turn, cleared on returning to `Idle`.
-    pub turn_started_at: Option<String>,
-    /// The `AskUserQuestion` claude is blocked on, by the CLI's request id —
-    /// the oldest, should it ever ask two at once. `None` whenever nothing is
-    /// waiting on the user.
-    ///
-    /// On the mirror because two readers cannot wait for the driver: the list
-    /// row's "asking you", which is true from the moment the question arrives
-    /// and *while the turn is still in flight*, and the send route, which turns
-    /// a message typed while a question is open into its answer.
-    pub question: Option<String>,
-}
-
-impl ResidentState {
-    /// Whether claude is looking after work that outlived its turn.
-    pub fn minding_background(&self) -> bool {
-        self.background > 0
-    }
-}
-
 /// What the send path and the routes hold on to.
 pub(super) struct Handle {
     tx: mpsc::UnboundedSender<Cmd>,
@@ -518,29 +441,6 @@ impl Handle {
     /// The mirror in the shape the API speaks in.
     pub(super) fn info(&self) -> crate::sessions::ResidentInfo {
         self.state().into()
-    }
-}
-
-impl From<ResidentState> for crate::sessions::ResidentInfo {
-    fn from(state: ResidentState) -> Self {
-        crate::sessions::ResidentInfo {
-            phase: match state.phase {
-                Phase::Starting => crate::sessions::ResidentPhase::Starting,
-                Phase::Working => crate::sessions::ResidentPhase::Working,
-                Phase::Idle => crate::sessions::ResidentPhase::Idle,
-            },
-            // Saturating rather than `as`: a queue long enough to overflow a
-            // `u32` is a bug elsewhere, and reporting it as a small number
-            // would hide that bug behind a plausible-looking row.
-            queued: state.queued.try_into().unwrap_or(u32::MAX),
-            queued_messages: state.queued_messages,
-            background: state.background.try_into().unwrap_or(u32::MAX),
-            tasks: state.tasks,
-            awaiting_background: state.awaiting_background,
-            stalled: state.stalled,
-            turn_started_at: droppen_http::openapi_ext::Nullable(state.turn_started_at),
-            asking: state.question.is_some(),
-        }
     }
 }
 
@@ -632,48 +532,6 @@ pub enum AnswerOutcome {
     /// The answer is not one the question could be given.
     Invalid(String),
     /// The write to claude failed; the question is still pending.
-    Unreachable,
-}
-
-/// What a queue route did, or why it could not.
-///
-/// Reported rather than logged because every one of these is something the
-/// person pressing the button has to be told: the message they meant is already
-/// running, or already handed over, or needs a process this one is not.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum QueueOutcome {
-    /// A native protocol refusal, with the message still safely queued.
-    Refused {
-        /// The CLI's refusal, with credentials redacted before publication.
-        reason: String,
-    },
-    /// The queue changed as asked.
-    Done,
-    /// This server holds no resident for the session at all.
-    NoResident,
-    /// No message in the queue has that id.
-    ///
-    /// The everyday case is a race rather than a typo: the turn in front ended
-    /// while the request was in flight and the message is now running.
-    Unknown,
-    /// The message is already in claude's stdin and cannot be taken back.
-    AlreadySteered,
-    /// The message asks for settings the running process was not started with,
-    /// and the restart it needs cannot be done now: either a turn is in flight,
-    /// or the message carries no recipe to start anything from.
-    ///
-    /// Not the answer to a settings change as such — a steer from *idle* does
-    /// the restart, see [`Driver::restart_for_steer`].
-    NeedsRestart {
-        /// What the message wants that the running process does not have, in
-        /// the words of [`Fingerprint::differences`].
-        ///
-        /// Carried rather than re-derived at the route, which holds neither
-        /// fingerprint: the refusal is only actionable if it says which setting
-        /// is in the way.
-        differences: String,
-    },
-    /// The write to claude failed; the message is still queued.
     Unreachable,
 }
 
@@ -936,7 +794,7 @@ impl InjectionRegistry {
         // interleaving this lock exists to stop.
         let claim = match lock::acquire(&self.lock_dir, Source::Claude, id) {
             Ok(lock::Outcome::Acquired(claim)) => claim,
-            Ok(lock::Outcome::Busy { holder }) => return Err(InjectError::message(super::busy_message(holder))),
+            Ok(lock::Outcome::Busy { holder }) => return Err(InjectError::message(busy_message(holder))),
             Err(error) => return Err(InjectError::Internal(format!("cannot claim this session: {error}"))),
         };
 
@@ -1305,23 +1163,6 @@ impl InjectionRegistry {
     }
 }
 
-/// What a stop-one-task request did, or why it could not.
-///
-/// Three outcomes and no fourth: this server never learns whether the task
-/// actually died, because the only report claude makes about that is the next
-/// task-list snapshot, which reaches the client by the same channel the list
-/// itself came down. So the route answers what it knows — that the request went
-/// out — and the panel answers the rest by the row disappearing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StopTaskOutcome {
-    /// The request is on its way to claude.
-    Asked,
-    /// This server holds no resident for the session at all.
-    NoResident,
-    /// The resident is not minding a task by that id.
-    NoSuchTask,
-}
-
 /// Which session a spawn asks claude for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Selector {
@@ -1583,7 +1424,7 @@ struct Spawned {
 /// The turn in flight: one message, and everything it produces.
 struct Turn {
     /// What the API reports as this session's injection.
-    run: Arc<Run>,
+    run: Arc<RunEntry>,
     /// How far through claude's stdout this turn's prompt was written.
     ///
     /// The offset the journal records, kept here so that every rewrite of the
@@ -5811,7 +5652,7 @@ impl Driver {
     // --------------------------------------------------------- bookkeeping
 
     /// Put a `Running` injection in the registry for the turn about to start.
-    fn open_turn(&mut self) -> Arc<Run> {
+    fn open_turn(&mut self) -> Arc<RunEntry> {
         self.seq += 1;
         let run = running_turn(&self.id);
         self.registry
@@ -5829,7 +5670,7 @@ impl Driver {
     /// idle. That is the run whoever pressed Stop is looking at, so it is the
     /// one that has to be closed — opening a second would leave the first
     /// running for ever.
-    fn launching_turn(&mut self) -> Arc<Run> {
+    fn launching_turn(&mut self) -> Arc<RunEntry> {
         match self.published_run() {
             Some(run) => {
                 self.seq += 1;
@@ -5845,7 +5686,7 @@ impl Driver {
     /// claimed, and nothing else may put a run against a claimed session. It is
     /// either the one the send path published while the CLI was starting, or the
     /// one adoption published while the replay was still arriving.
-    fn published_run(&self) -> Option<Arc<Run>> {
+    fn published_run(&self) -> Option<Arc<RunEntry>> {
         let runs = self.registry.runs.lock().expect("injections poisoned");
         runs.get(&self.registry.key_of(Source::Claude, &self.id))
             .filter(|run| run.state.lock().expect("run state poisoned").state == InjectionRunState::Running)
@@ -6129,9 +5970,9 @@ fn user_line(text: &str) -> String {
 /// Built here rather than in [`Driver::open_turn`] because the send path needs
 /// the same thing before there is a driver to ask: see
 /// [`InjectionRegistry::start_resident`].
-fn running_turn(id: &str) -> Arc<Run> {
+fn running_turn(id: &str) -> Arc<RunEntry> {
     let (finished, _) = tokio::sync::watch::channel(false);
-    Arc::new(Run {
+    Arc::new(RunEntry {
         state: Mutex::new(RunState {
             state: InjectionRunState::Running,
             error: None,

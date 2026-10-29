@@ -51,11 +51,16 @@ mod driver;
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::Arc;
+use std::time::Duration;
 
-use super::*;
+use super::common::{new_uuid, session_workdir, QueueOutcome};
+use super::{AccountChoice, InjectError, InjectionRegistry, SendOptions, Sent};
 use crate::acp::{category, option_for, ConfigOption, InitializeResponse};
 use crate::acp_agent::{AcpAgent, AcpAgentRegistry, AcpCheck, AcpCheckState};
 use crate::sessions::acp_transcript::{has_conversation, read_header, record, AcpTranscripts, Translator};
+use crate::sessions::Source;
+use droppen_base::process_env::clean_env_bare;
 use client::Client;
 use conn::Conn;
 pub(super) use driver::Handle;
@@ -623,7 +628,7 @@ impl InjectionRegistry {
     async fn acp_open(&self, agent: &AcpAgent, id: &str, recorded: Option<Recorded>, cwd: Option<&str>) -> Result<Open, InjectError> {
         // A session that exists ran somewhere; that is where it is reopened,
         // whatever directory the request names.
-        let workdir = claude_workdir(&self.paths, recorded.as_ref().and_then(|recorded| recorded.cwd.as_deref()).or(cwd));
+        let workdir = session_workdir(&self.paths, recorded.as_ref().and_then(|recorded| recorded.cwd.as_deref()).or(cwd));
         let mut started = start(agent, &workdir).await?;
         let reopen = recorded.as_ref().map(|recorded| recorded.agent_session.as_str());
         let opened = match tokio::time::timeout(START_TIMEOUT, started.conn.open(reopen, &workdir)).await {
@@ -727,6 +732,7 @@ pub(super) type Replay = Vec<crate::acp::SessionUpdate>;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use droppen_instance::paths::Paths;
 
     #[test]
     fn attachments_reach_the_agent_as_paths() {

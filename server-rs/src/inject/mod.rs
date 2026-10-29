@@ -8,7 +8,7 @@ use std::path::PathBuf;
 #[cfg(test)]
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 use crate::accounts::quota::QuotaCache;
 use crate::accounts::store::{AccountError, AccountLaunch, AccountProvider, AccountsStore};
@@ -17,7 +17,7 @@ use droppen_http::error::ApiError;
 use droppen_instance::identity::ServerId;
 use droppen_instance::instance::InstanceDirs;
 use droppen_instance::paths::{ClaudeRoot, Paths};
-use droppen_base::process_env::{claude_env, claude_env_bare, clean_env, clean_env_bare, redact_secrets, Env};
+use droppen_base::process_env::{claude_env, claude_env_bare, clean_env_bare, redact_secrets, Env};
 use droppen_base::procs;
 use crate::record;
 use crate::sessions::{claude, codex, Injection, InjectionRunState, SessionRef, SessionStatus, Source};
@@ -27,6 +27,7 @@ use gotcha::Schematic;
 
 pub mod acp;
 mod app_server;
+mod common;
 pub mod drafts;
 mod lock;
 pub mod questions;
@@ -35,7 +36,10 @@ mod resident;
 mod runs;
 pub mod shim;
 
-pub use resident::{AnswerOutcome, Phase, QueueOutcome, Reply, ResidentState, StopTaskOutcome};
+pub use common::{Phase, QueueOutcome, ResidentState, StopTaskOutcome};
+pub use resident::{AnswerOutcome, Reply};
+
+use common::{new_uuid, session_workdir, CHAT_SYSTEM_PROMPT};
 
 /// How often an adopted run's pid is probed.
 ///
@@ -195,13 +199,6 @@ pub(crate) fn codex_permission_flags(permission: &str) -> Result<Vec<&'static st
         other => return Err(InjectError::message(format!("unknown codex permission mode: {other}"))),
     })
 }
-
-/// The instant-chat persona: the text the CLI is actually launched with.
-const CHAT_SYSTEM_PROMPT: &str = concat!(
-    "You are a friendly general-purpose assistant in a casual chat app. ",
-    "This is not a coding tool: have a normal conversation, answer in the user's language, ",
-    "and keep answers conversational. You have no tools; never claim to read files or run commands."
-);
 
 fn claude_chat_flags() -> Vec<String> {
     vec![
@@ -371,7 +368,7 @@ fn claude_recipe(paths: &Paths, cwd: Option<&str>, options: &SendOptions, env: E
     resident::Recipe {
         args: claude_resident_flags(paths, options),
         env,
-        workdir: Some(claude_workdir(paths, cwd)),
+        workdir: Some(session_workdir(paths, cwd)),
         fingerprint: resident::Fingerprint {
             model: options.model.clone(),
             // A send asks for a model; only the CLI can say what it will call
@@ -437,28 +434,6 @@ impl SpawnDeps<'_> {
             None => None,
         };
         ClaudeLogin { account, credential }
-    }
-}
-
-/// Where a resident runs, with a fallback that is somewhere and not anywhere.
-///
-/// A session records the directory it was started in, and that directory can be
-/// renamed or deleted between two messages. Refusing to send is the wrong answer
-/// — the conversation is still worth continuing — so the fallback is the home
-/// directory, the same one a session with no recorded directory at all gets.
-///
-/// What it must *never* fall back to is "unset", because an unset working
-/// directory means the child inherits the server's, and the server's is wherever
-/// somebody happened to start it: a developer's checkout, `/`, the directory a
-/// supervisor chose. Handing an agent the source tree of the server driving it,
-/// silently, because a path went missing, is not a recovery.
-///
-/// One `stat` on the send path, which is cheap next to the process this is about
-/// to start.
-fn claude_workdir(paths: &Paths, cwd: Option<&str>) -> PathBuf {
-    match cwd.map(PathBuf::from) {
-        Some(dir) if dir.is_dir() => dir,
-        _ => paths.home.clone(),
     }
 }
 
@@ -1103,10 +1078,6 @@ fn cli_binary(source: Source) -> &'static str {
     }
 }
 
-fn new_uuid() -> String {
-    uuid::Uuid::new_v4().to_string()
-}
-
 // -------------------------------------------------------------------- registry
 
 /// One run's mutable state.
@@ -1152,7 +1123,7 @@ impl RunState {
 }
 
 /// A live or finished run.
-pub struct Run {
+pub struct RunEntry {
     state: Mutex<RunState>,
     /// Flipped once the child has exited and the final state has been written.
     ///
@@ -1162,7 +1133,7 @@ pub struct Run {
     finished: tokio::sync::watch::Sender<bool>,
 }
 
-impl Run {
+impl RunEntry {
     /// This run's state, in the shape the API speaks.
     pub fn injection(&self) -> Injection {
         self.state.lock().expect("run state poisoned").to_injection()
@@ -1199,7 +1170,7 @@ pub struct InjectionRegistry {
     /// Serializes each agent's probes, so a page asking twice starts one
     /// process, not two.
     acp_probes: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
-    runs: Mutex<HashMap<String, Arc<Run>>>,
+    runs: Mutex<HashMap<String, Arc<RunEntry>>>,
     /// The resident claude behind each session, keyed by session id alone —
     /// there is no codex resident, so the source is not part of the key.
     residents: Mutex<HashMap<String, resident::Handle>>,
@@ -1771,19 +1742,6 @@ impl InjectionRegistry {
     }
 }
 
-/// The refusal a claimed session produces, naming the holder when it can.
-///
-/// The wording of the first clause is the one the in-process map has always
-/// produced, deliberately: from the composer's point of view the two are the
-/// same condition, and it is the reason the send was refused, not the mechanism
-/// that noticed, that belongs in a message to the user.
-fn busy_message(holder: Option<u32>) -> String {
-    match holder {
-        Some(pid) => format!("a message is already running for this session (Droppen pid {pid})"),
-        None => "a message is already running for this session".to_string(),
-    }
-}
-
 // ---------------------------------------------------------------- adoption
 
 /// What one boot's adoption pass found.
@@ -1989,7 +1947,7 @@ impl InjectionRegistry {
     /// Put an inherited run back in the map and start watching its pid.
     fn resume(self: Arc<Self>, record: runs::RunRecord, claim: lock::InjectLock) {
         let (finished_tx, _) = tokio::sync::watch::channel(false);
-        let run = Arc::new(Run {
+        let run = Arc::new(RunEntry {
             state: Mutex::new(RunState {
                 state: InjectionRunState::Running,
                 error: None,
@@ -2060,7 +2018,7 @@ impl InjectionRegistry {
             }
         }
         let (finished_tx, _) = tokio::sync::watch::channel(true);
-        let run = Arc::new(Run {
+        let run = Arc::new(RunEntry {
             state: Mutex::new(RunState {
                 // The existing failure path, with a softer reason than usual —
                 // rather than a new state the web app would have to learn.
@@ -2127,7 +2085,7 @@ impl InjectionRegistry {
 /// looks like, and signalling one would end every conversation on the machine
 /// that nobody happened to be talking to. See [`resident::Driver::watchdog`] for
 /// why a live resident is only ever marked, never reaped.
-async fn watch_adopted(run: Arc<Run>, record: runs::RunRecord, registry: Arc<InjectionRegistry>) {
+async fn watch_adopted(run: Arc<RunEntry>, record: runs::RunRecord, registry: Arc<InjectionRegistry>) {
     let mut since_watchdog = Instant::now();
     loop {
         tokio::time::sleep(ADOPTED_POLL).await;
@@ -2251,7 +2209,7 @@ fn signal_name(signal: i32) -> String {
 /// Progress is either CLI output (codex exec --json streams events) or growth of
 /// the session transcript, which both CLIs write continuously — that is what
 /// the live feed renders.
-async fn check_idle(run: &Run, source: Source, paths: &Paths, idle_timeout: Duration) -> Option<u32> {
+async fn check_idle(run: &RunEntry, source: Source, paths: &Paths, idle_timeout: Duration) -> Option<u32> {
     let current_id = run.state.lock().expect("run state poisoned").current_id.clone();
     let transcript_progress = transcript_progress(source, paths, &current_id).await;
 
@@ -2612,35 +2570,5 @@ mod tests {
 
         let _ = stranger.kill();
         let _ = stranger.wait();
-    }
-
-    /// A working directory that has gone missing falls back to somewhere named,
-    /// and never to nothing.
-    ///
-    /// `None` would leave the child inheriting the server's own directory, which
-    /// on a developer's machine is the checkout of the server itself. The
-    /// fallback has to be a path this code chose.
-    #[test]
-    fn a_session_whose_directory_is_gone_runs_at_home_rather_than_wherever_the_server_is() {
-        let home = tempfile::tempdir().expect("tempdir");
-        let paths = Paths::new(home.path().to_path_buf());
-        let real = home.path().join("workspace");
-        std::fs::create_dir_all(&real).expect("workspace");
-
-        assert_eq!(
-            claude_workdir(&paths, Some(&real.to_string_lossy())),
-            real,
-            "a directory that exists is used"
-        );
-        assert_eq!(
-            claude_workdir(&paths, Some(&home.path().join("deleted").to_string_lossy())),
-            home.path(),
-            "one that does not falls back to home"
-        );
-        assert_eq!(claude_workdir(&paths, None), home.path(), "and so does a session with none recorded");
-        // A file is not a directory, and `current_dir` on one fails the spawn.
-        let file = home.path().join("not-a-dir");
-        std::fs::write(&file, b"x").expect("file");
-        assert_eq!(claude_workdir(&paths, Some(&file.to_string_lossy())), home.path());
     }
 }

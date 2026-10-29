@@ -215,7 +215,7 @@
       "crates": [
         {
           "name": "droppen-provider",
-          "about": "Provider, Run, Models, the registry, the spawn gate, queue, receipts, questions, drafts.",
+          "about": "Provider, Run, Models, the registry, the spawn gate, the session shim, queue, receipts, questions, drafts.",
           "modules": [
             "inject",
             "models"
@@ -226,15 +226,15 @@
           ],
           "notes": [
             "inject's own items, inject::receipts and inject::questions, drafts, runs and lock.",
+            "inject::shim, the session shim: Claude Code and Codex both start their CLI through it.",
             "models keeps its routes here; each provider gets its own model list (models::probe)."
           ]
         },
         {
           "name": "droppen-provider-claude-code",
-          "about": "Claude Code: the resident driver, the shim, its transcripts, roots, readings, logins and recordings.",
+          "about": "Claude Code: the resident driver, its transcripts, roots, readings, logins and recordings.",
           "modules": [
             "inject::resident",
-            "inject::shim",
             "sessions::transcript",
             "sessions::claude",
             "sessions::subagents",
@@ -370,7 +370,6 @@
         "inject -> inject::acp",
         "inject -> inject::app_server",
         "inject -> inject::resident",
-        "inject -> inject::shim",
         "inject -> record",
         "inject -> sessions::acp_transcript",
         "inject -> sessions::claude",
