@@ -489,8 +489,10 @@ impl PermissionResult<'_> {
     /// As the answer is stored and written: a [`Value`], which a row written by
     /// another version is too.
     fn to_value(&self) -> Value {
-        // Strings, the CLI's own questions and maps of strings: always encode.
-        serde_json::to_value(self).unwrap_or_default()
+        // Strings, the CLI's own questions and maps of strings. A field that
+        // could fail must fail loudly: a `null` answer would leave claude
+        // blocked on its question with nothing said.
+        serde_json::to_value(self).expect("permission answers encode")
     }
 }
 
@@ -562,8 +564,9 @@ enum ControlResult<'a> {
 impl ControlResponse<'_> {
     /// The line, without its newline.
     fn line(&self) -> String {
-        // Strings and an answer that was a `Value` already: always encode.
-        serde_json::to_string(self).unwrap_or_default()
+        // Strings and an answer that was a `Value` already. An empty line
+        // would leave claude waiting on its request.
+        serde_json::to_string(self).expect("control responses encode")
     }
 }
 
