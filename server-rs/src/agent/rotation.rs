@@ -413,7 +413,7 @@ fn restore_named(store: &FileSeedStore, keys: ([u8; 32], [u8; 32]), current: &Ma
 }
 
 /// Of `stagings`, the one `st`'s chain names for this device, if any.
-pub fn named<'a>(st: &AgentState, stagings: &'a [StagedSeed]) -> Option<&'a StagedSeed> {
+pub(crate) fn named<'a>(st: &AgentState, stagings: &'a [StagedSeed]) -> Option<&'a StagedSeed> {
     let record = st.chain.as_ref()?.device_record(&st.machine)?;
     stagings.iter().find(|s| {
         let k = s.identity();

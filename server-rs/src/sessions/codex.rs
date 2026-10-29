@@ -280,21 +280,23 @@ async fn file_meta(file_path: &Path, id: &str) -> std::io::Result<FileMeta> {
     Ok(meta)
 }
 
-/// Thread names from the optional `session_index.jsonl`.
-async fn thread_names(paths: &Paths) -> HashMap<String, String> {
-    let mut names = HashMap::new();
-    // The index is optional; without it sessions fall back to their first message.
-    let Ok(raw) = tokio::fs::read_to_string(CodexHome::of(&paths).session_index()).await else {
-        return names;
-    };
-    for line in raw.split('\n') {
-        let Some(entry) = try_parse(line) else { continue };
-        let (Some(id), Some(name)) = (entry.get("id").and_then(Value::as_str), entry.get("thread_name").and_then(Value::as_str)) else {
-            continue;
+impl CodexHome {
+    /// Thread names from the optional `session_index.jsonl`.
+    async fn thread_names(&self) -> HashMap<String, String> {
+        let mut names = HashMap::new();
+        // The index is optional; without it sessions fall back to their first message.
+        let Ok(raw) = tokio::fs::read_to_string(self.session_index()).await else {
+            return names;
         };
-        names.insert(id.to_string(), name.to_string());
+        for line in raw.split('\n') {
+            let Some(entry) = try_parse(line) else { continue };
+            let (Some(id), Some(name)) = (entry.get("id").and_then(Value::as_str), entry.get("thread_name").and_then(Value::as_str)) else {
+                continue;
+            };
+            names.insert(id.to_string(), name.to_string());
+        }
+        names
     }
-    names
 }
 
 /// One visible row of the `threads` table.
@@ -418,7 +420,7 @@ fn spawned_threads_from_state_db(db: &Path) -> Option<Vec<SpawnedThread>> {
 
 /// Every delegated subagent thread Codex knows of.
 pub(super) async fn spawned_threads(paths: &Paths) -> Vec<SpawnedThread> {
-    on_state_db(paths, spawned_threads_from_state_db).await.flatten().unwrap_or_default()
+    CodexHome::of(paths).on_state_db(spawned_threads_from_state_db).await.flatten().unwrap_or_default()
 }
 
 /// How a subagent thread is doing: whether it is still working, and whether
@@ -466,13 +468,15 @@ fn query_spawned_thread_row(db: &Path, id: &str) -> Option<(ThreadRow, String)> 
         .ok()
 }
 
-/// Run a state-database query off the async runtime's worker threads.
-///
-/// SQLite is a blocking API, and a cold page cache on a large index is long
-/// enough to matter to every other request in flight.
-async fn on_state_db<T: Send + 'static>(paths: &Paths, query: impl FnOnce(&Path) -> T + Send + 'static) -> Option<T> {
-    let db = CodexHome::of(&paths).state_db();
-    tokio::task::spawn_blocking(move || query(&db)).await.ok()
+impl CodexHome {
+    /// Run a state-database query off the async runtime's worker threads.
+    ///
+    /// SQLite is a blocking API, and a cold page cache on a large index is long
+    /// enough to matter to every other request in flight.
+    async fn on_state_db<T: Send + 'static>(&self, query: impl FnOnce(&Path) -> T + Send + 'static) -> Option<T> {
+        let db = self.state_db();
+        tokio::task::spawn_blocking(move || query(&db)).await.ok()
+    }
 }
 
 /// Build a list row from a thread row, returning the update instant separately
@@ -569,7 +573,7 @@ pub async fn list_codex_sessions(paths: &Paths) -> Vec<SessionSummary> {
     // Names the index that [`file_meta`] writes into; see
     // [`crate::sessions::index::current`] for why it is not an argument.
     crate::sessions::index::install(paths);
-    let rows = on_state_db(paths, list_from_state_db).await.flatten();
+    let rows = CodexHome::of(paths).on_state_db(list_from_state_db).await.flatten();
     let mut summaries = match rows {
         Some(rows) => {
             let mut out = Vec::with_capacity(rows.len());
@@ -677,7 +681,7 @@ async fn apply_ownership(paths: &Paths, summaries: &mut Vec<SessionSummary>, cla
 /// The fallback path: every rollout file under `~/.codex/sessions`.
 async fn list_by_scanning(paths: &Paths) -> Vec<SessionSummary> {
     let files = collect_session_files(&paths.codex_sessions()).await;
-    let names = thread_names(paths).await;
+    let names = CodexHome::of(paths).thread_names().await;
     let mut out = Vec::with_capacity(files.len());
     for (name, path) in files {
         let Some(id) = id_from_file_name(&name) else { continue };
@@ -695,8 +699,9 @@ pub async fn find_codex_session(paths: &Paths, id: &str) -> Option<SessionSummar
     // After the id check, not before: an id that cannot name a thread is not a
     // reason to open a database.
     crate::sessions::index::install(paths);
+    let home = CodexHome::of(paths);
 
-    let summary = match on_state_db(paths, {
+    let summary = match home.on_state_db({
         let id = id.to_string();
         move |db| query_thread_row(db, &id)
     })
@@ -706,7 +711,7 @@ pub async fn find_codex_session(paths: &Paths, id: &str) -> Option<SessionSummar
         // Archived, a subagent thread, or unknown: stay hidden — unless it is a
         // thread a conversation delegated, which opens from its parent's tree.
         Some(None) => {
-            let (row, parent_id) = on_state_db(paths, {
+            let (row, parent_id) = home.on_state_db({
                 let id = id.to_string();
                 move |db| query_spawned_thread_row(db, &id)
             })
@@ -727,7 +732,7 @@ pub async fn find_codex_session(paths: &Paths, id: &str) -> Option<SessionSummar
             let files = collect_session_files(&paths.codex_sessions()).await;
             let (_, path) = files.into_iter().find(|(name, _)| id_from_file_name(name).as_deref() == Some(id))?;
             let meta = file_meta(&path, id).await.ok()?;
-            let names = thread_names(paths).await;
+            let names = home.thread_names().await;
             with_codex_status(meta_to_summary(&meta, &names), meta.updated_ms).await
         }
     };

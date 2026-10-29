@@ -86,7 +86,9 @@ use crate::paths::Paths;
 pub(crate) mod cli;
 mod seed;
 
-pub use seed::{load_or_create, load_or_create_in, StagedSeed, StoredSeed};
+pub(crate) use seed::{load_or_create, StagedSeed};
+#[cfg(test)]
+pub(crate) use seed::StoredSeed;
 pub(in crate::agent) use seed::FileSeedStore;
 pub(in crate::agent) use seed::sync_dir;
 #[cfg(test)]

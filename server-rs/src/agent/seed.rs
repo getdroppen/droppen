@@ -46,7 +46,7 @@ pub(super) struct NextKeyFile {
 }
 
 /// A machine seed and the instance identity it belongs to.
-pub struct StoredSeed {
+pub(crate) struct StoredSeed {
     /// The instance identity the seed was created for.
     pub uuid: String,
     /// The 32 random bytes the keys expand from.
@@ -57,7 +57,7 @@ pub struct StoredSeed {
 /// beside the current one until the chain names its keys
 /// ([`FileSeedStore::promote`]) or its staging can no longer be committed.
 #[derive(Clone)]
-pub struct StagedSeed {
+pub(crate) struct StagedSeed {
     /// The instance identity the seed was created for.
     pub uuid: String,
     /// The 32 random bytes the new keys expand from.
@@ -402,7 +402,7 @@ impl AgentFiles {
 }
 /// This instance's machine identity, created on first use. The `bool` says
 /// whether it was created just now.
-pub fn load_or_create(paths: &Paths) -> Result<(MachineIdentity, bool), String> {
+pub(crate) fn load_or_create(paths: &Paths) -> Result<(MachineIdentity, bool), String> {
     let files = AgentFiles::of(paths);
     let uuid = crate::identity::ensure(paths)
         .ok_or("cannot read or mint this instance's identity uuid")?
@@ -420,7 +420,7 @@ pub fn load_or_create(paths: &Paths) -> Result<(MachineIdentity, bool), String> 
 }
 
 /// The same against `store`, for instance identity `uuid`.
-pub fn load_or_create_in(store: &FileSeedStore, uuid: &str) -> Result<(MachineIdentity, bool), String> {
+fn load_or_create_in(store: &FileSeedStore, uuid: &str) -> Result<(MachineIdentity, bool), String> {
     if let Some(stored) = store.load()? {
         if stored.uuid != uuid {
             return Err(format!(

@@ -138,8 +138,9 @@ impl crate::auth::LinkHandOver for Cloud {
 }
 
 /// `<instance>/cloud.json` itself, for what reads it without a [`Cloud`]: the
-/// aggregator asking whether it may run, the hand-over to the first account,
-/// the command line's unenroll. [`Cloud`] reads and writes it under its lock.
+/// aggregator asking whether it may run, the command line's unenroll. [`Cloud`]
+/// reads and writes it under its lock, and the hand-over to the first account
+/// runs through [`Cloud::hand_over_from_local_owner`], under that lock too.
 ///
 /// Its own type rather than functions of [`Paths`], so that where the file is,
 /// and what it says, are this module's.
@@ -223,7 +224,7 @@ impl LinkFile {
     /// Only ever called by the server that owns the instance, under its file lock
     /// ([`Cloud::hand_over_from_local_owner`]) — `user add` leaves it to that
     /// server, which does it within a few seconds or when it next starts.
-    pub fn hand_over_from_local_owner(&self, accounts: &[(String, String, bool)]) -> Result<Option<String>, String> {
+    pub(super) fn hand_over_from_local_owner(&self, accounts: &[(String, String, bool)]) -> Result<Option<String>, String> {
         let path = self.path();
         let bytes = match std::fs::read(&path) {
             Ok(bytes) => bytes,
