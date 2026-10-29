@@ -72,9 +72,6 @@ const DEFAULT_CODEX_KEY: &str = "default-codex-account-id";
 /// from `default_account_id` like any value naming no account.
 const LOCAL_DEFAULT: &str = "local";
 
-/// What `ANTHROPIC_BASE_URL` is called, for a claude account that names one.
-pub const CLAUDE_BASE_URL_ENV: &str = "ANTHROPIC_BASE_URL";
-
 /// Which CLI an account's credential is for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Schematic)]
 #[serde(rename_all = "snake_case")]

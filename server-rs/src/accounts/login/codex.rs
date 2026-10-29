@@ -1,8 +1,15 @@
-//! Codex's part of the accounts: how a credential starts `codex`.
+//! Codex's part of the accounts: how a credential starts `codex`, and the
+//! check that proves one works before it is kept.
+
+use futures_util::future::BoxFuture;
 
 use super::Login;
+use crate::accounts::quota::{is_rate_limited, mentions_status};
 use crate::accounts::store::{AccountError, AccountKind, AccountLaunch, AccountProvider, CODEX_BASE_URL_VAR, CODEX_KEY_CANDIDATES};
 use droppen_base::env_block::EnvVar;
+use crate::accounts::verify::{reason, Scratch, Verdict, PROBE_PROMPT, PROBE_TIMEOUT};
+use droppen_instance::paths::Paths;
+use droppen_base::process_env::{apply_env, clean_env, clean_env_bare, resolve_on_path};
 
 /// The environment variable a codex account's key is read from.
 ///
@@ -71,8 +78,104 @@ pub fn normalize_base_url(raw: &str) -> Result<String, AccountError> {
     Ok(url.to_string())
 }
 
+/// What a codex probe runs. `--skip-git-repo-check` because the scratch
+/// directory is deliberately not a repository, and the account's own provider
+/// override is appended by [`AccountLaunch::codex_args`].
+const CODEX_PROBE_ARGS: [&str; 2] = ["exec", "--skip-git-repo-check"];
+
+/// Whether codex is complaining about the *key* rather than about itself.
+///
+/// The same narrow direction as claude's `is_credential_refusal`: a miss stores an
+/// unchecked key and says so, a false positive refuses a working one.
+fn is_codex_refusal(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    const MARKERS: [&str; 5] = [
+        "invalid_api_key",
+        "incorrect api key",
+        "unauthorized",
+        "missing bearer",
+        "invalid api key",
+    ];
+    MARKERS.iter().any(|marker| lower.contains(marker)) || mentions_status(&lower, "401", None)
+}
+
 /// Codex's [`Login`].
 pub struct CodexLogin;
+
+impl CodexLogin {
+    /// One `codex exec ping` through the account's own model provider.
+    ///
+    /// Two deliberate differences from the claude probe, both about *not touching
+    /// the user's codex state*:
+    ///
+    /// * a scratch `CODEX_HOME`, so the run's rollout lands in a directory that is
+    ///   deleted afterwards rather than appearing in the session list — and so the
+    ///   probe cannot fall back on the user's own `auth.json` and answer for a login
+    ///   that is not the one being checked;
+    /// * the provider override from [`crate::accounts::login::codex::codex_provider_args`],
+    ///   which is the whole of how a key reaches codex: `app-server` reads neither
+    ///   `OPENAI_API_KEY` nor `CODEX_API_KEY`, so a probe that only set a variable
+    ///   would be checking nothing at all.
+    async fn check(&self, paths: &Paths, launch: &AccountLaunch, secrets: &[&str]) -> Verdict {
+        if resolve_on_path("codex", &clean_env_bare()).is_none() {
+            return Verdict::Unverifiable("the `codex` CLI is not on PATH, so the key cannot be checked".to_string());
+        }
+        let scratch = match Scratch::make(paths).await {
+            Ok(scratch) => scratch,
+            Err(error) => return Verdict::Unverifiable(format!("cannot prepare the check's config directory: {error}")),
+        };
+
+        let mut command = tokio::process::Command::new("codex");
+        command
+            .args(
+                CODEX_PROBE_ARGS
+                    .iter()
+                    .map(|arg| arg.to_string())
+                    .chain(launch.codex_args.iter().cloned()),
+            )
+            .arg(PROBE_PROMPT)
+            .current_dir(scratch.cwd())
+            .stdin(std::process::Stdio::null())
+            .kill_on_drop(true);
+        apply_env(
+            &mut command,
+            &clean_env(
+                [("CODEX_HOME".to_string(), scratch.codex_home().to_string_lossy().into_owned())]
+                    .into_iter()
+                    .chain(launch.env.iter().cloned()),
+            ),
+        );
+
+        let output = match tokio::time::timeout(PROBE_TIMEOUT, command.output()).await {
+            Ok(Ok(output)) => output,
+            Ok(Err(error)) => return Verdict::Unverifiable(format!("the `codex` CLI could not be started: {error}")),
+            Err(_) => return Verdict::Unverifiable("the check timed out before the CLI answered".to_string()),
+        };
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        self.verdict(output.status.success(), &stdout, &stderr, secrets)
+    }
+
+    /// What one finished `codex exec ping` says about the key it ran with:
+    /// its words first, then its exit status.
+    fn verdict(&self, success: bool, stdout: &str, stderr: &str, secrets: &[&str]) -> Verdict {
+        // `codex exec` reports a refusal on stderr and still exits zero often
+        // enough that the exit code cannot be the test; the words are.
+        if is_codex_refusal(stdout) || is_codex_refusal(stderr) {
+            return Verdict::Invalid(format!("the key was refused: {}", reason(stderr, stdout, secrets)));
+        }
+        if success {
+            return Verdict::Valid;
+        }
+        if is_rate_limited(stdout) || is_rate_limited(stderr) {
+            return Verdict::Unverifiable("the account is rate-limited, so the key could not be checked".to_string());
+        }
+        Verdict::Unverifiable(format!(
+            "the check itself failed, so the key was not tested: {}",
+            reason(stderr, stdout, secrets)
+        ))
+    }
+}
 
 impl Login for CodexLogin {
     /// The block, plus the translation `app-server` needs to read a key at all.
@@ -109,5 +212,74 @@ impl Login for CodexLogin {
             env: vars,
             codex_args,
         })
+    }
+
+    /// One `codex exec ping` through the account's own model provider.
+    fn verify<'a>(&'a self, paths: &'a Paths, launch: &'a AccountLaunch, secrets: &'a [&'a str]) -> BoxFuture<'a, Verdict> {
+        Box::pin(self.check(paths, launch, secrets))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Each marker is enough on its own, and words about codex itself, the
+    /// network or its arguments count for nothing.
+    #[test]
+    fn only_codex_talking_about_the_key_counts_as_a_refusal() {
+        for text in ["invalid_api_key", "Incorrect API key", "401 Unauthorized", "Missing bearer"] {
+            assert!(is_codex_refusal(text), "{text}");
+        }
+        // One marker each, so a marker that goes missing turns its line into a miss.
+        for text in ["invalid_api_key", "Incorrect API key", "Unauthorized", "Missing bearer", "Invalid API key", "status 401"] {
+            assert!(is_codex_refusal(text), "{text}");
+        }
+        assert!(!is_codex_refusal("getaddrinfo ENOTFOUND api.openai.com"));
+        assert!(!is_codex_refusal("error: unexpected argument '--skip-git-repo-check' found"));
+        assert!(
+            !is_codex_refusal("wrote 2401 tokens"),
+            "a status code is three digits standing on their own, not any three digits"
+        );
+    }
+
+    /// A finished check is judged by its words first, because `codex exec`
+    /// can print a refusal and still exit zero; then by its exit status.
+    #[test]
+    fn a_finished_check_is_judged_by_its_words_and_then_its_exit() {
+        let login = CodexLogin;
+        let refused = login.verdict(true, "", "ERROR: 401 Unauthorized: invalid_api_key for not-a-real-key", &["not-a-real-key"]);
+        let Verdict::Invalid(why) = refused else { panic!("a clean exit with a refusal is a refusal: {refused:?}") };
+        assert!(why.starts_with("the key was refused: "), "{why}");
+        assert!(!why.contains("not-a-real-key"), "the key is taken out: {why}");
+        assert!(matches!(login.verdict(false, "", "Incorrect API key provided", &[]), Verdict::Invalid(_)));
+
+        assert_eq!(login.verdict(true, "pong", "", &[]), Verdict::Valid);
+        assert_eq!(
+            login.verdict(false, "", "HTTP 429 Too Many Requests", &[]),
+            Verdict::Unverifiable("the account is rate-limited, so the key could not be checked".to_string())
+        );
+        let failed = login.verdict(false, "", "getaddrinfo ENOTFOUND api.openai.com", &[]);
+        let Verdict::Unverifiable(why) = failed else { panic!("no verdict: {failed:?}") };
+        assert!(why.starts_with("the check itself failed, so the key was not tested: getaddrinfo ENOTFOUND"), "{why}");
+    }
+
+    /// A check that cannot run proves nothing, and says it in codex's words.
+    #[tokio::test]
+    async fn a_check_that_cannot_run_proves_nothing() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let paths = crate::accounts::verify::paths_where_no_scratch_can_be_made(home.path());
+        let launch = AccountLaunch {
+            provider: AccountProvider::Codex,
+            env: vec![("OPENAI_API_KEY".to_string(), "not-a-real-key".to_string())],
+            codex_args: codex_provider_args(CODEX_DEFAULT_BASE_URL),
+        };
+        let verdict = CodexLogin.verify(&paths, &launch, &[]).await;
+        let Verdict::Unverifiable(why) = verdict else { panic!("a check that cannot run proves nothing: {verdict:?}") };
+        // Codex is not on `PATH` here, or it is and the scratch cannot be made.
+        assert!(
+            why == "the `codex` CLI is not on PATH, so the key cannot be checked" || why.starts_with("cannot prepare the check's config directory: "),
+            "{why}"
+        );
     }
 }
