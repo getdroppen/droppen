@@ -119,7 +119,7 @@ export function parseLinkMessage(data: unknown): LinkMessage | null {
 /**
  * The fingerprint both sides show for the machine: the first 16 bytes of
  * SHA-256("rh/v1 machine fingerprint\0" ‖ signing key ‖ channel key), as 8
- * groups of 4 hex digits (`machine_fingerprint` in `server-rs/src/agent/fingerprint.rs`).
+ * groups of 4 hex digits (`machine_fingerprint` in `server-rs/crates/droppen-agent/src/fingerprint.rs`).
  */
 export async function machineFingerprint(signKey: Uint8Array, dhKey: Uint8Array): Promise<string> {
   const digest = (await sha256(utf8("rh/v1 machine fingerprint\0"), signKey, dhKey)).slice(0, 16);

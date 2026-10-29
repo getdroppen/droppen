@@ -16,7 +16,7 @@
 # area is true". A bug here can therefore waste a run, never hide a test.
 #
 # The map follows what each job reads, not its directory:
-#  - the web job's check:hub-api scans server-rs/src/agent,
+#  - the web job's check:hub-api scans crates/droppen-agent/src,
 #    crates/droppen-aggregator/src and rh-{relay,client,devkit}/src, and its
 #    plugin-sdk test reads
 #    server-rs/crates/droppen-plugin-sdk/src/lib.rs (the SDK version);
@@ -109,7 +109,7 @@ while IFS= read -r path; do
   matched=0
 
   case "$path" in
-    web/*|packages/*|package.json|pnpm-lock.yaml|pnpm-workspace.yaml|.nvmrc|e2e/package.json|distribution.json|openapi/*|docs/hub-api/*|scripts/check-plugin-boundary.mjs|scripts/check-machine-keys.mjs|scripts/check-open-boundary.mjs|scripts/check-open-boundary.test.mjs|server-rs/src/agent/*|server-rs/crates/droppen-aggregator/src/*|server-rs/crates/rh-relay/src/*|server-rs/crates/rh-client/src/*|server-rs/crates/rh-devkit/src/*|server-rs/crates/droppen-plugin-sdk/*)
+    web/*|packages/*|package.json|pnpm-lock.yaml|pnpm-workspace.yaml|.nvmrc|e2e/package.json|distribution.json|openapi/*|docs/hub-api/*|scripts/check-plugin-boundary.mjs|scripts/check-machine-keys.mjs|scripts/check-open-boundary.mjs|scripts/check-open-boundary.test.mjs|server-rs/crates/droppen-agent/src/*|server-rs/crates/droppen-aggregator/src/*|server-rs/crates/rh-relay/src/*|server-rs/crates/rh-client/src/*|server-rs/crates/rh-devkit/src/*|server-rs/crates/droppen-plugin-sdk/*)
       web=1; matched=1 ;;
   esac
 

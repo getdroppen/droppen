@@ -105,7 +105,7 @@ impl HubWebs {
     }
 
     /// The web origin a browser opens for `hub` (`wss://…` as
-    /// [`crate::agent::hub::origin`] writes it), for the local page's status:
+    /// [`droppen_agent::hub::origin`] writes it), for the local page's status:
     /// a kept answer at once (refreshed in the background once stale), a
     /// first one waited for at most [`STATUS_WAIT`].
     pub async fn for_status(&self, hub: &str) -> String {
@@ -223,11 +223,11 @@ async fn fetch(hub: &str) -> Found {
 
 /// The app origin `doc` (a hub's discovery document) names, when a browser
 /// may be sent there for `hub` (`wss://…`/`ws://…` as
-/// [`crate::agent::hub::origin`] writes it) — by the rules in the module
+/// [`droppen_agent::hub::origin`] writes it) — by the rules in the module
 /// docs; `None` otherwise.
 pub fn app_origin(doc: &Value, hub: &str) -> Option<String> {
     if let Some(origin) = doc.get("origin").filter(|o| !o.is_null()) {
-        let said = crate::agent::hub::origin(origin.as_str()?).ok()?;
+        let said = droppen_agent::hub::origin(origin.as_str()?).ok()?;
         if said != hub {
             return None;
         }

@@ -3,7 +3,7 @@
 
 use rand::RngCore;
 
-use crate::agent::enroll::BeginError;
+use droppen_agent::enroll::BeginError;
 use droppen_http::SendResult;
 use crate::cloud::link_handoff::{self, Handoff, HandoffMachine, PageOrigin, Reply};
 
@@ -118,7 +118,7 @@ pub(super) fn resolve_hub(requested: Option<&str>) -> Result<String, ApiError> {
         .map(str::to_string)
         .or(configured)
         .unwrap_or_else(|| DEFAULT_HUB.to_string());
-    crate::agent::hub::origin(&url).map_err(|message| refusal(StatusCode::BAD_REQUEST, "bad_hub", &message))
+    droppen_agent::hub::origin(&url).map_err(|message| refusal(StatusCode::BAD_REQUEST, "bad_hub", &message))
 }
 
 /// `wss://host` → `https://host` (and `ws://` → `http://`, loopback only):
@@ -160,7 +160,7 @@ pub async fn post_link(
             None
         }
         Standing::Linked | Standing::NotHosting => {
-            let st = crate::agent::state::AgentState::load(&crate::agent::AgentFiles::of(&cloud.paths))
+            let st = droppen_agent::state::AgentState::load(&droppen_agent::AgentFiles::of(&cloud.paths))
                 .map_err(ApiError::internal)?
                 .ok_or_else(|| ApiError::internal("the agent state went away"))?;
             Some(LinkEnrolled {

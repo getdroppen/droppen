@@ -1,0 +1,80 @@
+[package]
+name = "droppen-agent"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+publish = false
+description = "The Droppen server's machine role: its identity, enrollment, the hub link, the chain, relays, the direct path, streams and key rotation"
+
+# The machine role. It stands on the instance, the HTTP kit, the shared wire
+# format and the device role, and names none of the server's subsystems: what
+# it needs of them (the push keys and account-change alerts, the sessions it
+# streams) reaches it through the `LinkHost` and `StreamSource` ports, which
+# the entry fills.
+[dependencies]
+# How the transcript stand-ins of `streams::test_transcripts` spell a
+# fingerprint, as the session loader does; only with `test-support`.
+base64 = { version = "0.22", optional = true }
+droppen-aggregator = { path = "../droppen-aggregator" }
+droppen-base = { path = "../droppen-base" }
+droppen-http = { path = "../droppen-http" }
+droppen-instance = { path = "../droppen-instance" }
+# Machine-signed stream heads and manifests.
+ed25519-dalek = "2"
+futures-util = "0.3"
+rand = "0.8"
+# The hub's HTTP endpoints. `default-features = false` drops `default-tls`
+# (native-tls/OpenSSL) so the binary keeps linking nothing but rustls; the
+# features are the server's, so it builds one reqwest.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "http2", "charset", "json"] }
+# The link driver and the direct (WebRTC) path.
+rh-proto = { path = "../rh-proto", features = ["runtime", "rtc"] }
+# The streams' local index. `bundled` compiles SQLite itself rather than
+# linking the platform's.
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { workspace = true }
+sha2 = "0.10"
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt", "sync", "time"] }
+# The agent's one outbound websocket to the hub, and its loopback sockets to
+# this server's own feed and terminal routes. The version axum already links;
+# rustls with the ring provider and webpki roots, like `reqwest` above.
+tokio-tungstenite = { version = "0.29", features = ["rustls-tls-webpki-roots"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+tracing = "0.1"
+# The machine seed is wiped from memory when dropped.
+zeroize = "1"
+
+# `testing` (what the server's tests of `cloud::control`, the `agent` command
+# line and the bridge's route classification reach of the agent's files) and
+# `streams::test_transcripts` (transcripts made the way the session loader
+# makes them). Only the server's [dev-dependencies] turn it on.
+[features]
+test-support = ["dep:base64"]
+
+[dev-dependencies]
+# The fake hubs and loopback servers the link tests talk to.
+axum = { version = "0.8", features = ["ws"] }
+base64 = "0.22"
+# The device role's test switch, for its controller under a real agent state
+# (`aggregator_controller_tests`).
+droppen-aggregator = { path = "../droppen-aggregator", features = ["test-support"] }
+droppen-auth = { path = "../droppen-auth" }
+regex = "1"
+rh-client = { path = "../rh-client" }
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "test-util"] }
+# What a log line says, for the test that the confirmation code is never
+# logged above DEBUG.
+tracing-subscriber = "0.3"
+
+[lints.rust]
+missing_docs = "deny"
+unreachable_pub = "deny"
+
+# `[lints] workspace = true` cannot be mixed with the rust lints above, so the
+# workspace's two clippy denials (`server-rs/Cargo.toml` `[workspace.lints]`)
+# are repeated here: keep them in step.
+[lints.clippy]
+significant_drop_in_scrutinee = "deny"
+await_holding_lock = "deny"

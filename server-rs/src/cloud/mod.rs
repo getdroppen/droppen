@@ -51,8 +51,8 @@ use gotcha::axum::extract::FromRef;
 use gotcha::{api, GotchaRouter, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
-use crate::agent::fingerprint::machine_fingerprint;
-use crate::agent::status::{AgentStatus, Standing};
+use droppen_agent::fingerprint::machine_fingerprint;
+use droppen_agent::status::{AgentStatus, Standing};
 use droppen_aggregator::controller::AggregatorHost;
 use droppen_auth::{MaybeIdentity, RETURN_ROUTE};
 use droppen_http::error::{ApiError, Coded};
@@ -62,6 +62,9 @@ use droppen_instance::paths::Paths;
 
 mod access;
 pub mod control;
+/// The server's handle on its hub link against this instance's agent files.
+#[cfg(test)]
+mod control_tests;
 mod file;
 pub mod gateway;
 pub mod hub_web;
@@ -230,8 +233,8 @@ pub struct CloudRotation {
     pub reason: Option<String>,
 }
 
-impl From<crate::agent::rotation::Status> for CloudRotation {
-    fn from(s: crate::agent::rotation::Status) -> Self {
+impl From<droppen_agent::rotation::Status> for CloudRotation {
+    fn from(s: droppen_agent::rotation::Status) -> Self {
         Self {
             state: s.state,
             code: s.code,
@@ -597,7 +600,7 @@ async fn status_for(state: &CloudState, user: Option<&str>) -> CloudStatus {
     };
     // The fingerprint only when the key exists already: a status is never
     // what makes one.
-    let fingerprint = crate::agent::AgentFiles::of(&cloud.paths)
+    let fingerprint = droppen_agent::AgentFiles::of(&cloud.paths)
         .has_machine_key()
         .then(|| cloud.control.identity().ok())
         .flatten()
@@ -1184,9 +1187,9 @@ mod tests {
             }))
         };
         let paths = state.cloud.paths.clone();
-        let files = crate::agent::AgentFiles::of(&paths);
+        let files = droppen_agent::AgentFiles::of(&paths);
         let old = state.cloud.control.identity().unwrap();
-        let mut st = crate::agent::state::AgentState::enrolling("wss://hub.example", "a-1", "m-1", [9; 16], 5);
+        let mut st = droppen_agent::state::AgentState::enrolling("wss://hub.example", "a-1", "m-1", [9; 16], 5);
         st.save(&files).unwrap();
         let refused = post_re_enroll_fresh(State(CloudState::from_ref(&state)), alice()).await.unwrap_err();
         assert_eq!(code_of(refused), (409, "not_renewed_elsewhere".into()));
@@ -1200,7 +1203,7 @@ mod tests {
         let shown = get_cloud(State(CloudState::from_ref(&state)), alice()).await.unwrap().0.link.unwrap().rotation;
         assert_eq!((shown.state.as_str(), shown.reason.as_deref()), ("refused", Some("rotated")));
         st.rotation.foreign_ms = Some(6);
-        st.rotation.foreign_reason = Some(crate::agent::rotation::FOREIGN_RENEWED_ELSEWHERE.into());
+        st.rotation.foreign_reason = Some(droppen_agent::rotation::FOREIGN_RENEWED_ELSEWHERE.into());
         st.save(&files).unwrap();
         let before = get_cloud(State(CloudState::from_ref(&state)), alice()).await.unwrap().0;
         let rotation = before.link.unwrap().rotation;
@@ -1310,8 +1313,8 @@ mod tests {
 
     /// Pretend the link is enrolled (a device completes it): something to claim.
     fn enrolled(state: &AppState) {
-        crate::agent::state::AgentState::enrolling("wss://hub.example", "a-1", "m-1", [7; 16], 1)
-            .save(&crate::agent::AgentFiles::of(&state.cloud.paths))
+        droppen_agent::state::AgentState::enrolling("wss://hub.example", "a-1", "m-1", [7; 16], 1)
+            .save(&droppen_agent::AgentFiles::of(&state.cloud.paths))
             .unwrap();
     }
 
@@ -1543,7 +1546,7 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let (state, addr) = crate::api::test_support::served(home.path()).await;
         // What a link needs, as the owning server attaches it.
-        state.cloud.control.attach(crate::agent::link::LinkEnv {
+        state.cloud.control.attach(droppen_agent::link::LinkEnv {
             addr,
             credential: "test".into(),
             streams: Arc::new(SessionStreams::new(
@@ -1671,7 +1674,7 @@ mod tests {
     async fn opened_from_a_page_with(home: &std::path::Path, hub: Option<String>, enroll: bool, discover: bool) -> (AppState, LinkAttempt) {
         let (state, addr) = crate::api::test_support::served(home).await;
         state.cloud.hub_webs.set_discover(discover);
-        state.cloud.control.attach(crate::agent::link::LinkEnv {
+        state.cloud.control.attach(droppen_agent::link::LinkEnv {
             addr,
             credential: "test".into(),
             streams: Arc::new(SessionStreams::new(
@@ -1719,9 +1722,9 @@ mod tests {
             .draft(Signer::Device("d-1".into()), Action::AddMachine(machine.info("m-1")), 2_000)
             .sign(device.signing_key());
         chain.apply(&add, &mut ChainClock::history()).unwrap();
-        let mut st = crate::agent::state::AgentState::enrolling("wss://hub.example", "a-1", "m-1", fingerprint(&ak.sign_public()), 5_000);
+        let mut st = droppen_agent::state::AgentState::enrolling("wss://hub.example", "a-1", "m-1", fingerprint(&ak.sign_public()), 5_000);
         assert_eq!(st.absorb(&[genesis, add], 5_000).error, None);
-        st.save(&crate::agent::AgentFiles::of(&state.cloud.paths)).unwrap();
+        st.save(&droppen_agent::AgentFiles::of(&state.cloud.paths)).unwrap();
         assert_eq!(state.cloud.control.status().state, Standing::Linked);
     }
 

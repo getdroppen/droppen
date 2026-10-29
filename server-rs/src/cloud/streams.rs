@@ -10,10 +10,9 @@ use std::sync::Arc;
 use futures_util::future::BoxFuture;
 use serde_json::Value;
 
-use crate::agent::streams::source::{DraftFeed, Fingerprints, Items, ListedSession, SessionRow, StreamSource, Transcript};
+use droppen_agent::streams::source::{DraftFeed, Fingerprints, Items, ListedSession, SessionRow, StreamSource, Transcript};
 use droppen_instance::paths::Paths;
-use droppen_sessions::loader::{self, encode_fp, Fp, RESUME_OVERLAP};
-use droppen_sessions::util::TranscriptItem;
+use droppen_sessions::loader::{self, encode_fp, RESUME_OVERLAP};
 use droppen_sessions::{DriverStates, ScopeFilter, SessionScope, SessionSummary, Source, TranscriptSources};
 
 /// What the session list and the drafts need from above cloud.
@@ -78,24 +77,6 @@ impl StreamSource for SessionStreams {
     }
 }
 
-impl SessionRow for SessionSummary {
-    fn source(&self) -> &str {
-        self.source.as_str()
-    }
-    fn id(&self) -> &str {
-        &self.id
-    }
-    fn updated_at(&self) -> &str {
-        &self.updated_at
-    }
-    fn owned(&self) -> bool {
-        self.scope == SessionScope::Owned
-    }
-    fn json(&self) -> Option<String> {
-        serde_json::to_string(self).ok()
-    }
-}
-
 /// A row of the session list, with where its transcript is parsed from.
 struct Listed {
     summary: SessionSummary,
@@ -105,19 +86,19 @@ struct Listed {
 
 impl SessionRow for Listed {
     fn source(&self) -> &str {
-        self.summary.source()
+        self.summary.source.as_str()
     }
     fn id(&self) -> &str {
-        self.summary.id()
+        &self.summary.id
     }
     fn updated_at(&self) -> &str {
-        self.summary.updated_at()
+        &self.summary.updated_at
     }
     fn owned(&self) -> bool {
-        self.summary.owned()
+        self.summary.scope == SessionScope::Owned
     }
     fn json(&self) -> Option<String> {
-        self.summary.json()
+        serde_json::to_string(&self.summary).ok()
     }
 }
 
@@ -128,11 +109,11 @@ impl ListedSession for Listed {
 
     fn transcript<'a>(&'a self, sig: &'a str) -> BoxFuture<'a, Arc<dyn Transcript>> {
         Box::pin(async move {
-            let transcript: Arc<dyn Transcript> = self
+            let transcript = self
                 .transcripts
                 .load(&self.paths, self.summary.source, Path::new(&self.summary.file_path), sig)
                 .await;
-            transcript
+            Arc::new(LoadedTranscript(transcript)) as Arc<dyn Transcript>
         })
     }
 
@@ -141,48 +122,102 @@ impl ListedSession for Listed {
             self.transcripts
                 .read_uncached(&self.paths, self.summary.source, Path::new(&self.summary.file_path))
                 .await
-                .map(|transcript| Arc::new(transcript) as Arc<dyn Transcript>)
+                .map(|transcript| Arc::new(LoadedTranscript(Arc::new(transcript))) as Arc<dyn Transcript>)
         })
     }
 }
 
-impl Transcript for loader::Transcript {
+/// One parse of a session's transcript as the agent's streams read it: the
+/// loader's parse, whose items and chain the agent's [`Transcript`],
+/// [`Items`] and [`Fingerprints`] answer from. The agent cannot name the
+/// loader, nor the loader the agent, so the entry holds the one in the other.
+struct LoadedTranscript(Arc<loader::Transcript>);
+
+impl Transcript for LoadedTranscript {
     fn items(&self) -> &dyn Items {
-        &*self.items
+        self
     }
     fn chain(&self) -> &dyn Fingerprints {
-        loader::Transcript::chain(self)
+        self
     }
     fn prefix(&self, end: usize) -> Arc<dyn Transcript> {
-        Arc::new(loader::Transcript::prefix(self, end))
+        Arc::new(LoadedTranscript(Arc::new(loader::Transcript::prefix(&self.0, end))))
     }
 }
 
-impl Items for Vec<TranscriptItem> {
+/// A transcript's items.
+impl Items for LoadedTranscript {
     fn len(&self) -> usize {
-        Vec::len(self)
+        self.0.items.len()
     }
     fn json(&self, i: usize) -> Value {
-        serde_json::to_value(&self[i]).unwrap_or(Value::Null)
+        serde_json::to_value(&self.0.items[i]).unwrap_or(Value::Null)
     }
     fn size(&self, i: usize) -> usize {
-        serde_json::to_vec(&self[i]).map_or(0, |b| b.len())
+        serde_json::to_vec(&self.0.items[i]).map_or(0, |b| b.len())
     }
     fn timestamp(&self, i: usize) -> Option<&str> {
-        self[i].timestamp.0.as_deref()
+        self.0.items[i].timestamp.0.as_deref()
     }
 }
 
-/// A transcript's chain as [`loader::Transcript::chain`] keeps it, or as
-/// [`loader::fingerprint_chain`] returns it.
-impl<C: std::ops::Deref<Target = [Fp]> + Send + Sync> Fingerprints for C {
+/// A transcript's chain, as [`loader::Transcript::chain`] keeps it.
+impl Fingerprints for LoadedTranscript {
     fn len(&self) -> usize {
-        <[Fp]>::len(self)
+        self.0.chain().len()
     }
     fn at(&self, at: usize) -> Option<String> {
-        self.get(at).map(encode_fp)
+        self.0.chain().get(at).map(encode_fp)
     }
     fn resume(&self, end: usize) -> Option<String> {
-        self.get(end.saturating_sub(RESUME_OVERLAP)).map(encode_fp)
+        self.0.chain().get(end.saturating_sub(RESUME_OVERLAP)).map(encode_fp)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use droppen_sessions::util::TranscriptItem;
+    use droppen_agent::streams::test_transcripts::{TestItems, TestTranscript};
+
+    /// The agent's streams tests read transcripts made the way the loader
+    /// makes them (`droppen_agent::streams::test_transcripts`). This holds a
+    /// loader's transcript, read through [`LoadedTranscript`] as the streams
+    /// read it, against that stand-in for the same items: the same items,
+    /// chain, fingerprints and resume markers, of the whole and of a prefix.
+    /// A change to how the loader chains or spells a fingerprint fails here
+    /// until the stand-in follows it.
+    #[test]
+    fn a_loaded_transcript_reads_as_the_streams_stand_in_does() {
+        let path = Path::new("/tmp/t.jsonl");
+        let items: Vec<TranscriptItem> = (0..6)
+            .map(|i| {
+                serde_json::from_value(serde_json::json!({
+                    "role": if i % 2 == 0 { "user" } else { "assistant" }, "kind": "text", "text": format!("{i}:{}", "x".repeat(i * 7)),
+                    "detail": null, "toolName": null, "meta": null, "isError": false, "question": null,
+                    "timestamp": if i == 2 { Value::Null } else { Value::String(format!("2026-10-1{i}T08:00:00.000Z")) },
+                    "truncated": false,
+                }))
+                .unwrap()
+            })
+            .collect();
+        let loaded = LoadedTranscript(Arc::new(loader::Transcript::new(path, Arc::new(items.clone()))));
+        let stand_in = TestTranscript::new(path, TestItems(items.iter().map(|item| serde_json::to_value(item).unwrap()).collect()));
+        let same = |real: &dyn Transcript, test: &dyn Transcript| {
+            assert_eq!(real.len(), test.len());
+            for i in 0..real.len() {
+                assert_eq!(real.items().json(i), test.items().json(i), "item {i}");
+                assert_eq!(real.items().size(i), test.items().size(i), "item {i}");
+                assert_eq!(real.items().timestamp(i), test.items().timestamp(i), "item {i}");
+            }
+            assert_eq!(real.chain().len(), real.len() + 1);
+            assert_eq!(real.chain().len(), test.chain().len());
+            for at in 0..real.chain().len() + 2 {
+                assert_eq!(real.chain().at(at), test.chain().at(at), "entry {at}");
+                assert_eq!(real.chain().resume(at), test.chain().resume(at), "resume at {at}");
+            }
+        };
+        same(&loaded, &stand_in);
+        same(&*loaded.prefix(3), &*stand_in.prefix(3));
     }
 }

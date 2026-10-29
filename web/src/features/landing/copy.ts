@@ -38,7 +38,7 @@
  * the notifications in server-rs/src/push; a new session in
  * features/sessions/new-session-view.tsx; the files in features/files;
  * scheduled prompts in server-rs/src/schedule; the offline window, the plan's
- * retention, in server-rs/src/agent/streams/retention.rs): numbers are the measured
+ * retention, in server-rs/crates/droppen-agent/src/streams/retention.rs): numbers are the measured
  * p50s, nothing says "unhackable" or "audited", and "open source" only ever
  * names the client (AGPL-3.0), never Droppen Hub or Droppen as a whole.
  */

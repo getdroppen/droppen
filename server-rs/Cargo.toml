@@ -16,7 +16,7 @@ workspace = true
 # package stays the default member, so a bare `cargo build`/`cargo test` here
 # still means the server and nothing else.
 [workspace]
-members = [".", "crates/rh-proto", "crates/rh-relay", "crates/droppen-relay", "crates/rh-client", "crates/rh-devkit", "crates/droppen-plugin-sdk", "crates/droppen-search-path", "crates/droppen-base", "crates/droppen-instance", "crates/droppen-http", "crates/droppen-pty", "crates/droppen-supervisor", "crates/droppen-auth", "crates/droppen-files", "crates/droppen-workbench", "crates/droppen-plugins", "crates/droppen-aggregator", "crates/droppen-sessions"]
+members = [".", "crates/rh-proto", "crates/rh-relay", "crates/droppen-relay", "crates/rh-client", "crates/rh-devkit", "crates/droppen-plugin-sdk", "crates/droppen-search-path", "crates/droppen-base", "crates/droppen-instance", "crates/droppen-http", "crates/droppen-pty", "crates/droppen-supervisor", "crates/droppen-auth", "crates/droppen-files", "crates/droppen-workbench", "crates/droppen-plugins", "crates/droppen-aggregator", "crates/droppen-sessions", "crates/droppen-agent"]
 
 # Every member takes serde_json from here, so `preserve_order` is on in every
 # build: a `Value` writes its keys in insertion order rather than sorted. Cargo
@@ -91,6 +91,8 @@ droppen-plugins = { path = "crates/droppen-plugins" }
 droppen-sessions = { path = "crates/droppen-sessions" }
 # The device role: verified copies of the account's other machines.
 droppen-aggregator = { path = "crates/droppen-aggregator" }
+# The machine role: identity, enrollment, the hub link, chain, relays, streams.
+droppen-agent = { path = "crates/droppen-agent" }
 # Machine-signed stream heads and manifests (the agent's streams).
 ed25519-dalek = "2"
 # The agent's one outbound websocket to the hub, and its loopback sockets to
@@ -217,6 +219,10 @@ droppen-base = { path = "crates/droppen-base", features = ["test-support"] }
 # The device role's test switch and a published index slot, for the tests of
 # the controller under a real agent state and of the gateway.
 droppen-aggregator = { path = "crates/droppen-aggregator", features = ["test-support"] }
+# What the tests of `cloud::control`, the `agent` command line and the bridge's
+# route classification reach of the agent's files (`droppen_agent::testing`), and
+# transcripts made the way the loader makes them (`streams::test_transcripts`).
+droppen-agent = { path = "crates/droppen-agent", features = ["test-support"] }
 # A link whose frames are all queued at once, for the terminal tests
 # (`droppen_pty::client::Link::preloaded`).
 droppen-pty = { path = "crates/droppen-pty", features = ["test-support"] }

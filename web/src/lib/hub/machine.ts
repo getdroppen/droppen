@@ -100,7 +100,7 @@ export type ChannelRefusal = { kind: "notAccepted"; by: "hub" | "relay"; why: st
 
 /**
  * The agent's close for a handshake it took but could not save (`AGENT_UNSAVED`
- * in `server-rs/src/agent/link.rs`): a device not on its record of who
+ * in `server-rs/crates/droppen-agent/src/link/mod.rs`): a device not on its record of who
  * connects is let in only once it is, and the computer's disk would not
  * take it. Retrying does not help until that is fixed there.
  */
@@ -108,7 +108,7 @@ export const AGENT_UNSAVED = 4507;
 
 /**
  * The agent's close for a hello it could not take (`refuse(.., 4401, "handshake
- * refused")` in `server-rs/src/agent/link.rs`) — among other reasons, one
+ * refused")` in `server-rs/crates/droppen-agent/src/link/mod.rs`) — among other reasons, one
  * sealed to a key it does not hold: it renewed its identity key and this
  * device has not heard yet.
  */

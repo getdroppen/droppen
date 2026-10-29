@@ -5,7 +5,7 @@
 //! An agent has one Ed25519 key (it answers the hub's sign-in challenge and
 //! signs stream heads and push payloads) and one X25519 key (its Noise static
 //! key, and what deliveries are sealed to). Both are expanded with HKDF from a
-//! single random 32-byte seed the agent keeps (`server-rs/src/agent`). The seed
+//! single random 32-byte seed the agent keeps (`server-rs/crates/droppen-agent`). The seed
 //! is the only secret; where it is kept is the agent's concern.
 //!
 //! # Enrollment codes
