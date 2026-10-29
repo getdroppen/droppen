@@ -172,22 +172,12 @@ pub async fn read_header(file_path: &Path) -> Option<Header> {
     })
 }
 
-/// A record, stamped now.
-fn record(kind: &str, fields: Value) -> Value {
-    let mut record = match fields {
-        Value::Object(map) => map,
-        _ => Map::new(),
-    };
-    record.insert("type".into(), kind.into());
-    record.insert("timestamp".into(), iso8601(std::time::SystemTime::now()).into());
-    Value::Object(record)
-}
-
 /// A record's own fields, one variant per record, as [`Record::stamped`]
 /// writes them.
 ///
 /// Untagged, so that a variant writes its fields and nothing else: the `type`
-/// follows them, where [`record`] puts it, and a tag serde wrote would lead.
+/// follows them, where [`Record::stamped`] puts it, and a tag serde wrote
+/// would lead.
 /// Key order is part of a line, and other versions read these lines back.
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
@@ -227,7 +217,7 @@ pub(crate) enum Record<'a> {
     /// `tool_result`.
     ToolResult { id: &'a str, status: &'a str, output: &'a str },
     /// `compact`. Braces, not a unit variant: an untagged unit is written as
-    /// `null`, not as an object.
+    /// `null`, which [`Record::stamped`] refuses.
     Compact {},
     /// `usage`.
     Usage { used: u64, size: u64 },
@@ -261,11 +251,18 @@ impl Record<'_> {
         }
     }
 
-    /// The line it is written as, stamped now.
+    /// The line it is written as: its fields, then `type`, then `timestamp`,
+    /// stamped now.
     pub(crate) fn stamped(&self) -> Value {
-        // Strings, numbers and the agent's own JSON cannot fail to encode; a
-        // record that did must not be written down as some other line.
-        record(self.kind(), serde_json::to_value(self).expect("ACP transcript records encode"))
+        // Strings, numbers and the agent's own JSON cannot fail to encode, and
+        // every variant is an object; a record that broke either must not be
+        // written down as some other line.
+        let Value::Object(mut line) = serde_json::to_value(self).expect("ACP transcript records encode") else {
+            panic!("ACP transcript records are objects");
+        };
+        line.insert("type".into(), self.kind().into());
+        line.insert("timestamp".into(), iso8601(std::time::SystemTime::now()).into());
+        Value::Object(line)
     }
 }
 
@@ -823,6 +820,15 @@ async fn summary_of(paths: &Paths, agent: &str, file_path: &Path, id: &str, titl
 pub(crate) mod tests {
     use super::*;
     use serde_json::json;
+
+    /// A line for the reader to read: `fields`, then `type`, then `timestamp`,
+    /// as [`Record::stamped`] writes one.
+    fn record(kind: &str, fields: Value) -> Value {
+        let Value::Object(mut line) = fields else { panic!("a record is an object") };
+        line.insert("type".into(), kind.into());
+        line.insert("timestamp".into(), iso8601(std::time::SystemTime::now()).into());
+        Value::Object(line)
+    }
 
     /// A `session/update` as the wire spells it, read through its type.
     fn update(value: Value) -> SessionUpdate {
