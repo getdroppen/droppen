@@ -61,8 +61,8 @@ pub trait Transcripts: Send + Sync {
     /// user*, trimmed, in the order they were written.
     ///
     /// **The one definition** behind the badge, the unread count and the push
-    /// notification ([`crate::sessions::attention::unread`] counts these;
-    /// [`crate::sessions::attention::derive::echo`] takes the newest), so the
+    /// notification ([`crate::attention::unread`] counts these;
+    /// [`crate::attention::derive::echo`] takes the newest), so the
     /// three can never disagree about whether something was said. One entry
     /// per transcript row the session view draws for it. Thinking, tool calls
     /// and a subagent talking to itself are the session working, not speech.
@@ -347,9 +347,9 @@ pub(crate) mod test_reader {
     use serde_json::{Map, Value};
 
     use super::{TokenUsage, TranscriptSources, Transcripts, UsageFold};
-    use crate::sessions::context::ContextUsage;
-    use crate::sessions::util::{num, TranscriptItem};
-    use crate::sessions::{CliChoice, SessionStatus, SessionSummary, Source};
+    use crate::context::ContextUsage;
+    use crate::util::{num, TranscriptItem};
+    use crate::{CliChoice, SessionStatus, SessionSummary, Source};
     use droppen_instance::paths::Paths;
 
     /// The stand-in, answering for `source`.

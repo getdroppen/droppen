@@ -42,8 +42,8 @@ use rusqlite::OptionalExtension;
 
 use droppen_instance::db::Db;
 use droppen_http::openapi_ext::Optional;
-use crate::sessions::delivery::{MessageReceipt, ReceiptLookup, ReceiptStatus};
-use crate::sessions::Source;
+use droppen_sessions::delivery::{MessageReceipt, ReceiptLookup, ReceiptStatus};
+use droppen_sessions::Source;
 
 /// How long a claim is remembered: a retry later than this is a new message.
 pub const KEEP_FOR_MS: i64 = 7 * 24 * 60 * 60 * 1000;

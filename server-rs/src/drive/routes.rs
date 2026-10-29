@@ -27,11 +27,12 @@ use crate::inject::receipts::{Kind, LOOKUP_CAP};
 use crate::inject::{self, AccountChoice, AnswerOutcome, Reply, SendOptions};
 use droppen_http::openapi_ext::{double_option, required_nullable, ExtraResponses, Nullable, Optional};
 use droppen_instance::paths::ClaudeRoot;
-use crate::sessions::delivery::{QuestionState, ReceiptLookup, ReceiptStatus, SessionQuestion};
-use crate::sessions::sidecars::{is_agent_id, AgentPath, Checklist};
-use crate::sessions::util::TranscriptItem;
+use droppen_sessions::delivery::{QuestionState, ReceiptLookup, ReceiptStatus, SessionQuestion};
+use droppen_sessions::sidecars::{is_agent_id, AgentPath, Checklist};
+use droppen_sessions::util::TranscriptItem;
 use crate::models::ModelRule;
-use crate::sessions::{chats_cwd, claude, file_signature, SessionScope, Source};
+use crate::sessions::claude;
+use droppen_sessions::{chats_cwd, file_signature, SessionScope, Source};
 
 /// `POST /api/sessions/{source}/{id}/message` body.
 #[derive(Debug, Clone, Serialize, Deserialize, Schematic)]
@@ -960,7 +961,7 @@ async fn settle_question(
 /// cannot both send the message; a send that fails puts it back.
 async fn settle_expired(
     drive: &crate::drive::Drive,
-    summary: &crate::sessions::SessionSummary,
+    summary: &droppen_sessions::SessionSummary,
     stored: &questions::Stored,
     reply: Reply,
     by: Option<String>,
@@ -1104,7 +1105,7 @@ pub(crate) fn external_session(hint: String) -> ApiError {
     ApiError::refusal(
         gotcha::axum::http::StatusCode::CONFLICT,
         Hinted {
-            error: crate::sessions::EXTERNAL_SESSION_ERROR,
+            error: droppen_sessions::EXTERNAL_SESSION_ERROR,
             hint: &hint,
         },
     )
@@ -1131,7 +1132,7 @@ pub(crate) fn external_session(hint: String) -> ApiError {
 /// browsing somebody else's session is the entire point of `scope=external`, and
 /// an unread badge that could not be cleared would make that browsing worse
 /// rather than safer.
-pub(crate) async fn writable_session(drive: &crate::drive::Drive, source: Source, id: &str) -> Result<crate::sessions::SessionSummary, ApiError> {
+pub(crate) async fn writable_session(drive: &crate::drive::Drive, source: Source, id: &str) -> Result<droppen_sessions::SessionSummary, ApiError> {
     let mut summary = drive
         .transcripts
         .find_summary(&drive.paths, source, id)
@@ -1262,7 +1263,7 @@ pub async fn pin_session(
     ApiJson(body): ApiJson<SessionPin>,
 ) -> Result<Json<SessionPin>, ApiError> {
     writable_session(&state.drive, source, &id).await?;
-    crate::sessions::pins::set(&state.paths, source, &id, body.pinned).map_err(|error| ApiError::internal(error.to_string()))?;
+    droppen_sessions::pins::set(&state.paths, source, &id, body.pinned).map_err(|error| ApiError::internal(error.to_string()))?;
     state.global.request_refresh(Some((source, &id)));
     Ok(Json(body))
 }
@@ -1408,7 +1409,7 @@ pub async fn session_first_unread(
     State(state): State<DriveState>,
     ApiPath((source, id)): ApiPath<(Source, String)>,
     ApiQuery(query): ApiQuery<FirstUnreadQuery>,
-) -> Result<Json<crate::sessions::attention::FirstUnread>, ApiError> {
+) -> Result<Json<droppen_sessions::attention::FirstUnread>, ApiError> {
     first_unread_of(&state.drive, source, &id, query.after.as_deref()).await.map(Json)
 }
 
@@ -1418,9 +1419,9 @@ pub(crate) async fn first_unread_of(
     source: Source,
     id: &str,
     after: Option<&str>,
-) -> Result<crate::sessions::attention::FirstUnread, ApiError> {
+) -> Result<droppen_sessions::attention::FirstUnread, ApiError> {
     let (items, mtime) = whole_transcript(drive, source, id).await?;
-    Ok(crate::sessions::attention::first_unread(&items, after, &mtime))
+    Ok(droppen_sessions::attention::first_unread(&items, after, &mtime))
 }
 
 /// Every subagent that ever wrote under a session.
@@ -1767,7 +1768,7 @@ pub async fn continue_session_on_account(
         .note_hand_binding(&new_id, crate::accounts::rest::now_ms());
     // A name somebody gave the conversation goes with it.
     let titles = state.drive.titles.read().await;
-    if let Some(title) = titles.get(&crate::sessions::reference::title_key(Source::Claude, &id)) {
+    if let Some(title) = titles.get(&droppen_sessions::reference::title_key(Source::Claude, &id)) {
         if let Err(error) = state.drive.titles.set(Source::Claude, &new_id, title).await {
             tracing::warn!(session = %new_id, %error, "cannot carry the title over to the continued session");
         }
@@ -2591,7 +2592,7 @@ mod tests {
     /// that is not this server's own.
     #[tokio::test]
     async fn the_first_unread_is_an_index_in_the_feeds_numbering() {
-        let _guard = crate::sessions::index::exclusive().await;
+        let _guard = droppen_sessions::index::exclusive().await;
         let (_dir, drive) = drive();
         let id = "88888888-8888-4888-8888-888888888888";
         let entry = |kind: &str, uuid: &str, at: &str, content: serde_json::Value| serde_json::json!({"type":kind,"message":{"role":kind,"content":content},"timestamp":at,"cwd":"/w/repo","sessionId":id,"uuid":uuid});
@@ -2665,7 +2666,7 @@ mod tests {
     /// one of this server's own, in the feed's numbering.
     #[tokio::test]
     async fn an_external_session_is_searchable_in_the_feeds_numbering() {
-        let _guard = crate::sessions::index::exclusive().await;
+        let _guard = droppen_sessions::index::exclusive().await;
         let (_dir, drive) = drive();
         let id = "55555555-5555-4555-8555-555555555555";
         let entry = |kind: &str, uuid: &str, content: serde_json::Value| serde_json::json!({"type":kind,"message":{"role":kind,"content":content},"timestamp":"2026-10-01T10:00:00.000Z","cwd":"/w/repo","sessionId":id,"uuid":uuid});
@@ -2730,7 +2731,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_codex_thread_is_searchable_too() {
-        let _guard = crate::sessions::index::exclusive().await;
+        let _guard = droppen_sessions::index::exclusive().await;
         let (_dir, drive) = drive();
         let id = "66666666-6666-4666-8666-666666666666";
         let day = drive.paths.codex_sessions().join("2026").join("10").join("01");
@@ -2745,7 +2746,7 @@ mod tests {
         std::fs::write(day.join(format!("rollout-2026-10-01T10-00-00-{id}.jsonl")), lines.join("\n") + "\n").expect("rollout");
 
         let found = search_session(&drive, Source::Codex, id, &search("迁移")).await.expect("searchable");
-        let shape: Vec<(usize, crate::sessions::util::ItemKind)> = found.matches.iter().map(|m| (m.index, m.kind)).collect();
+        let shape: Vec<(usize, droppen_sessions::util::ItemKind)> = found.matches.iter().map(|m| (m.index, m.kind)).collect();
         assert_eq!(found.total, 2, "{shape:?}");
         assert_eq!(found.matches[0].field, feed::search::SearchField::Text, "the user's own words");
         assert_eq!(found.matches[1].field, feed::search::SearchField::Detail, "the command's output");
@@ -2787,7 +2788,7 @@ mod tests {
     /// record moves or anything is sent, and the question stays answerable.
     #[tokio::test]
     async fn an_expired_answer_too_long_as_a_message_is_refused_and_stays_answerable() {
-        let _guard = crate::sessions::index::exclusive().await;
+        let _guard = droppen_sessions::index::exclusive().await;
         let (_dir, drive) = drive();
         let id = "99999999-9999-4999-8999-999999999999";
         // A session of this server's own: its transcript in the managed root.

@@ -23,7 +23,8 @@ use droppen_http::extract::{ApiPath, ApiQuery};
 use droppen_http::{close_within, hostname, node_platform, send_within, Heartbeat, CLOSE_LIMIT, RUNTIME_VERSION, SERVER_VERSION};
 use droppen_http::openapi_ext::{self, ExtraResponses};
 use droppen_instance::paths::Paths;
-use crate::sessions::{self, claude, codex, SessionDetail, SessionList, Settings, Source};
+use crate::sessions::{claude, codex};
+use droppen_sessions::{SessionDetail, SessionList, Settings, Source};
 
 mod state;
 
@@ -127,7 +128,7 @@ pub struct SessionListQuery {
     /// are still there, read-only, one `scope=external` away. A client that wants
     /// the old behaviour asks for `all` — and gets a `scope` on every row telling
     /// it which it is looking at.
-    pub scope: Option<sessions::ScopeFilter>,
+    pub scope: Option<droppen_sessions::ScopeFilter>,
 }
 
 /// Query for `GET /api/sessions/{source}/{id}`.
@@ -394,7 +395,7 @@ fn response_overrides() -> ExtraResponses {
     crate::accounts::usage_login::describe(&mut reg);
     crate::acp_agent::describe(&mut reg);
     droppen_workbench::apps::describe(&mut reg);
-    crate::attention::describe(&mut reg);
+    droppen_sessions::attention::routes::describe(&mut reg);
     droppen_auth::describe(&mut reg);
     crate::chats::describe(&mut reg);
     cloud::describe(&mut reg);
@@ -412,7 +413,7 @@ fn response_overrides() -> ExtraResponses {
     droppen_workbench::screens::describe(&mut reg);
     droppen_supervisor::selfupdate::describe(&mut reg);
     crate::setup::describe(&mut reg);
-    crate::stats::describe(&mut reg);
+    droppen_sessions::stats::describe(&mut reg);
     droppen_workbench::terminals::describe(&mut reg);
     reg
 }
@@ -429,7 +430,7 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
     let router = crate::accounts::usage_login::UsageLoginState::routes(router);
     let router = crate::acp_agent::AcpAgentState::routes(router);
     let router = droppen_workbench::apps::AppsState::routes(router);
-    let router = crate::attention::AttentionState::routes(router);
+    let router = droppen_sessions::attention::routes::AttentionState::routes(router);
     let router = droppen_auth::AuthState::routes(router);
     let router = crate::chats::ChatsState::routes(router);
     let router = cloud::CloudState::routes(router);
@@ -448,7 +449,7 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
     let router = droppen_workbench::screens::ScreensState::routes(router);
     let router = droppen_supervisor::selfupdate::SelfUpdateState::routes(router);
     let router = crate::setup::SetupState::routes(router);
-    let router = crate::stats::StatsState::routes(router);
+    let router = droppen_sessions::stats::StatsState::routes(router);
     let router = droppen_workbench::terminals::TerminalsState::routes(router);
     router
         .openapi(|mut spec| {
@@ -703,7 +704,7 @@ mod tests {
         let _client = never_reading_feed(&state, addr).await;
         until("the socket attaches to the feed", Duration::from_secs(30), || state.feeds.len() == 1).await;
 
-        let page = wide_turns(1, crate::feed::SESSION_PAGE_SIZE / 2, crate::sessions::util::TEXT_LIMIT);
+        let page = wide_turns(1, crate::feed::SESSION_PAGE_SIZE / 2, droppen_sessions::util::TEXT_LIMIT);
         let mut transcript = std::fs::OpenOptions::new().append(true).open(&file).expect("open");
         std::io::Write::write_all(&mut transcript, page.as_bytes()).expect("append");
         until(
@@ -723,7 +724,7 @@ mod tests {
         let (state, addr) = test_support::served(home.path()).await;
         assert_eq!(state.send_limit, droppen_http::SEND_LIMIT);
         // An opening snapshot of megabytes, more than the kernel's buffers hold.
-        wide_session(&state, crate::feed::SESSION_PAGE_SIZE / 2, crate::sessions::util::TEXT_LIMIT);
+        wide_session(&state, crate::feed::SESSION_PAGE_SIZE / 2, droppen_sessions::util::TEXT_LIMIT);
         let _client = never_reading_feed(&state, addr).await;
         until("the socket attaches to the feed", Duration::from_secs(30), || state.feeds.len() == 1).await;
         tokio::time::sleep(Duration::from_millis(500)).await;

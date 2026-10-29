@@ -1412,6 +1412,32 @@ name = "droppen-search-path"
 version = "0.1.0"
 
 [[package]]
+name = "droppen-sessions"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "droppen-base",
+ "droppen-http",
+ "droppen-instance",
+ "droppen-plugins",
+ "droppen-workbench",
+ "futures-util",
+ "gotcha",
+ "gotcha_core",
+ "memchr",
+ "regex",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "droppen-supervisor"
 version = "0.1.0"
 dependencies = [
@@ -3215,6 +3241,7 @@ dependencies = [
  "droppen-plugins",
  "droppen-pty",
  "droppen-search-path",
+ "droppen-sessions",
  "droppen-supervisor",
  "droppen-workbench",
  "ed25519-dalek",

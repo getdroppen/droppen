@@ -10,7 +10,7 @@ use serde_json::Value;
 
 use super::{is_rate_limited, window, ProbeRoots, QuotaProbeError, QuotaWindow, UsageLogin, UsageProbe};
 use crate::accounts::rest::iso_ms;
-use crate::sessions::util::try_parse;
+use droppen_sessions::util::try_parse;
 use droppen_base::process_env::{apply_env, claude_env};
 use droppen_base::time::{iso8601, now_ms};
 use droppen_instance::paths::ClaudeRoot;

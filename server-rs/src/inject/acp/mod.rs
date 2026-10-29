@@ -60,7 +60,7 @@ use futures_util::future::BoxFuture;
 use crate::acp::{category, option_for, ConfigOption, InitializeResponse};
 use crate::acp_agent::{AcpAgent, AcpAgentRegistry, AcpCheck, AcpCheckState};
 use crate::sessions::acp_transcript::{has_conversation, read_header, AcpTranscripts, Record, Translator};
-use crate::sessions::{Injection, SessionSummary, Source};
+use droppen_sessions::{Injection, SessionSummary, Source};
 use droppen_http::error::ApiError;
 use droppen_base::process_env::clean_env_bare;
 use client::Client;
@@ -740,8 +740,8 @@ impl InjectionRegistry {
     ///
     /// Refused while a turn is running or a message is waiting, as the other
     /// archives are: the user is told rather than the work being dropped.
-    pub async fn archive_acp(&self, id: &str) -> Result<(), crate::sessions::archive::ArchiveError> {
-        use crate::sessions::archive::ArchiveError;
+    pub async fn archive_acp(&self, id: &str) -> Result<(), droppen_sessions::archive::ArchiveError> {
+        use droppen_sessions::archive::ArchiveError;
         let (agent_id, from) = AcpTranscripts::of(&self.paths).locate(id)
             .await
             .ok_or_else(|| ArchiveError("cannot archive the ACP session: it is gone".to_string()))?;
@@ -1121,7 +1121,7 @@ mod tests {
             injections
                 .acp_handle(&id)
                 .and_then(|handle| handle.injection())
-                .is_some_and(|injection| injection.state == crate::sessions::InjectionRunState::Running)
+                .is_some_and(|injection| injection.state == droppen_sessions::InjectionRunState::Running)
         };
         until("the long turn", running).await;
         let switch = SendOptions {

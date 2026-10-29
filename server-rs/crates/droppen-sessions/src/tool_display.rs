@@ -4,7 +4,7 @@
 //! `tool_use` block carries a parsed JSON object, so everything here starts
 //! from one. Codex hands over the *source text* of a JavaScript cell or a
 //! JSON-encoded argument string, and records what actually ran somewhere else
-//! entirely; that half lives in [`super::codex_tools`], which borrows the
+//! entirely; that half lives in `sessions::codex_tools`, which borrows the
 //! generic helpers below so that a tool nothing knows by name reads the same
 //! from either CLI.
 
@@ -47,7 +47,7 @@ pub fn extract_questions(input: &Json) -> Option<Vec<QuestionEntry>> {
 
 /// `String(v)` in JS: a bare string stays bare, anything else is stringified,
 /// and `undefined ?? ""` collapses to the empty string.
-pub(super) fn as_display_string(value: Option<&Value>) -> String {
+pub fn as_display_string(value: Option<&Value>) -> String {
     match value {
         Some(Value::String(s)) => s.clone(),
         Some(Value::Null) | None => String::new(),
@@ -120,7 +120,8 @@ const PREFERRED_KEYS: &[&str] = &[
     "label",
 ];
 
-pub(super) fn pick_preferred(input: &Json) -> Option<String> {
+/// The first non-blank string among the keys a one-line summary prefers, in order.
+pub fn pick_preferred(input: &Json) -> Option<String> {
     PREFERRED_KEYS.iter().find_map(|key| {
         input
             .get(*key)
@@ -131,7 +132,7 @@ pub(super) fn pick_preferred(input: &Json) -> Option<String> {
 }
 
 /// Fernet blobs in agent-orchestration messages are unreadable; blank them out.
-pub(super) fn redact_encrypted(input: &Json) -> Json {
+pub fn redact_encrypted(input: &Json) -> Json {
     let mut out = input.clone();
     if let Some(Value::String(v)) = out.get("message") {
         if v.starts_with("gAAAAA") {
@@ -142,16 +143,19 @@ pub(super) fn redact_encrypted(input: &Json) -> Json {
     out
 }
 
-pub(super) fn pretty(input: &Json) -> String {
+/// `input` as indented JSON, for a tool call shown in full.
+pub fn pretty(input: &Json) -> String {
     serde_json::to_string_pretty(input).unwrap_or_default()
 }
 
 /// `JSON.stringify(input)` for the one-line fallback summary.
-pub(super) fn compact(input: &Json) -> String {
+pub fn compact(input: &Json) -> String {
     serde_json::to_string(input).unwrap_or_default()
 }
 
-pub(super) fn diff_of(old_text: &str, new_text: &str) -> String {
+/// `old_text` and `new_text` as one diff: every old line as `- `, then every new
+/// line as `+ `.
+pub fn diff_of(old_text: &str, new_text: &str) -> String {
     let removed = old_text.split('\n').map(|l| format!("- {l}"));
     let added = new_text.split('\n').map(|l| format!("+ {l}"));
     removed.chain(added).collect::<Vec<_>>().join("\n")
@@ -163,7 +167,8 @@ pub(super) fn diff_of(old_text: &str, new_text: &str) -> String {
 /// Claude's `TodoWrite` and Codex's `update_plan` are the same board in two
 /// shapes and spell the in-progress state differently, so each caller names the
 /// statuses its CLI writes.
-pub(super) trait ChecklistLinesExt: Iterator + Sized {
+pub trait ChecklistLinesExt: Iterator + Sized {
+    /// The board, one line per `(status, text)` item.
     fn checklist_lines(self, in_progress: &[&str]) -> String;
 }
 
@@ -188,7 +193,8 @@ impl<S: AsRef<str>, T: AsRef<str>, I: Iterator<Item = (S, T)>> ChecklistLinesExt
 /// Claude's `AskUserQuestion` and Codex's `request_user_input` spell the
 /// question and its options differently — Claude shows an option's description,
 /// Codex does not — so each caller renders both through its own closures.
-pub(super) trait QuestionLinesExt<'a>: Iterator<Item = &'a Json> + Sized {
+pub trait QuestionLinesExt<'a>: Iterator<Item = &'a Json> + Sized {
+    /// Every question's lines, its title and options rendered by the caller's closures.
     fn question_lines(self, title_of: impl Fn(&Json) -> String, option_of: impl Fn(&Value) -> Option<String>) -> Vec<String>;
 }
 

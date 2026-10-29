@@ -114,11 +114,7 @@
         {
           "name": "droppen-sessions",
           "about": "The session vocabulary, stores, listing and attention; owns the Transcripts port.",
-          "modules": [
-            "sessions",
-            "attention",
-            "stats"
-          ],
+          "modules": [],
           "mayUse": [
             "droppen-auth",
             "droppen-workbench",
@@ -204,7 +200,8 @@
           "about": "Provider, Run, Models, the registry, the spawn gate, the session shim, queue, receipts, questions, drafts.",
           "modules": [
             "inject",
-            "models"
+            "models",
+            "sessions"
           ],
           "mayUse": [
             "droppen-sessions",
@@ -324,7 +321,7 @@
       "droppen-provider-codex",
       "droppen-provider-acp"
     ],
-    "count": 26
+    "count": 23
   },
   "allowed": [
     {

@@ -1,5 +1,5 @@
 //! Claude Code's subagents, as a tree under the session that spawned them
-//! ([`super::children`]).
+//! ([`droppen_sessions::children`]).
 //!
 //! Claude Code writes each subagent's transcript beside the session —
 //! `<session>/subagents/agent-<id>.jsonl` — with a meta file naming the agent
@@ -14,8 +14,9 @@ use std::time::{Duration, SystemTime};
 
 use serde_json::Value;
 
-use super::children::{agent_seen_id, ReadMarksExt, SessionChild, SessionChildKind, SessionChildStatus, SpawnOrderExt};
-use super::{transcript, SessionActivity, SessionSummary, Source};
+use droppen_sessions::children::{agent_seen_id, ReadMarksExt, SessionChild, SessionChildKind, SessionChildStatus, SpawnOrderExt};
+use super::transcript;
+use droppen_sessions::{SessionActivity, SessionSummary, Source};
 use droppen_http::openapi_ext::Nullable;
 
 /// How recently a Claude subagent must have written to count as working
@@ -59,7 +60,7 @@ impl super::claude::ClaudeCodeSessions {
                 SessionChild {
                     id: agent.agent_id.clone(),
                     kind: SessionChildKind::Agent,
-                    name: super::util::title_line(&name),
+                    name: droppen_sessions::util::title_line(&name),
                     role: Nullable(agent.agent_type.clone()),
                     status,
                     // Decided once the tree is built, from the marks above it.
@@ -134,7 +135,7 @@ async fn ended_badly(path: &Path) -> bool {
             return verdict;
         }
     }
-    let verdict = match super::util::read_tail_lines(path, TAIL_BYTES).await {
+    let verdict = match droppen_sessions::util::read_tail_lines(path, TAIL_BYTES).await {
         Ok(lines) => tail_ended_badly(&lines),
         Err(_) => return false,
     };
@@ -148,7 +149,7 @@ async fn ended_badly(path: &Path) -> bool {
 
 fn tail_ended_badly(lines: &[String]) -> bool {
     for line in lines.iter().rev() {
-        let Some(entry) = super::util::try_parse(line) else { continue };
+        let Some(entry) = droppen_sessions::util::try_parse(line) else { continue };
         match entry.get("type").and_then(Value::as_str) {
             Some("assistant") => {
                 let synthetic = entry.get("message").and_then(|message| message.get("model")).and_then(Value::as_str) == Some("<synthetic>");

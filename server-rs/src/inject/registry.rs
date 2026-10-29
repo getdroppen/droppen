@@ -15,7 +15,7 @@ use tokio::sync::watch;
 
 use super::{drafts, AnswerOutcome, InjectError, InjectionRegistry, QueueOutcome, Reply, ResidentState, SendOptions, Sent, StopTaskOutcome};
 use crate::models::Models;
-use crate::sessions::{DriverStates, Injection, InjectionRunState, ResidentInfo, SessionSummary, Source};
+use droppen_sessions::{DriverStates, Injection, InjectionRunState, ResidentInfo, SessionSummary, Source};
 use droppen_http::error::ApiError;
 
 /// One CLI this server drives.
@@ -610,10 +610,10 @@ mod tests {
         let providers = providers(home.path());
         let paths = Paths::new(home.path().to_path_buf());
         providers.archive(Source::Claude, "c1").await.expect("archived");
-        assert!(crate::sessions::archive::archived_ids(&paths).contains("c1"));
+        assert!(droppen_sessions::archive::archived_ids(&paths).contains("c1"));
         assert_eq!(
             providers.archive(Source::Acp, "a1").await,
-            Err(crate::sessions::archive::ArchiveError("cannot archive the ACP session: it is gone".to_string()).to_string())
+            Err(droppen_sessions::archive::ArchiveError("cannot archive the ACP session: it is gone".to_string()).to_string())
         );
 
         let other = tempfile::tempdir().expect("tempdir");
@@ -621,6 +621,6 @@ mod tests {
         for source in [Source::Claude, Source::Codex, Source::Acp] {
             assert_eq!(none.archive(source, "x").await, Err(format!("no provider runs {source} sessions")), "{source}");
         }
-        assert!(crate::sessions::archive::archived_ids(&Paths::new(other.path().to_path_buf())).is_empty(), "nothing was archived");
+        assert!(droppen_sessions::archive::archived_ids(&Paths::new(other.path().to_path_buf())).is_empty(), "nothing was archived");
     }
 }

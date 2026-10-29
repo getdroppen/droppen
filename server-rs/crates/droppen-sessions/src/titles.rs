@@ -21,7 +21,7 @@
 //! `titles.json` was a mirror for one version, so a `.prev` binary that had
 //! never heard of the database would still find the names; the rollback floor
 //! has since risen to a build that reads the database, and
-//! `crate::sessions::custom_titles` — the last reader that went to the
+//! `crate::custom_titles` — the last reader that went to the
 //! file — now asks [`all`] instead. Nothing reads the file any more.
 
 use std::collections::BTreeMap;
@@ -29,7 +29,7 @@ use std::sync::Arc;
 
 use droppen_instance::db::{scope, Db};
 use droppen_instance::paths::Paths;
-use crate::sessions::Source;
+use crate::Source;
 
 /// The titles store, backed by `state.db`.
 ///
@@ -46,10 +46,10 @@ pub struct TitlesStore {
 ///
 /// A colon rather than the slash every other durable key uses, because that is
 /// what the rows on disk are already keyed by; see
-/// [`crate::sessions::SessionRef::title_key`]. Server-free, because a name a
+/// [`crate::SessionRef::title_key`]. Server-free, because a name a
 /// person gave a session is theirs and not one server's.
 fn key_of(source: Source, id: &str) -> String {
-    crate::sessions::reference::title_key(source, id)
+    crate::reference::title_key(source, id)
 }
 
 /// Every title anyone has set, for a caller that holds only a path set.

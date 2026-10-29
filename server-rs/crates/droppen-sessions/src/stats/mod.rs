@@ -31,7 +31,7 @@ pub struct StatsState {
     /// Where sessions are discovered.
     pub paths: Arc<Paths>,
     /// Each CLI's transcripts, which say what each session used.
-    pub transcripts: crate::sessions::TranscriptSources,
+    pub transcripts: crate::TranscriptSources,
 }
 droppen_http::substate!(StatsState);
 

@@ -21,12 +21,12 @@
 //! *shared* data directory precisely so a second instance is excluded from a
 //! session the first is driving; putting the server in the filename would give
 //! each of them their own lock, they would both acquire it, and two CLIs would
-//! append to one transcript. See [`crate::inject::lock`].
+//! append to one transcript. See `inject::lock`.
 //!
 //! Three of the four are also free functions, because three of their call sites
 //! have no server to name and — per the table above — must not name one:
-//! `crate::sessions::attention::seen::key_of` is called from a token mint that holds only
-//! a `(source, id)`, and `crate::inject::lock::acquire` takes the source as a
+//! `crate::attention::seen::key_of` is called from a token mint that holds only
+//! a `(source, id)`, and `inject::lock::acquire` takes the source as a
 //! `&str` on purpose so the separator property can be tested against sources
 //! that do not exist. The method bodies *are* the free functions, so there is
 //! still one `format!` per spelling.
@@ -34,10 +34,10 @@
 use sha2::{Digest, Sha256};
 
 use droppen_instance::identity::ServerId;
-use crate::sessions::Source;
+use crate::Source;
 
 /// How long a session id may be before [`stem`] hashes it instead.
-pub(crate) const MAX_STEM: usize = 64;
+pub const MAX_STEM: usize = 64;
 
 /// One session, on one server.
 ///
@@ -169,7 +169,7 @@ pub fn lock_name(source: &str, session_id: &str) -> String {
 /// place. Two ids must never collapse onto one stem — that would hand one
 /// session's lock to another — so the fallback is a hash of the whole id, not a
 /// truncation of it.
-pub(crate) fn stem(session_id: &str) -> String {
+pub fn stem(session_id: &str) -> String {
     let plain =
         !session_id.is_empty() && session_id.len() <= MAX_STEM && session_id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
     if plain {
@@ -193,7 +193,7 @@ pub(crate) fn stem(session_id: &str) -> String {
 /// a hex-uuid pattern), so nothing legitimate is refused: a uuid is 36 ASCII
 /// bytes, contains neither a dot nor a non-ASCII character, and does not start
 /// with `-`.
-pub(crate) fn is_path_segment_id(id: &str) -> bool {
+pub fn is_path_segment_id(id: &str) -> bool {
     !id.is_empty() && id.len() <= 128 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') && !id.starts_with('-')
 }
 

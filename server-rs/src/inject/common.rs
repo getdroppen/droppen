@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use droppen_instance::paths::Paths;
 
 use super::questions;
-use crate::sessions::delivery::SessionQuestion;
+use droppen_sessions::delivery::SessionQuestion;
 
 /// The instant-chat persona: the text the CLI is actually launched with.
 pub(super) const CHAT_SYSTEM_PROMPT: &str = concat!(
@@ -97,7 +97,7 @@ pub struct ResidentState {
     /// Held on the mirror rather than asked of the driver because that is what
     /// the mirror is for: a route that wanted the queue would otherwise have to
     /// await a task which may be inside a thirty-second recovery backoff.
-    pub queued_messages: Vec<crate::sessions::QueuedMessage>,
+    pub queued_messages: Vec<droppen_sessions::QueuedMessage>,
     /// How many background tasks claude is still minding.
     ///
     /// Deliberately *not* a phase. A turn that dispatched background work ends
@@ -110,7 +110,7 @@ pub struct ResidentState {
     /// The count above stays the authoritative one: this is the description of
     /// the work, and a row that showed a hundred of anything is already telling
     /// the user something has gone wrong.
-    pub tasks: Vec<crate::sessions::BackgroundTask>,
+    pub tasks: Vec<droppen_sessions::BackgroundTask>,
     /// Set when a settings change is waiting for that background work.
     ///
     /// The message that wants the new settings is at the head of the queue and
@@ -138,13 +138,13 @@ impl ResidentState {
     }
 }
 
-impl From<ResidentState> for crate::sessions::ResidentInfo {
+impl From<ResidentState> for droppen_sessions::ResidentInfo {
     fn from(state: ResidentState) -> Self {
-        crate::sessions::ResidentInfo {
+        droppen_sessions::ResidentInfo {
             phase: match state.phase {
-                Phase::Starting => crate::sessions::ResidentPhase::Starting,
-                Phase::Working => crate::sessions::ResidentPhase::Working,
-                Phase::Idle => crate::sessions::ResidentPhase::Idle,
+                Phase::Starting => droppen_sessions::ResidentPhase::Starting,
+                Phase::Working => droppen_sessions::ResidentPhase::Working,
+                Phase::Idle => droppen_sessions::ResidentPhase::Idle,
             },
             // Saturating rather than `as`: a queue long enough to overflow a
             // `u32` is a bug elsewhere, and reporting it as a small number

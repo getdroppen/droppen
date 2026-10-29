@@ -24,12 +24,12 @@ use crate::accounts::setup_token::Captures;
 use crate::accounts::store::AccountsStore;
 use droppen_auth::Auth;
 use crate::inject::{InjectionRegistry, ProviderRegistry, SpawnDecoration};
-use crate::sessions::Source;
+use droppen_sessions::Source;
 use droppen_base::process_env::Env;
 use droppen_instance::instance::InstanceDirs;
 use futures_util::future::BoxFuture;
 use droppen_instance::paths::Paths;
-use crate::sessions::{titles, TranscriptSources};
+use droppen_sessions::{titles, TranscriptSources};
 
 pub use routes::{describe, DriveState};
 

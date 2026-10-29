@@ -239,7 +239,7 @@ struct DuplicateAccount<'a> {
 pub trait ModelIds: Send + Sync {
     /// The ids `GET /api/models` lists for one login of `source`, in its order;
     /// `account_id` absent is the user's own login.
-    fn model_ids<'a>(&'a self, source: crate::sessions::Source, account_id: Option<&'a str>) -> futures_util::future::BoxFuture<'a, Vec<String>>;
+    fn model_ids<'a>(&'a self, source: droppen_sessions::Source, account_id: Option<&'a str>) -> futures_util::future::BoxFuture<'a, Vec<String>>;
 }
 
 /// What the account routes use of the server's state.
@@ -671,7 +671,8 @@ mod tests {
     use crate::api::AppState;
     use crate::drive::routes::{bind_session_account, continue_session_on_account, ContinuedSession, SessionAccount, SessionContinue};
     use droppen_instance::paths::ClaudeRoot;
-    use crate::sessions::{claude, Source};
+    use crate::sessions::claude;
+    use droppen_sessions::Source;
 
     /// The two refusals with a code of their own, byte for byte: the client
     /// acts on `error`, shows `hint`, and names `existingLabel`.
@@ -855,7 +856,7 @@ mod tests {
     /// conversation, while the original stays exactly where and what it was.
     #[tokio::test]
     async fn a_local_login_session_continues_on_an_account_as_a_new_session() {
-        let _guard = crate::sessions::index::exclusive().await;
+        let _guard = droppen_sessions::index::exclusive().await;
         let home = tempfile::tempdir().expect("tempdir");
         let state = crate::api::test_support::state(home.path()).await;
         let paths = state.drive.paths.clone();
@@ -879,7 +880,7 @@ mod tests {
         let continued = continue_on(&state, Source::Claude, STUCK, &work.id).await.expect("continued");
         assert_eq!(continued.source, Source::Claude);
         assert_ne!(continued.id, STUCK, "a new session, not the old one moved");
-        assert!(crate::sessions::reference::is_path_segment_id(&continued.id));
+        assert!(droppen_sessions::reference::is_path_segment_id(&continued.id));
 
         assert_eq!(std::fs::read(&original).expect("the original"), before, "the original is untouched");
         let copy = crate::sessions::claude::find_in_root(&paths, ClaudeRoot::Managed, &continued.id)
@@ -912,13 +913,13 @@ mod tests {
         let new_row = claude::load_claude_summary(&paths, &continued.id).await.expect("the new session lists");
         assert_eq!(
             (new_row.scope, new_row.claude_root),
-            (crate::sessions::SessionScope::Owned, Some(ClaudeRoot::Managed))
+            (droppen_sessions::SessionScope::Owned, Some(ClaudeRoot::Managed))
         );
         assert_eq!(new_row.title, "fix the inbox", "the same conversation");
         let old_row = claude::load_claude_summary(&paths, STUCK).await.expect("the original still lists");
         assert_eq!(
             (old_row.scope, old_row.claude_root),
-            (crate::sessions::SessionScope::Owned, Some(ClaudeRoot::Local))
+            (droppen_sessions::SessionScope::Owned, Some(ClaudeRoot::Local))
         );
 
         // The copy is in the managed root: it switches accounts in place, and
@@ -936,7 +937,7 @@ mod tests {
     /// claude account — and nothing written on any refusal.
     #[tokio::test]
     async fn continuing_refuses_what_is_not_this_servers_to_copy() {
-        let _guard = crate::sessions::index::exclusive().await;
+        let _guard = droppen_sessions::index::exclusive().await;
         let home = tempfile::tempdir().expect("tempdir");
         let state = crate::api::test_support::state(home.path()).await;
         let paths = state.drive.paths.clone();
@@ -1006,7 +1007,7 @@ mod tests {
                     source: "claude:result",
                     model: None,
                     verdict: limits::Verdict {
-                        class: crate::sessions::account::LimitClass::Auth,
+                        class: droppen_sessions::account::LimitClass::Auth,
                         scope: "all".into(),
                         until_ms: None,
                     },

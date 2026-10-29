@@ -1,6 +1,6 @@
 //! The read marks' routes: `POST …/seen` for a session and for one of its
 //! subagents. What a mark means, and the unread badge it feeds, are
-//! [`crate::sessions::attention`]'s.
+//! [`crate::attention`]'s.
 
 use std::sync::Arc;
 
@@ -13,8 +13,8 @@ use droppen_http::extract::ApiPath;
 use droppen_http::refresh::Refresh;
 use droppen_http::openapi_ext::{ExtraResponses, Nullable};
 use droppen_instance::paths::Paths;
-use crate::sessions::attention::seen;
-use crate::sessions::Source;
+use crate::attention::seen;
+use crate::Source;
 
 /// What the attention routes use of the server's state: where the read marks
 /// are stored, and the feed told when one moves.
@@ -57,12 +57,12 @@ pub async fn mark_seen(State(state): State<AttentionState>, ApiPath((source, id)
 #[api(id = "mark_agent_seen", group = "sessions", summary = "Mark a subagent read")]
 pub async fn mark_agent_seen(
     State(state): State<AttentionState>,
-    ApiPath(crate::sessions::sidecars::AgentPath { source, id, agent_id }): ApiPath<crate::sessions::sidecars::AgentPath>,
+    ApiPath(crate::sidecars::AgentPath { source, id, agent_id }): ApiPath<crate::sidecars::AgentPath>,
 ) -> Result<Json<SeenResult>, ApiError> {
-    if !crate::sessions::sidecars::is_agent_id(&agent_id) {
+    if !crate::sidecars::is_agent_id(&agent_id) {
         return Err(ApiError::bad_request("invalid agent id"));
     }
-    let previous = seen::mark(state.paths.as_ref(), source, &crate::sessions::children::agent_seen_id(&id, &agent_id))
+    let previous = seen::mark(state.paths.as_ref(), source, &crate::children::agent_seen_id(&id, &agent_id))
         .await
         .map_err(|error| ApiError::internal(format!("failed to record seen: {error}")))?;
     state.refresh.request_refresh(None);

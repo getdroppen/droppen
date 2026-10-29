@@ -8,7 +8,7 @@
 //!
 //! The obvious second half is "and send this to an existing session", and it is
 //! absent on purpose. A send has to pass
-//! [`crate::sessions::TranscriptSources::sendability`], find the session still
+//! [`droppen_sessions::TranscriptSources::sendability`], find the session still
 //! writable, and either reach a resident or respawn one with a matching
 //! fingerprint; every one of those is a decision a *person* was making
 //! when the send was a button, and a timer that makes them unattended has no way
@@ -85,7 +85,7 @@ use droppen_http::extract::{ApiJson, ApiPath};
 use droppen_http::SendResult;
 use droppen_http::openapi_ext::{ExtraResponses, Nullable, Optional};
 use droppen_instance::paths::Paths;
-use crate::sessions::Source;
+use droppen_sessions::Source;
 use droppen_base::time::iso8601;
 
 /// How long a task's display name may be, in characters.

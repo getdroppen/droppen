@@ -55,7 +55,7 @@ use serde::Serialize;
 
 use droppen_instance::db::{at_with, Db, Durability};
 use droppen_instance::paths::Paths;
-use crate::sessions::Source;
+use crate::Source;
 
 /// The index's schema, appended to under the same additive-only rule as
 /// [`super::SCHEMA`] — see `migrations.rs` for why an older binary must never
@@ -111,7 +111,7 @@ pub const INDEX_SCHEMA: &[&str] = &[
          probed_at INTEGER NOT NULL
      ) STRICT, WITHOUT ROWID;
      CREATE INDEX IF NOT EXISTS repo_keys_by_probe ON repo_keys (probed_at)",
-    // 2 — the unread ledgers (`crate::sessions::attention::unread`): the timestamps of a
+    // 2 — the unread ledgers (`crate::attention::unread`): the timestamps of a
     // transcript's newest assistant messages, and how far into the file they
     // were read.
     //
@@ -173,8 +173,8 @@ pub fn open(paths: &Paths) -> Index {
 /// The index the summarizers reach for, or `None` before anything installed one.
 ///
 /// A process-wide handle rather than an argument, and it is worth being honest
-/// about why: [`crate::sessions::claude::summarize_file`],
-/// `crate::sessions::codex::file_meta` and [`crate::sessions::repo::repo_key`]
+/// about why: `sessions::claude::summarize_file`,
+/// `sessions::codex::file_meta` and [`crate::repo::repo_key`]
 /// take a path and nothing else, because what they read is a file on this
 /// machine and not anything belonging to an instance. Threading a `Paths` into
 /// all three to reach the index would change the signature of every caller of
@@ -447,7 +447,7 @@ impl Index {
 /// `tokio`'s mutex rather than `std`'s because every caller is an async test
 /// that holds this across the `await` on a summary — which is the one thing a
 /// `std` guard must never do.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub async fn exclusive() -> tokio::sync::MutexGuard<'static, ()> {
     static LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
     LOCK.lock().await

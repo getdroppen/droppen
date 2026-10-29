@@ -12,10 +12,10 @@ use std::sync::{LazyLock, Mutex};
 use futures_util::future::BoxFuture;
 use serde_json::Value;
 
-use super::sources::{TokenUsage, UsageFile, UsageFold};
+use droppen_sessions::sources::{TokenUsage, UsageFile, UsageFold};
 use super::transcript::{content_blocks, user_title_candidate};
-use super::util::{self, read_head_lines, read_tail_lines, title_line, try_parse, FileCache};
-use super::{SessionActivity, SessionScope, SessionStatus, SessionSummary, Source};
+use droppen_sessions::util::{self, read_head_lines, read_tail_lines, title_line, try_parse, FileCache};
+use droppen_sessions::{SessionActivity, SessionScope, SessionStatus, SessionSummary, Source};
 use crate::claude_roots;
 use droppen_http::openapi_ext::Nullable;
 use droppen_instance::paths::{ClaudeRoot, Paths};
@@ -63,7 +63,7 @@ pub fn scope_of(root: ClaudeRoot) -> SessionScope {
 /// have to be told which server is answering for them.
 pub(super) async fn mark_owned(paths: &Paths, summaries: &mut [SessionSummary]) {
     let local = droppen_instance::identity::ServerId::local(paths);
-    let owned = super::owned_sessions::read(paths).await;
+    let owned = droppen_sessions::owned_sessions::read(paths).await;
     for summary in summaries {
         match owned.server_of(Source::Claude, &summary.id) {
             Some(server) => {
@@ -96,7 +96,7 @@ impl FinishExt for [SessionSummary] {
             return;
         }
         let live = live_claude_session_ids(paths).await;
-        let titles = super::custom_titles(paths, Source::Claude).await;
+        let titles = droppen_sessions::custom_titles(paths, Source::Claude).await;
         for summary in self.iter_mut() {
             if live.contains(&summary.id) {
                 let activity = claude_activity(Path::new(&summary.file_path)).await;
@@ -119,7 +119,7 @@ impl FinishExt for [SessionSummary] {
 /// above the corpus — 70 transcripts on the machine this was measured on — so
 /// the working set never reaches it.
 ///
-/// Emptied wholesale rather than evicted one at a time, following [`super::repo`]
+/// Emptied wholesale rather than evicted one at a time, following [`droppen_sessions::repo`]
 /// which made the same trade for the same reason: an LRU needs a second
 /// structure to maintain, and being wrong costs a re-read. It costs less than it
 /// used to, at that — a cleared entry is now found again in the durable index by
@@ -131,7 +131,7 @@ const CACHE_MAX: usize = 2048;
 /// files that actually changed.
 ///
 /// The near tier of two. This one is a `HashMap` lookup and dies with the
-/// process; behind it sits [`crate::sessions::index`], which is what stops a restart
+/// process; behind it sits [`droppen_sessions::index`], which is what stops a restart
 /// costing 11.2 MB of head and tail parsing before the first list appears.
 static LIST_CACHE: LazyLock<FileCache<SessionSummary>> = LazyLock::new(|| FileCache::new(CACHE_MAX));
 
@@ -155,7 +155,7 @@ fn from_index(mut payload: serde_json::Value) -> Option<SessionSummary> {
 pub async fn summarize_file(file_path: &Path, id: &str, root: ClaudeRoot) -> std::io::Result<SessionSummary> {
     let metadata = tokio::fs::metadata(file_path).await?;
     let mtime = mtime_ms(&metadata);
-    let mark = crate::sessions::index::Watermark::of(file_path, &metadata);
+    let mark = droppen_sessions::index::Watermark::of(file_path, &metadata);
     // Size as well as mtime, so the near tier agrees with the durable one
     // about what "unchanged" means.
     if let Some(summary) = LIST_CACHE.get(file_path, mtime, metadata.len()) {
@@ -165,7 +165,7 @@ pub async fn summarize_file(file_path: &Path, id: &str, root: ClaudeRoot) -> std
     // What some previous boot worked out about this exact file. The watermark is
     // the entire check: same path, same length, same mtime, or it is a miss and
     // the transcript gets read like there was no index at all.
-    let index = crate::sessions::index::current();
+    let index = droppen_sessions::index::current();
     if let Some(summary) = index
         .as_ref()
         .and_then(|index| index.summary::<serde_json::Value>(Source::Claude, id, mark))
@@ -263,7 +263,7 @@ pub async fn summarize_file(file_path: &Path, id: &str, root: ClaudeRoot) -> std
         server: String::new(),
         title: picked.as_deref().map(title_line).unwrap_or_else(|| "(untitled)".to_string()),
         cwd: Nullable(cwd),
-        // Filled in by `crate::sessions::repo::apply`, which spawns one `git`
+        // Filled in by `droppen_sessions::repo::apply`, which spawns one `git`
         // per distinct directory rather than one per row.
         repo_key: Nullable(None),
         git_branch: Nullable(git_branch),
@@ -274,14 +274,14 @@ pub async fn summarize_file(file_path: &Path, id: &str, root: ClaudeRoot) -> std
         size_bytes: metadata.len(),
         file_path: file_path.to_string_lossy().into_owned(),
         status: SessionStatus::Idle,
-        // Both refined by `crate::sessions::DriverStates::apply` for the
+        // Both refined by `droppen_sessions::DriverStates::apply` for the
         // sessions this server drives; a row nobody drives keeps these.
         activity: SessionActivity::Idle,
         resident: Nullable(None),
         claude_root: Some(root),
         acp_agent: None,
         account_id: None,
-        // Filled in by `crate::sessions::attention::apply`, which memoises the transcript
+        // Filled in by `droppen_sessions::attention::apply`, which memoises the transcript
         // read this cache would otherwise repeat for it.
         attention_at: Nullable(None),
         unread: false,
@@ -481,7 +481,7 @@ pub async fn claude_activity(file_path: &Path) -> ClaudeActivity {
 
 /// Ids the user archived out of the list.
 pub async fn archived_ids(paths: &Paths) -> HashSet<String> {
-    super::archive::archived_ids(paths)
+    droppen_sessions::archive::archived_ids(paths)
 }
 
 /// Every `<uuid>.jsonl` under one root's projects directory.
@@ -513,8 +513,8 @@ pub async fn list_claude_sessions(paths: &Paths, bindings: &BTreeMap<String, Str
     // [`summarize_file`] takes a path and no instance, because a transcript is a
     // file on this machine and belongs to nobody here. This is where the index
     // it writes into is named — on the way past, by the caller that does hold a
-    // `Paths`. See [`crate::sessions::index::current`].
-    crate::sessions::index::install(paths);
+    // `Paths`. See [`droppen_sessions::index::current`].
+    droppen_sessions::index::install(paths);
     let archived = archived_ids(paths).await;
 
     // Ids are uuids, so a collision across roots means one file was copied by
@@ -592,7 +592,7 @@ pub async fn find_claude_session(paths: &Paths, id: &str) -> Option<ClaudeSessio
 /// directory holding every session there is.
 ///
 /// An id that becomes a *directory* of its own is held to the stricter
-/// [`crate::sessions::reference::is_path_segment_id`] instead.
+/// [`droppen_sessions::reference::is_path_segment_id`] instead.
 pub fn is_session_id(id: &str) -> bool {
     !id.is_empty() && !id.bytes().all(|b| b == b'.') && id.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.' || c == '-')
 }
@@ -623,23 +623,23 @@ pub async fn find_claude_session_file(paths: &Paths, id: &str) -> Option<PathBuf
 
 /// One session's row, with live status applied, or `None` when it is gone.
 pub async fn load_claude_summary(paths: &Paths, id: &str) -> Option<SessionSummary> {
-    crate::sessions::index::install(paths);
+    droppen_sessions::index::install(paths);
     let found = find_claude_session(paths, id).await?;
     let mut summary = summarize_file(&found.file_path, id, found.root).await.ok()?;
     std::slice::from_mut(&mut summary).finish(paths).await;
     Some(summary)
 }
 
-/// Claude Code's transcripts, for [`super::TranscriptSources`]: the sessions in
+/// Claude Code's transcripts, for [`droppen_sessions::TranscriptSources`]: the sessions in
 /// both roots' projects directories, and the parser of their main chain.
 pub struct ClaudeCodeSessions;
 
 impl ClaudeCodeSessions {
     /// Record that this instance created claude session `id`, in its ownership
-    /// registry ([`super::owned_sessions::OwnedSessions::record`]): for a session
+    /// registry ([`droppen_sessions::owned_sessions::OwnedSessions::record`]): for a session
     /// whose transcript lands in a root this server does not own.
     pub async fn record_owned(&self, paths: &Paths, id: &str) -> std::io::Result<()> {
-        super::owned_sessions::OwnedSessions::record(paths, self, id).await
+        droppen_sessions::owned_sessions::OwnedSessions::record(paths, self, id).await
     }
 
     /// Drop claude entries whose transcript is not in any root this server reads.
@@ -664,7 +664,7 @@ impl ClaudeCodeSessions {
     /// there does not mean "gone", and disowning a thread the user merely archived
     /// would be worse than keeping a stale line.
     pub async fn prune_owned(&self, paths: &Paths) {
-        let owned = super::owned_sessions::read(paths).await;
+        let owned = droppen_sessions::owned_sessions::read(paths).await;
         let ids: Vec<String> = owned.ids(Source::Claude).map(str::to_owned).collect();
         if ids.is_empty() {
             return;
@@ -680,7 +680,7 @@ impl ClaudeCodeSessions {
             return;
         }
         for id in &stale {
-            if let Err(error) = super::owned_sessions::forget(paths, Source::Claude, id).await {
+            if let Err(error) = droppen_sessions::owned_sessions::forget(paths, Source::Claude, id).await {
                 tracing::warn!(session = %id, %error, "cannot drop a stale ownership entry");
                 return;
             }
@@ -711,7 +711,7 @@ impl ProjectsDirExt for Path {
     }
 }
 
-impl super::Transcripts for ClaudeCodeSessions {
+impl droppen_sessions::Transcripts for ClaudeCodeSessions {
     fn source(&self) -> Source {
         Source::Claude
     }
@@ -745,7 +745,7 @@ impl super::Transcripts for ClaudeCodeSessions {
         Box::pin(super::transcript::parse_claude_transcript(paths, file_path, false))
     }
 
-    fn cli_choice<'a>(&'a self, file_path: &'a Path) -> BoxFuture<'a, Option<super::CliChoice>> {
+    fn cli_choice<'a>(&'a self, file_path: &'a Path) -> BoxFuture<'a, Option<droppen_sessions::CliChoice>> {
         Box::pin(read_cli_choice(file_path))
     }
 
@@ -789,11 +789,11 @@ impl super::Transcripts for ClaudeCodeSessions {
         })
     }
 
-    fn subagents(&self) -> Option<&dyn super::sidecars::Subagents> {
+    fn subagents(&self) -> Option<&dyn droppen_sessions::sidecars::Subagents> {
         Some(self)
     }
 
-    fn checklists(&self) -> Option<&dyn super::sidecars::Checklists> {
+    fn checklists(&self) -> Option<&dyn droppen_sessions::sidecars::Checklists> {
         Some(self)
     }
 
@@ -805,8 +805,8 @@ impl super::Transcripts for ClaudeCodeSessions {
         })
     }
 
-    fn context<'a>(&'a self, file_path: &'a Path) -> BoxFuture<'a, Option<super::context::ContextUsage>> {
-        Box::pin(super::context::read_claude_context(file_path))
+    fn context<'a>(&'a self, file_path: &'a Path) -> BoxFuture<'a, Option<droppen_sessions::context::ContextUsage>> {
+        Box::pin(droppen_sessions::context::read_claude_context(file_path))
     }
 
     // Each non-empty `text` block of a main-chain `assistant` entry.
@@ -893,9 +893,9 @@ impl UsageFold for ClaudeUsage {
 }
 
 /// The model/effort a session last ran with, read from its transcript tail.
-pub async fn read_cli_choice(file_path: &Path) -> Option<super::CliChoice> {
+pub async fn read_cli_choice(file_path: &Path) -> Option<droppen_sessions::CliChoice> {
     // Claude writes model+effort on every assistant entry, so a small tail is enough.
-    super::CliChoice::read_tail(file_path, 128 * 1024, |entry| {
+    droppen_sessions::CliChoice::read_tail(file_path, 128 * 1024, |entry| {
         if entry.get("type").and_then(Value::as_str) != Some("assistant") || entry.get("isSidechain") == Some(&Value::Bool(true)) {
             return None;
         }
@@ -922,7 +922,7 @@ mod tests {
     #[tokio::test]
     async fn the_prune_drops_claude_ids_with_no_transcript_and_keeps_the_rest() {
         use crate::claude_roots;
-        use crate::sessions::owned_sessions;
+        use droppen_sessions::owned_sessions;
 
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(dir.path().to_path_buf());
@@ -1241,10 +1241,10 @@ mod tests {
     fn an_id_of_dots_is_never_a_session() {
         for id in ["..", ".", "...", "a/b", "a\\b", ""] {
             assert!(!is_session_id(id), "{id:?} must not name a transcript");
-            assert!(!crate::sessions::reference::is_path_segment_id(id), "{id:?} must not name a directory");
+            assert!(!droppen_sessions::reference::is_path_segment_id(id), "{id:?} must not name a directory");
         }
         assert!(is_session_id("a..b"), "a dot inside a name is merely unusual");
-        assert!(!crate::sessions::reference::is_path_segment_id("a..b"), "but never part of a directory name");
+        assert!(!droppen_sessions::reference::is_path_segment_id("a..b"), "but never part of a directory name");
     }
 
     /// What an adoption by an earlier build left behind: a copy in this
@@ -1253,7 +1253,7 @@ mod tests {
     /// session, listed once, and resolved to the copy a resume runs against.
     #[tokio::test]
     async fn a_session_adopted_by_an_earlier_build_is_still_this_servers_own() {
-        let _guard = crate::sessions::index::exclusive().await;
+        let _guard = droppen_sessions::index::exclusive().await;
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Paths::for_instance(home.path().to_path_buf(), "alice");
         let id = "0b1c2d3e-4f50-4612-8a7b-9c0d1e2f3a4b";
@@ -1282,7 +1282,7 @@ mod tests {
     /// are different claims. See [`SessionSummary::server`].
     #[tokio::test]
     async fn a_discovered_session_is_reachable_through_this_server_and_says_so() {
-        let _guard = crate::sessions::index::exclusive().await;
+        let _guard = droppen_sessions::index::exclusive().await;
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Paths::for_instance(home.path().to_path_buf(), "alice");
 
@@ -1326,10 +1326,10 @@ mod tests {
     /// same answer", which is what every other assertion here cannot distinguish.
     #[tokio::test]
     async fn a_summary_outlives_the_process_and_a_moved_file_does_not() {
-        let _guard = crate::sessions::index::exclusive().await;
+        let _guard = droppen_sessions::index::exclusive().await;
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(home.path().to_path_buf());
-        crate::sessions::index::install(&paths);
+        droppen_sessions::index::install(&paths);
 
         let id = "durable-index-fixture";
         let (_dir, path) = session(&[r#"{"type":"summary","summary":"from the transcript","cwd":"/w"}"#]);
@@ -1339,13 +1339,13 @@ mod tests {
         // The restart: the in-memory tier is precisely the part that dies.
         LIST_CACHE.clear();
 
-        let index = crate::sessions::index::open(&paths);
+        let index = droppen_sessions::index::open(&paths);
         let metadata = std::fs::metadata(&path).expect("stat");
         let planted = SessionSummary {
             title: "read out of the index".to_string(),
             ..first.clone()
         };
-        index.remember_summary(Source::Claude, id, crate::sessions::index::Watermark::of(&path, &metadata), &planted);
+        index.remember_summary(Source::Claude, id, droppen_sessions::index::Watermark::of(&path, &metadata), &planted);
         assert_eq!(
             summarize_file(&path, id, ClaudeRoot::Local).await.expect("summarize").title,
             "read out of the index",
@@ -1360,7 +1360,7 @@ mod tests {
         })
         .expect("JSON");
         older.as_object_mut().expect("an object").remove("unreadCount");
-        index.remember_summary(Source::Claude, id, crate::sessions::index::Watermark::of(&path, &metadata), &older);
+        index.remember_summary(Source::Claude, id, droppen_sessions::index::Watermark::of(&path, &metadata), &older);
         LIST_CACHE.clear();
         assert_eq!(
             summarize_file(&path, id, ClaudeRoot::Local).await.expect("summarize").title,
@@ -1389,7 +1389,7 @@ mod tests {
         let wrecked = Paths::new(other.path().to_path_buf());
         std::fs::create_dir_all(wrecked.index_db().parent().expect("parent")).expect("mkdir");
         std::fs::write(wrecked.index_db(), b"this is not a database").expect("write");
-        crate::sessions::index::install(&wrecked);
+        droppen_sessions::index::install(&wrecked);
         LIST_CACHE.clear();
         assert_eq!(
             summarize_file(&path, id, ClaudeRoot::Local).await.expect("summarize").title,
@@ -1404,8 +1404,8 @@ mod tests {
     async fn discovery_reads_the_archive_s_table() {
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(dir.path().to_path_buf());
-        crate::sessions::archive::archive_claude_session(&paths, "one").await.expect("archive");
-        crate::sessions::archive::archive_claude_session(&paths, "two").await.expect("archive");
+        droppen_sessions::archive::archive_claude_session(&paths, "one").await.expect("archive");
+        droppen_sessions::archive::archive_claude_session(&paths, "two").await.expect("archive");
         assert_eq!(
             archived_ids(&paths).await,
             ["one".to_string(), "two".to_string()].into_iter().collect(),
@@ -1419,10 +1419,10 @@ mod tests {
     /// stand-in; these pin Claude Code's rules.
     mod speech {
         use super::*;
-        use crate::sessions::attention::derive::{echo, spoken, AssistantEcho};
-        use crate::sessions::attention::unread::{refresh, Ledger};
-        use crate::sessions::attention::{first_unread, FirstUnread};
-        use crate::sessions::Transcripts;
+        use droppen_sessions::attention::derive::{echo, spoken, AssistantEcho};
+        use droppen_sessions::attention::unread::{refresh, Ledger};
+        use droppen_sessions::attention::{first_unread, FirstUnread};
+        use droppen_sessions::Transcripts;
 
         const FALLBACK: &str = "2026-01-01T09:59:59.000Z";
 
@@ -1684,7 +1684,7 @@ mod tests {
     /// and model; these pin what each entry is.
     mod usage {
         use super::*;
-        use crate::sessions::Transcripts;
+        use droppen_sessions::Transcripts;
         use serde_json::json;
 
         /// What each entry of a literal transcript folds to, in order.

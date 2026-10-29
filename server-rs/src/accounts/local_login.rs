@@ -34,7 +34,7 @@ use serde::{Deserialize, Serialize};
 use super::login::Logins;
 use super::quota::readings::SharedReading;
 use super::rest::{AccountRest, LimitLog, LOCAL_CLAUDE, LOCAL_CODEX};
-use crate::sessions::account::LimitClass;
+use droppen_sessions::account::LimitClass;
 
 /// Whether the machine's own login can start a session right now, as far as
 /// this server can tell.

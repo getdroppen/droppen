@@ -334,7 +334,7 @@ pub fn is_image_name(name: &str) -> bool {
 ///
 /// The extraction is `Path::extension`, which has no extension for a dotfile
 /// (`.png`); the allowlist is shared with the other image sites.
-pub(super) fn is_renderable_image(path: &Path) -> bool {
+pub fn is_renderable_image(path: &Path) -> bool {
     path.extension().and_then(|ext| ext.to_str()).is_some_and(is_image_ext)
 }
 
@@ -732,7 +732,7 @@ impl<K: std::hash::Hash + Eq, V> BoundedMap<K, V> {
 /// A bounded, process-local cache of a value derived from a file, invalidated
 /// by the file's mtime and size.
 ///
-/// The near tier in front of [`crate::sessions::index`]: a hit is a map lookup, and a
+/// The near tier in front of [`crate::index`]: a hit is a map lookup, and a
 /// miss falls through to the durable answer or a re-read. Both CLIs build their
 /// list rows this way, and both check the same two fields because those are
 /// what the durable tier's watermark is made of.

@@ -68,7 +68,7 @@ use tokio::task::JoinHandle;
 
 use super::{attach_session_feed_with, FeedRegistry, ResumeFrom, SESSION_PAGE_SIZE};
 use crate::drive::Drive;
-use crate::sessions::Source;
+use droppen_sessions::Source;
 
 /// Frames smaller than this go out as text: below a kilobyte deflate saves a
 /// few hundred bytes at best, and every binary frame costs the page an
@@ -611,7 +611,7 @@ mod tests {
         let delta = next(&mut rx).await;
         assert_eq!(delta["sub"], 2);
         assert_eq!(delta["type"], "delta");
-        assert_eq!(delta["fromIndex"], 1000 - crate::sessions::loader::RESUME_OVERLAP);
+        assert_eq!(delta["fromIndex"], 1000 - droppen_sessions::loader::RESUME_OVERLAP);
         assert_eq!(registry.len(), 1, "two subscriptions, one watcher");
         assert_eq!(subs.len(), 2);
     }

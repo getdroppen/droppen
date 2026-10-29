@@ -28,7 +28,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 | --- | --- |
 | `api/` | HTTP + websocket 表面：`AppState`、扁平的路由注册、错误体、`Created`、返回 JSON 400 的抽取器 |
 | `app.rs` | 应用装配：config / state / routes / bind，以及取代 `GotchaApp::run` 的可停机 serve loop |
-| `sessions/` | 会话发现、transcript 归一化与线上数据形状 |
+| `sessions/` | 每个 CLI 自己的会话读取器：Claude Code、Codex、ACP 的 transcript、发现与归属，实现 `droppen-sessions` 的 `Transcripts` 端口；随各自的 provider 迁出 |
 | `feed/` | 单会话 websocket feed；`feed/global.rs` 是 `GET /api/events` 背后的会话列表 feed |
 | `drive/` | 驱动会话的路由，以及所有进程类子系统挂靠的 `Drive` 状态 |
 | `inject/` | 驱动本机 CLI，每个会话一次运行 |
@@ -38,7 +38,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 | `quota/` | 订阅额度面板 |
 | `schedule/` | 定时任务：一条 cron 表达式（按**服务器本地时区**解释）到点新开一个会话；`runner.rs` 是那个五秒一跳、只在持有实例锁时才启动的循环 |
 | `notify/` | 会话自己决定「这件事值得打扰你」时走的推送通道（Bark），以及注进会话的 `rh-notify` 与 skill |
-| `stats/` `models.rs` | token 用量统计与模型列表 |
+| `models/` | 模型列表 |
 | `claude_roots.rs` | 一次 spawn 跑在什么根目录下（带什么环境见下面 `droppen-base` 的 `process_env`） |
 | `crates/droppen-base/` | 各子系统都用、却不属于任何一个的底层工具：时钟（`time`）、文本编码（`text`）、只有本用户可读的文件（`fsutil`）、「文件里那个 pid 还是当初那个进程吗」的两道守卫（`procs`）、出站 webhook 的守卫（`outbound`）、读环境变量（`env`）、spawn 的环境与输出脱敏（`process_env`）、二进制的两个名字（`program`） |
 | `crates/droppen-instance/` | 实例的底座：各子系统共用的路径（`paths`）、一个服务端独占的实例目录与宣示所有权的 `flock`（`instance`）、改名也不变的服务端身份（`identity`），以及实例自己的 SQLite 状态库和只增不改的 schema（`db`） |
@@ -48,6 +48,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 | `crates/droppen-files/` | `$HOME` 下的浏览、读取、下载与上传——客户端传来的路径只在这里被解析和收敛，经 Droppen 进来的设备另被挡在服务端自己的数据和配置目录之外（`FileRoots::fence`）；以及 transcript 里私有 GitHub 仓库图片的代理（`media`，走本机 `gh` 的登录） |
 | `crates/droppen-workbench/` | 会话周围的窗格与布局：浏览器通过 websocket 驱动的 PTY（`terminals`）、每个 app 一个 code-server 及 iframe 用的 `/embed/{id}/*` 反向代理（`apps`，`apps/embed.rs`）、持久化分屏布局（`screens`）、界面偏好（`prefs`） |
 | `crates/droppen-plugins/` | 插件宿主：本实例装了哪些插件、哪些开着（配置 > 实例自己的决定 > 关）、它们的代码从哪里供给（`serve`，带实例级的能力密钥）、每个插件自己的文档存储（`store`）、安装包的校验（`install`）、`/api/plugins*`（`routes`）和 `plugin` 命令行（`cli`）；经 Droppen 进来的设备看不到任何插件 |
+| `crates/droppen-sessions/` | 会话本身：各处共用的会话词汇与线上数据形状、会话列表、未读与已读标记（`attention`，`…/seen` 路由在 `attention::routes`）、标题、置顶、归档、本实例的会话归属（`owned_sessions`）、`index.db`（`index`）、transcript 加载器（`loader`）和 token 用量统计（`stats`）；每个 CLI 的 transcript 都经 `Transcripts` 端口读，由服务端 `sessions/` 里的读取器实现 |
 | `crates/droppen-aggregator/` | 设备角色：这台电脑以它跑 AI 的那个身份，作为账号的设备去控制其他设备。在 hub 上签到、取管理员封给它的其他主机的机器密钥（`controller`、`hub`、`keys`），按 `access` 选定的范围跟随它们的索引、状态和最新会话（`copies`），存进 `aggregator/copies.db`（`store`），并在内存里交给本机页面（`live`）；另有给 `docs/hub-api/` 契约检查用的流量记录（`traffic`）。它需要的入网状态经 `Enrollment` 端口由 agent 填上 |
 | `crates/droppen-pty/` | 活过服务端重启的 pty：shim 进程（本二进制的隐藏子命令 `pty-shim`）、它的帧格式、环形缓冲与屏幕模型、留在磁盘上的边车文件，以及服务端这一侧的连接 |
 

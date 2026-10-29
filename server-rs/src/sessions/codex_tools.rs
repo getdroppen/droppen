@@ -62,11 +62,11 @@ use std::sync::OnceLock;
 use serde::Serialize;
 use serde_json::{Map, Value};
 
-use super::mentions::resolve_within_home;
-use super::tool_display::{
+use droppen_sessions::mentions::resolve_within_home;
+use droppen_sessions::tool_display::{
     as_display_string, compact, diff_of, pick_preferred, pretty, redact_encrypted, shorten_tool_name, ChecklistLinesExt, QuestionLinesExt,
 };
-use super::util::{first_line_of, is_renderable_image, make_tool_item, ItemKind, PatchHunk, Role, ToolDisplay, TranscriptItem};
+use droppen_sessions::util::{first_line_of, is_renderable_image, make_tool_item, ItemKind, PatchHunk, Role, ToolDisplay, TranscriptItem};
 use droppen_base::time::parse_iso_ms;
 use droppen_base::time::iso8601;
 
@@ -2462,7 +2462,7 @@ mod tests {
 }"#
             )
         );
-        let chain = crate::sessions::loader::fingerprint_chain(Path::new("/w/rollout.jsonl"), &items[..1]);
+        let chain = droppen_sessions::loader::fingerprint_chain(Path::new("/w/rollout.jsonl"), &items[..1]);
         assert_eq!(droppen_base::text::hex(&chain[1]), "161043a632f7e9c56bcfddda746ffaf3");
     }
 

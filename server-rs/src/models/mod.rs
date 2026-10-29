@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use droppen_http::error::ApiError;
 use droppen_http::extract::ApiQuery;
 use droppen_http::openapi_ext::{ExtraResponses, Nullable, Optional};
-use crate::sessions::Source;
+use droppen_sessions::Source;
 
 pub mod acp;
 pub mod claude;

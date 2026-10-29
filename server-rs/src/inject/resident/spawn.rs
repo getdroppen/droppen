@@ -7,7 +7,8 @@ use crate::accounts::store::AccountProvider;
 use crate::claude_roots;
 use crate::inject::common::{new_uuid, session_workdir, CHAT_SYSTEM_PROMPT};
 use crate::inject::{claude_prompt, require_provider, resident, AccountChoice, InjectError, InjectionRegistry, SendOptions, SendTo, Sent, StartAt};
-use crate::sessions::{claude, Source};
+use crate::sessions::claude;
+use droppen_sessions::Source;
 use droppen_base::process_env::{claude_env, claude_env_bare, clean_env_bare, Env};
 use droppen_instance::paths::{ClaudeRoot, Paths};
 

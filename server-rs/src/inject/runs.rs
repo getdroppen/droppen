@@ -51,7 +51,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::sessions::Source;
+use droppen_sessions::Source;
 
 /// One in-flight run, as it survives on disk.
 #[derive(Debug, Clone, Serialize, Deserialize)]

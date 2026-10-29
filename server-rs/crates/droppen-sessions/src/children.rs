@@ -96,7 +96,7 @@ pub async fn apply(paths: &Paths, transcripts: &TranscriptSources, sessions: &mu
 }
 
 /// The reader's read marks, as [`seen::read`] returns them.
-pub(super) trait ReadMarksExt {
+pub trait ReadMarksExt {
     /// The reader's mark on `id`, if they ever opened it.
     fn read_at(&self, source: Source, id: &str) -> Option<&str>;
 }
@@ -116,7 +116,7 @@ impl SessionChildStatus {
     /// Whether a child at this status, which last wrote at `updated_at`, has
     /// output its reader has not seen, given the later of its own mark and its
     /// parent's.
-    pub(super) fn is_unread(self, updated_at: &str, own: Option<&str>, parent: Option<&str>) -> bool {
+    pub fn is_unread(self, updated_at: &str, own: Option<&str>, parent: Option<&str>) -> bool {
         if self == SessionChildStatus::Working {
             return false;
         }
@@ -128,7 +128,7 @@ impl SessionChildStatus {
 }
 
 /// Children put in the order they were spawned.
-pub(super) trait SpawnOrderExt {
+pub trait SpawnOrderExt {
     /// Spawn order, as near as the files tell it: oldest write first, then id.
     fn sort_by_spawn(&mut self);
 }

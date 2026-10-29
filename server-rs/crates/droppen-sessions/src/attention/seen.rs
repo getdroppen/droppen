@@ -2,11 +2,11 @@
 //!
 //! One row per session in the machine-wide state database ([`droppen_instance::db`]), under
 //! [`scope::SEEN`] and keyed `"<source>/<id>"` — the same key the global feed
-//! diffs its rows by (`crate::feed::global`) and the same one a push
+//! diffs its rows by (`feed::global`) and the same one a push
 //! notification's `tag` carries, so the three never have to be translated into
 //! each other.
 //!
-//! `seen.json` was a mirror for one version, so that a [`droppen_supervisor::supervisor`]
+//! `seen.json` was a mirror for one version, so that a `droppen_supervisor::supervisor`
 //! demotion onto a `.prev` binary that had never heard of this database would
 //! still find its marks; the rollback floor has since risen to a build that
 //! reads the database, so nothing reads the file any more.
@@ -14,7 +14,7 @@
 //! It is deliberately *not* a subsystem with its own state struct. There is
 //! nothing to cache: the store is a few hundred bytes, every reader wants the
 //! newest value, and a write-through cache is one more thing that can disagree
-//! with what was committed. The same reasoning [`crate::sessions::titles`] gives
+//! with what was committed. The same reasoning [`crate::titles`] gives
 //! for going straight to the store applies here, only more so — this one is
 //! written on every tab focus.
 //!
@@ -40,7 +40,7 @@ use std::sync::Arc;
 
 use droppen_instance::db::{scope, Db};
 use droppen_instance::paths::Paths;
-use crate::sessions::Source;
+use crate::Source;
 use droppen_base::time::iso8601;
 
 /// How many sessions are remembered. Well past what any one list shows, and
@@ -50,13 +50,13 @@ pub const MAX_ENTRIES: usize = 500;
 /// The key both this store and a notification's `tag` use for a session.
 ///
 /// Deliberately server-free, which is why it goes through
-/// [`crate::sessions::reference::local_key`] rather than
-/// [`crate::sessions::SessionRef::scoped_key`]: a session marked read is read
+/// [`crate::reference::local_key`] rather than
+/// [`crate::SessionRef::scoped_key`]: a session marked read is read
 /// on every server on this machine, the `tag` two servers push under has to
-/// collapse to one notification, and `crate::notify::NotifyCaller::parse` reads
+/// collapse to one notification, and `notify::NotifyCaller::parse` reads
 /// this key back out of tokens minted by processes that are still running.
 pub fn key_of(source: Source, id: &str) -> String {
-    crate::sessions::reference::local_key(source, id)
+    crate::reference::local_key(source, id)
 }
 
 /// Serializes the *trim*, which is the one read-modify-write left here.

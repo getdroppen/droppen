@@ -42,7 +42,7 @@ use droppen_http::SendResult;
 use crate::inject::SendOptions;
 use droppen_http::openapi_ext::{ExtraResponses, Nullable, Optional};
 use droppen_instance::paths::Paths;
-use crate::sessions::{chats_cwd, Source};
+use droppen_sessions::{chats_cwd, Source};
 
 pub use provider::{ChatModelList, ChatProviderInfo, ChatProviderUpdate};
 pub use store::{ApiChat, ApiChatMessage};

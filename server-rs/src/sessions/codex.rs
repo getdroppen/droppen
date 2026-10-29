@@ -28,17 +28,17 @@ use std::time::{Duration, SystemTime};
 use futures_util::future::BoxFuture;
 use serde_json::Value;
 
-use super::children::{ReadMarksExt, SessionChild, SessionChildKind, SessionChildStatus, SpawnOrderExt};
+use droppen_sessions::children::{ReadMarksExt, SessionChild, SessionChildKind, SessionChildStatus, SpawnOrderExt};
 use super::codex_claims::{Claims, Verdict};
 use super::codex_tools::{CodexTools, Context};
 use droppen_instance::paths::Paths;
 use droppen_base::time::{iso8601, mtime_ms, now_ms};
-use super::sources::{TokenUsage, UsageFile, UsageFold};
-use super::util::{
+use droppen_sessions::sources::{TokenUsage, UsageFile, UsageFold};
+use droppen_sessions::util::{
     date_of, is_jsonl, make_item, num, read_head_lines, read_tail_lines, title_line, try_parse, FileCache, ItemKind, LossyLines, Role,
     TranscriptItem,
 };
-use super::{owned_sessions, CliChoice, SessionActivity, SessionScope, SessionStatus, SessionSummary, Source};
+use droppen_sessions::{owned_sessions, CliChoice, SessionActivity, SessionScope, SessionStatus, SessionSummary, Source};
 use droppen_http::openapi_ext::Nullable;
 
 /// The files in `~/.codex` that only the session list and the model list read:
@@ -126,7 +126,7 @@ async fn with_codex_status(mut summary: SessionSummary, updated_ms: i64) -> Sess
 /// What one rollout file says about itself, cached by mtime and size.
 ///
 /// `Serialize`/`Deserialize` because this is the payload
-/// [`crate::sessions::index`] stores: what survives a restart is this struct, not the
+/// [`droppen_sessions::index`] stores: what survives a restart is this struct, not the
 /// `SessionSummary` built from it, because the summary also carries a thread
 /// name and an ownership verdict that come from elsewhere and can change while
 /// the rollout file does not move at all.
@@ -151,7 +151,7 @@ struct FileMeta {
 const CACHE_MAX: usize = 2048;
 
 /// The near tier: what this process has already read, keyed by rollout path.
-/// Behind it is [`crate::sessions::index`], which remembers the same thing across a
+/// Behind it is [`droppen_sessions::index`], which remembers the same thing across a
 /// restart.
 static META_CACHE: LazyLock<FileCache<FileMeta>> = LazyLock::new(|| FileCache::new(CACHE_MAX));
 
@@ -209,7 +209,7 @@ pub(crate) fn is_wrapper_text(text: &str) -> bool {
 async fn file_meta(file_path: &Path, id: &str) -> std::io::Result<FileMeta> {
     let metadata = tokio::fs::metadata(file_path).await?;
     let mtime = mtime_ms(&metadata);
-    let mark = crate::sessions::index::Watermark::of(file_path, &metadata);
+    let mark = droppen_sessions::index::Watermark::of(file_path, &metadata);
     if let Some(meta) = META_CACHE.get(file_path, mtime, metadata.len()) {
         // Size too, so this tier and the durable one agree on what "unchanged"
         // means.
@@ -219,7 +219,7 @@ async fn file_meta(file_path: &Path, id: &str) -> std::io::Result<FileMeta> {
     // What a previous boot read out of this exact file. A rollout's head can be
     // half a megabyte — the `session_meta` line alone carries the base
     // instructions — so this is the read worth not repeating.
-    let index = crate::sessions::index::current();
+    let index = droppen_sessions::index::current();
     if let Some(meta) = index.as_ref().and_then(|index| index.summary::<FileMeta>(Source::Codex, id, mark)) {
         META_CACHE.put(file_path, mtime, meta.size_bytes, meta.clone());
         return Ok(meta);
@@ -562,7 +562,7 @@ fn row_to_summary(row: &ThreadRow, size_bytes: u64) -> (SessionSummary, i64) {
         claude_root: None,
         acp_agent: None,
         account_id: None,
-        // All filled in by `crate::sessions::attention::apply`, once per changed file.
+        // All filled in by `droppen_sessions::attention::apply`, once per changed file.
         attention_at: Nullable(None),
         unread: false,
         unread_count: 0,
@@ -616,8 +616,8 @@ fn meta_to_summary(meta: &FileMeta, names: &HashMap<String, String>) -> SessionS
 /// Every visible Codex session, preferring the state database.
 pub async fn list_codex_sessions(paths: &Paths) -> Vec<SessionSummary> {
     // Names the index that [`file_meta`] writes into; see
-    // [`crate::sessions::index::current`] for why it is not an argument.
-    crate::sessions::index::install(paths);
+    // [`droppen_sessions::index::current`] for why it is not an argument.
+    droppen_sessions::index::install(paths);
     let rows = CodexHome::of(paths).on_state_db(list_from_state_db).await.flatten();
     let mut summaries = match rows {
         Some(rows) => {
@@ -673,7 +673,7 @@ trait FinishExt {
 
 impl FinishExt for Vec<SessionSummary> {
     async fn finish(&mut self, paths: &Paths, claims: Claims) {
-        let titles = super::custom_titles(paths, Source::Codex).await;
+        let titles = droppen_sessions::custom_titles(paths, Source::Codex).await;
         if !titles.is_empty() {
             for summary in self.iter_mut() {
                 if let Some(custom) = titles.get(&summary.id) {
@@ -736,14 +736,14 @@ async fn list_by_scanning(paths: &Paths) -> Vec<SessionSummary> {
     out
 }
 
-/// Codex's transcripts, for [`super::TranscriptSources`]: the rollouts under
+/// Codex's transcripts, for [`droppen_sessions::TranscriptSources`]: the rollouts under
 /// `~/.codex`, found through its state database or by walking them.
 pub struct CodexSessions;
 
 impl CodexSessions {
     /// Record that this instance made thread `id`: in its ownership registry,
     /// then as a claim in the shared directory ([`super::codex_claims::claim`],
-    /// this reader's [`on_owned`](super::Transcripts::on_owned)).
+    /// this reader's [`on_owned`](droppen_sessions::Transcripts::on_owned)).
     /// [`OwnedSessions::record`](owned_sessions::OwnedSessions::record) writes
     /// every row and runs the step after it, so the two cannot drift.
     ///
@@ -756,7 +756,7 @@ impl CodexSessions {
     }
 }
 
-impl super::Transcripts for CodexSessions {
+impl droppen_sessions::Transcripts for CodexSessions {
     fn source(&self) -> Source {
         Source::Codex
     }
@@ -826,8 +826,8 @@ impl super::Transcripts for CodexSessions {
         Box::pin(std::future::ready(vec![paths.codex_sessions()]))
     }
 
-    fn context<'a>(&'a self, file_path: &'a Path) -> BoxFuture<'a, Option<super::context::ContextUsage>> {
-        Box::pin(super::context::read_codex_context(file_path))
+    fn context<'a>(&'a self, file_path: &'a Path) -> BoxFuture<'a, Option<droppen_sessions::context::ContextUsage>> {
+        Box::pin(droppen_sessions::context::read_codex_context(file_path))
     }
 
     // Each non-empty text part of an assistant `message` payload, minus the
@@ -987,12 +987,12 @@ impl UsageFold for CodexUsage {
 
 /// Resolve one visible Codex session without listing the whole corpus.
 pub async fn find_codex_session(paths: &Paths, id: &str) -> Option<SessionSummary> {
-    if !crate::sessions::reference::is_path_segment_id(id) {
+    if !droppen_sessions::reference::is_path_segment_id(id) {
         return None;
     }
     // After the id check, not before: an id that cannot name a thread is not a
     // reason to open a database.
-    crate::sessions::index::install(paths);
+    droppen_sessions::index::install(paths);
     let home = CodexHome::of(paths);
 
     let summary = match home.on_state_db({
@@ -1121,7 +1121,7 @@ pub async fn parse_codex_transcript(paths: &Paths, file_path: &Path) -> std::io:
             _ => {}
         }
     }
-    super::mentions::annotate_mentioned_files(&paths.home, &mut items, cwd.as_deref()).await;
+    droppen_sessions::mentions::annotate_mentioned_files(&paths.home, &mut items, cwd.as_deref()).await;
     Ok(items)
 }
 
@@ -1370,7 +1370,7 @@ mod tests {
     /// on the CLI where discovery has no root to distinguish "mine" by.
     #[tokio::test]
     async fn a_discovered_thread_names_the_server_it_is_reachable_through() {
-        let _guard = crate::sessions::index::exclusive().await;
+        let _guard = droppen_sessions::index::exclusive().await;
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Paths::for_instance(home.path().to_path_buf(), "alice");
 
@@ -1404,10 +1404,10 @@ mod tests {
     /// serialise/deserialise round trip that nothing else in this file does.
     #[tokio::test]
     async fn a_rollout_read_once_is_not_read_again_after_a_restart() {
-        let _guard = crate::sessions::index::exclusive().await;
+        let _guard = droppen_sessions::index::exclusive().await;
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(home.path().to_path_buf());
-        crate::sessions::index::install(&paths);
+        droppen_sessions::index::install(&paths);
 
         let id = "durable-index-fixture";
         let (_dir, path) = rollout(&[
@@ -1418,13 +1418,13 @@ mod tests {
         assert_eq!(first.title_fallback.as_deref(), Some("from the rollout"));
 
         META_CACHE.clear();
-        let index = crate::sessions::index::open(&paths);
+        let index = droppen_sessions::index::open(&paths);
         let metadata = std::fs::metadata(&path).expect("stat");
         let planted = FileMeta {
             title_fallback: Some("read out of the index".to_string()),
             ..first.clone()
         };
-        index.remember_summary(Source::Codex, id, crate::sessions::index::Watermark::of(&path, &metadata), &planted);
+        index.remember_summary(Source::Codex, id, droppen_sessions::index::Watermark::of(&path, &metadata), &planted);
 
         let after = file_meta(&path, id).await.expect("meta");
         assert_eq!(
@@ -1440,10 +1440,10 @@ mod tests {
     /// The sessions core's own tests read a stand-in; these pin Codex's rules.
     mod speech {
         use super::*;
-        use crate::sessions::attention::derive::{echo, spoken, AssistantEcho};
-        use crate::sessions::attention::unread::{refresh, Ledger};
-        use crate::sessions::util::try_parse;
-        use crate::sessions::Transcripts;
+        use droppen_sessions::attention::derive::{echo, spoken, AssistantEcho};
+        use droppen_sessions::attention::unread::{refresh, Ledger};
+        use droppen_sessions::util::try_parse;
+        use droppen_sessions::Transcripts;
 
         const FALLBACK: &str = "2026-01-01T09:59:59.000Z";
 
@@ -1559,7 +1559,7 @@ mod tests {
     /// and model; these pin what each entry is.
     mod usage {
         use super::*;
-        use crate::sessions::Transcripts;
+        use droppen_sessions::Transcripts;
         use serde_json::json;
 
         /// What each entry of a literal rollout folds to, in order.

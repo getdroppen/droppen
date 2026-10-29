@@ -47,7 +47,7 @@ use super::rest::{AccountRest, LimitLog};
 use droppen_instance::db::{self, Db};
 use droppen_http::openapi_ext::{Nullable, Optional};
 use droppen_instance::paths::Paths;
-use crate::sessions::account::{AccountRef, LimitClass};
+use droppen_sessions::account::{AccountRef, LimitClass};
 use droppen_base::env_block::{is_env_name, EnvVar, InvalidEnvBlock, DENIED_ENV_KEYS};
 use droppen_base::time::iso8601;
 
@@ -91,20 +91,20 @@ impl Default for AccountProvider {
 
 impl AccountProvider {
     /// The CLI this provider's sessions belong to.
-    pub fn source(self) -> crate::sessions::Source {
+    pub fn source(self) -> droppen_sessions::Source {
         match self {
-            AccountProvider::Claude => crate::sessions::Source::Claude,
-            AccountProvider::Codex => crate::sessions::Source::Codex,
+            AccountProvider::Claude => droppen_sessions::Source::Claude,
+            AccountProvider::Codex => droppen_sessions::Source::Codex,
         }
     }
 
     /// The provider whose accounts drive this CLI, or `None` for one that has
     /// no accounts: an ACP agent runs on its own configuration.
-    pub fn of(source: crate::sessions::Source) -> Option<Self> {
+    pub fn of(source: droppen_sessions::Source) -> Option<Self> {
         match source {
-            crate::sessions::Source::Claude => Some(AccountProvider::Claude),
-            crate::sessions::Source::Codex => Some(AccountProvider::Codex),
-            crate::sessions::Source::Acp => None,
+            droppen_sessions::Source::Claude => Some(AccountProvider::Claude),
+            droppen_sessions::Source::Codex => Some(AccountProvider::Codex),
+            droppen_sessions::Source::Acp => None,
         }
     }
 
@@ -1467,7 +1467,7 @@ mod tests {
     #[tokio::test]
     async fn an_account_carries_its_active_rests_and_reauthorizing_ends_the_auth_one() {
         use super::super::limits::Verdict;
-        use crate::sessions::account::LimitClass;
+        use droppen_sessions::account::LimitClass;
         use super::super::rest::{now_ms, Observation};
 
         let (_dir, store) = store();

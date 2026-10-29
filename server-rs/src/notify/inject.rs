@@ -34,7 +34,7 @@ use std::path::{Path, PathBuf};
 use droppen_instance::instance::InstanceDirs;
 use droppen_instance::paths::Paths;
 use droppen_base::process_env::Env;
-use crate::sessions::Source;
+use droppen_sessions::Source;
 
 use super::{cli, store, token};
 
@@ -216,7 +216,7 @@ pub async fn decorate(paths: &Paths, instance: &InstanceDirs, source: Source, id
         return;
     };
 
-    let key = crate::sessions::attention::seen::key_of(source, id);
+    let key = droppen_sessions::attention::seen::key_of(source, id);
     env.insert("PATH".to_string(), path_with(&dir, env.get("PATH").map(String::as_str)));
     let token = token::mint(&secret, instance.name(), &key);
     env.insert(cli::URL_ENV.to_string(), url);

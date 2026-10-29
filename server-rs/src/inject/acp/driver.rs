@@ -18,7 +18,7 @@ use crate::acp::{category, option_for, ConfigOption, SessionUpdate};
 use crate::acp_agent::AcpAgent;
 use crate::inject::{InjectError, InjectionRegistry, Phase, QueueOutcome, ResidentState, Sent};
 use crate::sessions::acp_transcript::{Record, Translator};
-use crate::sessions::{Injection, InjectionRunState, Source};
+use droppen_sessions::{Injection, InjectionRunState, Source};
 use droppen_base::time::iso8601;
 
 /// How long an agent process with nothing to do is kept.
@@ -207,7 +207,7 @@ impl Handle {
             queued_messages: state
                 .queue
                 .iter()
-                .map(|message| crate::sessions::QueuedMessage {
+                .map(|message| droppen_sessions::QueuedMessage {
                     id: message.id.clone(),
                     text: message.text.chars().take(200).collect(),
                     steered: false,
@@ -222,7 +222,7 @@ impl Handle {
         }
     }
 
-    pub(in crate::inject) fn info(&self) -> crate::sessions::ResidentInfo {
+    pub(in crate::inject) fn info(&self) -> droppen_sessions::ResidentInfo {
         self.state().into()
     }
 
@@ -598,7 +598,7 @@ impl Driver {
                 let dropped = self.state.queue.remove(index).expect("an index the queue just gave");
                 self.publish();
                 self.registry
-                    .note_receipt(Source::Acp, &self.id, &dropped.id, crate::sessions::delivery::ReceiptStatus::Failed);
+                    .note_receipt(Source::Acp, &self.id, &dropped.id, droppen_sessions::delivery::ReceiptStatus::Failed);
                 let _ = reply.send(QueueOutcome::Done);
             }
             Cmd::Stop(_) => unreachable!("handled by the loop"),
@@ -619,7 +619,7 @@ impl Driver {
             // The turn never starts: the session would have run on a model or
             // at an effort nobody asked for.
             self.registry
-                .note_receipt(Source::Acp, &self.id, &message.id, crate::sessions::delivery::ReceiptStatus::Failed);
+                .note_receipt(Source::Acp, &self.id, &message.id, droppen_sessions::delivery::ReceiptStatus::Failed);
             return match unset {
                 Unset::Refused(reason) => {
                     let said = self.redact(&reason);
@@ -639,7 +639,7 @@ impl Driver {
         self.record_choice().await;
         self.conn.prompt(&self.agent_session, message.prompt).await?;
         self.registry
-            .note_receipt(Source::Acp, &self.id, &message.id, crate::sessions::delivery::ReceiptStatus::Sent);
+            .note_receipt(Source::Acp, &self.id, &message.id, droppen_sessions::delivery::ReceiptStatus::Sent);
         self.start_turn();
         Ok(())
     }
@@ -817,7 +817,7 @@ impl Driver {
         self.transcript.append(&records).await;
         for dropped in std::mem::take(&mut self.state.queue) {
             self.registry
-                .note_receipt(Source::Acp, &self.id, &dropped.id, crate::sessions::delivery::ReceiptStatus::Failed);
+                .note_receipt(Source::Acp, &self.id, &dropped.id, droppen_sessions::delivery::ReceiptStatus::Failed);
         }
         if self.state.active {
             let interrupted = self.interrupted;
