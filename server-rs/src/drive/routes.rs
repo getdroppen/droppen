@@ -12,6 +12,7 @@ use gotcha::axum::extract::FromRef;
 use gotcha::{api, GotchaRouter, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
+use super::attachments::resolve_attachments;
 use super::composer_prefs::{ComposerChoice, ComposerPrefs};
 use super::idempotent::{self, Begun, Key};
 use crate::accounts::store::{AccountError, AccountProvider};
@@ -608,7 +609,7 @@ async fn start_session(state: DriveState, body: NewSession, qid: Option<String>)
     // The first message's attachments pass the gate a later message's do
     // ([`deliver_message`]): every one proven to come from `/api/uploads`, and
     // the resolved path — what was checked — is what reaches the CLI.
-    let (images, attachments) = inject::resolve_attachments(&drive.paths, body.images.0.unwrap_or_default(), body.files.0.unwrap_or_default())?;
+    let (images, attachments) = resolve_attachments(&drive.paths, body.images.0.unwrap_or_default(), body.files.0.unwrap_or_default())?;
     let resolved = files::resolve_safe(&drive.paths, Some(&body.cwd)).map_err(|error| error.into_api("invalid working directory"))?;
     // Catch a bad path here: a spawn in a missing cwd only fails asynchronously.
     if !tokio::fs::metadata(&resolved).await.map(|m| m.is_dir()).unwrap_or(false) {
@@ -719,7 +720,7 @@ async fn deliver_message(
     let attachments = body.files.0.unwrap_or_default();
     // Every attachment is proven to come from `/api/uploads` and replaced by its
     // resolved path, so what reaches the CLI is what was checked.
-    let (images, attachments) = inject::resolve_attachments(&drive.paths, images, attachments)?;
+    let (images, attachments) = resolve_attachments(&drive.paths, images, attachments)?;
 
     let summary = writable_session(drive, source, &id).await?;
     // A session with a resident behind it is never refused for being busy: the
@@ -2186,6 +2187,7 @@ pub fn describe(reg: &mut ExtraResponses) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::drive::attachments::ATTACHMENT_MISSING;
     use crate::drive::Drive;
     use std::sync::Arc;
 
@@ -2288,12 +2290,12 @@ mod tests {
         let uploads = drive.paths.uploads_dir();
         let images = vec![uploaded(&drive, "a.png")];
         assert_eq!(
-            inject::resolve_attachments(&drive.paths, images.clone(), vec![]).expect("an upload").0,
+            resolve_attachments(&drive.paths, images.clone(), vec![]).expect("an upload").0,
             images
         );
-        assert!(inject::resolve_attachments(&drive.paths, vec!["/etc/passwd".to_string()], vec![]).is_err());
+        assert!(resolve_attachments(&drive.paths, vec!["/etc/passwd".to_string()], vec![]).is_err());
         assert!(
-            inject::resolve_attachments(
+            resolve_attachments(
                 &drive.paths,
                 vec![],
                 vec![uploads.join("../../.ssh/id_rsa").to_string_lossy().into_owned()]
@@ -2315,21 +2317,21 @@ mod tests {
             let error = result.expect_err("refused");
             (error.status().as_u16(), error.body()["error"].as_str().map(str::to_string))
         };
-        let missing = (409, Some(inject::ATTACHMENT_MISSING.to_string()));
+        let missing = (409, Some(ATTACHMENT_MISSING.to_string()));
 
         // Before the uploads directory was ever made…
         assert!(!uploads.exists());
         let gone = uploads.join("abc/gone.png").to_string_lossy().into_owned();
-        assert_eq!(code(inject::resolve_attachments(&drive.paths, vec![gone.clone()], vec![])), missing);
+        assert_eq!(code(resolve_attachments(&drive.paths, vec![gone.clone()], vec![])), missing);
         // …and after.
         let real = uploaded(&drive, "kept.txt");
         assert_eq!(
-            code(inject::resolve_attachments(&drive.paths, vec![], vec![real.clone(), gone])),
+            code(resolve_attachments(&drive.paths, vec![], vec![real.clone(), gone])),
             missing,
             "one gone refuses the message"
         );
         assert_eq!(
-            code(inject::resolve_attachments(
+            code(resolve_attachments(
                 &drive.paths,
                 vec![],
                 vec![uploads.join("abc").to_string_lossy().into_owned()]
@@ -2337,7 +2339,7 @@ mod tests {
             missing,
             "a directory is not a file"
         );
-        let refused = inject::resolve_attachments(
+        let refused = resolve_attachments(
             &drive.paths,
             vec![uploads.join("abc/also-gone.png").to_string_lossy().into_owned()],
             vec![],
@@ -2356,14 +2358,14 @@ mod tests {
             std::fs::write(&secret, b"s").expect("secret");
             let link = uploads.join("abc/link.txt");
             std::os::unix::fs::symlink(&secret, &link).expect("symlink");
-            let error = inject::resolve_attachments(&drive.paths, vec![], vec![link.to_string_lossy().into_owned()]).expect_err("refused");
+            let error = resolve_attachments(&drive.paths, vec![], vec![link.to_string_lossy().into_owned()]).expect_err("refused");
             assert_eq!(
                 (error.status().as_u16(), error.body()["error"].as_str()),
                 (409, Some("attachment paths must come from /api/uploads")),
                 "a symlink out of the uploads directory is not an upload"
             );
         }
-        assert!(inject::resolve_attachments(&drive.paths, vec![], vec![real]).is_ok());
+        assert!(resolve_attachments(&drive.paths, vec![], vec![real]).is_ok());
     }
 
     /// The message route refuses a missing upload with the same 409, before it
@@ -2394,7 +2396,7 @@ mod tests {
         .expect_err("refused");
         assert_eq!(
             (error.status().as_u16(), error.body()["error"].as_str()),
-            (409, Some(inject::ATTACHMENT_MISSING))
+            (409, Some(ATTACHMENT_MISSING))
         );
 
         // On disk, it passes; the next thing said no is the session nobody made.
@@ -2479,7 +2481,7 @@ mod tests {
         let gone = uploads.join("abc/gone.png").to_string_lossy().into_owned();
         let missing = new_session_body(&missing_cwd, Some(vec![gone]), None);
         let error = new_session(State(DriveState::from_ref(&state)), ApiJson(missing)).await.expect_err("refused");
-        assert_eq!(refused(error), (409, Some(inject::ATTACHMENT_MISSING.to_string())));
+        assert_eq!(refused(error), (409, Some(ATTACHMENT_MISSING.to_string())));
 
         // Uploaded paths pass, and the next thing said no is the directory.
         std::fs::create_dir_all(uploads.join("abc")).expect("uploads dir");

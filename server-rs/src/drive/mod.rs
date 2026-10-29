@@ -11,6 +11,7 @@
 //! cache and the composer preferences, so the merge surface in `api/mod.rs`
 //! stays a single line.
 
+mod attachments;
 pub mod composer_prefs;
 pub(crate) mod idempotent;
 pub mod routes;
