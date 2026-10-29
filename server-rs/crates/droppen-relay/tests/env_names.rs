@@ -1,8 +1,8 @@
-//! The rename to Droppen: a relay reads `DROPPEN_RELAY_*` first
-//! and the old `RH_RELAY_*` names when those are unset, logging each old name
-//! it used once and that it stops working in v0.2.135. Checked on the binary,
-//! with nothing in its environment but what each case sets; every case stops
-//! on a bad value before listening.
+//! A relay reads its configuration by the `DROPPEN_RELAY_*` names only: the
+//! names from before the rename to Droppen, `RH_RELAY_*`, are ignored, and
+//! nothing is said about them. Checked on the binary, with nothing in its
+//! environment but what each case sets; every case stops on a missing or bad
+//! value before listening.
 
 use rh_relay::config::hex;
 
@@ -21,72 +21,66 @@ fn relay(args: &[&str], env: &[(&str, &str)]) -> (bool, String, String) {
     (out.status.success(), stdout, said)
 }
 
-/// A relay's settings under the old names, every one it needs to get as far
-/// as `RH_RELAY_MAX_CONNS`.
-fn old_names(key: &str, keys: &str) -> Vec<(&'static str, String)> {
+/// Everything a relay needs to get as far as `DROPPEN_RELAY_TRUST_PROXY`,
+/// under the new names.
+fn new_names(key: &str, keys: &str) -> Vec<(&'static str, String)> {
     vec![
-        ("RH_RELAY_ORIGIN", "ws://127.0.0.1:1".to_string()),
-        ("RH_RELAY_ID", "sin-1".to_string()),
-        ("RH_RELAY_KEY", key.to_string()),
-        ("RH_RELAY_TICKET_KEYS", keys.to_string()),
+        ("DROPPEN_RELAY_ORIGIN", "ws://127.0.0.1:1".to_string()),
+        ("DROPPEN_RELAY_ID", "sin-1".to_string()),
+        ("DROPPEN_RELAY_KEY", key.to_string()),
+        ("DROPPEN_RELAY_TICKET_KEYS", keys.to_string()),
     ]
 }
 
-fn deprecations(said: &str, old: &str) -> usize {
-    said.lines().filter(|l| l.contains(&format!("{old} is deprecated"))).count()
+/// `vars` with each `DROPPEN_RELAY_X` as `RH_RELAY_X`.
+fn under_old_names(vars: &[(&'static str, String)]) -> Vec<(String, String)> {
+    vars.iter().map(|(name, value)| (name.replacen("DROPPEN_RELAY_", "RH_RELAY_", 1), value.clone())).collect()
+}
+
+fn pairs(vars: &[(impl AsRef<str>, String)]) -> Vec<(&str, &str)> {
+    vars.iter().map(|(k, v)| (k.as_ref(), v.as_str())).collect()
 }
 
 #[test]
-fn the_old_names_still_configure_a_relay_and_each_is_logged_once() {
+fn the_old_names_configure_nothing() {
     let (key, keys) = (hex(&[8; 32]), format!("1:{}", hex(&[9; 32])));
-    let env = old_names(&key, &keys);
-    let mut env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
-    env.push(("RH_RELAY_MAX_CONNS", "lots"));
-    let (ok, _, said) = relay(&["serve"], &env);
-    // Past the origin, the id, the ticket keys and the key: each was read
-    // under its old name, or it would have stopped there.
-    assert!(!ok && said.contains("DROPPEN_RELAY_MAX_CONNS: a number"), "{said}");
-    for old in ["RH_RELAY_ORIGIN", "RH_RELAY_ID", "RH_RELAY_KEY", "RH_RELAY_TICKET_KEYS", "RH_RELAY_MAX_CONNS"] {
-        assert_eq!(deprecations(&said, old), 1, "{old}: {said}");
-    }
-    assert!(
-        said.contains("RH_RELAY_KEY is deprecated: add DROPPEN_RELAY_KEY with the same value; RH_RELAY_KEY stops working in v0.2.135"),
-        "{said}"
-    );
+    let old = under_old_names(&new_names(&key, &keys));
+    let (ok, _, said) = relay(&["serve"], &pairs(&old));
+    // It stops at the first thing it needs, which only an old name gave.
+    assert!(!ok && said.contains("DROPPEN_RELAY_ORIGIN is required"), "{said}");
+    assert!(!said.contains("RH_RELAY_") && !said.contains("deprecated"), "{said}");
 }
 
 #[test]
-fn the_new_name_wins_over_the_old_one() {
+fn an_old_name_beside_the_new_ones_is_ignored() {
     let (key, keys) = (hex(&[8; 32]), format!("1:{}", hex(&[9; 32])));
-    let env = [
-        ("DROPPEN_RELAY_ORIGIN", "ws://127.0.0.1:1"),
-        ("DROPPEN_RELAY_ID", "sin-1"),
-        ("DROPPEN_RELAY_KEY", key.as_str()),
-        ("DROPPEN_RELAY_TICKET_KEYS", keys.as_str()),
-    ];
+    let env = new_names(&key, &keys);
+    let env = pairs(&env);
+    // The old name's bad value is not read: it stops at the next new name's.
+    let (ok, _, said) = relay(&["serve"], &[&env[..], &[("RH_RELAY_MAX_CONNS", "lots"), ("DROPPEN_RELAY_DRAIN_SECS", "soon")]].concat());
+    assert!(!ok && said.contains("DROPPEN_RELAY_DRAIN_SECS: a number") && !said.contains("MAX_CONNS: a number"), "{said}");
+    // Set both: the new name's value is the one read.
     let (ok, _, said) = relay(&["serve"], &[&env[..], &[("DROPPEN_RELAY_MAX_CONNS", "lots"), ("RH_RELAY_MAX_CONNS", "10")]].concat());
     assert!(!ok && said.contains("DROPPEN_RELAY_MAX_CONNS: a number"), "{said}");
-    assert!(
-        said.contains(
-            "DROPPEN_RELAY_MAX_CONNS and the deprecated RH_RELAY_MAX_CONNS are both set, to different values: DROPPEN_RELAY_MAX_CONNS is used; remove RH_RELAY_MAX_CONNS (it stops working in v0.2.135)"
-        ),
-        "{said}"
-    );
-    // The other way round: the new name's 10 parses, and it stops at the next.
-    let (ok, _, said) = relay(
-        &["serve"],
-        &[&env[..], &[("DROPPEN_RELAY_MAX_CONNS", "10"), ("RH_RELAY_MAX_CONNS", "lots"), ("DROPPEN_RELAY_DRAIN_SECS", "soon")]].concat(),
-    );
-    assert!(!ok && said.contains("DROPPEN_RELAY_DRAIN_SECS: a number") && !said.contains("MAX_CONNS: a number"), "{said}");
-    // Only new names: nothing deprecated.
-    let (ok, _, said) = relay(&["serve"], &[&env[..], &[("DROPPEN_RELAY_MAX_CONNS", "lots")]].concat());
-    assert!(!ok && said.contains("DROPPEN_RELAY_MAX_CONNS: a number") && !said.contains("deprecated"), "{said}");
+    assert!(!said.contains("RH_RELAY_") && !said.contains("deprecated"), "{said}");
+}
+
+/// A key under the old name is no key: without `DROPPEN_RELAY_KEY` or a
+/// state directory, the relay says what to set rather than start.
+#[test]
+fn the_old_key_name_is_not_a_key() {
+    let (key, keys) = (hex(&[8; 32]), format!("1:{}", hex(&[9; 32])));
+    let mut env = new_names(&key, &keys);
+    env.retain(|(name, _)| *name != "DROPPEN_RELAY_KEY");
+    let env = [pairs(&env), vec![("RH_RELAY_KEY", key.as_str())]].concat();
+    let (ok, _, said) = relay(&["serve"], &env);
+    assert!(!ok && said.contains("set DROPPEN_RELAY_KEY"), "{said}");
 }
 
 #[test]
-fn with_neither_name_set_it_says_the_new_one() {
+fn with_nothing_set_it_says_the_new_name() {
     let (ok, _, said) = relay(&["serve"], &[]);
-    assert!(!ok && said.contains("DROPPEN_RELAY_ORIGIN is required") && !said.contains("deprecated"), "{said}");
+    assert!(!ok && said.contains("DROPPEN_RELAY_ORIGIN is required"), "{said}");
     // A new key is printed under the new name.
     let (ok, stdout, _) = relay(&["keygen"], &[]);
     assert!(ok && stdout.starts_with("DROPPEN_RELAY_KEY=") && stdout.trim().len() == "DROPPEN_RELAY_KEY=".len() + 64, "{stdout}");

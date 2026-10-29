@@ -1,10 +1,7 @@
 //! A relay's configuration, from the environment only (§2.5, §2.11, §2.13).
 //!
-//! A relay's variables are `DROPPEN_RELAY_*`. Before the rename to Droppen
-//! they were `RH_RELAY_*`; until v0.2.135 each old name is still read when
-//! its new name is unset, and the relay logs once per old name that it is
-//! deprecated and stops working in v0.2.135 (or, when both are set to
-//! different values, that the new one is used). See [`env`].
+//! A relay's variables are `DROPPEN_RELAY_*`; their names from before the
+//! rename to Droppen, `RH_RELAY_*`, are not read. See [`env`].
 //!
 //! | variable | meaning |
 //! |---|---|
@@ -111,71 +108,9 @@ impl std::fmt::Debug for Config {
     }
 }
 
-/// The variable `name`, trimmed (empty is unset). A `DROPPEN_RELAY_*` name
-/// falls back to its old name ([`old_name`]) when unset, so a relay
-/// configured before the rename keeps working until v0.2.135; using the old
-/// name, or setting both to different values (the new one wins), is logged
-/// once per name.
+/// The variable `name`, trimmed (empty is unset).
 pub fn env(name: &str) -> Option<String> {
-    let (value, old) = lookup(name, |n| std::env::var(n).ok());
-    if let Some(line) = old.and_then(|old| notice(&NOTICED, name, &old)) {
-        tracing::warn!("{line}");
-    }
-    value
-}
-
-/// The old names already logged in this process.
-static NOTICED: std::sync::Mutex<std::collections::BTreeSet<String>> = std::sync::Mutex::new(std::collections::BTreeSet::new());
-
-/// The name a relay variable had before the rename to Droppen:
-/// `DROPPEN_RELAY_X` → `RH_RELAY_X`, and the shared capture's
-/// `DROPPEN_HUB_API_TRAFFIC` → `RH_HUB_API_TRAFFIC`; `None` for any other
-/// name.
-pub fn old_name(name: &str) -> Option<String> {
-    if name == "DROPPEN_HUB_API_TRAFFIC" {
-        // The hub-API capture (`crate::traffic`), named like the other
-        // binaries that write to it.
-        return Some("RH_HUB_API_TRAFFIC".into());
-    }
-    name.strip_prefix("DROPPEN_RELAY_").map(|rest| format!("RH_RELAY_{rest}"))
-}
-
-/// What a renamed variable's old name did.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum OldName {
-    /// Only the old name is set: its value is used.
-    Used(String),
-    /// Both are set, to different values: the new name's is used.
-    Overridden(String),
-}
-
-/// `name`'s value as [`env`] reads it through `read`, and what its old name
-/// did. A new name set to the old one's value says nothing: that is the
-/// switch-over, both set until the old one is removed.
-pub fn lookup(name: &str, read: impl Fn(&str) -> Option<String>) -> (Option<String>, Option<OldName>) {
-    let get = |n: &str| read(n).map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
-    let value = get(name);
-    let Some(old) = old_name(name) else { return (value, None) };
-    match (value, get(&old)) {
-        (None, Some(was)) => (Some(was), Some(OldName::Used(old))),
-        (Some(value), Some(was)) if was != value => (Some(value), Some(OldName::Overridden(old))),
-        (value, _) => (value, None),
-    }
-}
-
-/// The line to log about `name`'s old name, the first time it comes up
-/// (`noticed` remembers); `None` after.
-fn notice(noticed: &std::sync::Mutex<std::collections::BTreeSet<String>>, name: &str, old: &OldName) -> Option<String> {
-    let (OldName::Used(was) | OldName::Overridden(was)) = old;
-    if !noticed.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(was.clone()) {
-        return None;
-    }
-    Some(match old {
-        OldName::Used(_) => format!("{was} is deprecated: add {name} with the same value; {was} stops working in v0.2.135"),
-        OldName::Overridden(_) => format!(
-            "{name} and the deprecated {was} are both set, to different values: {name} is used; remove {was} (it stops working in v0.2.135)"
-        ),
-    })
+    std::env::var(name).ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
 }
 
 pub fn unhex(text: &str) -> Option<Vec<u8>> {
@@ -389,72 +324,5 @@ mod tests {
         assert_eq!(k.len(), 2);
         assert_eq!(k[1].0, 2);
         assert!(parse_keys("1:zz").is_none());
-    }
-
-    /// [`lookup`] over just `vars`.
-    fn lookup_in(vars: &[(&str, &str)], name: &str) -> (Option<String>, Option<OldName>) {
-        let vars: std::collections::HashMap<&str, &str> = vars.iter().copied().collect();
-        lookup(name, |n| vars.get(n).map(|v| v.to_string()))
-    }
-
-    #[test]
-    fn a_relay_variable_was_rh_relay_before_the_rename() {
-        assert_eq!(old_name("DROPPEN_RELAY_KEY").as_deref(), Some("RH_RELAY_KEY"));
-        assert_eq!(old_name("DROPPEN_RELAY_REGISTRATION_TOKEN").as_deref(), Some("RH_RELAY_REGISTRATION_TOKEN"));
-        assert_eq!(old_name("PORT"), None);
-        assert_eq!(old_name("DROPPEN_HUB_ORIGIN"), None, "a hub variable is not the relay's");
-        assert_eq!(old_name("DROPPEN_HUB_API_TRAFFIC").as_deref(), Some("RH_HUB_API_TRAFFIC"), "the capture all binaries share");
-    }
-
-    #[test]
-    fn the_new_name_wins_over_the_old_one() {
-        let both = [("DROPPEN_RELAY_ID", "sin-2"), ("RH_RELAY_ID", "sin-1")];
-        assert_eq!(
-            lookup_in(&both, "DROPPEN_RELAY_ID"),
-            (Some("sin-2".into()), Some(OldName::Overridden("RH_RELAY_ID".into())))
-        );
-        // The switch-over: both set to one value, nothing to say.
-        let same = [("DROPPEN_RELAY_ID", "sin-1"), ("RH_RELAY_ID", " sin-1 ")];
-        assert_eq!(lookup_in(&same, "DROPPEN_RELAY_ID"), (Some("sin-1".into()), None));
-        assert_eq!(lookup_in(&[("DROPPEN_RELAY_ID", "sin-1")], "DROPPEN_RELAY_ID"), (Some("sin-1".into()), None));
-    }
-
-    #[test]
-    fn the_old_name_still_works() {
-        assert_eq!(
-            lookup_in(&[("RH_RELAY_ID", " sin-1\n")], "DROPPEN_RELAY_ID"),
-            (Some("sin-1".into()), Some(OldName::Used("RH_RELAY_ID".into())))
-        );
-        // An empty new name is unset, as an empty variable always was.
-        assert_eq!(
-            lookup_in(&[("DROPPEN_RELAY_ID", " "), ("RH_RELAY_ID", "sin-1")], "DROPPEN_RELAY_ID"),
-            (Some("sin-1".into()), Some(OldName::Used("RH_RELAY_ID".into())))
-        );
-    }
-
-    #[test]
-    fn with_neither_name_set_it_is_unset() {
-        assert_eq!(lookup_in(&[], "DROPPEN_RELAY_MAX_CONNS"), (None, None));
-        assert_eq!(lookup_in(&[("RH_RELAY_MAX_CONNS", ""), ("DROPPEN_RELAY_MAX_CONNS", "")], "DROPPEN_RELAY_MAX_CONNS"), (None, None));
-        // Names that were never renamed have nothing to fall back to.
-        assert_eq!(lookup_in(&[("PORT", "9000")], "PORT"), (Some("9000".into()), None));
-    }
-
-    #[test]
-    fn each_old_name_is_logged_once() {
-        let noticed = std::sync::Mutex::new(std::collections::BTreeSet::new());
-        let used = OldName::Used("RH_RELAY_KEY".into());
-        let line = notice(&noticed, "DROPPEN_RELAY_KEY", &used).expect("the first time");
-        assert_eq!(
-            line,
-            "RH_RELAY_KEY is deprecated: add DROPPEN_RELAY_KEY with the same value; RH_RELAY_KEY stops working in v0.2.135"
-        );
-        assert_eq!(notice(&noticed, "DROPPEN_RELAY_KEY", &used), None, "once");
-        let line = notice(&noticed, "DROPPEN_RELAY_ID", &OldName::Overridden("RH_RELAY_ID".into())).expect("another name");
-        assert_eq!(
-            line,
-            "DROPPEN_RELAY_ID and the deprecated RH_RELAY_ID are both set, to different values: DROPPEN_RELAY_ID is used; remove RH_RELAY_ID (it stops working in v0.2.135)"
-        );
-        assert_eq!(notice(&noticed, "DROPPEN_RELAY_ID", &OldName::Overridden("RH_RELAY_ID".into())), None);
     }
 }
