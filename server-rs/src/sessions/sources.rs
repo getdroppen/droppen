@@ -140,10 +140,8 @@ pub trait Transcripts: Send + Sync {
 
     /// Whether this server's own root of this CLI holds a session transcript,
     /// which says the install has been used even where no ownership record
-    /// does. False for a CLI with no root of the server's own.
-    fn has_own_sessions<'a>(&'a self, _paths: &'a Paths) -> BoxFuture<'a, bool> {
-        Box::pin(async { false })
-    }
+    /// does. No default: each reader says whether its CLI's sessions count.
+    fn has_own_sessions<'a>(&'a self, paths: &'a Paths) -> BoxFuture<'a, bool>;
 
     /// The transcripts that count toward the token-usage stats and were
     /// written at or after `cutoff_ms`. None by default: a CLI whose
@@ -378,6 +376,11 @@ pub(crate) mod test_reader {
 
         fn find<'a>(&'a self, _paths: &'a Paths, _id: &'a str) -> BoxFuture<'a, Option<SessionSummary>> {
             Box::pin(std::future::ready(None))
+        }
+
+        /// False: a stand-in has no root of the server's own to look in.
+        fn has_own_sessions<'a>(&'a self, _paths: &'a Paths) -> BoxFuture<'a, bool> {
+            Box::pin(std::future::ready(false))
         }
 
         fn parse<'a>(&'a self, _paths: &'a Paths, _file_path: &'a Path) -> BoxFuture<'a, std::io::Result<Vec<TranscriptItem>>> {

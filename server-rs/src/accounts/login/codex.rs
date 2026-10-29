@@ -3,7 +3,7 @@
 
 use futures_util::future::BoxFuture;
 
-use super::Login;
+use super::{LocalPlan, Login};
 use crate::accounts::local_login::LocalLoginState;
 use crate::accounts::quota::codex::app_server_call;
 use crate::accounts::quota::readings::SharedReading;
@@ -242,7 +242,7 @@ impl Login for CodexLogin {
     }
 
     /// None: codex's plan arrives with its own login's quota reading.
-    fn local_plan<'a>(&'a self, _paths: &'a Paths) -> Option<BoxFuture<'a, (Option<String>, Option<String>)>> {
+    fn local_plan<'a>(&'a self, _paths: &'a Paths) -> Option<BoxFuture<'a, LocalPlan>> {
         None
     }
 

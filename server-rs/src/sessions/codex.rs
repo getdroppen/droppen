@@ -761,6 +761,13 @@ impl super::Transcripts for CodexSessions {
         Source::Codex
     }
 
+    /// False: codex keeps every thread in the user's own `~/.codex`, so there
+    /// is no root of the server's own to look in. The threads this server
+    /// started are in its ownership records, which the guide reads first.
+    fn has_own_sessions<'a>(&'a self, _paths: &'a Paths) -> BoxFuture<'a, bool> {
+        Box::pin(async { false })
+    }
+
     fn list<'a>(&'a self, paths: &'a Paths, bindings: &'a BTreeMap<String, String>) -> BoxFuture<'a, Vec<SessionSummary>> {
         Box::pin(async move {
             let mut sessions = list_codex_sessions(paths).await;

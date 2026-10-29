@@ -63,10 +63,9 @@ pub trait Login: Send + Sync {
     /// no such probe: only claude's logins keep readings for it to refresh.
     fn probe<'a>(&'a self, roots: &'a ProbeRoots, config_dir: Option<&'a Path>) -> Option<BoxFuture<'a, UsageProbe>>;
 
-    /// The plan the user's own login of this CLI is on, as the quota panel
-    /// names it, and the raw tier it was read from. `None` back is a CLI whose
-    /// plan arrives with its quota reading instead.
-    fn local_plan<'a>(&'a self, paths: &'a Paths) -> Option<BoxFuture<'a, (Option<String>, Option<String>)>>;
+    /// The plan the user's own login of this CLI is on. `None` back is a CLI
+    /// whose plan arrives with its quota reading instead.
+    fn local_plan<'a>(&'a self, paths: &'a Paths) -> Option<BoxFuture<'a, LocalPlan>>;
 
     /// The quota of the user's own login of this CLI, read whole: its plan
     /// and windows, live or out of the CLI's own logs. `None` back is a CLI
@@ -85,6 +84,15 @@ pub trait Login: Send + Sync {
         method: &'a str,
         timeout: Duration,
     ) -> Option<BoxFuture<'a, Option<Value>>>;
+}
+
+/// The plan the user's own login of a CLI is on ([`Login::local_plan`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LocalPlan {
+    /// The plan as the quota panel names it, e.g. `Max 20x`.
+    pub plan: Option<String>,
+    /// The raw tier the plan was read from, e.g. `default_max_20x`.
+    pub tier: Option<String>,
 }
 
 /// Every CLI's [`Login`], one per [`AccountProvider`].

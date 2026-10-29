@@ -55,6 +55,50 @@ async fn the_local_plan_and_windows_come_back_together() {
     probe.stop().await;
 }
 
+/// Either field of the user's own credentials names a plan on its own: a
+/// subscription with no tier, and a tier with no subscription.
+#[tokio::test]
+async fn either_credentials_field_names_the_local_plan() {
+    let probe = Probe::start().await;
+    std::fs::create_dir_all(probe.local_root()).expect("local root");
+    for (credentials, plan, tier) in [
+        (r#"{"claudeAiOauth": {"subscriptionType": "pro"}}"#, json!("Pro"), Value::Null),
+        (r#"{"claudeAiOauth": {"rateLimitTier": "default_max_5x"}}"#, json!("Claude 5x"), json!("default_max_5x")),
+    ] {
+        std::fs::write(probe.local_root().join(".credentials.json"), credentials).expect("credentials");
+        let quota = probe.get_json("/api/stats/quota").await;
+        assert_eq!(quota["claude"]["plan"], plan, "{credentials}");
+        assert_eq!(quota["claude"]["tier"], tier, "{credentials}");
+    }
+    probe.stop().await;
+}
+
+/// What a `/usage` probe runs: the same command line for every login, an
+/// account's under that account's own config dir, the local login's under the
+/// user's own (no `CLAUDE_CONFIG_DIR` at all), and both in UTC, which is what
+/// the reset times are parsed in.
+#[tokio::test]
+async fn each_usage_probe_runs_under_its_own_login() {
+    let probe = Probe::start().await;
+    let id = probing_account(&probe, "Probed", "sk-ant-oat01-SILENT01234567").await;
+    plan_usage(&probe.home, USAGE);
+    probe.get_json("/api/stats/quota").await;
+    let usage_args = ["-p", "/usage", "--output-format", "json", "--no-session-persistence"];
+
+    let config_dir = probe.data_dir().join("accounts").join(&id).join("claude");
+    let account = support::Spawn::read(&config_dir).expect("the account's probe ran");
+    assert_eq!(account.argv, usage_args);
+    assert_eq!(account.env("CLAUDE_CONFIG_DIR"), Some(config_dir.to_str().expect("utf-8 path")));
+    assert_eq!(account.env("TZ"), Some("UTC"));
+
+    let local = support::Spawn::read(&probe.home).expect("the local probe ran");
+    assert_eq!(local.argv, usage_args);
+    assert_eq!(local.env("CLAUDE_CONFIG_DIR"), None, "the user's own ~/.claude");
+    assert_eq!(local.env("TZ"), Some("UTC"));
+
+    probe.stop().await;
+}
+
 #[tokio::test]
 async fn a_config_dir_that_reports_nothing_is_not_logged_in() {
     let probe = Probe::start().await;
@@ -90,6 +134,28 @@ async fn an_account_that_never_opted_in_is_never_probed() {
     probe.stop().await;
 }
 
+/// The panel once the local login's reading and every one of `accounts`
+/// accounts' readings are stamped.
+///
+/// A cold panel answers within `COLLECT_BUDGET` with whatever is on file while
+/// the probes carry on behind it, and three serialized probes can take longer
+/// than that on a loaded machine. Asking until the stamps are there asserts on
+/// what the probes read rather than on how fast they read it; a poll while they
+/// run joins them rather than starting more.
+async fn quota_once_stamped(probe: &Probe, accounts: usize) -> Value {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        let quota = probe.get_json("/api/stats/quota").await;
+        let listed = quota["accounts"].as_array().map(Vec::as_slice).unwrap_or_default();
+        let stamped = listed.len() == accounts && listed.iter().all(|account| account["updatedAt"].is_string());
+        if stamped && quota["claude"]["updatedAt"].is_string() {
+            return quota;
+        }
+        assert!(std::time::Instant::now() < deadline, "the readings were never stamped: {quota}");
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+}
+
 #[tokio::test]
 async fn readings_are_cached_per_config_dir_and_probes_never_overlap() {
     let probe = Probe::start().await;
@@ -97,7 +163,7 @@ async fn readings_are_cached_per_config_dir_and_probes_never_overlap() {
     let second = probing_account(&probe, "Two", "sk-ant-oat01-TWO0123456789").await;
     plan_usage(&probe.home, USAGE);
 
-    let quota = probe.get_json("/api/stats/quota").await;
+    let quota = quota_once_stamped(&probe, 2).await;
     let accounts = quota["accounts"].as_array().expect("accounts");
     assert_eq!(accounts.len(), 2);
     for account in accounts {

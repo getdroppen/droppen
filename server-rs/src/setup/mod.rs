@@ -484,9 +484,7 @@ impl Setup {
     pub fn new(paths: Arc<Paths>, logins: &crate::accounts::login::Logins) -> Arc<Self> {
         Self::with(
             paths,
-            Arc::new(SystemRunner {
-                codex: logins.codex.clone(),
-            }),
+            Arc::new(SystemRunner::new(logins)),
             Arc::new(|paths: &Paths, overlay| Probe::live(paths.home.clone(), overlay)),
             shell::login_shell(),
             PathRead::from_app(std::env::var(droppen_base::process_env::SHELL_READ_ENV).ok().as_deref()),
@@ -1511,6 +1509,7 @@ pub(crate) mod tests {
             ("../crates/droppen-base/src/text.rs", &["strip_ansi"][..]),
             ("accounts/quota/mod.rs", &["claude_plan_label"][..]),
             ("accounts/quota/codex.rs", &["app_server_call", "ask", "send", "reply"][..]),
+            ("accounts/login/codex.rs", &["app_server_call"][..]),
             ("../crates/droppen-base/src/process_env.rs", &["apply_env"][..]),
         ] {
             let source = std::fs::read_to_string(src.join(file)).expect(file);
