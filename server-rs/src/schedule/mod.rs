@@ -326,7 +326,10 @@ fn task_at(entry: &Value, index: usize) -> ScheduledTask {
         // guessing wrong in the other direction is a CLI nobody asked for.
         enabled: entry.get("enabled").and_then(Value::as_bool).unwrap_or(false),
         // Claude when the file does not say, which is what a file written
-        // before this field existed means.
+        // before this field existed means. A stored "acp" or an unknown name
+        // reads as Claude too, and this stays a match on `Source` on purpose:
+        // decoding by wire name would put the provider registry into the task
+        // store, and the routes never store a task on a CLI that runs none.
         source: match entry.get("source").and_then(Value::as_str) {
             Some("codex") => Source::Codex,
             _ => Source::Claude,
@@ -463,14 +466,19 @@ async fn validated_cwd(paths: &Paths, cwd: &str) -> Result<String, ApiError> {
 }
 
 impl ScheduleState {
-    /// Refuse a task on `source` when scheduled tasks do not run on it. Checked
-    /// before the flags, which are only meaningful for a CLI that runs tasks.
-    fn check_schedulable(&self, source: Source) -> Result<(), ApiError> {
-        if self.drive.providers.capabilities(source).schedules {
-            Ok(())
-        } else {
-            Err(ApiError::bad_request("scheduled tasks run on Claude Code or Codex"))
+    /// The CLI a task is to run on, checked with the flags it will be handed.
+    ///
+    /// The CLI has to take scheduled tasks, and that is checked first: the flags
+    /// mean nothing to a CLI that runs none, and a task stored on one would read
+    /// back as Claude Code ([`task_at`]) and start a run nobody asked for. A
+    /// source no provider runs takes none. Then the flags ([`validated_flags`]).
+    /// Both routes check a task only through here, so neither can store one on
+    /// a CLI the other would refuse.
+    async fn check_cli(&self, source: Source, model: Option<&str>, effort: Option<&str>, permission: Option<&str>) -> Result<(), ApiError> {
+        if !self.drive.providers.capabilities(source).schedules {
+            return Err(ApiError::bad_request("scheduled tasks run on Claude Code or Codex"));
         }
+        validated_flags(&self.paths, source, model, effort, permission).await
     }
 }
 
@@ -498,6 +506,9 @@ impl ScheduleState {
 /// model lists are open by construction — claude's concrete ids come out of usage
 /// history, codex's out of a cache — so a model this machine has not run yet is
 /// not a model that does not exist.
+///
+/// The routes reach it through [`ScheduleState::check_cli`], which refuses a
+/// CLI that runs no scheduled tasks first.
 async fn validated_flags(paths: &Paths, source: Source, model: Option<&str>, effort: Option<&str>, permission: Option<&str>) -> Result<(), ApiError> {
     crate::drive::routes::validate_flags(model, effort, permission).map_err(ApiError::bad_request)?;
 
@@ -589,8 +600,7 @@ pub async fn create_scheduled_task(
         flag(body.effort.as_deref()),
         flag(body.permission.as_deref()),
     );
-    state.check_schedulable(body.source)?;
-    validated_flags(paths, body.source, model.as_deref(), effort.as_deref(), permission.as_deref()).await?;
+    state.check_cli(body.source, model.as_deref(), effort.as_deref(), permission.as_deref()).await?;
     let cwd = validated_cwd(paths, &body.cwd).await?;
 
     let enabled = body.enabled.0.unwrap_or(true);
@@ -655,15 +665,14 @@ pub async fn update_scheduled_task(
         .find(|task| task.id == id)
         .ok_or_else(|| ApiError::not_found("scheduled task not found"))?;
     let source = body.source.0.unwrap_or(stored.source);
-    state.check_schedulable(source)?;
-    validated_flags(
-        paths,
-        source,
-        patched_flag(&stored.model, body.model.as_deref()).0.as_deref(),
-        patched_flag(&stored.effort, body.effort.as_deref()).0.as_deref(),
-        patched_flag(&stored.permission, body.permission.as_deref()).0.as_deref(),
-    )
-    .await?;
+    state
+        .check_cli(
+            source,
+            patched_flag(&stored.model, body.model.as_deref()).0.as_deref(),
+            patched_flag(&stored.effort, body.effort.as_deref()).0.as_deref(),
+            patched_flag(&stored.permission, body.permission.as_deref()).0.as_deref(),
+        )
+        .await?;
     let cwd = match body.cwd.as_deref() {
         Some(cwd) => Some(validated_cwd(paths, cwd).await?),
         None => None,
@@ -1033,26 +1042,63 @@ mod tests {
         );
     }
 
-    /// A task runs only on a CLI whose provider takes scheduled tasks; any other
-    /// is refused before its flags are looked at.
-    #[test]
-    fn a_task_runs_only_on_a_cli_that_takes_scheduled_tasks() {
-        let (_dir, paths) = paths();
+    /// The routes' state over a fresh instance, with the providers `register`
+    /// adds, and a working directory in its home.
+    fn state_with(register: fn(&mut crate::inject::ProviderRegistry, &Arc<crate::inject::InjectionRegistry>)) -> (tempfile::TempDir, ScheduleState, String) {
+        let (dir, paths) = paths();
         let paths = Arc::new(paths);
+        let cwd = dir.path().join("w");
+        std::fs::create_dir_all(&cwd).expect("cwd");
         let instance = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
         let auth = crate::auth::Auth::new(&paths, &instance, &droppen_http::config::AuthSettings::default(), false, Arc::new(crate::app::NotifyTokens));
-        let drive = crate::drive::Drive::new(paths.clone(), &instance, auth, crate::app::transcript_sources(), crate::app::register_providers, crate::app::logins());
+        let drive = crate::drive::Drive::new(paths.clone(), &instance, auth, crate::app::transcript_sources(), register, crate::app::logins());
         let state = ScheduleState {
             paths,
             drive,
             global: crate::feed::global::GlobalFeed::new(),
             cancel: tokio_util::sync::CancellationToken::new(),
         };
-        assert!(state.check_schedulable(Source::Claude).is_ok());
-        assert!(state.check_schedulable(Source::Codex).is_ok());
-        let refused = state.check_schedulable(Source::Acp).expect_err("an ACP agent runs no scheduled tasks");
-        assert_eq!(refused.status(), gotcha::axum::http::StatusCode::BAD_REQUEST);
-        assert_eq!(refused.body()["error"], "scheduled tasks run on Claude Code or Codex");
+        (dir, state, cwd.to_string_lossy().into_owned())
+    }
+
+    /// The status and message of a refusal.
+    fn refusal(error: ApiError) -> (u16, String) {
+        (error.status().as_u16(), error.body()["error"].as_str().unwrap_or_default().to_string())
+    }
+
+    /// A task runs only on a CLI whose provider takes scheduled tasks. Both
+    /// routes refuse any other, and store nothing: a stored ACP task would read
+    /// back as Claude Code and start a run nobody asked for.
+    #[tokio::test]
+    async fn neither_route_stores_a_task_on_a_cli_that_runs_none() {
+        let (_dir, state, cwd) = state_with(crate::app::register_providers);
+        let create = |source: &str| -> ScheduledTaskCreate {
+            serde_json::from_value(serde_json::json!({"source": source, "expr": "0 9 * * *", "cwd": cwd, "prompt": "hi"})).expect("a create body")
+        };
+        let patch = |source: &str| -> ScheduledTaskUpdate { serde_json::from_value(serde_json::json!({"source": source})).expect("a patch body") };
+        let refused = (400, "scheduled tasks run on Claude Code or Codex".to_string());
+
+        let error = create_scheduled_task(State(state.clone()), ApiJson(create("acp"))).await.expect_err("refused");
+        assert_eq!(refusal(error), refused);
+        assert!(read_tasks(&state.paths).await.is_empty(), "nothing was stored");
+
+        let task = create_scheduled_task(State(state.clone()), ApiJson(create("claude"))).await.expect("created").0;
+        let error = update_scheduled_task(State(state.clone()), ApiPath(task.id.clone()), ApiJson(patch("acp"))).await.expect_err("refused");
+        assert_eq!(refusal(error), refused);
+        assert_eq!(read_tasks(&state.paths).await[0].source, Source::Claude, "the task is as it was");
+
+        let moved = update_scheduled_task(State(state.clone()), ApiPath(task.id), ApiJson(patch("codex"))).await.expect("moved").0;
+        assert_eq!(moved.source, Source::Codex);
+    }
+
+    /// A source no provider runs takes no scheduled tasks either.
+    #[tokio::test]
+    async fn a_task_on_a_cli_no_provider_runs_is_refused() {
+        let (_dir, state, _cwd) = state_with(|_, _| {});
+        for source in [Source::Claude, Source::Codex, Source::Acp] {
+            let error = state.check_cli(source, None, None, None).await.expect_err("refused");
+            assert_eq!(refusal(error), (400, "scheduled tasks run on Claude Code or Codex".to_string()), "{source}");
+        }
     }
 
     #[tokio::test]

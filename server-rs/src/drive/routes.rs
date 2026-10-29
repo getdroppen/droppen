@@ -717,8 +717,7 @@ async fn deliver_message(
     // Some CLIs run an instant chat with every tool disabled, so it cannot read
     // an attachment.
     let chat = summary.cwd.as_ref().map(Path::new) == Some(chats_cwd(&drive.paths).as_path());
-    let capabilities = drive.providers.capabilities(source);
-    if chat && capabilities.chats && !capabilities.chat_attachments && !(images.is_empty() && attachments.is_empty()) {
+    if chat && drive.providers.chat_refuses_attachments(source) && !(images.is_empty() && attachments.is_empty()) {
         return Err(ApiError::conflict("attachments are not supported in claude instant chats"));
     }
 
@@ -2215,11 +2214,16 @@ mod tests {
     }
 
     fn drive() -> (tempfile::TempDir, Arc<Drive>) {
+        drive_with(crate::app::register_providers)
+    }
+
+    /// [`drive`], with the providers `register` adds.
+    fn drive_with(register: fn(&mut crate::inject::ProviderRegistry, &Arc<crate::inject::InjectionRegistry>)) -> (tempfile::TempDir, Arc<Drive>) {
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = Arc::new(droppen_instance::paths::Paths::new(dir.path().to_path_buf()));
         let instance = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
         let auth = crate::auth::Auth::new(&paths, &instance, &droppen_http::config::AuthSettings::default(), false, std::sync::Arc::new(crate::app::NotifyTokens));
-        let drive = Drive::new(paths, &instance, auth, crate::app::transcript_sources(), crate::app::register_providers, crate::app::logins());
+        let drive = Drive::new(paths, &instance, auth, crate::app::transcript_sources(), register, crate::app::logins());
         (dir, drive)
     }
 
@@ -2435,6 +2439,49 @@ mod tests {
         .await
         .expect_err("no such session");
         assert_eq!(error.status().as_u16(), 404);
+    }
+
+    /// A message with an attachment to a Claude Code instant chat is refused:
+    /// the chat runs with every tool off. So is one to a chat no provider runs,
+    /// which the send block turns away before the chat check is reached.
+    #[tokio::test]
+    async fn a_chat_that_cannot_read_an_attachment_refuses_one() {
+        let cases: [(fn(&mut crate::inject::ProviderRegistry, &Arc<crate::inject::InjectionRegistry>), &str); 2] = [
+            (crate::app::register_providers, "attachments are not supported in claude instant chats"),
+            (|_, _| {}, "no provider runs claude sessions"),
+        ];
+        for (register, expected) in cases {
+            let (_dir, drive) = drive_with(register);
+            let id = "11111111-2222-4333-8444-555555555555";
+            let project = crate::claude_roots::ClaudeRoots::of(&drive.paths).managed_projects().join("-chats");
+            std::fs::create_dir_all(&project).expect("project");
+            let chats = chats_cwd(&drive.paths).to_string_lossy().into_owned();
+            let line = serde_json::json!({
+                "type": "user", "sessionId": id, "cwd": chats, "uuid": "u1", "timestamp": "2026-10-01T10:00:00Z",
+                "message": {"role": "user", "content": "hi"},
+            });
+            std::fs::write(project.join(format!("{id}.jsonl")), format!("{line}\n")).expect("transcript");
+            let state = DriveState {
+                drive: drive.clone(),
+                paths: drive.paths.clone(),
+                global: crate::feed::global::GlobalFeed::new(),
+                refresh: droppen_http::refresh::Refresh::new(crate::feed::global::GlobalFeed::new()),
+            };
+            let body = SendMessage {
+                text: "look".into(),
+                images: Optional(Some(vec![uploaded(&drive, "a.png")])),
+                files: Optional(None),
+                model: Optional(None),
+                effort: Optional(None),
+                permission: Optional(None),
+                account_id: None,
+                client_message_id: Optional(None),
+            };
+            let error = send_message(State(state), MaybeIdentity(None), ApiPath((Source::Claude, id.to_string())), ApiJson(body))
+                .await
+                .expect_err("refused");
+            assert_eq!((error.status().as_u16(), error.body()["error"].as_str()), (409, Some(expected)));
+        }
     }
 
     /// A `POST /api/sessions/new` body as a client sends it, with attachments.

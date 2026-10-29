@@ -769,9 +769,13 @@ mod tests {
         for source in providers.sources() {
             assert_eq!(ChatKind::of(source).is_some(), with_chats.contains(&source), "{source}");
         }
-        for kind in [ChatKind::Claude, ChatKind::Codex] {
-            assert!(kind.source().is_some_and(|source| with_chats.contains(&source)), "{kind:?}");
+        for (kind, source) in [(ChatKind::Claude, Source::Claude), (ChatKind::Codex, Source::Codex)] {
+            assert_eq!(kind.source(), Some(source), "{kind:?}");
+            assert_eq!(ChatKind::of(source), Some(kind), "{source}");
+            assert!(with_chats.contains(&source), "{source}");
         }
+        assert_eq!(ChatKind::Api.source(), None);
+        assert_eq!(ChatKind::of(Source::Acp), None);
     }
 
     #[test]
