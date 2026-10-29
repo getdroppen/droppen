@@ -438,7 +438,14 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
             spec.info.title = API_TITLE.to_string();
             spec.info.version = API_VERSION.to_string();
             spec.info.description = Some(API_DESCRIPTION.to_string());
-            openapi_ext::apply(spec, &response_overrides())
+            let spec = openapi_ext::apply(spec, &response_overrides());
+            // Every JSON object sorted: gotcha builds some of the spec's maps (a
+            // schema's `properties`) from hash maps, and a `Value` keeps the
+            // order it was given (`preserve_order`), so each server would
+            // otherwise serve its own order.
+            let Ok(mut value) = serde_json::to_value(&spec) else { return spec };
+            value.sort_all_objects();
+            serde_json::from_value(value).unwrap_or(spec)
         })
         .layer(droppen_http::origin::layer())
         .fallback_service(crate::static_files::service())

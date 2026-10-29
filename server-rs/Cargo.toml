@@ -24,7 +24,7 @@ members = [".", "crates/rh-proto", "crates/rh-relay", "crates/droppen-relay", "c
 # on with no way off, so a member that took serde_json on its own would write
 # different bytes under `cargo test -p <member>` than in a workspace build.
 # `scripts/check-serde-json-order.sh` (CI) checks that no member builds
-# without it.
+# without it, but for the exempt ones it names, each with its reason.
 [workspace.dependencies]
 serde_json = { version = "1", features = ["preserve_order"] }
 

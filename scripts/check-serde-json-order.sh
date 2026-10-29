@@ -4,8 +4,12 @@
 # features for the packages a build selects, so every member whose dependency
 # graph reaches serde_json has to turn the feature on itself; otherwise
 # `cargo test -p <member>` writes JSON keys in another order than a workspace
-# build does. A member that names serde_json takes it from the workspace, so
-# the feature does not hang on what else that member happens to depend on.
+# build does. So two checks, for every member but the exempt ones below:
+# - each serde_json it names, in whatever form (`serde_json = …`, a
+#   `[dependencies.serde_json]` table, a renamed `json = { package =
+#   "serde_json" }`), carries the feature: `serde_json = { workspace = true }`;
+# - when its graph reaches serde_json through other crates only, a build of it
+#   alone still has the feature.
 # The targets are the ones this workspace is built for: macOS (releases,
 # development) and Linux (CI, relays); `--target all` would also count
 # reqwest's wasm-only use of serde_json.
@@ -13,17 +17,49 @@ set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
 manifest="$root/server-rs/Cargo.toml"
 targets="--target x86_64-unknown-linux-gnu --target aarch64-unknown-linux-gnu --target aarch64-apple-darwin --target x86_64-apple-darwin"
-# One `<name> <dir>` per member.
-members=$(cargo tree --manifest-path "$manifest" --workspace --depth 0 --prefix none -e normal | sed -n 's/^\([^ ]*\) v[^ ]* (\(.*\))$/\1 \2/p')
+
+# Members that keep serde_json as it comes, each with why:
+# - droppen-plugin-sdk: plugin authors build against it, and the workspace's
+#   serde_json would turn `preserve_order` on in their builds too. Its tests
+#   compare `Value`s, which ignore key order.
+exempt="droppen-plugin-sdk"
+is_exempt() {
+  case " $exempt " in *" $1 "*) return 0 ;; esac
+  return 1
+}
+
+# Every serde_json a member names without the feature: `<member> <name>`.
+# `cargo metadata` gives the package each dependency is, whatever the manifest
+# calls it, and the features it has after workspace inheritance.
+declared=$(cargo metadata --manifest-path "$manifest" --no-deps --format-version 1 | node -e '
+let text = "";
+process.stdin.on("data", (chunk) => (text += chunk)).on("end", () => {
+  const meta = JSON.parse(text);
+  const members = new Set(meta.workspace_members);
+  for (const pkg of meta.packages.filter((p) => members.has(p.id))) {
+    for (const dep of pkg.dependencies) {
+      if (dep.name === "serde_json" && !dep.features.includes("preserve_order")) {
+        console.log(`${pkg.name} ${dep.rename ?? dep.name}`);
+      }
+    }
+  }
+});')
+named=""
+while read -r member name; do
+  [ -n "$member" ] || continue
+  is_exempt "$member" || named="$named $member ($name)"
+done <<EOF
+$declared
+EOF
+
+members=$(cargo tree --manifest-path "$manifest" --workspace --depth 0 --prefix none -e normal | sed -n 's/^\([^ ]*\) v.*/\1/p')
 on=""
 without=""
 missing=""
-own=""
-while read -r member dir; do
-  own="$own$(awk -v file="${dir#$root/}/Cargo.toml" '
-    /^\[/ { section = $0 }
-    /^serde_json[ .=]/ && section != "[workspace.dependencies]" && $0 !~ /workspace *= *true/ { printf "\n  %s: %s", file, $0 }
-  ' "$dir/Cargo.toml")"
+for member in $members; do
+  if is_exempt "$member"; then
+    continue
+  fi
   graph=$(cargo tree --manifest-path "$manifest" -p "$member" $targets -e normal,dev,build --prefix none)
   if ! printf '%s\n' "$graph" | grep -q '^serde_json v'; then
     without="$without $member"
@@ -35,13 +71,11 @@ while read -r member dir; do
   else
     missing="$missing $member"
   fi
-done <<EOF
-$members
-EOF
-if [ -n "$missing" ] || [ -n "$own" ]; then
+done
+if [ -n "$named" ] || [ -n "$missing" ]; then
+  [ -z "$named" ] || echo "serde_json named without preserve_order by:$named" >&2
   [ -z "$missing" ] || echo "serde_json builds without preserve_order for:$missing" >&2
-  [ -z "$own" ] || echo "serde_json named outside the workspace dependency:$own" >&2
   echo "take it from the workspace: serde_json = { workspace = true }" >&2
   exit 1
 fi
-echo "serde_json preserve_order on for:$on; not in the graph of:$without"
+echo "serde_json preserve_order on for:$on; not in the graph of:$without; exempt: $exempt"
