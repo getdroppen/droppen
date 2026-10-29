@@ -97,7 +97,8 @@
 //! * `/embed/{id}/*` — a capability URL. The id is a v4 uuid (122 bits) that only
 //!   `GET /api/apps` hands out, and the proxied VS Code server speaks its own
 //!   protocol on paths this server does not model. The residual risk is real and
-//!   written down in the README: anyone who learns an id reaches that app.
+//!   written down in docs/manual.zh-CN.md: anyone who learns an id reaches that
+//!   app.
 //!
 //! `/openapi.json`, `/redoc`, `/scalar`, `/api/settings`, `/api/push/vapid` and
 //! `POST /api/server/self-upgrade` are **not** exempt. The first three describe

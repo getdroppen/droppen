@@ -48,8 +48,9 @@ pub const MIN_CLAUDE: &str = "2.1.295";
 ///
 /// Codex sessions are driven through a persistent `codex app-server`
 /// (`turn/start`, `turn/steer`, `turn/interrupt`), verified against codex-cli
-/// 0.153.4 — the version the README names — and the quota panel and this
-/// guide ask the same app server `account/rateLimits/read` / `account/read`.
+/// 0.153.4 — the version docs/manual.zh-CN.md names — and the quota panel and
+/// this guide ask the same app server `account/rateLimits/read` /
+/// `account/read`.
 /// No older version was ever run against the driver, so none is claimed.
 pub const MIN_CODEX: &str = "0.153.4";
 

@@ -138,8 +138,9 @@ export function showJumpToBottom(pinned: boolean, box: ScrollBox): boolean {
  *
  * `clientHeight > 0` is the load-bearing one. A session pane inside a screen
  * the user has switched away from stays mounted and goes `display: none` (see
- * `features/screens/screen-frames.tsx`, which is keeping the README's promise
- * that a screen you come back to is exactly as you left it). An element with no
+ * `features/screens/screen-frames.tsx`, which is keeping the promise in
+ * docs/manual.zh-CN.md that a screen you come back to is exactly as you left
+ * it). An element with no
  * layout box reports every scroll metric as `0`, so "is the content shorter
  * than the viewport" reads `0 <= 0 + 80` — true, and true again however many
  * pages arrive, because nothing that lands can ever make a hidden box taller.
