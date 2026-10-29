@@ -929,6 +929,73 @@ test("D3: a dismissal is for the loss it was made for — the same device shut o
   assert.deepEqual([...a.reEnrollDue()], ["m-1"], "a new loss warns again");
 });
 
+test("D3: a dismissal never covers more than the loss the chain shows — a later seq named with it does not hide the next loss", async () => {
+  const { hub, a } = await account();
+  const b = await pairBrowser(hub, a, { admin: false });
+  await admit(a, "m-1", b.deviceId);
+  await a.setAccept("m-1", { type: "admins" }, new FakeCourier());
+  const shown = a.reEnrollWarnings().get("m-1")!.find((l) => l.device === b.deviceId)!.lostSeq;
+  a.dismissReEnroll("m-1", b.deviceId, shown + 1_000);
+  assert.deepEqual([...a.reEnrollDue()], []);
+  const key = `rh.hub.reenroll.dismissed.${a.account}`;
+  assert.deepEqual(JSON.parse(browserStorage(a.store).getItem(key)!), { "m-1": { [b.deviceId]: shown } }, "kept as the loss the chain had");
+  await admit(a, "m-1", b.deviceId);
+  await a.setAccept("m-1", { type: "admins" }, new FakeCourier());
+  assert.deepEqual([...a.reEnrollDue()], ["m-1"], "the next loss warns again");
+});
+
+test("D3: undoing a dismissal tells the page; dismissing or undoing what is not there writes nothing and tells nobody", async () => {
+  const { hub, a } = await account();
+  const p = await pairBrowser(hub, a, { admin: true });
+  await a.removeDevice(p.deviceId, new FakeCourier());
+  const key = `rh.hub.reenroll.dismissed.${a.account}`;
+  const storage = browserStorage(a.store);
+  const setItem = storage.setItem;
+  const writes: string[] = [];
+  storage.setItem = (k, v) => {
+    writes.push(k);
+    setItem(k, v);
+  };
+  let changes = 0;
+  a.onChange(() => void changes++);
+  try {
+    a.warnAgainReEnroll("m-1", p.deviceId);
+    a.dismissReEnroll("m-1", "d-nobody", a.chain!.seq);
+    a.dismissReEnroll("m-9", p.deviceId, a.chain!.seq);
+    assert.deepEqual([writes.filter((k) => k === key), changes], [[], 0], "nothing to undo or dismiss: nothing written, nobody told");
+    dismiss(a, "m-1", p.deviceId);
+    assert.deepEqual([writes.filter((k) => k === key).length, changes], [1, 1]);
+    a.warnAgainReEnroll("m-1", p.deviceId);
+    assert.deepEqual([writes.filter((k) => k === key).length, changes], [2, 2], "the undo is written and told too");
+    assert.equal(storage.getItem(key), "{}", "the host's entry goes with its last device");
+    assert.deepEqual([...a.reEnrollDue()], ["m-1"]);
+  } finally {
+    storage.setItem = setItem;
+  }
+});
+
+test("D3: a host's lines come sorted by device id, and only a current host's own record is asked for", async () => {
+  const { hub, a } = await account();
+  const p1 = await pairBrowser(hub, a, { admin: true });
+  const p2 = await pairBrowser(hub, a, { admin: true });
+  await hub.enroll(a, "m-2", { writable: true });
+  await a.removeDevice(p2.deviceId, new FakeCourier());
+  await a.removeDevice(p1.deviceId, new FakeCourier());
+  await a.removeDevice("m-2", new FakeCourier());
+  const asked: string[] = [];
+  const warnings = a.reEnrollWarnings((host) => {
+    asked.push(host);
+    return undefined;
+  });
+  assert.deepEqual(asked, ["m-1"], "m-2 is out of the account: its record is not asked for");
+  assert.deepEqual([...warnings.keys()], ["m-1"]);
+  assert.deepEqual(
+    warnings.get("m-1")!.map((l) => l.device),
+    [p1.deviceId, p2.deviceId].sort(),
+    "by device id, not by when each was lost",
+  );
+});
+
 test("D3: a device let back in is not lost any more — it may connect then — and a later loss is a new warning, with what it did", async () => {
   const { hub, a } = await account();
   const p = await pairBrowser(hub, a, { admin: false });
