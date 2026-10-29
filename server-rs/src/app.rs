@@ -137,7 +137,16 @@ impl GotchaApp for RemoteHandApp {
             drive.injections.attach_alerts(Arc::new(PushAlerts {
                 transcripts: drive.transcripts.clone(),
             }));
+            // Found once, here: an entry that registers no ACP provider fails
+            // to start rather than on the first request for an agent.
+            let acp = drive
+                .providers
+                .provider::<crate::inject::acp::Acp>()
+                .ok_or_else(|| GotchaError::message("no ACP provider is registered"))?
+                .runs()
+                .clone();
             Ok(AppState {
+                acp,
                 cloud: droppen_cloud::Cloud::new(paths.as_ref().clone()),
                 // Touches nothing yet: the installed packages are read by the
                 // first status, the instance database by the first switch or

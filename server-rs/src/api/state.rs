@@ -233,6 +233,7 @@ impl FromRef<AppState> for AcpAgentState {
     fn from_ref(state: &AppState) -> Self {
         Self {
             paths: state.paths.clone(),
+            acp: state.acp.clone(),
             providers: state.drive.providers.clone(),
         }
     }
