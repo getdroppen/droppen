@@ -73,6 +73,9 @@ try:
                     thread = (cwd / "resume-thread.txt").read_text().strip()
                 result ={"thread": {"id": thread, "turns": []}, "model": "test-model",
                           "reasoningEffort": "low", "sandbox": {"type": "readOnly"}}
+                # A planned answer replaces the settings: a key it leaves out is absent.
+                if (cwd / "thread-settings.json").exists():
+                    result = {"thread": result["thread"], **json.loads((cwd / "thread-settings.json").read_text())}
             elif method == "turn/start":
                 sequence += 1
                 active = f"turn-{sequence}"

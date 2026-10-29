@@ -254,3 +254,28 @@ async fn codex_windows_fall_back_to_the_newest_recent_session_file() {
 
     probe.stop().await;
 }
+
+/// The quota probe's whole conversation with `codex app-server`, byte for
+/// byte: a JSON-RPC 2.0 handshake that opts into the experimental API, then
+/// the one rate-limit request. Its ids are fixed, so only the version is
+/// filled in.
+#[tokio::test]
+async fn the_codex_quota_probe_sends_a_json_rpc_handshake_and_one_rate_limit_request() {
+    let probe = Probe::start().await;
+    probe.get_json("/api/stats/quota").await;
+
+    let lines = support::wait_for_codex_stdin(&probe.home, 3).await;
+    assert_eq!(
+        lines,
+        [
+            support::wire(
+                r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"remote_hand","title":"remote-hand","version":"VERSION"},"capabilities":{"experimentalApi":true}}}"#,
+                &[("VERSION", env!("CARGO_PKG_VERSION"))]
+            ),
+            support::wire(r#"{"jsonrpc":"2.0","method":"initialized","params":{}}"#, &[]),
+            support::wire(r#"{"jsonrpc":"2.0","id":2,"method":"account/rateLimits/read","params":{}}"#, &[]),
+        ]
+    );
+
+    probe.stop().await;
+}

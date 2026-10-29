@@ -2397,6 +2397,49 @@ mod tests {
         assert_eq!(items[3].result_of.as_deref(), Some("exec-7#2"));
     }
 
+    /// A two-hunk update's `MultiEdit` input, byte for byte: the detail is
+    /// Claude's tool input pretty-printed, and the item holding it is hashed
+    /// into the transcript's fingerprint chain, so a client resuming against a
+    /// fingerprint loses its place if a single byte of it moves.
+    #[tokio::test]
+    async fn a_two_hunk_update_is_pretty_printed_multiedit_input_under_a_fixed_fingerprint() {
+        let items = parse(&[
+            cell("call_A", "text(await tools.apply_patch(\"*** Begin Patch\\n...\"))"),
+            completed(json!({
+                "type": "FileChange", "id": "exec-7",
+                "changes": {
+                    "/w/build.py": {"type": "update", "move_path": null,
+                        "unified_diff": "@@ -19,3 +19,3 @@\n sec.header = 1\n-FONT = 'Songti SC'\n+FONT = 'Noto Sans CJK SC'\n \n@@ -40,2 +40,3 @@\n a\n+b\n c\n"},
+                },
+                "status": "completed",
+                "stdout": "Success. Updated the following files:\nM /w/build.py\n", "stderr": "",
+            })),
+            cell_output("call_A", "Script completed\nWall time 0.0 seconds\nOutput:\n", &["{}"]),
+        ])
+        .await;
+        assert_eq!(items[0].tool_name.0.as_deref(), Some("MultiEdit"));
+        assert_eq!(
+            items[0].detail.0.as_deref(),
+            Some(
+                r#"{
+  "file_path": "/w/build.py",
+  "edits": [
+    {
+      "old_string": "sec.header = 1\nFONT = 'Songti SC'\n",
+      "new_string": "sec.header = 1\nFONT = 'Noto Sans CJK SC'\n"
+    },
+    {
+      "old_string": "a\nc",
+      "new_string": "a\nb\nc"
+    }
+  ]
+}"#
+            )
+        );
+        let chain = crate::sessions::loader::fingerprint_chain(Path::new("/w/rollout.jsonl"), &items[..1]);
+        assert_eq!(droppen_base::text::hex(&chain[1]), "161043a632f7e9c56bcfddda746ffaf3");
+    }
+
     #[tokio::test]
     async fn an_mcp_call_is_named_by_server_and_tool() {
         let items = parse(&[
