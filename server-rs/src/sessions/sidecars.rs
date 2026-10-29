@@ -12,6 +12,7 @@ use gotcha::Schematic;
 use serde::{Deserialize, Serialize};
 
 use super::util::TranscriptItem;
+use super::Source;
 use droppen_instance::paths::Paths;
 
 /// The subagents a CLI's sessions spawn, each with a transcript of its own.
@@ -30,6 +31,28 @@ pub trait Subagents: Send + Sync {
 
     /// The items of the agent transcript at `file_path`.
     fn agent_items<'a>(&'a self, paths: &'a Paths, file_path: &'a Path) -> BoxFuture<'a, std::io::Result<Vec<TranscriptItem>>>;
+}
+
+/// Path of `GET /api/sessions/{source}/{id}/agents/{agentId}`.
+///
+/// A struct rather than a tuple because gotcha only documents one- and
+/// two-segment tuple paths (`gotcha_core-0.4.1/src/parameter.rs:43,60`); the
+/// generic `Path<T>` impl reads a struct's fields instead, which is the only
+/// way to document three.
+#[derive(Debug, Clone, Deserialize, Serialize, Schematic)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentPath {
+    /// Which CLI the parent session belongs to.
+    pub source: Source,
+    /// The parent session's id.
+    pub id: String,
+    /// The subagent's id.
+    pub agent_id: String,
+}
+
+/// Whether an agent id can name a file next to a transcript.
+pub(crate) fn is_agent_id(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 64 && id.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-')
 }
 
 /// The task checklists a CLI keeps for its sessions.
@@ -114,4 +137,17 @@ pub struct Checklist {
     pub total: usize,
     /// How many are finished.
     pub done: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_agent_id_is_a_plain_file_name() {
+        assert!(is_agent_id("agent_1-2"));
+        assert!(!is_agent_id("../escape"));
+        assert!(!is_agent_id(""));
+        assert!(!is_agent_id(&"a".repeat(65)));
+    }
 }

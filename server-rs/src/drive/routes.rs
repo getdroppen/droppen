@@ -29,7 +29,7 @@ use crate::inject::{self, AccountChoice, AnswerOutcome, Reply, SendOptions};
 use droppen_http::openapi_ext::{double_option, required_nullable, ExtraResponses, Nullable, Optional};
 use droppen_instance::paths::ClaudeRoot;
 use crate::sessions::delivery::{QuestionState, ReceiptLookup, ReceiptStatus, SessionQuestion};
-use crate::sessions::sidecars::Checklist;
+use crate::sessions::sidecars::{is_agent_id, AgentPath, Checklist};
 use crate::sessions::util::TranscriptItem;
 use crate::sessions::{archive, chats_cwd, claude, file_signature, sendability, SessionScope, Source};
 
@@ -251,23 +251,6 @@ pub struct SessionAgent {
 pub struct SessionAgents {
     /// Most recently written first.
     pub agents: Vec<SessionAgent>,
-}
-
-/// Path of `GET /api/sessions/{source}/{id}/agents/{agentId}`.
-///
-/// A struct rather than a tuple because gotcha only documents one- and
-/// two-segment tuple paths (`gotcha_core-0.4.1/src/parameter.rs:43,60`); the
-/// generic `Path<T>` impl reads a struct's fields instead, which is the only
-/// way to document three.
-#[derive(Debug, Clone, Deserialize, Serialize, Schematic)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentPath {
-    /// Which CLI the parent session belongs to.
-    pub source: Source,
-    /// The parent session's id.
-    pub id: String,
-    /// The subagent's id.
-    pub agent_id: String,
 }
 
 /// Path of the two queue routes.
@@ -1459,11 +1442,6 @@ pub(crate) async fn first_unread_of(
     Ok(crate::sessions::attention::first_unread(&items, after, &mtime))
 }
 
-/// Whether an agent id can name a file next to a transcript.
-pub(crate) fn is_agent_id(id: &str) -> bool {
-    !id.is_empty() && id.len() <= 64 && id.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-')
-}
-
 /// Every subagent that ever wrote under a session.
 ///
 /// The fallback entry point for work the transcript cannot point at. The
@@ -2505,14 +2483,6 @@ mod tests {
         named.images = Optional(None);
         let error = new_session(State(DriveState::from_ref(&state)), ApiJson(named)).await.expect_err("no such directory");
         assert_eq!(refused(error).0, 400, "answered afresh, not with the recorded refusal");
-    }
-
-    #[test]
-    fn an_agent_id_is_a_plain_file_name() {
-        assert!(is_agent_id("agent_1-2"));
-        assert!(!is_agent_id("../escape"));
-        assert!(!is_agent_id(""));
-        assert!(!is_agent_id(&"a".repeat(65)));
     }
 
     #[test]
