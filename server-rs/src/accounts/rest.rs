@@ -260,8 +260,8 @@ impl LimitLog {
     /// happened; the log is trimmed to [`EVENTS_CAP`] in the same breath.
     pub fn record(&self, observation: &Observation, now: i64) -> rusqlite::Result<Recorded> {
         let verdict = &observation.verdict;
-        let raw = limits::clip(&observation.raw, RAW_CAP);
-        let reason = limits::clip(&observation.reason, REASON_CAP);
+        let raw = droppen_base::text::clip(&observation.raw, RAW_CAP);
+        let reason = droppen_base::text::clip(&observation.reason, REASON_CAP);
         self.db.write(|tx| {
             let duplicate_of: Option<i64> = match &observation.session_id {
                 Some(session) => tx

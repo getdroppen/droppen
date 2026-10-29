@@ -77,6 +77,7 @@ use regex::Regex;
 use serde_json::Value;
 
 use crate::sessions::account::LimitClass;
+use droppen_base::text::clip;
 
 /// The scope of every limit that is not a per-model weekly window.
 pub const SCOPE_ALL: &str = "all";
@@ -406,14 +407,6 @@ pub fn reason_line(text: &str, class: LimitClass) -> String {
         .or_else(|| lines().next())
         .unwrap_or_default();
     clip(line, 200)
-}
-
-/// The first `cap` characters of `text`, with an ellipsis where it was cut.
-pub fn clip(text: &str, cap: usize) -> String {
-    if text.chars().count() <= cap {
-        return text.to_string();
-    }
-    text.chars().take(cap.saturating_sub(1)).chain(['…']).collect()
 }
 
 /// An epoch in seconds or milliseconds, as milliseconds.

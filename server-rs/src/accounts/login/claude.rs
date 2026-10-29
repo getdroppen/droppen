@@ -1,7 +1,8 @@
 //! Claude Code's part of the accounts: how a credential starts `claude`.
 
 use super::Login;
-use crate::accounts::store::{AccountError, AccountKind, AccountLaunch, AccountProvider, EnvVar};
+use crate::accounts::store::{AccountError, AccountKind, AccountLaunch, AccountProvider};
+use droppen_base::env_block::EnvVar;
 
 /// Claude Code's [`Login`].
 pub struct ClaudeCodeLogin;

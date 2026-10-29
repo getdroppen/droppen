@@ -396,13 +396,6 @@
       ]
     },
     {
-      "why": "The ACP provider parses an agent's KEY=VALUE block with accounts' parser (store::parse_env_block, EnvVar) and shortens text with accounts::limits::clip. They go when the parser moves to a crate both may use, and clip, which names no account, to droppen_base::text.",
-      "edges": [
-        "acp_agent -> accounts",
-        "inject::acp -> accounts"
-      ]
-    },
-    {
       "why": "The login wizards take drive::Drive, which holds every service a spawn needs. They go when they take only the spawn dependencies they use (SpawnDeps), as the spawns do.",
       "edges": [
         "accounts::setup_token -> drive",

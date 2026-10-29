@@ -1,7 +1,8 @@
 //! Codex's part of the accounts: how a credential starts `codex`.
 
 use super::Login;
-use crate::accounts::store::{AccountError, AccountKind, AccountLaunch, AccountProvider, EnvVar, CODEX_BASE_URL_VAR, CODEX_KEY_CANDIDATES};
+use crate::accounts::store::{AccountError, AccountKind, AccountLaunch, AccountProvider, CODEX_BASE_URL_VAR, CODEX_KEY_CANDIDATES};
+use droppen_base::env_block::EnvVar;
 
 /// The environment variable a codex account's key is read from.
 ///

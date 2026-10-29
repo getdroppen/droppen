@@ -6,7 +6,8 @@
 //! digest-to-hex spelling this crate uses. [`strip_ansi`] is the terminal
 //! cleaner the setup wizard and the installer-output reader share — every escape
 //! becomes a space, never nothing, so two words the escape sat between do not
-//! splice together.
+//! splice together. [`clip`] cuts text to a length, with an ellipsis where it
+//! was cut.
 
 use sha2::{Digest, Sha256};
 
@@ -84,6 +85,14 @@ const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp",
 /// test at the site. This is only the list.
 pub fn is_image_ext(ext: &str) -> bool {
     IMAGE_EXTS.contains(&ext.to_ascii_lowercase().as_str())
+}
+
+/// The first `cap` characters of `text`, with an ellipsis where it was cut.
+pub fn clip(text: &str, cap: usize) -> String {
+    if text.chars().count() <= cap {
+        return text.to_string();
+    }
+    text.chars().take(cap.saturating_sub(1)).chain(['…']).collect()
 }
 
 #[cfg(test)]

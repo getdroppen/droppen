@@ -19,6 +19,8 @@ libc = "0.2"
 # `watch`: the platform's filesystem events (FSEvents, inotify), debounced.
 notify = "7"
 regex = "1"
+# `env_block::EnvVar`, stored as JSON in the accounts' rows.
+serde = { version = "1", features = ["derive"] }
 # Only the client builder and `Url` (`outbound`). `default-features = false`
 # keeps `default-tls` (native-tls, OpenSSL) out: the server links nothing but
 # rustls.
