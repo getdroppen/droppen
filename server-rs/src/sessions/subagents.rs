@@ -1,38 +1,22 @@
-//! The subagents a session delegated work to, as a tree under it.
+//! Claude Code's subagents, as a tree under the session that spawned them
+//! ([`super::children`]).
 //!
-//! Both CLIs keep who spawned whom, each in its own way:
-//!
-//! * **Claude Code** writes each subagent's transcript beside the session —
-//!   `<session>/subagents/agent-<id>.jsonl` — with a meta file naming the
-//!   agent that spawned it (`parentAgentId`) for anything below the first
-//!   level. A subagent is not a session of its own: it is opened through its
-//!   parent ([`SessionChildKind::Agent`]).
-//! * **Codex** runs a subagent as a thread of its own and records the edge in
-//!   its state database (`thread_spawn_edges`). The thread is a session and
-//!   opens by its id ([`SessionChildKind::Thread`]); the list keeps it out of
-//!   the top level and shows it here instead.
-//!
-//! Only delegated work is a child. A forked or continued conversation is a
-//! session in its own right with no parent link, and stays a top-level row.
-//!
-//! The tree is an overlay ([`apply`]) like `unread`, computed each time the
-//! list is, because a child writes to a file of its own: the parent's
-//! transcript can sit still while its children change.
+//! Claude Code writes each subagent's transcript beside the session —
+//! `<session>/subagents/agent-<id>.jsonl` — with a meta file naming the agent
+//! that spawned it (`parentAgentId`) for anything below the first level. A
+//! subagent is not a session of its own: it is opened through its parent
+//! ([`SessionChildKind::Agent`]).
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, SystemTime};
 
-use gotcha::Schematic;
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::{codex, transcript, SessionActivity, SessionSummary, Source};
-use crate::sessions::attention::seen;
+use super::children::{agent_seen_id, ReadMarksExt, SessionChild, SessionChildKind, SessionChildStatus, SpawnOrderExt};
+use super::{transcript, SessionActivity, SessionSummary, Source};
 use droppen_http::openapi_ext::Nullable;
-use droppen_instance::paths::Paths;
-use droppen_base::time::iso8601;
 
 /// How recently a Claude subagent must have written to count as working
 /// while its parent is.
@@ -47,194 +31,56 @@ static ENDINGS: LazyLock<Mutex<HashMap<PathBuf, (u64, Option<SystemTime>, bool)>
 /// Past this many transcripts the remembered endings are dropped and read again.
 const ENDINGS_LIMIT: usize = 20_000;
 
-/// How a child is opened.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Schematic)]
-#[serde(rename_all = "lowercase")]
-pub enum SessionChildKind {
-    /// A session of its own: open it by its `id`, under the parent's source.
-    Thread,
-    /// A transcript inside its parent session: open it as the parent's agent
-    /// `id` (`/api/sessions/{source}/{parent}/agents/{id}`).
-    Agent,
-}
-
-/// Where a child is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Schematic)]
-#[serde(rename_all = "lowercase")]
-pub enum SessionChildStatus {
-    /// Still at work.
-    Working,
-    /// Stopped and waiting on someone.
-    Waiting,
-    /// Finished.
-    Done,
-    /// Ended in an error, or was cut short.
-    Failed,
-}
-
-/// One delegated subagent of a session.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Schematic)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionChild {
-    /// Its id: a thread id, or an agent id within the parent; see `kind`.
-    pub id: String,
-    /// How it is opened.
-    pub kind: SessionChildKind,
-    /// What to call it: the name the runtime gave it, or what it was asked to do.
-    pub name: String,
-    /// What it was spawned as (an agent type or role), when the runtime says.
-    pub role: Nullable<String>,
-    /// Where it is.
-    pub status: SessionChildStatus,
-    /// When it last wrote, ISO-8601.
-    pub updated_at: String,
-    /// Whether it has output nobody has looked at: it wrote after the reader
-    /// last opened it or anything above it — its parent's conversation shows
-    /// what it delegated — whichever was latest.
-    pub unread: bool,
-    /// The subagents it delegated to in turn.
-    pub children: Vec<SessionChild>,
-}
-
-/// Fill in `children` on every row, while the `subagentTree` pref is on.
-pub async fn apply(paths: &Paths, sessions: &mut [SessionSummary]) {
-    if sessions.is_empty() {
-        return;
+impl super::claude::ClaudeCodeSessions {
+    /// Claude children of one session, nested by `parentAgentId`.
+    pub(super) async fn subagent_tree(&self, session: &SessionSummary, marks: &BTreeMap<String, String>) -> Vec<SessionChild> {
+        let file = Path::new(&session.file_path);
+        let agents = transcript::list_session_agents(file).await;
+        if agents.is_empty() {
+            return Vec::new();
+        }
+        let parent_working = matches!(session.activity, SessionActivity::Working | SessionActivity::Background);
+        let known: std::collections::HashSet<&str> = agents.iter().map(|agent| agent.agent_id.as_str()).collect();
+        let mut flat: Vec<(Option<String>, SessionChild)> = Vec::with_capacity(agents.len());
+        for agent in &agents {
+            let updated_at = agent.updated_at.clone().unwrap_or_default();
+            let status = claude_status(agent.transcript_path.as_deref(), &updated_at, parent_working).await;
+            let name = agent
+                .description
+                .clone()
+                .filter(|text| !text.trim().is_empty())
+                .or_else(|| agent.agent_type.clone())
+                .unwrap_or_else(|| format!("agent {}", agent.agent_id.chars().take(8).collect::<String>()));
+            // An agent whose parent left no trace hangs off the session itself
+            // rather than vanishing with its missing parent.
+            let parent = agent.parent_agent_id.clone().filter(|parent| known.contains(parent.as_str()));
+            flat.push((
+                parent,
+                SessionChild {
+                    id: agent.agent_id.clone(),
+                    kind: SessionChildKind::Agent,
+                    name: super::util::title_line(&name),
+                    role: Nullable(agent.agent_type.clone()),
+                    status,
+                    // Decided once the tree is built, from the marks above it.
+                    unread: false,
+                    updated_at,
+                    children: Vec::new(),
+                },
+            ));
+        }
+        let mut tree = nest(flat);
+        mark_unread(&mut tree, &session.id, marks, marks.read_at(Source::Claude, &session.id));
+        tree
     }
-    // Opt-in (`subagentTree` in the prefs): until it is on, nothing is looked
-    // for, and every row goes out with no children, as before the tree.
-    if crate::prefs::PrefsStore::of(paths).read().await.subagent_tree != crate::prefs::SubagentTree::On {
-        return;
-    }
-    let marks = seen::read(paths).await;
-    let codex_threads = if sessions.iter().any(|session| session.source == Source::Codex) {
-        codex::spawned_threads(paths).await
-    } else {
-        Vec::new()
-    };
-    let mut threads_by_parent: HashMap<&str, Vec<&codex::SpawnedThread>> = HashMap::new();
-    for thread in &codex_threads {
-        threads_by_parent.entry(thread.parent_id.as_str()).or_default().push(thread);
-    }
-    for session in sessions.iter_mut() {
-        session.children = match session.source {
-            Source::Claude => claude_children(session, &marks).await,
-            Source::Codex => codex_children(&session.id, &threads_by_parent, &marks, read_at(&marks, Source::Codex, &session.id), 0).await,
-            // ACP keeps no parent links between sessions.
-            Source::Acp => Vec::new(),
-        };
-    }
-}
-
-/// The reader's mark on `id`, if they ever opened it.
-fn read_at<'a>(marks: &'a BTreeMap<String, String>, source: Source, id: &str) -> Option<&'a str> {
-    marks.get(&seen::key_of(source, id)).map(String::as_str)
-}
-
-/// The id a Claude subagent's read mark is kept under: within its session.
-pub fn agent_seen_id(session_id: &str, agent_id: &str) -> String {
-    format!("{session_id}/agents/{agent_id}")
-}
-
-/// Whether a child has output its reader has not seen, given the later of its
-/// own mark and its parent's.
-fn unread(status: SessionChildStatus, updated_at: &str, own: Option<&str>, parent: Option<&str>) -> bool {
-    if status == SessionChildStatus::Working {
-        return false;
-    }
-    match own.max(parent) {
-        Some(read) => updated_at > read,
-        None => true,
-    }
-}
-
-/// Codex children of `parent`, nested; `depth` guards against a cycle in a
-/// damaged edge table.
-async fn codex_children(
-    parent: &str,
-    by_parent: &HashMap<&str, Vec<&codex::SpawnedThread>>,
-    marks: &BTreeMap<String, String>,
-    parent_read: Option<&str>,
-    depth: usize,
-) -> Vec<SessionChild> {
-    let Some(threads) = by_parent.get(parent).filter(|_| depth < 8) else {
-        return Vec::new();
-    };
-    let mut children = Vec::with_capacity(threads.len());
-    for thread in threads {
-        let (working, failed) = codex::spawned_thread_state(thread).await;
-        let status = match (working, failed) {
-            (true, _) => SessionChildStatus::Working,
-            (false, true) => SessionChildStatus::Failed,
-            (false, false) => SessionChildStatus::Done,
-        };
-        let updated_at = iso8601(SystemTime::UNIX_EPOCH + Duration::from_millis(thread.updated_ms.max(0) as u64));
-        let own = read_at(marks, Source::Codex, &thread.id);
-        let read = own.max(parent_read);
-        let grandchildren = Box::pin(codex_children(&thread.id, by_parent, marks, read, depth + 1)).await;
-        children.push(SessionChild {
-            id: thread.id.clone(),
-            kind: SessionChildKind::Thread,
-            name: thread.name.clone(),
-            role: Nullable(thread.role.clone()),
-            status,
-            unread: unread(status, &updated_at, own, parent_read),
-            updated_at,
-            children: grandchildren,
-        });
-    }
-    sort(&mut children);
-    children
-}
-
-/// Claude children of one session, nested by `parentAgentId`.
-async fn claude_children(session: &SessionSummary, marks: &BTreeMap<String, String>) -> Vec<SessionChild> {
-    let file = Path::new(&session.file_path);
-    let agents = transcript::list_session_agents(file).await;
-    if agents.is_empty() {
-        return Vec::new();
-    }
-    let parent_working = matches!(session.activity, SessionActivity::Working | SessionActivity::Background);
-    let known: std::collections::HashSet<&str> = agents.iter().map(|agent| agent.agent_id.as_str()).collect();
-    let mut flat: Vec<(Option<String>, SessionChild)> = Vec::with_capacity(agents.len());
-    for agent in &agents {
-        let updated_at = agent.updated_at.clone().unwrap_or_default();
-        let status = claude_status(agent.transcript_path.as_deref(), &updated_at, parent_working).await;
-        let name = agent
-            .description
-            .clone()
-            .filter(|text| !text.trim().is_empty())
-            .or_else(|| agent.agent_type.clone())
-            .unwrap_or_else(|| format!("agent {}", agent.agent_id.chars().take(8).collect::<String>()));
-        // An agent whose parent left no trace hangs off the session itself
-        // rather than vanishing with its missing parent.
-        let parent = agent.parent_agent_id.clone().filter(|parent| known.contains(parent.as_str()));
-        flat.push((
-            parent,
-            SessionChild {
-                id: agent.agent_id.clone(),
-                kind: SessionChildKind::Agent,
-                name: super::transcript::title_line(&name),
-                role: Nullable(agent.agent_type.clone()),
-                status,
-                // Decided once the tree is built, from the marks above it.
-                unread: false,
-                updated_at,
-                children: Vec::new(),
-            },
-        ));
-    }
-    let mut tree = nest(flat);
-    mark_unread(&mut tree, &session.id, marks, read_at(marks, Source::Claude, &session.id));
-    tree
 }
 
 /// Decide `unread` down a Claude tree, each child against its own mark and
 /// the latest one above it.
 fn mark_unread(children: &mut [SessionChild], session: &str, marks: &BTreeMap<String, String>, above: Option<&str>) {
     for child in children {
-        let own = read_at(marks, Source::Claude, &agent_seen_id(session, &child.id));
-        child.unread = unread(child.status, &child.updated_at, own, above);
+        let own = marks.read_at(Source::Claude, &agent_seen_id(session, &child.id));
+        child.unread = child.status.is_unread(&child.updated_at, own, above);
         let below = own.max(above);
         mark_unread(&mut child.children, session, marks, below);
     }
@@ -253,15 +99,10 @@ fn nest(flat: Vec<(Option<String>, SessionChild)>) -> Vec<SessionChild> {
                 child.children = attach(Some(child.id.clone()), by_parent, depth + 1);
             }
         }
-        sort(&mut children);
+        children.sort_by_spawn();
         children
     }
     attach(None, &mut by_parent, 0)
-}
-
-/// Spawn order, as near as the files tell it: oldest write first, then id.
-fn sort(children: &mut [SessionChild]) {
-    children.sort_by(|a, b| a.updated_at.cmp(&b.updated_at).then_with(|| a.id.cmp(&b.id)));
 }
 
 /// Where a Claude subagent is: working while its parent is and it wrote
@@ -330,6 +171,7 @@ fn tail_ended_badly(lines: &[String]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use droppen_base::time::iso8601;
 
     fn child(id: &str, updated_at: &str) -> SessionChild {
         SessionChild {
@@ -356,27 +198,6 @@ mod tests {
         assert_eq!(ids, vec!["b", "a"], "spawn order");
         assert_eq!(tree[1].children[0].id, "a1");
         assert_eq!(tree[1].children[0].children[0].id, "a1x");
-    }
-
-    #[test]
-    fn a_child_is_unread_until_it_or_its_parent_is_opened_after_it_wrote() {
-        let wrote = "2026-10-01T10:00:00Z";
-        assert!(unread(SessionChildStatus::Done, wrote, None, None), "never opened");
-        assert!(
-            !unread(SessionChildStatus::Done, wrote, None, Some("2026-10-01T11:00:00Z")),
-            "the parent was read since"
-        );
-        assert!(
-            !unread(SessionChildStatus::Done, wrote, Some("2026-10-01T10:30:00Z"), None),
-            "it was read since"
-        );
-        assert!(unread(
-            SessionChildStatus::Failed,
-            wrote,
-            Some("2026-10-01T09:00:00Z"),
-            Some("2026-10-01T09:30:00Z")
-        ));
-        assert!(!unread(SessionChildStatus::Working, wrote, None, None), "not while it is still working");
     }
 
     #[tokio::test]

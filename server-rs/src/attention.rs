@@ -62,7 +62,7 @@ pub async fn mark_agent_seen(
     if !crate::sessions::sidecars::is_agent_id(&agent_id) {
         return Err(ApiError::bad_request("invalid agent id"));
     }
-    let previous = seen::mark(state.paths.as_ref(), source, &crate::sessions::subagents::agent_seen_id(&id, &agent_id))
+    let previous = seen::mark(state.paths.as_ref(), source, &crate::sessions::children::agent_seen_id(&id, &agent_id))
         .await
         .map_err(|error| ApiError::internal(format!("failed to record seen: {error}")))?;
     state.refresh.request_refresh(None);

@@ -5628,7 +5628,7 @@ export interface components {
              * @description The subagents this session delegated work to, as a tree: each child
              *     with its own children, when the agent runtime records who spawned whom.
              *
-             *     An overlay like `unread` ([`subagents::apply`]), never cached with the
+             *     An overlay like `unread` (`sessions::children::apply`), never cached with the
              *     row: a child writes to a file of its own, so the parent's transcript can
              *     sit still while its children change. Empty for a session with none, and
              *     for a runtime that keeps no parent links. Forks are not children — only
@@ -6036,7 +6036,7 @@ export interface components {
          * @description Whether the session list shows the subagents each session delegated to.
          *
          *     Opt-in: off until somebody turns it on, and while it is off the subagents are
-         *     not even looked for (`sessions::subagents`).
+         *     not even looked for (`sessions::children::apply`).
          * @enum {string}
          */
         SubagentTree: "off" | "on";

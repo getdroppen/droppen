@@ -13,8 +13,8 @@ use futures_util::future::BoxFuture;
 use serde_json::Value;
 
 use super::sources::{TokenUsage, UsageFile, UsageFold};
-use super::transcript::{content_blocks, title_line, user_title_candidate};
-use super::util::{self, read_head_lines, read_tail_lines, try_parse, FileCache};
+use super::transcript::{content_blocks, user_title_candidate};
+use super::util::{self, read_head_lines, read_tail_lines, title_line, try_parse, FileCache};
 use super::{SessionActivity, SessionScope, SessionStatus, SessionSummary, Source};
 use crate::claude_roots;
 use droppen_http::openapi_ext::Nullable;
@@ -699,6 +699,14 @@ impl super::Transcripts for ClaudeCodeSessions {
 
     fn checklists(&self) -> Option<&dyn super::sidecars::Checklists> {
         Some(self)
+    }
+
+    fn children<'a>(&'a self, _paths: &'a Paths, sessions: Vec<&'a mut SessionSummary>, marks: &'a BTreeMap<String, String>) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            for session in sessions {
+                session.children = self.subagent_tree(session, marks).await;
+            }
+        })
     }
 
     fn context<'a>(&'a self, file_path: &'a Path) -> BoxFuture<'a, Option<super::context::ContextUsage>> {

@@ -323,6 +323,21 @@ pub fn is_image_name(name: &str) -> bool {
     }
 }
 
+/// Whether a browser would draw this file in an `<img>`.
+///
+/// The count of image blocks in a result is not enough on its own to name the
+/// call's file as a thumbnail. `Read` answers with image blocks for a *PDF*
+/// too — it rasterises the pages — and the path on that call is the `.pdf`,
+/// which an `<img>` renders as a broken-image icon. That is strictly worse than
+/// the `[N images]` line it replaced, so the extension has to agree before a
+/// path is offered.
+///
+/// The extraction is `Path::extension`, which has no extension for a dotfile
+/// (`.png`); the allowlist is shared with the other image sites.
+pub(super) fn is_renderable_image(path: &Path) -> bool {
+    path.extension().and_then(|ext| ext.to_str()).is_some_and(is_image_ext)
+}
+
 /// Strip CSI escape sequences, which leak in from CLI stdout captures.
 pub fn strip_ansi(text: &str) -> String {
     static ANSI: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
@@ -347,6 +362,11 @@ pub fn first_line_of(text: &str, limit: usize) -> String {
     } else {
         line.to_string()
     }
+}
+
+/// First line of a picked title, ellipsised the way the session list expects.
+pub fn title_line(text: &str) -> String {
+    first_line_of(text, 120)
 }
 
 /// What an attachment suffix on a user message decomposes into.
@@ -748,6 +768,15 @@ impl<T: Clone> FileCache<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A path's extension, not its name's tail: `.png` is a dotfile.
+    #[test]
+    fn a_dotfile_is_not_a_renderable_image() {
+        assert!(is_renderable_image(Path::new("photo.png")));
+        assert!(is_renderable_image(Path::new("photo.PNG")));
+        assert!(!is_renderable_image(Path::new(".png")), "Path::extension has none for a dotfile");
+        assert!(!is_renderable_image(Path::new("notes.txt")));
+    }
 
     async fn backwards(bytes: &[u8], budget: u64) -> (Vec<String>, bool) {
         let dir = tempfile::tempdir().expect("tempdir");

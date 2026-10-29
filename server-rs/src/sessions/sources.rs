@@ -121,6 +121,18 @@ pub trait Transcripts: Send + Sync {
         None
     }
 
+    /// Fill in `children` on `sessions`, every one of them this CLI's: the
+    /// subagents each delegated work to, as a tree under it, read against the
+    /// reader's read marks (see [`super::children`]). A CLI that keeps no
+    /// links between its sessions leaves each with none.
+    fn children<'a>(&'a self, _paths: &'a Paths, sessions: Vec<&'a mut SessionSummary>, _marks: &'a BTreeMap<String, String>) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            for session in sessions {
+                session.children = Vec::new();
+            }
+        })
+    }
+
     /// The transcripts that count toward the token-usage stats and were
     /// written at or after `cutoff_ms`. None by default: a CLI whose
     /// transcripts report no tokens this server can price adds nothing.
