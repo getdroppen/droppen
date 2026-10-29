@@ -42,8 +42,8 @@ pub struct LinkEnv {
     /// The server's token; the link takes a child of it.
     pub cancel: CancellationToken,
     /// Whether the owner wants the device role to work
-    /// ([`crate::aggregator::Switch`]): the controller and the copies ask it.
-    pub aggregator_switch: Arc<dyn crate::aggregator::Switch>,
+    /// ([`droppen_aggregator::Switch`]): the controller and the copies ask it.
+    pub aggregator_switch: Arc<dyn droppen_aggregator::Switch>,
 }
 
 /// What the link asks of the server's push channels, which sit above the
@@ -67,14 +67,14 @@ pub struct Running {
     pub(in crate::agent) task: tokio::task::JoinHandle<()>,
     /// The streams' writer, which holds `streams.db` open.
     pub(in crate::agent) sync_task: tokio::task::JoinHandle<()>,
-    /// This computer's device role ([`crate::aggregator::controller`]), when
+    /// This computer's device role ([`droppen_aggregator::controller`]), when
     /// it may run (`DROPPEN_AGENT_CONTROL`), and what it reports.
     pub(in crate::agent) control: Option<tokio::task::JoinHandle<()>>,
-    pub(in crate::agent) control_status: Arc<Mutex<crate::aggregator::controller::Status>>,
-    /// Its copies of the other devices ([`crate::aggregator::copies`]), and
+    pub(in crate::agent) control_status: Arc<Mutex<droppen_aggregator::controller::Status>>,
+    /// Its copies of the other devices ([`droppen_aggregator::copies`]), and
     /// what it reports.
     pub(in crate::agent) copies: Option<tokio::task::JoinHandle<()>>,
-    pub(in crate::agent) copies_status: Arc<Mutex<crate::aggregator::copies::Status>>,
+    pub(in crate::agent) copies_status: Arc<Mutex<droppen_aggregator::copies::Status>>,
 }
 
 impl Running {
@@ -101,7 +101,7 @@ impl Running {
 
     /// What this computer's device role reports (`GET /api/cloud`): each
     /// host with what is copied of it.
-    pub fn control_status(&self) -> crate::aggregator::controller::Status {
+    pub fn control_status(&self) -> droppen_aggregator::controller::Status {
         let mut status = self.control_status.lock().expect("aggregator status").clone();
         let copies = self.copies_status.lock().expect("copies status").clone();
         for host in &mut status.hosts {
@@ -146,7 +146,7 @@ pub fn enabled() -> bool {
 pub fn start(
     paths: &Paths,
     env: &LinkEnv,
-    live: Arc<crate::aggregator::live::LiveCopies>,
+    live: Arc<droppen_aggregator::live::LiveCopies>,
     restart: super::rotation::Restart,
 ) -> Result<Running, String> {
     // Adding this device again under a new identity, interrupted by a crash:
@@ -215,18 +215,18 @@ pub fn start(
     if shared.state.lock().expect("agent state").rotation.push_renew {
         tokio::spawn(renew_push(shared.clone()));
     }
-    let control_status = Arc::new(Mutex::new(crate::aggregator::controller::Status::default()));
-    let copies_status = Arc::new(Mutex::new(crate::aggregator::copies::Status::default()));
+    let control_status = Arc::new(Mutex::new(droppen_aggregator::controller::Status::default()));
+    let copies_status = Arc::new(Mutex::new(droppen_aggregator::copies::Status::default()));
     // This computer as a device controlling the others and following their
     // copies: under the link's token, so both stop with it —
     // and with this machine's removal.
-    let control = crate::aggregator::enabled().then(|| {
+    let control = droppen_aggregator::enabled().then(|| {
         let (keys_out, keys) = tokio::sync::watch::channel(None);
         let nudge = Arc::new(tokio::sync::Notify::new());
-        let controller = tokio::spawn(crate::aggregator::controller::run(crate::aggregator::controller::Env {
+        let controller = tokio::spawn(droppen_aggregator::controller::run(droppen_aggregator::controller::Env {
             paths: paths.clone(),
             identity: shared.identity.clone(),
-            enrollment: shared.state.clone(),
+            enrollment: Arc::new(crate::agent::state::LinkEnrollment(shared.state.clone())),
             switch: env.aggregator_switch.clone(),
             chain: shared.chain_version.subscribe(),
             cancel: shared.cancel.child_token(),
@@ -236,10 +236,10 @@ pub fn start(
             nudge: nudge.clone(),
             may_sign_in: Some(sign_in_gate(&shared)),
         }));
-        let copies = tokio::spawn(crate::aggregator::copies::run(crate::aggregator::copies::Env {
+        let copies = tokio::spawn(droppen_aggregator::copies::run(droppen_aggregator::copies::Env {
             paths: paths.clone(),
             identity: shared.identity.clone(),
-            enrollment: shared.state.clone(),
+            enrollment: Arc::new(crate::agent::state::LinkEnrollment(shared.state.clone())),
             switch: env.aggregator_switch.clone(),
             chain: shared.chain_version.subscribe(),
             keys,
@@ -347,7 +347,7 @@ pub(in crate::agent) fn test_shared(
 
 /// Whether this computer's device role may sign in now
 /// ([`super::rotation::device_role_may_sign_in`]), for the aggregator.
-pub(in crate::agent) fn sign_in_gate(shared: &Arc<Shared>) -> crate::aggregator::SignInGate {
+pub(in crate::agent) fn sign_in_gate(shared: &Arc<Shared>) -> droppen_aggregator::SignInGate {
     let shared = Arc::downgrade(shared);
     Arc::new(move || shared.upgrade().is_some_and(|s| super::rotation::device_role_may_sign_in(&s)))
 }
@@ -388,7 +388,7 @@ pub(in crate::agent) fn chain_resync(shared: &Arc<Shared>) -> Arc<dyn Fn() + Sen
 pub(in crate::agent) fn startable(paths: &Paths) -> Result<AgentState, String> {
     let loaded = AgentState::load(&AgentFiles::of(paths))?.ok_or("this instance is not enrolled")?;
     if loaded.removed() {
-        if let Err(error) = crate::aggregator::forget_all(paths) {
+        if let Err(error) = droppen_aggregator::forget_all(paths) {
             tracing::error!(%error, "cannot delete the other devices' keys of a removed machine");
         }
         return Err("this device was removed from the account; it does not connect again".into());
@@ -636,7 +636,7 @@ pub(in crate::agent) async fn connection(shared: &Arc<Shared>) -> Result<(), Str
     // One writer for the socket: frames from every channel, and control text.
     let (frames_tx, frames_rx) = mpsc::unbounded_channel::<Frame>();
     let (text_tx, text_rx) = mpsc::unbounded_channel::<String>();
-    let writer = hub::spawn_writer(sink, frames_rx, text_rx, HEARTBEAT, crate::aggregator::traffic::agent_out);
+    let writer = hub::spawn_writer(sink, frames_rx, text_rx, HEARTBEAT, droppen_aggregator::traffic::agent_out);
 
     // The streams' writer has this connection only while this machine runs
     // AI in its account (and is told again whenever the chain changes that).
@@ -698,7 +698,7 @@ pub(in crate::agent) async fn connection(shared: &Arc<Shared>) -> Result<(), Str
         shared.rotation.heard();
         match message {
             Message::Text(text) => {
-                if let Ok(value) = serde_json::from_str::<Value>(crate::aggregator::traffic::agent_in(text.as_str())) {
+                if let Ok(value) = serde_json::from_str::<Value>(droppen_aggregator::traffic::agent_in(text.as_str())) {
                     on_control(shared, &value, &text_tx);
                 }
             }

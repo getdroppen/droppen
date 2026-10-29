@@ -11,7 +11,7 @@
 //!   follows the other hosts' index, status and newest sessions ([`access`]
 //!   says which) over its own `/v1/client` connection, and keeps them in
 //!   [`store`] (`aggregator/copies.db`). S2 adds the channels.
-//! - [`crate::cloud::gateway`] (S1-7) serves them to this computer's own pages —
+//! - `cloud::gateway` (S1-7) serves them to this computer's own pages —
 //!   `GET /api/agg/ws`, only to the local accounts that may see other
 //!   devices — from memory ([`live`]): the copies task publishes every copy
 //!   it follows there, and follows the sessions a page opens.
@@ -26,6 +26,9 @@
 //! signed in from its local settings with aggregation (the default), and for
 //! one enrolled from the command line that never was (§4.3, "已注册的电脑");
 //! off once the owner turns it off.
+//!
+//! A name in backticks such as `agent` or `cloud::gateway` in these docs is a
+//! module of the server, which this crate cannot link to.
 
 pub mod access;
 pub mod controller;
@@ -103,23 +106,23 @@ pub trait Switch: Send + Sync {
 }
 
 /// A [`Switch`] a test turns: on until [`TestSwitch::set`] turns it off.
-#[cfg(test)]
-pub(crate) struct TestSwitch(std::sync::atomic::AtomicBool);
+#[cfg(any(test, feature = "test-support"))]
+pub struct TestSwitch(std::sync::atomic::AtomicBool);
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl TestSwitch {
     /// A switch that is on.
-    pub(crate) fn on() -> std::sync::Arc<Self> {
+    pub fn on() -> std::sync::Arc<Self> {
         std::sync::Arc::new(Self(std::sync::atomic::AtomicBool::new(true)))
     }
 
     /// Turn it on or off, as the owner would.
-    pub(crate) fn set(&self, on: bool) {
+    pub fn set(&self, on: bool) {
         self.0.store(on, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl Switch for TestSwitch {
     fn is_on(&self) -> bool {
         self.0.load(std::sync::atomic::Ordering::SeqCst)

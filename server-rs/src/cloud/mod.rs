@@ -53,7 +53,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::agent::fingerprint::machine_fingerprint;
 use crate::agent::status::{AgentStatus, Standing};
-use crate::aggregator::controller::AggregatorHost;
+use droppen_aggregator::controller::AggregatorHost;
 use droppen_auth::{MaybeIdentity, RETURN_ROUTE};
 use droppen_http::error::{ApiError, Coded};
 use droppen_http::extract::ApiJson;
@@ -120,7 +120,7 @@ impl Cloud {
 
     /// The aggregator's switch, for the link to hand to its device role:
     /// this server's `cloud.json` ([`LinkFile::wants_aggregator`]).
-    pub fn aggregator_switch(&self) -> Arc<dyn crate::aggregator::Switch> {
+    pub fn aggregator_switch(&self) -> Arc<dyn droppen_aggregator::Switch> {
         Arc::new(LinkFile::of(&self.paths))
     }
 
@@ -133,7 +133,7 @@ impl Cloud {
     fn forget_aggregator(&self) -> Result<(), ApiError> {
         // What the gateway shows of them goes at once, with the files.
         self.control.live().clear();
-        crate::aggregator::forget_all(&self.paths).map_err(ApiError::internal)
+        droppen_aggregator::forget_all(&self.paths).map_err(ApiError::internal)
     }
 }
 
@@ -636,7 +636,7 @@ async fn status_for(state: &CloudState, user: Option<&str>) -> CloudStatus {
             let control = cloud.control.control_status().filter(|c| c.running);
             CloudAggregator {
                 enabled: LinkFile::of(&cloud.paths).wants_aggregator(),
-                state: if crate::aggregator::key_path(&cloud.paths).exists() {
+                state: if droppen_aggregator::key_path(&cloud.paths).exists() {
                     "pending".into()
                 } else if control.is_some() {
                     "on".into()
@@ -1120,7 +1120,7 @@ mod tests {
                 token_sha256: None,
             }))
         };
-        let dir = crate::aggregator::dir(&state.cloud.paths);
+        let dir = droppen_aggregator::dir(&state.cloud.paths);
         let fill = || {
             std::fs::create_dir_all(&dir).unwrap();
             for name in ["keys.json", "copies.db", "device-key.json"] {
@@ -1157,7 +1157,7 @@ mod tests {
     async fn a_pre_chain_v3_pending_key_is_not_pending_after_the_next_boot() {
         let home = tempfile::tempdir().unwrap();
         let state = crate::api::test_support::state(home.path()).await;
-        let key = crate::aggregator::key_path(&state.cloud.paths);
+        let key = droppen_aggregator::key_path(&state.cloud.paths);
         std::fs::create_dir_all(key.parent().unwrap()).unwrap();
         std::fs::write(&key, b"{}").unwrap();
         assert_eq!(status_for(&CloudState::from_ref(&state), None).await.aggregator.state, "pending");
@@ -2064,11 +2064,11 @@ mod tests {
         assert!(!crate::cloud::LinkFile::of(&paths).wants_aggregator());
     }
 
-    /// The aggregator's [`crate::aggregator::Switch`] is `cloud.json` as it is
+    /// The aggregator's [`droppen_aggregator::Switch`] is `cloud.json` as it is
     /// when asked: one value follows every change of the file.
     #[test]
     fn the_aggregators_switch_reads_the_file_on_every_ask() {
-        use crate::aggregator::Switch;
+        use droppen_aggregator::Switch;
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths::for_instance(dir.path().to_path_buf(), "switchtest");
         std::fs::create_dir_all(paths.instance_dir()).unwrap();

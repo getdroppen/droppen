@@ -1,0 +1,63 @@
+[package]
+name = "droppen-aggregator"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+publish = false
+description = "The Droppen server's device role: the verified copies of the account's other machines, their keys and the live tap"
+
+# The device role. It stands on the instance, the shared wire format and the
+# hub client, and names none of the server's subsystems: what it needs of the
+# machine role (the agent's enrollment) reaches it through the `Enrollment`
+# port, which the agent fills.
+[dependencies]
+droppen-base = { path = "../droppen-base" }
+droppen-instance = { path = "../droppen-instance" }
+gotcha = { version = "0.4.1", features = ["openapi"] }
+# What gotcha's `Schematic` derive expands to names it.
+gotcha_core = "0.4.1"
+libc = "0.2"
+# The jitter on a copy's retry.
+rand = "0.8"
+# The hub's HTTP endpoints. `default-features = false` drops `default-tls`
+# (native-tls/OpenSSL) so the binary keeps linking nothing but rustls; the
+# features are the server's, so it builds one reqwest.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "http2", "charset", "json"] }
+rh-client = { path = "../rh-client" }
+rh-proto = { path = "../rh-proto" }
+# The verified copies' store. `bundled` compiles SQLite itself rather than
+# linking the platform's.
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { workspace = true }
+tokio = { version = "1", features = ["macros", "net", "rt", "sync", "time"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+tracing = "0.1"
+# Host keys and the hub session token are wiped from memory when dropped.
+zeroize = "1"
+
+# `TestSwitch` and `live::index_slot`, for the server's tests of the device
+# role under a real agent state and of the gateway. Only the server's
+# [dev-dependencies] turn it on.
+[features]
+test-support = []
+
+[dev-dependencies]
+# The fake hub the copy and key tests talk to.
+axum = { version = "0.8", features = ["ws"] }
+ed25519-dalek = "2"
+futures-util = "0.3"
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "net", "rt", "rt-multi-thread", "sync", "time"] }
+tokio-tungstenite = { version = "0.29", features = ["rustls-tls-webpki-roots"] }
+
+[lints.rust]
+missing_docs = "deny"
+unreachable_pub = "deny"
+
+# `[lints] workspace = true` cannot be mixed with the rust lints above, so the
+# workspace's two clippy denials (`server-rs/Cargo.toml` `[workspace.lints]`)
+# are repeated here: keep them in step.
+[lints.clippy]
+significant_drop_in_scrutinee = "deny"
+await_holding_lock = "deny"

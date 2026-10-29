@@ -16,7 +16,7 @@ workspace = true
 # package stays the default member, so a bare `cargo build`/`cargo test` here
 # still means the server and nothing else.
 [workspace]
-members = [".", "crates/rh-proto", "crates/rh-relay", "crates/droppen-relay", "crates/rh-client", "crates/rh-devkit", "crates/droppen-plugin-sdk", "crates/droppen-search-path", "crates/droppen-base", "crates/droppen-instance", "crates/droppen-http", "crates/droppen-pty", "crates/droppen-supervisor", "crates/droppen-auth", "crates/droppen-files", "crates/droppen-workbench", "crates/droppen-plugins"]
+members = [".", "crates/rh-proto", "crates/rh-relay", "crates/droppen-relay", "crates/rh-client", "crates/rh-devkit", "crates/droppen-plugin-sdk", "crates/droppen-search-path", "crates/droppen-base", "crates/droppen-instance", "crates/droppen-http", "crates/droppen-pty", "crates/droppen-supervisor", "crates/droppen-auth", "crates/droppen-files", "crates/droppen-workbench", "crates/droppen-plugins", "crates/droppen-aggregator"]
 
 # Every member takes serde_json from here, so `preserve_order` is on in every
 # build: a `Value` writes its keys in insertion order rather than sorted. Cargo
@@ -86,6 +86,8 @@ droppen-files = { path = "crates/droppen-files" }
 droppen-workbench = { path = "crates/droppen-workbench" }
 # The plugin host: installed packages, their switches, store, routes and assets.
 droppen-plugins = { path = "crates/droppen-plugins" }
+# The device role: verified copies of the account's other machines.
+droppen-aggregator = { path = "crates/droppen-aggregator" }
 # Machine-signed stream heads and manifests (the agent's streams).
 ed25519-dalek = "2"
 # The agent's one outbound websocket to the hub, and its loopback sockets to
@@ -209,6 +211,9 @@ tokio = { version = "1", features = ["test-util"] }
 # The child-PATH override per test thread, which the unit tests that set it
 # rely on (`setup::tests::ChildPathGuard`): see the feature's own comment.
 droppen-base = { path = "crates/droppen-base", features = ["test-support"] }
+# The device role's test switch and a published index slot, for the tests of
+# the controller under a real agent state and of the gateway.
+droppen-aggregator = { path = "crates/droppen-aggregator", features = ["test-support"] }
 # A link whose frames are all queued at once, for the terminal tests
 # (`droppen_pty::client::Link::preloaded`).
 droppen-pty = { path = "crates/droppen-pty", features = ["test-support"] }

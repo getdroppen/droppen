@@ -286,7 +286,7 @@ test("a device that runs AI says on its row what it is and how many of its sessi
 test("a device's system and agent version read off its status as the local page's directory reads them, an older agent's settings standing in", () => {
   const status = (body: Record<string, unknown>): StatusState => statusFold.apply(statusFold.empty(), { asOf: 1, ...body });
   const settings = { platform: "darwin", serverVersion: "0.2.120" };
-  // The same cases as the local server's directory (`server-rs/src/aggregator/live.rs`, `os_of`).
+  // The same cases as the local server's directory (`server-rs/crates/droppen-aggregator/src/live.rs`, `os_of`).
   assert.equal(systemLabel(status({ os: { name: "macos", version: "15.3.1", arch: "aarch64" }, settings })), "macOS 15.3.1 aarch64");
   assert.equal(systemLabel(status({ os: { name: "linux", version: "24.04", distro: "ubuntu", arch: "x86_64" } })), "ubuntu 24.04 x86_64", "a Linux by its distribution");
   assert.equal(systemLabel(status({ os: { name: "linux", version: null, arch: "aarch64" } })), "Linux aarch64", "no os-release: Linux, and what is known");

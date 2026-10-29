@@ -196,7 +196,7 @@ impl LinkFile {
 }
 
 /// The aggregator's switch is this file, read again on every ask.
-impl crate::aggregator::Switch for LinkFile {
+impl droppen_aggregator::Switch for LinkFile {
     fn is_on(&self) -> bool {
         self.wants_aggregator()
     }

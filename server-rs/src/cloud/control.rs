@@ -76,7 +76,7 @@ pub struct Control {
     generation: Mutex<u64>,
     /// The other devices' copies in memory, for the local gateway:
     /// the copies task of whichever link runs publishes into it.
-    live: Arc<crate::aggregator::live::LiveCopies>,
+    live: Arc<droppen_aggregator::live::LiveCopies>,
 }
 
 impl Control {
@@ -90,7 +90,7 @@ impl Control {
             running: Mutex::new(None),
             gate: tokio::sync::Mutex::new(()),
             generation: Mutex::new(0),
-            live: crate::aggregator::live::LiveCopies::new(),
+            live: droppen_aggregator::live::LiveCopies::new(),
         })
     }
 
@@ -122,16 +122,16 @@ impl Control {
     }
 
     /// The other devices' copies as the gateway serves them.
-    pub fn live(&self) -> &Arc<crate::aggregator::live::LiveCopies> {
+    pub fn live(&self) -> &Arc<droppen_aggregator::live::LiveCopies> {
         &self.live
     }
 
     /// Give the handle what a link needs (the owner, once listening). First,
     /// whatever deletion of the other devices' copies an earlier run left
     /// unfinished is finished — whether the aggregator is on or not
-    /// ([`crate::aggregator::sweep_deleted`]).
+    /// ([`droppen_aggregator::sweep_deleted`]).
     pub fn attach(&self, env: LinkEnv) {
-        crate::aggregator::sweep_deleted(&self.paths);
+        droppen_aggregator::sweep_deleted(&self.paths);
         // Adding this device again under a new identity, cut short by a
         // crash: finished before anything starts.
         if let Err(error) = crate::agent::rotation::finish_re_enroll(&self.paths) {
@@ -244,7 +244,7 @@ impl Control {
 
     /// What this computer's device role reports: `None` when the
     /// link does not run here.
-    pub fn control_status(&self) -> Option<crate::aggregator::controller::Status> {
+    pub fn control_status(&self) -> Option<droppen_aggregator::controller::Status> {
         let running = self.running.lock().expect("running");
         running.as_ref().filter(|r| !r.finished()).map(Running::control_status)
     }

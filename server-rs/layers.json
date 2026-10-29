@@ -167,9 +167,7 @@
         {
           "name": "droppen-aggregator",
           "about": "The device role: copies of other machines; owns the Enrollment port.",
-          "modules": [
-            "aggregator"
-          ],
+          "modules": [],
           "mayUse": []
         },
         {

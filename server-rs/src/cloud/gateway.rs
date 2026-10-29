@@ -11,7 +11,7 @@
 //! | here | `copy {s, reset?, bodies, headSeq, epoch, headTimeMs}`; `missing {s}`; `copy_error {s, code, message}` (`no_device`, `bad_name`, `too_large`, `gone`, `overrun`, `limit`, `busy`) |
 //! | here | `refused {p, code: unsupported}` for `open` (live pipes come with S2-2); `bye {code, message}` before closing when the page may no longer see other devices; `pong` |
 //!
-//! Everything comes from memory ([`crate::aggregator::live`]); nothing here reads the
+//! Everything comes from memory ([`droppen_aggregator::live`]); nothing here reads the
 //! disk or writes anywhere: read-only, in every sense.
 //!
 //! **Who**: [`crate::cloud::remote_viewer`] — the rule `GET /api/cloud`'s
@@ -44,8 +44,8 @@ use gotcha::{GotchaRouter, State, WebSocketUpgrade};
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::aggregator::live::{error_frame, DirHost, Key, LiveCopies, Outbox, Subscription};
-use crate::aggregator::store::Kind;
+use droppen_aggregator::live::{error_frame, DirHost, Key, LiveCopies, Outbox, Subscription};
+use droppen_aggregator::store::Kind;
 use droppen_auth::MaybeIdentity;
 use crate::cloud::CloudState;
 
@@ -404,10 +404,10 @@ fn handle(ask: Ask, live: &Arc<LiveCopies>, out: &Arc<Outbox>, subs: &mut HashMa
     }
 }
 
-fn ended_message(ended: crate::aggregator::live::Ended) -> &'static str {
+fn ended_message(ended: droppen_aggregator::live::Ended) -> &'static str {
     match ended {
-        crate::aggregator::live::Ended::Gone => "that device is not one this device shows",
-        crate::aggregator::live::Ended::TooLarge => "this session's copy is too large to keep on this device",
+        droppen_aggregator::live::Ended::Gone => "that device is not one this device shows",
+        droppen_aggregator::live::Ended::TooLarge => "this session's copy is too large to keep on this device",
     }
 }
 
@@ -617,7 +617,7 @@ mod tests {
         live.set_hosts(&["m-2".into()]);
         let mut index = rh_client::streams::IndexCopy::default();
         index.rows.insert("claude/q".into(), json!({"source": "claude", "id": "q"}));
-        let slot = crate::aggregator::live::index_slot(index, 1, 1);
+        let slot = droppen_aggregator::live::index_slot(index, 1, 1);
         live.publish(&Key::new("m-2", Kind::Index, ""), 0, &slot);
         let (out, mut rx) = Outbox::new(16, OUTBOX_BYTES);
         let mut subs = HashMap::new();
@@ -721,7 +721,7 @@ mod tests {
         index
             .rows
             .insert("claude/q".into(), json!({"source": "claude", "id": "q", "asking": true}));
-        let slot = crate::aggregator::live::index_slot(index, 4, 1_700_000_000_000);
+        let slot = droppen_aggregator::live::index_slot(index, 4, 1_700_000_000_000);
         live.publish(&Key::new("m-2", Kind::Index, ""), 0, &slot);
         let dir = next(&mut a).await;
         assert_eq!(dir["machines"][0]["copyAsOfMs"], 1_700_000_000_000u64);

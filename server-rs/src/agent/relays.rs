@@ -800,7 +800,7 @@ async fn session(
         sig: hex(&sig),
     };
     let login = serde_json::to_value(&login).map_err(|e| e.to_string())?;
-    sink.send(Message::Text(crate::aggregator::traffic::relay_value(login).to_string().into()))
+    sink.send(Message::Text(droppen_aggregator::traffic::relay_value(login).to_string().into()))
     .await
     .map_err(|e| e.to_string())?;
     let welcome = match hub::read_json(&mut source, Peer::Relay).await {
@@ -820,7 +820,7 @@ async fn session(
 
     let (frames_tx, frames_rx) = mpsc::unbounded_channel::<Frame>();
     let (text_tx, text_rx) = mpsc::unbounded_channel::<String>();
-    let writer = hub::spawn_writer(sink, frames_rx, text_rx, HEARTBEAT, crate::aggregator::traffic::relay_out);
+    let writer = hub::spawn_writer(sink, frames_rx, text_rx, HEARTBEAT, droppen_aggregator::traffic::relay_out);
     let mut chain = shared.chain_version.subscribe();
     let mut routes: Routes = HashMap::new();
     let mut pending = Pending::new();
@@ -855,7 +855,7 @@ async fn session(
                         channels.store(routes.len(), Ordering::Relaxed);
                     }
                     Message::Text(text) => {
-                        let Ok(v) = serde_json::from_str::<Value>(crate::aggregator::traffic::relay_in(text.as_str())) else { continue };
+                        let Ok(v) = serde_json::from_str::<Value>(droppen_aggregator::traffic::relay_in(text.as_str())) else { continue };
                         match v["t"].as_str() {
                             Some("goaway") => tracing::info!(relay = %id, reason = %v["reason"], "the relay is draining"),
                             Some("error") => tracing::warn!(relay = %id, code = %v["code"], message = %v["message"], "the relay reported an error"),

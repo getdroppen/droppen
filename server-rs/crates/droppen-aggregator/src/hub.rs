@@ -85,7 +85,7 @@ pub struct Mail {
 
 /// A hub's websocket origin as the HTTP base the same hub answers on:
 /// `wss://host` → `https://host`, and `ws://host` → `http://host` (the
-/// loopback hub [`crate::agent::hub::origin`] allows). Anything else passes
+/// loopback hub `agent::hub::origin` allows). Anything else passes
 /// through, so a value already in HTTP form is returned as it is.
 pub trait HubOriginExt {
     /// This origin as an HTTP base.

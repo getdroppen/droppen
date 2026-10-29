@@ -1209,6 +1209,33 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
 
 [[package]]
+name = "droppen-aggregator"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "droppen-base",
+ "droppen-instance",
+ "ed25519-dalek",
+ "futures-util",
+ "gotcha",
+ "gotcha_core",
+ "libc",
+ "rand 0.8.7",
+ "reqwest",
+ "rh-client",
+ "rh-proto",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-tungstenite",
+ "tokio-util",
+ "tracing",
+ "zeroize",
+]
+
+[[package]]
 name = "droppen-auth"
 version = "0.1.0"
 dependencies = [
@@ -3178,6 +3205,7 @@ dependencies = [
  "chrono",
  "clap",
  "croner",
+ "droppen-aggregator",
  "droppen-auth",
  "droppen-base",
  "droppen-files",

@@ -116,7 +116,7 @@ impl GotchaApp for RemoteHandApp {
             // boot, whatever the link and cloud state: nothing in this build
             // writes it, and while it exists the status route would keep
             // reporting `pending` for ever.
-            crate::aggregator::sweep_legacy_key(paths.as_ref());
+            droppen_aggregator::sweep_legacy_key(paths.as_ref());
             // Attachments uploaded but never sent accumulate; sweep the stale
             // ones once at boot, off the startup path so a slow disk cannot
             // delay the listener.
@@ -603,7 +603,7 @@ impl Prepared {
                 .await;
             // A deletion of the other devices' copies still running (the
             // aggregator turned off just before) gets a moment to finish.
-            crate::aggregator::finish_deletions(std::time::Duration::from_secs(5)).await;
+            droppen_aggregator::finish_deletions(std::time::Duration::from_secs(5)).await;
             // A setup code is only good while its server runs; the file must
             // not outlive it and be read back as if it still worked.
             auth.setup.disarm();
