@@ -228,18 +228,26 @@ pub fn parse_claude_usage(text: &str, now_ms: i64) -> Vec<QuotaWindow> {
         .collect()
 }
 
-impl ProbeRoots {
+/// Claude Code's `/usage` probe, as something the probe roots run.
+///
+/// An extension trait rather than inherent methods: the roots are the quota
+/// cache's, and the probe is Claude Code's.
+pub(crate) trait ClaudeUsageProbeExt {
     /// Run `/usage` against one config root.
     ///
     /// `config_dir` `None` means the user's own login (whatever the CLI picks
     /// up by itself); anything else is an account's probe directory. `TZ` is
     /// pinned so the reset labels always carry `(UTC)`, which is the only form
     /// [`parse_resets_at`] understands.
-    pub async fn claude_usage(&self, config_dir: Option<&Path>) -> UsageProbe {
+    async fn claude_usage(&self, config_dir: Option<&Path>) -> UsageProbe;
+}
+
+impl ClaudeUsageProbeExt for ProbeRoots {
+    async fn claude_usage(&self, config_dir: Option<&Path>) -> UsageProbe {
     let mut command = tokio::process::Command::new("claude");
     command
         .args(USAGE_ARGS)
-        .current_dir(config_dir.map(Path::to_path_buf).unwrap_or_else(|| self.home.clone()))
+        .current_dir(config_dir.map(Path::to_path_buf).unwrap_or_else(|| self.home().to_path_buf()))
         .stdin(std::process::Stdio::null())
         // A timed-out probe that kept running would also break the one-at-a-time
         // rule: the next queued probe would start beside it.
@@ -510,7 +518,7 @@ mod tests {
     }
 
     /// A real `claude -p /usage --output-format json` reading from `2026-09-10`,
-    /// spawned exactly as [`ProbeRoots::claude_usage`] spawns it.
+    /// spawned exactly as [`ClaudeUsageProbeExt::claude_usage`] spawns it.
     #[test]
     fn a_live_usage_reading_keeps_its_reset_instants() {
         let text = concat!(

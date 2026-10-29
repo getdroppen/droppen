@@ -222,46 +222,16 @@ impl WindowValue for Option<&Value> {
 
 // ------------------------------------------------------------------ the probe
 
-impl ProbeRoots {
-    /// Start a `codex app-server`, ask it the one question, and take the windows
-    /// out of its answer.
-    ///
-    /// A short-lived child of this module's own rather than the session client in
-    /// [`crate::inject::app_server`]: that one is one app server *per session* over
-    /// the restart-safe shim, and it exists to keep a turn alive across a server
-    /// restart — it claims the session lock, writes a run journal record and leaves
-    /// shim sidecars on disk. None of that belongs to a read that needs no thread
-    /// at all. This is the [`crate::models::claude::probe`] shape instead: timeout,
-    /// `kill_on_drop`, an explicit close, cached and TTL'd, fallback on any failure.
-    ///
-    /// `None` for every failure there is — no CLI, one that will not start, one
-    /// that never answers, an answer that is not JSON, an error reply, a reply with
-    /// no windows in it. The caller falls back to the session logs, so none of them
-    /// need telling apart.
-    async fn app_server(&self) -> Option<CodexQuota> {
-    // The user's own home, exactly as the Claude probes are spawned: the app
-    // server reads the login this machine's `codex` would use, which is the
-    // login whose windows the panel is about.
-    let reading = app_server_call(Path::new("codex"), &self.home, &clean_env_bare(), RATE_LIMITS, PROBE_TIMEOUT)
-        .await
-        .and_then(|result| result.rate_limits_reading(SystemTime::now()));
-    if reading.is_none() {
-        tracing::debug!("the codex app server answered no rate limits; falling back to the session logs");
-    }
-        reading
-    }
-}
-
 /// One question put to a short-lived `codex app-server`: the handshake, one
 /// request with no parameters, and the `result` of its answer.
 ///
-/// Shared by the quota probe above and by the first-run guide's account check
+/// Shared by the quota probe (`app_server`, below) and by the first-run guide's account check
 /// ([`crate::setup`], `account/read`), so there is one copy of the handshake
 /// and of the shutdown that keeps `~/.codex/tmp/arg0/` clean. `program` is
 /// `codex` for the probe and the binary the guide found for the guide;
 /// `timeout` bounds the conversation, not the exit grace after it.
 ///
-/// `None` for every failure, as [`ProbeRoots::app_server`] describes, and an `error`
+/// `None` for every failure, as [`CodexSourcesExt::app_server`] describes, and an `error`
 /// reply is one of them: its message describes the account and is not ours to
 /// quote (see the module's security note).
 pub(crate) async fn app_server_call(program: &Path, cwd: &Path, env: &droppen_base::process_env::Env, method: &str, timeout: Duration) -> Option<Value> {
@@ -461,12 +431,57 @@ async fn file_reading(path: &Path, floor_ms: i64) -> Option<(i64, CodexQuota)> {
     None
 }
 
-impl ProbeRoots {
+/// Where Codex's own reading comes from: its app server, or the session logs.
+/// A trait for the same reason as [`CodexReadingExt`], and private to this module.
+trait CodexSourcesExt {
+    /// Start a `codex app-server`, ask it the one question, and take the windows
+    /// out of its answer.
+    ///
+    /// A short-lived child of this module's own rather than the session client in
+    /// [`crate::inject::app_server`]: that one is one app server *per session* over
+    /// the restart-safe shim, and it exists to keep a turn alive across a server
+    /// restart — it claims the session lock, writes a run journal record and leaves
+    /// shim sidecars on disk. None of that belongs to a read that needs no thread
+    /// at all. This is the [`crate::models::claude::probe`] shape instead: timeout,
+    /// `kill_on_drop`, an explicit close, cached and TTL'd, fallback on any failure.
+    ///
+    /// `None` for every failure there is — no CLI, one that will not start, one
+    /// that never answers, an answer that is not JSON, an error reply, a reply with
+    /// no windows in it. The caller falls back to the session logs, so none of them
+    /// need telling apart.
+    async fn app_server(&self) -> Option<CodexQuota>;
+
     /// The newest rollout files under the date-partitioned sessions tree, freshest
     /// mtime first.
+    async fn newest_codex_files(&self, keep: usize) -> Vec<PathBuf>;
+
+    /// The newest reading the session logs can still vouch for.
+    ///
+    /// Newest by *timestamp* across the [`LOG_FILES`] newest files, not the newest
+    /// file's own answer: mtime orders when a file was last touched, which is not
+    /// when its numbers were read. Resuming a fortnight-old session for one turn
+    /// makes it the newest file on disk while a younger session holds the newer
+    /// windows, and picking by mtime alone is half of the bug this module prevents.
+    async fn log_reading(&self, now: SystemTime) -> Option<CodexQuota>;
+}
+
+impl CodexSourcesExt for ProbeRoots {
+    async fn app_server(&self) -> Option<CodexQuota> {
+    // The user's own home, exactly as the Claude probes are spawned: the app
+    // server reads the login this machine's `codex` would use, which is the
+    // login whose windows the panel is about.
+    let reading = app_server_call(Path::new("codex"), self.home(), &clean_env_bare(), RATE_LIMITS, PROBE_TIMEOUT)
+        .await
+        .and_then(|result| result.rate_limits_reading(SystemTime::now()));
+    if reading.is_none() {
+        tracing::debug!("the codex app server answered no rate limits; falling back to the session logs");
+    }
+        reading
+    }
+
     async fn newest_codex_files(&self, keep: usize) -> Vec<PathBuf> {
     let mut found: Vec<(PathBuf, f64)> = Vec::new();
-    let mut stack = vec![self.codex_sessions.clone()];
+    let mut stack = vec![self.codex_sessions().to_path_buf()];
     while let Some(dir) = stack.pop() {
         let Ok(mut entries) = tokio::fs::read_dir(&dir).await else { continue };
         while let Ok(Some(entry)) = entries.next_entry().await {
@@ -488,16 +503,7 @@ impl ProbeRoots {
     found.truncate(keep);
         found.into_iter().map(|(path, _)| path).collect()
     }
-}
 
-impl ProbeRoots {
-    /// The newest reading the session logs can still vouch for.
-    ///
-    /// Newest by *timestamp* across the [`LOG_FILES`] newest files, not the newest
-    /// file's own answer: mtime orders when a file was last touched, which is not
-    /// when its numbers were read. Resuming a fortnight-old session for one turn
-    /// makes it the newest file on disk while a younger session holds the newer
-    /// windows, and picking by mtime alone is half of the bug this module prevents.
     async fn log_reading(&self, now: SystemTime) -> Option<CodexQuota> {
     let floor_ms = now
         .checked_sub(LOG_MAX_AGE)
@@ -517,10 +523,18 @@ impl ProbeRoots {
     }
 }
 
-impl ProbeRoots {
+/// Codex's reading of the user's own login, as something the probe roots run.
+///
+/// An extension trait rather than inherent methods: the roots are the quota
+/// cache's, and the reading is Codex's.
+pub(crate) trait CodexReadingExt {
     /// The live reading if the app server can be reached, the session logs if
     /// not.
-    pub(crate) async fn codex(&self) -> Option<CodexQuota> {
+    async fn codex(&self) -> Option<CodexQuota>;
+}
+
+impl CodexReadingExt for ProbeRoots {
+    async fn codex(&self) -> Option<CodexQuota> {
         if let Some(live) = self.app_server().await {
             return Some(live);
         }

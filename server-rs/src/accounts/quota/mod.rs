@@ -285,6 +285,16 @@ impl ProbeRoots {
             codex_sessions: paths.codex_sessions(),
         }
     }
+
+    /// The user's home, where a probe of the user's own login runs.
+    pub fn home(&self) -> &Path {
+        &self.home
+    }
+
+    /// Codex's date-partitioned sessions tree.
+    pub fn codex_sessions(&self) -> &Path {
+        &self.codex_sessions
+    }
 }
 
 /// Markers that make a bare `429` an HTTP status code rather than an incidental

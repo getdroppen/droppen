@@ -5,7 +5,7 @@ use futures_util::future::BoxFuture;
 
 use super::{LocalPlan, Login};
 use crate::accounts::local_login::LocalLoginState;
-use crate::accounts::quota::codex::app_server_call;
+use crate::accounts::quota::codex::{app_server_call, CodexReadingExt};
 use crate::accounts::quota::readings::SharedReading;
 use crate::accounts::quota::{is_rate_limited, mentions_status, CodexQuota, ProbeRoots, UsageProbe};
 use crate::accounts::store::{AccountError, AccountKind, AccountLaunch, AccountProvider, CODEX_BASE_URL_VAR, CODEX_KEY_CANDIDATES};
@@ -263,7 +263,7 @@ impl Login for CodexLogin {
     }
 
     /// The app server's `account/rateLimits/read` when it can be reached, the
-    /// newest reading in the session logs when not ([`ProbeRoots::codex`]).
+    /// newest reading in the session logs when not ([`CodexReadingExt::codex`]).
     fn local_quota<'a>(&'a self, roots: &'a ProbeRoots) -> Option<BoxFuture<'a, Option<CodexQuota>>> {
         Some(Box::pin(roots.codex()))
     }
