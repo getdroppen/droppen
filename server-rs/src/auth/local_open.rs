@@ -63,7 +63,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
 
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 
 use super::Auth;
 
@@ -89,7 +89,7 @@ pub const FRAGMENT_KEY: &str = "local-open";
 #[derive(Debug, Clone)]
 pub struct ControlSocket {
     dir: PathBuf,
-    /// `None` when the instance's name is not one ([`crate::instance::InstanceDirs::new`]):
+    /// `None` when the instance's name is not one ([`droppen_instance::instance::InstanceDirs::new`]):
     /// then no port was recorded either.
     port_file: Option<PathBuf>,
 }
@@ -99,7 +99,7 @@ impl ControlSocket {
     pub fn of(paths: &Paths) -> Self {
         Self {
             dir: paths.instance_dir().join("control"),
-            port_file: crate::instance::InstanceDirs::new(&paths.data_dir(), paths.instance())
+            port_file: droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), paths.instance())
                 .ok()
                 .map(|dirs| dirs.port_file()),
         }
@@ -685,7 +685,7 @@ mod tests {
     async fn a_fake_server_answering_wrong_is_refused() {
         let home = tempfile::tempdir().unwrap();
         let paths = Paths::for_instance(home.path().to_path_buf(), "fakeanswer");
-        let dirs = crate::instance::InstanceDirs::new(&paths.data_dir(), paths.instance()).unwrap();
+        let dirs = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), paths.instance()).unwrap();
         dirs.create().unwrap();
         dirs.write_port(8700);
         let control = ControlSocket::of(&paths);
@@ -725,7 +725,7 @@ mod tests {
             assert_eq!(std::fs::metadata(parent).unwrap().permissions().mode() & 0o777, 0o700);
         }
 
-        crate::instance::InstanceDirs::new(&state.paths.data_dir(), state.paths.instance())
+        droppen_instance::instance::InstanceDirs::new(&state.paths.data_dir(), state.paths.instance())
             .unwrap()
             .write_port(9);
         let answer = ask(&state.paths).await.expect("an answer");
@@ -766,7 +766,7 @@ mod tests {
         let auth = state.drive.auth.clone();
         let cancel = CancellationToken::new();
         ControlSocket::of(&paths).serve(auth.clone(), "http://127.0.0.1:9/".into(), true, cancel.clone()).expect("serve");
-        crate::instance::InstanceDirs::new(&paths.data_dir(), paths.instance()).unwrap().write_port(9);
+        droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), paths.instance()).unwrap().write_port(9);
         let answer = ask(&paths).await.expect("an answer");
         assert_eq!(answer.error.as_deref(), Some(DESKTOP_APP_REFUSAL));
         assert_eq!((answer.url, answer.redirect), (None, None));

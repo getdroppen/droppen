@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::openapi_ext::Nullable;
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 use crate::sessions::util::{try_parse, LossyLines};
 use crate::sessions::Source;
 use droppen_base::time::{iso8601, mtime_ms};

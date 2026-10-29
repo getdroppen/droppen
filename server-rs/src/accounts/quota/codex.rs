@@ -608,7 +608,7 @@ impl ProbeRoots {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::paths::Paths;
+    use droppen_instance::paths::Paths;
 
     /// `2026-09-20T12:00:00Z` — a fixed "now" for the readings below.
     const NOW_MS: u64 = 1_790_078_400_000;

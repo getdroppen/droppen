@@ -81,7 +81,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::drive::Drive;
 use crate::inject::drafts::Draft;
-use crate::paths::{ClaudeRoot, Paths};
+use droppen_instance::paths::{ClaudeRoot, Paths};
 use crate::sessions::account::AccountRef;
 use crate::sessions::loader::{encode_fp, Fp, Transcript, RESUME_OVERLAP};
 use crate::sessions::util::TranscriptItem;
@@ -636,7 +636,7 @@ pub async fn attach_session_feed_with(
     // The registry is this process' own memory, so the key carries the server:
     // see `crate::sessions::SessionRef::scoped_key`. Nothing here is written
     // down or sent anywhere — the frames a socket receives never contain it.
-    let key = crate::sessions::SessionRef::new(crate::identity::ServerId::local(&drive.paths), source, id).scoped_key();
+    let key = crate::sessions::SessionRef::new(droppen_instance::identity::ServerId::local(&drive.paths), source, id).scoped_key();
 
     let (rx, latest, latest_draft) = {
         let mut feeds = registry.feeds.lock().expect("feed registry poisoned");
@@ -1461,7 +1461,7 @@ mod tests {
 
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = Arc::new(Paths::new(dir.path().to_path_buf()));
-        let instance = crate::instance::InstanceDirs::new(&paths.data_dir(), crate::instance::DEFAULT_INSTANCE).expect("valid name");
+        let instance = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
         let auth = crate::auth::Auth::new(&paths, &instance, &crate::config::AuthSettings::default(), false);
         let drive = Drive::new(paths.clone(), &instance, auth, crate::app::transcript_sources());
         let feeds = FeedRegistry::new();
@@ -1627,7 +1627,7 @@ mod tests {
 
     pub(crate) fn test_drive(dir: &Path) -> (Arc<Paths>, Arc<Drive>) {
         let paths = Arc::new(Paths::new(dir.to_path_buf()));
-        let instance = crate::instance::InstanceDirs::new(&paths.data_dir(), crate::instance::DEFAULT_INSTANCE).expect("valid name");
+        let instance = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
         let auth = crate::auth::Auth::new(&paths, &instance, &crate::config::AuthSettings::default(), false);
         let drive = Drive::new(paths.clone(), &instance, auth, crate::app::transcript_sources());
         (paths, drive)

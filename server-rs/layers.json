@@ -36,12 +36,7 @@
         {
           "name": "droppen-instance",
           "about": "The shared Paths, the instance's directories and lock, its identity, the databases.",
-          "modules": [
-            "paths",
-            "instance",
-            "identity",
-            "db"
-          ],
+          "modules": [],
           "mayUse": []
         },
         {

@@ -21,7 +21,7 @@
 //!
 //! # Where the records actually are
 //!
-//! One row each in [`crate::db`]'s `apps` table, in the instance database that
+//! One row each in [`droppen_instance::db`]'s `apps` table, in the instance database that
 //! sits beside `apps.json`. Everything the paragraph above asks for is the
 //! transaction's: replacing all the rows at once is atomic by construction, and
 //! the WAL at `synchronous = FULL` buys what a hand-rolled tempfile / `rename` /
@@ -35,7 +35,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use super::AppType;
-use crate::db::Db;
+use droppen_instance::db::Db;
 
 /// One app that was running when this file was last written.
 ///
@@ -74,13 +74,13 @@ pub struct AppRecord {
 
 /// The instance database that sits beside `apps.json`.
 ///
-/// Derived from the path rather than taken as a [`crate::paths::Paths`], and
+/// Derived from the path rather than taken as a [`droppen_instance::paths::Paths`], and
 /// the reason is that the two are the same directory: the only caller hands this
 /// module `<instance>/apps.json`, and `<instance>/state.db` is its sibling.
 /// Threading a `Paths` down here instead would change every caller's signature
 /// to say something the path it already passes has always said.
 fn store(path: &Path) -> Arc<Db> {
-    crate::db::at(path.with_file_name("state.db"))
+    droppen_instance::db::at(path.with_file_name("state.db"))
 }
 
 impl AppRecord {

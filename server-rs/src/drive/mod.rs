@@ -22,7 +22,7 @@ use crate::accounts::setup_token::Captures;
 use crate::accounts::store::AccountsStore;
 use crate::auth::Auth;
 use crate::inject::InjectionRegistry;
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 use crate::sessions::{titles, TranscriptSources};
 
 pub use routes::{describe, DriveState};
@@ -62,7 +62,7 @@ pub struct Drive {
     /// `rh-notify` program and this instance's port and tokens into a spawn.
     /// Cloned rather than shared behind an `Arc` because it is three paths and a
     /// name, and cloning it once per server costs less than the indirection.
-    pub instance: crate::instance::InstanceDirs,
+    pub instance: droppen_instance::instance::InstanceDirs,
     /// Local accounts, live logins, tickets and failed-login counters.
     ///
     /// Here rather than as a field of its own on
@@ -81,7 +81,7 @@ impl Drive {
     /// records its in-flight runs in the instance directory, so a restart can
     /// find them again. `auth` is built by the caller rather than here, because
     /// the middleware needs the same handle and is mounted outside the router.
-    pub fn new(paths: Arc<Paths>, instance: &crate::instance::InstanceDirs, auth: Arc<Auth>, transcripts: TranscriptSources) -> Arc<Self> {
+    pub fn new(paths: Arc<Paths>, instance: &droppen_instance::instance::InstanceDirs, auth: Arc<Auth>, transcripts: TranscriptSources) -> Arc<Self> {
         let accounts = Arc::new(AccountsStore::new(paths.clone()));
         let quota = Arc::new(QuotaCache::new(paths.clone()));
         Arc::new(Self {

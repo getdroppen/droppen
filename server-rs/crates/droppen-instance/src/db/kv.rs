@@ -12,7 +12,7 @@
 //! and it is worth being concrete about which bug each one closes:
 //!
 //! * `archived.json` is read-modify-written with **no lock at all**
-//!   (`crate::sessions::archive`), so two archives in flight lose one. An `UPSERT`
+//!   (the server's `sessions::archive`), so two archives in flight lose one. An `UPSERT`
 //!   of one row cannot lose the other.
 //! * `titles.json`, `prefs.json` and `composer-prefs.json` are written **in
 //!   place** — `tokio::fs::write` straight over the live file — so a crash mid
@@ -53,7 +53,7 @@ pub mod scope {
     /// `chat-provider.json` — base URL, key and model for the BYO-API chat.
     pub const CHAT_PROVIDER: &str = "chat-provider";
     /// The configured ACP agents, one row per agent id: its name, command
-    /// line and extra environment, as JSON ([`crate::acp_agent`]).
+    /// line and extra environment, as JSON (the server's `acp_agent`).
     pub const ACP_AGENTS: &str = "acp-agents";
     /// `notify.json` — the Bark channel's settings and its HMAC secret.
     pub const NOTIFY: &str = "notify";
@@ -67,13 +67,13 @@ pub mod scope {
     /// like it.
     pub const PUSH: &str = "push";
     /// The screen list's own bookkeeping — today one row, `list-revision`,
-    /// bumped by every create, delete and reorder (see [`crate::screens`]).
+    /// bumped by every create, delete and reorder (see the server's `screens`).
     pub const SCREENS: &str = "screens";
     /// Which plugins this instance turned on or off, one row per plugin id:
-    /// `{"enabled", "by", "at", "reason"}` (see [`crate::plugins`]). Instance
+    /// `{"enabled", "by", "at", "reason"}` (see the server's `plugins`). Instance
     /// state only — never the machine-wide database two instances share.
     pub const PLUGINS: &str = "plugins";
-    /// The first-run guide's own state ([`crate::setup`]): `progress` (where
+    /// The first-run guide's own state (the server's `setup`): `progress` (where
     /// the guide stands), `pathOverlay` (the directories the user adopted for
     /// a CLI found off the `PATH`), `tasks` (the last install, update or
     /// sign-in per tool) and `practiceFolder` (the practice folder step 03
@@ -122,7 +122,7 @@ impl Db {
     ///
     /// For a value two callers may both try to make first — the plugin host's
     /// capability key — where the loser must read back the winner's rather
-    /// than overwrite it (`crate::plugins::Plugins::asset_key`).
+    /// than overwrite it (the server's `plugins::Plugins::asset_key`).
     pub fn kv_set_if_absent(&self, scope: &str, key: &str, value: &str) {
         self.commit("a setting", |tx| {
             tx.execute(
@@ -166,7 +166,7 @@ impl Db {
     ///   migrated and partly not, and the next boot would import *over* the
     ///   user's newer edits.
     /// * **The file is left alone.** Not deleted, not rewritten. It is the
-    ///   rollback bridge: [`crate::supervisor`] can demote to a binary that has
+    ///   rollback bridge: the server's `supervisor` can demote to a binary that has
     ///   never heard of this database, and that binary finds its file exactly
     ///   where it left it. Stale by however long the new version ran, but
     ///   coherent — which is the whole difference between a bad upgrade and a
@@ -216,7 +216,7 @@ impl Db {
 }
 
 /// [`Db::kv_set`]'s statement, for a caller already inside a transaction.
-pub(crate) fn kv_set_in(tx: &rusqlite::Transaction<'_>, scope: &str, key: &str, value: &str) -> rusqlite::Result<()> {
+pub fn kv_set_in(tx: &rusqlite::Transaction<'_>, scope: &str, key: &str, value: &str) -> rusqlite::Result<()> {
     tx.execute(
         "INSERT INTO kv (scope, key, value, updated_at) VALUES (?1, ?2, ?3, unixepoch())
          ON CONFLICT (scope, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
@@ -226,7 +226,7 @@ pub(crate) fn kv_set_in(tx: &rusqlite::Transaction<'_>, scope: &str, key: &str, 
 }
 
 /// [`Db::kv_remove`]'s statement, for a caller already inside a transaction.
-pub(crate) fn kv_remove_in(tx: &rusqlite::Transaction<'_>, scope: &str, key: &str) -> rusqlite::Result<()> {
+pub fn kv_remove_in(tx: &rusqlite::Transaction<'_>, scope: &str, key: &str) -> rusqlite::Result<()> {
     tx.execute("DELETE FROM kv WHERE scope = ?1 AND key = ?2", (scope, key))?;
     Ok(())
 }

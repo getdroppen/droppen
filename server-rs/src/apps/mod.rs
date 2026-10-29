@@ -53,9 +53,9 @@ use tokio::sync::oneshot;
 use crate::http::error::ApiError;
 use crate::http::extract::{ApiJson, ApiPath};
 use crate::http::SendResult;
-use crate::instance::InstanceDirs;
+use droppen_instance::instance::InstanceDirs;
 use crate::openapi_ext::ExtraResponses;
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 use droppen_base::process_env::{self, Env};
 use droppen_base::procs;
 use droppen_base::time::iso8601;
@@ -206,7 +206,12 @@ fn spawn_error(kind: AppType, error: &std::io::Error) -> AppError {
     AppError::new(format!("cannot launch {}: {error}", kind.program()))
 }
 
-impl InstanceDirs {
+/// Where the apps keep their files inside the instance directory.
+trait AppDataRootExt {
+    fn app_data_root(&self) -> PathBuf;
+}
+
+impl AppDataRootExt for InstanceDirs {
     /// Per-app state (settings DB, "last opened folder", UI layout) and logs, under
     /// the directory this server exclusively owns.
     ///

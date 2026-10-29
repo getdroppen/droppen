@@ -31,7 +31,7 @@ use serde_json::Value;
 use super::{codex, transcript, SessionActivity, SessionSummary, Source};
 use crate::sessions::attention::seen;
 use crate::openapi_ext::Nullable;
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 use droppen_base::time::iso8601;
 
 /// How recently a Claude subagent must have written to count as working

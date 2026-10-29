@@ -39,8 +39,8 @@ use clap::Args;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
 use super::{Event, Line};
-use crate::instance::DEFAULT_INSTANCE;
-use crate::paths::{ClaudeRoot, Paths};
+use droppen_instance::instance::DEFAULT_INSTANCE;
+use droppen_instance::paths::{ClaudeRoot, Paths};
 use droppen_base::time::parse_iso_ms;
 
 /// How much silence is replayed before it is compressed, by default.

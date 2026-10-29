@@ -129,7 +129,7 @@ mod tests {
     use crate::accounts::limits::Verdict;
     use crate::accounts::quota::{QuotaReadingSource, QuotaWindow};
     use crate::accounts::rest::Observation;
-    use crate::db::Db;
+    use droppen_instance::db::Db;
     use std::sync::Arc;
 
     const MINUTE: i64 = 60_000;

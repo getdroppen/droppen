@@ -66,9 +66,9 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use droppen_plugin_sdk::{sdk_version, valid_id, Doc, DocMeta, DocWrite, Manifest, PluginStatus, PutDoc};
 use serde::{Deserialize, Serialize};
 
-use crate::db::scope;
+use droppen_instance::db::scope;
 use crate::http::refresh::Refresh;
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 use install::{Installed, InstallError};
 pub use store::{Store, StoreError};
 
@@ -273,7 +273,7 @@ impl Plugins {
 
     /// The instance's decision about `id`, if it ever made one.
     pub fn decision(&self, id: &str) -> Option<Decision> {
-        let raw = crate::db::at(&self.instance_db).kv_get(scope::PLUGINS, id)?;
+        let raw = droppen_instance::db::at(&self.instance_db).kv_get(scope::PLUGINS, id)?;
         serde_json::from_str(&raw)
             .map_err(|error| tracing::warn!(plugin = id, %error, "an unreadable plugin switch; treating it as never decided"))
             .ok()
@@ -281,7 +281,7 @@ impl Plugins {
 
     fn record(&self, id: &str, decision: &Decision) {
         let value = serde_json::to_string(decision).expect("a decision serialises");
-        crate::db::at(&self.instance_db).kv_set(scope::PLUGINS, id, &value);
+        droppen_instance::db::at(&self.instance_db).kv_set(scope::PLUGINS, id, &value);
     }
 
     /// Every installed plugin as this instance sees it, by id.
@@ -345,7 +345,7 @@ impl Plugins {
                 return key.clone();
             }
         }
-        let db = crate::db::at(&self.instance_db);
+        let db = droppen_instance::db::at(&self.instance_db);
         let key = match db.kv_get(scope::PLUGINS, ASSET_KEY_ROW).filter(|key| valid_key(key)) {
             Some(key) => key,
             None => {
@@ -382,7 +382,7 @@ impl Plugins {
             // No database, so no key was ever made; do not make one now.
             return None;
         }
-        let key = crate::db::at(&self.instance_db).kv_get(scope::PLUGINS, ASSET_KEY_ROW).filter(|key| valid_key(key))?;
+        let key = droppen_instance::db::at(&self.instance_db).kv_get(scope::PLUGINS, ASSET_KEY_ROW).filter(|key| valid_key(key))?;
         *self.asset_key.lock_or_recover() = Some(key.clone());
         Some(key)
     }
@@ -526,12 +526,12 @@ impl Plugins {
                 return store.clone();
             }
             tracing::warn!(plugin = id, path = %path.display(), "the plugin's store has gone from disk; opening a fresh one");
-            crate::db::forget(&path);
+            droppen_instance::db::forget(&path);
             stores.remove(id);
         } else if !path.exists() {
             // Another handle in this process may still name a file that a CLI
             // in another process moved away.
-            crate::db::forget(&path);
+            droppen_instance::db::forget(&path);
         }
         let store = Arc::new(Store::open(&path));
         stores.insert(id.to_string(), store.clone());

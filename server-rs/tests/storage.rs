@@ -17,7 +17,7 @@
 
 mod common;
 
-use remote_hand_server::db::scope;
+use droppen_instance::db::scope;
 use serde_json::{json, Value};
 
 #[tokio::test]
@@ -362,8 +362,8 @@ async fn boot_serves_the_instance_database_and_ignores_the_old_shared_file() {
     let body = format!("{}\n", serde_json::to_string_pretty(&legacy).expect("json"));
     let shared_body = body.clone();
     let server = common::TestServer::start_with(move |home| {
-        let paths = remote_hand_server::paths::Paths::new(home.to_path_buf());
-        remote_hand_server::db::at(paths.instance_db())
+        let paths = droppen_instance::paths::Paths::new(home.to_path_buf());
+        droppen_instance::db::at(paths.instance_db())
             .write(|tx| {
                 tx.execute(
                     "INSERT INTO screens (id, ordinal, payload) VALUES ('seeded', 0, ?1)",

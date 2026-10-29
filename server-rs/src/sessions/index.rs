@@ -2,7 +2,7 @@
 //!
 //! # Why this exists
 //!
-//! [`crate::db`] is about atomicity; this file is the one that is about speed,
+//! [`droppen_instance::db`] is about atomicity; this file is the one that is about speed,
 //! and the difference is worth keeping straight. The stores that module replaces
 //! are kilobytes and answer in microseconds either way. The corpus *this* one
 //! stands in front of is 194 MB of claude transcripts and a `~/.codex/sessions`
@@ -25,7 +25,7 @@
 //! watermark that says which version of the file it was derived from, and a
 //! working directory's repository key. **No transcript content.** The 194 MB of
 //! JSONL belongs to claude and codex and stays where they put it, exactly as
-//! [`crate::db`]'s module note says; a database that had copied it in would be
+//! [`droppen_instance::db`]'s module note says; a database that had copied it in would be
 //! a second corpus to keep in step with the first, which is worse than no index
 //! at all.
 //!
@@ -44,7 +44,7 @@
 //!   that used to cure it.
 //! * **Losing it costs a re-scan, not a fact.** Which is what
 //!   [`Durability::Rebuildable`] means, and why this lives in its own file:
-//!   [`crate::paths::Paths::index_db`] explains the rest of that choice.
+//!   [`droppen_instance::paths::Paths::index_db`] explains the rest of that choice.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
@@ -53,8 +53,8 @@ use rusqlite::{params, OptionalExtension};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-use crate::db::{at_with, Db, Durability};
-use crate::paths::Paths;
+use droppen_instance::db::{at_with, Db, Durability};
+use droppen_instance::paths::Paths;
 use crate::sessions::Source;
 
 /// The index's schema, appended to under the same additive-only rule as

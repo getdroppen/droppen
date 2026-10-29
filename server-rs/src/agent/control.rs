@@ -23,7 +23,7 @@ use super::enroll::BeginError;
 use super::link::{Health, LinkEnv, Running};
 use super::state::{AgentState, Alarm};
 use super::AgentFiles;
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 
 /// Where this instance stands with a hub.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -637,7 +637,7 @@ impl AgentFiles {
     /// link — and with it the streams' writer — must be stopped first; the
     /// process's connection to `streams.db` is dropped here, before the file.
     pub(crate) fn unenroll(&self) -> Result<(), String> {
-        crate::db::forget(&self.streams_db());
+        droppen_instance::db::forget(&self.streams_db());
         let dir = self.0.clone();
         let entries = match std::fs::read_dir(&dir) {
             Ok(entries) => entries,
@@ -772,7 +772,7 @@ mod tests {
 
     /// What a link needs, for a server of these paths that listens nowhere.
     fn link_env(paths: &Paths) -> LinkEnv {
-        let instance = crate::instance::InstanceDirs::new(&paths.data_dir(), paths.instance()).unwrap();
+        let instance = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), paths.instance()).unwrap();
         let auth = crate::auth::Auth::new(paths, &instance, &crate::config::AuthSettings::default(), false);
         LinkEnv {
             addr: "127.0.0.1:9".parse().unwrap(),
@@ -918,7 +918,7 @@ mod tests {
         let store = FileSeedStore::for_instance(&AgentFiles::of(&paths));
         store
             .stage(&StagedSeed {
-                uuid: crate::identity::ensure(&paths).unwrap().uuid,
+                uuid: droppen_instance::identity::ensure(&paths).unwrap().uuid,
                 seed: zeroize::Zeroizing::new([9; 32]),
                 nonce: [1; 16],
                 chain_seq: 0,

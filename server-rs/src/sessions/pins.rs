@@ -1,6 +1,6 @@
 //! Instance-local sidebar pins; never modify the CLI's transcript or shared titles.
-use crate::db::scope;
-use crate::paths::Paths;
+use droppen_instance::db::scope;
+use droppen_instance::paths::Paths;
 use crate::sessions::reference::local_key;
 use crate::sessions::{SessionScope, SessionSummary, Source};
 
@@ -15,7 +15,7 @@ fn key(source: Source, id: &str) -> String {
 
 /// One atomic row per session, so concurrent pins cannot overwrite each other.
 pub fn set(paths: &Paths, source: Source, id: &str, pinned: bool) -> rusqlite::Result<()> {
-    crate::db::at(paths.instance_db()).write(|tx| {
+    droppen_instance::db::at(paths.instance_db()).write(|tx| {
         let key = key(source, id);
         if pinned {
             tx.execute(
@@ -31,7 +31,7 @@ pub fn set(paths: &Paths, source: Source, id: &str, pinned: bool) -> rusqlite::R
 
 /// Overlay current instance pins, including clearing stale cached values.
 pub fn apply(paths: &Paths, sessions: &mut [SessionSummary]) {
-    let pins = crate::db::at(paths.instance_db()).kv_scope(scope::SESSION_PINS);
+    let pins = droppen_instance::db::at(paths.instance_db()).kv_scope(scope::SESSION_PINS);
     for session in sessions {
         session.pinned = session.scope == SessionScope::Owned && pins.contains_key(&key(session.source, &session.id));
     }
@@ -51,10 +51,10 @@ mod tests {
         set(&a, Source::Claude, "other", true).unwrap();
         set(&a, Source::Claude, "same", true).unwrap();
         set(&a, Source::Claude, "same", false).unwrap();
-        let reopened = crate::db::Db::open(a.instance_db());
+        let reopened = droppen_instance::db::Db::open(a.instance_db());
         assert_eq!(reopened.kv_scope(scope::SESSION_PINS).len(), 2);
         assert!(reopened.kv_get(scope::SESSION_PINS, "claude/same").is_none());
         assert_eq!(reopened.kv_get(scope::SESSION_PINS, "codex/same").as_deref(), Some("1"));
-        assert!(crate::db::at(b.instance_db()).kv_scope(scope::SESSION_PINS).is_empty());
+        assert!(droppen_instance::db::at(b.instance_db()).kv_scope(scope::SESSION_PINS).is_empty());
     }
 }

@@ -29,7 +29,7 @@ use super::link::{self, Shared};
 use super::rotation::{self, Verdict};
 use super::state::AgentState;
 use super::{AgentFiles, FileSeedStore, StagedSeed, StoredSeed};
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 use droppen_base::text::{hex, unhex32};
 use droppen_base::time::now_ms_u64;
 
@@ -107,7 +107,7 @@ impl Account {
             flags: Flags { host: true, admin: false },
         }));
         a.push(key_epoch("m-1", 0));
-        let uuid = crate::identity::ensure(&a.paths).unwrap().uuid;
+        let uuid = droppen_instance::identity::ensure(&a.paths).unwrap().uuid;
         FileSeedStore::for_instance(&a.files)
             .create(&StoredSeed {
                 uuid,
@@ -197,7 +197,7 @@ impl Account {
 
     /// Stage `seed` for this instance as `POST /rh/rotate` would, at the hub's head now.
     fn stage(&self, seed: [u8; 32], nonce: [u8; 16]) -> MachineIdentity {
-        let uuid = crate::identity::ensure(&self.paths).unwrap().uuid;
+        let uuid = droppen_instance::identity::ensure(&self.paths).unwrap().uuid;
         let staged = StagedSeed {
             uuid,
             seed: Zeroizing::new(seed),

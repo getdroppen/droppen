@@ -43,7 +43,7 @@
 //!
 //! # Where the registry actually is
 //!
-//! In [`crate::db`], as `owned_sessions`, and the table's shape is the point:
+//! In [`droppen_instance::db`], as `owned_sessions`, and the table's shape is the point:
 //! its primary key is `(source, session_id)`, so "the same id under two sources"
 //! — the one thing `{"claude": [...], "codex": [...]}` could always express and
 //! never mean — is not a row that can be written.
@@ -64,9 +64,9 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use super::Source;
-use crate::db::Db;
-use crate::identity::ServerId;
-use crate::paths::{ClaudeRoot, Paths};
+use droppen_instance::db::Db;
+use droppen_instance::identity::ServerId;
+use droppen_instance::paths::{ClaudeRoot, Paths};
 
 /// The ids one instance claims, per CLI, each with the server that made it.
 ///
@@ -127,7 +127,7 @@ impl OwnedSessions {
 /// it could skip the parse, and a cache keyed on the file's mtime would now be
 /// keyed on a file nothing writes.
 fn store(paths: &Paths) -> Arc<Db> {
-    crate::db::at(paths.instance_db())
+    droppen_instance::db::at(paths.instance_db())
 }
 
 /// The sessions this instance created, or an empty registry when there is none.
@@ -153,7 +153,7 @@ pub async fn read(paths: &Paths) -> OwnedSessions {
 /// `NULL` — and `COALESCE` resolves those to the local server rather than to
 /// "unknown". That is a fact rather than a guess, and the table's own shape is
 /// what makes it one: `owned_sessions` lives in the **per-instance** database
-/// ([`crate::paths::Paths::instance_db`]), it is never read across instances (the
+/// ([`droppen_instance::paths::Paths::instance_db`]), it is never read across instances (the
 /// module note above turns on that), and the only thing that has ever inserted
 /// into it is this instance recording a session it had just started. A row here
 /// with no server named is therefore this server's, necessarily; there has
@@ -378,7 +378,7 @@ mod tests {
         let paths = paths(&dir);
         record(&paths, Source::Codex, "thread-a").await.expect("record");
 
-        let reopened = crate::db::Db::open(paths.instance_db());
+        let reopened = droppen_instance::db::Db::open(paths.instance_db());
         let source: String = reopened
             .read(|conn| conn.query_row("SELECT source FROM owned_sessions WHERE session_id = 'thread-a'", [], |row| row.get(0)))
             .expect("the row is there for anyone who opens the file");
@@ -417,7 +417,7 @@ mod tests {
         std::fs::create_dir_all(file.parent().expect("parent")).expect("instance dir");
         {
             let conn = rusqlite::Connection::open(&file).expect("open");
-            for step in &crate::db::SCHEMA[..2] {
+            for step in &droppen_instance::db::SCHEMA[..2] {
                 conn.execute_batch(step).expect("the previous release's ladder");
             }
             conn.pragma_update(None, "user_version", 2).expect("version");
@@ -444,8 +444,8 @@ mod tests {
         );
         assert!(owned.contains(Source::Claude, "made-before"), "ownership is unchanged by any of this");
 
-        let db = crate::db::at(paths.instance_db());
-        assert_eq!(db.user_version(), crate::db::SCHEMA.len() as i64, "the ladder ran");
+        let db = droppen_instance::db::at(paths.instance_db());
+        assert_eq!(db.user_version(), droppen_instance::db::SCHEMA.len() as i64, "the ladder ran");
         let stamped: Option<String> = db
             .read(|conn| {
                 conn.query_row("SELECT server_id FROM owned_sessions WHERE session_id = 'made-after'", [], |row| {

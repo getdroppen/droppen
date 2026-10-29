@@ -21,7 +21,7 @@
 //!
 //! # The table is the store
 //!
-//! In [`crate::db`], at `<instance>/state.db` — the same database the runs, the
+//! In [`droppen_instance::db`], at `<instance>/state.db` — the same database the runs, the
 //! layouts and the schedule are in, so an account and this instance's state are
 //! one file and one `fsync`. `remote-hand-server user add` runs **while a server
 //! is up**, deliberately (see [`super::cli`]), and takes no lock the server
@@ -93,8 +93,8 @@ use argon2::{Algorithm, Argon2, Params, Version};
 use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 
-use crate::db::{self, Db};
-use crate::paths::Paths;
+use droppen_instance::db::{self, Db};
+use droppen_instance::paths::Paths;
 use droppen_base::time::iso8601;
 
 /// Memory cost, in KiB. 64 MiB — the OWASP baseline for argon2id at `t=3`.
@@ -133,7 +133,7 @@ const SEED_MARKER: &str = "machine-wide-users";
 
 /// Where the two ISO stamps live, keyed by user name.
 ///
-/// `users` is `(name, hash, created_at)` and [`crate::db::SCHEMA`] is
+/// `users` is `(name, hash, created_at)` and [`droppen_instance::db::SCHEMA`] is
 /// append-only, so `updatedAt` — a *password* event, not a creation one — has no
 /// column to go in and never will have one that this build could rely on. It
 /// goes in `kv` beside the row, written in the same transaction, which is the
@@ -670,7 +670,7 @@ impl UsersStore {
                 if tx.execute("DELETE FROM users WHERE name = ?1", (&name,))? == 0 {
                     return Ok(Err(UserError::NotFound(name.clone())));
                 }
-                crate::db::kv_remove_in(tx, STAMPS_SCOPE, &name)?;
+                droppen_instance::db::kv_remove_in(tx, STAMPS_SCOPE, &name)?;
                 Ok(Ok(()))
             })
             .map_err(store_error)??;
@@ -762,7 +762,7 @@ trait UserStampsExt {
 impl UserStampsExt for rusqlite::Transaction<'_> {
     fn write_user_stamps(&self, name: &str, stamps: &Stamps) -> rusqlite::Result<()> {
         let value = serde_json::to_string(stamps).unwrap_or_else(|_| "{}".to_string());
-        crate::db::kv_set_in(self, STAMPS_SCOPE, name, &value)
+        droppen_instance::db::kv_set_in(self, STAMPS_SCOPE, name, &value)
     }
 }
 
@@ -838,7 +838,12 @@ fn write_mirror(path: &Path, file: &UsersFile) {
     }
 }
 
-impl Db {
+/// The accounts' one-time import out of `kv` into `users`.
+trait DrainStagedUsersExt {
+    fn drain_staged_users(&self, scope: &str) -> usize;
+}
+
+impl DrainStagedUsersExt for Db {
     /// Move whatever is staged into `users`, and forget it was ever staged.
     ///
     /// `INSERT OR IGNORE` rather than `REPLACE`, for [`Db::import_once`]'s
@@ -936,7 +941,7 @@ fn needs_rehash(phc: &str) -> bool {
 /// Whether `name` is a legal user name: `[a-z0-9._-]{1,32}`.
 ///
 /// Refused rather than sanitised, in the spirit of
-/// [`crate::instance::valid_name`]: a name that is silently lower-cased is a name
+/// [`droppen_instance::instance::valid_name`]: a name that is silently lower-cased is a name
 /// the person who typed it cannot find again, and one that is silently stripped
 /// is two accounts that collapse into one.
 pub fn valid_name(name: &str) -> bool {
@@ -1222,7 +1227,7 @@ mod tests {
 
         // A second connection to the same file, as the CLI in its own process
         // would open it.
-        let reopened = crate::db::Db::open(dir.path().join("state.db"));
+        let reopened = droppen_instance::db::Db::open(dir.path().join("state.db"));
         let (hash, created): (String, i64) = reopened
             .read(|conn| {
                 conn.query_row("SELECT hash, created_at FROM users WHERE name = 'ada'", [], |row| {

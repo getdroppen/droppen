@@ -36,9 +36,9 @@ use std::path::{Path, PathBuf};
 use gotcha::Schematic;
 use serde::{Deserialize, Serialize};
 
-use crate::identity::ServerId;
+use droppen_instance::identity::ServerId;
 use crate::openapi_ext::{Nullable, Optional};
-use crate::paths::{ClaudeRoot, Paths};
+use droppen_instance::paths::{ClaudeRoot, Paths};
 use droppen_base::time::mtime_ms;
 pub use reference::SessionRef;
 pub use sources::{TranscriptSources, Transcripts};

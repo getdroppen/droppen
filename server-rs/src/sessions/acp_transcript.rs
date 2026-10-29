@@ -59,9 +59,9 @@ use super::util::{
 };
 use super::{SessionActivity, SessionScope, SessionStatus, SessionSummary, Source};
 use crate::acp::{ContentBlock, SessionUpdate, ToolCallContent, ToolCallStatus, ToolKind};
-use crate::identity::ServerId;
+use droppen_instance::identity::ServerId;
 use crate::openapi_ext::Nullable;
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 use droppen_base::time::iso8601;
 
 /// The transcripts this instance keeps for ACP sessions:

@@ -14,7 +14,7 @@
 //! not keep the file for ever. It only ever deletes files with that suffix.
 
 use crate::claude_roots;
-use crate::paths::{ClaudeRoot, Paths};
+use droppen_instance::paths::{ClaudeRoot, Paths};
 
 /// Suffix a half-written adopted transcript wore until it was complete.
 const PARTIAL_SUFFIX: &str = "jsonl.adopting";

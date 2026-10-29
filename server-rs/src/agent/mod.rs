@@ -31,7 +31,7 @@
 //! One random 32-byte seed; the Ed25519 and X25519 keys are expanded from it
 //! ([`rh_proto::identity::MachineIdentity`]). It is kept by [`FileSeedStore`],
 //! `<instance dir>/agent/machine-key.json`, mode 0600
-//! in a 0700 directory, next to the instance identity uuid ([`crate::identity`])
+//! in a 0700 directory, next to the instance identity uuid ([`droppen_instance::identity`])
 //! it belongs to. A key file that names another instance, or that anyone but
 //! the owner can read, is refused rather than used.
 //!
@@ -81,7 +81,7 @@ pub mod system;
 
 use std::path::PathBuf;
 
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 
 pub(crate) mod cli;
 mod seed;
@@ -168,7 +168,7 @@ mod tests {
     use crate::cli::agent::*;
     use super::seed::*;
     use super::{rotation, state};
-    use crate::paths::Paths;
+    use droppen_instance::paths::Paths;
     use rh_proto::identity::{EnrollCode, MachineIdentity};
     use zeroize::Zeroizing;
     use super::*;
@@ -307,7 +307,7 @@ mod tests {
         let stored = FileSeedStore::for_instance(&AgentFiles::of(&paths)).load().unwrap().unwrap();
         assert_eq!(
             stored.uuid,
-            crate::identity::ensure(&paths).unwrap().uuid,
+            droppen_instance::identity::ensure(&paths).unwrap().uuid,
             "recorded against this instance's identity"
         );
         assert_eq!(MachineIdentity::from_seed(&stored.seed).sign_public(), first.sign_public());
@@ -375,7 +375,7 @@ mod tests {
         let paths = Paths::for_instance(dir.path().to_path_buf(), "agentsync");
         let (old, _) = load_or_create(&paths).unwrap();
         let store = FileSeedStore::for_instance(&AgentFiles::of(&paths));
-        let uuid = crate::identity::ensure(&paths).unwrap().uuid;
+        let uuid = droppen_instance::identity::ensure(&paths).unwrap().uuid;
         let staged = |seed: u8, nonce: u8| StagedSeed {
             uuid: uuid.clone(),
             seed: Zeroizing::new([seed; 32]),
@@ -420,7 +420,7 @@ mod tests {
         );
         assert!(store.stagings().unwrap().is_empty() && store.staged().unwrap().is_none());
         assert!(store.promote(&[1; 16]).is_err(), "nothing staged, nothing promoted");
-        let uuid = crate::identity::ensure(&paths).unwrap().uuid;
+        let uuid = droppen_instance::identity::ensure(&paths).unwrap().uuid;
         let staged = |seed: u8, nonce: u8, created_ms: u64| StagedSeed {
             uuid: uuid.clone(),
             seed: Zeroizing::new([seed; 32]),
@@ -507,7 +507,7 @@ mod tests {
         let paths = Paths::for_instance(dir.path().to_path_buf(), "agenttest");
         load_or_create(&paths).unwrap();
         let path = AgentFiles::of(&paths).machine_key();
-        let uuid = crate::identity::ensure(&paths).unwrap().uuid;
+        let uuid = droppen_instance::identity::ensure(&paths).unwrap().uuid;
         std::fs::write(&path, format!(r#"{{"version":1,"uuid":"{uuid}","seed":"abcd"}}"#)).unwrap();
         assert!(load_or_create(&paths).unwrap_err().contains("not 32 bytes"));
     }

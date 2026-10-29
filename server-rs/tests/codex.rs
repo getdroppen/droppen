@@ -23,8 +23,8 @@ const SUBAGENT_ID: &str = "99999999-8888-7777-6666-555555555555";
 /// is a registry in the instance database. The server itself writes only the
 /// table, so the fixture inserts the row it would have written.
 fn own_codex_session(home: &Path, id: &str) {
-    let paths = remote_hand_server::paths::Paths::new(home.to_path_buf());
-    remote_hand_server::db::at(paths.instance_db())
+    let paths = droppen_instance::paths::Paths::new(home.to_path_buf());
+    droppen_instance::db::at(paths.instance_db())
         .write(|tx| {
             tx.execute(
                 "INSERT OR IGNORE INTO owned_sessions (source, session_id) VALUES ('codex', ?1)",

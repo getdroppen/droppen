@@ -6,7 +6,7 @@
 //! Nothing is ever dropped, renamed or retyped.
 //!
 //! That is not tidiness, it is the only thing standing between a bad upgrade and
-//! a machine that never runs remote-hand again. [`crate::supervisor`] steps down
+//! a machine that never runs remote-hand again. The server's `supervisor` steps down
 //! after three fast failures: the new binary's replacement is `.prev`, and after
 //! that the baked one, and the backoff between attempts is deliberately never
 //! reset. So consider a release that migrates the database and then crashes for
@@ -20,13 +20,13 @@
 //! there and still means what it meant. The columns it has never heard of go
 //! unread; the rows it writes leave them at their defaults. This is the same
 //! doctrine the JSON envelopes already carried — "only ever written, never
-//! branched on" (`crate::schedule`) — pointed at a database instead of a file.
+//! branched on" (the server's `schedule`) — pointed at a database instead of a file.
 //!
 //! # What must never migrate
 //!
 //! A schema step runs when a database is opened, so the question "who opens a
 //! database?" is a security question. One caller deserves naming: `preflight`,
-//! the subcommand [`crate::selfupdate`] makes an *uploaded, not-yet-trusted*
+//! the subcommand the server's `selfupdate` makes an *uploaded, not-yet-trusted*
 //! binary run against this server's real configuration before promoting it. If
 //! that binary opened the state database it would migrate it — and a rollback
 //! would then hand the old binary a schema written by a build that was never
@@ -48,7 +48,7 @@ use rusqlite::Connection;
 
 /// Identifies the file as remote-hand's, for anyone holding `file(1)` or a hex
 /// editor. Arbitrary, fixed for ever: `0x52 0x48 0x44 0x42` — "RHDB".
-pub const APPLICATION_ID: i32 = 0x5248_4442;
+pub(crate) const APPLICATION_ID: i32 = 0x5248_4442;
 
 /// Every migration ever written, in order. The database's `user_version` is the
 /// count of these that have been applied, so appending to this list is the whole
@@ -177,7 +177,7 @@ pub const SCHEMA: &[&str] = &[
     // `server_id` is nullable with no default, which is the additive shape this
     // module insists on: the column is unread by every binary that predates it,
     // and the rows those binaries write leave it `NULL`. A `NULL` is not a gap —
-    // [`crate::sessions::owned_sessions`] resolves it as *this* instance's name,
+    // the server's `sessions::owned_sessions` resolves it as *this* instance's name,
     // and says there why that is a fact rather than a guess.
     //
     // `ADD COLUMN` on a `STRICT, WITHOUT ROWID` table is legal because the
@@ -205,7 +205,7 @@ pub const SCHEMA: &[&str] = &[
     // 4 — the limit log, and which accounts are resting.
     //
     // Phase 1 of automatic account rotation: recorded, never acted on (see
-    // [`crate::accounts::rest`]). Instance tables, deliberately — the accounts
+    // the server's `accounts::rest`). Instance tables, deliberately — the accounts
     // are machine-wide, but what one instance has seen them do is its own. Like
     // step 3's tables, the config database gets empty copies it never writes.
     //
@@ -257,7 +257,7 @@ pub const SCHEMA: &[&str] = &[
     //
     // Phase 2 of account rotation: every time a session's own turn ends in a
     // limit and the driver decides where it goes — another account, or nowhere
-    // (see [`crate::accounts::rotation`]). An instance table like the rests,
+    // (see the server's `accounts::rotation`). An instance table like the rests,
     // capped at twenty rows per session by the writer. The labels are copied
     // in, so a decision still names the accounts it was between after one of
     // them is renamed or deleted. `to_account` is the account the session was
@@ -284,7 +284,7 @@ pub const SCHEMA: &[&str] = &[
     // can be retried without the message running twice. The row is inserted
     // *before* the message is enqueued, under the primary key, which is what
     // makes two concurrent attempts unable to both enqueue; see
-    // [`crate::inject::receipts`].
+    // the server's `inject::receipts`.
     //
     // `response_json` is `NULL` while the first attempt is still running and
     // holds exactly what it answered once it has; a retry answers the same.
@@ -311,7 +311,7 @@ pub const SCHEMA: &[&str] = &[
     // 8 — a revision per screen, so two devices cannot overwrite each other.
     //
     // A layout save names the revision it was based on and is refused when the
-    // row has moved on since (see [`crate::screens`]). Every row already here
+    // row has moved on since (see the server's `screens`). Every row already here
     // starts at 1, which is what a client that read it before this step would
     // have been told had it been asked. `NOT NULL DEFAULT 1` is an `ADD COLUMN`
     // SQLite accepts, and it is what keeps the `.prev` binary's inserts — which
@@ -322,7 +322,7 @@ pub const SCHEMA: &[&str] = &[
     //
     // A session can now be moved *ahead* of a limit, at a quiet point, when a
     // window of its account is about to run out (see
-    // [`crate::accounts::rotation::plan_ahead`]). `trigger_kind` says which —
+    // the server's `accounts::rotation::plan_ahead`). `trigger_kind` says which —
     // `limit` or `ahead` — and is `NULL` on every row written before it, which
     // reads as `limit`, the only kind there was. `used_percent` is the near
     // window's, for an `ahead` row. Not `trigger`: that is an SQL keyword.
@@ -331,7 +331,7 @@ pub const SCHEMA: &[&str] = &[
     // 10 — the questions an agent stopped to ask.
     //
     // A resident claude now offers `AskUserQuestion` and blocks its turn on the
-    // answer (see [`crate::inject::questions`]). One row per question, keyed by
+    // answer (see the server's `inject::questions`). One row per question, keyed by
     // the CLI's own `request_id`, so a second device answering finds the row the
     // first already moved: an answer is a compare-and-set out of `pending`,
     // taken before anything is written to the CLI. `state` is `pending`,
@@ -359,7 +359,7 @@ pub const SCHEMA: &[&str] = &[
 ];
 
 /// Bring `conn` up to the newest step, and say nothing if it is already there.
-pub fn apply(conn: &mut Connection, schema: &[&str]) -> rusqlite::Result<()> {
+pub(crate) fn apply(conn: &mut Connection, schema: &[&str]) -> rusqlite::Result<()> {
     // Set at every open rather than at creation: a database made by a build that
     // predates this constant should acquire it rather than stay anonymous, and
     // writing the value it already has costs nothing.
@@ -628,33 +628,6 @@ mod tests {
         assert_eq!(revisions, vec![("old".to_string(), 1), ("older".to_string(), 1)]);
     }
 
-    /// Step 9 gives the rotation log its trigger, and a row the previous
-    /// release wrote reads back as the limit it was.
-    #[test]
-    fn a_database_at_step_eight_gains_the_rotation_trigger_and_old_rows_read_as_limits() {
-        use crate::accounts::rotation::RotationLog;
-        use crate::sessions::account::RotationTrigger;
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("state.db");
-        {
-            let conn = database_at(&path, 8);
-            conn.execute(
-                "INSERT INTO session_rotations
-                     (session_id, at_ms, from_account, from_label, to_account, to_label,
-                      class, scope, until_ms, interrupted_tasks, outcome)
-                 VALUES ('s', 1, 'a', 'A', 'b', 'B', 'session', 'all', NULL, 0, 'switched')",
-                [],
-            )
-            .expect("a rotation the previous release wrote");
-        }
-        let db = std::sync::Arc::new(Db::open(&path));
-        assert_eq!(db.user_version(), SCHEMA.len() as i64);
-        let latest = RotationLog::new(db).latest("s").expect("the old row reads back");
-        assert_eq!(latest.trigger, RotationTrigger::Limit);
-        assert_eq!(latest.used_percent, None);
-        assert_eq!(latest.to.label, "B");
-    }
-
     /// Step 10 adds the question table to a database the previous release left
     /// at step 9, and leaves the rotation log alone.
     #[test]
@@ -688,7 +661,7 @@ mod tests {
     /// The release gate: the binary this one replaces must still work against
     /// the database this one migrated.
     ///
-    /// [`crate::supervisor`] demotes to `.prev` after three fast failures, so a
+    /// The server's `supervisor` demotes to `.prev` after three fast failures, so a
     /// migration that made the old binary refuse to run would take the whole
     /// machine down rather than one release. The old binary is modelled by its
     /// own schema — the first two steps — which is exactly what it holds.

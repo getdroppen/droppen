@@ -285,7 +285,7 @@ pub struct AuthState {
     /// Local accounts, live logins, tickets and failed-login counters.
     pub auth: Arc<super::Auth>,
     /// The instance's paths, for the status's `droppenEnv`.
-    pub paths: Arc<crate::paths::Paths>,
+    pub paths: Arc<droppen_instance::paths::Paths>,
     /// Whether the Droppen desktop app runs this server.
     pub desktop_app: bool,
     /// The Droppen link, which the first account takes over from the owner.

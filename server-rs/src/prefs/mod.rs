@@ -1,7 +1,7 @@
 //! UI preferences.
 //!
 //! Eight settings, one row each in the machine-wide state database
-//! ([`crate::db`]) under [`scope::PREFS`], keyed by the same camelCase names the
+//! ([`droppen_instance::db`]) under [`scope::PREFS`], keyed by the same camelCase names the
 //! wire uses. A row per field rather than one row holding the document, because
 //! the settings are independent ones that happen to be saved together, and
 //! because it is what makes the read below lenient for free.
@@ -26,12 +26,12 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::db::scope;
+use droppen_instance::db::scope;
 use crate::http::error::ApiError;
 use crate::http::extract::ApiJson;
 use crate::http::refresh::Refresh;
 use crate::openapi_ext::ExtraResponses;
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 
 /// How the session list is grouped.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Schematic)]
@@ -232,8 +232,8 @@ impl PrefsStore {
 
 impl PrefsStore {
     /// The database, with `prefs.json` drained into it if nobody has yet.
-    fn store(&self) -> std::sync::Arc<crate::db::Db> {
-        let db = crate::db::at(&self.db);
+    fn store(&self) -> std::sync::Arc<droppen_instance::db::Db> {
+        let db = droppen_instance::db::at(&self.db);
         db.import_once(scope::PREFS, || {
             // Only string values cross: a field of the wrong JSON type would read
             // as its default anyway, and importing it would put a value in the
@@ -359,6 +359,22 @@ pub fn describe(reg: &mut ExtraResponses) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Each sidecar is per instance: a path that went through the config
+    /// directory would be one shared file again.
+    #[test]
+    fn the_moved_sidecars_are_disjoint_between_instances() {
+        let a = droppen_instance::paths::Paths::for_instance(PathBuf::from("/home/me"), "a");
+        let b = droppen_instance::paths::Paths::for_instance(PathBuf::from("/home/me"), "b");
+
+        assert_ne!(a.instance_dir().join("scheduled-tasks.json"), b.instance_dir().join("scheduled-tasks.json"));
+
+        // And the sidecars that are shared by design did not move with them.
+        assert_eq!(crate::prefs::PrefsStore::of(&a).file(), crate::prefs::PrefsStore::of(&b).file());
+        assert_eq!(a.config_dir().join("titles.json"), b.config_dir().join("titles.json"));
+        assert_eq!(a.config_dir().join("seen.json"), b.config_dir().join("seen.json"));
+        assert_eq!(a.config_dir().join("archived.json"), b.config_dir().join("archived.json"));
+    }
 
     #[test]
     fn a_missing_file_reads_as_the_defaults() {
@@ -566,7 +582,7 @@ mod tests {
         let store = PrefsStore::of(&paths);
         store.write(&saved()).await.expect("write");
 
-        let reopened = crate::db::Db::open(paths.config_db());
+        let reopened = droppen_instance::db::Db::open(paths.config_db());
         assert_eq!(reopened.kv_scope(scope::PREFS).get("language").map(String::as_str), Some("ja"));
         assert_eq!(
             reopened.kv_scope(scope::PREFS).get("subagentTree").map(String::as_str),

@@ -6,7 +6,7 @@
 //! survives a restart and works for Codex, which has no custom-title mechanism
 //! of its own.
 //!
-//! One row per title in the machine-wide state database ([`crate::db`]) under
+//! One row per title in the machine-wide state database ([`droppen_instance::db`]) under
 //! [`scope::TITLES`], keyed `"<source>:<id>"`. `titles.json` used to be written
 //! *in place* — `tokio::fs::write` straight over the live file — so a crash
 //! between truncate and write left a file every reader turns into an empty map:
@@ -27,8 +27,8 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use crate::db::{scope, Db};
-use crate::paths::Paths;
+use droppen_instance::db::{scope, Db};
+use droppen_instance::paths::Paths;
 use crate::sessions::Source;
 
 /// The titles store, backed by `state.db`.
@@ -59,7 +59,7 @@ fn key_of(source: Source, id: &str) -> String {
 /// than inside it. Both go to the same rows, so a rename is on the list at the
 /// next refresh without anything having to be written to disk twice.
 pub fn all(paths: &Paths) -> BTreeMap<String, String> {
-    crate::db::at(paths.config_db()).kv_scope(scope::TITLES)
+    droppen_instance::db::at(paths.config_db()).kv_scope(scope::TITLES)
 }
 
 impl TitlesStore {
@@ -70,7 +70,7 @@ impl TitlesStore {
 
     /// The machine-wide database these titles live in.
     fn db(&self) -> Arc<Db> {
-        crate::db::at(self.paths.config_db())
+        droppen_instance::db::at(self.paths.config_db())
     }
 
     /// Every title anyone has set, keyed `"<source>:<id>"`.
@@ -136,7 +136,7 @@ mod tests {
         let store = TitlesStore::new(Arc::new(paths.clone()));
         store.set(Source::Codex, "abc", "Renamed").await.expect("set");
 
-        let reopened = crate::db::Db::open(paths.config_db());
+        let reopened = droppen_instance::db::Db::open(paths.config_db());
         assert_eq!(
             reopened.kv_scope(scope::TITLES).get("codex:abc").map(String::as_str),
             Some("Renamed"),

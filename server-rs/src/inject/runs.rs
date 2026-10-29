@@ -15,7 +15,7 @@
 //! re-attached to through the shim socket named by [`RunRecord::shim`].
 //!
 //! This journal is the missing half. It is the `runs` table of the instance's
-//! database — the server that holds [`crate::instance::InstanceLock`] is the
+//! database — the server that holds [`droppen_instance::instance::InstanceLock`] is the
 //! only one that may read or write it — and holds exactly the runs that are
 //! *in flight*:
 //!
@@ -38,7 +38,7 @@
 //! # Durability
 //!
 //! One transaction per change, against a WAL running at `synchronous = FULL`
-//! (see [`crate::db`]): the commit does not return until the write-ahead log is
+//! (see [`droppen_instance::db`]): the commit does not return until the write-ahead log is
 //! on the platter, so a run that was recorded stays recorded across a power
 //! cut. That is the guarantee the old whole-file rewrite bought by hand —
 //! encode, `fsync` the temporary, `rename`, `fsync` the *directory* so the
@@ -282,7 +282,7 @@ fn is_zero(value: &u8) -> bool {
 /// cross-*process* exclusion is the instance flock's job, as it always was.
 #[derive(Debug)]
 pub struct RunsFile {
-    db: std::sync::Arc<crate::db::Db>,
+    db: std::sync::Arc<droppen_instance::db::Db>,
 }
 
 impl RunsFile {
@@ -294,7 +294,7 @@ impl RunsFile {
     pub fn new(path: impl Into<PathBuf>) -> Self {
         let path = path.into();
         Self {
-            db: crate::db::at(path.with_file_name("state.db")),
+            db: droppen_instance::db::at(path.with_file_name("state.db")),
         }
     }
 
@@ -636,7 +636,7 @@ mod tests {
     fn a_corrupt_journal_forgets_runs_instead_of_refusing_to_boot() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("runs.json");
-        let db = crate::db::at(path.with_file_name("state.db"));
+        let db = droppen_instance::db::at(path.with_file_name("state.db"));
         db.write(|tx| {
             tx.execute(
                 "INSERT INTO runs (run_id, session_id, ordinal, payload) VALUES ('half-written', 'session-a', 0, ?1)",

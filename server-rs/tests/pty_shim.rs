@@ -17,8 +17,8 @@ use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use remote_hand_server::app::RemoteHandApp;
-use remote_hand_server::instance::{InstanceDirs, InstanceLock, DEFAULT_INSTANCE};
-use remote_hand_server::paths::Paths;
+use droppen_instance::instance::{InstanceDirs, InstanceLock, DEFAULT_INSTANCE};
+use droppen_instance::paths::Paths;
 use droppen_pty::proto::{self, Frame, Hello2, Meta};
 use droppen_pty::sidecar::Sidecars;
 use remote_hand_server::shutdown::Cleanups;

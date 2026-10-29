@@ -858,7 +858,7 @@ async fn an_interrupted_codex_run_releases_the_composer_for_the_queued_message()
         .collect::<String>(),
     )
     .expect("seed codex rollout");
-    let paths = remote_hand_server::paths::Paths::for_instance(probe.home.clone(), INSTANCE);
+    let paths = droppen_instance::paths::Paths::for_instance(probe.home.clone(), INSTANCE);
     remote_hand_server::sessions::owned_sessions::record(&paths, remote_hand_server::sessions::Source::Codex, id)
         .await
         .expect("own codex session");

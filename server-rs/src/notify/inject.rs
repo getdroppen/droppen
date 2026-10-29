@@ -31,8 +31,8 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::instance::InstanceDirs;
-use crate::paths::Paths;
+use droppen_instance::instance::InstanceDirs;
+use droppen_instance::paths::Paths;
 use droppen_base::process_env::Env;
 use crate::sessions::Source;
 

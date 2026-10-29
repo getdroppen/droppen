@@ -15,7 +15,7 @@ use gotcha::Schematic;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::paths::{ClaudeRoot, Paths};
+use droppen_instance::paths::{ClaudeRoot, Paths};
 
 /// The status the CLI writes for a finished task.
 const DONE: &str = "completed";

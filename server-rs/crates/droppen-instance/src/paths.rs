@@ -11,7 +11,7 @@
 
 use std::path::{Path, PathBuf};
 
-use gotcha::Schematic;
+use gotcha_core::Schematic;
 use serde::{Deserialize, Serialize};
 
 use droppen_base::program::{abbreviate_home, shell_word};
@@ -40,7 +40,7 @@ impl ClaudeRoot {
     /// The name this root has on the wire, matching the `serde` representation.
     ///
     /// Spelled out rather than round-tripped through `serde_json` because
-    /// [`crate::record`] writes it into every line of a recording and reads it
+    /// the server's `record` writes it into every line of a recording and reads it
     /// back in the replay tool: one function both directions go through is what
     /// stops the two from drifting.
     pub fn as_str(self) -> &'static str {
@@ -169,7 +169,7 @@ impl Paths {
     /// which moved to [`Paths::instance_db`] when it turned out that a machine
     /// runs one instance per person as readily as one per purpose. What is
     /// there is frozen rather than dropped, so a rolled-back binary still finds
-    /// accounts and stays shut; [`crate::auth::users`] has the argument.
+    /// accounts and stays shut; the server's `auth::users` has the argument.
     pub fn config_db(&self) -> PathBuf {
         self.config_dir.join("state.db")
     }
@@ -201,7 +201,7 @@ impl Paths {
 
     /// `<data>/claude` — the managed root as it was before it became per-instance.
     ///
-    /// Only [`crate::claude_roots::migrate_legacy_root`] reads this: it is where
+    /// Only the server's `claude_roots::migrate_legacy_root` reads this: it is where
     /// every account-backed session of every earlier build lives, and the default
     /// instance claims it once at boot.
     pub fn legacy_claude_managed(&self) -> PathBuf {

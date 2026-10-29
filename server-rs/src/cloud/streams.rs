@@ -11,7 +11,7 @@ use futures_util::future::BoxFuture;
 use serde_json::Value;
 
 use crate::agent::streams::source::{DraftFeed, Fingerprints, Items, ListedSession, SessionRow, StreamSource, Transcript};
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 use crate::sessions::loader::{self, encode_fp, Fp, RESUME_OVERLAP};
 use crate::sessions::util::TranscriptItem;
 use crate::sessions::{DriverStates, ScopeFilter, SessionScope, SessionSummary, Source, TranscriptSources};

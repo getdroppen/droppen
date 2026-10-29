@@ -5,7 +5,7 @@ mod support;
 
 use std::io::Write;
 
-use remote_hand_server::db::scope;
+use droppen_instance::db::scope;
 use serde_json::{json, Value};
 use support::{common, Probe};
 

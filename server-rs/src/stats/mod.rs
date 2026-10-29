@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::http::extract::ApiQuery;
 use crate::openapi_ext::ExtraResponses;
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 use usage::UsageStats;
 
 /// Query for `GET /api/stats/usage`.

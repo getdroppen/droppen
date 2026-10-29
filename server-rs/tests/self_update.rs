@@ -33,7 +33,7 @@ use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
-use remote_hand_server::instance::DEFAULT_INSTANCE;
+use droppen_instance::instance::DEFAULT_INSTANCE;
 use support::{common, plan_held_cli, release_turn, Probe};
 use tokio::io::AsyncWriteExt;
 use tokio_tungstenite::tungstenite::Message;

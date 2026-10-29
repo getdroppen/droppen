@@ -47,9 +47,9 @@ use tokio::sync::{mpsc, watch};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
-use crate::instance::InstanceDirs;
+use droppen_instance::instance::InstanceDirs;
 use crate::openapi_ext::Optional;
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 use droppen_base::process_env::{self, Env};
 use droppen_pty::client::{self, Link};
 use droppen_pty::proto::{self, Frame, Meta, Resize};

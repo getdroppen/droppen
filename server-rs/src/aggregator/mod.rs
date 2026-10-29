@@ -39,7 +39,7 @@ pub mod traffic;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 
 /// Writes under `aggregator/` and its deletion, one at a time: a key the
 /// controller is storing never lands after the directory was deleted.

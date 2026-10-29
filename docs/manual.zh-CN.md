@@ -502,7 +502,7 @@ plist 由安装脚本生成，别手改：重跑安装脚本时它会按当前�
 - **`AbandonProcessGroup=true`**——macOS 上最关键的一行。不加的话，job 一停 launchd 就把整个
   进程组杀干净，而那正是终端 shim、嵌入式 app 本该**活下来**的时刻，一次自我更新会顺手带走你
   开着的所有终端。（这些子进程本来就 `setpgid(0, 0)` 脱离了 job 的进程组，所以它更像是保险，
-  但很便宜。背景见 `server-rs/src/instance.rs` 的模块注释。）
+  但很便宜。背景见 `server-rs/crates/droppen-instance/src/instance.rs` 的模块注释。）
 - **`PATH`**——launchd agent 不读你的 shell profile，默认只有
   `/usr/bin:/bin:/usr/sbin:/sbin`，于是 `claude` / `codex` / `node` 全都找不到，会话一起就报
   command not found。安装脚本写进去的是你运行它时 shell 里的 `PATH`，后面再补上常见目录

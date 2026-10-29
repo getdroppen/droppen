@@ -33,7 +33,7 @@
 
 use sha2::{Digest, Sha256};
 
-use crate::identity::ServerId;
+use droppen_instance::identity::ServerId;
 use crate::sessions::Source;
 
 /// How long a session id may be before [`stem`] hashes it instead.

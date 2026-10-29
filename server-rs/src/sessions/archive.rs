@@ -5,7 +5,7 @@
 //! driven through the official CLI so the Codex app stays in sync.
 //!
 //! The hidden list is one row per archived id in the machine-wide state database
-//! ([`crate::db`]) under [`scope::ARCHIVED`]. It is the store this migration is
+//! ([`droppen_instance::db`]) under [`scope::ARCHIVED`]. It is the store this migration is
 //! most obviously for: `archived.json` was read-modify-written with **no lock of
 //! any kind** — not even the process-local mutex the other sidecars take — so
 //! two archives in flight each read the same list, each appended their own id,
@@ -26,8 +26,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::db::{scope, Db};
-use crate::paths::Paths;
+use droppen_instance::db::{scope, Db};
+use droppen_instance::paths::Paths;
 use droppen_base::process_env::{apply_env, clean_env_bare};
 
 /// What goes in the value column. Nothing reads it; the row is the fact.
@@ -42,7 +42,7 @@ const CODEX_ARCHIVE_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// The machine-wide database the hidden list lives in.
 fn store(paths: &Paths) -> Arc<Db> {
-    crate::db::at(paths.config_db())
+    droppen_instance::db::at(paths.config_db())
 }
 
 /// Every id the user has archived out of the list.
@@ -156,7 +156,7 @@ mod tests {
         let paths = Paths::new(dir.path().to_path_buf());
         archive_claude_session(&paths, "one").await.expect("archive");
 
-        let reopened = crate::db::Db::open(paths.config_db());
+        let reopened = droppen_instance::db::Db::open(paths.config_db());
         assert!(reopened.kv_scope(scope::ARCHIVED).contains_key("one"));
     }
 }

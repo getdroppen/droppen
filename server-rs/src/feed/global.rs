@@ -39,7 +39,7 @@ use crate::http::extract::ApiQuery;
 use crate::http::refresh::RefreshSink;
 use crate::http::{close_within, send_within, CLOSE_LIMIT};
 use crate::openapi_ext::ExtraResponses;
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 use crate::sessions::{self, SessionSummary, Source};
 
 /// Status changes (a live process exiting) touch no file; poll cheaply for them.
@@ -472,7 +472,7 @@ fn settings_frame(paths: &Paths, instance: &str, started_at: &str, plugins: &[dr
         "instance": instance,
         // The same name, as a session reference scopes it. See
         // `crate::sessions::Settings::server_id`.
-        "serverId": crate::identity::ServerId::local(paths).to_string(),
+        "serverId": droppen_instance::identity::ServerId::local(paths).to_string(),
         "hostname": crate::http::hostname(),
         "platform": crate::http::node_platform(),
         "nodeVersion": crate::http::RUNTIME_VERSION,
@@ -531,7 +531,7 @@ pub struct EventsState {
     /// The drivers a subscription follows, and the logins a socket rechecks.
     pub drive: Arc<Drive>,
     /// The instance whose name the `settings` frame carries.
-    pub instance: Arc<crate::instance::InstanceDirs>,
+    pub instance: Arc<droppen_instance::instance::InstanceDirs>,
     /// When this process started, ISO-8601, for the `settings` frame.
     pub started_at: Arc<str>,
     /// Every live session feed, which a subscription attaches to.

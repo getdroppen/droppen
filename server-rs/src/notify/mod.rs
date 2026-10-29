@@ -65,7 +65,7 @@ use crate::http::error::ApiError;
 use crate::http::extract::ApiJson;
 use crate::http::SendResult;
 use crate::openapi_ext::{ExtraResponses, Optional};
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 use crate::sessions::Source;
 
 /// The one route an agent's `rh-notify` calls.
@@ -344,7 +344,7 @@ pub struct NotifyState {
     /// The instance's paths, under which the channel and the sessions live.
     pub paths: Arc<Paths>,
     /// The instance this server owns, whose name the test message carries.
-    pub instance: Arc<crate::instance::InstanceDirs>,
+    pub instance: Arc<droppen_instance::instance::InstanceDirs>,
     /// What a nudge reads the session it came from through.
     pub transcripts: crate::sessions::TranscriptSources,
 }

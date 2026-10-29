@@ -78,7 +78,7 @@ use crate::http::error::ApiError;
 use crate::http::extract::ApiJson;
 use crate::http::SendResult;
 use crate::openapi_ext::{ExtraResponses, Optional};
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 use crate::sessions::{DriverStates, InjectionRunState, ResidentInfo, Source, TranscriptSources};
 
 /// How long the same session's notifications are suppressed after one is sent.

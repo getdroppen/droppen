@@ -1,7 +1,7 @@
 //! Where an agent's nudge is sent, and the secret the injected script proves
 //! itself with.
 //!
-//! Four rows in the machine-wide state database ([`crate::db`]) under
+//! Four rows in the machine-wide state database ([`droppen_instance::db`]) under
 //! [`scope::NOTIFY`], keyed by the names `notify.json` gave them.
 //!
 //! Machine-global rather than instance-scoped, and that is the one decision in
@@ -24,7 +24,7 @@
 //! file any more.
 //!
 //! Two of the three configured fields are secrets, which is why the one copy
-//! that is left — the database — is `0600` (see [`crate::db::Db`]), the same
+//! that is left — the database — is `0600` (see [`droppen_instance::db::Db`]), the same
 //! rule and the same reasoning as [`crate::push::store`] and
 //! [`crate::accounts::store`]. They are secrets for different reasons:
 //!
@@ -46,8 +46,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::NotifyConfigInfo;
-use crate::db::{scope, Db};
-use crate::paths::Paths;
+use droppen_instance::db::{scope, Db};
+use droppen_instance::paths::Paths;
 
 /// Serializes read-modify-write across every caller in the process, for the same
 /// reason [`crate::push::store`]'s does: minting the secret is a read, a change
@@ -119,7 +119,7 @@ const ENABLED: &str = "enabled";
 
 /// The machine-wide database the channel lives in.
 fn store(paths: &Paths) -> Arc<Db> {
-    crate::db::at(paths.config_db())
+    droppen_instance::db::at(paths.config_db())
 }
 
 /// Map a parsed document onto the store's shape.
@@ -278,7 +278,7 @@ mod tests {
     #[tokio::test]
     async fn a_corrupt_secret_is_an_error_not_a_silent_rotation() {
         let (_dir, paths) = paths();
-        crate::db::at(paths.config_db()).kv_set(scope::NOTIFY, "secret", "not base64url!!");
+        droppen_instance::db::at(paths.config_db()).kv_set(scope::NOTIFY, "secret", "not base64url!!");
         assert!(secret(&paths).await.is_err(), "re-minting here would silently refuse every live session");
     }
 
@@ -305,7 +305,7 @@ mod tests {
         .expect("update");
         let minted = secret(&paths).await.expect("mint");
 
-        let reopened = crate::db::Db::open(paths.config_db());
+        let reopened = droppen_instance::db::Db::open(paths.config_db());
         let rows = reopened.kv_scope(scope::NOTIFY);
         assert_eq!(rows.get(ENABLED).map(String::as_str), Some("true"), "the one boolean is spelled out");
         assert_eq!(

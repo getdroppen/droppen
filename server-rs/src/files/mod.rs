@@ -28,7 +28,7 @@ use crate::auth::MaybeIdentity;
 use crate::http::error::ApiError;
 use crate::http::extract::ApiQuery;
 use crate::openapi_ext::{ExtraResponses, Nullable};
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 use droppen_base::time::iso8601;
 
 /// How much of a file `GET /api/fs/read` will return.
@@ -425,7 +425,7 @@ impl FileRoots {
         let real = real_path(target).ok_or(FsError::Private)?;
         let private: Vec<FileId> = [self.0.data_dir(), self.0.config_dir()].iter().filter_map(|d| file_id(d)).collect();
         let uploads = file_id(&self.0.uploads_dir());
-        let claude = self.0.claude_root(crate::paths::ClaudeRoot::Managed);
+        let claude = self.0.claude_root(droppen_instance::paths::ClaudeRoot::Managed);
         let readable: Vec<FileId> = READABLE_IN_CLAUDE_ROOT.iter().filter_map(|d| real_dir_id(&claude.join(d))).collect();
         let projects = real_dir_id(&claude.join("projects"));
         for dir in real.ancestors() {
@@ -1423,7 +1423,7 @@ mod tests {
 
         // What the transcript links to in the managed Claude root, at the
         // routes too: a plan reads, a pasted image draws; the login does not.
-        let claude = state.paths.claude_root(crate::paths::ClaudeRoot::Managed);
+        let claude = state.paths.claude_root(droppen_instance::paths::ClaudeRoot::Managed);
         for (file, bytes) in [
             ("plans/p.md", &b"# plan"[..]),
             ("image-cache/s-1/1.png", b"png"),
@@ -1470,7 +1470,7 @@ mod tests {
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(home.path().to_path_buf());
         let roots = FileRoots::of(&paths);
-        let claude = paths.claude_root(crate::paths::ClaudeRoot::Managed);
+        let claude = paths.claude_root(droppen_instance::paths::ClaudeRoot::Managed);
         let data = paths.data_dir();
         let put = |path: &Path, bytes: &[u8]| {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -1647,7 +1647,7 @@ mod tests {
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(home.path().to_path_buf());
         let roots = FileRoots::of(&paths);
-        let claude = paths.claude_root(crate::paths::ClaudeRoot::Managed);
+        let claude = paths.claude_root(droppen_instance::paths::ClaudeRoot::Managed);
         let put = |path: &Path, bytes: &[u8]| {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(path, bytes).unwrap();

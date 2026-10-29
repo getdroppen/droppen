@@ -52,7 +52,7 @@ use super::quota::readings::UsageLogin;
 use super::quota::{QuotaCache, QuotaWindow};
 use super::rest::iso_ms;
 use super::store::{Account, AccountProvider, AccountsStore};
-use crate::db::Db;
+use droppen_instance::db::Db;
 use crate::openapi_ext::Nullable;
 use crate::sessions::account::{AccountRef, LimitClass, RotationOutcome, RotationTrigger, SessionRotation};
 
@@ -1120,7 +1120,7 @@ impl RotationLog {
     /// binding: the binding table lives in the configuration database, and
     /// this is only ever asked by this instance's drivers, beside its log.
     pub fn note_hand_binding(&self, session_id: &str, at_ms: i64) {
-        let written = self.db.write(|tx| crate::db::kv_set_in(tx, HAND_BINDING_SCOPE, session_id, &at_ms.to_string()));
+        let written = self.db.write(|tx| droppen_instance::db::kv_set_in(tx, HAND_BINDING_SCOPE, session_id, &at_ms.to_string()));
         if let Err(error) = written {
             tracing::warn!(session = %session_id, %error, "cannot record a binding made by hand");
         }
@@ -1156,6 +1156,46 @@ mod tests {
 
     const NOW: i64 = 1_790_000_000_000;
     const MINUTE: i64 = 60_000;
+
+    /// A database exactly as the release before this one left it: the ladder up
+    /// to `at`, and `user_version` to match (as in `droppen_instance::db`'s
+    /// own migration tests).
+    fn database_at(path: &std::path::Path, at: usize) -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open(path).expect("open");
+        for step in &droppen_instance::db::SCHEMA[..at] {
+            conn.execute_batch(step).expect("a step this binary already shipped");
+        }
+        conn.pragma_update(None, "user_version", at as i64).expect("version");
+        conn
+    }
+
+    /// Step 9 gives the rotation log its trigger, and a row the previous
+    /// release wrote reads back as the limit it was.
+    #[test]
+    fn a_database_at_step_eight_gains_the_rotation_trigger_and_old_rows_read_as_limits() {
+        use crate::accounts::rotation::RotationLog;
+        use droppen_instance::db::{Db, SCHEMA};
+        use crate::sessions::account::RotationTrigger;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("state.db");
+        {
+            let conn = database_at(&path, 8);
+            conn.execute(
+                "INSERT INTO session_rotations
+                     (session_id, at_ms, from_account, from_label, to_account, to_label,
+                      class, scope, until_ms, interrupted_tasks, outcome)
+                 VALUES ('s', 1, 'a', 'A', 'b', 'B', 'session', 'all', NULL, 0, 'switched')",
+                [],
+            )
+            .expect("a rotation the previous release wrote");
+        }
+        let db = std::sync::Arc::new(Db::open(&path));
+        assert_eq!(db.user_version(), SCHEMA.len() as i64);
+        let latest = RotationLog::new(db).latest("s").expect("the old row reads back");
+        assert_eq!(latest.trigger, RotationTrigger::Limit);
+        assert_eq!(latest.used_percent, None);
+        assert_eq!(latest.to.label, "B");
+    }
 
     fn window(label: &str, used: f64, read_ago_min: i64) -> Window {
         Window {
@@ -1395,7 +1435,7 @@ mod tests {
         use crate::accounts::limits::Verdict;
         use crate::accounts::rest::{now_ms, Observation};
         use crate::accounts::store::Credential;
-        use crate::paths::Paths;
+        use droppen_instance::paths::Paths;
 
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = Arc::new(Paths::new(dir.path().to_path_buf()));
@@ -1633,7 +1673,7 @@ mod tests {
         use crate::accounts::limits::Verdict;
         use crate::accounts::rest::{now_ms, Observation, LOCAL_CLAUDE, LOCAL_CODEX};
         use crate::accounts::store::{parse_env_block, AccountPatch, Credential};
-        use crate::paths::Paths;
+        use droppen_instance::paths::Paths;
 
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = Arc::new(Paths::new(dir.path().to_path_buf()));

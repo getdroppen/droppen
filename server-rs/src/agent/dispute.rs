@@ -424,7 +424,7 @@ mod tests {
     use rh_proto::chain::{Action, Assurance, ChainClock, ChainState, DeviceInfo, DeviceV3, Flags, HostRotation, KeyCommit, KeyCommits, Signer};
 
     use super::*;
-    use crate::paths::Paths;
+    use droppen_instance::paths::Paths;
     use crate::agent::{FileSeedStore, StoredSeed};
 
     /// m-1's state: a chain that added it with `keys[0]` and renewed it to
@@ -502,7 +502,7 @@ mod tests {
     fn instance(name: &str, held: [u8; 32], st: &AgentState) -> (tempfile::TempDir, Paths) {
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths::for_instance(dir.path().to_path_buf(), name);
-        let uuid = crate::identity::ensure(&paths).unwrap().uuid;
+        let uuid = droppen_instance::identity::ensure(&paths).unwrap().uuid;
         FileSeedStore::for_instance(&AgentFiles::of(&paths))
             .create(&StoredSeed {
                 uuid,

@@ -57,7 +57,7 @@ use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
-use crate::db::Db;
+use droppen_instance::db::Db;
 use crate::openapi_ext::Nullable;
 use crate::sessions::delivery::{QuestionState, SessionQuestion};
 use crate::sessions::util::QuestionEntry;
@@ -166,7 +166,7 @@ fn entries(questions: &Value) -> Vec<QuestionEntry> {
 pub struct Questions {
     db: Arc<Db>,
     /// When the last prune ran.
-    prune_gate: crate::db::PruneGate,
+    prune_gate: droppen_instance::db::PruneGate,
 }
 
 const COLUMNS: &str = "request_id, session_id, tool_use_id, questions, state, answer, delivery, answered_by, answered_ms, created_ms";
@@ -192,7 +192,7 @@ impl Questions {
     pub fn new(db: Arc<Db>) -> Self {
         Self {
             db,
-            prune_gate: crate::db::PruneGate::new(PRUNE_EVERY_MS),
+            prune_gate: droppen_instance::db::PruneGate::new(PRUNE_EVERY_MS),
         }
     }
 
@@ -678,7 +678,7 @@ mod tests {
 
     fn store() -> (tempfile::TempDir, Questions) {
         let dir = tempfile::tempdir().expect("tempdir");
-        let db = crate::db::at(dir.path().join("state.db"));
+        let db = droppen_instance::db::at(dir.path().join("state.db"));
         (dir, Questions::new(db))
     }
 

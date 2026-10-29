@@ -25,8 +25,8 @@ use common::header;
 use std::path::Path;
 
 use remote_hand_server::auth::users::UsersStore;
-use remote_hand_server::instance::DEFAULT_INSTANCE;
-use remote_hand_server::paths::Paths;
+use droppen_instance::instance::DEFAULT_INSTANCE;
+use droppen_instance::paths::Paths;
 use serde_json::{json, Value};
 
 /// Long enough for the policy, and not on the worst-password list.

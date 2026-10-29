@@ -28,7 +28,7 @@
 //! # Waiting for a holder, which is not a failure
 //!
 //! One kind of fast exit says nothing about the binary: `serve` finding that
-//! another server already holds its instance lock ([`crate::instance`]). The
+//! another server already holds its instance lock ([`droppen_instance::instance`]). The
 //! everyday way to get there is this loop itself being killed outright — a
 //! `SIGKILL`, the OOM killer, a service manager whose stop timeout ran out. Its
 //! `serve` child survives by design (a process group of its own,
@@ -62,7 +62,7 @@
 //! # Reaping orphans (this process is pid 1)
 //!
 //! In the container this is pid 1, which makes it the machine's reaper.
-//! `crate::instance`'s module docs set this problem up: every pty shim, embedded
+//! `droppen_instance::instance`'s module docs set this problem up: every pty shim, embedded
 //! app and detached CLI is spawned to *outlive* the server, so when the server
 //! exits they are reparented to pid 1 — and if pid 1 never `wait()`s, each one
 //! becomes a zombie that holds a pid until the container dies. A shell script
@@ -88,8 +88,8 @@ use std::path::Path;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::{Duration, Instant};
 
-use crate::instance::InstanceError;
-use crate::paths::Paths;
+use droppen_instance::instance::InstanceError;
+use droppen_instance::paths::Paths;
 use crate::selfupdate;
 use crate::selfupdate::store::{BinStore, Fallback};
 use crate::GotchaError;
@@ -156,7 +156,7 @@ pub fn run(child_args: Vec<String>) -> Result<i32, String> {
 
     // Only ever read, to name whoever `serve` was refused by. `None` for a name
     // `serve` will refuse anyway — as a bad name, long before any lock.
-    let lock_file = crate::instance::InstanceDirs::new(&paths.data_dir(), paths.instance())
+    let lock_file = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), paths.instance())
         .ok()
         .map(|dirs| dirs.lock_file());
 
@@ -199,7 +199,7 @@ pub fn run(child_args: Vec<String>) -> Result<i32, String> {
                 }
             }
             Next::AwaitHolder { wait } => {
-                let holder = crate::instance::describe_holder(lock_file.as_deref().and_then(crate::instance::recorded_holder));
+                let holder = droppen_instance::instance::describe_holder(lock_file.as_deref().and_then(droppen_instance::instance::recorded_holder));
                 let at = lock_file.as_deref().map_or_else(String::new, |path| format!(" ({})", path.display()));
                 say(&format!(
                     "child {child} exited with {code}: another server ({holder}) holds instance {:?}{at}. \
@@ -772,11 +772,11 @@ mod tests {
     #[test]
     fn only_a_held_instance_exits_with_the_held_code() {
         let data = tempfile::tempdir().expect("tempdir");
-        let dirs = crate::instance::InstanceDirs::new(data.path(), "default").expect("valid name");
-        let _held = crate::instance::InstanceLock::acquire(&dirs).expect("first acquire");
+        let dirs = droppen_instance::instance::InstanceDirs::new(data.path(), "default").expect("valid name");
+        let _held = droppen_instance::instance::InstanceLock::acquire(&dirs).expect("first acquire");
         // `flock` is per open file description, so a second acquire in this
         // process is refused exactly as a second server would be.
-        let refused = crate::instance::InstanceLock::acquire(&dirs).expect_err("a second acquire must be refused");
+        let refused = droppen_instance::instance::InstanceLock::acquire(&dirs).expect_err("a second acquire must be refused");
         let text = refused.to_string();
 
         let error = typed_instance_error(refused);
@@ -787,7 +787,7 @@ mod tests {
         // must keep it typed.
         assert_eq!(failure_exit_code(&GotchaError::message(&text)), 1);
         // Any other instance failure, typed or not, is an ordinary failure.
-        let bad_name = crate::instance::InstanceDirs::new(data.path(), "../x").expect_err("bad name");
+        let bad_name = droppen_instance::instance::InstanceDirs::new(data.path(), "../x").expect_err("bad name");
         assert_eq!(failure_exit_code(&typed_instance_error(bad_name)), 1);
         assert_eq!(failure_exit_code(&GotchaError::Io(io::Error::other("boom"))), 1);
     }

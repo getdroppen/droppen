@@ -63,7 +63,7 @@ pub struct AppConfig {
     ///
     /// Everything adoptable — surviving terminals now, runs and apps later —
     /// lives under `<data>/instances/<instance>/`, and a server takes an
-    /// exclusive lock on it at boot (see [`crate::instance`]). Two servers on
+    /// exclusive lock on it at boot (see [`droppen_instance::instance`]). Two servers on
     /// one machine must therefore be given different names, which is what this
     /// is for: `APP_INSTANCE=staging`, or `instance = "staging"` at the top
     /// level of `configurations/application.toml`.
@@ -226,12 +226,12 @@ impl AppConfig {
     /// directory somebody later cannot find.
     pub fn instance(&self) -> String {
         // An empty value means "unset", matching how `home_dir` and every
-        // `DROPPEN_*` override in `crate::paths::Paths` read one.
+        // `DROPPEN_*` override in `droppen_instance::paths::Paths` read one.
         self.instance
             .as_deref()
             .map(str::trim)
             .filter(|name| !name.is_empty())
-            .unwrap_or(crate::instance::DEFAULT_INSTANCE)
+            .unwrap_or(droppen_instance::instance::DEFAULT_INSTANCE)
             .to_string()
     }
 }
@@ -419,12 +419,12 @@ mod tests {
 
     #[test]
     fn the_instance_name_defaults_and_treats_blank_as_unset() {
-        assert_eq!(AppConfig::default().instance(), crate::instance::DEFAULT_INSTANCE);
+        assert_eq!(AppConfig::default().instance(), droppen_instance::instance::DEFAULT_INSTANCE);
         let blank = AppConfig {
             instance: Some("   ".into()),
             ..AppConfig::default()
         };
-        assert_eq!(blank.instance(), crate::instance::DEFAULT_INSTANCE);
+        assert_eq!(blank.instance(), droppen_instance::instance::DEFAULT_INSTANCE);
         let set = AppConfig {
             instance: Some(" staging ".into()),
             ..AppConfig::default()

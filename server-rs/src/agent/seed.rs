@@ -7,7 +7,7 @@ use zeroize::Zeroizing;
 
 use droppen_base::fsutil::{check_private, write_private_reporting_path};
 use super::AgentFiles;
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 
 /// The key file's contents.
 #[derive(Serialize, Deserialize)]
@@ -404,7 +404,7 @@ impl AgentFiles {
 /// whether it was created just now.
 pub(crate) fn load_or_create(paths: &Paths) -> Result<(MachineIdentity, bool), String> {
     let files = AgentFiles::of(paths);
-    let uuid = crate::identity::ensure(paths)
+    let uuid = droppen_instance::identity::ensure(paths)
         .ok_or("cannot read or mint this instance's identity uuid")?
         .uuid;
     let (identity, created) = load_or_create_in(&FileSeedStore::for_instance(&files), &uuid)?;

@@ -14,9 +14,9 @@ use crate::accounts::quota::QuotaCache;
 use crate::accounts::store::{AccountError, AccountLaunch, AccountProvider, AccountsStore};
 use crate::claude_roots;
 use crate::http::error::ApiError;
-use crate::identity::ServerId;
-use crate::instance::InstanceDirs;
-use crate::paths::{ClaudeRoot, Paths};
+use droppen_instance::identity::ServerId;
+use droppen_instance::instance::InstanceDirs;
+use droppen_instance::paths::{ClaudeRoot, Paths};
 use droppen_base::process_env::{claude_env, claude_env_bare, clean_env, clean_env_bare, redact_secrets, Env};
 use droppen_base::procs;
 use crate::record;
@@ -1404,8 +1404,8 @@ impl InjectionRegistry {
         accounts: Arc<crate::accounts::store::AccountsStore>,
         quota: Arc<crate::accounts::quota::QuotaCache>,
     ) -> Arc<Self> {
-        let receipts = Arc::new(receipts::Receipts::new(crate::db::at(paths.instance_db())));
-        let questions = Arc::new(questions::Questions::new(crate::db::at(paths.instance_db())));
+        let receipts = Arc::new(receipts::Receipts::new(droppen_instance::db::at(paths.instance_db())));
+        let questions = Arc::new(questions::Questions::new(droppen_instance::db::at(paths.instance_db())));
         Arc::new(Self {
             receipts,
             questions,
@@ -2545,7 +2545,7 @@ mod tests {
 
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Arc::new(Paths::new(home.path().to_path_buf()));
-        let dirs = InstanceDirs::new(&paths.data_dir(), crate::instance::DEFAULT_INSTANCE).expect("valid name");
+        let dirs = InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
         let registry = InjectionRegistry::new(
             paths.clone(),
             &dirs,

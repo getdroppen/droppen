@@ -46,7 +46,7 @@ use lapse::ChannelLapse;
 use super::bridge::Loopback;
 use super::state::{self, AgentState};
 use super::{bridge, direct, hub, load_or_create, relays, rotation, streams, AgentFiles, StagedSeed, CHAIN_V3_FEATURE, POLICY_FEATURE, ROTATE_FEATURE};
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 use droppen_base::time::now_ms_u64;
 
 mod admit;
@@ -692,7 +692,7 @@ mod tests {
         let a = account();
         let paths = a.shared.paths.clone();
         let old = crate::push::store::vapid_public(&paths).await.unwrap();
-        let db = crate::db::at(paths.instance_db());
+        let db = droppen_instance::db::at(paths.instance_db());
         db.write(|tx| tx.execute_batch("CREATE TRIGGER refuse_push BEFORE UPDATE ON kv WHEN NEW.scope = 'push' BEGIN SELECT RAISE(ABORT, 'refused (test)'); END;"))
             .unwrap();
         a.shared.state.lock().unwrap().rotation.push_renew = true;

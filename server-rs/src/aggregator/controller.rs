@@ -49,7 +49,7 @@ use tokio_util::sync::CancellationToken;
 use super::hub::{DeviceClient, HubError, Mail};
 use super::keys::HostKeys;
 use super::{Enrollment, Switch, View};
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 
 /// A round while a key is missing.
 pub const GAP_EVERY: Duration = Duration::from_secs(5);

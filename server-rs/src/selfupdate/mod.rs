@@ -67,7 +67,7 @@ use tokio::io::AsyncWriteExt;
 
 use crate::http::error::ApiError;
 use crate::openapi_ext::ExtraResponses;
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 
 use store::BinStore;
 
@@ -196,7 +196,7 @@ pub struct SelfUpdateState {
     pub desktop_app: bool,
     /// This server's claim on its instance directory, filled in once the flock
     /// is held; the route refuses while it is empty or no longer upgrades.
-    pub lock: Arc<std::sync::OnceLock<std::sync::Weak<crate::instance::InstanceLock>>>,
+    pub lock: Arc<std::sync::OnceLock<std::sync::Weak<droppen_instance::instance::InstanceLock>>>,
     /// Where the shared server binary is installed.
     pub paths: Arc<Paths>,
     /// Cancelled to stop the server so its supervisor starts the new binary.

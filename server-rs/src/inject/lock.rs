@@ -8,7 +8,7 @@
 //!   happily spawn a second CLI against a session the first one's CLI is still
 //!   writing to;
 //! * two instances — `APP_INSTANCE=b` exists precisely so a second server can
-//!   coexist, and [`crate::instance`] gives it a disjoint directory. Disjoint
+//!   coexist, and [`droppen_instance::instance`] gives it a disjoint directory. Disjoint
 //!   directories are the right answer for shims and sockets, and the wrong one
 //!   here: the sessions themselves are *shared*, because they live in the
 //!   user's `~/.claude` and `~/.codex`, and two agents appending to one
@@ -65,7 +65,7 @@ pub enum Outcome {
 #[derive(Debug)]
 pub struct InjectLock {
     /// Kept open; closing it is what releases the `flock`. Never read: it is
-    /// held for its side effect, exactly as `crate::instance::InstanceLock`
+    /// held for its side effect, exactly as `droppen_instance::instance::InstanceLock`
     /// holds its own.
     _file: File,
     path: PathBuf,

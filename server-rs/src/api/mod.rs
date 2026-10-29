@@ -21,7 +21,7 @@ use crate::http::error::ApiError;
 use crate::http::extract::{ApiPath, ApiQuery};
 use crate::http::{close_within, hostname, node_platform, send_within, Heartbeat, CLOSE_LIMIT, RUNTIME_VERSION, SERVER_VERSION};
 use crate::openapi_ext::{self, ExtraResponses};
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 use crate::sessions::{self, claude, codex, SessionDetail, SessionList, Settings, Source};
 
 mod state;
@@ -47,7 +47,7 @@ pub struct AppState {
     /// Where sessions are discovered.
     pub paths: Arc<Paths>,
     /// The instance directory this server owns, and the name it reports.
-    pub instance: Arc<crate::instance::InstanceDirs>,
+    pub instance: Arc<droppen_instance::instance::InstanceDirs>,
     /// When this process started, ISO-8601.
     pub started_at: Arc<str>,
     /// Every live session feed, so shutdown can tear them down.
@@ -81,7 +81,7 @@ pub struct AppState {
     /// The serve task holds a strong reference
     /// ([`crate::app::Prepared::serve_task`]), and a production server keeps
     /// one more until its process exits (`Prepared::claim_for_process`).
-    pub lock: Arc<std::sync::OnceLock<std::sync::Weak<crate::instance::InstanceLock>>>,
+    pub lock: Arc<std::sync::OnceLock<std::sync::Weak<droppen_instance::instance::InstanceLock>>>,
     /// The hub link: started at boot for an enrolled instance, and at any
     /// time after by an enrollment from the local settings
     /// ([`crate::agent::control`]). Inert in a server that does not own its
@@ -213,7 +213,7 @@ pub async fn settings(State(state): State<AppState>, #[api(skip)] who: crate::au
     };
     Json(Settings {
         instance: state.instance.name().to_string(),
-        server_id: crate::identity::ServerId::local(paths).to_string(),
+        server_id: droppen_instance::identity::ServerId::local(paths).to_string(),
         hostname: hostname(),
         platform: node_platform().to_string(),
         // The field name is the contract's; the value is this server's runtime.

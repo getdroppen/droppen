@@ -67,7 +67,7 @@ use tokio::sync::mpsc;
 
 use super::{Event, Line, Stop, SCHEMA};
 use crate::feed::watch::{self, FileEvents};
-use crate::paths::{ClaudeRoot, Paths};
+use droppen_instance::paths::{ClaudeRoot, Paths};
 use crate::sessions::transcript::{SubagentFileKind, SubagentFilesExt};
 use droppen_base::time::{iso8601, mtime_ms};
 
@@ -568,7 +568,7 @@ mod tests {
     struct Session {
         home: tempfile::TempDir,
         paths: Arc<Paths>,
-        dirs: crate::instance::InstanceDirs,
+        dirs: droppen_instance::instance::InstanceDirs,
         transcript: PathBuf,
         id: String,
     }
@@ -576,7 +576,7 @@ mod tests {
     fn session(id: &str) -> Session {
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Arc::new(Paths::new(home.path().to_path_buf()));
-        let dirs = crate::instance::InstanceDirs::new(&paths.data_dir(), crate::instance::DEFAULT_INSTANCE).expect("valid name");
+        let dirs = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
         dirs.create().expect("instance dirs");
         let project = crate::claude_roots::ClaudeRoots::of(&paths).managed_projects().join("-w-repo");
         std::fs::create_dir_all(&project).expect("project dir");

@@ -85,7 +85,7 @@ use super::detect::Detection;
 use super::runner::Invocation;
 use super::shell::{self, ShellSnapshot};
 use super::{Setup, SetupState, SetupTask, TaskFailure, TaskKind, ToolId, ToolLogin};
-use crate::db::scope;
+use droppen_instance::db::scope;
 use crate::http::error::ApiError;
 use crate::openapi_ext::Nullable;
 use droppen_base::process_env::{self, Env};

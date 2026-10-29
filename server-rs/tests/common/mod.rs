@@ -30,8 +30,8 @@ use remote_hand_server::app::RemoteHandApp;
 use remote_hand_server::apps::Registry;
 use remote_hand_server::feed::global::GlobalFeed;
 use remote_hand_server::feed::FeedRegistry;
-use remote_hand_server::instance::InstanceDirs;
-use remote_hand_server::paths::Paths;
+use droppen_instance::instance::InstanceDirs;
+use droppen_instance::paths::Paths;
 use remote_hand_server::shutdown::Cleanups;
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -156,7 +156,7 @@ impl TestServer {
             // The same instance the server was given: the Claude root it owns
             // hangs off it, so a `Paths` built for `default` here would point a
             // sibling instance's test at the wrong directory.
-            paths: Paths::for_instance(home.to_path_buf(), instance.unwrap_or(remote_hand_server::instance::DEFAULT_INSTANCE)),
+            paths: Paths::for_instance(home.to_path_buf(), instance.unwrap_or(droppen_instance::instance::DEFAULT_INSTANCE)),
             global,
             terminals,
             apps,

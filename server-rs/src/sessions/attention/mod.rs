@@ -50,7 +50,7 @@ use gotcha::Schematic;
 use serde::{Deserialize, Serialize};
 
 use crate::openapi_ext::Nullable;
-use crate::paths::Paths;
+use droppen_instance::paths::Paths;
 use crate::sessions::index::Index;
 use crate::sessions::util::{ItemKind, Role, TranscriptItem};
 use crate::sessions::{SessionStatus, SessionSummary};

@@ -40,7 +40,7 @@ use std::sync::Arc;
 
 use rusqlite::OptionalExtension;
 
-use crate::db::Db;
+use droppen_instance::db::Db;
 use crate::openapi_ext::Optional;
 use crate::sessions::delivery::{MessageReceipt, ReceiptLookup, ReceiptStatus};
 use crate::sessions::Source;
@@ -138,7 +138,7 @@ pub struct Receipts {
     /// process that is gone, and is finished by nothing.
     booted_ms: i64,
     /// When the last prune ran.
-    prune_gate: crate::db::PruneGate,
+    prune_gate: droppen_instance::db::PruneGate,
 }
 
 impl Receipts {
@@ -147,7 +147,7 @@ impl Receipts {
         Self {
             db,
             booted_ms: now_ms(),
-            prune_gate: crate::db::PruneGate::new(PRUNE_EVERY_MS),
+            prune_gate: droppen_instance::db::PruneGate::new(PRUNE_EVERY_MS),
         }
     }
 
@@ -401,7 +401,7 @@ mod tests {
 
     fn store() -> (tempfile::TempDir, Receipts) {
         let dir = tempfile::tempdir().expect("tempdir");
-        let db = crate::db::at(dir.path().join("state.db"));
+        let db = droppen_instance::db::at(dir.path().join("state.db"));
         (dir, Receipts::new(db))
     }
 

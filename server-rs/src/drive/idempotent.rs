@@ -197,7 +197,7 @@ mod tests {
 
     fn store() -> (tempfile::TempDir, Arc<Receipts>) {
         let dir = tempfile::tempdir().expect("tempdir");
-        let receipts = Arc::new(Receipts::new(crate::db::at(dir.path().join("state.db"))));
+        let receipts = Arc::new(Receipts::new(droppen_instance::db::at(dir.path().join("state.db"))));
         (dir, receipts)
     }
 
@@ -347,7 +347,7 @@ mod tests {
     async fn a_stranded_claim_a_driver_holds_is_answered_not_resent() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("state.db");
-        let before = Receipts::new(crate::db::at(&path));
+        let before = Receipts::new(droppen_instance::db::at(&path));
         let then = receipts::now_ms() - receipts::STALE_AFTER_MS - 1;
         let qid = match before.claim(ID, Kind::Message, Source::Claude, Some(SESSION), then).expect("claim") {
             Claim::Owned { qid } => qid,
