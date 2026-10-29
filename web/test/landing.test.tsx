@@ -21,7 +21,7 @@ import { I18nextProvider, initReactI18next } from "react-i18next";
 import { renderToStaticMarkup } from "react-dom/server";
 import { landingBundles } from "../src/features/landing/copy.js";
 import { MEASURED, schedule } from "../src/features/landing/direct-path.js";
-import { TOUR_SHOTS, TOUR_TABS, tourLanguage, tourShot } from "../src/features/landing/product-tour.js";
+import { MOBILE_TOUR_TABS, TOUR_SHOTS, TOUR_TABS, tourLanguage, tourShot } from "../src/features/landing/product-tour.js";
 import { DIRECT_HUB, directLayout, directWires } from "../src/features/landing/direct-path.js";
 import { offlineLayout, offlineWires } from "../src/features/landing/offline-copy.js";
 import LandingPage from "../src/features/landing/landing.js";
@@ -506,12 +506,18 @@ test("the tour shows the product: six tabs of real screenshots, each in its fram
   assert.doesNotMatch(tour, /animate-/);
   assert.match(tour, /role="tab"[^>]*aria-selected="true"[^>]*data-tab="sessions"/);
   for (const label of ["会话", "分屏", "终端", "我的设备", "移动端", "添加设备"]) assert.ok(text(tour).includes(label), label);
-  // Its picture in both themes, the light one described.
+  // Its picture in both themes, each described when it is the one shown.
   assert.match(tour, /<img src="\/tour\/app-session-zh-CN-light\.webp" alt="Mac 上的 Droppen[^"]*"/);
-  assert.match(tour, /<img src="\/tour\/app-session-zh-CN-dark\.webp" alt="" aria-hidden="true"/);
+  assert.match(tour, /<img src="\/tour\/app-session-zh-CN-dark\.webp" alt="Mac 上的 Droppen[^"]*"/);
+  assert.doesNotMatch(tour, /<img src="\/tour\/app-session-zh-CN-dark\.webp"[^>]*aria-hidden/);
   // Chinese pages show the app in Chinese, every other page in English.
   assert.deepEqual(["zh-CN", "zh-TW", "ja", "en"].map(tourLanguage), ["zh-CN", "zh-CN", "en", "en"]);
   assert.match(draw("en"), /<img src="\/tour\/app-session-en-light\.webp" alt="Droppen on a Mac[^"]*"/);
+  // A phone gets the same six tabs in an order whose first is the phone's own
+  // screens; desktop keeps the product's order. The DOM order is the visual
+  // one, so the arrow keys follow it too.
+  assert.equal(MOBILE_TOUR_TABS[0], "phone");
+  assert.deepEqual([...MOBILE_TOUR_TABS].sort(), [...TOUR_TABS].sort());
 });
 
 test("every screenshot the tour can show is in the build, in both languages and both themes, and nothing it cannot", () => {

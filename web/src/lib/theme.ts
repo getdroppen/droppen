@@ -1,3 +1,4 @@
+import { useSyncExternalStore } from "react";
 import { Monitor, Moon, Sun } from "lucide-react";
 
 export type ThemeMode = "auto" | "light" | "dark";
@@ -42,3 +43,39 @@ export const MODE_ICONS: Record<ThemeMode, typeof Sun> = {
   light: Sun,
   dark: Moon,
 };
+
+/*
+ * The theme actually painted (the `.dark` class on `<html>`), for components
+ * that must not fetch what the other theme would show: the landing page's
+ * screenshots, one image per theme, both in the DOM so a toggle is instant.
+ * `applyThemeMode` is the only writer; the observer catches its class change
+ * (and the boot script's), so a reader's toggle reaches every subscriber.
+ */
+const themeListeners = new Set<() => void>();
+let themeObserver: MutationObserver | null = null;
+
+function subscribeTheme(listener: () => void): () => void {
+  themeListeners.add(listener);
+  if (!themeObserver) {
+    themeObserver = new MutationObserver(() => {
+      for (const notify of themeListeners) notify();
+    });
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+  }
+  return () => {
+    themeListeners.delete(listener);
+    if (themeListeners.size === 0) {
+      themeObserver?.disconnect();
+      themeObserver = null;
+    }
+  };
+}
+
+/** Whether the page is painted dark now; follows the theme toggle. */
+export function useDarkTheme(): boolean {
+  return useSyncExternalStore(
+    subscribeTheme,
+    () => document.documentElement.classList.contains("dark"),
+    () => false,
+  );
+}

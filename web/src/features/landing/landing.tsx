@@ -121,7 +121,7 @@ function HowItWorks() {
           <li key={title} className={cn("flex flex-col gap-2.5 px-6 py-7 max-md:px-4", i > 0 && "border-border max-md:border-t md:border-l")}>
             <div className="flex items-center gap-2.5">
               <span className="flex size-6 shrink-0 items-center justify-center bg-fg font-mono text-xs font-medium text-bg tabular-nums">{i + 1}</span>
-              <span className="text-base leading-6 font-semibold text-fg">{title}</span>
+              <h3 className="text-base leading-6 font-semibold text-fg [&:lang(en)]:text-balance [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all]">{title}</h3>
             </div>
             <span className="text-sm leading-6 text-pretty text-muted">{body}</span>
           </li>
@@ -157,7 +157,7 @@ function Features() {
           >
             <div className="flex items-center gap-2.5">
               <Icon className="size-5 shrink-0 text-fg" />
-              <span className="text-base leading-6 font-semibold text-fg">{title}</span>
+              <h3 className="text-base leading-6 font-semibold text-fg">{title}</h3>
             </div>
             <span className="text-sm leading-6 text-pretty text-muted">{body}</span>
           </li>
@@ -208,7 +208,7 @@ function Security() {
           <li key={title} className={cn("flex flex-col gap-2.5 px-6 py-7 max-md:px-4", i > 0 && "border-border max-md:border-t md:border-l")}>
             <div className="flex items-center gap-2.5">
               <Icon className="size-5 shrink-0 text-fg" />
-              <span className="text-base leading-6 font-semibold text-fg">{title}</span>
+              <h3 className="text-base leading-6 font-semibold text-fg">{title}</h3>
             </div>
             <span className="text-sm leading-6 text-pretty text-muted">
               {body}
@@ -236,7 +236,7 @@ function Footer({ signedIn, signup }: { signedIn: boolean; signup: SignupMode })
       {!signedIn && (
         <Section>
           <div className="flex flex-col gap-6 px-6 py-16 max-md:px-4 max-md:py-10 md:flex-row md:items-end md:justify-between">
-            <p className={cn(headline, "text-4xl leading-display tracking-tight max-md:text-2xl")}>{t("Your AI keeps working on your computer. When it needs you, answer from your phone.")}</p>
+            <p className={cn(headline, "text-4xl leading-display tracking-tight max-md:text-2xl max-md:max-[360px]:text-xl")}>{t("Your AI keeps working on your computer. When it needs you, answer from your phone.")}</p>
             <div className="flex flex-wrap gap-3">
               <a
                 {...publicLink(signup === "closed" ? WAITLIST_HREF : SIGN_UP_PATH)}
@@ -300,7 +300,9 @@ export default function LandingPage({
   const { t } = useTranslation();
   useDocumentMeta();
   const offer = useMemo(() => heroOffer(detectKind(hints ?? browserHints() ?? { userAgent: "" }), availability), [hints, availability]);
-  const latest = useLatestRelease(release);
+  // A phone or Windows hero names no release file: do not ask the hub for one.
+  const needsRelease = offer === "mac" || offer === "linux" || offer === "all";
+  const latest = useLatestRelease(release === undefined && !needsRelease ? null : release);
   // Linux's processor, for its tarball (the high-entropy hints, else the user agent).
   const [detectedCpu, setDetectedCpu] = useState<string | null>(null);
   useEffect(() => {

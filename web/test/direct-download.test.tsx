@@ -556,8 +556,8 @@ test("the hero on a device it cannot tell: every way, the Mac's the file itself 
 test("the hero reads in en, zh-CN, zh-TW and ja on every device, and sells before it explains", () => {
   const said: Record<string, Record<string, string[]>> = {
     en: { mac: ["Download for Mac"], linux: ["Paste it into a terminal on this device", "Or download it:"], windows: ["Sign up on the web", "Droppen for Mac"], phone: ["On your phone, Droppen works in the browser"], unknown: ["Get Droppen:"] },
-    "zh-CN": { mac: ["下载 Mac 版", "Linux 及其他平台"], linux: ["在这台设备的终端里粘贴运行", "复制命令", "也可以直接下载："], windows: ["Web 免费注册", "Droppen · Mac"], phone: ["在手机上，Droppen 直接在浏览器里用"], unknown: ["获取 Droppen：", "下载 Mac 版"] },
-    "zh-TW": { mac: ["下載 Mac 版", "Linux 及其他平台"], linux: ["在這台裝置的終端機裡貼上執行", "也可以直接下載："], windows: ["Web 免費註冊", "Droppen · Mac"], phone: ["在手機上，Droppen 直接在瀏覽器裡用"], unknown: ["取得 Droppen："] },
+    "zh-CN": { mac: ["下载 Mac 版", "Linux 及其他平台"], linux: ["在这台设备的终端里粘贴运行", "复制命令", "也可以直接下载："], windows: ["在网页上免费注册", "Droppen · Mac"], phone: ["在手机上，Droppen 直接在浏览器里用"], unknown: ["获取 Droppen：", "下载 Mac 版"] },
+    "zh-TW": { mac: ["下載 Mac 版", "Linux 及其他平台"], linux: ["在這台裝置的終端機裡貼上執行", "也可以直接下載："], windows: ["在網頁上免費註冊", "Droppen · Mac"], phone: ["在手機上，Droppen 直接在瀏覽器裡用"], unknown: ["取得 Droppen："] },
     ja: { mac: ["Mac 版をダウンロード", "Linux とほかのプラットフォーム"], linux: ["このデバイスのターミナルに貼り付けて実行すると", "直接ダウンロードもできます："], windows: ["Web で登録", "Droppen · Mac 版"], phone: ["スマホでは、Droppen はブラウザで使います。"], unknown: ["Droppen を入手："] },
   };
   for (const [lng, devices] of Object.entries(said)) {
