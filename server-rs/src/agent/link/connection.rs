@@ -24,9 +24,9 @@ use crate::paths::Paths;
 use droppen_base::time::now_ms_u64;
 
 /// What the link needs from the server it runs in: where its own loopback
-/// API listens, the per-boot credential the bridge presents there, the
-/// drive (for the streams' writer), the server's push channels ([`LinkHost`])
-/// and the server's cancellation token (the link runs under a child of it, so
+/// API listens, the per-boot credential the bridge presents there, what the
+/// streams' writer copies, the server's push channels ([`LinkHost`]) and the
+/// server's cancellation token (the link runs under a child of it, so
 /// stopping the link never stops the server).
 #[derive(Clone)]
 pub struct LinkEnv {
@@ -34,8 +34,8 @@ pub struct LinkEnv {
     pub addr: SocketAddr,
     /// [`crate::auth::Auth::internal_credential`].
     pub credential: String,
-    /// The server's drive.
-    pub drive: Arc<crate::drive::Drive>,
+    /// The sessions the streams copy ([`crate::agent::streams::source`]).
+    pub streams: Arc<dyn crate::agent::streams::source::StreamSource>,
     /// The server's push channels.
     pub host: Arc<dyn LinkHost>,
     /// The server's token; the link takes a child of it.
@@ -165,7 +165,7 @@ pub fn start(
     let files = AgentFiles::of(paths);
     let (sync, sync_task) = super::streams::spawn(
         &files,
-        env.drive.clone(),
+        env.streams.clone(),
         identity.signing_key().clone(),
         loopback.clone(),
         super::streams::Options {

@@ -111,6 +111,12 @@ impl Transcript {
     pub fn prefix_fp(&self) -> String {
         self.fp_at(self.len().saturating_sub(RESUME_OVERLAP)).unwrap_or_default()
     }
+
+    /// The parse of its first `end` items, of the same file, so its chain is
+    /// this one's up to `end`. Panics when `end` is past the last item.
+    pub fn prefix(&self, end: usize) -> Self {
+        Self::new(&self.file_path, Arc::new(self.items[..end].to_vec()))
+    }
 }
 
 /// How many transcripts are remembered; `TRANSCRIPT_CACHE_MAX` in

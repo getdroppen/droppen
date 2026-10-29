@@ -65,9 +65,11 @@ pub mod gateway;
 pub mod hub_web;
 mod link;
 pub mod link_handoff;
+mod streams;
 
 pub use access::remote_viewer;
 pub use file::LinkFile;
+pub use streams::{LiveSessions, SessionStreams};
 pub use link::{post_cancel, post_finish, post_link, post_return, web_origin, ATTEMPT_TTL_MS, DEFAULT_HUB};
 
 use access::*;
@@ -1532,7 +1534,7 @@ mod tests {
         state.cloud.control.attach(crate::agent::link::LinkEnv {
             addr,
             credential: "test".into(),
-            drive: state.drive.clone(),
+            streams: Arc::new(SessionStreams::new(state.drive.paths.clone(), state.drive.clone())),
             host: Arc::new(crate::app::PushLinkHost),
             cancel: tokio_util::sync::CancellationToken::new(),
             aggregator_switch: state.cloud.aggregator_switch(),
@@ -1656,7 +1658,7 @@ mod tests {
         state.cloud.control.attach(crate::agent::link::LinkEnv {
             addr,
             credential: "test".into(),
-            drive: state.drive.clone(),
+            streams: Arc::new(SessionStreams::new(state.drive.paths.clone(), state.drive.clone())),
             host: Arc::new(crate::app::PushLinkHost),
             cancel: tokio_util::sync::CancellationToken::new(),
             aggregator_switch: state.cloud.aggregator_switch(),
