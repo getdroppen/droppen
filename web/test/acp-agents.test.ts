@@ -17,24 +17,12 @@ import {
   openingTab,
 } from "../src/features/settings/agents/agents-tabs.js";
 import { LOCAL } from "../src/lib/machines/key.js";
+import { MemoryStorage } from "./storage.js";
 
 const ICONS = fileURLToPath(new URL("../src/features/sessions/presets/icons/", import.meta.url));
 /** The server's built-in agent descriptions, which `GET /api/acp/agents` serves as `presets`. */
 const BUILT_IN = fileURLToPath(new URL("../../server-rs/src/acp-agents.json", import.meta.url));
 const SLUG = /^[a-z0-9][a-z0-9-]*$/;
-
-class MemoryStorage {
-  values = new Map<string, string>();
-  getItem(key: string) {
-    return this.values.get(key) ?? null;
-  }
-  setItem(key: string, value: string) {
-    this.values.set(key, value);
-  }
-  removeItem(key: string) {
-    this.values.delete(key);
-  }
-}
 
 test("every built-in agent is well-formed: a unique slug id, a name, one executable and its arguments", () => {
   const presets = JSON.parse(readFileSync(BUILT_IN, "utf8")) as unknown;

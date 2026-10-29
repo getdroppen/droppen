@@ -16,8 +16,7 @@ import * as React from "react";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import i18next from "i18next";
-import { I18nextProvider, initReactI18next } from "react-i18next";
+import { I18nextProvider } from "react-i18next";
 import { chooseAuto, medianAfterFirst, RelayPool, type RelayDirectory } from "../src/lib/hub/relays.js";
 import { RelayLink } from "../src/lib/hub/relay-link.js";
 import { RelaySection } from "../src/features/cloud/relays.js";
@@ -193,8 +192,7 @@ test("the picker offers automatic first and greys a third relay on a full free a
   });
   const { pool } = fakePool(d);
   await pool.refresh();
-  const i18n = i18next.createInstance();
-  await i18n.use(initReactI18next).init({ lng: "en", resources: { en: { translation: {} } }, interpolation: { escapeValue: false }, keySeparator: false, nsSeparator: false });
+  const i18n = makeI18n({ lng: "en", resources: { en: { translation: {} } }, keySeparator: false, nsSeparator: false });
   const html = renderToStaticMarkup(
     <I18nextProvider i18n={i18n}>
       <RelaySection pool={pool} machine="m-1" />

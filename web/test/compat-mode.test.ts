@@ -25,25 +25,10 @@ import { chainV3Writable } from "../src/lib/hub/api.js";
 import { candidateFromOffer, completePairing, type CompleteDeps, PairingResponder, type ResponderState } from "../src/lib/hub/pairing.js";
 import { containsBytes, FakeKeysHub, RecordingKeyStore } from "./fake-keys-hub.js";
 import { removeNative } from "./no-native-curves.js";
+import { MemoryStorage } from "./storage.js";
 
 const QUICK = [0, 0, 0];
 const check = () => checkE2eSupport({ requireIndexedDb: false });
-
-/** A browser's `localStorage`. */
-function memoryStorage(): Storage & { values: Map<string, string> } {
-  const values = new Map<string, string>();
-  return {
-    values,
-    get length() {
-      return values.size;
-    },
-    clear: () => values.clear(),
-    key: (i: number) => [...values.keys()][i] ?? null,
-    getItem: (k: string) => values.get(k) ?? null,
-    setItem: (k: string, v: string) => void values.set(k, v),
-    removeItem: (k: string) => void values.delete(k),
-  };
-}
 
 test("no Ed25519 in WebCrypto: making the device keys fails as the browser lacking it, not as the store", async () => {
   const restore = removeNative(["Ed25519", "X25519"]);
@@ -89,7 +74,7 @@ test("compatibility mode: offered only when just the curves are missing, and not
     const support = await check();
     assert.deepEqual(support.missing, ["Ed25519", "HKDF"]);
     assert.equal(compatCovers(support), false, "HKDF must stay native");
-    assert.deepEqual(await e2eReadiness(support, { storage: memoryStorage(), check }), { kind: "unsupported", missing: ["Ed25519", "HKDF"], compat: false });
+    assert.deepEqual(await e2eReadiness(support, { storage: new MemoryStorage(), check }), { kind: "unsupported", missing: ["Ed25519", "HKDF"], compat: false });
   } finally {
     restoreHkdf();
   }
@@ -97,7 +82,7 @@ test("compatibility mode: offered only when just the curves are missing, and not
   try {
     const support = await check();
     assert.equal(compatCovers(support), true);
-    const storage = memoryStorage();
+    const storage = new MemoryStorage();
     assert.deepEqual(await e2eReadiness(support, { storage, check }), { kind: "unsupported", missing: ["X25519", "Ed25519"], compat: true });
     assert.equal(compatModeActive(), false);
     assert.deepEqual(softCurvesOn(), [], "nothing installed");
@@ -110,7 +95,7 @@ test("compatibility mode: offered only when just the curves are missing, and not
 test("an agreement covers what the browser lacked then: lacking more, it is asked again", async () => {
   const restore = removeNative(["Ed25519", "X25519"]);
   try {
-    const storage = memoryStorage();
+    const storage = new MemoryStorage();
     consentToCompat(["Ed25519"], storage);
     assert.equal(compatAgreedFor(["Ed25519"], storage), true);
     assert.equal(compatAgreedFor(["X25519", "Ed25519"], storage), false);
@@ -123,7 +108,7 @@ test("an agreement covers what the browser lacked then: lacking more, it is aske
 });
 
 test("the agreement is kept for this browser, and can be withdrawn", () => {
-  const storage = memoryStorage();
+  const storage = new MemoryStorage();
   forgetCompatConsent(storage); // this page's own memory of the last test's agreement
   assert.equal(compatConsent(storage), null);
   consentToCompat(["X25519", "Ed25519"], storage, () => 1_700_000_000_000);
@@ -163,7 +148,7 @@ async function storedSeed(store: KeyStore): Promise<Uint8Array> {
 
 test("agreed: the whole thing works in compatibility mode — a new account, a device that runs AI, a QR pairing, a reload", async () => {
   const restore = removeNative(["Ed25519", "X25519"]);
-  const storage = memoryStorage();
+  const storage = new MemoryStorage();
   consentToCompat(["X25519", "Ed25519"], storage);
   const ready = await e2eReadiness(await check(), { storage, check });
   assert.deepEqual(ready, { kind: "compat", algorithms: ["X25519", "Ed25519"] });
