@@ -12,28 +12,10 @@ import { I18nextProvider } from "react-i18next";
 import { renderToStaticMarkup } from "react-dom/server";
 import { loadDeviceKeys, MemoryKeyStore } from "../src/lib/e2e/keystore.js";
 import { makeI18n } from "./render.js";
+import { MemoryStorage } from "./storage.js";
 
-class MapStorage {
-  readonly values = new Map<string, string>();
-  get length() {
-    return this.values.size;
-  }
-  key(i: number) {
-    return [...this.values.keys()][i] ?? null;
-  }
-  getItem(k: string) {
-    return this.values.get(k) ?? null;
-  }
-  setItem(k: string, v: string) {
-    this.values.set(k, String(v));
-  }
-  removeItem(k: string) {
-    this.values.delete(k);
-  }
-}
-
-const local = new MapStorage();
-Object.assign(globalThis, { localStorage: local, sessionStorage: new MapStorage(), location: { replace: () => undefined, origin: "https://droppen.app", host: "droppen.app" } });
+const local = new MemoryStorage();
+Object.assign(globalThis, { localStorage: local, sessionStorage: new MemoryStorage(), location: { replace: () => undefined, origin: "https://droppen.app", host: "droppen.app" } });
 // An account opened to be removed leaves its timers and channels behind: the file ends when its tests do.
 after(() => void setTimeout(() => process.exit(), 50));
 
