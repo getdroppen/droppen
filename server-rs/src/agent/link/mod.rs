@@ -42,7 +42,7 @@ use serde_json::Value;
 use tokio::sync::{mpsc, Semaphore};
 use tokio_util::sync::CancellationToken;
 
-use lapse::ChannelLapse;
+use lapse::{ChannelLapse, Clock};
 use super::bridge::Loopback;
 use super::state::{self, AgentState};
 use super::{bridge, direct, hub, load_or_create, relays, rotation, streams, AgentFiles, StagedSeed, CHAIN_V3_FEATURE, POLICY_FEATURE, ROTATE_FEATURE};
@@ -112,6 +112,8 @@ pub(super) struct Shared {
     /// attestation as it arrives ([`take_attestation`]), before a newer one
     /// from the same admin can replace it in the state.
     pub(super) lapses: Mutex<Vec<std::sync::Weak<Mutex<ChannelLapse>>>>,
+    /// The clock every channel's control lapse is judged by ([`Clock`]).
+    pub(super) clock: Clock,
     /// A test's hook right after a handshake's admission, its state lock let
     /// go: where an attestation arriving then would have slipped past a
     /// channel whose lapse was registered only later.
@@ -299,6 +301,7 @@ mod tests {
             held_until: Mutex::new(None),
             chain_version: tokio::sync::watch::channel(0).0,
             lapses: Mutex::new(Vec::new()),
+            clock: Clock::wall(),
             after_admission: Mutex::new(None),
             hub_text: Mutex::new(None),
             relays: Mutex::new(None),

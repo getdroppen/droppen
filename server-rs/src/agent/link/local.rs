@@ -8,7 +8,6 @@ use crate::agent::answers::{AnswerBody, DisplayName, Info, KeyRefused, MachineKe
 use super::lapse::{still_controls, ChannelLapse};
 use super::Shared;
 use droppen_base::text::unhex;
-use droppen_base::time::now_ms_u64;
 
 /// The agent's own routes over a channel ([`bridge::LOCAL_PREFIX`]): what a
 /// device tells the agent itself rather than its API.
@@ -63,7 +62,7 @@ pub(in crate::agent) fn standing_with(shared: &Shared, device: &str, controls: b
         };
     };
     use rh_proto::chain::Freshness;
-    let view = match chain.freshness(device, &st.attestation_list(), now_ms_u64(), rh_proto::chain::MANAGE_FRESHNESS_MS) {
+    let view = match chain.freshness(device, &st.attestation_list(), shared.clock.now_ms(), rh_proto::chain::MANAGE_FRESHNESS_MS) {
         Ok(Freshness::Fresh) => bridge::View::Fresh,
         Ok(Freshness::Stale { .. }) => bridge::View::Stale,
         Ok(Freshness::Behind { .. }) => bridge::View::Behind,
@@ -80,7 +79,7 @@ pub(in crate::agent) fn standing_with(shared: &Shared, device: &str, controls: b
 impl bridge::Local for AgentLocal {
     fn standing(&self, device: &str) -> bridge::Standing {
         // The channel's own control lapse (local-aggregator §3.4).
-        let controls = still_controls(&self.shared, &self.lapse, now_ms_u64());
+        let controls = still_controls(&self.shared, &self.lapse, self.shared.clock.now_ms());
         standing_with(&self.shared, device, controls)
     }
 
