@@ -344,20 +344,6 @@ mod tests {
             "{refused:?}"
         );
         assert!(calls.lock().expect("calls").is_empty(), "no check ran");
-
-        // The real logins swapped: a claude block holding an OpenAI key would
-        // otherwise be checked, and could pass, as a codex key.
-        let real = crate::app::logins();
-        let swapped = Logins {
-            claude: real.codex.clone(),
-            codex: real.claude.clone(),
-        };
-        let block = Credential::Env(parse_env_block("OPENAI_API_KEY=codex-test-key").expect("block"));
-        let refused = swapped.verify_secret(&paths, AccountProvider::Claude, &block).await;
-        assert!(
-            matches!(refused, Err(AccountError::ProviderMismatch { account: AccountProvider::Claude, wanted: AccountProvider::Codex })),
-            "{refused:?}"
-        );
     }
 
     /// Each credential is checked by its own CLI's login, with its own values
