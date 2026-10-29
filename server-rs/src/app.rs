@@ -22,6 +22,8 @@ use crate::feed::global::GlobalFeed;
 use crate::feed::FeedRegistry;
 use crate::instance::{InstanceDirs, InstanceLock};
 use crate::paths::Paths;
+use crate::sessions::account::{RotationOutcome, RotationTrigger};
+use crate::sessions::{DriverStates, InjectionRunState, Source};
 use crate::shutdown::{self, Cleanups};
 use droppen_base::time::iso8601;
 
@@ -127,6 +129,7 @@ impl GotchaApp for RemoteHandApp {
             // two feeds that would otherwise only notice on their next poll.
             let refresh = crate::http::refresh::Refresh::new(global.clone());
             drive.injections.attach_listeners(feeds.clone(), refresh.clone());
+            drive.injections.attach_alerts(Arc::new(PushAlerts));
             Ok(AppState {
                 cloud: crate::cloud::Cloud::new(paths.as_ref().clone()),
                 // Touches nothing yet: the installed packages are read by the
@@ -613,6 +616,25 @@ fn join(result: Result<std::io::Result<()>, tokio::task::JoinError>) -> GotchaRe
         Ok(Ok(())) => Ok(()),
         Ok(Err(error)) => Err(GotchaError::Io(error)),
         Err(error) => Err(GotchaError::message(error)),
+    }
+}
+
+/// The drivers' alerts, sent by [`crate::push`]: Web Push to every subscribed
+/// browser, and the Bark endpoint too for a question or a rotation. Each push
+/// function spawns its sending and returns, as [`crate::inject::Alerts`] asks.
+struct PushAlerts;
+
+impl crate::inject::Alerts for PushAlerts {
+    fn turn(&self, paths: Arc<Paths>, source: Source, id: String, outcome: InjectionRunState, error: Option<String>, driver: DriverStates) {
+        crate::push::notify_turn(paths, source, id, outcome, error, driver);
+    }
+
+    fn question(&self, paths: Arc<Paths>, source: Source, id: String, question: String) {
+        crate::push::notify_question(paths, source, id, question);
+    }
+
+    fn rotation(&self, paths: Arc<Paths>, source: Source, id: String, outcome: RotationOutcome, trigger: RotationTrigger, text: String) {
+        crate::push::notify_rotation(paths, source, id, outcome, trigger, text);
     }
 }
 
