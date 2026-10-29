@@ -48,6 +48,15 @@ impl std::fmt::Display for ControlError {
     }
 }
 
+impl From<crate::agent::hub::DeleteError> for ControlError {
+    fn from(error: crate::agent::hub::DeleteError) -> Self {
+        match error {
+            crate::agent::hub::DeleteError::Failed(m) => ControlError::Failed(m),
+            crate::agent::hub::DeleteError::Unreachable(m) => ControlError::Unreachable(m),
+        }
+    }
+}
+
 /// The server's handle on its hub link. One per server, in
 /// [`crate::api::AppState`].
 pub struct Control {
@@ -352,9 +361,10 @@ impl Control {
             Err(error) => return Err(ControlError::Failed(error)),
         };
         let identity = self.identity().map_err(ControlError::Failed)?;
-        tokio::time::timeout(Duration::from_secs(30), delete_streams(&st, &identity))
+        tokio::time::timeout(Duration::from_secs(30), crate::agent::hub::delete_streams(&st, &identity))
             .await
             .map_err(|_| ControlError::Unreachable("the hub did not answer in time".into()))?
+            .map_err(ControlError::from)
     }
 
     /// Before a sign-in shows this computer's keys: when the seed in use is
@@ -392,55 +402,6 @@ impl Control {
         self.stop_locked().await;
         self.files.unenroll().map_err(ControlError::Failed)
     }
-}
-
-/// Sign in as the machine, ask for the streams the hub holds for it, delete
-/// each, and ask again until none is left.
-async fn delete_streams(st: &AgentState, identity: &MachineIdentity) -> Result<usize, ControlError> {
-    use futures_util::StreamExt;
-    use tokio_tungstenite::tungstenite::Message;
-    let hub = crate::agent::hub::origin(&st.hub).map_err(ControlError::Failed)?;
-    let (mut sink, mut source, nonce) = crate::agent::hub::dial(&hub).await.map_err(ControlError::Unreachable)?;
-    crate::agent::hub::login(&mut sink, &mut source, identity, &st.account, &st.machine, &hub, nonce)
-        .await
-        .map_err(|e| ControlError::Unreachable(e.to_string()))?;
-    let mut deleted = 0;
-    for _round in 0..3 {
-        crate::agent::hub::send_json(&mut sink, &serde_json::json!({"t": "stream_list"}))
-            .await
-            .map_err(ControlError::Unreachable)?;
-        let streams: Vec<String> = loop {
-            let message = tokio::time::timeout(Duration::from_secs(15), source.next())
-                .await
-                .map_err(|_| ControlError::Unreachable("the hub did not list this device's streams".into()))?;
-            let Some(Ok(message)) = message else {
-                return Err(ControlError::Unreachable("the hub closed the connection".into()));
-            };
-            let Message::Text(text) = message else { continue };
-            let Ok(v) = serde_json::from_str::<serde_json::Value>(text.as_str()) else {
-                continue;
-            };
-            if v["t"] == "stream_list" {
-                break v["streams"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|s| s["stream"].as_str().map(str::to_string))
-                    .collect();
-            }
-        };
-        if streams.is_empty() {
-            break;
-        }
-        for stream in &streams {
-            crate::agent::hub::send_json(&mut sink, &serde_json::json!({"t": "stream_delete", "stream": stream}))
-                .await
-                .map_err(ControlError::Unreachable)?;
-        }
-        deleted += streams.len();
-    }
-    tracing::info!(deleted, "deleted this machine's encrypted copy on the hub");
-    Ok(deleted)
 }
 
 /// Whether `st` is an enrollment still waiting for a device to add this

@@ -17,6 +17,7 @@ use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
+use super::state::AgentState;
 use droppen_base::text::{hex, unhex32};
 use droppen_base::time::now_ms_u64;
 
@@ -234,6 +235,62 @@ impl Peer {
 /// nothing binary comes before sign-in).
 pub async fn next_json(source: &mut Source) -> Result<Value, String> {
     read_json(source, Peer::Hub).await
+}
+
+/// Why this machine's copy on the hub could not be deleted ([`delete_streams`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeleteError {
+    /// The hub this machine is enrolled at is not a hub address.
+    Failed(String),
+    /// The hub could not be reached, refused the sign-in, or did not answer.
+    Unreachable(String),
+}
+
+/// Sign in as the machine, ask for the streams the hub holds for it, delete
+/// each, and ask again until none is left.
+pub async fn delete_streams(st: &AgentState, identity: &MachineIdentity) -> Result<usize, DeleteError> {
+    let hub = origin(&st.hub).map_err(DeleteError::Failed)?;
+    let (mut sink, mut source, nonce) = dial(&hub).await.map_err(DeleteError::Unreachable)?;
+    login(&mut sink, &mut source, identity, &st.account, &st.machine, &hub, nonce)
+        .await
+        .map_err(|e| DeleteError::Unreachable(e.to_string()))?;
+    let mut deleted = 0;
+    for _round in 0..3 {
+        send_json(&mut sink, &serde_json::json!({"t": "stream_list"}))
+            .await
+            .map_err(DeleteError::Unreachable)?;
+        let streams: Vec<String> = loop {
+            let message = tokio::time::timeout(Duration::from_secs(15), source.next())
+                .await
+                .map_err(|_| DeleteError::Unreachable("the hub did not list this device's streams".into()))?;
+            let Some(Ok(message)) = message else {
+                return Err(DeleteError::Unreachable("the hub closed the connection".into()));
+            };
+            let Message::Text(text) = message else { continue };
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(text.as_str()) else {
+                continue;
+            };
+            if v["t"] == "stream_list" {
+                break v["streams"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|s| s["stream"].as_str().map(str::to_string))
+                    .collect();
+            }
+        };
+        if streams.is_empty() {
+            break;
+        }
+        for stream in &streams {
+            send_json(&mut sink, &serde_json::json!({"t": "stream_delete", "stream": stream}))
+                .await
+                .map_err(DeleteError::Unreachable)?;
+        }
+        deleted += streams.len();
+    }
+    tracing::info!(deleted, "deleted this machine's encrypted copy on the hub");
+    Ok(deleted)
 }
 
 /// The next text control message, as JSON, from `peer`'s socket (up to
