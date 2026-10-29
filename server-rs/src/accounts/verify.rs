@@ -261,6 +261,10 @@ mod tests {
             self.calls.lock().expect("calls").push((self.provider, values));
             Box::pin(async { Verdict::Valid })
         }
+
+        fn local_state(&self, _refused_at: Option<i64>, _local_reading: &crate::accounts::quota::readings::SharedReading) -> crate::accounts::local_login::LocalLoginState {
+            crate::accounts::local_login::LocalLoginState::Unknown
+        }
     }
 
     /// Two recording logins: the one filed under Claude makes launches for

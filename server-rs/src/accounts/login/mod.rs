@@ -15,6 +15,8 @@ use std::sync::Arc;
 
 use futures_util::future::BoxFuture;
 
+use super::local_login::LocalLoginState;
+use super::quota::readings::SharedReading;
 use super::store::{AccountError, AccountKind, AccountLaunch, AccountProvider};
 use droppen_base::env_block::EnvVar;
 use super::verify::Verdict;
@@ -41,6 +43,14 @@ pub trait Login: Send + Sync {
     /// redacted of them before it reaches the verdict. Never fails: anything
     /// that is not a clean run or a clean refusal is [`Verdict::Unverifiable`].
     fn verify<'a>(&'a self, paths: &'a Paths, launch: &'a AccountLaunch, secrets: &'a [&'a str]) -> BoxFuture<'a, Verdict>;
+
+    /// Whether the machine's own login of this CLI can start a session, from
+    /// the evidence this server has of it.
+    ///
+    /// `refused_at` is when an active `auth` rest on that login was seen.
+    /// `local_reading` is the machine's shared reading of its own login, which
+    /// only claude makes: a CLI that reads none weighs the refusal alone.
+    fn local_state(&self, refused_at: Option<i64>, local_reading: &SharedReading) -> LocalLoginState;
 }
 
 /// Every CLI's [`Login`], one per [`AccountProvider`].

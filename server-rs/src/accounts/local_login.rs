@@ -18,7 +18,8 @@
 //! * **a reading.** Every window a session or a probe read for the local login
 //!   was read by a login that worked at that instant.
 //!
-//! [`claude_state`] weighs them by *when*: the newest piece of evidence decides.
+//! Claude Code's login weighs them by *when* ([`super::login::Login::local_state`]):
+//! the newest piece of evidence decides.
 //! That is what lets the answer heal on its own — a user who signs in again and
 //! runs one turn on the local login produces a reading newer than the rest that
 //! condemned it — without anything having to clear the rest first.
@@ -30,8 +31,8 @@
 use gotcha::Schematic;
 use serde::{Deserialize, Serialize};
 
+use super::login::Logins;
 use super::quota::readings::SharedReading;
-use super::quota::QuotaProbeError;
 use super::rest::{AccountRest, LimitLog, LOCAL_CLAUDE, LOCAL_CODEX};
 use crate::sessions::account::LimitClass;
 
@@ -77,46 +78,22 @@ pub struct LocalLogins {
     pub codex: LocalLogin,
 }
 
-/// The claude local login's state from its evidence, newest first.
-///
-/// `auth_rest_at` is when an active `auth` rest on the local login was seen;
-/// `reading` is the shared `/usage` reading file for it. Ties go to the
-/// refusal, the direction that costs a click rather than a failed session.
-pub fn claude_state(auth_rest_at: Option<i64>, reading: &SharedReading) -> LocalLoginState {
-    let refused_by_probe = match (reading.probe_error, reading.probe_error_at_ms) {
-        // `probe_failed` only says the reading did not happen.
-        (Some(QuotaProbeError::NotLoggedIn), Some(at)) => Some(at),
-        _ => None,
-    };
-    let refused = auth_rest_at.max(refused_by_probe);
-    let worked = reading.newest().map(|window| window.read_at_ms);
-    match (refused, worked) {
-        (Some(refused), Some(worked)) if worked > refused => LocalLoginState::SignedIn,
-        (Some(_), _) => LocalLoginState::SignedOut,
-        (None, Some(_)) => LocalLoginState::SignedIn,
-        (None, None) => LocalLoginState::Unknown,
-    }
-}
-
 /// Both local logins, from this instance's limit log and the machine's shared
-/// local reading. Neither is the default here: that is a setting of the store,
-/// which [`super::store::AccountsStore::local_logins`] fills in.
-pub fn local_logins(log: &LimitLog, local_reading: &SharedReading, now: i64) -> LocalLogins {
+/// local reading, each weighed by its own CLI's login. Neither is the default
+/// here: that is a setting of the store, which
+/// [`super::store::AccountsStore::local_logins`] fills in.
+pub fn local_logins(logins: &Logins, log: &LimitLog, local_reading: &SharedReading, now: i64) -> LocalLogins {
     let mut rests = log.active_rests(now);
     let claude_refused = log.active_observed_ms(LOCAL_CLAUDE, LimitClass::Auth, now);
     let codex_refused = log.active_observed_ms(LOCAL_CODEX, LimitClass::Auth, now);
     LocalLogins {
         claude: LocalLogin {
-            state: claude_state(claude_refused, local_reading),
+            state: logins.claude.local_state(claude_refused, local_reading),
             rest: rests.remove(LOCAL_CLAUDE).unwrap_or_default(),
             is_default: false,
         },
         codex: LocalLogin {
-            state: if codex_refused.is_some() {
-                LocalLoginState::SignedOut
-            } else {
-                LocalLoginState::Unknown
-            },
+            state: logins.codex.local_state(codex_refused, local_reading),
             rest: rests.remove(LOCAL_CODEX).unwrap_or_default(),
             is_default: false,
         },
@@ -151,54 +128,6 @@ mod tests {
         reading
     }
 
-    fn not_logged_in_at(mut reading: SharedReading, at: i64) -> SharedReading {
-        reading.probe_error = Some(QuotaProbeError::NotLoggedIn);
-        reading.probe_error_at_ms = Some(at);
-        reading
-    }
-
-    #[test]
-    fn nothing_known_is_unknown_and_a_reading_is_signed_in() {
-        assert_eq!(claude_state(None, &SharedReading::default()), LocalLoginState::Unknown);
-        assert_eq!(claude_state(None, &read_at(5 * MINUTE)), LocalLoginState::SignedIn);
-    }
-
-    /// The session that started this: an OAuth session expired weeks ago, the
-    /// probe said so, and a turn on it was refused. Nothing since has worked.
-    #[test]
-    fn a_refused_credential_or_an_empty_probe_is_signed_out() {
-        let old_reading = read_at(MINUTE);
-        assert_eq!(claude_state(Some(10 * MINUTE), &old_reading), LocalLoginState::SignedOut);
-        assert_eq!(
-            claude_state(None, &not_logged_in_at(old_reading.clone(), 10 * MINUTE)),
-            LocalLoginState::SignedOut,
-            "the probe's verdict alone is enough"
-        );
-        assert_eq!(claude_state(Some(10 * MINUTE), &SharedReading::default()), LocalLoginState::SignedOut);
-    }
-
-    /// Signing in again and running one turn is the whole fix: the reading that
-    /// turn makes is newer than the rest, and nobody has to clear anything.
-    #[test]
-    fn a_reading_newer_than_the_refusal_heals_it() {
-        assert_eq!(claude_state(Some(MINUTE), &read_at(10 * MINUTE)), LocalLoginState::SignedIn);
-        assert_eq!(
-            claude_state(None, &not_logged_in_at(read_at(10 * MINUTE), MINUTE)),
-            LocalLoginState::SignedIn
-        );
-    }
-
-    /// A probe that failed to run says nothing about the login.
-    #[test]
-    fn a_probe_that_failed_to_run_is_not_a_verdict() {
-        let reading = SharedReading {
-            probe_error: Some(QuotaProbeError::ProbeFailed),
-            probe_error_at_ms: Some(MINUTE),
-            ..Default::default()
-        };
-        assert_eq!(claude_state(None, &reading), LocalLoginState::Unknown);
-    }
-
     #[test]
     fn the_local_rests_are_reported_with_the_state() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -223,7 +152,7 @@ mod tests {
         )
         .expect("record");
 
-        let logins = local_logins(&log, &read_at(now - MINUTE), now + MINUTE);
+        let logins = local_logins(&crate::app::logins(), &log, &read_at(now - MINUTE), now + MINUTE);
         assert_eq!(logins.claude.state, LocalLoginState::SignedOut);
         assert_eq!(logins.claude.rest.len(), 1);
         assert_eq!(logins.claude.rest[0].class, LimitClass::Auth);
