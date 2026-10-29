@@ -2451,7 +2451,7 @@ mod tests {
         let registry = InjectionRegistry::new(
             paths.clone(),
             &dirs,
-            Arc::new(crate::accounts::store::AccountsStore::new(paths.clone())),
+            Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins())),
             Arc::new(crate::accounts::quota::QuotaCache::new(paths)),
         );
 
@@ -2536,7 +2536,7 @@ mod tests {
         let registry = InjectionRegistry::new(
             paths.clone(),
             &dirs,
-            Arc::new(crate::accounts::store::AccountsStore::new(paths.clone())),
+            Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins())),
             Arc::new(crate::accounts::quota::QuotaCache::new(paths)),
         );
         let spawn = |script: &str| {

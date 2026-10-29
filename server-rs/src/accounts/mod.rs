@@ -10,6 +10,7 @@
 
 pub mod limits;
 pub mod local_login;
+pub mod login;
 pub mod quota;
 pub mod rest;
 pub mod rotation;
@@ -298,7 +299,7 @@ fn require_secret(secret: &str) -> Result<(), ApiError> {
 /// It is returned rather than swallowed because the UI promises a check, and a
 /// promise kept silently only when convenient is not one.
 async fn require_working(state: &AccountsState, provider: AccountProvider, credential: &Credential) -> Result<Option<String>, ApiError> {
-    match verify::verify_secret(&state.paths, provider, credential).await {
+    match verify::verify_secret(state.accounts.logins(), &state.paths, provider, credential).await {
         verify::Verdict::Valid => Ok(None),
         verify::Verdict::Invalid(reason) => Err(ApiError::bad_request(reason)),
         verify::Verdict::Unverifiable(why) => {

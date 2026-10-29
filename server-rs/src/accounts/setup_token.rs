@@ -893,9 +893,11 @@ impl Reading {
 /// [`choose_reading`] against the real Anthropic check.
 async fn accepted_reading(drive: &Arc<Drive>, found: &TokenMatch) -> Result<Reading, String> {
     let paths = drive.paths.clone();
+    let logins = drive.accounts.logins().clone();
     choose_reading(found, move |candidate| {
         let paths = paths.clone();
-        async move { verify_secret(&paths, AccountProvider::Claude, &Credential::Oauth(candidate)).await }
+        let logins = logins.clone();
+        async move { verify_secret(&logins, &paths, AccountProvider::Claude, &Credential::Oauth(candidate)).await }
     })
     .await
 }

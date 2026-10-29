@@ -7063,7 +7063,7 @@ mod tests {
         Arc::new(InjectionRegistry {
             receipts: Arc::new(crate::inject::receipts::Receipts::new(droppen_instance::db::at(paths.instance_db()))),
             questions: Arc::new(crate::inject::questions::Questions::new(droppen_instance::db::at(paths.instance_db()))),
-            accounts: Arc::new(crate::accounts::store::AccountsStore::new(paths.clone())),
+            accounts: Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins())),
             quota: Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone())),
             server: droppen_instance::identity::ServerId::local(&paths),
             codex_servers: Mutex::new(HashMap::new()),
@@ -10500,7 +10500,7 @@ done
     /// first, and describe a process started under it running `model`.
     async fn accounts_in(home: &Path, wanted: &[(&str, bool)], model: Option<&str>) -> (Vec<crate::accounts::store::Account>, Fingerprint) {
         use crate::accounts::store::{parse_env_block, AccountsStore, Credential};
-        let store = AccountsStore::new(Arc::new(Paths::new(home.to_path_buf())));
+        let store = AccountsStore::new(Arc::new(Paths::new(home.to_path_buf())), crate::app::logins());
         let mut accounts = Vec::new();
         for (label, oauth) in wanted {
             let credential = if *oauth {
@@ -10974,7 +10974,7 @@ dir=$(dirname "$GO")
         let home = tempfile::tempdir().expect("tempdir");
         let (accounts, live) = accounts_in(home.path(), &[("a@work", true), ("b@team", true)], Some("fable")).await;
         let b = accounts[1].clone();
-        let store = crate::accounts::store::AccountsStore::new(Arc::new(Paths::new(home.path().to_path_buf())));
+        let store = crate::accounts::store::AccountsStore::new(Arc::new(Paths::new(home.path().to_path_buf())), crate::app::logins());
         store
             .bind_session_account(SESSION, Some(&b.id), AccountProvider::Claude)
             .await
@@ -12145,7 +12145,7 @@ done
             auth: crate::auth::Auth::new(&paths, &instance, &droppen_http::config::AuthSettings::default(), false),
             wizards: crate::accounts::setup_token::Captures::new(),
             injections: harness.registry.clone(),
-            accounts: Arc::new(crate::accounts::store::AccountsStore::new(paths.clone())),
+            accounts: Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins())),
             quota: Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone())),
             models: Arc::new(crate::models::ClaudeModelCache::new(paths.clone())),
             composer: crate::drive::composer_prefs::ComposerPrefsStore::new(paths.clone()),

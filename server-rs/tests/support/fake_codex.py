@@ -24,7 +24,8 @@ def archive_thread(thread_id):
 if len(sys.argv) == 3 and sys.argv[1] == "archive":
     archive_thread(sys.argv[2])
     sys.exit(0)
-if sys.argv[1:] != ["app-server"]:
+# An account's model provider follows the subcommand as `-c` overrides.
+if sys.argv[1:2] != ["app-server"]:
     sys.exit(0)
 if (cwd / "codex-exit.txt").exists():
     sys.exit(int((cwd / "codex-exit.txt").read_text()))

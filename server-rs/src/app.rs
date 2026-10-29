@@ -16,6 +16,9 @@ use gotcha::{ConfigWrapper, GotchaApp, GotchaContext, GotchaError, GotchaResult,
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 
+use crate::accounts::login::claude::ClaudeCodeLogin;
+use crate::accounts::login::codex::CodexLogin;
+use crate::accounts::login::Logins;
 use crate::api::AppState;
 use droppen_http::config::AppConfig;
 use crate::feed::global::GlobalFeed;
@@ -122,7 +125,7 @@ impl GotchaApp for RemoteHandApp {
                 async move { roots.sweep_uploads().await }
             });
             let auth = crate::auth::Auth::new(&paths, &instance, &auth_settings, auth_disabled);
-            let drive = crate::drive::Drive::new(paths.clone(), &instance, auth, transcript_sources(), register_providers);
+            let drive = crate::drive::Drive::new(paths.clone(), &instance, auth, transcript_sources(), register_providers, logins());
             let feeds = FeedRegistry::new();
             let global = GlobalFeed::new();
             // A session's driver changes things no file shows — an automatic
@@ -646,6 +649,15 @@ pub fn register_providers(providers: &mut ProviderRegistry, registry: &Arc<Injec
     providers.register(Arc::new(crate::inject::acp::Acp::new(registry.clone())));
 }
 
+/// Every CLI's login, as the accounts are handed them: the one place that
+/// names each provider's own implementation.
+pub fn logins() -> Logins {
+    Logins {
+        claude: Arc::new(ClaudeCodeLogin),
+        codex: Arc::new(CodexLogin),
+    }
+}
+
 /// The drivers' alerts, sent by [`crate::push`]: Web Push to every subscribed
 /// browser, and the Bark endpoint too for a question or a rotation. Each push
 /// function spawns its sending and returns, as [`crate::inject::Alerts`] asks.
@@ -731,7 +743,7 @@ mod tests {
         let paths = Arc::new(Paths::new(home.path().to_path_buf()));
         let dirs = InstanceDirs::new(&paths.data_dir(), "providers-test").expect("valid name");
         dirs.create().expect("instance dirs");
-        let accounts = Arc::new(crate::accounts::store::AccountsStore::new(paths.clone()));
+        let accounts = Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), logins()));
         let quota = Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone()));
         let providers = ProviderRegistry::new(InjectionRegistry::new(paths, &dirs, accounts, quota), register_providers);
 

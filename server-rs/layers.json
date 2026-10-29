@@ -244,6 +244,7 @@
             "accounts::setup_token",
             "accounts::usage_login",
             "accounts::local_login",
+            "accounts::login::claude",
             "record"
           ],
           "mayUse": [
@@ -255,13 +256,14 @@
         },
         {
           "name": "droppen-provider-codex",
-          "about": "Codex: the app-server driver, its threads and tools, its quota.",
+          "about": "Codex: the app-server driver, its threads and tools, its quota and its login.",
           "modules": [
             "inject::app_server",
             "sessions::codex",
             "sessions::codex_tools",
             "sessions::codex_claims",
-            "accounts::quota::codex"
+            "accounts::quota::codex",
+            "accounts::login::codex"
           ],
           "mayUse": [
             "droppen-provider",
