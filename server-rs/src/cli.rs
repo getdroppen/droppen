@@ -462,9 +462,6 @@ pub(crate) mod tests {
                     command: AgentCommand::Enroll { code: "-".to_string() },
                 }),
             ),
-            (vec!["up", "--", "serve"], Command::Up(UpArgs { child: args(&["serve"]) })),
-            (vec!["up"], Command::Up(UpArgs { child: vec![] })),
-            (vec!["up", "serve"], Command::Up(UpArgs { child: args(&["serve"]) })),
             (vec!["serve"], Command::Serve(tail(&[]))),
             (vec![], Command::Serve(tail(&[]))),
             (vec!["preflight"], Command::Preflight(tail(&[]))),
@@ -473,12 +470,25 @@ pub(crate) mod tests {
             if let Command::User(args) = &parsed {
                 assert!(args.flags_fit(), "{argv:?} runs");
             }
-            if let Command::Up(up) = &parsed {
-                assert_eq!(droppen_supervisor::supervisor::child_args(&up.child), args(&["serve"]), "{argv:?} supervises `serve`");
-            }
             assert_eq!(parsed, expected, "{argv:?}");
         }
         assert_eq!(kind(&["--version"]), ErrorKind::DisplayVersion);
+
+        // What `up` supervises, by the way it is started. The launchd agent,
+        // the systemd unit and the manual start in `scripts/install.sh`, and
+        // the INSTALL texts, run `up -- serve`; `up` and `up serve` are typed
+        // by hand. What follows the server's command is the server's own.
+        for (argv, child) in [
+            (vec!["up"], vec!["serve"]),
+            (vec!["up", "--"], vec!["serve"]),
+            (vec!["up", "serve"], vec!["serve"]),
+            (vec!["up", "--", "serve"], vec!["serve"]),
+            (vec!["up", "--", "serve", "--flag"], vec!["serve", "--flag"]),
+            (vec!["up", "serve", "--flag"], vec!["serve", "--flag"]),
+        ] {
+            let Command::Up(up) = parse(&argv).expect("parses") else { panic!("{argv:?} is `up`") };
+            assert_eq!(droppen_supervisor::supervisor::child_args(&up.child), args(&child), "{argv:?} supervises {child:?}");
+        }
 
         // A user name may be anything `^[a-z0-9._-]{1,32}$` allows, so in the
         // name position a hyphen-led word is a name, never a flag.
