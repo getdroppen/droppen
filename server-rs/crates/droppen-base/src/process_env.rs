@@ -10,6 +10,16 @@ pub type Env = BTreeMap<String, String>;
 /// The environment variable the desktop app sets.
 pub const DESKTOP_APP_ENV: &str = "DROPPEN_DESKTOP_APP";
 
+/// Where a session's `droppen-notify` reaches its server, and the session's
+/// token ([`NOTIFY_TOKEN_ENV`]): the server's `notify` sets both on each Claude
+/// session it decorates, after [`clean_env`]. Server-only otherwise
+/// (`is_server_only_variable`).
+pub const NOTIFY_URL_ENV: &str = "DROPPEN_NOTIFY_URL";
+
+/// The session's notify token, a capability with no expiry: see
+/// [`NOTIFY_URL_ENV`].
+pub const NOTIFY_TOKEN_ENV: &str = "DROPPEN_NOTIFY_TOKEN";
+
 /// The variable the desktop app reports its own login-shell read in:
 /// `ok`, `timeout` or `failed`. Server-only: never passed to a child
 /// (`is_server_only_variable`).
@@ -33,8 +43,14 @@ fn is_harness_variable(key: &str) -> bool {
 /// `DROPPEN_DESKTOP_SHELL_READ` ([`SHELL_READ_ENV`]) is the
 /// app's report on how *its* read of the login shell went; it describes how
 /// this server was started and means nothing to anything the server starts.
+/// `DROPPEN_NOTIFY_URL` / `DROPPEN_NOTIFY_TOKEN` ([`NOTIFY_URL_ENV`]) that
+/// this server inherited are the channel of the session it was started in:
+/// a child of this server that is not decorated (Codex, an ACP agent, a
+/// terminal, a Claude session with notify off) would otherwise notify as that
+/// session, and carry its token into recordings and model requests. A
+/// decorated Claude session gets its own channel back after the strip.
 fn is_server_only_variable(key: &str) -> bool {
-    key == DESKTOP_APP_ENV || key == SHELL_READ_ENV
+    key == DESKTOP_APP_ENV || key == SHELL_READ_ENV || key == NOTIFY_URL_ENV || key == NOTIFY_TOKEN_ENV
 }
 
 /// Variables an older Droppen set for whoever started this server, under their
@@ -350,8 +366,22 @@ mod tests {
             is_server_only_variable("DROPPEN_DESKTOP_SHELL_READ"),
             "the app's report on its own shell read is the server's alone"
         );
-        assert!(!is_server_only_variable("DROPPEN_NOTIFY_URL"), "what a child is meant to have stays");
-        assert!(!is_server_only_variable("PATH"));
+        assert!(!is_server_only_variable("PATH"), "what a child is meant to have stays");
+    }
+
+    /// A notify channel this server inherited is the session's that started
+    /// it: no child gets it from the strip. The one a decorated session gets
+    /// is added after it.
+    #[test]
+    fn an_inherited_notify_channel_stays_with_the_server() {
+        assert!(is_server_only_variable(NOTIFY_URL_ENV) && is_server_only_variable(NOTIFY_TOKEN_ENV));
+        let inherited = [(NOTIFY_URL_ENV, "http://outer/api/notify"), (NOTIFY_TOKEN_ENV, "outer"), ("HOME", "/home/ada")]
+            .map(|(k, v)| (k.to_string(), v.to_string()));
+        let env = clean_env_from(inherited.clone(), std::iter::empty::<(String, String)>());
+        assert!(!env.contains_key(NOTIFY_URL_ENV) && !env.contains_key(NOTIFY_TOKEN_ENV), "{env:?}");
+        assert_eq!(env.get("HOME").map(String::as_str), Some("/home/ada"));
+        let env = clean_env_from(inherited, [(NOTIFY_TOKEN_ENV, "own")]);
+        assert_eq!(env.get(NOTIFY_TOKEN_ENV).map(String::as_str), Some("own"), "what a caller adds is its own");
     }
 
     /// What an older Droppen hands its children never reaches one of ours: a
@@ -362,7 +392,7 @@ mod tests {
         for name in crate::env::OLDER_HANDOFFS {
             assert!(is_older_handoff(name), "{name}");
         }
-        assert!(!is_older_handoff("DROPPEN_NOTIFY_TOKEN"), "what a child is meant to have stays");
+        assert!(!is_older_handoff("DROPPEN_NOTIFY_TOKEN"), "not an older name");
         let inherited = crate::env::OLDER_HANDOFFS
             .iter()
             .map(|name| (name.to_string(), "outer".to_string()))

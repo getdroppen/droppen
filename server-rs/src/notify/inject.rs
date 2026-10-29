@@ -345,6 +345,28 @@ mod tests {
         }
     }
 
+    /// With notify off, a Claude session is not decorated, and the channel this
+    /// server inherited does not stand in for one: the session has none.
+    #[tokio::test]
+    async fn with_notify_off_a_session_has_no_channel_at_all() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let paths = Paths::for_instance(dir.path().to_path_buf(), "notifyoff");
+        let instance = InstanceDirs::new(&paths.data_dir(), "notifyoff").expect("instance");
+        instance.create().expect("create");
+        std::fs::write(instance.port_file(), "4321").expect("port");
+
+        let inherited = droppen_base::env::OLDER_HANDOFFS
+            .iter()
+            .chain(&[cli::URL_ENV, cli::TOKEN_ENV])
+            .map(|name| (name.to_string(), "outer".to_string()));
+        let mut env = droppen_base::process_env::clean_env_from(inherited, std::iter::empty::<(String, String)>());
+        decorate(&paths, &instance, Source::Claude, "s1", &mut env).await;
+
+        for name in droppen_base::env::OLDER_HANDOFFS.iter().chain(&[cli::URL_ENV, cli::TOKEN_ENV]) {
+            assert!(!env.contains_key(*name), "{name}: another session's");
+        }
+    }
+
     /// The frontmatter is a contract with the CLI, not prose: a skill whose
     /// `name` does not match its directory, or whose `description` is missing,
     /// is a skill the model never hears about.
