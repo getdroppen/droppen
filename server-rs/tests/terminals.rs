@@ -12,6 +12,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
+use remote_hand_server::auth::users::UsersStore;
+use remote_hand_server::feed::global::LOGIN_RECHECK;
 use remote_hand_server::instance::{InstanceDirs, DEFAULT_INSTANCE};
 use remote_hand_server::paths::Paths;
 use remote_hand_server::pty_shim::proto::Meta;
@@ -50,6 +52,41 @@ async fn attach(probe: &Probe, id: &str) -> Socket {
     Socket(socket)
 }
 
+/// Connect as `token`'s login through a ws ticket, the way a browser must.
+async fn attach_as(probe: &Probe, id: &str, token: &str) -> Socket {
+    let (status, body) = with_token(probe, "POST", "/api/auth/ticket", token, r#"{"scope":"ws"}"#).await;
+    assert_eq!(status, 200, "{body}");
+    let ticket = serde_json::from_str::<Value>(&body).expect("json")["ticket"]
+        .as_str()
+        .expect("ticket")
+        .to_string();
+    let url = probe.ws_url(&format!("/api/terminals/{id}/ws?ticket={ticket}"));
+    let (socket, _) = tokio_tungstenite::connect_async(&url).await.expect("the ticket opens the socket");
+    Socket(socket)
+}
+
+/// A request carrying a bearer token.
+async fn with_token(probe: &Probe, method: &str, path: &str, token: &str, body: &str) -> (u16, String) {
+    let authorization = format!("Bearer {token}");
+    probe
+        .request(
+            method,
+            path,
+            &[("Content-Type", "application/json"), ("Authorization", &authorization)],
+            body.as_bytes(),
+        )
+        .await
+}
+
+/// `POST /api/auth/login`, returning the bearer token.
+async fn login(probe: &Probe, name: &str, password: &str) -> String {
+    let (status, body) = probe
+        .json("POST", "/api/auth/login", &serde_json::json!({ "username": name, "password": password }))
+        .await;
+    assert_eq!(status, 200, "{body}");
+    serde_json::from_str::<Value>(&body).expect("json")["token"].as_str().expect("token").to_string()
+}
+
 /// A connected attach socket, with the read/write helpers the assertions need.
 struct Socket(tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>);
 
@@ -71,6 +108,14 @@ impl Socket {
                 _ => continue,
             }
         }
+    }
+
+    /// The next frame whatever it is, for the tests that read a close code.
+    async fn next_frame(&mut self) -> Option<Message> {
+        tokio::time::timeout(Duration::from_secs(10), self.0.next())
+            .await
+            .expect("timed out waiting for a frame")?
+            .ok()
     }
 
     /// Read frames until everything in `needles` has been seen, returning the
@@ -751,4 +796,62 @@ async fn adoption_honours_the_cap_the_create_path_enforces() {
         left, newest,
         "the cap's worth of oldest tabs was considered; the rest keep their identities for a boot with room"
     );
+}
+
+/// A login's sign-out ends the shell sockets it opened, as it ends its feed
+/// sockets: the next recheck closes them with 4401, and a socket another login
+/// opened on the same terminal stays. A shell is the last thing a signed-out
+/// login may keep.
+#[tokio::test]
+async fn signing_out_closes_the_terminal_sockets_of_that_login() {
+    let home = tempfile::tempdir().expect("tempdir");
+    UsersStore::new(&Paths::for_instance(home.path().to_path_buf(), DEFAULT_INSTANCE))
+        .add("ada", "correct horse battery")
+        .await
+        .expect("seed account");
+    let probe = common::TestServer::start_guarded_at(home.path(), None).await;
+    let gone = login(&probe, "ada", "correct horse battery").await;
+    let kept = login(&probe, "ada", "correct horse battery").await;
+    let info = probe
+        .terminals()
+        .create_terminal_with(sh("sleep 30"))
+        .await
+        .expect("create terminal");
+    let mut signed_out = attach_as(&probe, &info.id, &gone).await;
+    let mut stays = attach_as(&probe, &info.id, &kept).await;
+
+    // Signing out revokes the token's session; the socket's own recheck is what
+    // notices, so the close comes at the next tick rather than with the request.
+    let (status, body) = with_token(&probe, "POST", "/api/auth/logout", &gone, "").await;
+    assert_eq!(status, 200, "{body}");
+    let closed = tokio::time::timeout(LOGIN_RECHECK + Duration::from_secs(10), async {
+        loop {
+            match signed_out.next_frame().await {
+                Some(Message::Close(frame)) => return frame.map(|frame| u16::from(frame.code)),
+                Some(_) => continue,
+                None => return None,
+            }
+        }
+    })
+    .await
+    .expect("the socket closed in time");
+    assert_eq!(closed, Some(4401), "a signed-out login's shell socket says why it closed");
+
+    // The other login's socket, on the same terminal, is still served.
+    stays.0.send(Message::Ping(Default::default())).await.expect("ping");
+    let alive = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match stays.next_frame().await {
+                Some(Message::Pong(_)) => return true,
+                Some(Message::Close(_)) | None => return false,
+                Some(_) => continue,
+            }
+        }
+    })
+    .await
+    .expect("an answer in time");
+    assert!(alive, "another login's socket is untouched");
+
+    let _ = probe.terminals().kill_terminal(&info.id);
+    probe.stop().await;
 }
