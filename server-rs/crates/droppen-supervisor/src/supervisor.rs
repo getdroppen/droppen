@@ -563,42 +563,9 @@ fn say(message: &str) {
     eprintln!("[rh-up] {message}");
 }
 
-/// The default command when `up` is given none.
-pub fn default_child_args() -> Vec<String> {
-    vec!["serve".to_string()]
-}
-
-/// The child command line from `up`'s own arguments.
-///
-/// `up -- serve --flag` and `up serve --flag` both work; the `--` is the
-/// conventional way to say "everything after this belongs to the child" and is
-/// accepted rather than required.
-pub fn child_args(args: &[String]) -> Vec<String> {
-    let rest = match args.first().map(String::as_str) {
-        Some("--") => &args[1..],
-        _ => args,
-    };
-    if rest.is_empty() {
-        default_child_args()
-    } else {
-        rest.to_vec()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_child_command_line_survives_an_optional_double_dash() {
-        assert_eq!(child_args(&[]), vec!["serve".to_string()]);
-        assert_eq!(child_args(&["--".to_string()]), vec!["serve".to_string()]);
-        assert_eq!(
-            child_args(&["--".to_string(), "serve".to_string(), "--x".to_string()]),
-            vec!["serve".to_string(), "--x".to_string()]
-        );
-        assert_eq!(child_args(&["serve".to_string()]), vec!["serve".to_string()]);
-    }
 
     #[test]
     fn the_backoff_doubles_to_a_ceiling_and_stops() {

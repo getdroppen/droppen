@@ -72,8 +72,8 @@ pub struct RawTail {
 /// `up`'s arguments: the command line of the server it supervises.
 #[derive(Debug, PartialEq, Eq, Args)]
 pub struct UpArgs {
-    /// The supervised server's command line (`serve` when empty).
-    #[arg(trailing_var_arg = true, allow_hyphen_values = true, num_args = 0.., hide = true)]
+    /// The supervised server's command line (`serve` when none is given).
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true, num_args = 0.., hide = true, default_value = "serve")]
     pub child: Vec<String>,
 }
 
@@ -85,10 +85,12 @@ impl UpArgs {
     /// tokio's process driver reaps its own children through the same call —
     /// the two would race over each other's statuses.
     pub fn run(self) -> Result<i32, String> {
-        // `child_args` is protocol, not parsing: launchd, systemd, containers
-        // and the desktop app start `up`, `up serve` and `up -- serve`, and it
-        // says which server command line each of those means.
-        droppen_supervisor::supervisor::run(droppen_supervisor::supervisor::child_args(&self.child))
+        // The child's command line is protocol: the launchd agent, the systemd
+        // unit and the manual start `scripts/install.sh` writes run
+        // `up -- serve`, a person types `up`, and each must supervise exactly
+        // `serve`. clap gives that: it takes the leading `--` itself, and
+        // `child` defaults to `serve`.
+        droppen_supervisor::supervisor::run(self.child)
     }
 }
 
@@ -346,7 +348,7 @@ pub(crate) mod tests {
             (vec!["preflight", "--help"], Command::Preflight(tail(&["--help"]))),
             (vec!["preflight", "junk"], Command::Preflight(tail(&["junk"]))),
             (vec!["up", "--help"], Command::Up(UpArgs { child: args(&["--help"]) })),
-            (vec!["up", "--"], Command::Up(UpArgs { child: vec![] })),
+            (vec!["up", "--"], Command::Up(UpArgs { child: args(&["serve"]) })),
             (vec!["up", "--", "serve", "--flag"], Command::Up(UpArgs { child: args(&["serve", "--flag"]) })),
             (vec!["up", "serve", "--", "x"], Command::Up(UpArgs { child: args(&["serve", "--", "x"]) })),
         ] {
@@ -462,9 +464,6 @@ pub(crate) mod tests {
                     command: AgentCommand::Enroll { code: "-".to_string() },
                 }),
             ),
-            (vec!["up", "--", "serve"], Command::Up(UpArgs { child: args(&["serve"]) })),
-            (vec!["up"], Command::Up(UpArgs { child: vec![] })),
-            (vec!["up", "serve"], Command::Up(UpArgs { child: args(&["serve"]) })),
             (vec!["serve"], Command::Serve(tail(&[]))),
             (vec![], Command::Serve(tail(&[]))),
             (vec!["preflight"], Command::Preflight(tail(&[]))),
@@ -473,12 +472,25 @@ pub(crate) mod tests {
             if let Command::User(args) = &parsed {
                 assert!(args.flags_fit(), "{argv:?} runs");
             }
-            if let Command::Up(up) = &parsed {
-                assert_eq!(droppen_supervisor::supervisor::child_args(&up.child), args(&["serve"]), "{argv:?} supervises `serve`");
-            }
             assert_eq!(parsed, expected, "{argv:?}");
         }
         assert_eq!(kind(&["--version"]), ErrorKind::DisplayVersion);
+
+        // What `up` supervises, by the way it is started. The launchd agent,
+        // the systemd unit and the manual start in `scripts/install.sh`, and
+        // the INSTALL texts, run `up -- serve`; `up` and `up serve` are typed
+        // by hand. What follows the server's command is the server's own.
+        for (argv, child) in [
+            (vec!["up"], vec!["serve"]),
+            (vec!["up", "--"], vec!["serve"]),
+            (vec!["up", "serve"], vec!["serve"]),
+            (vec!["up", "--", "serve"], vec!["serve"]),
+            (vec!["up", "--", "serve", "--flag"], vec!["serve", "--flag"]),
+            (vec!["up", "serve", "--flag"], vec!["serve", "--flag"]),
+        ] {
+            let Command::Up(up) = parse(&argv).expect("parses") else { panic!("{argv:?} is `up`") };
+            assert_eq!(up.child, args(&child), "{argv:?} supervises {child:?}");
+        }
 
         // A user name may be anything `^[a-z0-9._-]{1,32}$` allows, so in the
         // name position a hyphen-led word is a name, never a flag.
