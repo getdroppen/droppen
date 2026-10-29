@@ -137,11 +137,11 @@ describe("sources", () => {
   });
 
   test("an allowed file names only what it is allowed to", () => {
-    assert.deepEqual(sourceProblems('old_name("DROPPEN_HUB_ORIGIN")', "rs", "server-rs/crates/rh-relay/src/config.rs"), []);
-    assert.equal(sourceProblems('old_name("DROPPEN_HUB_BIND")', "rs", "server-rs/crates/rh-relay/src/config.rs").length, 1);
     assert.deepEqual(sourceProblems('DROPPEN_HUB_BIND=127.0.0.1 "$hub" serve', "sh", "server-rs/crates/rh-devkit/scripts/cloud-dev.sh"), []);
     assert.equal(sourceProblems('DROPPEN_HUB_NOT_DOCUMENTED=1 "$hub" serve', "sh", "server-rs/crates/rh-devkit/scripts/cloud-dev.sh").length, 1);
-    // the devkit's e2e harness went to the hub's side (rh-hub-tools): no allowance is left for it here
+    // the devkit's e2e harness went to the hub's side (rh-hub-tools), and the relay's config names no hub
+    // variable: no allowance is left for either
+    assert.equal(sourceProblems('env("DROPPEN_HUB_ORIGIN")', "rs", "server-rs/crates/rh-relay/src/config.rs").length, 1);
     assert.equal(sourceProblems('("DROPPEN_HUB_BIND", "127.0.0.1")', "rs", "server-rs/crates/rh-devkit/src/bin/rh-cloud-e2e.rs").length, 1);
   });
 });

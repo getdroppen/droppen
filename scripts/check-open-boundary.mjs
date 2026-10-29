@@ -94,9 +94,6 @@ export const ALLOWED = [
       "DROPPEN_HUB_CHANNEL_RELAY", "RH_HUB_CHANNEL_RELAY", "DROPPEN_HUB_IMAGE", "crates/rh-hub",
     ],
   },
-  // A test that the relay's names from before the rename do not take the
-  // hub's variable: it names it to say it is not the relay's.
-  { file: "server-rs/crates/rh-relay/src/config.rs", allow: ["DROPPEN_HUB_ORIGIN"] },
   // CI builds and tests the hub while it lives here: its Docker stage
   // (`crates/rh-hub/Dockerfile`) and its database tests (`RH_HUB_TEST_*`).
   // These jobs go to the hub repository with it.
