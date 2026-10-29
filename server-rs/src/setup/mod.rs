@@ -62,7 +62,7 @@ use gotcha::{api, GotchaRouter, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
 use crate::db::scope;
-use crate::http::app_window::{AppWindow, Caller};
+use crate::http::app_window::{AppWindow, Caller, ListenPort};
 use crate::http::created::Created;
 use crate::http::error::ApiError;
 use crate::http::extract::{ApiJson, ApiPath};
@@ -518,10 +518,20 @@ impl Setup {
         let _ = self.listen_port.set(port);
     }
 
-    /// The cell [`Self::set_listen_port`] fills, for the desktop-window gate
-    /// ([`AppWindow`](crate::http::app_window::AppWindow)) to read the port from.
-    pub fn listen_port_cell(&self) -> Arc<OnceLock<u16>> {
-        self.listen_port.clone()
+    /// The port cell [`Self::set_listen_port`] fills, as a handle the
+    /// desktop-window gate ([`AppWindow`](crate::http::app_window::AppWindow))
+    /// can read but not write.
+    pub fn listen_port(&self) -> ListenPort {
+        ListenPort::new(self.listen_port.clone())
+    }
+
+    /// The desktop app's window as this server knows it: the port cell
+    /// [`Self::set_listen_port`] fills, and whether the app runs this server.
+    ///
+    /// The whole app's state and the guide's own state both build their window
+    /// through this, so the two cannot drift.
+    pub fn window(&self, desktop_app: bool) -> AppWindow {
+        AppWindow::new(self.listen_port(), desktop_app)
     }
 
     /// The directories the user adopted, in the order they were adopted, as
@@ -737,7 +747,7 @@ impl SetupState {
     /// The desktop app's window as this server knows it: the guide's port cell
     /// and `desktop_app`.
     fn window(&self) -> AppWindow {
-        AppWindow::new(self.setup.listen_port_cell(), self.desktop_app)
+        self.setup.window(self.desktop_app)
     }
 }
 

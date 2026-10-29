@@ -51,6 +51,27 @@ impl<S: Send + Sync> FromRequestParts<S> for Caller {
     }
 }
 
+/// The port a server records once its listener is bound, for the gate below.
+///
+/// A handle rather than the shared cell itself: every request builds a window,
+/// and a window that could write the cell would let a request make itself look
+/// like the app's own ([`AppWindow::from_app_window`]). Only the setup guide
+/// that binds the listener writes it.
+#[derive(Clone)]
+pub struct ListenPort(Arc<OnceLock<u16>>);
+
+impl ListenPort {
+    /// A handle on `cell`, which the server fills once.
+    pub fn new(cell: Arc<OnceLock<u16>>) -> Self {
+        Self(cell)
+    }
+
+    /// The port, once it is recorded.
+    pub fn get(&self) -> Option<&u16> {
+        self.0.get()
+    }
+}
+
 /// The desktop app's window as this server knows it: the port the server
 /// listens on, and whether the app runs it.
 ///
@@ -60,7 +81,7 @@ impl<S: Send + Sync> FromRequestParts<S> for Caller {
 #[derive(Clone)]
 pub struct AppWindow {
     /// The port this server listens on, once it does.
-    port: Arc<OnceLock<u16>>,
+    port: ListenPort,
     /// Whether the Droppen desktop app runs this server.
     desktop_app: bool,
 }
@@ -68,7 +89,7 @@ pub struct AppWindow {
 impl AppWindow {
     /// The window of a server whose listen port is recorded in `port`, run by
     /// the desktop app when `desktop_app` is set.
-    pub fn new(port: Arc<OnceLock<u16>>, desktop_app: bool) -> Self {
+    pub fn new(port: ListenPort, desktop_app: bool) -> Self {
         Self { port, desktop_app }
     }
 
