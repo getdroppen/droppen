@@ -6,6 +6,7 @@ use futures_util::future::BoxFuture;
 use super::{LocalPlan, Login};
 use crate::accounts::local_login::LocalLoginState;
 use crate::accounts::quota::readings::SharedReading;
+use crate::accounts::quota::claude::ClaudeUsageProbeExt;
 use crate::accounts::quota::{claude_plan_label, is_rate_limited, mentions_status, CodexQuota, ProbeRoots, QuotaProbeError, UsageProbe};
 use crate::accounts::store::{AccountError, AccountKind, AccountLaunch, AccountProvider};
 use droppen_base::env_block::EnvVar;
@@ -215,7 +216,7 @@ impl Login for ClaudeCodeLogin {
         }
     }
 
-    /// `claude -p /usage` against that config root ([`ProbeRoots::claude_usage`]).
+    /// `claude -p /usage` against that config root ([`ClaudeUsageProbeExt::claude_usage`]).
     fn probe<'a>(&'a self, roots: &'a ProbeRoots, config_dir: Option<&'a Path>) -> Option<BoxFuture<'a, UsageProbe>> {
         Some(Box::pin(roots.claude_usage(config_dir)))
     }
