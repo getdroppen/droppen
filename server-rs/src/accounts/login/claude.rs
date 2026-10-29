@@ -102,27 +102,6 @@ fn is_credential_refusal(text: &str) -> bool {
     MARKERS.iter().any(|marker| lower.contains(marker)) || mentions_status(&lower, "401", None) || mentions_status(&lower, "403", None)
 }
 
-/// The claude local login's state from its evidence, newest first.
-///
-/// `auth_rest_at` is when an active `auth` rest on the local login was seen;
-/// `reading` is the shared `/usage` reading file for it. Ties go to the
-/// refusal, the direction that costs a click rather than a failed session.
-pub fn claude_state(auth_rest_at: Option<i64>, reading: &SharedReading) -> LocalLoginState {
-    let refused_by_probe = match (reading.probe_error, reading.probe_error_at_ms) {
-        // `probe_failed` only says the reading did not happen.
-        (Some(QuotaProbeError::NotLoggedIn), Some(at)) => Some(at),
-        _ => None,
-    };
-    let refused = auth_rest_at.max(refused_by_probe);
-    let worked = reading.newest().map(|window| window.read_at_ms);
-    match (refused, worked) {
-        (Some(refused), Some(worked)) if worked > refused => LocalLoginState::SignedIn,
-        (Some(_), _) => LocalLoginState::SignedOut,
-        (None, Some(_)) => LocalLoginState::SignedIn,
-        (None, None) => LocalLoginState::Unknown,
-    }
-}
-
 /// Claude Code's [`Login`].
 pub struct ClaudeCodeLogin;
 
@@ -210,10 +189,26 @@ impl Login for ClaudeCodeLogin {
         Box::pin(async move { launch.with_base_url_hint(self.check(paths, launch, secrets).await) })
     }
 
-    /// A refused credential, a `/usage` probe that found nobody signed in, and
-    /// every reading a session or a probe made: [`claude_state`].
+    /// The local login's state from its evidence, newest first: a refused
+    /// credential (`refused_at`, when an active `auth` rest on it was seen), a
+    /// `/usage` probe that found nobody signed in, and every reading a session
+    /// or a probe made (`local_reading`, Claude Code's own reading of that
+    /// login). Ties go to the refusal, the direction that costs a click rather
+    /// than a failed session.
     fn local_state(&self, refused_at: Option<i64>, local_reading: &SharedReading) -> LocalLoginState {
-        claude_state(refused_at, local_reading)
+        let refused_by_probe = match (local_reading.probe_error, local_reading.probe_error_at_ms) {
+            // `probe_failed` only says the reading did not happen.
+            (Some(QuotaProbeError::NotLoggedIn), Some(at)) => Some(at),
+            _ => None,
+        };
+        let refused = refused_at.max(refused_by_probe);
+        let worked = local_reading.newest().map(|window| window.read_at_ms);
+        match (refused, worked) {
+            (Some(refused), Some(worked)) if worked > refused => LocalLoginState::SignedIn,
+            (Some(_), _) => LocalLoginState::SignedOut,
+            (None, Some(_)) => LocalLoginState::SignedIn,
+            (None, None) => LocalLoginState::Unknown,
+        }
     }
 }
 
@@ -442,31 +437,36 @@ mod tests {
 
     #[test]
     fn nothing_known_is_unknown_and_a_reading_is_signed_in() {
-        assert_eq!(claude_state(None, &SharedReading::default()), LocalLoginState::Unknown);
-        assert_eq!(claude_state(None, &read_at(5 * MINUTE)), LocalLoginState::SignedIn);
+        assert_eq!(ClaudeCodeLogin.local_state(None, &SharedReading::default()), LocalLoginState::Unknown);
+        assert_eq!(ClaudeCodeLogin.local_state(None, &read_at(5 * MINUTE)), LocalLoginState::SignedIn);
     }
 
-    /// The session that started this: an OAuth session expired weeks ago, the
-    /// probe said so, and a turn on it was refused. Nothing since has worked.
+    /// A login whose OAuth token expired weeks ago: the probe found nobody
+    /// signed in, a turn on it was refused, and nothing has worked since.
     #[test]
     fn a_refused_credential_or_an_empty_probe_is_signed_out() {
         let old_reading = read_at(MINUTE);
-        assert_eq!(claude_state(Some(10 * MINUTE), &old_reading), LocalLoginState::SignedOut);
+        assert_eq!(ClaudeCodeLogin.local_state(Some(10 * MINUTE), &old_reading), LocalLoginState::SignedOut);
         assert_eq!(
-            claude_state(None, &not_logged_in_at(old_reading.clone(), 10 * MINUTE)),
+            ClaudeCodeLogin.local_state(None, &not_logged_in_at(old_reading.clone(), 10 * MINUTE)),
             LocalLoginState::SignedOut,
             "the probe's verdict alone is enough"
         );
-        assert_eq!(claude_state(Some(10 * MINUTE), &SharedReading::default()), LocalLoginState::SignedOut);
+        assert_eq!(ClaudeCodeLogin.local_state(Some(10 * MINUTE), &SharedReading::default()), LocalLoginState::SignedOut);
+        assert_eq!(
+            ClaudeCodeLogin.local_state(Some(10 * MINUTE), &read_at(10 * MINUTE)),
+            LocalLoginState::SignedOut,
+            "a tie goes to the refusal"
+        );
     }
 
     /// Signing in again and running one turn is the whole fix: the reading that
     /// turn makes is newer than the rest, and nobody has to clear anything.
     #[test]
     fn a_reading_newer_than_the_refusal_heals_it() {
-        assert_eq!(claude_state(Some(MINUTE), &read_at(10 * MINUTE)), LocalLoginState::SignedIn);
+        assert_eq!(ClaudeCodeLogin.local_state(Some(MINUTE), &read_at(10 * MINUTE)), LocalLoginState::SignedIn);
         assert_eq!(
-            claude_state(None, &not_logged_in_at(read_at(10 * MINUTE), MINUTE)),
+            ClaudeCodeLogin.local_state(None, &not_logged_in_at(read_at(10 * MINUTE), MINUTE)),
             LocalLoginState::SignedIn
         );
     }
@@ -479,6 +479,6 @@ mod tests {
             probe_error_at_ms: Some(MINUTE),
             ..Default::default()
         };
-        assert_eq!(claude_state(None, &reading), LocalLoginState::Unknown);
+        assert_eq!(ClaudeCodeLogin.local_state(None, &reading), LocalLoginState::Unknown);
     }
 }

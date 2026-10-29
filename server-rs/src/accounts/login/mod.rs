@@ -48,8 +48,9 @@ pub trait Login: Send + Sync {
     /// the evidence this server has of it.
     ///
     /// `refused_at` is when an active `auth` rest on that login was seen.
-    /// `local_reading` is the machine's shared reading of its own login, which
-    /// only claude makes: a CLI that reads none weighs the refusal alone.
+    /// `local_reading` is Claude Code's reading of its local login
+    /// (`<data>/local-usage.json`), whichever CLI is asked: no other CLI keeps
+    /// one, so every other login ignores it and weighs the refusal alone.
     fn local_state(&self, refused_at: Option<i64>, local_reading: &SharedReading) -> LocalLoginState;
 }
 
