@@ -38,7 +38,8 @@
   },
   "pnpm": {
     "overrides": {
-      "seroval": ">=1.7.1"
+      "seroval": ">=1.7.1",
+      "micromark-extension-math>katex": ">=0.18.2"
     }
   }
 }
