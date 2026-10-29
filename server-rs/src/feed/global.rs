@@ -314,7 +314,7 @@ async fn collect_sessions(drive: &Arc<Drive>) -> Vec<SessionSummary> {
     let bindings = drive.accounts.session_account_map().await;
     // The sidebar is the one surface that shows every session at once, so it is
     // the one that most needs to be right about which of them are working.
-    let drivers = drive.injections.driver_states();
+    let drivers = drive.providers.driver_states();
     drive
         .transcripts
         .list_and_filter(&drive.paths, &bindings, &drivers, None, None, sessions::ScopeFilter::All)

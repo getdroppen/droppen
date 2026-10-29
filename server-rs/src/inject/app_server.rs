@@ -22,7 +22,10 @@ use droppen_base::procs;
 use droppen_base::time::iso8601;
 
 use super::common::{busy_message, new_uuid, session_workdir, Phase, QueueOutcome, ResidentState, CHAT_SYSTEM_PROMPT};
-use super::{codex_permission_flags, lock, runs, shim, with_codex_files, CodexAccount, InjectError, InjectionRegistry, SendOptions, Sent};
+use super::{
+    codex_permission_flags, lock, runs, shim, with_codex_files, CodexAccount, DriverStatesBuilder, InjectError, InjectionRegistry, Provider, Run,
+    SendOptions, Sent,
+};
 
 const RPC_TIMEOUT: Duration = Duration::from_secs(30);
 /// How long a retiring app-server is given to actually exit.
@@ -233,7 +236,71 @@ async fn rpc(registry: &InjectionRegistry, link: &mut shim::Link, method: &str, 
     .map_err(|_| InjectError::message("Codex App Server handshake timed out"))?
 }
 
+/// Codex, as the provider registry knows it.
+pub(crate) struct Codex {
+    /// The registry it reads its app servers from.
+    registry: Arc<InjectionRegistry>,
+}
+
+impl Codex {
+    /// Codex over `registry`.
+    pub(crate) fn new(registry: Arc<InjectionRegistry>) -> Self {
+        Self { registry }
+    }
+}
+
+impl Provider for Codex {
+    fn source(&self) -> Source {
+        Source::Codex
+    }
+
+    fn run(&self) -> &dyn Run {
+        self
+    }
+}
+
+impl Run for Codex {
+    fn injection(&self, id: &str) -> Option<Injection> {
+        self.registry.codex_injection(id)
+    }
+
+    fn resident(&self, id: &str) -> Option<ResidentState> {
+        self.registry.codex_handle(id).filter(|h| h.visible()).map(|h| h.state())
+    }
+
+    /// The schedule waits for the run to finish: whether it is still running
+    /// is the whole question asked of codex.
+    fn schedule_busy(&self, id: &str) -> Option<&'static str> {
+        self.injection(id)
+            .is_some_and(|i| i.state == InjectionRunState::Running)
+            .then_some("the previous run has not finished")
+    }
+}
+
 impl InjectionRegistry {
+    /// The state of a codex session's run: its app server's, whenever there is
+    /// a handle (even one that has nothing to say yet), and otherwise the runs
+    /// map's, where a `codex exec` run adopted from the previous server is.
+    pub(super) fn codex_injection(&self, id: &str) -> Option<Injection> {
+        if let Some(handle) = self.codex_handle(id) {
+            return handle.injection();
+        }
+        self.run_injection(Source::Codex, id)
+    }
+
+    /// Codex's part of [`InjectionRegistry::driver_states`]: the app servers
+    /// the list is to show, and the state of every app server's run.
+    pub(super) fn codex_driver_states(&self, states: &mut DriverStatesBuilder) {
+        for (id, handle) in self.codex_servers.lock().unwrap().iter().filter(|(_, h)| h.visible()) {
+            states.resident(self.key_of(Source::Codex, id), handle.info());
+        }
+        for (id, handle) in self.codex_servers.lock().unwrap().iter() {
+            if let Some(injection) = handle.injection() {
+                states.run(self.key_of(Source::Codex, id), injection);
+            }
+        }
+    }
+
     /// A dead CLI must not take already-accepted, undelivered messages with it.
     pub(super) fn codex_dead(&self, mut record: runs::RunRecord) {
         let mut state = record.codex.clone().unwrap_or_default();
@@ -426,7 +493,7 @@ impl InjectionRegistry {
         account: Option<CodexAccount>,
     ) -> Result<(String, Handle), InjectError> {
         // Also excludes a legacy codex exec inherited during this upgrade.
-        if id.is_some_and(|id| self.is_running(Source::Codex, id)) {
+        if id.is_some_and(|id| self.codex_injection(id).is_some_and(|i| i.state == InjectionRunState::Running)) {
             return Err(InjectError::message("a message is already running for this session"));
         }
         let claim = match id {

@@ -171,13 +171,13 @@ impl FromRef<AppState> for ModelsState {
 
 impl FromRef<AppState> for AccountsState {
     fn from_ref(state: &AppState) -> Self {
-        let injections = state.drive.injections.clone();
+        let providers = state.drive.providers.clone();
         Self {
             accounts: state.drive.accounts.clone(),
             quota: state.drive.quota.clone(),
             paths: state.drive.paths.clone(),
             models: ModelsState::from_ref(state),
-            recheck_holds: Arc::new(move || injections.recheck_holds()),
+            recheck_holds: Arc::new(move || providers.recheck_holds()),
         }
     }
 }

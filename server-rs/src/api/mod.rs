@@ -144,7 +144,7 @@ pub async fn list_sessions(State(state): State<AppState>, ApiQuery(query): ApiQu
     }
 
     let bindings = state.drive.accounts.session_account_map().await;
-    let drivers = state.drive.injections.driver_states();
+    let drivers = state.drive.providers.driver_states();
     let mut sessions = state
         .drive
         .transcripts

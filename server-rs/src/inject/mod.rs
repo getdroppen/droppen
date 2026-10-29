@@ -24,17 +24,19 @@ use droppen_base::time::iso8601;
 use gotcha::Schematic;
 
 pub mod acp;
-mod app_server;
+pub(crate) mod app_server;
 mod common;
 pub mod drafts;
 mod lock;
 pub mod questions;
 pub mod receipts;
-mod resident;
+mod registry;
+pub(crate) mod resident;
 mod runs;
 pub mod shim;
 
 pub use common::{Phase, QueueOutcome, ResidentState, StopTaskOutcome};
+pub use registry::{Provider, ProviderRegistry, Run};
 pub use resident::{AnswerOutcome, Reply};
 
 use common::{new_uuid, session_workdir, CHAT_SYSTEM_PROMPT};
@@ -1423,16 +1425,6 @@ impl InjectionRegistry {
         listeners.feeds.poke(&self.key_of(source, id));
     }
 
-    /// Follow what a claude session's resident has said and its transcript does
-    /// not show yet, or `None` for codex, which has no such window to cover.
-    ///
-    /// Answers whether or not a resident is running: a page may be open on a
-    /// session long before anything is sent to it, and has to be holding the
-    /// channel the driver will write into when something is.
-    pub fn draft_watch(&self, source: Source, id: &str) -> Option<tokio::sync::watch::Receiver<drafts::Draft>> {
-        (source == Source::Claude).then(|| self.drafts.subscribe(&self.key_of(source, id)))
-    }
-
     /// The channel claude session `id`'s draft is published on.
     ///
     /// Its driver's [`drafts::DraftWriter`] is the only thing that writes to it
@@ -1467,13 +1459,6 @@ impl InjectionRegistry {
         }
     }
 
-    /// Whether this server's driver for a session still holds `qid` in its
-    /// queue: the evidence a claim stranded by a crash was enqueued after all.
-    pub fn holds_queued(&self, source: Source, id: &str, qid: &str) -> bool {
-        self.resident_info(source, id)
-            .is_some_and(|info| info.queued_messages.iter().any(|message| message.id == qid))
-    }
-
     /// The key one session's run, resident or feed entry is filed under here.
     ///
     /// [`SessionRef::scoped_key`], so the server is part of it. Every map it
@@ -1484,28 +1469,14 @@ impl InjectionRegistry {
         SessionRef::new(self.server.clone(), source, id).scoped_key()
     }
 
-    /// The state of the run for this session, if remote-hand ever started one.
-    pub fn injection_for(&self, source: Source, id: &str) -> Option<Injection> {
-        if source == Source::Acp {
-            return self.acp_handle(id).and_then(|handle| handle.injection());
-        }
-        if source == Source::Codex {
-            if let Some(handle) = self.codex_handle(id) {
-                return handle.injection();
-            }
-        }
+    /// The state of this session's run in the runs map: a turn a resident
+    /// published there, or a run adopted from the previous server.
+    pub(crate) fn run_injection(&self, source: Source, id: &str) -> Option<Injection> {
         self.runs
             .lock()
             .expect("injections poisoned")
             .get(&self.key_of(source, id))
             .map(|run| run.injection())
-    }
-
-    /// Whether a run is in flight for this session.
-    pub fn is_running(&self, source: Source, id: &str) -> bool {
-        self.injection_for(source, id)
-            .map(|i| i.state == InjectionRunState::Running)
-            .unwrap_or(false)
     }
 
     /// Everything the session list needs from this subsystem, in one pass.
@@ -1517,71 +1488,16 @@ impl InjectionRegistry {
     /// driven, rather than by transcript or list rows, so the snapshot is cheap
     /// to make and cheap to carry.
     pub fn driver_states(&self) -> crate::sessions::DriverStates {
-        // Both sources are filed under `key_of` here. They were not: claude
-        // residents went in under the bare session id and codex ones under
-        // `codex/{id}`, so the snapshot was the one map in the process that
-        // could not be read with a single key. Nothing outside
-        // `crate::sessions::DriverStates::resident` ever looked, which is what
-        // made the asymmetry safe to remove.
-        let mut residents: HashMap<_, _> = self
-            .residents
-            .lock()
-            .expect("residents poisoned")
-            .iter()
-            .map(|(id, handle)| (self.key_of(Source::Claude, id), handle.info()))
-            .collect();
-        for (id, handle) in self.codex_servers.lock().unwrap().iter().filter(|(_, h)| h.visible()) {
-            residents.insert(self.key_of(Source::Codex, id), handle.info());
+        let mut states = DriverStatesBuilder::default();
+        self.claude_driver_states(&mut states);
+        self.codex_driver_states(&mut states);
+        self.acp_driver_states(&mut states);
+        // Last, so that where a run here and a CLI's own handle share a key,
+        // the run's finishing time is the one the list shows.
+        for (key, run) in self.runs.lock().expect("injections poisoned").iter() {
+            states.run(key.clone(), run.injection());
         }
-        // Already keyed `key_of`, so the keys go in as they are.
-        let acp: Vec<(String, acp::Handle)> = self.acp_servers.lock().unwrap().iter().map(|(key, h)| (key.clone(), h.clone())).collect();
-        for (key, handle) in acp.iter().filter(|(_, h)| h.visible()) {
-            residents.insert(key.clone(), handle.info());
-        }
-        let runs = self.runs.lock().expect("injections poisoned");
-        let mut running = std::collections::HashSet::new();
-        let mut finished = std::collections::HashMap::new();
-        for (id, handle) in self.codex_servers.lock().unwrap().iter() {
-            if let Some(injection) = handle.injection() {
-                if injection.state == InjectionRunState::Running {
-                    running.insert(self.key_of(Source::Codex, id));
-                } else if let Some(at) = injection.finished_at.0 {
-                    finished.insert(self.key_of(Source::Codex, id), at);
-                }
-            }
-        }
-        for (key, handle) in &acp {
-            if let Some(injection) = handle.injection() {
-                if injection.state == InjectionRunState::Running {
-                    running.insert(key.clone());
-                } else if let Some(at) = injection.finished_at.0 {
-                    finished.insert(key.clone(), at);
-                }
-            }
-        }
-        for (key, run) in runs.iter() {
-            let injection = run.injection();
-            if injection.state == InjectionRunState::Running {
-                running.insert(key.clone());
-            } else if let Some(at) = injection.finished_at.0 {
-                finished.insert(key.clone(), at);
-            }
-        }
-        crate::sessions::DriverStates::new(self.server.clone(), residents, running, finished)
-    }
-
-    /// This server's resident for one session, as the API reports it.
-    pub fn resident_info(&self, source: Source, id: &str) -> Option<crate::sessions::ResidentInfo> {
-        if source == Source::Acp {
-            return self.acp_handle(id).filter(acp::Handle::visible).map(|h| h.info());
-        }
-        if source == Source::Codex {
-            return self.codex_handle(id).filter(app_server::Handle::visible).map(|h| h.info());
-        }
-        if source != Source::Claude {
-            return None;
-        }
-        Some(self.residents.lock().expect("residents poisoned").get(id)?.info())
+        crate::sessions::DriverStates::new(self.server.clone(), states.residents, states.running, states.finished)
     }
 
     /// Take a message out of a session's queue before it is written to the CLI.
@@ -1681,6 +1597,34 @@ impl InjectionRegistry {
             return StopTaskOutcome::NoResident;
         }
         self.stop_resident_task(id, task_id)
+    }
+}
+
+/// The session list's view of the runs, gathered a CLI at a time; see
+/// [`InjectionRegistry::driver_states`].
+#[derive(Default)]
+pub(crate) struct DriverStatesBuilder {
+    residents: HashMap<String, crate::sessions::ResidentInfo>,
+    running: std::collections::HashSet<String>,
+    finished: HashMap<String, String>,
+}
+
+impl DriverStatesBuilder {
+    /// A resident the list is to show, under its [`InjectionRegistry::key_of`]
+    /// key: every CLI files its sessions under that one key, so
+    /// [`crate::sessions::DriverStates::resident`] finds any of them with it.
+    pub(crate) fn resident(&mut self, key: String, info: crate::sessions::ResidentInfo) {
+        self.residents.insert(key, info);
+    }
+
+    /// A run's state under its key: running, or finished at a time. A later
+    /// finish under the same key replaces an earlier one's time.
+    pub(crate) fn run(&mut self, key: String, injection: Injection) {
+        if injection.state == InjectionRunState::Running {
+            self.running.insert(key);
+        } else if let Some(at) = injection.finished_at.0 {
+            self.finished.insert(key, at);
+        }
     }
 }
 
@@ -2489,7 +2433,10 @@ mod tests {
             },
             claim,
         );
-        assert!(registry.is_running(Source::Claude, SESSION), "the run is in flight before Stop");
+        assert!(
+            registry.run_injection(Source::Claude, SESSION).is_some_and(|run| run.state == InjectionRunState::Running),
+            "the run is in flight before Stop"
+        );
 
         assert!(
             !registry.interrupt(Source::Claude, SESSION),
@@ -2505,7 +2452,7 @@ mod tests {
 
         // And the user is not left with a run that says it is still going and a
         // Stop button that will never end it.
-        let seen = registry.injection_for(Source::Claude, SESSION).expect("the run is still reported");
+        let seen = registry.run_injection(Source::Claude, SESSION).expect("the run is still reported");
         assert_eq!(seen.state, InjectionRunState::Ok, "a run whose pid is gone has ended, not failed");
         assert!(!seen.interrupted, "nothing was interrupted, so nothing may claim to have been");
         assert!(seen.finished_at.0.is_some(), "and it has an end time");

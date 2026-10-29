@@ -79,13 +79,14 @@ use droppen_base::procs;
 use crate::record::{Recorder, SpawnSummary, Stage};
 use crate::sessions::account::{AccountRef, LimitClass, RotationOutcome, RotationTrigger};
 use crate::sessions::delivery::{QuestionState, ReceiptStatus, SessionQuestion};
-use crate::sessions::{InjectionRunState, SessionStatus, Source};
+use crate::sessions::{Injection, InjectionRunState, SessionStatus, Source};
 use droppen_base::time::iso8601;
 
 use super::questions::{self, PermissionRequest, Stored};
 use super::shim::{self, Link, Output, Sidecars, Spawn};
 use super::common::{busy_message, new_uuid, Phase, QueueOutcome, ResidentState, StopTaskOutcome};
-use super::{lock, runs, InjectError, InjectionRegistry, RunEntry, RunState};
+use super::drafts::Draft;
+use super::{lock, runs, DriverStatesBuilder, InjectError, InjectionRegistry, Provider, Run, RunEntry, RunState};
 
 /// The mode flags every resident is started with.
 ///
@@ -680,16 +681,80 @@ async fn wait_recorded(
     result
 }
 
+/// Claude Code, as the provider registry knows it.
+pub(crate) struct ClaudeCode {
+    /// The registry it reads its residents from.
+    registry: Arc<InjectionRegistry>,
+}
+
+impl ClaudeCode {
+    /// Claude Code over `registry`.
+    pub(crate) fn new(registry: Arc<InjectionRegistry>) -> Self {
+        Self { registry }
+    }
+}
+
+impl Provider for ClaudeCode {
+    fn source(&self) -> Source {
+        Source::Claude
+    }
+
+    fn run(&self) -> &dyn Run {
+        self
+    }
+}
+
+impl Run for ClaudeCode {
+    /// A resident publishes each turn in the runs map, so that is where a
+    /// claude session's run is.
+    fn injection(&self, id: &str) -> Option<Injection> {
+        self.registry.run_injection(Source::Claude, id)
+    }
+
+    fn resident(&self, id: &str) -> Option<ResidentState> {
+        Some(self.registry.residents.lock().expect("residents poisoned").get(id)?.state())
+    }
+
+    /// claude keeps a resident between turns, so the honest reading is its
+    /// phase *and* its queue. A phase that is not `idle` means a turn is in
+    /// flight or the process is still coming up; a queue that is not empty
+    /// means work is already waiting behind it, and adding to that is how a
+    /// backlog starts — remote-hand's queue never refuses a message, it waits,
+    /// so nothing else would ever apply the brake.
+    fn schedule_busy(&self, id: &str) -> Option<&'static str> {
+        let state = self.resident(id)?;
+        if state.phase != Phase::Idle {
+            return Some("a turn is still in flight");
+        }
+        (state.queued > 0).then_some("messages are still queued")
+    }
+
+    /// Answers whether or not a resident is running: a page may be open on a
+    /// session long before anything is sent to it, and has to be holding the
+    /// channel the driver will write into when something is.
+    fn draft_watch(&self, id: &str) -> Option<tokio::sync::watch::Receiver<Draft>> {
+        Some(self.registry.drafts.subscribe(&self.registry.key_of(Source::Claude, id)))
+    }
+
+    /// Its resident looks for steered messages claude folded into the turn in
+    /// flight now rather than at its next poll — see `Driver::absorb` — so the
+    /// message leaves the queue on screen in the same moment it appears in the
+    /// transcript. Cheap for a resident with nothing steered: it returns at once.
+    fn transcript_grew(&self, id: &str) {
+        if let Some(handle) = self.registry.residents.lock().expect("residents poisoned").get(id) {
+            let _ = handle.tx.send(Cmd::Absorb { nudged: true });
+        }
+    }
+
+    fn recheck_holds(&self) {
+        self.registry.recheck_holds();
+    }
+}
+
 impl InjectionRegistry {
-    /// Whether this server holds a resident process for a claude session.
-    ///
-    /// The composer gate asks this. A session whose CLI is registered as live
-    /// is normally refused, because writing into a conversation somebody's own
-    /// terminal has open interleaves two agents in one transcript — and a
-    /// resident registers itself exactly the same way, because it *is* a real
-    /// `claude`. Without this the first turn would be the last one this server
-    /// could send.
-    pub fn has_resident(&self, source: Source, id: &str) -> bool {
+    /// Whether this server holds a resident for the session, for the stop
+    /// paths below; the routes ask [`super::ProviderRegistry::has_resident`].
+    pub(super) fn has_resident(&self, source: Source, id: &str) -> bool {
         if source == Source::Codex {
             return self.codex_handle(id).is_some_and(|h| h.visible());
         }
@@ -699,18 +764,11 @@ impl InjectionRegistry {
         source == Source::Claude && self.residents.lock().expect("residents poisoned").contains_key(id)
     }
 
-    /// How a session's resident is doing, for a caller that wants the detail.
-    pub fn resident_state(&self, source: Source, id: &str) -> Option<ResidentState> {
-        if source == Source::Codex {
-            return self.codex_handle(id).filter(|h| h.visible()).map(|h| h.state());
+    /// Claude's part of [`InjectionRegistry::driver_states`]: every resident.
+    pub(super) fn claude_driver_states(&self, states: &mut DriverStatesBuilder) {
+        for (id, handle) in self.residents.lock().expect("residents poisoned").iter() {
+            states.resident(self.key_of(Source::Claude, id), handle.info());
         }
-        if source == Source::Acp {
-            return self.acp_handle(id).filter(|h| h.visible()).map(|h| h.state());
-        }
-        if source != Source::Claude {
-            return None;
-        }
-        Some(self.residents.lock().expect("residents poisoned").get(id)?.state())
     }
 
     /// Hand a message to this session's resident, starting one if needed.
@@ -998,21 +1056,6 @@ impl InjectionRegistry {
         let residents = self.residents.lock().expect("residents poisoned");
         for handle in residents.values() {
             let _ = handle.tx.send(Cmd::Recheck);
-        }
-    }
-
-    /// A claude session's transcript has grown, and its feed has just sent it.
-    ///
-    /// Its resident looks for steered messages claude folded into the turn in
-    /// flight now rather than at its next poll — see `Driver::absorb` — so the
-    /// message leaves the queue on screen in the same moment it appears in the
-    /// transcript. Cheap for a resident with nothing steered: it returns at once.
-    pub(crate) fn transcript_grew(&self, source: Source, id: &str) {
-        if source != Source::Claude {
-            return;
-        }
-        if let Some(handle) = self.residents.lock().expect("residents poisoned").get(id) {
-            let _ = handle.tx.send(Cmd::Absorb { nudged: true });
         }
     }
 
@@ -7856,11 +7899,17 @@ done
         }
 
         fn injection(&self) -> Option<crate::sessions::Injection> {
-            self.registry.injection_for(Source::Claude, SESSION)
+            self.registry.run_injection(Source::Claude, SESSION)
         }
 
         fn injection_for(&self, id: &str) -> Option<crate::sessions::Injection> {
-            self.registry.injection_for(Source::Claude, id)
+            self.registry.run_injection(Source::Claude, id)
+        }
+
+        /// Every provider over this harness's registry, as the routes and the
+        /// feeds ask them.
+        fn providers(&self) -> Arc<crate::inject::ProviderRegistry> {
+            crate::inject::ProviderRegistry::new(self.registry.clone(), crate::app::register_providers)
         }
 
         /// Every line the fake claude has read, in the order it read them.
@@ -8889,11 +8938,11 @@ done
         tokio::time::sleep(Duration::from_millis(200)).await;
         assert_eq!(harness.state().queued, 1, "{:?}", harness.state());
 
-        harness.registry.transcript_grew(Source::Claude, SESSION);
+        harness.providers().transcript_grew(Source::Claude, SESSION);
         until("the nudge to take it off the queue", || harness.state().queued == 0).await;
         assert_eq!(harness.state().phase, Phase::Working, "the turn is still running");
         // A nudge for a source with no residents of this kind changes nothing.
-        harness.registry.transcript_grew(Source::Codex, SESSION);
+        harness.providers().transcript_grew(Source::Codex, SESSION);
 
         harness.release();
         until("the session to go quiet", || harness.state().phase == Phase::Idle).await;
@@ -12005,7 +12054,7 @@ done
     /// What the session's draft holds right now.
     fn draft_of(harness: &Harness) -> crate::inject::drafts::Draft {
         harness
-            .registry
+            .providers()
             .draft_watch(Source::Claude, SESSION)
             .expect("a claude session has a draft")
             .borrow()
@@ -12085,6 +12134,7 @@ done
             instance,
             paths,
             transcripts: crate::app::transcript_sources(),
+            providers: crate::inject::ProviderRegistry::new(harness.registry.clone(), crate::app::register_providers),
         });
         let feeds = crate::feed::FeedRegistry::new();
         harness.registry.attach_listeners(feeds.clone(), droppen_http::refresh::Refresh::new(crate::feed::global::GlobalFeed::new()));
