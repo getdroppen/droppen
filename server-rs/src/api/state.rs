@@ -41,7 +41,7 @@ impl AppState {
     /// [`crate::setup::Setup::set_listen_port`] fills, and `desktop_app`, read
     /// now.
     pub fn window(&self) -> AppWindow {
-        AppWindow::new(self.setup.listen_port_cell(), self.desktop_app)
+        self.setup.window(self.desktop_app)
     }
 }
 
