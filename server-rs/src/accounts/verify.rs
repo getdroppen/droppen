@@ -150,6 +150,18 @@ impl Drop for Scratch {
     }
 }
 
+/// A path set under `home` whose data directory is a file, so no check can make
+/// its scratch directory, and every check stops before it starts a CLI.
+#[cfg(test)]
+pub(crate) fn paths_where_no_scratch_can_be_made(home: &std::path::Path) -> Paths {
+    let paths = Paths::new(home.to_path_buf());
+    let data = paths.data_dir();
+    assert!(data.starts_with(home), "DROPPEN_DATA_DIR is set, so this would write outside the test's home");
+    std::fs::create_dir_all(data.parent().expect("the data directory has a parent")).expect("data parent");
+    std::fs::write(&data, "").expect("a file where the data directory goes");
+    paths
+}
+
 /// Spend one real request proving the credential works.
 ///
 /// Never panics and never fails: everything that is not a clean run or a clean
@@ -174,6 +186,69 @@ pub async fn verify_secret(logins: &Logins, paths: &Paths, provider: AccountProv
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::accounts::login::Login;
+    use crate::accounts::store::{AccountError, AccountKind, AccountLaunch};
+    use droppen_base::env_block::{parse_env_block, EnvVar};
+    use futures_util::future::BoxFuture;
+    use std::sync::{Arc, Mutex};
+
+    /// Which login checked which credential's values.
+    type Calls = Arc<Mutex<Vec<(AccountProvider, Vec<String>)>>>;
+
+    /// A login that builds launches for the CLI it was made as, and writes down
+    /// each credential that reaches its check.
+    struct Recording {
+        provider: AccountProvider,
+        calls: Calls,
+    }
+
+    impl Login for Recording {
+        fn spawn_env(&self, kind: AccountKind, secret: &str, env: &[EnvVar]) -> Result<AccountLaunch, AccountError> {
+            Ok(AccountLaunch {
+                provider: self.provider,
+                env: kind.vars(secret, env),
+                codex_args: Vec::new(),
+            })
+        }
+
+        fn verify<'a>(&'a self, _paths: &'a Paths, _launch: &'a AccountLaunch, secrets: &'a [&'a str]) -> BoxFuture<'a, Verdict> {
+            let values = secrets.iter().map(|value| value.to_string()).collect();
+            self.calls.lock().expect("calls").push((self.provider, values));
+            Box::pin(async { Verdict::Valid })
+        }
+    }
+
+    /// Two recording logins: the one filed under Claude makes launches for
+    /// `claude`, the one filed under Codex for `codex`.
+    fn recording(claude: AccountProvider, codex: AccountProvider) -> (Logins, Calls) {
+        let calls = Calls::default();
+        let logins = Logins {
+            claude: Arc::new(Recording { provider: claude, calls: calls.clone() }),
+            codex: Arc::new(Recording { provider: codex, calls: calls.clone() }),
+        };
+        (logins, calls)
+    }
+
+    /// Each credential is checked by its own CLI's login, with its own values
+    /// to take out of whatever comes back.
+    #[tokio::test]
+    async fn each_credential_is_checked_by_its_own_clis_login() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let paths = paths_where_no_scratch_can_be_made(home.path());
+        let (logins, calls) = recording(AccountProvider::Claude, AccountProvider::Codex);
+        let claude = Credential::Oauth("claude-test-token".to_string());
+        let codex = Credential::Env(parse_env_block("OPENAI_API_KEY=codex-test-key").expect("block"));
+
+        assert_eq!(verify_secret(&logins, &paths, AccountProvider::Claude, &claude).await, Verdict::Valid);
+        assert_eq!(verify_secret(&logins, &paths, AccountProvider::Codex, &codex).await, Verdict::Valid);
+        assert_eq!(
+            *calls.lock().expect("calls"),
+            vec![
+                (AccountProvider::Claude, vec!["claude-test-token".to_string()]),
+                (AccountProvider::Codex, vec!["codex-test-key".to_string()]),
+            ]
+        );
+    }
 
     #[test]
     fn a_refusal_is_quoted_back_without_the_credential_in_it() {

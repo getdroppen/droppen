@@ -136,23 +136,29 @@ impl ClaudeCodeLogin {
             Ok(Err(error)) => return Verdict::Unverifiable(format!("the `claude` CLI could not be started: {error}")),
             Err(_) => return Verdict::Unverifiable("the check timed out before the CLI answered".to_string()),
         };
-        if output.status.success() {
-            return Verdict::Valid;
-        }
-
         let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
         let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        self.verdict(output.status.success(), &stdout, &stderr, secrets)
+    }
+
+    /// What one finished `claude -p ping` says about the credential it ran
+    /// with: a clean exit is a request that went through, and a failure is
+    /// read for what the CLI says about it.
+    fn verdict(&self, success: bool, stdout: &str, stderr: &str, secrets: &[&str]) -> Verdict {
+        if success {
+            return Verdict::Valid;
+        }
         // An account over its request limit is a working account, and a refusal here
         // would send the user back through a wizard that cannot help.
-        if is_rate_limited(&stdout) || is_rate_limited(&stderr) {
+        if is_rate_limited(stdout) || is_rate_limited(stderr) {
             return Verdict::Unverifiable("the account is rate-limited, so the token could not be checked".to_string());
         }
-        let quoted = reason(&stderr, &stdout, secrets);
+        let quoted = reason(stderr, stdout, secrets);
         // A non-zero exit is not a verdict on the credential unless the CLI said so.
         // An older CLI that does not know one of these flags, a DNS failure behind a
         // proxy, a crash — all exit non-zero, and turning any of them into a refusal
         // would lock the user out of adding an account at all.
-        if is_credential_refusal(&stdout) || is_credential_refusal(&stderr) {
+        if is_credential_refusal(stdout) || is_credential_refusal(stderr) {
             return Verdict::Invalid(format!("the token was refused: {quoted}"));
         }
         Verdict::Unverifiable(format!("the check itself failed, so the token was not tested: {quoted}"))
@@ -206,6 +212,81 @@ mod tests {
             !is_credential_refusal("wrote 2401 tokens to the transcript"),
             "a status code is three digits standing on their own, not any three digits"
         );
+    }
+
+    /// Each marker is enough on its own: every line here is matched by exactly
+    /// one of them, so a marker that goes missing turns its line into a miss.
+    #[test]
+    fn each_refusal_marker_counts_on_its_own() {
+        for text in [
+            "authentication_error",
+            "could not authenticate",
+            "Request failed: Unauthorized",
+            "Forbidden",
+            "Invalid API key",
+            "invalid bearer",
+            "Invalid token",
+            "invalid_api_key",
+            "Session expired",
+            "OAuth error",
+            "Please run /login",
+            "Not logged in",
+            "API Error: 401",
+            "API Error: 403",
+        ] {
+            assert!(is_credential_refusal(text), "{text}");
+        }
+    }
+
+    /// A finished check is judged by its exit status first, then, on a
+    /// failure, by its words: over its limit is a working account, a refusal
+    /// is quoted without the credential, and anything else proves nothing.
+    #[test]
+    fn a_finished_check_is_judged_by_its_exit_and_then_its_words() {
+        let login = ClaudeCodeLogin;
+        assert_eq!(login.verdict(true, "{\"result\":\"pong\"}", "", &[]), Verdict::Valid);
+        assert_eq!(
+            login.verdict(true, "", "unauthorized", &[]),
+            Verdict::Valid,
+            "a clean exit is a request that went through, whatever was printed beside it"
+        );
+
+        let refused = login.verdict(false, "", "API Error: 401 Unauthorized for not-a-real-token", &["not-a-real-token"]);
+        let Verdict::Invalid(why) = refused else { panic!("a refusal: {refused:?}") };
+        assert!(why.starts_with("the token was refused: "), "{why}");
+        assert!(!why.contains("not-a-real-token"), "the credential is taken out: {why}");
+
+        assert_eq!(
+            login.verdict(false, "", "HTTP 429 Too Many Requests: unauthorized", &[]),
+            Verdict::Unverifiable("the account is rate-limited, so the token could not be checked".to_string()),
+            "a rate limit outranks words that would otherwise be a refusal"
+        );
+        let failed = login.verdict(false, "", "getaddrinfo ENOTFOUND api.anthropic.com", &[]);
+        let Verdict::Unverifiable(why) = failed else { panic!("no verdict: {failed:?}") };
+        assert!(why.starts_with("the check itself failed, so the token was not tested: getaddrinfo ENOTFOUND"), "{why}");
+    }
+
+    /// The hint goes in front of whatever the check concludes, including the
+    /// verdicts it reaches without running the CLI, and only for a `/v1` root.
+    #[tokio::test]
+    async fn a_check_that_cannot_run_proves_nothing_and_still_carries_the_hint() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let paths = crate::accounts::verify::paths_where_no_scratch_can_be_made(home.path());
+        // It stops before starting anything either way: claude is not on
+        // `PATH` here, or it is and the scratch directory cannot be made.
+        let claudes_own = |why: &str| {
+            why == "the `claude` CLI is not on PATH, so the token cannot be checked"
+                || why.starts_with("cannot prepare the check's config directory: ")
+        };
+
+        let verdict = ClaudeCodeLogin.verify(&paths, &launch("https://gw.example.com/v1"), &[]).await;
+        let Verdict::Unverifiable(why) = verdict else { panic!("a check that cannot run proves nothing: {verdict:?}") };
+        let rest = why.strip_prefix(CLAUDE_BASE_URL_HINT).unwrap_or_else(|| panic!("the hint goes first: {why}"));
+        assert!(claudes_own(rest), "{rest}");
+
+        let verdict = ClaudeCodeLogin.verify(&paths, &launch("https://gw.example.com"), &[]).await;
+        let Verdict::Unverifiable(why) = verdict else { panic!("a check that cannot run proves nothing: {verdict:?}") };
+        assert!(claudes_own(&why), "a root gets no hint: {why}");
     }
 
     /// A block whose base URL already carries the path claude appends.
