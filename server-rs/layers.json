@@ -436,10 +436,9 @@
       ]
     },
     {
-      "why": "Domain pairs that point the wrong way: accounts checks a model against models::model_ids, and attention uses helpers in drive's routes (AgentPath, is_agent_id). They go when those items move to the crate that owns them.",
+      "why": "A domain pair that points the wrong way: accounts checks a model against models::model_ids. It goes when that item moves to the crate that owns it.",
       "edges": [
-        "accounts -> models",
-        "attention -> drive"
+        "accounts -> models"
       ]
     }
   ]

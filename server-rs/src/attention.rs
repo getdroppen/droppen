@@ -57,9 +57,9 @@ pub async fn mark_seen(State(state): State<AttentionState>, ApiPath((source, id)
 #[api(id = "mark_agent_seen", group = "sessions", summary = "Mark a subagent read")]
 pub async fn mark_agent_seen(
     State(state): State<AttentionState>,
-    ApiPath(crate::drive::routes::AgentPath { source, id, agent_id }): ApiPath<crate::drive::routes::AgentPath>,
+    ApiPath(crate::sessions::sidecars::AgentPath { source, id, agent_id }): ApiPath<crate::sessions::sidecars::AgentPath>,
 ) -> Result<Json<SeenResult>, ApiError> {
-    if !crate::drive::routes::is_agent_id(&agent_id) {
+    if !crate::sessions::sidecars::is_agent_id(&agent_id) {
         return Err(ApiError::bad_request("invalid agent id"));
     }
     let previous = seen::mark(state.paths.as_ref(), source, &crate::sessions::subagents::agent_seen_id(&id, &agent_id))
