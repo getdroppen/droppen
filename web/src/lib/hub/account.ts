@@ -313,6 +313,8 @@ import {
   lostDeviceKey,
   lostWhyKey,
   readFrom,
+  reEnrollConnectedKey,
+  reEnrollDismissedKey,
   REGISTER_AFRESH_MARGIN_MS,
   renewalLockName,
   type SeenWatch,
@@ -434,14 +436,7 @@ export class CloudAccount {
   private readonly seen: SeenStore;
   private readonly locks: AccountLocks | null;
   /** The re-enroll warnings (review D3), kept for the account in this browser. */
-  private readonly reEnroll = new ReEnrollWarnings({
-    account: () => this.account,
-    state: () => this.state,
-    renews: (host) => this.renews(host),
-    read: (key) => this.read(key),
-    write: (key, value) => this.write(key, value),
-    emit: () => this.emit(),
-  });
+  private readonly reEnroll: ReEnrollWarnings;
   /** What the account's collaborators read of it (`AccountBasics`). */
   private readonly basics = accountBasics({
     account: () => this.account,
@@ -484,6 +479,11 @@ export class CloudAccount {
       },
       this.crossTab,
     );
+    this.reEnroll = new ReEnrollWarnings(this.basics, {
+      renews: (host) => this.renews(host),
+      dismissed: this.note(reEnrollDismissedKey(this.account)),
+      connected: this.note(reEnrollConnectedKey(this.account)),
+    });
     // Another tab kept disputes: merged here, and every listener (each channel among them) looks again once they are checked.
     this.unhearCrossTab = this.crossTab?.subscribe((message) => this.renewalNotes.heardDisputes(message)) ?? null;
     this.vault = new UserKeyVault(store, session.account);

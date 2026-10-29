@@ -5,35 +5,25 @@
  * `CloudAccount` documents the methods it hands to these.
  */
 import { type ChainState, utf8 } from "@/lib/e2e";
-import { reEnrollConnectedKey, reEnrollDismissedKey } from "../account-storage";
 import { compareBytes, type ReEnrollLine, reEnrollCulprits, reEnrollEvidence, seqMaps } from "../chain-policy";
 import type { ControllersRecord } from "../streams";
+import type { AccountBasics, AccountNote } from "./basics";
 
-/** What the warnings read of the account they belong to, and how they tell its page. */
+/** What the warnings read of the account beyond its basics. */
 export interface ReEnrollDeps {
-  /** The account, whose id names the notes kept in this browser. */
-  account(): string;
-  /** The verified chain, `null` before there is one. */
-  state(): ChainState | null;
   /** Whether `host` renews its identity key instead of being re-enrolled. */
   renews(host: string): boolean;
-  read(key: string): string | null;
-  write(key: string, value: string): void;
-  emit(): void;
+  /** The devices a person said never connected, per host (`reEnrollDismissedKey`), and no other note. */
+  dismissed: AccountNote;
+  /** The devices a host's record ever named, per host (`reEnrollConnectedKey`), and no other note. */
+  connected: AccountNote;
 }
 
 export class ReEnrollWarnings {
-  constructor(private readonly deps: ReEnrollDeps) {}
-
-  /** The account's id, as the notes below are kept under it. */
-  private get account(): string {
-    return this.deps.account();
-  }
-
-  /** The account's verified chain, read each time: it moves on as the account syncs. */
-  private get state(): ChainState | null {
-    return this.deps.state();
-  }
+  constructor(
+    private readonly basics: AccountBasics,
+    private readonly deps: ReEnrollDeps,
+  ) {}
 
   reEnrollDue(controllersOf?: (host: string) => ControllersRecord | undefined): Set<string> {
     const due = new Set<string>();
@@ -42,7 +32,7 @@ export class ReEnrollWarnings {
   }
 
   reEnrollWarnings(controllersOf?: (host: string) => ControllersRecord | undefined): Map<string, ReEnrollLine[]> {
-    const chain = this.state;
+    const chain = this.basics.state;
     const out = new Map<string, ReEnrollLine[]>();
     if (!chain) return out;
     const culprits = reEnrollCulprits(chain);
@@ -67,13 +57,13 @@ export class ReEnrollWarnings {
   }
 
   dismissReEnroll(host: string, device: string, lostSeq: number): void {
-    const now = this.state ? reEnrollCulprits(this.state).get(host)?.get(device) : undefined;
+    const now = this.basics.state ? reEnrollCulprits(this.basics.state).get(host)?.get(device) : undefined;
     if (now === undefined) return;
     const dismissed = this.reEnrollDismissed();
     // Never past the loss the chain has now: a dismissal covers only what was shown.
     (dismissed[host] ??= {})[device] = Math.min(lostSeq, now);
-    this.deps.write(reEnrollDismissedKey(this.account), JSON.stringify(dismissed));
-    this.deps.emit();
+    this.deps.dismissed.write(JSON.stringify(dismissed));
+    this.basics.emit();
   }
 
   warnAgainReEnroll(host: string, device: string): void {
@@ -81,17 +71,17 @@ export class ReEnrollWarnings {
     if (dismissed[host]?.[device] === undefined) return;
     delete dismissed[host]![device];
     if (Object.keys(dismissed[host]!).length === 0) delete dismissed[host];
-    this.deps.write(reEnrollDismissedKey(this.account), JSON.stringify(dismissed));
-    this.deps.emit();
+    this.deps.dismissed.write(JSON.stringify(dismissed));
+    this.basics.emit();
   }
 
   private reEnrollDismissed(): Record<string, Record<string, number>> {
-    return seqMaps(this.deps.read(reEnrollDismissedKey(this.account)));
+    return seqMaps(this.deps.dismissed.read());
   }
 
   /** Every device a current host's record ever named here, with when it first connected: `records` merged into what is kept. */
   private keepConnected(chain: ChainState, records: ReadonlyMap<string, ControllersRecord>): Record<string, Record<string, number>> {
-    const kept = seqMaps(this.deps.read(reEnrollConnectedKey(this.account)));
+    const kept = seqMaps(this.deps.connected.read());
     // A device this chain does not name is not added — and what is kept is never deleted for it: another
     // tab's newer chain may name it. A host removed from the account takes its list with it (one that
     // merely stopped running AI keeps it: it may run AI again, and an old loss must not become dismissable).
@@ -111,7 +101,7 @@ export class ReEnrollWarnings {
       delete kept[host];
       changed = true;
     }
-    if (changed) this.deps.write(reEnrollConnectedKey(this.account), JSON.stringify(kept));
+    if (changed) this.deps.connected.write(JSON.stringify(kept));
     // What this chain cannot place is left out of what is read, not out of what is kept.
     const view: Record<string, Record<string, number>> = {};
     for (const [host, devices] of Object.entries(kept)) view[host] = Object.fromEntries(Object.entries(devices).filter(([id]) => named(id)));

@@ -141,9 +141,9 @@ export class ChainAlerts {
           break;
         case "keyEpochs": {
           // New key epochs on their own — not a removal's rotation, nor an
-          // enrollment (those are said by the entry the batch is for). The
-          // review of the M2 re-review fixes, N2: a device could commit
-          // epochs at will without anybody hearing of it.
+          // enrollment (those are said by the entry the batch is for): left
+          // unsaid, a device could commit epochs at will without anybody
+          // hearing of it.
           // The account's upgrade to chain v3 (its first v3 entry) says so.
           if (seq === chain.v3From) {
             out.push({ alert: { seq, kind: "upgrade", by, subject: null, atMs, remove: removable(by) }, pending: false });
