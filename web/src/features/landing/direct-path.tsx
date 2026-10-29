@@ -372,7 +372,7 @@ export function DirectPath() {
               aria-selected={scenario === s.id}
               onClick={() => setScenario(s.id)}
               className={cn(
-                "flex items-center border-r border-border px-3 text-2xs font-medium last:border-r-0",
+                "flex items-center border-r border-border px-3 text-xs font-semibold last:border-r-0",
                 scenario === s.id ? "bg-fg text-bg" : "text-muted hover:text-fg",
               )}
             >
@@ -501,11 +501,11 @@ export function DirectPath() {
           ref={status}
           data-tone="ok"
           data-signal="path"
-          className="line-clamp-2 text-2xs leading-4 data-[tone=danger]:text-danger data-[tone=ok]:text-ok"
+          className="line-clamp-2 text-xs font-semibold leading-4 data-[tone=danger]:text-danger data-[tone=ok]:text-ok"
         >
           {directLive}
         </span>
-        <span ref={counts} className="min-w-[24ch] text-right text-2xs text-muted tabular-nums" />
+        <span ref={counts} className="min-w-[24ch] text-right text-xs font-semibold text-muted tabular-nums" />
       </div>
     </div>
   );

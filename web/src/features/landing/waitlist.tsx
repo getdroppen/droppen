@@ -89,7 +89,7 @@ function PlanChoice({ plan, onPlan }: { plan: WaitlistPlan; onPlan: (plan: Waitl
   return (
     <fieldset className="flex flex-col gap-1.5">
       <legend className="mb-1.5">
-        <CapsLabel className={cjkTracking}>{t("Plan")}</CapsLabel>
+        <CapsLabel face="sans" className={cn(cjkTracking, "text-xs font-semibold")}>{t("Plan")}</CapsLabel>
       </legend>
       <div className="grid grid-cols-2 gap-px border border-border-strong bg-border-strong">
         {options.map((o) => (
@@ -103,7 +103,7 @@ function PlanChoice({ plan, onPlan }: { plan: WaitlistPlan; onPlan: (plan: Waitl
           >
             <input type="radio" name="plan" value={o.id} checked={plan === o.id} onChange={() => onPlan(o.id)} data-testid={`waitlist-plan-${o.id}`} className="sr-only" />
             <span>{o.name}</span>
-            <span className={cn("font-mono text-2xs", plan === o.id ? "text-bg/70" : "text-faint")}>{o.price}</span>
+            <span className={cn("font-mono text-xs font-semibold", plan === o.id ? "text-bg/70" : "text-faint")}>{o.price}</span>
           </label>
         ))}
       </div>
@@ -170,7 +170,7 @@ export function WaitlistForm({
     <form noValidate onSubmit={(e) => void submit(e)} data-testid="waitlist-form" data-plan={plan} className="flex max-w-[34rem] flex-col gap-5">
       {onPlan && <PlanChoice plan={plan} onPlan={onPlan} />}
       <label className="flex flex-col gap-1.5">
-        <CapsLabel className={cjkTracking}>{t("E-mail address")}</CapsLabel>
+        <CapsLabel face="sans" className={cn(cjkTracking, "text-xs font-semibold")}>{t("E-mail address")}</CapsLabel>
         <input
           id="waitlist-email"
           type="email"
@@ -191,7 +191,7 @@ export function WaitlistForm({
         />
       </label>
       {refused && (
-        <p id="waitlist-error" role="alert" data-signal="failed" data-testid="waitlist-error" data-reason={refused.reason} className="font-mono text-2xs leading-4 text-danger">
+        <p id="waitlist-error" role="alert" data-signal="failed" data-testid="waitlist-error" data-reason={refused.reason} className="font-mono text-xs font-semibold leading-4 text-danger">
           {problemText(refused, t)}
         </p>
       )}

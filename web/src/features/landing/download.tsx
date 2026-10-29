@@ -103,7 +103,7 @@ function Steps({ items, testId }: { items: { title: string; body: ReactNode }[];
             i > 0 && "lg:border-l",
           )}
         >
-          <span className="font-mono text-2xs text-faint tabular-nums">{String(i + 1).padStart(2, "0")}</span>
+          <span className="font-mono text-xs font-semibold text-faint tabular-nums">{String(i + 1).padStart(2, "0")}</span>
           <span className="text-sm leading-5 font-semibold text-fg">{s.title}</span>
           <span className="text-xs leading-5 text-muted">{s.body}</span>
         </li>
@@ -166,12 +166,12 @@ function AppPanel({ availability, onPick, release }: { availability: Availabilit
             <Download className="size-3.5" />
             {t("Download Droppen App (macOS)")}
           </a>
-          <span data-testid="app-file-facts" className="font-mono text-2xs text-faint">
+          <span data-testid="app-file-facts" className="font-mono text-xs font-semibold text-faint">
             {release && dmg
               ? `${fileFacts(release, dmg)} · ${t("macOS 13 or later · Universal: Apple silicon and Intel")}`
               : t("macOS 13 or later · Universal: Apple silicon and Intel · Droppen-<version>.dmg")}
           </span>
-          <a href={release?.releasesPage ?? RELEASES_URL} target="_blank" rel="noopener noreferrer" data-testid="app-release-link" className="inline-flex items-center gap-1 font-mono text-2xs text-muted underline underline-offset-4 hover:text-fg">
+          <a href={release?.releasesPage ?? RELEASES_URL} target="_blank" rel="noopener noreferrer" data-testid="app-release-link" className="inline-flex items-center gap-1 font-mono text-xs font-semibold text-muted underline underline-offset-4 hover:text-fg">
             {t("release notes, checksums and other files")}
             <ExternalLink className="size-3" />
           </a>
@@ -219,7 +219,7 @@ function BackgroundPanel() {
       <PanelHead title={t("Droppen in the background on a Mac")} body={t("For a Mac that stays on as a server, or if you prefer the terminal. One command installs Droppen; you then add this Mac to your account in the browser.")}>
         <div className="flex max-w-[44rem] flex-col gap-2">
           <CommandLine command={INSTALL_COMMAND} label={t("copy the command")} testId="install-command" primaryCopy />
-          <p className="font-mono text-2xs text-faint">{t("Paste it into Terminal on that Mac.")}</p>
+          <p className="font-mono text-xs font-semibold text-faint">{t("Paste it into Terminal on that Mac.")}</p>
         </div>
       </PanelHead>
       <Steps
@@ -270,7 +270,7 @@ function LinuxPanel({
     <>
       <PanelHead {...head}>
         {arch && (
-          <p data-testid="linux-cpu" className="font-mono text-2xs text-faint">
+          <p data-testid="linux-cpu" className="font-mono text-xs font-semibold text-faint">
             {t("This browser reports Linux on {{arch}}.", { arch })}
             {!(LINUX_CPUS as readonly string[]).includes(arch) && <> {t("Droppen's Linux builds are for x86_64 and aarch64.")}</>}
           </p>
@@ -458,7 +458,7 @@ function Environments({
             <Icon aria-hidden="true" className="size-4 shrink-0" />
             {label}
             {value === marked && (
-              <span data-testid="detected" className="border border-border px-1.5 text-2xs leading-4 font-normal text-muted">
+              <span data-testid="detected" className="border border-border px-1.5 text-xs font-semibold leading-4 font-normal text-muted">
                 {t("Detected")}
               </span>
             )}
@@ -620,13 +620,13 @@ function Uninstall({ availability }: { availability: Availability }) {
       <ol className="grid border-t border-border md:grid-cols-3">
         {steps.map((s, i) => (
           <li key={s.title} className="flex flex-col gap-2 border-border px-6 py-6 max-md:border-b max-md:px-4 md:border-r">
-            <span className="font-mono text-2xs text-faint tabular-nums">0{i + 1}</span>
+            <span className="font-mono text-xs font-semibold text-faint tabular-nums">0{i + 1}</span>
             <span className="text-sm leading-5 font-semibold text-fg">{s.title}</span>
             <span className="text-xs leading-5 text-muted">{s.body}</span>
           </li>
         ))}
         <li className="flex min-w-0 flex-col gap-2 px-6 py-6 max-md:px-4">
-          <span className="font-mono text-2xs text-faint tabular-nums">03</span>
+          <span className="font-mono text-xs font-semibold text-faint tabular-nums">03</span>
           <span className="text-sm leading-5 font-semibold text-fg">{t("Remove the program")}</span>
           {availability.app && <span className="text-xs leading-5 text-muted">{t("The App: quit Droppen and drag it from Applications to the Trash.")}</span>}
           <span className="text-xs leading-5 text-muted">

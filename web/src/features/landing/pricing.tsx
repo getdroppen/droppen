@@ -80,9 +80,9 @@ function PlanCard({
       <div className="flex flex-col gap-2">
         <p className="flex items-baseline gap-2">
           <span className="text-5xl leading-none font-semibold tracking-tight text-fg tabular-nums max-md:text-4xl">{price}</span>
-          <span className="font-mono text-2xs text-muted">{unit}</span>
+          <span className="font-mono text-xs font-semibold text-muted">{unit}</span>
         </p>
-        <p className="font-mono text-2xs leading-4 text-faint">{note}</p>
+        <p className="font-mono text-xs font-semibold leading-4 text-faint">{note}</p>
       </div>
       <div className="flex flex-col gap-2">
         {action}
@@ -153,7 +153,7 @@ function Plans({ signedIn, signup, onChoose }: { signedIn: boolean; signup: Sign
           }
           aside={
             signedIn ? (
-              <span className="font-mono text-2xs leading-4 text-faint">{t("You have an account already.")}</span>
+              <span className="font-mono text-xs font-semibold leading-4 text-faint">{t("You have an account already.")}</span>
             ) : signup === "invite" ? (
               <a {...publicLink(SIGN_UP_PATH)} data-testid="plan-free-signup" className="w-fit text-xs text-muted underline underline-offset-4 hover:text-fg">
                 {t("Have an invite code? Sign up")}
@@ -188,7 +188,7 @@ function Plans({ signedIn, signup, onChoose }: { signedIn: boolean; signup: Sign
               {t("Join the waitlist")}
             </a>
           }
-          aside={<span className="font-mono text-2xs leading-4 text-faint">{t("Payments are not open yet: we'll e-mail you when they are.")}</span>}
+          aside={<span className="font-mono text-xs font-semibold leading-4 text-faint">{t("Payments are not open yet: we'll e-mail you when they are.")}</span>}
           lead={t("Everything in Free, with higher limits:")}
           points={[
             t("{{n}} devices that run AI", { n: pro.hosts }),
@@ -448,7 +448,7 @@ export default function PricingPage({
                 "Every plan is end-to-end encrypted: on none of them can we read your sessions, your code or your terminals. A plan decides only how many devices you can connect, how many days of sessions your phone can read while a device that runs AI is offline, and how much traffic goes through our servers each month.",
               )}
             </p>
-            <p className="font-mono text-2xs text-faint">{t("Prices in US dollars. Pro is not on sale yet, and nothing is charged before you choose to pay.")}</p>
+            <p className="font-mono text-xs font-semibold text-faint">{t("Prices in US dollars. Pro is not on sale yet, and nothing is charged before you choose to pay.")}</p>
           </div>
           <Plans signedIn={signedIn} signup={signup} onChoose={setPlan} />
           <Compare signup={signup} />

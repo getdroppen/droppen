@@ -55,7 +55,7 @@ export const RENEWAL_PARTS = ["renewal-why", "renewal-entry", "renewal-staging",
  * the column. What is not prose (formulas, quoted labels and paths, the algorithm table, paired
  * lists) takes the topic's whole width, so it is not wrapped short beside empty space.
  */
-const prose = "max-w-[46em] text-sm leading-5 text-muted";
+const prose = "max-w-[46em] text-base text-muted";
 
 /**
  * A translated line in the page's mini-markup, written the same way in every
@@ -186,8 +186,8 @@ function List({ items }: { items: ReactNode[] }) {
   return (
     <ul className="flex max-w-[46em] flex-col gap-2">
       {items.map((item, i) => (
-        <li key={i} className="flex gap-2.5 text-sm leading-5 text-muted">
-          <span className="mt-2 size-1.5 shrink-0 bg-fg" />
+        <li key={i} className="flex gap-2.5 text-base text-muted">
+          <span className="mt-[9px] size-1.5 shrink-0 bg-fg" />
           <div className="min-w-0">{linked(item)}</div>
         </li>
       ))}
@@ -197,7 +197,7 @@ function List({ items }: { items: ReactNode[] }) {
 
 /** The code's own bytes, quoted, never translated (the formulas: `Formula`). */
 function Spec({ children }: { children: ReactNode }) {
-  return <div className="flex flex-col gap-1 border-l border-border-strong py-0.5 pl-3 font-mono text-2xs leading-4 text-fg [overflow-wrap:anywhere]">{children}</div>;
+  return <div className="flex flex-col gap-1 border-l border-border-strong py-0.5 pl-3 font-mono text-xs font-semibold leading-4 text-fg [overflow-wrap:anywhere]">{children}</div>;
 }
 
 function Line({ children }: { children: ReactNode }) {
@@ -206,7 +206,7 @@ function Line({ children }: { children: ReactNode }) {
 
 /** A small caps chip: what is still in testing. */
 function Chip({ children }: { children: ReactNode }) {
-  return <span className="inline-flex shrink-0 items-center border border-fg px-1.5 font-mono text-sm leading-4 font-semibold tracking-wider text-fg uppercase">{children}</span>;
+  return <span className="inline-flex shrink-0 items-center border border-fg px-1.5 text-sm leading-4 font-semibold tracking-wider text-fg uppercase">{children}</span>;
 }
 
 /** One mechanism: its number and name on the left (above, when narrow), what it does on the right; `#t2-6` and the like unless it has an id of its own. */
@@ -214,8 +214,8 @@ function Topic({ id, n, title, children }: { id?: string; n: string; title: stri
   return (
     <div id={id ?? `t${n.replace(".", "-")}`} className="grid scroll-mt-14 border-t border-border lg:grid-cols-[minmax(0,1fr)_minmax(0,2.4fr)]">
       <div className="flex gap-3 px-6 pt-6 max-md:px-4 max-md:pt-5 lg:pb-6">
-        <span className="w-7 shrink-0 font-mono text-2xs leading-5 text-faint tabular-nums">{n}</span>
-        <h3 className="text-sm leading-5 font-semibold text-balance text-fg">{withConcepts(title)}</h3>
+        <span className="w-7 shrink-0 text-xs font-semibold leading-5 text-faint tabular-nums">{n}</span>
+        <h3 className="text-base leading-6 font-semibold text-balance text-fg">{withConcepts(title)}</h3>
       </div>
       <div className="flex min-w-0 flex-col gap-4 px-6 pt-3 pb-6 max-md:px-4 max-md:pb-5 lg:border-l lg:border-border lg:pt-6">{children}</div>
     </div>
@@ -228,7 +228,7 @@ function Pair({ left, right }: { left: { title: string; items: string[] }; right
     <div className="grid gap-6 md:grid-cols-2">
       {[left, right].map((side) => (
         <div key={side.title} className="flex min-w-0 flex-col gap-3">
-          <span className="text-xs leading-5 font-semibold text-fg">{withConcepts(side.title)}</span>
+          <span className="text-base leading-6 font-semibold text-fg">{withConcepts(side.title)}</span>
           <List items={side.items} />
         </div>
       ))}
@@ -245,7 +245,7 @@ function Table({ label, heads, rows }: { label: string; heads: string[]; rows: s
       <div role="row" className={cn("grid border-b border-border max-md:hidden", grid)}>
         {heads.map((h, i) => (
           <span key={h} role="columnheader" className={cn("px-6 py-3", i > 0 && "border-l border-border")}>
-            <CapsLabel className={cn("text-fg", cjkTracking)}>{h}</CapsLabel>
+            <CapsLabel face="sans" className={cn("text-fg", cjkTracking, "text-xs font-semibold")}>{h}</CapsLabel>
           </span>
         ))}
       </div>
@@ -256,13 +256,13 @@ function Table({ label, heads, rows }: { label: string; heads: string[]; rows: s
               key={i}
               role={i === 0 ? "rowheader" : "cell"}
               className={cn(
-                "min-w-0 px-6 text-xs leading-5 max-md:px-4",
+                "min-w-0 px-6 text-sm leading-6 max-md:px-4",
                 i === 0 ? "pt-3.5 font-semibold text-fg md:pb-3.5" : "py-3.5 text-muted max-md:pt-1 max-md:pb-0 max-md:last:pb-3.5",
                 i > 0 && "md:border-l md:border-border",
               )}
             >
               {i > 0 && (
-                <CapsLabel size="xs" className={cn("block pb-0.5 md:hidden", cjkTracking)}>
+                <CapsLabel size="xs" face="sans" className={cn("block pb-0.5 md:hidden", cjkTracking)}>
                   {heads[i]}
                 </CapsLabel>
               )}
@@ -281,7 +281,7 @@ function Note({ children }: { children: ReactNode }) {
   return (
     <div className="flex items-start gap-3 border-t border-border px-6 py-4 max-md:px-4">
       <Info className="mt-0.5 size-4 shrink-0 text-muted" />
-      <Block className="max-w-[60em] text-xs leading-5 text-muted">{linked(children, true)}</Block>
+      <Block className="max-w-[60em] text-base text-muted">{linked(children, true)}</Block>
     </div>
   );
 }
@@ -293,10 +293,10 @@ function Hero() {
       <h1 className="max-w-[18em] text-5xl leading-display font-normal tracking-tight text-balance text-fg [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-md:text-3xl">
         {t("How Droppen's end-to-end encryption works.")}
       </h1>
-      <p className="max-w-[44em] text-base leading-6 text-muted max-md:text-sm max-md:leading-6">
+      <p className="max-w-[44em] text-base leading-6 text-muted">
         {t("A technical description for anyone who wants to verify our claims: who holds which key, how your devices agree on which devices belong to your account, what our servers can and cannot see, and what each of them could still do if it were malicious or compelled. It describes what Droppen does today; the parts that are not live yet, or still in testing, are marked as such.")}
       </p>
-      <p className="font-mono text-2xs text-faint">{t("Last updated {{date}}", { date: SECURITY_UPDATED })}</p>
+      <p className="text-xs text-faint">{t("Last updated {{date}}", { date: SECURITY_UPDATED })}</p>
     </div>
   );
 }
@@ -338,12 +338,12 @@ function Definitions() {
     <div role="group" aria-label={t("Two words this page uses")} data-testid="security-terms" className="grid border-t border-border md:grid-cols-2">
       {cards.map((card, i) => (
         <div key={card.id} data-concept-def={card.id} className={cn("flex flex-col gap-2.5 border-border px-6 py-5 max-md:px-4", i > 0 && "max-md:border-t md:border-l")}>
-          <dfn className="text-sm leading-5 font-semibold text-fg not-italic">{card.name}</dfn>
+          <dfn className="text-base leading-6 font-semibold text-fg not-italic">{card.name}</dfn>
           <dl className="grid grid-cols-[minmax(0,auto)_minmax(0,1fr)] gap-x-4 gap-y-1.5">
             {card.rows.map(([label, text]) => (
               <div key={label} className="contents">
-                <dt className={cn("label-caps pt-[3px] text-sm leading-4 text-faint", cjkTracking)}>{label}</dt>
-                <dd className="text-xs leading-5 text-muted">{withConcepts(text!)}</dd>
+                <dt className={cn("uppercase tracking-label pt-[3px] text-sm leading-4 text-faint", cjkTracking)}>{label}</dt>
+                <dd className="text-base text-muted">{withConcepts(text!)}</dd>
               </div>
             ))}
           </dl>
@@ -383,11 +383,11 @@ function Contents() {
             >
               <a href={`#${e.id}`} className="group flex h-full flex-col gap-1.5 px-6 py-5 hover:bg-hover max-md:px-4">
                 <span className="flex items-center gap-2">
-                  <span className="font-mono text-2xs leading-4 text-faint tabular-nums">{String(i + 1).padStart(2, "0")}</span>
-                  <span className="text-sm leading-5 font-semibold text-fg group-hover:underline group-hover:underline-offset-4">{e.title}</span>
+                  <span className="text-xs font-semibold leading-4 text-faint tabular-nums">{String(i + 1).padStart(2, "0")}</span>
+                  <span className="text-base leading-6 font-semibold text-fg group-hover:underline group-hover:underline-offset-4">{e.title}</span>
                   {e.chip && <Chip>{e.chip}</Chip>}
                 </span>
-                <span className="text-xs leading-5 text-muted">{e.line}</span>
+                <span className="text-base text-muted">{e.line}</span>
               </a>
             </li>
           ))}
@@ -416,7 +416,7 @@ function Overview() {
         {c.title}
       </text>
       {c.lines.map((line, i) => (
-        <text key={line} x={x + 14} y={y + 50 + i * 18} className="fill-muted font-mono text-sm">
+        <text key={line} x={x + 14} y={y + 50 + i * 18} className="fill-muted text-sm">
           {line}
         </text>
       ))}
@@ -427,23 +427,23 @@ function Overview() {
       <svg viewBox="0 0 1040 304" role="img" aria-label={label} className="block w-full max-md:hidden">
         {/* The end-to-end span over the three. */}
         <path d="M140.5 34v8M900.5 34v8M140.5 34.5H900.5" className="stroke-muted" strokeWidth={1} fill="none" />
-        <text x={520} y={26} textAnchor="middle" className="fill-fg font-mono text-sm">
+        <text x={520} y={26} textAnchor="middle" className="fill-fg text-sm">
           {e2e}
         </text>
         {/* The channel: ink, 2px, through the relay. */}
         <path d="M256 92H404M636 92H784" className="stroke-fg" strokeWidth={2} fill="none" />
-        <text x={330} y={84} textAnchor="middle" className="fill-muted font-mono text-sm">
+        <text x={330} y={84} textAnchor="middle" className="fill-muted text-sm">
           {wire}
         </text>
-        <text x={710} y={84} textAnchor="middle" className="fill-muted font-mono text-sm">
+        <text x={710} y={84} textAnchor="middle" className="fill-muted text-sm">
           {wire}
         </text>
         {/* The copy: dashed, 1.5px, an L each way. */}
         <path d="M900 136V242.75H636M404 242.75H140V136" className="stroke-fg" strokeWidth={1.5} strokeDasharray="5 4" fill="none" />
-        <text x={768} y={232} textAnchor="middle" className="fill-muted font-mono text-sm">
+        <text x={768} y={232} textAnchor="middle" className="fill-muted text-sm">
           {sealed}
         </text>
-        <text x={272} y={232} textAnchor="middle" className="fill-muted font-mono text-sm">
+        <text x={272} y={232} textAnchor="middle" className="fill-muted text-sm">
           {copy}
         </text>
         {card(24, 48, 232, 88, devices)}
@@ -460,14 +460,14 @@ function Overview() {
         ].map(({ c, next }, i) => (
           <li key={c.title} className="flex flex-col">
             <div className="flex flex-col gap-1 border border-border-strong px-3 py-2.5">
-              <span className="text-sm leading-5 font-semibold text-fg">{withConcepts(c.title)}</span>
+              <span className="text-base leading-6 font-semibold text-fg">{withConcepts(c.title)}</span>
               {c.lines.map((line) => (
-                <span key={line} className="font-mono text-2xs leading-4 text-muted">
+                <span key={line} className="text-xs font-semibold leading-4 text-muted">
                   {line}
                 </span>
               ))}
             </div>
-            <span className="py-1.5 pl-3 font-mono text-sm leading-4 text-muted">
+            <span className="py-1.5 pl-3 text-sm leading-4 text-muted">
               {i < 3 ? "↓ " : "↑ "}
               {next}
               {i === 3 && <> → {withConcepts(devices.title)}</>}
@@ -552,11 +552,11 @@ function ChainFigure() {
             i > 0 && "lg:border-l",
           )}
         >
-          <span className="font-mono text-2xs leading-4 text-faint tabular-nums">#{i}</span>
-          <span className="font-mono text-xs leading-4 font-semibold text-fg [overflow-wrap:anywhere]">{e.kind}</span>
-          <span className="text-2xs leading-4 text-muted">{withConcepts(e.what)}</span>
-          <span className="text-2xs leading-4 text-muted">{e.by}</span>
-          <span className="mt-auto pt-1 font-mono text-sm leading-4 text-faint">{i === 0 ? t("prev: none") : `prev: H(#${i - 1})`}</span>
+          <span className="text-xs font-semibold leading-4 text-faint tabular-nums">#{i}</span>
+          <span className="text-xs leading-4 font-semibold text-fg [overflow-wrap:anywhere]">{e.kind}</span>
+          <span className="text-xs font-semibold leading-4 text-muted">{withConcepts(e.what)}</span>
+          <span className="text-xs font-semibold leading-4 text-muted">{e.by}</span>
+          <span className="mt-auto pt-1 text-sm leading-4 text-faint">{i === 0 ? t("prev: none") : `prev: H(#${i - 1})`}</span>
         </li>
       ))}
     </ol>
@@ -929,8 +929,8 @@ function VerifySection() {
           <dl className="grid grid-cols-[minmax(0,auto)_minmax(0,1fr)] gap-x-6 gap-y-1.5">
             {choices.map(([name, value]) => (
               <div key={name} className="contents">
-                <dt className="text-xs leading-5 font-semibold text-fg">{name}</dt>
-                <dd className="font-mono text-2xs leading-5 text-muted [overflow-wrap:anywhere]">{value}</dd>
+                <dt className="text-base leading-6 font-semibold text-fg">{name}</dt>
+                <dd className="text-xs font-semibold leading-5 text-muted [overflow-wrap:anywhere]">{value}</dd>
               </div>
             ))}
           </dl>

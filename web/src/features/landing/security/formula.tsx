@@ -347,7 +347,7 @@ function ConceptCard({ concept, pinned }: { concept: ConceptId; pinned: boolean 
     <>
       <div className="flex items-baseline gap-2">
         <span className="text-xs leading-5 font-semibold text-fg">{words.name}</span>
-        <span className={cn("label-caps text-sm leading-4 text-muted", cjkTracking)}>{t("Term")}</span>
+        <span className={cn("uppercase tracking-label text-sm leading-4 text-muted", cjkTracking)}>{t("Term")}</span>
         {pinned && <Pin className="ml-auto size-3 shrink-0 self-center text-muted" />}
       </div>
       <p className="text-xs leading-5 text-fg">{words.says}</p>
@@ -374,7 +374,7 @@ function Tools({ block, legendId, showLegend, onLegend }: { block: BlockId; lege
     <div data-formula-tools="" className="flex flex-wrap items-center gap-x-3 gap-y-1.5 font-sans">
       {roles && (
         <>
-          <span id={labelId} className={cn("label-caps text-sm leading-4 text-faint", cjkTracking)}>
+          <span id={labelId} className={cn("uppercase tracking-label text-sm leading-4 text-faint", cjkTracking)}>
             {t("View as")}
           </span>
           <div
@@ -400,7 +400,7 @@ function Tools({ block, legendId, showLegend, onLegend }: { block: BlockId; lege
                 tabIndex={view === party ? 0 : -1}
                 onClick={() => choose(party)}
                 className={cn(
-                  "-ml-px h-6 border border-border-strong px-2 font-mono text-sm leading-none text-muted first:ml-0 hover:text-fg focus-visible:relative focus-visible:-outline-offset-2",
+                  "-ml-px h-6 border border-border-strong px-2 text-sm leading-none text-muted first:ml-0 hover:text-fg focus-visible:relative focus-visible:-outline-offset-2",
                   view === party && "border-fg bg-fg text-bg hover:text-bg",
                 )}
               >
@@ -420,7 +420,7 @@ function Tools({ block, legendId, showLegend, onLegend }: { block: BlockId; lege
         aria-expanded={showLegend}
         aria-controls={legendId}
         onClick={onLegend}
-        className={cn("ml-auto label-caps text-sm leading-4 text-faint underline decoration-dotted underline-offset-[3px] hover:text-fg", cjkTracking)}
+        className={cn("ml-auto uppercase tracking-label text-sm leading-4 text-faint underline decoration-dotted underline-offset-[3px] hover:text-fg", cjkTracking)}
       >
         {t("Legend")}
       </button>
@@ -484,7 +484,7 @@ export function Formula({ block }: { block: BlockId }) {
         role="group"
         aria-label={t("Formula")}
         aria-describedby={HINT_ID}
-        className="flex flex-col gap-1 font-mono text-2xs leading-4 text-fg [overflow-wrap:anywhere]"
+        className="flex flex-col gap-1 font-mono text-xs font-semibold leading-4 text-fg [overflow-wrap:anywhere]"
         onKeyDown={move}
         onFocus={(e) => {
           const occ = (e.target as HTMLElement).dataset.occ;
@@ -622,7 +622,7 @@ function TermCard({ occ, pinned }: { occ: string; pinned: boolean }) {
     <>
       <div className="flex items-baseline gap-2">
         <code className={cn("font-mono text-xs decoration-1 underline-offset-[3px]", KIND_CLASS[def.kind])}>{o.text}</code>
-        <span className={cn("label-caps text-sm leading-4 text-muted", cjkTracking)}>{kinds[def.kind]}</span>
+        <span className={cn("uppercase tracking-label text-sm leading-4 text-muted", cjkTracking)}>{kinds[def.kind]}</span>
         {pinned && <Pin className="ml-auto size-3 shrink-0 self-center text-muted" />}
       </div>
       <p className="text-xs leading-5 text-fg">{say(def.says, lang)}</p>

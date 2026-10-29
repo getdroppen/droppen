@@ -62,7 +62,7 @@ export const cjkTracking = "[&:lang(ja)]:tracking-normal [&:lang(zh)]:tracking-n
 export function SectionHead({ label, title, lead, className }: { label?: string; title: ReactNode; lead?: ReactNode; className?: string }) {
   return (
     <div className={cn("flex flex-col gap-3 px-6 pt-10 pb-8 max-md:px-4 max-md:pt-8 max-md:pb-6", className)}>
-      {label && <CapsLabel className={cjkTracking}>{label}</CapsLabel>}
+      {label && <CapsLabel face="sans" className={cn(cjkTracking, "text-xs font-semibold")}>{label}</CapsLabel>}
       <h2 className="text-3xl leading-tight font-normal tracking-tight text-balance text-fg [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-md:text-2xl">{title}</h2>
       {lead && <p className="max-w-[38em] text-sm leading-6 text-muted">{lead}</p>}
     </div>
@@ -252,7 +252,7 @@ export function FooterLine() {
   return (
     <Section>
       <div className="flex flex-wrap items-center gap-x-6 gap-y-3 px-6 py-5 max-md:px-4">
-        <span className="flex items-center gap-2 font-mono text-2xs text-faint">
+        <span className="flex items-center gap-2 text-xs text-faint">
           <BrandMark size={12} />© 2026 Droppen · www.droppen.app
           {/* The app, where the hub keeps it on a host of its own (my.droppen.app): a link there from these pages. */}
           {appOrigin() && (
@@ -264,22 +264,22 @@ export function FooterLine() {
             </>
           )}
         </span>
-        <a {...publicLink(DOWNLOAD_PATH)} data-testid="footer-download" className="font-mono text-2xs text-muted underline-offset-4 hover:text-fg hover:underline">
+        <a {...publicLink(DOWNLOAD_PATH)} data-testid="footer-download" className="text-xs text-muted underline-offset-4 hover:text-fg hover:underline">
           {t("Download Droppen")}
         </a>
-        <PageLink path={PRICING_PATH} label={t("Pricing")} testId="footer-pricing" className="font-mono text-2xs text-muted underline-offset-4 hover:text-fg hover:underline" />
-        <PageLink path={PRIVACY_PATH} label={t("Privacy notice")} testId="footer-privacy" className="font-mono text-2xs text-muted underline-offset-4 hover:text-fg hover:underline" />
-        <PageLink path={SECURITY_PATH} label={t("Security")} testId="footer-security" className="font-mono text-2xs text-muted underline-offset-4 hover:text-fg hover:underline" />
-        <PageLink path={TERMS_PATH} label={t("Terms of Service")} testId="footer-terms" className="font-mono text-2xs text-muted underline-offset-4 hover:text-fg hover:underline" />
+        <PageLink path={PRICING_PATH} label={t("Pricing")} testId="footer-pricing" className="text-xs text-muted underline-offset-4 hover:text-fg hover:underline" />
+        <PageLink path={PRIVACY_PATH} label={t("Privacy notice")} testId="footer-privacy" className="text-xs text-muted underline-offset-4 hover:text-fg hover:underline" />
+        <PageLink path={SECURITY_PATH} label={t("Security")} testId="footer-security" className="text-xs text-muted underline-offset-4 hover:text-fg hover:underline" />
+        <PageLink path={TERMS_PATH} label={t("Terms of Service")} testId="footer-terms" className="text-xs text-muted underline-offset-4 hover:text-fg hover:underline" />
         {/* Who to write to: the terms' contact part, its addresses for the account and for security. */}
-        <a {...publicLink(`${TERMS_PATH}#contact`)} data-testid="footer-contact" className="font-mono text-2xs text-muted underline-offset-4 hover:text-fg hover:underline">
+        <a {...publicLink(`${TERMS_PATH}#contact`)} data-testid="footer-contact" className="text-xs text-muted underline-offset-4 hover:text-fg hover:underline">
           {t("Contact")}
         </a>
-        <a href={SOURCE_URL} data-testid="footer-source" className="font-mono text-2xs text-muted underline-offset-4 hover:text-fg hover:underline">
+        <a href={SOURCE_URL} data-testid="footer-source" className="text-xs text-muted underline-offset-4 hover:text-fg hover:underline">
           {t("Client source code")}
         </a>
         {/* Every build writes it (web/build/third-party-notices.mjs): the licences of the packages in this page. */}
-        <a href={NOTICES_PATH} data-testid="footer-licences" className="font-mono text-2xs text-muted underline-offset-4 hover:text-fg hover:underline">
+        <a href={NOTICES_PATH} data-testid="footer-licences" className="text-xs text-muted underline-offset-4 hover:text-fg hover:underline">
           {t("Third-party notices")}
         </a>
       </div>

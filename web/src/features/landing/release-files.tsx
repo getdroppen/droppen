@@ -92,7 +92,7 @@ export function LinuxTarballs({
   const files = platforms.map((platform) => release.files[platform]).filter((file): file is ReleaseFile => !!file);
   if (files.length === 0) return null;
   return (
-    <p data-testid={testId} className="font-mono text-2xs leading-5 text-faint">
+    <p data-testid={testId} className="font-mono text-xs font-semibold leading-5 text-faint">
       {sayUnbuilt && cpu && !built && <>{t("Droppen's Linux builds are for x86_64 and aarch64.")} </>}
       {t("Or download it:")}{" "}
       {files.map((file, i) => (

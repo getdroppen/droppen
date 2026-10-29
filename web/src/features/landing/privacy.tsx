@@ -97,14 +97,14 @@ export default function PrivacyPage({ signedIn = false }: { signedIn?: boolean }
       <div className="md:px-8">
         <main className="mx-auto max-w-[1360px] md:border-x md:border-border">
           <div className="flex flex-col gap-5 px-10 pt-16 pb-10 max-lg:pt-12 max-md:px-4 max-md:pt-10 max-md:pb-8">
-            <CapsLabel className={cjkTracking}>{t("Privacy notice")}</CapsLabel>
+            <CapsLabel face="sans" className={cn(cjkTracking, "text-xs font-semibold")}>{t("Privacy notice")}</CapsLabel>
             <h1 className="max-w-[18em] text-5xl leading-display font-normal tracking-tight text-balance text-fg [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-md:text-3xl">
               {t("What we keep, and what we can't see.")}
             </h1>
             <p className="max-w-[40em] text-base leading-6 text-muted max-md:text-sm max-md:leading-6">
               {t("Droppen is end-to-end encrypted, so there is little to tell: here is all of it.")}
             </p>
-            <p className="font-mono text-2xs text-faint">{t("Last updated {{date}}", { date: PRIVACY_UPDATED })}</p>
+            <p className="text-xs text-faint">{t("Last updated {{date}}", { date: PRIVACY_UPDATED })}</p>
           </div>
           <Section id="waitlist">
             <SectionHead label={t("Waitlist")} title={t("If you joined the waitlist")} />
@@ -241,7 +241,7 @@ export default function PrivacyPage({ signedIn = false }: { signedIn?: boolean }
           </Section>
           <Section id="contact">
             <div className="flex flex-col gap-3 px-6 py-8 max-md:px-4">
-              <CapsLabel className={cjkTracking}>{t("Contact")}</CapsLabel>
+              <CapsLabel face="sans" className={cn(cjkTracking, "text-xs font-semibold")}>{t("Contact")}</CapsLabel>
               <p className="text-sm leading-6 text-muted">
                 {t("Questions, or a request about your data:")} {mail}
               </p>
