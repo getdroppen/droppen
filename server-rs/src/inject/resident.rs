@@ -4436,12 +4436,11 @@ impl Driver {
         turn.ladder = Some(0);
         turn.run.state.lock().expect("run state poisoned").interrupted = true;
         let seq = turn.seq;
-        let request = serde_json::json!({
-            "type": "control_request",
-            "request_id": format!("int-{}", new_uuid()),
-            "request": {"subtype": "interrupt"},
-        })
-        .to_string();
+        let request = StdinLine::ControlRequest {
+            request_id: format!("int-{}", new_uuid()),
+            request: ControlRequest::Interrupt,
+        }
+        .line();
         self.recorder.lifecycle(Stage::Interrupt, Some("asking claude to end the turn"));
         self.recorder.stdin(&request);
         if let Err(error) = self.link.send_line(&request).await {
@@ -4476,12 +4475,11 @@ impl Driver {
             tracing::info!(session = %self.id, task = %task_id, "cannot stop a task before claude says it is listening");
             return;
         }
-        let request = serde_json::json!({
-            "type": "control_request",
-            "request_id": format!("stop-{}", new_uuid()),
-            "request": {"subtype": "stop_task", "task_id": task_id},
-        })
-        .to_string();
+        let request = StdinLine::ControlRequest {
+            request_id: format!("stop-{}", new_uuid()),
+            request: ControlRequest::StopTask { task_id },
+        }
+        .line();
         self.recorder
             .lifecycle(Stage::Interrupt, Some("asking claude to stop one background task"));
         self.recorder.stdin(&request);
@@ -6028,11 +6026,57 @@ async fn newest_write(dir: &Path) -> Option<SystemTime> {
 /// chance to write a message claude parses differently depending on how it got
 /// there.
 fn user_line(text: &str) -> String {
-    serde_json::json!({
-        "type": "user",
-        "message": {"role": "user", "content": [{"type": "text", "text": text}]},
-    })
-    .to_string()
+    StdinLine::User {
+        message: UserMessage {
+            role: "user",
+            content: [TextBlock { kind: "text", text }],
+        },
+    }
+    .line()
+}
+
+/// A line of stream-json this server writes to claude's stdin, tagged `type`.
+/// The answers to claude's own requests are [`questions::control_response`].
+#[derive(serde::Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum StdinLine<'a> {
+    /// A prompt.
+    User { message: UserMessage<'a> },
+    /// A request of the CLI's own protocol.
+    ControlRequest { request_id: String, request: ControlRequest<'a> },
+}
+
+/// A user message with one text block.
+#[derive(serde::Serialize)]
+struct UserMessage<'a> {
+    role: &'static str,
+    content: [TextBlock<'a>; 1],
+}
+
+/// One text block of a message.
+#[derive(serde::Serialize)]
+struct TextBlock<'a> {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    text: &'a str,
+}
+
+/// What a `control_request` asks, tagged `subtype`.
+#[derive(serde::Serialize)]
+#[serde(tag = "subtype", rename_all = "snake_case")]
+enum ControlRequest<'a> {
+    /// End the turn in flight.
+    Interrupt,
+    /// Stop one background task.
+    StopTask { task_id: &'a str },
+}
+
+impl StdinLine<'_> {
+    /// The line, without its newline.
+    fn line(&self) -> String {
+        // Strings only: always encodes.
+        serde_json::to_string(self).unwrap_or_default()
+    }
 }
 
 /// A `Running` injection for one turn of `id`.

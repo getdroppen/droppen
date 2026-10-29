@@ -55,7 +55,7 @@ use std::sync::Arc;
 
 use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value};
 
 use droppen_instance::db::Db;
 use droppen_http::openapi_ext::Nullable;
@@ -463,22 +463,54 @@ pub fn allow(questions: &Value, answer: &Answer) -> Value {
             format!("{}; {response}", note.trim())
         };
     }
-    let mut input = Map::new();
-    input.insert("questions".to_string(), questions.clone());
-    input.insert("answers".to_string(), json!(answer.answers));
-    if !notes.is_empty() {
-        let annotations: Map<String, Value> = notes
-            .iter()
-            .map(|(question, notes)| (question.clone(), json!({ "notes": notes })))
-            .collect();
-        input.insert("annotations".to_string(), Value::Object(annotations));
+    let updated_input = AnsweredInput {
+        questions,
+        answers: &answer.answers,
+        annotations: notes.iter().map(|(question, notes)| (question.as_str(), Note { notes })).collect(),
+        response: response.filter(|_| answer.answers.is_empty()),
+    };
+    PermissionResult::Allow { updated_input }.to_value()
+}
+
+/// A permission response, as claude reads it: tagged `behavior`.
+#[derive(Serialize)]
+#[serde(tag = "behavior", rename_all = "lowercase")]
+enum PermissionResult<'a> {
+    /// Go ahead, with the tool's input as the user filled it in.
+    Allow {
+        #[serde(rename = "updatedInput")]
+        updated_input: AnsweredInput<'a>,
+    },
+    /// Do not, and tell the agent why.
+    Deny { message: &'a str },
+}
+
+impl PermissionResult<'_> {
+    /// As the answer is stored and written: a [`Value`], which a row written by
+    /// another version is too.
+    fn to_value(&self) -> Value {
+        // Strings, the CLI's own questions and maps of strings: always encode.
+        serde_json::to_value(self).unwrap_or_default()
     }
-    if answer.answers.is_empty() {
-        if let Some(response) = response {
-            input.insert("response".to_string(), json!(response));
-        }
-    }
-    json!({ "behavior": "allow", "updatedInput": input })
+}
+
+/// `AskUserQuestion`'s input with the user's answer in it: the questions as the
+/// CLI asked them, then the answers, the notes and a typed response, each
+/// left out when there is none.
+#[derive(Serialize)]
+struct AnsweredInput<'a> {
+    questions: &'a Value,
+    answers: &'a BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    annotations: BTreeMap<&'a str, Note<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response: Option<&'a str>,
+}
+
+/// The note beside one answer.
+#[derive(Serialize)]
+struct Note<'a> {
+    notes: &'a str,
 }
 
 /// The last question, in the order they were asked, that has an answer.
@@ -492,26 +524,47 @@ fn last_answered(questions: &Value, answer: &Answer) -> Option<String> {
 
 /// The permission response that refuses, with what the agent is told.
 pub fn deny(message: &str) -> Value {
-    json!({ "behavior": "deny", "message": message })
+    PermissionResult::Deny { message }.to_value()
 }
 
 /// One line of stdin answering `request_id`.
 pub fn control_response(request_id: &str, response: &Value) -> String {
-    json!({
-        "type": "control_response",
-        "response": { "subtype": "success", "request_id": request_id, "response": response },
-    })
-    .to_string()
+    ControlResponse {
+        response: ControlResult::Success { request_id, response },
+    }
+    .line()
 }
 
 /// One line of stdin refusing a control request this server does not handle,
 /// so the CLI is not left waiting on an answer that will never come.
 pub fn control_error(request_id: &str, error: &str) -> String {
-    json!({
-        "type": "control_response",
-        "response": { "subtype": "error", "request_id": request_id, "error": error },
-    })
-    .to_string()
+    ControlResponse {
+        response: ControlResult::Error { request_id, error },
+    }
+    .line()
+}
+
+/// A `control_response` line: claude's own request answered or refused.
+#[derive(Serialize)]
+#[serde(tag = "type", rename = "control_response")]
+struct ControlResponse<'a> {
+    response: ControlResult<'a>,
+}
+
+/// What a `control_response` says, tagged `subtype`.
+#[derive(Serialize)]
+#[serde(tag = "subtype", rename_all = "lowercase")]
+enum ControlResult<'a> {
+    Success { request_id: &'a str, response: &'a Value },
+    Error { request_id: &'a str, error: &'a str },
+}
+
+impl ControlResponse<'_> {
+    /// The line, without its newline.
+    fn line(&self) -> String {
+        // Strings and an answer that was a `Value` already: always encode.
+        serde_json::to_string(self).unwrap_or_default()
+    }
 }
 
 /// What a refused permission prompt tells the agent.
@@ -673,6 +726,7 @@ pub use droppen_base::time::now_ms;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     const SESSION: &str = "11111111-1111-4111-8111-111111111111";
 
