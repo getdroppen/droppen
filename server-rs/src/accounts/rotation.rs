@@ -51,6 +51,7 @@ use super::limits::SCOPE_ALL;
 use super::quota::readings::UsageLogin;
 use super::quota::{QuotaCache, QuotaWindow};
 use super::rest::iso_ms;
+use super::login::{Login, Logins};
 use super::store::{Account, AccountProvider, AccountsStore};
 use droppen_instance::db::Db;
 use droppen_http::openapi_ext::Nullable;
@@ -80,17 +81,10 @@ pub const AHEAD_EVERY_MS: i64 = 30 * 60 * 1000;
 pub const HAND_BINDING_GRACE_MS: i64 = 30 * 60 * 1000;
 
 /// The model families a limit can be scoped to, as [`super::limits`] names them.
-const FAMILIES: [&str; 4] = ["fable", "opus", "sonnet", "haiku"];
+/// Which family a model is, is its CLI's to say ([`Login::model_family`]).
+pub const FAMILIES: [&str; 4] = ["fable", "opus", "sonnet", "haiku"];
 
 // ------------------------------------------------------------ the rules
-
-/// The family a model id or alias belongs to: `claude-fable-5-1`, `fable`,
-/// `opus[1m]` and `claude-opus-4-1` all say which. `None` when the model is
-/// unknown or names no family — a custom gateway model, the CLI's default.
-pub fn model_family(model: Option<&str>) -> Option<&'static str> {
-    let lower = model?.to_ascii_lowercase();
-    FAMILIES.into_iter().find(|family| lower.contains(family))
-}
 
 /// Whether a limit of this class moves a session at all.
 ///
@@ -107,9 +101,10 @@ pub fn rotates_on(class: LimitClass) -> bool {
 /// `from` is the account the process was billing, when it names one this store
 /// still holds: a session on the machine's own login is `None`, and never
 /// moves. It has to be in the pool — unless `rebound`: somebody has already
-/// bound the session to another account by hand, and the move is theirs.
-pub fn triggers(class: LimitClass, from: Option<&Account>, rebound: bool) -> bool {
-    rotates_on(class) && from.is_some_and(|account| account.provider == AccountProvider::Claude && (account.rotation || rebound))
+/// bound the session to another account by hand, and the move is theirs —
+/// and its CLI's sessions have to move at all ([`Login::rotates`]).
+pub fn triggers(logins: &Logins, class: LimitClass, from: Option<&Account>, rebound: bool) -> bool {
+    rotates_on(class) && from.is_some_and(|account| logins.of(account.provider).rotates() && (account.rotation || rebound))
 }
 
 /// Whether a rest of `scope` stops an account taking a session whose model is
@@ -580,10 +575,11 @@ const START_FAMILIES: [Option<&str>; 5] = [None, Some("fable"), Some("opus"), So
 
 /// What [`start_choice`] reads, gathered once — everything but the model — so
 /// one answer can ask it about several models.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct StartInputs {
-    /// The CLI.
-    pub provider: AccountProvider,
+    /// The CLI's login, which says whether its sessions move and which family
+    /// a model is.
+    pub login: Arc<dyn Login>,
     /// Its configured default account.
     pub default: Option<String>,
     /// Its local login.
@@ -599,14 +595,10 @@ pub struct StartInputs {
 impl StartInputs {
     /// Everything the rule reads for `provider`, from the store and the readings.
     pub async fn gather(accounts: &AccountsStore, quota: &QuotaCache, provider: AccountProvider) -> StartInputs {
-        let logins = accounts.local_logins();
         StartInputs {
-            provider,
+            login: accounts.logins().of(provider).clone(),
             default: accounts.default_account_id(provider).await,
-            local: match provider {
-                AccountProvider::Claude => logins.claude,
-                AccountProvider::Codex => logins.codex,
-            },
+            local: accounts.local_logins().of(provider),
             pool: pool_of(accounts, quota, provider).await,
             ahead: ahead_threshold_from_env(),
             now_ms: super::rest::now_ms(),
@@ -615,16 +607,12 @@ impl StartInputs {
 
     /// Where a start asking for `model` (none: the CLI's own default) runs.
     pub fn place(&self, model: Option<&str>) -> AccountStart {
-        let family = match self.provider {
-            AccountProvider::Claude => model_family(model),
-            // Codex models name no claude family; every rest stands in the way.
-            AccountProvider::Codex => None,
-        };
-        self.place_family(family)
+        // A model that names no family meets every rest.
+        self.place_family(self.login.model_family(model))
     }
 
     fn place_family(&self, family: Option<&str>) -> AccountStart {
-        start_choice(self.provider, self.default.as_deref(), &self.local, &self.pool, family, self.ahead, self.now_ms)
+        start_choice(self.login.as_ref(), self.default.as_deref(), &self.local, &self.pool, family, self.ahead, self.now_ms)
     }
 
     /// Whether the model a start asks for can change the login it runs on:
@@ -727,7 +715,7 @@ impl StartInputs {
 /// 5. Nothing free in the pool: the local login after all, whose refusal says
 ///    what to do, rather than an account that would only refuse as well.
 pub fn start_choice(
-    provider: AccountProvider,
+    login: &dyn Login,
     default: Option<&str>,
     local: &super::local_login::LocalLogin,
     pool: &[PoolAccount],
@@ -742,9 +730,10 @@ pub fn start_choice(
         placed: true,
     };
     if let Some(default) = default {
-        let chosen = match provider {
-            AccountProvider::Claude => default_for_new_session(default, pool, family, ahead, now_ms),
-            AccountProvider::Codex => default.to_string(),
+        let chosen = if login.rotates() {
+            default_for_new_session(default, pool, family, ahead, now_ms)
+        } else {
+            default.to_string()
         };
         let reason = if chosen == default { StartReason::Default } else { StartReason::Rotated };
         return on(Some(chosen), reason);
@@ -769,37 +758,27 @@ pub async fn start_for(accounts: &AccountsStore, quota: &QuotaCache, provider: A
     StartInputs::gather(accounts, quota, provider).await.place(model)
 }
 
-/// [`default_for_new_session`] against the store: the account a new claude
-/// session asking for `model` should start on, given the configured default
-/// and `DROPPEN_ROTATE_AHEAD_PERCENT`.
-pub async fn default_for(accounts: &AccountsStore, quota: &QuotaCache, default_id: &str, model: Option<&str>) -> String {
-    let pool = pool(accounts, quota).await;
-    default_for_new_session(default_id, &pool, model_family(model), ahead_threshold_from_env(), super::rest::now_ms())
-}
-
-/// Every claude account, as the choice sees it: pool membership, active rests,
-/// and the latest reading of each.
-pub async fn pool(accounts: &AccountsStore, quota: &QuotaCache) -> Vec<PoolAccount> {
-    pool_of(accounts, quota, AccountProvider::Claude).await
-}
-
-/// [`pool`] for either CLI. A codex account carries no windows: its readings
-/// are another protocol's, so it ranks by the order the accounts are listed.
+/// Every account of the CLI `provider` names, as the choice sees it: pool
+/// membership, active rests, and the latest reading of each. An account of a
+/// CLI that keeps no reading per login carries no windows
+/// ([`Login::reads_per_login`]), so it ranks by the order the accounts are listed.
 pub async fn pool_of(accounts: &AccountsStore, quota: &QuotaCache, provider: AccountProvider) -> Vec<PoolAccount> {
+    let reads = accounts.logins().of(provider).reads_per_login();
     accounts
         .list()
         .await
         .into_iter()
         .filter(|account| account.provider == provider)
         .map(|account| PoolAccount {
-            windows: match provider {
-                AccountProvider::Claude => quota
+            windows: if reads {
+                quota
                     .cached(&UsageLogin::Account(account.id.clone()))
                     .windows
                     .iter()
                     .map(Window::from_quota)
-                    .collect(),
-                AccountProvider::Codex => Vec::new(),
+                    .collect()
+            } else {
+                Vec::new()
             },
             resting: account.rest.iter().map(|rest| rest.scope.clone()).collect(),
             in_pool: account.rotation,
@@ -1237,41 +1216,31 @@ mod tests {
         }
     }
 
-    #[test]
-    fn model_ids_and_aliases_name_their_family() {
-        assert_eq!(model_family(Some("claude-fable-5-1")), Some("fable"));
-        assert_eq!(model_family(Some("fable")), Some("fable"));
-        assert_eq!(model_family(Some("opus[1m]")), Some("opus"));
-        assert_eq!(model_family(Some("claude-sonnet-4-5-20250929")), Some("sonnet"));
-        assert_eq!(model_family(Some("Claude-Haiku-4-5")), Some("haiku"));
-        assert_eq!(model_family(Some("glm-4.6")), None, "a gateway's model is nobody's family");
-        assert_eq!(model_family(None), None);
-    }
-
     /// The trigger, class by class: the long windows and the dead credential
     /// move a session, a request-rate blip and an unclassified failure do not.
     #[test]
     fn only_limits_that_outlast_a_respawn_trigger_a_rotation() {
+        let logins = crate::app::logins();
         let pooled = public(AccountProvider::Claude, AccountKind::OauthToken, true);
         for class in [LimitClass::Session, LimitClass::Weekly, LimitClass::Credit, LimitClass::Auth] {
-            assert!(triggers(class, Some(&pooled), false), "{class:?} moves the session");
+            assert!(triggers(&logins, class, Some(&pooled), false), "{class:?} moves the session");
         }
         for class in [LimitClass::Rate, LimitClass::Other] {
-            assert!(!triggers(class, Some(&pooled), false), "{class:?} does not");
-            assert!(!triggers(class, Some(&pooled), true), "{class:?} does not, even rebound by hand");
+            assert!(!triggers(&logins, class, Some(&pooled), false), "{class:?} does not");
+            assert!(!triggers(&logins, class, Some(&pooled), true), "{class:?} does not, even rebound by hand");
         }
-        assert!(!triggers(LimitClass::Session, None, true), "a session on no account never moves");
+        assert!(!triggers(&logins, LimitClass::Session, None, true), "a session on no account never moves");
         let outside = public(AccountProvider::Claude, AccountKind::Env, false);
         assert!(
-            !triggers(LimitClass::Session, Some(&outside), false),
+            !triggers(&logins, LimitClass::Session, Some(&outside), false),
             "nor one on an account outside the pool"
         );
         assert!(
-            triggers(LimitClass::Session, Some(&outside), true),
+            triggers(&logins, LimitClass::Session, Some(&outside), true),
             "…unless somebody already bound the session elsewhere, and the move is theirs"
         );
         let codex = public(AccountProvider::Codex, AccountKind::Env, true);
-        assert!(!triggers(LimitClass::Session, Some(&codex), true), "nor a codex one, ever");
+        assert!(!triggers(&logins, LimitClass::Session, Some(&codex), true), "nor a codex one, ever");
     }
 
     #[test]
@@ -1427,6 +1396,15 @@ mod tests {
         );
     }
 
+    /// [`default_for_new_session`] against the store: the account a new claude
+    /// session asking for `model` should start on, given the configured default
+    /// and `DROPPEN_ROTATE_AHEAD_PERCENT`.
+    async fn default_for(accounts: &AccountsStore, quota: &QuotaCache, default_id: &str, model: Option<&str>) -> String {
+        let pool = pool_of(accounts, quota, AccountProvider::Claude).await;
+        let family = accounts.logins().claude.model_family(model);
+        default_for_new_session(default_id, &pool, family, ahead_threshold_from_env(), super::super::rest::now_ms())
+    }
+
     /// The same rule against a real store: the default resting under the
     /// five-hour window sends a new session to the next pool account, a
     /// family rest only a session of that family, and nothing else moves.
@@ -1485,6 +1463,51 @@ mod tests {
         assert_eq!(default_for(&store, &quota, &default.id, None).await, other.id);
     }
 
+    /// A pool is ranked by readings only for a CLI whose accounts keep one
+    /// each: a claude account's windows come from its reading, and a codex
+    /// account carries none, whatever is filed under its id.
+    #[tokio::test]
+    async fn only_a_cli_that_reads_each_login_ranks_its_pool_by_readings() {
+        use crate::accounts::store::Credential;
+        use droppen_base::env_block::parse_env_block;
+        use droppen_instance::paths::Paths;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let paths = Arc::new(Paths::new(dir.path().to_path_buf()));
+        let store = AccountsStore::new(paths.clone(), crate::app::logins());
+        let quota = Arc::new(QuotaCache::new(paths, crate::app::logins()));
+        let claude = store
+            .create("Claude", AccountProvider::Claude, Credential::Oauth("sk-ant-oat01-test-pool".to_string()))
+            .await
+            .expect("account");
+        let codex = store
+            .create(
+                "Codex",
+                AccountProvider::Codex,
+                Credential::Env(parse_env_block("OPENAI_API_KEY=not-a-real-openai-key").expect("block")),
+            )
+            .await
+            .expect("account");
+        let window = QuotaWindow {
+            label: "5h".to_string(),
+            used_percent: 40.0,
+            remaining_percent: 60.0,
+            resets_at: Nullable(None),
+            window_minutes: 300,
+            updated_at: droppen_http::openapi_ext::Optional(None),
+        };
+        quota.ingest_session(UsageLogin::Account(claude.id.clone()), vec![window.clone()]);
+        quota.ingest_session(UsageLogin::Account(codex.id.clone()), vec![window]);
+
+        let windows = |pool: Vec<PoolAccount>| pool.iter().map(|account| account.windows.len()).collect::<Vec<_>>();
+        assert_eq!(windows(pool_of(&store, &quota, AccountProvider::Claude).await), [1]);
+        assert_eq!(
+            windows(pool_of(&store, &quota, AccountProvider::Codex).await),
+            [0],
+            "a codex account ranks by the order it is listed in"
+        );
+    }
+
     fn local(state: super::super::local_login::LocalLoginState, is_default: bool) -> super::super::local_login::LocalLogin {
         super::super::local_login::LocalLogin {
             state,
@@ -1501,7 +1524,7 @@ mod tests {
     fn a_start_nobody_pointed_takes_a_pool_account_only_for_a_signed_out_local_login() {
         use super::super::local_login::LocalLoginState::{SignedIn, SignedOut, Unknown};
         let start = |provider, default: Option<&str>, login, pool: &[PoolAccount], family| {
-            let picked = start_choice(provider, default, &login, pool, family, None, NOW);
+            let picked = start_choice(crate::app::logins().of(provider).as_ref(), default, &login, pool, family, None, NOW);
             (picked.account_id.0, picked.reason)
         };
         let gateway = PoolAccount {
@@ -1580,7 +1603,7 @@ mod tests {
         let d_models = ids(&["opus[1m]", "fable", "sonnet"]);
         let e_models = ids(&["fable", "opus", "sonnet", "haiku"]);
         let inputs = StartInputs {
-            provider: AccountProvider::Claude,
+            login: crate::app::logins().claude.clone(),
             default: Some("d".into()),
             local: local(SignedIn, false),
             pool: vec![
@@ -1659,10 +1682,40 @@ mod tests {
         };
         assert!(!plain.model_matters());
         let codex = StartInputs {
-            provider: AccountProvider::Codex,
+            login: crate::app::logins().codex.clone(),
             ..inputs.clone()
         };
         assert!(!codex.model_matters(), "codex models name no family");
+    }
+
+    /// A model names a family only by its own CLI's naming: `opus` is a claude
+    /// family, so a claude start for it may stand in on an account resting
+    /// under `fable`, while for codex it names none, and every rest stands in
+    /// the way of it.
+    #[test]
+    fn a_family_is_named_by_the_start_s_own_cli() {
+        use super::super::local_login::LocalLoginState::SignedOut;
+        let codex = StartInputs {
+            login: crate::app::logins().codex.clone(),
+            default: None,
+            local: local(SignedOut, false),
+            pool: vec![PoolAccount {
+                resting: vec!["fable".into()],
+                ..account("x", Vec::new())
+            }],
+            ahead: None,
+            now_ms: NOW,
+        };
+        let claude = StartInputs {
+            login: crate::app::logins().claude.clone(),
+            ..codex.clone()
+        };
+        assert_eq!(claude.place(Some("opus")).account_id.0.as_deref(), Some("x"), "a fable rest is not an opus one");
+        assert_eq!(
+            codex.place(Some("opus")).account_id.0,
+            None,
+            "a codex model that reads like claude's names no family: the rest stands in the way"
+        );
     }
 
     /// The same against a real store, both CLIs: a local login signed out by a

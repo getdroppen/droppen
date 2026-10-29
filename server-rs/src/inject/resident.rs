@@ -70,6 +70,8 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 
 use crate::accounts::limits::{self, Verdict};
+use crate::accounts::login::claude::ClaudeCodeLogin;
+use crate::accounts::login::Login;
 use crate::accounts::quota::claude::RateLimitWindows;
 use crate::accounts::rest::{self, Observation};
 use crate::accounts::rotation::{self, AheadGuards, AheadPlan, Plan, Wait};
@@ -3266,7 +3268,7 @@ impl Driver {
         let from = accounts.get(&from_id).await;
         let bound = accounts.session_account_id_for(&self.id, AccountProvider::Claude).await;
         let rebound = bound.as_deref().is_some_and(|bound| bound != from_id);
-        if !rotation::triggers(verdict.class, from.as_ref(), rebound) {
+        if !rotation::triggers(accounts.logins(), verdict.class, from.as_ref(), rebound) {
             return false;
         }
         let Some(from) = from else { return false };
@@ -3314,8 +3316,8 @@ impl Driver {
     async fn decide(&self, live: &Fingerprint, from: &str, switches: u8) -> Choice {
         let accounts = &self.registry.accounts;
         let bound = accounts.session_account_id_for(&self.id, AccountProvider::Claude).await;
-        let pool = rotation::pool(accounts, &self.registry.quota).await;
-        let family = rotation::model_family(live.resolved.as_deref().or(live.model.as_deref()));
+        let pool = rotation::pool_of(accounts, &self.registry.quota, AccountProvider::Claude).await;
+        let family = ClaudeCodeLogin.model_family(live.resolved.as_deref().or(live.model.as_deref()));
         match rotation::choose(&pool, from, bound.as_deref(), family, switches, rest::now_ms()) {
             Plan::Switch(id) => Choice::Switch(
                 pool.iter()
@@ -3627,7 +3629,7 @@ impl Driver {
         if self.queue.iter().any(|pending| pending.fingerprint.account != live.account) {
             return false;
         }
-        let family = rotation::model_family(live.resolved.as_deref().or(live.model.as_deref()));
+        let family = ClaudeCodeLogin.model_family(live.resolved.as_deref().or(live.model.as_deref()));
         let now = rest::now_ms();
         // The cheap question first, at every quiet point: this account's own
         // reading. The binding, the log, the background work on disk and the
@@ -3656,7 +3658,7 @@ impl Driver {
             last_ahead_ms: log.last_ahead_ms(&self.id),
             bound_by_hand_ms: log.bound_by_hand_ms(&self.id),
         };
-        let pool = rotation::pool(&accounts, &self.registry.quota).await;
+        let pool = rotation::pool_of(&accounts, &self.registry.quota, AccountProvider::Claude).await;
         match rotation::plan_ahead(&pool, &from_id, family, threshold, guards, now) {
             AheadPlan::Stay => false,
             AheadPlan::Defer(near, why) => {

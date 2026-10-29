@@ -285,6 +285,21 @@ impl Login for CodexLogin {
     ) -> Option<BoxFuture<'a, Option<Value>>> {
         Some(Box::pin(app_server_call(program, cwd, env, method, timeout)))
     }
+
+    /// A codex session stays on the account it started on.
+    fn rotates(&self) -> bool {
+        false
+    }
+
+    /// Codex's models name no family the limits know.
+    fn model_family(&self, _model: Option<&str>) -> Option<&'static str> {
+        None
+    }
+
+    /// Codex keeps one reading, of the user's own login ([`Login::local_quota`]).
+    fn reads_per_login(&self) -> bool {
+        false
+    }
 }
 
 #[cfg(test)]
@@ -293,6 +308,15 @@ mod tests {
     use droppen_base::env_block::parse_env_block;
     use crate::accounts::verify::StubCli;
     use droppen_base::process_env::set_child_path;
+
+    /// A codex session stays on its account, whatever its model, and its
+    /// accounts carry no reading each.
+    #[test]
+    fn codex_sessions_never_rotate_and_name_no_family() {
+        assert!(!CodexLogin.rotates());
+        assert_eq!(CodexLogin.model_family(Some("opus")), None, "not even a model that looks like claude's");
+        assert!(!CodexLogin.reads_per_login());
+    }
 
     /// Each marker is enough on its own, and words about codex itself, the
     /// network or its arguments count for nothing.

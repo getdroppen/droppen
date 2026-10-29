@@ -279,6 +279,18 @@ mod tests {
             None
         }
 
+        fn rotates(&self) -> bool {
+            false
+        }
+
+        fn model_family(&self, _model: Option<&str>) -> Option<&'static str> {
+            None
+        }
+
+        fn reads_per_login(&self) -> bool {
+            false
+        }
+
         fn probe<'a>(
             &'a self,
             _roots: &'a crate::accounts::quota::ProbeRoots,
