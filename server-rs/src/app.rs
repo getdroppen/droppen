@@ -652,7 +652,10 @@ pub fn register_providers(providers: &mut ProviderRegistry, registry: &Arc<Injec
 /// Every CLI's login, as the accounts are handed them: the one place that
 /// names each provider's own implementation.
 pub fn logins() -> Logins {
-    Logins::new(Arc::new(ClaudeCodeLogin), Arc::new(CodexLogin))
+    Logins {
+        claude: Arc::new(ClaudeCodeLogin),
+        codex: Arc::new(CodexLogin),
+    }
 }
 
 /// The drivers' alerts, sent by [`crate::push`]: Web Push to every subscribed

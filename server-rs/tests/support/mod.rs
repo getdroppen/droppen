@@ -260,7 +260,7 @@ pub fn fake_bin(prefix: &str, scripts: &[(&str, &str)]) -> &'static Path {
     dir
 }
 
-fn ensure_fake_clis_on_path() -> &'static Path {
+pub fn ensure_fake_clis_on_path() -> &'static Path {
     fake_bin("remote-hand-fake-bin-", &[("claude", FAKE_CLAUDE), ("codex", FAKE_CODEX)])
 }
 
@@ -647,7 +647,7 @@ impl Spawn {
         Some(Spawn { argv, env })
     }
 
-    fn read(dir: &Path) -> Option<Spawn> {
+    pub fn read(dir: &Path) -> Option<Spawn> {
         // The marker is written last, so both dumps are whole by the time it exists.
         if !dir.join("spawn.done").exists() {
             return None;

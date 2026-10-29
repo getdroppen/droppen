@@ -517,8 +517,20 @@ impl StoredAccount {
     }
 
     /// What this account puts into a spawn of its CLI.
+    ///
+    /// The launch says which CLI it is for, and a spawn refuses one that is not
+    /// its own by that word ([`AccountLaunch::provider`]). So it is checked
+    /// against the account's own CLI here rather than taken from the login: a
+    /// login filed under the wrong CLI must not get to vouch for itself.
     fn launch(&self, logins: &Logins) -> Result<AccountLaunch, AccountError> {
-        logins.of(self.provider).spawn_env(self.kind, &self.secret, &self.env)
+        let launch = logins.of(self.provider).spawn_env(self.kind, &self.secret, &self.env)?;
+        if launch.provider != self.provider {
+            return Err(AccountError::ProviderMismatch {
+                account: self.provider,
+                wanted: launch.provider,
+            });
+        }
+        Ok(launch)
     }
 
     /// Every value this account could see echoed back at it by a CLI.
@@ -1508,6 +1520,34 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = Arc::new(Paths::new(dir.path().to_path_buf()));
         (dir, AccountsStore::new(paths, crate::app::logins()))
+    }
+
+    /// A login filed under the other CLI cannot launch an account: the launch
+    /// it builds names its own CLI, and that is checked against the account's,
+    /// which is the word every spawn's provider check then relies on.
+    #[tokio::test]
+    async fn a_login_filed_under_the_other_cli_cannot_launch_an_account() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let paths = Arc::new(Paths::new(dir.path().to_path_buf()));
+        let logins = crate::app::logins();
+        let swapped = Logins {
+            claude: logins.codex.clone(),
+            codex: logins.claude.clone(),
+        };
+        let store = AccountsStore::new(paths, swapped);
+        // A block both CLIs could be started with, so storing it succeeds.
+        let account = store.create("Swapped", AccountProvider::Claude, env("OPENAI_API_KEY=k")).await.expect("stored");
+        let error = store.account_env(&account.id).await.expect_err("refused");
+        assert!(
+            matches!(
+                error,
+                AccountError::ProviderMismatch {
+                    account: AccountProvider::Claude,
+                    wanted: AccountProvider::Codex
+                }
+            ),
+            "{error:?}"
+        );
     }
 
     /// Choosing the local login is a setting of its own, not the absence of a

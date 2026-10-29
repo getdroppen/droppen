@@ -30,19 +30,20 @@ pub trait Login: Send + Sync {
 /// Every CLI's [`Login`], one per [`AccountProvider`].
 ///
 /// A field per provider rather than a map: the providers are a closed set, so
-/// every account's CLI has a login and finding it cannot fail.
+/// every account's CLI has a login and finding it cannot fail. The fields are
+/// named where the entry fills them in, so which login serves which CLI is
+/// written down there rather than implied by an argument's position; the store
+/// still refuses a launch that claims another CLI than its account's
+/// ([`super::store::AccountsStore::account_env`]).
 #[derive(Clone)]
 pub struct Logins {
-    claude: Arc<dyn Login>,
-    codex: Arc<dyn Login>,
+    /// Claude Code's login.
+    pub claude: Arc<dyn Login>,
+    /// Codex's login.
+    pub codex: Arc<dyn Login>,
 }
 
 impl Logins {
-    /// The logins the entry built, one per provider.
-    pub fn new(claude: Arc<dyn Login>, codex: Arc<dyn Login>) -> Self {
-        Self { claude, codex }
-    }
-
     /// The login of the CLI `provider` names.
     pub fn of(&self, provider: AccountProvider) -> &dyn Login {
         match provider {
@@ -58,6 +59,19 @@ mod tests {
     use super::codex::{CodexLogin, CODEX_DEFAULT_BASE_URL};
     use super::*;
     use crate::accounts::store::parse_env_block;
+
+    /// The entry files each login under the CLI it is for: a launch says which
+    /// CLI it starts, and every spawn trusts that word only after the store has
+    /// checked it against the account's own.
+    #[test]
+    fn each_cli_s_login_is_filed_under_that_cli() {
+        let logins = crate::app::logins();
+        let block = parse_env_block("OPENAI_API_KEY=k").expect("block");
+        for provider in [AccountProvider::Claude, AccountProvider::Codex] {
+            let launch = logins.of(provider).spawn_env(AccountKind::Env, "", &block).expect("launch");
+            assert_eq!(launch.provider, provider, "{} is served by its own login", provider.label());
+        }
+    }
 
     /// What each shape actually puts into a child process.
     #[test]
