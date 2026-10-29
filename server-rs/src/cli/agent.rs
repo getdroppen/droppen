@@ -4,14 +4,14 @@
 //! terminal, the server `agent run` starts, and `agent unenroll`, which also
 //! clears the aggregator's key and the link's settings. Enrolling and the
 //! status report work on the agent's own files, so they are
-//! [`crate::agent::cli`]'s.
+//! [`droppen_agent::cli`]'s.
 
 use rh_proto::identity::EnrollCode;
 
 use clap::{Args, Subcommand};
 
-use crate::agent::cli::{enroll_cli, print_status};
-use crate::agent::{hub, state, AgentFiles};
+use droppen_agent::cli::{enroll_cli, print_status};
+use droppen_agent::{hub, state, AgentFiles};
 use droppen_instance::paths::Paths;
 
 /// The rest of `agent --help`, after the options clap lists.

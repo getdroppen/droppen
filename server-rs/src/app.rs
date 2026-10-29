@@ -474,7 +474,7 @@ impl RemoteHandApp {
             // instance: one that was never enrolled starts nothing here. From
             // now on the local settings can enroll it, and start or stop the
             // link, without a restart.
-            cloud.attach(crate::agent::link::LinkEnv {
+            cloud.attach(droppen_agent::link::LinkEnv {
                 addr,
                 credential: auth_for_link.internal_credential().to_string(),
                 streams: Arc::new(crate::cloud::SessionStreams::new(
@@ -687,10 +687,10 @@ impl crate::inject::Alerts for PushAlerts {
 /// The link's push channels, as [`crate::push`] runs them: the VAPID renewal
 /// in the instance's state database, and the account alerts to Web Push and
 /// Bark. `notify_account_change` spawns its sending and returns, as
-/// [`crate::agent::link::LinkHost::account_change`] asks.
+/// [`droppen_agent::link::LinkHost::account_change`] asks.
 pub(crate) struct PushLinkHost;
 
-impl crate::agent::link::LinkHost for PushLinkHost {
+impl droppen_agent::link::LinkHost for PushLinkHost {
     fn renew_push_keys<'a>(&'a self, paths: &'a Paths) -> futures_util::future::BoxFuture<'a, std::io::Result<usize>> {
         Box::pin(crate::push::store::renew_vapid(paths))
     }
@@ -742,22 +742,24 @@ impl crate::cloud::LiveSessions for crate::drive::Drive {
         self.providers.driver_states()
     }
 
-    fn drafts(&self, source: Source, id: &str) -> Option<Box<dyn crate::agent::streams::source::DraftFeed>> {
+    fn drafts(&self, source: Source, id: &str) -> Option<Box<dyn droppen_agent::streams::source::DraftFeed>> {
         self.providers
             .draft_watch(source, id)
-            .map(|rx| Box::new(rx) as Box<dyn crate::agent::streams::source::DraftFeed>)
+            .map(|rx| Box::new(DraftWatch(rx)) as Box<dyn droppen_agent::streams::source::DraftFeed>)
     }
 }
 
 /// A claude session's draft, as its driver publishes it.
-impl crate::agent::streams::source::DraftFeed for tokio::sync::watch::Receiver<crate::inject::drafts::Draft> {
+struct DraftWatch(tokio::sync::watch::Receiver<crate::inject::drafts::Draft>);
+
+impl droppen_agent::streams::source::DraftFeed for DraftWatch {
     fn changed(&mut self) -> futures_util::future::BoxFuture<'_, bool> {
-        Box::pin(async move { tokio::sync::watch::Receiver::changed(self).await.is_ok() })
+        Box::pin(async move { tokio::sync::watch::Receiver::changed(&mut self.0).await.is_ok() })
     }
 
-    fn seen(&mut self) -> crate::agent::streams::source::Draft {
-        let draft = self.borrow_and_update().clone();
-        crate::agent::streams::source::Draft {
+    fn seen(&mut self) -> droppen_agent::streams::source::Draft {
+        let draft = self.0.borrow_and_update().clone();
+        droppen_agent::streams::source::Draft {
             v: draft.v,
             body: serde_json::to_value(&draft).unwrap_or(serde_json::Value::Null),
         }
@@ -774,7 +776,7 @@ mod tests {
     /// (`agent::link::tests::the_push_keys_are_renewed_again_after_a_failure_without_a_restart`).
     #[tokio::test]
     async fn the_push_link_host_renews_the_vapid_keys_and_fails_when_refused() {
-        use crate::agent::link::LinkHost;
+        use droppen_agent::link::LinkHost;
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths::for_instance(dir.path().to_path_buf(), "agentlink");
         let old = crate::push::store::vapid_public(&paths).await.unwrap();

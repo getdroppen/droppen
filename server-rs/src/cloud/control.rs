@@ -7,7 +7,7 @@
 //!   ([`AgentFiles::begin_enrollment`]) in this process and starts the link at once,
 //!   which then follows the chain until a device adds the machine;
 //! - the link stops itself when this machine is removed from the account
-//!   ([`crate::agent::link`]), and [`Control::status`] says so;
+//!   ([`droppen_agent::link`]), and [`Control::status`] says so;
 //! - [`Control::unenroll`] stops it and deletes everything under `agent/`.
 //!
 //! Nothing here ever runs on a request path that is not about the link: the
@@ -18,11 +18,11 @@ use std::time::Duration;
 
 use rh_proto::identity::{EnrollCode, MachineIdentity};
 
-use crate::agent::enroll::BeginError;
-use crate::agent::link::{Health, LinkEnv, Running};
-use crate::agent::state::AgentState;
-use crate::agent::status::{AgentStatus, Standing};
-use crate::agent::AgentFiles;
+use droppen_agent::enroll::BeginError;
+use droppen_agent::link::{Health, LinkEnv, Running};
+use droppen_agent::state::AgentState;
+use droppen_agent::status::{AgentStatus, Standing};
+use droppen_agent::AgentFiles;
 use droppen_instance::paths::Paths;
 
 /// Why [`Control`] could not do what it was asked.
@@ -48,11 +48,11 @@ impl std::fmt::Display for ControlError {
     }
 }
 
-impl From<crate::agent::hub::DeleteError> for ControlError {
-    fn from(error: crate::agent::hub::DeleteError) -> Self {
+impl From<droppen_agent::hub::DeleteError> for ControlError {
+    fn from(error: droppen_agent::hub::DeleteError) -> Self {
         match error {
-            crate::agent::hub::DeleteError::Failed(m) => ControlError::Failed(m),
-            crate::agent::hub::DeleteError::Unreachable(m) => ControlError::Unreachable(m),
+            droppen_agent::hub::DeleteError::Failed(m) => ControlError::Failed(m),
+            droppen_agent::hub::DeleteError::Unreachable(m) => ControlError::Unreachable(m),
         }
     }
 }
@@ -97,7 +97,7 @@ impl Control {
     /// What a link calls once it renewed its identity key: this control
     /// restarts it ([`Control::restart`]) on a task of its own — the link
     /// that asks is the one stopped.
-    fn restart_hook(&self) -> crate::agent::rotation::Restart {
+    fn restart_hook(&self) -> droppen_agent::rotation::Restart {
         let me = self.me.clone();
         Arc::new(move || {
             let Some(control) = me.upgrade() else { return };
@@ -134,7 +134,7 @@ impl Control {
         droppen_aggregator::sweep_deleted(&self.paths);
         // Adding this device again under a new identity, cut short by a
         // crash: finished before anything starts.
-        if let Err(error) = crate::agent::rotation::finish_re_enroll(&self.paths) {
+        if let Err(error) = droppen_agent::rotation::finish_re_enroll(&self.paths) {
             tracing::error!(%error, "cannot finish adding this device again under a new identity");
         }
         // A dispute statement the hub has not taken yet: delivered again
@@ -145,7 +145,7 @@ impl Control {
 
     /// Whether this server can run a link at all.
     pub fn available(&self) -> Result<&LinkEnv, ControlError> {
-        if !crate::agent::link::enabled() {
+        if !droppen_agent::link::enabled() {
             return Err(ControlError::Unavailable("the hub link is turned off here (DROPPEN_AGENT_LINK=0)".into()));
         }
         self.env
@@ -187,9 +187,9 @@ impl Control {
         }
         // An install still enrolled at the legacy apex hub moves to the
         // canonical `api.` origin once, if the hub takes its sign-in
-        // ([`crate::agent::migrate_hub`]).
-        crate::agent::migrate_hub(&self.paths).await.map_err(ControlError::Failed)?;
-        let started = crate::agent::link::start(&self.paths, env, self.live.clone(), self.restart_hook()).map_err(ControlError::Failed)?;
+        // ([`droppen_agent::migrate_hub`]).
+        droppen_agent::migrate_hub(&self.paths).await.map_err(ControlError::Failed)?;
+        let started = droppen_agent::link::start(&self.paths, env, self.live.clone(), self.restart_hook()).map_err(ControlError::Failed)?;
         *self.running.lock().expect("running") = Some(started);
         Ok(())
     }
@@ -252,7 +252,7 @@ impl Control {
     /// This instance's machine identity (made on first use, kept in
     /// `agent/machine-key.json`): what a device checks an enrollment against.
     pub fn identity(&self) -> Result<MachineIdentity, String> {
-        crate::agent::load_or_create(&self.paths).map(|(identity, _)| identity)
+        droppen_agent::load_or_create(&self.paths).map(|(identity, _)| identity)
     }
 
     /// Enroll in this process: present `code` at `hub_url`, prove it, save the
@@ -271,7 +271,7 @@ impl Control {
         self.stop_locked().await;
         // A seed a renewal retired (or one archived) never signs up again:
         // a fresh one then (`docs/host-identity-rotation.md` §3.8).
-        let begun = match crate::agent::rotation::identity_for_enrolling(&self.paths) {
+        let begun = match droppen_agent::rotation::identity_for_enrolling(&self.paths) {
             Ok(identity) => self.files.begin_enrollment(&identity, code, hub_url)
                 .await
                 .map_err(ControlError::Begin),
@@ -300,7 +300,7 @@ impl Control {
         };
         let this = self.clone();
         tokio::spawn(async move {
-            tokio::time::sleep(crate::agent::enroll::CONFIRM_TIMEOUT + Duration::from_secs(5)).await;
+            tokio::time::sleep(droppen_agent::enroll::CONFIRM_TIMEOUT + Duration::from_secs(5)).await;
             this.expire_enrollment(generation).await;
         });
         Ok((account, machine))
@@ -361,7 +361,7 @@ impl Control {
             Err(error) => return Err(ControlError::Failed(error)),
         };
         let identity = self.identity().map_err(ControlError::Failed)?;
-        tokio::time::timeout(Duration::from_secs(30), crate::agent::hub::delete_streams(&st, &identity))
+        tokio::time::timeout(Duration::from_secs(30), droppen_agent::hub::delete_streams(&st, &identity))
             .await
             .map_err(|_| ControlError::Unreachable("the hub did not answer in time".into()))?
             .map_err(ControlError::from)
@@ -379,19 +379,19 @@ impl Control {
             return Ok(false);
         }
         self.stop_locked().await;
-        crate::agent::rotation::re_enroll_fresh(&self.paths, droppen_base::time::now_ms_u64()).map_err(ControlError::Failed)?;
+        droppen_agent::rotation::re_enroll_fresh(&self.paths, droppen_base::time::now_ms_u64()).map_err(ControlError::Failed)?;
         Ok(true)
     }
 
     /// "Add this device again with a new identity": for a device left holding
     /// only a retired identity key (`link.rotation.state` `foreign`), stop
     /// the link, archive the seed, forget the enrollment and make a fresh
-    /// seed ([`crate::agent::rotation::re_enroll_fresh`]). The new identity; the
+    /// seed ([`droppen_agent::rotation::re_enroll_fresh`]). The new identity; the
     /// instance is then not enrolled, waiting for a registration code.
     pub async fn re_enroll_fresh(&self) -> Result<MachineIdentity, ControlError> {
         let _gate = self.gate.lock().await;
         self.stop_locked().await;
-        crate::agent::rotation::re_enroll_fresh(&self.paths, droppen_base::time::now_ms_u64()).map_err(ControlError::Failed)
+        droppen_agent::rotation::re_enroll_fresh(&self.paths, droppen_base::time::now_ms_u64()).map_err(ControlError::Failed)
     }
 
     /// Stop the link and delete everything under `agent/`: the state, the
@@ -412,7 +412,7 @@ fn waiting_for_a_device(st: &AgentState) -> bool {
     !st.enrolled() && !st.removed()
 }
 
-/// What the agent's tests of a running link reach (`agent::control_tests`):
+/// What the tests of a running link reach (`cloud::control_tests`):
 /// the link this control runs, the restart hook it hands the link, and the
 /// expiry of an enrollment's code.
 #[cfg(test)]
@@ -421,7 +421,7 @@ impl Control {
         self.running.lock().unwrap()
     }
 
-    pub(crate) fn link_restart_hook(&self) -> crate::agent::rotation::Restart {
+    pub(crate) fn link_restart_hook(&self) -> droppen_agent::rotation::Restart {
         self.restart_hook()
     }
 

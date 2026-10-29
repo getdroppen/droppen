@@ -1,5 +1,5 @@
 //! The `agent` command line as this binary parses and runs it (`cli::agent`),
-//! against this instance's agent files (`crate::agent`).
+//! against this instance's agent files (`droppen_agent`).
 
 use droppen_instance::paths::Paths;
 use rh_proto::identity::EnrollCode;
@@ -7,7 +7,8 @@ use rh_proto::identity::EnrollCode;
 use super::super::agent::tests::parse;
 use super::super::agent::*;
 use super::args;
-use crate::agent::{hub, load_or_create, state, AgentFiles};
+use droppen_agent::testing::AgentFilesTesting;
+use droppen_agent::{hub, load_or_create, state, AgentFiles};
 
 fn code() -> String {
     EnrollCode {
@@ -115,4 +116,28 @@ fn unenroll_on_the_command_line_leaves_nothing_of_droppen() {
     assert!(!paths.instance_dir().join("agent").exists());
     assert!(!droppen_aggregator::dir(&paths).exists(), "the aggregator's key is gone");
     assert!(!cloud.exists(), "cloud.json is gone");
+}
+
+#[tokio::test]
+async fn enrolling_needs_a_local_account_and_authentication_on() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let paths = Paths::for_instance(dir.path().to_path_buf(), "enrolltest");
+    let refusal = refuse_enroll(&paths, None).await.expect("no account: refused");
+    assert!(refusal.contains("has no local account"), "{refusal}");
+    assert!(refusal.contains("user add <name> --instance enrolltest"), "says how: {refusal}");
+    assert!(refusal.contains("setup-code --instance enrolltest"), "and where the code is: {refusal}");
+    assert!(refusal.contains(&droppen_auth::setup::code_file(&paths).display().to_string()));
+    assert!(!AgentFiles::of(&paths).machine_key().exists(), "refused before a machine key is made");
+
+    let users = droppen_auth::users::UsersStore::new(&paths);
+    users.add_app("app", "correct horse battery").await.expect("the desktop app's account");
+    assert!(
+        refuse_enroll(&paths, None).await.is_some(),
+        "the desktop app's own account is not a user account"
+    );
+    users.add("ada", "correct horse battery").await.expect("account");
+    assert_eq!(refuse_enroll(&paths, None).await, None, "with an account it goes ahead");
+    assert_eq!(refuse_enroll(&paths, Some(true)).await, None);
+    let off = refuse_enroll(&paths, Some(false)).await.expect("authentication off: refused");
+    assert!(off.contains("auth.enabled = false"), "{off}");
 }

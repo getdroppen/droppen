@@ -32,6 +32,10 @@ mod state;
 /// router as the server builds it.
 #[cfg(test)]
 mod auth_routes;
+/// The bridge's route allow-list (`droppen_agent::bridge::ROUTES`) against
+/// every route the server registers.
+#[cfg(test)]
+mod bridge_routes;
 
 /// The plugin routes (`droppen_plugins::routes`) and the plugin assets
 /// (`droppen_plugins::serve`), through the router as the server builds it.

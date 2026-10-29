@@ -182,7 +182,7 @@ After an install, an uninstall or a switch, open (non-cloud) clients get a
 A request that came in over the end-to-end bridge (identity `cloud:<device>`)
 gets none of it:
 
-- **the bridge's allowlist** (`server-rs/src/agent/bridge.rs`) drops every
+- **the bridge's allowlist** (`server-rs/crates/droppen-agent/src/bridge.rs`) drops every
   `/api/plugins…` route, so droppen.app can neither list, switch, install nor
   read or write a document;
 - **the handlers** refuse a `cloud:` identity as well (`404 plugin_not_found`),

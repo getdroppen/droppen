@@ -50,6 +50,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 | `crates/droppen-plugins/` | 插件宿主：本实例装了哪些插件、哪些开着（配置 > 实例自己的决定 > 关）、它们的代码从哪里供给（`serve`，带实例级的能力密钥）、每个插件自己的文档存储（`store`）、安装包的校验（`install`）、`/api/plugins*`（`routes`）和 `plugin` 命令行（`cli`）；经 Droppen 进来的设备看不到任何插件 |
 | `crates/droppen-sessions/` | 会话本身：各处共用的会话词汇与线上数据形状、会话列表、未读与已读标记（`attention`，`…/seen` 路由在 `attention::routes`）、标题、置顶、归档、本实例的会话归属（`owned_sessions`）、`index.db`（`index`）、transcript 加载器（`loader`）和 token 用量统计（`stats`）；每个 CLI 的 transcript 都经 `Transcripts` 端口读，由服务端 `sessions/` 里的读取器实现 |
 | `crates/droppen-aggregator/` | 设备角色：这台电脑以它跑 AI 的那个身份，作为账号的设备去控制其他设备。在 hub 上签到、取管理员封给它的其他主机的机器密钥（`controller`、`hub`、`keys`），按 `access` 选定的范围跟随它们的索引、状态和最新会话（`copies`），存进 `aggregator/copies.db`（`store`），并在内存里交给本机页面（`live`）；另有给 `docs/hub-api/` 契约检查用的流量记录（`traffic`）。它需要的入网状态经 `Enrollment` 端口由 agent 填上 |
+| `crates/droppen-agent/` | 机器角色：这台电脑在账号里的身份（种子与机器密钥，`seed`、`fingerprint`）、用设备发的注册码加入账号（`enroll`）、到 hub 的连接与设备的端到端握手（`link`、`hub`）、账号链的状态与争议声明（`state`、`dispute`）、中继（`relays`）与直连路径（`direct`）、通道到本机回环 API 的桥接（`bridge`）、加密的流（`streams`）和身份密钥轮换（`rotation`）；`agent enroll` / `agent status` 的执行部分（`cli`）。推送密钥、账号变化提醒和要复制的会话经 `LinkHost`、`StreamSource` 端口由入口填上 |
 | `crates/droppen-pty/` | 活过服务端重启的 pty：shim 进程（本二进制的隐藏子命令 `pty-shim`）、它的帧格式、环形缓冲与屏幕模型、留在磁盘上的边车文件，以及服务端这一侧的连接 |
 
 ## 四个「填坑」模块

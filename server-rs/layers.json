@@ -169,9 +169,7 @@
         {
           "name": "droppen-agent",
           "about": "The machine role: link, chain, relays, direct path, streams, rotation; owns the StreamSource and LinkHost ports.",
-          "modules": [
-            "agent"
-          ],
+          "modules": [],
           "mayUse": [
             "droppen-aggregator"
           ]
@@ -305,8 +303,7 @@
             "shutdown",
             "export",
             "main",
-            "cli",
-            "agent::cli"
+            "cli"
           ],
           "mayUse": "*"
         }

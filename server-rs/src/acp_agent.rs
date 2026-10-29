@@ -1000,7 +1000,7 @@ mod tests {
     /// does, and a device reaches that only when it manages this computer.
     #[tokio::test]
     async fn a_check_error_is_only_on_the_checks_own_route() {
-        use crate::agent::bridge::{refusal, Standing, View};
+        use droppen_agent::bridge::{refusal, Standing, View};
         use tower_service::Service;
 
         async fn get(router: &mut gotcha::axum::Router, path: &str, headers: &[(&str, &str)]) -> (u16, serde_json::Value) {
