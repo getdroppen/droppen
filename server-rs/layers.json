@@ -331,15 +331,14 @@
       "droppen-provider-codex",
       "droppen-provider-acp"
     ],
-    "count": 32
+    "count": 27
   },
   "allowed": [
     {
       "why": "sessions, attention and stats read each provider's transcripts and roots themselves. They go through the Transcripts port sessions owns, which each provider implements.",
       "edges": [
         "sessions -> claude_roots",
-        "sessions -> sessions::claude",
-        "sessions -> sessions::codex_claims"
+        "sessions -> sessions::claude"
       ]
     },
     {

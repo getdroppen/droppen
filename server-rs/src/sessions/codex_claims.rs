@@ -87,9 +87,9 @@ fn named(raw: &str) -> Option<String> {
 
 /// Record that this instance made `id`, for the other instances to read.
 ///
-/// Called wherever [`super::owned_sessions::record`] records a codex thread —
-/// from inside it, in fact, so the two cannot drift: a registry entry with no
-/// claim is a thread a sibling still lists, which is the bug this exists to fix.
+/// Called by [`super::codex::CodexSessions::record_owned`] right after the
+/// registry entry, so the two cannot drift: a registry entry with no claim is a
+/// thread a sibling still lists, which is the bug this exists to fix.
 ///
 /// Best effort. Every failure is logged and none is propagated, because the run
 /// that just succeeded must not be reported as failed over bookkeeping a sibling
@@ -320,7 +320,7 @@ pub async fn migrate(paths: &Paths) -> usize {
 /// deleting one would un-hide its thread here. And the absence checked is the
 /// rollout *file*, not the thread's visibility — `~/.codex` hides archived and
 /// subagent threads from every cheap lookup, which is why
-/// [`super::owned_sessions::prune`] leaves codex registry entries alone, but an
+/// [`super::claude::ClaudeCodeSessions::prune_owned`] leaves codex registry entries alone, but an
 /// archived thread still has its file. No file is the one form of "gone" that is
 /// not a lie. A missing sessions directory says nothing at all, so nothing is
 /// dropped.
@@ -501,7 +501,7 @@ mod tests {
 
         // Simulate a registry written before claims existed: the entry is there,
         // the claim is not.
-        super::super::owned_sessions::record(&a, Source::Codex, "old-thread")
+        super::super::codex::CodexSessions.record_owned(&a, "old-thread")
             .await
             .expect("record");
         std::fs::remove_file(a.codex_claims_dir().join("old-thread")).expect("unclaim");
@@ -511,7 +511,7 @@ mod tests {
         assert_eq!(migrate(&a).await, 0, "and the second boot writes nothing");
 
         // A conflict is reported by leaving the other instance's claim alone.
-        super::super::owned_sessions::record(&b, Source::Codex, "old-thread")
+        super::super::codex::CodexSessions.record_owned(&b, "old-thread")
             .await
             .expect("record");
         assert_eq!(migrate(&b).await, 0);

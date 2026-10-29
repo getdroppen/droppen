@@ -296,7 +296,7 @@ impl RemoteHandApp {
                 // The registry is the one piece of ownership state that cannot
                 // be rebuilt from the filesystem, so the owner tidies it here
                 // rather than on every list refresh.
-                crate::sessions::owned_sessions::prune(&paths).await;
+                crate::sessions::claude::ClaudeCodeSessions.prune_owned(&paths).await;
                 // A codex thread this instance made before claims existed has a
                 // registry entry and no claim, which is exactly a thread the
                 // sibling instances still list. Mirroring the registry out here

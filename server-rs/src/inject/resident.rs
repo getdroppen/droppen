@@ -2922,7 +2922,7 @@ impl Driver {
         // The page following the old id would otherwise show a think in
         // flight for ever; the one following the new id sees the rest of it.
         self.draft.retarget(self.registry.draft_channel(id));
-        if let Err(error) = crate::sessions::owned_sessions::record(&self.registry.paths, Source::Claude, id).await {
+        if let Err(error) = crate::sessions::claude::ClaudeCodeSessions.record_owned(&self.registry.paths, id).await {
             tracing::error!(session = %id, %error, "cannot record the adopted claude session as ours; it will list as external");
         }
         #[cfg(test)]

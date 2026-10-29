@@ -63,10 +63,18 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use serde::Deserialize;
+
 use super::Source;
 use droppen_instance::db::Db;
 use droppen_instance::identity::ServerId;
-use droppen_instance::paths::{ClaudeRoot, Paths};
+use droppen_instance::paths::Paths;
+
+/// The sources a row may name, by wire name: the CLIs whose sessions this
+/// instance records. A row naming any other is dropped ([`stored`]); an ACP
+/// session is owned by where its transcript is kept, not by a row here (see
+/// `crate::sessions::acp_transcript`).
+const RECORDED: [&str; 2] = ["claude", "codex"];
 
 /// The ids one instance claims, per CLI, each with the server that made it.
 ///
@@ -75,8 +83,7 @@ use droppen_instance::paths::{ClaudeRoot, Paths};
 /// tomorrow need not be.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct OwnedSessions {
-    claude: BTreeMap<String, ServerId>,
-    codex: BTreeMap<String, ServerId>,
+    by_source: BTreeMap<Source, BTreeMap<String, ServerId>>,
 }
 
 impl OwnedSessions {
@@ -95,7 +102,7 @@ impl OwnedSessions {
 
     /// Whether anything is recorded at all, so a caller can skip a pass.
     pub fn is_empty(&self) -> bool {
-        self.claude.is_empty() && self.codex.is_empty()
+        self.by_source.values().all(BTreeMap::is_empty)
     }
 
     /// Every id recorded for one CLI, for a pass that has to visit them all.
@@ -104,16 +111,8 @@ impl OwnedSessions {
     }
 
     fn set(&self, source: Source) -> &BTreeMap<String, ServerId> {
-        match source {
-            Source::Claude => &self.claude,
-            Source::Codex => &self.codex,
-            // Owned by where its transcript is kept, not by a record here; see
-            // `crate::sessions::acp_transcript`.
-            Source::Acp => {
-                static NONE: BTreeMap<String, ServerId> = BTreeMap::new();
-                &NONE
-            }
-        }
+        static NONE: BTreeMap<String, ServerId> = BTreeMap::new();
+        self.by_source.get(&source).unwrap_or(&NONE)
     }
 }
 
@@ -174,11 +173,13 @@ fn stored(db: &Db, local: &ServerId) -> OwnedSessions {
             // server, not its ownership: the local name is the same answer the
             // `NULL` case gives, and it is the one this server can stand behind.
             let server = ServerId::new(&server).unwrap_or_else(|| local.clone());
-            match source.as_str() {
-                "claude" => owned.claude.insert(id, server),
-                "codex" => owned.codex.insert(id, server),
-                _ => continue,
+            if !RECORDED.contains(&source.as_str()) {
+                continue;
+            }
+            let Ok(source) = Source::deserialize(serde::de::IntoDeserializer::<serde::de::value::Error>::into_deserializer(source.as_str())) else {
+                continue;
             };
+            owned.by_source.entry(source).or_default().insert(id, server);
         }
         Ok(owned)
     })
@@ -193,11 +194,13 @@ fn stored(db: &Db, local: &ServerId) -> OwnedSessions {
 /// the spawn, so it is recorded before it — a crash mid-launch leaves an entry
 /// for a session with no transcript, which nothing lists and nothing resumes.
 ///
-/// A codex thread is claimed in the shared `<data>/codex-claims` at the same
-/// time, and the claim is written *here* rather than at the call sites so the
-/// two cannot drift: a registry entry with no claim is exactly a thread the
-/// sibling instances go on listing. See [`super::codex_claims`].
-pub async fn record(paths: &Paths, source: Source, id: &str) -> std::io::Result<()> {
+/// Private to sessions: each CLI records through its own reader.
+/// Claude Code calls [`super::claude::ClaudeCodeSessions::record_owned`].
+/// Codex calls [`super::codex::CodexSessions::record_owned`], which also writes
+/// the thread's claim in the shared `<data>/codex-claims`. Without the claim the
+/// sibling instances go on listing the thread, and that one call is how the
+/// two never come apart.
+pub(super) async fn record(paths: &Paths, source: Source, id: &str) -> std::io::Result<()> {
     // The server is stamped here rather than at the three call sites — a new
     // session, a new codex thread, the id claude answers an adoption with —
     // because all three are this process recording its own work, and there is
@@ -208,7 +211,7 @@ pub async fn record(paths: &Paths, source: Source, id: &str) -> std::io::Result<
     // `INSERT OR IGNORE` is the read-modify-write this used to do by hand, minus
     // the window between the read and the write — and recording an id twice is
     // the ordinary case on a codex re-handshake, not an error.
-    let outcome = store(paths)
+    store(paths)
         .write(|tx| {
             tx.execute(
                 "INSERT OR IGNORE INTO owned_sessions (source, session_id, server_id) VALUES (?1, ?2, ?3)",
@@ -216,76 +219,20 @@ pub async fn record(paths: &Paths, source: Source, id: &str) -> std::io::Result<
             )
         })
         .map(|_| ())
-        .map_err(std::io::Error::other);
-    // After the registry: the claim is a separate, best-effort copy of what was
-    // just recorded, and it is re-attempted on a second `record` of the same id
-    // precisely so a claim that failed to land once is not permanent.
-    if source == Source::Codex {
-        super::codex_claims::claim(paths, id).await;
-    }
-    outcome
+        .map_err(std::io::Error::other)
 }
 
 /// Drop `id` from the registry, because the session no longer needs to be in it.
 ///
-/// The caller is [`prune`]: an entry for a transcript that is in neither root
-/// stands for a session nothing lists or resumes. (Adoption in earlier builds
-/// was the other caller, retiring the entry once the transcript had been copied
-/// into this server's own root, where the directory answers instead.)
+/// The caller is Claude Code's prune at boot
+/// (`crate::sessions::claude::ClaudeCodeSessions::prune_owned`): an entry for a
+/// transcript that is in neither root stands for a session nothing lists or
+/// resumes.
 pub async fn forget(paths: &Paths, source: Source, id: &str) -> std::io::Result<()> {
     store(paths)
         .write(|tx| tx.execute("DELETE FROM owned_sessions WHERE source = ?1 AND session_id = ?2", (source.as_str(), id)))
         .map(|_| ())
         .map_err(std::io::Error::other)
-}
-
-/// Drop claude entries whose transcript is not in any root this server reads.
-///
-/// Two things put one there. A claude id is recorded *before* the spawn, so a
-/// launch that failed leaves an entry for a session that never existed; and a
-/// transcript the user deletes leaves one for a session that no longer does.
-/// Neither is harmful — nothing lists an id with no file — but the registry is
-/// the one piece of ownership state that cannot be rebuilt from the filesystem,
-/// so it should not accumulate forever either.
-///
-/// **Boot only, and under the instance lock**, rather than on every load: the
-/// check is a directory scan per id, and the read path runs once per list
-/// refresh for every attached client. There is a narrow race — a server
-/// restarted in the moment between a claude id being recorded and its CLI
-/// writing the first line would prune it — and the cost of losing it is that the
-/// session lists as external: still readable here, and still the user's own to
-/// continue with `claude --resume`, but no longer sendable from this server.
-///
-/// Codex entries are deliberately left alone. `~/.codex` hides archived and
-/// subagent threads from every lookup cheap enough to run here, so "not found"
-/// there does not mean "gone", and disowning a thread the user merely archived
-/// would be worse than keeping a stale line.
-pub async fn prune(paths: &Paths) {
-    let owned = read(paths).await;
-    if owned.claude.is_empty() {
-        return;
-    }
-    let mut stale: Vec<String> = Vec::new();
-    for id in owned.claude.keys() {
-        let found = super::claude::find_in_root(paths, ClaudeRoot::Managed, id).await.is_some()
-            || super::claude::find_in_root(paths, ClaudeRoot::Local, id).await.is_some();
-        if !found {
-            stale.push(id.clone());
-        }
-    }
-    if stale.is_empty() {
-        return;
-    }
-    for id in &stale {
-        if let Err(error) = forget(paths, Source::Claude, id).await {
-            tracing::warn!(session = %id, %error, "cannot drop a stale ownership entry");
-            return;
-        }
-    }
-    tracing::info!(
-        dropped = stale.len(),
-        "dropped ownership entries for claude sessions that no longer exist"
-    );
 }
 
 #[cfg(test)]
@@ -306,9 +253,9 @@ mod tests {
     async fn each_cli_is_recorded_separately_and_recording_twice_is_a_no_op() {
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = paths(&dir);
-        record(&paths, Source::Codex, "thread-a").await.expect("record");
+        super::super::codex::CodexSessions.record_owned(&paths, "thread-a").await.expect("record");
         record(&paths, Source::Claude, "session-a").await.expect("record");
-        record(&paths, Source::Codex, "thread-a").await.expect("recording twice is fine");
+        super::super::codex::CodexSessions.record_owned(&paths, "thread-a").await.expect("recording twice is fine");
 
         let owned = read(&paths).await;
         assert!(owned.contains(Source::Codex, "thread-a"));
@@ -322,7 +269,7 @@ mod tests {
     async fn no_change_writes_the_file_back() {
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = paths(&dir);
-        record(&paths, Source::Codex, "thread-a").await.expect("record");
+        super::super::codex::CodexSessions.record_owned(&paths, "thread-a").await.expect("record");
         assert!(!paths.instance_dir().join("owned-sessions.json").exists(), "recording writes the table and nothing else");
         assert!(!paths.instance_dir().join("owned-sessions.json").with_extension("json.tmp").exists());
 
@@ -338,36 +285,23 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&file).expect("read"), planted);
     }
 
-    /// A claude id is recorded *before* its spawn, so a launch that failed
-    /// leaves an entry for a session that never existed — and a transcript the
-    /// user deletes leaves one for a session that no longer does.
+    /// Only the sources the registry is written for are read back: a row naming
+    /// `acp`, whose sessions are owned by where their transcript is kept, or a
+    /// CLI this build has never heard of, owns nothing.
     #[tokio::test]
-    async fn the_prune_drops_claude_ids_with_no_transcript_and_keeps_the_rest() {
-        use crate::claude_roots;
-
+    async fn a_row_for_a_source_the_registry_is_not_written_for_owns_nothing() {
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = paths(&dir);
-        let project = claude_roots::ClaudeRoots::of(&paths).projects_dir(ClaudeRoot::Local).join("-w");
-        std::fs::create_dir_all(&project).expect("project dir");
-        std::fs::write(project.join("alive.jsonl"), "{}\n").expect("a session that exists");
-
-        record(&paths, Source::Claude, "alive").await.expect("record");
-        record(&paths, Source::Claude, "never-launched").await.expect("record");
-        // Codex is left alone whatever the filesystem says: `~/.codex` hides
-        // archived threads from every lookup cheap enough to run at boot, so
-        // "not found" there is not "gone".
-        record(&paths, Source::Codex, "archived-thread").await.expect("record");
-
-        prune(&paths).await;
+        store(&paths)
+            .write(|tx| {
+                tx.execute("INSERT INTO owned_sessions (source, session_id) VALUES ('acp', 'x')", [])?;
+                tx.execute("INSERT INTO owned_sessions (source, session_id) VALUES ('gemini', 'y')", [])
+            })
+            .expect("rows written by hand");
 
         let owned = read(&paths).await;
-        assert!(owned.contains(Source::Claude, "alive"));
-        assert!(!owned.contains(Source::Claude, "never-launched"), "the failed launch is dropped");
-        assert!(owned.contains(Source::Codex, "archived-thread"), "codex entries are never pruned");
-
-        // Idempotent, and a no-op on a registry with nothing to drop.
-        prune(&paths).await;
-        assert_eq!(read(&paths).await, owned);
+        assert!(owned.is_empty(), "{owned:?}");
+        assert!(!owned.contains(Source::Acp, "x"));
     }
 
     /// The registry is the one piece of ownership state that cannot be rebuilt
@@ -376,7 +310,7 @@ mod tests {
     async fn an_entry_survives_the_database_being_reopened() {
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = paths(&dir);
-        record(&paths, Source::Codex, "thread-a").await.expect("record");
+        super::super::codex::CodexSessions.record_owned(&paths, "thread-a").await.expect("record");
 
         let reopened = droppen_instance::db::Db::open(paths.instance_db());
         let source: String = reopened
@@ -392,7 +326,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = paths(&dir);
         record(&paths, Source::Claude, "shared-id").await.expect("record");
-        record(&paths, Source::Codex, "shared-id").await.expect("record");
+        super::super::codex::CodexSessions.record_owned(&paths, "shared-id").await.expect("record");
 
         let owned = read(&paths).await;
         assert!(owned.contains(Source::Claude, "shared-id"));
@@ -470,8 +404,8 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let a = Paths::for_instance(dir.path().to_path_buf(), "alice");
         let b = Paths::for_instance(dir.path().to_path_buf(), "bob");
-        record(&a, Source::Codex, "thread-a").await.expect("record");
-        record(&b, Source::Codex, "thread-b").await.expect("record");
+        super::super::codex::CodexSessions.record_owned(&a, "thread-a").await.expect("record");
+        super::super::codex::CodexSessions.record_owned(&b, "thread-b").await.expect("record");
 
         assert_eq!(read(&a).await.server_of(Source::Codex, "thread-a").map(ServerId::as_str), Some("alice"));
         assert_eq!(
