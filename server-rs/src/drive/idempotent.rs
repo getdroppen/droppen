@@ -24,6 +24,8 @@ use gotcha::axum::http::StatusCode;
 use serde_json::Value;
 
 use droppen_http::error::ApiError;
+use droppen_http::openapi_ext::Optional;
+use super::routes::{NewSessionResult, SendMessageResult};
 use crate::inject::receipts::{self, Claim, InFlight, Kind, Receipts};
 use crate::sessions::Source;
 
@@ -141,15 +143,21 @@ pub(crate) fn in_progress() -> ApiError {
 /// got as far as enqueuing — a driver moved its receipt, or still holds it.
 fn stranded_answer(kind: Kind, flight: &InFlight, holds_queued: &impl Fn(&str) -> bool) -> Option<Value> {
     let touched = flight.status != "pending";
-    match kind {
-        Kind::Message if touched || holds_queued(&flight.qid) => Some(serde_json::json!({
-            "accepted": true,
-            "queued": flight.status != "sent",
-            "qid": flight.qid,
-        })),
-        Kind::NewSession if touched => flight.session_id.as_ref().map(|id| serde_json::json!({ "id": id })),
-        _ => None,
-    }
+    let answer = match kind {
+        Kind::Message if touched || holds_queued(&flight.qid) => serde_json::to_value(SendMessageResult {
+            accepted: true,
+            queued: flight.status != "sent",
+            qid: Optional(Some(flight.qid.clone())),
+            duplicate: Optional(None),
+            answered: Optional(None),
+        }),
+        Kind::NewSession if touched => serde_json::to_value(NewSessionResult {
+            id: flight.session_id.clone()?,
+            duplicate: Optional(None),
+        }),
+        _ => return None,
+    };
+    Some(answer.expect("answers encode"))
 }
 
 /// Run an owned attempt to the end, and write down what it answered.

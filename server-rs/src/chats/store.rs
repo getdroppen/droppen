@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use futures_util::StreamExt;
 use gotcha::Schematic;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 
 use super::{ChatError, Chats};
 use droppen_instance::paths::Paths;
@@ -287,11 +287,18 @@ impl Chats {
         chat: &ApiChat,
         sink: &(impl DeltaSink + Sync),
     ) -> Result<String, ChatError> {
-        let body = json!({
-            "model": chat.model,
-            "stream": true,
-            "messages": chat.messages.iter().map(|m| json!({ "role": m.role, "content": m.content })).collect::<Vec<_>>(),
-        });
+        let body = ChatCompletionRequest {
+            model: &chat.model,
+            stream: true,
+            messages: chat
+                .messages
+                .iter()
+                .map(|m| CompletionMessage {
+                    role: m.role,
+                    content: &m.content,
+                })
+                .collect(),
+        };
         let response = self
             .http
             .post(format!("{}/chat/completions", provider.base_url))
@@ -336,6 +343,21 @@ impl Chats {
         }
         Ok(full)
     }
+}
+
+/// An OpenAI-compatible `/chat/completions` request, streamed.
+#[derive(Serialize)]
+struct ChatCompletionRequest<'a> {
+    model: &'a str,
+    stream: bool,
+    messages: Vec<CompletionMessage<'a>>,
+}
+
+/// One message of the conversation it sends.
+#[derive(Serialize)]
+struct CompletionMessage<'a> {
+    role: ChatRole,
+    content: &'a str,
 }
 
 /// The content chunk one provider line carries, if it carries one.
@@ -391,6 +413,7 @@ mod tests_lenient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use std::sync::{Arc, Mutex};
 
     /// A sink that keeps every chunk, for asserting on what a turn emitted.

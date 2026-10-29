@@ -27,6 +27,7 @@ use gotcha::axum::extract::ws::{Message, WebSocket};
 use gotcha::axum::response::Response;
 use gotcha::axum::extract::FromRef;
 use gotcha::{GotchaRouter, State, WebSocketUpgrade};
+use serde::Serialize;
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -432,7 +433,7 @@ fn delta_frame(seen: &HashMap<String, String>, sessions: &[SessionSummary], next
     if upserts.is_empty() && removed.is_empty() {
         return None;
     }
-    Some(serde_json::json!({ "type": "sessions:delta", "upserts": upserts, "removed": removed }).to_string())
+    Some(ListFrame::SessionsDelta { upserts, removed }.encode())
 }
 
 /// `{"type":"settings", …}` — the server description the sidebar shows.
@@ -442,37 +443,77 @@ fn delta_frame(seen: &HashMap<String, String>, sessions: &[SessionSummary], next
 /// is the contract — a client reads whichever of the two it has — and
 /// `the_settings_frame_carries_every_field_the_settings_route_does` pins it.
 fn settings_frame(paths: &Paths, instance: &str, started_at: &str, plugins: &[droppen_plugin_sdk::PluginStatus]) -> String {
-    serde_json::json!({
-        "type": "settings",
-        // Which of possibly several servers on this machine this socket reached.
-        // Everything that survives a restart is scoped to the instance, so a
-        // client watching the feed has to be able to say which one it is
-        // watching.
-        "instance": instance,
-        // The same name, as a session reference scopes it. See
-        // `crate::sessions::Settings::server_id`.
-        "serverId": droppen_instance::identity::ServerId::local(paths).to_string(),
-        "hostname": droppen_http::hostname(),
-        "platform": droppen_http::node_platform(),
-        "nodeVersion": droppen_http::RUNTIME_VERSION,
-        // The one field a client re-reads *for* its value rather than to
-        // display it: a reconnect that brings back a different build is how the
-        // web knows a self-upgrade happened underneath it.
-        "serverVersion": droppen_http::SERVER_VERSION,
-        "homeDir": paths.home.to_string_lossy(),
-        "claudeDir": crate::claude_roots::ClaudeRoots::of(&paths).local_projects().to_string_lossy(),
-        "claudeManagedDir": crate::claude_roots::ClaudeRoots::of(&paths).managed_projects().to_string_lossy(),
-        "codexDir": paths.codex_sessions().to_string_lossy(),
-        "serverStartedAt": started_at,
-        // Which plugins are on decides which parts of the app exist, so it
-        // has to be here before anything renders; `plugins` frames follow it.
-        "plugins": plugins,
+    let roots = crate::claude_roots::ClaudeRoots::of(paths);
+    ListFrame::Settings(SettingsFrame {
+        instance,
+        server_id: droppen_instance::identity::ServerId::local(paths).to_string(),
+        hostname: droppen_http::hostname(),
+        platform: droppen_http::node_platform(),
+        node_version: droppen_http::RUNTIME_VERSION,
+        server_version: droppen_http::SERVER_VERSION,
+        home_dir: paths.home.to_string_lossy().into_owned(),
+        claude_dir: roots.local_projects().to_string_lossy().into_owned(),
+        claude_managed_dir: roots.managed_projects().to_string_lossy().into_owned(),
+        codex_dir: paths.codex_sessions().to_string_lossy().into_owned(),
+        server_started_at: started_at,
+        plugins,
     })
-    .to_string()
+    .encode()
 }
 
 fn snapshot_frame(sessions: &[SessionSummary]) -> String {
-    serde_json::json!({ "type": "sessions:snapshot", "sessions": sessions }).to_string()
+    ListFrame::SessionsSnapshot { sessions }.encode()
+}
+
+/// What the list socket tells a client, tagged `type`.
+#[derive(Serialize)]
+#[serde(tag = "type")]
+enum ListFrame<'a> {
+    /// The rows that changed, and the keys of those that went.
+    #[serde(rename = "sessions:delta")]
+    SessionsDelta { upserts: Vec<&'a SessionSummary>, removed: Vec<&'a String> },
+    /// Every row.
+    #[serde(rename = "sessions:snapshot")]
+    SessionsSnapshot { sessions: &'a [SessionSummary] },
+    /// The server description.
+    #[serde(rename = "settings")]
+    Settings(SettingsFrame<'a>),
+}
+
+impl ListFrame<'_> {
+    fn encode(&self) -> String {
+        serde_json::to_string(self).expect("list frames encode")
+    }
+}
+
+/// The `settings` frame's fields: those of `GET /api/settings` but its two
+/// session counts.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SettingsFrame<'a> {
+    /// Which of possibly several servers on this machine this socket reached.
+    /// Everything that survives a restart is scoped to the instance, so a
+    /// client watching the feed has to be able to say which one it is
+    /// watching.
+    instance: &'a str,
+    /// The same name, as a session reference scopes it. See
+    /// `crate::sessions::Settings::server_id`.
+    server_id: String,
+    hostname: String,
+    platform: &'static str,
+    node_version: &'static str,
+    /// The one field a client re-reads *for* its value rather than to
+    /// display it: a reconnect that brings back a different build is how the
+    /// web knows a self-upgrade happened underneath it.
+    server_version: &'static str,
+    home_dir: String,
+    claude_dir: String,
+    claude_managed_dir: String,
+    codex_dir: String,
+    server_started_at: &'a str,
+    /// Which plugins are on decides which parts of the app exist, so it
+    /// has to be here before anything renders; `plugins` frames follow it.
+    plugins: &'a [droppen_plugin_sdk::PluginStatus],
 }
 
 /// Whether `frame` is about runtime-installed plugins: the `plugins` list or a

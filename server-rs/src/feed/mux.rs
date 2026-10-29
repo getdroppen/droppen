@@ -61,6 +61,7 @@ use std::io::Write;
 use std::sync::Arc;
 
 use gotcha::axum::extract::ws::Message;
+use serde::Serialize;
 use serde_json::Value;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -106,12 +107,28 @@ impl MuxOptions {
 
 /// `{"type":"hello","features":["sub","ping"],"compress":"deflate-raw"|null}`.
 pub fn hello_frame(options: MuxOptions) -> String {
-    serde_json::json!({
-        "type": "hello",
-        "features": ["sub", "ping"],
-        "compress": options.compress.then_some("deflate-raw"),
-    })
-    .to_string()
+    MuxFrame::Hello {
+        features: ["sub", "ping"],
+        compress: options.compress.then_some("deflate-raw"),
+    }
+    .encode()
+}
+
+/// The socket's own frames, tagged `type`; a session feed's frames are the
+/// feed's.
+#[derive(Serialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+enum MuxFrame<'a> {
+    /// What this socket does, and how it compresses (`null`: it does not).
+    Hello { features: [&'static str; 2], compress: Option<&'static str> },
+    /// A subscription that ended, and why.
+    Closed { reason: &'a str },
+}
+
+impl MuxFrame<'_> {
+    fn encode(&self) -> String {
+        serde_json::to_string(self).expect("mux frames encode")
+    }
 }
 
 /// One subscription a client asked for.
@@ -227,7 +244,7 @@ pub fn tag(sub: u64, frame: &str) -> String {
 
 /// `{"sub":N,"type":"closed","reason":…}`: a subscription refused outright.
 pub fn refused(sub: u64, reason: &str) -> String {
-    serde_json::json!({ "sub": sub, "type": "closed", "reason": reason }).to_string()
+    tag(sub, &MuxFrame::Closed { reason }.encode())
 }
 
 /// `bytes` as raw deflate.
