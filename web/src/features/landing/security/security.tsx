@@ -457,7 +457,7 @@ function TocSidebar({ scroller }: { scroller: RefObject<HTMLDivElement | null> }
           <CapsLabel face="sans" className={cn(cjkTracking, "text-xs font-semibold")}>
             {t("On this page")}
           </CapsLabel>
-          <span className="font-mono text-[11px] leading-4 tabular-nums text-faint">{String(percent).padStart(2, "0")}%</span>
+          <span className="font-mono text-xs leading-4 tabular-nums text-faint">{String(percent).padStart(2, "0")}%</span>
         </div>
         <div aria-hidden="true" className="mt-3 h-px bg-border">
           <div className="h-px bg-fg" style={{ width: `${percent}%` }} />
@@ -470,11 +470,11 @@ function TocSidebar({ scroller }: { scroller: RefObject<HTMLDivElement | null> }
                   href={`#${e.id}`}
                   aria-current={active === e.id ? "location" : undefined}
                   className={cn(
-                    "flex gap-3 border-l-2 py-2 pr-2 pl-3 text-[13px] leading-5 transition-colors",
+                    "flex gap-3 border-l-2 py-2 pr-2 pl-3 text-sm leading-5 transition-colors",
                     active === e.id ? "border-fg text-fg" : "border-transparent text-muted hover:text-fg",
                   )}
                 >
-                  <span className="w-5 shrink-0 font-mono text-[11px] leading-5 tabular-nums text-faint">{String(i + 1).padStart(2, "0")}</span>
+                  <span className="w-5 shrink-0 font-mono text-xs leading-5 tabular-nums text-faint">{String(i + 1).padStart(2, "0")}</span>
                   <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
                     <span className="min-w-0">{e.title}</span>
                     {e.chip && <Chip>{e.chip}</Chip>}
@@ -506,7 +506,7 @@ function TocSheet({ active, open, onClose }: { active: (typeof SECURITY_SECTIONS
       <BaseDialog.Backdrop className="fixed inset-0 z-40 bg-black/20 dark:bg-black/60" />
       <BaseDialog.Popup className="fixed inset-x-0 bottom-0 z-50 max-h-[80dvh] overflow-y-auto border-t border-border-strong bg-bg outline-none md:right-auto md:left-1/2 md:w-[min(32rem,calc(100vw-2rem))] md:-translate-x-1/2 md:border-x">
         <div className="sticky top-0 z-10 flex h-9 items-center justify-between gap-2 border-b border-border bg-bg px-4">
-          <BaseDialog.Title className="min-w-0 py-1.5 text-[13px] leading-5 font-semibold text-fg">{t("On this page")}</BaseDialog.Title>
+          <BaseDialog.Title className="min-w-0 py-1.5 text-sm leading-5 font-semibold text-fg">{t("On this page")}</BaseDialog.Title>
           <BaseDialog.Close aria-label={t("close")} className="flex size-5 shrink-0 items-center justify-center text-muted hover:bg-hover hover:text-fg">
             <X className="size-3.5" />
           </BaseDialog.Close>
@@ -525,9 +525,9 @@ function TocSheet({ active, open, onClose }: { active: (typeof SECURITY_SECTIONS
                     active === e.id ? "border-fg bg-raised" : "border-transparent hover:bg-hover",
                   )}
                 >
-                  <span className="w-5 shrink-0 font-mono text-[11px] leading-5 tabular-nums text-faint">{String(i + 1).padStart(2, "0")}</span>
+                  <span className="w-5 shrink-0 font-mono text-xs leading-5 tabular-nums text-faint">{String(i + 1).padStart(2, "0")}</span>
                   <span className="min-w-0 flex-1">
-                    <span className="flex flex-wrap items-center gap-2 text-[13px] leading-5 font-medium text-fg">
+                    <span className="flex flex-wrap items-center gap-2 text-sm leading-5 font-medium text-fg">
                       {e.title}
                       {e.chip && <Chip>{e.chip}</Chip>}
                     </span>
@@ -561,8 +561,8 @@ function TocBar({ scroller }: { scroller: RefObject<HTMLDivElement | null> }) {
           <CapsLabel face="sans" className={cn(cjkTracking, "shrink-0 text-xs font-semibold")}>
             {t("On this page")}
           </CapsLabel>
-          <span className="flex min-w-0 flex-1 items-center gap-2 text-[13px] text-fg">
-            <span className="font-mono text-[11px] tabular-nums text-faint">{String(index + 1).padStart(2, "0")}</span>
+          <span className="flex min-w-0 flex-1 items-center gap-2 text-sm text-fg">
+            <span className="font-mono text-xs tabular-nums text-faint">{String(index + 1).padStart(2, "0")}</span>
             <span className="truncate">{current.title}</span>
           </span>
           <ChevronDown className="size-4 shrink-0 text-muted" />
