@@ -845,6 +845,27 @@ mod tests {
     use droppen_instance::paths::ClaudeRoot;
     use crate::sessions::{claude, Source};
 
+    /// The two refusals with a code of their own, byte for byte: the client
+    /// acts on `error`, shows `hint`, and names `existingLabel`.
+    #[test]
+    fn the_account_refusals_are_written_as_pinned() {
+        let mismatch = provider_mismatch();
+        assert_eq!(mismatch.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            mismatch.body().to_string(),
+            r#"{"error":"provider_mismatch","hint":"this account authenticates the other CLI; a codex session needs a codex account and a claude session a claude one"}"#
+        );
+        let duplicate = store_error(
+            AccountError::Duplicate {
+                existing_id: "a-1".into(),
+                existing_label: "Work \"main\"".into(),
+            },
+            "unused",
+        );
+        assert_eq!(duplicate.status(), StatusCode::CONFLICT);
+        assert_eq!(duplicate.body().to_string(), r#"{"error":"duplicate_account","existingLabel":"Work \"main\""}"#);
+    }
+
     #[test]
     fn an_auth_status_survives_a_banner_around_it() {
         let status = parse_auth_status("Welcome!\n{\"loggedIn\": true, \"email\": \"me@example.com\"}\nBye").expect("parsed");

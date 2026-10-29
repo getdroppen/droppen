@@ -991,6 +991,15 @@ mod tests {
     use super::*;
     use crate::api::AppState;
 
+    /// A refusal's body, byte for byte: pages act on `error` and show
+    /// `message`, and the gateway's `bye` carries both.
+    #[test]
+    fn a_refusal_is_written_as_pinned() {
+        let refused = refusal(StatusCode::FORBIDDEN, "no_remote_access", "not here");
+        assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+        assert_eq!(refused.body().to_string(), r#"{"error":"no_remote_access","message":"not here"}"#);
+    }
+
     fn attempt(owner: &str, expires_ms: u64) -> Option<Attempt> {
         Some(Attempt {
             id: "a1".into(),
