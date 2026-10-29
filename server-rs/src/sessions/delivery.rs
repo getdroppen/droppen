@@ -36,6 +36,16 @@ impl ReceiptStatus {
             ReceiptStatus::Failed => "failed",
         }
     }
+
+    /// The receipt a stored status reads as. `pending` only ever reaches a
+    /// reader for a row whose answer was written, which accepted it.
+    pub fn from_stored(stored: &str) -> ReceiptStatus {
+        match stored {
+            "sent" => ReceiptStatus::Sent,
+            "failed" => ReceiptStatus::Failed,
+            _ => ReceiptStatus::Queued,
+        }
+    }
 }
 
 /// One message's receipt.
@@ -93,6 +103,18 @@ impl QuestionState {
             QuestionState::Dismissed => "dismissed",
             QuestionState::Cancelled => "cancelled",
             QuestionState::Expired => "expired",
+        }
+    }
+
+    /// A stored word, read back. Anything unrecognised is a question nobody can
+    /// do anything with any more, which is what `cancelled` says.
+    pub fn from_stored(stored: &str) -> QuestionState {
+        match stored {
+            "pending" => QuestionState::Pending,
+            "answered" => QuestionState::Answered,
+            "dismissed" => QuestionState::Dismissed,
+            "expired" => QuestionState::Expired,
+            _ => QuestionState::Cancelled,
         }
     }
 }
