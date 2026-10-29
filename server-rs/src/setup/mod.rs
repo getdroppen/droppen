@@ -738,6 +738,8 @@ pub struct SetupState {
     pub accounts: Arc<crate::accounts::store::AccountsStore>,
     /// The instance's paths: the home directory and the sessions it owns.
     pub paths: Arc<Paths>,
+    /// Each CLI's transcripts, which the recent folders are listed from.
+    pub transcripts: crate::sessions::TranscriptSources,
     /// Whether the Droppen desktop app runs this server.
     pub desktop_app: bool,
 }

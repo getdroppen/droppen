@@ -778,8 +778,8 @@ mod tests {
             addr: "127.0.0.1:9".parse().unwrap(),
             credential: "test".into(),
             streams: {
-                let drive = crate::drive::Drive::new(std::sync::Arc::new(paths.clone()), &instance, auth);
-                std::sync::Arc::new(crate::cloud::SessionStreams::new(drive.paths.clone(), drive))
+                let drive = crate::drive::Drive::new(std::sync::Arc::new(paths.clone()), &instance, auth, crate::app::transcript_sources());
+                std::sync::Arc::new(crate::cloud::SessionStreams::new(drive.paths.clone(), drive.transcripts.clone(), drive))
             },
             host: std::sync::Arc::new(crate::app::PushLinkHost),
             cancel: tokio_util::sync::CancellationToken::new(),

@@ -1534,7 +1534,11 @@ mod tests {
         state.cloud.control.attach(crate::agent::link::LinkEnv {
             addr,
             credential: "test".into(),
-            streams: Arc::new(SessionStreams::new(state.drive.paths.clone(), state.drive.clone())),
+            streams: Arc::new(SessionStreams::new(
+                state.drive.paths.clone(),
+                state.drive.transcripts.clone(),
+                state.drive.clone(),
+            )),
             host: Arc::new(crate::app::PushLinkHost),
             cancel: tokio_util::sync::CancellationToken::new(),
             aggregator_switch: state.cloud.aggregator_switch(),
@@ -1658,7 +1662,11 @@ mod tests {
         state.cloud.control.attach(crate::agent::link::LinkEnv {
             addr,
             credential: "test".into(),
-            streams: Arc::new(SessionStreams::new(state.drive.paths.clone(), state.drive.clone())),
+            streams: Arc::new(SessionStreams::new(
+                state.drive.paths.clone(),
+                state.drive.transcripts.clone(),
+                state.drive.clone(),
+            )),
             host: Arc::new(crate::app::PushLinkHost),
             cancel: tokio_util::sync::CancellationToken::new(),
             aggregator_switch: state.cloud.aggregator_switch(),

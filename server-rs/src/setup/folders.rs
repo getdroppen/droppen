@@ -193,15 +193,17 @@ pub fn practice_folder_for(home: &Path, earlier: Option<&Path>) -> std::io::Resu
 #[api(id = "setup_recent_folders", group = "setup", summary = "List folders sessions ran in")]
 pub async fn recent_folders(State(state): State<SetupState>) -> Json<RecentFolders> {
     let bindings = state.accounts.session_account_map().await;
-    let sessions = crate::sessions::list_and_filter(
-        &state.paths,
-        &bindings,
-        &crate::sessions::DriverStates::default(),
-        None,
-        None,
-        crate::sessions::ScopeFilter::All,
-    )
-    .await;
+    let sessions = state
+        .transcripts
+        .list_and_filter(
+            &state.paths,
+            &bindings,
+            &crate::sessions::DriverStates::default(),
+            None,
+            None,
+            crate::sessions::ScopeFilter::All,
+        )
+        .await;
     Json(RecentFolders {
         folders: recent_from(&sessions, Path::is_dir),
     })

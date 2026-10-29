@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 
+use futures_util::future::BoxFuture;
 use serde_json::Value;
 
 use super::transcript::{content_blocks, title_line, user_title_candidate};
@@ -639,6 +640,35 @@ pub async fn load_claude_summary(paths: &Paths, id: &str) -> Option<SessionSumma
     let mut summary = summarize_file(&found.file_path, id, found.root).await.ok()?;
     std::slice::from_mut(&mut summary).finish(paths).await;
     Some(summary)
+}
+
+/// Claude Code's transcripts, for [`super::TranscriptSources`]: the sessions in
+/// both roots' projects directories, and the parser of their main chain.
+pub struct ClaudeCodeSessions;
+
+impl super::Transcripts for ClaudeCodeSessions {
+    fn source(&self) -> Source {
+        Source::Claude
+    }
+
+    fn list<'a>(&'a self, paths: &'a Paths, bindings: &'a BTreeMap<String, String>) -> BoxFuture<'a, Vec<SessionSummary>> {
+        Box::pin(list_claude_sessions(paths, bindings))
+    }
+
+    fn find<'a>(&'a self, paths: &'a Paths, id: &'a str) -> BoxFuture<'a, Option<SessionSummary>> {
+        Box::pin(load_claude_summary(paths, id))
+    }
+
+    // Found without building the row: the row summarizes the file and applies
+    // the live overlay, and reading the transcript needs neither.
+    fn find_file<'a>(&'a self, paths: &'a Paths, id: &'a str) -> BoxFuture<'a, Option<PathBuf>> {
+        Box::pin(find_claude_session_file(paths, id))
+    }
+
+    // The main chain only: a subagent's sidechain is read as its own transcript.
+    fn parse<'a>(&'a self, paths: &'a Paths, file_path: &'a Path) -> BoxFuture<'a, std::io::Result<Vec<util::TranscriptItem>>> {
+        Box::pin(super::transcript::parse_claude_transcript(paths, file_path, false))
+    }
 }
 
 /// The model/effort a session last ran with, read from its transcript tail.

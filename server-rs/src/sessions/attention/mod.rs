@@ -25,7 +25,7 @@
 //!
 //! # Where the work happens
 //!
-//! [`apply`] is called from [`crate::sessions::list_and_filter`], which is the
+//! [`apply`] is called from [`crate::sessions::TranscriptSources::list_and_filter`], which is the
 //! single place the session list is assembled — so `GET /api/sessions` and the
 //! websocket's `sessions:snapshot`/`sessions:delta` rows agree by construction
 //! rather than by two implementations happening to match.

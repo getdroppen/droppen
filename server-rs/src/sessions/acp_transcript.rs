@@ -47,9 +47,10 @@
 //! removed stays listed under the id it recorded ([`crate::acp_agent`] says what
 //! that means for sending to it).
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
+use futures_util::future::BoxFuture;
 use serde_json::{json, Map, Value};
 
 use super::transcript::title_line;
@@ -593,6 +594,30 @@ pub async fn find_session(paths: &Paths, id: &str) -> Option<SessionSummary> {
     let (agent, file_path) = AcpTranscripts::of(paths).locate(id).await?;
     let titles = super::custom_titles(paths, Source::Acp).await;
     summary_of(paths, &agent, &file_path, id, &titles).await
+}
+
+/// The ACP transcripts this server keeps, for [`super::TranscriptSources`]:
+/// one directory per agent under [`AcpTranscripts::dir`].
+pub struct AcpSessions;
+
+impl super::Transcripts for AcpSessions {
+    fn source(&self) -> Source {
+        Source::Acp
+    }
+
+    // The account store holds no ACP accounts, so no binding names an ACP
+    // session.
+    fn list<'a>(&'a self, paths: &'a Paths, _bindings: &'a BTreeMap<String, String>) -> BoxFuture<'a, Vec<SessionSummary>> {
+        Box::pin(list_sessions(paths))
+    }
+
+    fn find<'a>(&'a self, paths: &'a Paths, id: &'a str) -> BoxFuture<'a, Option<SessionSummary>> {
+        Box::pin(find_session(paths, id))
+    }
+
+    fn parse<'a>(&'a self, _paths: &'a Paths, file_path: &'a Path) -> BoxFuture<'a, std::io::Result<Vec<TranscriptItem>>> {
+        Box::pin(parse_transcript(file_path))
+    }
 }
 
 /// Build the row for one transcript of `agent`'s.

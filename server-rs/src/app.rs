@@ -23,7 +23,7 @@ use crate::feed::FeedRegistry;
 use crate::instance::{InstanceDirs, InstanceLock};
 use crate::paths::Paths;
 use crate::sessions::account::{RotationOutcome, RotationTrigger};
-use crate::sessions::{DriverStates, InjectionRunState, Source};
+use crate::sessions::{DriverStates, InjectionRunState, Source, TranscriptSources};
 use crate::shutdown::{self, Cleanups};
 use droppen_base::time::iso8601;
 
@@ -121,7 +121,7 @@ impl GotchaApp for RemoteHandApp {
                 async move { roots.sweep_uploads().await }
             });
             let auth = crate::auth::Auth::new(&paths, &instance, &auth_settings, auth_disabled);
-            let drive = crate::drive::Drive::new(paths.clone(), &instance, auth);
+            let drive = crate::drive::Drive::new(paths.clone(), &instance, auth, transcript_sources());
             let feeds = FeedRegistry::new();
             let global = GlobalFeed::new();
             // A session's driver changes things no file shows — an automatic
@@ -129,7 +129,9 @@ impl GotchaApp for RemoteHandApp {
             // two feeds that would otherwise only notice on their next poll.
             let refresh = crate::http::refresh::Refresh::new(global.clone());
             drive.injections.attach_listeners(feeds.clone(), refresh.clone());
-            drive.injections.attach_alerts(Arc::new(PushAlerts));
+            drive.injections.attach_alerts(Arc::new(PushAlerts {
+                transcripts: drive.transcripts.clone(),
+            }));
             Ok(AppState {
                 cloud: crate::cloud::Cloud::new(paths.as_ref().clone()),
                 // Touches nothing yet: the installed packages are read by the
@@ -467,7 +469,11 @@ impl RemoteHandApp {
             cloud.attach(crate::agent::link::LinkEnv {
                 addr,
                 credential: auth_for_link.internal_credential().to_string(),
-                streams: Arc::new(crate::cloud::SessionStreams::new(drive_for_link.paths.clone(), drive_for_link)),
+                streams: Arc::new(crate::cloud::SessionStreams::new(
+                    drive_for_link.paths.clone(),
+                    drive_for_link.transcripts.clone(),
+                    drive_for_link,
+                )),
                 host: Arc::new(PushLinkHost),
                 cancel: cancel.clone(),
                 aggregator_switch,
@@ -620,22 +626,35 @@ fn join(result: Result<std::io::Result<()>, tokio::task::JoinError>) -> GotchaRe
     }
 }
 
+/// Every CLI's transcripts, for whatever lists or reads sessions. Each reader
+/// names its own [`Source`]; this is the one place that names all of them.
+pub fn transcript_sources() -> TranscriptSources {
+    let mut sources = TranscriptSources::default();
+    sources.register(Arc::new(crate::sessions::claude::ClaudeCodeSessions));
+    sources.register(Arc::new(crate::sessions::codex::CodexSessions));
+    sources.register(Arc::new(crate::sessions::acp_transcript::AcpSessions));
+    sources
+}
+
 /// The drivers' alerts, sent by [`crate::push`]: Web Push to every subscribed
 /// browser, and the Bark endpoint too for a question or a rotation. Each push
 /// function spawns its sending and returns, as [`crate::inject::Alerts`] asks.
-struct PushAlerts;
+struct PushAlerts {
+    /// What the alerts read the session's row through.
+    transcripts: TranscriptSources,
+}
 
 impl crate::inject::Alerts for PushAlerts {
     fn turn(&self, paths: Arc<Paths>, source: Source, id: String, outcome: InjectionRunState, error: Option<String>, driver: DriverStates) {
-        crate::push::notify_turn(paths, source, id, outcome, error, driver);
+        crate::push::notify_turn(paths, self.transcripts.clone(), source, id, outcome, error, driver);
     }
 
     fn question(&self, paths: Arc<Paths>, source: Source, id: String, question: String) {
-        crate::push::notify_question(paths, source, id, question);
+        crate::push::notify_question(paths, self.transcripts.clone(), source, id, question);
     }
 
     fn rotation(&self, paths: Arc<Paths>, source: Source, id: String, outcome: RotationOutcome, trigger: RotationTrigger, text: String) {
-        crate::push::notify_rotation(paths, source, id, outcome, trigger, text);
+        crate::push::notify_rotation(paths, self.transcripts.clone(), source, id, outcome, trigger, text);
     }
 }
 

@@ -12243,6 +12243,7 @@ done
             titles: crate::sessions::titles::TitlesStore::new(paths.clone()),
             instance,
             paths,
+            transcripts: crate::app::transcript_sources(),
         });
         let feeds = crate::feed::FeedRegistry::new();
         harness.registry.attach_listeners(feeds.clone(), crate::http::refresh::Refresh::new(crate::feed::global::GlobalFeed::new()));

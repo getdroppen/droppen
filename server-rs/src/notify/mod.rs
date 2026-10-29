@@ -66,7 +66,7 @@ use crate::http::extract::ApiJson;
 use crate::http::SendResult;
 use crate::openapi_ext::{ExtraResponses, Optional};
 use crate::paths::Paths;
-use crate::sessions::{SessionSummary, Source};
+use crate::sessions::Source;
 
 /// The one route an agent's `rh-notify` calls.
 pub const NOTIFY_PATH: &str = "/api/notify";
@@ -324,11 +324,6 @@ fn take_slot(key: &str, now: Instant) -> bool {
 
 /* ── routes ──────────────────────────────────────────────────────────── */
 
-/// What a nudge is worth telling the caller about the session it came from.
-async fn summary_of(paths: &Paths, source: Source, id: &str) -> Option<SessionSummary> {
-    crate::sessions::find_summary(paths, source, id).await
-}
-
 /// Trim, collapse and cap one field of a nudge.
 ///
 /// Newlines are collapsed because a lock-screen notification renders them as
@@ -350,6 +345,8 @@ pub struct NotifyState {
     pub paths: Arc<Paths>,
     /// The instance this server owns, whose name the test message carries.
     pub instance: Arc<crate::instance::InstanceDirs>,
+    /// What a nudge reads the session it came from through.
+    pub transcripts: crate::sessions::TranscriptSources,
 }
 crate::http::substate!(NotifyState);
 
@@ -454,7 +451,7 @@ pub async fn notify(
         ));
     }
 
-    let summary = summary_of(state.paths.as_ref(), caller.source, &caller.id).await;
+    let summary = state.transcripts.find_summary(state.paths.as_ref(), caller.source, &caller.id).await;
     let nudge = Nudge {
         title,
         body: tidy(&body.body, BODY_CAP),

@@ -315,7 +315,10 @@ async fn collect_sessions(drive: &Arc<Drive>) -> Vec<SessionSummary> {
     // The sidebar is the one surface that shows every session at once, so it is
     // the one that most needs to be right about which of them are working.
     let drivers = drive.injections.driver_states();
-    sessions::list_and_filter(&drive.paths, &bindings, &drivers, None, None, sessions::ScopeFilter::All).await
+    drive
+        .transcripts
+        .list_and_filter(&drive.paths, &bindings, &drivers, None, None, sessions::ScopeFilter::All)
+        .await
 }
 
 /// [`crate::sessions::SessionRef::local_key`] -> serialized summary, the form

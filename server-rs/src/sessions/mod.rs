@@ -23,6 +23,7 @@ pub mod owned_sessions;
 pub mod pins;
 pub mod reference;
 pub mod repo;
+pub mod sources;
 pub mod subagents;
 pub mod titles;
 pub mod tool_display;
@@ -40,11 +41,13 @@ use crate::openapi_ext::{Nullable, Optional};
 use crate::paths::{ClaudeRoot, Paths};
 use droppen_base::time::mtime_ms;
 pub use reference::SessionRef;
+pub use sources::{TranscriptSources, Transcripts};
 use account::AccountRef;
 use util::TranscriptItem;
 
 /// Which CLI a session belongs to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Schematic)]
+// Ordered as declared: `TranscriptSources` lists the sources in this order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Schematic)]
 #[serde(rename_all = "lowercase")]
 pub enum Source {
     /// Claude Code.
@@ -341,7 +344,7 @@ impl ResidentInfo {
 /// What the driver subsystem knows about the sessions being listed.
 ///
 /// A snapshot, taken once per listing and read per row, in the same shape and
-/// for the same reason as the account bindings [`list_and_filter`] is handed:
+/// for the same reason as the account bindings [`TranscriptSources::list_and_filter`] is handed:
 /// the session module describes rows and must not reach into the subsystem that
 /// drives them, and a per-row lock of the injection registry would be a lock
 /// per row.
@@ -408,7 +411,7 @@ impl DriverStates {
 
     /// Fold the driver's account into every row.
     ///
-    /// Called from [`list_and_filter`] *before* [`crate::sessions::attention::apply`],
+    /// Called from [`TranscriptSources::list_and_filter`] *before* [`crate::sessions::attention::apply`],
     /// because `unread` is computed from `status` and the corrected status is
     /// the one it must be computed from: a session whose resident is mid-turn
     /// is not waiting on the user, whatever the tail of its transcript looks
@@ -864,140 +867,124 @@ pub fn chats_cwd(paths: &Paths) -> PathBuf {
     paths.data_dir().join("chats")
 }
 
-/// Every session both CLIs know about, filtered and newest first.
-///
-/// The one place the session list is assembled. `GET /api/sessions` and the
-/// global feed's snapshot are two views of the same list, and the delta the feed
-/// pushes is only meaningful if the row the client already holds came out of the
-/// same discovery, the same hiding rule and the same order — so they share this
-/// rather than each spelling it out.
-///
-/// `bindings` is the session-to-account map, which only the caller can read
-/// (it lives in the accounts store, and this module sits below it).
-///
-/// `scope` decides *whose* sessions are listed, and is applied after discovery
-/// rather than during it: a session that exists in both Claude roots is one row,
-/// owned, and must not reappear as an external one because the external half of
-/// the pair is still on disk.
-pub async fn list_and_filter(
-    paths: &Paths,
-    bindings: &std::collections::BTreeMap<String, String>,
-    drivers: &DriverStates,
-    source: Option<Source>,
-    query: Option<&str>,
-    scope: ScopeFilter,
-) -> Vec<SessionSummary> {
-    let (claude_sessions, codex_sessions, acp_sessions) = match source {
-        Some(Source::Claude) => (claude::list_claude_sessions(paths, bindings).await, vec![], vec![]),
-        Some(Source::Codex) => (vec![], codex::list_codex_sessions(paths).await, vec![]),
-        Some(Source::Acp) => (vec![], vec![], acp_transcript::list_sessions(paths).await),
-        None => tokio::join!(
-            claude::list_claude_sessions(paths, bindings),
-            codex::list_codex_sessions(paths),
-            acp_transcript::list_sessions(paths)
-        ),
-    };
+impl TranscriptSources {
+    /// Every session both CLIs know about, filtered and newest first.
+    ///
+    /// The one place the session list is assembled. `GET /api/sessions` and the
+    /// global feed's snapshot are two views of the same list, and the delta the feed
+    /// pushes is only meaningful if the row the client already holds came out of the
+    /// same discovery, the same hiding rule and the same order — so they share this
+    /// rather than each spelling it out.
+    ///
+    /// `bindings` is the session-to-account map, which only the caller can read
+    /// (it lives in the accounts store, and this module sits below it).
+    ///
+    /// `scope` decides *whose* sessions are listed, and is applied after discovery
+    /// rather than during it: a session that exists in both Claude roots is one row,
+    /// owned, and must not reappear as an external one because the external half of
+    /// the pair is still on disk.
+    pub async fn list_and_filter(
+        &self,
+        paths: &Paths,
+        bindings: &std::collections::BTreeMap<String, String>,
+        drivers: &DriverStates,
+        source: Option<Source>,
+        query: Option<&str>,
+        scope: ScopeFilter,
+    ) -> Vec<SessionSummary> {
+        let listed = self.list(paths, bindings, source).await;
 
-    // Instant chats live in their own list, not the session sidebar.
-    let hidden = chats_cwd(paths).to_string_lossy().into_owned();
-    let mut sessions: Vec<SessionSummary> = claude_sessions
-        .into_iter()
-        .chain(codex_sessions)
-        .chain(acp_sessions)
-        .filter(|session| session.cwd.as_ref().map(String::as_str) != Some(hidden.as_str()))
-        .filter(|session| scope.admits(session.scope))
-        .collect();
-    // The claude discovery applies the bindings itself, inside the root walk it
-    // has to do anyway; codex has no such walk, so its rows are matched up here.
-    // Either way the field means the same thing and is filled from the same
-    // table — a client reading `accountId` must not have to ask which CLI wrote
-    // the row.
-    for session in sessions.iter_mut().filter(|session| session.source == Source::Codex) {
-        session.account_id = bindings.get(&session.id).cloned();
+        // Instant chats live in their own list, not the session sidebar.
+        let hidden = chats_cwd(paths).to_string_lossy().into_owned();
+        let mut sessions: Vec<SessionSummary> = listed
+            .into_iter()
+            .filter(|session| session.cwd.as_ref().map(String::as_str) != Some(hidden.as_str()))
+            .filter(|session| scope.admits(session.scope))
+            .collect();
+
+        if let Some(needle) = query.filter(|needle| !needle.is_empty()) {
+            let needle = needle.to_lowercase();
+            sessions.retain(|session| {
+                session.title.to_lowercase().contains(&needle) || session.cwd.as_ref().is_some_and(|cwd| cwd.to_lowercase().contains(&needle))
+            });
+        }
+        // `localeCompare` on ISO-8601 timestamps is a plain lexicographic compare.
+        sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        // After the truncation-free sort but before the caller pages: `attentionAt`,
+        // `unread` and `repoKey` are part of a row, and this is the one place a row
+        // is made.
+        //
+        // The driver goes first, and the order is load-bearing: `apply` corrects
+        // `status`, and `unread` is computed *from* `status` — so a session whose
+        // resident is mid-turn has to be known to be mid-turn before the badge is
+        // decided, or the phone lights up for a session that is busy working.
+        drivers.apply(&mut sessions);
+        // After the driver: a Claude child counts as working only while its
+        // parent is, and that is the driver's answer.
+        subagents::apply(paths, &mut sessions).await;
+        attention::apply(paths, &mut sessions).await;
+        repo::apply(&mut sessions).await;
+        pins::apply(paths, &mut sessions);
+        sessions.sort_by_key(|session| !session.pinned);
+        sessions
     }
 
-    if let Some(needle) = query.filter(|needle| !needle.is_empty()) {
-        let needle = needle.to_lowercase();
-        sessions.retain(|session| {
-            session.title.to_lowercase().contains(&needle) || session.cwd.as_ref().is_some_and(|cwd| cwd.to_lowercase().contains(&needle))
-        });
-    }
-    // `localeCompare` on ISO-8601 timestamps is a plain lexicographic compare.
-    sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-    // After the truncation-free sort but before the caller pages: `attentionAt`,
-    // `unread` and `repoKey` are part of a row, and this is the one place a row
-    // is made.
-    //
-    // The driver goes first, and the order is load-bearing: `apply` corrects
-    // `status`, and `unread` is computed *from* `status` — so a session whose
-    // resident is mid-turn has to be known to be mid-turn before the badge is
-    // decided, or the phone lights up for a session that is busy working.
-    drivers.apply(&mut sessions);
-    // After the driver: a Claude child counts as working only while its
-    // parent is, and that is the driver's answer.
-    subagents::apply(paths, &mut sessions).await;
-    attention::apply(paths, &mut sessions).await;
-    repo::apply(&mut sessions).await;
-    pins::apply(paths, &mut sessions);
-    sessions.sort_by_key(|session| !session.pinned);
-    sessions
-}
-
-/// One session's list row, whatever CLI it belongs to, without the driver's
-/// overlay.
-pub async fn find_summary(paths: &Paths, source: Source, id: &str) -> Option<SessionSummary> {
-    match source {
-        Source::Claude => claude::load_claude_summary(paths, id).await,
-        Source::Codex => codex::find_codex_session(paths, id).await,
-        Source::Acp => acp_transcript::find_session(paths, id).await,
+    /// One session's list row, whatever CLI it belongs to, without the driver's
+    /// overlay.
+    pub async fn find_summary(&self, paths: &Paths, source: Source, id: &str) -> Option<SessionSummary> {
+        self.get(source)?.find(paths, id).await
     }
 }
 
 /// How many recent working directories the new-session picker offers.
 pub const RECENT_CWDS_LIMIT: usize = 8;
 
-/// Distinct working directories, the most recently *started in* first.
-///
-/// Ranked by each directory's newest session **creation**, not its newest
-/// activity. The difference is the whole point: one long-running session that is
-/// still being appended to would otherwise pin its directory to the top forever,
-/// which is the opposite of the question the picker asks — "where have I been
-/// starting work lately".
-///
-/// Paths come back exactly as the session list reports them, absolute and
-/// unabbreviated; shortening `$HOME` to `~` is the client's display choice, and
-/// doing it here would hand back a path nothing can `cd` into.
-///
-/// Two things it deliberately does not inherit from the sidebar:
-///
-/// * **every scope counts.** "Where was I working" is a fact about the machine,
-///   not about which server made the session, and a fresh instance whose picker
-///   offered nothing would be worse than useless.
-/// * **one entry per repository.** Four worktrees of one project are four
-///   directories but one place the user thinks of, so they collapse to whichever
-///   was started in most recently, keyed by `repoKey`. A directory that is not in
-///   a repository is its own key, so nothing outside git is merged with anything.
-pub async fn recent_cwds(paths: &Paths, bindings: &std::collections::BTreeMap<String, String>, source: Option<Source>) -> Vec<String> {
-    // No driver snapshot: this answers "where was I working", which is a
-    // question about creation times and says nothing about what is running.
-    let sessions = list_and_filter(paths, bindings, &DriverStates::default(), source, None, ScopeFilter::All).await;
-    // repository -> (creation of the newest session in it, the cwd that session ran in)
-    let mut newest: std::collections::HashMap<String, (String, String)> = std::collections::HashMap::new();
-    for session in sessions {
-        let Some(cwd) = session.cwd.as_ref().filter(|cwd| !cwd.is_empty()).cloned() else {
-            continue;
-        };
-        let key = session.repo_key.as_ref().cloned().unwrap_or_else(|| cwd.clone());
-        let entry = newest.entry(key).or_default();
-        // ISO-8601 compares lexicographically, as everywhere else in this module.
-        if session.created_at > entry.0 {
-            *entry = (session.created_at, cwd);
+impl TranscriptSources {
+    /// Distinct working directories, the most recently *started in* first.
+    ///
+    /// Ranked by each directory's newest session **creation**, not its newest
+    /// activity. The difference is the whole point: one long-running session that is
+    /// still being appended to would otherwise pin its directory to the top forever,
+    /// which is the opposite of the question the picker asks — "where have I been
+    /// starting work lately".
+    ///
+    /// Paths come back exactly as the session list reports them, absolute and
+    /// unabbreviated; shortening `$HOME` to `~` is the client's display choice, and
+    /// doing it here would hand back a path nothing can `cd` into.
+    ///
+    /// Two things it deliberately does not inherit from the sidebar:
+    ///
+    /// * **every scope counts.** "Where was I working" is a fact about the machine,
+    ///   not about which server made the session, and a fresh instance whose picker
+    ///   offered nothing would be worse than useless.
+    /// * **one entry per repository.** Four worktrees of one project are four
+    ///   directories but one place the user thinks of, so they collapse to whichever
+    ///   was started in most recently, keyed by `repoKey`. A directory that is not in
+    ///   a repository is its own key, so nothing outside git is merged with anything.
+    pub async fn recent_cwds(&self, paths: &Paths, bindings: &std::collections::BTreeMap<String, String>, source: Option<Source>) -> Vec<String> {
+        // No driver snapshot: this answers "where was I working", which is a
+        // question about creation times and says nothing about what is running.
+        let sessions = self
+            .list_and_filter(paths, bindings, &DriverStates::default(), source, None, ScopeFilter::All)
+            .await;
+        // repository -> (creation of the newest session in it, the cwd that session ran in)
+        let mut newest: std::collections::HashMap<String, (String, String)> = std::collections::HashMap::new();
+        for session in sessions {
+            let Some(cwd) = session.cwd.as_ref().filter(|cwd| !cwd.is_empty()).cloned() else {
+                continue;
+            };
+            let key = session.repo_key.as_ref().cloned().unwrap_or_else(|| cwd.clone());
+            let entry = newest.entry(key).or_default();
+            // ISO-8601 compares lexicographically, as everywhere else in this module.
+            if session.created_at > entry.0 {
+                *entry = (session.created_at, cwd);
+            }
         }
+        let mut ranked: Vec<(String, String)> = newest.into_values().map(|(created_at, cwd)| (cwd, created_at)).collect();
+        // Newest first; ties broken by name so the answer is stable across calls.
+        ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        ranked.into_iter().take(RECENT_CWDS_LIMIT).map(|(cwd, _)| cwd).collect()
     }
-    let mut ranked: Vec<(String, String)> = newest.into_values().map(|(created_at, cwd)| (cwd, created_at)).collect();
-    // Newest first; ties broken by name so the answer is stable across calls.
-    ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-    ranked.into_iter().take(RECENT_CWDS_LIMIT).map(|(cwd, _)| cwd).collect()
 }
 
 /// The `error` a send to somebody else's session is refused with.

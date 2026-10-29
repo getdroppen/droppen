@@ -79,7 +79,7 @@ use crate::http::extract::ApiJson;
 use crate::http::SendResult;
 use crate::openapi_ext::{ExtraResponses, Optional};
 use crate::paths::Paths;
-use crate::sessions::{DriverStates, InjectionRunState, ResidentInfo, SessionSummary, Source};
+use crate::sessions::{DriverStates, InjectionRunState, ResidentInfo, Source, TranscriptSources};
 
 /// How long the same session's notifications are suppressed after one is sent.
 const THROTTLE: Duration = Duration::from_secs(60);
@@ -377,11 +377,6 @@ async fn deliver(paths: &Paths, title: String, body: String, tag: String, url: S
 
 /* ── the trigger ─────────────────────────────────────────────────────── */
 
-/// The session-list row for one session, whatever CLI it belongs to.
-async fn summary_of(paths: &Paths, source: Source, id: &str) -> Option<SessionSummary> {
-    crate::sessions::find_summary(paths, source, id).await
-}
-
 /// What a finished run is worth telling somebody about, if anything.
 enum Notice {
     Finished(String),
@@ -453,12 +448,20 @@ fn still_busy_clause(resident: Option<&ResidentInfo>) -> Option<String> {
 
 /// Decide, and send. Split from [`notify_turn`] so the decision can be read on
 /// its own, and so the spawn site stays one line.
-async fn notify_inner(paths: Arc<Paths>, source: Source, id: String, outcome: InjectionRunState, error: Option<String>, driver: DriverStates) {
+async fn notify_inner(
+    paths: Arc<Paths>,
+    transcripts: TranscriptSources,
+    source: Source,
+    id: String,
+    outcome: InjectionRunState,
+    error: Option<String>,
+    driver: DriverStates,
+) {
     // Nobody has subscribed: stop before reading a transcript or minting a key.
     if store::subscriptions(&paths).await.is_empty() {
         return;
     }
-    let mut summary = summary_of(&paths, source, &id).await;
+    let mut summary = transcripts.find_summary(&paths, source, &id).await;
     // The transcript's own verdict, kept from before the overlay below runs.
     //
     // The unread gate must go on asking exactly the question it has always
@@ -471,7 +474,7 @@ async fn notify_inner(paths: Arc<Paths>, source: Source, id: String, outcome: In
     // turn happened.
     let transcript_status = summary.as_ref().map(|summary| summary.status);
     if let Some(summary) = summary.as_mut() {
-        // The same overlay `crate::sessions::list_and_filter` applies, on the one
+        // The same overlay `TranscriptSources::list_and_filter` applies, on the one
         // row this is about, so a notification and a list row can never give two
         // accounts of one session.
         driver.apply(std::slice::from_mut(summary));
@@ -532,6 +535,7 @@ async fn notify_inner(paths: Arc<Paths>, source: Source, id: String, outcome: In
 /// about to respawn the session.
 pub fn notify_rotation(
     paths: Arc<Paths>,
+    transcripts: TranscriptSources,
     source: Source,
     id: String,
     outcome: crate::sessions::account::RotationOutcome,
@@ -541,7 +545,7 @@ pub fn notify_rotation(
     use crate::sessions::account::{RotationOutcome, RotationTrigger};
     tokio::spawn(async move {
         let notice = Notice::Rotated(text.clone());
-        let summary = summary_of(&paths, source, &id).await;
+        let summary = transcripts.find_summary(&paths, source, &id).await;
         let title = summary
             .as_ref()
             .map(|summary| summary.title.clone())
@@ -614,9 +618,9 @@ pub fn notify_account_change(paths: Arc<Paths>, title: String, body: String) {
 ///
 /// Nothing takes it back when the question is answered: a notification already
 /// delivered cannot be recalled, and the session it opens says it was answered.
-pub fn notify_question(paths: Arc<Paths>, source: Source, id: String, question: String) {
+pub fn notify_question(paths: Arc<Paths>, transcripts: TranscriptSources, source: Source, id: String, question: String) {
     tokio::spawn(async move {
-        let summary = summary_of(&paths, source, &id).await;
+        let summary = transcripts.find_summary(&paths, source, &id).await;
         let title = summary
             .as_ref()
             .map(|summary| summary.title.clone())
@@ -662,13 +666,22 @@ fn question_body(question: &str) -> String {
 /// has been written back as idle. Taken inside the spawned task instead it would
 /// race the driver loop picking up the next queued message, and the notification
 /// would describe a turn that had not started when it was sent.
-pub fn notify_turn(paths: Arc<Paths>, source: Source, id: String, outcome: InjectionRunState, error: Option<String>, driver: DriverStates) {
-    tokio::spawn(notify_inner(paths, source, id, outcome, error, driver));
+pub fn notify_turn(
+    paths: Arc<Paths>,
+    transcripts: TranscriptSources,
+    source: Source,
+    id: String,
+    outcome: InjectionRunState,
+    error: Option<String>,
+    driver: DriverStates,
+) {
+    tokio::spawn(notify_inner(paths, transcripts, source, id, outcome, error, driver));
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sessions::SessionSummary;
 
     /// Serializes the tests that mutate process-global environment variables, so
     /// one setting `DROPPEN_PUSH_ALLOW_INSECURE_ENDPOINT` cannot be observed by another
