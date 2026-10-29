@@ -675,6 +675,14 @@ impl super::Transcripts for ClaudeCodeSessions {
         Box::pin(read_cli_choice(file_path))
     }
 
+    fn subagents(&self) -> Option<&dyn super::sidecars::Subagents> {
+        Some(self)
+    }
+
+    fn checklists(&self) -> Option<&dyn super::sidecars::Checklists> {
+        Some(self)
+    }
+
     fn context<'a>(&'a self, file_path: &'a Path) -> BoxFuture<'a, Option<super::context::ContextUsage>> {
         Box::pin(super::context::read_claude_context(file_path))
     }

@@ -15,6 +15,7 @@ use futures_util::future::BoxFuture;
 use serde_json::{Map, Value};
 
 use super::context::ContextUsage;
+use super::sidecars::{Checklists, Subagents};
 use super::util::TranscriptItem;
 use super::{CliChoice, SessionSummary, Source};
 use droppen_base::time::mtime_ms;
@@ -76,6 +77,17 @@ pub trait Transcripts: Send + Sync {
     /// [`super::apply_driver`].
     fn settles_reaped_runs(&self) -> bool {
         false
+    }
+
+    /// The subagents this CLI's sessions spawn, when it keeps their
+    /// transcripts.
+    fn subagents(&self) -> Option<&dyn Subagents> {
+        None
+    }
+
+    /// The task checklists this CLI keeps for its sessions, when it keeps any.
+    fn checklists(&self) -> Option<&dyn Checklists> {
+        None
     }
 
     /// The transcripts that count toward the token-usage stats and were
@@ -199,6 +211,16 @@ impl TranscriptSources {
     /// reader.
     pub fn settles_reaped_runs(&self, source: Source) -> bool {
         self.get(source).is_some_and(|reader| reader.settles_reaped_runs())
+    }
+
+    /// See [`Transcripts::subagents`]; `None` for a source with no reader.
+    pub fn subagents(&self, source: Source) -> Option<&dyn Subagents> {
+        self.get(source)?.subagents()
+    }
+
+    /// See [`Transcripts::checklists`]; `None` for a source with no reader.
+    pub fn checklists(&self, source: Source) -> Option<&dyn Checklists> {
+        self.get(source)?.checklists()
     }
 
     /// See [`Transcripts::cli_choice`].
