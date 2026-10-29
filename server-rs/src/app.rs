@@ -787,6 +787,33 @@ mod tests {
         assert_eq!(transcripts, [Source::Claude, Source::Codex, Source::Acp], "every source has both");
     }
 
+    /// An ownership row is written with its own CLI's step after it: the
+    /// writer takes the row's source from the reader whose step it runs, so a
+    /// Codex row always comes with the thread's claim, and no other CLI's row
+    /// writes one. Each reader's own `record_owned` is the same writer.
+    #[tokio::test]
+    async fn every_cli_records_ownership_with_its_own_step() {
+        use crate::sessions::owned_sessions::{self, OwnedSessions};
+        let home = tempfile::tempdir().expect("tempdir");
+        let paths = Paths::new(home.path().to_path_buf());
+        let claimed = |id: &str| paths.codex_claims_dir().join(id).exists();
+
+        for reader in transcript_sources().iter() {
+            let id = format!("{}-a", reader.source().as_str());
+            OwnedSessions::record(&paths, reader, &id).await.expect("record");
+            assert_eq!(claimed(&id), reader.source() == Source::Codex, "{} runs its own step", reader.source().as_str());
+        }
+        crate::sessions::claude::ClaudeCodeSessions.record_owned(&paths, "claude-b").await.expect("record");
+        crate::sessions::codex::CodexSessions.record_owned(&paths, "codex-b").await.expect("record");
+
+        let owned = owned_sessions::read(&paths).await;
+        assert_eq!(owned.ids(Source::Codex).collect::<Vec<_>>(), ["codex-a", "codex-b"]);
+        assert!(owned.ids(Source::Codex).all(claimed), "every codex row has its claim");
+        assert_eq!(owned.ids(Source::Claude).collect::<Vec<_>>(), ["claude-a", "claude-b"]);
+        assert!(!owned.ids(Source::Claude).any(claimed), "a claude row claims nothing");
+        assert!(!owned.contains(Source::Acp, "acp-a"), "nothing records an ACP session");
+    }
+
     /// What each CLI's sessions are offered for: only Claude Code stops to ask
     /// questions, Claude Code runs its instant chats with every tool off, so
     /// they take no attachments, and an ACP agent runs neither instant chats

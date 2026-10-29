@@ -748,6 +748,12 @@ impl super::Transcripts for AcpSessions {
         false
     }
 
+    // Owned by where its transcript is kept, so nothing records an ACP session
+    // and a row naming one would be dropped on read.
+    fn on_owned<'a>(&'a self, _paths: &'a Paths, _id: &'a str) -> BoxFuture<'a, ()> {
+        Box::pin(std::future::ready(()))
+    }
+
     // Made first, or the first ACP session would only reach the list on the
     // poll. One recursive watch covers every agent.
     fn watch_dirs<'a>(&'a self, paths: &'a Paths) -> BoxFuture<'a, Vec<PathBuf>> {

@@ -636,10 +636,10 @@ pub struct ClaudeCodeSessions;
 
 impl ClaudeCodeSessions {
     /// Record that this instance created claude session `id`, in its ownership
-    /// registry ([`super::owned_sessions::record`]): for a session whose
-    /// transcript lands in a root this server does not own.
+    /// registry ([`super::owned_sessions::OwnedSessions::record`]): for a session
+    /// whose transcript lands in a root this server does not own.
     pub async fn record_owned(&self, paths: &Paths, id: &str) -> std::io::Result<()> {
-        super::owned_sessions::record(paths, Source::Claude, id).await
+        super::owned_sessions::OwnedSessions::record(paths, self, id).await
     }
 
     /// Drop claude entries whose transcript is not in any root this server reads.
@@ -738,6 +738,12 @@ impl super::Transcripts for ClaudeCodeSessions {
 
     fn foreign_sessions(&self) -> bool {
         true
+    }
+
+    // The row is all a claude session needs: a sibling lists one on the local
+    // login as external, which is what it is to that sibling.
+    fn on_owned<'a>(&'a self, _paths: &'a Paths, _id: &'a str) -> BoxFuture<'a, ()> {
+        Box::pin(std::future::ready(()))
     }
 
     // Both roots' projects directories, made first: on a fresh install the
@@ -895,8 +901,8 @@ mod tests {
         std::fs::create_dir_all(&project).expect("project dir");
         std::fs::write(project.join("alive.jsonl"), "{}\n").expect("a session that exists");
 
-        owned_sessions::record(&paths, Source::Claude, "alive").await.expect("record");
-        owned_sessions::record(&paths, Source::Claude, "never-launched").await.expect("record");
+        ClaudeCodeSessions.record_owned(&paths, "alive").await.expect("record");
+        ClaudeCodeSessions.record_owned(&paths, "never-launched").await.expect("record");
         // Codex is left alone whatever the filesystem says: `~/.codex` hides
         // archived threads from every lookup cheap enough to run at boot, so
         // "not found" there is not "gone".
@@ -1255,9 +1261,7 @@ mod tests {
         // The same file, once this instance records having made it: the value is
         // now read out of the ownership row rather than defaulted, which is the
         // claim that survives a restart.
-        crate::sessions::owned_sessions::record(&paths, Source::Claude, "discovered")
-            .await
-            .expect("record");
+        ClaudeCodeSessions.record_owned(&paths, "discovered").await.expect("record");
         let owned = load_claude_summary(&paths, "discovered").await.expect("the row");
         assert_eq!(owned.scope, SessionScope::Owned);
         assert_eq!(owned.server, "alice");
