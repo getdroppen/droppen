@@ -44,7 +44,7 @@ use droppen_instance::paths::Paths;
 use droppen_base::process_env::{redact_secrets, redact_values};
 
 use super::login::Logins;
-use super::store::{AccountProvider, Credential};
+use super::store::{AccountError, AccountProvider, Credential};
 
 /// The prompt the probe sends. Short on purpose: it is billed like any other.
 pub(crate) const PROBE_PROMPT: &str = "ping";
@@ -179,6 +179,19 @@ pub async fn verify_secret(logins: &Logins, paths: &Paths, provider: AccountProv
         Ok(launch) => launch,
         Err(error) => return Verdict::Invalid(error.to_string()),
     };
+    // A launch says which CLI it starts, and only the credential's own may
+    // check it: a login filed under the other CLI would run the wrong program
+    // and vouch for a credential it never tested. Refused the way the store
+    // refuses such a launch for a spawn.
+    if launch.provider != provider {
+        return Verdict::Invalid(
+            AccountError::ProviderMismatch {
+                account: provider,
+                wanted: launch.provider,
+            }
+            .to_string(),
+        );
+    }
     let values = credential.values();
     login.verify(paths, &launch, &values).await
 }
@@ -227,6 +240,32 @@ mod tests {
             codex: Arc::new(Recording { provider: codex, calls: calls.clone() }),
         };
         (logins, calls)
+    }
+
+    /// A login filed under the other CLI checks nothing: the launch it builds
+    /// names its own CLI, and that is refused before any check runs.
+    #[tokio::test]
+    async fn a_login_filed_under_the_other_cli_checks_nothing() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let paths = paths_where_no_scratch_can_be_made(home.path());
+        let (logins, calls) = recording(AccountProvider::Codex, AccountProvider::Claude);
+        let claude = Credential::Oauth("claude-test-token".to_string());
+        let codex = Credential::Env(parse_env_block("OPENAI_API_KEY=codex-test-key").expect("block"));
+        let mismatch = Verdict::Invalid("provider_mismatch".to_string());
+
+        assert_eq!(verify_secret(&logins, &paths, AccountProvider::Claude, &claude).await, mismatch);
+        assert_eq!(verify_secret(&logins, &paths, AccountProvider::Codex, &codex).await, mismatch);
+        assert!(calls.lock().expect("calls").is_empty(), "no check ran");
+
+        // The real logins swapped: a claude block holding an OpenAI key would
+        // otherwise be checked, and could pass, as a codex key.
+        let real = crate::app::logins();
+        let swapped = Logins {
+            claude: real.codex.clone(),
+            codex: real.claude.clone(),
+        };
+        let block = Credential::Env(parse_env_block("OPENAI_API_KEY=codex-test-key").expect("block"));
+        assert_eq!(verify_secret(&swapped, &paths, AccountProvider::Claude, &block).await, mismatch);
     }
 
     /// Each credential is checked by its own CLI's login, with its own values
