@@ -348,11 +348,10 @@
       ]
     },
     {
-      "why": "drive, feed and chats call each provider's transcript, roots, checklist and agent code themselves (the ACP agent registry too), and Drive holds Claude Code's setup-token captures. They go through the provider base (Provider, Transcripts).",
+      "why": "drive finds a Claude Code session by its id itself (sessions::claude), and Drive holds Claude Code's setup-token captures. They go through the provider base (Provider, Transcripts).",
       "edges": [
         "drive -> accounts::setup_token",
-        "drive -> sessions::claude",
-        "feed -> claude_roots"
+        "drive -> sessions::claude"
       ]
     },
     {

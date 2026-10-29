@@ -23,7 +23,7 @@ use crate::auth::AuthState;
 use crate::chats::ChatsState;
 use crate::cloud::CloudState;
 use crate::drive::DriveState;
-use crate::feed::global::EventsState;
+use crate::feed::global::{ClaudeDirs, EventsState};
 use crate::files::FilesState;
 use crate::notify::NotifyState;
 use crate::plugins::routes::PluginsState;
@@ -254,6 +254,8 @@ impl FromRef<AppState> for AuthState {
 
 impl FromRef<AppState> for EventsState {
     fn from_ref(state: &AppState) -> Self {
+        // Read as the socket opens, the way `/api/settings` reads them.
+        let roots = crate::claude_roots::ClaudeRoots::of(&state.drive.paths);
         Self {
             send_limit: state.send_limit,
             cancel: state.cancel.clone(),
@@ -262,6 +264,10 @@ impl FromRef<AppState> for EventsState {
             drive: state.drive.clone(),
             instance: state.instance.clone(),
             started_at: state.started_at.clone(),
+            claude_dirs: ClaudeDirs {
+                local: roots.local_projects().to_string_lossy().into_owned(),
+                managed: roots.managed_projects().to_string_lossy().into_owned(),
+            },
             feeds: state.feeds.clone(),
         }
     }
