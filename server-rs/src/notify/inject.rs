@@ -98,7 +98,7 @@ pub fn program_text(binary: &Path) -> String {
 async fn ensure_program(instance: &InstanceDirs) -> std::io::Result<PathBuf> {
     let dir = bin_dir(instance);
     tokio::fs::create_dir_all(&dir).await?;
-    let binary = crate::pty_shim::shim_program();
+    let binary = droppen_pty::shim_program();
     write_executable(&dir.join(cli::NAME), program_text(&binary).as_bytes()).await?;
     Ok(dir)
 }

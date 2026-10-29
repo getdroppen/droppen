@@ -5,7 +5,7 @@
 //! <instance>/apps/<id>.log  that app's stdout+stderr        (app-owned)
 //! ```
 //!
-//! The pty shims of [`crate::pty_shim`] can be found by scanning a directory,
+//! The pty shims of [`droppen_pty`] can be found by scanning a directory,
 //! because each one leaves a socket a server can knock on. An embedded app
 //! leaves nothing: it is an ordinary `code-server` on an ordinary loopback port,
 //! indistinguishable from anything else the machine happens to be running. So

@@ -496,8 +496,8 @@ fn assert_contiguous(ticks: &[u64]) {
 /// quiet-for-a-moment heuristic would simply never fire — the drain has to stop
 /// at a tick the caller already knows arrived.
 async fn ticks_in_ring(shims: &Path, id: &str, until: u64) -> Vec<u64> {
-    let sidecars = remote_hand_server::pty_shim::sidecar::Sidecars::new(shims, id);
-    let mut link = remote_hand_server::pty_shim::client::connect(&sidecars.socket(), 0)
+    let sidecars = droppen_pty::sidecar::Sidecars::new(shims, id);
+    let mut link = droppen_pty::client::connect(&sidecars.socket(), 0)
         .await
         .expect("connect to the shim");
     let deadline = std::time::Instant::now() + BUDGET;
@@ -510,7 +510,7 @@ async fn ticks_in_ring(shims: &Path, id: &str, until: u64) -> Vec<u64> {
             Ok(None) => panic!("the shim closed before tick {until}; saw {found:?}"),
             Err(_) => panic!("the shim never replayed as far as tick {until}; saw {found:?}"),
         };
-        if frame.kind == remote_hand_server::pty_shim::proto::OUTPUT {
+        if frame.kind == droppen_pty::proto::OUTPUT {
             text.push_str(&String::from_utf8_lossy(&frame.payload));
             found = ticks(&text);
         }
@@ -524,8 +524,8 @@ async fn ticks_in_ring(shims: &Path, id: &str, until: u64) -> Vec<u64> {
 /// clamps it to the head, so this connection learns the pid and is handed no
 /// output.
 async fn shell_pid(shims: &Path, id: &str) -> u32 {
-    let sidecars = remote_hand_server::pty_shim::sidecar::Sidecars::new(shims, id);
-    remote_hand_server::pty_shim::client::connect(&sidecars.socket(), u64::MAX)
+    let sidecars = droppen_pty::sidecar::Sidecars::new(shims, id);
+    droppen_pty::client::connect(&sidecars.socket(), u64::MAX)
         .await
         .expect("connect to the shim")
         .shell_pid

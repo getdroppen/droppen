@@ -128,13 +128,13 @@ impl Link {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl Link {
     /// A link whose inbound `frames` are all queued before anything reads them,
     /// for a test that needs a burst to be there at once. Writes go to a socket
     /// nobody reads. The sender comes back so the link does not end when the
     /// frames run out.
-    pub(crate) fn preloaded(frames: Vec<Frame>) -> std::io::Result<(Link, mpsc::UnboundedSender<Frame>)> {
+    pub fn preloaded(frames: Vec<Frame>) -> std::io::Result<(Link, mpsc::UnboundedSender<Frame>)> {
         let (ours, theirs) = UnixStream::pair()?;
         let (_, writer) = ours.into_split();
         let (inbound_tx, inbound) = mpsc::unbounded_channel();

@@ -1108,6 +1108,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "droppen-pty"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "droppen-base",
+ "libc",
+ "portable-pty",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "vt100",
+]
+
+[[package]]
 name = "droppen-relay"
 version = "0.1.0"
 dependencies = [
@@ -2777,6 +2794,7 @@ dependencies = [
  "croner",
  "droppen-base",
  "droppen-plugin-sdk",
+ "droppen-pty",
  "droppen-search-path",
  "ed25519-dalek",
  "flate2",
@@ -2793,7 +2811,6 @@ dependencies = [
  "mofa",
  "notify",
  "p256",
- "portable-pty",
  "rand 0.8.7",
  "regex",
  "reqwest",
@@ -2817,7 +2834,6 @@ dependencies = [
  "tracing-subscriber",
  "unicode-segmentation",
  "uuid",
- "vt100",
  "zeroize",
 ]
 

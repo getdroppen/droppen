@@ -60,9 +60,7 @@
         {
           "name": "droppen-pty",
           "about": "The pty shims that outlive the server.",
-          "modules": [
-            "pty_shim"
-          ],
+          "modules": [],
           "mayUse": [
             "droppen-instance"
           ]

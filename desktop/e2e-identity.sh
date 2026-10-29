@@ -131,7 +131,7 @@ e2e_check_socket_room() { # the support directory
 }
 
 # The folders under /tmp the server falls back to for its sockets when an
-# instance's own path is too long for one (`server-rs/src/pty_shim/sidecar.rs`,
+# instance's own path is too long for one (`server-rs/crates/droppen-pty/src/sidecar.rs`,
 # `runtime_dir`): named after a hash of the socket's folder, so those of the
 # run's own instance are the run's alone. The server leaves them, emptied.
 e2e_runtime_dirs() { # the run's instance directory

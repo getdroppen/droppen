@@ -8,7 +8,7 @@
 //! stream-json`, cannot be held that way at all: its whole point is to still be
 //! there tomorrow.
 //!
-//! So it is held one process out, exactly as [`crate::pty_shim`] holds a shell:
+//! So it is held one process out, exactly as [`droppen_pty`] holds a shell:
 //!
 //! ```text
 //!   server  ──unix socket──▶  session shim  ──pipes──▶  claude
@@ -178,13 +178,13 @@ pub const SPAWN_PATIENCE: Duration = Duration::from_secs(10);
 /// ```
 ///
 /// All three belong to the shim, which is the difference from
-/// [`crate::pty_shim::sidecar::Sidecars`]: a terminal's identity is the server's
+/// [`droppen_pty::sidecar::Sidecars`]: a terminal's identity is the server's
 /// to record because a browser has to be shown a list of them, whereas a
 /// session's identity is already a session, recorded where sessions are. What is
 /// here is only what the shim itself writes.
 ///
 /// The socket's name is short and its directory is sometimes not this one — see
-/// [`crate::pty_shim::sidecar`] for the `sun_path` budget that forces it.
+/// [`droppen_pty::sidecar`] for the `sun_path` budget that forces it.
 #[derive(Debug, Clone)]
 pub struct Sidecars {
     dir: PathBuf,
@@ -197,7 +197,7 @@ impl Sidecars {
     pub fn new(dir: impl Into<PathBuf>, id: impl Into<String>) -> Self {
         let dir = dir.into();
         let id = id.into();
-        let socket = crate::pty_shim::sidecar::socket_path(&dir, &id);
+        let socket = droppen_pty::sidecar::socket_path(&dir, &id);
         Self { dir, id, socket }
     }
 
@@ -249,7 +249,7 @@ impl Sidecars {
     /// itself — condemn a session that has only just started.
     pub fn prepare(&self) -> std::io::Result<()> {
         std::fs::create_dir_all(&self.dir)?;
-        crate::pty_shim::sidecar::ensure_socket_dir(&self.socket, &self.dir)?;
+        droppen_pty::sidecar::ensure_socket_dir(&self.socket, &self.dir)?;
         match std::fs::remove_file(self.exit()) {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -529,7 +529,7 @@ impl Args {
     let _ = std::fs::remove_file(&args.socket);
     let listener = bind_socket(&args.socket, args.stderr_file.parent())?;
     // Recorded now, compared at unlink time: see `unlink_if_ours`.
-    let identity = crate::pty_shim::child::path_identity(&args.socket);
+    let identity = droppen_pty::child::path_identity(&args.socket);
 
     let (grew, _) = watch::channel(0u64);
     let shim = Arc::new(Shim {
@@ -592,7 +592,7 @@ impl Args {
     //    bound a fresh one at the same path, and unlinking by name would strand
     //    a session that nothing is wrong with.
     accepting.abort();
-    crate::pty_shim::child::unlink_if_ours(&args.socket, identity);
+    droppen_pty::child::unlink_if_ours(&args.socket, identity);
     Ok(())
 }
 }
@@ -600,7 +600,7 @@ impl Args {
 /// Bind the session socket, making its directory again if it has just gone.
 ///
 /// The spawner made the directory a moment ago, so the ordinary path is one
-/// `bind`. The retry is for the same race [`crate::pty_shim::sidecar::
+/// `bind`. The retry is for the same race [`droppen_pty::sidecar::
 /// ensure_socket_dir`] documents from the other side: the `/tmp` directory is
 /// shared by an instance's shims and its last user removes it on the way out, so
 /// an outgoing shim can take it between the spawner making it and this `bind`.
@@ -610,7 +610,7 @@ fn bind_socket(socket: &Path, beside: Option<&Path>) -> Result<UnixListener, Str
     let failed = |error: std::io::Error| format!("session-shim: cannot bind {}: {error}", socket.display());
     match UnixListener::bind(socket) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            crate::pty_shim::sidecar::ensure_socket_dir(socket, beside.unwrap_or(Path::new("")))
+            droppen_pty::sidecar::ensure_socket_dir(socket, beside.unwrap_or(Path::new("")))
                 .map_err(|error| format!("session-shim: cannot make the directory for {}: {error}", socket.display()))?;
             UnixListener::bind(socket).map_err(failed)
         }
@@ -1083,7 +1083,7 @@ pub async fn spawn_via_shim(spawn: Spawn<'_>) -> Result<Link, LinkError> {
 /// under its `session-shim` subcommand, with `env_clear` first.
 #[cfg(not(test))]
 fn shim_command(argv: &[OsString], env: &Env) -> Command {
-    let mut command = Command::new(crate::pty_shim::shim_program());
+    let mut command = Command::new(droppen_pty::shim_program());
     command.arg("session-shim").args(argv).env_clear().envs(env);
     command
 }
@@ -1091,7 +1091,7 @@ fn shim_command(argv: &[OsString], env: &Env) -> Command {
 /// The same, in this crate's unit tests: the test binary itself, running the
 /// one test that is a shim.
 ///
-/// [`crate::pty_shim::shim_program`] cannot serve a unit test. From a test
+/// [`droppen_pty::shim_program`] cannot serve a unit test. From a test
 /// binary it falls back to the server binary beside it in `target/debug` —
 /// which `cargo test --lib` never builds, and which any other run may have left
 /// there from older source. Absent, the test binary itself was run as
@@ -1686,7 +1686,7 @@ mod tests {
         assert_eq!(sidecars.socket(), Path::new("/tmp/shims/0123456789abcdef.sock"));
 
         // The real directory is far longer than a `sun_path`, and the socket has
-        // to move rather than fail to bind. See `crate::pty_shim::sidecar`.
+        // to move rather than fail to bind. See `droppen_pty::sidecar`.
         let deep = PathBuf::from("/Users/somebody/.local/share/remote-hand/instances/production-instance/session-shims");
         let moved = Sidecars::new(&deep, "9f8e7d6c5b4a39281706");
         assert!(

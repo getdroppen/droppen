@@ -24,9 +24,10 @@
 //! * [`sidecar`] — the four files one surviving terminal leaves on disk.
 //!
 //! Everything lives under `<data>/instances/<name>/pty-shims/`, which is the
-//! [`crate::instance`] directory one server exclusively owns. That is not
-//! decoration: adoption is "attach to whatever is in this directory", and two
-//! servers doing that to one directory would fight over every shell in it.
+//! instance directory one server exclusively owns (the server's `instance`).
+//! That is not decoration: adoption is "attach to whatever is in this
+//! directory", and two servers doing that to one directory would fight over
+//! every shell in it.
 
 pub mod child;
 pub mod client;

@@ -27,11 +27,19 @@
  * library's own name, `remote_hand_server::<module>…`), `self::…`,
  * `super::…`, or a child module's name. Comments, string literals,
  * `pub(in …)` and `#[cfg(test)]` items do not count: a test may reach
- * anywhere. The check fails on
+ * anywhere.
+ *
+ * A crate that has left `server-rs/src` is a workspace member of its own
+ * (`server-rs/crates/<name>`), and `layers.json` places no module in it. A
+ * path that starts with its name (`droppen_pty::…`) is a use of it, held to
+ * the same rules as a module's, and its manifest's `[dependencies]` on the
+ * other crates of `layers.json` are its own uses: Cargo keeps it from using
+ * the server, but not from depending on a crate its layer may not use. Such
+ * a dependency has no exceptions; it fails. The check fails on
  * - a module that `layers.json` does not place, places twice, or places but
  *   is gone;
  * - a use between two crates that may not use each other that `allowed`
- *   does not list;
+ *   does not list, and any such dependency of a workspace crate;
  * - an `allowed` edge that is no longer such a use. The list only shrinks:
  *   an exception that is gone may not come back unnoticed;
  * - more or fewer `Source::Claude|Codex|Acp` matches outside the provider
@@ -317,14 +325,18 @@ const SOURCE_MATCH = /(?<![A-Za-z0-9_])Source\s*::\s*(?:Claude|Codex|Acp)(?![A-Z
  *   `a::b`, inline ones too); `files`;
  * - `uses`: every use, `{ from, to, where }`, `from` and `to` module paths as
  *   segment lists (`to` may go on into an item: `[sessions, Source]`);
+ * - `crateUses`: every path into one of `crates` (crate names, `droppen-pty`
+ *   spelled `droppen_pty::…` in code), `{ from, crate, where }`;
  * - `edges`: the top-level modules' graph, `Map<from, Map<to, { count, where }>>`;
  * - `sizes`: per file, `{ file, path, lines, sources }`: its code lines and
  *   where it matches `Source::Claude|Codex|Acp`;
  * - `problems`.
  */
-export function moduleGraph(serverDir) {
+export function moduleGraph(serverDir, { crates = [] } = {}) {
   const src = join(serverDir, "src");
   const lib = libName(readFileSync(join(serverDir, "Cargo.toml"), "utf8"));
+  const crateOfHead = new Map(crates.map((name) => [name.replace(/-/g, "_"), name]));
+  const crateHeads = [...crateOfHead.keys()].map(escape).join("|");
   const problems = [];
   const owners = new Map();
   const names = { lib: new Set(), bin: new Set() };
@@ -356,6 +368,7 @@ export function moduleGraph(serverDir) {
 
   const paths = new Set();
   const uses = [];
+  const crateUses = [];
   const sizes = [];
   for (const [, { files, kind }] of owners) {
     for (const { file, code, lines, path, children } of files) {
@@ -384,6 +397,9 @@ export function moduleGraph(serverDir) {
         } else to = [...here, head, ...rest];
         if (known(to, ns)) add(at, to);
       }
+      for (const { head, at } of crateHeads ? pathsFrom(code, crateHeads) : []) {
+        crateUses.push({ from: pathAt(path, inline, at), crate: crateOfHead.get(head), where: `${rel}:${lineAt(code, at)}` });
+      }
       const sources = [...code.matchAll(SOURCE_MATCH)].map((m) => `${rel}:${lineAt(code, m.index)}`);
       sizes.push({ file: rel, path, lines, sources });
     }
@@ -398,7 +414,42 @@ export function moduleGraph(serverDir) {
     out.set(to[0], edge);
   }
   const files = [...owners.values()].flatMap((o) => o.files.map((f) => relative(serverDir, f.file)));
-  return { modules: [...owners.keys()].sort(), paths, files, uses, edges, sizes, problems };
+  return { modules: [...owners.keys()].sort(), paths, files, uses, crateUses, edges, sizes, problems };
+}
+
+/** A manifest's `[dependencies]` (and per-target ones), by package name: `[{ name, line }]`. */
+export function manifestDependencies(manifest) {
+  const found = [];
+  let inside = false;
+  manifest.split("\n").forEach((text, i) => {
+    const header = /^\s*\[([^\]]*)\]\s*(?:#.*)?$/.exec(text);
+    if (header) {
+      inside = /^(?:target\..*\.)?dependencies$/.test(header[1].trim());
+      return;
+    }
+    const entry = inside && /^\s*([A-Za-z0-9_-]+)\s*=(.*)$/.exec(text);
+    if (entry) found.push({ name: /\bpackage\s*=\s*"([^"]+)"/.exec(entry[2])?.[1] ?? entry[1], line: i + 1 });
+  });
+  return found;
+}
+
+/**
+ * The workspace's other members (`members` of `<serverDir>/Cargo.toml`, the
+ * server itself aside): `[{ name, manifest, dependencies, lines }]`, `lines`
+ * being the code lines of its library built outside tests.
+ */
+export function workspaceCrates(serverDir) {
+  const root = readFileSync(join(serverDir, "Cargo.toml"), "utf8");
+  const members = /^members\s*=\s*\[([^\]]*)\]/m.exec(root)?.[1] ?? "";
+  return [...members.matchAll(/"([^"]+)"/g)]
+    .map((m) => m[1])
+    .filter((dir) => dir !== ".")
+    .map((dir) => {
+      const manifest = readFileSync(join(serverDir, dir, "Cargo.toml"), "utf8");
+      const lib = join(serverDir, dir, "src", "lib.rs");
+      const lines = existsSync(lib) ? moduleFiles(lib, []).files.reduce((n, f) => n + f.lines, 0) : 0;
+      return { name: libName(manifest).replace(/_/g, "-"), manifest: join(dir, "Cargo.toml"), dependencies: manifestDependencies(manifest), lines };
+    });
 }
 
 /** The strongly connected groups of more than one node, largest first (Tarjan's algorithm). */
@@ -457,11 +508,13 @@ const count = (edges, from, to, where) => {
  *   modules, mayUse?, notes? }] }`: the crates of each layer, the modules
  *   (`a`, `a::b`) going to each, and the crates each may use besides those
  *   of the open layers below it (`*`: every crate below it);
- * - `allowed`, each `{ why, edges: ["from -> to", …] }`, between modules;
- * - `sourceMatches`, `{ providers: [crate, …], count }`.
+ * - `allowed`, each `{ why, edges: ["from -> to", …] }`, from a module to a
+ *   module or to a crate that has left the server;
+ * - `sourceMatches`, `{ providers: [crate, …], count }`;
+ * and `workspace` ({@link workspaceCrates}): the crates that have left.
  * Returns `{ problems, violations, stats }`.
  */
-export function checkLayers(graph, config) {
+export function checkLayers(graph, config, workspace = []) {
   const problems = [...graph.problems];
   const crates = new Map();
   const crateOf = new Map();
@@ -505,6 +558,10 @@ export function checkLayers(graph, config) {
     if (y.level < x.level && (y.open || x.mayUse === "*")) return true;
     return x.mayUse !== "*" && x.mayUse.includes(b) && y.level <= x.level;
   };
+  const whyNot = (a, b) => {
+    const [x, y] = [crates.get(a), crates.get(b)];
+    return y.level > x.level ? `${b} is in a higher layer (${y.layer})` : `${a}'s mayUse does not list ${b}`;
+  };
   const unitOf = (path) => {
     for (let n = path.length; n > 0; n--) {
       const unit = path.slice(0, n).join("::");
@@ -513,23 +570,37 @@ export function checkLayers(graph, config) {
     return undefined;
   };
 
+  // From a module to a module, or to a crate that has left (`droppen_pty::…`,
+  // whose own name stands for its unit and its crate).
   const unitEdges = new Map();
   const crateEdges = new Map();
-  for (const { from, to, where } of graph.uses) {
-    const [a, b] = [unitOf(from), unitOf(to)];
+  const targetCrate = (unit) => crateOf.get(unit) ?? unit;
+  const uses = [
+    ...graph.uses.map(({ from, to, where }) => [unitOf(from), unitOf(to), where]),
+    ...(graph.crateUses ?? []).filter((u) => crates.has(u.crate)).map(({ from, crate, where }) => [unitOf(from), crate, where]),
+  ];
+  for (const [a, b, where] of uses) {
     if (!a || !b || a === b) continue;
     count(unitEdges, a, b, where);
-    if (crateOf.get(a) !== crateOf.get(b)) count(crateEdges, crateOf.get(a), crateOf.get(b), where);
+    if (crateOf.get(a) !== targetCrate(b)) count(crateEdges, crateOf.get(a), targetCrate(b), where);
+  }
+
+  // A workspace crate's dependencies on the crates of layers.json.
+  for (const w of workspace) {
+    if (!crates.has(w.name)) continue;
+    for (const d of w.dependencies) {
+      if (!crates.has(d.name)) continue;
+      count(crateEdges, w.name, d.name, `${w.manifest}:${d.line}`);
+      if (!mayUse(w.name, d.name)) problems.push(`${w.manifest}:${d.line}: ${w.name} depends on ${d.name}, which it may not use: ${whyNot(w.name, d.name)}`);
+    }
   }
 
   const violations = [];
   for (const [from, out] of unitEdges) {
     for (const [to, { count: n, where }] of out) {
-      const [a, b] = [crateOf.get(from), crateOf.get(to)];
+      const [a, b] = [crateOf.get(from), targetCrate(to)];
       if (mayUse(a, b)) continue;
-      const [x, y] = [crates.get(a), crates.get(b)];
-      const why = y.level > x.level ? `${b} is in a higher layer (${y.layer})` : `${a}'s mayUse does not list ${b}`;
-      violations.push({ edge: `${from} -> ${to}`, from: a, to: b, why, count: n, where });
+      violations.push({ edge: `${from} -> ${to}`, from: a, to: b, why: whyNot(a, b), count: n, where });
     }
   }
   violations.sort((p, q) => p.edge.localeCompare(q.edge));
@@ -571,6 +642,12 @@ export function checkLayers(graph, config) {
     const c = crateOf.get(unitOf(f.path));
     if (c) code.set(c, (code.get(c) ?? 0) + f.lines);
   }
+  const left = new Set();
+  for (const w of workspace) {
+    if (!crates.has(w.name)) continue;
+    left.add(w.name);
+    code.set(w.name, (code.get(w.name) ?? 0) + w.lines);
+  }
   const crateUsers = fanIn(crateEdges);
   const stats = {
     modules: graph.modules.length,
@@ -581,7 +658,7 @@ export function checkLayers(graph, config) {
     cycle: cycles(graph.modules, graph.edges)[0] ?? [],
     crateCycle: cycles([...crates.keys()], crateEdges)[0] ?? [],
     middle: [...crates.values()]
-      .filter((c) => c.middle && c.modules.length)
+      .filter((c) => c.middle && (c.modules.length || left.has(c.name)))
       .map((c) => ({ crate: c.name, code: code.get(c.name) ?? 0, fanIn: crateUsers.get(c.name) ?? 0 })),
     sourceMatches: sources.length,
     fanIn: Object.fromEntries(fanIn(graph.edges)),
@@ -592,7 +669,9 @@ export function checkLayers(graph, config) {
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const serverDir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "server-rs");
   const config = JSON.parse(readFileSync(join(serverDir, "layers.json"), "utf8"));
-  const { problems, violations, stats } = checkLayers(moduleGraph(serverDir), config);
+  const workspace = workspaceCrates(serverDir);
+  const graph = moduleGraph(serverDir, { crates: workspace.map((w) => w.name) });
+  const { problems, violations, stats } = checkLayers(graph, config, workspace);
   if (process.argv.includes("--json")) {
     console.log(JSON.stringify({ ...stats, violationEdges: violations.map((v) => v.edge), problems }, null, 2));
     process.exit(problems.length ? 1 : 0);

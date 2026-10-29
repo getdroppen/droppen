@@ -19,8 +19,8 @@ use futures_util::{SinkExt, StreamExt};
 use remote_hand_server::app::RemoteHandApp;
 use remote_hand_server::instance::{InstanceDirs, InstanceLock, DEFAULT_INSTANCE};
 use remote_hand_server::paths::Paths;
-use remote_hand_server::pty_shim::proto::{self, Frame, Hello2, Meta};
-use remote_hand_server::pty_shim::sidecar::Sidecars;
+use droppen_pty::proto::{self, Frame, Hello2, Meta};
+use droppen_pty::sidecar::Sidecars;
 use remote_hand_server::shutdown::Cleanups;
 use remote_hand_server::terminals::{Chunk, CreateSpec, Registry};
 use serde_json::Value;
@@ -228,7 +228,7 @@ impl Socket {
 /// also told, quite correctly, that a cursor that far out cannot be true; the
 /// gap frame that says so is dropped with the link a line later.
 async fn peek_shell_pid(shims: &Path, id: &str) -> u32 {
-    let link = remote_hand_server::pty_shim::client::connect(&Sidecars::new(shims, id).socket(), u64::MAX)
+    let link = droppen_pty::client::connect(&Sidecars::new(shims, id).socket(), u64::MAX)
         .await
         .expect("connect to the shim");
     link.shell_pid
@@ -449,7 +449,7 @@ async fn a_tombstoned_terminal_is_reported_and_swept_rather_than_adopted() {
 
     // The shell dies while nobody is watching, which is exactly the case the
     // tombstone exists for.
-    remote_hand_server::pty_shim::child::kill_shell(shell_pid, libc::SIGKILL);
+    droppen_pty::child::kill_shell(shell_pid, libc::SIGKILL);
     let sidecars = Sidecars::new(&shims, &info.id);
     common::wait_for("the shim to record the exit", Duration::from_secs(10), || sidecars.tombstoned()).await;
 
@@ -478,7 +478,7 @@ async fn a_socket_whose_shim_was_killed_is_swept_rather_than_adopted() {
     // socket: the socket file is left behind with nothing listening on it.
     let shim_pid = shim_pid_for(&shims, &info.id);
     unsafe { libc::kill(shim_pid as libc::pid_t, libc::SIGKILL) };
-    remote_hand_server::pty_shim::child::kill_shell(shell_pid, libc::SIGKILL);
+    droppen_pty::child::kill_shell(shell_pid, libc::SIGKILL);
     let sidecars = Sidecars::new(&shims, &info.id);
     common::wait_for("the shim to die", Duration::from_secs(10), || !alive(shim_pid)).await;
     assert!(sidecars.socket().exists(), "the point of this test is the socket that was left behind");
@@ -761,7 +761,7 @@ async fn a_shim_survives_its_server_being_sigkilled_and_is_adopted_by_the_next_o
     // exit and leaves on its own, so a lookup after the shell's death can miss it.
     let shim_pid = shim_pid_for(&shims, &id);
     unsafe { libc::kill(-(second.pid as libc::pid_t), libc::SIGKILL) };
-    remote_hand_server::pty_shim::child::kill_shell(shell_pid, libc::SIGKILL);
+    droppen_pty::child::kill_shell(shell_pid, libc::SIGKILL);
     unsafe { libc::kill(shim_pid as libc::pid_t, libc::SIGKILL) };
     common::wait_for("the shell to be cleaned up", Duration::from_secs(10), || !alive(shell_pid)).await;
     // Nothing here was given the chance to tidy up after itself, which is the

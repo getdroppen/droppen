@@ -50,6 +50,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 | `selfupdate/` | `POST /api/server/self-upgrade`，以及 `<data>/bin` 这个二进制仓库 |
 | `supervisor.rs` | `remote-hand-server up`：重启子进程、回滚坏二进制、收孤儿 |
 | `crates/droppen-base/` | 各子系统都用、却不属于任何一个的底层工具：时钟（`time`）、文本编码（`text`）、只有本用户可读的文件（`fsutil`）、「文件里那个 pid 还是当初那个进程吗」的两道守卫（`procs`）、出站 webhook 的守卫（`outbound`）、环境变量的新旧名字（`env`）、spawn 的环境与输出脱敏（`process_env`）、二进制的两个名字（`program`） |
+| `crates/droppen-pty/` | 活过服务端重启的 pty：shim 进程（本二进制的隐藏子命令 `pty-shim`）、它的帧格式、环形缓冲与屏幕模型、留在磁盘上的边车文件，以及服务端这一侧的连接 |
 
 ## 四个「填坑」模块
 

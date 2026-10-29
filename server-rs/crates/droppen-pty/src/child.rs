@@ -189,7 +189,7 @@ impl Shim {
 
     /// The recorder, taken back from a panic rather than propagating it.
     ///
-    /// The house pattern, for the house reason — `crate::db::Db::lock` states
+    /// The house pattern, for the house reason — the server's `db::Db::lock` states
     /// it in full. A `vt100` parse that panicked inside [`read_pty`] *while it
     /// held this lock* would poison it: from then on every one of the five
     /// places that take it would panic in turn, the worst being the `HELLO` arm
@@ -942,9 +942,9 @@ fn write_tombstone(path: &Path, code: i32) {
 /// (APFS allocates monotonically, which is why this never showed on macOS).
 /// The change time pins the identity to one particular creation.
 ///
-/// Shared with [`crate::inject::shim`]: a session shim binds its socket, waits
+/// Shared with the server's `inject::shim`: a session shim binds its socket, waits
 /// out the same kind of linger and faces the same successor.
-pub(crate) fn path_identity(path: &Path) -> Option<(u64, u64, i64, i64)> {
+pub fn path_identity(path: &Path) -> Option<(u64, u64, i64, i64)> {
     use std::os::unix::fs::MetadataExt;
     std::fs::metadata(path)
         .ok()
@@ -959,7 +959,7 @@ pub(crate) fn path_identity(path: &Path) -> Option<(u64, u64, i64, i64)> {
 /// directory. Deleting a live successor's socket would strand a terminal that
 /// nothing is wrong with. Comparing device and inode against what was bound
 /// makes the removal unambiguous: same file, or nothing.
-pub(crate) fn unlink_if_ours(path: &Path, identity: Option<(u64, u64, i64, i64)>) {
+pub fn unlink_if_ours(path: &Path, identity: Option<(u64, u64, i64, i64)>) {
     let Some(identity) = identity else { return };
     if path_identity(path) != Some(identity) {
         tracing::info!(path = %path.display(), "the shim socket was replaced; leaving it alone");
@@ -1162,48 +1162,31 @@ mod tests {
 
     use super::*;
 
+    /// `pty-shim` followed by `words`, parsed the way the server's command line
+    /// mounts it: a hidden subcommand under a top level with no help
+    /// subcommand. The server's own tests pin its real command line (the
+    /// spawn forms, and the paths and separator this one needs).
     fn parse(words: &[String]) -> Result<PtyShimArgs, clap::Error> {
-        match crate::cli::tests::parse_words("pty-shim", words)? {
-            crate::cli::Command::PtyShim(parsed) => Ok(parsed),
-            other => panic!("{words:?} parsed as {other:?}"),
+        use clap::Parser;
+
+        #[derive(Debug, clap::Parser)]
+        #[command(name = "remote-hand-server", disable_help_subcommand = true)]
+        struct Cli {
+            #[command(subcommand)]
+            command: Option<Command>,
         }
-    }
 
-    #[test]
-    fn the_command_line_needs_both_paths_and_a_separator() {
-        let argv: Vec<String> = ["--socket", "/tmp/a.sock", "--exit-file", "/tmp/a.exit", "--", "/bin/sh", "-l"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-        let args = parse(&argv).expect("parse");
-        assert_eq!(args.socket, PathBuf::from("/tmp/a.sock"));
-        assert_eq!(args.exit_file, PathBuf::from("/tmp/a.exit"));
-        assert_eq!(args.command, vec!["/bin/sh".to_string(), "-l".to_string()]);
+        #[derive(Debug, clap::Subcommand)]
+        enum Command {
+            #[command(hide = true)]
+            PtyShim(PtyShimArgs),
+        }
 
-        let missing_separator: Vec<String> = ["--socket", "/tmp/a.sock", "--exit-file", "/tmp/a.exit"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-        assert_eq!(
-            parse(&missing_separator).unwrap_err().kind(),
-            ErrorKind::MissingRequiredArgument,
-            "the command must follow `--`"
-        );
-
-        let empty_command: Vec<String> = ["--socket", "/s", "--exit-file", "/e", "--"].iter().map(|s| s.to_string()).collect();
-        assert_eq!(parse(&empty_command).unwrap_err().kind(), ErrorKind::MissingRequiredArgument);
-
-        let no_socket: Vec<String> = ["--exit-file", "/e", "--", "/bin/sh"].iter().map(|s| s.to_string()).collect();
-        assert_eq!(parse(&no_socket).unwrap_err().kind(), ErrorKind::MissingRequiredArgument);
-
-        // An argument that looks like a flag is only a flag *before* the
-        // separator; after it, it belongs to the shell.
-        let after: Vec<String> = ["--socket", "/s", "--exit-file", "/e", "--", "/bin/sh", "--socket", "-c", "echo"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-        let parsed = parse(&after).expect("parse");
-        assert_eq!(&parsed.command[1..], ["--socket", "-c", "echo"]);
+        let argv = ["remote-hand-server", "pty-shim"].into_iter().chain(words.iter().map(String::as_str));
+        match Cli::try_parse_from(argv)?.command {
+            Some(Command::PtyShim(parsed)) => Ok(parsed),
+            None => panic!("{words:?} parsed as no command"),
+        }
     }
 
     #[test]

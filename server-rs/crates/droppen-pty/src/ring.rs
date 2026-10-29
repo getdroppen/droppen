@@ -6,7 +6,7 @@
 //!   bytes and knows the absolute offset of the first byte it still has. A
 //!   client resuming from outside that window — below it because the output
 //!   fell out, above it because the cursor it kept cannot be true — is told, in
-//!   a [`crate::pty_shim::proto::GAP`] frame, that the stream it is about to be
+//!   a [`crate::proto::GAP`] frame, that the stream it is about to be
 //!   handed is not the continuation of the one it had. See [`Ring::resume_at`].
 //! * **The screen is reproducible even when the ring is not enough.** A `vim` an
 //!   hour into a session cannot be reconstructed by replaying the tail of its

@@ -5,7 +5,7 @@
 //!
 //! # Where the pty lives
 //!
-//! Not here. Each terminal is a detached [`crate::pty_shim`] process that owns
+//! Not here. Each terminal is a detached [`droppen_pty`] process that owns
 //! the pty and the shell; this module owns a unix-socket link to it, a byte
 //! offset into its output, and the browser-facing replay buffer. That is the
 //! whole of "restart survival": the server can die and come back, and the only
@@ -14,7 +14,7 @@
 //! The wire the browser speaks is bare text frames of output out and
 //! `{"type":"input"|"resize"}` JSON in, plus the four REST routes; the shim is
 //! invisible on that wire except in two deliberate places: where output was
-//! genuinely lost the client sees a counted [`crate::pty_shim::gap_note`]
+//! genuinely lost the client sees a counted [`droppen_pty::gap_note`]
 //! rather than a seamless-looking splice, and where the link to a shim is down
 //! it is told so rather than being left typing into a screen frozen at whenever
 //! that link last worked.
@@ -51,10 +51,10 @@ use crate::instance::InstanceDirs;
 use crate::openapi_ext::Optional;
 use crate::paths::Paths;
 use droppen_base::process_env::{self, Env};
-use crate::pty_shim::client::{self, Link};
-use crate::pty_shim::proto::{self, Frame, Meta, Resize};
-use crate::pty_shim::sidecar::{self, Sidecars};
-use crate::pty_shim::{self as shim, gap_note};
+use droppen_pty::client::{self, Link};
+use droppen_pty::proto::{self, Frame, Meta, Resize};
+use droppen_pty::sidecar::{self, Sidecars};
+use droppen_pty::{self as shim, gap_note};
 
 pub use routes::{describe, TerminalsState};
 
@@ -117,7 +117,7 @@ const TOMBSTONE_GRACE: Duration = Duration::from_secs(3);
 /// there, to receive the shim's exit frame before [`reap_killed`] stops it.
 ///
 /// The shim allows its reader half a second to drain the pty between the two
-/// (`pty_shim::child::DRAIN_GRACE`); this leaves room for a busy machine on
+/// (`droppen_pty::child::DRAIN_GRACE`); this leaves room for a busy machine on
 /// top of that.
 const EXIT_FRAME_GRACE: Duration = Duration::from_secs(2);
 
@@ -921,7 +921,7 @@ impl Registry {
     /// drops links and nothing else.
     ///
     /// The cursor is deliberately not written on the way out either — see
-    /// [`crate::pty_shim::CURSOR_FLUSH_EVERY`].
+    /// [`droppen_pty::CURSOR_FLUSH_EVERY`].
     pub fn shutdown_all(&self) -> usize {
         let entries = self.drain();
         let count = entries.len();
@@ -1107,7 +1107,13 @@ impl Drop for Attachment {
     }
 }
 
-impl Sidecars {
+/// Starting a terminal's shim from the files it will leave: the argv the shim
+/// parses is the pty crate's, the spawn is the terminals'.
+trait SpawnShimExt {
+    async fn spawn_shim(&self, program: &str, args: &[String], workdir: &str, env: &Env, size: Option<(u16, u16)>) -> std::io::Result<u32>;
+}
+
+impl SpawnShimExt for Sidecars {
     /// Spawn a shim, detached, and return its pid.
     ///
     /// Every flag here is load-bearing. `process_group(0)` takes the shim out
@@ -1527,7 +1533,7 @@ async fn reap_killed(registry: Weak<Registry>, entry: Arc<Entry>) {
     }
     // The tombstone is the shim's first act on the way out, not its last: the
     // `x` frame follows it once the shim's reader has drained the pty
-    // (`pty_shim::child::Args::run`, steps 1 and 2). Cancelling `detach` as soon as
+    // (`droppen_pty::child::Args::run`, steps 1 and 2). Cancelling `detach` as soon as
     // the tombstone appears would beat that frame on a busy machine, and the
     // link task, which checks `detach` first, would stop without noting the
     // exit. So the link task is given time to carry the frame itself and is

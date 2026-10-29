@@ -1450,7 +1450,7 @@ mod tests {
     #[tokio::test]
     async fn an_install_whose_request_went_away_while_its_terminal_opened_still_ends() {
         let exe = std::env::current_exe().unwrap_or_default();
-        if crate::pty_shim::shim_program() == exe {
+        if droppen_pty::shim_program() == exe {
             eprintln!("no server binary beside the tests to run the pty shim (a `cargo test --lib` on its own): not run");
             return;
         }
