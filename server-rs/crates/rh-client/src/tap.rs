@@ -238,8 +238,8 @@ mod line_tests {
     use super::{line, Event};
     use serde_json::json;
 
-    /// The line's exact bytes: one record, keys sorted (no feature turns
-    /// insertion order on), the URL split into path and query. Every writer
+    /// The line's exact bytes: one record, keys in written order (serde_json's
+    /// `preserve_order`), the URL split into path and query. Every writer
     /// of the file — this crate's own, the devkit's, the agent's — builds it
     /// here, so the contract check reads one shape.
     #[test]
@@ -247,7 +247,7 @@ mod line_tests {
         let body = json!({"t": "welcome", "b": 1});
         assert_eq!(
             line("devkit", Event::Ws { socket: "/v1/client", dir: "out", body: &body }).to_string(),
-            r#"{"body":{"b":1,"t":"welcome"},"dir":"out","kind":"ws","socket":"/v1/client","src":"devkit"}"#
+            r#"{"src":"devkit","kind":"ws","socket":"/v1/client","dir":"out","body":{"t":"welcome","b":1}}"#
         );
         assert_eq!(
             line(
@@ -261,7 +261,7 @@ mod line_tests {
                 }
             )
             .to_string(),
-            r#"{"body":{"b":1,"t":"welcome"},"dir":"in","kind":"http","method":"GET","path":"/v1/me","query":"x=1","src":"agent","status":200}"#
+            r#"{"src":"agent","kind":"http","dir":"in","method":"GET","path":"/v1/me","body":{"t":"welcome","b":1},"query":"x=1","status":200}"#
         );
     }
 }

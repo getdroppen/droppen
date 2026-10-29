@@ -300,6 +300,10 @@ jobs:
       - run: cargo nextest run --profile ci --workspace --features rh-devkit/p2p-probe
         timeout-minutes: 20
       - run: ../scripts/check-sdk-crate-deps.sh
+      # serde_json's `preserve_order` on for every member that reaches it
+      # (server-rs/Cargo.toml `[workspace.dependencies]`), so the JSON a
+      # member writes does not depend on which packages a build selects.
+      - run: ../scripts/check-serde-json-order.sh
       - name: Report Rust build storage
         if: always()
         run: |

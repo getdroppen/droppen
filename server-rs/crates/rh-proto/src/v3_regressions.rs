@@ -1858,7 +1858,11 @@ pub(crate) fn v2_removal_chain() -> (ChainState, Vec<Entry>) {
 #[test]
 fn w2_a_v2_chain_with_removals_replays_exactly_as_before() {
     let (state, _) = v2_removal_chain();
-    let json = crate::vectors::v3_state_json(&state, &["m-1"]).to_string();
+    // Sorted: the literal below was recorded with sorted keys, and what it
+    // pins is the state, not the order a `Value` keeps.
+    let mut json = crate::vectors::v3_state_json(&state, &["m-1"]);
+    json.sort_all_objects();
+    let json = json.to_string();
     assert_eq!(json, V2_REMOVAL_STATE, "{json}");
     assert_eq!(state.recovery_key(), None, "v2 keeps its rule: the removed device came back with words");
 }

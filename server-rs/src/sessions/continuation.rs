@@ -137,9 +137,9 @@ async fn is_real_dir(path: &Path) -> bool {
 
 /// The transcript's whole lines with each line's own `sessionId` set to `new_id`.
 ///
-/// Textual, not a parse and re-serialise: `serde_json` without
-/// `preserve_order` would sort every line's keys, and a transcript that reads
-/// back differently from the one claude wrote is a risk for nothing. A line is
+/// Textual, not a parse and re-serialise: re-serialising can change a line's
+/// spacing, escapes and number spellings, and a transcript that reads back
+/// differently from the one claude wrote is a risk for nothing. A line is
 /// rewritten only where it holds the field with exactly the old id as its value
 /// — `"sessionId":"<old>"`, the compact form claude writes — so the id quoted
 /// anywhere else (a path, a message, a tool's output) stays as it was.

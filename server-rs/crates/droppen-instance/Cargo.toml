@@ -19,6 +19,9 @@ libc = "0.2"
 # `bundled` compiles SQLite itself rather than linking the platform's.
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
+# Unused here: gotcha_core brings serde_json in, and this keeps its features
+# the workspace's (the root Cargo.toml says why).
+serde_json = { workspace = true }
 thiserror = "1"
 tracing = "0.1"
 # The server's identity is a v4 uuid, minted once.
