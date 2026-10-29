@@ -23,7 +23,7 @@ use droppen_instance::paths::Paths;
 use droppen_pty::proto::{self, Frame, Hello2, Meta};
 use droppen_pty::sidecar::Sidecars;
 use remote_hand_server::shutdown::Cleanups;
-use remote_hand_server::terminals::{Chunk, Registry};
+use droppen_workbench::terminals::{Chunk, Registry};
 use serde_json::Value;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_util::sync::CancellationToken;
@@ -161,7 +161,7 @@ fn dirs(home: &Path, instance: &str) -> InstanceDirs {
 ///
 /// This is the browser's stream — `terminals::routes` sends `replay` and then
 /// each chunk verbatim as a text frame — without the websocket in the way.
-struct Watcher(remote_hand_server::terminals::Attachment);
+struct Watcher(droppen_workbench::terminals::Attachment);
 
 impl Watcher {
     fn attach(registry: &Registry, id: &str) -> Watcher {

@@ -1,6 +1,6 @@
 //! The `/embed/{id}/*` reverse proxy, for HTTP and for websockets.
 //!
-//! The proxy is the router's fallback, composed in [`crate::app`] outside the
+//! The proxy is the router's fallback, composed in `app` outside the
 //! gotcha app, so nothing about it is in the OpenAPI document.
 //!
 //! # Where it hangs
@@ -10,7 +10,7 @@
 //! fallback (see [`crate::static_files`]). It also assembles routes in
 //! `GotchaApp::routes`, which runs *before* the state exists and so cannot be
 //! handed the [`Registry`]. So the composition happens one level up, in
-//! [`crate::app`], on the axum router `GotchaApp::build_router` returns: this
+//! `app`, on the axum router `GotchaApp::build_router` returns: this
 //! module's service takes the fallback, and delegates every path that is not an
 //! embed to the SPA service it wraps. A layer would work too, but would put a
 //! path test in front of every `/api/*` request to serve a route that

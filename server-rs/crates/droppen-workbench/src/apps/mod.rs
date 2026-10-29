@@ -2,7 +2,7 @@
 //!
 //! The supervision and the three `/api/apps` routes live here. The transport
 //! half — the `/embed/{id}/*` reverse proxy the iframe actually talks to — is
-//! [`embed`]: it is the router's fallback, composed in [`crate::app`] outside
+//! [`embed`]: it is the router's fallback, composed in `app` outside
 //! the gotcha app, so it appears in no spec.
 //!
 //! The shape here is one supervisor task per instance, owning the
@@ -680,7 +680,7 @@ impl Registry {
     /// and is not the app, and adopting on liveness alone would put a stranger's
     /// process in the list and eventually signal it. A record written before the
     /// token existed carries none and falls back to liveness, which is the same
-    /// trade [`crate::inject::runs`] makes — a guard that cannot tell must not
+    /// trade `inject::runs` makes — a guard that cannot tell must not
     /// refuse, or every restart would throw away a live editor.
     async fn survivor(&self, record: &AppRecord) -> Survivor {
         match (
@@ -1238,7 +1238,7 @@ mod tests {
     async fn an_app_whose_program_is_not_on_the_path_is_refused_before_anything_is_reserved() {
         // The override is this test thread's own (`process_env`), so the empty
         // `PATH` is seen by this create and by no test running beside it.
-        let _guard = crate::setup::tests::ChildPathGuard::take();
+        let _guard = droppen_base::process_env::ChildPathGuard::take();
         let empty = tempfile::tempdir().expect("a PATH directory with nothing in it");
         process_env::set_child_path(Some(empty.path().to_string_lossy().into_owned()));
 

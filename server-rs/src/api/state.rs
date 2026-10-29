@@ -17,7 +17,7 @@ use crate::accounts::AccountsState;
 use crate::acp_agent::AcpAgentState;
 use droppen_http::app_window::AppWindow;
 use crate::models::ModelsState;
-use crate::apps::AppsState;
+use droppen_workbench::apps::AppsState;
 use crate::attention::AttentionState;
 use droppen_auth::AuthState;
 use crate::chats::ChatsState;
@@ -27,14 +27,14 @@ use crate::feed::global::{ClaudeDirs, EventsState};
 use droppen_files::FilesState;
 use crate::notify::NotifyState;
 use crate::plugins::routes::PluginsState;
-use crate::prefs::PrefsState;
+use droppen_workbench::prefs::PrefsState;
 use crate::push::PushState;
 use crate::schedule::ScheduleState;
-use crate::screens::ScreensState;
+use droppen_workbench::screens::ScreensState;
 use droppen_supervisor::selfupdate::SelfUpdateState;
 use crate::setup::SetupState;
 use crate::stats::StatsState;
-use crate::terminals::TerminalsState;
+use droppen_workbench::terminals::TerminalsState;
 
 impl AppState {
     /// The desktop app's window as this server knows it: the port cell

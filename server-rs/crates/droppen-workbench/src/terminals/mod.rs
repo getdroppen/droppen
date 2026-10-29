@@ -539,7 +539,7 @@ impl Entry {
 /// Every live terminal.
 ///
 /// Lives in the application state rather than in a `static` — like
-/// [`crate::feed::FeedRegistry`], and for the same reason: two servers in one
+/// `feed::FeedRegistry`, and for the same reason: two servers in one
 /// process (which is what the integration tests run) must not share or reap each
 /// other's terminals. With shims that reason is stronger, not weaker: the
 /// registry is scoped to one [`InstanceDirs`], and two registries on different
@@ -1709,10 +1709,10 @@ mod tests {
     }
 
     /// A tool the first-run guide found after the server started is on the
-    /// `PATH` of the next terminal, with no restart (`crate::setup`).
+    /// `PATH` of the next terminal, with no restart (`setup`).
     #[test]
     fn a_new_terminal_gets_the_children_s_path() {
-        let _guard = crate::setup::tests::ChildPathGuard::take();
+        let _guard = droppen_base::process_env::ChildPathGuard::take();
         let dir = tempfile::tempdir().expect("tempdir");
         // A superset of what was there, so a test running beside this one
         // still finds everything it would have.

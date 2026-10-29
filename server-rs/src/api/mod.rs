@@ -69,12 +69,12 @@ pub struct AppState {
     /// process-driving subsystems add.
     pub drive: Arc<Drive>,
     /// Every live web terminal, so shutdown can kill them.
-    pub terminals: Arc<crate::terminals::Registry>,
+    pub terminals: Arc<droppen_workbench::terminals::Registry>,
     /// Instant chats: the provider configuration and the API-backed store.
     pub chats: Arc<crate::chats::Chats>,
     /// Every running embedded app, so shutdown can kill them and the
     /// `/embed/{id}/*` proxy can find their ports.
-    pub apps: Arc<crate::apps::Registry>,
+    pub apps: Arc<droppen_workbench::apps::Registry>,
     /// This server's claim on its instance directory, filled in by
     /// [`crate::app::RemoteHandApp::prepare`] once the flock is held. Empty in
     /// lock-less servers (`export-openapi`, tests), whose self-upgrade handler
@@ -386,7 +386,7 @@ fn response_overrides() -> ExtraResponses {
     crate::accounts::setup_token::describe(&mut reg);
     crate::accounts::usage_login::describe(&mut reg);
     crate::acp_agent::describe(&mut reg);
-    crate::apps::describe(&mut reg);
+    droppen_workbench::apps::describe(&mut reg);
     crate::attention::describe(&mut reg);
     droppen_auth::describe(&mut reg);
     crate::chats::describe(&mut reg);
@@ -398,15 +398,15 @@ fn response_overrides() -> ExtraResponses {
     crate::models::describe(&mut reg);
     crate::notify::describe(&mut reg);
     crate::plugins::routes::describe(&mut reg);
-    crate::prefs::describe(&mut reg);
+    droppen_workbench::prefs::describe(&mut reg);
     crate::push::describe(&mut reg);
     crate::accounts::quota::describe(&mut reg);
     crate::schedule::describe(&mut reg);
-    crate::screens::describe(&mut reg);
+    droppen_workbench::screens::describe(&mut reg);
     droppen_supervisor::selfupdate::describe(&mut reg);
     crate::setup::describe(&mut reg);
     crate::stats::describe(&mut reg);
-    crate::terminals::describe(&mut reg);
+    droppen_workbench::terminals::describe(&mut reg);
     reg
 }
 
@@ -421,7 +421,7 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
     let router = crate::accounts::setup_token::TokenWizardState::routes(router);
     let router = crate::accounts::usage_login::UsageLoginState::routes(router);
     let router = crate::acp_agent::AcpAgentState::routes(router);
-    let router = crate::apps::AppsState::routes(router);
+    let router = droppen_workbench::apps::AppsState::routes(router);
     let router = crate::attention::AttentionState::routes(router);
     let router = droppen_auth::AuthState::routes(router);
     let router = crate::chats::ChatsState::routes(router);
@@ -434,15 +434,15 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
     let router = crate::models::ModelsState::routes(router);
     let router = crate::notify::NotifyState::routes(router);
     let router = crate::plugins::routes::PluginsState::routes(router);
-    let router = crate::prefs::PrefsState::routes(router);
+    let router = droppen_workbench::prefs::PrefsState::routes(router);
     let router = crate::push::PushState::routes(router);
     let router = crate::accounts::quota::QuotaState::routes(router);
     let router = crate::schedule::ScheduleState::routes(router);
-    let router = crate::screens::ScreensState::routes(router);
+    let router = droppen_workbench::screens::ScreensState::routes(router);
     let router = droppen_supervisor::selfupdate::SelfUpdateState::routes(router);
     let router = crate::setup::SetupState::routes(router);
     let router = crate::stats::StatsState::routes(router);
-    let router = crate::terminals::TerminalsState::routes(router);
+    let router = droppen_workbench::terminals::TerminalsState::routes(router);
     router
         .openapi(|mut spec| {
             spec.info.title = API_TITLE.to_string();

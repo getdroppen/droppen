@@ -35,12 +35,9 @@ cargo clippy --all-targets --all-features -- -D warnings
 | `record/` | 会话飞行记录器：一个会话一份 NDJSON 录像，以及把它放回文件系统的 `replay` 子命令 |
 | `accounts/` | 服务端保存的多个 Claude 登录，以及产出它们的两个 pty 向导 |
 | `chats/` | 即时聊天：锚点目录里的 CLI 会话，加上 BYO-API 后端与它的流式回复 |
-| `apps/` | 每个 app 一个 code-server，`apps/embed.rs` 是 iframe 用的 `/embed/{id}/*` 反向代理 |
 | `quota/` | 订阅额度面板 |
 | `schedule/` | 定时任务：一条 cron 表达式（按**服务器本地时区**解释）到点新开一个会话；`runner.rs` 是那个五秒一跳、只在持有实例锁时才启动的循环 |
 | `notify/` | 会话自己决定「这件事值得打扰你」时走的推送通道（Bark），以及注进会话的 `rh-notify` 与 skill |
-| `terminals/` | 浏览器通过 websocket 驱动的 PTY |
-| `prefs/` `screens/` | 两个边车存储：界面偏好、持久化分屏布局 |
 | `stats/` `models.rs` | token 用量统计与模型列表 |
 | `claude_roots.rs` | 一次 spawn 跑在什么根目录下（带什么环境见下面 `droppen-base` 的 `process_env`） |
 | `crates/droppen-base/` | 各子系统都用、却不属于任何一个的底层工具：时钟（`time`）、文本编码（`text`）、只有本用户可读的文件（`fsutil`）、「文件里那个 pid 还是当初那个进程吗」的两道守卫（`procs`）、出站 webhook 的守卫（`outbound`）、读环境变量（`env`）、spawn 的环境与输出脱敏（`process_env`）、二进制的两个名字（`program`） |
@@ -49,6 +46,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 | `crates/droppen-supervisor/` | `remote-hand-server up`：重启子进程、回滚坏二进制、收孤儿（`supervisor`）；`POST /api/server/self-upgrade`，以及 `<data>/bin` 这个二进制仓库（`selfupdate`） |
 | `crates/droppen-auth/` | 本机账号：谁能和这个服务端说话。账号与 argon2id 哈希（`users`）、登录会话（`sessions`）、websocket 与下载用的短命票据（`tickets`）、失败锁定（`lockout`）、没有账号的实例的设置码（`setup`）、本机控制 socket 发的一次性令牌（`local_open`）、`/api/auth/*`（`routes`）、`user` / `setup-code` / `open` 命令行（`cli`），以及每个请求最先经过的登录守卫（`guard`） |
 | `crates/droppen-files/` | `$HOME` 下的浏览、读取、下载与上传——客户端传来的路径只在这里被解析和收敛，经 Droppen 进来的设备另被挡在服务端自己的数据和配置目录之外（`FileRoots::fence`）；以及 transcript 里私有 GitHub 仓库图片的代理（`media`，走本机 `gh` 的登录） |
+| `crates/droppen-workbench/` | 会话周围的窗格与布局：浏览器通过 websocket 驱动的 PTY（`terminals`）、每个 app 一个 code-server 及 iframe 用的 `/embed/{id}/*` 反向代理（`apps`，`apps/embed.rs`）、持久化分屏布局（`screens`）、界面偏好（`prefs`） |
 | `crates/droppen-pty/` | 活过服务端重启的 pty：shim 进程（本二进制的隐藏子命令 `pty-shim`）、它的帧格式、环形缓冲与屏幕模型、留在磁盘上的边车文件，以及服务端这一侧的连接 |
 
 ## 四个「填坑」模块

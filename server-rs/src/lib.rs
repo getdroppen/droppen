@@ -32,10 +32,10 @@
 //!   the one place a client-supplied path is resolved and bounded;
 //! * [`droppen_files::media`] — images in private GitHub repositories, fetched through the
 //!   host's own `gh` login so a transcript can show what an agent pushed;
-//! * [`terminals`] — PTYs the browser drives over a websocket, each one owned
+//! * [`droppen_workbench::terminals`] — PTYs the browser drives over a websocket, each one owned
 //!   by a detached [`droppen_pty`] shim so it survives a server restart;
 //! * [`droppen_instance::instance`] — which server owns the adoptable resources on this machine;
-//! * [`apps`] — a VS Code server per app, and the [`apps::embed`] reverse proxy
+//! * [`droppen_workbench::apps`] — a VS Code server per app, and the [`droppen_workbench::apps::embed`] reverse proxy
 //!   the iframe reaches it through;
 //! * [`droppen_auth`] — local accounts: who may talk to this server at all, and the
 //!   guard every request passes through before [`droppen_http::origin`]'s;
@@ -47,7 +47,7 @@
 //!   the server's own time zone, that start a session while nobody is watching;
 //! * [`setup`] — the first-run guide's server half: which AI tools this
 //!   device has, and the `PATH` that finds them;
-//! * [`prefs`] / [`screens`] — the sidecar stores;
+//! * [`droppen_workbench::prefs`] / [`droppen_workbench::screens`] — the sidecar stores;
 //! * [`stats`] / [`models`] — token accounting and the model list;
 //! * [`droppen_http::origin`] — the guard every `/api/*` request passes through.
 //!
@@ -79,7 +79,6 @@ pub mod agent;
 pub mod aggregator;
 pub mod api;
 pub mod app;
-pub mod apps;
 pub mod attention;
 pub mod chats;
 pub mod claude_roots;
@@ -93,14 +92,11 @@ pub mod inject;
 pub mod models;
 pub mod notify;
 pub mod plugins;
-pub mod prefs;
 pub mod push;
 pub mod record;
 pub mod schedule;
-pub mod screens;
 pub mod sessions;
 pub mod setup;
 pub mod shutdown;
 pub mod static_files;
 pub mod stats;
-pub mod terminals;

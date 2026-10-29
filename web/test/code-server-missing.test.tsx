@@ -1,5 +1,5 @@
 // The rail's 「+ → vscode」 on a device without code-server: the server answers
-// `409 code_server_missing` with a hint (`server-rs/src/apps/mod.rs`), and the
+// `409 code_server_missing` with a hint (`server-rs/crates/droppen-workbench/src/apps/mod.rs`), and the
 // web app says what to install and where, in the reader's language, with a
 // link to code-server's install guide, instead of quoting the OS error
 // (`features/apps/code-server-missing.tsx`).
@@ -46,7 +46,7 @@ async function notice(lng: string): Promise<string> {
 }
 
 test("the server's refusal is told apart from every other failure to start an app", () => {
-  assert.equal(CODE_SERVER_MISSING, MISSING.error, "the token server-rs/src/apps/mod.rs answers with");
+  assert.equal(CODE_SERVER_MISSING, MISSING.error, "the token server-rs/crates/droppen-workbench/src/apps/mod.rs answers with");
   const t = (key: string) => `«${key}»`;
 
   const missing = new ApiError(MISSING);

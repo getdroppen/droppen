@@ -66,7 +66,7 @@ droppen_http::substate!(TerminalsState);
 
 /// Every terminal whose process is still running.
 #[api(id = "list_terminals", group = "terminals", summary = "List terminals")]
-pub async fn list_terminals(State(state): State<TerminalsState>) -> Json<TerminalList> {
+pub(crate) async fn list_terminals(State(state): State<TerminalsState>) -> Json<TerminalList> {
     Json(TerminalList {
         terminals: state.terminals.list(),
     })
@@ -74,7 +74,7 @@ pub async fn list_terminals(State(state): State<TerminalsState>) -> Json<Termina
 
 /// Start a terminal running the user's login shell.
 #[api(id = "create_terminal", group = "terminals", summary = "Create a terminal")]
-pub async fn create_terminal(State(state): State<TerminalsState>, ApiJson(body): ApiJson<TerminalCreate>) -> Result<Json<TerminalInfo>, ApiError> {
+pub(crate) async fn create_terminal(State(state): State<TerminalsState>, ApiJson(body): ApiJson<TerminalCreate>) -> Result<Json<TerminalInfo>, ApiError> {
     let cwd = match body.cwd.as_deref() {
         // An empty string means "no cwd".
         Some(cwd) if !cwd.is_empty() => Some(state.terminals.resolve_safe(cwd).map_err(bad_request)?),
@@ -86,7 +86,7 @@ pub async fn create_terminal(State(state): State<TerminalsState>, ApiJson(body):
 
 /// Give a terminal a new display name.
 #[api(id = "rename_terminal", group = "terminals", summary = "Rename a terminal")]
-pub async fn rename_terminal(
+pub(crate) async fn rename_terminal(
     State(state): State<TerminalsState>,
     ApiPath(id): ApiPath<String>,
     ApiJson(body): ApiJson<TerminalRename>,
@@ -101,7 +101,7 @@ pub async fn rename_terminal(
 
 /// Kill a terminal's process.
 #[api(id = "kill_terminal", group = "terminals", summary = "Kill a terminal")]
-pub async fn kill_terminal(State(state): State<TerminalsState>, ApiPath(id): ApiPath<String>) -> Result<Json<SendResult>, ApiError> {
+pub(crate) async fn kill_terminal(State(state): State<TerminalsState>, ApiPath(id): ApiPath<String>) -> Result<Json<SendResult>, ApiError> {
     if !state.terminals.kill_terminal(&id) {
         return Err(ApiError::not_found("terminal not found"));
     }
@@ -109,13 +109,13 @@ pub async fn kill_terminal(State(state): State<TerminalsState>, ApiPath(id): Api
 }
 
 /// The attach socket. Deliberately **not** annotated with `#[api]`, for the same
-/// reason [`crate::api::session_feed_ws`] is not: `WebSocketUpgrade` is not a
+/// reason `api::session_feed_ws` is not: `WebSocketUpgrade` is not a
 /// `ParameterProvider`.
 ///
 /// A socket opened by a login closes with 4401 once that login no longer
 /// stands ([`droppen_auth::Auth::watch_login`]): a shell is the last thing to leave
 /// open for a login that was signed out.
-pub async fn terminal_ws(
+pub(crate) async fn terminal_ws(
     State(state): State<TerminalsState>,
     who: droppen_auth::MaybeIdentity,
     ApiPath(id): ApiPath<String>,
