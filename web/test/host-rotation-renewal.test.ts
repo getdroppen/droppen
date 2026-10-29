@@ -2844,3 +2844,136 @@ test("the runner wakes when another page's staging is to be taken for abandoned,
   await until(() => rotated(a).includes("m-1"), 5_000);
   runner.stop();
 });
+
+test("pins: what is exposed follows a renewal note at once, on the same chain — the hosts that can renew decide it", async () => {
+  const { a, agents, x } = await account();
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  const all = new Set(["m-1", "m-2", "m-3"]);
+  a.noteRenewals({ renews: all, pending: new Set(), isolated: new Set() });
+  await a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick });
+  assert.deepEqual(exposedIds(a.chain!), ["m-2"]);
+  assert.deepEqual([...a.hostsToRotate().keys()], ["m-2"], "m-2 can renew, and m-1's old key reached it");
+  const seq = a.chain!.seq;
+  a.noteRenewals({ renews: new Set(), pending: new Set(), isolated: new Set() });
+  assert.equal(a.chain!.seq, seq, "the same chain");
+  assert.deepEqual([...a.hostsToRotate().keys()], [], "none can renew now: nothing a renewal would fix");
+});
+
+test("pins: what changes an automatic renewal's footing while it runs — this device's guard, a host isolated by a note or by a dispute kept here or heard of from another tab — stops it once the host answered, before it waits for staging", async () => {
+  for (const flip of ["guard", "isolated", "kept", "heard"] as const) {
+    const { a, agents, x, h1 } = await account();
+    await a.removeDevice(x.deviceId, new FakeCourier());
+    // The page that renews: for "heard", one with a cross-tab end, which another tab of this browser tells of a dispute.
+    const bus = tabsBus();
+    const page = flip === "heard" ? await tabOf(a, bus()) : a;
+    const other = bus();
+    const renews = new Set(["m-1", "m-2", "m-3"]);
+    page.noteRenewals({ renews, pending: new Set(), isolated: new Set() });
+    // A dispute of an automatic renewal of m-1: what isolates m-1 once it counts here.
+    let d: Awaited<ReturnType<typeof keptOf>> | null = null;
+    if (flip === "kept" || flip === "heard") {
+      await page.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick });
+      d = await keptOf(page, "m-1", h1.signPrivate);
+    }
+    const before = rotated(page);
+    const steps: string[] = [];
+    await assert.rejects(
+      page.renewIdentity("m-1", agents, {
+        assurance: ASSURANCE_AUTO,
+        ...quick,
+        onStep: (step) => {
+          steps.push(step);
+          if (step !== "requesting") return;
+          if (flip === "guard") page.setLocalAssured(true);
+          else if (flip === "isolated") page.noteRenewals({ renews, pending: new Set(), isolated: new Set(["m-1"]) });
+          else if (flip === "kept") page.keepDisputes([d!]);
+          else other.post({ account: page.account, disputes: [d!] });
+        },
+      }),
+      renewal("needsAssurance"),
+    );
+    assert.deepEqual(steps, ["requesting"], `${flip}: stopped right after the host answered`);
+    assert.deepEqual(rotated(page), before, `${flip}: nothing written`);
+    page.setLocalAssured(false);
+  }
+});
+
+test("pins: a host the hub flags is renewed automatically nowhere — only with the code its screen shows", async () => {
+  const { a, agents, x } = await account();
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  a.noteRenewals({ renews: new Set(["m-1", "m-2", "m-3"]), pending: new Set(), isolated: new Set(), flagged: new Set(["m-1"]) });
+  assert.equal(a.isolated("m-1"), false, "a flag is no evidence");
+  await assert.rejects(a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick }), renewal("needsAssurance", "flagged"));
+  assert.deepEqual(rotated(a), []);
+  await a.renewIdentity("m-1", agents, { assurance: ASSURANCE_ON_DEVICE, askCode: async (h) => agents.sas.get(h)!, ...quick });
+  assert.deepEqual(rotated(a), ["m-1"]);
+});
+
+test("pins: disputes another tab tells of count for the account they name only", async () => {
+  const { a, agents, x, h1 } = await account();
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  await a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick });
+  const d = await keptOf(a, "m-1", h1.signPrivate);
+  const bus = tabsBus();
+  const tab = await tabOf(a, bus());
+  const other = bus();
+  other.post({ account: "a-somebody-else", disputes: [d] });
+  await new Promise((r) => setTimeout(r, 200));
+  assert.equal(tab.isolated("m-1"), false, "another account's dispute is not this one's");
+  assert.deepEqual(tab.keptDisputes(), []);
+  other.post({ account: a.account, disputes: [d] });
+  await until(() => tab.isolated("m-1"));
+});
+
+test("pins: a kept dispute that does not check out is dropped from what is kept, not written back with the next", async () => {
+  const { a, agents, x, h1 } = await account();
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  await a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick });
+  const d = await keptOf(a, "m-1", h1.signPrivate);
+  const key = `rh.hub.renewal.disputes.${a.account}`;
+  const storage = browserStorage(a.store);
+  a.keepDisputes([d]);
+  const [good] = JSON.parse(storage.getItem(key)!) as { host: string; seq: number; sig: string }[];
+  const forged = { ...good!, sig: (good!.sig[0] === "0" ? "1" : "0") + good!.sig.slice(1) };
+  storage.setItem(key, JSON.stringify([forged]));
+  const page = await tabOf(a, null);
+  const warned = (globalThis as { console: Console }).console.warn;
+  console.warn = () => undefined;
+  try {
+    assert.deepEqual(page.keptDisputes(), [], "not checked yet");
+    // Checked meanwhile: it does not check out.
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(page.isolated("m-1"), false);
+    page.keepDisputes([d]);
+  } finally {
+    console.warn = warned;
+  }
+  assert.deepEqual((JSON.parse(storage.getItem(key)!) as { sig: string }[]).map((k) => k.sig), [good!.sig], "the forged one is not written back");
+});
+
+test("pins: a host a dispute verified here isolates is let control no other host, though it renewed and nothing else holds it back", async () => {
+  const { a, agents, x, h1 } = await account({ chain: false });
+  await a.removeDevice(x.deviceId, new FakeCourier());
+  await a.renewIdentity("m-1", agents, { assurance: ASSURANCE_AUTO, ...quick });
+  assert.equal(a.mustRenewFirst("m-1"), false, "renewed, not flagged, not noted isolated");
+  a.keepDisputes([await keptOf(a, "m-1", h1.signPrivate)]);
+  assert.equal(a.mustRenewFirst("m-1"), true, "the dispute isolates it");
+  await assert.rejects(a.setAccept("m-2", { type: "devices", ids: ["m-1"] }), (e: unknown) => {
+    assert.ok(e instanceof AccountError && e.kind === "exposed", String(e));
+    assert.equal(e.vars?.ids, "m-1");
+    return true;
+  });
+  assert.equal(admitsOn(a.chain!, "m-2", "m-1"), false);
+});
+
+test("pins: this device's guard is kept as \"1\" under rh.hub.renewal.localAssured.<account>, where another page of this browser reads it", async () => {
+  const { a } = await account();
+  const key = `rh.hub.renewal.localAssured.${a.account}`;
+  const storage = browserStorage(a.store);
+  a.setLocalAssured(true);
+  assert.equal(storage.getItem(key), "1");
+  assert.equal((await tabOf(a, null)).localAssured(), true, "another page sees it");
+  a.setLocalAssured(false);
+  assert.equal(storage.getItem(key), null);
+  assert.equal((await tabOf(a, null)).localAssured(), false);
+});
