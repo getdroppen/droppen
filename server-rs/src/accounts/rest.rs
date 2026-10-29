@@ -77,7 +77,7 @@ pub fn account_key(account: Option<&str>, provider: AccountProvider) -> String {
 /// the root itself holds, which is nobody's choice here, and filing its refusal
 /// under [`LOCAL_CLAUDE`] would mark the user's own login signed out for a
 /// failure that was never its. Such a limit — and one whose root cannot be told
-/// — is not filed at all, which is what [`super::quota::readings::session_login`]
+/// — is not filed at all, which is what [`super::quota::claude::session_login`]
 /// already does with its readings.
 pub fn claude_limit_account(account: Option<&str>, root: Option<droppen_instance::paths::ClaudeRoot>) -> Option<String> {
     match (account.filter(|id| !id.is_empty()), root) {

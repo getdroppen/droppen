@@ -43,6 +43,7 @@
 //! file on every request instead would report a three-day-old percentage as the
 //! current one.
 
+pub mod claude;
 pub mod codex;
 pub mod readings;
 pub mod routes;
@@ -66,7 +67,7 @@ use crate::sessions::util::try_parse;
 use droppen_base::time::{iso8601, now_ms};
 
 pub use codex::{CodexQuota, CodexQuotaCache, CodexQuotaSource};
-pub use readings::{QuotaReadingSource, RateLimitWindows, UsageLogin};
+pub use readings::{QuotaReadingSource, UsageLogin};
 pub use routes::{describe, QuotaState};
 
 /// `/usage` is a local slash command: it queries the usage endpoint directly, so
@@ -889,6 +890,7 @@ pub fn spawn_fallback_ticker(quota: Arc<QuotaCache>, store: Arc<crate::accounts:
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::accounts::quota::claude::RateLimitWindows;
 
     /// `2024-08-01T00:00:00Z`, so the reset-year rule has something to bite on.
     const NOW_MS: i64 = 1_722_470_400_000;

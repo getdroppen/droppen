@@ -70,7 +70,7 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 
 use crate::accounts::limits::{self, Verdict};
-use crate::accounts::quota::readings::RateLimitWindows;
+use crate::accounts::quota::claude::RateLimitWindows;
 use crate::accounts::rest::{self, Observation};
 use crate::accounts::rotation::{self, AheadGuards, AheadPlan, Plan, Wait};
 use crate::accounts::store::AccountProvider;
@@ -3072,7 +3072,7 @@ impl Driver {
                 .await
                 .map(|found| found.root),
         };
-        crate::accounts::quota::readings::session_login(account.as_deref(), root)
+        crate::accounts::quota::claude::session_login(account.as_deref(), root)
     }
 
     /// Record a refused `rate_limit_event`. Recording only.
@@ -7050,7 +7050,7 @@ mod tests {
     /// server really builds for each kind of spawn.
     #[test]
     fn a_usage_reading_goes_to_the_login_the_process_runs_on() {
-        use crate::accounts::quota::readings::session_login;
+        use crate::accounts::quota::claude::session_login;
         use crate::accounts::quota::UsageLogin;
         use droppen_instance::paths::ClaudeRoot;
 
