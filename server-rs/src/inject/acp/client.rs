@@ -23,8 +23,13 @@ use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use agent_client_protocol_schema::v1::{
+    CreateTerminalResponse, KillTerminalResponse, ReadTextFileResponse, ReleaseTerminalResponse, RequestPermissionOutcome,
+    RequestPermissionResponse, TerminalExitStatus, TerminalOutputResponse, WaitForTerminalExitResponse, WriteTextFileResponse,
+};
 use serde::de::DeserializeOwned;
-use serde_json::{json, Value};
+use serde::Serialize;
+use serde_json::Value;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::sync::watch;
 
@@ -65,6 +70,11 @@ fn params<T: DeserializeOwned>(params: Value) -> Result<T, Error> {
     serde_json::from_value(params).map_err(|error| Error::new(INVALID_PARAMS, error.to_string()))
 }
 
+/// An answer, as the JSON its reply carries.
+fn answer(answer: impl Serialize) -> Result<Value, Error> {
+    serde_json::to_value(answer).map_err(|error| Error::new(INTERNAL_ERROR, error.to_string()))
+}
+
 /// How a terminal's command ended.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Exit {
@@ -73,8 +83,13 @@ struct Exit {
 }
 
 impl Exit {
-    fn to_json(&self) -> Value {
-        json!({"exitCode": self.code, "signal": self.signal})
+    /// As the protocol has it. Its exit code is unsigned, so a negative one is
+    /// left out, beside the signal where there is one, rather than wrapped. No
+    /// Unix exit status is negative, but some APIs report -1 for a kill.
+    fn status(&self) -> TerminalExitStatus {
+        TerminalExitStatus::new()
+            .exit_code(self.code.and_then(|code| u32::try_from(code).ok()))
+            .signal(self.signal.clone())
     }
 }
 
@@ -139,7 +154,7 @@ impl Client {
             "terminal/wait_for_exit" => self.wait_for_terminal_exit(&params::<TerminalParams>(request)?.terminal_id).await,
             "terminal/kill" => {
                 self.terminal(&params::<TerminalParams>(request)?.terminal_id)?.kill();
-                Ok(json!({}))
+                answer(KillTerminalResponse::new())
             }
             "terminal/release" => {
                 let id = params::<TerminalParams>(request)?.terminal_id;
@@ -147,11 +162,11 @@ impl Client {
                 if let Some(terminal) = terminal {
                     terminal.kill();
                 }
-                Ok(json!({}))
+                answer(ReleaseTerminalResponse::new())
             }
             // There is nobody at this end of the pipe to ask, and approving
             // whatever a model wants to run is not this server's call to make.
-            "session/request_permission" => Ok(json!({"outcome": {"outcome": "cancelled"}})),
+            "session/request_permission" => answer(RequestPermissionResponse::new(RequestPermissionOutcome::Cancelled)),
             other => Err(Error::new(METHOD_NOT_FOUND, format!("{other} is not supported by Droppen"))),
         }
     }
@@ -173,7 +188,7 @@ impl Client {
                 None => lines.collect(),
             }
         };
-        Ok(json!({ "content": content }))
+        answer(ReadTextFileResponse::new(content))
     }
 
     async fn write_text_file(&self, request: WriteTextFileParams) -> Result<Value, Error> {
@@ -186,7 +201,7 @@ impl Client {
         tokio::fs::write(path, &request.content)
             .await
             .map_err(|error| Error::new(INTERNAL_ERROR, format!("cannot write {}: {error}", path.display())))?;
-        Ok(json!({}))
+        answer(WriteTextFileResponse::new())
     }
 
     fn create_terminal(&self, request: CreateTerminalParams) -> Result<Value, Error> {
@@ -243,24 +258,21 @@ impl Client {
             .lock()
             .unwrap()
             .insert(id.clone(), Arc::new(Terminal { group, output, exit }));
-        Ok(json!({ "terminalId": id }))
+        answer(CreateTerminalResponse::new(id))
     }
 
     fn terminal_output(&self, id: &str) -> Result<Value, Error> {
         let terminal = self.terminal(id)?;
         let (bytes, truncated) = &*terminal.output.lock().unwrap();
-        Ok(json!({
-            "output": String::from_utf8_lossy(bytes),
-            "truncated": truncated,
-            "exitStatus": terminal.exit.borrow().as_ref().map(Exit::to_json),
-        }))
+        let status = terminal.exit.borrow().as_ref().map(Exit::status);
+        answer(TerminalOutputResponse::new(String::from_utf8_lossy(bytes), *truncated).exit_status(status))
     }
 
     async fn wait_for_terminal_exit(&self, id: &str) -> Result<Value, Error> {
         let mut exit = self.terminal(id)?.exit.clone();
         let ended = exit.wait_for(Option::is_some).await.map(|exit| exit.clone());
         match ended {
-            Ok(Some(exit)) => Ok(exit.to_json()),
+            Ok(Some(exit)) => answer(WaitForTerminalExitResponse::new(exit.status())),
             _ => Err(Error::new(INTERNAL_ERROR, "the terminal is gone")),
         }
     }
@@ -308,6 +320,7 @@ fn absolute(path: &Path) -> Result<&Path, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     fn client(dir: &Path) -> Arc<Client> {
         Client::new(dir.to_path_buf(), droppen_base::process_env::clean_env_bare())
@@ -405,8 +418,8 @@ mod tests {
         assert_eq!((output["output"].as_str(), output["truncated"].as_bool()), (Some("ghij"), Some(true)));
     }
 
-    /// Each answer as the agent reads it, byte for byte: what it is sent
-    /// back, `null`s included.
+    /// Each answer as the agent reads it, byte for byte: what is left out is
+    /// left out, not `null`.
     #[tokio::test]
     async fn each_answer_in_its_bytes() {
         let dir = tempfile::tempdir().unwrap();
@@ -423,24 +436,41 @@ mod tests {
         let created = ask("terminal/create", json!({"command": "/bin/sh", "args": ["-c", "printf done; exit 3"]})).await;
         assert_eq!(created, r#"{"terminalId":"term-1"}"#);
         let exited = ask("terminal/wait_for_exit", json!({"terminalId": "term-1"})).await;
-        assert_eq!(exited, r#"{"exitCode":3,"signal":null}"#);
+        assert_eq!(exited, r#"{"exitCode":3}"#);
         let output = ask("terminal/output", json!({"terminalId": "term-1"})).await;
-        assert_eq!(output, r#"{"output":"done","truncated":false,"exitStatus":{"exitCode":3,"signal":null}}"#);
+        assert_eq!(output, r#"{"output":"done","truncated":false,"exitStatus":{"exitCode":3}}"#);
         assert_eq!(ask("terminal/kill", json!({"terminalId": "term-1"})).await, "{}");
         assert_eq!(ask("terminal/release", json!({"terminalId": "term-1"})).await, "{}");
 
         let running = ask("terminal/create", json!({"command": "/bin/sh", "args": ["-c", "sleep 30"]})).await;
         assert_eq!(running, r#"{"terminalId":"term-2"}"#);
         let early = ask("terminal/output", json!({"terminalId": "term-2"})).await;
-        assert_eq!(early, r#"{"output":"","truncated":false,"exitStatus":null}"#);
+        assert_eq!(early, r#"{"output":"","truncated":false}"#);
         assert_eq!(ask("terminal/kill", json!({"terminalId": "term-2"})).await, "{}");
         let killed = ask("terminal/wait_for_exit", json!({"terminalId": "term-2"})).await;
-        assert_eq!(killed, r#"{"exitCode":null,"signal":"SIGKILL"}"#);
+        assert_eq!(killed, r#"{"signal":"SIGKILL"}"#);
 
         let permission = ask("session/request_permission", json!({})).await;
         assert_eq!(permission, r#"{"outcome":{"outcome":"cancelled"}}"#);
         let refused = client.handle("nope", json!({})).await.unwrap_err();
         assert_eq!((refused.code, refused.message.as_str()), (METHOD_NOT_FOUND, "nope is not supported by Droppen"));
+    }
+
+    /// An exit code the protocol cannot hold is left out, never wrapped; the
+    /// signal is kept.
+    #[test]
+    fn a_negative_exit_code_is_left_out_and_the_signal_kept() {
+        let status = |code: Option<i32>, signal: Option<&str>| {
+            let exit = Exit {
+                code,
+                signal: signal.map(str::to_owned),
+            };
+            serde_json::to_string(&exit.status()).unwrap()
+        };
+        assert_eq!(status(Some(-1), Some("SIGKILL")), r#"{"signal":"SIGKILL"}"#);
+        assert_eq!(status(Some(-1), None), "{}");
+        assert_eq!(status(Some(0), None), r#"{"exitCode":0}"#);
+        assert_eq!(status(Some(i32::MAX), None), r#"{"exitCode":2147483647}"#);
     }
 
     #[tokio::test]
