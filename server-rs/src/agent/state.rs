@@ -866,13 +866,17 @@ impl AgentFiles {
     }
 }
 
-impl crate::aggregator::Enrollment for std::sync::Mutex<AgentState> {
-    fn view(&self) -> Option<crate::aggregator::View> {
-        let st = self.lock().expect("agent state");
+/// The link's agent state as the device role reads it: what fills the
+/// aggregator's [`droppen_aggregator::Enrollment`] port.
+pub(crate) struct LinkEnrollment(pub(crate) std::sync::Arc<std::sync::Mutex<AgentState>>);
+
+impl droppen_aggregator::Enrollment for LinkEnrollment {
+    fn view(&self) -> Option<droppen_aggregator::View> {
+        let st = self.0.lock().expect("agent state");
         if !st.enrolled() || st.removed() {
             return None;
         }
-        Some(crate::aggregator::View {
+        Some(droppen_aggregator::View {
             hub: st.hub.clone(),
             account: st.account.clone(),
             me: st.machine.clone(),

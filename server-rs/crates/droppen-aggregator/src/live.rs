@@ -415,7 +415,7 @@ fn status_info(status: &Value) -> StatusInfo {
 }
 
 /// The registry. One per server, on its link's handle
-/// ([`crate::cloud::control::Control`]): it outlives a link that stops and
+/// (`cloud::control::Control`): it outlives a link that stops and
 /// starts again.
 pub struct LiveCopies {
     inner: Mutex<Inner>,
@@ -970,8 +970,8 @@ impl LiveCopies {
 
 /// A published index copy for tests outside `aggregator`: they need a slot,
 /// but `Published::new` must not leave this module.
-#[cfg(test)]
-pub(crate) fn index_slot(copy: rh_client::streams::IndexCopy, seq: u64, time_ms: u64) -> Slot {
+#[cfg(any(test, feature = "test-support"))]
+pub fn index_slot(copy: rh_client::streams::IndexCopy, seq: u64, time_ms: u64) -> Slot {
     Arc::new(Mutex::new(Published::new(Fold::Index(copy), seq, time_ms)))
 }
 

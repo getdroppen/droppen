@@ -5,7 +5,7 @@
  *
  * On droppen.app both come off the machine's status stream (`systemLabel`,
  * `agentVersionOf`); the local page has them from its server's directory,
- * which reads the same fields the same way (`server-rs/src/aggregator/live.rs`,
+ * which reads the same fields the same way (`server-rs/crates/droppen-aggregator/src/live.rs`,
  * `os_of`): the two pages say a system in the same words.
  */
 import type { StatusState } from "@/lib/hub/streams";

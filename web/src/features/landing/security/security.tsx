@@ -308,7 +308,7 @@ function Hero() {
  * control any host; the keys table below; with local aggregation, on by
  * default, a host also takes the content keys other hosts' accept lists let
  * it have, wrap.rs `HOST_KEY_PURPOSE`, and the local web app shows its own
- * device's view and holds no keys, server-rs/src/aggregator/mod.rs). Every
+ * device's view and holds no keys, server-rs/crates/droppen-aggregator/src/lib.rs). Every
  * later mention explains itself with the same words (`withConcepts`), one
  * tab stop per word in each section (`MentionScope`).
  */

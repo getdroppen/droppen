@@ -37,7 +37,7 @@ use serde_json::Value;
 
 use super::state::AgentState;
 use super::AgentFiles;
-use crate::aggregator::hub::HubOriginExt;
+use droppen_aggregator::hub::HubOriginExt;
 use droppen_base::text::hex;
 use droppen_base::time::now_ms_u64;
 
@@ -326,7 +326,7 @@ impl AgentFiles {
 
 impl AgentFiles {
     async fn deliver_disputes_loop(self, guard: Running) {
-        crate::aggregator::traffic::install_client_tap();
+        droppen_aggregator::traffic::install_client_tap();
         let http = reqwest::Client::builder()
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())

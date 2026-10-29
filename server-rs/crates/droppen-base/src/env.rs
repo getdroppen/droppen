@@ -177,6 +177,7 @@ mod tests {
             manifest.join("../droppen-files/src"),
             manifest.join("../droppen-workbench/src"),
             manifest.join("../droppen-plugins/src"),
+            manifest.join("../droppen-aggregator/src"),
         ];
         while let Some(dir) = dirs.pop() {
             for entry in std::fs::read_dir(&dir).expect("read src").flatten() {

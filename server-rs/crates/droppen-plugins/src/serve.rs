@@ -6,7 +6,7 @@
 //! A page cannot put its bearer token on an `import()`, and a query string
 //! would not survive the plugin's own relative chunk imports (`./tasks-page-
 //! ….js`), so the credential is part of the path. `<key>` is the instance-wide
-//! secret `crate` keeps in `state.db`: 128 random bits as hex, made
+//! secret [`crate::Plugins`] keeps in `state.db`: 128 random bits as hex, made
 //! on first need and stable across restarts. It reaches a page only inside
 //! `PluginStatus.entry`, which only a signed-in, non-cloud caller is given
 //! (`GET /api/plugins`, the feed's `plugins` frame); [`super::Plugins::asset`]

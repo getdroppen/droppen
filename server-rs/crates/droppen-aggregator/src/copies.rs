@@ -1733,7 +1733,16 @@ impl Live {
 mod tests {
     use super::*;
     use serde_json::json;
-    use crate::agent::state::AgentState;
+
+    /// An agent state that is not enrolled yet (`AgentState::enrolling`
+    /// before it absorbs a chain): the device role sees no enrollment.
+    struct Unenrolled;
+
+    impl Enrollment for Unenrolled {
+        fn view(&self) -> Option<View> {
+            None
+        }
+    }
 
     #[test]
     fn keys_say_their_epochs_and_nothing_else() {
@@ -1824,7 +1833,7 @@ mod tests {
         let env = Env {
             paths: paths.clone(),
             identity: Arc::new(MachineIdentity::from_seed(&[9; 32])),
-            enrollment: Arc::new(Mutex::new(AgentState::enrolling("ws://127.0.0.1:1", "a-1", "m-me", [0; 16], 1))),
+            enrollment: Arc::new(Unenrolled),
             switch: super::super::TestSwitch::on(),
             chain: watch::channel(0).1,
             keys: watch::channel(None).1,

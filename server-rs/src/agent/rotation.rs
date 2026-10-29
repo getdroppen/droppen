@@ -1202,7 +1202,7 @@ fn forget_for_a_fresh_identity(paths: &Paths, now: u64) -> Result<MachineIdentit
     }
     FileSeedStore::for_instance(&files).discard_all_staged()?;
     files.forget_enrollment_leftovers()?;
-    crate::aggregator::forget_all(paths)?;
+    droppen_aggregator::forget_all(paths)?;
     match std::fs::remove_file(files.state()) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}

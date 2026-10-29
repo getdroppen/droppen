@@ -681,4 +681,45 @@ mod tests {
         assert_eq!((refused.status(), refused.body()["error"].clone()), (StatusCode::NOT_FOUND, json!("plugin_not_found")));
         assert!(MaybeIdentity(None).refuse_cloud().is_ok());
     }
+
+    /// The layer itself, in the crate: a bridged request is refused before
+    /// its body is parsed (a malformed body still gets `404 plugin_not_found`,
+    /// not `400`), and a local one goes on to the handler. That it is on every
+    /// plugin route is the server's router test (`api::plugins_routes`).
+    #[tokio::test]
+    async fn the_refusal_layer_answers_a_bridged_request_before_its_body_is_parsed() {
+        let accept = |PluginJson(body): PluginJson<PluginPutDoc>| async move { body.value.to_string() };
+        let mut router = gotcha::axum::Router::new()
+            .route("/put", gotcha::axum::routing::put(accept))
+            .layer(gotcha::axum::middleware::from_fn(refuse_cloud_requests));
+        let mut send = |username: Option<&str>, body: &'static str| {
+            let mut request = Request::builder()
+                .method("PUT")
+                .uri("/put")
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap();
+            if let Some(username) = username {
+                request.extensions_mut().insert(droppen_http::identity::AuthIdentity {
+                    username: username.into(),
+                    token_sha256: None,
+                });
+            }
+            let fut = router.call(request);
+            async move {
+                let response = fut.await.unwrap();
+                let status = response.status();
+                let body = gotcha::axum::body::to_bytes(response.into_body(), 1 << 20).await.unwrap();
+                (status, serde_json::from_slice::<serde_json::Value>(&body).unwrap_or_default())
+            }
+        };
+        let (status, body) = send(Some("cloud:device-1"), "{").await;
+        assert_eq!((status, body["error"].clone()), (StatusCode::NOT_FOUND, json!("plugin_not_found")));
+        let (status, body) = send(Some("cloud:device-1"), r#"{"expectedRevision":null,"value":1}"#).await;
+        assert_eq!((status, body["error"].clone()), (StatusCode::NOT_FOUND, json!("plugin_not_found")));
+        let (status, body) = send(Some("ada"), "{").await;
+        assert_eq!((status, body["error"].clone()), (StatusCode::BAD_REQUEST, json!("invalid")), "a local caller reaches the extractor");
+        let (status, body) = send(None, r#"{"expectedRevision":null,"value":1}"#).await;
+        assert_eq!((status, body), (StatusCode::OK, json!(1)), "and the handler");
+    }
 }

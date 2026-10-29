@@ -67,6 +67,8 @@ pub const ROTATE_FEATURE: &str = "rotate/1";
 mod answers;
 pub mod bridge;
 #[cfg(test)]
+mod aggregator_controller_tests;
+#[cfg(test)]
 mod control_tests;
 pub mod direct;
 pub mod dispute;
@@ -343,14 +345,14 @@ mod tests {
             .save(&AgentFiles::of(&paths))
             .unwrap();
         // A pending key an older release left behind.
-        std::fs::create_dir_all(crate::aggregator::dir(&paths)).unwrap();
-        std::fs::write(crate::aggregator::key_path(&paths), b"{}").unwrap();
+        std::fs::create_dir_all(droppen_aggregator::dir(&paths)).unwrap();
+        std::fs::write(droppen_aggregator::key_path(&paths), b"{}").unwrap();
         let cloud = crate::cloud::LinkFile::of(&paths).path();
         std::fs::write(&cloud, br#"{"owner":"alice"}"#).unwrap();
         let before = unenroll_instance(&paths).unwrap();
         assert_eq!(before.map(|st| st.machine).as_deref(), Some("m-1"));
         assert!(!paths.instance_dir().join("agent").exists());
-        assert!(!crate::aggregator::dir(&paths).exists(), "the aggregator's key is gone");
+        assert!(!droppen_aggregator::dir(&paths).exists(), "the aggregator's key is gone");
         assert!(!cloud.exists(), "cloud.json is gone");
     }
 

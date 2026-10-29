@@ -49,8 +49,9 @@ tracing = "0.1"
 uuid = { version = "1", features = ["v4"] }
 
 # `testing` (plugin packages built in code, and a host with some installed),
-# for the server's tests of the feed and the settings route. Only the server's
-# [dev-dependencies] turn it on.
+# for the server's tests of the feed, the settings route, the plugin routes
+# (`api::plugins_routes`) and the assets (`api::plugins_serve`). Only the
+# server's [dev-dependencies] turn it on.
 [features]
 test-support = []
 

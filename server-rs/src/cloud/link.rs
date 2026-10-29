@@ -124,9 +124,9 @@ pub(super) fn resolve_hub(requested: Option<&str>) -> Result<String, ApiError> {
 /// `wss://host` → `https://host` (and `ws://` → `http://`, loopback only):
 /// the hub's own web origin, where a browser signs in unless the hub names
 /// its app's ([`crate::cloud::hub_web`]). The one implementation is
-/// [`crate::aggregator::hub::HubOriginExt::http_base`].
+/// [`droppen_aggregator::hub::HubOriginExt::http_base`].
 pub fn web_origin(ws_origin: &str) -> String {
-    use crate::aggregator::hub::HubOriginExt;
+    use droppen_aggregator::hub::HubOriginExt;
     ws_origin.http_base()
 }
 

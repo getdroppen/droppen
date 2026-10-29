@@ -127,7 +127,7 @@ async fn an_unfinished_deletion_of_the_copies_is_finished_at_start() {
     let mut held = std::fs::File::open(left.join("copies.db")).unwrap();
     let control = Control::new(paths.clone());
     control.attach(link_env(&paths));
-    crate::aggregator::finish_deletions(Duration::from_secs(5)).await;
+    droppen_aggregator::finish_deletions(Duration::from_secs(5)).await;
     assert!(!left.exists(), "swept at start");
     let mut bytes = Vec::new();
     std::io::Read::read_to_end(&mut held, &mut bytes).unwrap();

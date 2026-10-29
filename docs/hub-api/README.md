@@ -360,7 +360,7 @@ node docs/hub-api/check.mjs --traffic /tmp/traffic.jsonl
 ```
 
 It scans the open clients (`web/src/lib/hub`, `web/src/lib/e2e`,
-`web/src/features/cloud`, `server-rs/src/agent`, `server-rs/src/aggregator`,
+`web/src/features/cloud`, `server-rs/src/agent`, `server-rs/crates/droppen-aggregator`,
 `rh-relay`, `rh-client`, `rh-devkit`, `rh-proto`'s `wire`) for
 `/v1/…` paths in string literals (format strings and template literals
 included, their placeholders read as path parameters) and for control

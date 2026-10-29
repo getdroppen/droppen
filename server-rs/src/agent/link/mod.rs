@@ -2384,9 +2384,9 @@ mod tests {
     async fn the_verified_chain_removing_this_machine_stops_the_link() {
         let mut a = account();
         // The other devices' keys it held as a device go with it.
-        let mut keys = crate::aggregator::keys::HostKeys::load(&a.shared.paths, "a-1", "m-1").unwrap();
+        let mut keys = droppen_aggregator::keys::HostKeys::load(&a.shared.paths, "a-1", "m-1").unwrap();
         keys.put("m-2", 0, &[2; 32]).unwrap();
-        assert!(crate::aggregator::keys::path(&a.shared.paths).exists());
+        assert!(droppen_aggregator::keys::path(&a.shared.paths).exists());
         let rm = a
             .hub
             .draft(Signer::Device("d-1".into()), Action::RemoveMachine("m-1".into()), 3_000)
@@ -2402,7 +2402,7 @@ mod tests {
         assert!(a.shared.state.lock().unwrap().removed());
         assert!(a.shared.cancel.is_cancelled(), "the link stops");
         assert!(AgentState::load(&a.shared.files).unwrap().unwrap().removed(), "and stays stopped");
-        assert!(!crate::aggregator::dir(&a.shared.paths).exists(), "the other devices' keys are gone");
+        assert!(!droppen_aggregator::dir(&a.shared.paths).exists(), "the other devices' keys are gone");
     }
 
     /// Stopping a link — also one that already ended on its own, which is
@@ -2436,7 +2436,7 @@ mod tests {
             task: tokio::spawn(async {}),
             sync_task: tokio::spawn(async {}),
             control: Some(control),
-            control_status: Arc::new(Mutex::new(crate::aggregator::controller::Status::default())),
+            control_status: Arc::new(Mutex::new(droppen_aggregator::controller::Status::default())),
             copies: Some(copies),
             copies_status: Arc::default(),
         };
@@ -2464,11 +2464,11 @@ mod tests {
             assert!(st.removed());
         }
         a.shared.save();
-        let mut keys = crate::aggregator::keys::HostKeys::load(&a.shared.paths, "a-1", "m-1").unwrap();
+        let mut keys = droppen_aggregator::keys::HostKeys::load(&a.shared.paths, "a-1", "m-1").unwrap();
         keys.put("m-2", 0, &[2; 32]).unwrap();
         let refused = startable(&a.shared.paths).err().expect("a removed machine does not start");
         assert!(refused.contains("removed"), "{refused}");
-        assert!(!crate::aggregator::dir(&a.shared.paths).exists(), "the other devices' keys are gone");
+        assert!(!droppen_aggregator::dir(&a.shared.paths).exists(), "the other devices' keys are gone");
     }
 
     /// A host's mailbox is shared between its

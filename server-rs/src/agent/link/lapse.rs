@@ -21,7 +21,7 @@ pub(in crate::agent) fn on_removed(shared: &Arc<Shared>, why: &str) {
     let news = shared.state.lock().expect("agent state").mark_removed(now_ms_u64());
     // What it held to control the others (their keys) goes with it (§4.7).
     shared.cancel.cancel();
-    if let Err(error) = crate::aggregator::forget_all(&shared.paths) {
+    if let Err(error) = droppen_aggregator::forget_all(&shared.paths) {
         tracing::error!(%error, "cannot delete the other devices' keys after this machine's removal");
     }
     if news {
