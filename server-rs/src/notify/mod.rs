@@ -211,15 +211,29 @@ pub struct NotifyBody {
 /// type. This is not an identity: it authorizes one operation on one session and
 /// carries no account, so nothing that asks "who is this" can be satisfied by it
 /// by accident.
+///
+/// Its fields are private, so only [`NotifyCaller::parse`] makes one, out of a
+/// key a verified token names: no other code in the process can put a caller
+/// for some session into a [`droppen_http::identity::NotifyGrant`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NotifyCaller {
     /// Which CLI the session belongs to.
-    pub source: Source,
+    source: Source,
     /// The session id, as it was when the process was spawned.
-    pub id: String,
+    id: String,
 }
 
 impl NotifyCaller {
+    /// Which CLI the session belongs to.
+    pub fn source(&self) -> Source {
+        self.source
+    }
+
+    /// The session id, as it was when the process was spawned.
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
     /// The `<source>/<id>` key a token is minted against.
     pub fn key(&self) -> String {
         crate::sessions::attention::seen::key_of(self.source, &self.id)
