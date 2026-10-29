@@ -740,6 +740,22 @@ impl super::Transcripts for CodexSessions {
         true
     }
 
+    fn external_reason(&self) -> String {
+        "this codex session was started elsewhere; continue it where it was started".to_string()
+    }
+
+    fn live_block(&self, status: SessionStatus) -> Option<String> {
+        (status == SessionStatus::Running).then(|| "session is currently running".into())
+    }
+
+    fn foreign_sessions(&self) -> bool {
+        true
+    }
+
+    fn watch_dirs<'a>(&'a self, paths: &'a Paths) -> BoxFuture<'a, Vec<PathBuf>> {
+        Box::pin(std::future::ready(vec![paths.codex_sessions()]))
+    }
+
     fn context<'a>(&'a self, file_path: &'a Path) -> BoxFuture<'a, Option<super::context::ContextUsage>> {
         Box::pin(super::context::read_codex_context(file_path))
     }

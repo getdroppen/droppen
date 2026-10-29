@@ -19,7 +19,6 @@
 //! share, or tear down, each other's watcher.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -345,7 +344,7 @@ async fn run(
     cancel: CancellationToken,
     mut requests: mpsc::Receiver<Option<String>>,
 ) {
-    let mut events = watch::watch_dirs(&watch_targets(drive.paths.as_ref()).await, WATCH_DEBOUNCE);
+    let mut events = watch::watch_dirs(&drive.transcripts.watch_dirs(drive.paths.as_ref()).await, WATCH_DEBOUNCE);
     let mut poll = tokio::time::interval(REFRESH_INTERVAL);
     poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     poll.tick().await; // the first tick is immediate
@@ -397,26 +396,6 @@ async fn run(
     }
 
     tracing::debug!("global feed watcher stopped");
-}
-
-/// The directories a session file can appear in.
-///
-/// On a fresh install the managed root does not exist yet, and a watch on a
-/// missing directory simply fails — leaving account sessions with no watcher at
-/// all until a restart. Creating an empty projects directory is cheap and
-/// harmless; an unwritable home just falls back to the poll interval.
-async fn watch_targets(paths: &Paths) -> Vec<PathBuf> {
-    let mut dirs: Vec<PathBuf> = crate::claude_roots::ClaudeRoots::of(&paths).projects_dirs().into_iter().map(|(_, dir)| dir).collect();
-    for dir in &dirs {
-        let _ = tokio::fs::create_dir_all(dir).await;
-    }
-    dirs.push(paths.codex_sessions());
-    // Created for the same reason: the first ACP session would otherwise only
-    // reach the list on the poll. One recursive watch covers every agent.
-    let acp = crate::sessions::acp_transcript::AcpTranscripts::of(&paths).dir();
-    let _ = tokio::fs::create_dir_all(&acp).await;
-    dirs.push(acp);
-    dirs
 }
 
 /// Re-list, diff against what clients hold, and push a delta if anything moved.
@@ -713,6 +692,7 @@ pub fn describe(_reg: &mut ExtraResponses) {}
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
+    use std::path::PathBuf;
 
     use futures_util::SinkExt;
 

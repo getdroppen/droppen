@@ -334,7 +334,7 @@
       "droppen-provider-codex",
       "droppen-provider-acp"
     ],
-    "count": 65
+    "count": 54
   },
   "allowed": [
     {
@@ -358,7 +358,6 @@
         "drive -> sessions::claude",
         "feed -> acp_agent",
         "feed -> claude_roots",
-        "feed -> sessions::acp_transcript",
         "feed -> sessions::subagents"
       ]
     },

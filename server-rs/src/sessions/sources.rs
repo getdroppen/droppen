@@ -17,9 +17,9 @@ use serde_json::{Map, Value};
 use super::context::ContextUsage;
 use super::sidecars::{Checklists, Subagents};
 use super::util::TranscriptItem;
-use super::{CliChoice, SessionSummary, Source};
+use super::{CliChoice, SessionStatus, SessionSummary, Source};
 use droppen_base::time::mtime_ms;
-use droppen_instance::paths::Paths;
+use droppen_instance::paths::{ClaudeRoot, Paths};
 
 /// One CLI's transcripts: where its sessions are, and how one is read.
 ///
@@ -78,6 +78,37 @@ pub trait Transcripts: Send + Sync {
     fn settles_reaped_runs(&self) -> bool {
         false
     }
+
+    /// Why a session of this CLI that this instance did not start cannot be
+    /// sent to, in one line for the composer.
+    fn external_reason(&self) -> String;
+
+    /// Why a session this instance owns cannot be sent to while its
+    /// transcript reads `status`, or `None` when that blocks nothing: the
+    /// live-process arm of [`TranscriptSources::sendability`].
+    fn live_block(&self, status: SessionStatus) -> Option<String> {
+        let _ = status;
+        None
+    }
+
+    /// The Claude root a session's detail reports, or `None` for a CLI whose
+    /// sessions live in no Claude root.
+    fn detail_root(&self, summary: &SessionSummary) -> Option<ClaudeRoot> {
+        let _ = summary;
+        None
+    }
+
+    /// Whether a session of this CLI that this instance did not start was run
+    /// in the CLI itself, outside Droppen. False for a CLI only Droppen runs:
+    /// its other sessions are another instance's.
+    fn foreign_sessions(&self) -> bool {
+        false
+    }
+
+    /// The directories a new transcript of this CLI can appear in, for the
+    /// session list's watcher. A watch on a missing directory fails, so a
+    /// reader whose directory may not exist yet makes it here.
+    fn watch_dirs<'a>(&'a self, paths: &'a Paths) -> BoxFuture<'a, Vec<PathBuf>>;
 
     /// The subagents this CLI's sessions spawn, when it keeps their
     /// transcripts.
@@ -211,6 +242,35 @@ impl TranscriptSources {
     /// reader.
     pub fn settles_reaped_runs(&self, source: Source) -> bool {
         self.get(source).is_some_and(|reader| reader.settles_reaped_runs())
+    }
+
+    /// See [`Transcripts::external_reason`]. A source with no reader lists no
+    /// sessions, so nothing is refused with the fallback wording.
+    pub fn external_reason(&self, source: Source) -> String {
+        match self.get(source) {
+            Some(reader) => reader.external_reason(),
+            None => format!("this {source} session was started elsewhere; continue it where it was started"),
+        }
+    }
+
+    /// See [`Transcripts::detail_root`]; `None` for a source with no reader.
+    pub fn detail_root(&self, source: Source, summary: &SessionSummary) -> Option<ClaudeRoot> {
+        self.get(source)?.detail_root(summary)
+    }
+
+    /// See [`Transcripts::foreign_sessions`]; false for a source with no
+    /// reader.
+    pub fn foreign_sessions(&self, source: Source) -> bool {
+        self.get(source).is_some_and(|reader| reader.foreign_sessions())
+    }
+
+    /// Every reader's [`Transcripts::watch_dirs`], in [`Source`]'s order.
+    pub async fn watch_dirs(&self, paths: &Paths) -> Vec<PathBuf> {
+        let mut dirs = Vec::new();
+        for reader in self.iter() {
+            dirs.extend(reader.watch_dirs(paths).await);
+        }
+        dirs
     }
 
     /// See [`Transcripts::subagents`]; `None` for a source with no reader.
