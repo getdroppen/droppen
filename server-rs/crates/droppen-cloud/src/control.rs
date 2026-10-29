@@ -57,16 +57,16 @@ impl From<droppen_agent::hub::DeleteError> for ControlError {
     }
 }
 
-/// The server's handle on its hub link. One per server, in
-/// [`crate::api::AppState`].
+/// The server's handle on its hub link. One per server, in the server's
+/// `AppState`.
 pub struct Control {
     /// Itself, for the link to ask for a restart once it took a renewed
     /// identity key ([`Control::restart`]).
     me: std::sync::Weak<Control>,
     paths: Paths,
     files: AgentFiles,
-    /// Set once the server owns its instance and listens
-    /// ([`crate::app::RemoteHandApp::prepare`]); a server without it (no
+    /// Set once the server owns its instance and listens (the server's
+    /// `RemoteHandApp::prepare`); a server without it (no
     /// lock: `export-openapi`, tests) never starts a link.
     env: OnceLock<LinkEnv>,
     running: Mutex<Option<Running>>,
@@ -412,20 +412,20 @@ fn waiting_for_a_device(st: &AgentState) -> bool {
     !st.enrolled() && !st.removed()
 }
 
-/// What the tests of a running link reach (`api::cloud_control`):
+/// What the server's tests of a running link reach (`api::cloud_control`):
 /// the link this control runs, the restart hook it hands the link, and the
 /// expiry of an enrollment's code.
-#[cfg(test)]
-impl Control {
-    pub(crate) fn running_link(&self) -> std::sync::MutexGuard<'_, Option<Running>> {
+#[cfg(any(test, feature = "test-support"))]
+impl crate::testing::ControlTesting for Control {
+    fn running_link(&self) -> std::sync::MutexGuard<'_, Option<Running>> {
         self.running.lock().unwrap()
     }
 
-    pub(crate) fn link_restart_hook(&self) -> droppen_agent::rotation::Restart {
+    fn link_restart_hook(&self) -> droppen_agent::rotation::Restart {
         self.restart_hook()
     }
 
-    pub(crate) async fn expire_enrollment_now(&self, generation: u64) {
+    async fn expire_enrollment_now(&self, generation: u64) {
         self.expire_enrollment(generation).await
     }
 }

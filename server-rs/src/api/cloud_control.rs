@@ -1,4 +1,4 @@
-//! The server's handle on its hub link ([`crate::cloud::control::Control`])
+//! The server's handle on its hub link ([`droppen_cloud::control::Control`])
 //! against this instance's agent files: enrolling, cancelling, adding again,
 //! restarting with a renewed key, unenrolling.
 
@@ -12,7 +12,8 @@ use droppen_agent::state::AgentState;
 use droppen_agent::status::Standing;
 use droppen_agent::testing::{AgentFilesTesting, RunningTesting, TestSeed};
 use droppen_agent::AgentFiles;
-use crate::cloud::control::*;
+use droppen_cloud::control::*;
+use droppen_cloud::testing::{ControlTesting, LinkFileTesting};
 use droppen_instance::paths::Paths;
 #[tokio::test]
 async fn a_server_that_does_not_own_its_instance_runs_no_link() {
@@ -99,7 +100,7 @@ fn link_env(paths: &Paths) -> LinkEnv {
         },
         host: std::sync::Arc::new(crate::app::PushLinkHost),
         cancel: tokio_util::sync::CancellationToken::new(),
-        aggregator_switch: std::sync::Arc::new(crate::cloud::LinkFile::of(paths)),
+        aggregator_switch: std::sync::Arc::new(droppen_cloud::LinkFile::of(paths)),
     }
 }
 
@@ -116,8 +117,8 @@ async fn an_unfinished_deletion_of_the_copies_is_finished_at_start() {
     let dir = tempfile::tempdir().unwrap();
     let paths = Paths::for_instance(dir.path().to_path_buf(), "ctlsweep");
     std::fs::create_dir_all(paths.instance_dir()).unwrap();
-    std::fs::write(crate::cloud::LinkFile::of(&paths).path(), br#"{"aggregatorOff": true}"#).unwrap();
-    assert!(!crate::cloud::LinkFile::of(&paths).wants_aggregator());
+    std::fs::write(droppen_cloud::LinkFile::of(&paths).path(), br#"{"aggregatorOff": true}"#).unwrap();
+    assert!(!droppen_cloud::LinkFile::of(&paths).wants_aggregator());
     let left = paths.instance_dir().join(".aggregator-deleted-1-2-3");
     std::fs::create_dir_all(&left).unwrap();
     std::fs::write(left.join("copies.db"), b"STARTUP-SWEEP-CANARY").unwrap();

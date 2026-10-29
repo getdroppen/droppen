@@ -14,7 +14,6 @@ use gotcha::{api, state, GotchaRouter, Json, Schematic, State, WebSocketUpgrade}
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
-use crate::cloud;
 use crate::drive::Drive;
 use crate::feed;
 use droppen_plugins::CloudIdentityExt;
@@ -36,13 +35,16 @@ mod auth_routes;
 /// every route the server registers.
 #[cfg(test)]
 mod bridge_routes;
-/// Cloud's link control (`crate::cloud::control`) with the link `app`
-/// attaches, and the aggregator gateway (`crate::cloud::gateway`) as the
-/// server serves it.
+/// Cloud's routes and the remote-view gate (`droppen_cloud`) on the state the
+/// server builds, its link control (`droppen_cloud::control`) with the link
+/// `app` attaches, and the aggregator gateway (`droppen_cloud::gateway`) as
+/// the server serves it.
 #[cfg(test)]
 mod cloud_control;
 #[cfg(test)]
 mod cloud_gateway;
+#[cfg(test)]
+mod cloud_routes;
 
 /// The plugin routes (`droppen_plugins::routes`) and the plugin assets
 /// (`droppen_plugins::serve`), through the router as the server builds it.
@@ -109,9 +111,9 @@ pub struct AppState {
     pub lock: Arc<std::sync::OnceLock<std::sync::Weak<droppen_instance::instance::InstanceLock>>>,
     /// The hub link: started at boot for an enrolled instance, and at any
     /// time after by an enrollment from the local settings
-    /// ([`crate::cloud::control`]). Inert in a server that does not own its
+    /// ([`droppen_cloud::control`]). Inert in a server that does not own its
     /// instance.
-    pub cloud: Arc<cloud::Cloud>,
+    pub cloud: Arc<droppen_cloud::Cloud>,
     /// Whether the Droppen desktop app runs this server (`DROPPEN_DESKTOP_APP`,
     /// see [`crate::desktop_app`]): no self-upgrade, and the app owns the login.
     pub desktop_app: bool,
@@ -409,7 +411,7 @@ fn response_overrides() -> ExtraResponses {
     droppen_sessions::attention::routes::describe(&mut reg);
     droppen_auth::describe(&mut reg);
     crate::chats::describe(&mut reg);
-    cloud::describe(&mut reg);
+    droppen_cloud::describe(&mut reg);
     crate::drive::describe(&mut reg);
     crate::feed::global::describe(&mut reg);
     droppen_files::describe(&mut reg);
@@ -444,8 +446,8 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
     let router = droppen_sessions::attention::routes::AttentionState::routes(router);
     let router = droppen_auth::AuthState::routes(router);
     let router = crate::chats::ChatsState::routes(router);
-    let router = cloud::CloudState::routes(router);
-    let router = crate::cloud::gateway::routes(router);
+    let router = droppen_cloud::CloudState::routes(router);
+    let router = droppen_cloud::gateway::routes(router);
     let router = crate::drive::DriveState::routes(router);
     let router = crate::feed::global::EventsState::routes(router);
     let router = droppen_files::FilesState::routes(router);

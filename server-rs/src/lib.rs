@@ -80,7 +80,6 @@ pub mod app;
 pub mod chats;
 pub mod claude_roots;
 pub mod cli;
-pub mod cloud;
 pub mod desktop_app;
 pub mod drive;
 pub mod export;

@@ -14,7 +14,7 @@
 //! Everything comes from memory ([`droppen_aggregator::live`]); nothing here reads the
 //! disk or writes anywhere: read-only, in every sense.
 //!
-//! **Who**: [`crate::cloud::remote_viewer`] — the rule `GET /api/cloud`'s
+//! **Who**: [`crate::remote_viewer`] — the rule `GET /api/cloud`'s
 //! `copy` follows (security review of S1-5, F8): the local account that
 //! signed this device in, and those it allowed; and the login behind the
 //! socket still signed in — before the upgrade, again once upgraded, then
@@ -47,7 +47,7 @@ use serde_json::Value;
 use droppen_aggregator::live::{error_frame, DirHost, Key, LiveCopies, Outbox, Subscription};
 use droppen_aggregator::store::Kind;
 use droppen_auth::MaybeIdentity;
-use crate::cloud::CloudState;
+use crate::CloudState;
 
 /// How often a connection looks again at whether its page may still see other devices.
 pub const RECHECK: Duration = Duration::from_secs(2);
@@ -83,7 +83,7 @@ where
 /// landing in between is not missed.
 pub async fn agg_ws(State(state): State<CloudState>, who: MaybeIdentity, upgrade: WebSocketUpgrade) -> Response {
     let changes = state.cloud.changes();
-    let user = match crate::cloud::remote_viewer(&state, &who).await {
+    let user = match crate::remote_viewer(&state, &who).await {
         Ok(user) => user,
         Err(refusal) => return refusal.into_response(),
     };
@@ -242,7 +242,7 @@ async fn run(socket: WebSocket, state: CloudState, user: String, who: MaybeIdent
     tracing::info!(%user, "gateway: a page connected");
     let mut bye: Option<(u16, String, String)> = None;
     // A change between the check before the upgrade and here is not missed.
-    if let Err(refusal) = crate::cloud::remote_viewer(&state, &who).await {
+    if let Err(refusal) = crate::remote_viewer(&state, &who).await {
         bye = Some(closing(&refusal));
     } else {
         // Out of the directory's borrow before anything else (sending it may wait).
@@ -290,7 +290,7 @@ async fn run(socket: WebSocket, state: CloudState, user: String, who: MaybeIdent
                         }
                     }
                     _ = recheck.tick() => {
-                        if let Err(refusal) = crate::cloud::remote_viewer(&state, &who).await {
+                        if let Err(refusal) = crate::remote_viewer(&state, &who).await {
                             bye = Some(closing(&refusal));
                             break;
                         }
@@ -299,7 +299,7 @@ async fn run(socket: WebSocket, state: CloudState, user: String, who: MaybeIdent
                         if changed.is_err() {
                             break;
                         }
-                        if let Err(refusal) = crate::cloud::remote_viewer(&state, &who).await {
+                        if let Err(refusal) = crate::remote_viewer(&state, &who).await {
                             bye = Some(closing(&refusal));
                             break;
                         }
@@ -595,7 +595,7 @@ mod tests {
     /// its code and words in the `bye` before it.
     #[test]
     fn local_auth_turned_off_closes_with_4409() {
-        let (code, error, message) = closing(&crate::cloud::access::local_auth_off());
+        let (code, error, message) = closing(&crate::access::local_auth_off());
         assert_eq!(code, 4409);
         assert_eq!(
             GatewayFrame::Bye { code: error, message }.encode(),

@@ -138,7 +138,7 @@ impl GotchaApp for RemoteHandApp {
                 transcripts: drive.transcripts.clone(),
             }));
             Ok(AppState {
-                cloud: crate::cloud::Cloud::new(paths.as_ref().clone()),
+                cloud: droppen_cloud::Cloud::new(paths.as_ref().clone()),
                 // Touches nothing yet: the installed packages are read by the
                 // first status, the instance database by the first switch or
                 // store, and `boot` below.

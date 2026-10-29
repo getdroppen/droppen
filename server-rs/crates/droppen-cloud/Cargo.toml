@@ -1,0 +1,66 @@
+[package]
+name = "droppen-cloud"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+publish = false
+description = "The Droppen server's link to Droppen: the link routes, the browser hand-off, the remote-view gate, link control and the aggregator gateway"
+
+# The server's side of being in a Droppen account. It stands on the machine
+# role, the device role and the local accounts, and names none of the server's
+# subsystems: what the link copies and the host it pushes to are handed in by
+# the entry, through droppen-agent's `StreamSource` and `LinkHost` ports.
+[dependencies]
+# The hand-off's sealed answer, as the browser carries it.
+base64 = "0.22"
+droppen-agent = { path = "../droppen-agent" }
+droppen-aggregator = { path = "../droppen-aggregator" }
+droppen-auth = { path = "../droppen-auth" }
+droppen-base = { path = "../droppen-base" }
+droppen-http = { path = "../droppen-http" }
+droppen-instance = { path = "../droppen-instance" }
+futures-util = "0.3"
+gotcha = { version = "0.4.1", features = ["openapi"] }
+# What gotcha's `Schematic` derive expands to names it.
+gotcha_core = "0.4.1"
+rand = "0.8"
+# Asking a hub where its app is (`hub_web`). `default-features = false` drops
+# `default-tls` (native-tls/OpenSSL) so the binary keeps linking nothing but
+# rustls; the features are the server's, so it builds one reqwest.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "http2", "charset", "json"] }
+rh-proto = { path = "../rh-proto" }
+serde = { version = "1", features = ["derive"] }
+serde_json = { workspace = true }
+# Constant-time comparison of the attempt's nonce.
+subtle = "2"
+# `net`: the hub `testing::hub_answering` serves, with `test-support` only.
+tokio = { version = "1", features = ["macros", "net", "rt", "sync", "time"] }
+tokio-util = "0.7"
+tracing = "0.1"
+# The hand-off's key is wiped from memory when dropped.
+zeroize = "1"
+
+# `testing`: what the server's tests of the cloud routes, the remote-view gate
+# and link control reach of cloud's insides. Only the server's
+# [dev-dependencies] turn it on.
+[features]
+test-support = []
+
+[dev-dependencies]
+# A copy's slot made as the device role makes one (`live::index_slot`), for
+# the gateway's tests.
+droppen-aggregator = { path = "../droppen-aggregator", features = ["test-support"] }
+rh-client = { path = "../rh-client" }
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "test-util"] }
+
+[lints.rust]
+missing_docs = "deny"
+unreachable_pub = "deny"
+
+# `[lints] workspace = true` cannot be mixed with the rust lints above, so the
+# workspace's two clippy denials (`server-rs/Cargo.toml` `[workspace.lints]`)
+# are repeated here: keep them in step.
+[lints.clippy]
+significant_drop_in_scrutinee = "deny"
+await_holding_lock = "deny"

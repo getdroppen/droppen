@@ -1,4 +1,4 @@
-//! The aggregator gateway (`crate::cloud::gateway`) as the server serves it.
+//! The aggregator gateway (`droppen_cloud::gateway`) as the server serves it.
 
 use std::time::Duration;
 
@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 use droppen_aggregator::live::Key;
 use droppen_aggregator::store::Kind;
 use droppen_auth::MaybeIdentity;
-use crate::cloud::CloudState;
+use droppen_cloud::CloudState;
 
 /// The `bye` a page that may no longer see other devices is sent, byte
 /// for byte.
@@ -77,7 +77,7 @@ async fn the_gateway_serves_only_the_local_accounts_that_may_see_other_devices()
     // alice signed this device in: she sees the other devices, and says who else may.
     let created: std::collections::BTreeMap<String, String> = auth.users.list().await.into_iter().map(|u| (u.name, u.created_at)).collect();
     std::fs::write(
-        crate::cloud::LinkFile::of(&state.paths).path(),
+        droppen_cloud::LinkFile::of(&state.paths).path(),
         serde_json::json!({"owner": "alice", "aggregate": true, "linkedAt": 1, "accountsSince": {"alice": created["alice"]}}).to_string(),
     )
     .unwrap();
@@ -123,10 +123,10 @@ async fn the_gateway_serves_only_the_local_accounts_that_may_see_other_devices()
     assert_eq!(status_of(connect(ticket("bob")).await), 403);
     // alice lets him, then takes it back: he is told, and closed.
     let set = |remote: bool| {
-        crate::cloud::put_access(
+        droppen_cloud::put_access(
             State(CloudState::from_ref(&state)),
             alice.clone(),
-            droppen_http::extract::ApiJson(crate::cloud::AccessRequest { user: "bob".into(), remote }),
+            droppen_http::extract::ApiJson(droppen_cloud::AccessRequest { user: "bob".into(), remote }),
         )
     };
     let _ = set(true).await.unwrap();
@@ -157,7 +157,7 @@ async fn the_gateway_serves_only_the_local_accounts_that_may_see_other_devices()
     // No owner on file (a device signed in with the CLI): nobody sees the
     // other devices, not even who may manage the link, until one claims it.
     std::fs::write(
-        crate::cloud::LinkFile::of(&state.paths).path(),
+        droppen_cloud::LinkFile::of(&state.paths).path(),
         serde_json::json!({"aggregate": true, "linkedAt": 1}).to_string(),
     )
     .unwrap();
@@ -165,6 +165,6 @@ async fn the_gateway_serves_only_the_local_accounts_that_may_see_other_devices()
     assert_eq!(next_text(&mut a).await, NO_REMOTE_ACCESS_BYE);
     assert_eq!(status_of(connect(ticket("alice")).await), 403);
     // A file that does not read: nobody either.
-    std::fs::write(crate::cloud::LinkFile::of(&state.paths).path(), "{not json").unwrap();
+    std::fs::write(droppen_cloud::LinkFile::of(&state.paths).path(), "{not json").unwrap();
     assert_eq!(status_of(connect(ticket("alice")).await), 403);
 }
