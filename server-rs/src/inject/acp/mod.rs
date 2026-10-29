@@ -55,7 +55,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::common::{new_uuid, session_workdir, QueueOutcome, ResidentState};
-use super::{AccountChoice, DriverStatesBuilder, InjectError, InjectionRegistry, Provider, Run, SendOptions, Sent, SpawnPermit};
+use super::{AccountChoice, Capabilities, DriverStatesBuilder, InjectError, InjectionRegistry, Provider, Run, SendOptions, Sent, SpawnPermit};
+use futures_util::future::BoxFuture;
 use crate::acp::{category, option_for, ConfigOption, InitializeResponse};
 use crate::acp_agent::{AcpAgent, AcpAgentRegistry, AcpCheck, AcpCheckState};
 use crate::sessions::acp_transcript::{has_conversation, read_header, record, AcpTranscripts, Translator};
@@ -311,6 +312,12 @@ impl Provider for Acp {
         Source::Acp
     }
 
+    /// Every permission request an agent makes is answered by the client:
+    /// an agent never stops to ask the user.
+    fn capabilities(&self) -> Capabilities {
+        Capabilities::default()
+    }
+
     fn run(&self) -> &dyn Run {
         self
     }
@@ -350,6 +357,20 @@ impl Run for Acp {
     // A session whose agent was removed cannot be continued.
     fn send_block(&self, summary: &SessionSummary) -> Option<String> {
         AcpAgentRegistry::of(&self.registry.paths).send_block(summary)
+    }
+
+    fn drop_queued<'a>(&'a self, id: &'a str, qid: &'a str) -> BoxFuture<'a, QueueOutcome> {
+        Box::pin(self.registry.acp_queue_action(id, qid, false))
+    }
+
+    fn steer_queued<'a>(&'a self, id: &'a str, qid: &'a str) -> BoxFuture<'a, QueueOutcome> {
+        Box::pin(self.registry.acp_queue_action(id, qid, true))
+    }
+
+    /// The agent process, when one is running: an ACP session has no run
+    /// outside it.
+    fn interrupt(&self, id: &str) -> bool {
+        self.registry.acp_handle(id).filter(Handle::alive).is_some_and(|handle| handle.interrupt())
     }
 }
 

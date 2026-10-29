@@ -10,9 +10,10 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use futures_util::future::BoxFuture;
 use tokio::sync::watch;
 
-use super::{drafts, InjectionRegistry, ResidentState};
+use super::{drafts, AnswerOutcome, InjectionRegistry, QueueOutcome, Reply, ResidentState, StopTaskOutcome};
 use crate::sessions::{DriverStates, Injection, InjectionRunState, ResidentInfo, SessionSummary, Source};
 use droppen_http::error::ApiError;
 
@@ -21,8 +22,19 @@ pub trait Provider: Send + Sync {
     /// The sessions it runs: the key the registry files it under.
     fn source(&self) -> Source;
 
+    /// What its sessions can do that not every CLI's can.
+    fn capabilities(&self) -> Capabilities;
+
     /// What it says about those sessions.
     fn run(&self) -> &dyn Run;
+}
+
+/// What a provider's sessions can do that not every CLI's can.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Capabilities {
+    /// Its sessions stop to ask the user questions, which this server keeps
+    /// and answers into the turn that asked.
+    pub questions: bool,
 }
 
 /// What a provider says about the sessions it runs, each named by its id.
@@ -69,6 +81,31 @@ pub trait Run: Send + Sync {
     /// `None` when nothing in the provider stops one.
     fn send_block(&self, _summary: &SessionSummary) -> Option<String> {
         None
+    }
+
+    /// Take message `qid` out of the session's queue before it is written to
+    /// the CLI.
+    fn drop_queued<'a>(&'a self, id: &'a str, qid: &'a str) -> BoxFuture<'a, QueueOutcome>;
+
+    /// Hand queued message `qid` to the CLI now, ahead of the turn in flight.
+    fn steer_queued<'a>(&'a self, id: &'a str, qid: &'a str) -> BoxFuture<'a, QueueOutcome>;
+
+    /// Stop the turn this server started. `false` when nothing is running.
+    fn interrupt(&self, id: &str) -> bool;
+
+    /// Ask the CLI to stop one background task, leaving the turn alone.
+    fn stop_background_task(&self, _id: &str, _task_id: &str) -> StopTaskOutcome {
+        StopTaskOutcome::NoResident
+    }
+
+    /// The question the session's CLI is blocked on, by request id.
+    fn open_question(&self, _id: &str) -> Option<String> {
+        None
+    }
+
+    /// Answer a question the session's CLI is blocked on, or dismiss it.
+    fn answer_question<'a>(&'a self, _id: &'a str, _request_id: &'a str, _reply: Reply, _by: Option<String>) -> BoxFuture<'a, AnswerOutcome> {
+        Box::pin(std::future::ready(AnswerOutcome::NoResident))
     }
 }
 
@@ -193,6 +230,72 @@ impl ProviderRegistry {
         match self.run(summary.source) {
             Some(run) => run.send_block(summary),
             None => Some(format!("no provider runs {} sessions", summary.source)),
+        }
+    }
+
+    /// See [`Provider::capabilities`]; none for a source with no provider.
+    pub fn capabilities(&self, source: Source) -> Capabilities {
+        self.providers.get(&source).map(|provider| provider.capabilities()).unwrap_or_default()
+    }
+
+    /// Take a message out of a session's queue before it is written to the CLI.
+    ///
+    /// Both resident protocols hold durable queues. Legacy exec runs do not.
+    pub async fn drop_queued_message(&self, source: Source, id: &str, qid: &str) -> QueueOutcome {
+        match self.run(source) {
+            Some(run) => run.drop_queued(id, qid).await,
+            None => QueueOutcome::NoResident,
+        }
+    }
+
+    /// Hand a queued message to the CLI now, ahead of the turn in flight.
+    ///
+    /// See `resident::Driver::steer` for what that means to claude and why it
+    /// is a delivery rather than an interruption.
+    pub async fn steer_queued_message(&self, source: Source, id: &str, qid: &str) -> QueueOutcome {
+        match self.run(source) {
+            Some(run) => run.steer_queued(id, qid).await,
+            None => QueueOutcome::NoResident,
+        }
+    }
+
+    /// Stop the turn remote-hand started. `false` when nothing is running.
+    ///
+    /// A resident is asked rather than killed: the first rung of its ladder is
+    /// a `control_request` that ends the *turn* and leaves the process — and
+    /// anything it started in the background — alive. Only a CLI that will not
+    /// answer gets signalled, and only by the driver that can tell whether the
+    /// turn ended in between. Claude and Codex fall back to
+    /// [`InjectionRegistry::interrupt_legacy`] when they hold no process for the
+    /// session; ACP never runs outside its agent.
+    pub fn interrupt(&self, source: Source, id: &str) -> bool {
+        self.run(source).is_some_and(|run| run.interrupt(id))
+    }
+
+    /// Ask claude to stop one background task, leaving the turn alone.
+    ///
+    /// The narrow counterpart to [`ProviderRegistry::interrupt`], and
+    /// deliberately not reachable the same way: Stop ends the *turn*, which is a
+    /// thing this server started and can therefore take back, while a
+    /// background task is a child claude is minding on its own clock. The CLI's
+    /// `stop_task` control request is the only thing that can end one of those
+    /// without ending the process, so a session with no resident — every codex
+    /// run, and a claude session this server is not driving — has no way to do
+    /// it at all rather than a worse way.
+    pub fn stop_background_task(&self, source: Source, id: &str, task_id: &str) -> StopTaskOutcome {
+        self.run(source).map_or(StopTaskOutcome::NoResident, |run| run.stop_background_task(id, task_id))
+    }
+
+    /// See [`Run::open_question`]; `None` for a source with no provider.
+    pub fn open_question(&self, source: Source, id: &str) -> Option<String> {
+        self.run(source)?.open_question(id)
+    }
+
+    /// See [`Run::answer_question`].
+    pub async fn answer_question(&self, source: Source, id: &str, request_id: &str, reply: Reply, by: Option<String>) -> AnswerOutcome {
+        match self.run(source) {
+            Some(run) => run.answer_question(id, request_id, reply, by).await,
+            None => AnswerOutcome::NoResident,
         }
     }
 }

@@ -358,9 +358,10 @@ pub async fn load_session_state(drive: &Arc<Drive>, source: Source, id: &str) ->
         Source::Codex | Source::Acp => None,
     };
     let receipts = drive.injections.receipts().for_session(source, id, crate::inject::receipts::now_ms());
-    let questions = match source {
-        Source::Claude => drive.injections.questions().for_session(id, crate::inject::questions::now_ms()),
-        Source::Codex | Source::Acp => Vec::new(),
+    let questions = if drive.providers.capabilities(source).questions {
+        drive.injections.questions().for_session(id, crate::inject::questions::now_ms())
+    } else {
+        Vec::new()
     };
     Some(SessionState {
         summary,

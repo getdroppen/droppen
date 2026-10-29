@@ -933,6 +933,62 @@ async fn an_interrupted_codex_run_releases_the_composer_for_the_queued_message()
     probe.stop().await;
 }
 
+/// A message queued behind a codex turn can be taken back from its row before
+/// codex sees it: the turn goes on, and the message is never written to the
+/// App Server, neither as a steer nor as a turn of its own.
+#[tokio::test]
+async fn a_queued_codex_message_is_dropped_before_codex_sees_it() {
+    const INSTANCE: &str = "codex-drop";
+    let probe = Probe::start_named(Some(INSTANCE)).await;
+    let workspace = probe.workspace();
+    let id = "0199c1a1-2b3c-4d5e-8f60-112233445577";
+    let dir = probe.home.join(".codex/sessions/2026/09/11");
+    std::fs::create_dir_all(&dir).expect("codex sessions dir");
+    std::fs::write(
+        dir.join(format!("rollout-2026-09-11T10-00-00-{id}.jsonl")),
+        format!(
+            "{}\n",
+            json!({"type": "session_meta", "timestamp": "2026-09-11T10:00:00.000Z", "payload": {"id": id, "cwd": workspace.to_string_lossy()}})
+        ),
+    )
+    .expect("seed codex rollout");
+    let paths = droppen_instance::paths::Paths::for_instance(probe.home.clone(), INSTANCE);
+    remote_hand_server::sessions::owned_sessions::record(&paths, remote_hand_server::sessions::Source::Codex, id)
+        .await
+        .expect("own codex session");
+    support::plan_slow_cli(&workspace, 120.0);
+
+    let (status, body) = message(&probe, "codex", id, json!({"text": "one"})).await;
+    assert_eq!(status, 200, "{body}");
+    let path = format!("/api/sessions/codex/{id}");
+    let path = path.as_str();
+    let server = &probe;
+    common::wait_for_async("the codex turn to start", std::time::Duration::from_secs(10), move || async move {
+        let detail = server.get_json(path).await;
+        (detail["summary"]["resident"]["phase"] == "working").then_some(detail)
+    })
+    .await;
+
+    let (status, body) = message(&probe, "codex", id, json!({"text": "never sent"})).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["queued"], true);
+    let queued = probe.get_json(path).await;
+    let qid = queued["summary"]["resident"]["queuedMessages"][0]["id"].as_str().expect("a queue id").to_string();
+    probe.send_ok("DELETE", &format!("{path}/queue/{qid}"), json!({}), 200).await;
+    let dropped = probe.get_json(path).await;
+    assert_eq!(dropped["summary"]["resident"]["queued"], 0, "{dropped}");
+    assert_eq!(dropped["injection"]["state"], "running", "dropping a queued message leaves the turn alone");
+
+    probe.send_ok("POST", &format!("{path}/interrupt"), json!({}), 200).await;
+    probe.wait_for_injection_within("codex", id, std::time::Duration::from_secs(10)).await;
+    let written = std::fs::read_to_string(workspace.join("codex-stdin.jsonl")).expect("what codex was sent");
+    assert!(written.contains("\"one\""), "the turn's own message reached codex: {written}");
+    assert!(!written.contains("never sent"), "the dropped message reached codex: {written}");
+
+    std::fs::remove_file(workspace.join("sleep.txt")).expect("release future codex runs");
+    probe.stop().await;
+}
+
 #[tokio::test]
 async fn a_new_codex_session_takes_the_id_the_cli_announces() {
     let probe = Probe::start().await;

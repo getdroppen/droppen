@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
+use futures_util::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 #[cfg(test)]
@@ -25,8 +26,8 @@ use super::common::{busy_message, new_uuid, session_workdir, Phase, QueueOutcome
 use super::gate::{ClaimError, SessionLease};
 use crate::sessions::archive::ArchiveError;
 use super::{
-    codex_permission_flags, runs, shim, with_codex_files, CodexAccount, DriverStatesBuilder, InjectError, InjectionRegistry, Provider, Run,
-    SendOptions, Sent, SpawnPermit,
+    codex_permission_flags, runs, shim, with_codex_files, Capabilities, CodexAccount, DriverStatesBuilder, InjectError, InjectionRegistry,
+    Provider, Run, SendOptions, Sent, SpawnPermit,
 };
 
 const RPC_TIMEOUT: Duration = Duration::from_secs(30);
@@ -256,6 +257,12 @@ impl Provider for Codex {
         Source::Codex
     }
 
+    /// Approvals are off and every request the app server makes is refused:
+    /// codex never stops to ask.
+    fn capabilities(&self) -> Capabilities {
+        Capabilities::default()
+    }
+
     fn run(&self) -> &dyn Run {
         self
     }
@@ -276,6 +283,28 @@ impl Run for Codex {
         self.injection(id)
             .is_some_and(|i| i.state == InjectionRunState::Running)
             .then_some("the previous run has not finished")
+    }
+
+    fn drop_queued<'a>(&'a self, id: &'a str, qid: &'a str) -> BoxFuture<'a, QueueOutcome> {
+        Box::pin(self.registry.codex_queue_action(id, qid, false))
+    }
+
+    fn steer_queued<'a>(&'a self, id: &'a str, qid: &'a str) -> BoxFuture<'a, QueueOutcome> {
+        Box::pin(self.registry.codex_queue_action(id, qid, true))
+    }
+
+    /// The app server, when one is running; nothing, when the list still shows
+    /// a handle whose process is gone, because `codex_dead` already closed that
+    /// turn as failed and removed its runs entry, so nothing is left to stop;
+    /// otherwise a `codex exec` run adopted from the previous server.
+    fn interrupt(&self, id: &str) -> bool {
+        if let Some(handle) = self.registry.codex_handle(id).filter(Handle::alive) {
+            return handle.interrupt();
+        }
+        if self.registry.codex_handle(id).is_some_and(|handle| handle.visible()) {
+            return false;
+        }
+        self.registry.interrupt_legacy(Source::Codex, id)
     }
 }
 

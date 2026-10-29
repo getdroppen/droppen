@@ -36,11 +36,10 @@ mod runs;
 pub mod shim;
 
 pub(crate) use app_server::Codex;
-pub use common::{Phase, QueueOutcome, ResidentState, StopTaskOutcome};
+pub use common::{AnswerOutcome, Phase, QueueOutcome, Reply, ResidentState, StopTaskOutcome};
 pub use gate::SpawnPermit;
-pub use registry::{Provider, ProviderRegistry, Run};
+pub use registry::{Capabilities, Provider, ProviderRegistry, Run};
 pub(crate) use resident::ClaudeCode;
-pub use resident::{AnswerOutcome, Reply};
 
 use common::{new_uuid, session_workdir, CHAT_SYSTEM_PROMPT};
 
@@ -1505,63 +1504,14 @@ impl InjectionRegistry {
         crate::sessions::DriverStates::new(self.server.clone(), states.residents, states.running, states.finished)
     }
 
-    /// Take a message out of a session's queue before it is written to the CLI.
+    /// Stop a run in the runs map, which no resident drives: a one-shot run
+    /// adopted from the previous server. `false` when nothing is running.
     ///
-    /// Both resident protocols hold durable queues. Legacy exec runs do not.
-    pub async fn drop_queued_message(&self, source: Source, id: &str, qid: &str) -> QueueOutcome {
-        if source == Source::Codex {
-            return self.codex_queue_action(id, qid, false).await;
-        }
-        if source == Source::Acp {
-            return self.acp_queue_action(id, qid, false).await;
-        }
-        if source != Source::Claude {
-            return QueueOutcome::NoResident;
-        }
-        self.drop_queued(id, qid).await
-    }
-
-    /// Hand a queued message to claude now, ahead of the turn in flight.
-    ///
-    /// See [`resident::Driver::steer`] for what that means to the CLI and why
-    /// it is a delivery rather than an interruption.
-    pub async fn steer_queued_message(&self, source: Source, id: &str, qid: &str) -> QueueOutcome {
-        if source == Source::Codex {
-            return self.codex_queue_action(id, qid, true).await;
-        }
-        if source == Source::Acp {
-            return self.acp_queue_action(id, qid, true).await;
-        }
-        if source != Source::Claude {
-            return QueueOutcome::NoResident;
-        }
-        self.steer_queued(id, qid).await
-    }
-
-    /// Stop the turn remote-hand started. `false` when nothing is running.
-    ///
-    /// A resident is asked rather than killed: the first rung of its ladder is
-    /// a `control_request` that ends the *turn* and leaves the process — and
-    /// anything it started in the background — alive. Only a CLI that will not
-    /// answer gets signalled, and only by the driver that can tell whether the
-    /// turn ended in between.
-    ///
-    /// For a one-shot codex run there is no such distinction, and the old rule
-    /// applies: a pid that no longer names the run it was recorded for is *not*
-    /// signalled, and the run is closed out as finished instead — see
+    /// For such a run there is no turn to end short of the process, and the
+    /// old rule applies: a pid that no longer names the run it was recorded for
+    /// is *not* signalled, and the run is closed out as finished instead — see
     /// [`vanished`] for why that is the only safe direction.
-    pub fn interrupt(&self, source: Source, id: &str) -> bool {
-        if source == Source::Acp {
-            return self.acp_handle(id).filter(acp::Handle::alive).is_some_and(|h| h.interrupt());
-        }
-        if source == Source::Codex {
-            if let Some(h) = self.codex_handle(id).filter(app_server::Handle::alive) {
-                return h.interrupt();
-            }
-        }
-        if self.has_resident(source, id) {
-            return self.interrupt_resident(id);
-        }
+    pub(crate) fn interrupt_legacy(&self, source: Source, id: &str) -> bool {
         // The handle is cloned out so the map lock is released first: the
         // fail-closed path below rewrites `runs.json` and unlinks a claim, and
         // neither belongs under a lock every route contends on.
@@ -1585,23 +1535,6 @@ impl InjectionRegistry {
         drop(state);
         signal(pid, libc::SIGTERM);
         true
-    }
-
-    /// Ask claude to stop one background task, leaving the turn alone.
-    ///
-    /// The narrow counterpart to [`Injections::interrupt`], and deliberately not
-    /// reachable the same way: Stop ends the *turn*, which is a thing this
-    /// server started and can therefore take back, while a background task is a
-    /// child claude is minding on its own clock. The CLI's `stop_task` control
-    /// request is the only thing that can end one of those without ending the
-    /// process, so a session with no resident — every codex run, and a claude
-    /// session this server is not driving — has no way to do it at all rather
-    /// than a worse way.
-    pub fn stop_background_task(&self, source: Source, id: &str, task_id: &str) -> StopTaskOutcome {
-        if source != Source::Claude || !self.has_resident(source, id) {
-            return StopTaskOutcome::NoResident;
-        }
-        self.stop_resident_task(id, task_id)
     }
 }
 
@@ -2443,9 +2376,14 @@ mod tests {
     /// same identity check and would never have adopted this record: the state
     /// under test is one that was adopted while its CLI was alive and lost it
     /// afterwards, which is the only way a live entry can point at a stranger.
+    ///
+    /// Stop is pressed through the providers, as the route presses it: claude
+    /// and codex each fall back to the adopted run when they hold no process
+    /// for the session.
     #[tokio::test]
     async fn stop_never_signals_a_pid_that_is_no_longer_the_run_it_named() {
-        const SESSION: &str = "eeeeeeee-5555-4555-8555-eeeeeeeeeeee";
+        const CLAUDE: &str = "eeeeeeee-5555-4555-8555-eeeeeeeeeeee";
+        const CODEX: &str = "0199c1a1-5555-7555-8555-eeeeeeeeeeee";
 
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Arc::new(Paths::new(home.path().to_path_buf()));
@@ -2467,39 +2405,42 @@ mod tests {
             .spawn()
             .expect("spawn a stand-in");
 
-        let claim = registry.spawn_gate.lease(Source::Claude, SESSION).expect("a free session must be claimable");
-        registry.clone().resume(
-            runs::RunRecord {
-                codex: None,
-                codex_account: None,
-                hold: None,
-                run_id: "run-under-test".to_string(),
-                source: Source::Claude,
-                session_id: SESSION.to_string(),
-                cwd: None,
-                cli_pid: stranger.id(),
-                // A start time no process alive today can have. This is exactly
-                // what the record of a run whose pid has been recycled looks
-                // like, and the only part of it that can tell.
-                started_at: "2026-01-01T00:00:00.000Z".to_string(),
-                pid_token: Some("1.000000".to_string()),
-                resident: false,
-                shim: None,
-                fingerprint: None,
-                turn_at: None,
-                queued: Vec::new(),
-            },
-            claim,
-        );
-        assert!(
-            registry.run_injection(Source::Claude, SESSION).is_some_and(|run| run.state == InjectionRunState::Running),
-            "the run is in flight before Stop"
-        );
+        let providers = ProviderRegistry::new(registry.clone(), crate::app::register_providers);
+        for (source, session) in [(Source::Claude, CLAUDE), (Source::Codex, CODEX)] {
+            let claim = registry.spawn_gate.lease(source, session).expect("a free session must be claimable");
+            registry.clone().resume(
+                runs::RunRecord {
+                    codex: None,
+                    codex_account: None,
+                    hold: None,
+                    run_id: format!("run-{session}"),
+                    source,
+                    session_id: session.to_string(),
+                    cwd: None,
+                    cli_pid: stranger.id(),
+                    // A start time no process alive today can have. This is exactly
+                    // what the record of a run whose pid has been recycled looks
+                    // like, and the only part of it that can tell.
+                    started_at: "2026-01-01T00:00:00.000Z".to_string(),
+                    pid_token: Some("1.000000".to_string()),
+                    resident: false,
+                    shim: None,
+                    fingerprint: None,
+                    turn_at: None,
+                    queued: Vec::new(),
+                },
+                claim,
+            );
+            assert!(
+                registry.run_injection(source, session).is_some_and(|run| run.state == InjectionRunState::Running),
+                "{source}: the run is in flight before Stop"
+            );
 
-        assert!(
-            !registry.interrupt(Source::Claude, SESSION),
-            "a pid that fails the identity guard has nothing to interrupt"
-        );
+            assert!(
+                !providers.interrupt(source, session),
+                "{source}: a pid that fails the identity guard has nothing to interrupt"
+            );
+        }
 
         // The assertion the whole fix exists for.
         tokio::time::sleep(Duration::from_millis(300)).await;
@@ -2510,14 +2451,89 @@ mod tests {
 
         // And the user is not left with a run that says it is still going and a
         // Stop button that will never end it.
-        let seen = registry.run_injection(Source::Claude, SESSION).expect("the run is still reported");
-        assert_eq!(seen.state, InjectionRunState::Ok, "a run whose pid is gone has ended, not failed");
-        assert!(!seen.interrupted, "nothing was interrupted, so nothing may claim to have been");
-        assert!(seen.finished_at.0.is_some(), "and it has an end time");
+        for (source, session) in [(Source::Claude, CLAUDE), (Source::Codex, CODEX)] {
+            let seen = registry.run_injection(source, session).expect("the run is still reported");
+            assert_eq!(seen.state, InjectionRunState::Ok, "{source}: a run whose pid is gone has ended, not failed");
+            assert!(!seen.interrupted, "{source}: nothing was interrupted, so nothing may claim to have been");
+            assert!(seen.finished_at.0.is_some(), "{source}: and it has an end time");
+        }
 
         let _ = stranger.kill();
         let _ = stranger.wait();
     }
+
+    /// A codex session whose app server is gone with messages still queued
+    /// keeps its handle in the list, and Stop on it stops nothing: the turn was
+    /// closed when the process went. A live adopted run is put under the same
+    /// session, the one the fallback would signal, so the test fails if Stop
+    /// ever gets past the handle.
+    #[tokio::test]
+    async fn stop_on_a_codex_session_whose_app_server_is_gone_reaches_no_run() {
+        const SESSION: &str = "0199c1a1-6666-7666-8666-dddddddddddd";
+
+        let home = tempfile::tempdir().expect("tempdir");
+        let paths = Arc::new(Paths::new(home.path().to_path_buf()));
+        let dirs = InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
+        dirs.create().expect("instance dirs");
+        let registry = InjectionRegistry::new(
+            paths.clone(),
+            &dirs,
+            Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins())),
+            Arc::new(crate::accounts::quota::QuotaCache::new(paths)),
+        );
+        let providers = ProviderRegistry::new(registry.clone(), crate::app::register_providers);
+
+        let mut live = std::process::Command::new("/bin/sh")
+            .args(["-c", "sleep 30"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn a stand-in");
+        let adopted = runs::RunRecord {
+            codex: None,
+            codex_account: None,
+            hold: None,
+            run_id: "run-adopted".to_string(),
+            source: Source::Codex,
+            session_id: SESSION.to_string(),
+            cwd: None,
+            cli_pid: live.id(),
+            started_at: "2026-01-01T00:00:00.000Z".to_string(),
+            pid_token: procs::start_token(live.id()),
+            resident: false,
+            shim: None,
+            fingerprint: None,
+            turn_at: None,
+            queued: Vec::new(),
+        };
+
+        let queued: app_server::State =
+            serde_json::from_value(serde_json::json!({"queue": [{"id": "q1", "text": "next", "params": {}, "request": null}]}))
+                .expect("a codex state");
+        registry.codex_dead(runs::RunRecord {
+            codex: Some(queued),
+            run_id: "run-app-server".to_string(),
+            resident: true,
+            ..adopted.clone()
+        });
+        let handle = registry.codex_handle(SESSION).expect("the handle stays");
+        assert!(handle.visible() && !handle.alive(), "listed, with no process behind it");
+
+        let claim = registry.spawn_gate.lease(Source::Codex, SESSION).expect("a free session must be claimable");
+        registry.clone().resume(adopted, claim);
+
+        assert!(!providers.interrupt(Source::Codex, SESSION), "nothing is left to stop");
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(live.try_wait().expect("try_wait").is_none(), "Stop got past the handle and signalled the adopted run");
+        let seen = registry.run_injection(Source::Codex, SESSION).expect("the adopted run");
+        assert_eq!(seen.state, InjectionRunState::Running);
+        assert!(!seen.interrupted);
+
+        let _ = live.kill();
+        let _ = live.wait();
+    }
+
     /// Adoption claims each session it takes back without the spawn gate: it
     /// runs before the server listens, so no send can race it. A run whose CLI
     /// is gone is swept the same way, its claim taken and let go at once, and
