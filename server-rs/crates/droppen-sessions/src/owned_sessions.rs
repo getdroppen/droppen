@@ -123,15 +123,19 @@ impl OwnedSessions {
     /// the spawn, so it is recorded before it — a crash mid-launch leaves an entry
     /// for a session with no transcript, which nothing lists and nothing resumes.
     ///
-    /// The only way a row is written, and the row's source is the reader's own:
-    /// the reader's [`Transcripts::on_owned`] runs right after it, so no row is
-    /// written without what its CLI needs beside it. For Codex that is the
-    /// thread's claim in the shared `<data>/codex-claims`; without the claim the
-    /// sibling instances go on listing the thread. The row's outcome is the
-    /// answer: the step after it is best effort, and it runs whichever way the
-    /// row went, so a second record of the same id retries it.
+    /// The only way this module writes a row, and the row's source is the
+    /// reader's own: the reader's [`Transcripts::on_owned`] runs right after
+    /// it, so no row is written without what its CLI needs beside it. For Codex
+    /// that is the thread's claim in the shared `<data>/codex-claims`; without
+    /// the claim the sibling instances go on listing the thread. The row's
+    /// outcome is the answer: the step after it is best effort, and it runs
+    /// whichever way the row went, so a second record of the same id retries it.
+    ///
+    /// A source the registry is not written for (`RECORDED`) gets no row, since
+    /// reading would drop it; its CLI's step still runs.
     pub async fn record(paths: &Paths, reader: &dyn Transcripts, id: &str) -> std::io::Result<()> {
-        let outcome = insert(paths, reader.source(), id).await;
+        let source = reader.source();
+        let outcome = if RECORDED.contains(&source.as_str()) { insert(paths, source, id).await } else { Ok(()) };
         reader.on_owned(paths, id).await;
         outcome
     }
@@ -248,6 +252,13 @@ pub async fn forget(paths: &Paths, source: Source, id: &str) -> std::io::Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::context::ContextUsage;
+    use crate::sources::test_reader::TestReader;
+    use crate::util::TranscriptItem;
+    use crate::{CliChoice, SessionStatus, SessionSummary};
+    use futures_util::future::BoxFuture;
+    use serde_json::{Map, Value};
+    use std::path::{Path, PathBuf};
 
     fn paths(dir: &tempfile::TempDir) -> Paths {
         Paths::new(dir.path().to_path_buf())
@@ -439,5 +450,112 @@ mod tests {
         insert(&a, Source::Claude, "session-a").await.expect("record");
         assert!(read(&a).await.contains(Source::Claude, "session-a"));
         assert!(read(&b).await.is_empty(), "a sibling's registry is not this one's");
+    }
+
+    /// The core's stand-in reader, whose step after a row notes whether the
+    /// row was already there.
+    struct Witness {
+        reader: TestReader,
+        saw_row: std::sync::Mutex<Vec<bool>>,
+    }
+
+    impl Witness {
+        fn of(source: Source) -> Self {
+            Self {
+                reader: TestReader(source),
+                saw_row: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+
+        fn saw_row(&self) -> Vec<bool> {
+            self.saw_row.lock().expect("witness").clone()
+        }
+    }
+
+    impl Transcripts for Witness {
+        fn source(&self) -> Source {
+            self.reader.source()
+        }
+
+        fn list<'a>(&'a self, paths: &'a Paths, bindings: &'a BTreeMap<String, String>) -> BoxFuture<'a, Vec<SessionSummary>> {
+            self.reader.list(paths, bindings)
+        }
+
+        fn find<'a>(&'a self, paths: &'a Paths, id: &'a str) -> BoxFuture<'a, Option<SessionSummary>> {
+            self.reader.find(paths, id)
+        }
+
+        fn has_own_sessions<'a>(&'a self, paths: &'a Paths) -> BoxFuture<'a, bool> {
+            self.reader.has_own_sessions(paths)
+        }
+
+        fn parse<'a>(&'a self, paths: &'a Paths, file_path: &'a Path) -> BoxFuture<'a, std::io::Result<Vec<TranscriptItem>>> {
+            self.reader.parse(paths, file_path)
+        }
+
+        fn cli_choice<'a>(&'a self, file_path: &'a Path) -> BoxFuture<'a, Option<CliChoice>> {
+            self.reader.cli_choice(file_path)
+        }
+
+        fn context<'a>(&'a self, file_path: &'a Path) -> BoxFuture<'a, Option<ContextUsage>> {
+            self.reader.context(file_path)
+        }
+
+        fn spoken_texts(&self, entry: &Map<String, Value>) -> Vec<String> {
+            self.reader.spoken_texts(entry)
+        }
+
+        fn external_reason(&self) -> String {
+            self.reader.external_reason()
+        }
+
+        fn live_block(&self, status: SessionStatus) -> Option<String> {
+            self.reader.live_block(status)
+        }
+
+        fn foreign_sessions(&self) -> bool {
+            self.reader.foreign_sessions()
+        }
+
+        fn on_owned<'a>(&'a self, paths: &'a Paths, id: &'a str) -> BoxFuture<'a, ()> {
+            Box::pin(async move {
+                let row = read(paths).await.contains(self.source(), id);
+                self.saw_row.lock().expect("witness").push(row);
+            })
+        }
+
+        fn watch_dirs<'a>(&'a self, paths: &'a Paths) -> BoxFuture<'a, Vec<PathBuf>> {
+            self.reader.watch_dirs(paths)
+        }
+    }
+
+    /// The row first, then its CLI's step, every time. Claim first, and a row
+    /// that then fails leaves a claim with no row: a thread every sibling hides
+    /// and this instance does not own, which nothing heals. A row whose claim
+    /// failed is healed at boot (`sessions::codex_claims::migrate`).
+    #[tokio::test]
+    async fn a_row_is_written_before_its_cli_s_step_runs() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let paths = paths(&dir);
+        let codex = Witness::of(Source::Codex);
+        OwnedSessions::record(&paths, &codex, "thread-a").await.expect("record");
+        OwnedSessions::record(&paths, &codex, "thread-a").await.expect("recording twice is fine");
+        assert_eq!(codex.saw_row(), [true, true], "the step ran once per record, each time after the row");
+        assert!(read(&paths).await.contains(Source::Codex, "thread-a"));
+    }
+
+    /// No row for a source the registry is not written for: reading would drop
+    /// it, so it would sit in the table owning nothing. The CLI's step still runs.
+    #[tokio::test]
+    async fn a_source_the_registry_is_not_written_for_gets_no_row() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let paths = paths(&dir);
+        let acp = Witness::of(Source::Acp);
+        OwnedSessions::record(&paths, &acp, "acp-a").await.expect("nothing to fail");
+        assert_eq!(acp.saw_row(), [false], "its step ran, with no row before it");
+        let rows: i64 = store(&paths)
+            .read(|conn| conn.query_row("SELECT COUNT(*) FROM owned_sessions", [], |row| row.get(0)))
+            .expect("count");
+        assert_eq!(rows, 0, "and the table holds nothing");
     }
 }

@@ -225,9 +225,17 @@ impl UsageFold for NoUsage {
 pub struct TranscriptSources(Arc<BTreeMap<Source, Arc<dyn Transcripts>>>);
 
 impl TranscriptSources {
-    /// Add `reader` under its own source, in place of any reader there.
+    /// Add `reader` under its own source.
+    ///
+    /// # Panics
+    ///
+    /// When that source has a reader already. A source has exactly one, so no
+    /// reader can stand in for another: the step after an ownership row
+    /// ([`Transcripts::on_owned`]) is always its own CLI's.
     pub fn register(&mut self, reader: Arc<dyn Transcripts>) {
-        Arc::make_mut(&mut self.0).insert(reader.source(), reader);
+        let source = reader.source();
+        assert!(!self.0.contains_key(&source), "a second transcript reader for {source}");
+        Arc::make_mut(&mut self.0).insert(source, reader);
     }
 
     /// Every reader, in [`Source`]'s order.
@@ -452,5 +460,21 @@ pub(crate) mod test_reader {
                 cache_write: num(usage.get("cache_write")),
             })
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::test_reader::TestReader;
+    use super::*;
+
+    /// One reader per source: a second would stand in for the first, and so
+    /// would its step after an ownership row.
+    #[test]
+    #[should_panic(expected = "a second transcript reader for claude")]
+    fn a_source_takes_one_reader() {
+        let mut sources = TranscriptSources::default();
+        sources.register(Arc::new(TestReader(Source::Claude)));
+        sources.register(Arc::new(TestReader(Source::Claude)));
     }
 }
