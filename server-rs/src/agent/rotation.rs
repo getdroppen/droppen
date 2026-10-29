@@ -78,11 +78,12 @@ use rh_proto::identity::MachineIdentity;
 use rh_proto::sig;
 use rh_proto::wire::agent::AgentToHub;
 use serde::Serialize;
-use serde_json::{json, Value};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tokio::sync::{mpsc, oneshot};
 use zeroize::Zeroizing;
 
+use super::answers::{AnswerBody, NotOnChain, Refused, RefusedWithReason, Rotated};
 use super::hub::WireText;
 use super::link::Shared;
 use super::state::AgentState;
@@ -520,7 +521,7 @@ impl AgentFiles {
 pub(super) async fn rotate(shared: &Arc<Shared>, device: &str, body: &[u8]) -> (u16, Value) {
     let req = match Request::parse(body) {
         Ok(req) => req,
-        Err(message) => return (400, json!({"error": "bad_request", "message": message})),
+        Err(message) => return (400, Refused { error: "bad_request", message }.body()),
     };
     let _one = shared.rotation.gate.lock().await;
     // The bridge refused already; the chain (and who vouched for it) may
@@ -535,24 +536,32 @@ pub(super) async fn rotate(shared: &Arc<Shared>, device: &str, body: &[u8]) -> (
     let session = shared.rotation.session().filter(|s| s.offered && !s.staged_key);
     let text = shared.hub_text.lock().expect("hub text").clone();
     let (Some(session), Some(text)) = (session, text) else {
-        return (
-            409,
-            json!({"error": "hub_not_ready", "message": "this device's hub connection is down, or its hub does not stage identity renewals yet"}),
-        );
+        let refused = Refused {
+            error: "hub_not_ready",
+            message: "this device's hub connection is down, or its hub does not stage identity renewals yet",
+        };
+        return (409, refused.body());
     };
     let store = FileSeedStore::for_instance(&shared.files);
     let uuid = match store.load() {
         Ok(Some(seed)) => seed.uuid,
-        _ => return (500, json!({"error": "unavailable", "message": "this device's identity key does not read"})),
+        _ => {
+            let refused = Refused {
+                error: "unavailable",
+                message: "this device's identity key does not read",
+            };
+            return (500, refused.body());
+        }
     };
     let stagings = shared.files.staged_seeds(&shared.identity);
     let existing = stagings.iter().find(|s| s.nonce == req.nonce).cloned();
     if let Some(s) = &existing {
         if (s.chain_seq, s.chain_head, s.assurance) != (req.chain_seq, req.chain_head, req.assurance) {
-            return (
-                400,
-                json!({"error": "bad_request", "message": "this nonce came before with another chain view or assurance"}),
-            );
+            let refused = Refused {
+                error: "bad_request",
+                message: "this nonce came before with another chain view or assurance",
+            };
+            return (400, refused.body());
         }
     }
     let is_new = existing.is_none();
@@ -576,21 +585,22 @@ pub(super) async fn rotate(shared: &Arc<Shared>, device: &str, body: &[u8]) -> (
     let new = staged.identity();
     let body = proof(&account, &machine, &staged, &shared.identity, &new);
     let Some(mac) = chain::host_rotate_confirm(new.dh(), &req.eph, &body) else {
-        return (400, json!({"error": "bad_request", "message": "eph is not a usable X25519 key"}));
+        return (400, Refused { error: "bad_request", message: "eph is not a usable X25519 key" }.body());
     };
     let old_sig = sig::sign(shared.identity.signing_key(), sig::HOST_ROTATE, &body);
     let new_sig = sig::sign(new.signing_key(), sig::HOST_ROTATE, &body);
     let answer = |ready_ms: Option<u64>| {
-        json!({
-            "signKey": hex(&new.sign_public()),
-            "dhKey": hex(&new.dh_public()),
-            "oldSig": hex(&old_sig),
-            "newSig": hex(&new_sig),
-            "mac": hex(&mac),
-            "stagedSeq": staged.chain_seq,
-            "stagedHead": hex(&staged.chain_head),
-            "readyMs": ready_ms,
-        })
+        Rotated {
+            sign_key: hex(&new.sign_public()),
+            dh_key: hex(&new.dh_public()),
+            old_sig: hex(&old_sig),
+            new_sig: hex(&new_sig),
+            mac: hex(&mac),
+            staged_seq: staged.chain_seq,
+            staged_head: hex(&staged.chain_head),
+            ready_ms,
+        }
+        .body()
     };
     // The same nonce, staged on the hub already: the same answer.
     let taken = shared.rotation.lock().taken.get(&req.nonce).copied();
@@ -604,7 +614,7 @@ pub(super) async fn rotate(shared: &Arc<Shared>, device: &str, body: &[u8]) -> (
     // this device can always finish.
     if let Err(error) = store.stage(&staged) {
         tracing::error!(%error, "cannot stage a new identity key");
-        return (500, json!({"error": "unavailable", "message": "cannot store the new identity key"}));
+        return (500, Refused { error: "unavailable", message: "cannot store the new identity key" }.body());
     }
     let hash = hex(&nonce_hash(&req.nonce));
     let (tx, rx) = oneshot::channel();
@@ -621,7 +631,7 @@ pub(super) async fn rotate(shared: &Arc<Shared>, device: &str, body: &[u8]) -> (
     };
     if text.send(stage.text()).is_err() {
         shared.rotation.lock().waiting.remove(&hash);
-        return (409, json!({"error": "hub_not_ready", "message": "this device's hub connection went"}));
+        return (409, Refused { error: "hub_not_ready", message: "this device's hub connection went" }.body());
     }
     tracing::info!(%device, assurance = staged.assurance.to_byte(), "staged a new identity key; the hub is staging the renewal");
     let heard = tokio::time::timeout(STAGE_WAIT, rx).await;
@@ -653,10 +663,12 @@ pub(super) async fn rotate(shared: &Arc<Shared>, device: &str, body: &[u8]) -> (
                     tracing::error!(%error, "cannot forget the staged identity key");
                 }
             }
-            (
-                409,
-                json!({"error": "hub_refused", "reason": reason, "message": "the hub refused to stage this renewal"}),
-            )
+            let refused = RefusedWithReason {
+                error: "hub_refused",
+                reason: &reason,
+                message: "the hub refused to stage this renewal",
+            };
+            (409, refused.body())
         }
         Ok(Err(_)) | Err(_) => {
             // Not answered in time — but the hub may still have staged it
@@ -667,10 +679,11 @@ pub(super) async fn rotate(shared: &Arc<Shared>, device: &str, body: &[u8]) -> (
             if staged.accepted_ms.is_none() {
                 tracing::warn!("the hub did not answer the staging in time; keeping the staged key for the attempt's ten minutes");
             }
-            (
-                504,
-                json!({"error": "hub_timeout", "message": "the hub did not answer the staging in time: ask again"}),
-            )
+            let refused = Refused {
+                error: "hub_timeout",
+                message: "the hub did not answer the staging in time: ask again",
+            };
+            (504, refused.body())
         }
     }
 }
@@ -762,7 +775,7 @@ fn make_room(store: &FileSeedStore, stagings: &[StagedSeed], since: u64, now: u6
 /// a current host whose chain names the keys it runs with, asked about a
 /// view on that chain.
 fn check_chain(shared: &Shared, req: &Request) -> Result<(String, String), (u16, Value)> {
-    let not_host = |message: &str| (409, json!({"error": "not_current_host", "message": message}));
+    let not_host = |message: &str| (409, Refused { error: "not_current_host", message }.body());
     let st = shared.state.lock().expect("agent state");
     let Some(chain) = st.chain.as_ref() else {
         return Err(not_host("this device is not in the account yet"));
@@ -772,10 +785,11 @@ fn check_chain(shared: &Shared, req: &Request) -> Result<(String, String), (u16,
     };
     // A renewal is a chain v3 entry: a v2 account re-enrolls instead.
     if !chain.is_v3() {
-        return Err((
-            409,
-            json!({"error": "not_v3", "message": "this account's device chain is not at version 3: identity keys are renewed on v3 accounts only"}),
-        ));
+        let refused = Refused {
+            error: "not_v3",
+            message: "this account's device chain is not at version 3: identity keys are renewed on v3 accounts only",
+        };
+        return Err((409, refused.body()));
     }
     if (me.info.sign_key, me.info.dh_key) != (shared.identity.sign_public(), shared.identity.dh_public()) {
         return Err(not_host(
@@ -783,19 +797,22 @@ fn check_chain(shared: &Shared, req: &Request) -> Result<(String, String), (u16,
         ));
     }
     if req.chain_seq > chain.seq() || chain.hash_at(req.chain_seq) != Some(req.chain_head) {
-        return Err((
-            409,
-            json!({"error": "not_on_chain", "message": "that chain view is not on this device's chain: sync and retry", "chainSeq": chain.seq()}),
-        ));
+        let refused = NotOnChain {
+            error: "not_on_chain",
+            message: "that chain view is not on this device's chain: sync and retry",
+            chain_seq: chain.seq(),
+        };
+        return Err((409, refused.body()));
     }
     // The account's renewal policy (`SetRenewalPolicy`, §3.4 rule 9): every
     // renewal confirmed on the device. The chain would never take another, so
     // nothing is staged for one.
     if chain.always_assured() && req.assurance != Assurance::OnDevice {
-        return Err((
-            409,
-            json!({"error": "assurance_required", "message": "this account renews identity keys only when confirmed on the device (assurance 1)"}),
-        ));
+        let refused = Refused {
+            error: "assurance_required",
+            message: "this account renews identity keys only when confirmed on the device (assurance 1)",
+        };
+        return Err((409, refused.body()));
     }
     Ok((st.account.clone(), st.machine.clone()))
 }
