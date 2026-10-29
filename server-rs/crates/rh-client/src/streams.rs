@@ -9,8 +9,9 @@ use std::time::Duration;
 use rh_proto::frame::Frame;
 use rh_proto::record::StreamId;
 use rh_proto::stream::MAX_PAGE_LEN;
+use rh_proto::wire::client::DeviceToHub;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 
 use crate::follow::{Follower, Step};
 use crate::link::Link;
@@ -85,7 +86,7 @@ pub async fn read_stream(
     let (ch, mut rx) = link.reserve();
     link.send(Frame::Sub { ch, stream, from_seq: 0 })?;
     let result = follow(&mut rx, pages, machine_key, keys, stream, timeout).await;
-    let _ = link.send_control(&json!({"t": "stream_unsub", "ch": ch}));
+    let _ = link.send_control(&DeviceToHub::StreamUnsub { ch });
     link.release(ch);
     result
 }
@@ -444,6 +445,7 @@ impl StreamCopy {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     /// A one-shot HTTP server answering `head` then `body` (raw), its URL.
     async fn serve_once(head: String, body: Vec<u8>) -> String {

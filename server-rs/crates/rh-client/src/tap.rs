@@ -15,7 +15,8 @@
 use std::io::Write;
 use std::sync::{Mutex, OnceLock};
 
-use serde_json::{json, Value};
+use serde::Serialize;
+use serde_json::Value;
 
 /// One thing that crossed the wire.
 #[derive(Debug, Clone, Copy)]
@@ -92,9 +93,35 @@ fn file() -> Option<&'static Mutex<std::fs::File>> {
     .as_ref()
 }
 
+/// The capture line of an HTTP body: `query` and `status` only when there
+/// are some.
+#[derive(Serialize)]
+struct HttpLine<'a> {
+    src: &'a str,
+    kind: &'static str,
+    dir: &'a str,
+    method: &'a str,
+    path: &'a str,
+    body: &'a Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    query: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    status: Option<u16>,
+}
+
+/// The capture line of a control message.
+#[derive(Serialize)]
+struct WsLine<'a> {
+    src: &'a str,
+    kind: &'static str,
+    socket: &'a str,
+    dir: &'a str,
+    body: &'a Value,
+}
+
 /// The line the default writes for `event` (also what a caller's own tap may write).
 pub fn line(src: &str, event: Event<'_>) -> Value {
-    match event {
+    let line = match event {
         Event::Http {
             dir,
             method,
@@ -105,17 +132,26 @@ pub fn line(src: &str, event: Event<'_>) -> Value {
             let after_scheme = url.split_once("://").map_or(url, |(_, rest)| rest);
             let target = after_scheme.find('/').map_or("/", |i| &after_scheme[i..]);
             let (path, query) = target.split_once('?').map_or((target, None), |(p, q)| (p, Some(q)));
-            let mut record = json!({"src": src, "kind": "http", "dir": dir, "method": method, "path": path, "body": body});
-            if let Some(query) = query {
-                record["query"] = json!(query);
-            }
-            if let Some(status) = status {
-                record["status"] = json!(status);
-            }
-            record
+            serde_json::to_value(HttpLine {
+                src,
+                kind: "http",
+                dir,
+                method,
+                path,
+                body,
+                query,
+                status,
+            })
         }
-        Event::Ws { socket, dir, body } => json!({"src": src, "kind": "ws", "socket": socket, "dir": dir, "body": body}),
-    }
+        Event::Ws { socket, dir, body } => serde_json::to_value(WsLine {
+            src,
+            kind: "ws",
+            socket,
+            dir,
+            body,
+        }),
+    };
+    line.expect("a capture line encodes")
 }
 
 fn emit(event: Event<'_>) {
@@ -226,6 +262,30 @@ mod line_tests {
             )
             .to_string(),
             r#"{"body":{"b":1,"t":"welcome"},"dir":"in","kind":"http","method":"GET","path":"/v1/me","query":"x=1","src":"agent","status":200}"#
+        );
+    }
+}
+
+#[cfg(test)]
+mod absent_keys_tests {
+    use super::{line, Event};
+    use serde_json::json;
+
+    /// A request has no status, and a URL without a query has no query: the
+    /// keys are left out, never null.
+    #[test]
+    fn a_request_line_leaves_out_status_and_query() {
+        let body = json!({"account": "a-1"});
+        let event = Event::Http {
+            dir: "out",
+            method: "POST",
+            url: "https://hub.example/v1/session/challenge",
+            status: None,
+            body: &body,
+        };
+        assert_eq!(
+            line("agent", event),
+            json!({"src": "agent", "kind": "http", "dir": "out", "method": "POST", "path": "/v1/session/challenge", "body": {"account": "a-1"}})
         );
     }
 }

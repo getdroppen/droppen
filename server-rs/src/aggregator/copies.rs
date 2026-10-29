@@ -45,8 +45,9 @@ use rh_client::HubUrl;
 use rh_proto::frame::Frame;
 use rh_proto::identity::MachineIdentity;
 use rh_proto::record::{SignedHead, StreamId, FMT_FEED_V1, FMT_INDEX_V1, FMT_STATUS_V1};
+use rh_proto::wire::client::DeviceToHub;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 use tokio::sync::{mpsc, watch, Notify};
 use tokio_util::sync::CancellationToken;
 use zeroize::{Zeroize, Zeroizing};
@@ -706,7 +707,7 @@ async fn follow_stream(task: Task, stop: CancellationToken) {
     if dirty && !stop.is_cancelled() {
         let _ = emit(&follower);
     }
-    let _ = link.send_control(&json!({"t": "stream_unsub", "ch": ch}));
+    let _ = link.send_control(&DeviceToHub::StreamUnsub { ch });
     link.release(ch);
 }
 
@@ -1731,6 +1732,7 @@ impl Live {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use crate::agent::state::AgentState;
 
     #[test]

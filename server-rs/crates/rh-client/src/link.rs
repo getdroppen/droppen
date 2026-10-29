@@ -17,7 +17,9 @@ use futures_util::{SinkExt, StreamExt};
 use rh_proto::chain::Attestation;
 use rh_proto::frame::{Frame, CLIENT_PATH};
 use rh_proto::sig::{HubLogin, LoginRole};
-use serde_json::{json, Value};
+use rh_proto::wire::client::DeviceToHub;
+use rh_proto::wire::connect::PeerToRelay;
+use serde_json::Value;
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
 
@@ -106,8 +108,16 @@ pub async fn connect_device(hub: &HubUrl, account: &str, device: &str, sign: &Si
     }
     .sign(sign)
     .map_err(|e| failed(format!("sign-in: {e}")))?;
-    let login = json!({"t": "login", "role": "device", "account": account, "id": device, "time_ms": time_ms, "sig": hex(&sig), "session": session});
-    sink.send(Message::Text(tap::sent(CLIENT_PATH, login.to_string()).into()))
+    let login = DeviceToHub::Login {
+        role: "device".into(),
+        account: account.into(),
+        id: device.into(),
+        time_ms,
+        sig: hex(&sig),
+        session: session.into(),
+    };
+    let login = serde_json::to_string(&login).map_err(|e| failed(format!("sign-in: {e}")))?;
+    sink.send(Message::Text(tap::sent(CLIENT_PATH, login).into()))
         .await
         .map_err(|e| failed(format!("send: {e}")))?;
     let welcome = next_json(&mut stream, CLIENT_PATH).await.map_err(failed)?;
@@ -144,8 +154,13 @@ pub async fn connect_relay(origin: &str, account: &str, device: &str, sign: &Sig
     }
     .sign(sign)
     .map_err(err("sign-in"))?;
-    let login = json!({"t": "login", "ticket": ticket, "time_ms": time_ms, "sig": hex(&sig)});
-    sink.send(Message::Text(tap::sent(CONNECT_PATH, login.to_string()).into()))
+    let login = PeerToRelay::Login {
+        ticket: ticket.into(),
+        time_ms,
+        sig: hex(&sig),
+    };
+    let login = serde_json::to_string(&login).map_err(err("sign-in"))?;
+    sink.send(Message::Text(tap::sent(CONNECT_PATH, login).into()))
         .await
         .map_err(err("send"))?;
     let welcome = next_json(&mut stream, CONNECT_PATH).await?;
@@ -325,8 +340,9 @@ impl Link {
     }
 
     /// Send a control message.
-    pub fn send_control(&self, value: &Value) -> Result<()> {
-        self.text.send(value.to_string()).map_err(|_| "the link is closed".to_string())
+    pub fn send_control(&self, message: &DeviceToHub) -> Result<()> {
+        let text = serde_json::to_string(message).map_err(err("control message"))?;
+        self.text.send(text).map_err(|_| "the link is closed".to_string())
     }
 
     /// The next control message, or `None` after `timeout`.
