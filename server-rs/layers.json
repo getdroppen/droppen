@@ -410,12 +410,6 @@
       ]
     },
     {
-      "why": "auth reads notify's caller classification. It goes when the caller classification moves to auth.",
-      "edges": [
-        "auth -> notify"
-      ]
-    },
-    {
       "why": "A domain pair that points the wrong way: accounts checks a model against models::model_ids. It goes when that item moves to the crate that owns it.",
       "edges": [
         "accounts -> models"

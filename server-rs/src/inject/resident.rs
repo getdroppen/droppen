@@ -12142,7 +12142,7 @@ done
         let paths = Arc::new(Paths::new(harness._home.path().to_path_buf()));
         let instance = InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
         let drive = Arc::new(crate::drive::Drive {
-            auth: crate::auth::Auth::new(&paths, &instance, &droppen_http::config::AuthSettings::default(), false),
+            auth: crate::auth::Auth::new(&paths, &instance, &droppen_http::config::AuthSettings::default(), false, std::sync::Arc::new(crate::app::NotifyTokens)),
             wizards: crate::accounts::setup_token::Captures::new(),
             injections: harness.registry.clone(),
             accounts: Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins())),
