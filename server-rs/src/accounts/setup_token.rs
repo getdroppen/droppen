@@ -898,7 +898,12 @@ async fn accepted_reading(drive: &Arc<Drive>, found: &TokenMatch) -> Result<Read
     choose_reading(found, move |candidate| {
         let paths = paths.clone();
         let logins = logins.clone();
-        async move { verify_secret(&logins, &paths, AccountProvider::Claude, &Credential::Oauth(candidate)).await }
+        async move {
+            // A reading with nothing to check is a refused one: never stored.
+            verify_secret(&logins, &paths, AccountProvider::Claude, &Credential::Oauth(candidate))
+                .await
+                .unwrap_or_else(|error| Verdict::Invalid(error.to_string()))
+        }
     })
     .await
 }

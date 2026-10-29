@@ -223,14 +223,14 @@ impl Login for CodexLogin {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use droppen_base::env_block::parse_env_block;
+    use crate::accounts::verify::StubCli;
+    use droppen_base::process_env::set_child_path;
 
     /// Each marker is enough on its own, and words about codex itself, the
     /// network or its arguments count for nothing.
     #[test]
     fn only_codex_talking_about_the_key_counts_as_a_refusal() {
-        for text in ["invalid_api_key", "Incorrect API key", "401 Unauthorized", "Missing bearer"] {
-            assert!(is_codex_refusal(text), "{text}");
-        }
         // One marker each, so a marker that goes missing turns its line into a miss.
         for text in ["invalid_api_key", "Incorrect API key", "Unauthorized", "Missing bearer", "Invalid API key", "status 401"] {
             assert!(is_codex_refusal(text), "{text}");
@@ -267,6 +267,11 @@ mod tests {
     /// A check that cannot run proves nothing, and says it in codex's words.
     #[tokio::test]
     async fn a_check_that_cannot_run_proves_nothing() {
+        // An empty `PATH`, whatever this machine has installed, so the words
+        // can only be codex's own check stopping. The override is this test
+        // thread's own (`process_env`).
+        let empty = tempfile::tempdir().expect("a PATH directory with nothing in it");
+        set_child_path(Some(empty.path().to_string_lossy().into_owned()));
         let home = tempfile::tempdir().expect("tempdir");
         let paths = crate::accounts::verify::paths_where_no_scratch_can_be_made(home.path());
         let launch = AccountLaunch {
@@ -275,11 +280,55 @@ mod tests {
             codex_args: codex_provider_args(CODEX_DEFAULT_BASE_URL),
         };
         let verdict = CodexLogin.verify(&paths, &launch, &[]).await;
-        let Verdict::Unverifiable(why) = verdict else { panic!("a check that cannot run proves nothing: {verdict:?}") };
-        // Codex is not on `PATH` here, or it is and the scratch cannot be made.
-        assert!(
-            why == "the `codex` CLI is not on PATH, so the key cannot be checked" || why.starts_with("cannot prepare the check's config directory: "),
-            "{why}"
+        assert_eq!(
+            verdict,
+            Verdict::Unverifiable("the `codex` CLI is not on PATH, so the key cannot be checked".to_string())
         );
+    }
+
+    /// The check is one `codex exec ping` through the account's own model
+    /// provider, with the key in the variable that provider reads, in a fresh
+    /// `CODEX_HOME` and an empty working directory under the instance's data,
+    /// both gone once it answers — and a refusal printed beside a clean exit
+    /// is still a refusal, quoted back without the key.
+    #[tokio::test]
+    async fn the_check_runs_codex_through_the_accounts_own_provider_in_a_scratch_home() {
+        let codex = StubCli::new(
+            "codex",
+            &["CODEX_HOME", "DROPPEN_CODEX_API_KEY"],
+            "printf 'ERROR: 401 Unauthorized: invalid_api_key %s\\n' \"$DROPPEN_CODEX_API_KEY\" >&2\nexit 0\n",
+        );
+        set_child_path(Some(codex.path()));
+        let home = tempfile::tempdir().expect("tempdir");
+        // Canonical, because the stub reports its working directory physically.
+        let paths = Paths::new(home.path().canonicalize().expect("canonical home"));
+        let key = "not-a-real-openai-key";
+        let block = parse_env_block(&format!("OPENAI_API_KEY={key}")).expect("block");
+        let launch = CodexLogin.spawn_env(AccountKind::Env, "", &block).expect("a launch");
+
+        let verdict = CodexLogin.verify(&paths, &launch, &[key]).await;
+        assert_eq!(
+            verdict,
+            Verdict::Invalid("the key was refused: ERROR: 401 Unauthorized: invalid_api_key [redacted]".to_string())
+        );
+        assert_eq!(
+            codex.recorded("argv").lines().collect::<Vec<_>>(),
+            [
+                "exec",
+                "--skip-git-repo-check",
+                "-c",
+                "model_providers.remote_hand={name=\"remote-hand\",base_url=\"https://api.openai.com/v1\",env_key=\"DROPPEN_CODEX_API_KEY\",wire_api=\"responses\"}",
+                "-c",
+                "model_provider=remote_hand",
+                "ping",
+            ]
+        );
+        assert!(codex.recorded("DROPPEN_CODEX_API_KEY") == key, "the key reached the provider's variable");
+        let codex_home = std::path::PathBuf::from(codex.recorded("CODEX_HOME"));
+        let scratch = codex_home.parent().expect("the scratch");
+        assert_eq!(scratch.parent(), Some(paths.data_dir().join("verify").as_path()));
+        assert_eq!(codex_home, scratch.join("codex"));
+        assert_eq!(std::path::PathBuf::from(codex.recorded("cwd").trim_end()), scratch.join("cwd"));
+        assert!(!scratch.exists(), "the scratch goes once the check has answered");
     }
 }
