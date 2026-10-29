@@ -425,12 +425,6 @@
       ]
     },
     {
-      "why": "The session-list socket reads the plugin host's status once per socket, for a local client's opening settings frame; live plugins frames arrive through the GlobalFeed broadcast. It goes when the feed takes that one reading through a port the entry fills.",
-      "edges": [
-        "feed -> plugins"
-      ]
-    },
-    {
       "why": "auth reads notify's caller classification. It goes when the caller classification moves to auth.",
       "edges": [
         "auth -> notify"
