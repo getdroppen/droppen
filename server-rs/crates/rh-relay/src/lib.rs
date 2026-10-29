@@ -32,6 +32,8 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use rh_proto::wire::relay::RelayToHub;
+
 pub use config::Config;
 pub use server::Server;
 
@@ -108,7 +110,9 @@ async fn drain(server: &Arc<Server>, why: &Result<(), String>) {
     };
     tracing::info!(drain_s = drain.as_secs(), reason, "draining: goaway to every connection");
     server.goaway(drain.as_millis() as u64, reason);
-    server.tell_hub(&serde_json::json!({"t": "draining", "until_ms": server::now_ms() + drain.as_millis() as u64}));
+    server.tell_hub(&RelayToHub::Draining {
+        until_ms: server::now_ms() + drain.as_millis() as u64,
+    });
     let until = Instant::now() + drain;
     while Instant::now() < until && server.counts().0 > 0 {
         tokio::time::sleep(Duration::from_millis(200)).await;

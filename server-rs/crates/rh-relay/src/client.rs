@@ -30,8 +30,7 @@ use futures_util::StreamExt;
 use rand::RngCore;
 use rh_proto::frame::{Frame, FrameType, RawFrame, IGNORABLE_TYPES};
 use rh_proto::ticket::TicketRole;
-use serde::Deserialize;
-use serde_json::json;
+use rh_proto::wire::connect::{PeerToRelay, RelayToPeer};
 
 use crate::config::hex;
 use crate::conn::Outbound;
@@ -49,20 +48,17 @@ const MAX_TEXT: usize = 16 * 1024;
 const SUSTAINED_BYTES_PER_SEC: u64 = 2 * 1024 * 1024;
 const SUSTAINED_WINDOW: Duration = Duration::from_secs(600);
 
-#[derive(Deserialize)]
-#[serde(tag = "t", rename_all = "snake_case")]
-enum FromPeer {
-    Login { ticket: String, time_ms: u64, sig: String },
-    Ticket { ticket: String },
-}
-
 pub async fn connection(server: Arc<Server>, socket: WebSocket) {
     let id = server.next_conn_id();
     let (out, rx, queued) = Outbound::new(OUTBOUND_BUDGET);
     let (sink, mut stream) = socket.split();
     let writer = crate::conn::spawn_writer(sink, rx, queued, server.shutdown.clone(), (CLOSE_RESTART, "the relay is restarting"));
     if server.draining() {
-        out.text(&json!({"t": "error", "code": "busy", "message": "the relay is shutting down", "retry_ms": 1000}));
+        out.text(&RelayToPeer::Error {
+            code: "busy".into(),
+            message: "the relay is shutting down".into(),
+            retry_ms: Some(1000),
+        });
         out.close(CLOSE_BUSY, "the relay is shutting down");
         let _ = tokio::time::timeout(Duration::from_secs(2), writer).await;
         return;
@@ -71,7 +67,12 @@ pub async fn connection(server: Arc<Server>, socket: WebSocket) {
     server.wait_synced().await;
     let mut nonce = [0u8; 32];
     rand::rngs::OsRng.fill_bytes(&mut nonce);
-    out.text(&json!({"t": "challenge", "nonce": hex(&nonce), "relay": server.config.id, "origin": server.config.origin, "version": 1}));
+    out.text(&RelayToPeer::Challenge {
+        nonce: hex(&nonce),
+        relay: server.config.id.clone(),
+        origin: server.config.origin.clone(),
+        version: 1,
+    });
     let timing = server.config.timing;
     let opened = Instant::now();
     let mut last_inbound = Instant::now();
@@ -95,7 +96,11 @@ pub async fn connection(server: Arc<Server>, socket: WebSocket) {
                 }
                 if signed.is_some() {
                     if let Err((code, reason)) = server.still_valid(id) {
-                        out.text(&json!({"t": "error", "code": "expired", "message": reason}));
+                        out.text(&RelayToPeer::Error {
+                            code: "expired".into(),
+                            message: reason.into(),
+                            retry_ms: None,
+                        });
                         out.close(code, reason);
                         break;
                     }
@@ -188,15 +193,19 @@ fn on_text(
     text: &str,
 ) -> bool {
     let fail = |code: u16, what: &str, message: &str| {
-        out.text(&json!({"t": "error", "code": what, "message": message}));
+        out.text(&RelayToPeer::Error {
+            code: what.into(),
+            message: message.into(),
+            retry_ms: None,
+        });
         out.close(code, message);
         false
     };
-    let Ok(message) = serde_json::from_str::<FromPeer>(text) else {
+    let Ok(message) = serde_json::from_str::<PeerToRelay>(text) else {
         return fail(4400, "bad_message", "not a message this relay understands");
     };
     match (signed.as_ref(), message) {
-        (None, FromPeer::Login { ticket, time_ms, sig }) => {
+        (None, PeerToRelay::Login { ticket, time_ms, sig }) => {
             let ticket = match server.admit(&ticket, time_ms, &sig, *nonce) {
                 Ok(t) => t,
                 Err((code, reason)) => {
@@ -210,30 +219,38 @@ fn on_text(
             };
             *rate = current.rate.load(Ordering::Relaxed);
             *limiter = ConnLimiter::new(*rate, u64::from(ticket.limits.frames_per_sec.max(1)), Instant::now());
-            out.text(&json!({"t": "welcome", "relay": server.config.id, "id": ticket.id, "expires_ms": ticket.expires_ms}));
+            out.text(&RelayToPeer::Welcome {
+                relay: server.config.id.clone(),
+                id: ticket.id.clone(),
+                expires_ms: ticket.expires_ms,
+            });
             server.presence_snapshot(id);
             tracing::info!(conn = id, account = %ticket.account, id = %ticket.id, kind = if ticket.role == TicketRole::Agent { "agent" } else { "device" }, "signed in");
             *signed = Some((ticket.role, ticket.account, current));
             true
         }
-        (Some(_), FromPeer::Ticket { ticket }) => {
+        (Some(_), PeerToRelay::Ticket { ticket }) => {
             let ticket = match server.check_ticket(&ticket) {
                 Ok(t) => t,
                 Err(error) => {
-                    out.text(&json!({"t": "error", "code": "bad_ticket", "message": error.to_string()}));
+                    out.text(&RelayToPeer::Error {
+                        code: "bad_ticket".into(),
+                        message: error.to_string(),
+                        retry_ms: None,
+                    });
                     return true;
                 }
             };
             match server.renew(id, &ticket) {
                 Ok(expires_ms) => {
-                    out.text(&json!({"t": "ticket_ok", "expires_ms": expires_ms}));
+                    out.text(&RelayToPeer::TicketOk { expires_ms });
                     true
                 }
                 Err((code, reason)) => fail(code, "denied", reason),
             }
         }
         (None, _) => fail(crate::server::CLOSE_DENIED, "sign_in_first", "sign in first"),
-        (Some(_), FromPeer::Login { .. }) => fail(4400, "unexpected", "already signed in"),
+        (Some(_), PeerToRelay::Login { .. }) => fail(4400, "unexpected", "already signed in"),
     }
 }
 

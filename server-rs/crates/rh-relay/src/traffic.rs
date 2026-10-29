@@ -11,7 +11,8 @@
 use std::io::Write;
 use std::sync::{Mutex, OnceLock};
 
-use serde_json::{json, Value};
+use serde::Serialize;
+use serde_json::Value;
 
 fn file() -> Option<&'static Mutex<std::fs::File>> {
     static FILE: OnceLock<Option<Mutex<std::fs::File>>> = OnceLock::new();
@@ -26,10 +27,27 @@ fn file() -> Option<&'static Mutex<std::fs::File>> {
     .as_ref()
 }
 
+/// One line of the capture, in the shape `check.mjs --traffic` reads.
+#[derive(Serialize)]
+struct Line<'a> {
+    src: &'static str,
+    kind: &'static str,
+    socket: &'static str,
+    dir: &'a str,
+    body: Value,
+}
+
 fn record(dir: &str, text: &str) {
     let Some(file) = file() else { return };
     let Ok(body) = serde_json::from_str::<Value>(text) else { return };
-    let mut line = json!({"src": "relay", "kind": "ws", "socket": "/v1/relay", "dir": dir, "body": body}).to_string();
+    let line = Line {
+        src: "relay",
+        kind: "ws",
+        socket: "/v1/relay",
+        dir,
+        body,
+    };
+    let Ok(mut line) = serde_json::to_string(&line) else { return };
     line.push('\n');
     if let Ok(mut file) = file.lock() {
         let _ = file.write_all(line.as_bytes());

@@ -26,7 +26,8 @@ use futures_util::{SinkExt, StreamExt};
 use rand::Rng;
 use rh_proto::sig::{HubLogin, LoginRole};
 use rh_proto::ticket::TicketRole;
-use serde_json::{json, Value};
+use rh_proto::wire::relay::RelayToHub;
+use serde_json::Value;
 use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
@@ -100,8 +101,9 @@ async fn next_json(source: &mut Source) -> Result<Value, Ended> {
     }
 }
 
-async fn send(sink: &mut Sink, value: &Value) -> Result<(), Ended> {
-    sink.send(Message::Text(crate::traffic::sent(value.to_string()).into()))
+async fn send(sink: &mut Sink, message: &RelayToHub) -> Result<(), Ended> {
+    let text = serde_json::to_string(message).expect("relay messages serialize");
+    sink.send(Message::Text(crate::traffic::sent(text).into()))
         .await
         .map_err(|e| Ended::Retry(e.to_string()))
 }
@@ -162,10 +164,13 @@ pub async fn sign_in(config: &Config, sink: &mut Sink, source: &mut Source, nonc
     let time_ms = now_ms();
     send(
         sink,
-        &json!({
-            "t": "login", "id": config.id, "time_ms": time_ms, "sig": login_sig(&config.key, &config.id, &hub, nonce, time_ms), "version": VERSION,
-            "features": [FEATURE_REVOKE_ROLE],
-        }),
+        &RelayToHub::Login {
+            id: config.id.clone(),
+            time_ms,
+            sig: login_sig(&config.key, &config.id, &hub, nonce, time_ms),
+            version: VERSION.into(),
+            features: vec![FEATURE_REVOKE_ROLE.into()],
+        },
     )
     .await?;
     let mut answer = next_json(source).await?;
@@ -180,11 +185,15 @@ pub async fn sign_in(config: &Config, sink: &mut Sink, source: &mut Source, nonc
         tracing::info!(id = %config.id, origin = %config.origin, "registering with the Hub");
         send(
             sink,
-            &json!({
-                "t": "register", "token": token, "sign_key": hex(&config.key.verifying_key().to_bytes()), "origin": config.origin,
-                "version": VERSION, "time_ms": time_ms, "sig": login_sig(&config.key, &config.id, &hub, nonce, time_ms),
-                "features": [FEATURE_REVOKE_ROLE],
-            }),
+            &RelayToHub::Register {
+                token: token.clone(),
+                sign_key: hex(&config.key.verifying_key().to_bytes()),
+                origin: config.origin.clone(),
+                version: VERSION.into(),
+                time_ms,
+                sig: login_sig(&config.key, &config.id, &hub, nonce, time_ms),
+                features: vec![FEATURE_REVOKE_ROLE.into()],
+            },
         )
         .await?;
         answer = next_json(source).await?;
@@ -270,17 +279,21 @@ async fn session(server: &Arc<Server>) -> Ended {
                 let rate = ((total - last_total) as f64 / secs) as u64;
                 last_total = total;
                 last_at = Instant::now();
-                let message = json!({
-                    "t": "health", "conns": conns, "channels": channels, "bytes_in_per_s": rate, "bytes_out_per_s": rate,
-                    "load": server.load(), "version": VERSION,
-                });
+                let message = RelayToHub::Health {
+                    conns: conns as u64,
+                    channels: channels as u64,
+                    bytes_in_per_s: rate,
+                    bytes_out_per_s: rate,
+                    load: f64::from(server.load()),
+                    version: VERSION.into(),
+                };
                 if send(&mut sink, &message).await.is_err() {
                     return Ended::Retry("the link closed".into());
                 }
             }
             _ = usage.tick() => {
                 for report in server.meter.pending() {
-                    if sink.send(Message::Text(crate::traffic::sent(serde_json::to_string(&report).unwrap_or_default()).into())).await.is_err() {
+                    if send(&mut sink, &RelayToHub::Usage(report)).await.is_err() {
                         return Ended::Retry("the link closed".into());
                     }
                 }
@@ -348,7 +361,7 @@ fn on_message(server: &Server, v: &Value) -> Option<Ended> {
 pub async fn deregister(config: &Config, reason: &str) -> Result<(), String> {
     let (mut sink, mut source, nonce) = dial(config).await.map_err(describe)?;
     sign_in(config, &mut sink, &mut source, nonce).await.map_err(describe)?;
-    send(&mut sink, &json!({"t": "deregister", "reason": reason})).await.map_err(describe)?;
+    send(&mut sink, &RelayToHub::Deregister { reason: reason.into() }).await.map_err(describe)?;
     loop {
         let v = next_json(&mut source).await.map_err(describe)?;
         if v["t"] == "deregistered" {
@@ -366,7 +379,11 @@ pub async fn rotate(config: &Config, new: &ed25519_dalek::SigningKey) -> Result<
     let hub = config.hub.clone().unwrap_or_default();
     send(
         &mut sink,
-        &json!({"t": "rotate", "new_key": hex(&new.verifying_key().to_bytes()), "time_ms": time_ms, "sig_new": login_sig(new, &config.id, &hub, nonce, time_ms)}),
+        &RelayToHub::Rotate {
+            new_key: hex(&new.verifying_key().to_bytes()),
+            time_ms,
+            sig_new: login_sig(new, &config.id, &hub, nonce, time_ms),
+        },
     )
     .await
     .map_err(describe)?;
