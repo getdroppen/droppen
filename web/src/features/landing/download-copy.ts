@@ -40,6 +40,7 @@ export const downloadZhCN: Bundle = {
   "Detected": "当前设备",
 
   // Mac · App
+  "Droppen · Mac": "Droppen · Mac",
   "Droppen for Mac": "Droppen · Mac 版",
   "Open the app and Droppen runs on this Mac, with no terminal and no local password. To use it from your phone and other devices, sign in to Droppen from the app.":
     "打开 App，Droppen 即在这台 Mac 上运行，无需终端，也无需设置本地密码。要在手机和其他设备上使用，请在 App 内登录 Droppen。",
@@ -83,7 +84,7 @@ export const downloadZhCN: Bundle = {
     "几秒钟后，这台设备会在「我的设备」中显示为在线，账户中的每部手机和每个浏览器都能看到它。按同样的步骤添加更多设备后，所有设备上的会话会汇总在同一个列表中。",
 
   // Linux server
-  "Droppen on a Linux server": "在 Linux 服务器上运行 Droppen",
+  "Droppen · Linux": "Droppen · Linux",
   "Run your AI on a server that stays on, and follow it and answer it from your phone. The server needs no browser: it joins your account with a one-time code.":
     "让 AI 在常开的服务器上运行，并在手机上查看进度、回答它的提问。服务器上无需浏览器，使用一次性注册码即可加入你的账户。",
   "coming": "即将支持",
@@ -103,7 +104,7 @@ export const downloadZhCN: Bundle = {
   "Within seconds it shows as online in my devices, on every phone and browser in your account.": "几秒钟后，这台设备会在「我的设备」中显示为在线，账户中的每部手机和每个浏览器都能看到它。",
 
   // Windows
-  "Droppen on Windows": "Windows 版 Droppen",
+  "Droppen · Windows": "Droppen · Windows",
   "Droppen does not run on Windows yet. From a browser on Windows you can already follow your AI and answer its questions.":
     "Droppen 暂不支持在 Windows 上运行。目前可以在 Windows 的浏览器中查看 AI 的进度并回答它的提问。",
   "What works on Windows today:": "目前在 Windows 上可以：",
@@ -173,6 +174,8 @@ export const downloadZhCN: Bundle = {
     "该命令会停止并移除服务和程序，保留数据；结束时会列出数据所在目录，以及删除数据的命令。",
 
   // The end of the page
+  "macOS 13 or later: Apple silicon or Intel.": "系统为 macOS 13 及以上（Apple 芯片或 Intel）。",
+  "Linux on x86_64 or aarch64, with glibc 2.28 or later.": "系统为 Linux（x86_64 或 aarch64，glibc 2.28 及以上）。",
   "Before you install:": "安装前需要：",
   "Mac app": "Mac 应用",
   "A Droppen account. Sign-up is closed for now.": "一个 Droppen 账户。目前暂停注册。",
@@ -199,6 +202,21 @@ export const downloadZhCN: Bundle = {
   "how to set it up": "查看设置指南",
   "Get Droppen:": "获取 Droppen：",
   "Or download it:": "也可以直接下载：",
+
+  // The page's own order: what the install needs, then the panels' words
+  "App (recommended)": "App（推荐）",
+  "Replace <code> with the one-time code.": "把 <code> 替换为一次性注册码。",
+  "Check the file before you open it": "打开前先核对文件",
+  "Droppen App (recommended)": "Droppen App（推荐）",
+  "If Droppen is not on a device yet, open {{url}} on the Mac or Linux device that runs your AI first.":
+    "如果还没装 Droppen，请先在运行 AI 的 Mac 或 Linux 设备上打开 {{url}}。",
+  "Update": "更新",
+  "Uninstall": "卸载",
+  "What it installs, and how it connects": "装了什么，以及如何连接",
+  "On Windows, Droppen runs in the browser: follow your AI, answer its questions, steer it. Droppen itself goes on the Mac or Linux device that runs it.":
+    "在 Windows 上，Droppen 在浏览器里运行：跟进 AI、回答它的提问、给它下指令。Droppen 本身装在运行 AI 的 Mac 或 Linux 设备上。",
+  "In the setup guide, choose “On my phone and other devices too”, then sign in: your browser opens {{app}}, where you check the fingerprint and approve this Mac.":
+    "在设置向导里选择「在手机和其他设备上也能用」，然后登录：浏览器会打开 {{app}}，核对指纹后批准这台 Mac。",
 };
 
 export const downloadZhTW: Bundle = {
@@ -220,6 +238,7 @@ export const downloadZhTW: Bundle = {
   "Phone / tablet": "手機 / 平板",
   "Detected": "目前裝置",
 
+  "Droppen · Mac": "Droppen · Mac",
   "Droppen for Mac": "Droppen · Mac 版",
   "Open the app and Droppen runs on this Mac, with no terminal and no local password. To use it from your phone and other devices, sign in to Droppen from the app.":
     "打開 App，Droppen 即在這台 Mac 上執行，無需終端機，也無需設定本地密碼。要在手機和其他裝置上使用，請在 App 內登入 Droppen。",
@@ -261,7 +280,7 @@ export const downloadZhTW: Bundle = {
   "Within seconds it shows as online in my devices, on every phone and browser in your account. Add more devices the same way, and the sessions on all of them appear in one list.":
     "幾秒鐘後，這台裝置會在「我的裝置」中顯示為上線，帳戶中的每支手機和每個瀏覽器都能看到它。按同樣的步驟新增更多裝置後，所有裝置上的工作階段會彙整在同一個列表中。",
 
-  "Droppen on a Linux server": "在 Linux 伺服器上執行 Droppen",
+  "Droppen · Linux": "Droppen · Linux",
   "Run your AI on a server that stays on, and follow it and answer it from your phone. The server needs no browser: it joins your account with a one-time code.":
     "讓 AI 在常開的伺服器上執行，並在手機上查看進度、回答它的提問。伺服器上無需瀏覽器，使用一次性註冊碼即可加入你的帳戶。",
   "coming": "即將支援",
@@ -280,7 +299,7 @@ export const downloadZhTW: Bundle = {
     "腳本會安裝 Droppen，以你的使用者身分作為 systemd 使用者服務啟動（不使用 root），並用註冊碼加入你的帳戶。如果腳本結束時給出提示，請執行 sudo loginctl enable-linger，使服務在登出後繼續執行。",
   "Within seconds it shows as online in my devices, on every phone and browser in your account.": "幾秒鐘後，這台裝置會在「我的裝置」中顯示為上線，帳戶中的每支手機和每個瀏覽器都能看到它。",
 
-  "Droppen on Windows": "Windows 版 Droppen",
+  "Droppen · Windows": "Droppen · Windows",
   "Droppen does not run on Windows yet. From a browser on Windows you can already follow your AI and answer its questions.":
     "Droppen 暫不支援在 Windows 上執行。目前可以在 Windows 的瀏覽器中查看 AI 的進度並回答它的提問。",
   "What works on Windows today:": "目前在 Windows 上可以：",
@@ -345,6 +364,8 @@ export const downloadZhTW: Bundle = {
   "It stops and removes the service and the program and keeps your data; at the end it prints where the data is, and the command that deletes it.":
     "該指令會停止並移除服務和程式，保留資料；結束時會列出資料所在目錄，以及刪除資料的指令。",
 
+  "macOS 13 or later: Apple silicon or Intel.": "系統為 macOS 13 以上（Apple 晶片或 Intel）。",
+  "Linux on x86_64 or aarch64, with glibc 2.28 or later.": "系統為 Linux（x86_64 或 aarch64，glibc 2.28 以上）。",
   "Before you install:": "安裝前需要：",
   "Mac app": "Mac 應用程式",
   "A Droppen account. Sign-up is closed for now.": "一個 Droppen 帳戶。目前暫停註冊。",
@@ -371,6 +392,20 @@ export const downloadZhTW: Bundle = {
   "how to set it up": "怎麼設定",
   "Get Droppen:": "取得 Droppen：",
   "Or download it:": "也可以直接下載：",
+
+  "App (recommended)": "App（推薦）",
+  "Replace <code> with the one-time code.": "把 <code> 替換為一次性註冊碼。",
+  "Check the file before you open it": "開啟前先核對檔案",
+  "Droppen App (recommended)": "Droppen App（推薦）",
+  "If Droppen is not on a device yet, open {{url}} on the Mac or Linux device that runs your AI first.":
+    "如果還沒裝 Droppen，請先在執行 AI 的 Mac 或 Linux 裝置上開啟 {{url}}。",
+  "Update": "更新",
+  "Uninstall": "解除安裝",
+  "What it installs, and how it connects": "裝了什麼，以及如何連線",
+  "On Windows, Droppen runs in the browser: follow your AI, answer its questions, steer it. Droppen itself goes on the Mac or Linux device that runs it.":
+    "在 Windows 上，Droppen 在瀏覽器裡執行：追蹤 AI、回答它的提問、給它下指令。Droppen 本身裝在執行 AI 的 Mac 或 Linux 裝置上。",
+  "In the setup guide, choose “On my phone and other devices too”, then sign in: your browser opens {{app}}, where you check the fingerprint and approve this Mac.":
+    "在設定精靈裡選擇「在手機和其他裝置上也能用」，然後登入：瀏覽器會開啟 {{app}}，核對指紋後批准這台 Mac。",
 };
 
 export const downloadJa: Bundle = {
@@ -392,6 +427,7 @@ export const downloadJa: Bundle = {
   "Phone / tablet": "スマホ / タブレット",
   "Detected": "このデバイス",
 
+  "Droppen · Mac": "Droppen · Mac",
   "Droppen for Mac": "Droppen · Mac 版",
   "Open the app and Droppen runs on this Mac, with no terminal and no local password. To use it from your phone and other devices, sign in to Droppen from the app.":
     "アプリを開くと、この Mac で Droppen が動きます。ターミナルもローカルのパスワードも不要です。スマホやほかのデバイスから使うには、アプリから Droppen にサインインします。",
@@ -434,7 +470,7 @@ export const downloadJa: Bundle = {
   "Within seconds it shows as online in my devices, on every phone and browser in your account. Add more devices the same way, and the sessions on all of them appear in one list.":
     "数秒で「マイデバイス」にオンラインと表示され、アカウントのすべてのスマホとブラウザから見えるようになります。同じ手順でデバイスを追加すると、すべてのデバイスのセッションがひとつのリストにまとまります。",
 
-  "Droppen on a Linux server": "Linux サーバーで Droppen を動かす",
+  "Droppen · Linux": "Droppen · Linux",
   "Run your AI on a server that stays on, and follow it and answer it from your phone. The server needs no browser: it joins your account with a one-time code.":
     "常時稼働のサーバーで AI を動かし、スマホから進み具合を確認して質問に答えられます。サーバーにブラウザは不要で、ワンタイムコードでアカウントに追加します。",
   "coming": "近日対応",
@@ -454,7 +490,7 @@ export const downloadJa: Bundle = {
   "Within seconds it shows as online in my devices, on every phone and browser in your account.":
     "数秒で「マイデバイス」にオンラインと表示され、アカウントのすべてのスマホとブラウザから見えるようになります。",
 
-  "Droppen on Windows": "Windows 版 Droppen",
+  "Droppen · Windows": "Droppen · Windows",
   "Droppen does not run on Windows yet. From a browser on Windows you can already follow your AI and answer its questions.":
     "Droppen はまだ Windows では動きません。Windows のブラウザからでも、AI の進み具合を確認し、質問に答えることはできます。",
   "What works on Windows today:": "Windows で現在できること：",
@@ -522,6 +558,8 @@ export const downloadJa: Bundle = {
   "It stops and removes the service and the program and keeps your data; at the end it prints where the data is, and the command that deletes it.":
     "サービスとプログラムを停止して削除し、データは残します。最後に、データの場所とそれを削除するコマンドが表示されます。",
 
+  "macOS 13 or later: Apple silicon or Intel.": "macOS 13 以降（Apple シリコンまたは Intel）。",
+  "Linux on x86_64 or aarch64, with glibc 2.28 or later.": "Linux（x86_64 または aarch64、glibc 2.28 以降）。",
   "Before you install:": "インストールの前に必要なもの：",
   "Mac app": "Mac アプリ",
   "A Droppen account. Sign-up is closed for now.": "Droppen アカウント。現在、新規登録を停止しています。",
@@ -548,4 +586,18 @@ export const downloadJa: Bundle = {
   "how to set it up": "設定のしかた",
   "Get Droppen:": "Droppen を入手：",
   "Or download it:": "直接ダウンロードもできます：",
+
+  "App (recommended)": "App（推奨）",
+  "Replace <code> with the one-time code.": "<code> をワンタイムコードに置き換えます。",
+  "Check the file before you open it": "開く前にファイルを確認する",
+  "Droppen App (recommended)": "Droppen App（推奨）",
+  "If Droppen is not on a device yet, open {{url}} on the Mac or Linux device that runs your AI first.":
+    "まだ Droppen を入れていない場合は、先に AI を動かす Mac か Linux のデバイスで {{url}} を開いてください。",
+  "Update": "更新",
+  "Uninstall": "アンインストール",
+  "What it installs, and how it connects": "何がインストールされ、どうつながるか",
+  "On Windows, Droppen runs in the browser: follow your AI, answer its questions, steer it. Droppen itself goes on the Mac or Linux device that runs it.":
+    "Windows では、Droppen はブラウザで動きます。AI の進み具合を見て、質問に答え、指示を出せます。Droppen 本体は、AI を動かす Mac か Linux のデバイスに入ります。",
+  "In the setup guide, choose “On my phone and other devices too”, then sign in: your browser opens {{app}}, where you check the fingerprint and approve this Mac.":
+    "セットアップガイドで「スマホやほかのデバイスからも使う」を選び、サインインします。ブラウザが {{app}} を開くので、指紋を照合してこの Mac を承認します。",
 };

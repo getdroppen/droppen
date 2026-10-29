@@ -44,7 +44,6 @@ import {
 } from "../src/features/landing/get-droppen.js";
 import LandingPage from "../src/features/landing/landing.js";
 import { bootRoute, isAuthPath, isFrontPath, isLandingPath, publicPage } from "../src/features/landing/route.js";
-import type { SignupMode } from "../src/lib/hub/api.js";
 import { cloudDevicesJa, cloudDevicesZhCN, cloudDevicesZhTW } from "../src/i18n/cloud-devices.js";
 import { ja } from "../src/i18n/ja.js";
 import { zhCN } from "../src/i18n/zh-CN.js";
@@ -80,14 +79,14 @@ const MAC_CHROME: EnvironmentHints = {
 
 function draw(
   lng: string,
-  opts: { signedIn?: boolean; app?: boolean; appSignIn?: boolean; linux?: boolean; availability?: Availability; hints?: EnvironmentHints; os?: DownloadOs | null; signup?: SignupMode } = {},
+  opts: { signedIn?: boolean; app?: boolean; appSignIn?: boolean; linux?: boolean; availability?: Availability; hints?: EnvironmentHints; os?: DownloadOs | null } = {},
 ): string {
   void i18n.changeLanguage(lng);
   place.search = opts.os ? `?os=${opts.os}` : "";
   const availability = opts.availability ?? { app: opts.app ?? false, appSignIn: opts.appSignIn ?? false, linux: opts.linux ?? false };
   return renderToStaticMarkup(
     <I18nextProvider i18n={i18n}>
-      <DownloadPage signedIn={opts.signedIn} availability={availability} hints={opts.hints ?? MAC_CHROME} signup={opts.signup} />
+      <DownloadPage signedIn={opts.signedIn} availability={availability} hints={opts.hints ?? MAC_CHROME} />
     </I18nextProvider>,
   );
 }
@@ -219,15 +218,16 @@ test("the computers are one keyboard-operable tablist, the Mac's two ways a swit
     assert.match(html, new RegExp(`data-testid="panel-${tab}"`), `${os} panel`);
     assert.equal(primaries(html), 1, `${os}: one primary action`);
   }
-  // The Mac's ways: the App or the command line, a switch in the Mac's tab.
-  const bg = draw("en", { os: "macos-bg", app: true });
-  assert.match(bg, /data-testid="way-macos-bg"[^>]*aria-pressed="true"|aria-pressed="true"[^>]*data-testid="way-macos-bg"/);
-  assert.match(bg, /data-testid="way-panel-macos-bg"/);
-  assert.match(draw("en", { os: "macos-app", app: true }), /data-testid="way-panel-macos-app"/);
+  // The Mac's two ways, flat in the tab: no switch, nothing hidden behind one.
+  const mac = draw("en", { os: "macos-app", app: true });
+  assert.match(mac, /data-testid="way-panel-macos-app"/);
+  assert.match(mac, /data-testid="way-panel-macos-bg"/, "the command line is shown beside the App");
+  assert.doesNotMatch(mac, /data-testid="way-macos-app"|data-testid="way-macos-bg"/, "no switch");
+  assert.equal(primaries(mac), 1, "one primary action: the App's download");
   const words = (os: DownloadOs, extra: { app?: boolean; linux?: boolean } = {}) => text(draw("en", { os, ...extra }));
   assert.ok(words("macos-bg").includes(INSTALL_COMMAND));
   assert.ok(words("macos-bg").includes("It installs and starts at login"));
-  assert.ok(words("windows").includes("Droppen does not run on Windows yet."));
+  assert.ok(words("windows").includes("On Windows, Droppen runs in the browser:"));
   assert.ok(words("windows").includes("use droppen.app in this browser"), "no dead end");
   // The phone is a part of the page, after the install, whatever the tab: nothing to install there.
   for (const os of DOWNLOAD_OSES) {
@@ -281,7 +281,7 @@ test("signing in from the App: its last step is 「登录 Droppen」 inside it, 
     en: {
       step: "Sign in to Droppen from the app",
       opens: "It opens a short setup guide, four steps.",
-      where: "In the setup guide's Where to use it step, choose “On my phone and other devices too”, then click Sign in to Droppen. Your browser opens droppen.app: sign in, check that the fingerprint matches the one the app shows, then click add this device.",
+      where: "In the setup guide, choose “On my phone and other devices too”, then sign in: your browser opens droppen.app, where you check the fingerprint and approve this Mac.",
       lead: "To use it from your phone and other devices, sign in to Droppen from the app.",
       note: "signing in to Droppen from the app is coming in an update",
       gone: "Nothing to type.",
@@ -289,7 +289,7 @@ test("signing in from the App: its last step is 「登录 Droppen」 inside it, 
     "zh-CN": {
       step: "在 App 内登录 Droppen",
       opens: "它会打开一个四步的设置向导。",
-      where: "在设置向导的「在哪里用」一步，选择「在手机和其它设备上也能用」，再点击「登录 Droppen」。浏览器会打开 droppen.app：登录后，核对指纹与 App 中显示的一致，再点击「加入这台设备」。",
+      where: "在设置向导里选择「在手机和其他设备上也能用」，然后登录：浏览器会打开 droppen.app，核对指纹后批准这台 Mac。",
       lead: "要在手机和其他设备上使用，请在 App 内登录 Droppen",
       note: "在 App 内登录 Droppen 的功能将在后续更新中提供",
       gone: "不用输入任何东西",
@@ -297,7 +297,7 @@ test("signing in from the App: its last step is 「登录 Droppen」 inside it, 
     "zh-TW": {
       step: "在 App 內登入 Droppen",
       opens: "它會打開一個四步的設定引導。",
-      where: "在設定引導的「在哪裡用」一步，選擇「在手機和其他裝置上也能用」，再點擊「登入 Droppen」。",
+      where: "在設定精靈裡選擇「在手機和其他裝置上也能用」，然後登入：瀏覽器會開啟 droppen.app，核對指紋後批准這台 Mac。",
       lead: "要在手機和其他裝置上使用，請在 App 內登入 Droppen",
       note: "在 App 內登入 Droppen 的功能將在後續更新中提供",
       gone: "不用輸入任何東西",
@@ -305,7 +305,7 @@ test("signing in from the App: its last step is 「登录 Droppen」 inside it, 
     ja: {
       step: "アプリから Droppen にサインイン",
       opens: "4 ステップの短いセットアップガイドが開きます。",
-      where: "セットアップガイドの「使う場所」で「スマートフォンやほかのデバイスでも使う」を選び、「Droppen にサインイン」を押します。",
+      where: "セットアップガイドで「スマホやほかのデバイスからも使う」を選び、サインインします。ブラウザが droppen.app を開くので、指紋を照合してこの Mac を承認します。",
       lead: "スマホやほかのデバイスから使うには、アプリから Droppen にサインインします",
       note: "アプリからの Droppen へのサインインは、今後のアップデートで対応します",
       gone: "入力するものはありません",
@@ -329,11 +329,8 @@ test("signing in from the App: its last step is 「登录 Droppen」 inside it, 
       assert.equal(primaries(html), 1, `${lng}: one primary action, the download`);
     }
   }
-  // The download page and 「我的设备」's first-run card say it in the same words, in every language.
-  for (const key of [
-    "It opens a short setup guide, four steps.",
-    "In the setup guide's Where to use it step, choose “On my phone and other devices too”, then click Sign in to Droppen. Your browser opens {{app}}: sign in, check that the fingerprint matches the one the app shows, then click add this device. Later, the same is under Settings → Access → Droppen.",
-  ]) {
+  // The step's opening line is the card's, in every language; the page now summarizes the sign-in walkthrough the card spells out.
+  for (const key of ["It opens a short setup guide, four steps."]) {
     for (const [lng, page, card] of [["zh-CN", downloadZhCN, onboardingZhCN], ["zh-TW", downloadZhTW, onboardingZhTW], ["ja", downloadJa, onboardingJa]] as const) {
       assert.ok(page[key], `${lng}: the page has ${key}`);
       assert.equal(page[key], card[key], `${lng}: as the card says it`);
@@ -351,12 +348,12 @@ test("signing in from the App: its last step is 「登录 Droppen」 inside it, 
 test("in a customer's order: what to have, the install, the phone, what gets installed and how to check it, updating and uninstalling", () => {
   const html = draw("en", { app: true });
   const words = text(html);
-  // What to have, before the install.
-  const needs = text(html.slice(html.indexOf('data-testid="download-needs"'), html.indexOf('id="get"')));
-  for (const line of ["Claude Code or Codex, installed and signed in on that device", "macOS 13 or later (Apple silicon or Intel), or Linux (x86_64 or aarch64, glibc 2.28 or later)", "A free Droppen account"]) assert.ok(needs.includes(line), line);
-  // The order of the parts.
+  // What to have: the panel's own system line, and no account line of its own under the tabs.
+  assert.doesNotMatch(html, /data-testid="download-needs"/, "no needs band under the tabs");
+  for (const line of ["macOS 13 or later: Apple silicon or Intel"]) assert.ok(words.includes(line), line);
+  // The order of the parts: the platform's install, update, uninstall and reference, then the phone.
   const at = (marker: string) => html.indexOf(marker);
-  const order = ['data-testid="download-needs"', 'id="get"', 'id="phone"', 'id="verify"', 'id="uninstall"'];
+  const order = ['id="get"', 'id="update"', 'id="uninstall"', 'id="verify"', 'id="phone"'];
   assert.deepEqual([...order].sort((a, b) => at(a) - at(b)), order);
   for (const marker of order) assert.ok(at(marker) > 0, marker);
   // What gets installed, as the install script and the release say it, and how to check the files.
@@ -380,27 +377,13 @@ test("in a customer's order: what to have, the install, the phone, what gets ins
   assert.doesNotMatch(html, /id="requirements"|id="manual"|Ready when you are|Install it, then sign it in/);
 });
 
-test("signed out the account it needs is a link to sign up; signed in it goes back to 「我的设备」 — never asks to sign in again", () => {
+test("no account line of its own: sign-in stays in the header, signed in or not", () => {
   const out = draw("en");
-  assert.match(out, /<a href="\/signup"[^>]*data-testid="download-signup"[^>]*>Create a free account<\/a>/);
-  // Open sign-up (the default): no invite code; by invite, the code first.
-  assert.ok(text(out).includes("A free Droppen account. You can also create one when you sign in to Droppen on the device."));
-  assert.doesNotMatch(text(out), /invite/i);
-  assert.ok(text(draw("zh-CN")).includes("一个免费的 Droppen 账户，也可以在设备上登录 Droppen 时创建。"));
-  assert.ok(text(draw("en", { signup: "invite" })).includes("A Droppen account. Sign-up needs an invite code."));
-  // Closed: closed for now, and the waitlist; sign-in stays in the header.
-  const closed = draw("en", { signup: "closed" });
-  assert.ok(text(closed).includes("A Droppen account. Sign-up is closed for now."));
-  assert.match(closed, /<a href="\/pricing#waitlist"[^>]*data-testid="download-waitlist"[^>]*>Join the waitlist<\/a>/);
-  assert.doesNotMatch(closed, /href="\/signup"|Create a free account/);
-  // Sign-in stays in the header, now behind the account menu's trigger.
-  assert.match(closed, /aria-label="Sign in"/);
-  assert.doesNotMatch(text(closed), /invite/i);
-  assert.ok(text(draw("ja", { signup: "closed" })).includes("現在、新規登録を停止しています。"));
+  assert.doesNotMatch(out, /data-testid="download-(signup|waitlist|open-devices)"/, "no account link under the tabs");
+  assert.doesNotMatch(text(out), /installed and signed in on the device that runs it/, "no needs line");
+  assert.match(out, /aria-label="Sign in"/, "signed out, the header offers sign-in");
   const signedIn = draw("en", { signedIn: true, os: "windows" });
-  assert.doesNotMatch(signedIn, /href="\/sign(in|up)"/);
   assert.match(signedIn, /aria-label="Open app"/, "signed in, the header offers the app instead");
-  assert.match(signedIn, /<a href="\/devices"[^>]*data-testid="download-open-devices"/);
   assert.match(signedIn, /<a href="\/sessions"[^>]*data-testid="use-in-browser"/);
 });
 

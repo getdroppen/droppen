@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { fetchLatestRelease, formatSize, type LatestRelease, type ReleaseFile } from "@/lib/hub/releases";
 import { LINUX_CPUS } from "./detect";
@@ -96,18 +96,21 @@ export function LinuxTarballs({
       {sayUnbuilt && cpu && !built && <>{t("Droppen's Linux builds are for x86_64 and aarch64.")} </>}
       {t("Or download it:")}{" "}
       {files.map((file, i) => (
-        <span key={file.name}>
+        <Fragment key={file.name}>
           {i > 0 && " · "}
-          <a
-            href={file.href}
-            data-testid={`${testId}-file`}
-            className="text-muted underline underline-offset-4 [overflow-wrap:anywhere] hover:text-fg"
-            rel={countedLink(file) ? "nofollow" : undefined}
-          >
-            {file.name}
-          </a>{" "}
-          ({formatSize(file.size)})
-        </span>
+          {/* A file's name is one token: never split at a hyphen, where the architecture is. */}
+          <span className="whitespace-nowrap">
+            <a
+              href={file.href}
+              data-testid={`${testId}-file`}
+              className="text-muted underline underline-offset-4 hover:text-fg"
+              rel={countedLink(file) ? "nofollow" : undefined}
+            >
+              {file.name}
+            </a>{" "}
+            ({formatSize(file.size)})
+          </span>
+        </Fragment>
       ))}
     </p>
   );

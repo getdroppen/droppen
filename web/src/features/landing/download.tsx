@@ -2,9 +2,8 @@ import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { Tabs as BaseTabs } from "@base-ui-components/react/tabs";
 import i18n from "i18next";
 import { useTranslation } from "react-i18next";
-import { Download, ExternalLink, Laptop, Monitor, Server } from "lucide-react";
+import { Download, ExternalLink, Info, Laptop, Monitor, Server } from "lucide-react";
 import { cn } from "@/lib/cn";
-import type { SignupMode } from "@/lib/hub/api";
 import type { LatestRelease } from "@/lib/hub/releases";
 import { landingBundles } from "./copy";
 import { browserCpu, browserHints, detectKind, type EnvironmentHints, initialOs, LINUX_CPUS, osForKind } from "./detect";
@@ -25,7 +24,7 @@ import {
 import { cjkTracking, CommandLine, FooterLine, landingPrimary, landingSecondary, PublicHeader, Section, SectionHead } from "./page-kit";
 import { fileFacts, fileLink, LinuxTarballs, useLatestRelease } from "./release-files";
 import { appHost } from "@/lib/hub/hosts";
-import { APP_PATH, publicLink, SECURITY_PATH, SIGN_IN_PATH, SIGN_UP_PATH, WAITLIST_HREF } from "./route";
+import { APP_PATH, publicLink, SECURITY_PATH, SIGN_IN_PATH } from "./route";
 
 /*
  * droppen.app/download, in the order a customer needs it: where Droppen goes
@@ -73,6 +72,9 @@ for (const [lng, bundle] of Object.entries(landingBundles)) i18n.addResourceBund
 /** Where a tab chosen here is kept, for this browser tab's session (the address wins). */
 const OS_KEY = "rh.download.os";
 
+/** The platforms with something to update, uninstall or check: Windows installs nothing. */
+type Platform = "macos-app" | "linux";
+
 function rememberedOs(): DownloadOs | null {
   try {
     return osOfSearch(`?os=${sessionStorage.getItem(OS_KEY) ?? ""}`);
@@ -89,36 +91,45 @@ function rememberOs(os: DownloadOs): void {
   }
 }
 
-/** Numbered steps, as hairline cells. */
-function Steps({ items, testId }: { items: { title: string; body: ReactNode }[]; testId?: string }) {
+/** Numbered steps, as hairline cells; `stack` for a step whose body holds a command (the Linux server's). */
+function Steps({ items, testId, stack = false }: { items: { title: string; body: ReactNode }[]; testId?: string; stack?: boolean }) {
   return (
-    <ol data-testid={testId} className={cn("grid border-t border-border sm:grid-cols-2", items.length >= 4 ? "lg:grid-cols-4" : "lg:grid-cols-3")}>
+    <ol
+      data-testid={testId}
+      className={cn("grid border-t border-border", stack ? "grid-cols-1" : cn("sm:grid-cols-2", items.length >= 4 ? "lg:grid-cols-4" : "lg:grid-cols-3"))}
+    >
       {items.map((s, i) => (
         <li
           key={s.title}
           className={cn(
             "flex min-w-0 flex-col gap-2 border-border px-6 py-5 max-md:px-4",
-            "max-sm:border-b max-sm:last:border-b-0",
-            "sm:max-lg:[&:nth-child(2n)]:border-l sm:max-lg:[&:not(:nth-last-child(-n+2))]:border-b",
-            i > 0 && "lg:border-l",
+            stack
+              ? "border-b last:border-b-0"
+              : cn(
+                  "max-sm:border-b max-sm:last:border-b-0",
+                  "sm:max-lg:[&:nth-child(2n)]:border-l sm:max-lg:[&:not(:nth-last-child(-n+2))]:border-b",
+                  i > 0 && "lg:border-l",
+                ),
           )}
         >
           <span className="text-xs font-semibold text-faint tabular-nums">{String(i + 1).padStart(2, "0")}</span>
-          <span className="text-sm leading-5 font-semibold text-fg">{s.title}</span>
-          <span className="text-xs leading-5 text-muted">{s.body}</span>
+          <span className="text-base leading-6 font-semibold text-fg">{s.title}</span>
+          <div className={cn("text-base text-muted", stack && "max-w-[44rem]")}>{s.body}</div>
         </li>
       ))}
     </ol>
   );
 }
 
-/** A panel's lead: what this way gets you, and its one action. */
-function PanelHead({ title, body, children }: { title: string; body: string; children?: ReactNode }) {
+/** A panel's lead: what this way gets you, what the device has to be, and its one action. */
+function PanelHead({ title, body, note, children }: { title: string; body: string; note?: string; children?: ReactNode }) {
   return (
     <div className="flex flex-col gap-4 px-6 py-6 max-md:px-4">
       <div className="flex max-w-[44rem] flex-col gap-2">
         <h2 className="text-xl leading-7 font-semibold tracking-tight text-fg">{title}</h2>
-        <p className="text-sm leading-6 text-muted">{body}</p>
+        <p className="text-base text-muted">{body}</p>
+        {/* What the device has to be, under the panel it belongs to — never a band of its own above the title. */}
+        {note && <Nonce>{note}</Nonce>}
       </div>
       {children}
     </div>
@@ -130,54 +141,66 @@ function Soon({ label, body, children, testId }: { label?: string; body: string;
   return (
     <div data-testid={testId} className="flex max-w-[44rem] flex-col gap-3 border border-border bg-raised px-4 py-3.5">
       {label && <span className="inline-flex w-fit items-center border border-fg px-1.5 text-sm leading-4 font-semibold tracking-wider text-fg uppercase">{label}</span>}
-      <p className="text-xs leading-5 text-fg">{body}</p>
+      <p className="text-base text-fg">{body}</p>
       {children}
     </div>
   );
 }
 
-function AppPanel({ availability, onPick, release }: { availability: Availability; onPick: (os: DownloadOs) => void; release: LatestRelease | null | undefined }) {
+/** How to check the file before opening it: the checksum, and what it must match. */
+function Check() {
+  const { t } = useTranslation();
+  return (
+    <details className="border border-border bg-raised px-4 py-3">
+      <summary className="cursor-pointer text-sm font-semibold text-fg">{t("Check the file before you open it")}</summary>
+      <div className="mt-2 flex flex-col gap-2 text-sm text-muted">
+        <span>{t("Before you open the .dmg or extract the .tar.gz, check it in a terminal:")}</span>
+        <CommandLine command={CHECKSUM_COMMAND} label={t("copy")} />
+        <span>{t("The checksum it prints must match that file's line in the release's SHA256SUMS; if it does not, do not install it. The install script runs the same check before it installs anything.")}</span>
+      </div>
+    </details>
+  );
+}
+
+function AppPanel({ availability, release }: { availability: Availability; release: LatestRelease | null | undefined }) {
   const { t } = useTranslation();
   const dmg = release?.files.macos;
   const head = {
-    title: t("Droppen for Mac"),
+    title: t("Droppen App (recommended)"),
     body: availability.appSignIn
       ? t("Open the app and Droppen runs on this Mac, with no terminal and no local password. To use it from your phone and other devices, sign in to Droppen from the app.")
       : t("Open the app and Droppen runs on this Mac, with no terminal and no local password."),
+    note: t("macOS 13 or later: Apple silicon or Intel."),
   };
   if (!availability.app) {
     return (
       <PanelHead {...head}>
-        <Soon testId="app-soon" label={t("The App is coming soon")} body={t("Until it is out, run Droppen in the background on your Mac: one line, and the same sign-in.")}>
-          <CommandLine command={INSTALL_COMMAND} label={t("copy the command")} testId="install-command" primaryCopy />
-          <button type="button" data-testid="to-macos-bg" onClick={() => onPick("macos-bg")} className="w-fit text-xs text-fg underline underline-offset-4 hover:no-underline">
-            {t("the steps for running it in the background")}
-          </button>
-        </Soon>
+        <Soon testId="app-soon" label={t("The App is coming soon")} body={t("Until it is out, run Droppen in the background on your Mac: one line, and the same sign-in.")} />
       </PanelHead>
     );
   }
   return (
     <>
       <PanelHead {...head}>
-        <div className="flex flex-wrap items-center gap-3">
-          {/* The file itself when the hub named it, downloaded in place; else the release page. */}
-          <a {...fileLink(dmg)} data-variant="primary" data-testid="app-download" className={landingPrimary}>
-            <Download className="size-3.5" />
-            {t("Download Droppen App (macOS)")}
-          </a>
-          <span data-testid="app-file-facts" className="text-xs font-semibold text-faint">
-            {release && dmg
-              ? `${fileFacts(release, dmg)} · ${t("macOS 13 or later · Universal: Apple silicon and Intel")}`
-              : t("macOS 13 or later · Universal: Apple silicon and Intel · Droppen-<version>.dmg")}
-          </span>
-          <a href={release?.releasesPage ?? RELEASES_URL} target="_blank" rel="noopener noreferrer" data-testid="app-release-link" className="inline-flex items-center gap-1 text-xs font-semibold text-muted underline underline-offset-4 hover:text-fg">
-            {t("release notes, checksums and other files")}
-            <ExternalLink className="size-3" />
-          </a>
+        <div className="flex max-w-[44rem] flex-col gap-4">
+          <div className="flex flex-wrap items-center gap-3">
+            {/* The file itself when the hub named it, downloaded in place; else the release page. */}
+            <a {...fileLink(dmg)} data-variant="primary" data-testid="app-download" className={landingPrimary}>
+              <Download className="size-3.5" />
+              {t("Download Droppen App (macOS)")}
+            </a>
+            {release && dmg && <span data-testid="app-file-facts" className="text-xs font-semibold text-faint">{fileFacts(release, dmg)}</span>}
+            <a href={release?.releasesPage ?? RELEASES_URL} target="_blank" rel="noopener noreferrer" data-testid="app-release-link" className="inline-flex items-center gap-1 text-xs font-semibold text-muted underline underline-offset-4 hover:text-fg">
+              {t("release notes, checksums and other files")}
+              <ExternalLink className="size-3" />
+            </a>
+          </div>
+          {/* The check that belongs beside the file, not in a table further down the page. */}
+          <Check />
         </div>
       </PanelHead>
       <Steps
+        stack
         testId="app-steps"
         items={[
           { title: t("Open the .dmg"), body: t("The file you just downloaded, from Downloads.") },
@@ -190,7 +213,7 @@ function AppPanel({ availability, onPick, release }: { availability: Availabilit
                   title: t("Sign in to Droppen from the app"),
                   // The App signs in through the system browser, showing this device's fingerprint (`browser-sign-in.tsx`).
                   body: t(
-                    "In the setup guide's Where to use it step, choose “On my phone and other devices too”, then click Sign in to Droppen. Your browser opens {{app}}: sign in, check that the fingerprint matches the one the app shows, then click add this device. Later, the same is under Settings → Access → Droppen.",
+                    "In the setup guide, choose “On my phone and other devices too”, then sign in: your browser opens {{app}}, where you check the fingerprint and approve this Mac.",
                     { app: appHost() },
                   ),
                 },
@@ -212,17 +235,18 @@ function AppPanel({ availability, onPick, release }: { availability: Availabilit
   );
 }
 
-function BackgroundPanel() {
+function BackgroundPanel({ primary = false }: { primary?: boolean }) {
   const { t } = useTranslation();
   return (
     <>
-      <PanelHead title={t("Droppen in the background on a Mac")} body={t("For a Mac that stays on as a server, or if you prefer the terminal. One command installs Droppen; you then add this Mac to your account in the browser.")}>
+      <PanelHead title={t("Command line")} body={t("For a Mac that stays on as a server, or if you prefer the terminal. One command installs Droppen; you then add this Mac to your account in the browser.")} note={t("macOS 13 or later: Apple silicon or Intel.")}>
         <div className="flex max-w-[44rem] flex-col gap-2">
-          <CommandLine command={INSTALL_COMMAND} label={t("copy the command")} testId="install-command" primaryCopy />
+          <CommandLine command={INSTALL_COMMAND} label={t("copy the command")} testId="install-command" primaryCopy={primary} />
           <p className="text-xs font-semibold text-faint">{t("Paste it into Terminal on that Mac.")}</p>
         </div>
       </PanelHead>
       <Steps
+        stack
         testId="bg-steps"
         items={[
           // The local account as install.sh's `ensure_account` makes it: the system user name, a password asked for (12 characters at least), or generated when there is no terminal.
@@ -252,14 +276,15 @@ function LinuxPanel({
 }) {
   const { t } = useTranslation();
   const head = {
-    title: t("Droppen on a Linux server"),
+    title: t("Droppen · Linux"),
     body: t("Run your AI on a server that stays on, and follow it and answer it from your phone. The server needs no browser: it joins your account with a one-time code."),
+    note: t("Linux on x86_64 or aarch64, with glibc 2.28 or later."),
   };
   if (!availability.linux) {
     return (
       <PanelHead {...head}>
         <Soon testId="linux-soon" label={t("coming")} body={t("Linux support, with no browser needed on the server, is on its way. Until then, run Droppen on a Mac.")}>
-          <button type="button" data-variant="primary" data-testid="to-macos-bg" onClick={() => onPick("macos-bg")} className={cn(landingPrimary, "w-fit")}>
+          <button type="button" data-variant="primary" data-testid="to-macos-app" onClick={() => onPick("macos-app")} className={cn(landingPrimary, "w-fit")}>
             {t("run it in the background on a Mac")}
           </button>
         </Soon>
@@ -275,24 +300,41 @@ function LinuxPanel({
             {!(LINUX_CPUS as readonly string[]).includes(arch) && <> {t("Droppen's Linux builds are for x86_64 and aarch64.")}</>}
           </p>
         )}
-        <div className="flex max-w-[44rem] flex-col gap-2">
-          <CommandLine command={codeInstallCommand(t("<code>"))} label={t("copy the command")} testId="install-command" primaryCopy />
-          <p className="text-xs leading-5 text-muted">{t("Replace <code> with the one-time code from step 01 below.")}</p>
-          <LinuxTarballs release={release} cpu={arch} testId="linux-tarballs" sayUnbuilt={false} />
-        </div>
       </PanelHead>
-      <Steps
-        testId="linux-steps"
-        items={[
-          { title: t("Get a one-time code"), body: t("On {{app}}: my devices → add a device that runs AI → show a one-time code. It is good for 10 minutes, once.", { app: appHost() }) },
-          // install.sh: a systemd user service, never root; it prints the linger command when the service would stop at logout.
-          {
-            title: t("Run the command on the server"),
-            body: t("The script installs Droppen, starts it as a systemd user service under your own user, never as root, and joins your account with the code. If it says so at the end, run sudo loginctl enable-linger to keep it running after you log out."),
-          },
-          { title: t("It is in my devices"), body: t("Within seconds it shows as online in my devices, on every phone and browser in your account.") },
-        ]}
-      />
+      {/* Two columns, like the Mac tab: the steps on the left, the command they use on the right. */}
+      <div className="grid lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)]">
+        <div className="lg:border-r lg:border-border">
+          <Steps
+            testId="linux-steps"
+            stack
+            items={[
+              {
+                title: t("Get a one-time code"),
+                body: (
+                  <span className="flex flex-col gap-2">
+                    {t("On {{app}}: my devices → add a device that runs AI → show a one-time code. It is good for 10 minutes, once.", { app: appHost() })}{" "}
+                    <a {...publicLink("/devices")} data-testid="linux-devices" className="w-fit text-fg underline underline-offset-4 hover:no-underline">
+                      {t("Open my devices")}
+                    </a>
+                  </span>
+                ),
+              },
+              {
+                title: t("Run the command on the server"),
+                // install.sh: a systemd user service, never root; it prints the linger command when the service would stop at logout.
+                body: t("The script installs Droppen, starts it as a systemd user service under your own user, never as root, and joins your account with the code. If it says so at the end, run sudo loginctl enable-linger to keep it running after you log out."),
+              },
+              { title: t("It is in my devices"), body: t("Within seconds it shows as online in my devices, on every phone and browser in your account.") },
+            ]}
+          />
+        </div>
+        <div className="flex flex-col gap-3 border-t border-border px-6 py-6 max-md:px-4">
+          <p className="text-base text-muted">{t("Replace <code> with the one-time code.")}</p>
+          <CommandLine command={codeInstallCommand(t("<code>"))} label={t("copy the command")} testId="install-command" primaryCopy />
+          <LinuxTarballs release={release} cpu={arch} testId="linux-tarballs" sayUnbuilt={false} />
+          <Check />
+        </div>
+      </div>
     </>
   );
 }
@@ -301,7 +343,7 @@ function WindowsPanel({ availability, signedIn, onPick }: { availability: Availa
   const { t } = useTranslation();
   const into = signedIn ? APP_PATH : SIGN_IN_PATH;
   return (
-    <PanelHead title={t("Droppen on Windows")} body={t("Droppen does not run on Windows yet. From a browser on Windows you can already follow your AI and answer its questions.")}>
+    <PanelHead title={t("Droppen · Windows")} body={t("On Windows, Droppen runs in the browser: follow your AI, answer its questions, steer it. Droppen itself goes on the Mac or Linux device that runs it.")}>
       <Soon testId="windows-soon" body={t("What works on Windows today:")}>
         <ul className="flex flex-col gap-2">
           {[
@@ -322,8 +364,8 @@ function WindowsPanel({ availability, signedIn, onPick }: { availability: Availa
                 }
               : { key: "linux", line: t("Once Linux is supported: a Linux server, or WSL.") },
           ].map(({ key, line }) => (
-            <li key={key} className="flex gap-2.5 text-xs leading-5 text-fg">
-              <span className="mt-[7px] size-1.5 shrink-0 bg-fg" />
+            <li key={key} className="flex gap-2.5 text-base text-fg">
+              <span className="mt-[9px] size-1.5 shrink-0 bg-fg" />
               <span>{line}</span>
             </li>
           ))}
@@ -347,12 +389,15 @@ function WindowsPanel({ availability, signedIn, onPick }: { availability: Availa
 }
 
 /** After the install: the phone needs nothing installed, only the browser, approved from a device already in the account. */
-function PhoneSection({ signedIn }: { signedIn: boolean }) {
+function PhoneSection({ onPhone }: { onPhone: boolean }) {
   const { t } = useTranslation();
-  const into = signedIn ? APP_PATH : SIGN_IN_PATH;
   return (
     <Section id="phone">
-      <SectionHead title={t("Then, use it from your phone")} />
+      <SectionHead
+        title={t("Then, use it from your phone")}
+        // Read on a phone, this page may be the first visit: say what to do first, where the reader lands.
+        lead={onPhone ? t("If Droppen is not on a device yet, open {{url}} on the Mac or Linux device that runs your AI first.", { url: pageAddress() }) : undefined}
+      />
       <Steps
         testId="phone-steps"
         items={[
@@ -367,11 +412,6 @@ function PhoneSection({ signedIn }: { signedIn: boolean }) {
           },
         ]}
       />
-      <div className="border-t border-border px-6 py-5 max-md:px-4">
-        <a {...publicLink(into)} data-testid="open-droppen" className={cn(landingSecondary, "w-fit")}>
-          {t("open {{app}}", { app: appHost() })}
-        </a>
-      </div>
     </Section>
   );
 }
@@ -389,32 +429,6 @@ function useTabs(): { os: DownloadOs; label: string; icon: typeof Laptop }[] {
 /** The tab a way is under: both Mac ways under the Mac's, and a phone's visitor on the Mac's (it installs on a computer). */
 function tabOf(os: DownloadOs): DownloadOs {
   return os === "macos-bg" || os === "mobile" ? "macos-app" : os;
-}
-
-/** On the Mac tab, its two ways: the App, and the command line (a Mac that stays on, or a terminal user). */
-function MacWays({ os, onPick }: { os: DownloadOs; onPick: (os: DownloadOs) => void }) {
-  const { t } = useTranslation();
-  const ways = [
-    { os: "macos-app" as const, label: t("Mac app (recommended)") },
-    { os: "macos-bg" as const, label: t("Command line") },
-  ];
-  const on = os === "macos-bg" ? "macos-bg" : "macos-app";
-  return (
-    <div role="group" aria-label={t("How to install on a Mac")} data-testid="mac-ways" className="flex w-fit border border-border-strong">
-      {ways.map((w) => (
-        <button
-          key={w.os}
-          type="button"
-          aria-pressed={w.os === on}
-          data-testid={`way-${w.os}`}
-          onClick={() => onPick(w.os)}
-          className={cn("h-8 px-3 text-xs whitespace-nowrap transition-colors", w.os === on ? "bg-fg text-bg" : "text-muted hover:text-fg")}
-        >
-          {w.label}
-        </button>
-      ))}
-    </div>
-  );
 }
 
 /** The computers, as a tablist: the detected one marked, the chosen one inked in. */
@@ -442,18 +456,23 @@ function Environments({
   return (
     <BaseTabs.Root
       value={tabOf(os)}
-      onValueChange={(next) => onPick(next === "macos-app" && os === "macos-bg" ? "macos-bg" : (next as DownloadOs))}
+      onValueChange={(next) => onPick(next as DownloadOs)}
       data-testid="environments"
       data-os={os}
       data-detected={detected ?? undefined}
     >
-      <BaseTabs.List aria-label={t("Choose your system")} activateOnFocus className="flex gap-8 border-b border-border px-6 max-md:gap-6 max-md:px-4">
+      <BaseTabs.List
+        aria-label={t("Choose your system")}
+        activateOnFocus
+        /* Sticky through the whole platform block below it: the tab still says which platform's update, uninstall and details are being read. */
+        className="sticky top-14 z-30 flex gap-8 border-b border-border bg-bg px-6 max-md:gap-6 max-md:px-4"
+      >
         {tabs.map(({ os: value, label, icon: Icon }) => (
           <BaseTabs.Tab
             key={value}
             value={value}
             data-testid={`os-${value}`}
-            className="group relative flex h-12 shrink-0 items-center gap-2 text-sm text-muted outline-none hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent data-[active]:font-semibold data-[active]:text-fg"
+            className="group relative flex h-12 shrink-0 items-center gap-2 text-base text-muted outline-none hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent data-[active]:font-semibold data-[active]:text-fg"
           >
             <Icon aria-hidden="true" className="size-4 shrink-0" />
             {label}
@@ -471,17 +490,29 @@ function Environments({
         <BaseTabs.Panel key={value} value={value} data-testid={`panel-${value}`} className="outline-none">
           {value === "macos-app" && (
             <>
-              {availability.app && (
-                <div className="px-6 pt-6 max-md:px-4">
-                  <MacWays os={os} onPick={onPick} />
+              {/* Both ways, side by side: no switch to find, and nothing hidden behind one. */}
+              <div data-testid="mac-ways" className="grid border-border lg:grid-cols-2">
+                <div data-testid="way-panel-macos-app" className="border-b border-border lg:border-r lg:border-b-0">
+                  <AppPanel availability={availability} release={release} />
                 </div>
-              )}
-              <div data-testid={`way-panel-${os === "macos-bg" ? "macos-bg" : "macos-app"}`}>
-                {os === "macos-bg" ? <BackgroundPanel /> : <AppPanel availability={availability} onPick={onPick} release={release} />}
+                <div data-testid="way-panel-macos-bg">
+                  <BackgroundPanel primary={!availability.app} />
+                </div>
               </div>
+              {/* The rest of the platform's page, inside the same tab: one block, one sticky row. */}
+              <Update platform="macos-app" availability={availability} />
+              <Uninstall platform="macos-app" availability={availability} />
+              <Verify platform="macos-app" availability={availability} />
             </>
           )}
-          {value === "linux" && <LinuxPanel availability={availability} onPick={onPick} arch={arch} release={release} />}
+          {value === "linux" && (
+            <>
+              <LinuxPanel availability={availability} onPick={onPick} arch={arch} release={release} />
+              <Update platform="linux" availability={availability} />
+              <Uninstall platform="linux" availability={availability} />
+              <Verify platform="linux" availability={availability} />
+            </>
+          )}
           {value === "windows" && <WindowsPanel availability={availability} signedIn={signedIn} onPick={onPick} />}
         </BaseTabs.Panel>
       ))}
@@ -489,64 +520,25 @@ function Environments({
   );
 }
 
-/** What to have before installing, under the page's lead: the AI tools, the system, an account (or the way back in). */
-function Needs({ signedIn, signup }: { signedIn: boolean; signup: SignupMode }) {
-  const { t } = useTranslation();
-  const link = "whitespace-nowrap text-fg underline underline-offset-4 hover:no-underline";
-  const account = signedIn ? (
-    <>
-      {t("You are signed in.")}{" "}
-      <a {...publicLink("/devices")} data-testid="download-open-devices" className={link}>
-        {t("Open my devices")}
-      </a>
-    </>
-  ) : signup === "closed" ? (
-    <>
-      {t("A Droppen account. Sign-up is closed for now.")}{" "}
-      <a {...publicLink(WAITLIST_HREF)} data-testid="download-waitlist" className={link}>
-        {t("Join the waitlist")}
-      </a>
-    </>
-  ) : signup === "invite" ? (
-    <>
-      {t("A Droppen account. Sign-up needs an invite code.")}{" "}
-      <a {...publicLink(SIGN_UP_PATH)} data-testid="download-signup" className={link}>
-        {t("Sign up")}
-      </a>
-    </>
-  ) : (
-    <>
-      {t("A free Droppen account. You can also create one when you sign in to Droppen on the device.")}{" "}
-      <a {...publicLink(SIGN_UP_PATH)} data-testid="download-signup" className={link}>
-        {t("Create a free account")}
-      </a>
-    </>
-  );
-  const items: { key: string; body: ReactNode }[] = [
-    { key: "tools", body: t("Claude Code or Codex, installed and signed in on that device") },
-    { key: "system", body: t("macOS 13 or later (Apple silicon or Intel), or Linux (x86_64 or aarch64, glibc 2.28 or later)") },
-    { key: "account", body: account },
-  ];
+/**
+ * What a panel assumes, under its title: the system. It used to be a band of
+ * its own above the title — the first thing read, before the panel said what
+ * it was — and its top border doubled the tab row's.
+ */
+function Nonce({ children }: { children: ReactNode }) {
   return (
-    <div data-testid="download-needs" className="flex flex-col gap-2.5">
-      <p className="text-sm leading-6 font-semibold text-fg">{t("Before you install:")}</p>
-      <ul className="flex flex-col gap-2">
-        {items.map((item) => (
-          <li key={item.key} className="flex gap-2.5 text-sm leading-6 text-pretty text-muted">
-            <span className="mt-[9px] size-1.5 shrink-0 bg-fg" />
-            <span>{item.body}</span>
-          </li>
-        ))}
-      </ul>
-    </div>
+    <p className="flex items-start gap-2 text-sm leading-6 text-muted">
+      <Info className="mt-1 size-3.5 shrink-0" />
+      {children}
+    </p>
   );
 }
 
 /** For whoever approves the install: what it puts on the computer, how it runs, and how to check the files. */
-function Verify({ availability }: { availability: Availability }) {
+function Verify({ platform, availability }: { platform: Platform; availability: Availability }) {
   const { t } = useTranslation();
   const rows: { term: string; body: ReactNode }[] = [
-    ...(availability.app ? [{ term: t("Mac app"), body: t("Signed with a Developer ID and notarized by Apple. It installs only updates signed for that version.") }] : []),
+    ...(platform === "macos-app" && availability.app ? [{ term: t("Mac app"), body: t("Signed with a Developer ID and notarized by Apple. It installs only updates signed for that version.") }] : []),
     { term: t("Install script"), body: t("Runs as you, never as root, and checks the release's SHA-256 checksums before it installs anything.") },
     // install.sh: `--system` is Linux only, still runs as you, and `sctl` uses sudo for that service alone. The App's own port is not 8700 (`desktop/core/src/identity.rs`).
     {
@@ -556,20 +548,6 @@ function Verify({ availability }: { availability: Availability }) {
     {
       term: t("Network"),
       body: t("Listens only on 127.0.0.1 and reaches Droppen over outbound connections, so there is no inbound port to open. A command-line install uses port 8700, or the next free port."),
-    },
-    {
-      term: t("Manual download"),
-      body: (
-        <span className="flex flex-col gap-2">
-          <a href={RELEASES_URL} target="_blank" rel="noopener noreferrer" data-testid="releases-link" className="inline-flex w-fit items-center gap-1 text-fg underline underline-offset-4 hover:no-underline">
-            {t("the latest release on GitHub (getdroppen/droppen)")}
-            <ExternalLink className="size-3" />
-          </a>
-          <span>{t("Before you open the .dmg or extract the .tar.gz, check it in a terminal:")}</span>
-          <CommandLine command={CHECKSUM_COMMAND} label={t("copy")} />
-          <span>{t("The checksum it prints must match that file's line in the release's SHA256SUMS; if it does not, do not install it. The install script runs the same check before it installs anything.")}</span>
-        </span>
-      ),
     },
     {
       term: t("Encryption"),
@@ -586,12 +564,15 @@ function Verify({ availability }: { availability: Availability }) {
   return (
     <Section id="verify">
       <div className="grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1.55fr)]">
-        <SectionHead title={t("What gets installed, and how to verify it")} className="lg:border-r lg:border-border" />
+        {/* The title stays with the rows it introduces, instead of leaving the column blank beside them. */}
+        <div className="lg:border-r lg:border-border">
+          <SectionHead title={t("What it installs, and how it connects")} />
+        </div>
         <dl data-testid="download-verify" className="flex flex-col max-lg:border-t max-lg:border-border">
           {rows.map((r) => (
-            <div key={r.term} className="grid grid-cols-[10rem_minmax(0,1fr)] items-baseline gap-4 border-b border-border px-6 py-3.5 last:border-b-0 max-md:grid-cols-1 max-md:gap-1 max-md:px-4">
-              <dt className="text-sm leading-5 font-semibold text-fg">{r.term}</dt>
-              <dd className="min-w-0 text-xs leading-5 text-muted">{r.body}</dd>
+            <div key={r.term} className="grid grid-cols-[12rem_minmax(0,1fr)] items-baseline gap-4 border-b border-border px-6 py-3.5 last:border-b-0 max-md:grid-cols-1 max-md:gap-1 max-md:px-4">
+              <dt className="text-base leading-6 font-semibold text-fg">{r.term}</dt>
+              <dd className="min-w-0 max-w-[42em] text-base text-muted">{r.body}</dd>
             </div>
           ))}
         </dl>
@@ -600,41 +581,54 @@ function Verify({ availability }: { availability: Availability }) {
   );
 }
 
-function Uninstall({ availability }: { availability: Availability }) {
+/** Updating: the App does it itself; a command-line install runs the install command again. */
+function Update({ platform, availability }: { platform: Platform; availability: Availability }) {
+  const { t } = useTranslation();
+  const lead =
+    platform === "macos-app" && availability.app
+      ? t("The Mac app checks for updates by itself. To update a command-line install, run the install command again: it upgrades in place and keeps your data.")
+      : t("To update, run the install command again: it upgrades in place and keeps your data.");
+  return (
+    <Section id="update">
+      <SectionHead title={t("Update")} lead={lead} />
+      <div className="border-t border-border px-6 py-5 max-md:px-4">
+        <div className="max-w-[44rem]">
+          <CommandLine command={INSTALL_COMMAND} label={t("copy the command")} testId="update-command" />
+        </div>
+      </div>
+    </Section>
+  );
+}
+
+function Uninstall({ platform, availability }: { platform: Platform; availability: Availability }) {
   const { t } = useTranslation();
   // Every key it held is replaced (the security page's 2.8); removal stops its link but leaves its files (`cloud/control.rs`): the disconnect deletes them.
   const steps = [
     { title: t("Remove it from your account"), body: t("On {{app}}, open my devices and remove the device. Every key it held is replaced, so it cannot decrypt anything written afterwards.", { app: appHost() }) },
     { title: t("Disconnect it"), body: t("On that device, open Droppen's Settings → Access → Droppen → Disconnect this device. It deletes the Droppen keys stored there, which removing it from the account leaves in place.") },
   ];
+  const app = platform === "macos-app" && availability.app;
   return (
     <Section id="uninstall">
-      <SectionHead
-        title={t("Updating and uninstalling")}
-        lead={
-          availability.app
-            ? t("The Mac app checks for updates by itself. To update a command-line install, run the install command again: it upgrades in place and keeps your data.")
-            : t("To update, run the install command again: it upgrades in place and keeps your data.")
-        }
-      />
-      <ol className="grid border-t border-border md:grid-cols-3">
+      <SectionHead title={t("Uninstall")} />
+      <ol className="grid border-t border-border xl:grid-cols-3">
         {steps.map((s, i) => (
-          <li key={s.title} className="flex flex-col gap-2 border-border px-6 py-6 max-md:border-b max-md:px-4 md:border-r">
+          <li key={s.title} className="flex flex-col gap-2 border-border px-6 py-6 max-xl:border-b max-md:px-4 xl:border-r">
             <span className="text-xs font-semibold text-faint tabular-nums">0{i + 1}</span>
-            <span className="text-sm leading-5 font-semibold text-fg">{s.title}</span>
-            <span className="text-xs leading-5 text-muted">{s.body}</span>
+            <span className="text-base leading-6 font-semibold text-fg">{s.title}</span>
+            <span className="max-w-[42em] text-base text-muted">{s.body}</span>
           </li>
         ))}
         <li className="flex min-w-0 flex-col gap-2 px-6 py-6 max-md:px-4">
           <span className="text-xs font-semibold text-faint tabular-nums">03</span>
-          <span className="text-sm leading-5 font-semibold text-fg">{t("Remove the program")}</span>
-          {availability.app && <span className="text-xs leading-5 text-muted">{t("The App: quit Droppen and drag it from Applications to the Trash.")}</span>}
-          <span className="text-xs leading-5 text-muted">
-            {availability.app ? t("Command-line install (Mac or Linux): run this on that device, as the user who installed it:") : t("Run this on that device, as the user who installed it:")}
+          <span className="text-base leading-6 font-semibold text-fg">{t("Remove the program")}</span>
+          {app && <span className="max-w-[42em] text-base text-muted">{t("The App: quit Droppen and drag it from Applications to the Trash.")}</span>}
+          <span className="max-w-[42em] text-base text-muted">
+            {app ? t("Command-line install (Mac or Linux): run this on that device, as the user who installed it:") : t("Run this on that device, as the user who installed it:")}
           </span>
           <CommandLine command={UNINSTALL_COMMAND} label={t("copy")} testId="uninstall-command" />
           {/* install.sh's `--uninstall`: the service and the program go, the data stays, and it prints where that is and how to delete it. */}
-          <span className="text-xs leading-5 text-muted">{t("It stops and removes the service and the program and keeps your data; at the end it prints where the data is, and the command that deletes it.")}</span>
+          <span className="max-w-[42em] text-base text-muted">{t("It stops and removes the service and the program and keeps your data; at the end it prints where the data is, and the command that deletes it.")}</span>
         </li>
       </ol>
     </Section>
@@ -697,15 +691,12 @@ export default function DownloadPage({
   hints,
   cpu,
   release,
-  signup = "open",
 }: {
   signedIn?: boolean;
   availability?: Availability;
   hints?: EnvironmentHints;
   cpu?: string | null;
   release?: LatestRelease | null;
-  /** The hub's sign-up mode (`signup-mode.ts`): by invite, the way to sign up names the invite code; closed, it offers the waitlist. */
-  signup?: SignupMode;
 }) {
   const { t } = useTranslation();
   useDocumentMeta();
@@ -746,20 +737,15 @@ export default function DownloadPage({
             {/* Read on a phone: it installs nothing; the address to open on the computer. */}
             {detected === "mobile" && (
               <div data-testid="on-a-phone" className="flex max-w-[44rem] flex-col gap-2">
-                <p className="text-sm leading-6 text-fg">{t("You are on a phone. To install, open this page on the device that runs your AI:")}</p>
+                <p className="text-base text-fg">{t("You are on a phone. To install, open this page on the device that runs your AI:")}</p>
                 <CommandLine command={pageAddress()} label={t("copy")} testId="page-address" />
               </div>
             )}
-            <div className="mt-3">
-              <Needs signedIn={signedIn} signup={signup} />
-            </div>
           </div>
           <Section id="get">
             <Environments os={os} detected={detected} onPick={pick} availability={availability} signedIn={signedIn} arch={onLinux ? arch : null} release={latest} />
           </Section>
-          <PhoneSection signedIn={signedIn} />
-          <Verify availability={availability} />
-          <Uninstall availability={availability} />
+          <PhoneSection onPhone={detected === "mobile"} />
           <FooterLine />
         </main>
       </div>

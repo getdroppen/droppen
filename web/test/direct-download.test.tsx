@@ -241,7 +241,7 @@ test("with the hub's answer, every download button is a plain link to the file i
   }
   assert.ok(text(hero(landing("en", { hints: HINTS.mac }))).includes("v0.2.129 · 48 MB · macOS 13 or later · Apple silicon and Intel"));
   const page = download("en", { os: "macos-app" });
-  assert.ok(text(page).includes("v0.2.129 · 48 MB · macOS 13 or later · Universal: Apple silicon and Intel"));
+  assert.ok(text(page).includes("v0.2.129 · 48 MB"), "the file's facts: version and size");
   // Downloaded, opened, then signed in from inside the App (`APP_SIGN_IN_AVAILABLE`): never "coming in an update".
   assert.ok(text(page).includes("Sign in to Droppen from the app"));
   assert.doesNotMatch(page, /data-testid="app-sign-in-soon"|coming in an update/);
@@ -288,7 +288,7 @@ test("a hub that counts downloads: each button links its /dl/<platform> on this 
     assert.doesNotMatch(a, /target=|download=/, a);
   }
   assert.ok(text(hero(landing("en", { hints: HINTS.mac, release: COUNTED }))).includes("v0.2.129 · 48 MB · macOS 13 or later · Apple silicon and Intel"));
-  assert.ok(text(download("en", { os: "macos-app", release: COUNTED })).includes("v0.2.129 · 48 MB · macOS 13 or later · Universal: Apple silicon and Intel"));
+  assert.ok(text(download("en", { os: "macos-app", release: COUNTED })).includes("v0.2.129 · 48 MB"));
   const linuxHero = hero(landing("en", { hints: HINTS.linux, cpu: "x86_64", release: COUNTED }));
   assert.deepEqual([...linuxHero.matchAll(/<a href="([^"]+)" data-testid="hero-tarballs-file"[^>]*>([^<]+)</g)].map((m) => [m[1], m[2]]), [["/dl/linux-x86_64", "droppen-v0.2.129-linux-x86_64.tar.gz"]]);
   assert.match(linuxHero, /<a href="\/dl\/linux-x86_64" data-testid="hero-tarballs-file" class="[^"]*" rel="nofollow">/, "crawlers leave the count alone");
@@ -335,7 +335,7 @@ test("without it (no route, a 503, a failure, or not yet), the hero's Mac downlo
   assert.match(fallback.match(/<a [^>]*data-testid="app-download"[^>]*>/)![0], new RegExp(`^<a href="${esc(RELEASES_URL)}" target="_blank" rel="noopener noreferrer"`));
   assert.doesNotMatch(fallback, /v0\.2\.129|github\.com\/getdroppen\/droppen\/releases\/download/);
   const page = download("en", { os: "macos-app", release: null });
-  assert.ok(text(page).includes("macOS 13 or later · Universal: Apple silicon and Intel · Droppen-<version>.dmg"));
+  assert.doesNotMatch(page, /macOS 13 or later · Universal/);
   assert.match(page, new RegExp(`<a href="${esc(RELEASES_URL)}" target="_blank" rel="noopener noreferrer" data-testid="app-release-link"`));
   assert.doesNotMatch(hero(landing("en", { hints: HINTS.linux, release: null, cpu: "x86_64" })), /data-testid="hero-tarballs"/, "no tarball named");
 });
@@ -556,8 +556,8 @@ test("the hero on a device it cannot tell: every way, the Mac's the file itself 
 test("the hero reads in en, zh-CN, zh-TW and ja on every device, and sells before it explains", () => {
   const said: Record<string, Record<string, string[]>> = {
     en: { mac: ["Download for Mac"], linux: ["Paste it into a terminal on this device", "Or download it:"], windows: ["Sign up on the web", "Droppen for Mac"], phone: ["On your phone, Droppen works in the browser"], unknown: ["Get Droppen:"] },
-    "zh-CN": { mac: ["下载 Mac 版", "Linux 及其他平台"], linux: ["在这台设备的终端里粘贴运行", "复制命令", "也可以直接下载："], windows: ["Web 免费注册", "Droppen · Mac 版"], phone: ["在手机上，Droppen 直接在浏览器里用"], unknown: ["获取 Droppen：", "下载 Mac 版"] },
-    "zh-TW": { mac: ["下載 Mac 版", "Linux 及其他平台"], linux: ["在這台裝置的終端機裡貼上執行", "也可以直接下載："], windows: ["Web 免費註冊", "Droppen · Mac 版"], phone: ["在手機上，Droppen 直接在瀏覽器裡用"], unknown: ["取得 Droppen："] },
+    "zh-CN": { mac: ["下载 Mac 版", "Linux 及其他平台"], linux: ["在这台设备的终端里粘贴运行", "复制命令", "也可以直接下载："], windows: ["Web 免费注册", "Droppen · Mac"], phone: ["在手机上，Droppen 直接在浏览器里用"], unknown: ["获取 Droppen：", "下载 Mac 版"] },
+    "zh-TW": { mac: ["下載 Mac 版", "Linux 及其他平台"], linux: ["在這台裝置的終端機裡貼上執行", "也可以直接下載："], windows: ["Web 免費註冊", "Droppen · Mac"], phone: ["在手機上，Droppen 直接在瀏覽器裡用"], unknown: ["取得 Droppen："] },
     ja: { mac: ["Mac 版をダウンロード", "Linux とほかのプラットフォーム"], linux: ["このデバイスのターミナルに貼り付けて実行すると", "直接ダウンロードもできます："], windows: ["Web で登録", "Droppen · Mac 版"], phone: ["スマホでは、Droppen はブラウザで使います。"], unknown: ["Droppen を入手："] },
   };
   for (const [lng, devices] of Object.entries(said)) {

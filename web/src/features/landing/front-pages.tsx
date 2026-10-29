@@ -22,7 +22,7 @@ export function FrontPageView({ page, signedIn, api }: { page: FrontPage; signed
   return (
     <Suspense fallback={<div className="h-full w-full bg-bg" />}>
       {page === "download" ? (
-        <DownloadPage signedIn={signedIn} signup={signup} />
+        <DownloadPage signedIn={signedIn} />
       ) : page === "pricing" ? (
         <PricingPage signedIn={signedIn} api={api} signup={signup} />
       ) : page === "privacy" ? (
