@@ -382,9 +382,9 @@ fn renewed_to(current: &MachineIdentity, to: &MachineIdentity) -> AgentState {
 
 /// The local settings' sign-in renews the identity only when the seed in use
 /// is retired: while the chain's renewal of this machine is to a seed it has
-/// staged — its own renewal — it is left alone; with that staging gone (the
-/// keys were renewed elsewhere) the seed is archived, the enrollment
-/// forgotten and a fresh identity made. The agent's
+/// staged — its own renewal, waiting or set aside as expired — it is left
+/// alone; with no staging of it at all (the keys were renewed elsewhere) the
+/// seed is archived, the enrollment forgotten and a fresh identity made. The agent's
 /// `rotation::tests::an_honest_hosts_own_renewal_is_never_wiped_for_a_fresh_identity`
 /// checks the predicate this acts on (`AgentFiles::seed_in_use_retired`).
 #[tokio::test]
@@ -408,10 +408,22 @@ async fn the_sign_in_renews_only_a_retired_seed() {
         })
         .unwrap();
     renewed_to(&current, &to).save(&files).unwrap();
+    let untouched = |why: &str| {
+        assert!(!files.seed_retired(&current), "{why}: its own renewal");
+        assert!(!files.seed_archived(&current), "{why}: nothing archived");
+        assert!(files.has_state(), "{why}: the enrollment stays");
+        assert_eq!(control.identity().unwrap().sign_public(), current.sign_public(), "{why}: the seed in use stays");
+        assert_eq!(files.kept_staged_seeds(), 1, "{why}: the staged seed stays");
+    };
     assert!(!control.renew_retired_seed().await.unwrap(), "its own renewal: left alone");
-    assert_eq!(control.identity().unwrap().sign_public(), current.sign_public());
-    assert!(files.has_state(), "the enrollment stays");
+    untouched("staged");
+    // Set aside as expired: still its own.
+    files.expire_staged_seed(&[3; 16]).unwrap();
+    assert!(!control.renew_retired_seed().await.unwrap(), "set aside as expired: left alone");
+    untouched("set aside");
+    // No staging of it at all: replaced elsewhere — only then a fresh one.
     files.discard_staged_seeds().unwrap();
+    assert!(files.seed_retired(&current));
     assert!(control.renew_retired_seed().await.unwrap(), "renewed elsewhere: a fresh identity");
     assert!(files.seed_archived(&current));
     assert!(!files.has_state(), "the enrollment is forgotten");

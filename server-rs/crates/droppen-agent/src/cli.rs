@@ -124,7 +124,7 @@ pub(super) fn load_or_create_existing(paths: &Paths) -> Result<(MachineIdentity,
 /// droppen.app page has not added this device yet: the enrolling state is
 /// saved and `serve` finishes it once the page does. Anything else that is
 /// not success exits 1.
-pub const ENROLL_PENDING_EXIT: u8 = 76;
+pub(crate) const ENROLL_PENDING_EXIT: u8 = 76;
 
 /// `agent enroll`, the code given either way.
 pub async fn enroll_cli(paths: &Paths, code: &EnrollCode, hub: &str) -> Result<(), String> {

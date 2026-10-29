@@ -52,6 +52,8 @@ pub trait AgentFilesTesting {
     fn forget_enrollment_leftovers(&self) -> Result<(), String>;
     /// Whether `identity`'s seed is archived.
     fn seed_archived(&self, identity: &MachineIdentity) -> bool;
+    /// Whether `identity`'s seed was retired by a renewal of this machine.
+    fn seed_retired(&self, identity: &MachineIdentity) -> bool;
     /// Row `key` of the streams store's key-value table.
     fn streams_kv(&self, key: &str) -> Option<String>;
     /// Set row `key` of the streams store's key-value table.
@@ -62,6 +64,10 @@ pub trait AgentFilesTesting {
     fn promote_seed(&self, nonce: &[u8; 16]) -> Result<(), String>;
     /// Forget every staged seed.
     fn discard_staged_seeds(&self) -> Result<(), String>;
+    /// Set the staged seed of `nonce` aside as expired.
+    fn expire_staged_seed(&self, nonce: &[u8; 16]) -> Result<(), String>;
+    /// How many seeds are staged, waiting or set aside as expired.
+    fn kept_staged_seeds(&self) -> usize;
 }
 
 impl AgentFilesTesting for AgentFiles {
@@ -86,6 +92,9 @@ impl AgentFilesTesting for AgentFiles {
     fn seed_archived(&self, identity: &MachineIdentity) -> bool {
         AgentFiles::seed_archived(self, identity)
     }
+    fn seed_retired(&self, identity: &MachineIdentity) -> bool {
+        AgentFiles::seed_retired(self, identity)
+    }
     fn streams_kv(&self, key: &str) -> Option<String> {
         Store::open(self).get_kv(key)
     }
@@ -109,6 +118,13 @@ impl AgentFilesTesting for AgentFiles {
     }
     fn discard_staged_seeds(&self) -> Result<(), String> {
         FileSeedStore::for_instance(self).discard_all_staged()
+    }
+    fn expire_staged_seed(&self, nonce: &[u8; 16]) -> Result<(), String> {
+        FileSeedStore::for_instance(self).expire(nonce)
+    }
+    fn kept_staged_seeds(&self) -> usize {
+        let store = FileSeedStore::for_instance(self);
+        store.stagings().unwrap_or_default().len() + store.expired().len()
     }
 }
 
