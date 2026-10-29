@@ -2678,6 +2678,33 @@ mod tests {
         }
     }
 
+    /// A session's app server is in the snapshot the injection registry takes
+    /// itself, which a turn's alert carries, as well as in the one the session
+    /// list asks the providers for.
+    #[tokio::test]
+    async fn a_codex_session_is_in_the_registrys_own_snapshot() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let (_path, registry) = fake_codex_registry(home.path(), "codex-snapshot");
+        let providers = crate::inject::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
+        let work = home.path().join("work");
+        std::fs::create_dir_all(&work).expect("work");
+        let work = work.to_string_lossy().into_owned();
+        let (id, _) = registry
+            .codex_deliver(providers.gate(), None, Some(&work), "hello", &SendOptions::default(), None)
+            .await
+            .expect("a new thread");
+        assert!(registry.driver_states().resident(Source::Codex, &id).is_some(), "in the registry's snapshot");
+        assert!(providers.driver_states().resident(Source::Codex, &id).is_some(), "in the providers' snapshot");
+        let handle = registry.codex_handle(&id).expect("its app server");
+        for _ in 0..500 {
+            if !handle.busy() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        retire(&handle).await.expect("retired");
+    }
+
     /// A thread request's optional members follow the two every thread gets,
     /// in this order: the thread being resumed, the provider an account with a
     /// key of its own injects, and the chat persona; a chat's turn is
