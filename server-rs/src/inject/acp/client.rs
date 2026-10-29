@@ -401,6 +401,41 @@ mod tests {
         assert_eq!(exit["signal"], "SIGKILL");
     }
 
+    /// A kill can land while the shell is still forking its children, and on
+    /// macOS one signal to the group then misses the child being forked, which
+    /// lives on holding the terminal's pipes (#430). Each round kills a shell
+    /// that starts eight children, at a delay that sweeps its first four
+    /// milliseconds, and every one must end with its pipes closed.
+    #[tokio::test]
+    async fn a_terminal_killed_while_its_shell_forks_takes_every_child() {
+        let dir = tempfile::tempdir().unwrap();
+        let client = client(dir.path());
+        for round in 0..68u64 {
+            let created = client
+                .handle(
+                    "terminal/create",
+                    json!({"command": "bash", "args": ["-c", "for _ in 1 2 3 4 5 6 7 8; do sleep 30 & done; wait"], "cwd": dir.path()}),
+                )
+                .await
+                .expect("created");
+            let id = created["terminalId"].clone();
+            // 0 to 4 ms in steps of 250 µs: across bash starting and forking.
+            std::thread::sleep(std::time::Duration::from_micros(round % 17 * 250));
+            client.handle("terminal/kill", json!({"terminalId": id})).await.expect("killed");
+            let ended = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                client.handle("terminal/wait_for_exit", json!({"terminalId": id})),
+            )
+            .await;
+            if ended.is_err() {
+                // Signal what is left again, so a failed run leaves no child behind.
+                client.kill_all();
+            }
+            assert!(ended.is_ok(), "round {round}: a child outlived the kill, holding the pipes");
+            client.handle("terminal/release", json!({"terminalId": id})).await.expect("released");
+        }
+    }
+
     #[tokio::test]
     async fn output_keeps_the_newest_bytes() {
         let dir = tempfile::tempdir().unwrap();
