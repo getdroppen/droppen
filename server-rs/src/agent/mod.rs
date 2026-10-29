@@ -176,10 +176,8 @@ mod tests {
     use rh_proto::identity::{EnrollCode, MachineIdentity};
     use zeroize::Zeroizing;
     use super::*;
-
-    fn args(words: &[&str]) -> Vec<String> {
-        words.iter().map(|w| w.to_string()).collect()
-    }
+    use crate::cli::agent::tests::parse;
+    use crate::cli::tests::args;
 
     fn code() -> String {
         EnrollCode {
@@ -189,12 +187,6 @@ mod tests {
         .to_string()
     }
 
-    fn parse(words: &[String]) -> Result<AgentArgs, clap::Error> {
-        match crate::cli::tests::parse_words("agent", words)? {
-            crate::cli::Command::Agent(parsed) => Ok(parsed),
-            other => panic!("{words:?} parsed as {other:?}"),
-        }
-    }
 
     #[test]
     fn the_subcommands_parse_and_a_missing_action_is_an_error() {

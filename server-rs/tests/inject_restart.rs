@@ -531,7 +531,7 @@ async fn a_run_survives_its_server_being_sigkilled_and_is_adopted_by_the_next_on
     let cli_pid = record["cli_pid"].as_u64().expect("cli_pid") as u32;
     // The CLI is nobody's child once the first server dies, so the test is what
     // has to guarantee it does not outlive the test.
-    let _cli_guard = KillGroupOnDrop(cli_pid);
+    let _cli_guard = common::KillGroupOnDrop(cli_pid);
     assert_eq!(record["session_id"], SESSION);
     assert!(record["pid_token"].is_string(), "the pid-reuse guard is recorded: {record}");
     assert!(record["resident"] == true, "a claude run is a resident behind a shim: {record}");
@@ -672,23 +672,7 @@ struct Spawned {
 
 impl Drop for Spawned {
     fn drop(&mut self) {
-        KillGroupOnDrop(self.pid);
-    }
-}
-
-/// Kills a process group when it goes out of scope.
-///
-/// Both the server and the CLI it spawns lead groups of their own — the server
-/// because [`spawn_server`] says so, the CLI because that is what lets it
-/// outlive the server — so a group signal is what reaches every child they
-/// forked.
-struct KillGroupOnDrop(u32);
-
-impl Drop for KillGroupOnDrop {
-    fn drop(&mut self) {
-        // SAFETY: a negative pid names a process group; killing one that has
-        // already gone is an ignored `ESRCH`.
-        unsafe { libc::kill(-(self.0 as libc::pid_t), libc::SIGKILL) };
+        common::KillGroupOnDrop(self.pid);
     }
 }
 

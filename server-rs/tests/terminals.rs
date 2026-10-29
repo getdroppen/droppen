@@ -19,11 +19,13 @@ use droppen_instance::instance::{InstanceDirs, DEFAULT_INSTANCE};
 use droppen_instance::paths::Paths;
 use droppen_pty::proto::Meta;
 use droppen_pty::sidecar::{self, Sidecars};
-use remote_hand_server::terminals::{CreateSpec, Registry, MAX_TERMINALS};
+use remote_hand_server::terminals::{Registry, MAX_TERMINALS};
 use serde_json::Value;
 use tokio_tungstenite::tungstenite::Message;
 
 mod common;
+
+use common::sh;
 
 /// A running server plus the terminal registry its handlers share.
 type Probe = common::TestServer;
@@ -132,11 +134,6 @@ impl Socket {
         }
         seen
     }
-}
-
-/// A terminal running `script` under `/bin/sh`.
-fn sh(script: &str) -> CreateSpec {
-    CreateSpec::new("/bin/sh", vec!["-c".to_string(), script.to_string()])
 }
 
 /// Ask a shim who it is minding, without disturbing the server's own link.

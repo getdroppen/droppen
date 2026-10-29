@@ -105,7 +105,7 @@ async fn the_server_replaces_its_own_binary_without_dropping_a_terminal_or_a_run
     assert_eq!(status, 200, "{body}");
     let record = wait_for_record(&journal).await;
     let cli_pid = record["cli_pid"].as_u64().expect("cli_pid") as u32;
-    let _cli_guard = KillGroupOnDrop(cli_pid);
+    let _cli_guard = common::KillGroupOnDrop(cli_pid);
 
     // ---- the upgrade -------------------------------------------------------
 
@@ -573,17 +573,6 @@ async fn wait_for_record(db: &Path) -> Value {
         }
         assert!(std::time::Instant::now() < deadline, "no run was ever recorded in {}", db.display());
         tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-}
-
-/// Kills a process group when it goes out of scope.
-struct KillGroupOnDrop(u32);
-
-impl Drop for KillGroupOnDrop {
-    fn drop(&mut self) {
-        // SAFETY: a negative pid names a process group; killing one that has
-        // already gone is an ignored `ESRCH`.
-        unsafe { libc::kill(-(self.0 as libc::pid_t), libc::SIGKILL) };
     }
 }
 

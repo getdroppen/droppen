@@ -203,10 +203,7 @@ mod tests {
     use clap::error::ErrorKind;
 
     use super::*;
-
-    fn args(raw: &[&str]) -> Vec<String> {
-        raw.iter().map(|value| (*value).to_string()).collect()
-    }
+    use crate::cli::tests::args;
 
     fn parse(raw: &[String]) -> Result<NotifyArgs, clap::Error> {
         match crate::cli::tests::parse_words("notify", raw)? {

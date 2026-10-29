@@ -250,12 +250,13 @@ pub(crate) async fn refuse_enroll(paths: &Paths, auth_enabled: Option<bool>) -> 
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use clap::error::ErrorKind;
 
     use super::*;
+    use crate::cli::tests::args;
 
-    fn parse(words: &[String]) -> Result<AgentArgs, clap::Error> {
+    pub(crate) fn parse(words: &[String]) -> Result<AgentArgs, clap::Error> {
         match crate::cli::tests::parse_words("agent", words)? {
             crate::cli::Command::Agent(parsed) => Ok(parsed),
             other => panic!("{words:?} parsed as {other:?}"),
@@ -267,10 +268,6 @@ mod tests {
         let args = parse(words).map_err(|error| error.to_string())?;
         args.checked()?;
         Ok(args)
-    }
-
-    fn args(words: &[&str]) -> Vec<String> {
-        words.iter().map(|word| (*word).to_string()).collect()
     }
 
     /// A code `EnrollCode` accepts, so the table can tell "the code was refused" from "the shape was refused".
