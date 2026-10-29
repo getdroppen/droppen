@@ -121,8 +121,12 @@ pub fn hello_frame(options: MuxOptions) -> String {
 enum MuxFrame<'a> {
     /// What this socket does, and how it compresses (`null`: it does not).
     Hello { features: [&'static str; 2], compress: Option<&'static str> },
-    /// A subscription that ended, and why.
-    Closed { reason: &'a str },
+    /// A subscription that ended: refused outright, with a `reason`, or
+    /// because its feed ended or its session is not there, with none.
+    Closed {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reason: Option<&'a str>,
+    },
 }
 
 impl MuxFrame<'_> {
@@ -244,7 +248,7 @@ pub fn tag(sub: u64, frame: &str) -> String {
 
 /// `{"sub":N,"type":"closed","reason":…}`: a subscription refused outright.
 pub fn refused(sub: u64, reason: &str) -> String {
-    tag(sub, &MuxFrame::Closed { reason }.encode())
+    tag(sub, &MuxFrame::Closed { reason: Some(reason) }.encode())
 }
 
 /// `bytes` as raw deflate.
@@ -371,7 +375,7 @@ impl Subscriptions {
 /// One subscription: attach, send the opening frames, then follow the feed.
 async fn pump(registry: Arc<FeedRegistry>, drive: Arc<Drive>, request: SubRequest, out: mpsc::Sender<String>, mut control: mpsc::Receiver<String>) {
     let sub = request.sub;
-    let closed = || tag(sub, r#"{"type":"closed"}"#);
+    let closed = || tag(sub, &MuxFrame::Closed { reason: None }.encode());
     let Some(attached) = attach_session_feed_with(&registry, &drive, request.source, &request.id, request.resume.as_ref(), request.limit).await
     else {
         let _ = out.send(closed()).await;
