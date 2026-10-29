@@ -193,7 +193,18 @@ test("a think with nothing to date the turn by is still said, and the old senten
  */
 test("the transcript draws nothing provisional: the draft store reaches only the activity bar", () => {
   // The session view, across the files it is made of.
-  const source = ["session-detail.tsx", "composer.tsx", "activity-bar.tsx", "use-session-feed.ts", "session-meta.tsx"]
+  const source = [
+    "session-detail.tsx",
+    "composer.tsx",
+    "activity-bar.tsx",
+    "use-session-feed.ts",
+    "session-meta.tsx",
+    "transcript-context.ts",
+    "transcript-rows.tsx",
+    "tool-line.tsx",
+    "bubble-run.tsx",
+    "system-line.tsx",
+  ]
     .map((file) => readFileSync(new URL(`../src/features/sessions/${file}`, import.meta.url), "utf8"))
     .join("\n");
   const handedTo = [...source.matchAll(/drafts=\{/g)].map((match) => {

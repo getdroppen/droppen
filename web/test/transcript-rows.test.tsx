@@ -14,7 +14,10 @@ import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { components } from "../src/api/schema.js";
-import { BubbleRun, SubagentTool, SystemLine, ToolLine } from "../src/features/sessions/session-detail.js";
+import { BubbleRun } from "../src/features/sessions/bubble-run.js";
+import { SystemLine } from "../src/features/sessions/system-line.js";
+import { ToolLine } from "../src/features/sessions/tool-line.js";
+import { SubagentTool } from "../src/features/sessions/transcript-rows.js";
 import {
   ModelFallbackNotice,
   modelFallbackOf,
