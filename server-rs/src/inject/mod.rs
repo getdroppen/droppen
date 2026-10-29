@@ -27,7 +27,7 @@ pub mod acp;
 pub(crate) mod app_server;
 mod common;
 pub mod drafts;
-mod lock;
+mod gate;
 pub mod questions;
 pub mod receipts;
 mod registry;
@@ -36,6 +36,7 @@ mod runs;
 pub mod shim;
 
 pub use common::{Phase, QueueOutcome, ResidentState, StopTaskOutcome};
+pub use gate::SpawnPermit;
 pub use registry::{Provider, ProviderRegistry, Run};
 pub use resident::{AnswerOutcome, Reply};
 
@@ -1051,7 +1052,7 @@ struct RunState {
     /// This run's cross-instance claim on the session, held for exactly as long
     /// as the CLI is running. `None` once it has finished, and on a run that
     /// never launched.
-    lock: Option<lock::InjectLock>,
+    lock: Option<gate::SessionLease>,
 }
 
 impl RunState {
@@ -1119,8 +1120,8 @@ pub struct InjectionRegistry {
     /// there is no codex resident, so the source is not part of the key.
     residents: Mutex<HashMap<String, resident::Handle>>,
     /// Serializes the gap between "no resident for this session" and "one in the
-    /// map"; see [`InjectionRegistry::deliver`].
-    spawn_gate: tokio::sync::Mutex<()>,
+    /// map", and holds the per-session claims; see [`InjectionRegistry::deliver`].
+    spawn_gate: gate::SpawnGate,
     /// Where a resident's shim leaves its socket, stderr tail and tombstone.
     shim_dir: PathBuf,
     /// How long a codex run may make no progress before it is ended.
@@ -1205,9 +1206,10 @@ pub struct InjectionRegistry {
     paths: Arc<Paths>,
     /// The record of in-flight runs, in this server's own instance directory.
     journal: runs::RunsFile,
-    /// Where the per-session claims live: the **shared** data directory, so a
-    /// second instance contends with this one rather than ignoring it.
-    lock_dir: PathBuf,
+    /// What the spawn gate and the session's claim were at each traced point
+    /// of a spawn; see [`Step`].
+    #[cfg(test)]
+    steps: Mutex<Vec<Step>>,
     /// Where a session's flight recording goes, if it is being made at all.
     ///
     /// A factory rather than a recorder: one is opened per *resident*, lives on
@@ -1333,7 +1335,7 @@ impl InjectionRegistry {
             acp_probes: Mutex::new(HashMap::new()),
             runs: Mutex::new(HashMap::new()),
             residents: Mutex::new(HashMap::new()),
-            spawn_gate: tokio::sync::Mutex::new(()),
+            spawn_gate: gate::SpawnGate::new(paths.data_dir().join("inject-locks")),
             shim_dir: instance.session_shims(),
             idle_timeout: env_ms("DROPPEN_IDLE_TIMEOUT_MS", Duration::from_secs(20 * 60)),
             // Ten minutes of silence is a *report*, not a sentence: the only
@@ -1370,7 +1372,8 @@ impl InjectionRegistry {
             steer_settle: env_ms("DROPPEN_STEER_SETTLE_MS", resident::STEER_SETTLE),
             absorb_poll: env_ms("DROPPEN_ABSORB_POLL_MS", resident::ABSORB_POLL),
             journal: runs::RunsFile::new(instance.runs_file()),
-            lock_dir: paths.data_dir().join("inject-locks"),
+            #[cfg(test)]
+            steps: Mutex::new(Vec::new()),
             recorders: record::Recorders::new(paths.clone(), instance),
             instance: instance.clone(),
             listeners: std::sync::OnceLock::new(),
@@ -1628,6 +1631,53 @@ impl DriverStatesBuilder {
     }
 }
 
+/// One point of a spawn, as the tests see it: whether the spawn gate and the
+/// session's claim were held there.
+///
+/// The gate and the claim are the two locks that keep a second CLI off a
+/// session, and which of them is held where is the contract the pins in the
+/// tests check; a refactor of either keeps every sequence they record.
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Step {
+    /// The point, by name.
+    pub(crate) what: &'static str,
+    /// Whether the spawn gate was held, by anyone.
+    pub(crate) gate: bool,
+    /// Whether the session's claim was held, by anyone; `None` where the
+    /// session has no id yet.
+    pub(crate) claim: Option<bool>,
+}
+
+#[cfg(test)]
+impl InjectionRegistry {
+    /// Note a [`Step`] of session `id`'s spawn.
+    pub(crate) fn step(&self, what: &'static str, source: Source, id: Option<&str>) {
+        let step = Step {
+            what,
+            gate: self.gate_held(),
+            claim: id.map(|id| self.claim_held(source, id)),
+        };
+        self.steps.lock().expect("steps poisoned").push(step);
+    }
+
+    /// Every step noted so far, oldest first.
+    pub(crate) fn steps(&self) -> Vec<Step> {
+        self.steps.lock().expect("steps poisoned").clone()
+    }
+
+    /// Whether anyone holds the spawn gate.
+    pub(crate) fn gate_held(&self) -> bool {
+        self.spawn_gate.held()
+    }
+
+    /// Whether anyone holds session `id`'s claim: a claim of our own would be
+    /// refused. One that is granted is let go at once.
+    pub(crate) fn claim_held(&self, source: Source, id: &str) -> bool {
+        self.spawn_gate.claim_held(source, id)
+    }
+}
+
 // ---------------------------------------------------------------- adoption
 
 /// What one boot's adoption pass found.
@@ -1656,7 +1706,7 @@ enum Reattached {
     Driving,
     /// The process is alive but unreachable; the claim comes back out to be
     /// held by a pid watcher instead.
-    Watching(lock::InjectLock),
+    Watching(gate::SessionLease),
     /// There was nothing left to attach to.
     Buried,
 }
@@ -1673,12 +1723,18 @@ impl InjectionRegistry {
     /// claim a real one's runs.
     pub async fn adopt_all(self: &Arc<Self>) -> Adopted {
         let mut report = Adopted::default();
+        // Its claims need no gate because it runs once, before the server
+        // listens: no send can race it.
+        let Some(boot) = self.spawn_gate.boot() else {
+            tracing::warn!("adoption runs once per server; not adopting again");
+            return report;
+        };
         for record in self.journal.read() {
             if !procs::is_same_process(record.cli_pid, record.pid_token.as_deref()) {
                 if record.codex.is_some() {
                     self.codex_dead(record);
                 } else {
-                    self.bury(&record).await;
+                    self.bury(&record, &boot).await;
                 }
                 report.finished += 1;
                 continue;
@@ -1690,9 +1746,9 @@ impl InjectionRegistry {
             // down. Adopting on top of that would be a second tracker for one
             // session, so the record is left for a later boot instead: the pid
             // check above is what stops it lingering for ever.
-            let claim = match lock::acquire(&self.lock_dir, record.source, &record.session_id) {
-                Ok(lock::Outcome::Acquired(claim)) => claim,
-                Ok(lock::Outcome::Busy { holder }) => {
+            let claim = match boot.claim(record.source, &record.session_id) {
+                Ok(claim) => claim,
+                Err(gate::ClaimError::Busy { holder }) => {
                     tracing::warn!(
                         session = %record.session_id,
                         source = %record.source,
@@ -1703,18 +1759,20 @@ impl InjectionRegistry {
                     report.deferred += 1;
                     continue;
                 }
-                Err(error) => {
+                Err(gate::ClaimError::Io(error)) => {
                     tracing::warn!(%error, session = %record.session_id, "cannot claim a session to adopt it");
                     report.deferred += 1;
                     continue;
                 }
             };
+            #[cfg(test)]
+            self.step("adoption claimed", record.source, Some(&record.session_id));
             // A resident is *re-attached to*, not watched: the shim held the
             // process' stdio open across the restart, so this server gets the
             // conversation back rather than just the knowledge that a pid
             // exists. A `codex exec` child has no such thing and is watched.
             if record.resident || record.codex.is_some() {
-                match self.clone().reattach(&record, claim).await {
+                match self.clone().reattach(&record, claim, &boot).await {
                     Reattached::Driving => report.recovered += 1,
                     Reattached::Watching(claim) => {
                         self.clone().resume(record, claim);
@@ -1756,7 +1814,7 @@ impl InjectionRegistry {
     ///   against a transcript the first is still writing;
     /// * the shim is minding a corpse, or the pid went while we were asking →
     ///   there is nothing to attach to, and the record is buried.
-    async fn reattach(self: Arc<Self>, record: &runs::RunRecord, claim: lock::InjectLock) -> Reattached {
+    async fn reattach(self: Arc<Self>, record: &runs::RunRecord, claim: gate::SessionLease, boot: &gate::Boot<'_>) -> Reattached {
         let Some(shim_id) = record.shim.as_deref() else {
             // A resident record with no shim named cannot be dialled at all.
             // Only reachable from a record written by a server old enough to
@@ -1780,14 +1838,14 @@ impl InjectionRegistry {
             Err(shim::LinkError::Corpse(why)) => {
                 tracing::info!(session = %record.session_id, %why, "the resident named by this record is already dead");
                 drop(claim);
-                self.bury_resident(record, &sidecars).await;
+                self.bury_resident(record, &sidecars, boot).await;
                 Reattached::Buried
             }
             Err(error) => {
                 if !procs::is_same_process(record.cli_pid, record.pid_token.as_deref()) {
                     tracing::info!(session = %record.session_id, %error, "the resident named by this record has gone");
                     drop(claim);
-                    self.bury_resident(record, &sidecars).await;
+                    self.bury_resident(record, &sidecars, boot).await;
                     return Reattached::Buried;
                 }
                 // The socket is unreachable and the process is not. Everything
@@ -1817,7 +1875,7 @@ impl InjectionRegistry {
     /// out is to write down how claude ended, and that note is worth more than
     /// an inference — so it is used where it exists and the sidecars are swept
     /// up behind it.
-    async fn bury_resident(&self, record: &runs::RunRecord, sidecars: &shim::Sidecars) {
+    async fn bury_resident(&self, record: &runs::RunRecord, sidecars: &shim::Sidecars, boot: &gate::Boot<'_>) {
         if record.codex.is_some() {
             self.codex_dead(record.clone());
             return;
@@ -1825,13 +1883,13 @@ impl InjectionRegistry {
         if let Some(exit) = sidecars.read_tombstone() {
             tracing::info!(session = %record.session_id, ?exit, "the resident's shim recorded how it ended");
         }
-        self.bury(record).await;
+        self.bury(record, boot).await;
         let _ = std::fs::remove_file(sidecars.exit());
         let _ = std::fs::remove_file(sidecars.stderr());
     }
 
     /// Put an inherited run back in the map and start watching its pid.
-    fn resume(self: Arc<Self>, record: runs::RunRecord, claim: lock::InjectLock) {
+    fn resume(self: Arc<Self>, record: runs::RunRecord, claim: gate::SessionLease) {
         let (finished_tx, _) = tokio::sync::watch::channel(false);
         let run = Arc::new(RunEntry {
             state: Mutex::new(RunState {
@@ -1883,13 +1941,13 @@ impl InjectionRegistry {
     /// transcript can tell the two apart, so that is what is asked — and only
     /// when it says the turn was cut short does anything surface, because a
     /// spurious failure on every restart would be worse than silence.
-    async fn bury(&self, record: &runs::RunRecord) {
+    async fn bury(&self, record: &runs::RunRecord, boot: &gate::Boot<'_>) {
         self.journal.remove(&record.run_id);
         // Taken and immediately dropped: a lock file whose run is over is
         // debris, and leaving it would keep the session claimed by nobody.
-        if let Ok(lock::Outcome::Acquired(stale)) = lock::acquire(&self.lock_dir, record.source, &record.session_id) {
-            drop(stale);
-        }
+        boot.sweep(record.source, &record.session_id);
+        #[cfg(test)]
+        self.step("buried", record.source, Some(&record.session_id));
         if !self.was_cut_short(record).await {
             tracing::info!(session = %record.session_id, "a run finished while the server was down");
             return;
@@ -2038,7 +2096,7 @@ fn signal(pid: u32, sig: libc::c_int) {
 /// The claim is handed back rather than dropped here so the caller can release
 /// the state lock before its unlink runs.
 #[must_use = "the claim is released when this is dropped, which should happen outside the state lock"]
-fn release(registry: &InjectionRegistry, state: &mut RunState) -> Option<lock::InjectLock> {
+fn release(registry: &InjectionRegistry, state: &mut RunState) -> Option<gate::SessionLease> {
     registry.journal.remove(&state.run_id);
     state.lock.take()
 }
@@ -2407,9 +2465,7 @@ mod tests {
             .spawn()
             .expect("spawn a stand-in");
 
-        let lock::Outcome::Acquired(claim) = lock::acquire(&registry.lock_dir, Source::Claude, SESSION).expect("claim") else {
-            panic!("a free session must be claimable");
-        };
+        let claim = registry.spawn_gate.lease(Source::Claude, SESSION).expect("a free session must be claimable");
         registry.clone().resume(
             runs::RunRecord {
                 codex: None,
@@ -2459,5 +2515,70 @@ mod tests {
 
         let _ = stranger.kill();
         let _ = stranger.wait();
+    }
+    /// Adoption claims each session it takes back without the spawn gate: it
+    /// runs before the server listens, so no send can race it. A run whose CLI
+    /// is gone is swept the same way, its claim taken and let go at once, and
+    /// its lock file goes with it.
+    #[tokio::test]
+    async fn adoption_claims_a_live_run_and_sweeps_a_dead_one_without_the_gate() {
+        const LIVE: &str = "ffffffff-6666-4666-8666-ffffffffffff";
+        const DEAD: &str = "dddddddd-7777-4777-8777-dddddddddddd";
+
+        let home = tempfile::tempdir().expect("tempdir");
+        let paths = Arc::new(Paths::new(home.path().to_path_buf()));
+        let locks = paths.data_dir().join("inject-locks");
+        let debris = locks.join(crate::sessions::reference::lock_name(Source::Claude.as_str(), DEAD));
+        std::fs::create_dir_all(&locks).expect("inject-locks");
+        std::fs::write(&debris, b"1\n").expect("the dead run's lock file");
+        let dirs = InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
+        dirs.create().expect("instance dirs");
+        let registry = InjectionRegistry::new(
+            paths.clone(),
+            &dirs,
+            Arc::new(crate::accounts::store::AccountsStore::new(paths.clone())),
+            Arc::new(crate::accounts::quota::QuotaCache::new(paths)),
+        );
+        let spawn = |script: &str| {
+            std::process::Command::new("/bin/sh")
+                .args(["-c", script])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("spawn a stand-in")
+        };
+        let mut live = spawn("sleep 30");
+        let mut dead = spawn("exit 0");
+        dead.wait().expect("it exits");
+        let record = |session: &str, pid: u32| runs::RunRecord {
+            codex: None,
+            codex_account: None,
+            hold: None,
+            run_id: format!("run-{session}"),
+            source: Source::Claude,
+            session_id: session.to_string(),
+            cwd: None,
+            cli_pid: pid,
+            started_at: "2026-01-01T00:00:00.000Z".to_string(),
+            pid_token: procs::start_token(pid),
+            resident: false,
+            shim: None,
+            fingerprint: None,
+            turn_at: None,
+            queued: Vec::new(),
+        };
+        registry.journal.add(record(LIVE, live.id()));
+        registry.journal.add(record(DEAD, dead.id()));
+
+        let adopted = registry.adopt_all().await;
+        assert_eq!((adopted.recovered, adopted.finished), (1, 1), "{adopted:?}");
+        let step = |what, claim| Step { what, gate: false, claim: Some(claim) };
+        assert_eq!(registry.steps(), [step("adoption claimed", true), step("buried", false)]);
+        assert!(!debris.exists(), "the sweep took the dead run's lock file");
+        assert!(registry.claim_held(Source::Claude, LIVE), "the watcher holds the claim");
+
+        let _ = live.kill();
+        let _ = live.wait();
     }
 }

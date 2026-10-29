@@ -24,11 +24,9 @@
 //! any more.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use droppen_instance::db::{scope, Db};
 use droppen_instance::paths::Paths;
-use droppen_base::process_env::{apply_env, clean_env_bare};
 
 /// What goes in the value column. Nothing reads it; the row is the fact.
 const PRESENT: &str = "1";
@@ -37,8 +35,6 @@ const PRESENT: &str = "1";
 #[derive(Debug, Clone, thiserror::Error)]
 #[error("codex archive failed: {0}")]
 pub struct ArchiveError(pub String);
-
-const CODEX_ARCHIVE_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// The machine-wide database the hidden list lives in.
 fn store(paths: &Paths) -> Arc<Db> {
@@ -72,32 +68,6 @@ pub async fn archive_claude_session(paths: &Paths, id: &str) -> std::io::Result<
     // idempotence the `[...new Set(...)]` gave is now the primary key's.
     store(paths).kv_set(scope::ARCHIVED, id, PRESENT);
     Ok(())
-}
-
-/// Archive an unloaded Codex session. Loaded sessions must go through
-/// `InjectionRegistry::archive_codex`, which routes to their owning App Server.
-pub async fn archive_codex_session(paths: &Arc<Paths>, id: &str) -> Result<(), ArchiveError> {
-    let mut command = tokio::process::Command::new("codex");
-    command.args(["archive", id]).current_dir(&paths.home).kill_on_drop(true);
-    apply_env(&mut command, &clean_env_bare());
-
-    let output: Result<std::io::Result<std::process::Output>, _> = tokio::time::timeout(CODEX_ARCHIVE_TIMEOUT, command.output()).await;
-    match output {
-        Ok(Ok(output)) if output.status.success() => Ok(()),
-        Ok(Ok(output)) => {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let trimmed = stderr.trim();
-            let message = if trimmed.is_empty() {
-                format!("codex exited with {}", output.status)
-            } else {
-                let lines: Vec<&str> = trimmed.split('\n').collect();
-                lines[lines.len().saturating_sub(2)..].join(" ")
-            };
-            Err(ArchiveError(message))
-        }
-        Ok(Err(error)) => Err(ArchiveError(error.to_string())),
-        Err(_) => Err(ArchiveError("the CLI did not answer within 15 seconds".to_string())),
-    }
 }
 
 #[cfg(test)]

@@ -68,7 +68,9 @@ try:
             result = {}
             if method in ("thread/start", "thread/resume"):
                 thread = params.get("threadId", thread)
-                result = {"thread": {"id": thread, "turns": []}, "model": "test-model",
+                if method == "thread/resume" and (cwd / "resume-thread.txt").exists():
+                    thread = (cwd / "resume-thread.txt").read_text().strip()
+                result ={"thread": {"id": thread, "turns": []}, "model": "test-model",
                           "reasoningEffort": "low", "sandbox": {"type": "readOnly"}}
             elif method == "turn/start":
                 sequence += 1
