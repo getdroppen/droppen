@@ -398,11 +398,16 @@ pub fn check<R: Runtime>(app: &AppHandle<R>, asked: bool) {
         let Some(me) = app.try_state::<Updater<R>>() else { return };
         // The update page's notes: the release in hand, or this version's when
         // there is nothing newer. Started here so the page has them by the
-        // time anyone opens it; the read never delays the download.
-        match &checked {
-            Checked::Found(release) => fetch_notes(app.clone(), release.version.clone()),
-            Checked::UpToDate => fetch_notes(app.clone(), lock(&me.updates).current().to_string()),
-            Checked::Failed(_) => {}
+        // time anyone opens it; the read never delays the download. The version
+        // is read before the call, not in its arguments: a guard there would be
+        // held through `fetch_notes`, which takes the same lock.
+        let notes_of = match &checked {
+            Checked::Found(release) => Some(release.version.clone()),
+            Checked::UpToDate => Some(lock(&me.updates).current().to_string()),
+            Checked::Failed(_) => None,
+        };
+        if let Some(version) = notes_of {
+            fetch_notes(app.clone(), version);
         }
         if matches!(checked, Checked::Failed(_)) {
             lock(&me.schedule).failed();
@@ -431,21 +436,18 @@ pub fn check<R: Runtime>(app: &AppHandle<R>, asked: bool) {
 /// Read the notes of Droppen `version` (its GitHub release body) and keep them
 /// for the update page. Best effort: a failure leaves the page its link.
 fn fetch_notes<R: Runtime>(app: AppHandle<R>, version: String) {
-    #[cfg(feature = "e2e")]
+    // Looked at in a test build too, so that its checks take the same lock as
+    // a release build's: the updater's end-to-end test then sees a deadlock.
+    if app
+        .try_state::<Updater<R>>()
+        .is_some_and(|me| lock(&me.updates).cached_notes().is_some_and(|notes| notes.version == version))
     {
-        // A test build never asks GitHub: its manifest comes from the loopback
-        // server `desktop/e2e-updater-macos.sh` serves.
-        let _ = (app, version);
         return;
     }
+    // A test build never asks GitHub: its manifest comes from the loopback
+    // server `desktop/e2e-updater-macos.sh` serves.
     #[cfg(not(feature = "e2e"))]
     {
-        if app
-            .try_state::<Updater<R>>()
-            .is_some_and(|me| lock(&me.updates).cached_notes().is_some_and(|notes| notes.version == version))
-        {
-            return;
-        }
         let Some(url) = update::notes_api_url(&version) else {
             return;
         };

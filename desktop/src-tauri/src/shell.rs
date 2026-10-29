@@ -340,8 +340,12 @@ impl Shell {
                 self.sidecar.display()
             ));
         }
-        // A retry first lets go of what the failed attempt started.
-        if let Some(supervisor) = self.inner().supervisor.take() {
+        // A retry first lets go of what the failed attempt started. Taken out
+        // before the stop, which waits for the supervisor's thread: an `if let`
+        // on `inner()` would hold the lock through it, and the thread's events
+        // take that lock.
+        let previous = self.inner().supervisor.take();
+        if let Some(supervisor) = previous {
             let pid = supervisor.pid();
             log::info!("stopping the previous attempt's server: {:?}", supervisor.stop(STOP_GRACE));
             if let Some(pid) = pid {
