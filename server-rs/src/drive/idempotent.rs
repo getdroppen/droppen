@@ -23,7 +23,7 @@ use tokio::time::Instant;
 use gotcha::axum::http::StatusCode;
 use serde_json::Value;
 
-use droppen_http::error::ApiError;
+use droppen_http::error::{ApiError, Hinted};
 use droppen_http::openapi_ext::Optional;
 use super::routes::{NewSessionResult, SendMessageResult};
 use crate::inject::receipts::{self, Claim, InFlight, Kind, Receipts};
@@ -95,12 +95,12 @@ pub(crate) async fn begin(receipts: &Receipts, key: Key<'_>, holds_queued: impl 
                     .map_err(|error| ApiError::internal(format!("cannot read the recorded answer: {error}")));
             }
             Claim::Mismatch => {
-                return Err(ApiError::with_body(
+                return Err(ApiError::refusal(
                     StatusCode::CONFLICT,
-                    serde_json::json!({
-                        "error": REUSED,
-                        "hint": "this clientMessageId was already used for a different session or route; mint a new one",
-                    }),
+                    Hinted {
+                        error: REUSED,
+                        hint: "this clientMessageId was already used for a different session or route; mint a new one",
+                    },
                 ));
             }
             Claim::InFlight(flight) if flight.stale => {
@@ -130,12 +130,12 @@ pub(crate) async fn begin(receipts: &Receipts, key: Key<'_>, holds_queued: impl 
 
 /// The `409` a retry gets while the first attempt is still running.
 pub(crate) fn in_progress() -> ApiError {
-    ApiError::with_body(
+    ApiError::refusal(
         StatusCode::CONFLICT,
-        serde_json::json!({
-            "error": IN_PROGRESS,
-            "hint": "an earlier attempt with this clientMessageId is still being accepted; ask again shortly",
-        }),
+        Hinted {
+            error: IN_PROGRESS,
+            hint: "an earlier attempt with this clientMessageId is still being accepted; ask again shortly",
+        },
     )
 }
 

@@ -1,6 +1,6 @@
 //! The upload fence a client's attachments pass before a session sees them.
 
-use droppen_http::error::ApiError;
+use droppen_http::error::{ApiError, Hinted};
 use droppen_instance::paths::Paths;
 use gotcha::axum::http::StatusCode;
 
@@ -10,12 +10,12 @@ pub const ATTACHMENT_MISSING: &str = "attachment_missing";
 /// The refusal of an attachment that `/api/uploads` handed out and that is no
 /// longer on this device: swept with the rest of the old uploads, or deleted.
 fn attachment_missing() -> ApiError {
-    ApiError::with_body(
+    ApiError::refusal(
         StatusCode::CONFLICT,
-        serde_json::json!({
-            "error": ATTACHMENT_MISSING,
-            "hint": "an attachment is no longer on this device; attach it again",
-        }),
+        Hinted {
+            error: ATTACHMENT_MISSING,
+            hint: "an attachment is no longer on this device; attach it again",
+        },
     )
 }
 
