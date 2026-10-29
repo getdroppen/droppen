@@ -23,7 +23,12 @@ use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use agent_client_protocol_schema::v1::{
+    CreateTerminalResponse, KillTerminalResponse, ReadTextFileResponse, ReleaseTerminalResponse, RequestPermissionOutcome,
+    RequestPermissionResponse, WriteTextFileResponse,
+};
 use serde::de::DeserializeOwned;
+use serde::Serialize;
 use serde_json::{json, Value};
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::sync::watch;
@@ -63,6 +68,11 @@ impl Error {
 /// A request's parameters, read as `T`.
 fn params<T: DeserializeOwned>(params: Value) -> Result<T, Error> {
     serde_json::from_value(params).map_err(|error| Error::new(INVALID_PARAMS, error.to_string()))
+}
+
+/// An answer, as the JSON its reply carries.
+fn answer(answer: impl Serialize) -> Result<Value, Error> {
+    serde_json::to_value(answer).map_err(|error| Error::new(INTERNAL_ERROR, error.to_string()))
 }
 
 /// How a terminal's command ended.
@@ -139,7 +149,7 @@ impl Client {
             "terminal/wait_for_exit" => self.wait_for_terminal_exit(&params::<TerminalParams>(request)?.terminal_id).await,
             "terminal/kill" => {
                 self.terminal(&params::<TerminalParams>(request)?.terminal_id)?.kill();
-                Ok(json!({}))
+                answer(KillTerminalResponse::new())
             }
             "terminal/release" => {
                 let id = params::<TerminalParams>(request)?.terminal_id;
@@ -147,11 +157,11 @@ impl Client {
                 if let Some(terminal) = terminal {
                     terminal.kill();
                 }
-                Ok(json!({}))
+                answer(ReleaseTerminalResponse::new())
             }
             // There is nobody at this end of the pipe to ask, and approving
             // whatever a model wants to run is not this server's call to make.
-            "session/request_permission" => Ok(json!({"outcome": {"outcome": "cancelled"}})),
+            "session/request_permission" => answer(RequestPermissionResponse::new(RequestPermissionOutcome::Cancelled)),
             other => Err(Error::new(METHOD_NOT_FOUND, format!("{other} is not supported by Droppen"))),
         }
     }
@@ -173,7 +183,7 @@ impl Client {
                 None => lines.collect(),
             }
         };
-        Ok(json!({ "content": content }))
+        answer(ReadTextFileResponse::new(content))
     }
 
     async fn write_text_file(&self, request: WriteTextFileParams) -> Result<Value, Error> {
@@ -186,7 +196,7 @@ impl Client {
         tokio::fs::write(path, &request.content)
             .await
             .map_err(|error| Error::new(INTERNAL_ERROR, format!("cannot write {}: {error}", path.display())))?;
-        Ok(json!({}))
+        answer(WriteTextFileResponse::new())
     }
 
     fn create_terminal(&self, request: CreateTerminalParams) -> Result<Value, Error> {
@@ -243,7 +253,7 @@ impl Client {
             .lock()
             .unwrap()
             .insert(id.clone(), Arc::new(Terminal { group, output, exit }));
-        Ok(json!({ "terminalId": id }))
+        answer(CreateTerminalResponse::new(id))
     }
 
     fn terminal_output(&self, id: &str) -> Result<Value, Error> {
