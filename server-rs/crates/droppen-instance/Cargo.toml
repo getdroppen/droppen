@@ -15,7 +15,6 @@ droppen-base = { path = "../droppen-base" }
 # and its derive, which gotcha re-exports; without its `axum` feature it brings
 # no web framework into this crate.
 gotcha_core = { version = "0.4.1", default-features = false }
-libc = "0.2"
 # `bundled` compiles SQLite itself rather than linking the platform's.
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
