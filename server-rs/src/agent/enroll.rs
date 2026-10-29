@@ -25,7 +25,7 @@ use futures_util::StreamExt;
 use rh_proto::chain::{Attestation, Entry};
 use rh_proto::frame::Frame;
 use rh_proto::identity::{display_fingerprint, EnrollCode, MachineIdentity};
-use serde_json::json;
+use rh_proto::wire::agent::AgentToHub;
 use tokio_tungstenite::tungstenite::Message;
 
 use super::hub;
@@ -89,7 +89,7 @@ impl AgentFiles {
         }
         let origin = hub::origin(hub_url).map_err(BeginError::Local)?;
         let (mut sink, mut source, nonce) = hub::dial(&origin).await.map_err(BeginError::Unreachable)?;
-        hub::send_json(&mut sink, &json!({"t": "enroll", "token": hex(&code.token())}))
+        hub::send(&mut sink, &AgentToHub::Enroll { token: hex(&code.token()) })
             .await
             .map_err(BeginError::Unreachable)?;
         let assigned = hub::next_json(&mut source).await.map_err(BeginError::Unreachable)?;
@@ -110,16 +110,15 @@ impl AgentFiles {
         let time_ms = now_ms_u64();
         let sig = hub::login_signature(identity, &account, &machine, &origin, nonce, time_ms).map_err(BeginError::Local)?;
         let proof = code.proof(&account, &machine, &identity.sign_public(), &identity.dh_public());
-        hub::send_json(
+        hub::send(
             &mut sink,
-            &json!({
-                "t": "enroll_proof",
-                "sign_key": hex(&identity.sign_public()),
-                "dh_key": hex(&identity.dh_public()),
-                "time_ms": time_ms,
-                "sig": hex(&sig),
-                "proof": hex(&proof),
-            }),
+            &AgentToHub::EnrollProof {
+                sign_key: hex(&identity.sign_public()),
+                dh_key: hex(&identity.dh_public()),
+                time_ms,
+                sig: hex(&sig),
+                proof: hex(&proof),
+            },
         )
         .await
         .map_err(BeginError::Unreachable)?;
@@ -210,12 +209,15 @@ impl AgentFiles {
         // Say first that this agent reads chain v3 (`docs/local-aggregator.md` §3.5): the
         // hub then sends it the v3 entry that adds it, and lets an account that
         // writes v3 add it at all.
-        hub::send_json(
+        hub::send(
             &mut sink,
-            &json!({"t": "agent_info", "version": droppen_http::SERVER_VERSION, "features": [super::CHAIN_V3_FEATURE, super::POLICY_FEATURE]}),
+            &AgentToHub::AgentInfo {
+                version: droppen_http::SERVER_VERSION.into(),
+                features: vec![super::CHAIN_V3_FEATURE.into(), super::POLICY_FEATURE.into()],
+            },
         )
         .await?;
-        hub::send_json(&mut sink, &json!({"t": "chain_sub", "from": 0})).await?;
+        hub::send(&mut sink, &AgentToHub::ChainSub { from: 0 }).await?;
         let deadline = tokio::time::Instant::now() + timeout;
         let mut ping = tokio::time::interval(Duration::from_secs(20));
         let mut nonce_n = 0u64;
@@ -273,5 +275,70 @@ impl AgentFiles {
                 _ => {}
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use futures_util::SinkExt;
+    use serde_json::Value;
+
+    use super::*;
+    use crate::agent::hub::BlankExt;
+    use serde_json::json;
+
+    /// What a machine sends the hub while it enrolls, compared whole: the
+    /// code's token, the proof, then what it reads and the chain it asks for.
+    #[tokio::test]
+    async fn an_enrollment_sends_its_messages_in_the_documented_shape() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("ws://127.0.0.1:{}", listener.local_addr().unwrap().port());
+        let heard: Arc<Mutex<Vec<Value>>> = Arc::default();
+        let (kept, hub) = (heard.clone(), url.clone());
+        tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
+            let challenge = json!({"t": "challenge", "nonce": hex(&[5; 32]), "hub": hub, "version": 1});
+            ws.send(Message::Text(challenge.to_string().into())).await.unwrap();
+            while let Some(Ok(Message::Text(text))) = ws.next().await {
+                let v: Value = serde_json::from_str(text.as_str()).unwrap();
+                kept.lock().unwrap().push(v.clone());
+                let answer = match v["t"].as_str() {
+                    Some("enroll") => json!({"t": "enroll_assigned", "account": "a-1", "machine": "m-1"}),
+                    Some("enroll_proof") => json!({"t": "welcome"}),
+                    _ => continue,
+                };
+                ws.send(Message::Text(answer.to_string().into())).await.unwrap();
+            }
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let files = AgentFiles::of(&droppen_instance::paths::Paths::for_instance(dir.path().to_path_buf(), "enroll"));
+        let identity = MachineIdentity::from_seed(&[4; 32]);
+        let code = EnrollCode {
+            account_fingerprint: [1; 16],
+            secret: [2; 16],
+        };
+        let begun = files.begin_enrollment(&identity, &code, &url).await.unwrap();
+        // Nothing adds it here: the wait runs out, after asking.
+        assert!(files.wait_enrollment_confirmed(&identity, begun, Duration::from_millis(300)).await.is_err());
+        let heard = heard.lock().unwrap().clone();
+        assert_eq!(heard[0], json!({"t": "enroll", "token": hex(&code.token())}));
+        let proof = code.proof("a-1", "m-1", &identity.sign_public(), &identity.dh_public());
+        assert_eq!(
+            heard[1].clone().blank(&["time_ms", "sig"]),
+            json!({
+                "t": "enroll_proof", "sign_key": hex(&identity.sign_public()), "dh_key": hex(&identity.dh_public()), "time_ms": 0, "sig": "",
+                "proof": hex(&proof),
+            })
+        );
+        assert_eq!(
+            heard[2..],
+            [
+                json!({"t": "agent_info", "version": droppen_http::SERVER_VERSION, "features": [super::super::CHAIN_V3_FEATURE, super::super::POLICY_FEATURE]}),
+                json!({"t": "chain_sub", "from": 0}),
+            ]
+        );
     }
 }

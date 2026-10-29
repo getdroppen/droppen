@@ -10,7 +10,9 @@ use rand::Rng;
 use rh_proto::frame::Frame;
 use rh_proto::identity::MachineIdentity;
 use rh_proto::sig::{HubLogin, LoginRole};
-use serde_json::{json, Value};
+use rh_proto::wire::agent::AgentToHub;
+use rh_proto::wire::connect::PeerToRelay;
+use serde_json::Value;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -184,9 +186,15 @@ pub async fn login(
 ) -> Result<Value, LoginError> {
     let time_ms = now_ms_u64();
     let sig = login_signature(identity, account, machine, origin, nonce, time_ms)?;
-    send_json(
+    send(
         sink,
-        &json!({"t": "login", "role": "agent", "account": account, "id": machine, "time_ms": time_ms, "sig": hex(&sig)}),
+        &AgentToHub::Login {
+            role: "agent".into(),
+            account: account.into(),
+            id: machine.into(),
+            time_ms,
+            sig: hex(&sig),
+        },
     )
     .await?;
     let welcome = next_json(source).await?;
@@ -197,9 +205,27 @@ pub async fn login(
 }
 
 /// Send one control message.
-pub async fn send_json(sink: &mut Sink, value: &Value) -> Result<(), String> {
-    crate::aggregator::traffic::agent_value(value);
+pub async fn send(sink: &mut Sink, message: &AgentToHub) -> Result<(), String> {
+    let value = serde_json::to_value(message).map_err(|e| e.to_string())?;
+    crate::aggregator::traffic::agent_value(&value);
     sink.send(Message::Text(value.to_string().into())).await.map_err(|e| e.to_string())
+}
+
+/// A message to the hub or a relay as the text that goes on its socket.
+pub(in crate::agent) trait WireText {
+    fn text(&self) -> String;
+}
+
+impl WireText for AgentToHub {
+    fn text(&self) -> String {
+        serde_json::to_string(self).expect("hub messages encode")
+    }
+}
+
+impl WireText for PeerToRelay {
+    fn text(&self) -> String {
+        serde_json::to_string(self).expect("relay messages encode")
+    }
 }
 
 /// Whose socket a JSON control message is read from: the hub's `/v1/agent`
@@ -256,7 +282,7 @@ pub async fn delete_streams(st: &AgentState, identity: &MachineIdentity) -> Resu
         .map_err(|e| DeleteError::Unreachable(e.to_string()))?;
     let mut deleted = 0;
     for _round in 0..3 {
-        send_json(&mut sink, &serde_json::json!({"t": "stream_list"}))
+        send(&mut sink, &AgentToHub::StreamList)
             .await
             .map_err(DeleteError::Unreachable)?;
         let streams: Vec<String> = loop {
@@ -283,7 +309,7 @@ pub async fn delete_streams(st: &AgentState, identity: &MachineIdentity) -> Resu
             break;
         }
         for stream in &streams {
-            send_json(&mut sink, &serde_json::json!({"t": "stream_delete", "stream": stream}))
+            send(&mut sink, &AgentToHub::StreamDelete { stream: stream.clone() })
                 .await
                 .map_err(DeleteError::Unreachable)?;
         }
@@ -393,9 +419,33 @@ pub(super) fn spawn_writer(
     })
 }
 
+/// A message with what changes per run blanked, for comparing the rest
+/// exactly: each key a number (made `0`) or a string that is not empty
+/// (made `""`).
+#[cfg(test)]
+pub(in crate::agent) trait BlankExt {
+    fn blank(self, keys: &[&str]) -> Value;
+}
+
+#[cfg(test)]
+impl BlankExt for Value {
+    fn blank(mut self, keys: &[&str]) -> Value {
+        for key in keys {
+            let was = self[*key].clone();
+            self[*key] = match was {
+                Value::Number(n) if n.is_u64() => Value::from(0),
+                Value::String(s) if !s.is_empty() => Value::from(""),
+                other => panic!("{key}: {other} in {self}"),
+            };
+        }
+        self
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn a_refusal_as_removed_is_told_apart() {
@@ -438,5 +488,47 @@ mod tests {
         for bytes in [&[][..], &[0x00], &[0x0f, 0xf0], &[0xab, 0xcd, 0xef], &[7; 32], &all] {
             assert_eq!(hex(bytes), rh_client::hex(bytes), "{bytes:?}");
         }
+    }
+
+    /// What a machine sends the hub to sign in and delete its copy there,
+    /// compared whole.
+    #[tokio::test]
+    async fn deleting_the_copy_signs_in_and_deletes_in_the_documented_shape() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("ws://127.0.0.1:{}", listener.local_addr().unwrap().port());
+        let heard: std::sync::Arc<std::sync::Mutex<Vec<Value>>> = Default::default();
+        let (kept, hub) = (heard.clone(), url.clone());
+        tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
+            let challenge = json!({"t": "challenge", "nonce": hex(&[5; 32]), "hub": hub, "version": 1});
+            ws.send(Message::Text(challenge.to_string().into())).await.unwrap();
+            let mut lists = 0;
+            while let Some(Ok(Message::Text(text))) = ws.next().await {
+                let v: Value = serde_json::from_str(text.as_str()).unwrap();
+                kept.lock().unwrap().push(v.clone());
+                let answer = match v["t"].as_str() {
+                    Some("login") => json!({"t": "welcome"}),
+                    Some("stream_list") => {
+                        lists += 1;
+                        let streams = if lists == 1 { json!([{"stream": "ab12"}]) } else { json!([]) };
+                        json!({"t": "stream_list", "streams": streams})
+                    }
+                    _ => continue,
+                };
+                ws.send(Message::Text(answer.to_string().into())).await.unwrap();
+            }
+        });
+        let st = AgentState::enrolling(&url, "a-1", "m-1", [0; 16], 1_000);
+        assert_eq!(delete_streams(&st, &MachineIdentity::from_seed(&[4; 32])).await, Ok(1));
+        let heard = heard.lock().unwrap().clone();
+        assert_eq!(
+            heard[0].clone().blank(&["time_ms", "sig"]),
+            json!({"t": "login", "role": "agent", "account": "a-1", "id": "m-1", "time_ms": 0, "sig": ""})
+        );
+        assert_eq!(
+            heard[1..],
+            [json!({"t": "stream_list"}), json!({"t": "stream_delete", "stream": "ab12"}), json!({"t": "stream_list"})]
+        );
     }
 }

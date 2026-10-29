@@ -50,12 +50,14 @@ use futures_util::{SinkExt, StreamExt};
 use rh_proto::frame::Frame;
 use rh_proto::netpolicy;
 use rh_proto::sig::{HubLogin, LoginRole};
-use serde_json::{json, Value};
+use rh_proto::wire::agent::AgentToHub;
+use rh_proto::wire::connect::PeerToRelay;
+use serde_json::Value;
 use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_util::sync::CancellationToken;
 
-use super::hub::{self, Backoff, Peer, HEARTBEAT, SILENCE};
+use super::hub::{self, Backoff, Peer, WireText, HEARTBEAT, SILENCE};
 use super::link::{drop_ended, drop_removed, expire_pending, on_channel_frame, Pending, Routes, Shared};
 use droppen_base::text::{hex, unhex32};
 use droppen_base::time::now_ms_u64;
@@ -540,7 +542,8 @@ impl Manager {
         }
         self.asked_ms = now;
         for chunk in due.chunks(8) {
-            let _ = hub.send(json!({"t": "relay_tickets", "relays": chunk}).to_string());
+            let relays = chunk.iter().map(|id| id.to_string()).collect();
+            let _ = hub.send(AgentToHub::RelayTickets { relays }.text());
         }
     }
 
@@ -641,7 +644,11 @@ impl Manager {
         if !moved {
             return;
         }
-        let _ = hub.send(json!({"t": "relay_state", "rtts": self.rtts, "attached": self.attached}).to_string());
+        let state = AgentToHub::RelayState {
+            rtts: self.rtts.clone(),
+            attached: self.attached.clone(),
+        };
+        let _ = hub.send(state.text());
         self.reported = Some((self.rtts.clone(), self.attached.clone()));
     }
 }
@@ -787,11 +794,13 @@ async fn session(
     }
     .sign(shared.identity.signing_key())
     .map_err(|e| e.to_string())?;
-    sink.send(Message::Text(
-        crate::aggregator::traffic::relay_value(json!({"t": "login", "ticket": ticket, "time_ms": time_ms, "sig": hex(&sig)}))
-            .to_string()
-            .into(),
-    ))
+    let login = PeerToRelay::Login {
+        ticket: ticket.to_string(),
+        time_ms,
+        sig: hex(&sig),
+    };
+    let login = serde_json::to_value(&login).map_err(|e| e.to_string())?;
+    sink.send(Message::Text(crate::aggregator::traffic::relay_value(login).to_string().into()))
     .await
     .map_err(|e| e.to_string())?;
     let welcome = match hub::read_json(&mut source, Peer::Relay).await {
@@ -869,7 +878,7 @@ async fn session(
                 }
                 let next = tickets.borrow_and_update().clone();
                 if let Some((t, _)) = next {
-                    let _ = text_tx.send(json!({"t": "ticket", "ticket": t}).to_string());
+                    let _ = text_tx.send(PeerToRelay::Ticket { ticket: t }.text());
                 }
             }
             r = chain.changed() => {
@@ -902,6 +911,7 @@ async fn session(
 mod tests {
     use super::*;
     use axum::extract::ws::WebSocketUpgrade;
+    use serde_json::json;
     use axum::routing::get;
 
     fn pair(id: &str, origin: &str) -> (String, String) {
@@ -1215,6 +1225,120 @@ mod tests {
         .expect("signed in with the fresh ticket");
         assert_eq!(*logins.lock().unwrap(), vec!["revoked".to_string(), "fresh".to_string()]);
         cancel.cancel();
+    }
+
+    /// What this machine sends a relay, compared whole: its sign-in with the
+    /// hub's ticket, and a renewed ticket on the same connection.
+    #[tokio::test]
+    async fn a_machine_signs_in_and_renews_on_a_relay_in_the_documented_shape() {
+        use axum::extract::ws::Message as WsMessage;
+        use crate::agent::hub::BlankExt;
+        let heard: Arc<Mutex<Vec<Value>>> = Arc::default();
+        let kept = heard.clone();
+        let relay = serve(axum::Router::new().route(
+            "/v1/connect",
+            get(move |ws: WebSocketUpgrade| {
+                let kept = kept.clone();
+                async move {
+                    ws.on_upgrade(move |mut socket| async move {
+                        let challenge = json!({"t": "challenge", "nonce": hex(&[7u8; 32])}).to_string();
+                        let _ = socket.send(WsMessage::Text(challenge.into())).await;
+                        let mut welcomed = false;
+                        while let Some(Ok(WsMessage::Text(text))) = socket.recv().await {
+                            kept.lock().unwrap().push(serde_json::from_str(text.as_str()).unwrap());
+                            if !welcomed {
+                                welcomed = true;
+                                let welcome = json!({"t": "welcome", "relay": "r-1", "id": "m-1", "expires_ms": now_ms_u64() + 600_000}).to_string();
+                                let _ = socket.send(WsMessage::Text(welcome.into())).await;
+                            }
+                        }
+                    })
+                }
+            }),
+        ))
+        .await;
+        let dir = tempfile::tempdir().unwrap();
+        let paths = droppen_instance::paths::Paths::for_instance(dir.path().to_path_buf(), "relays");
+        let st = super::super::state::AgentState::enrolling("http://hub.invalid", "a-1", "m-1", [0; 16], now_ms_u64());
+        let shared = super::super::link::test_shared(
+            &paths,
+            st,
+            rh_proto::identity::MachineIdentity::from_seed(&[5; 32]),
+            super::super::streams::Handle::detached(),
+            super::super::rotation::no_restart(),
+        );
+        let (tickets, rx) = watch::channel(Some(("first".to_string(), now_ms_u64() + 600_000)));
+        let (events, mut said) = mpsc::unbounded_channel();
+        let cancel = CancellationToken::new();
+        let target = Target {
+            origin: format!("ws://{relay}"),
+            insecure: true,
+        };
+        tokio::spawn(run(shared, "r-1".into(), target, rx, cancel.clone(), Arc::new(AtomicUsize::new(0)), events));
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                match said.recv().await {
+                    Some(Event::Attached(id, true)) if id == "r-1" => break,
+                    Some(_) => continue,
+                    None => panic!("the connection ended"),
+                }
+            }
+        })
+        .await
+        .expect("signed in");
+        tickets.send_replace(Some(("second".to_string(), now_ms_u64() + 900_000)));
+        let renewed = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if heard.lock().unwrap().len() >= 2 {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await;
+        assert!(renewed.is_ok(), "the renewal reached the relay");
+        let heard = heard.lock().unwrap().clone();
+        assert_eq!(
+            heard[0].clone().blank(&["time_ms", "sig"]),
+            json!({"t": "login", "ticket": "first", "time_ms": 0, "sig": ""})
+        );
+        assert_eq!(heard[1], json!({"t": "ticket", "ticket": "second"}));
+        cancel.cancel();
+    }
+
+    /// What this machine tells the hub of its relays, compared whole.
+    #[tokio::test]
+    async fn the_relay_state_has_the_documented_shape() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = droppen_instance::paths::Paths::for_instance(dir.path().to_path_buf(), "relays");
+        let st = super::super::state::AgentState::enrolling("http://hub.invalid", "a-1", "m-1", [0; 16], now_ms_u64());
+        let shared = super::super::link::test_shared(
+            &paths,
+            st,
+            rh_proto::identity::MachineIdentity::from_seed(&[5; 32]),
+            super::super::streams::Handle::detached(),
+            super::super::rotation::no_restart(),
+        );
+        let (hub, mut told) = mpsc::unbounded_channel::<String>();
+        let mut m = Manager {
+            shared,
+            events: mpsc::unbounded_channel().0,
+            wanted: BTreeMap::new(),
+            directory: BTreeMap::new(),
+            tickets: HashMap::new(),
+            conns: HashMap::new(),
+            hub: Some(hub),
+            attached: BTreeSet::from(["r-1".to_string()]),
+            rtts: BTreeMap::from([("r-2".to_string(), 40), ("r-1".to_string(), 12)]),
+            reported: None,
+            asked_ms: 0,
+            insecure: false,
+            http: None,
+            measuring: Measuring::default(),
+        };
+        m.report();
+        let state: Value = serde_json::from_str(&told.try_recv().expect("told")).unwrap();
+        assert_eq!(state, json!({"t": "relay_state", "rtts": {"r-1": 12, "r-2": 40}, "attached": ["r-1"]}));
     }
 
     /// The manager, told a ticket was refused as revoked, drops it and asks
