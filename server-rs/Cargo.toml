@@ -98,8 +98,8 @@ tokio-tungstenite = { version = "0.29", features = ["rustls-tls-webpki-roots"] }
 # graph through rh-proto and the RustCrypto crates.
 zeroize = "1"
 gotcha = { version = "0.4.1", features = ["openapi"] }
-# Named directly by the server's own `Schematic` impls (`plugins::wire`,
-# `drive::routes`) and by what gotcha's `Schematic` derive expands to.
+# Named directly by the server's own `Schematic` impls (`drive::routes`) and by
+# what gotcha's `Schematic` derive expands to.
 gotcha_core = "0.4.1"
 
 axum = { version = "0.8", features = ["ws", "multipart"] }
@@ -221,5 +221,6 @@ droppen-pty = { path = "crates/droppen-pty", features = ["test-support"] }
 # of the guard and the `/api/auth/*` routes (`api::auth_routes`).
 droppen-auth = { path = "crates/droppen-auth", features = ["test-support"] }
 # Plugin packages built in code and a host with some installed
-# (`droppen_plugins::testing`), for the feed's and the settings route's tests.
+# (`droppen_plugins::testing`), for the feed's and the settings route's tests
+# and the plugin routes' and assets' (`api::plugins_routes`, `api::plugins_serve`).
 droppen-plugins = { path = "crates/droppen-plugins", features = ["test-support"] }
