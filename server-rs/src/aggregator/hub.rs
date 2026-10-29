@@ -264,6 +264,30 @@ mod tests {
         assert_eq!("ws://127.0.0.1:9000".http_base(), "http://127.0.0.1:9000");
     }
 
+    /// The key request this computer posts to an admin's mailbox, compared
+    /// whole.
+    #[tokio::test]
+    async fn a_key_request_is_posted_in_the_documented_shape() {
+        let (posted, mut bodies) = tokio::sync::mpsc::unbounded_channel::<Value>();
+        let app = axum::Router::new().route(
+            "/v1/mailbox",
+            axum::routing::post(move |axum::Json(body): axum::Json<Value>| {
+                let _ = posted.send(body);
+                async { axum::http::StatusCode::NO_CONTENT }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("ws://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        let mut client = DeviceClient::new(&origin, "a-1", "m-me").unwrap();
+        client.session = Some((zeroize::Zeroizing::new("tok".into()), u64::MAX));
+        client.ask("d-admin").await.unwrap();
+        assert_eq!(
+            bodies.recv().await.unwrap(),
+            json!({"recipient": "d-admin", "sender": "m-me", "purpose": 4, "epoch": 0, "sealed": ""})
+        );
+    }
+
     #[test]
     fn refusals_are_told_apart() {
         let body = |code: &str| json!({"error": code});

@@ -231,6 +231,30 @@ mod line_tests {
 }
 
 #[cfg(test)]
+mod absent_keys_tests {
+    use super::{line, Event};
+    use serde_json::json;
+
+    /// A request has no status, and a URL without a query has no query: the
+    /// keys are left out, never null.
+    #[test]
+    fn a_request_line_leaves_out_status_and_query() {
+        let body = json!({"account": "a-1"});
+        let event = Event::Http {
+            dir: "out",
+            method: "POST",
+            url: "https://hub.example/v1/session/challenge",
+            status: None,
+            body: &body,
+        };
+        assert_eq!(
+            line("agent", event),
+            json!({"src": "agent", "kind": "http", "dir": "out", "method": "POST", "path": "/v1/session/challenge", "body": {"account": "a-1"}})
+        );
+    }
+}
+
+#[cfg(test)]
 mod traffic_path_tests {
     use super::traffic_path_in;
 
