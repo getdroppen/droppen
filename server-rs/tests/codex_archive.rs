@@ -60,8 +60,18 @@ async fn archive_routes_through_the_resident_and_removes_its_run() {
     start_resident(&probe).await;
     probe.send_ok("POST", &route("archive"), json!({}), 200).await;
     assert_archived(&probe).await;
-    let requests = std::fs::read_to_string(probe.workspace().join("codex-stdin.jsonl")).unwrap();
-    assert!(requests.contains("thread/archive"));
+    let requests = support::codex_stdin(&probe.workspace());
+    let archive = requests.last().expect("the archive request");
+    let uuid = support::id_of(archive);
+    let uuid = uuid.strip_prefix("archive:").expect("an archive request's id");
+    assert_eq!(
+        *archive,
+        support::wire(
+            r#"{"id":"archive:UUID","method":"thread/archive","params":{"threadId":"THREAD"}}"#,
+            &[("UUID", uuid), ("THREAD", ID)]
+        ),
+        "the last thing the resident is sent, byte for byte"
+    );
     assert!(!probe.home.join("codex-argv.bin").exists(), "no independent archive CLI was spawned");
     assert_eq!(
         std::fs::read_to_string(probe.workspace().join("codex-calls.txt"))

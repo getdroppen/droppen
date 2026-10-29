@@ -59,7 +59,8 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::OnceLock;
 
-use serde_json::{json, Map, Value};
+use serde::Serialize;
+use serde_json::{Map, Value};
 
 use super::mentions::resolve_within_home;
 use super::tool_display::{
@@ -842,6 +843,22 @@ fn file_changes(changes: Option<&Value>) -> Vec<PatchFile> {
         .collect()
 }
 
+/// Claude's `MultiEdit` input, which a patch's several-hunk update is shown as,
+/// with its fields in Claude's order. The pretty text is hashed into the
+/// transcript's fingerprint chain, so moving a field moves a client's resume
+/// point.
+#[derive(Serialize)]
+struct MultiEditInput<'a> {
+    file_path: &'a str,
+    edits: Vec<MultiEditEdit<'a>>,
+}
+
+#[derive(Serialize)]
+struct MultiEditEdit<'a> {
+    old_string: &'a str,
+    new_string: &'a str,
+}
+
 /// One file of a patch, as the Claude tool that would have made the same
 /// change: `Write` for a new file, `Edit` for one hunk, `MultiEdit` for several.
 fn file_call(file: &PatchFile) -> ToolDisplay {
@@ -857,9 +874,18 @@ fn file_call(file: &PatchFile) -> ToolDisplay {
                 [] => ToolDisplay::call("Edit", text, None, None),
                 [(old, new)] => ToolDisplay::call("Edit", text, None, Some(diff_of(old, new))),
                 many => {
-                    let edits: Vec<Value> = many.iter().map(|(old, new)| json!({"old_string": old, "new_string": new})).collect();
-                    let input = json!({"file_path": file.path, "edits": edits});
-                    ToolDisplay::call("MultiEdit", text, None, input.as_object().map(pretty))
+                    let input = MultiEditInput {
+                        file_path: &file.path,
+                        edits: many
+                            .iter()
+                            .map(|(old, new)| MultiEditEdit {
+                                old_string: old,
+                                new_string: new,
+                            })
+                            .collect(),
+                    };
+                    let input = serde_json::to_string_pretty(&input).expect("MultiEdit input encode");
+                    ToolDisplay::call("MultiEdit", text, None, Some(input))
                 }
             }
         }
@@ -2395,6 +2421,49 @@ mod tests {
         assert_eq!(items[2].detail.0.as_deref(), Some("<fontconfig/>\n"), "a new file's content is its diff");
         assert_eq!(items[2].tool_use_id.as_deref(), Some("exec-7#2"), "each file is its own pair");
         assert_eq!(items[3].result_of.as_deref(), Some("exec-7#2"));
+    }
+
+    /// A two-hunk update's `MultiEdit` input, byte for byte: the detail is
+    /// Claude's tool input pretty-printed, and the item holding it is hashed
+    /// into the transcript's fingerprint chain, so a client resuming against a
+    /// fingerprint loses its place if a single byte of it moves.
+    #[tokio::test]
+    async fn a_two_hunk_update_is_pretty_printed_multiedit_input_under_a_fixed_fingerprint() {
+        let items = parse(&[
+            cell("call_A", "text(await tools.apply_patch(\"*** Begin Patch\\n...\"))"),
+            completed(json!({
+                "type": "FileChange", "id": "exec-7",
+                "changes": {
+                    "/w/build.py": {"type": "update", "move_path": null,
+                        "unified_diff": "@@ -19,3 +19,3 @@\n sec.header = 1\n-FONT = 'Songti SC'\n+FONT = 'Noto Sans CJK SC'\n \n@@ -40,2 +40,3 @@\n a\n+b\n c\n"},
+                },
+                "status": "completed",
+                "stdout": "Success. Updated the following files:\nM /w/build.py\n", "stderr": "",
+            })),
+            cell_output("call_A", "Script completed\nWall time 0.0 seconds\nOutput:\n", &["{}"]),
+        ])
+        .await;
+        assert_eq!(items[0].tool_name.0.as_deref(), Some("MultiEdit"));
+        assert_eq!(
+            items[0].detail.0.as_deref(),
+            Some(
+                r#"{
+  "file_path": "/w/build.py",
+  "edits": [
+    {
+      "old_string": "sec.header = 1\nFONT = 'Songti SC'\n",
+      "new_string": "sec.header = 1\nFONT = 'Noto Sans CJK SC'\n"
+    },
+    {
+      "old_string": "a\nc",
+      "new_string": "a\nb\nc"
+    }
+  ]
+}"#
+            )
+        );
+        let chain = crate::sessions::loader::fingerprint_chain(Path::new("/w/rollout.jsonl"), &items[..1]);
+        assert_eq!(droppen_base::text::hex(&chain[1]), "161043a632f7e9c56bcfddda746ffaf3");
     }
 
     #[tokio::test]

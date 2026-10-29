@@ -11,7 +11,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use futures_util::future::BoxFuture;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 #[cfg(test)]
 use tokio::io::AsyncBufReadExt;
 use tokio::sync::{mpsc, oneshot};
@@ -163,42 +163,216 @@ enum Cmd {
     Archive(oneshot::Sender<Result<(), InjectError>>),
 }
 
+/// A request to codex. Its app server speaks JSON-RPC 2.0 without the
+/// `jsonrpc` member on the wire.
+#[derive(Serialize)]
+struct Request<'a, P> {
+    id: &'a str,
+    method: &'a str,
+    params: P,
+}
+
+/// A notification to codex: a request without an id, which nothing answers.
+#[derive(Serialize)]
+struct Notification<'a, P> {
+    method: &'a str,
+    params: P,
+}
+
+/// The params of a call that takes none, written `{}`.
+#[derive(Serialize)]
+struct NoParams {}
+
+/// The answer to a request codex makes of us, with the request's id echoed in
+/// the type it came in.
+#[derive(Serialize)]
+struct ErrorResponse<'a> {
+    id: &'a Value,
+    error: RpcError,
+}
+
+#[derive(Serialize)]
+struct RpcError {
+    code: i64,
+    message: &'static str,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InitializeParams {
+    client_info: ClientInfo,
+}
+
+#[derive(Serialize)]
+struct ClientInfo {
+    name: &'static str,
+    title: &'static str,
+    version: &'static str,
+}
+
+/// Codex never stops a headless turn to ask; see [`reject_request`].
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+enum ApprovalPolicy {
+    Never,
+}
+
+/// The params of `thread/start`, and of `thread/resume` when they name the
+/// thread.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ThreadParams<'a> {
+    cwd: &'a str,
+    approval_policy: ApprovalPolicy,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thread_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model_provider: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    base_instructions: Option<&'static str>,
+}
+
+/// A thread answer's settings as [`State::settings`] keeps them: what codex
+/// said, and `null` for any it left out.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ThreadSettings<'a> {
+    model: &'a Value,
+    effort: &'a Value,
+    sandbox_policy: &'a Value,
+}
+
+/// A message's `turn/start` params as [`Message::params`] keeps them. The
+/// thread and the message's id are added when it is sent, by
+/// [`TurnStartOnThread`].
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TurnStartParams<'a> {
+    input: Vec<UserInput<'a>>,
+    approval_policy: ApprovalPolicy,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    effort: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sandbox_policy: Option<SandboxPolicy>,
+}
+
+/// One item of a turn's input.
+#[derive(Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+enum UserInput<'a> {
+    Text { text: String },
+    LocalImage { path: &'a str },
+}
+
+/// The sandbox a turn runs in. A turn that names none runs in the thread's.
+#[derive(Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+enum SandboxPolicy {
+    WorkspaceWrite,
+    ReadOnly,
+    DangerFullAccess,
+}
+
+/// `turn/start`'s params as sent: a queued message's params exactly as the
+/// journal holds them, whichever build wrote them, then the thread and the
+/// message they start.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TurnStartOnThread<'a> {
+    #[serde(flatten)]
+    params: StoredParams<'a>,
+    thread_id: &'a str,
+    client_user_message_id: &'a str,
+}
+
+/// A queued message's stored params, less the `threadId` and
+/// `clientUserMessageId` [`TurnStartOnThread`] writes after them: a row that
+/// holds its own must not name either twice, and the ones written now win.
+struct StoredParams<'a>(&'a Value);
+
+impl Serialize for StoredParams<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self.0 {
+            Value::Object(params) => serializer.collect_map(
+                params
+                    .iter()
+                    .filter(|(key, _)| !matches!(key.as_str(), "threadId" | "clientUserMessageId")),
+            ),
+            other => other.serialize(serializer),
+        }
+    }
+}
+
+/// `turn/steer`'s params: a queued message's input, into the turn it expects
+/// to be running.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TurnSteerParams<'a> {
+    thread_id: &'a str,
+    expected_turn_id: Option<&'a str>,
+    input: &'a Value,
+    client_user_message_id: &'a str,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TurnInterruptParams<'a> {
+    thread_id: &'a str,
+    turn_id: &'a str,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ThreadArchiveParams<'a> {
+    thread_id: &'a str,
+}
+
 fn message(text: &str, options: &SendOptions) -> Result<Message, InjectError> {
-    let mut input = vec![json!({"type":"text", "text":with_codex_files(text, options)})];
-    input.extend(options.images.iter().map(|path| json!({"type":"localImage","path":path})));
-    let mut params = json!({"input":input,"approvalPolicy":"never"});
-    if let Some(model) = &options.model {
-        params["model"] = json!(model);
-    }
-    if let Some(effort) = &options.effort {
-        params["effort"] = json!(effort);
-    }
+    let mut input = vec![UserInput::Text {
+        text: with_codex_files(text, options),
+    }];
+    input.extend(options.images.iter().map(|path| UserInput::LocalImage { path }));
     let permission = if options.chat {
         Some("read-only")
     } else {
         options.permission.as_deref()
     };
-    if let Some(permission) = permission {
-        codex_permission_flags(permission)?;
-        params["sandboxPolicy"] = match permission {
-            "auto" | "workspace-write" => json!({"type":"workspaceWrite"}),
-            "read-only" => json!({"type":"readOnly"}),
-            _ => json!({"type":"dangerFullAccess"}),
-        };
-    }
+    let sandbox_policy = match permission {
+        Some(permission) => {
+            codex_permission_flags(permission)?;
+            Some(match permission {
+                "auto" | "workspace-write" => SandboxPolicy::WorkspaceWrite,
+                "read-only" => SandboxPolicy::ReadOnly,
+                _ => SandboxPolicy::DangerFullAccess,
+            })
+        }
+        None => None,
+    };
+    let params = TurnStartParams {
+        input,
+        approval_policy: ApprovalPolicy::Never,
+        model: options.model.as_deref(),
+        effort: options.effort.as_deref(),
+        sandbox_policy,
+    };
     Ok(Message {
         // The send path's choice when a client named the message, so its
         // receipt can follow it; see [`super::receipts`].
         id: options.message_id.clone().unwrap_or_else(new_uuid),
         text: text.into(),
-        params,
+        // A stored value, because the journal reads back rows other builds
+        // wrote.
+        params: serde_json::to_value(params).expect("turn/start params encode"),
         request: None,
         uncertain: false,
     })
 }
 
-async fn write(link: &mut shim::Link, value: Value) -> Result<(), InjectError> {
-    tokio::time::timeout(RPC_TIMEOUT, link.send_line(&value.to_string()))
+async fn write(link: &mut shim::Link, message: &impl Serialize) -> Result<(), InjectError> {
+    let line = serde_json::to_string(message).expect("Codex App Server message encode");
+    tokio::time::timeout(RPC_TIMEOUT, link.send_line(&line))
         .await
         .map_err(|_| InjectError::message("Codex App Server write timed out"))?
         .map_err(|e| InjectError::Internal(e.to_string()))
@@ -207,16 +381,19 @@ async fn write(link: &mut shim::Link, value: Value) -> Result<(), InjectError> {
 // Headless permissions remain `never`. Unexpected interactive requests must get
 // an explicit error, not hang the CLI or silently approve a tool invocation.
 async fn reject_request(link: &mut shim::Link, value: &Value) -> Result<(), InjectError> {
-    write(
-        link,
-        json!({"id":value["id"],"error":{"code":-32601,"message":"interactive requests are not supported by Droppen"}}),
-    )
-    .await
+    let answer = ErrorResponse {
+        id: &value["id"],
+        error: RpcError {
+            code: -32601,
+            message: "interactive requests are not supported by Droppen",
+        },
+    };
+    write(link, &answer).await
 }
 
-async fn rpc(registry: &InjectionRegistry, link: &mut shim::Link, method: &str, params: Value) -> Result<Value, InjectError> {
+async fn rpc(registry: &InjectionRegistry, link: &mut shim::Link, method: &str, params: impl Serialize) -> Result<Value, InjectError> {
     let id = new_uuid();
-    write(link, json!({"id":id,"method":method,"params":params})).await?;
+    write(link, &Request { id: &id, method, params }).await?;
     tokio::time::timeout(RPC_TIMEOUT, async {
         while let Some(output) = link.recv().await {
             let shim::Output::Line(line) = output else {
@@ -636,6 +813,12 @@ impl InjectionRegistry {
         }
         let sidecars = shim::Sidecars::new(self.shim_dir.clone(), new_uuid());
         let cwd = session_workdir(&self.paths, cwd);
+        // The thread request names the directory as a JSON string, which a
+        // path that is not UTF-8 cannot be written as: refuse it before codex
+        // is started.
+        let Some(thread_cwd) = cwd.to_str() else {
+            return Err(InjectError::message("the session's working directory is not valid UTF-8"));
+        };
         // With no account, argv and environment are byte for byte what they
         // have always been: `codex app-server`, the process environment, and
         // whatever `~/.codex/auth.json` holds. An account adds a model
@@ -663,27 +846,32 @@ impl InjectionRegistry {
         #[cfg(test)]
         self.step("codex started", Source::Codex, id);
         let setup = async {
-            rpc(
-                self,
+            let client_info = ClientInfo {
+                name: "remote_hand",
+                title: "remote-hand",
+                version: env!("CARGO_PKG_VERSION"),
+            };
+            rpc(self, &mut link, "initialize", InitializeParams { client_info }).await?;
+            write(
                 &mut link,
-                "initialize",
-                json!({"clientInfo":{"name":"remote_hand","title":"remote-hand","version":env!("CARGO_PKG_VERSION")}}),
+                &Notification {
+                    method: "initialized",
+                    params: NoParams {},
+                },
             )
             .await?;
-            write(&mut link, json!({"method":"initialized","params":{}})).await?;
-            let mut params = json!({"cwd":cwd,"approvalPolicy":"never"});
-            if let Some(id) = id {
-                params["threadId"] = json!(id);
-            }
-            // Belt and braces with `-c model_provider=…` on the command line:
-            // the flag is what a `codex exec` probe proves works, and naming it
-            // on the thread as well costs nothing if the flag already took.
-            if launch.is_some_and(|launch| !launch.codex_args.is_empty()) {
-                params["modelProvider"] = json!(crate::accounts::login::codex::CODEX_PROVIDER_ID);
-            }
-            if options.chat {
-                params["baseInstructions"] = json!(CHAT_SYSTEM_PROMPT);
-            }
+            let params = ThreadParams {
+                cwd: thread_cwd,
+                approval_policy: ApprovalPolicy::Never,
+                thread_id: id,
+                // Belt and braces with `-c model_provider=…` on the command line:
+                // the flag is what a `codex exec` probe proves works, and naming it
+                // on the thread as well costs nothing if the flag already took.
+                model_provider: launch
+                    .is_some_and(|launch| !launch.codex_args.is_empty())
+                    .then_some(crate::accounts::login::codex::CODEX_PROVIDER_ID),
+                base_instructions: options.chat.then_some(CHAT_SYSTEM_PROMPT),
+            };
             let result = rpc(self, &mut link, if id.is_some() { "thread/resume" } else { "thread/start" }, params).await?;
             let resolved = result["thread"]["id"]
                 .as_str()
@@ -729,7 +917,12 @@ impl InjectionRegistry {
             .and_then(|turns| turns.iter().rev().find(|t| t["status"] == "inProgress"))
             .and_then(|t| t["id"].as_str())
             .map(str::to_owned);
-        state.settings = json!({"model":result["model"],"effort":result["reasoningEffort"],"sandboxPolicy":result["sandbox"]});
+        state.settings = serde_json::to_value(ThreadSettings {
+            model: &result["model"],
+            effort: &result["reasoningEffort"],
+            sandbox_policy: &result["sandbox"],
+        })
+        .expect("thread settings encode");
         state.paused = state.queue.iter().any(|m| m.uncertain);
         state.interrupt_requested = false;
         let record = runs::RunRecord {
@@ -912,23 +1105,39 @@ impl Driver {
     }
 
     async fn submit(&mut self, index: usize, steer: bool) -> Result<(), InjectError> {
-        let mut params = self.state.queue[index].params.clone();
         let id = format!("{}:{}", if steer { "steer" } else { "start" }, self.state.queue[index].id);
-        params["threadId"] = json!(self.record.session_id);
-        params["clientUserMessageId"] = json!(self.state.queue[index].id);
-        if steer {
-            params = json!({"threadId":self.record.session_id,"expectedTurnId":self.state.active,"input":params["input"],"clientUserMessageId":self.state.queue[index].id});
-        } else {
+        if !steer {
             self.running();
         }
         self.state.queue[index].request = Some(id.clone());
         self.pending_since = Instant::now();
         self.checkpoint();
-        write(
-            &mut self.link,
-            json!({"id":id,"method":if steer {"turn/steer"} else {"turn/start"},"params":params}),
-        )
-        .await
+        let message = &self.state.queue[index];
+        let thread_id = self.record.session_id.as_str();
+        if steer {
+            let request = Request {
+                id: &id,
+                method: "turn/steer",
+                params: TurnSteerParams {
+                    thread_id,
+                    expected_turn_id: self.state.active.as_deref(),
+                    input: &message.params["input"],
+                    client_user_message_id: &message.id,
+                },
+            };
+            write(&mut self.link, &request).await
+        } else {
+            let request = Request {
+                id: &id,
+                method: "turn/start",
+                params: TurnStartOnThread {
+                    params: StoredParams(&message.params),
+                    thread_id,
+                    client_user_message_id: &message.id,
+                },
+            };
+            write(&mut self.link, &request).await
+        }
     }
 
     async fn run(mut self) {
@@ -1021,11 +1230,14 @@ impl Driver {
                 self.archive_reply = Some(reply);
                 self.archive_since = Instant::now();
                 self.checkpoint();
-                write(
-                    &mut self.link,
-                    json!({"id":id,"method":"thread/archive","params":{"threadId":self.record.session_id}}),
-                )
-                .await?;
+                let request = Request {
+                    id: &id,
+                    method: "thread/archive",
+                    params: ThreadArchiveParams {
+                        thread_id: &self.record.session_id,
+                    },
+                };
+                write(&mut self.link, &request).await?;
             }
             Cmd::Deliver(message, reply) => {
                 if self.state.archived || self.state.archive_request.is_some() {
@@ -1431,11 +1643,15 @@ impl Driver {
             if let Some(turn) = self.state.active.clone() {
                 let id = new_uuid();
                 self.interrupt = Some((Some(turn.clone()), Instant::now(), 0));
-                write(
-                    &mut self.link,
-                    json!({"id":id,"method":"turn/interrupt","params":{"threadId":self.record.session_id,"turnId":turn}}),
-                )
-                .await?;
+                let request = Request {
+                    id: &id,
+                    method: "turn/interrupt",
+                    params: TurnInterruptParams {
+                        thread_id: &self.record.session_id,
+                        turn_id: &turn,
+                    },
+                };
+                write(&mut self.link, &request).await?;
             } else if self.interrupt.is_none() && self.state.queue.iter().any(|q| q.request.is_some()) {
                 self.interrupt = Some((None, Instant::now(), 0));
             }
@@ -1449,6 +1665,7 @@ mod tests {
     use super::*;
     use droppen_instance::instance::InstanceDirs;
     use droppen_instance::paths::Paths;
+    use serde_json::json;
     use tokio::io::{AsyncWriteExt, BufReader};
     use tokio::net::{
         unix::{OwnedReadHalf, OwnedWriteHalf},
@@ -1548,13 +1765,17 @@ mod tests {
             let output = self.driver.link.recv().await.unwrap();
             self.driver.output(output).await.unwrap();
         }
-        async fn request(&mut self) -> Value {
+        /// The next line the driver wrote, byte for byte, newline included.
+        async fn raw(&mut self) -> String {
             let mut line = String::new();
             tokio::time::timeout(Duration::from_secs(2), self.input.read_line(&mut line))
                 .await
                 .unwrap()
                 .unwrap();
-            serde_json::from_str(&line).unwrap()
+            line
+        }
+        async fn request(&mut self) -> Value {
+            serde_json::from_str(&self.raw().await).unwrap()
         }
         async fn enqueue(&mut self, text: &str) -> String {
             let message = message(text, &SendOptions::default()).unwrap();
@@ -1577,6 +1798,19 @@ mod tests {
         async fn complete(&mut self, status: &str) {
             self.event(json!({"method":"turn/completed","params":{"threadId":"test-thread","turn":{"id":"turn-1","status":status,"error":{"message":"test failure"}}}})).await;
         }
+    }
+
+    /// One written line: `template` with each placeholder replaced by the
+    /// value that differs from run to run, and the newline that ends it.
+    fn wire(template: &str, values: &[(&str, &str)]) -> String {
+        let mut line = values.iter().fold(template.to_owned(), |line, (from, to)| line.replace(from, to));
+        line.push('\n');
+        line
+    }
+
+    /// The `id` member of a written line, for the requests that mint one.
+    fn id_of(line: &str) -> String {
+        serde_json::from_str::<Value>(line).unwrap()["id"].as_str().unwrap().to_owned()
     }
 
     /// The codex local login is `signed_out` on a refused credential, a rest
@@ -1690,6 +1924,11 @@ mod tests {
         assert_eq!(m.params["effort"], "high");
         assert_eq!(m.params["input"][1], json!({"type":"localImage","path":"/uploads/a.png"}));
         assert!(m.params["input"][0]["text"].as_str().unwrap().contains("/uploads/a.txt"));
+        // The bytes the journal keeps and every later turn/start is cloned from.
+        assert_eq!(
+            serde_json::to_string(&m.params).unwrap(),
+            r#"{"input":[{"type":"text","text":"hello\n\n[1 attached file(s) — view with the Read tool:]\n- /uploads/a.txt"},{"type":"localImage","path":"/uploads/a.png"}],"approvalPolicy":"never","model":"gpt-5","effort":"high","sandboxPolicy":{"type":"workspaceWrite"}}"#
+        );
         assert!(message(
             "x",
             &SendOptions {
@@ -1698,6 +1937,153 @@ mod tests {
             }
         )
         .is_err());
+    }
+
+    /// The sandbox is the one security boundary a headless turn has, so the
+    /// turn params of every permission mode, of none and of one codex does not
+    /// know are pinned byte for byte, outside a chat and in one. A chat is
+    /// read-only whatever mode it names, an unknown one included; outside a
+    /// chat an unknown mode is refused, and no mode at all names no sandbox and
+    /// leaves the thread's own in force.
+    #[test]
+    fn turn_params_name_the_sandbox_each_permission_mode_maps_to() {
+        const UNNAMED: &str = r#"{"input":[{"type":"text","text":"hi"}],"approvalPolicy":"never"}"#;
+        const WRITE: &str = r#"{"input":[{"type":"text","text":"hi"}],"approvalPolicy":"never","sandboxPolicy":{"type":"workspaceWrite"}}"#;
+        const READ: &str = r#"{"input":[{"type":"text","text":"hi"}],"approvalPolicy":"never","sandboxPolicy":{"type":"readOnly"}}"#;
+        const FULL: &str = r#"{"input":[{"type":"text","text":"hi"}],"approvalPolicy":"never","sandboxPolicy":{"type":"dangerFullAccess"}}"#;
+        const REFUSED: &str = "unknown codex permission mode: invalid";
+        let params = |permission: Option<&str>, chat: bool| {
+            let options = SendOptions {
+                permission: permission.map(str::to_owned),
+                chat,
+                ..Default::default()
+            };
+            message("hi", &options)
+                .map(|message| serde_json::to_string(&message.params).unwrap())
+                .map_err(|error| error.to_string())
+        };
+        let cases = [
+            (None, false, Ok(UNNAMED)),
+            (Some("auto"), false, Ok(WRITE)),
+            (Some("workspace-write"), false, Ok(WRITE)),
+            (Some("read-only"), false, Ok(READ)),
+            (Some("full-access"), false, Ok(FULL)),
+            (Some("danger-full-access"), false, Ok(FULL)),
+            (Some("bypass-all"), false, Ok(FULL)),
+            (Some("invalid"), false, Err(REFUSED)),
+            (None, true, Ok(READ)),
+            (Some("auto"), true, Ok(READ)),
+            (Some("workspace-write"), true, Ok(READ)),
+            (Some("read-only"), true, Ok(READ)),
+            (Some("full-access"), true, Ok(READ)),
+            (Some("danger-full-access"), true, Ok(READ)),
+            (Some("bypass-all"), true, Ok(READ)),
+            (Some("invalid"), true, Ok(READ)),
+        ];
+        for (permission, chat, expected) in cases {
+            let expected = expected.map(str::to_owned).map_err(str::to_owned);
+            assert_eq!(params(permission, chat), expected, "permission {permission:?}, chat {chat}");
+        }
+    }
+
+    /// What the driver writes for a turn, a steer into it, the interrupt that
+    /// ends it and an archive, byte for byte, as codex reads them. Only the
+    /// ids the driver mints are filled in. None of them carries a `jsonrpc`
+    /// member, unlike the quota probe's requests to the same protocol.
+    #[tokio::test]
+    async fn the_driver_writes_turn_steer_interrupt_and_archive_requests_byte_for_byte() {
+        let mut h = Harness::new().await;
+        let first = h.enqueue("first").await;
+        h.driver.submit(0, false).await.unwrap();
+        assert_eq!(
+            h.raw().await,
+            wire(
+                r#"{"id":"start:QID","method":"turn/start","params":{"input":[{"type":"text","text":"first"}],"approvalPolicy":"never","threadId":"test-thread","clientUserMessageId":"QID"}}"#,
+                &[("QID", &first)]
+            )
+        );
+        h.event(json!({"method":"turn/started","params":{"threadId":"test-thread","turn":{"id":"turn-1","status":"inProgress"}}}))
+            .await;
+        h.event(json!({"id":format!("start:{first}"),"result":{"turn":{"id":"turn-1","status":"inProgress"}}}))
+            .await;
+
+        let correction = h.enqueue("correction").await;
+        let (reply, rx) = oneshot::channel();
+        h.driver
+            .command(Cmd::Queue {
+                id: correction.clone(),
+                steer: true,
+                reply,
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            h.raw().await,
+            wire(
+                r#"{"id":"steer:QID","method":"turn/steer","params":{"threadId":"test-thread","expectedTurnId":"turn-1","input":[{"type":"text","text":"correction"}],"clientUserMessageId":"QID"}}"#,
+                &[("QID", &correction)]
+            )
+        );
+        h.event(json!({"id":format!("steer:{correction}"),"result":{"turnId":"turn-1"}})).await;
+        assert_eq!(rx.await.unwrap(), QueueOutcome::Done);
+
+        h.driver.command(Cmd::Interrupt).await.unwrap();
+        let interrupt = h.raw().await;
+        let id = id_of(&interrupt);
+        assert_eq!(
+            interrupt,
+            wire(
+                r#"{"id":"UUID","method":"turn/interrupt","params":{"threadId":"test-thread","turnId":"turn-1"}}"#,
+                &[("UUID", &id)]
+            )
+        );
+        h.event(json!({"id":id,"result":{}})).await;
+        h.complete("interrupted").await;
+
+        let (reply, rx) = oneshot::channel();
+        h.driver.command(Cmd::Archive(reply)).await.unwrap();
+        let archive = h.raw().await;
+        let id = id_of(&archive);
+        assert_eq!(
+            archive,
+            wire(
+                r#"{"id":"archive:UUID","method":"thread/archive","params":{"threadId":"test-thread"}}"#,
+                &[("UUID", id.strip_prefix("archive:").unwrap())]
+            )
+        );
+        h.event(json!({"id":id,"result":{}})).await;
+        rx.await.unwrap().unwrap();
+    }
+
+    /// A stored row that already names a thread and a message, where the
+    /// turn's request puts them, is sent naming each once: the thread it runs
+    /// on and the message it is.
+    #[tokio::test]
+    async fn a_stored_rows_own_thread_and_message_give_way_to_the_ones_sent() {
+        let mut h = Harness::new().await;
+        let stored: Message = serde_json::from_value(json!({
+            "id": "queued-1",
+            "text": "first",
+            "params": {
+                "input": [{"type": "text", "text": "first"}],
+                "approvalPolicy": "never",
+                "threadId": "stale-thread",
+                "clientUserMessageId": "stale-message",
+            },
+            "request": null,
+        }))
+        .unwrap();
+        let (reply, rx) = oneshot::channel();
+        h.driver.command(Cmd::Deliver(stored, reply)).await.unwrap();
+        rx.await.unwrap().unwrap();
+        h.driver.submit(0, false).await.unwrap();
+        assert_eq!(
+            h.raw().await,
+            wire(
+                r#"{"id":"start:queued-1","method":"turn/start","params":{"input":[{"type":"text","text":"first"}],"approvalPolicy":"never","threadId":"test-thread","clientUserMessageId":"queued-1"}}"#,
+                &[]
+            )
+        );
     }
 
     /// Switching account retires the running process — but only when it has
@@ -2004,6 +2390,19 @@ mod tests {
         assert_eq!(response["id"], 42);
         assert_eq!(response["error"]["code"], -32601);
         assert!(response.get("result").is_none());
+        // Byte for byte, with the request's id echoed in the type it came in.
+        h.event(json!({"id":"req-7","method":"item/fileChange/requestApproval","params":{}}))
+            .await;
+        assert_eq!(
+            h.raw().await,
+            wire(r#"{"id":"req-7","error":{"code":-32601,"message":"interactive requests are not supported by Droppen"}}"#, &[])
+        );
+        h.event(json!({"id":43,"method":"item/commandExecution/requestApproval","params":{}}))
+            .await;
+        assert_eq!(
+            h.raw().await,
+            wire(r#"{"id":43,"error":{"code":-32601,"message":"interactive requests are not supported by Droppen"}}"#, &[])
+        );
     }
 
     #[tokio::test]
@@ -2127,6 +2526,34 @@ mod tests {
         assert_eq!(rx.await.unwrap(), QueueOutcome::Done);
         assert_eq!(status(&receipts, &second_id), Some(ReceiptStatus::Failed));
     }
+    /// A registry whose `codex` is `tests/support/fake_codex.py`, which logs
+    /// every line it reads to `codex-stdin.jsonl` in its working directory.
+    /// `home` becomes the test root the fake insists on; the guard puts the
+    /// child `PATH` back when it goes.
+    fn fake_codex_registry(home: &std::path::Path, instance: &str) -> (droppen_base::process_env::ChildPathGuard, Arc<InjectionRegistry>) {
+        let guard = droppen_base::process_env::ChildPathGuard::take();
+        // The stand-in app server runs only under a test root.
+        std::fs::write(home.join(".rh-test-root"), b"").expect("test root");
+        let bin = home.join("bin");
+        std::fs::create_dir_all(&bin).expect("bin");
+        let codex = bin.join("codex");
+        let fake = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/support/fake_codex.py");
+        std::fs::write(&codex, format!("#!/bin/sh\nexec python3 {fake} \"$@\"\n")).expect("codex");
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&codex, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        }
+        let path = format!("{}:{}", bin.display(), droppen_base::process_env::child_path());
+        droppen_base::process_env::set_child_path(Some(path));
+        let paths = Arc::new(Paths::new(home.into()));
+        let dirs = InstanceDirs::new(&paths.data_dir(), instance).unwrap();
+        dirs.create().unwrap();
+        let accounts = Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins()));
+        let quota = Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone()));
+        let decoration = crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone());
+        (guard, InjectionRegistry::new(paths, &dirs, accounts, quota, decoration))
+    }
+
     /// A step of a spawn, as [`crate::inject::Step`] records it.
     fn step(what: &'static str, gate: bool, claim: Option<bool>) -> crate::inject::Step {
         crate::inject::Step { what, gate, claim }
@@ -2146,28 +2573,8 @@ mod tests {
         const UNLOADED: &str = "0199c1a1-0000-4000-8000-000000000002";
         const MISMATCHED: &str = "0199c1a1-0000-4000-8000-000000000003";
         const OTHER: &str = "0199c1a1-0000-4000-8000-000000000004";
-        let _path = droppen_base::process_env::ChildPathGuard::take();
         let home = tempfile::tempdir().expect("tempdir");
-        // The stand-in app server runs only under a test root.
-        std::fs::write(home.path().join(".rh-test-root"), b"").expect("test root");
-        let bin = home.path().join("bin");
-        std::fs::create_dir_all(&bin).expect("bin");
-        let codex = bin.join("codex");
-        let fake = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/support/fake_codex.py");
-        std::fs::write(&codex, format!("#!/bin/sh\nexec python3 {fake} \"$@\"\n")).expect("codex");
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&codex, std::fs::Permissions::from_mode(0o755)).expect("chmod");
-        }
-        let path = format!("{}:{}", bin.display(), droppen_base::process_env::child_path());
-        droppen_base::process_env::set_child_path(Some(path));
-        let paths = Arc::new(Paths::new(home.path().into()));
-        let dirs = InstanceDirs::new(&paths.data_dir(), "codex-steps").unwrap();
-        dirs.create().unwrap();
-        let accounts = Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins()));
-        let quota = Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone()));
-        let decoration = crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone());
-        let registry = InjectionRegistry::new(paths, &dirs, accounts, quota, decoration);
+        let (_path, registry) = fake_codex_registry(home.path(), "codex-steps");
         let work = home.path().join("work");
         std::fs::create_dir_all(&work).expect("work");
         let work = work.to_string_lossy().into_owned();
@@ -2258,5 +2665,106 @@ mod tests {
                 retire(&handle).await.expect("retired");
             }
         }
+    }
+
+    /// A thread request's optional members follow the two every thread gets,
+    /// in this order: the thread being resumed, the provider an account with a
+    /// key of its own injects, and the chat persona; a chat's turn is
+    /// read-only. Byte for byte, because the order is on the wire too.
+    #[tokio::test]
+    async fn a_resumed_chat_under_an_account_names_its_thread_provider_and_persona_in_order() {
+        const THREAD: &str = "0199c1a1-0000-4000-8000-000000000005";
+        let home = tempfile::tempdir().expect("tempdir");
+        let (_path, registry) = fake_codex_registry(home.path(), "codex-wire");
+        let work = home.path().join("work");
+        std::fs::create_dir_all(&work).expect("work");
+        let log = work.join("codex-stdin.jsonl");
+        let work = work.to_string_lossy().into_owned();
+        let account = CodexAccount {
+            id: "own-key".to_string(),
+            launch: crate::accounts::store::AccountLaunch {
+                provider: AccountProvider::Codex,
+                env: vec![],
+                codex_args: crate::accounts::login::codex::codex_provider_args("https://api.example.test/v1"),
+            },
+        };
+        let chat = SendOptions {
+            chat: true,
+            ..SendOptions::default()
+        };
+        registry
+            .codex_deliver(Some(THREAD), Some(&work), "hi", &chat, Some(account))
+            .await
+            .expect("resumed");
+
+        let mut lines = Vec::new();
+        for _ in 0..500 {
+            lines = std::fs::read_to_string(&log)
+                .unwrap_or_default()
+                .lines()
+                .map(|line| format!("{line}\n"))
+                .collect();
+            if lines.len() >= 4 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(lines.len(), 4, "{lines:?}");
+        assert_eq!(
+            lines[0],
+            wire(
+                r#"{"id":"UUID","method":"initialize","params":{"clientInfo":{"name":"remote_hand","title":"remote-hand","version":"VERSION"}}}"#,
+                &[("UUID", &id_of(&lines[0])), ("VERSION", env!("CARGO_PKG_VERSION"))]
+            )
+        );
+        assert_eq!(lines[1], wire(r#"{"method":"initialized","params":{}}"#, &[]));
+        assert_eq!(
+            lines[2],
+            wire(
+                r#"{"id":"UUID","method":"thread/resume","params":{"cwd":"WORK","approvalPolicy":"never","threadId":"THREAD","modelProvider":"remote_hand","baseInstructions":"PERSONA"}}"#,
+                &[("UUID", &id_of(&lines[2])), ("WORK", &work), ("THREAD", THREAD), ("PERSONA", CHAT_SYSTEM_PROMPT)]
+            )
+        );
+        let qid = id_of(&lines[3]).strip_prefix("start:").expect("a turn's id").to_owned();
+        assert_eq!(
+            lines[3],
+            wire(
+                r#"{"id":"start:QID","method":"turn/start","params":{"input":[{"type":"text","text":"hi"}],"approvalPolicy":"never","sandboxPolicy":{"type":"readOnly"},"threadId":"THREAD","clientUserMessageId":"QID"}}"#,
+                &[("QID", &qid), ("THREAD", THREAD)]
+            )
+        );
+
+        let handle = registry.codex_handle(THREAD).expect("the resident");
+        for _ in 0..500 {
+            if !handle.busy() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        retire(&handle).await.expect("retired");
+    }
+
+    /// A thread request names its directory as a JSON string, which a path
+    /// that is not UTF-8 cannot be written as: such a session is refused
+    /// before codex is started, and its claim goes with the refusal. Linux
+    /// only, because macOS will not create a directory under such a name.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn a_working_directory_that_is_not_utf8_is_refused_before_codex_starts() {
+        use std::os::unix::ffi::OsStrExt;
+        const THREAD: &str = "0199c1a1-0000-4000-8000-000000000006";
+        let root = tempfile::tempdir().expect("tempdir");
+        // The send names no directory, so the session runs in the home.
+        let home = root.path().join(std::ffi::OsStr::from_bytes(b"\xff"));
+        std::fs::create_dir_all(&home).expect("home");
+        let (_path, registry) = fake_codex_registry(&home, "codex-utf8");
+        let refused = registry
+            .codex_deliver(Some(THREAD), None, "hi", &SendOptions::default(), None)
+            .await
+            .expect_err("refused");
+        assert_eq!(refused.to_string(), "the session's working directory is not valid UTF-8");
+        assert!(registry.steps().is_empty(), "codex was started: {:?}", registry.steps());
+        assert!(!registry.gate_held());
+        assert!(!registry.claim_held(Source::Codex, THREAD));
     }
 }

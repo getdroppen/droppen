@@ -836,6 +836,30 @@ async fn an_interrupt_ends_a_turn_the_cli_will_not_end_itself() {
     probe.stop().await;
 }
 
+/// A codex thread `instance` made, whose rollout says it runs in the probe's
+/// workspace; returns the rollout's path.
+async fn owned_codex_thread(probe: &Probe, instance: &str, id: &str) -> std::path::PathBuf {
+    let dir = probe.home.join(".codex/sessions/2026/09/11");
+    std::fs::create_dir_all(&dir).expect("codex sessions dir");
+    let rollout = dir.join(format!("rollout-2026-09-11T10-00-00-{id}.jsonl"));
+    std::fs::write(
+        &rollout,
+        [
+            json!({"type": "session_meta", "timestamp": "2026-09-11T10:00:00.000Z", "payload": {"id": id, "cwd": probe.workspace().to_string_lossy()}}),
+            json!({"type": "event_msg", "timestamp": "2026-09-11T10:00:01.000Z", "payload": {"type": "agent_message", "message": "ready"}}),
+        ]
+        .iter()
+        .map(|line| format!("{line}\n"))
+        .collect::<String>(),
+    )
+    .expect("seed codex rollout");
+    let paths = droppen_instance::paths::Paths::for_instance(probe.home.clone(), instance);
+    remote_hand_server::sessions::codex::CodexSessions.record_owned(&paths, id)
+        .await
+        .expect("own codex session");
+    rollout
+}
+
 /// Native interruption ends the turn, keeps the process, and overrides a stale
 /// rollout tail without blocking the next message.
 #[tokio::test]
@@ -844,24 +868,7 @@ async fn an_interrupted_codex_run_releases_the_composer_for_the_queued_message()
     let probe = Probe::start_named(Some(INSTANCE)).await;
     let workspace = probe.workspace();
     let id = "0199c1a1-2b3c-4d5e-8f60-112233445566";
-    let dir = probe.home.join(".codex/sessions/2026/09/11");
-    std::fs::create_dir_all(&dir).expect("codex sessions dir");
-    let rollout = dir.join(format!("rollout-2026-09-11T10-00-00-{id}.jsonl"));
-    std::fs::write(
-        &rollout,
-        [
-            json!({"type": "session_meta", "timestamp": "2026-09-11T10:00:00.000Z", "payload": {"id": id, "cwd": workspace.to_string_lossy()}}),
-            json!({"type": "event_msg", "timestamp": "2026-09-11T10:00:01.000Z", "payload": {"type": "agent_message", "message": "ready"}}),
-        ]
-        .iter()
-        .map(|line| format!("{line}\n"))
-        .collect::<String>(),
-    )
-    .expect("seed codex rollout");
-    let paths = droppen_instance::paths::Paths::for_instance(probe.home.clone(), INSTANCE);
-    remote_hand_server::sessions::codex::CodexSessions.record_owned(&paths, id)
-        .await
-        .expect("own codex session");
+    let rollout = owned_codex_thread(&probe, INSTANCE, id).await;
     support::plan_slow_cli(&workspace, 120.0);
 
     let (status, body) = message(&probe, "codex", id, json!({"text": "one"})).await;
@@ -1022,6 +1029,188 @@ async fn a_new_codex_session_takes_the_id_the_cli_announces() {
         spawn.env("IS_SANDBOX"),
         None,
         "the sandbox marker means something to one CLI only, so only that CLI is told"
+    );
+
+    probe.stop().await;
+}
+
+/// The journal row of the one codex run on `thread`, as it is stored.
+fn codex_journal(probe: &Probe, thread: &str) -> String {
+    let rows = common::rows(&probe.instance_db(), "SELECT payload FROM runs WHERE session_id = ?1", (thread,));
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    rows.into_iter().next().unwrap()
+}
+
+/// The same, once codex has acknowledged the turn and finished it. A new
+/// thread has no rollout for the session routes to find, so its journal row
+/// is where its run is watched.
+async fn settled_codex_journal(probe: &Probe, thread: &str) -> String {
+    let db = probe.instance_db();
+    let db = db.as_path();
+    common::wait_for_async("the codex turn to finish", std::time::Duration::from_secs(10), move || async move {
+        let row = common::rows(db, "SELECT payload FROM runs WHERE session_id = ?1", (thread,)).into_iter().next()?;
+        let record: Value = serde_json::from_str(&row).ok()?;
+        (record["codex"]["completed_turn"].is_string() && record["codex"]["queue"] == json!([])).then_some(())
+    })
+    .await;
+    codex_journal(probe, thread)
+}
+
+/// What a new codex session is sent, byte for byte: the handshake, the thread
+/// and a read-only turn. Then the thread's settings as the run journal stores
+/// them, which a later build reads back. Only the ids minted per run and the
+/// workspace path are filled in.
+#[tokio::test]
+async fn a_new_codex_session_is_sent_its_handshake_thread_and_turn_byte_for_byte() {
+    let probe = Probe::start().await;
+    let workspace = probe.workspace();
+    let created = probe
+        .send_ok(
+            "POST",
+            "/api/sessions/new",
+            json!({"source": "codex", "cwd": workspace.to_string_lossy(), "text": "start", "permission": "read-only"}),
+            200,
+        )
+        .await;
+    let thread = created["id"].as_str().expect("the thread id").to_owned();
+    let journal = settled_codex_journal(&probe, &thread).await;
+
+    let lines = support::codex_stdin(&workspace);
+    assert_eq!(lines.len(), 4, "{lines:?}");
+    assert_eq!(
+        lines[0],
+        support::wire(
+            r#"{"id":"UUID","method":"initialize","params":{"clientInfo":{"name":"remote_hand","title":"remote-hand","version":"VERSION"}}}"#,
+            &[("UUID", &support::id_of(&lines[0])), ("VERSION", env!("CARGO_PKG_VERSION"))]
+        )
+    );
+    assert_eq!(lines[1], support::wire(r#"{"method":"initialized","params":{}}"#, &[]));
+    assert_eq!(
+        lines[2],
+        support::wire(
+            r#"{"id":"UUID","method":"thread/start","params":{"cwd":"CWD","approvalPolicy":"never"}}"#,
+            &[("UUID", &support::id_of(&lines[2])), ("CWD", &workspace.to_string_lossy())]
+        )
+    );
+    let qid = support::id_of(&lines[3]).strip_prefix("start:").expect("a turn's id").to_owned();
+    assert_eq!(
+        lines[3],
+        support::wire(
+            r#"{"id":"start:QID","method":"turn/start","params":{"input":[{"type":"text","text":"start"}],"approvalPolicy":"never","sandboxPolicy":{"type":"readOnly"},"threadId":"THREAD","clientUserMessageId":"QID"}}"#,
+            &[("QID", &qid), ("THREAD", &thread)]
+        )
+    );
+    assert!(
+        journal.contains(r#","settings":{"model":"test-model","effort":"low","sandboxPolicy":{"type":"readOnly"}},"#),
+        "{journal}"
+    );
+
+    probe.stop().await;
+}
+
+/// A setting the thread answer leaves out is journaled as an explicit null,
+/// in its place, and a turn that names it fills that place in.
+#[tokio::test]
+async fn thread_settings_codex_leaves_out_are_journaled_as_nulls() {
+    let probe = Probe::start().await;
+    let workspace = probe.workspace();
+    std::fs::write(workspace.join("thread-settings.json"), r#"{"model": "test-model"}"#).expect("plan the thread settings");
+    let created = probe
+        .send_ok(
+            "POST",
+            "/api/sessions/new",
+            json!({"source": "codex", "cwd": workspace.to_string_lossy(), "text": "start", "permission": "read-only"}),
+            200,
+        )
+        .await;
+    let thread = created["id"].as_str().expect("the thread id").to_owned();
+    let journal = settled_codex_journal(&probe, &thread).await;
+    assert!(
+        journal.contains(r#","settings":{"model":"test-model","effort":null,"sandboxPolicy":{"type":"readOnly"}},"#),
+        "{journal}"
+    );
+
+    probe.stop().await;
+}
+
+/// What a resumed codex thread is sent, byte for byte: the handshake, the
+/// resume, a turn, a steer into it and the interrupt that stops it. And the
+/// queued message, beside the thread's settings, as the run journal stores it
+/// until codex has it.
+#[tokio::test]
+async fn a_resumed_codex_thread_is_sent_its_resume_turn_steer_and_interrupt_byte_for_byte() {
+    const INSTANCE: &str = "codex-wire";
+    const THREAD: &str = "0199c1a1-2b3c-4d5e-8f60-112233445566";
+    let probe = Probe::start_named(Some(INSTANCE)).await;
+    let workspace = probe.workspace();
+    owned_codex_thread(&probe, INSTANCE, THREAD).await;
+    support::plan_slow_cli(&workspace, 120.0);
+    let path = format!("/api/sessions/codex/{THREAD}");
+
+    let (status, body) = message(&probe, "codex", THREAD, json!({"text": "one"})).await;
+    assert_eq!(status, 200, "{body}");
+    let (path, server) = (path.as_str(), &probe);
+    common::wait_for_async("codex to acknowledge the turn", std::time::Duration::from_secs(10), move || async move {
+        let resident = server.get_json(path).await["summary"]["resident"].clone();
+        (resident["phase"] == "working" && resident["queued"] == 0).then_some(())
+    })
+    .await;
+
+    let (status, body) = message(&probe, "codex", THREAD, json!({"text": "native correction"})).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["queued"], true);
+    let detail = probe.get_json(path).await;
+    let qid = detail["summary"]["resident"]["queuedMessages"][0]["id"].as_str().expect("the queued id").to_owned();
+    let journal = codex_journal(&probe, THREAD);
+    let stored = r#","queue":[{"id":"QID","text":"native correction","params":{"input":[{"type":"text","text":"native correction"}],"approvalPolicy":"never"},"request":null,"uncertain":false}],"settings":{"model":"test-model","effort":"low","sandboxPolicy":{"type":"readOnly"}},"#
+        .replace("QID", &qid);
+    assert!(journal.contains(&stored), "{journal}");
+
+    probe
+        .send_ok("POST", &format!("{path}/queue/{qid}/steer"), json!({}), 200)
+        .await;
+    probe.send_ok("POST", &format!("{path}/interrupt"), json!({}), 200).await;
+    let injection = probe.wait_for_injection_within("codex", THREAD, std::time::Duration::from_secs(10)).await;
+    assert_eq!(injection["interrupted"], true);
+
+    let lines = support::codex_stdin(&workspace);
+    assert_eq!(lines.len(), 6, "{lines:?}");
+    assert_eq!(
+        lines[0],
+        support::wire(
+            r#"{"id":"UUID","method":"initialize","params":{"clientInfo":{"name":"remote_hand","title":"remote-hand","version":"VERSION"}}}"#,
+            &[("UUID", &support::id_of(&lines[0])), ("VERSION", env!("CARGO_PKG_VERSION"))]
+        )
+    );
+    assert_eq!(lines[1], support::wire(r#"{"method":"initialized","params":{}}"#, &[]));
+    assert_eq!(
+        lines[2],
+        support::wire(
+            r#"{"id":"UUID","method":"thread/resume","params":{"cwd":"CWD","approvalPolicy":"never","threadId":"THREAD"}}"#,
+            &[("UUID", &support::id_of(&lines[2])), ("CWD", &workspace.to_string_lossy()), ("THREAD", THREAD)]
+        )
+    );
+    let first = support::id_of(&lines[3]).strip_prefix("start:").expect("a turn's id").to_owned();
+    assert_eq!(
+        lines[3],
+        support::wire(
+            r#"{"id":"start:QID","method":"turn/start","params":{"input":[{"type":"text","text":"one"}],"approvalPolicy":"never","threadId":"THREAD","clientUserMessageId":"QID"}}"#,
+            &[("QID", &first), ("THREAD", THREAD)]
+        )
+    );
+    assert_eq!(
+        lines[4],
+        support::wire(
+            r#"{"id":"steer:QID","method":"turn/steer","params":{"threadId":"THREAD","expectedTurnId":"turn-1","input":[{"type":"text","text":"native correction"}],"clientUserMessageId":"QID"}}"#,
+            &[("QID", &qid), ("THREAD", THREAD)]
+        )
+    );
+    assert_eq!(
+        lines[5],
+        support::wire(
+            r#"{"id":"UUID","method":"turn/interrupt","params":{"threadId":"THREAD","turnId":"turn-1"}}"#,
+            &[("UUID", &support::id_of(&lines[5])), ("THREAD", THREAD)]
+        )
     );
 
     probe.stop().await;

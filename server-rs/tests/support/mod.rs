@@ -807,6 +807,49 @@ pub async fn wait_for_prompts(dir: &Path, count: usize) -> Vec<String> {
     }
 }
 
+/// Every whole line the fake `codex` has read from its stdin in `dir`, byte for
+/// byte, each with the newline that ended it.
+pub fn codex_stdin(dir: &Path) -> Vec<String> {
+    std::fs::read_to_string(dir.join("codex-stdin.jsonl"))
+        .unwrap_or_default()
+        .split_inclusive('\n')
+        .filter(|line| line.ends_with('\n'))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Wait until the fake `codex` has read `count` lines in `dir`, and return them.
+pub async fn wait_for_codex_stdin(dir: &Path, count: usize) -> Vec<String> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let seen = codex_stdin(dir);
+        if seen.len() >= count {
+            return seen;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the codex in {} read {} line(s), not {count}: {seen:?}",
+            dir.display(),
+            seen.len()
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+/// One line as written: `template` with each placeholder replaced by the value
+/// that differs from run to run, and the newline that ends it.
+pub fn wire(template: &str, values: &[(&str, &str)]) -> String {
+    let mut line = values.iter().fold(template.to_owned(), |line, (from, to)| line.replace(from, to));
+    line.push('\n');
+    line
+}
+
+/// The `id` member of a written line, for the requests that mint their own.
+pub fn id_of(line: &str) -> String {
+    let value: Value = serde_json::from_str(line).expect("a JSON line");
+    value["id"].as_str().expect("a string id").to_owned()
+}
+
 /// Give the fake `claude` a `/usage` reply to print from `dir`.
 pub fn plan_usage(dir: &Path, body: &str) {
     std::fs::create_dir_all(dir).expect("usage dir");
