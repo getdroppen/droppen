@@ -2276,7 +2276,7 @@ async fn transcript_progress(source: Source, paths: &Paths, id: &str) -> Option<
         // is always `None`, which falls back to output activity exactly as the
         // TypeScript does for a session with no file yet.
         Source::Codex => codex::find_codex_session(paths, id).await.map(|s| std::path::PathBuf::from(s.file_path)),
-        Source::Acp => crate::sessions::acp_transcript::locate(paths, id).await.map(|(_, file)| file),
+        Source::Acp => crate::sessions::acp_transcript::AcpTranscripts::of(paths).locate(id).await.map(|(_, file)| file),
     }?;
     let modified = tokio::fs::metadata(&path).await.ok()?.modified().ok()?;
     let age = std::time::SystemTime::now().duration_since(modified).ok()?;

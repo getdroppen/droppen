@@ -100,12 +100,6 @@ pub fn valid_agent_id(id: &str) -> bool {
         && id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
-/// The directory one agent's transcripts are kept in, or `None` for an id that
-/// cannot name one ([`valid_agent_id`]).
-pub fn agent_dir(paths: &Paths, agent: &str) -> Option<PathBuf> {
-    valid_agent_id(agent).then(|| AcpTranscripts::of(&paths).dir().join(agent))
-}
-
 /// Whether `id` can name a session: only the ids that cannot leave the
 /// directory are let near a path. This server mints UUIDs; the agent's own
 /// ids are held to the same rule, so nothing odd reaches a header either.
@@ -113,35 +107,43 @@ pub fn valid_id(id: &str) -> bool {
     !id.is_empty() && id.len() <= 128 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
-/// Where the transcript of session `id` is, and which agent's directory it is
-/// in; `None` when there is no such session.
-pub async fn locate(paths: &Paths, id: &str) -> Option<(String, PathBuf)> {
-    if !valid_id(id) {
-        return None;
+impl AcpTranscripts {
+    /// The directory one agent's transcripts are kept in, or `None` for an id
+    /// that cannot name one ([`valid_agent_id`]).
+    pub fn agent_dir(&self, agent: &str) -> Option<PathBuf> {
+        valid_agent_id(agent).then(|| self.dir().join(agent))
     }
-    for agent in agent_dirs(paths).await {
-        let file = AcpTranscripts::of(&paths).dir().join(&agent).join(format!("{id}.jsonl"));
-        if tokio::fs::metadata(&file).await.is_ok_and(|metadata| metadata.is_file()) {
-            return Some((agent, file));
-        }
-    }
-    None
-}
 
-/// Every agent directory there is, by agent id, in id order.
-async fn agent_dirs(paths: &Paths) -> Vec<String> {
-    let Ok(mut entries) = tokio::fs::read_dir(AcpTranscripts::of(&paths).dir()).await else {
-        return Vec::new();
-    };
-    let mut agents = Vec::new();
-    while let Ok(Some(entry)) = entries.next_entry().await {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if valid_agent_id(&name) && entry.file_type().await.is_ok_and(|kind| kind.is_dir()) {
-            agents.push(name);
+    /// Where the transcript of session `id` is, and which agent's directory it
+    /// is in; `None` when there is no such session.
+    pub async fn locate(&self, id: &str) -> Option<(String, PathBuf)> {
+        if !valid_id(id) {
+            return None;
         }
+        for agent in self.agent_dirs().await {
+            let file = self.dir().join(&agent).join(format!("{id}.jsonl"));
+            if tokio::fs::metadata(&file).await.is_ok_and(|metadata| metadata.is_file()) {
+                return Some((agent, file));
+            }
+        }
+        None
     }
-    agents.sort();
-    agents
+
+    /// Every agent directory there is, by agent id, in id order.
+    async fn agent_dirs(&self) -> Vec<String> {
+        let Ok(mut entries) = tokio::fs::read_dir(self.dir()).await else {
+            return Vec::new();
+        };
+        let mut agents = Vec::new();
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if valid_agent_id(&name) && entry.file_type().await.is_ok_and(|kind| kind.is_dir()) {
+                agents.push(name);
+            }
+        }
+        agents.sort();
+        agents
+    }
 }
 
 /// What a transcript's `session` record says about the session.
@@ -570,9 +572,10 @@ pub async fn has_conversation(file_path: &Path) -> bool {
 /// order is the caller's.
 pub async fn list_sessions(paths: &Paths) -> Vec<SessionSummary> {
     let titles = super::custom_titles(paths, Source::Acp).await;
+    let transcripts = AcpTranscripts::of(paths);
     let mut out = Vec::new();
-    for agent in agent_dirs(paths).await {
-        let dir = AcpTranscripts::of(&paths).dir().join(&agent);
+    for agent in transcripts.agent_dirs().await {
+        let dir = transcripts.dir().join(&agent);
         let Ok(mut entries) = tokio::fs::read_dir(&dir).await else { continue };
         while let Ok(Some(entry)) = entries.next_entry().await {
             let name = entry.file_name().to_string_lossy().into_owned();
@@ -587,7 +590,7 @@ pub async fn list_sessions(paths: &Paths) -> Vec<SessionSummary> {
 
 /// One session's list row, or `None` when there is no such session.
 pub async fn find_session(paths: &Paths, id: &str) -> Option<SessionSummary> {
-    let (agent, file_path) = locate(paths, id).await?;
+    let (agent, file_path) = AcpTranscripts::of(paths).locate(id).await?;
     let titles = super::custom_titles(paths, Source::Acp).await;
     summary_of(paths, &agent, &file_path, id, &titles).await
 }
@@ -767,7 +770,7 @@ mod tests {
     async fn a_transcript_lists_as_an_owned_session_of_its_agent() {
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(home.path().to_path_buf());
-        let dir = agent_dir(&paths, "mine").expect("a slug");
+        let dir = AcpTranscripts::of(&paths).agent_dir("mine").expect("a slug");
         tokio::fs::create_dir_all(&dir).await.unwrap();
         let file = dir.join("abc123.jsonl");
         let body = lines(&[
@@ -796,7 +799,7 @@ mod tests {
         let header = read_header(&file).await.expect("a header");
         assert_eq!(header.agent_session_id.as_deref(), Some("agent-1"));
         assert_eq!(header.cwd.as_deref(), Some("/work"));
-        assert!(agent_dir(&paths, "../x").is_none());
+        assert!(AcpTranscripts::of(&paths).agent_dir("../x").is_none());
     }
 
     #[tokio::test]
@@ -804,7 +807,7 @@ mod tests {
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(home.path().to_path_buf());
         for (agent, id) in [("one", "s-1"), ("two", "s-2")] {
-            let dir = agent_dir(&paths, agent).unwrap();
+            let dir = AcpTranscripts::of(&paths).agent_dir(agent).unwrap();
             tokio::fs::create_dir_all(&dir).await.unwrap();
             // Both agents gave their session the same id; this server's ids differ.
             let header = record("session", json!({"id": id, "agent": agent, "agentSessionId": "same", "cwd": "/w"}));
@@ -813,7 +816,7 @@ mod tests {
         let mut listed: Vec<(String, Option<String>)> = list_sessions(&paths).await.into_iter().map(|row| (row.id, row.acp_agent)).collect();
         listed.sort();
         assert_eq!(listed, vec![("s-1".into(), Some("one".into())), ("s-2".into(), Some("two".into()))]);
-        assert_eq!(locate(&paths, "s-2").await.map(|(agent, _)| agent).as_deref(), Some("two"));
+        assert_eq!(AcpTranscripts::of(&paths).locate("s-2").await.map(|(agent, _)| agent).as_deref(), Some("two"));
     }
 
     #[test]

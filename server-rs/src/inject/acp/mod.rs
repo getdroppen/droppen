@@ -55,7 +55,7 @@ use std::process::Stdio;
 use super::*;
 use crate::acp::{category, option_for, ConfigOption, InitializeResponse};
 use crate::acp_agent::{AcpAgent, AcpAgentRegistry, AcpCheck, AcpCheckState};
-use crate::sessions::acp_transcript::{agent_dir, has_conversation, locate, read_header, record, Translator};
+use crate::sessions::acp_transcript::{has_conversation, read_header, record, AcpTranscripts, Translator};
 use client::Client;
 use conn::Conn;
 pub(super) use driver::Handle;
@@ -498,7 +498,7 @@ impl InjectionRegistry {
     /// the one its transcript is kept under, whatever else is configured now.
     /// Under the gate as [`InjectionRegistry::acp_start`] is.
     pub(super) async fn acp_send(self: &Arc<Self>, id: &str, text: &str, options: &SendOptions) -> Result<Sent, InjectError> {
-        let (agent_id, file) = locate(&self.paths, id)
+        let (agent_id, file) = AcpTranscripts::of(&self.paths).locate(id)
             .await
             .ok_or_else(|| InjectError::message("ACP session not found"))?;
         let gate = self.spawn_gate.lock().await;
@@ -580,7 +580,7 @@ impl InjectionRegistry {
     /// archives are: the user is told rather than the work being dropped.
     pub async fn archive_acp(&self, id: &str) -> Result<(), crate::sessions::archive::ArchiveError> {
         use crate::sessions::archive::ArchiveError;
-        let (agent_id, from) = locate(&self.paths, id)
+        let (agent_id, from) = AcpTranscripts::of(&self.paths).locate(id)
             .await
             .ok_or_else(|| ArchiveError("cannot archive the ACP session: it is gone".to_string()))?;
         let name = AcpAgentRegistry::of(&self.paths).get(&agent_id).map_or(agent_id.clone(), |agent| agent.name);
@@ -643,7 +643,7 @@ impl InjectionRegistry {
                 // defaults the composer offers. A reopened one's say what *it*
                 // was switched to, which is nobody else's default.
                 self.remember_acp_options(&agent.id, &opened.options);
-                let dir = agent_dir(&self.paths, &agent.id).ok_or_else(|| InjectError::Internal(format!("unusable agent id {}", agent.id)))?;
+                let dir = AcpTranscripts::of(&self.paths).agent_dir(&agent.id).ok_or_else(|| InjectError::Internal(format!("unusable agent id {}", agent.id)))?;
                 tokio::fs::create_dir_all(&dir)
                     .await
                     .map_err(|error| InjectError::Internal(error.to_string()))?;
@@ -978,7 +978,7 @@ mod tests {
         let behind = tokio::time::timeout(Duration::from_secs(20), behind).await.expect("answered").expect("joined");
         assert!(behind.is_err(), "the process went before it took the message");
         until("the process to go", || injections.acp_handle(&id).is_some_and(|handle| !handle.alive())).await;
-        let (_, file) = locate(&state.paths, &id).await.expect("its transcript");
+        let (_, file) = AcpTranscripts::of(&state.paths).locate(&id).await.expect("its transcript");
         let transcript = std::fs::read_to_string(file).expect("transcript");
         assert_eq!(transcript.matches("did not answer a switch of its model").count(), 1, "{transcript}");
     }
