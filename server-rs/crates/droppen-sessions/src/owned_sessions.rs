@@ -141,6 +141,14 @@ impl OwnedSessions {
     }
 }
 
+/// Record `id` as this instance's own under `source` without that CLI's
+/// reader: for a test of one CLI's reader that needs another CLI's row beside
+/// its own.
+#[cfg(any(test, feature = "test-support"))]
+pub async fn record_as(paths: &Paths, source: Source, id: &str) -> std::io::Result<()> {
+    insert(paths, source, id).await
+}
+
 /// This instance's database.
 ///
 /// No `stat`-keyed parse cache any more, and its absence is deliberate rather

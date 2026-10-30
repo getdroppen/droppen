@@ -972,7 +972,7 @@ mod tests {
         // Codex is left alone whatever the filesystem says: `~/.codex` hides
         // archived threads from every lookup cheap enough to run at boot, so
         // "not found" there is not "gone".
-        crate::provider::codex::sessions::codex::CodexSessions.record_owned(&paths, "archived-thread").await.expect("record");
+        owned_sessions::record_as(&paths, Source::Codex, "archived-thread").await.expect("record");
 
         ClaudeCodeSessions.prune_owned(&paths).await;
 
@@ -1451,8 +1451,9 @@ mod tests {
     }
 
     /// The root a session is bound by is found as every lookup by id finds
-    /// it: managed first, an archived session not at all, and only by Claude
-    /// Code's reader, the one whose sessions live in a Claude root.
+    /// it: managed first, an archived session not at all. That no other CLI's
+    /// reader finds one is the server's test
+    /// (`app::tests::only_claude_code_s_reader_finds_a_claude_root`).
     #[tokio::test]
     async fn a_session_s_root_is_found_managed_first_and_never_when_archived() {
         use droppen_sessions::Transcripts;
@@ -1473,8 +1474,6 @@ mod tests {
         assert!(find_in_root(&paths, ClaudeRoot::Local, "hidden").await.is_some(), "the file is there");
         assert_eq!(ClaudeCodeSessions.find_root(&paths, "hidden").await, None, "but archived");
         assert_eq!(ClaudeCodeSessions.find_root(&paths, "nothing").await, None);
-        assert_eq!(crate::provider::codex::sessions::codex::CodexSessions.find_root(&paths, "local").await, None, "codex has no Claude root");
-        assert_eq!(droppen_provider_acp::sessions::AcpSessions.find_root(&paths, "local").await, None, "nor an ACP agent");
     }
 
     /// What Claude Code says to the user: the speech the attention clock, the
