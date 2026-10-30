@@ -7,6 +7,7 @@ use super::{LocalPlan, Login};
 use crate::accounts::local_login::LocalLoginState;
 use crate::accounts::quota::readings::SharedReading;
 use crate::accounts::quota::claude::ClaudeUsageProbeExt;
+use crate::accounts::rotation::FAMILIES;
 use crate::accounts::quota::{is_rate_limited, mentions_status, CodexQuota, ProbeRoots, QuotaProbeError, UsageProbe};
 use crate::accounts::store::{AccountError, AccountKind, AccountLaunch, AccountProvider};
 use droppen_base::env_block::EnvVar;
@@ -285,6 +286,24 @@ impl Login for ClaudeCodeLogin {
     ) -> Option<BoxFuture<'a, Option<Value>>> {
         None
     }
+
+    /// A claude session moves, on a limit and off a resting default.
+    fn rotates(&self) -> bool {
+        true
+    }
+
+    /// `claude-fable-5-1`, `fable`, `opus[1m]` and `claude-opus-4-1` all say
+    /// which family they are; a custom gateway model and the CLI's default
+    /// name none.
+    fn model_family(&self, model: Option<&str>) -> Option<&'static str> {
+        let lower = model?.to_ascii_lowercase();
+        FAMILIES.into_iter().find(|family| lower.contains(family))
+    }
+
+    /// Every claude login keeps its own `/usage` reading.
+    fn reads_per_login(&self) -> bool {
+        true
+    }
 }
 
 #[cfg(test)]
@@ -294,6 +313,18 @@ mod tests {
     use crate::accounts::verify::StubCli;
     use droppen_base::process_env::set_child_path;
     use crate::accounts::quota::{QuotaReadingSource, QuotaWindow};
+
+    #[test]
+    fn model_ids_and_aliases_name_their_family() {
+        let family = |model| ClaudeCodeLogin.model_family(model);
+        assert_eq!(family(Some("claude-fable-5-1")), Some("fable"));
+        assert_eq!(family(Some("fable")), Some("fable"));
+        assert_eq!(family(Some("opus[1m]")), Some("opus"));
+        assert_eq!(family(Some("claude-sonnet-4-5-20250929")), Some("sonnet"));
+        assert_eq!(family(Some("Claude-Haiku-4-5")), Some("haiku"));
+        assert_eq!(family(Some("glm-4.6")), None, "a gateway's model is nobody's family");
+        assert_eq!(family(None), None);
+    }
 
     /// A CLI that fell over is not a CLI that turned the credential down.
     ///

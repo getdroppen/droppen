@@ -34,6 +34,7 @@ use serde::{Deserialize, Serialize};
 use super::login::Logins;
 use super::quota::readings::SharedReading;
 use super::rest::{AccountRest, LimitLog, LOCAL_CLAUDE, LOCAL_CODEX};
+use super::store::AccountProvider;
 use droppen_sessions::account::LimitClass;
 
 /// Whether the machine's own login can start a session right now, as far as
@@ -76,6 +77,16 @@ pub struct LocalLogins {
     pub claude: LocalLogin,
     /// The user's own `~/.codex`.
     pub codex: LocalLogin,
+}
+
+impl LocalLogins {
+    /// The local login of the CLI `provider` names.
+    pub fn of(self, provider: AccountProvider) -> LocalLogin {
+        match provider {
+            AccountProvider::Claude => self.claude,
+            AccountProvider::Codex => self.codex,
+        }
+    }
 }
 
 impl Logins {
@@ -150,6 +161,23 @@ mod tests {
             at,
         )
         .expect("record");
+    }
+
+    /// Each CLI's start reads its own local login, never the other's.
+    #[test]
+    fn each_cli_reads_its_own_local_login() {
+        let logins = LocalLogins {
+            claude: LocalLogin {
+                state: LocalLoginState::SignedIn,
+                ..Default::default()
+            },
+            codex: LocalLogin {
+                state: LocalLoginState::SignedOut,
+                ..Default::default()
+            },
+        };
+        assert_eq!(logins.clone().of(AccountProvider::Claude).state, LocalLoginState::SignedIn);
+        assert_eq!(logins.of(AccountProvider::Codex).state, LocalLoginState::SignedOut);
     }
 
     #[test]

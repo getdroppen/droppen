@@ -89,6 +89,21 @@ pub trait Login: Send + Sync {
         method: &'a str,
         timeout: Duration,
     ) -> Option<BoxFuture<'a, Option<Value>>>;
+
+    /// Whether this CLI's sessions move between accounts: off the account a
+    /// limit ended a turn on, and off a configured default that is resting or
+    /// about to run out ([`super::rotation`]). A CLI whose sessions stay on
+    /// the account they started on answers `false`.
+    fn rotates(&self) -> bool;
+
+    /// The family `model` belongs to, as the limits scope rests to families
+    /// ([`super::rotation::FAMILIES`]), or `None` for a model that names none:
+    /// a family's rest stands in the way of that family's sessions only.
+    fn model_family(&self, model: Option<&str>) -> Option<&'static str>;
+
+    /// Whether each of this CLI's accounts keeps a usage reading of its own
+    /// ([`super::quota::QuotaCache::cached`]), which rotation ranks the pool by.
+    fn reads_per_login(&self) -> bool;
 }
 
 /// The plan the user's own login of a CLI is on ([`Login::local_plan`]).
@@ -118,10 +133,10 @@ pub struct Logins {
 
 impl Logins {
     /// The login of the CLI `provider` names.
-    pub fn of(&self, provider: AccountProvider) -> &dyn Login {
+    pub fn of(&self, provider: AccountProvider) -> &Arc<dyn Login> {
         match provider {
-            AccountProvider::Claude => self.claude.as_ref(),
-            AccountProvider::Codex => self.codex.as_ref(),
+            AccountProvider::Claude => &self.claude,
+            AccountProvider::Codex => &self.codex,
         }
     }
 }

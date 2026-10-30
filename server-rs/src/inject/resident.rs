@@ -70,6 +70,8 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 
 use crate::accounts::limits::{self, Verdict};
+use crate::accounts::login::claude::ClaudeCodeLogin;
+use crate::accounts::login::Login;
 use crate::accounts::quota::claude::RateLimitWindows;
 use crate::accounts::rest::{self, Observation};
 use crate::accounts::rotation::{self, AheadGuards, AheadPlan, Plan, Wait};
@@ -3266,7 +3268,7 @@ impl Driver {
         let from = accounts.get(&from_id).await;
         let bound = accounts.session_account_id_for(&self.id, AccountProvider::Claude).await;
         let rebound = bound.as_deref().is_some_and(|bound| bound != from_id);
-        if !rotation::triggers(verdict.class, from.as_ref(), rebound) {
+        if !rotation::triggers(accounts.logins(), verdict.class, from.as_ref(), rebound) {
             return false;
         }
         let Some(from) = from else { return false };
@@ -3314,8 +3316,8 @@ impl Driver {
     async fn decide(&self, live: &Fingerprint, from: &str, switches: u8) -> Choice {
         let accounts = &self.registry.accounts;
         let bound = accounts.session_account_id_for(&self.id, AccountProvider::Claude).await;
-        let pool = rotation::pool(accounts, &self.registry.quota).await;
-        let family = rotation::model_family(live.resolved.as_deref().or(live.model.as_deref()));
+        let pool = rotation::pool_of(accounts, &self.registry.quota, AccountProvider::Claude).await;
+        let family = ClaudeCodeLogin.model_family(live.resolved.as_deref().or(live.model.as_deref()));
         match rotation::choose(&pool, from, bound.as_deref(), family, switches, rest::now_ms()) {
             Plan::Switch(id) => Choice::Switch(
                 pool.iter()
@@ -3627,7 +3629,7 @@ impl Driver {
         if self.queue.iter().any(|pending| pending.fingerprint.account != live.account) {
             return false;
         }
-        let family = rotation::model_family(live.resolved.as_deref().or(live.model.as_deref()));
+        let family = ClaudeCodeLogin.model_family(live.resolved.as_deref().or(live.model.as_deref()));
         let now = rest::now_ms();
         // The cheap question first, at every quiet point: this account's own
         // reading. The binding, the log, the background work on disk and the
@@ -3656,7 +3658,7 @@ impl Driver {
             last_ahead_ms: log.last_ahead_ms(&self.id),
             bound_by_hand_ms: log.bound_by_hand_ms(&self.id),
         };
-        let pool = rotation::pool(&accounts, &self.registry.quota).await;
+        let pool = rotation::pool_of(&accounts, &self.registry.quota, AccountProvider::Claude).await;
         match rotation::plan_ahead(&pool, &from_id, family, threshold, guards, now) {
             AheadPlan::Stay => false,
             AheadPlan::Defer(near, why) => {
@@ -11015,6 +11017,33 @@ dir=$(dirname "$GO")
         assert_eq!(harness.tokens(), vec![fake_token("b@team")]);
     }
 
+    /// A rest stands in the way of its own family only, and the family is the
+    /// one of the model the process runs: a fable session limited on its
+    /// account moves to the only other pool account, which rests under opus.
+    #[tokio::test]
+    async fn a_limited_session_moves_past_a_rest_on_another_family() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let (accounts, live) = accounts_in(home.path(), &[("a@work", true), ("b@team", true)], Some("fable")).await;
+        let b = accounts[1].clone();
+        let resets = rest::now_ms() / 1000 + 7200;
+        let harness = Harness::rotating(home, &refused_once("five_hour", resets, SESSION_LIMIT, ""), live.clone()).await;
+        rest_on(&harness.registry, &b.id, LimitClass::Weekly, "opus", rest::now_ms() + 3 * 86_400_000);
+        harness.plan_claude(&rotated_claude(TURN_OK));
+        until("the init", || harness.state().phase == Phase::Idle).await;
+
+        harness.send_with("first", harness.recipe(live.clone()));
+        harness.release();
+        until("the decision", || harness.latest_rotation().is_some()).await;
+        let rotation = harness.latest_rotation().expect("a decision");
+        assert_eq!(
+            (rotation.outcome, rotation.to.id.as_str()),
+            (RotationOutcome::Switched, b.id.as_str()),
+            "b's opus rest is no reason to hold a fable session"
+        );
+        until("the continuation", || harness.after().len() == 1).await;
+        assert_eq!(harness.tokens(), vec![fake_token("b@team")]);
+    }
+
     /// Rest `account` under `scope` until `until_ms`, as phase 1 would have.
     fn rest_on(registry: &InjectionRegistry, account: &str, class: LimitClass, scope: &str, until_ms: i64) {
         registry
@@ -11531,6 +11560,37 @@ done
         until("the third message, on the same new process", || harness.after().len() == 2).await;
         assert_eq!(harness.respawns().len(), 1, "{:?}", harness.spawns());
         assert_eq!(harness.rotations().len(), 1, "{:?}", harness.rotations());
+    }
+
+    /// Ahead of a limit, too, a rest stands in the way of its own family
+    /// only: a fable session whose five-hour window is near moves to the only
+    /// other pool account, which has room and rests under opus.
+    #[tokio::test]
+    async fn a_session_moves_ahead_past_a_rest_on_another_family() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let (accounts, live) = accounts_in(home.path(), &[("a@work", true), ("b@team", true)], Some("fable")).await;
+        let b = accounts[1].clone();
+        let resets = rest::now_ms() / 1000 + 5400;
+        let harness = Harness::rotating(home, &warns_every_turn(0.96, resets, ""), live.clone()).await;
+        read_account(&harness.registry, &b.id, 0.10, 0.20);
+        rest_on(&harness.registry, &b.id, LimitClass::Weekly, "opus", rest::now_ms() + 3 * 86_400_000);
+        harness.plan_claude(&rotated_claude(TURN_OK));
+        until("the init", || harness.state().phase == Phase::Idle).await;
+
+        harness.send_with("first", harness.recipe(live.clone()));
+        until("the first turn", || harness.state().phase == Phase::Working).await;
+        harness.send_with("second", harness.recipe(live.clone()));
+        until("the second message to queue", || harness.state().queued == 1).await;
+        harness.release();
+
+        until("the second message to go in", || harness.seen().len() + harness.after().len() == 2).await;
+        assert_eq!(
+            harness.tokens(),
+            vec![fake_token("b@team")],
+            "b's opus rest is no reason to keep a fable session on the account running out"
+        );
+        let rotation = harness.latest_rotation().expect("the decision is on record");
+        assert_eq!((rotation.trigger, rotation.to.id.as_str()), (RotationTrigger::Ahead, b.id.as_str()));
     }
 
     /// The point of moving early is that nothing is cut off, so a turn that
