@@ -14,6 +14,8 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use droppen_auth::users::UsersStore;
+use droppen_instance::paths::Paths;
 use futures_util::StreamExt;
 use serde_json::{json, Value};
 
@@ -459,6 +461,90 @@ async fn the_authorization_url_is_reported_and_a_pasted_code_is_typed_into_the_w
         )
         .await;
     assert_eq!(status, 409, "{body}");
+    server.stop().await;
+}
+
+/// Only the desktop app's own window leaves the CLI's browser openers alone.
+///
+/// The CLI opens the sign-in page itself. On the screen of the person who asked
+/// that is the shortest way through; asked from anywhere else, it would open a
+/// browser where nobody is looking, so the wizard shadows every opener with a
+/// no-op (the test above). Both ways in, a new account and a re-authorization,
+/// ask the desktop-window gate, and the gate answers from the port the server
+/// listens on: the same request addressed to another port is a stranger's.
+#[tokio::test]
+async fn only_the_desktop_apps_own_window_lets_the_wizard_open_a_browser() {
+    ensure_fake_claude_on_path();
+    let home = tempfile::tempdir().expect("tempdir");
+    let secret = "correct horse battery";
+    UsersStore::new(&Paths::for_instance(home.path().to_path_buf(), "droppen-app"))
+        .add_app("droppen-app", secret)
+        .await
+        .expect("app account");
+    let server = common::TestServer::start_desktop_app_at(home.path(), "droppen-app").await;
+    let (status, body) = server
+        .json("POST", "/api/auth/login", &json!({ "username": "droppen-app", "password": secret }))
+        .await;
+    assert_eq!(status, 200, "login -> {status}: {body}");
+    let token = serde_json::from_str::<Value>(&body).expect("json")["token"].as_str().expect("token").to_string();
+    let authorization = format!("Bearer {token}");
+
+    // Run a wizard started at `path` by a window at `at` to the end, and say
+    // whether its CLI had the no-op openers: first on `PATH`, and `BROWSER`.
+    let run = |path: String, at: String, body: Value| {
+        let (authorization, server) = (authorization.clone(), &server);
+        async move {
+            let origin = format!("http://{at}");
+            let headers = [
+                ("Content-Type", "application/json"),
+                ("Authorization", authorization.as_str()),
+                ("Host", at.as_str()),
+                ("Origin", origin.as_str()),
+            ];
+            let encoded = serde_json::to_vec(&body).expect("encode");
+            let (status, answer) = server.request("POST", &path, &headers, &encoded).await;
+            assert_eq!(status, 201, "POST {path} at {at} -> {status}: {answer}");
+            let started: Value = serde_json::from_str(&answer).expect("json");
+            let capture_id = started["captureId"].as_str().expect("captureId").to_string();
+            let poll = format!("/api/accounts/setup-token/{capture_id}");
+            let (poll, headers) = (poll.as_str(), &headers);
+            let capture = common::wait_for_async(
+                &format!("capture {capture_id} to settle"),
+                Duration::from_secs(15),
+                move || async move {
+                    let (status, answer) = server.request("GET", poll, headers, &[]).await;
+                    assert_eq!(status, 200, "GET {poll} -> {status}: {answer}");
+                    let capture: Value = serde_json::from_str(&answer).expect("json");
+                    (capture["status"] != json!("pending")).then_some(capture)
+                },
+            )
+            .await;
+            assert_eq!(capture["status"], json!("captured"), "{capture}");
+
+            let env = std::fs::read_to_string(data_dir(server).join("setup-env.txt")).expect("the wizard's environment");
+            let var = |key: &str| env.lines().find_map(|line| line.strip_prefix(key)).map(str::to_owned);
+            let stubs = data_dir(server).join("setup-token").join(&capture_id).join("bin");
+            let openers = (
+                var("PATH=").is_some_and(|path| path.starts_with(&format!("{}:", stubs.display()))),
+                var("BROWSER=").is_some_and(|browser| browser == stubs.join("open").to_string_lossy()),
+            );
+            (capture, openers)
+        }
+    };
+    let here = format!("127.0.0.1:{}", server.addr.port());
+    let elsewhere = format!("127.0.0.1:{}", server.addr.port().wrapping_add(1));
+    let new = "/api/accounts/setup-token".to_string();
+
+    let (capture, openers) = run(new.clone(), here.clone(), json!({ "label": "Mine" })).await;
+    assert_eq!(openers, (false, false), "the app's own window keeps the openers");
+    let (_, openers) = run(new, elsewhere.clone(), json!({ "label": "Theirs" })).await;
+    assert_eq!(openers, (true, true), "a stranger's request gets the no-op openers");
+
+    let reauth = format!("/api/accounts/{}/setup-token", capture["accountId"].as_str().expect("accountId"));
+    let (_, openers) = run(reauth.clone(), here, json!({})).await;
+    assert_eq!(openers, (false, false), "re-authorizing from the app's own window keeps them too");
+    let (_, openers) = run(reauth, elsewhere, json!({})).await;
+    assert_eq!(openers, (true, true), "and a stranger's re-authorization gets the no-ops");
     server.stop().await;
 }
 
