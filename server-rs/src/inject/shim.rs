@@ -1251,9 +1251,14 @@ mod tests {
     /// JSON array: a libtest command line has no room for them.
     const SHIM_ARGV: &str = "DROPPEN_UNIT_TEST_SHIM_ARGV";
 
+    /// The pid of the test process that started the shim, which the shim
+    /// [`session_shim`] ends with.
+    const SHIM_TEST: &str = "DROPPEN_UNIT_TEST_SHIM_TEST";
+
     /// This test binary as the session shim: libtest asked for [`session_shim`]
-    /// and nothing else, the shim's arguments in [`SHIM_ARGV`]. See
-    /// [`super::shim_command`] for why a unit test cannot run the server's.
+    /// and nothing else, the shim's arguments in [`SHIM_ARGV`] and this
+    /// process's pid in [`SHIM_TEST`]. See [`super::shim_command`] for why a
+    /// unit test cannot run the server's.
     pub(super) fn this_binary_as_the_shim(argv: &[OsString], env: &Env) -> Command {
         let argv: Vec<String> = argv
             .iter()
@@ -1266,7 +1271,8 @@ mod tests {
             .args(["--ignored", "--exact", "--quiet", &format!("{module}::session_shim")])
             .env_clear()
             .envs(env)
-            .env(SHIM_ARGV, serde_json::to_string(&argv).expect("json"));
+            .env(SHIM_ARGV, serde_json::to_string(&argv).expect("json"))
+            .env(SHIM_TEST, std::process::id().to_string());
         command
     }
 
@@ -1276,12 +1282,28 @@ mod tests {
     /// It exits rather than returns once the shim is done, with the code the
     /// server's `session-shim` would: the process is the shim, and libtest's
     /// summary after it would be a second ending.
+    ///
+    /// Unlike the server's, it also ends with the test process that started
+    /// it. A server's shim outlives the server, which is what it is for; a
+    /// test's has nothing to outlive it for, and a test can end while its
+    /// driver is still respawning, before the new run is in the journal its
+    /// harness ends processes from. The shim would then hold its claude's
+    /// stdin open for ever. Once it exits, its claude reads end of file and
+    /// goes too.
     #[test]
     #[ignore = "the session shim a unit test's respawn runs, not a test"]
     fn session_shim() {
         let Ok(argv) = std::env::var(SHIM_ARGV) else {
             return;
         };
+        let test: u32 = std::env::var(SHIM_TEST).ok().and_then(|pid| pid.parse().ok()).expect("the test's pid");
+        std::thread::spawn(move || {
+            // Once the test process is gone, this one is someone else's child.
+            while std::os::unix::process::parent_id() == test {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            std::process::exit(1);
+        });
         let argv: Vec<String> = serde_json::from_str(&argv).expect("the shim's arguments");
         let outcome = parse(&argv).map_err(|error| error.to_string()).and_then(|args| {
             let runtime = tokio::runtime::Runtime::new().map_err(|error| format!("cannot start a runtime: {error}"))?;
