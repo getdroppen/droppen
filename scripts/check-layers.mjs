@@ -520,7 +520,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     `forbidden: ${stats.forbidden.rules} rules, checked through every chain of dependencies, each crate's own dev- and build-dependencies included; waiting for their crates: ${stats.forbidden.waiting.join(", ") || "none"}`,
     `wrappers: ${stats.wrappers.map((w) => `${w.crate} only in ${w.wrappers.join(", ")}`).join("; ")}`,
     `largest crate cycle, dev-dependencies included: ${stats.cycle.length} crates${stats.cycle.length ? ` (${stats.cycle.join(", ")})` : ""}`,
-    `middle crates (code lines, members depending on each): ${stats.middle.map((c) => `${c.crate} ${c.code} / ${c.dependents}`).join(", ")}`,
+    `middle crates (code lines, test modules excluded and test-only items elsewhere counted; members depending on each): ${stats.middle.map((c) => `${c.crate} ${c.code} / ${c.dependents}`).join(", ")}`,
     `Source::Claude|Codex|Acp outside the provider crates: ${stats.sourceMatches}, as layers.json records (counted by the server's provider_tests::gate scans)`,
   ];
   if (problems.length) {
