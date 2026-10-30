@@ -7,9 +7,11 @@
 //!   the subscriptions, the payload encryption), and the fan-out that sends
 //!   each of those alerts to Bark as well.
 //!
-//! The auth guard asks [`notify`] about a caller through droppen-http's
-//! `NotifyCredential` port, and the runs, rotations and link events the
-//! fan-out announces reach it through ports the entry fills.
+//! The auth guard asks [`notify`] about a caller through droppen-auth's
+//! `NotifyCredential` port, which the entry answers, and what that proves
+//! travels to the handler in [`droppen_http::identity::NotifyGrant`]. The
+//! runs, rotations and link events the fan-out announces reach it through
+//! ports the entry fills.
 
 pub mod notify;
 pub mod push;

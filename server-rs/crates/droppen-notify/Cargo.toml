@@ -9,8 +9,10 @@ description = "The Droppen server's alert channels: Bark (a session's own nudges
 # The two channels a person is told through. They stand on the session
 # vocabulary, the pty shims' rules, the instance and the HTTP kit, and name
 # none of the server's subsystems: the auth guard asks them about a caller
-# through droppen-http's `NotifyCredential` port, and the runs, rotations and
-# link events they announce reach them through ports the entry fills.
+# through droppen-auth's `NotifyCredential` port, which the entry answers, and
+# what that proves travels in droppen-http's `NotifyGrant`. The runs,
+# rotations and link events they announce reach them through ports the entry
+# fills.
 [dependencies]
 # Web Push's payload encryption (RFC 8291).
 aes-gcm = "0.10"
