@@ -1,55 +1,29 @@
-//! remote-hand's server, on the gotcha framework.
+//! Droppen's server: the entry. Every subsystem is a crate of its own under
+//! `server-rs/crates`, in the layers `server-rs/layers.json` gives it; this
+//! crate builds them into one program and serves them.
 //!
-//! The port is in progress. It began as a four-route feasibility probe, chosen
-//! because between them those routes exercise every framework seam the port
-//! depends on: OpenAPI parity with multi-status responses, a programmatic spec
-//! export, a filesystem-driven websocket feed, an embedded SPA, and graceful
-//! shutdown. Everything that has landed since is a faithful port of the
-//! matching TypeScript module, named after it.
+//! * [`app`] — the application: its configuration and the state every route
+//!   reads ([`api::AppState`]), the CLIs it drives
+//!   ([`app::register_providers`], [`app::transcript_sources`],
+//!   [`app::logins`]), the ports one crate declares and another crate's types
+//!   answer, and a serve loop that can be stopped;
+//! * [`api`] — the router: each subsystem's routes on a state of its own,
+//!   made from [`api::AppState`], and the session list, detail, socket and
+//!   settings, which read several subsystems' state at once;
+//! * [`stream_source`] — what the link copies of this machine's sessions, the
+//!   agent's [`droppen_agent::streams::source::StreamSource`] over the
+//!   sessions and the drive's live state;
+//! * [`cli`] — the command line, and [`export`] its `export-openapi`;
+//! * [`static_files`] — the web app, embedded;
+//! * [`desktop_app`] — a server the desktop app started;
+//! * [`shutdown`] — the signals that stop the server and what it cleans up on
+//!   the way out.
 //!
-//! # Layout
-//!
-//! Each subsystem is a module directory exposing `routes` and `describe`, and
-//! is registered with one line each in [`api`]. Its state is one struct, and it
-//! adds one field to [`api::AppState`].
-//!
-//! * [`droppen_drive::feed`] — the per-session websocket feed, and [`droppen_drive::feed::global`] the
-//!   session-list one behind `GET /api/events`;
-//! * [`droppen_provider_claude_code::claude_roots`] / [`droppen_base::process_env`] — what a spawn runs
-//!   against and with;
-//! * [`droppen_base::env`] — the environment variables this server reads,
-//!   under their Droppen names and the ones they had before;
-//! * [`accounts`] — several Claude logins, stored server-side, and the two pty
-//!   wizards that mint them;
-//! * [`provider`] — driving the local CLIs, one run per session;
-//! * [`droppen_drive`] — the session-driving routes, and the state all of the above
-//!   hangs off ([`droppen_drive::Drive`]);
-//! * [`droppen_drive::chats`] — instant chats: CLI sessions in an anchor directory, plus the
-//!   BYO-API backend and its streamed replies;
-//! * [`droppen_accounts::quota`] — the subscription panel;
-//! * [`droppen_files`] — browsing, reading and uploading under the home directory, and
-//!   the one place a client-supplied path is resolved and bounded;
-//! * [`droppen_files::media`] — images in private GitHub repositories, fetched through the
-//!   host's own `gh` login so a transcript can show what an agent pushed;
-//! * [`droppen_workbench::terminals`] — PTYs the browser drives over a websocket, each one owned
-//!   by a detached [`droppen_pty`] shim so it survives a server restart;
-//! * [`droppen_instance::instance`] — which server owns the adoptable resources on this machine;
-//! * [`droppen_workbench::apps`] — a VS Code server per app, and the [`droppen_workbench::apps::embed`] reverse proxy
-//!   the iframe reaches it through;
-//! * [`droppen_auth`] — local accounts: who may talk to this server at all, and the
-//!   guard every request passes through before [`droppen_http::origin`]'s;
-//! * [`droppen_sessions::attention`] — which sessions are waiting on you, and
-//!   [`droppen_notify::push`] — telling
-//!   a phone about it while the tab is closed;
-//! * [`droppen_notify::notify`] — the other direction of the same idea: the notification an
-//!   *agent* decides to send, through a channel whose credential it never sees;
-//! * [`droppen_drive::schedule`] — cron tasks: a prompt, a directory and an expression, read in
-//!   the server's own time zone, that start a session while nobody is watching;
-//! * [`droppen_setup`] — the first-run guide's server half: which AI tools this
-//!   device has, and the `PATH` that finds them;
-//! * [`droppen_workbench::prefs`] / [`droppen_workbench::screens`] — the sidecar stores;
-//! * [`droppen_sessions::stats`] / [`droppen_provider::models`] — token accounting and the model list;
-//! * [`droppen_http::origin`] — the guard every `/api/*` request passes through.
+//! Its tests are the ones that need the whole program: the provider base's
+//! on the providers [`app::register_providers`] registers
+//! (`provider_tests`), the accounts' and the setup guide's on the logins
+//! [`app::logins`] builds (`accounts_tests`, `setup_tests`), and the routes
+//! through the router.
 //!
 //! # Shared contract plumbing
 //!
@@ -72,15 +46,17 @@
 
 pub use gotcha::{GotchaError, GotchaResult};
 
-pub mod accounts;
+#[cfg(test)]
+mod accounts_tests;
 pub mod api;
 pub mod app;
 pub mod cli;
 pub mod desktop_app;
 pub mod export;
-pub mod provider;
-pub mod shutdown;
+#[cfg(test)]
+mod provider_tests;
 #[cfg(test)]
 mod setup_tests;
+pub mod shutdown;
 pub mod static_files;
 pub mod stream_source;
