@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use serde_json::Value;
 
-use droppen_accounts::quota::{is_rate_limited, window, ProbeRoots, QuotaProbeError, QuotaWindow, UsageLogin, UsageProbe};
+use droppen_accounts::quota::{CliTextExt, ProbeRoots, QuotaProbeError, QuotaWindow, UsageLogin, UsageProbe};
 use droppen_accounts::rest::iso_ms;
 use droppen_sessions::util::try_parse;
 use droppen_base::process_env::{apply_env, claude_env};
@@ -110,7 +110,7 @@ impl RateLimitWindows for Value {
         // A family's own key outranks the inferred one if both ever arrive in
         // one event: `seven_day_fable` would say what `overage_included` guesses.
         let inferred = key == "seven_day_overage_included";
-        let candidate = window(label, minutes, used, resets_at);
+        let candidate = QuotaWindow::new(label, minutes, used, resets_at);
         match windows.iter_mut().find(|(_, existing)| existing.label == candidate.label) {
             Some(slot) if slot.0 && !inferred => *slot = (inferred, candidate),
             Some(_) => {}
@@ -223,7 +223,7 @@ pub fn parse_claude_usage(text: &str, now_ms: i64) -> Vec<QuotaWindow> {
             if let (Some(clause), None) = (clause, &resets_at) {
                 tracing::warn!(window = %label, clause = %clause, "quota: unrecognised reset label from `claude /usage`");
             }
-            Some(window(label, minutes, used, resets_at))
+            Some(QuotaWindow::new(label, minutes, used, resets_at))
         })
         .collect()
 }
@@ -275,7 +275,7 @@ impl ClaudeUsageProbeExt for ProbeRoots {
 
     let stdout = String::from_utf8_lossy(&output.stdout[..output.stdout.len().min(MAX_PROBE_OUTPUT)]).into_owned();
     let stderr = String::from_utf8_lossy(&output.stderr[..output.stderr.len().min(MAX_PROBE_OUTPUT)]).into_owned();
-    let rate_limited = is_rate_limited(&stdout) || is_rate_limited(&stderr);
+    let rate_limited = stdout.is_rate_limited() || stderr.is_rate_limited();
 
     if !output.status.success() {
         return UsageProbe {
@@ -595,6 +595,6 @@ mod tests {
             "Usage:                 0 input, 0 output, 0 cache read, 0 cache write",
         );
         assert!(parse_claude_usage(text, NOW_MS).is_empty());
-        assert!(!is_rate_limited(text), "an unauthenticated probe is not a rate-limited one");
+        assert!(!text.is_rate_limited(), "an unauthenticated probe is not a rate-limited one");
     }
 }

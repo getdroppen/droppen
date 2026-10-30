@@ -228,17 +228,19 @@ pub struct UsageProbe {
 
 // ------------------------------------------------------------ claude: parsing
 
-/// One window as the quota panel shows it, its use clamped to 0–100 % and
-/// the remainder beside it; not yet stamped with when it was read.
-pub fn window(label: String, minutes: i64, used: f64, resets_at: Option<String>) -> QuotaWindow {
-    let used = used.clamp(0.0, 100.0);
-    QuotaWindow {
-        label,
-        used_percent: used,
-        remaining_percent: (100.0 - used).max(0.0),
-        window_minutes: minutes,
-        resets_at: Nullable(resets_at),
-        updated_at: Optional(None),
+impl QuotaWindow {
+    /// One window as the quota panel shows it, its use clamped to 0–100 % and
+    /// the remainder beside it; not yet stamped with when it was read.
+    pub fn new(label: String, minutes: i64, used: f64, resets_at: Option<String>) -> Self {
+        let used = used.clamp(0.0, 100.0);
+        QuotaWindow {
+            label,
+            used_percent: used,
+            remaining_percent: (100.0 - used).max(0.0),
+            window_minutes: minutes,
+            resets_at: Nullable(resets_at),
+            updated_at: Optional(None),
+        }
     }
 }
 
@@ -283,55 +285,67 @@ const STATUS_MARKERS: [&str; 2] = ["http", "rate limit"];
 /// How far on either side of a `429` a status marker still counts as its context.
 const STATUS_WINDOW: usize = 32;
 
-/// Whether a probe's output says the account is over its request limit.
-///
-/// Deliberately narrow. `/usage` legitimately talks about rate limits — the
-/// credentials it reads carry a `rateLimitTier`, and the reply is about nothing
-/// but windows — so matching the bare digits `429` anywhere would back an account
-/// off on a path, a pid or a token count that happened to contain them. A `429`
-/// counts only as a bounded token sitting beside a status marker; the RFC 6585
-/// reason phrase "too many requests" counts on its own, since `/usage` never
-/// prints it.
-///
-/// Public because the credential check in [`crate::verify`] asks the
-/// same question of its own probe's output, and for the same reason: an account
-/// that is over its limit is a *working* account.
-pub fn is_rate_limited(text: &str) -> bool {
-    let lower = text.to_ascii_lowercase();
-    lower.contains("too many requests") || mentions_status(&lower, "429", Some((&STATUS_MARKERS, STATUS_WINDOW)))
+/// What the quota probes and each CLI's credential check read in the text a
+/// CLI printed.
+pub trait CliTextExt {
+    /// Whether a probe's output says the account is over its request limit.
+    ///
+    /// Deliberately narrow. `/usage` legitimately talks about rate limits — the
+    /// credentials it reads carry a `rateLimitTier`, and the reply is about nothing
+    /// but windows — so matching the bare digits `429` anywhere would back an account
+    /// off on a path, a pid or a token count that happened to contain them. A `429`
+    /// counts only as a bounded token sitting beside a status marker; the RFC 6585
+    /// reason phrase "too many requests" counts on its own, since `/usage` never
+    /// prints it.
+    ///
+    /// Public because each CLI's credential check (`accounts::login`) asks the
+    /// same question of its own probe's output, and for the same reason: an account
+    /// that is over its limit is a *working* account.
+    fn is_rate_limited(&self) -> bool;
+
+    /// Whether this text, lowercased, contains `code` as a standalone HTTP status code: bounded by
+    /// non-digits, so a longer number cannot match. With `near`, the code also has
+    /// to sit within that many bytes of one of the given markers — the narrow rule
+    /// for `429`, where a coincidental number in prose must not back an account
+    /// off, and the plain rule for `401`/`403`, where the status is evidence by
+    /// itself.
+    fn mentions_status(&self, code: &str, near: Option<(&[&str], usize)>) -> bool;
 }
 
-/// Whether `lower` contains `code` as a standalone HTTP status code: bounded by
-/// non-digits, so a longer number cannot match. With `near`, the code also has
-/// to sit within that many bytes of one of the given markers — the narrow rule
-/// for `429`, where a coincidental number in prose must not back an account
-/// off, and the plain rule for `401`/`403`, where the status is evidence by
-/// itself.
-pub fn mentions_status(lower: &str, code: &str, near: Option<(&[&str], usize)>) -> bool {
-    let bytes = lower.as_bytes();
-    let mut from = 0;
-    while let Some(rel) = lower[from..].find(code) {
-        let start = from + rel;
-        let end = start + code.len();
-        let bounded = (start == 0 || !bytes[start - 1].is_ascii_digit()) && (end == bytes.len() || !bytes[end].is_ascii_digit());
-        if bounded {
-            match near {
-                None => return true,
-                Some((markers, window)) => {
-                    let ctx_start = start.saturating_sub(window);
-                    let ctx_end = (end + window).min(bytes.len());
-                    // Slicing on bytes may cut a multi-byte char at the window edge;
-                    // `from_utf8_lossy` tolerates it and the markers are all ASCII.
-                    let context = String::from_utf8_lossy(&bytes[ctx_start..ctx_end]);
-                    if markers.iter().any(|marker| context.contains(marker)) {
-                        return true;
+impl CliTextExt for str {
+    fn is_rate_limited(&self) -> bool {
+        let text = self;
+        let lower = text.to_ascii_lowercase();
+        lower.contains("too many requests") || lower.mentions_status("429", Some((&STATUS_MARKERS, STATUS_WINDOW)))
+    }
+
+    fn mentions_status(&self, code: &str, near: Option<(&[&str], usize)>) -> bool {
+        let lower = self;
+        let bytes = lower.as_bytes();
+        let mut from = 0;
+        while let Some(rel) = lower[from..].find(code) {
+            let start = from + rel;
+            let end = start + code.len();
+            let bounded = (start == 0 || !bytes[start - 1].is_ascii_digit()) && (end == bytes.len() || !bytes[end].is_ascii_digit());
+            if bounded {
+                match near {
+                    None => return true,
+                    Some((markers, window)) => {
+                        let ctx_start = start.saturating_sub(window);
+                        let ctx_end = (end + window).min(bytes.len());
+                        // Slicing on bytes may cut a multi-byte char at the window edge;
+                        // `from_utf8_lossy` tolerates it and the markers are all ASCII.
+                        let context = String::from_utf8_lossy(&bytes[ctx_start..ctx_end]);
+                        if markers.iter().any(|marker| context.contains(marker)) {
+                            return true;
+                        }
                     }
                 }
             }
+            from = end;
         }
-        from = end;
+        false
     }
-    false
 }
 
 
@@ -840,8 +854,8 @@ mod tests {
     /// of the week, as a session hands them over.
     fn allowed_windows() -> Vec<QuotaWindow> {
         vec![
-            window("5h".into(), 300, 19.0, Some(iso_ms(1_790_436_000_000))),
-            window("weekly".into(), 10080, 46.0, Some(iso_ms(1_790_460_000_000))),
+            QuotaWindow::new("5h".into(), 300, 19.0, Some(iso_ms(1_790_436_000_000))),
+            QuotaWindow::new("weekly".into(), 10080, 46.0, Some(iso_ms(1_790_460_000_000))),
         ]
     }
 
@@ -900,7 +914,7 @@ mod tests {
 
         // Five seconds on: held here, visible here, not yet on file.
         let mut newer = allowed_windows();
-        newer[0] = window("5h".into(), 300, 25.0, None);
+        newer[0] = QuotaWindow::new("5h".into(), 300, 25.0, None);
         ours.ingest_session_at(login.clone(), newer, t0 + 5_000, start + Duration::from_secs(5));
         assert_eq!(ours.cached(&login).windows[0].used_percent, 25.0, "this instance shows it at once");
         assert_eq!(theirs.cached(&login).windows[0].used_percent, 19.0, "the file still has the last write");
@@ -1044,7 +1058,7 @@ mod tests {
         CodexQuota {
             plan: Nullable(Some("pro".into())),
             updated_at: Nullable(Some(iso_ms(1_790_000_000_000))),
-            windows: vec![window("weekly".into(), 10080, 100.0, Some(iso_ms(1_790_128_010_000)))],
+            windows: vec![QuotaWindow::new("weekly".into(), 10080, 100.0, Some(iso_ms(1_790_128_010_000)))],
             source: CodexQuotaSource::AppServer,
             blocked: Nullable(Some(true)),
         }
@@ -1075,21 +1089,21 @@ mod tests {
     #[test]
     fn only_an_unambiguous_429_counts_as_rate_limited() {
         // A 429 as a status code, beside "rate limit" / "http" / the reason phrase.
-        assert!(is_rate_limited("API Error: 429 rate limit exceeded"));
-        assert!(is_rate_limited("HTTP/1.1 429 Too Many Requests"));
-        assert!(is_rate_limited("too many requests, retry after 600"));
+        assert!("API Error: 429 rate limit exceeded".is_rate_limited());
+        assert!("HTTP/1.1 429 Too Many Requests".is_rate_limited());
+        assert!("too many requests, retry after 600".is_rate_limited());
 
         // The false positive that matters: `/usage` is *about* rate limits, and
         // the credentials beside it carry a tier by that name. Neither is a 429.
-        assert!(!is_rate_limited(r#"{"rateLimitTier": "default_max_20x"}"#));
-        assert!(!is_rate_limited("Current session: 12% used · resets Aug 11, 7:30am (UTC)"));
-        assert!(!is_rate_limited("Current week (all models): 40% used"));
+        assert!(!r#"{"rateLimitTier": "default_max_20x"}"#.is_rate_limited());
+        assert!(!"Current session: 12% used · resets Aug 11, 7:30am (UTC)".is_rate_limited());
+        assert!(!"Current week (all models): 40% used".is_rate_limited());
 
         // Incidental 429s that must NOT trip: a standalone token count and a path
         // segment, neither near a status marker...
-        assert!(!is_rate_limited("context window: 429 tokens used, resets in 5h"));
-        assert!(!is_rate_limited("wrote /home/me/.cache/claude-429/usage.json"));
+        assert!(!"context window: 429 tokens used, resets in 5h".is_rate_limited());
+        assert!(!"wrote /home/me/.cache/claude-429/usage.json".is_rate_limited());
         // ...and a longer number that merely contains the digits.
-        assert!(!is_rate_limited("processed 4290000 tokens across the week"));
+        assert!(!"processed 4290000 tokens across the week".is_rate_limited());
     }
 }

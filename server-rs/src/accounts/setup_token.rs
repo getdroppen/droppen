@@ -86,6 +86,7 @@ use droppen_base::text::strip_ansi;
 
 use droppen_accounts::store::{AccountError, AccountKind, AccountPatch, AccountProvider, Credential};
 use droppen_accounts::verify::Verdict;
+use droppen_accounts::AccountInputExt;
 
 /// How long a finished capture stays pollable.
 const EXPIRY: Duration = Duration::from_secs(60 * 60);
@@ -1000,7 +1001,7 @@ pub async fn start_setup_token(
 ) -> Result<Created<SetupTokenStarted>, ApiError> {
     // `z.string().min(1).max(100)`, which fails in the validator before the
     // TypeScript handler runs — so it is a 400 there too, undocumented.
-    droppen_accounts::require_label(&body.label)?;
+    body.label.require_label()?;
     let open_browser = state.window().app_caller(&caller).is_ok();
     start(state.drive.clone(), state.terminals.clone(), Target::New(body.label), open_browser)
         .await
@@ -1019,7 +1020,7 @@ pub async fn reauth_account(
     #[api(skip)] caller: droppen_http::app_window::Caller,
     ApiPath(id): ApiPath<String>,
 ) -> Result<Created<SetupTokenStarted>, ApiError> {
-    droppen_accounts::require_uuid(&id)?;
+    id.require_uuid()?;
     let Some(account) = state.drive.accounts.get(&id).await else {
         return Err(ApiError::not_found("account not found"));
     };

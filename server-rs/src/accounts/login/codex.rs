@@ -7,10 +7,10 @@ use droppen_accounts::login::{LocalPlan, Login};
 use droppen_accounts::local_login::LocalLoginState;
 use crate::accounts::quota::codex::{app_server_call, CodexReadingExt};
 use droppen_accounts::quota::readings::SharedReading;
-use droppen_accounts::quota::{is_rate_limited, mentions_status, CodexQuota, ProbeRoots, UsageProbe};
+use droppen_accounts::quota::{CliTextExt, CodexQuota, ProbeRoots, UsageProbe};
 use droppen_accounts::store::{AccountError, AccountKind, AccountLaunch, AccountProvider, CODEX_BASE_URL_VAR, CODEX_KEY_CANDIDATES};
 use droppen_base::env_block::EnvVar;
-use droppen_accounts::verify::{reason, Scratch, Verdict, PROBE_PROMPT, PROBE_TIMEOUT};
+use droppen_accounts::verify::{CliOutput, Scratch, Verdict, PROBE_PROMPT, PROBE_TIMEOUT};
 use droppen_base::process_env::{apply_env, clean_env, clean_env_bare, resolve_on_path, Env};
 use droppen_instance::paths::Paths;
 use serde_json::Value;
@@ -118,7 +118,7 @@ fn is_codex_refusal(text: &str) -> bool {
         "missing bearer",
         "invalid api key",
     ];
-    MARKERS.iter().any(|marker| lower.contains(marker)) || mentions_status(&lower, "401", None)
+    MARKERS.iter().any(|marker| lower.contains(marker)) || lower.mentions_status("401", None)
 }
 
 /// Codex's [`Login`].
@@ -184,17 +184,17 @@ impl CodexLogin {
         // `codex exec` reports a refusal on stderr and still exits zero often
         // enough that the exit code cannot be the test; the words are.
         if is_codex_refusal(stdout) || is_codex_refusal(stderr) {
-            return Verdict::Invalid(format!("the key was refused: {}", reason(stderr, stdout, secrets)));
+            return Verdict::Invalid(format!("the key was refused: {}", CliOutput { stdout, stderr }.reason(secrets)));
         }
         if success {
             return Verdict::Valid;
         }
-        if is_rate_limited(stdout) || is_rate_limited(stderr) {
+        if stdout.is_rate_limited() || stderr.is_rate_limited() {
             return Verdict::Unverifiable("the account is rate-limited, so the key could not be checked".to_string());
         }
         Verdict::Unverifiable(format!(
             "the check itself failed, so the key was not tested: {}",
-            reason(stderr, stdout, secrets)
+            CliOutput { stdout, stderr }.reason(secrets)
         ))
     }
 }

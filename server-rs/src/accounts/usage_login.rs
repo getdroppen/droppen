@@ -27,7 +27,7 @@ use droppen_base::process_env::{apply_env, claude_env, clean_env_bare, resolve_o
 use droppen_workbench::terminals::{CreateSpec, Registry};
 
 use droppen_accounts::store::{Account, AccountKind, AccountPatch, AccountProvider};
-use droppen_accounts::{account_not_found, parse_auth_status, require_uuid, AccountsState};
+use droppen_accounts::{account_not_found, parse_auth_status, AccountInputExt, AccountsState};
 
 /// `POST /api/accounts/{id}/usage-login` response.
 #[derive(Debug, Clone, Serialize, Deserialize, Schematic)]
@@ -136,7 +136,7 @@ droppen_http::substate!(UsageLoginState);
 /// Start `claude auth login` for one account, in a terminal.
 #[api(id = "start_usage_login", group = "accounts", summary = "Start an account's usage login")]
 pub async fn start_usage_login(State(state): State<UsageLoginState>, ApiPath(id): ApiPath<String>) -> Result<Created<UsageLoginStarted>, ApiError> {
-    droppen_accounts::require_uuid(&id)?;
+    id.require_uuid()?;
     let Some(account) = state.drive.accounts.get(&id).await else {
         return Err(ApiError::not_found("account not found"));
     };
@@ -182,7 +182,7 @@ async fn read_auth_status(config_dir: &std::path::Path, cwd: &std::path::Path) -
 /// failure — an unusable login is a `false`, not a 500.
 #[api(id = "verify_usage_login", group = "accounts", summary = "Verify an account's usage login")]
 pub async fn verify_usage_login(State(state): State<AccountsState>, ApiPath(id): ApiPath<String>) -> Result<Json<UsageVerifyResult>, ApiError> {
-    require_uuid(&id)?;
+    id.require_uuid()?;
     let accounts = &state.accounts;
     let Some(account) = accounts.get(&id).await else {
         return Err(account_not_found());

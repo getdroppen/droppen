@@ -8,10 +8,10 @@ use droppen_accounts::local_login::LocalLoginState;
 use droppen_accounts::quota::readings::SharedReading;
 use crate::accounts::quota::claude::ClaudeUsageProbeExt;
 use droppen_accounts::rotation::FAMILIES;
-use droppen_accounts::quota::{is_rate_limited, mentions_status, CodexQuota, ProbeRoots, QuotaProbeError, UsageProbe};
+use droppen_accounts::quota::{CliTextExt, CodexQuota, ProbeRoots, QuotaProbeError, UsageProbe};
 use droppen_accounts::store::{AccountError, AccountKind, AccountLaunch, AccountProvider};
 use droppen_base::env_block::EnvVar;
-use droppen_accounts::verify::{reason, Scratch, Verdict, PROBE_PROMPT, PROBE_TIMEOUT};
+use droppen_accounts::verify::{CliOutput, Scratch, Verdict, PROBE_PROMPT, PROBE_TIMEOUT};
 use crate::provider::claude_code::claude_roots::ClaudeRoots;
 use droppen_base::process_env::{apply_env, claude_env, clean_env_bare, resolve_on_path, Env};
 use droppen_instance::paths::Paths;
@@ -105,7 +105,7 @@ fn is_credential_refusal(text: &str) -> bool {
         "/login",
         "not logged in",
     ];
-    MARKERS.iter().any(|marker| lower.contains(marker)) || mentions_status(&lower, "401", None) || mentions_status(&lower, "403", None)
+    MARKERS.iter().any(|marker| lower.contains(marker)) || lower.mentions_status("401", None) || lower.mentions_status("403", None)
 }
 
 /// Claude Code's [`Login`].
@@ -158,10 +158,10 @@ impl ClaudeCodeLogin {
         }
         // An account over its request limit is a working account, and a refusal here
         // would send the user back through a wizard that cannot help.
-        if is_rate_limited(stdout) || is_rate_limited(stderr) {
+        if stdout.is_rate_limited() || stderr.is_rate_limited() {
             return Verdict::Unverifiable("the account is rate-limited, so the token could not be checked".to_string());
         }
-        let quoted = reason(stderr, stdout, secrets);
+        let quoted = CliOutput { stdout, stderr }.reason(secrets);
         // A non-zero exit is not a verdict on the credential unless the CLI said so.
         // An older CLI that does not know one of these flags, a DNS failure behind a
         // proxy, a crash — all exit non-zero, and turning any of them into a refusal
