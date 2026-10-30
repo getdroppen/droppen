@@ -64,9 +64,9 @@ pub fn endpoint_origin(endpoint: &str) -> String {
 /// on the answer. Building a client means building a rustls configuration, so
 /// each channel keeps one shared instance rather than one per request.
 ///
-/// `version` is the server's own (its `CARGO_PKG_VERSION`), which the user
-/// agent `remote-hand/<version>` carries: this crate's version is not the
-/// release's.
+/// `version` is the server's own (its `CARGO_PKG_VERSION`, which the crates it
+/// is made of read as `droppen_http::PACKAGE_VERSION`), which the user agent
+/// `remote-hand/<version>` carries: this crate's version is not the release's.
 pub fn no_redirect_client(timeout: Duration, version: &str) -> Option<reqwest::Client> {
     reqwest::Client::builder()
         .user_agent(format!("remote-hand/{version}"))

@@ -172,6 +172,13 @@ pub async fn close_within(sender: &mut WsSender, limit: std::time::Duration, shu
     }
 }
 
+/// The server package's version: what `CARGO_PKG_VERSION` says when the server
+/// itself is compiled, read from its manifest by `build.rs`. For the crates the
+/// server is made of, whose own `CARGO_PKG_VERSION` is their `0.1.0`, wherever
+/// they have to name the release: the user agent `remote-hand/<version>` that
+/// Bark's and Web Push's requests carry, say.
+pub const PACKAGE_VERSION: &str = env!("DROPPEN_SERVER_VERSION");
+
 /// What this server reports where the contract asks for `nodeVersion`.
 pub const RUNTIME_VERSION: &str = concat!("rust/", env!("DROPPEN_SERVER_VERSION"));
 

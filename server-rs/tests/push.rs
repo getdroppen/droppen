@@ -385,6 +385,8 @@ async fn a_finished_turn_delivers_one_notification_the_browser_can_open() {
     assert_eq!(request.header("content-encoding"), Some("aes128gcm"), "RFC 8291's only encoding");
     assert_eq!(request.header("content-type"), Some("application/octet-stream"));
     assert_eq!(request.header("ttl"), Some("86400"));
+    let agent = format!("remote-hand/{}", env!("CARGO_PKG_VERSION"));
+    assert_eq!(request.header("user-agent"), Some(agent.as_str()), "this server's name and its release, byte for byte");
     let authorization = request.header("authorization").expect("an Authorization header");
     assert!(authorization.starts_with("vapid t="), "RFC 8292 §3: {authorization}");
     assert!(authorization.contains(", k="), "…and it names the key it was signed with");
@@ -533,4 +535,29 @@ async fn a_push_endpoint_redirect_is_never_followed_to_a_loopback_canary() {
     assert_eq!(canary.count(), 0, "the send path must not follow a push endpoint's redirect");
 
     probe.stop().await;
+}
+
+/* ── the other channel ───────────────────────────────────────────────── */
+
+/// A Bark nudge goes out under the name Web Push's does: `remote-hand/` and
+/// this server's release, byte for byte, and not a crate's own `0.1.0`.
+#[tokio::test]
+async fn a_bark_nudge_goes_out_as_remote_hand_and_the_servers_version() {
+    // Plain-http loopback, as the push tests have it; nothing in this binary
+    // relies on Bark refusing it.
+    std::env::set_var(remote_hand_server::notify::bark::ALLOW_INSECURE_ENDPOINT_ENV, "1");
+    let endpoint = FakeEndpoint::start(200).await;
+    let nudge = remote_hand_server::notify::Nudge {
+        title: "Blocked".into(),
+        body: "Postgres or SQLite?".into(),
+        subtitle: None,
+        group: None,
+        url: None,
+        level: remote_hand_server::notify::Level::Active,
+    };
+    remote_hand_server::notify::bark::send(&endpoint.url, &nudge).await.expect("sent");
+    let captured = endpoint.take();
+    assert_eq!(captured.len(), 1, "one nudge, one request");
+    let agent = format!("remote-hand/{}", env!("CARGO_PKG_VERSION"));
+    assert_eq!(captured[0].header("user-agent"), Some(agent.as_str()));
 }

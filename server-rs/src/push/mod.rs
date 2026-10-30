@@ -262,7 +262,7 @@ pub fn describe(reg: &mut ExtraResponses) {
 
 /// One shared client: building one means building a rustls configuration, which
 /// is far more expensive than the request it would carry.
-static CLIENT: LazyLock<Option<reqwest::Client>> = LazyLock::new(|| droppen_base::outbound::no_redirect_client(SEND_TIMEOUT, env!("CARGO_PKG_VERSION")));
+static CLIENT: LazyLock<Option<reqwest::Client>> = LazyLock::new(|| droppen_base::outbound::no_redirect_client(SEND_TIMEOUT, droppen_http::PACKAGE_VERSION));
 
 /// When each session last had a notification sent for it.
 static SENT_AT: LazyLock<Mutex<HashMap<String, Instant>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
