@@ -584,6 +584,11 @@ impl Provider for Codex {
         self.runs.clone()
     }
 
+    // A thread switches accounts in place: its login is a binding, not a root.
+    fn continue_on_account<'a>(&'a self, _id: &'a str, _new_id: &'a str) -> BoxFuture<'a, Result<std::path::PathBuf, crate::provider::ContinueError>> {
+        Box::pin(std::future::ready(Err(crate::provider::ContinueError::Unsupported)))
+    }
+
     fn models(&self) -> &dyn crate::models::Models {
         &self.models
     }

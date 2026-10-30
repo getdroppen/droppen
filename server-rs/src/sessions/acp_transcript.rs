@@ -723,6 +723,11 @@ impl droppen_sessions::Transcripts for AcpSessions {
         Box::pin(find_session(paths, id))
     }
 
+    // An ACP session's transcript is this server's own, in no Claude root.
+    fn find_root<'a>(&'a self, _paths: &'a Paths, _id: &'a str) -> BoxFuture<'a, Option<droppen_instance::paths::ClaudeRoot>> {
+        Box::pin(std::future::ready(None))
+    }
+
     fn parse<'a>(&'a self, _paths: &'a Paths, file_path: &'a Path) -> BoxFuture<'a, std::io::Result<Vec<TranscriptItem>>> {
         Box::pin(parse_transcript(file_path))
     }

@@ -485,6 +485,10 @@ mod tests {
             self.reader.find(paths, id)
         }
 
+        fn find_root<'a>(&'a self, paths: &'a Paths, id: &'a str) -> BoxFuture<'a, Option<droppen_instance::paths::ClaudeRoot>> {
+            self.reader.find_root(paths, id)
+        }
+
         fn has_own_sessions<'a>(&'a self, paths: &'a Paths) -> BoxFuture<'a, bool> {
             self.reader.has_own_sessions(paths)
         }

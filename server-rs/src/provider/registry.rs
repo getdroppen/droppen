@@ -50,9 +50,7 @@ pub trait Provider: Send + Sync {
     /// has one to carry; every other provider refuses
     /// ([`ContinueError::Unsupported`]), its sessions switching accounts in
     /// place.
-    fn continue_on_account<'a>(&'a self, _id: &'a str, _new_id: &'a str) -> BoxFuture<'a, Result<PathBuf, ContinueError>> {
-        Box::pin(std::future::ready(Err(ContinueError::Unsupported)))
-    }
+    fn continue_on_account<'a>(&'a self, id: &'a str, new_id: &'a str) -> BoxFuture<'a, Result<PathBuf, ContinueError>>;
 }
 
 /// Why a session could not be continued on an account

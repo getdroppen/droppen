@@ -412,6 +412,11 @@ impl Provider for Acp {
         self.runs.clone()
     }
 
+    // An agent runs on its own configuration and takes no account.
+    fn continue_on_account<'a>(&'a self, _id: &'a str, _new_id: &'a str) -> BoxFuture<'a, Result<std::path::PathBuf, crate::provider::ContinueError>> {
+        Box::pin(std::future::ready(Err(crate::provider::ContinueError::Unsupported)))
+    }
+
     fn models(&self) -> &dyn crate::models::Models {
         &self.models
     }

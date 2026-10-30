@@ -792,6 +792,11 @@ impl droppen_sessions::Transcripts for CodexSessions {
         Box::pin(find_codex_session(paths, id))
     }
 
+    // A codex thread lives under `~/.codex`, in no Claude root.
+    fn find_root<'a>(&'a self, _paths: &'a Paths, _id: &'a str) -> BoxFuture<'a, Option<droppen_instance::paths::ClaudeRoot>> {
+        Box::pin(std::future::ready(None))
+    }
+
     fn parse<'a>(&'a self, paths: &'a Paths, file_path: &'a Path) -> BoxFuture<'a, std::io::Result<Vec<TranscriptItem>>> {
         Box::pin(parse_codex_transcript(paths, file_path))
     }
