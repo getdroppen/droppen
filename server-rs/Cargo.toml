@@ -182,8 +182,9 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 rust-embed = { version = "8", optional = true }
 mime_guess = { version = "2", optional = true }
 
-# Outbound HTTP: `export`'s download, and the tests' clients (the BYO-API
-# chat's is the drive's now). `default-features = false` drops
+# Outbound HTTP: `export`'s download, and the tests' clients. The BYO-API
+# chat's client is in droppen-drive (`chats`), with the chat it serves.
+# `default-features = false` drops
 # `default-tls` (native-tls/OpenSSL) so the binary keeps linking nothing but
 # rustls; `stream` is what makes the completion response readable chunk by chunk.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "http2", "charset", "json"] }
