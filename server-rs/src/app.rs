@@ -1115,8 +1115,11 @@ mod tests {
                 }
                 let source = std::fs::read_to_string(&path).expect("source");
                 // The tests below spell the fragments out to check for them; the
-                // scan stops where a file's tests begin.
-                let code = source.split("#[cfg(test)]").next().unwrap_or_default();
+                // scan stops where a file's tests module begins. Not at its first
+                // `#[cfg(test)]`, which can be a test-only item above code that
+                // runs (`tasks`' `TRUST_ROOT`).
+                let tests = regex::Regex::new(r"#\[cfg\(test\)\]\n(pub\(crate\) )?mod tests\b").expect("the tests-module pattern");
+                let code = tests.find(&source).map_or(source.as_str(), |found| &source[..found.start()]);
                 assert_eq!(credential_mentions(code), Vec::<String>::new(), "{}", path.display());
                 checked += 1;
             }

@@ -1227,7 +1227,8 @@ pub mod testing {
     /// run on when they do not care which CLI's login answers. It names no
     /// plan, holds no conversation, reads nothing and moves no session; an
     /// account's launch is its block as given. What each CLI's own login
-    /// answers is pinned by the tests on `crate::app::logins()`.
+    /// answers is pinned by the server's tests on its `app::logins()`, in
+    /// `src/setup_tests.rs`.
     pub struct StandInLogin(pub droppen_accounts::store::AccountProvider);
 
     impl Login for StandInLogin {
