@@ -881,7 +881,7 @@ impl ProviderRuns for ClaudeCodeRuns {
 /// What a Claude Code run keeps in its journal row, beside what every run
 /// says ([`runs::RunRecord`]): written after those fields, in this order.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
-pub struct ClaudeRun {
+pub(crate) struct ClaudeRun {
     /// What this resident's command line settled: model, effort, permission
     /// mode, account, persona, uploads.
     ///
@@ -1078,6 +1078,22 @@ impl ClaudeJournal for runs::RunsFile {
         self.patch("the session a run belongs to", run_id, move |run: &mut runs::RunRecord<ClaudeRun>| {
             run.session_id = session_id;
         });
+    }
+}
+
+/// A Claude Code row put in a journal as Claude Code reads and writes it, for
+/// the server's tests of each CLI's rows side by side. The row's type stays
+/// this crate's own: outside it, a test hands the row over as text.
+#[cfg(any(test, feature = "test-support"))]
+pub trait ClaudeRowsExt {
+    /// Add `row`, read as a Claude Code run. Panics if it is not one.
+    fn add_claude_row(&self, row: &str);
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl ClaudeRowsExt for runs::RunsFile {
+    fn add_claude_row(&self, row: &str) {
+        self.add(serde_json::from_str::<runs::RunRecord<ClaudeRun>>(row).expect("a Claude Code row"));
     }
 }
 
