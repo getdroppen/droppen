@@ -23,6 +23,8 @@
     "test:boundary": "node --test scripts/check-open-boundary.test.mjs",
     "check:layers": "node scripts/check-module-layers.mjs",
     "test:layers": "node --test scripts/check-module-layers.test.mjs",
+    "check:crate-layers": "node scripts/check-crate-layers.mjs",
+    "test:crate-layers": "node --test scripts/check-crate-layers.test.mjs",
     "test:verify-web": "node --test scripts/verify-web.test.mjs",
     "test:publish-release": "node --test scripts/publish-release.test.mjs",
     "test:release-notes": "node --test scripts/release-notes.test.mjs",

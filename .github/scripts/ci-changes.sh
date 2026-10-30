@@ -142,7 +142,7 @@ while IFS= read -r path; do
   esac
 
   case "$path" in
-    server-rs/*|openapi/openapi.json|packages/plugin-sdk/test/engine-vectors.json|scripts/check-open-boundary.mjs|scripts/check-module-layers.mjs|scripts/check-module-layers.test.mjs|scripts/check-sdk-crate-deps.sh|scripts/check-serde-json-order.sh|scripts/install.sh)
+    server-rs/*|openapi/openapi.json|packages/plugin-sdk/test/engine-vectors.json|scripts/check-open-boundary.mjs|scripts/check-module-layers.mjs|scripts/check-module-layers.test.mjs|scripts/check-crate-layers.mjs|scripts/check-crate-layers.test.mjs|scripts/check-sdk-crate-deps.sh|scripts/check-serde-json-order.sh|scripts/install.sh)
       server=1; matched=1 ;;
   esac
 

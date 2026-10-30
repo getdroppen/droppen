@@ -109,10 +109,6 @@ droppen-notify = { path = "crates/droppen-notify" }
 droppen-cloud = { path = "crates/droppen-cloud" }
 # Machine-signed stream heads and manifests (the agent's streams).
 ed25519-dalek = "2"
-# The agent's one outbound websocket to the hub, and its loopback sockets to
-# this server's own feed and terminal routes. The version axum already links;
-# rustls with the ring provider and webpki roots, like `reqwest` below.
-tokio-tungstenite = { version = "0.29", features = ["rustls-tls-webpki-roots"] }
 # The agent's machine seed is wiped from memory when dropped. Already in the
 # graph through rh-proto and the RustCrypto crates.
 zeroize = "1"
@@ -221,6 +217,10 @@ tempfile = "3"
 # `start_paused` runtimes, so the websocket heartbeat's minute-scale schedule can
 # be asserted without a test that actually takes minutes.
 tokio = { version = "1", features = ["test-util"] }
+# A websocket client for the tests of this server's own websocket routes: the
+# feeds, the terminals, the cloud gateway. The version axum already links;
+# rustls with the ring provider and webpki roots, as droppen-agent has it.
+tokio-tungstenite = { version = "0.29", features = ["rustls-tls-webpki-roots"] }
 # The child-PATH override per test thread, which the unit tests that set it
 # rely on (`setup::tests::ChildPathGuard`): see the feature's own comment.
 droppen-base = { path = "crates/droppen-base", features = ["test-support"] }

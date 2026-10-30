@@ -59,7 +59,6 @@ base64 = "0.22"
 # The device role's test switch, for its controller under a real agent state
 # (`aggregator_controller_tests`).
 droppen-aggregator = { path = "../droppen-aggregator", features = ["test-support"] }
-droppen-auth = { path = "../droppen-auth" }
 regex = "1"
 rh-client = { path = "../rh-client" }
 tempfile = "3"

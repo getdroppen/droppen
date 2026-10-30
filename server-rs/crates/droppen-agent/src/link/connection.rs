@@ -33,7 +33,8 @@ use droppen_base::time::now_ms_u64;
 pub struct LinkEnv {
     /// The server's own listener.
     pub addr: SocketAddr,
-    /// [`droppen_auth::Auth::internal_credential`].
+    /// The per-boot credential the bridge presents to that listener (what
+    /// droppen-auth's `Auth::internal_credential` hands out).
     pub credential: String,
     /// The sessions the streams copy ([`crate::streams::source`]).
     pub streams: Arc<dyn crate::streams::source::StreamSource>,

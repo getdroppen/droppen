@@ -269,6 +269,13 @@ jobs:
       # Source matches outside the provider crates may only shrink.
       - run: node --test ../scripts/check-module-layers.test.mjs
       - run: node ../scripts/check-module-layers.mjs
+      # The crates as Cargo builds them (`pnpm check:crate-layers`): every
+      # workspace member sits in server-rs/layers.json and depends only on what
+      # its layer may use, no crate reaches a pair the file forbids or depends
+      # on the entry, and portable-pty and tokio-tungstenite are depended on
+      # only by the crates that wrap them.
+      - run: node --test ../scripts/check-crate-layers.test.mjs
+      - run: node ../scripts/check-crate-layers.mjs
       # No `cargo fmt --check`, and of clippy only the two deadlock lints
       # `server-rs/Cargo.toml`'s `[workspace.lints.clippy]` denies gate CI:
       # a guard made in a match/if-let scrutinee lives through the whole
