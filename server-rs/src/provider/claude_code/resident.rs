@@ -9019,6 +9019,23 @@ done
         assert!(!harness.driver.is_finished(), "the process is still there for a third");
     }
 
+    /// A turn's alert carries what its driver's snapshot says of the session:
+    /// its resident, idle as the turn left it ([`RunHost::driver_states_of`]).
+    #[tokio::test]
+    async fn a_turn_s_alert_sees_its_session_s_resident() {
+        let harness = Harness::ordinary().await;
+        let alerts = Arc::new(crate::provider::TurnAlerts::default());
+        harness.registry.host.attach_alerts(alerts.clone());
+        until("the init to land", || harness.state().phase == Phase::Idle).await;
+        harness.send("first");
+        until("the turn to open", || harness.state().phase == Phase::Working).await;
+        harness.release();
+        until("the turn's alert", || !alerts.seen().is_empty()).await;
+        let (source, id, resident) = alerts.seen().remove(0);
+        assert_eq!((source, id.as_str()), (Source::Claude, SESSION));
+        assert_eq!(resident.map(|resident| resident.phase), Some(droppen_sessions::ResidentPhase::Idle), "its resident, as the turn left it");
+    }
+
     #[tokio::test]
     async fn uploads_directory_failure_prevents_spawning_a_misconfigured_process() {
         let harness = Harness::ordinary().await;

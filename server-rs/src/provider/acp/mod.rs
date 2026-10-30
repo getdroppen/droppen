@@ -1337,15 +1337,33 @@ mod tests {
     }
 
     /// A session's agent process is in the snapshot its driver hands a turn's
-    /// alert ([`RunHost::driver_states_of`]), as well as in the one the session
-    /// list asks the providers for.
+    /// alert ([`RunHost::driver_states_of`]), idle as the turn left it, as
+    /// well as in the one the session list asks the providers for.
     #[tokio::test]
     async fn an_acp_session_is_in_its_turn_alert_s_snapshot() {
         let home = tempfile::tempdir().expect("tempdir");
-        let (state, id, _) = one_turn(home.path(), "", "hi", &SendOptions::default()).await;
-        let own = state.drive.injections.host.driver_states_of(&*acp_of(&state.drive)).resident(Source::Acp, &id).expect("in the alert's snapshot");
-        assert_eq!(own.phase, droppen_sessions::ResidentPhase::Idle);
-        let listed = state.drive.providers.driver_states().resident(Source::Acp, &id).expect("in the providers' snapshot");
+        let paths = Arc::new(Paths::new(home.path().to_path_buf()));
+        let dirs = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
+        dirs.create().expect("instance dirs");
+        let registry = InjectionRegistry::new(
+            paths.clone(),
+            &dirs,
+            Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), crate::app::logins())),
+            Arc::new(droppen_accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins())),
+            crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone()),
+        );
+        let alerts = Arc::new(crate::provider::TurnAlerts::default());
+        registry.host.attach_alerts(alerts.clone());
+        let providers = crate::provider::ProviderRegistry::new(registry, crate::app::register_providers);
+        configure_fake(&paths, home.path(), "fake", "");
+        let dir = workdirs(home.path(), &["work"]).remove(0);
+        let runs = providers.provider::<Acp>().expect("the ACP provider").runs().clone();
+        let id = runs.acp_start(providers.gate(), "fake", &dir.to_string_lossy(), "hi", &SendOptions::default()).await.expect("started");
+        until("the turn's alert", || !alerts.seen().is_empty()).await;
+        let (source, alerted, resident) = alerts.seen().remove(0);
+        assert_eq!((source, alerted.as_str()), (Source::Acp, id.as_str()));
+        assert_eq!(resident.map(|resident| resident.phase), Some(droppen_sessions::ResidentPhase::Idle), "its agent process, as the turn left it");
+        let listed = providers.driver_states().resident(Source::Acp, &id).expect("in the providers' snapshot");
         assert_eq!(listed.phase, droppen_sessions::ResidentPhase::Idle);
     }
 

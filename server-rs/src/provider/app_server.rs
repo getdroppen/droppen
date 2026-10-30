@@ -2818,6 +2818,8 @@ mod tests {
     async fn a_codex_session_is_in_its_turn_alert_s_snapshot() {
         let home = tempfile::tempdir().expect("tempdir");
         let (_path, registry) = fake_codex_registry(home.path(), "codex-snapshot");
+        let alerts = Arc::new(crate::provider::TurnAlerts::default());
+        registry.host.attach_alerts(alerts.clone());
         let providers = crate::provider::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
         let work = home.path().join("work");
         std::fs::create_dir_all(&work).expect("work");
@@ -2826,15 +2828,19 @@ mod tests {
             .codex_deliver(providers.gate(), None, Some(&work), "hello", &SendOptions::default(), None)
             .await
             .expect("a new thread");
-        assert!(registry.host.driver_states_of(&**codex(&providers)).resident(Source::Codex, &id).is_some(), "in the alert's snapshot");
         assert!(providers.driver_states().resident(Source::Codex, &id).is_some(), "in the providers' snapshot");
         let handle = codex(&providers).codex_handle(&id).expect("its app server");
         for _ in 0..500 {
-            if !handle.busy() {
+            if !handle.busy() && !alerts.seen().is_empty() {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
+        let seen = alerts.seen();
+        assert!(
+            seen.iter().any(|(source, alerted, resident)| *source == Source::Codex && *alerted == id && resident.is_some()),
+            "the turn's alert saw its app server: {seen:?}"
+        );
         retire(&handle).await.expect("retired");
     }
 

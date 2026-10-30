@@ -613,6 +613,41 @@ pub trait Alerts: Send + Sync {
     );
 }
 
+/// The turn alerts a test's drivers raised, each with what its snapshot said
+/// of the alert's own session: its resident, if the snapshot had one.
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct TurnAlerts(Mutex<Vec<(Source, String, Option<droppen_sessions::ResidentInfo>)>>);
+
+#[cfg(test)]
+impl TurnAlerts {
+    /// Every turn alert so far, oldest first.
+    pub(crate) fn seen(&self) -> Vec<(Source, String, Option<droppen_sessions::ResidentInfo>)> {
+        self.0.lock().expect("turn alerts").clone()
+    }
+}
+
+#[cfg(test)]
+impl Alerts for TurnAlerts {
+    fn turn(&self, _paths: Arc<Paths>, source: Source, id: String, _outcome: InjectionRunState, _error: Option<String>, driver: droppen_sessions::DriverStates) {
+        let resident = driver.resident(source, &id);
+        self.0.lock().expect("turn alerts").push((source, id, resident));
+    }
+
+    fn question(&self, _paths: Arc<Paths>, _source: Source, _id: String, _question: String) {}
+
+    fn rotation(
+        &self,
+        _paths: Arc<Paths>,
+        _source: Source,
+        _id: String,
+        _outcome: droppen_sessions::account::RotationOutcome,
+        _trigger: droppen_sessions::account::RotationTrigger,
+        _text: String,
+    ) {
+    }
+}
+
 /// Whoever follows a session from outside the driver: the per-session feed and
 /// the session list.
 struct Listeners {
@@ -1807,6 +1842,11 @@ mod tests {
     /// The providers over a fresh instance in `home`, as the server builds
     /// them, and the injection registry under them.
     fn adopting(home: &std::path::Path) -> (Arc<Paths>, Arc<InjectionRegistry>, Arc<ProviderRegistry>) {
+        adopting_with(home, crate::app::register_providers)
+    }
+
+    /// [`adopting`], with the providers `register` adds.
+    fn adopting_with(home: &std::path::Path, register: fn(&mut ProviderRegistry, &Arc<InjectionRegistry>)) -> (Arc<Paths>, Arc<InjectionRegistry>, Arc<ProviderRegistry>) {
         let paths = Arc::new(Paths::new(home.to_path_buf()));
         let dirs = InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
         dirs.create().expect("instance dirs");
@@ -1818,7 +1858,7 @@ mod tests {
             Arc::new(droppen_accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins())),
             decoration,
         );
-        let providers = ProviderRegistry::new(registry.clone(), crate::app::register_providers);
+        let providers = ProviderRegistry::new(registry.clone(), register);
         (paths, registry, providers)
     }
 
@@ -1900,5 +1940,28 @@ mod tests {
         assert!(adopted.is_empty(), "{adopted:?}");
         assert!(registry.host.steps().is_empty(), "nothing was claimed or buried: {:?}", registry.host.steps());
         assert_eq!(registry.host.journal.raw().len(), 2, "both rows stay as they were");
+    }
+
+    /// A row of a source no provider is registered for is adopted by no one,
+    /// for want of runs to hand it to: nothing claims its session or buries
+    /// it, and it stays where it is.
+    #[tokio::test]
+    async fn a_row_of_a_source_no_provider_runs_is_left_where_it_is() {
+        const CODEX: &str = "0199c1a1-7777-4777-8777-777777777777";
+        let home = tempfile::tempdir().expect("tempdir");
+        let (_paths, registry, providers) = adopting_with(home.path(), |providers, injections| {
+            providers.register(Arc::new(crate::provider::claude_code::resident::ClaudeCode::new(injections.clone())));
+        });
+        let row = serde_json::json!({
+            "run_id": "run-codex", "source": "codex", "session_id": CODEX, "cwd": "/work", "cli_pid": gone(),
+            "started_at": "2026-01-01T00:00:00.000Z", "pid_token": null, "resident": false, "shim": null,
+            "fingerprint": null, "turn_at": null, "queued": [],
+        });
+        registry.host.journal.insert_raw("run-codex", CODEX, &row.to_string());
+
+        let adopted = providers.adopt_all().await;
+        assert!(adopted.is_empty(), "{adopted:?}");
+        assert!(registry.host.steps().is_empty(), "nothing was claimed or buried: {:?}", registry.host.steps());
+        assert_eq!(registry.host.journal.raw().len(), 1, "the row stays as it was");
     }
 }
