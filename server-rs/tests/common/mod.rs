@@ -435,10 +435,16 @@ impl Drop for Spawned {
     }
 }
 
-/// Kill the process group `pid` leads, if `pid` is still the process `token`
-/// was taken from.
+/// Kill the process group `pid` leads, if a start token was recorded for it
+/// and `pid` is still the process that token was taken from. Without a token,
+/// or with one that cannot be read for `pid` now, nothing is signalled: that
+/// `pid` is alive cannot tell the process that was started from one the
+/// system has given its pid to since.
 fn kill_group_of(pid: u32, token: Option<&str>) {
-    if droppen_base::procs::is_same_process(pid, token) {
+    let Some(token) = token else {
+        return;
+    };
+    if droppen_base::procs::start_token(pid).as_deref() == Some(token) {
         // SAFETY: a signal to the process group of a process this test
         // started, checked to be that process still.
         unsafe { libc::kill(-(pid as libc::pid_t), libc::SIGKILL) };
