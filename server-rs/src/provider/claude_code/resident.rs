@@ -826,6 +826,10 @@ impl ClaudeCodeRuns {
 }
 
 impl ProviderRuns for ClaudeCodeRuns {
+    fn source(&self) -> Source {
+        Source::Claude
+    }
+
     fn host(&self) -> &Arc<RunHost> {
         &self.host
     }
@@ -1182,7 +1186,7 @@ impl Run for ClaudeCode {
         if self.holds(id) {
             return self.runs.interrupt_resident(id);
         }
-        self.runs.host.interrupt_legacy(&*self.runs, Source::Claude, id)
+        self.runs.host.interrupt_legacy(&*self.runs, id)
     }
 
     fn stop_background_task(&self, id: &str, task_id: &str) -> StopTaskOutcome {

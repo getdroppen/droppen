@@ -491,6 +491,10 @@ impl CodexRuns {
 }
 
 impl ProviderRuns for CodexRuns {
+    fn source(&self) -> Source {
+        Source::Codex
+    }
+
     fn host(&self) -> &Arc<RunHost> {
         &self.host
     }
@@ -663,7 +667,7 @@ impl Run for Codex {
         if self.runs.codex_handle(id).is_some_and(|handle| handle.visible()) {
             return false;
         }
-        self.runs.host.interrupt_legacy(&*self.runs, Source::Codex, id)
+        self.runs.host.interrupt_legacy(&*self.runs, id)
     }
 
     // Through the session's app server, or `codex archive` when it has none:

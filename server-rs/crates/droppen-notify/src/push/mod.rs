@@ -677,11 +677,13 @@ fn question_body(question: &str) -> String {
 /// the server's `provider` where a run's outcome is written, and a push service being
 /// slow (or a phone being asleep) must not hold up releasing the injection lock.
 ///
-/// `driver` is the caller's snapshot of what the injection subsystem knows, and
-/// it must be taken **synchronously at the call site**, after the finished turn
-/// has been written back as idle. Taken inside the spawned task instead it would
-/// race the driver loop picking up the next queued message, and the notification
-/// would describe a turn that had not started when it was sent.
+/// `driver` is the caller's snapshot of what the injection subsystem knows of
+/// this session: its provider's processes and the runs map, which is all it
+/// answers for. It must be taken **synchronously at the call site**, after the
+/// finished turn has been written back as idle. Taken inside the spawned task
+/// instead it would race the driver loop picking up the next queued message,
+/// and the notification would describe a turn that had not started when it
+/// was sent.
 pub fn notify_turn(
     paths: Arc<Paths>,
     transcripts: TranscriptSources,

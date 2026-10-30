@@ -619,7 +619,9 @@ pub trait SessionFeeds: Send + Sync {
 pub trait Alerts: Send + Sync {
     /// A run reached its final state. `driver` is the caller's snapshot of the
     /// drivers, taken synchronously after the finished turn was written back
-    /// as idle, so the alert cannot describe the next queued turn.
+    /// as idle, so the alert cannot describe the next queued turn. It answers
+    /// for session `id` of `source` only: its own provider's processes and the
+    /// runs map ([`RunHost::driver_states_of`]).
     fn turn(&self, paths: Arc<Paths>, source: Source, id: String, outcome: InjectionRunState, error: Option<String>, driver: droppen_sessions::DriverStates);
     /// The agent stopped to ask `question`. Called once per question, the
     /// first time it is put on record.
@@ -898,6 +900,11 @@ impl RunHost {
     /// Lend the spawn gate of the provider registry over this host: one at a
     /// time, as two registries would each run a part of one source's
     /// sessions. A second, while the first's gate lasts, is refused.
+    ///
+    /// The refusal follows the registry's lifetime, which is its gate's, not
+    /// its runs': a registry dropped while a driver still holds its runs lets
+    /// a new one in. Nothing in production drops one: the entry builds one and
+    /// keeps it for the life of the server.
     fn hold_gate(&self, gate: &Arc<gate::SpawnGate>) {
         let mut held = self.gate.lock().expect("held gate");
         if held.strong_count() > 0 {
@@ -914,7 +921,8 @@ impl RunHost {
     /// old rule applies: a pid that no longer names the run it was recorded for
     /// is *not* signalled, and the run is closed out as finished instead — see
     /// [`vanished`] for why that is the only safe direction.
-    pub fn interrupt_legacy(&self, runs: &dyn ProviderRuns, source: Source, id: &str) -> bool {
+    pub fn interrupt_legacy(&self, runs: &dyn ProviderRuns, id: &str) -> bool {
+        let source = runs.source();
         // The handle is cloned out so the map lock is released first: the
         // fail-closed path below rewrites `runs.json` and unlinks a claim, and
         // neither belongs under a lock every route contends on.
@@ -949,6 +957,9 @@ impl RunHost {
 /// The record each method is handed is one of this provider's own CLI: adoption
 /// hands each run to the provider of the source it names.
 pub trait ProviderRuns: Send + Sync {
+    /// The source whose sessions they run.
+    fn source(&self) -> Source;
+
     /// The host they run on.
     fn host(&self) -> &Arc<RunHost>;
 
@@ -1102,11 +1113,11 @@ impl InjectionRegistry {
         for record in self.host.journal.read() {
             // Each run is its own CLI's provider's to take back. One whose part
             // that provider cannot read is one this version cannot read, and is
-            // left where it is. One of a source no runs are listed for has no
-            // provider to take it back at all: this server was put together
+            // left where it is. One of a source no provider is registered for
+            // has no one to take it back at all: this server was put together
             // without it.
             let Some(runs) = by_source.get(&record.source).cloned() else {
-                tracing::error!(session = %record.session_id, source = %record.source, "no runs are listed for this run's source; that run will not be adopted");
+                tracing::error!(session = %record.session_id, source = %record.source, "no provider is registered for this run's source; that run will not be adopted");
                 continue;
             };
             if !runs.readable(&record) {

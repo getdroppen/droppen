@@ -231,7 +231,9 @@ impl ProviderRegistry {
     /// registry's host.
     pub fn register(&mut self, provider: Arc<dyn Provider>) {
         let source = provider.source();
-        assert!(Arc::ptr_eq(provider.runs().host(), &self.injections.host), "the {source} provider's runs are on another host than this registry's");
+        let runs = provider.runs();
+        assert_eq!(runs.source(), source, "the {source} provider's runs run another source's sessions");
+        assert!(Arc::ptr_eq(runs.host(), &self.injections.host), "the {source} provider's runs are on another host than this registry's");
         assert!(!self.providers.contains_key(&source), "a {source} provider is registered already: one per source");
         self.providers.insert(source, provider);
     }
@@ -580,7 +582,10 @@ mod tests {
         let why = refusal(|| {
             ProviderRegistry::new(injections, |providers, _| providers.register(Arc::new(crate::provider::codex::app_server::Codex::new(foreign))));
         });
-        assert!(why.as_deref().is_some_and(|why| why.contains("the codex provider's runs are on another host")), "{why:?}");
+        assert!(
+            why.as_deref().is_some_and(|why| why.contains("the codex provider's runs are on another host")),
+            "Codex over another host's injection registry: refused for another reason, or not at all: {why:?}"
+        );
     }
 
     /// One provider registry per host, and one provider per source in it: a
@@ -595,7 +600,10 @@ mod tests {
         let why = refusal(|| {
             ProviderRegistry::new(injections.clone(), crate::app::register_providers);
         });
-        assert!(why.as_deref().is_some_and(|why| why.contains("a provider registry is over this host already")), "{why:?}");
+        assert!(
+            why.as_deref().is_some_and(|why| why.contains("a provider registry is over this host already")),
+            "a second live provider registry on one host: refused for another reason, or not at all: {why:?}"
+        );
         drop(first);
         let again = ProviderRegistry::new(injections.clone(), crate::app::register_providers);
         assert!(again.provider::<crate::provider::acp::Acp>().is_some());
@@ -608,7 +616,10 @@ mod tests {
                     register(providers, injections);
                 });
             });
-            assert!(why.as_deref().is_some_and(|why| why.contains(&format!("a {source} provider is registered already"))), "{source}: {why:?}");
+            assert!(
+                why.as_deref().is_some_and(|why| why.contains(&format!("a {source} provider is registered already"))),
+                "a second {source} provider in one registry: refused for another reason, or not at all: {why:?}"
+            );
         }
     }
 

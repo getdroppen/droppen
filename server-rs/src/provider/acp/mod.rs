@@ -355,6 +355,10 @@ impl AcpRuns {
 /// An ACP agent's process is never journalled, so no run of one is adopted:
 /// it dies with the server that started it.
 impl ProviderRuns for AcpRuns {
+    fn source(&self) -> Source {
+        Source::Acp
+    }
+
     fn host(&self) -> &Arc<RunHost> {
         &self.host
     }
