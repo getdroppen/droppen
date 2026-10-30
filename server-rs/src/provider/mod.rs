@@ -1920,6 +1920,37 @@ mod tests {
         assert_eq!(registry.host.journal.raw().len(), 2, "both rows stay as they were");
     }
 
+    /// The runs map as a driver keeps its sessions' turns in it: a turn put
+    /// in is found by its session and source while it runs and not once it
+    /// has ended, follows its session to a new id along with the id the
+    /// watchdog reads, and goes when it is taken out.
+    #[test]
+    fn a_driver_s_turn_is_found_renamed_and_withdrawn_by_its_session() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let paths = Arc::new(Paths::new(home.path().to_path_buf()));
+        let dirs = InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
+        dirs.create().expect("instance dirs");
+        let accounts = Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), crate::app::logins()));
+        let quota = Arc::new(droppen_accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins()));
+        let minute = Duration::from_secs(60);
+        let host = testing::host(paths, &dirs, accounts, quota, minute, minute, minute);
+
+        host.publish_run(Source::Claude, "first", RunEntry::resident_turn("first"));
+        assert!(host.running_run(Source::Claude, "first").is_some());
+        assert!(host.running_run(Source::Codex, "first").is_none(), "another source's session of that id has none");
+
+        host.rename_run(Source::Claude, "first", "second");
+        assert!(host.run_injection(Source::Claude, "first").is_none(), "gone from the old id");
+        let run = host.running_run(Source::Claude, "second").expect("under the new id");
+        assert_eq!(run.state.lock().expect("run state").current_id, "second", "the id the watchdog reads");
+
+        run.state.lock().expect("run state").state = InjectionRunState::Ok;
+        assert!(host.running_run(Source::Claude, "second").is_none(), "an ended turn is not running");
+        assert!(host.run_injection(Source::Claude, "second").is_some(), "though it is still in the map");
+        host.withdraw_run(Source::Claude, "second");
+        assert!(host.run_injection(Source::Claude, "second").is_none());
+    }
+
     /// A row of a source no provider is registered for is adopted by no one,
     /// for want of runs to hand it to: nothing claims its session or buries
     /// it, and it stays where it is.

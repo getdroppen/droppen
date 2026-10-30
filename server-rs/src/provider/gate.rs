@@ -357,4 +357,36 @@ mod tests {
             .collect();
         assert!(found.is_empty(), "a spawn gate made outside the provider registry: {found:?}");
     }
+
+    /// The spawn gate reaches the providers alone. Outside `provider`, no
+    /// production code names the gate, a permit or a lease, so none can take
+    /// the gate, mint a permit or build a lease. Inside it, the ACP provider's
+    /// agent routes, which start and stop its CLI outside a run, are lent the
+    /// gate through `provider_with_gate` as that provider's own. A file's
+    /// tests aside.
+    #[test]
+    fn only_the_providers_reach_the_spawn_gate() {
+        const NAMES: [&str; 4] = ["SpawnGate", "SpawnPermit", "SessionLease", "provider_with_gate"];
+        let named = |text: &str| -> Vec<&'static str> {
+            let code = text.split("\n#[cfg(test)]\nmod tests").next().unwrap_or_default();
+            let code: Vec<&str> = code.lines().filter(|line| !line.trim_start().starts_with("//")).collect();
+            let code = code.join("\n");
+            NAMES
+                .into_iter()
+                .filter(|name| code.match_indices(name).any(|(at, _)| !code[..at].ends_with(ident) && !code[at + name.len()..].starts_with(ident)))
+                .collect()
+        };
+        let mut found = Vec::new();
+        let mut lent = false;
+        for (path, text) in server_sources() {
+            let names = named(&text);
+            if path.contains("/src/provider/") {
+                lent |= path.contains("/src/provider/acp/") && names.contains(&"provider_with_gate");
+                continue;
+            }
+            found.extend(names.into_iter().map(|name| format!("{path}: {name}")));
+        }
+        assert!(lent, "the ACP provider's agent routes take the gate through provider_with_gate");
+        assert!(found.is_empty(), "the spawn gate reached outside the providers: {found:?}");
+    }
 }
