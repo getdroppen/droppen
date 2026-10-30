@@ -633,12 +633,14 @@ pub struct RunHost {
     gate: Mutex<Weak<gate::SpawnGate>>,
 }
 
-/// Claude Code's residents and Codex's app servers, on the host whose runs
-/// every provider shares ([`RunHost`]).
+/// Claude Code's residents, on the host whose runs every provider shares
+/// ([`RunHost`]).
 pub struct InjectionRegistry {
     /// What its runs share with every provider's.
     host: Arc<RunHost>,
-    codex_servers: Mutex<HashMap<String, app_server::Handle>>,
+    /// Codex's runs, which its provider keeps, and adoption hands a surviving
+    /// app server to until each provider adopts its own.
+    codex: Arc<app_server::CodexRuns>,
     /// The resident claude behind each session, keyed by session id alone —
     /// there is no codex resident, so the source is not part of the key.
     residents: Mutex<HashMap<String, resident::Handle>>,
@@ -802,9 +804,10 @@ impl InjectionRegistry {
         quota: Arc<crate::accounts::quota::QuotaCache>,
         decoration: Arc<dyn SpawnDecoration>,
     ) -> Arc<Self> {
+        let host = RunHost::new(paths.clone(), instance, accounts, quota);
         Arc::new(Self {
-            host: RunHost::new(paths.clone(), instance, accounts, quota),
-            codex_servers: Mutex::new(HashMap::new()),
+            codex: app_server::CodexRuns::new(host.clone()),
+            host,
             residents: Mutex::new(HashMap::new()),
             // Ten minutes of silence is a *report*, not a sentence: the only
             // thing that happens at this threshold is that the turn is marked.
@@ -856,7 +859,6 @@ impl std::ops::Deref for InjectionRegistry {
 impl ListsRuns for InjectionRegistry {
     fn add_to(&self, states: &mut DriverStatesBuilder) {
         self.claude_driver_states(states);
-        self.codex_driver_states(states);
     }
 }
 
@@ -1212,7 +1214,7 @@ impl InjectionRegistry {
         for record in self.journal.read() {
             if !procs::is_same_process(record.cli_pid, record.pid_token.as_deref()) {
                 if record.codex.is_some() {
-                    self.codex_dead(record);
+                    self.codex.codex_dead(record);
                 } else {
                     self.bury(&record, &boot).await;
                 }
@@ -1306,7 +1308,7 @@ impl InjectionRegistry {
         match shim::attach(&sidecars).await {
             Ok(link) => {
                 if record.source == Source::Codex {
-                    self.codex_attached(record.clone(), link, claim);
+                    self.codex.codex_attached(record.clone(), link, claim);
                 } else {
                     self.attached(record, sidecars, link, claim);
                 }
@@ -1357,7 +1359,7 @@ impl InjectionRegistry {
     /// up behind it.
     async fn bury_resident(&self, record: &runs::RunRecord, sidecars: &shim::Sidecars, boot: &gate::Boot<'_>) {
         if record.codex.is_some() {
-            self.codex_dead(record.clone());
+            self.codex.codex_dead(record.clone());
             return;
         }
         if let Some(exit) = sidecars.read_tombstone() {
@@ -1546,7 +1548,7 @@ async fn watch_adopted(run: Arc<RunEntry>, record: runs::RunRecord, registry: Ar
     drop(state);
     drop(claim);
     if record.codex.is_some() {
-        registry.codex_dead(record);
+        registry.codex.codex_dead(record);
     }
     let _ = run.finished.send(true);
 }
@@ -1898,13 +1900,13 @@ mod tests {
         let queued: app_server::State =
             serde_json::from_value(serde_json::json!({"queue": [{"id": "q1", "text": "next", "params": {}, "request": null}]}))
                 .expect("a codex state");
-        registry.codex_dead(runs::RunRecord {
+        registry.codex.codex_dead(runs::RunRecord {
             codex: Some(queued),
             run_id: "run-app-server".to_string(),
             resident: true,
             ..adopted.clone()
         });
-        let handle = registry.codex_handle(SESSION).expect("the handle stays");
+        let handle = registry.codex.codex_handle(SESSION).expect("the handle stays");
         assert!(handle.visible() && !handle.alive(), "listed, with no process behind it");
 
         let claim = providers.gate().lease(Source::Codex, SESSION).expect("a free session must be claimable");
