@@ -304,6 +304,10 @@ jobs:
       # (server-rs/Cargo.toml `[workspace.dependencies]`), so the JSON a
       # member writes does not depend on which packages a build selects.
       - run: ../scripts/check-serde-json-order.sh
+      # No member's `test-support` is on in a build without dev-dependencies:
+      # what it carries (a permit that takes no spawn gate, stand-in logins)
+      # is for tests alone.
+      - run: ../scripts/check-test-support-off.sh
       - name: Report Rust build storage
         if: always()
         run: |

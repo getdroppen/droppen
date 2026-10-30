@@ -1050,6 +1050,8 @@ impl CodexRuns {
             Some(launch) => clean_env(launch.env.iter().cloned()),
             None => clean_env_bare(),
         };
+        #[cfg(test)]
+        crate::provider::testing::shims_run_as(crate::provider::with_providers::SHIMS);
         let mut link = shim::spawn_via_shim(shim::Spawn {
             permit,
             sidecars: &sidecars,

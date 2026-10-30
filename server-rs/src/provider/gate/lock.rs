@@ -51,7 +51,7 @@ use droppen_sessions::Source;
 
 /// The result of trying to claim a session.
 #[derive(Debug)]
-pub enum Outcome {
+pub(super) enum Outcome {
     /// The claim succeeded; hold the guard for as long as the run lasts.
     Acquired(InjectLock),
     /// Somebody else is running against this session.
@@ -100,7 +100,7 @@ impl Drop for InjectLock {
 ///
 /// The error case is a real I/O failure — an unwritable data directory —
 /// rather than contention, which is [`Outcome::Busy`].
-pub fn acquire(dir: &Path, source: Source, session_id: &str) -> std::io::Result<Outcome> {
+pub(super) fn acquire(dir: &Path, source: Source, session_id: &str) -> std::io::Result<Outcome> {
     std::fs::create_dir_all(dir)?;
     let path = dir.join(lock_name(source.as_str(), session_id));
     let mut file = File::options().read(true).write(true).create(true).truncate(false).open(&path)?;

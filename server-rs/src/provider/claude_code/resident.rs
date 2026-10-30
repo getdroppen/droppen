@@ -1522,6 +1522,8 @@ impl ClaudeCodeRuns {
         }
         args.extend(recipe.args.iter().cloned());
 
+        #[cfg(test)]
+        crate::provider::testing::shims_run_as(crate::provider::with_providers::SHIMS);
         let link = shim::spawn_via_shim(Spawn {
             permit,
             sidecars: &sidecars,
@@ -7623,11 +7625,8 @@ mod tests {
             reading_recheck: Mutex::new(None),
             host: host.clone(),
         });
-        let injections = Arc::new(InjectionRegistry {
-            host,
-            decoration: crate::drive::NotifyDecoration::new(paths, dirs.clone()),
-            instance: dirs,
-        });
+        let decoration = crate::drive::NotifyDecoration::new(paths, dirs.clone());
+        let injections = crate::provider::testing::injection_registry_on(host, dirs, decoration);
         (injections, claude)
     }
 

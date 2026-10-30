@@ -1087,28 +1087,33 @@ pub async fn spawn_via_shim(spawn: Spawn<'_>) -> Result<Link, LinkError> {
 }
 
 /// The command that starts a shim told `argv`, in exactly `env`: this server
-/// under its `session-shim` subcommand, with `env_clear` first.
-#[cfg(not(test))]
+/// under its `session-shim` subcommand, with `env_clear` first. In a test that
+/// says so, and in this crate's own, the test binary itself instead
+/// ([`super::testing::shims_run_as`]).
 fn shim_command(argv: &[OsString], env: &Env) -> Command {
+    #[cfg(any(test, feature = "test-support"))]
+    if let Some(command) = super::testing::shim_command(argv, env) {
+        return command;
+    }
     let mut command = Command::new(droppen_pty::shim_program());
     command.arg("session-shim").args(argv).env_clear().envs(env);
     command
 }
 
-/// The same, in this crate's unit tests: the test binary itself, running the
-/// one test that is a shim.
-///
-/// [`droppen_pty::shim_program`] cannot serve a unit test. From a test
-/// binary it falls back to the server binary beside it in `target/debug` —
-/// which `cargo test --lib` never builds, and which any other run may have left
-/// there from older source. Absent, the test binary itself was run as
-/// `session-shim --socket …`, libtest refused the option and exited 101, and
-/// every respawn in [`super::claude_code::resident`]'s tests timed out on a socket nobody
-/// would bind. Present, the shim under test was whatever that binary happened
-/// to be. The test binary is always there, and always this source.
-#[cfg(test)]
-fn shim_command(argv: &[OsString], env: &Env) -> Command {
-    tests::this_binary_as_the_shim(argv, env)
+/// `session-shim`'s command line on its own, as the server reads it under
+/// that subcommand.
+#[cfg(any(test, feature = "test-support"))]
+#[derive(clap::Parser)]
+struct ShimCommandLine {
+    #[command(flatten)]
+    args: SessionShimArgs,
+}
+
+/// `words` read as `session-shim`'s command line.
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) fn parse_command_line(words: &[String]) -> Result<SessionShimArgs, clap::Error> {
+    use clap::Parser;
+    ShimCommandLine::try_parse_from(std::iter::once("session-shim").chain(words.iter().map(String::as_str))).map(|line| line.args)
 }
 
 /// Reconnect to the shim of a session that survived a restart.
@@ -1247,71 +1252,6 @@ fn classify(text: &str) -> Output {
 mod tests {
     use super::*;
 
-    /// Where [`this_binary_as_the_shim`] puts the shim's own arguments, as a
-    /// JSON array: a libtest command line has no room for them.
-    const SHIM_ARGV: &str = "DROPPEN_UNIT_TEST_SHIM_ARGV";
-
-    /// The pid of the test process that started the shim, which the shim
-    /// [`session_shim`] ends with.
-    const SHIM_TEST: &str = "DROPPEN_UNIT_TEST_SHIM_TEST";
-
-    /// This test binary as the session shim: libtest asked for [`session_shim`]
-    /// and nothing else, the shim's arguments in [`SHIM_ARGV`] and this
-    /// process's pid in [`SHIM_TEST`]. See [`super::shim_command`] for why a
-    /// unit test cannot run the server's.
-    pub(super) fn this_binary_as_the_shim(argv: &[OsString], env: &Env) -> Command {
-        let argv: Vec<String> = argv
-            .iter()
-            .map(|arg| arg.to_str().expect("a unit test's shim arguments are UTF-8").to_owned())
-            .collect();
-        // libtest names a test by its path inside the crate.
-        let (_crate, module) = module_path!().split_once("::").expect("a module inside a crate");
-        let mut command = Command::new(std::env::current_exe().expect("this test binary"));
-        command
-            .args(["--ignored", "--exact", "--quiet", &format!("{module}::session_shim")])
-            .env_clear()
-            .envs(env)
-            .env(SHIM_ARGV, serde_json::to_string(&argv).expect("json"))
-            .env(SHIM_TEST, std::process::id().to_string());
-        command
-    }
-
-    /// Not a test: the session shim, when [`this_binary_as_the_shim`] runs this
-    /// binary as one. Run any other way it has no arguments, and returns.
-    ///
-    /// It exits rather than returns once the shim is done, with the code the
-    /// server's `session-shim` would: the process is the shim, and libtest's
-    /// summary after it would be a second ending.
-    ///
-    /// Unlike the server's, it also ends with the test process that started
-    /// it. A server's shim outlives the server, which is what it is for; a
-    /// test's has nothing to outlive it for, and a test can end while its
-    /// driver is still respawning, before the new run is in the journal its
-    /// harness ends processes from. The shim would then hold its claude's
-    /// stdin open for ever. Once it exits, its claude reads end of file and
-    /// goes too.
-    #[test]
-    #[ignore = "the session shim a unit test's respawn runs, not a test"]
-    fn session_shim() {
-        let Ok(argv) = std::env::var(SHIM_ARGV) else {
-            return;
-        };
-        let test: u32 = std::env::var(SHIM_TEST).ok().and_then(|pid| pid.parse().ok()).expect("the test's pid");
-        std::thread::spawn(move || {
-            // Once the test process is gone, this one is someone else's child.
-            while std::os::unix::process::parent_id() == test {
-                std::thread::sleep(Duration::from_millis(100));
-            }
-            std::process::exit(1);
-        });
-        let argv: Vec<String> = serde_json::from_str(&argv).expect("the shim's arguments");
-        let outcome = parse(&argv).map_err(|error| error.to_string()).and_then(|args| {
-            let runtime = tokio::runtime::Runtime::new().map_err(|error| format!("cannot start a runtime: {error}"))?;
-            runtime.block_on(args.run())
-        });
-        std::process::exit(i32::from(outcome.is_err()));
-    }
-
     /// A shim running in this process over a fake claude, and its files.
     struct Harness {
         _dir: tempfile::TempDir,
@@ -1371,10 +1311,7 @@ mod tests {
     // ------------------------------------------------------------ the parser
 
     fn parse(words: &[String]) -> Result<SessionShimArgs, clap::Error> {
-        match crate::cli::tests::parse_words("session-shim", words)? {
-            crate::cli::Command::SessionShim(parsed) => Ok(parsed),
-            other => panic!("{words:?} parsed as {other:?}"),
-        }
+        parse_command_line(words)
     }
 
     #[test]
