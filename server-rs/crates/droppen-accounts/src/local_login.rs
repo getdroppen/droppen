@@ -10,7 +10,7 @@
 //! The server already had the evidence; it just never put it in one place:
 //!
 //! * **a refused credential.** A turn on the local login that failed on its
-//!   credential rests [`LOCAL_CLAUDE`](super::rest::LOCAL_CLAUDE) with class
+//!   credential rests [`LOCAL_CLAUDE`] with class
 //!   `auth`, indefinitely ([`super::rest`]);
 //! * **the `/usage` fallback probe**, which runs against the local login too and
 //!   files `not_logged_in` when the CLI answers with nothing

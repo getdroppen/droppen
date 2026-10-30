@@ -312,7 +312,7 @@ struct Entry {
     ///
     /// Nothing about a send says this, and that is what makes the failure quiet:
     /// `outbound` is unbounded, so a keystroke is accepted just as cheerfully
-    /// while the link task sits inside [`relink`] backing off with nobody
+    /// while the link task sits inside [`Entry::relink`] backing off with nobody
     /// draining the channel — and just as cheerfully after the task has returned
     /// for good. A terminal in either state lists, attaches and repaints an
     /// entirely normal-looking screen while swallowing everything typed into it.

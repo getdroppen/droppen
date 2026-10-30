@@ -622,7 +622,7 @@ fn bind_socket(socket: &Path, beside: Option<&Path>) -> Result<UnixListener, Str
 
 /// Read claude's stdout into the ring for as long as it produces any.
 ///
-/// Deliberately does not close the stream when the pipe ends: only [`run`]
+/// Deliberately does not close the stream when the pipe ends: only [`Args::run`]
 /// does that, and only after the tombstone is on disk.
 async fn record_stdout(mut stdout: ChildStdout, shim: Arc<Shim>) {
     let mut buf = vec![0u8; READ_CHUNK];
@@ -882,7 +882,7 @@ pub struct Link {
     /// two run at different speeds: the reader is normally several lines ahead
     /// of whoever is draining it, and a counter it bumped as it read would say
     /// "caught up" while the backlog was still in the channel. See
-    /// [`Link::replaying`], which is the reason any of this is counted.
+    /// [`Link::at`], which is the reason any of this is counted.
     at: u64,
     inbound: mpsc::UnboundedReceiver<(Output, u64)>,
     writer: OwnedWriteHalf,
@@ -1089,7 +1089,7 @@ pub async fn spawn_via_shim(spawn: Spawn<'_>) -> Result<Link, LinkError> {
 /// The command that starts a shim told `argv`, in exactly `env`: this server
 /// under its `session-shim` subcommand, with `env_clear` first. In a test that
 /// says so, and in this crate's own, the test binary itself instead
-/// ([`super::testing::shims_run_as`]).
+/// (`crate::testing::shims_run_as`, behind `test-support`).
 fn shim_command(argv: &[OsString], env: &Env) -> Command {
     #[cfg(any(test, feature = "test-support"))]
     if let Some(command) = super::testing::shim_command(argv, env) {

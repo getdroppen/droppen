@@ -233,7 +233,7 @@ impl Clock {
 /// [`rh_proto::chain::CONTROL_FRESHNESS_MS`] after the newest word that
 /// counts for its device ([`word_of`]), kept per admin. A channel is
 /// admitted only on a word about exactly this view's head
-/// ([`handshake::accept`]); once open, the head moving on before an admin
+/// ([`super::admit::accept`]); once open, the head moving on before an admin
 /// vouches for the new one does not end it, but a view no admin vouched for
 /// in seven days does — however long the hub keeps the connection up and a
 /// removal to itself. An admin's newer attestation that does not count (of

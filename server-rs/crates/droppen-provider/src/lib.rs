@@ -1419,7 +1419,7 @@ async fn watch_adopted(run: Arc<RunEntry>, record: runs::RunRecord, registry: Ar
 ///
 /// Every caller owes that proof: [`procs::is_same_process`] must agree that the pid is still
 ///   the process its record named — the check
-///   [`InjectionRegistry::interrupt`] and [`watch_adopted`] make immediately
+///   [`RunHost::interrupt_legacy`] and [`watch_adopted`] make immediately
 ///   before calling this.
 ///
 /// Reaching here without one of those is how a Stop button ends a stranger's
@@ -1449,7 +1449,7 @@ fn release(registry: &RunHost, state: &mut RunState) -> Option<gate::SessionLeas
 ///
 /// Two places reach this, and they must not word the same fact differently or
 /// the state would flicker between them: [`watch_adopted`]'s poll, which is how
-/// an inherited run normally ends, and [`InjectionRegistry::interrupt`] when the
+/// an inherited run normally ends, and [`RunHost::interrupt_legacy`] when the
 /// pid fails the identity guard.
 ///
 /// Failing closed there is the asymmetry the whole pid-reuse guard rests on. A

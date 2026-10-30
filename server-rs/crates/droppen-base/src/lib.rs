@@ -8,7 +8,7 @@
 //! * [`fsutil`] — the one way a file only this user may read is written;
 //! * [`procs`] — what a remembered pid still means, and signalling process groups;
 //! * [`outbound`] — the guards every outbound webhook shares;
-//! * [`env`] — the environment variables the server reads, under their Droppen
+//! * [`env`](mod@env) — the environment variables the server reads, under their Droppen
 //!   names and the ones they had before;
 //! * [`process_env`] — the environment a spawned CLI runs with, and the
 //!   redaction its output passes through;

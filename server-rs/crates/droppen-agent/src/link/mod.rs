@@ -104,12 +104,12 @@ pub(super) struct Shared {
     /// When a recovered device's self-activation this agent held back (too
     /// early by its own clock) may be taken: the chain is asked for again then.
     held_until: Mutex<Option<u64>>,
-    /// Bumped whenever the chain advanced, wherever from ([`chain_moved`]):
+    /// Bumped whenever the chain advanced, wherever from ([`admit::chain_moved`]):
     /// the hub connection and every relay connection ([`super::relays`])
     /// close the channels of devices that may no longer control this machine.
     pub(super) chain_version: tokio::sync::watch::Sender<u64>,
     /// Every open channel's control lapse ([`ChannelLapse`]): told of each
-    /// attestation as it arrives ([`take_attestation`]), before a newer one
+    /// attestation as it arrives ([`admit::take_attestation`]), before a newer one
     /// from the same admin can replace it in the state.
     pub(super) lapses: Mutex<Vec<std::sync::Weak<Mutex<ChannelLapse>>>>,
     /// The clock every channel's control lapse, and a management request's

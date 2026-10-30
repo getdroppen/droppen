@@ -141,7 +141,7 @@ fn emit(event: Event<'_>) {
     record("client", event);
 }
 
-/// Append one record built by [`line`] to the default capture file, as a
+/// Append one record built by [`line`](fn@line) to the default capture file, as a
 /// line: for a caller that writes the same file but is not this crate's
 /// traffic (the headless device says `"src": "devkit"`). Nothing when no
 /// capture file is configured.

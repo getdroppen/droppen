@@ -1,6 +1,6 @@
 //! Text helpers that more than one subsystem needs.
 //!
-//! [`hex`] spells bytes the way every binary field in the hub's control
+//! [`hex`](fn@hex) spells bytes the way every binary field in the hub's control
 //! messages does (lower case); [`unhex`] and [`unhex32`] read it back,
 //! answering `None` for anything that is not hex; [`sha256_hex`] is the one
 //! digest-to-hex spelling this crate uses. [`strip_ansi`] is the terminal

@@ -609,7 +609,7 @@ pub(crate) fn trusted(path: &Path) -> bool {
 }
 
 /// [`owned_safely`] for a folder the walk passes through. In the unit tests,
-/// a folder above the test's scratch root ([`TRUST_ROOT`]) is the machine's,
+/// a folder above the test's scratch root (`TRUST_ROOT`) is the machine's,
 /// not the test's, and is taken as it is.
 fn owned_safely_above(dir: &Path) -> bool {
     #[cfg(test)]

@@ -5,7 +5,7 @@
 //!
 //! * **`attentionAt`** — when the assistant last actually spoke on the main
 //!   chain, derived from the transcript itself ([`unread`], over the per-line
-//!   rule in [`derive`]). The transcript *is* the record, and a derived clock
+//!   rule in [`derive`](mod@derive)). The transcript *is* the record, and a derived clock
 //!   cannot fall out of step with the file the way a mirrored one would after a
 //!   crash, a restore, or a session driven from the terminal instead of from
 //!   here. What is kept is only a cache of that derivation.
@@ -162,7 +162,7 @@ const MAX_CACHE_ENTRIES: usize = 1000;
 ///
 /// Cold by the row's own `updated_at`: a transcript that has not been written to
 /// in the longest is the one least likely to be asked about again, the same
-/// eviction shape [`seen::evict`] uses. Ties broken by key so it is deterministic.
+/// eviction shape [`seen`]'s `evict` uses. Ties broken by key so it is deterministic.
 fn evict(cache: &mut HashMap<String, Cached>) {
     if cache.len() <= MAX_CACHE_ENTRIES {
         return;

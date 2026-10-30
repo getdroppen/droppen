@@ -760,7 +760,7 @@ impl Drop for EchoOff {
 }
 
 /// A signal that kills the process while echo is off would leave the shell
-/// that ran it with echo off too. While [`Armed`] lives, SIGINT, SIGTERM and
+/// that ran it with echo off too. While [`echo_restore::Armed`] lives, SIGINT, SIGTERM and
 /// SIGHUP first put the terminal back, then end the process as they would
 /// have (default action, raised again).
 #[cfg(unix)]
