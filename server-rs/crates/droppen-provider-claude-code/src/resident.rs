@@ -8402,20 +8402,18 @@ done
         // scenario. That is exactly what the real CLI's injection window is.
         until("claude to take the steered message into the running turn", || harness.seen().len() == 2).await;
 
-        let released = Instant::now();
         harness.release();
 
         // One `result`, covering both prompts. The queue behind it must move
-        // anyway, and within a window a person would call automatic.
+        // anyway, on its own: nothing else in this harness would move it (no
+        // stall, no tick), so `until`'s ten seconds are the bound, and the
+        // recording below says it was the settle window that moved it. A
+        // bound in wall-clock seconds measured the machine as much as the
+        // driver.
         until("the message it jumped to start on its own", || {
             harness.seen().iter().any(|line| line.contains("\"after\""))
         })
         .await;
-        assert!(
-            released.elapsed() < Duration::from_secs(3),
-            "the queue waited {:?} on a turn that had already been answered",
-            released.elapsed()
-        );
         let state = harness.state();
         assert_eq!(state.phase, Phase::Working, "the message it jumped is running: {state:?}");
         assert_eq!(state.queued, 0, "and nothing is left waiting: {state:?}");
@@ -8513,7 +8511,6 @@ done
     /// released — the stretch the queue used to be wrong for.
     fn folds_into_the_transcript() -> &'static str {
         r#"
-await() { n=0; while [ ! -f "$GO_DIR/$1" ] && [ "$n" -lt 400 ]; do [ -d "$GO_DIR" ] || exit 97; sleep 0.02; n=$((n + 1)); done; }
 IFS= read -r first
 printf '%s\n' "$first" >> "$LOG"
 printf '%s\n' '{"type":"attachment","attachment":{"type":"queued_command","prompt":"urgent","commandMode":"prompt"},"timestamp":"2026-10-18T09:00:00.000Z"}' >> "$TRANSCRIPT"
@@ -8522,7 +8519,7 @@ printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","id"
 touch "$GO_DIR/opened"
 IFS= read -r second
 printf '%s\n' "$second" >> "$LOG"
-await fold
+await_file fold
 printf '%s\n' '{"type":"queue-operation","operation":"enqueue","content":"urgent"}' >> "$TRANSCRIPT"
 printf '%s\n' '{"type":"attachment","attachment":{"type":"queued_command","prompt":[{"text":"urgent","type":"text"}],"commandMode":"prompt"}}' >> "$TRANSCRIPT"
 printf '%s\n' '{"type":"queue-operation","operation":"remove"}' >> "$TRANSCRIPT"
@@ -9170,16 +9167,14 @@ done
     fn describes_its_background_work() -> String {
         format!(
             r#"
-dir=$(dirname "$GO")
-await() {{ n=0; while [ ! -f "$dir/$1" ] && [ "$n" -lt 400 ]; do [ -d "$dir" ] || exit 97; sleep 0.02; n=$((n + 1)); done; }}
 (
-  await started
+  await_file started
   printf '%s\n' '{{"type":"system","subtype":"task_started","task_id":"a8725c02","tool_use_id":"toolu_01PfPz9","description":"survey the repository","subagent_type":"general-purpose","task_type":"local_agent"}}'
-  await snapshot
+  await_file snapshot
   printf '%s\n' '{{"type":"system","subtype":"background_tasks_changed","tasks":[{{"task_id":"a8725c02","task_type":"local_agent","description":"survey the repository"}},{{"task_id":"buli8h4uy","task_type":"local_bash","description":"Fetch PR 6-9 titles and bodies"}}]}}'
-  await prune
+  await_file prune
   printf '%s\n' '{{"type":"system","subtype":"background_tasks_changed","tasks":[{{"task_id":"buli8h4uy","task_type":"local_bash"}}]}}'
-  await notify
+  await_file notify
   printf '%s\n' '{{"type":"system","subtype":"task_notification","task_id":"buli8h4uy","status":"completed","output_file":"","summary":"Fetch PR 6-9 titles and bodies"}}'
 ) &
 {}
@@ -10530,11 +10525,9 @@ done
         let (_, live) = accounts_in(home.path(), &[("a@work", true), ("b@team", true)], Some("fable")).await;
         let resets = rest::now_ms() / 1000 + 3 * 86_400;
         let finishes = r#"
-dir=$(dirname "$GO")
 (
-  n=0
-  while [ ! -f "$dir/tasks-done" ] && [ "$n" -lt 400 ]; do [ -d "$dir" ] || exit 97; sleep 0.02; n=$((n + 1)); done
-  [ -f "$dir/tasks-done" ] && printf '%s\n' '{"type":"system","subtype":"background_tasks_changed","tasks":[]}'
+  await_file tasks-done
+  printf '%s\n' '{"type":"system","subtype":"background_tasks_changed","tasks":[]}'
 ) &
 "#;
         let body = format!(
@@ -10721,11 +10714,9 @@ dir=$(dirname "$GO")
             journalled("q-2", "second", &under_b, 0, None),
         ];
         let finishes = r#"
-dir=$(dirname "$GO")
 (
-  n=0
-  while [ ! -f "$dir/tasks-done" ] && [ "$n" -lt 400 ]; do [ -d "$dir" ] || exit 97; sleep 0.02; n=$((n + 1)); done
-  [ -f "$dir/tasks-done" ] && printf '%s\n' '{"type":"system","subtype":"background_tasks_changed","tasks":[]}'
+  await_file tasks-done
+  printf '%s\n' '{"type":"system","subtype":"background_tasks_changed","tasks":[]}'
 ) &
 "#;
         let harness = Harness::build_in(
@@ -10785,8 +10776,7 @@ dir=$(dirname "$GO")
             r#"
 dir=$(dirname "$GO")
 (
-  n=0
-  while [ ! -f "$dir/again" ] && [ "$n" -lt 400 ]; do [ -d "$dir" ] || exit 97; sleep 0.02; n=$((n + 1)); done
+  await_file again
   if [ -f "$dir/again" ]; then
     printf '%s\n' '{{"type":"assistant","message":{{}}}}'
     printf '%s\n' '{{"type":"rate_limit_event","rate_limit_info":{{"status":"rejected","rateLimitType":"five_hour","resetsAt":{resets_at}}}}}'
@@ -11110,11 +11100,9 @@ done
         let b = accounts[1].clone();
         let resets = rest::now_ms() / 1000 + 5400;
         let finishes = r#"
-dir=$(dirname "$GO")
 (
-  n=0
-  while [ ! -f "$dir/tasks-done" ] && [ "$n" -lt 400 ]; do [ -d "$dir" ] || exit 97; sleep 0.02; n=$((n + 1)); done
-  [ -f "$dir/tasks-done" ] && printf '%s\n' '{"type":"system","subtype":"background_tasks_changed","tasks":[]}'
+  await_file tasks-done
+  printf '%s\n' '{"type":"system","subtype":"background_tasks_changed","tasks":[]}'
 ) &
 "#;
         let body = format!(
@@ -11891,7 +11879,10 @@ done
             &asks_a_question(),
             Duration::from_secs(3600),
             Duration::from_secs(3600),
-            Duration::from_millis(120),
+            // No rung in the test's lifetime: the stop under test is the
+            // request claude answers. A rung that fired first, on a slow
+            // machine, would signal claude before it had read the request.
+            Duration::from_secs(3600),
             NEVER_SETTLES,
             Adoption {
                 attach: Some(Witness::None),
