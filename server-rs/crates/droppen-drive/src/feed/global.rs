@@ -1130,22 +1130,25 @@ mod tests {
         let silent = futures_util::stream::pending::<Result<Message, std::convert::Infallible>>();
         let mut socket = std::pin::pin!(serve(client, silent, state, MuxOptions::default(), None, false));
 
-        // `settings` and the snapshot leave; the next frame never does.
-        let stuck = async {
+        // `settings` and the snapshot leave; the next frame never does. Bounded,
+        // so a frame that never reaches a send fails here rather than hangs.
+        let stuck = tokio::time::timeout(Duration::from_secs(10), async {
             for _ in 0..2 {
                 frames.recv().await.expect("an opening frame");
             }
             global.publish(r#"{"type":"screens:list","listRevision":1}"#.into());
             assert!(frames.recv().await.is_none(), "the client refuses the frame after the opening");
-        };
+        });
         tokio::select! {
             biased;
             () = &mut socket => panic!("the socket ended before the shutdown"),
-            () = stuck => {}
+            reached = stuck => reached.expect("the socket gets stuck sending the published frame"),
         }
 
+        // Well inside the close's own limit, so a close that waited it out
+        // fails here as surely as a send that waited out its hour.
         cancel.cancel();
-        tokio::time::timeout(Duration::from_secs(1), socket)
+        tokio::time::timeout(CLOSE_LIMIT / 2, socket)
             .await
             .expect("a shutdown ends the stuck socket at once");
     }
