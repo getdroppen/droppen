@@ -22,7 +22,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use futures_util::StreamExt;
+use futures_util::{Sink, Stream, StreamExt};
 use gotcha::axum::extract::ws::{Message, WebSocket};
 use gotcha::axum::response::Response;
 use gotcha::axum::extract::FromRef;
@@ -640,7 +640,17 @@ pub struct EventsQuery {
 /// ([`CLOSE_LIMIT`]): a client that stops reading would otherwise park this
 /// task for good, with the list feed and every subscription it holds.
 async fn run_socket(socket: WebSocket, state: EventsState, options: MuxOptions, login: Option<(String, String)>, cloud: bool) {
-    let (mut sender, mut receiver) = socket.split();
+    let (sender, receiver) = socket.split();
+    serve(sender, receiver, state, options, login, cloud).await;
+}
+
+/// [`run_socket`] on the socket's two halves: over any sink and stream of
+/// frames, so a test can stand in a client that has stopped reading.
+async fn serve<S, R, E>(mut sender: S, mut receiver: R, state: EventsState, options: MuxOptions, login: Option<(String, String)>, cloud: bool)
+where
+    S: Sink<Message> + Unpin,
+    R: Stream<Item = Result<Message, E>> + Unpin,
+{
     let (limit, shutdown) = (state.send_limit, &state.cancel);
     let compress = options.compress;
     if options.enabled && !send_within(&mut sender, Message::Text(hello_frame(options).into()), limit, shutdown).await {
@@ -773,6 +783,7 @@ mod tests {
 
     use super::*;
     use droppen_http::openapi_ext::Nullable;
+    use droppen_instance::instance::{InstanceDirs, DEFAULT_INSTANCE};
     use droppen_sessions::{SessionStatus, Settings};
 
     /// The only fields `GET /api/settings` may have that the frame does not.
@@ -1045,4 +1056,100 @@ mod tests {
         }
     }
 
+    /// No plugins: the `settings` frame's list is empty.
+    struct NoPlugins;
+
+    impl PluginStatuses for NoPlugins {
+        fn status(&self) -> futures_util::future::BoxFuture<'_, Vec<droppen_plugin_sdk::PluginStatus>> {
+            Box::pin(std::future::ready(Vec::new()))
+        }
+    }
+
+    /// A client that reads the opening frames and then stops reading: it
+    /// takes `room` frames and is never ready for another. Each frame it takes
+    /// goes to `taken`, which it closes the first time it refuses one.
+    struct StopsReading {
+        room: usize,
+        taken: Option<mpsc::UnboundedSender<Message>>,
+    }
+
+    impl Sink<Message> for StopsReading {
+        type Error = std::convert::Infallible;
+
+        fn poll_ready(mut self: std::pin::Pin<&mut Self>, _: &mut std::task::Context<'_>) -> std::task::Poll<Result<(), Self::Error>> {
+            if self.room > 0 {
+                return std::task::Poll::Ready(Ok(()));
+            }
+            self.taken = None;
+            std::task::Poll::Pending
+        }
+
+        fn start_send(mut self: std::pin::Pin<&mut Self>, frame: Message) -> Result<(), Self::Error> {
+            self.room -= 1;
+            if let Some(taken) = &self.taken {
+                let _ = taken.send(frame);
+            }
+            Ok(())
+        }
+
+        fn poll_flush(self: std::pin::Pin<&mut Self>, _: &mut std::task::Context<'_>) -> std::task::Poll<Result<(), Self::Error>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+
+        // No room for the close frame either.
+        fn poll_close(self: std::pin::Pin<&mut Self>, _: &mut std::task::Context<'_>) -> std::task::Poll<Result<(), Self::Error>> {
+            std::task::Poll::Pending
+        }
+    }
+
+    /// A shutdown ends a socket stuck sending to a client that stopped reading
+    /// at once, not a send limit later: the send gives way to the server's
+    /// token, and so does the close after it. That the server hands its own
+    /// token to the socket is pinned end to end, in the server's
+    /// `api::feed_global` tests.
+    #[tokio::test]
+    async fn a_shutdown_ends_a_socket_stuck_on_a_client_that_stopped_reading() {
+        let home = tempfile::tempdir().expect("a temp dir");
+        let (paths, drive) = crate::fake::drive(home.path());
+        let instance = InstanceDirs::new(&paths.data_dir(), DEFAULT_INSTANCE).expect("valid name");
+        let state = EventsState {
+            // Far past the test's own bound: only the token can end the send.
+            send_limit: Duration::from_secs(3600),
+            cancel: CancellationToken::new(),
+            plugins: Arc::new(NoPlugins),
+            global: GlobalFeed::new(),
+            drive,
+            instance: Arc::new(instance),
+            started_at: "2026-01-01T00:00:00.000Z".into(),
+            claude_dirs: claude_dirs(),
+            feeds: super::super::FeedRegistry::new(),
+        };
+        let (global, cancel) = (state.global.clone(), state.cancel.clone());
+        let (taken, mut frames) = mpsc::unbounded_channel();
+        let client = StopsReading { room: 2, taken: Some(taken) };
+        let silent = futures_util::stream::pending::<Result<Message, std::convert::Infallible>>();
+        let mut socket = std::pin::pin!(serve(client, silent, state, MuxOptions::default(), None, false));
+
+        // `settings` and the snapshot leave; the next frame never does. Bounded,
+        // so a frame that never reaches a send fails here rather than hangs.
+        let stuck = tokio::time::timeout(Duration::from_secs(10), async {
+            for _ in 0..2 {
+                frames.recv().await.expect("an opening frame");
+            }
+            global.publish(r#"{"type":"screens:list","listRevision":1}"#.into());
+            assert!(frames.recv().await.is_none(), "the client refuses the frame after the opening");
+        });
+        tokio::select! {
+            biased;
+            () = &mut socket => panic!("the socket ended before the shutdown"),
+            reached = stuck => reached.expect("the socket gets stuck sending the published frame"),
+        }
+
+        // Well inside the close's own limit, so a close that waited it out
+        // fails here as surely as a send that waited out its hour.
+        cancel.cancel();
+        tokio::time::timeout(CLOSE_LIMIT / 2, socket)
+            .await
+            .expect("a shutdown ends the stuck socket at once");
+    }
 }

@@ -142,7 +142,13 @@ pub type WsSender = futures_util::stream::SplitSink<WebSocket, Message>;
 ///
 /// Biased toward the send, so a frame that can go at once still goes during
 /// a shutdown; only one that would have to wait gives way to it.
-pub async fn send_within(sender: &mut WsSender, message: Message, limit: std::time::Duration, shutdown: &CancellationToken) -> bool {
+///
+/// Any sink of frames will do: a socket's [`WsSender`], or a test's client
+/// that never takes one.
+pub async fn send_within<S>(sender: &mut S, message: Message, limit: std::time::Duration, shutdown: &CancellationToken) -> bool
+where
+    S: futures_util::Sink<Message> + Unpin,
+{
     tokio::select! {
         biased;
         sent = tokio::time::timeout(limit, sender.send(message)) => match sent {
@@ -164,7 +170,10 @@ pub async fn send_within(sender: &mut WsSender, message: Message, limit: std::ti
 /// stopped reading leaves no room for the close frame either. Biased toward
 /// the close, so on shutdown one that can go at once still goes. Nothing
 /// waits for the client's answer; the socket is dropped right after.
-pub async fn close_within(sender: &mut WsSender, limit: std::time::Duration, shutdown: &CancellationToken) {
+pub async fn close_within<S>(sender: &mut S, limit: std::time::Duration, shutdown: &CancellationToken)
+where
+    S: futures_util::Sink<Message> + Unpin,
+{
     tokio::select! {
         biased;
         _ = tokio::time::timeout(limit, sender.close()) => {}
