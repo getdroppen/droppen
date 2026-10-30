@@ -408,9 +408,11 @@ impl RemoteHandApp {
         let addr = listener.local_addr().map_err(GotchaError::Io)?;
         // The address the desktop app's window is at, `127.0.0.1:<port>`, is
         // what the first-run guide's install routes check a request against
-        // (`http::app_window`). Recorded once; until now nothing counted as
-        // the app's window.
-        let _ = listen_port.set(addr.port());
+        // (`http::app_window`). Recorded once, here; before this, nothing
+        // counts as the app's window.
+        listen_port
+            .set(addr.port())
+            .expect("the listen port is recorded once, by the boot that bound it");
         // Same rule: the port file says where *the owner* is listening, and a
         // throwaway server writing its own would send every reader somewhere
         // that is about to stop existing.
