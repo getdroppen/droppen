@@ -259,6 +259,11 @@ async fn a_list_client_that_never_reads_is_given_up_on() {
 /// A server shutting down does not wait on a list client that has stopped
 /// reading: the send it is stuck on gives way at once, well inside the
 /// real limit.
+///
+/// What this pins is that the server's own shutdown token reaches the socket.
+/// That a stuck send gives way to the token is pinned in `droppen_drive`
+/// (`feed::global`'s tests), on a client that never takes a frame; here the
+/// kernel's buffers decide whether a send is stuck at all.
 #[tokio::test]
 async fn a_shutdown_does_not_wait_for_a_list_client_that_never_reads() {
     let home = tempfile::tempdir().unwrap();
