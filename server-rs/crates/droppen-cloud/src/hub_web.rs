@@ -85,7 +85,12 @@ struct Inner {
 pub struct HubWebs {
     inner: Arc<Inner>,
     /// Off in tests (cloud's own, and the server's through `test-support`)
-    /// unless a test turns it on: they never reach the network.
+    /// unless a test turns it on: they never reach the network. Off as well in
+    /// a server binary built in the same run as the server's tests (`cargo
+    /// test`, `--tests`, nextest), which builds it with the dev-dependencies'
+    /// features: a `target/debug/remote-hand-server` built that way does not
+    /// look hubs up. A normal or release build (`cargo build`, `cargo build
+    /// --release`, the release tooling) has no `test-support`, and does.
     discover: AtomicBool,
 }
 

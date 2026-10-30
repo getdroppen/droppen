@@ -255,4 +255,39 @@ mod tests {
         let back = CloudFile::from(TestCloudFile::from(file.clone()));
         assert_eq!(serde_json::to_value(&back).unwrap(), serde_json::to_value(&file).unwrap());
     }
+
+    /// The attempt copied is the attempt, field for field: the server's tests
+    /// read the sign-in in flight only through the copy. Every field differs
+    /// from its default, so a field the copy dropped or swapped shows.
+    #[test]
+    fn a_copy_of_the_attempt_reads_as_the_attempt() {
+        let machine = crate::link_handoff::HandoffMachine {
+            hostname: "laptop".into(),
+            sign_key: [1; 32],
+            dh_key: [2; 32],
+            enrolled: None,
+        };
+        let attempt = Attempt {
+            id: "a1".into(),
+            nonce: "n1".into(),
+            owner: "alice".into(),
+            hub: "wss://hub.example".into(),
+            hub_web: "https://app.example".into(),
+            aggregate: true,
+            expires_ms: 1_000,
+            handoff: Some(Handoff::new("https://app.example", "a1", 1_000, "http://127.0.0.1:8700", &machine)),
+        };
+        let copy = TestAttempt::from(attempt.clone());
+        assert_eq!(copy.id, attempt.id);
+        assert_eq!(copy.nonce, attempt.nonce);
+        assert_eq!(copy.owner, attempt.owner);
+        assert_eq!(copy.hub, attempt.hub);
+        assert_eq!(copy.hub_web, attempt.hub_web);
+        assert_eq!(copy.aggregate, attempt.aggregate);
+        assert_eq!(copy.expires_ms, attempt.expires_ms);
+        // A hand-off's URL carries its own one-off key and state, so the same
+        // URL is the same hand-off.
+        assert_eq!(copy.handoff.as_ref().map(Handoff::url), attempt.handoff.as_ref().map(Handoff::url));
+        assert!(copy.handoff.is_some());
+    }
 }
