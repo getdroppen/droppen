@@ -116,7 +116,7 @@ function Steps({ items, testId, stack = false }: { items: { title: string; body:
         >
           {/* The number is the page's face (IBM Plex Sans), with tabular figures so 01/02/03 align; the command's mono is not used here. */}
           <span className="flex min-w-0 items-baseline gap-2">
-            <span className="shrink-0 text-xs font-semibold text-faint tabular-nums">{String(i + 1).padStart(2, "0")}</span>
+            <span className="shrink-0 text-base font-semibold text-faint tabular-nums">{String(i + 1).padStart(2, "0")}</span>
             <span className="min-w-0 text-base leading-6 font-semibold text-fg">{s.title}</span>
           </span>
           <div className={cn("text-base text-muted", stack && "max-w-[44rem]")}>{s.body}</div>
@@ -344,6 +344,10 @@ function LinuxPanel({
             <p className="text-base text-muted">{t("Replace <code> with the one-time code.")}</p>
             <CommandLine command={codeInstallCommand(t("<code>"))} label={t("copy the command")} testId="install-command" primaryCopy />
             <LinuxTarballs release={release} cpu={arch} testId="linux-tarballs" sayUnbuilt={false} />
+            <a href={release?.releasesPage ?? RELEASES_URL} target="_blank" rel="noopener noreferrer" data-testid="linux-release-link" className="inline-flex w-fit items-center gap-1 text-xs font-semibold text-muted underline underline-offset-4 hover:text-fg">
+              {t("release notes, checksums and other files")}
+              <ExternalLink className="size-3" />
+            </a>
           </div>
           <div className="border-t border-border pt-4">
             <Check flat />
@@ -468,6 +472,7 @@ function Environments({
   const { t } = useTranslation();
   const tabs = useTabs();
   const marked = detected && detected !== "mobile" ? tabOf(detected) : null;
+  const macWays = os === "macos-bg" ? (["macos-bg", "macos-app"] as const) : (["macos-app", "macos-bg"] as const);
   return (
     <BaseTabs.Root
       value={tabOf(os)}
@@ -505,14 +510,13 @@ function Environments({
         <BaseTabs.Panel key={value} value={value} tabIndex={-1} data-testid={`panel-${value}`}>
           {value === "macos-app" && (
             <>
-              {/* Both ways, side by side: no switch to find, and nothing hidden behind one. */}
+              {/* Both ways, side by side: no switch to find, and nothing hidden behind one. A background-install deep link leads with that way. */}
               <div data-testid="mac-ways" className="grid border-border lg:grid-cols-2">
-                <div data-testid="way-panel-macos-app" className="border-b border-border lg:border-r lg:border-b-0">
-                  <AppPanel availability={availability} release={release} />
-                </div>
-                <div data-testid="way-panel-macos-bg">
-                  <BackgroundPanel primary={!availability.app} />
-                </div>
+                {macWays.map((way, index) => (
+                  <div key={way} data-testid={`way-panel-${way}`} className={cn(index === 0 && "border-b border-border lg:border-r lg:border-b-0")}>
+                    {way === "macos-app" ? <AppPanel availability={availability} release={release} /> : <BackgroundPanel primary={!availability.app} />}
+                  </div>
+                ))}
               </div>
               {/* The rest of the platform's page, inside the same tab: one block, one sticky row. */}
               <Update platform="macos-app" availability={availability} />
@@ -587,7 +591,7 @@ function Verify({ platform, availability }: { platform: Platform; availability: 
     return { ...row, left };
   });
   return (
-    <Section id="verify">
+    <Section id="verify" className="scroll-mt-28">
       <SectionHead title={t("What it installs, and how it connects")} />
       <dl data-testid="download-verify" className="grid border-t border-border sm:grid-cols-2">
         {cells.map((r) => (
@@ -615,7 +619,7 @@ function Update({ platform, availability }: { platform: Platform; availability: 
       ? t("The Mac app checks for updates by itself. To update a command-line install, run the install command again: it upgrades in place and keeps your data.")
       : t("To update, run the install command again: it upgrades in place and keeps your data.");
   return (
-    <Section id="update">
+    <Section id="update" className="scroll-mt-28">
       {/* The lead on the left, the command it asks for on the right: the section uses the page's width instead of leaving half of it blank. */}
       <div className="grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1.55fr)]">
         <div className="lg:border-r lg:border-border">
@@ -638,13 +642,13 @@ function Uninstall({ platform, availability }: { platform: Platform; availabilit
   ];
   const app = platform === "macos-app" && availability.app;
   return (
-    <Section id="uninstall">
+    <Section id="uninstall" className="scroll-mt-28">
       <SectionHead title={t("Uninstall")} />
       <ol className="grid border-t border-border xl:grid-cols-3">
         {steps.map((s, i) => (
           <li key={s.title} className="flex flex-col gap-2 border-border px-6 py-6 max-xl:border-b max-md:px-4 xl:border-r">
             <span className="flex min-w-0 items-baseline gap-2">
-              <span className="shrink-0 text-xs font-semibold text-faint tabular-nums">0{i + 1}</span>
+              <span className="shrink-0 text-base font-semibold text-faint tabular-nums">0{i + 1}</span>
               <span className="min-w-0 text-base leading-6 font-semibold text-fg">{s.title}</span>
             </span>
             <span className="max-w-[42em] text-base text-muted">{s.body}</span>
@@ -652,7 +656,7 @@ function Uninstall({ platform, availability }: { platform: Platform; availabilit
         ))}
         <li className="flex min-w-0 flex-col gap-2 px-6 py-6 max-md:px-4">
           <span className="flex min-w-0 items-baseline gap-2">
-            <span className="shrink-0 text-xs font-semibold text-faint tabular-nums">03</span>
+            <span className="shrink-0 text-base font-semibold text-faint tabular-nums">03</span>
             <span className="min-w-0 text-base leading-6 font-semibold text-fg">{t("Remove the program")}</span>
           </span>
           {app && <span className="max-w-[42em] text-base text-muted">{t("The App: quit Droppen and drag it from Applications to the Trash.")}</span>}

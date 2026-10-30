@@ -27,6 +27,7 @@
     "test:publish-release": "node --test scripts/publish-release.test.mjs",
     "test:release-notes": "node --test scripts/release-notes.test.mjs",
     "test:ai-attribution": "node --test scripts/check-ai-attribution.test.mjs",
+    "test:ui-audit": "node --test scripts/ui-audit/run.test.mjs",
     "test:sdk": "pnpm --filter @droppen/plugin-sdk test",
     "ui-audit": "node scripts/ui-audit/run.mjs",
     "build:web:app": "rm -rf web/dist && DROPPEN_WEB_MODE=cloud DROPPEN_WEB_ROLE=app pnpm --filter @remote-hand/web build",

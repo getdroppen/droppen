@@ -200,6 +200,16 @@ test("the numbers are the measured ones, and nothing claims more than the build 
   assert.deepEqual(MEASURED, { same: { direct: [1, 2], hub: [170, 215] }, phone: { direct: [63, 73], hub: [215, 227] } });
 });
 
+test("every localized beta caveat says there has been no external audit", () => {
+  for (const [lng, caveat] of [
+    ["zh-CN", /内部安全评审，尚未进行外部审计/],
+    ["zh-TW", /內部安全審查，尚未進行外部稽核/],
+    ["ja", /社内のセキュリティレビューを受けていますが、外部監査はまだです/],
+  ] as const) {
+    assert.match(text(draw(lng)), caveat, lng);
+  }
+});
+
 test("only the client is called open source: the hub never is, and nothing says all of Droppen is", () => {
   const en = text(draw("en"));
   assert.match(en, /open-source client/i);

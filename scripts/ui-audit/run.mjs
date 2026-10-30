@@ -402,6 +402,9 @@ async function auditLive(view) {
   await page.goto(liveUrl, { waitUntil: "networkidle" });
   await page.evaluate(() => document.fonts.ready);
   await page.waitForTimeout(300);
+  const { handle, element, height, viewport, overlap } = await liveScroller(page);
+  // Measure and capture the same initial state, even when the URL has a hash.
+  await scrollLive(page, element, 0);
   const snapshot = await page.evaluate(() => {
     const rect = (e) => {
       const r = e.getBoundingClientRect();
@@ -423,9 +426,7 @@ async function auditLive(view) {
   // One image per viewport, from the top: a `fullPage` image of this app is
   // 1440×20602 and mostly blank, because the scroll container inside the fixed
   // body never paints below the fold, and it is too tall for a model to accept.
-  const { handle, element, height, viewport, overlap } = await liveScroller(page);
   try {
-    await scrollLive(page, element, 0);
     await page.screenshot({ path: `${out}/live-${view.name}.png` });
     const step = Math.max(64, viewport - Math.ceil(overlap));
     if (height > viewport && viewport > 0) {

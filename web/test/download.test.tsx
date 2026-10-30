@@ -24,6 +24,7 @@ import { downloadJa, downloadZhCN, downloadZhTW } from "../src/features/landing/
 import { onboardingJa, onboardingZhCN, onboardingZhTW } from "../src/i18n/onboarding.js";
 import { detectKind, type EnvironmentHints, initialOs, osForKind } from "../src/features/landing/detect.js";
 import DownloadPage from "../src/features/landing/download.js";
+import type { LatestRelease } from "../src/lib/hub/releases.js";
 import {
   APP_AVAILABLE,
   APP_DOWNLOAD_URL,
@@ -79,14 +80,14 @@ const MAC_CHROME: EnvironmentHints = {
 
 function draw(
   lng: string,
-  opts: { signedIn?: boolean; app?: boolean; appSignIn?: boolean; linux?: boolean; availability?: Availability; hints?: EnvironmentHints; os?: DownloadOs | null } = {},
+  opts: { signedIn?: boolean; app?: boolean; appSignIn?: boolean; linux?: boolean; availability?: Availability; hints?: EnvironmentHints; os?: DownloadOs | null; cpu?: string | null; release?: LatestRelease | null } = {},
 ): string {
   void i18n.changeLanguage(lng);
   place.search = opts.os ? `?os=${opts.os}` : "";
   const availability = opts.availability ?? { app: opts.app ?? false, appSignIn: opts.appSignIn ?? false, linux: opts.linux ?? false };
   return renderToStaticMarkup(
     <I18nextProvider i18n={i18n}>
-      <DownloadPage signedIn={opts.signedIn} availability={availability} hints={opts.hints ?? MAC_CHROME} />
+      <DownloadPage signedIn={opts.signedIn} availability={availability} hints={opts.hints ?? MAC_CHROME} cpu={opts.cpu} release={opts.release} />
     </I18nextProvider>,
   );
 }
@@ -234,6 +235,65 @@ test("the computers are one keyboard-operable tablist, the Mac's two ways a swit
     const html = draw("en", { os });
     assert.ok(html.indexOf('id="get"') < html.indexOf('id="phone"'), `${os}: the install, then the phone`);
     assert.ok(text(html).includes("Then, use it from your phone") && text(html).includes("Add to Home Screen") && text(html).includes("Install app"), os);
+  }
+});
+
+test("the macos-bg deep link leads with the background install and keeps both Mac ways on the page", () => {
+  const background = draw("en", { os: "macos-bg", app: true });
+  const backgroundAt = background.indexOf('data-testid="way-panel-macos-bg"');
+  const appAt = background.indexOf('data-testid="way-panel-macos-app"');
+  assert.ok(backgroundAt >= 0 && appAt >= 0, "both installation ways stay visible");
+  assert.ok(backgroundAt < appAt, "the linked way is the first one on the opening screen");
+
+  const regular = draw("en", { os: "macos-app", app: true });
+  assert.ok(regular.indexOf('data-testid="way-panel-macos-app"') < regular.indexOf('data-testid="way-panel-macos-bg"'), "the regular Mac link keeps the App first");
+});
+
+test("Linux always links the release page when the hub fails or names no tarball for this processor", () => {
+  const hints: EnvironmentHints = { userAgent: "Mozilla/5.0 (X11; Linux x86_64; rv:131.0) Gecko/20100101 Firefox/131.0" };
+  const releasePage = "https://github.com/getdroppen/droppen/releases/tag/v0.2.129";
+  const linuxFile = {
+    name: "droppen-v0.2.129-linux-x86_64.tar.gz",
+    url: "https://github.com/getdroppen/droppen/releases/download/v0.2.129/droppen-v0.2.129-linux-x86_64.tar.gz",
+    href: "https://github.com/getdroppen/droppen/releases/download/v0.2.129/droppen-v0.2.129-linux-x86_64.tar.gz",
+    size: 12_300_000,
+  };
+  const release: LatestRelease = { version: "0.2.129", tag: "v0.2.129", publishedAt: "2026-10-24T09:30:00Z", releasesPage: releasePage, files: { "linux-x86_64": linuxFile } };
+  const macFile = { name: "Droppen-0.2.129.dmg", url: "https://github.com/getdroppen/droppen/releases/download/v0.2.129/Droppen-0.2.129.dmg", href: "https://github.com/getdroppen/droppen/releases/download/v0.2.129/Droppen-0.2.129.dmg", size: 48_000_000 };
+  const withoutLinux = { ...release, files: { macos: macFile } };
+  const link = (html: string, href: string) => html.includes(`<a href="${href}" target="_blank" rel="noopener noreferrer" data-testid="linux-release-link"`);
+
+  for (const [name, given, href] of [["hub failure", null, RELEASES_URL], ["no Linux file", withoutLinux, releasePage]] as const) {
+    const html = draw("en", { os: "linux", linux: true, hints, cpu: "x86_64", release: given });
+    assert.ok(link(html, href), `${name}: the public release-page fallback remains in the Linux download area`);
+    assert.doesNotMatch(html, /data-testid="linux-tarballs-file"/, `${name}: no file is invented`);
+  }
+
+  const resolved = draw("en", { os: "linux", linux: true, hints, cpu: "x86_64", release });
+  assert.ok(link(resolved, releasePage), "a resolved release links its own notes and checksums");
+  assert.ok(resolved.includes(`<a href="${linuxFile.href}" data-testid="linux-tarballs-file"`), "the resolved tarball download is unchanged");
+});
+
+test("update, uninstall and verify clear both sticky rows when followed as anchors", () => {
+  const html = draw("en", { os: "macos-app", app: true });
+  for (const id of ["update", "uninstall", "verify"]) {
+    const section = html.match(new RegExp(`<section id="${id}" class="([^"]*)"`));
+    assert.ok(section, `#${id} is a section`);
+    const classes = section[1]!.split(/\s+/);
+    assert.ok(classes.includes("scroll-mt-28"), `#${id} clears the 56px header and 48px platform row`);
+    assert.ok(!classes.includes("scroll-mt-14"), `#${id}'s larger margin wins the class merge`);
+  }
+});
+
+test("every numbered install and uninstall step uses 16px type", () => {
+  for (const os of ["macos-app", "macos-bg", "linux"] as const) {
+    const html = draw("en", { os, app: true, linux: true });
+    const numbers = [...html.matchAll(/<span class="([^"]*tabular-nums[^"]*)">(\d{2})<\/span>/g)];
+    assert.ok(numbers.length >= 3, `${os}: the page has numbered steps`);
+    for (const [, classes, number] of numbers) {
+      assert.ok(classes!.split(/\s+/).includes("text-base"), `${os}: step ${number} is 16px`);
+      assert.ok(!classes!.split(/\s+/).includes("text-xs"), `${os}: step ${number} is not 12px`);
+    }
   }
 });
 

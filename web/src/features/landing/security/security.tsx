@@ -594,6 +594,7 @@ function TocSheet({ active, open, onClose }: { active: (typeof SECURITY_SECTIONS
   const { t } = useTranslation();
   const entries = tocEntries(t);
   const activeRef = useRef<HTMLAnchorElement>(null);
+  const destinationRef = useRef<string | null>(null);
   // Opening at chapter 06 should show 06, not the top of the list. The portal's
   // refs land after this effect, so scroll on the next frame.
   useEffect(() => {
@@ -604,7 +605,21 @@ function TocSheet({ active, open, onClose }: { active: (typeof SECURITY_SECTIONS
   return (
     <BaseDialog.Portal>
       <BaseDialog.Backdrop className="fixed inset-0 z-40 bg-black/20 dark:bg-black/60" />
-      <BaseDialog.Popup className={TOC_SHEET}>
+      <BaseDialog.Popup
+        className={TOC_SHEET}
+        finalFocus={() => {
+          const id = destinationRef.current;
+          destinationRef.current = null;
+          if (!id) return true;
+          const destination = document.getElementById(id);
+          if (!destination) return true;
+          // A chosen chapter is the reader's destination; do not undo its anchor
+          // scroll by returning focus to the trigger at the top of the page.
+          destination.tabIndex = -1;
+          destination.focus({ preventScroll: true });
+          return false;
+        }}
+      >
         <div className="sticky top-0 z-10 flex h-9 items-center justify-between gap-2 border-b border-border bg-bg px-4">
           <BaseDialog.Title className="min-w-0 py-1.5 text-sm leading-5 font-semibold text-fg">{t("On this page")}</BaseDialog.Title>
           <BaseDialog.Close aria-label={t("close")} className="flex size-5 shrink-0 items-center justify-center text-muted hover:bg-hover hover:text-fg pointer-coarse:size-9">
@@ -617,7 +632,10 @@ function TocSheet({ active, open, onClose }: { active: (typeof SECURITY_SECTIONS
               <li key={e.id}>
                 <a
                   href={`#${e.id}`}
-                  onClick={onClose}
+                  onClick={() => {
+                    destinationRef.current = e.id;
+                    onClose();
+                  }}
                   ref={active === e.id ? activeRef : undefined}
                   aria-current={active === e.id ? "location" : undefined}
                   className={cn(
@@ -1267,16 +1285,30 @@ export default function SecurityPage({ signedIn = false }: { signedIn?: boolean 
   // Arrived at a part of the page (`/security#renewal`): the page was not there to scroll to yet.
   // Fonts swap in after that first scroll, so ask again once they have settled.
   useEffect(() => {
-    const id = location.hash.slice(1);
+    const id = window.location.hash.slice(1);
     if (!id) return;
-    const to = () => document.getElementById(id)?.scrollIntoView();
-    requestAnimationFrame(to);
     let live = true;
+    const interactions = ["hashchange", "pointerdown", "wheel", "touchstart", "keydown"] as const;
+    const unsubscribe = () => {
+      for (const type of interactions) window.removeEventListener(type, cancel);
+    };
+    const cancel = () => {
+      live = false;
+      unsubscribe();
+    };
+    const to = () => {
+      if (live && window.location.hash.slice(1) === id) document.getElementById(id)?.scrollIntoView();
+    };
+    const frame = requestAnimationFrame(to);
+    for (const type of interactions) window.addEventListener(type, cancel, { passive: true });
     void document.fonts?.ready.then(() => {
       if (live) to();
+      unsubscribe();
     });
     return () => {
       live = false;
+      unsubscribe();
+      cancelAnimationFrame(frame);
     };
   }, []);
   return (
