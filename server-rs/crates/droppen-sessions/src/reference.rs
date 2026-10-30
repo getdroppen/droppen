@@ -21,12 +21,12 @@
 //! *shared* data directory precisely so a second instance is excluded from a
 //! session the first is driving; putting the server in the filename would give
 //! each of them their own lock, they would both acquire it, and two CLIs would
-//! append to one transcript. See `inject::lock`.
+//! append to one transcript. See `provider::lock`.
 //!
 //! Three of the four are also free functions, because three of their call sites
 //! have no server to name and — per the table above — must not name one:
 //! `crate::attention::seen::key_of` is called from a token mint that holds only
-//! a `(source, id)`, and `inject::lock::acquire` takes the source as a
+//! a `(source, id)`, and `provider::lock::acquire` takes the source as a
 //! `&str` on purpose so the separator property can be tested against sources
 //! that do not exist. The method bodies *are* the free functions, so there is
 //! still one `format!` per spelling.

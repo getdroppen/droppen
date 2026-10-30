@@ -22,9 +22,9 @@ use crate::feed;
 use droppen_http::error::{ApiError, Hinted};
 use droppen_http::SendResult;
 use droppen_http::extract::{ApiJson, ApiPath, ApiQuery};
-use crate::inject::questions::{self, Answer};
-use crate::inject::receipts::{Kind, LOOKUP_CAP};
-use crate::inject::{self, AccountChoice, AnswerOutcome, Reply, SendOptions};
+use crate::provider::questions::{self, Answer};
+use crate::provider::receipts::{Kind, LOOKUP_CAP};
+use crate::provider::{self, AccountChoice, AnswerOutcome, Reply, SendOptions};
 use droppen_http::openapi_ext::{double_option, required_nullable, ExtraResponses, Nullable, Optional};
 use droppen_instance::paths::ClaudeRoot;
 use droppen_sessions::delivery::{QuestionState, ReceiptLookup, ReceiptStatus, SessionQuestion};
@@ -132,7 +132,7 @@ pub struct NewSession {
     /// for a pair no model-less start reaches (`placed: false`), not a pick —
     /// logged as the start rule's choice and checked again at the spawn.
     #[serde(default, skip_serializing_if = "Optional::is_none")]
-    pub account_from: Optional<inject::AccountFrom>,
+    pub account_from: Optional<provider::AccountFrom>,
     /// A UUID the client minted for this first message, sent unchanged with
     /// every attempt. A repeat answers the session the first attempt started
     /// (`duplicate: true`) instead of starting a second one.
@@ -739,7 +739,7 @@ async fn deliver_message(
         if let Some(request_id) = drive.providers.open_question(source, &id) {
             meant_as_answer = true;
             let answer = Answer {
-                response: Some(inject::claude_prompt(&body.text, &images, &attachments)),
+                response: Some(provider::claude_prompt(&body.text, &images, &attachments)),
                 ..Answer::default()
             };
             if let AnswerOutcome::Delivered(_) = drive
@@ -1076,7 +1076,7 @@ pub async fn session_receipts(
         .drive
         .injections
         .receipts()
-        .lookup(source, &id, &ids, crate::inject::receipts::now_ms())
+        .lookup(source, &id, &ids, crate::provider::receipts::now_ms())
         .map(Json)
         .map_err(|error| ApiError::internal(format!("cannot read message receipts: {error}")))
 }
@@ -1088,10 +1088,10 @@ pub async fn session_receipts(
 /// their own. Choosing the other CLI's account is not one of them: the request
 /// named something that could never have worked, which is the same `400` a
 /// malformed `accountId` gets two functions up.
-fn spawn_refusal(error: inject::InjectError, fallback: &str) -> ApiError {
+fn spawn_refusal(error: provider::InjectError, fallback: &str) -> ApiError {
     let message = error.client_message(fallback);
     match error {
-        inject::InjectError::ProviderMismatch { .. } => ApiError::bad_request(message),
+        provider::InjectError::ProviderMismatch { .. } => ApiError::bad_request(message),
         _ => ApiError::conflict(message),
     }
 }
@@ -1179,12 +1179,12 @@ pub async fn stop_background_task(
     ApiPath(TaskPath { source, id, task_id }): ApiPath<TaskPath>,
 ) -> Result<Json<SendResult>, ApiError> {
     match state.drive.providers.stop_background_task(source, &id, &task_id) {
-        inject::StopTaskOutcome::Asked => Ok(Json(SendResult { accepted: true })),
+        provider::StopTaskOutcome::Asked => Ok(Json(SendResult { accepted: true })),
         // 404 rather than 409: the task is not there to act on, most often
         // because it finished while the button was being pressed.
-        inject::StopTaskOutcome::NoSuchTask => Err(ApiError::not_found("no such background task")),
+        provider::StopTaskOutcome::NoSuchTask => Err(ApiError::not_found("no such background task")),
         // Only a session this server is driving has a channel to ask down.
-        inject::StopTaskOutcome::NoResident => Err(ApiError::conflict("this session has no live process to ask")),
+        provider::StopTaskOutcome::NoResident => Err(ApiError::conflict("this session has no live process to ask")),
     }
 }
 
@@ -1194,8 +1194,8 @@ pub async fn stop_background_task(
 /// and the two statuses say which kind it is: a `404` means the message is not
 /// there to act on — usually because the turn in front of it ended while the
 /// request was in flight — and a `409` means it is there and cannot be moved.
-fn queue_result(outcome: inject::QueueOutcome) -> Result<Json<SendResult>, ApiError> {
-    use inject::QueueOutcome;
+fn queue_result(outcome: provider::QueueOutcome) -> Result<Json<SendResult>, ApiError> {
+    use provider::QueueOutcome;
     match outcome {
         QueueOutcome::Refused { reason } => Err(ApiError::conflict(reason)),
         QueueOutcome::Done => Ok(Json(SendResult { accepted: true })),
@@ -2182,7 +2182,7 @@ mod tests {
             format!(r#"{{"error":"question_settled","hint":"alice already answered it","question":{row}}}"#)
         );
 
-        let restart = queue_result(inject::QueueOutcome::NeedsRestart {
+        let restart = queue_result(provider::QueueOutcome::NeedsRestart {
             differences: "another model".into(),
         })
         .expect_err("a refusal");
@@ -2198,7 +2198,7 @@ mod tests {
     }
 
     /// [`drive`], with the providers `register` adds.
-    fn drive_with(register: fn(&mut crate::inject::ProviderRegistry, &Arc<crate::inject::InjectionRegistry>)) -> (tempfile::TempDir, Arc<Drive>) {
+    fn drive_with(register: fn(&mut crate::provider::ProviderRegistry, &Arc<crate::provider::InjectionRegistry>)) -> (tempfile::TempDir, Arc<Drive>) {
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = Arc::new(droppen_instance::paths::Paths::new(dir.path().to_path_buf()));
         let instance = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
@@ -2426,7 +2426,7 @@ mod tests {
     /// which the send block turns away before the chat check is reached.
     #[tokio::test]
     async fn a_chat_that_cannot_read_an_attachment_refuses_one() {
-        let cases: [(fn(&mut crate::inject::ProviderRegistry, &Arc<crate::inject::InjectionRegistry>), &str); 2] = [
+        let cases: [(fn(&mut crate::provider::ProviderRegistry, &Arc<crate::provider::InjectionRegistry>), &str); 2] = [
             (crate::app::register_providers, "attachments are not supported in claude instant chats"),
             (|_, _| {}, "no provider runs claude sessions"),
         ];

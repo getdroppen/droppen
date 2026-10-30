@@ -64,7 +64,7 @@ fn hex_digest(bytes: &[u8], chars: usize) -> String {
 /// Where a terminal's socket goes: beside its other sidecars if that address
 /// fits, and in a per-instance directory under `/tmp` if it does not.
 ///
-/// Shared with the server's `inject::shim`, whose sockets live one directory over
+/// Shared with the server's `provider::shim`, whose sockets live one directory over
 /// and hit the same `sun_path` ceiling for the same reason. The budget is a
 /// property of the kernel, not of what is on the other end of the socket, so
 /// there is one implementation of it.

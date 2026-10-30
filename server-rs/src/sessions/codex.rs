@@ -569,7 +569,7 @@ fn row_to_summary(row: &ThreadRow, size_bytes: u64) -> (SessionSummary, i64) {
         unread: false,
         unread_count: 0,
         // Never set for codex: it runs with approvals off and every interactive
-        // request the app server makes is refused (`inject::app_server`), so a
+        // request the app server makes is refused (`provider::app_server`), so a
         // codex thread has no way to stop and ask.
         asking: false,
         children: Vec::new(),

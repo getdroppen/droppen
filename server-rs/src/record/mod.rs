@@ -95,7 +95,7 @@ const DETAIL_CAP: usize = 4_000;
 /// How much *replayed* stdout one attach may add to a recording.
 ///
 /// The shim's ring holds a hundred mebibytes of claude's stdout so that a
-/// server upgrade cannot truncate a turn ([`crate::inject::shim`]), and every
+/// server upgrade cannot truncate a turn ([`crate::provider::shim`]), and every
 /// re-attach replays all of it. That history is worth having in a recording
 /// that has none of its own — but the usual case is a recording that was
 /// written by the server before this one and already holds every one of those
@@ -262,7 +262,7 @@ pub enum Stage {
     /// A turn ended, however it ended.
     Result,
     /// A turn has produced nothing for long enough to be marked. Nothing is
-    /// killed for it — see [`crate::inject::resident`].
+    /// killed for it — see [`crate::provider::resident`].
     Stalled,
     /// Stop was pressed: claude was asked to end the turn.
     Interrupt,
@@ -275,7 +275,7 @@ pub enum Stage {
     /// What became of a steered message once the turn it was handed to ended.
     ///
     /// The CLI has two answers and does not say which it chose, so the driver
-    /// has to watch for it — see [`crate::inject::resident::Driver::settle_delivered`].
+    /// has to watch for it — see [`crate::provider::resident::Driver::settle_delivered`].
     /// Either claude opened a turn of its own for the message, or it had already
     /// folded the message into the turn that was running and nothing more is
     /// coming. This is the line that says which happened, and it is the one to
@@ -295,7 +295,7 @@ pub enum Stage {
     Adopt,
     /// claude stopped to ask the user something (`AskUserQuestion`), or what
     /// became of it: answered, dismissed, withdrawn, or left behind by a process
-    /// that went. See [`crate::inject::questions`].
+    /// that went. See [`crate::provider::questions`].
     Question,
     /// claude asked for a permission and was refused. Every prompt but a
     /// question is: remote-hand grants nothing interactively.

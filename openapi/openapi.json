@@ -2436,7 +2436,7 @@
         "type": "string"
       },
       "Injection": {
-        "description": "State of a message remote-hand injected into a session.\n\nFilled in by `inject::InjectionRegistry`; `null` for a session\nremote-hand has never driven.",
+        "description": "State of a message remote-hand injected into a session.\n\nFilled in by `provider::InjectionRegistry`; `null` for a session\nremote-hand has never driven.",
         "nullable": true,
         "properties": {
           "error": {
@@ -4076,7 +4076,7 @@
             "type": "boolean"
           },
           "tasks": {
-            "description": "Those tasks, oldest first, as far as the CLI described them.\n\nEmpty whenever `background` is zero, and never longer than the cap the\ndriver publishes — see `inject::resident::TASKS_ON_THE_WIRE`.",
+            "description": "Those tasks, oldest first, as far as the CLI described them.\n\nEmpty whenever `background` is zero, and never longer than the cap the\ndriver publishes — see `provider::resident::TASKS_ON_THE_WIRE`.",
             "items": {
               "$ref": "#/components/schemas/BackgroundTask"
             },
@@ -4101,7 +4101,7 @@
         "type": "object"
       },
       "ResidentPhase": {
-        "description": "Where a resident process is in its cycle.\n\nThe wire form of `inject::common::Phase`. A separate type because\nthe driver's is an internal enum that the injection subsystem is free to\ngrow states on, and this one is a contract.",
+        "description": "Where a resident process is in its cycle.\n\nThe wire form of `provider::common::Phase`. A separate type because\nthe driver's is an internal enum that the injection subsystem is free to\ngrow states on, and this one is a contract.",
         "enum": [
           "starting",
           "working",

@@ -3950,7 +3950,7 @@ export interface components {
         /**
          * @description State of a message remote-hand injected into a session.
          *
-         *     Filled in by `inject::InjectionRegistry`; `null` for a session
+         *     Filled in by `provider::InjectionRegistry`; `null` for a session
          *     remote-hand has never driven.
          */
         Injection: {
@@ -4833,7 +4833,7 @@ export interface components {
              * @description Those tasks, oldest first, as far as the CLI described them.
              *
              *     Empty whenever `background` is zero, and never longer than the cap the
-             *     driver publishes — see `inject::resident::TASKS_ON_THE_WIRE`.
+             *     driver publishes — see `provider::resident::TASKS_ON_THE_WIRE`.
              */
             tasks: components["schemas"]["BackgroundTask"][];
             /**
@@ -4850,7 +4850,7 @@ export interface components {
         /**
          * @description Where a resident process is in its cycle.
          *
-         *     The wire form of `inject::common::Phase`. A separate type because
+         *     The wire form of `provider::common::Phase`. A separate type because
          *     the driver's is an internal enum that the injection subsystem is free to
          *     grow states on, and this one is a contract.
          * @enum {string}

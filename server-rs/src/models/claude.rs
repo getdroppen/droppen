@@ -189,7 +189,7 @@ fn probe_dir(accounts: &crate::accounts::store::AccountsStore, account: &Account
 
 /// The `--permission-mode` / sandbox values remote-hand will spawn with.
 ///
-/// Codex's are the CLI's own, asked of [`crate::inject::codex_permission_flags`]
+/// Codex's are the CLI's own, asked of [`crate::provider::codex_permission_flags`]
 /// so the two cannot drift: that function is what turns the value into `argv`,
 /// and it already refuses what it does not know.
 ///

@@ -1,7 +1,7 @@
 //! Sessions driven over ACP: the transcript this server keeps for them, and
 //! their discovery.
 //!
-//! An agent driven over the Agent Client Protocol ([`crate::inject::acp`])
+//! An agent driven over the Agent Client Protocol ([`crate::provider::acp`])
 //! streams a turn as `session/update` notifications and keeps nothing a client
 //! can read back later except by `session/load`, which means starting the
 //! agent. Its own history is its format, not this server's

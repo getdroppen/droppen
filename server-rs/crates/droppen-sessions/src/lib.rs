@@ -138,7 +138,7 @@ impl SessionActivity {
 
 /// Where a resident process is in its cycle.
 ///
-/// The wire form of `inject::common::Phase`. A separate type because
+/// The wire form of `provider::common::Phase`. A separate type because
 /// the driver's is an internal enum that the injection subsystem is free to
 /// grow states on, and this one is a contract.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Schematic)]
@@ -294,7 +294,7 @@ pub struct ResidentInfo {
     /// Those tasks, oldest first, as far as the CLI described them.
     ///
     /// Empty whenever `background` is zero, and never longer than the cap the
-    /// driver publishes — see `inject::resident::TASKS_ON_THE_WIRE`.
+    /// driver publishes — see `provider::resident::TASKS_ON_THE_WIRE`.
     pub tasks: Vec<BackgroundTask>,
     /// Whether the head of the queue is parked waiting for that background work.
     ///
@@ -694,7 +694,7 @@ pub struct SessionList {
 
 /// State of a message remote-hand injected into a session.
 ///
-/// Filled in by `inject::InjectionRegistry`; `null` for a session
+/// Filled in by `provider::InjectionRegistry`; `null` for a session
 /// remote-hand has never driven.
 #[derive(Debug, Clone, Serialize, Deserialize, Schematic)]
 #[serde(rename_all = "camelCase")]

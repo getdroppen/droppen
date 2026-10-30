@@ -55,7 +55,7 @@
 //! # Drafts
 //!
 //! A draft — the count of a think the agent is in the middle of (the server's
-//! `inject/drafts.rs`), which no record can carry yet — is an `EPHEMERAL`
+//! `provider/drafts.rs`), which no record can carry yet — is an `EPHEMERAL`
 //! payload: sealed under the stream key with `"rh/v1 ephemeral\0" ‖ stream ‖
 //! epoch` as its AAD, relayed to a stream's live readers and never stored.
 //! The machine signs it ([`seal_ephemeral`]), so a holder of the stream key

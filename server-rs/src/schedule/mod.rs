@@ -17,7 +17,7 @@
 //! Injection into an existing session is a later version's problem.
 //!
 //! Both CLIs, though: which one a task runs is a field on it, because
-//! [`crate::inject::ProviderRegistry::start_new_session`] already takes a [`Source`] and there is
+//! [`crate::provider::ProviderRegistry::start_new_session`] already takes a [`Source`] and there is
 //! nothing about a timer that prefers one. The two differ in three places, all of
 //! them handled rather than papered over — the flag values each accepts (see
 //! [`crate::models::Models::accepted_efforts`] and
@@ -828,8 +828,8 @@ mod tests {
         let accounts = Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins()));
         let quota = Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins()));
         let decoration = crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone());
-        let injections = crate::inject::InjectionRegistry::new(paths, &dirs, accounts, quota, decoration);
-        let providers = crate::inject::ProviderRegistry::new(injections, crate::app::register_providers);
+        let injections = crate::provider::InjectionRegistry::new(paths, &dirs, accounts, quota, decoration);
+        let providers = crate::provider::ProviderRegistry::new(injections, crate::app::register_providers);
         providers.models(source).expect("a provider").check_task_flags(source, model, effort, permission).await
     }
 
@@ -1070,7 +1070,7 @@ mod tests {
 
     /// The routes' state over a fresh instance, with the providers `register`
     /// adds, and a working directory in its home.
-    fn state_with(register: fn(&mut crate::inject::ProviderRegistry, &Arc<crate::inject::InjectionRegistry>)) -> (tempfile::TempDir, ScheduleState, String) {
+    fn state_with(register: fn(&mut crate::provider::ProviderRegistry, &Arc<crate::provider::InjectionRegistry>)) -> (tempfile::TempDir, ScheduleState, String) {
         let (dir, paths) = paths();
         let paths = Arc::new(paths);
         let cwd = dir.path().join("w");

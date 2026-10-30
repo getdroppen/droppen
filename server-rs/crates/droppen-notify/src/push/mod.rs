@@ -27,11 +27,11 @@
 //! two different mechanisms — the line where a turn's final state is written:
 //!
 //! * **codex** is still one `codex exec` child per message, so a child exiting
-//!   *is* the turn ending, and `inject::drive_run`'s exit bookkeeping
+//!   *is* the turn ending, and `provider::drive_run`'s exit bookkeeping
 //!   is the hook.
 //! * **claude** is a resident process that answers message after message, so
 //!   the turn ends at a `{"type":"result"}` line and the process keeps going.
-//!   `inject::resident` fires this once per result, which is the
+//!   `provider::resident` fires this once per result, which is the
 //!   correction that matters: hanging the notification on the *process* would
 //!   have meant one notification per session per day, arriving when the user
 //!   closed it.
@@ -674,7 +674,7 @@ fn question_body(question: &str) -> String {
 /// A run has reached its final state; notify if that is worth doing.
 ///
 /// Fire-and-forget by design. This is called from the one place in
-/// the server's `inject` where a run's outcome is written, and a push service being
+/// the server's `provider` where a run's outcome is written, and a push service being
 /// slow (or a phone being asleep) must not hold up releasing the injection lock.
 ///
 /// `driver` is the caller's snapshot of what the injection subsystem knows, and

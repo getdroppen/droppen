@@ -22,7 +22,7 @@
 //!   under their Droppen names and the ones they had before;
 //! * [`accounts`] — several Claude logins, stored server-side, and the two pty
 //!   wizards that mint them;
-//! * [`inject`] — driving the local CLIs, one run per session;
+//! * [`provider`] — driving the local CLIs, one run per session;
 //! * [`drive`] — the session-driving routes, and the state all of the above
 //!   hangs off ([`drive::Drive`]);
 //! * [`chats`] — instant chats: CLI sessions in an anchor directory, plus the
@@ -84,7 +84,7 @@ pub mod desktop_app;
 pub mod drive;
 pub mod export;
 pub mod feed;
-pub mod inject;
+pub mod provider;
 pub mod models;
 pub mod record;
 pub mod schedule;

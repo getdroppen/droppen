@@ -1809,7 +1809,7 @@ mod tests {
         input: BufReader<OwnedReadHalf>,
         output: OwnedWriteHalf,
         /// The providers over the driver's registry, for their spawn gate.
-        providers: Arc<crate::inject::ProviderRegistry>,
+        providers: Arc<crate::provider::ProviderRegistry>,
         _home: tempfile::TempDir,
     }
 
@@ -1823,7 +1823,7 @@ mod tests {
             let quota = Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins()));
             let decoration = crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone());
             let registry = InjectionRegistry::new(paths, &dirs, accounts, quota, decoration);
-            let providers = crate::inject::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
+            let providers = crate::provider::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
             let socket = home.path().join("mock.sock");
             let listener = UnixListener::bind(&socket).unwrap();
             let connector = tokio::spawn(async move { shim::connect_in_process(&socket).await.unwrap() });
@@ -2603,13 +2603,13 @@ mod tests {
     /// failed when it is withdrawn instead.
     #[tokio::test]
     async fn a_named_messages_receipt_follows_it_into_codex_and_out_of_the_queue() {
-        use crate::inject::receipts::{Claim, Kind};
+        use crate::provider::receipts::{Claim, Kind};
         use droppen_sessions::delivery::ReceiptStatus;
         let mut h = Harness::new().await;
         let receipts = h.driver.registry.receipts().clone();
         let named = |text: &str| {
             let client = new_uuid();
-            let now = crate::inject::receipts::now_ms();
+            let now = crate::provider::receipts::now_ms();
             let Claim::Owned { qid } = receipts.claim(&client, Kind::Message, Source::Codex, Some("test-thread"), now).unwrap() else {
                 panic!("a fresh id is owned");
             };
@@ -2622,9 +2622,9 @@ mod tests {
             assert_eq!(message.id, qid, "the message travels under the queue id the claim chose");
             message
         };
-        let status = |receipts: &crate::inject::receipts::Receipts, qid: &str| {
+        let status = |receipts: &crate::provider::receipts::Receipts, qid: &str| {
             receipts
-                .for_session(Source::Codex, "test-thread", crate::inject::receipts::now_ms())
+                .for_session(Source::Codex, "test-thread", crate::provider::receipts::now_ms())
                 .into_iter()
                 .find(|receipt| receipt.qid.0.as_deref() == Some(qid))
                 .map(|receipt| receipt.status)
@@ -2689,13 +2689,13 @@ mod tests {
     }
 
     /// The Codex runs `providers` hold.
-    fn codex(providers: &crate::inject::ProviderRegistry) -> &Arc<CodexRuns> {
+    fn codex(providers: &crate::provider::ProviderRegistry) -> &Arc<CodexRuns> {
         providers.provider::<Codex>().expect("Codex").runs()
     }
 
-    /// A step of a spawn, as [`crate::inject::Step`] records it.
-    fn step(what: &'static str, gate: bool, claim: Option<bool>) -> crate::inject::Step {
-        crate::inject::Step { what, gate, claim }
+    /// A step of a spawn, as [`crate::provider::Step`] records it.
+    fn step(what: &'static str, gate: bool, claim: Option<bool>) -> crate::provider::Step {
+        crate::provider::Step { what, gate, claim }
     }
 
     /// Codex's app server is started under the spawn gate. A thread this
@@ -2714,7 +2714,7 @@ mod tests {
         const OTHER: &str = "0199c1a1-0000-4000-8000-000000000004";
         let home = tempfile::tempdir().expect("tempdir");
         let (_path, registry) = fake_codex_registry(home.path(), "codex-steps");
-        let providers = crate::inject::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
+        let providers = crate::provider::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
         let gate = providers.gate();
         let work = home.path().join("work");
         std::fs::create_dir_all(&work).expect("work");
@@ -2813,7 +2813,7 @@ mod tests {
     async fn a_codex_session_is_in_the_registrys_own_snapshot() {
         let home = tempfile::tempdir().expect("tempdir");
         let (_path, registry) = fake_codex_registry(home.path(), "codex-snapshot");
-        let providers = crate::inject::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
+        let providers = crate::provider::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
         let work = home.path().join("work");
         std::fs::create_dir_all(&work).expect("work");
         let work = work.to_string_lossy().into_owned();
@@ -2842,7 +2842,7 @@ mod tests {
         const THREAD: &str = "0199c1a1-0000-4000-8000-000000000005";
         let home = tempfile::tempdir().expect("tempdir");
         let (_path, registry) = fake_codex_registry(home.path(), "codex-wire");
-        let providers = crate::inject::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
+        let providers = crate::provider::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
         let work = home.path().join("work");
         std::fs::create_dir_all(&work).expect("work");
         let log = work.join("codex-stdin.jsonl");
@@ -2924,7 +2924,7 @@ mod tests {
         let home = root.path().join(std::ffi::OsStr::from_bytes(b"\xff"));
         std::fs::create_dir_all(&home).expect("home");
         let (_path, registry) = fake_codex_registry(&home, "codex-utf8");
-        let providers = crate::inject::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
+        let providers = crate::provider::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
         let refused = codex(&providers).codex_deliver(providers.gate(), Some(THREAD), None, "hi", &SendOptions::default(), None)
             .await
             .expect_err("refused");

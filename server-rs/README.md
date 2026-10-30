@@ -31,7 +31,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 | `sessions/` | 每个 CLI 自己的会话读取器：Claude Code、Codex、ACP 的 transcript、发现与归属，实现 `droppen-sessions` 的 `Transcripts` 端口；随各自的 provider 迁出 |
 | `feed/` | 单会话 websocket feed；`feed/global.rs` 是 `GET /api/events` 背后的会话列表 feed |
 | `drive/` | 驱动会话的路由，以及所有进程类子系统挂靠的 `Drive` 状态 |
-| `inject/` | 驱动本机 CLI，每个会话一次运行 |
+| `provider/` | 驱动本机 CLI，每个会话一次运行 |
 | `record/` | 会话飞行记录器：一个会话一份 NDJSON 录像，以及把它放回文件系统的 `replay` 子命令 |
 | `accounts/` | 服务端保存的多个 Claude 登录，以及产出它们的两个 pty 向导 |
 | `chats/` | 即时聊天：锚点目录里的 CLI 会话，加上 BYO-API 后端与它的流式回复 |
