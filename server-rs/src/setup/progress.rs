@@ -315,6 +315,8 @@ pub async fn put_progress(State(state): State<SetupState>, ApiJson(body): ApiJso
 mod tests {
     use super::*;
     use crate::claude_roots;
+    use crate::setup::runner::fixture::Fixture;
+    use crate::setup::tests::{guide, setup_state};
     use droppen_instance::paths::ClaudeRoot;
     use gotcha::axum::extract::FromRef;
 
@@ -346,7 +348,7 @@ mod tests {
     #[tokio::test]
     async fn the_progress_is_stored_whole_and_the_server_s_fields_are_its_own() {
         let home = tempfile::tempdir().expect("tempdir");
-        let state = crate::api::test_support::state(home.path()).await;
+        let state = setup_state(home.path(), guide(home.path(), Fixture::new(), None));
         assert_eq!(state.setup.stored_progress(), SetupProgress::default(), "never started");
 
         let sent = SetupProgress {
@@ -384,7 +386,7 @@ mod tests {
         assert_eq!(stored.wrap.start_at_login.0, Some(false));
 
         // Another server on the same instance reads the same row.
-        let again = crate::api::test_support::state(home.path()).await;
+        let again = setup_state(home.path(), guide(home.path(), Fixture::new(), None));
         assert_eq!(again.setup.stored_progress(), stored);
 
         // A row that is not JSON at all is a guide never started, not an error.
@@ -395,7 +397,7 @@ mod tests {
     #[tokio::test]
     async fn a_value_this_build_does_not_know_costs_its_field_and_nothing_else() {
         let home = tempfile::tempdir().expect("tempdir");
-        let state = crate::api::test_support::state(home.path()).await;
+        let state = setup_state(home.path(), guide(home.path(), Fixture::new(), None));
         let whole = SetupProgress {
             started_at: Nullable(Some("2026-10-19T09:12:00Z".into())),
             finished_at: Nullable(Some("2026-10-19T09:20:00Z".into())),

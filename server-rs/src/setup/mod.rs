@@ -1015,7 +1015,124 @@ pub(crate) mod tests {
     use runner::RunOutput;
     use std::os::unix::fs::PermissionsExt;
 
-    /// A guide on a scratch home whose detection only ever looks there.
+    /// A login that answers for no CLI in particular: what the guide's tests
+    /// run on when they do not care which CLI's login answers. It names no
+    /// plan, holds no conversation, reads nothing and moves no session; an
+    /// account's launch is its block as given. What each CLI's own login
+    /// answers is pinned by the tests on `crate::app::logins()`.
+    pub(crate) struct StandInLogin(pub(crate) crate::accounts::store::AccountProvider);
+
+    impl Login for StandInLogin {
+        fn spawn_env(
+            &self,
+            _kind: crate::accounts::store::AccountKind,
+            _secret: &str,
+            env: &[droppen_base::env_block::EnvVar],
+        ) -> Result<crate::accounts::store::AccountLaunch, crate::accounts::store::AccountError> {
+            Ok(crate::accounts::store::AccountLaunch {
+                provider: self.0,
+                env: env.iter().map(|var| (var.key.clone(), var.value.clone())).collect(),
+                codex_args: Vec::new(),
+            })
+        }
+
+        fn verify<'a>(
+            &'a self,
+            _paths: &'a Paths,
+            _launch: &'a crate::accounts::store::AccountLaunch,
+            _secrets: &'a [&'a str],
+        ) -> futures_util::future::BoxFuture<'a, crate::accounts::verify::Verdict> {
+            unreachable!("the guide verifies no account")
+        }
+
+        fn local_state(
+            &self,
+            _refused_at: Option<i64>,
+            _local_reading: &crate::accounts::quota::readings::SharedReading,
+        ) -> crate::accounts::local_login::LocalLoginState {
+            crate::accounts::local_login::LocalLoginState::Unknown
+        }
+
+        fn probe<'a>(
+            &'a self,
+            _roots: &'a crate::accounts::quota::ProbeRoots,
+            _config_dir: Option<&'a std::path::Path>,
+        ) -> Option<futures_util::future::BoxFuture<'a, crate::accounts::quota::UsageProbe>> {
+            None
+        }
+
+        fn local_plan<'a>(&'a self, _paths: &'a Paths) -> Option<futures_util::future::BoxFuture<'a, crate::accounts::login::LocalPlan>> {
+            None
+        }
+
+        fn plan_label(&self, _subscription: Option<&str>, _tier: Option<&str>) -> Option<String> {
+            None
+        }
+
+        fn local_quota<'a>(
+            &'a self,
+            _roots: &'a crate::accounts::quota::ProbeRoots,
+        ) -> Option<futures_util::future::BoxFuture<'a, Option<crate::accounts::quota::CodexQuota>>> {
+            None
+        }
+
+        fn app_server_call<'a>(
+            &'a self,
+            _program: &'a std::path::Path,
+            _cwd: &'a std::path::Path,
+            _env: &'a Env,
+            _method: &'a str,
+            _timeout: Duration,
+        ) -> Option<futures_util::future::BoxFuture<'a, Option<serde_json::Value>>> {
+            None
+        }
+
+        fn rotates(&self) -> bool {
+            false
+        }
+
+        fn model_family(&self, _model: Option<&str>) -> Option<&'static str> {
+            None
+        }
+
+        fn reads_per_login(&self) -> bool {
+            false
+        }
+    }
+
+    /// A stand-in login for each CLI ([`StandInLogin`]).
+    pub(crate) fn stand_in_logins() -> Logins {
+        Logins {
+            claude: Arc::new(StandInLogin(crate::accounts::store::AccountProvider::Claude)),
+            codex: Arc::new(StandInLogin(crate::accounts::store::AccountProvider::Codex)),
+        }
+    }
+
+    /// The guide's state on a scratch home, built the way a server builds it
+    /// minus the server: its terminals (their folder made, as the instance's
+    /// owner does at boot), the stored accounts on the stand-in logins, no
+    /// transcripts, and the desktop app's window unopened (no port, not run by
+    /// the app).
+    pub(crate) fn setup_state(home: &std::path::Path, setup: Arc<Setup>) -> SetupState {
+        let paths = Arc::new(Paths::new(home.to_path_buf()));
+        let instance = Arc::new(droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), "unittest").expect("valid name"));
+        std::fs::create_dir_all(instance.pty_shims()).expect("the shims' folder");
+        SetupState {
+            setup,
+            terminals: droppen_workbench::terminals::Registry::new(paths.clone(), instance),
+            accounts: Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), stand_in_logins())),
+            paths,
+            transcripts: droppen_sessions::TranscriptSources::default(),
+            desktop_app: false,
+            app_window: AppWindow::new(
+                droppen_http::app_window::ListenPort::new(Arc::new(std::sync::OnceLock::new())),
+                false,
+            ),
+        }
+    }
+
+    /// A guide on a scratch home whose detection only ever looks there, on the
+    /// stand-in logins.
     pub(crate) fn guide(home: &std::path::Path, fixture: Arc<Fixture>, app_read: Option<PathRead>) -> Arc<Setup> {
         guide_in_shell(home, fixture, app_read, "/bin/zsh")
     }
@@ -1023,6 +1140,15 @@ pub(crate) mod tests {
     /// [`guide`], with `shell` as the user's login shell — what an install's
     /// terminal runs.
     pub(crate) fn guide_in_shell(home: &std::path::Path, fixture: Arc<Fixture>, app_read: Option<PathRead>, shell: &str) -> Arc<Setup> {
+        guide_on(home, fixture, app_read, shell, &stand_in_logins())
+    }
+
+    /// [`guide`], on `logins`: for a test that pins which CLI's login answers.
+    pub(crate) fn guide_with_logins(home: &std::path::Path, fixture: Arc<Fixture>, app_read: Option<PathRead>, logins: &Logins) -> Arc<Setup> {
+        guide_on(home, fixture, app_read, "/bin/zsh", logins)
+    }
+
+    fn guide_on(home: &std::path::Path, fixture: Arc<Fixture>, app_read: Option<PathRead>, shell: &str, logins: &Logins) -> Arc<Setup> {
         let scratch = home.to_path_buf();
         let probe: ProbeFn = Arc::new(move |_paths: &Paths, overlay| {
             let bin = scratch.join("bin");
@@ -1041,7 +1167,7 @@ pub(crate) mod tests {
                 macos: true,
             }
         });
-        Setup::with(Arc::new(Paths::new(home.to_path_buf())), fixture, &crate::app::logins(), probe, shell.to_string(), app_read)
+        Setup::with(Arc::new(Paths::new(home.to_path_buf())), fixture, logins, probe, shell.to_string(), app_read)
     }
 
     pub(crate) fn marker(path: &std::path::Path) {
@@ -1102,9 +1228,8 @@ pub(crate) mod tests {
             )
             .answer("zsh -ilc", shell_answer("PATH=/usr/bin\nANTHROPIC_API_KEY=set\nOPENAI_API_KEY=unset"));
 
-        let mut state = crate::api::test_support::state(home.path()).await;
-        state.setup = guide(home.path(), fixture.clone(), Some(PathRead::Timeout));
-        let report = state.setup.report(&SetupState::from_ref(&state), false).await;
+        let mut state = setup_state(home.path(), guide(home.path(), fixture.clone(), Some(PathRead::Timeout)));
+        let report = state.setup.report(&state, false).await;
         assert_eq!(
             report.tools.iter().map(|tool| tool.id).collect::<Vec<_>>(),
             [ToolId::Claude, ToolId::Codex]
@@ -1127,7 +1252,6 @@ pub(crate) mod tests {
         // A stored account makes claude ready; the desktop app's server
         // also reads the shell for the key question, once.
         let account = state
-            .drive
             .accounts
             .create(
                 "work gateway",
@@ -1137,20 +1261,19 @@ pub(crate) mod tests {
             .await
             .expect("account");
         state
-            .drive
             .accounts
             .set_default(Some(&account.id), crate::accounts::store::AccountProvider::Claude)
             .await
             .expect("default");
         state.desktop_app = true;
-        let report = state.setup.report(&SetupState::from_ref(&state), false).await;
+        let report = state.setup.report(&state, false).await;
         let claude = &report.tools[0];
         assert!(claude.ready, "a verified Droppen account is a way to be ready");
         assert_eq!(claude.droppen_accounts.total, 1);
         assert_eq!(claude.droppen_accounts.default_label.0.as_deref(), Some("work gateway"));
         assert!(claude.shell_key, "ANTHROPIC_API_KEY is set in the login shell");
         assert!(!report.tools[1].shell_key);
-        let _ = state.setup.report(&SetupState::from_ref(&state), false).await;
+        let _ = state.setup.report(&state, false).await;
         assert_eq!(
             fixture.lines().iter().filter(|line| line.starts_with("zsh")).count(),
             1,
@@ -1442,7 +1565,7 @@ pub(crate) mod tests {
                 "",
             ),
         );
-        let setup = guide(home.path(), fixture, None);
+        let setup = guide_with_logins(home.path(), fixture, None, &crate::app::logins());
 
         let detection = setup.detection(true).await;
         assert_eq!(detection.tools[0].login.plan.0.as_deref(), Some("Max 20x"));
