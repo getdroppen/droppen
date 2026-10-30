@@ -160,29 +160,17 @@ mod tests {
     #[test]
     fn nothing_reads_an_old_name() {
         // A name no code reads: a terminal test's stand-in for "any variable".
-        const ALLOWED: &[&str] = &["RH_TERMINAL_KEEP"];
-        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        // And rh-proto's switch that rewrites its test vectors: the protocol
+        // crate the hub and the relays build too keeps its own name for it.
+        const ALLOWED: &[&str] = &["RH_TERMINAL_KEEP", "RH_PROTO_WRITE_VECTORS"];
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).canonicalize().expect("this crate");
         let src = manifest.join("src");
         let mut found = Vec::new();
-        // The server's sources too, and those of the crates it is made of: they
-        // read the environment through this module.
-        let mut dirs = vec![
-            src.clone(),
-            manifest.join("../../src"),
-            manifest.join("../droppen-http/src"),
-            manifest.join("../droppen-instance/src"),
-            manifest.join("../droppen-pty/src"),
-            manifest.join("../droppen-supervisor/src"),
-            manifest.join("../droppen-auth/src"),
-            manifest.join("../droppen-files/src"),
-            manifest.join("../droppen-workbench/src"),
-            manifest.join("../droppen-plugins/src"),
-            manifest.join("../droppen-accounts/src"),
-            manifest.join("../droppen-setup/src"),
-            manifest.join("../droppen-sessions/src"),
-            manifest.join("../droppen-aggregator/src"),
-            manifest.join("../droppen-agent/src"),
-        ];
+        // The server's sources too, and those of every crate of its workspace,
+        // this one's among them: they read the environment through this
+        // module, and a crate that leaves the server is read wherever it goes.
+        let crates = std::fs::read_dir(manifest.parent().expect("the workspace's crates")).expect("the workspace's crates").flatten();
+        let mut dirs: Vec<_> = std::iter::once(manifest.join("../../src").canonicalize().expect("the server's sources")).chain(crates.map(|entry| entry.path().join("src"))).filter(|dir| dir.is_dir()).collect();
         while let Some(dir) = dirs.pop() {
             for entry in std::fs::read_dir(&dir).expect("read src").flatten() {
                 let path = entry.path();
