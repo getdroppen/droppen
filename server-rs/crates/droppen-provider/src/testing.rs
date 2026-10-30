@@ -272,6 +272,12 @@ pub fn session_shim() {
     std::process::exit(i32::from(outcome.is_err()));
 }
 
+/// A permit for a shim that runs no session, with neither the gate nor a
+/// claim, for the shim's own end-to-end test, which starts the real binary.
+pub fn without_a_session() -> super::SpawnPermit<'static> {
+    super::SpawnPermit::without_a_session()
+}
+
 #[cfg(test)]
 mod tests {
     /// Not a test: this crate's own session shim ([`super::session_shim`]).

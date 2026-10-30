@@ -187,7 +187,6 @@
           "about": "Provider, Run, Models, the registry, the spawn gate, the session shim, queue, receipts, questions, drafts.",
           "modules": [
             "provider",
-            "sessions",
             "accounts"
           ],
           "mayUse": [

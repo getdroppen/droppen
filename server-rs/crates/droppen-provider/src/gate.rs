@@ -115,11 +115,11 @@ pub struct SpawnPermit<'g> {
 
 impl SpawnPermit<'_> {
     /// A permit for a shim that runs no session, with neither the gate nor a
-    /// claim: the shim's own end-to-end test starts the real binary with it.
-    /// Nothing in the server may, and a test reads every file under `src/` to
-    /// keep it so.
-    #[doc(hidden)]
-    pub fn without_a_session() -> SpawnPermit<'static> {
+    /// claim: the shim's own end-to-end test starts the real binary with it
+    /// ([`crate::testing::without_a_session`]). Nothing in the server may, and
+    /// a test reads every file under `src/` to keep it so.
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn without_a_session() -> SpawnPermit<'static> {
         SpawnPermit {
             claim: None,
             guard: None,

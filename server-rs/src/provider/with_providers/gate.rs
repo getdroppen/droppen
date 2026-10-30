@@ -61,9 +61,10 @@ fn server_sources() -> Vec<Source> {
         .collect()
 }
 
-/// Whether `path` is the spawn gate's own source or these scans'.
+/// Whether `path` is the spawn gate's own source, the test probe that hands
+/// out its gateless permit, or these scans'.
 fn gate_or_scan(path: &Path) -> bool {
-    ["provider/gate.rs", "droppen-provider/src/gate.rs", "with_providers/gate.rs"].iter().any(|own| path.ends_with(own))
+    ["provider/gate.rs", "droppen-provider/src/gate.rs", "droppen-provider/src/testing.rs", "with_providers/gate.rs"].iter().any(|own| path.ends_with(own))
 }
 
 /// Whether `path` is the provider registry's source.

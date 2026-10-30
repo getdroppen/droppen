@@ -13,7 +13,6 @@
 //! is registered with one line each in [`api`]. Its state is one struct, and it
 //! adds one field to [`api::AppState`].
 //!
-//! * [`sessions`] — discovery, the transcript normalizer and the wire shapes;
 //! * [`feed`] — the per-session websocket feed, and [`feed::global`] the
 //!   session-list one behind `GET /api/events`;
 //! * [`provider::claude_code::claude_roots`] / [`droppen_base::process_env`] — what a spawn runs
@@ -83,7 +82,6 @@ pub mod export;
 pub mod feed;
 pub mod provider;
 pub mod schedule;
-pub mod sessions;
 pub mod shutdown;
 #[cfg(test)]
 mod setup_tests;
