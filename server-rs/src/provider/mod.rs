@@ -25,14 +25,16 @@ use gotcha::Schematic;
 pub mod acp;
 pub mod claude_code;
 pub mod codex;
-mod common;
+pub mod common;
 pub mod drafts;
-mod gate;
+pub mod gate;
 pub mod questions;
 pub mod receipts;
 mod registry;
-mod runs;
+pub mod runs;
 pub mod shim;
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing;
 
 pub use common::{AnswerOutcome, Phase, QueueOutcome, Reply, ResidentState, StopTaskOutcome};
 pub use gate::{SessionLease, SpawnGate, SpawnPermit};
@@ -89,7 +91,8 @@ impl InjectError {
 }
 
 impl InjectError {
-    fn message(text: impl Into<String>) -> Self {
+    /// A failure to report as it is worded.
+    pub fn message(text: impl Into<String>) -> Self {
         InjectError::Message(text.into())
     }
 }
@@ -217,7 +220,7 @@ fn with_codex_files(text: &str, options: &SendOptions) -> String {
 }
 
 /// Refuse an account that belongs to the other CLI.
-fn require_provider(launch: &AccountLaunch, wanted: AccountProvider) -> Result<(), InjectError> {
+pub fn require_provider(launch: &AccountLaunch, wanted: AccountProvider) -> Result<(), InjectError> {
     if launch.provider == wanted {
         return Ok(());
     }
@@ -268,7 +271,7 @@ impl RunHost {
     /// no model gets ([`droppen_accounts::rotation::StartInputs::still_names`]) —
     /// then it, logged as the rule's choice — or, if the rule has moved on since
     /// the page asked, wherever the rule places this start's model now.
-    async fn rule_account(&self, provider: AccountProvider, named: &str, model: Option<&str>) -> Option<String> {
+    pub async fn rule_account(&self, provider: AccountProvider, named: &str, model: Option<&str>) -> Option<String> {
         let inputs = droppen_accounts::rotation::StartInputs::gather(&self.accounts, &self.quota, provider).await;
         if inputs.still_names(named) {
             tracing::info!(
@@ -295,7 +298,7 @@ impl RunHost {
     /// Where a start that names no account runs ([`droppen_accounts::rotation::start_for`]),
     /// and a line in the log whenever that is not simply the default or the local
     /// login: which login the start was moved off, which it went to, and why.
-    async fn start_account(&self, provider: AccountProvider, model: Option<&str>) -> Option<String> {
+    pub async fn start_account(&self, provider: AccountProvider, model: Option<&str>) -> Option<String> {
         use droppen_accounts::rotation::StartReason;
         let start = droppen_accounts::rotation::start_for(&self.accounts, &self.quota, provider, model).await;
         let to = start.account_id.0;
@@ -339,7 +342,7 @@ impl RunHost {
     /// kinds look like nothing a pattern could find; then the `sk-…` pattern,
     /// which catches a credential this server never stored — the user's own
     /// login out of `~/.claude`, a key somebody pasted into a prompt.
-    pub(crate) fn redact(&self, text: &str) -> String {
+    pub fn redact(&self, text: &str) -> String {
         redact_secrets(&self.accounts.redact_known_secrets(text))
     }
 
@@ -353,7 +356,7 @@ impl RunHost {
     ///
     /// Synchronous like every state-database write in this server, and only
     /// ever reached on a path where a CLI has already failed.
-    pub(crate) fn record_limit(&self, mut observation: droppen_accounts::rest::Observation) {
+    pub fn record_limit(&self, mut observation: droppen_accounts::rest::Observation) {
         use droppen_accounts::rest;
         observation.raw = self.redact(&observation.raw);
         observation.reason = if observation.reason.is_empty() {
@@ -392,7 +395,7 @@ impl RunHost {
     /// this, one passing refusal would mark a login signed out for good — and a
     /// signed-out local login hands every start that names no account to a
     /// stand-in ([`droppen_accounts::rotation::start_choice`]).
-    pub(crate) fn credential_accepted(&self, account_id: &str, session_id: &str) {
+    pub fn credential_accepted(&self, account_id: &str, session_id: &str) {
         use droppen_sessions::account::LimitClass;
         let log = self.accounts.limit_log();
         if log
@@ -415,12 +418,16 @@ impl RunHost {
 // -------------------------------------------------------------------- registry
 
 /// One run's mutable state.
-struct RunState {
-    state: InjectionRunState,
-    error: Option<String>,
-    interrupted: bool,
+pub struct RunState {
+    /// Running, or how it ended.
+    pub state: InjectionRunState,
+    /// Why it failed, when it did.
+    pub error: Option<String>,
+    /// Whether it ended because it was stopped.
+    pub interrupted: bool,
     started_at: String,
-    finished_at: Option<String>,
+    /// When it ended, once it has.
+    pub finished_at: Option<String>,
     /// `None` once the child has exited.
     pid: Option<u32>,
     /// What [`procs::start_token`] said about [`RunState::pid`] when the run was
@@ -458,16 +465,46 @@ impl RunState {
 
 /// A live or finished run.
 pub struct RunEntry {
-    state: Mutex<RunState>,
+    /// Its state, which its driver or watcher writes.
+    pub state: Mutex<RunState>,
     /// Flipped once the child has exited and the final state has been written.
     ///
     /// A `watch` rather than a `Notify`: `notify_waiters` stores no permit, so a
     /// waiter that arrives after the run finished — which is exactly what the
     /// codex handshake does when stdout closes first — would wait forever.
-    finished: tokio::sync::watch::Sender<bool>,
+    pub finished: tokio::sync::watch::Sender<bool>,
 }
 
 impl RunEntry {
+    /// A `Running` turn of session `id` in a resident process: one that
+    /// outlives the turn, so the run has no process and no journal entry of
+    /// its own.
+    pub fn resident_turn(id: &str) -> Arc<Self> {
+        let (finished, _) = tokio::sync::watch::channel(false);
+        Arc::new(RunEntry {
+            state: Mutex::new(RunState {
+                state: InjectionRunState::Running,
+                error: None,
+                interrupted: false,
+                started_at: iso8601(std::time::SystemTime::now()),
+                finished_at: None,
+                // The pid is the resident's, and the resident is not this turn's to
+                // end: Stop goes through the driver's ladder, which is the reason
+                // nothing here is allowed to signal it directly.
+                pid: None,
+                pid_token: None,
+                last_progress: Instant::now(),
+                idle_killed: false,
+                current_id: id.to_string(),
+                // The journal entry belongs to the *process*, not to the turn, so a
+                // turn ending must never retire it.
+                run_id: String::new(),
+                lock: None,
+            }),
+            finished,
+        })
+    }
+
     /// This run's state, in the shape the API speaks.
     pub fn injection(&self) -> Injection {
         self.state.lock().expect("run state poisoned").to_injection()
@@ -489,12 +526,12 @@ pub struct RunHost {
     /// The stored logins, for one job only: taking the credentials this server
     /// injected back out of whatever the CLI printed. See
     /// [`RunHost::redact`].
-    accounts: Arc<droppen_accounts::store::AccountsStore>,
+    pub accounts: Arc<droppen_accounts::store::AccountsStore>,
     /// The quota readings, for one job only: every `rate_limit_event` a
     /// resident's claude writes is a reading of the login it runs on, and the
     /// driver files it here. The same handle [`crate::drive::Drive::quota`]
     /// serves the panel from, so a reading is on the panel the moment it lands.
-    quota: Arc<droppen_accounts::quota::QuotaCache>,
+    pub quota: Arc<droppen_accounts::quota::QuotaCache>,
     /// This server's name, so the keys below can say whose they are.
     ///
     /// Only ever this process' own: everything keyed by it is in memory and
@@ -502,7 +539,7 @@ pub struct RunHost {
     server: ServerId,
     runs: Mutex<HashMap<String, Arc<RunEntry>>>,
     /// Where a resident's shim leaves its socket, stderr tail and tombstone.
-    shim_dir: PathBuf,
+    pub shim_dir: PathBuf,
     /// How long a codex run may make no progress before it is ended.
     idle_timeout: Duration,
     /// How long each rung of a resident's interrupt ladder waits for the turn to
@@ -513,19 +550,19 @@ pub struct RunHost {
     /// answer it. Five seconds is well past what a healthy claude takes to write
     /// the turn's `result`, and short enough that a Stop button still feels like
     /// one.
-    interrupt_step: Duration,
+    pub interrupt_step: Duration,
     /// How often the watchdog checks.
-    watchdog_interval: Duration,
+    pub watchdog_interval: Duration,
     /// Where transcripts are discovered, for the idle watchdog.
-    paths: Arc<Paths>,
+    pub paths: Arc<Paths>,
     /// The record of in-flight runs, in this server's own instance directory.
-    journal: runs::RunsFile,
+    pub journal: runs::RunsFile,
     /// The session feed and the list feed, told when a driver changes something
     /// no file shows. Set once, at startup; empty in tests that build no app.
     listeners: std::sync::OnceLock<Listeners>,
     /// Where the drivers send a turn's end, a question and a rotation for the
     /// phone. Set once, at startup; empty in tests that build no app.
-    alerts: std::sync::OnceLock<Arc<dyn Alerts>>,
+    pub alerts: std::sync::OnceLock<Arc<dyn Alerts>>,
     /// The idempotency claims and receipts of messages a client named, in
     /// this instance's database. The drivers report into it by queue id; see
     /// [`receipts`].
@@ -536,11 +573,11 @@ pub struct RunHost {
     questions: Arc<questions::Questions>,
     /// What each resident claude is thinking right now, as a running count;
     /// written by the drivers, read by the session feeds. See [`drafts`].
-    drafts: drafts::Drafts,
+    pub drafts: drafts::Drafts,
     /// What the spawn gate and the session's claim were at each traced point
-    /// of a spawn; see [`Step`].
-    #[cfg(test)]
-    steps: Mutex<Vec<Step>>,
+    /// of a spawn; see [`testing::Step`].
+    #[cfg(any(test, feature = "test-support"))]
+    steps: Mutex<Vec<testing::Step>>,
     /// The spawn gate of the provider registry over this host, while that
     /// registry lasts: one registry per host, as two would each run a part
     /// of one source's sessions ([`Self::hold_gate`]). The steps are read off
@@ -554,14 +591,14 @@ pub struct RunHost {
 /// CLI.
 pub struct InjectionRegistry {
     /// What its runs share with every provider's.
-    host: Arc<RunHost>,
+    pub host: Arc<RunHost>,
     /// This server's own instance directory, where a provider keeps what is
     /// its runs' alone (Claude Code's flight recordings).
-    instance: InstanceDirs,
+    pub instance: InstanceDirs,
     /// What a claude spawn's environment gains before it starts: on the send
     /// path, and for the process an automatic rotation moves a session to,
     /// which a driver builds by itself.
-    decoration: Arc<dyn SpawnDecoration>,
+    pub decoration: Arc<dyn SpawnDecoration>,
 }
 
 /// The per-session feeds as the drivers see them: the open views of a session
@@ -600,39 +637,14 @@ pub trait Alerts: Send + Sync {
     );
 }
 
-/// The turn alerts a test's drivers raised, each with what its snapshot said
-/// of the alert's own session: its resident, if the snapshot had one.
-#[cfg(test)]
-#[derive(Default)]
-pub(crate) struct TurnAlerts(Mutex<Vec<(Source, String, Option<droppen_sessions::ResidentInfo>)>>);
-
-#[cfg(test)]
-impl TurnAlerts {
-    /// Every turn alert so far, oldest first.
-    pub(crate) fn seen(&self) -> Vec<(Source, String, Option<droppen_sessions::ResidentInfo>)> {
-        self.0.lock().expect("turn alerts").clone()
-    }
-}
-
-#[cfg(test)]
-impl Alerts for TurnAlerts {
-    fn turn(&self, _paths: Arc<Paths>, source: Source, id: String, _outcome: InjectionRunState, _error: Option<String>, driver: droppen_sessions::DriverStates) {
-        let resident = driver.resident(source, &id);
-        self.0.lock().expect("turn alerts").push((source, id, resident));
-    }
-
-    fn question(&self, _paths: Arc<Paths>, _source: Source, _id: String, _question: String) {}
-
-    fn rotation(
-        &self,
-        _paths: Arc<Paths>,
-        _source: Source,
-        _id: String,
-        _outcome: droppen_sessions::account::RotationOutcome,
-        _trigger: droppen_sessions::account::RotationTrigger,
-        _text: String,
-    ) {
-    }
+/// How a host's watchdog and interrupt ladder are timed.
+struct Timings {
+    /// [`RunHost::idle_timeout`].
+    idle_timeout: Duration,
+    /// [`RunHost::interrupt_step`].
+    interrupt_step: Duration,
+    /// [`RunHost::watchdog_interval`].
+    watchdog_interval: Duration,
 }
 
 /// Whoever follows a session from outside the driver: the per-session feed and
@@ -644,7 +656,7 @@ struct Listeners {
 
 /// A duration from the environment, in milliseconds, or the fallback
 /// ([`droppen_base::env::var`]).
-fn env_ms(name: &str, fallback: Duration) -> Duration {
+pub fn env_ms(name: &str, fallback: Duration) -> Duration {
     droppen_base::env::var(name)
         .and_then(|raw| raw.parse::<f64>().ok())
         .filter(|ms| ms.is_finite() && *ms > 0.0)
@@ -685,11 +697,6 @@ impl InjectionRegistry {
             decoration,
         })
     }
-
-    /// What its runs share with every provider's.
-    pub fn host(&self) -> &RunHost {
-        &self.host
-    }
 }
 
 impl RunHost {
@@ -701,6 +708,22 @@ impl RunHost {
         accounts: Arc<droppen_accounts::store::AccountsStore>,
         quota: Arc<droppen_accounts::quota::QuotaCache>,
     ) -> Arc<Self> {
+        let timings = Timings {
+            idle_timeout: env_ms("DROPPEN_IDLE_TIMEOUT_MS", Duration::from_secs(20 * 60)),
+            interrupt_step: env_ms("DROPPEN_INTERRUPT_STEP_MS", Duration::from_secs(5)),
+            watchdog_interval: env_ms("DROPPEN_WATCHDOG_INTERVAL_MS", Duration::from_secs(60)),
+        };
+        Self::timed(paths, instance, accounts, quota, timings)
+    }
+
+    /// The host of a registry's runs, the watchdog timed by `timings`.
+    fn timed(
+        paths: Arc<Paths>,
+        instance: &InstanceDirs,
+        accounts: Arc<droppen_accounts::store::AccountsStore>,
+        quota: Arc<droppen_accounts::quota::QuotaCache>,
+        timings: Timings,
+    ) -> Arc<Self> {
         let receipts = Arc::new(receipts::Receipts::new(droppen_instance::db::at(paths.instance_db())));
         let questions = Arc::new(questions::Questions::new(droppen_instance::db::at(paths.instance_db())));
         Arc::new(Self {
@@ -711,14 +734,14 @@ impl RunHost {
             server: ServerId::local(&paths),
             runs: Mutex::new(HashMap::new()),
             shim_dir: instance.session_shims(),
-            idle_timeout: env_ms("DROPPEN_IDLE_TIMEOUT_MS", Duration::from_secs(20 * 60)),
-            interrupt_step: env_ms("DROPPEN_INTERRUPT_STEP_MS", Duration::from_secs(5)),
-            watchdog_interval: env_ms("DROPPEN_WATCHDOG_INTERVAL_MS", Duration::from_secs(60)),
+            idle_timeout: timings.idle_timeout,
+            interrupt_step: timings.interrupt_step,
+            watchdog_interval: timings.watchdog_interval,
             journal: runs::RunsFile::new(instance.runs_file()),
             listeners: std::sync::OnceLock::new(),
             alerts: std::sync::OnceLock::new(),
             drafts: drafts::Drafts::default(),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             steps: Mutex::new(Vec::new()),
             gate: Mutex::new(Weak::new()),
             paths,
@@ -740,7 +763,7 @@ impl RunHost {
 
     /// Tell the session's feed and the session list that it changed in a way
     /// no file shows: its account binding and its rotation record, today.
-    pub(crate) fn announce(&self, source: Source, id: &str) {
+    pub fn announce(&self, source: Source, id: &str) {
         let Some(listeners) = self.listeners.get() else { return };
         listeners.feeds.poke(&self.key_of(source, id));
         listeners.refresh.request_refresh(Some((&source, id)));
@@ -754,7 +777,7 @@ impl RunHost {
     /// the feed only once that feed has shown the transcript — see
     /// `claude_code::resident::Driver::on_absorb` — while the list, which shows no
     /// transcript, can be told straight away.
-    pub(crate) fn refresh_list(&self) {
+    pub fn refresh_list(&self) {
         let Some(listeners) = self.listeners.get() else { return };
         listeners.refresh.request_refresh(None);
     }
@@ -764,7 +787,7 @@ impl RunHost {
     /// The narrow half of [`RunHost::announce`], for a change only
     /// the session's own view shows — a message's receipt — and that the list
     /// has no column for.
-    pub(crate) fn poke_feed(&self, source: Source, id: &str) {
+    pub fn poke_feed(&self, source: Source, id: &str) {
         let Some(listeners) = self.listeners.get() else { return };
         listeners.feeds.poke(&self.key_of(source, id));
     }
@@ -784,7 +807,7 @@ impl RunHost {
     /// Cheap for a message nobody named — the update finds no row — and a
     /// poke of the session's feed for one somebody did, so the receipt reaches
     /// the page without waiting for the next poll.
-    pub(crate) fn note_receipt(&self, source: Source, session: &str, qid: &str, status: droppen_sessions::delivery::ReceiptStatus) {
+    pub fn note_receipt(&self, source: Source, session: &str, qid: &str, status: droppen_sessions::delivery::ReceiptStatus) {
         if self.receipts.mark(qid, status, session, receipts::now_ms()) {
             self.poke_feed(source, session);
         }
@@ -796,13 +819,44 @@ impl RunHost {
     /// keys is in this process' memory and dies with it — nothing durable and
     /// nothing on the wire is spelled this way, which is exactly what makes the
     /// prefix free.
-    pub(super) fn key_of(&self, source: Source, id: &str) -> String {
+    pub fn key_of(&self, source: Source, id: &str) -> String {
         SessionRef::new(self.server.clone(), source, id).scoped_key()
+    }
+
+    /// Put `run` in the runs map as session `id`'s of `source`, in place of
+    /// any run there.
+    pub fn publish_run(&self, source: Source, id: &str, run: Arc<RunEntry>) {
+        self.runs.lock().expect("injections poisoned").insert(self.key_of(source, id), run);
+    }
+
+    /// Take session `id`'s run of `source` out of the runs map, if there is one.
+    pub fn withdraw_run(&self, source: Source, id: &str) {
+        self.runs.lock().expect("injections poisoned").remove(&self.key_of(source, id));
+    }
+
+    /// Session `id`'s run of `source`, if the runs map has one and it is
+    /// still running: its state read under the map's lock.
+    pub fn running_run(&self, source: Source, id: &str) -> Option<Arc<RunEntry>> {
+        let runs = self.runs.lock().expect("injections poisoned");
+        runs.get(&self.key_of(source, id))
+            .filter(|run| run.state.lock().expect("run state poisoned").state == InjectionRunState::Running)
+            .cloned()
+    }
+
+    /// Move session `from`'s run of `source` to session `to`, which it watches
+    /// from now on, under one hold of the map's lock; nothing when `from` has
+    /// no run.
+    pub fn rename_run(&self, source: Source, from: &str, to: &str) {
+        let mut runs = self.runs.lock().expect("injections poisoned");
+        if let Some(run) = runs.remove(&self.key_of(source, from)) {
+            run.state.lock().expect("run state poisoned").current_id = to.to_string();
+            runs.insert(self.key_of(source, to), run);
+        }
     }
 
     /// The state of this session's run in the runs map: a turn a resident
     /// published there, or a run adopted from the previous server.
-    pub(crate) fn run_injection(&self, source: Source, id: &str) -> Option<Injection> {
+    pub fn run_injection(&self, source: Source, id: &str) -> Option<Injection> {
         self.runs
             .lock()
             .expect("injections poisoned")
@@ -837,7 +891,7 @@ impl RunHost {
     /// sessions' turns ([`Alerts::turn`]): `runs`' own processes and the runs
     /// map, which is all the alert reads of that session. Taken synchronously
     /// by the driver, as the alert asks.
-    pub(crate) fn driver_states_of(&self, runs: &dyn ProviderRuns) -> droppen_sessions::DriverStates {
+    pub fn driver_states_of(&self, runs: &dyn ProviderRuns) -> droppen_sessions::DriverStates {
         self.snapshot([runs])
     }
 
@@ -860,7 +914,7 @@ impl RunHost {
     /// old rule applies: a pid that no longer names the run it was recorded for
     /// is *not* signalled, and the run is closed out as finished instead — see
     /// [`vanished`] for why that is the only safe direction.
-    pub(crate) fn interrupt_legacy(&self, runs: &dyn ProviderRuns, source: Source, id: &str) -> bool {
+    pub fn interrupt_legacy(&self, runs: &dyn ProviderRuns, source: Source, id: &str) -> bool {
         // The handle is cloned out so the map lock is released first: the
         // fail-closed path below rewrites `runs.json` and unlinks a claim, and
         // neither belongs under a lock every route contends on.
@@ -947,15 +1001,18 @@ pub trait ProviderRuns: Send + Sync {
 }
 
 /// When a file was last written, on the clock `Instant` keeps.
-pub(crate) trait WrittenAt {
-    async fn written_at(&self) -> Option<Instant>;
+pub trait WrittenAt {
+    /// When it was last written, or `None` when that cannot be read.
+    fn written_at(&self) -> impl std::future::Future<Output = Option<Instant>> + Send;
 }
 
 impl WrittenAt for Path {
-    async fn written_at(&self) -> Option<Instant> {
-        let modified = tokio::fs::metadata(self).await.ok()?.modified().ok()?;
-        let age = std::time::SystemTime::now().duration_since(modified).ok()?;
-        Instant::now().checked_sub(age)
+    fn written_at(&self) -> impl std::future::Future<Output = Option<Instant>> + Send {
+        async move {
+            let modified = tokio::fs::metadata(self).await.ok()?.modified().ok()?;
+            let age = std::time::SystemTime::now().duration_since(modified).ok()?;
+            Instant::now().checked_sub(age)
+        }
     }
 }
 
@@ -972,70 +1029,18 @@ impl DriverStatesBuilder {
     /// A resident the list is to show, under its [`RunHost::key_of`]
     /// key: every CLI files its sessions under that one key, so
     /// [`droppen_sessions::DriverStates::resident`] finds any of them with it.
-    pub(crate) fn resident(&mut self, key: String, info: droppen_sessions::ResidentInfo) {
+    pub fn resident(&mut self, key: String, info: droppen_sessions::ResidentInfo) {
         self.residents.insert(key, info);
     }
 
     /// A run's state under its key: running, or finished at a time. A later
     /// finish under the same key replaces an earlier one's time.
-    pub(crate) fn run(&mut self, key: String, injection: Injection) {
+    pub fn run(&mut self, key: String, injection: Injection) {
         if injection.state == InjectionRunState::Running {
             self.running.insert(key);
         } else if let Some(at) = injection.finished_at.0 {
             self.finished.insert(key, at);
         }
-    }
-}
-
-/// One point of a spawn, as the tests see it: whether the spawn gate and the
-/// session's claim were held there.
-///
-/// The gate and the claim are the two locks that keep a second CLI off a
-/// session, and which of them is held where is the contract the pins in the
-/// tests check; a refactor of either keeps every sequence they record.
-#[cfg(test)]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Step {
-    /// The point, by name.
-    pub(crate) what: &'static str,
-    /// Whether the spawn gate was held, by anyone.
-    pub(crate) gate: bool,
-    /// Whether the session's claim was held, by anyone; `None` where the
-    /// session has no id yet.
-    pub(crate) claim: Option<bool>,
-}
-
-#[cfg(test)]
-impl RunHost {
-    /// Note a [`Step`] of session `id`'s spawn.
-    pub(crate) fn step(&self, what: &'static str, source: Source, id: Option<&str>) {
-        let step = Step {
-            what,
-            gate: self.gate_held(),
-            claim: id.map(|id| self.claim_held(source, id)),
-        };
-        self.steps.lock().expect("steps poisoned").push(step);
-    }
-
-    /// Every step noted so far, oldest first.
-    pub(crate) fn steps(&self) -> Vec<Step> {
-        self.steps.lock().expect("steps poisoned").clone()
-    }
-
-    /// Whether anyone holds the spawn gate.
-    pub(crate) fn gate_held(&self) -> bool {
-        self.watched_gate().is_some_and(|gate| gate.held())
-    }
-
-    /// Whether anyone holds session `id`'s claim: a claim of our own would be
-    /// refused. One that is granted is let go at once.
-    pub(crate) fn claim_held(&self, source: Source, id: &str) -> bool {
-        self.watched_gate().is_some_and(|gate| gate.claim_held(source, id))
-    }
-
-    /// The gate the steps are read off, while its registry lasts.
-    fn watched_gate(&self) -> Option<Arc<gate::SpawnGate>> {
-        self.gate.lock().expect("held gate").upgrade()
     }
 }
 
@@ -1143,7 +1148,7 @@ impl InjectionRegistry {
                     continue;
                 }
             };
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             self.host.step("adoption claimed", record.source, Some(&record.session_id));
             // A resident is *re-attached to*, not watched: the shim held the
             // process' stdio open across the restart, so this server gets the
@@ -1320,7 +1325,7 @@ impl InjectionRegistry {
         // Taken and immediately dropped: a lock file whose run is over is
         // debris, and leaving it would keep the session claimed by nobody.
         boot.sweep(record.source, &record.session_id);
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-support"))]
         self.host.step("buried", record.source, Some(&record.session_id));
         if !runs.was_cut_short(record).await {
             tracing::info!(session = %record.session_id, "a run finished while the server was down");
@@ -1482,7 +1487,7 @@ fn vanished(state: &mut RunState, cli: &str, idle_timeout: Duration) {
 }
 
 /// Node reports signals by name (`SIGTERM`), and the message is user-facing.
-fn signal_name(signal: i32) -> String {
+pub fn signal_name(signal: i32) -> String {
     match signal {
         libc::SIGTERM => "SIGTERM".to_string(),
         libc::SIGKILL => "SIGKILL".to_string(),
@@ -1521,7 +1526,7 @@ const AHEAD_PUSH_WINDOW: std::time::Duration = std::time::Duration::from_secs(10
 
 /// Whether this move ahead from `from` to `to` is the first one in the current
 /// [`AHEAD_PUSH_WINDOW`], and so the one that gets a push.
-fn first_ahead_push(from: &str, to: &str, now: std::time::Instant) -> bool {
+pub fn first_ahead_push(from: &str, to: &str, now: std::time::Instant) -> bool {
     static LAST: std::sync::OnceLock<std::sync::Mutex<HashMap<(String, String), std::time::Instant>>> = std::sync::OnceLock::new();
     let mut last = LAST.get_or_init(Default::default).lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     last.retain(|_, at| now.saturating_duration_since(*at) < AHEAD_PUSH_WINDOW);
@@ -1803,7 +1808,7 @@ mod tests {
 
         let adopted = providers.adopt_all().await;
         assert_eq!((adopted.recovered, adopted.finished), (1, 1), "{adopted:?}");
-        let step = |what, claim| Step { what, gate: false, claim: Some(claim) };
+        let step = |what, claim| testing::Step { what, gate: false, claim: Some(claim) };
         assert_eq!(registry.host.steps(), [step("adoption claimed", true), step("buried", false)]);
         assert!(!debris.exists(), "the sweep took the dead run's lock file");
         assert!(registry.host.claim_held(Source::Claude, LIVE), "the watcher holds the claim");

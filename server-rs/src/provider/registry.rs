@@ -236,9 +236,17 @@ impl ProviderRegistry {
         self.providers.insert(source, provider);
     }
 
-    /// The spawn gate, for a provider's own route that starts or stops its
-    /// CLI outside a [`Run`] call.
-    pub(crate) fn gate(&self) -> &SpawnGate {
+    /// The provider of type `P` and the spawn gate, for a route of that
+    /// provider's own that starts or stops its CLI outside a [`Run`] call;
+    /// `None` when none is registered. Only a provider's own type is lent the
+    /// gate this way, so only its code can reach it.
+    pub fn provider_with_gate<P: Provider + 'static>(&self) -> Option<(&P, &SpawnGate)> {
+        Some((self.provider::<P>()?, &self.gate))
+    }
+
+    /// The spawn gate, for a test that drives a provider by hand.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn gate(&self) -> &SpawnGate {
         &self.gate
     }
 

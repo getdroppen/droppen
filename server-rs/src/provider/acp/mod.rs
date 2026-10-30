@@ -1350,7 +1350,7 @@ mod tests {
             Arc::new(droppen_accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins())),
             crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone()),
         );
-        let alerts = Arc::new(crate::provider::TurnAlerts::default());
+        let alerts = Arc::new(crate::provider::testing::TurnAlerts::default());
         registry.host.attach_alerts(alerts.clone());
         let providers = crate::provider::ProviderRegistry::new(registry, crate::app::register_providers);
         configure_fake(&paths, home.path(), "fake", "");
@@ -1501,9 +1501,9 @@ mod tests {
         assert!(!scratch.exists(), "{} is left behind", scratch.display());
         gone(helper).await;
     }
-    /// A step of a spawn, as [`crate::provider::Step`] records it.
-    fn step(what: &'static str, gate: bool, claim: Option<bool>) -> crate::provider::Step {
-        crate::provider::Step { what, gate, claim }
+    /// A step of a spawn, as [`crate::provider::testing::Step`] records it.
+    fn step(what: &'static str, gate: bool, claim: Option<bool>) -> crate::provider::testing::Step {
+        crate::provider::testing::Step { what, gate, claim }
     }
 
     /// An ACP start holds the spawn gate only to put the session's placeholder

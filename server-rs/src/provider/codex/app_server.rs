@@ -766,7 +766,7 @@ impl CodexRuns {
         record.payload.codex = Some(state.clone());
         let id = record.session_id.clone();
         let account = record.payload.codex_account.clone();
-        self.host.runs.lock().unwrap().remove(&self.host.key_of(Source::Codex, &id));
+        self.host.withdraw_run(Source::Codex, &id);
         if state.archived {
             self.host.journal.remove(&record.run_id);
         } else {
@@ -1086,7 +1086,7 @@ impl CodexRuns {
     pub(in crate::provider) fn codex_attached(self: &Arc<Self>, record: runs::RunRecord<CodexRun>, link: shim::Link, lease: SessionLease) -> Handle {
         // A finished legacy exec entry must not overwrite this driver's newer
         // finish time in the list snapshot after the session migrates.
-        self.host.runs.lock().unwrap().remove(&self.host.key_of(Source::Codex, &record.session_id));
+        self.host.withdraw_run(Source::Codex, &record.session_id);
         let state = record.payload.codex.clone().unwrap_or_default();
         let (tx, rx) = mpsc::unbounded_channel();
         let handle = Handle {
@@ -1424,11 +1424,7 @@ impl Driver {
                 }
                 self.retiring = true;
                 self.runs.host.journal.remove(&self.record.run_id);
-                self.runs
-                    .host.runs
-                    .lock()
-                    .unwrap()
-                    .remove(&self.runs.host.key_of(Source::Codex, &self.record.session_id));
+                self.runs.host.withdraw_run(Source::Codex, &self.record.session_id);
                 self.runs.codex_servers.lock().unwrap().remove(&self.record.session_id);
                 // Released before the reply, because the caller's very next move
                 // is to claim this session for the process it is about to start.
@@ -2719,9 +2715,9 @@ mod tests {
         providers.provider::<Codex>().expect("Codex").runs()
     }
 
-    /// A step of a spawn, as [`crate::provider::Step`] records it.
-    fn step(what: &'static str, gate: bool, claim: Option<bool>) -> crate::provider::Step {
-        crate::provider::Step { what, gate, claim }
+    /// A step of a spawn, as [`crate::provider::testing::Step`] records it.
+    fn step(what: &'static str, gate: bool, claim: Option<bool>) -> crate::provider::testing::Step {
+        crate::provider::testing::Step { what, gate, claim }
     }
 
     /// Codex's app server is started under the spawn gate. A thread this
@@ -2839,7 +2835,7 @@ mod tests {
     async fn a_codex_session_is_in_its_turn_alert_s_snapshot() {
         let home = tempfile::tempdir().expect("tempdir");
         let (_path, registry) = fake_codex_registry(home.path(), "codex-snapshot");
-        let alerts = Arc::new(crate::provider::TurnAlerts::default());
+        let alerts = Arc::new(crate::provider::testing::TurnAlerts::default());
         registry.host.attach_alerts(alerts.clone());
         let providers = crate::provider::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
         let work = home.path().join("work");

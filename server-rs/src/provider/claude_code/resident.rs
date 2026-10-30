@@ -90,7 +90,7 @@ use crate::provider::shim::{self, Link, Output, Sidecars, Spawn};
 use crate::provider::common::{busy_message, new_uuid, AnswerOutcome, Phase, QueueOutcome, Reply, ResidentState, StopTaskOutcome};
 use crate::provider::drafts::Draft;
 use crate::provider::gate::{ClaimError, SessionLease, SpawnGate};
-use crate::provider::{runs, Capabilities, DriverStatesBuilder, InjectError, InjectionRegistry, Provider, ProviderRuns, Run, RunEntry, RunHost, RunState, SendTo, Sent, SpawnPermit, StartAt, WrittenAt};
+use crate::provider::{runs, Capabilities, DriverStatesBuilder, InjectError, InjectionRegistry, Provider, ProviderRuns, Run, RunEntry, RunHost, SendTo, Sent, SpawnPermit, StartAt, WrittenAt};
 mod spawn;
 
 /// The mode flags every resident is started with.
@@ -1430,10 +1430,7 @@ impl ClaudeCodeRuns {
         // that, as far as the phone can tell, vanished. Replaced by the driver's
         // own entry as soon as there is one, and by the failure if the process
         // dies before there is.
-        self.host.runs
-            .lock()
-            .expect("injections poisoned")
-            .insert(self.host.key_of(Source::Claude, id), running_turn(id));
+        self.host.publish_run(Source::Claude, id, running_turn(id));
 
         let driver = Driver {
             runs: self.clone(),
@@ -1821,10 +1818,7 @@ impl ClaudeCodeRuns {
         // the pessimistic half goes in now and the driver corrects it — the same
         // bargain [`ClaudeCodeRuns::start_resident`] makes for a cold CLI.
         if record.payload.turn_at.is_some() || outstanding > 0 {
-            self.host.runs
-                .lock()
-                .expect("injections poisoned")
-                .insert(self.host.key_of(Source::Claude, &record.session_id), running_turn(&record.session_id));
+            self.host.publish_run(Source::Claude, &record.session_id, running_turn(&record.session_id));
         }
         // A shim that has written nothing has nothing to replay, which is the
         // everyday shape of a resident spawned and restarted-past before it said
@@ -2944,7 +2938,7 @@ impl Driver {
     fn recall_questions_lost_in_a_gap(&mut self) {
         let mut recalled: Vec<OpenQuestion> = self
             .runs
-            .host.questions
+            .host.questions()
             .pending_for(&self.id)
             .into_iter()
             .filter(|stored| !self.replay_asked.iter().any(|question| question.request_id == stored.request_id))
@@ -3013,7 +3007,7 @@ impl Driver {
         }
         let mut stop_again = false;
         let waiting = std::mem::take(&mut self.replay_asked);
-        let store = self.runs.host.questions.clone();
+        let store = self.runs.host.questions().clone();
         let now = questions::now_ms();
         for stale in store.pending_for(&self.id) {
             if !waiting.iter().any(|question| question.request_id == stale.request_id) {
@@ -3405,13 +3399,7 @@ impl Driver {
                 residents.insert(id.to_string(), handle);
             }
         }
-        {
-            let mut runs = self.runs.host.runs.lock().expect("injections poisoned");
-            if let Some(run) = runs.remove(&self.runs.host.key_of(Source::Claude, &self.id)) {
-                run.state.lock().expect("run state poisoned").current_id = id.to_string();
-                runs.insert(self.runs.host.key_of(Source::Claude, id), run);
-            }
-        }
+        self.runs.host.rename_run(Source::Claude, &self.id, id);
         self.runs.host.journal.repoint(&self.record, id);
         // The page following the old id would otherwise show a think in
         // flight for ever; the one following the new id sees the rest of it.
@@ -4493,7 +4481,7 @@ impl Driver {
     /// hears of it — on the phone. A question this driver inherited across a
     /// restart is already on record, which is what keeps the phone quiet.
     fn hold_question(&mut self, question: OpenQuestion) {
-        let fresh = self.runs.host.questions.open(
+        let fresh = self.runs.host.questions().open(
             &question.request_id,
             &self.id,
             question.tool_use_id.as_deref(),
@@ -4524,7 +4512,7 @@ impl Driver {
         self.asked.remove(at);
         // Only out of `pending`: an answer this driver wrote has already moved
         // the record, and claude echoing it back must not rewrite it.
-        if self.runs.host.questions.close(request_id, to, questions::now_ms()) {
+        if self.runs.host.questions().close(request_id, to, questions::now_ms()) {
             tracing::info!(session = %self.id, request = %request_id, state = to.as_str(), why, "a question closed without an answer");
             self.recorder
                 .lifecycle(Stage::Question, Some(&format!("{request_id} {}: {why}", to.as_str())));
@@ -4609,7 +4597,7 @@ impl Driver {
             }
             Reply::Dismiss => (QuestionState::Dismissed, None, questions::deny(questions::DISMISSED)),
         };
-        let store = self.runs.host.questions.clone();
+        let store = self.runs.host.questions().clone();
         let now = questions::now_ms();
         let stored = match store.resolve(
             request_id,
@@ -6235,11 +6223,7 @@ impl Driver {
     fn open_turn(&mut self) -> Arc<RunEntry> {
         self.seq += 1;
         let run = running_turn(&self.id);
-        self.runs
-            .host.runs
-            .lock()
-            .expect("injections poisoned")
-            .insert(self.runs.host.key_of(Source::Claude, &self.id), run.clone());
+        self.runs.host.publish_run(Source::Claude, &self.id, run.clone());
         run
     }
 
@@ -6267,10 +6251,7 @@ impl Driver {
     /// either the one the send path published while the CLI was starting, or the
     /// one adoption published while the replay was still arriving.
     fn published_run(&self) -> Option<Arc<RunEntry>> {
-        let runs = self.runs.host.runs.lock().expect("injections poisoned");
-        runs.get(&self.runs.host.key_of(Source::Claude, &self.id))
-            .filter(|run| run.state.lock().expect("run state poisoned").state == InjectionRunState::Running)
-            .cloned()
+        self.runs.host.running_run(Source::Claude, &self.id)
     }
 
     /// Take back a run that was published for a turn there turns out not to be.
@@ -6279,11 +6260,7 @@ impl Driver {
     /// needs no explanation, and a failure reported on every restart would be
     /// noise about something that went fine.
     fn withdraw_published_run(&self) {
-        self.runs
-            .host.runs
-            .lock()
-            .expect("injections poisoned")
-            .remove(&self.runs.host.key_of(Source::Claude, &self.id));
+        self.runs.host.withdraw_run(Source::Claude, &self.id);
     }
 
     /// Write a turn's outcome, tell the phone, and go back to idle.
@@ -6596,29 +6573,7 @@ impl StdinLine<'_> {
 /// the same thing before there is a driver to ask: see
 /// [`ClaudeCodeRuns::start_resident`].
 fn running_turn(id: &str) -> Arc<RunEntry> {
-    let (finished, _) = tokio::sync::watch::channel(false);
-    Arc::new(RunEntry {
-        state: Mutex::new(RunState {
-            state: InjectionRunState::Running,
-            error: None,
-            interrupted: false,
-            started_at: iso8601(std::time::SystemTime::now()),
-            finished_at: None,
-            // The pid is the resident's, and the resident is not this turn's to
-            // end: Stop goes through the driver's ladder, which is the reason
-            // nothing here is allowed to signal it directly.
-            pid: None,
-            pid_token: None,
-            last_progress: Instant::now(),
-            idle_killed: false,
-            current_id: id.to_string(),
-            // The journal entry belongs to the *process*, not to the turn, so a
-            // turn ending must never retire it.
-            run_id: String::new(),
-            lock: None,
-        }),
-        finished,
-    })
+    RunEntry::resident_turn(id)
 }
 
 /// Which of the three futures woke the driver.
@@ -7623,32 +7578,22 @@ mod tests {
 
     /// A registry with timings a test can wait out.
     ///
-    /// Built field by field rather than through [`InjectionRegistry::new`] on
+    /// Built by hand rather than through [`InjectionRegistry::new`] on
     /// purpose: `new` reads the timings out of the environment, which is
     /// process-global and shared with every other test in this binary.
     fn registry(home: &Path, stall: Duration, tick: Duration, step: Duration, settle: Duration, absorb_poll: Duration) -> (Arc<InjectionRegistry>, Arc<ClaudeCodeRuns>) {
         let paths = Arc::new(Paths::new(home.to_path_buf()));
         let dirs = InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
         dirs.create().expect("instance directories");
-        let host = Arc::new(crate::provider::RunHost {
-            receipts: Arc::new(crate::provider::receipts::Receipts::new(droppen_instance::db::at(paths.instance_db()))),
-            questions: Arc::new(crate::provider::questions::Questions::new(droppen_instance::db::at(paths.instance_db()))),
-            accounts: Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), crate::app::logins())),
-            quota: Arc::new(droppen_accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins())),
-            server: droppen_instance::identity::ServerId::local(&paths),
-            runs: Mutex::new(HashMap::new()),
-            shim_dir: dirs.session_shims(),
-            idle_timeout: Duration::from_secs(600),
-            interrupt_step: step,
-            watchdog_interval: tick,
-            journal: runs::RunsFile::new(dirs.runs_file()),
-            listeners: std::sync::OnceLock::new(),
-            alerts: std::sync::OnceLock::new(),
-            drafts: crate::provider::drafts::Drafts::default(),
-            steps: Mutex::new(Vec::new()),
-            gate: Mutex::new(std::sync::Weak::new()),
-            paths: paths.clone(),
-        });
+        let host = crate::provider::testing::host(
+            paths.clone(),
+            &dirs,
+            Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), crate::app::logins())),
+            Arc::new(droppen_accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins())),
+            Duration::from_secs(600),
+            step,
+            tick,
+        );
         let claude = Arc::new(ClaudeCodeRuns {
             residents: Mutex::new(HashMap::new()),
             stall_after: stall,
@@ -7716,10 +7661,10 @@ mod tests {
 
         let asked = serde_json::json!([{"question": "Which one?", "options": [{"label": "this"}]}]);
         for (request, session) in [("request-held", HELD), ("request-gone", GONE)] {
-            assert!(injections.host.questions.open(request, session, None, &asked, questions::now_ms()));
+            assert!(injections.host.questions().open(request, session, None, &asked, questions::now_ms()));
         }
         providers.adopt_all().await;
-        let state = |session| injections.host.questions.for_session(session, questions::now_ms())[0].state;
+        let state = |session| injections.host.questions().for_session(session, questions::now_ms())[0].state;
         assert_eq!(state(HELD), droppen_sessions::delivery::QuestionState::Pending, "its process is still there");
         assert_eq!(state(GONE), droppen_sessions::delivery::QuestionState::Expired);
     }
@@ -9024,7 +8969,7 @@ done
     #[tokio::test]
     async fn a_turn_s_alert_sees_its_session_s_resident() {
         let harness = Harness::ordinary().await;
-        let alerts = Arc::new(crate::provider::TurnAlerts::default());
+        let alerts = Arc::new(crate::provider::testing::TurnAlerts::default());
         harness.registry.host.attach_alerts(alerts.clone());
         until("the init to land", || harness.state().phase == Phase::Idle).await;
         harness.send("first");
@@ -13137,9 +13082,9 @@ done
 
     // ------------------------------------------------ the gate and the claim
 
-    /// A step of a spawn, as [`crate::provider::Step`] records it.
-    fn step(what: &'static str, gate: bool, claim: Option<bool>) -> crate::provider::Step {
-        crate::provider::Step { what, gate, claim }
+    /// A step of a spawn, as [`crate::provider::testing::Step`] records it.
+    fn step(what: &'static str, gate: bool, claim: Option<bool>) -> crate::provider::testing::Step {
+        crate::provider::testing::Step { what, gate, claim }
     }
 
     /// A new resident starts under the spawn gate and with its claim, and both
@@ -13218,7 +13163,7 @@ done
             .find(|record| record.session_id == OTHER)
             .expect("its record")
             .cli_pid;
-        crate::provider::signal(pid, libc::SIGKILL);
+        crate::provider::testing::signal(pid, libc::SIGKILL);
         until("the driver to end", || registry.host.steps().len() == 5).await;
         assert_eq!(registry.host.steps()[4..], [step("resident ended", false, Some(false))]);
         assert!(!registry.residents.lock().expect("residents").contains_key(OTHER));

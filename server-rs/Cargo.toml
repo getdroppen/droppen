@@ -43,6 +43,9 @@ default = ["embed"]
 # `web/dist` is absent the build script downgrades it to a stub that answers
 # with a friendly "run pnpm build" page, so `cargo check` still works.
 embed = ["dep:rust-embed", "dep:mime_guess"]
+# The provider base's test probes (`provider::testing`, and the spawn gate's,
+# the run journal's and the shim's own), for tests that drive a provider.
+test-support = []
 
 [dependencies]
 # The cloud protocol (frames, the Noise channel, the device chain, records),

@@ -357,9 +357,9 @@ pub async fn load_session_state(drive: &Arc<Drive>, source: Source, id: &str) ->
         Source::Claude => drive.accounts.rotation_log().latest(id),
         Source::Codex | Source::Acp => None,
     };
-    let receipts = drive.injections.host().receipts().for_session(source, id, crate::provider::receipts::now_ms());
+    let receipts = drive.injections.host.receipts().for_session(source, id, crate::provider::receipts::now_ms());
     let questions = if drive.providers.capabilities(source).questions {
-        drive.injections.host().questions().for_session(id, crate::provider::questions::now_ms())
+        drive.injections.host.questions().for_session(id, crate::provider::questions::now_ms())
     } else {
         Vec::new()
     };
