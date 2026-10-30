@@ -106,12 +106,13 @@ fn pairs(vars: &[(&str, &str)]) -> Vec<(String, String)> {
 /// The real server binary on a home directory of its own, with [`PLANTED`] in
 /// its environment.
 ///
-/// It kills what it started on the way out: the residents and app servers
-/// the journal names, which lead process groups of their own so that they
-/// outlive a server, and then the server's group.
+/// It kills what it started on the way out ([`common::Spawned`]): the server,
+/// and then the residents and app servers the journal names, which lead
+/// process groups of their own so that they outlive a server.
 struct Server {
     addr: SocketAddr,
-    pid: u32,
+    /// Declared before `home`, so the server and its CLIs are gone before it is.
+    _server: common::Spawned,
     home: tempfile::TempDir,
 }
 
@@ -124,7 +125,7 @@ impl Server {
         let spawned = common::spawn_server(home.path(), droppen_instance::instance::DEFAULT_INSTANCE, &PLANTED).await;
         Server {
             addr: spawned.addr,
-            pid: spawned.pid,
+            _server: spawned,
             home,
         }
     }
@@ -272,27 +273,6 @@ impl Server {
             assert!(std::time::Instant::now() < deadline, "{source}/{id} never finished its turn: {detail}");
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
-    }
-}
-
-impl Drop for Server {
-    fn drop(&mut self) {
-        let db = self.home().join(".local/share/remote-hand/instances/default/state.db");
-        let flags = rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_URI;
-        if let Ok(conn) = rusqlite::Connection::open_with_flags(&db, flags) {
-            if let Ok(mut statement) = conn.prepare("SELECT payload FROM runs") {
-                if let Ok(rows) = statement.query_map([], |row| row.get::<_, String>(0)) {
-                    for payload in rows.filter_map(Result::ok) {
-                        let Ok(record) = serde_json::from_str::<Value>(&payload) else { continue };
-                        let Some(pid) = record["cli_pid"].as_u64() else { continue };
-                        // SAFETY: a signal to a process group; it touches no memory of ours.
-                        unsafe { libc::kill(-(pid as libc::pid_t), libc::SIGKILL) };
-                    }
-                }
-            }
-        }
-        // SAFETY: as above; the server leads a group of its own.
-        unsafe { libc::kill(-(self.pid as libc::pid_t), libc::SIGKILL) };
     }
 }
 

@@ -52,6 +52,8 @@ struct Boot {
     /// `vi`, a swap file — behind to confuse the next run. `Drop` kills what a
     /// finished test did not.
     stopped: bool,
+    /// Ends the terminals' shims if the test process dies before `Drop` can.
+    _reaper: common::Reaper,
 }
 
 impl Drop for Boot {
@@ -66,6 +68,7 @@ impl Drop for Boot {
 impl Boot {
     /// Start a server on `home`, owning `instance`.
     async fn start(home: &Path, instance: &str) -> Boot {
+        common::test_home(home);
         let app = RemoteHandApp {
             home_override: Some(home.to_path_buf()),
             port_override: Some(0),
@@ -88,6 +91,7 @@ impl Boot {
             cancel,
             task: Some(task),
             stopped: false,
+            _reaper: common::Reaper::watch(None, home, instance),
         }
     }
 

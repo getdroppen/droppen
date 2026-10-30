@@ -217,6 +217,9 @@ struct Supervisor {
     addr: std::net::SocketAddr,
     home: PathBuf,
     stopped: bool,
+    /// Ends the supervisor's group, the server it supervises and the CLIs its
+    /// servers started if this test process dies before the guard is dropped.
+    _reaper: common::Reaper,
 }
 
 impl Drop for Supervisor {
@@ -228,6 +231,9 @@ impl Drop for Supervisor {
             // SAFETY: a negative pid names a process group; signalling one that
             // has already gone is an ignored `ESRCH`.
             unsafe { libc::kill(-(self.pid as libc::pid_t), libc::SIGKILL) };
+            // The server it was supervising runs in a group of its own, from
+            // a copy installed under the home.
+            common::kill_shims_serving(&self.home);
         }
     }
 }
@@ -245,6 +251,7 @@ fn forget_port(home: &Path) {
 
 impl Supervisor {
     async fn start(home: &Path) -> Supervisor {
+        common::test_home(home);
         forget_port(home);
         let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_remote-hand-server"));
         command
@@ -284,6 +291,7 @@ impl Supervisor {
             addr: ([127, 0, 0, 1], 0).into(),
             home: home.to_path_buf(),
             stopped: false,
+            _reaper: common::Reaper::watch(Some(pid), home, DEFAULT_INSTANCE),
         };
         supervisor.addr = common::wait_for_listener(home, DEFAULT_INSTANCE, BUDGET).await;
         supervisor
@@ -620,6 +628,9 @@ struct Unsupervised {
     addr: std::net::SocketAddr,
     home: PathBuf,
     stopped: bool,
+    /// Ends the server's group and the CLIs it started if this test process
+    /// dies before the guard is dropped.
+    _reaper: common::Reaper,
 }
 
 impl Drop for Unsupervised {
@@ -650,6 +661,7 @@ impl Unsupervised {
     }
 
     async fn start_from(home: &Path, exe: &Path) -> Unsupervised {
+        common::test_home(home);
         forget_port(home);
         let mut command = tokio::process::Command::new(exe);
         command
@@ -676,6 +688,7 @@ impl Unsupervised {
             addr: ([127, 0, 0, 1], 0).into(),
             home: home.to_path_buf(),
             stopped: false,
+            _reaper: common::Reaper::watch(Some(pid), home, DEFAULT_INSTANCE),
         };
         server.addr = common::wait_for_listener(home, DEFAULT_INSTANCE, BUDGET).await;
         server

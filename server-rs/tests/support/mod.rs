@@ -69,6 +69,12 @@ pub mod common;
 /// `.rh-test-root`) and records any overlap, which is how "probes are
 /// serialized" is asserted without a clock.
 ///
+/// Every wait it makes ends the moment the process that started it is gone
+/// (`kill -0 "$PPID"`). For a resident that is its session shim, and a shim
+/// that is gone took the CLI's stdin with it: nobody is left to end the turn,
+/// and a two-minute `sleep.txt` would otherwise keep a stand-in running for
+/// two minutes after a test process was killed.
+///
 /// # Why the marker is checked before anything is written
 ///
 /// A resident outlives the server that started it — that is the entire point of
@@ -82,6 +88,16 @@ dir=$(/bin/pwd 2>/dev/null) || dir="$PWD"
 root="$dir"
 while [ "$root" != "/" ] && [ ! -f "$root/.rh-test-root" ]; do root=$(dirname "$root"); done
 [ -f "$root/.rh-test-root" ] || exit 97
+
+# Sleep this long, unless the process that started this CLI goes first.
+nap() {
+  sleep "$1" &
+  napping=$!
+  while kill -0 "$napping" 2>/dev/null; do
+    kill -0 "$PPID" 2>/dev/null || { kill "$napping" 2>/dev/null; exit 97; }
+    sleep 0.05
+  done
+}
 
 # The reader polls for `spawn.done`, so argv and env are complete before it
 # appears: a half-written `env.txt` would otherwise read as a missing variable.
@@ -133,7 +149,7 @@ if [ -f "$dir/stderr.txt" ]; then cat "$dir/stderr.txt" >&2; fi
 # A CLI that is slow to come up. Nothing may be written to it until it says it
 # is listening, so this is the window in which a message has been accepted and
 # no turn can have started yet.
-if [ -f "$dir/mute.txt" ]; then sleep "$(cat "$dir/mute.txt")"; fi
+if [ -f "$dir/mute.txt" ]; then nap "$(cat "$dir/mute.txt")"; fi
 
 # The handshake. `hook_started` really does come before `init`, and lines that
 # are not JSON really do turn up, so both are here: a reader that took the first
@@ -153,10 +169,10 @@ printf '{"type":"system","subtype":"init","session_id":"%s"}\n' "$session"
 # that fails halfway leaves nothing polling a directory that has gone.
 if [ -f "$dir/wake.txt" ]; then
   (
-    n=0; while [ ! -f "$dir/wake" ] && [ "$n" -lt 500 ]; do [ -d "$dir" ] || exit 97; sleep 0.02; n=$((n + 1)); done
+    n=0; while [ ! -f "$dir/wake" ] && [ "$n" -lt 500 ]; do [ -d "$dir" ] && kill -0 "$PPID" 2>/dev/null || exit 97; sleep 0.02; n=$((n + 1)); done
     printf '%s\n' '{"type":"assistant","parent_tool_use_id":"toolu_child","message":{}}'
     printf '%s\n' '{"type":"assistant","message":{}}'
-    n=0; while [ ! -f "$dir/woken" ] && [ "$n" -lt 500 ]; do [ -d "$dir" ] || exit 97; sleep 0.02; n=$((n + 1)); done
+    n=0; while [ ! -f "$dir/woken" ] && [ "$n" -lt 500 ]; do [ -d "$dir" ] && kill -0 "$PPID" 2>/dev/null || exit 97; sleep 0.02; n=$((n + 1)); done
     printf '%s\n' '{"type":"result","subtype":"success","is_error":false}'
   ) &
 fi
@@ -177,7 +193,7 @@ while IFS= read -r line; do
     while [ "$tick" -lt "$ticks" ]; do
       tick=$((tick + 1))
       printf '{"type":"assistant","message":{"content":[{"type":"text","text":"working %s"}]}}\n' "$tick"
-      sleep "$gap"
+      nap "$gap"
     done
   fi
   if [ -f "$dir/hold" ]; then
@@ -189,7 +205,7 @@ while IFS= read -r line; do
     # into a pass — with a code no test expects.
     n=0
     while [ ! -f "$dir/go" ]; do
-      [ -d "$dir" ] || exit 97
+      [ -d "$dir" ] && kill -0 "$PPID" 2>/dev/null || exit 97
       # Leave time for upgrade tests to copy and health-check a large debug binary.
       [ "$n" -lt 6000 ] || exit 97
       sleep 0.02
@@ -197,7 +213,7 @@ while IFS= read -r line; do
     done
     rm -f "$dir/go"
   fi
-  if [ -f "$dir/sleep.txt" ]; then sleep "$(cat "$dir/sleep.txt")"; fi
+  if [ -f "$dir/sleep.txt" ]; then nap "$(cat "$dir/sleep.txt")"; fi
   if [ -f "$dir/exit.txt" ]; then exit "$(cat "$dir/exit.txt")"; fi
   printf '%s\n' '{"type":"result","subtype":"success","is_error":false}'
 done
@@ -309,7 +325,8 @@ pub struct Probe {
 /// still move the server out of itself, and so that the order relative to the
 /// `tempdir` is stated where it is decided.
 struct ResidentReaper {
-    state_db: PathBuf,
+    home: PathBuf,
+    instance: String,
 }
 
 impl ResidentReaper {
@@ -321,26 +338,7 @@ impl ResidentReaper {
     /// being written would find neither. Killing an already-dead process group
     /// is a no-op, so doing it twice costs nothing.
     fn sweep(&self) {
-        // Read-only, and every failure is a silent return: the journal is a
-        // database now, the server that owns it may already be gone, and a
-        // reaper that panicked would fail the test it was cleaning up after.
-        let flags = rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_URI;
-        let Ok(conn) = rusqlite::Connection::open_with_flags(&self.state_db, flags) else {
-            return;
-        };
-        let Ok(mut statement) = conn.prepare("SELECT payload FROM runs") else {
-            return;
-        };
-        let Ok(rows) = statement.query_map([], |row| row.get::<_, String>(0)) else {
-            return;
-        };
-        for payload in rows.filter_map(Result::ok) {
-            let Ok(record) = serde_json::from_str::<Value>(&payload) else { continue };
-            let Some(pid) = record["cli_pid"].as_u64() else { continue };
-            // SAFETY: `kill` delivers a signal to a process group and cannot
-            // corrupt this process' own state.
-            unsafe { libc::kill(-(pid as libc::pid_t), libc::SIGKILL) };
-        }
+        common::kill_journal_runs(&self.home, &self.instance);
     }
 }
 
@@ -348,11 +346,6 @@ impl Drop for ResidentReaper {
     fn drop(&mut self) {
         self.sweep();
     }
-}
-
-/// Where one instance keeps its state, the journal included.
-fn state_db_of(home: &Path, instance: &str) -> PathBuf {
-    home.join(".local/share/remote-hand/instances").join(instance).join("state.db")
 }
 
 impl Probe {
@@ -372,7 +365,8 @@ impl Probe {
         Probe {
             home: home.path().to_path_buf(),
             residents: ResidentReaper {
-                state_db: state_db_of(home.path(), &instance),
+                home: home.path().to_path_buf(),
+                instance: instance.clone(),
             },
             instance,
             server,
@@ -405,7 +399,8 @@ impl Probe {
             instance: instance.to_string(),
             server: common::TestServer::start_at(home, Some(instance)).await,
             residents: ResidentReaper {
-                state_db: state_db_of(home, instance),
+                home: home.to_path_buf(),
+                instance: instance.to_string(),
             },
             _home: None,
         }
@@ -423,7 +418,8 @@ impl Probe {
             instance: instance.to_string(),
             server: common::TestServer::start_at(&self.home, Some(instance)).await,
             residents: ResidentReaper {
-                state_db: state_db_of(&self.home, instance),
+                home: self.home.clone(),
+                instance: instance.to_string(),
             },
             _home: None,
         }

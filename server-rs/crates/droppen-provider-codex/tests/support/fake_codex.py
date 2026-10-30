@@ -8,6 +8,9 @@ import threading
 import time
 
 cwd = Path.cwd()
+# The process that started this one, its session shim: a wait below ends the
+# moment it is gone, which took this process's stdin with it.
+parent = os.getppid()
 test_root = next((p for p in [cwd, *cwd.parents] if (p / ".rh-test-root").exists()), None)
 if test_root is None:
     sys.exit(97)
@@ -72,6 +75,8 @@ try:
             # there: what a slow app server looks like to the server.
             if method == "initialize":
                 while (cwd / "init-hold").exists():
+                    if os.getppid() != parent:
+                        sys.exit(97)
                     time.sleep(0.01)
             if method in ("thread/start", "thread/resume"):
                 thread = params.get("threadId", thread)

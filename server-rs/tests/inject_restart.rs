@@ -823,24 +823,13 @@ async fn a_watched_codex_app_server_that_dies_leaves_its_queue_with_a_resident()
 
 /// A server started from the real binary, on a home directory the test owns.
 ///
-/// It kills its own process group on the way out. Without that, a test that
-/// fails an assertion between spawning a server and killing it leaves a real
-/// server — and the CLI it started — running on the developer's machine, which
-/// is a nasty way to learn that an assertion moved.
-struct Spawned {
-    pid: u32,
-    addr: std::net::SocketAddr,
-}
-
-impl Drop for Spawned {
-    fn drop(&mut self) {
-        common::KillGroupOnDrop(self.pid);
-    }
-}
-
-async fn spawn_server(home: &Path) -> Spawned {
-    let spawned = common::spawn_server(home, DEFAULT_INSTANCE, &[]).await;
-    Spawned { pid: spawned.pid, addr: spawned.addr }
+/// Dropped, it kills its own process group and then every CLI the run journal
+/// names ([`common::Spawned`]). Without that, a test that fails an assertion
+/// between spawning a server and killing it leaves a real server — and the
+/// CLI it started — running on the developer's machine, which is a nasty way
+/// to learn that an assertion moved.
+async fn spawn_server(home: &Path) -> common::Spawned {
+    common::spawn_server(home, DEFAULT_INSTANCE, &[]).await
 }
 
 /// The one record in the journal, as it stands right now.
