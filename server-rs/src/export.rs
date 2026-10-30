@@ -102,32 +102,51 @@ async fn fetch_spec(addr: std::net::SocketAddr) -> Result<String, String> {
 mod tests {
     use super::*;
 
+    /// Where [`a_proxy_in_the_environment_does_not_capture_the_export`] runs the
+    /// export, when this test binary runs it as a process of its own.
+    const EXPORT_DIR: &str = "DROPPEN_UNIT_TEST_EXPORT_DIR";
+
     /// The export is a request to a port this process just opened, so the
     /// environment's proxy is not part of it. With `HTTP_PROXY`/`ALL_PROXY`
     /// pointed at a closed port, only a client built with `no_proxy()` reaches
     /// the server and writes the spec.
     ///
-    /// The variables are set for the whole process, which is safe under the
-    /// suite's process-per-test runner (see `server-rs/.config/nextest.toml`).
+    /// The variables are a process's, so the export runs in a process of its
+    /// own: this test binary again, for this test alone, with them set. Set in
+    /// the test's own process they would be every other test's too under
+    /// `cargo test`, which runs the tests as threads of one process: a server
+    /// another test built meanwhile kept its accounts and sessions in this
+    /// test's directories, beside every other such server's.
     #[tokio::test]
     async fn a_proxy_in_the_environment_does_not_capture_the_export() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let out = dir.path().join("openapi.json");
-        let set = |name: &str, value: &str| std::env::set_var(name, value);
-        // Keep the throwaway server's paths inside the test's own directory.
-        set("DROPPEN_CONFIG_DIR", dir.path().join("config").to_str().expect("utf-8"));
-        set("DROPPEN_DATA_DIR", dir.path().join("data").to_str().expect("utf-8"));
-        set("APP_HOME_DIR", dir.path().join("home").to_str().expect("utf-8"));
-        set("APP_INSTANCE", "openapi-export");
-        set("HTTP_PROXY", "http://127.0.0.1:1");
-        set("ALL_PROXY", "http://127.0.0.1:1");
-        set("NO_PROXY", "");
-        let exported = ExportOpenapiArgs { out: Some(out.clone()) }.run().await;
-        for name in ["DROPPEN_CONFIG_DIR", "DROPPEN_DATA_DIR", "APP_HOME_DIR", "APP_INSTANCE", "HTTP_PROXY", "ALL_PROXY", "NO_PROXY"] {
-            std::env::remove_var(name);
+        let Ok(dir) = std::env::var(EXPORT_DIR) else {
+            let dir = tempfile::tempdir().expect("tempdir");
+            // libtest names a test by its path inside the crate.
+            let (_crate, module) = module_path!().split_once("::").expect("a module inside a crate");
+            let status = std::process::Command::new(std::env::current_exe().expect("this test binary"))
+                .args(["--exact", "--quiet", &format!("{module}::a_proxy_in_the_environment_does_not_capture_the_export")])
+                .env(EXPORT_DIR, dir.path())
+                // Keep the throwaway server's paths inside the test's own directory.
+                .env("DROPPEN_CONFIG_DIR", dir.path().join("config"))
+                .env("DROPPEN_DATA_DIR", dir.path().join("data"))
+                .env("APP_HOME_DIR", dir.path().join("home"))
+                .env("APP_INSTANCE", "openapi-export")
+                .env("HTTP_PROXY", "http://127.0.0.1:1")
+                .env("ALL_PROXY", "http://127.0.0.1:1")
+                .env("NO_PROXY", "")
+                .status()
+                .expect("this test binary runs");
+            assert!(status.success(), "the export, in a process of its own: {status}");
+            // Read here, so a run that never reached the export fails too.
+            let spec = std::fs::read_to_string(dir.path().join("openapi.json")).expect("the written spec");
+            assert!(spec.contains("\"openapi\""), "the file is the spec, not a proxy error page");
+            return;
+        };
+        ExportOpenapiArgs {
+            out: Some(std::path::Path::new(&dir).join("openapi.json")),
         }
-        exported.expect("the export must ignore the environment's proxy");
-        let spec = std::fs::read_to_string(&out).expect("the written spec");
-        assert!(spec.contains("\"openapi\""), "the file is the spec, not a proxy error page");
+        .run()
+        .await
+        .expect("the export must ignore the environment's proxy");
     }
 }
