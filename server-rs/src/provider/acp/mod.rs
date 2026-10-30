@@ -999,9 +999,32 @@ mod tests {
         assert_eq!(prompt, "look\n\n[2 attached file(s):]\n- /u/a.png\n- /u/b.txt");
     }
 
-    /// The ACP runs of `drive`'s provider.
-    fn acp_of(drive: &crate::drive::Drive) -> Arc<AcpRuns> {
-        drive.providers.provider::<Acp>().expect("the ACP provider").runs().clone()
+    /// The ACP provider and no other, on the base's own injection registry
+    /// at a home ([`droppen_provider::testing::injection_registry`]: stand-in
+    /// logins, spawns decorated with nothing). No server is built.
+    struct AcpAlone {
+        /// The home's paths, where the agents' settings and transcripts are.
+        paths: Arc<Paths>,
+        /// The registry ACP is registered in, which lends its spawn gate.
+        providers: Arc<droppen_provider::ProviderRegistry>,
+    }
+
+    /// The ACP provider, registered alone.
+    fn acp_only(providers: &mut droppen_provider::ProviderRegistry, registry: &Arc<InjectionRegistry>) {
+        providers.register(Arc::new(Acp::new(registry.clone())));
+    }
+
+    /// [`AcpAlone`] at `home`.
+    fn acp_alone(home: &Path) -> AcpAlone {
+        let injections = droppen_provider::testing::injection_registry(home);
+        let paths = injections.host.paths.clone();
+        let providers = droppen_provider::ProviderRegistry::new(injections, acp_only);
+        AcpAlone { paths, providers }
+    }
+
+    /// The ACP runs of `state`'s provider.
+    fn acp_of(state: &AcpAlone) -> Arc<AcpRuns> {
+        state.providers.provider::<Acp>().expect("the ACP provider").runs().clone()
     }
 
     fn agent() -> AcpAgent {
@@ -1202,9 +1225,9 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn an_agent_that_never_answers_a_model_switch_holds_up_no_other_send() {
         let home = tempfile::tempdir().expect("tempdir");
-        let state = crate::api::test_support::state(home.path()).await;
-        let injections = acp_of(&state.drive);
-        let gate = state.drive.providers.gate();
+        let state = acp_alone(home.path());
+        let injections = acp_of(&state);
+        let gate = state.providers.gate();
         configure_fake(&state.paths, home.path(), "stuck", "FAKE_AGENT_SLOW=session/set_config_option=600");
         configure_fake(&state.paths, home.path(), "other", "");
         let dirs = workdirs(home.path(), &["stuck", "other"]);
@@ -1233,7 +1256,7 @@ mod tests {
 
         // The driver is stuck on the switch, so the next message waits for it…
         let behind = tokio::spawn({
-            let (injections, providers, id) = (injections.clone(), state.drive.providers.clone(), id.clone());
+            let (injections, providers, id) = (injections.clone(), state.providers.clone(), id.clone());
             async move { injections.acp_send(providers.gate(), &id, "behind it", &SendOptions::default()).await }
         });
         tokio::time::sleep(Duration::from_millis(300)).await;
@@ -1266,16 +1289,16 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn an_agent_that_hangs_while_it_starts_holds_up_no_other_send() {
         let home = tempfile::tempdir().expect("tempdir");
-        let state = crate::api::test_support::state(home.path()).await;
-        let injections = acp_of(&state.drive);
-        let gate = state.drive.providers.gate();
+        let state = acp_alone(home.path());
+        let injections = acp_of(&state);
+        let gate = state.providers.gate();
         configure_fake(&state.paths, home.path(), "hangs", "FAKE_AGENT_SLOW=initialize=600");
         configure_fake(&state.paths, home.path(), "other", "");
         let dirs = workdirs(home.path(), &["hangs", "other"]);
         let plain = SendOptions::default();
 
         let starting = tokio::spawn({
-            let (injections, providers, dir) = (injections.clone(), state.drive.providers.clone(), dirs[0].to_string_lossy().into_owned());
+            let (injections, providers, dir) = (injections.clone(), state.providers.clone(), dirs[0].to_string_lossy().into_owned());
             async move { injections.acp_start(providers.gate(), "hangs", &dir, "hello", &SendOptions::default()).await }
         });
         until("initialize", || was_sent(&dirs[0], "initialize")).await;
@@ -1310,9 +1333,9 @@ mod tests {
     #[tokio::test]
     async fn a_stop_does_not_drop_a_message_on_its_way() {
         let home = tempfile::tempdir().expect("tempdir");
-        let state = crate::api::test_support::state(home.path()).await;
-        let injections = acp_of(&state.drive);
-        let gate = state.drive.providers.gate();
+        let state = acp_alone(home.path());
+        let injections = acp_of(&state);
+        let gate = state.providers.gate();
         configure_fake(&state.paths, home.path(), "fake", "");
         let dir = workdirs(home.path(), &["work"]).remove(0);
         let id = injections
@@ -1344,19 +1367,11 @@ mod tests {
     #[tokio::test]
     async fn an_acp_session_is_in_its_turn_alert_s_snapshot() {
         let home = tempfile::tempdir().expect("tempdir");
-        let paths = Arc::new(Paths::new(home.path().to_path_buf()));
-        let dirs = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
-        dirs.create().expect("instance dirs");
-        let registry = InjectionRegistry::new(
-            paths.clone(),
-            &dirs,
-            Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), crate::app::logins())),
-            Arc::new(droppen_accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins())),
-            crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone()),
-        );
+        let registry = droppen_provider::testing::injection_registry(home.path());
+        let paths = registry.host.paths.clone();
         let alerts = Arc::new(droppen_provider::testing::TurnAlerts::default());
         registry.host.attach_alerts(alerts.clone());
-        let providers = droppen_provider::ProviderRegistry::new(registry, crate::app::register_providers);
+        let providers = droppen_provider::ProviderRegistry::new(registry, acp_only);
         configure_fake(&paths, home.path(), "fake", "");
         let dir = workdirs(home.path(), &["work"]).remove(0);
         let runs = providers.provider::<Acp>().expect("the ACP provider").runs().clone();
@@ -1371,10 +1386,10 @@ mod tests {
 
     /// Start a session on the stand-in, configured with `env`, with one
     /// message, and wait for its turn to end; its id and working directory.
-    async fn one_turn(home: &Path, env: &str, text: &str, options: &SendOptions) -> (crate::api::AppState, String, PathBuf) {
-        let state = crate::api::test_support::state(home).await;
-        let injections = acp_of(&state.drive);
-        let gate = state.drive.providers.gate();
+    async fn one_turn(home: &Path, env: &str, text: &str, options: &SendOptions) -> (AcpAlone, String, PathBuf) {
+        let state = acp_alone(home);
+        let injections = acp_of(&state);
+        let gate = state.providers.gate();
         configure_fake(&state.paths, home, "fake", env);
         let dir = workdirs(home, &["work"]).remove(0);
         let id = injections.acp_start(gate, "fake", &dir.to_string_lossy(), text, options).await.expect("started");
@@ -1474,10 +1489,10 @@ mod tests {
     #[tokio::test]
     async fn a_check_that_gets_no_answer_leaves_nothing_running_and_no_scratch_directory() {
         let home = tempfile::tempdir().expect("tempdir");
-        let state = crate::api::test_support::state(home.path()).await;
+        let state = acp_alone(home.path());
         let record = tempfile::tempdir().expect("tempdir");
         let agent = deaf_agent(record.path());
-        let check = acp_of(&state.drive).check_acp_agent_within(&agent, Duration::from_secs(2)).await;
+        let check = acp_of(&state).check_acp_agent_within(&agent, Duration::from_secs(2)).await;
         assert_eq!(check.state, AcpCheckState::Failed);
         assert!(
             check.error.0.as_deref().is_some_and(|error| error.contains("did not answer initialize")),
@@ -1496,10 +1511,10 @@ mod tests {
     #[tokio::test]
     async fn a_check_whose_request_is_cancelled_leaves_nothing_running_and_no_scratch_directory() {
         let home = tempfile::tempdir().expect("tempdir");
-        let state = crate::api::test_support::state(home.path()).await;
+        let state = acp_alone(home.path());
         let record = tempfile::tempdir().expect("tempdir");
         let agent = deaf_agent(record.path());
-        let cancelled = tokio::time::timeout(Duration::from_secs(2), acp_of(&state.drive).check_acp_agent(&agent)).await;
+        let cancelled = tokio::time::timeout(Duration::from_secs(2), acp_of(&state).check_acp_agent(&agent)).await;
         assert!(cancelled.is_err(), "still waiting for initialize when dropped");
         let (scratch, helper) = recorded(record.path());
         assert!(!scratch.exists(), "{} is left behind", scratch.display());
@@ -1517,9 +1532,9 @@ mod tests {
     #[tokio::test]
     async fn acp_starts_and_archives_hold_the_gate_only_around_the_map() {
         let home = tempfile::tempdir().expect("tempdir");
-        let state = crate::api::test_support::state(home.path()).await;
-        let injections = acp_of(&state.drive);
-        let gate = state.drive.providers.gate();
+        let state = acp_alone(home.path());
+        let injections = acp_of(&state);
+        let gate = state.providers.gate();
         configure_fake(&state.paths, home.path(), "fake", "");
         let dir = workdirs(home.path(), &["work"]).remove(0);
         let plain = SendOptions::default();
@@ -1542,7 +1557,10 @@ mod tests {
         );
         until("the second turn", || injections.acp_handle(&id).is_some_and(|handle| !handle.busy())).await;
 
-        injections.archive_acp(gate, &id).await.expect("archived");
+        tokio::time::timeout(Duration::from_secs(10), injections.archive_acp(gate, &id))
+            .await
+            .expect("the archive waits for its agent's stop outside the gate")
+            .expect("archived");
         assert_eq!(injections.host.steps()[4..], [step("agent stopping", false, Some(false))]);
     }
 
@@ -1552,8 +1570,8 @@ mod tests {
     #[tokio::test]
     async fn the_provider_registry_lends_its_own_gate() {
         let home = tempfile::tempdir().expect("tempdir");
-        let state = crate::api::test_support::state(home.path()).await;
-        let (providers, injections) = (state.drive.providers.clone(), acp_of(&state.drive));
+        let state = acp_alone(home.path());
+        let (providers, injections) = (state.providers.clone(), acp_of(&state));
         configure_fake(&state.paths, home.path(), "fake", "");
         let dir = workdirs(home.path(), &["work"]).remove(0).to_string_lossy().into_owned();
         let options = SendOptions {
@@ -1581,7 +1599,11 @@ mod tests {
         // never would be.
         until("the archive to wait for the registry's gate", || providers.gate().waiting() == 1).await;
         drop(held);
-        archive.await.expect("joined").expect("archived");
+        tokio::time::timeout(Duration::from_secs(10), archive)
+            .await
+            .expect("the archive ends once the registry's gate is free: it waits for its agent's stop outside it")
+            .expect("joined")
+            .expect("archived");
     }
     /// Asking an agent what it offers, or checking that it answers, starts it
     /// in a scratch directory and outside the spawn gate: neither runs a
@@ -1589,8 +1611,8 @@ mod tests {
     #[tokio::test]
     async fn a_probe_and_a_check_start_their_agent_outside_the_gate() {
         let home = tempfile::tempdir().expect("tempdir");
-        let state = crate::api::test_support::state(home.path()).await;
-        let injections = acp_of(&state.drive);
+        let state = acp_alone(home.path());
+        let injections = acp_of(&state);
         configure_fake(&state.paths, home.path(), "fake", "");
         let agent = AcpAgentRegistry::of(&state.paths).get("fake").expect("configured");
 
