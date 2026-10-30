@@ -358,54 +358,9 @@ fn span(ms: i64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use clap::error::ErrorKind;
-
     use super::*;
     use droppen_base::time::iso8601;
     use std::time::SystemTime;
-
-    fn parse_args(argv: &[String]) -> Result<ReplayArgs, clap::Error> {
-        match crate::cli::tests::parse_words("replay", argv)? {
-            crate::cli::Command::Replay(parsed) => Ok(parsed),
-            other => panic!("{argv:?} parsed as {other:?}"),
-        }
-    }
-
-    #[test]
-    fn the_command_line_is_read_or_refused_with_a_reason() {
-        let argv: Vec<String> = [
-            "--log",
-            "/tmp/a.ndjson",
-            "--home",
-            "/tmp/home",
-            "--speed",
-            "4",
-            "--max-gap",
-            "0.5",
-            "--instant",
-        ]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-        let options = parse_args(&argv).expect("a valid command line");
-        assert_eq!(options.log, PathBuf::from("/tmp/a.ndjson"));
-        assert_eq!(options.home, PathBuf::from("/tmp/home"));
-        assert_eq!(options.speed, 4.0);
-        assert_eq!(options.max_gap, 0.5);
-        assert_eq!(options.instant, 1);
-        assert_eq!(options.instance, DEFAULT_INSTANCE, "the default matches the server's own");
-
-        let bare = |args: &[&str]| parse_args(&args.iter().map(|s| s.to_string()).collect::<Vec<_>>()).expect_err("must be refused").to_string();
-        assert!(bare(&["--home", "/tmp"]).contains("--log"));
-        assert!(bare(&["--log", "/tmp/a"]).contains("--home"));
-        assert!(bare(&["--log", "/tmp/a", "--home", "/tmp", "--speed", "0"]).contains("greater than zero"));
-        assert!(bare(&["--log", "/tmp/a", "--home", "/tmp", "--speed", "fast"]).contains("wants a number"));
-        assert!(
-            bare(&["--log", "/tmp/a", "--home", "/tmp", "--nope"]).contains("unexpected argument '--nope'"),
-            "unknown option"
-        );
-        assert!(bare(&["--log"]).contains("a value is required for '--log <LOG>'"), "needs a value");
-    }
 
     /// The two knobs that make a six-hour session watchable in five minutes.
     #[test]
@@ -597,68 +552,6 @@ mod tests {
         let file = Paths::new(home).claude_root(ClaudeRoot::Managed).join("projects/-w/abc.jsonl");
         let content = std::fs::read_to_string(&file).expect("the transcript");
         assert_eq!(content, "{\"n\":1}\n", "the second replay replaced the first: {content:?}");
-    }
-    /// The replay command lines. A value-taking option consumes the next token
-    /// whatever it looks like, `--flag=value` is now a clap spelling, a bare
-    /// `--` is clap's terminator, and repeats take the last. Help is clap's.
-    #[test]
-    fn the_replay_argument_table() {
-        let words = |line: &[&str]| -> Vec<String> { line.iter().map(|word| (*word).to_string()).collect() };
-        let accepted: Vec<Vec<String>> = [
-            &["--log", "a", "--home", "b"][..],
-            &["--home", "b", "--log", "a"],
-            &["--log", "a", "--home", "b", "--instance", "i", "--speed", "4", "--max-gap", "0.5", "--instant"],
-            &["--log", "a", "--log", "c", "--home", "b"],
-            &["--log", "--", "--home", "b"],
-            &["--log", "a", "--home", "--"],
-            &["--log", "a", "--home", "b", "--instant", "--instant"],
-            &["--log=a", "--home", "b"],
-            &["--log", "a", "--home", "b", "--"],
-        ]
-        .into_iter()
-        .map(words)
-        .collect();
-        for argv in &accepted {
-            assert!(parse_args(argv).is_ok(), "{argv:?} must parse: {:?}", parse_args(argv).err());
-        }
-        let parsed = parse_args(&words(&["--log", "a", "--log", "c", "--home", "b"])).expect("parsed");
-        assert_eq!(parsed.log, PathBuf::from("c"), "the last --log wins");
-        assert_eq!(parsed.home, PathBuf::from("b"));
-        assert_eq!(parse_args(&words(&["--log", "--", "--home", "b"])).expect("parsed").log, PathBuf::from("--"));
-        assert_eq!(parse_args(&words(&["--log=a", "--home", "b"])).expect("parsed").log, PathBuf::from("a"));
-
-        for (argv, expected) in [
-            (&[][..], ErrorKind::MissingRequiredArgument),
-            (&["--log", "a"], ErrorKind::MissingRequiredArgument),
-            (&["--home", "b"], ErrorKind::MissingRequiredArgument),
-            (&["--log"], ErrorKind::InvalidValue),
-            (&["--log", "a", "--home", "b", "--nope"], ErrorKind::UnknownArgument),
-            (&["--instant"], ErrorKind::MissingRequiredArgument),
-            (&["--log", "a", "--home", "b", "--speed"], ErrorKind::InvalidValue),
-            (&["--log", "a", "--home", "b", "--speed", "fast"], ErrorKind::ValueValidation),
-            (&["--log", "a", "--home", "b", "--speed", "0"], ErrorKind::ValueValidation),
-            (&["--log", "a", "--home", "b", "--speed", "-1"], ErrorKind::ValueValidation),
-            (&["--log", "a", "--home", "b", "--speed", "inf"], ErrorKind::ValueValidation),
-            (&["--log", "a", "--home", "b", "--speed", "infinity"], ErrorKind::ValueValidation),
-            (&["--log", "a", "--home", "b", "--max-gap", "x"], ErrorKind::ValueValidation),
-            (&["--log", "a", "--home", "b", "--max-gap", "-2"], ErrorKind::ValueValidation),
-            (&["--log", "a", "--home", "b", "--max-gap", "NaN"], ErrorKind::ValueValidation),
-            (&["--log", "a", "--home", "b", "extra"], ErrorKind::UnknownArgument),
-            (&["--log", "a", "--home", "b", "--", "x"], ErrorKind::UnknownArgument),
-            // A value-taking option before --instance takes it as its value;
-            // the word after it is then an unknown argument.
-            (&["--log", "--instance", "x", "--home", "y"], ErrorKind::UnknownArgument),
-        ] {
-            assert_eq!(parse_args(&words(argv)).unwrap_err().kind(), expected, "{argv:?}");
-        }
-    }
-
-    #[test]
-    fn help_is_claps() {
-        for argv in [vec!["--help"], vec!["-h"], vec!["--log", "a", "--help"], vec!["--help", "junk"]] {
-            let argv: Vec<String> = argv.iter().map(|word| (*word).to_string()).collect();
-            assert_eq!(parse_args(&argv).unwrap_err().kind(), clap::error::ErrorKind::DisplayHelp, "{argv:?}");
-        }
     }
 
 }

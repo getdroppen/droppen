@@ -820,6 +820,23 @@ mod tests {
         assert_eq!(transcripts, [Source::Claude, Source::Codex, Source::Acp], "every source has both");
     }
 
+    /// A session's Claude root is found by Claude Code's reader alone: with a
+    /// session in the user's own Claude root, no other CLI's reader names one.
+    #[tokio::test]
+    async fn only_claude_code_s_reader_finds_a_claude_root() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let paths = Paths::new(dir.path().to_path_buf());
+        let project = crate::provider::claude_code::claude_roots::ClaudeRoots::of(&paths)
+            .projects_dir(droppen_instance::paths::ClaudeRoot::Local)
+            .join("-w");
+        std::fs::create_dir_all(&project).expect("project dir");
+        std::fs::write(project.join("local.jsonl"), "{}\n").expect("transcript");
+        for reader in transcript_sources().iter() {
+            let root = (reader.source() == Source::Claude).then_some(droppen_instance::paths::ClaudeRoot::Local);
+            assert_eq!(reader.find_root(&paths, "local").await, root, "{:?}", reader.source());
+        }
+    }
+
     /// An ownership row is written with its own CLI's step after it: the
     /// writer takes the row's source from the reader whose step it runs, so a
     /// Codex row always comes with the thread's claim, and no other CLI's row

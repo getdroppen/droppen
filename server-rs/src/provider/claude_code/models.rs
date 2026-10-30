@@ -435,7 +435,7 @@ mod tests {
     #[tokio::test]
     async fn a_model_this_build_has_never_heard_of_accepts_the_whole_ladder() {
         let paths = Arc::new(Paths::new(PathBuf::from("/nonexistent")));
-        let models = ClaudeModels::new(paths.clone(), Arc::new(AccountsStore::new(paths, crate::app::logins())));
+        let models = ClaudeModels::new(paths.clone(), Arc::new(AccountsStore::new(paths, droppen_accounts::login::Logins::stand_ins())));
         for model in ["GLM-5.3-CYBERSECURITY-FP8", "qwen3-max", "glm-5-air"] {
             assert_eq!(
                 models.accepted_efforts(Some(model)).await,
