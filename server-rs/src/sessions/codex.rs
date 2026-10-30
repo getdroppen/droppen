@@ -33,6 +33,7 @@ use super::codex_claims::{Claims, Verdict};
 use super::codex_tools::{CodexTools, Context};
 use droppen_instance::paths::Paths;
 use droppen_base::time::{iso8601, mtime_ms, now_ms};
+use droppen_sessions::context::ContextUsage;
 use droppen_sessions::sources::{TokenUsage, UsageFile, UsageFold};
 use droppen_sessions::util::{
     date_of, is_jsonl, make_item, num, read_head_lines, read_tail_lines, title_line, try_parse, FileCache, ItemKind, LossyLines, Role,
@@ -827,7 +828,7 @@ impl droppen_sessions::Transcripts for CodexSessions {
     }
 
     fn context<'a>(&'a self, file_path: &'a Path) -> BoxFuture<'a, Option<droppen_sessions::context::ContextUsage>> {
-        Box::pin(droppen_sessions::context::read_codex_context(file_path))
+        Box::pin(read_codex_context(file_path))
     }
 
     // Each non-empty text part of an assistant `message` payload, minus the
@@ -1181,6 +1182,45 @@ fn push_reasoning(items: &mut Vec<TranscriptItem>, payload: &serde_json::Map<Str
         }
     }
     items.push(by_model(make_item(Role::Assistant, ItemKind::Thinking, text, timestamp), model));
+}
+
+/// Codex's occupancy: the newest `token_count` event's `last_token_usage`.
+///
+/// Deliberately *not* `total_token_usage`, which is cumulative over the session —
+/// a long thread reports tens of millions against a 258k window, which is spend,
+/// not occupancy. `last_token_usage.input_tokens` is the per-turn figure and
+/// already includes whatever was replayed out of the cache, matching what the
+/// Claude arm sums by hand.
+async fn read_codex_context(file_path: &Path) -> Option<ContextUsage> {
+    let lines = read_tail_lines(file_path, droppen_sessions::context::TAIL_BYTES).await.ok()?;
+    for line in lines.iter().rev() {
+        let Some(entry) = try_parse(line) else { continue };
+        if entry.get("type").and_then(Value::as_str) != Some("event_msg") {
+            continue;
+        }
+        let Some(payload) = entry.get("payload").and_then(Value::as_object) else {
+            continue;
+        };
+        if payload.get("type").and_then(Value::as_str) != Some("token_count") {
+            continue;
+        }
+        let Some(info) = payload.get("info").and_then(Value::as_object) else {
+            continue;
+        };
+        let window = info.get("model_context_window").and_then(Value::as_u64).filter(|w| *w > 0);
+        let tokens = info
+            .get("last_token_usage")
+            .and_then(Value::as_object)
+            .and_then(|last| last.get("input_tokens"))
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        if tokens > 0 {
+            // No model is recorded here on purpose: codex states its own window
+            // on the same event, so nothing downstream needs to infer one.
+            return Some(ContextUsage { tokens, window, model: None });
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -1635,5 +1675,51 @@ mod tests {
             let folded = folds(json!([repeated, repeated]));
             assert_eq!(folded, vec![tokens("2026-07-22", "codex", [100.0, 0.0, 0.0, 0.0]), None], "the default model until a turn_context is seen");
         }
+    }
+
+    fn session(lines: &[&str]) -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("s.jsonl");
+        let mut file = std::fs::File::create(&path).expect("create");
+        for line in lines {
+            writeln!(file, "{line}").expect("write");
+        }
+        (dir, path)
+    }
+
+    /// The cumulative total is spend, not occupancy: this entry reports 24M
+    /// against a 258k window, and reading it would peg the ring forever.
+    #[tokio::test]
+    async fn codex_reads_the_turn_not_the_running_total() {
+        let (_dir, path) = session(&[
+            r#"{"type":"event_msg","payload":{"type":"token_count","info":{"model_context_window":258400,"last_token_usage":{"input_tokens":202004,"cached_input_tokens":11008,"output_tokens":629},"total_token_usage":{"input_tokens":24141990,"total_tokens":24251793}}}}"#,
+        ]);
+        let usage = read_codex_context(&path).await.expect("a reading");
+        assert_eq!(usage.tokens, 202_004);
+        assert_eq!(usage.window, Some(258_400), "codex states its own window, so nothing is inferred");
+    }
+
+    #[tokio::test]
+    async fn codex_without_a_stated_window_leaves_it_to_the_model_id() {
+        let (_dir, path) = session(&[
+            r#"{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":1200,"output_tokens":10}}}}"#,
+        ]);
+        let usage = read_codex_context(&path).await.expect("a reading");
+        assert_eq!(usage.tokens, 1_200);
+        assert_eq!(usage.window, None);
+    }
+
+    /// The reading is looked for as far back as the context budget
+    /// (`droppen_sessions::context::TAIL_BYTES`), further than this reader's own
+    /// tail for discovery.
+    #[tokio::test]
+    async fn the_context_reading_is_found_further_back_than_the_discovery_tail() {
+        let reading = r#"{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":1200,"output_tokens":10}}}}"#;
+        let filler = format!(r#"{{"type":"event_msg","payload":{{"type":"agent_message","message":"{}"}}}}"#, "x".repeat(1000));
+        let lines: Vec<&str> = std::iter::once(reading).chain(std::iter::repeat_n(filler.as_str(), 90)).collect();
+        let (_dir, path) = session(&lines);
+        let behind = std::fs::metadata(&path).expect("size").len() - reading.len() as u64;
+        assert!(TAIL_BYTES < behind && behind < droppen_sessions::context::TAIL_BYTES, "{behind}");
+        assert_eq!(read_codex_context(&path).await.map(|usage| usage.tokens), Some(1_200));
     }
 }

@@ -54,6 +54,7 @@ use futures_util::future::BoxFuture;
 use serde::Serialize;
 use serde_json::{Map, Value};
 
+use droppen_sessions::context::ContextUsage;
 use droppen_sessions::util::{
     first_line_of, make_item, make_tool_item, read_head_lines, read_tail_lines, title_line, try_parse, FileRef, ItemKind, Role, ToolDisplay,
     TranscriptItem,
@@ -733,7 +734,7 @@ impl droppen_sessions::Transcripts for AcpSessions {
 
     // The `usage` record the driver writes from the agent's own `usage_update`.
     fn context<'a>(&'a self, file_path: &'a Path) -> BoxFuture<'a, Option<droppen_sessions::context::ContextUsage>> {
-        Box::pin(droppen_sessions::context::read_acp_context(file_path))
+        Box::pin(read_acp_context(file_path))
     }
 
     fn spoken_texts(&self, entry: &Map<String, Value>) -> Vec<String> {
@@ -826,6 +827,22 @@ async fn summary_of(paths: &Paths, agent: &str, file_path: &Path, id: &str, titl
         asking: false,
         children: Vec::new(),
         parent_id: Nullable(None),
+    })
+}
+
+/// An ACP agent's occupancy: the newest `usage` record, which is the agent's
+/// own `usage_update` with the window it reported beside it.
+async fn read_acp_context(file_path: &Path) -> Option<ContextUsage> {
+    let lines = read_tail_lines(file_path, droppen_sessions::context::TAIL_BYTES).await.ok()?;
+    lines.iter().rev().filter_map(|line| try_parse(line)).find_map(|entry| {
+        if entry.get("type").and_then(Value::as_str) != Some("usage") {
+            return None;
+        }
+        Some(ContextUsage {
+            tokens: entry.get("used").and_then(Value::as_u64)?,
+            window: entry.get("size").and_then(Value::as_u64).filter(|size| *size > 0),
+            model: None,
+        })
     })
 }
 
