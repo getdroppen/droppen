@@ -9,7 +9,7 @@
 //!   is stored here: it is a session like any other, and the only things that
 //!   make it a chat are the anchor directory and the persona
 //!   ([`ensure_chats_cwd`] for codex, `--system-prompt` for claude, both applied
-//!   by [`crate::provider`]). Those sessions are hidden from `GET /api/sessions`
+//!   by `provider`). Those sessions are hidden from `GET /api/sessions`
 //!   and surface only through [`list_chats`].
 //! * **API-backed** — messages remote-hand stores itself ([`store`]) and
 //!   answers by streaming from any OpenAI-compatible endpoint the user
@@ -304,7 +304,7 @@ pub struct ChatsState {
     /// Where sessions are discovered.
     pub paths: Arc<droppen_instance::paths::Paths>,
     /// Accounts and the spawn dependencies a CLI-backed chat starts with.
-    pub drive: Arc<crate::drive::Drive>,
+    pub drive: Arc<crate::Drive>,
     /// The shared session-list feed, told when a chat's session appears.
     pub global: Arc<crate::feed::global::GlobalFeed>,
 }

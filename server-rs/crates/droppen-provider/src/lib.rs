@@ -507,7 +507,7 @@ pub struct RunHost {
     pub accounts: Arc<droppen_accounts::store::AccountsStore>,
     /// The quota readings, for one job only: every `rate_limit_event` a
     /// resident's claude writes is a reading of the login it runs on, and the
-    /// driver files it here. The same handle `drive::Drive::quota`
+    /// driver files it here. The same handle `droppen_drive::Drive::quota`
     /// serves the panel from, so a reading is on the panel the moment it lands.
     pub quota: Arc<droppen_accounts::quota::QuotaCache>,
     /// This server's name, so the keys below can say whose they are.

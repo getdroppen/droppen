@@ -68,7 +68,7 @@ fn compressed<S>(inner: S) -> Compressed<S> {
 
 /// Files smaller than this are sent as they are: compressing them saves about
 /// what `Content-Encoding` and `Vary` cost. The feed socket's floor too
-/// (`feed::mux::COMPRESS_MIN`).
+/// (`droppen_drive::feed::mux::COMPRESS_MIN`).
 const COMPRESS_MIN: u16 = 1024;
 
 /// Which answers go out compressed: those of [`COMPRESS_MIN`] bytes or more,

@@ -34,7 +34,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::mux::{encode, hello_frame, parse_client_message, MuxOptions, Subscriptions};
 use droppen_base::watch;
-use crate::drive::Drive;
+use crate::Drive;
 use droppen_http::extract::ApiQuery;
 use droppen_http::refresh::RefreshSink;
 use droppen_http::{close_within, send_within, CLOSE_LIMIT};
@@ -57,11 +57,7 @@ const DISCOVERY_RETRY: [Duration; 4] = [
     Duration::from_millis(3000),
 ];
 /// How many frames a slow client may fall behind before it is resynchronised.
-const CHANNEL_CAPACITY: usize = 64;
-/// [`CHANNEL_CAPACITY`], for the entry's test of a list client that never
-/// reads, which fills the broadcast to it.
-#[cfg(test)]
-pub(crate) const LIST_CHANNEL_CAPACITY: usize = CHANNEL_CAPACITY;
+pub(crate) const CHANNEL_CAPACITY: usize = 64;
 
 /// The feed's shared state, alive only while a client is attached.
 struct Live {

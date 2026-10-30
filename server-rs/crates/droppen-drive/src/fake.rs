@@ -36,14 +36,14 @@ pub(crate) const SOURCE: Source = Source::Claude;
 
 /// A drive over a fresh instance at `dir`: the fake provider and the fake
 /// reader for [`SOURCE`], the accounts on stand-in logins, and no notify
-/// channel.
+/// channel: no notify credential, and spawns decorated with nothing.
 pub(crate) fn drive(dir: &Path) -> (Arc<Paths>, Arc<Drive>) {
     let paths = Arc::new(Paths::new(dir.to_path_buf()));
     let instance = InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
     let auth = droppen_auth::Auth::new(&paths, &instance, &droppen_http::config::AuthSettings::default(), false, Arc::new(NoNotify));
     let mut sources = TranscriptSources::default();
     sources.register(Arc::new(FakeReader));
-    let drive = Drive::new(paths.clone(), &instance, auth, sources, register, Logins::stand_ins());
+    let drive = Drive::new(paths.clone(), &instance, auth, sources, register, Logins::stand_ins(), droppen_provider::testing::no_decoration());
     (paths, drive)
 }
 

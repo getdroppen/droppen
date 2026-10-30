@@ -67,7 +67,7 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use super::{attach_session_feed_with, FeedRegistry, ResumeFrom, SESSION_PAGE_SIZE};
-use crate::drive::Drive;
+use crate::Drive;
 use droppen_sessions::Source;
 
 /// Frames smaller than this go out as text: below a kilobyte deflate saves a
@@ -547,7 +547,7 @@ mod tests {
 
     // ---------------------------------------------------------- end to end
 
-    use crate::drive::fake;
+    use crate::fake;
     use std::time::Duration;
 
     const ID: &str = "55555555-5555-4555-8555-555555555555";

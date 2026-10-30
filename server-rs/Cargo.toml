@@ -16,7 +16,7 @@ workspace = true
 # package stays the default member, so a bare `cargo build`/`cargo test` here
 # still means the server and nothing else.
 [workspace]
-members = [".", "crates/rh-proto", "crates/rh-relay", "crates/droppen-relay", "crates/rh-client", "crates/rh-devkit", "crates/droppen-plugin-sdk", "crates/droppen-search-path", "crates/droppen-base", "crates/droppen-instance", "crates/droppen-http", "crates/droppen-pty", "crates/droppen-supervisor", "crates/droppen-auth", "crates/droppen-files", "crates/droppen-workbench", "crates/droppen-plugins", "crates/droppen-aggregator", "crates/droppen-sessions", "crates/droppen-agent", "crates/droppen-cloud", "crates/droppen-notify", "crates/droppen-accounts", "crates/droppen-setup", "crates/droppen-provider", "crates/droppen-provider-acp"]
+members = [".", "crates/rh-proto", "crates/rh-relay", "crates/droppen-relay", "crates/rh-client", "crates/rh-devkit", "crates/droppen-plugin-sdk", "crates/droppen-search-path", "crates/droppen-base", "crates/droppen-instance", "crates/droppen-http", "crates/droppen-pty", "crates/droppen-supervisor", "crates/droppen-auth", "crates/droppen-files", "crates/droppen-workbench", "crates/droppen-plugins", "crates/droppen-aggregator", "crates/droppen-sessions", "crates/droppen-agent", "crates/droppen-cloud", "crates/droppen-notify", "crates/droppen-accounts", "crates/droppen-setup", "crates/droppen-provider", "crates/droppen-provider-acp", "crates/droppen-drive"]
 
 # Every member takes serde_json from here, so `preserve_order` is on in every
 # build: a `Value` writes its keys in insertion order rather than sorted. Cargo
@@ -96,6 +96,9 @@ droppen-provider = { path = "crates/droppen-provider" }
 # The ACP agents' provider: their runs, their routes, their model list and
 # their transcripts. The entry registers it.
 droppen-provider-acp = { path = "crates/droppen-provider-acp" }
+# The drive: starting, sending to and answering sessions, the feeds, the
+# instant chats and the scheduled tasks. The entry builds it.
+droppen-drive = { path = "crates/droppen-drive" }
 # The first-run guide: detection, installs and sign-ins, folders and progress.
 droppen-setup = { path = "crates/droppen-setup" }
 # The device role: verified copies of the account's other machines.
@@ -113,8 +116,7 @@ ed25519-dalek = "2"
 # graph through rh-proto and the RustCrypto crates.
 zeroize = "1"
 gotcha = { version = "0.4.1", features = ["openapi"] }
-# Named directly by the server's own `Schematic` impls (`drive::routes`) and by
-# what gotcha's `Schematic` derive expands to.
+# What gotcha's `Schematic` derive expands to names it.
 gotcha_core = "0.4.1"
 
 axum = { version = "0.8", features = ["ws", "multipart"] }
@@ -140,11 +142,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 sha2 = "0.10"
 base64 = "0.22"
-# Compressing the websocket frames a client asks to have compressed (see
-# `feed::mux`). tungstenite has no permessage-deflate, and nothing between the
-# server and a browser compresses a websocket for it. The backend is the one
-# already in the graph.
-flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 
 # Web Push (`crate::push`), hand-rolled on RustCrypto rather than taken from the
 # `web-push` crate: that one reaches ECE and from there `openssl-sys`, and this
@@ -182,24 +179,14 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 rust-embed = { version = "8", optional = true }
 mime_guess = { version = "2", optional = true }
 
-# The BYO-API chat's outbound HTTP. `default-features = false` drops
+# Outbound HTTP: `export`'s download, and the tests' clients (the BYO-API
+# chat's is the drive's now). `default-features = false` drops
 # `default-tls` (native-tls/OpenSSL) so the binary keeps linking nothing but
 # rustls; `stream` is what makes the completion response readable chunk by chunk.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "http2", "charset", "json"] }
 
-# The cron half of `crate::schedule`. croner is pure Rust with no clock of its own, and its DST handling is the reason it was
-# not hand-rolled: it resolves each candidate wall-clock time through the time
-# library rather than assuming every day is 24 hours long. `default-features =
-# false` drops the `jiff` backend, since the `chrono` one below is the only one
-# this crate speaks.
-croner = { version = "4", default-features = false, features = ["chrono"] }
-# The calendar croner does that arithmetic against, and the parser that reads a
-# stored ISO-8601 stamp back. Already in the graph as a transitive dependency, so
-# naming it here downloads nothing new; named for the reason `subtle` and `hmac`
-# are, one paragraph up — an implicit dependency is one `cargo update` away from
-# disappearing, and a scheduler that cannot tell the time is a scheduler that
-# does not run. Default features, because `clock` is what gives `Local` its
-# offset and the local zone *is* the contract (see `schedule::cron`).
+# The calendar Claude Code's usage windows are counted in, and the stamps its
+# subagents' records carry (`provider::claude_code`).
 chrono = "0.4"
 # An unoptimized argon2 at 64 MiB and three passes takes seconds rather than
 # milliseconds, which would put minutes on every `cargo test` run that touches a
@@ -212,6 +199,8 @@ opt-level = 3
 opt-level = 3
 
 [dev-dependencies]
+# Reading a compressed answer back (`static_files`' tests).
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 # Scratch homes and directories for the tests.
 tempfile = "3"
 # `start_paused` runtimes, so the websocket heartbeat's minute-scale schedule can
@@ -249,6 +238,9 @@ droppen-sessions = { path = "crates/droppen-sessions", features = ["test-support
 # (`droppen_accounts::verify`), for the tests of each CLI's login.
 droppen-accounts = { path = "crates/droppen-accounts", features = ["test-support"] }
 droppen-provider = { path = "crates/droppen-provider", features = ["test-support"] }
+# What the server's tests reach of the drive (`droppen_drive::testing`): the
+# search and first-unread helpers, and the list broadcast's capacity.
+droppen-drive = { path = "crates/droppen-drive", features = ["test-support"] }
 # An ACP agent configured without the gate (`droppen_provider_acp::testing`),
 # for the provider registry's and the agents' routes' tests.
 droppen-provider-acp = { path = "crates/droppen-provider-acp", features = ["test-support"] }

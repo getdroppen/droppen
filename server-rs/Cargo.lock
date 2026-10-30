@@ -1364,6 +1364,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "droppen-drive"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "croner",
+ "droppen-accounts",
+ "droppen-auth",
+ "droppen-base",
+ "droppen-files",
+ "droppen-http",
+ "droppen-instance",
+ "droppen-notify",
+ "droppen-plugin-sdk",
+ "droppen-plugins",
+ "droppen-provider",
+ "droppen-sessions",
+ "flate2",
+ "futures-util",
+ "gotcha",
+ "gotcha_core",
+ "libc",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "droppen-files"
 version = "0.1.0"
 dependencies = [
@@ -3415,13 +3449,13 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "clap",
- "croner",
  "droppen-accounts",
  "droppen-agent",
  "droppen-aggregator",
  "droppen-auth",
  "droppen-base",
  "droppen-cloud",
+ "droppen-drive",
  "droppen-files",
  "droppen-http",
  "droppen-instance",

@@ -16,8 +16,8 @@ use std::sync::Arc;
 
 use tokio_util::sync::CancellationToken;
 
-use crate::feed::global::GlobalFeed;
-use crate::feed::FeedRegistry;
+use droppen_drive::feed::global::GlobalFeed;
+use droppen_drive::feed::FeedRegistry;
 
 /// Resolves when the process is asked to stop.
 ///

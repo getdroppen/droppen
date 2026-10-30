@@ -28,8 +28,8 @@ use std::time::Duration;
 
 use remote_hand_server::app::RemoteHandApp;
 use droppen_workbench::apps::Registry;
-use remote_hand_server::feed::global::GlobalFeed;
-use remote_hand_server::feed::FeedRegistry;
+use droppen_drive::feed::global::GlobalFeed;
+use droppen_drive::feed::FeedRegistry;
 use droppen_instance::instance::InstanceDirs;
 use droppen_instance::paths::Paths;
 use remote_hand_server::shutdown::Cleanups;

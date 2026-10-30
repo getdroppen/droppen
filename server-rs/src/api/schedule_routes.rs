@@ -1,4 +1,4 @@
-//! The scheduled-task routes (`crate::schedule`) on the providers the server
+//! The scheduled-task routes (`droppen_drive::schedule`) on the providers the server
 //! registers (`crate::app`).
 
 use std::sync::Arc;
@@ -10,7 +10,7 @@ use droppen_http::extract::{ApiJson, ApiPath};
 use droppen_instance::paths::Paths;
 use droppen_sessions::Source;
 
-use crate::schedule::{create_scheduled_task, read_tasks, update_scheduled_task, ScheduleState, ScheduledTaskCreate, ScheduledTaskUpdate};
+use droppen_drive::schedule::{create_scheduled_task, read_tasks, update_scheduled_task, ScheduleState, ScheduledTaskCreate, ScheduledTaskUpdate};
 
 fn paths() -> (tempfile::TempDir, Paths) {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -31,11 +31,11 @@ fn state_with(register: fn(&mut droppen_provider::ProviderRegistry, &Arc<droppen
 fn state_on(paths: Arc<Paths>, register: fn(&mut droppen_provider::ProviderRegistry, &Arc<droppen_provider::InjectionRegistry>)) -> ScheduleState {
     let instance = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
     let auth = droppen_auth::Auth::new(&paths, &instance, &droppen_http::config::AuthSettings::default(), false, Arc::new(crate::app::NotifyTokens));
-    let drive = crate::drive::Drive::new(paths.clone(), &instance, auth, crate::app::transcript_sources(), register, crate::app::logins());
+    let drive = droppen_drive::Drive::new(paths.clone(), &instance, auth, crate::app::transcript_sources(), register, crate::app::logins(), crate::app::NotifyDecoration::new(paths.clone(), instance.clone()));
     ScheduleState {
         paths,
         drive,
-        global: crate::feed::global::GlobalFeed::new(),
+        global: droppen_drive::feed::global::GlobalFeed::new(),
         cancel: tokio_util::sync::CancellationToken::new(),
     }
 }

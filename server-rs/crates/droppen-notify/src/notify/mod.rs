@@ -146,7 +146,7 @@ pub struct Nudge {
 /// The endpoint is not in it. Its last path segment is the Bark device key,
 /// which is the entirety of Bark's authorization, so what comes back is a mask:
 /// enough to recognise the endpoint you configured, and not enough to send to
-/// it. Same rule as `chats::provider::ChatProviderInfo`'s `hasKey`, one
+/// it. Same rule as `droppen_drive::chats::provider::ChatProviderInfo`'s `hasKey`, one
 /// step friendlier because there is only ever one of these and a user with two
 /// phones should be able to tell which one is armed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Schematic)]

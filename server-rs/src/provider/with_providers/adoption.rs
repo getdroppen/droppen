@@ -37,7 +37,7 @@ async fn stop_never_signals_a_pid_that_is_no_longer_the_run_it_named() {
     let home = tempfile::tempdir().expect("tempdir");
     let paths = Arc::new(Paths::new(home.path().to_path_buf()));
     let dirs = InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
-    let decoration = crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone());
+    let decoration = droppen_provider::testing::no_decoration();
     let registry = InjectionRegistry::new(
         paths.clone(),
         &dirs,
@@ -122,7 +122,7 @@ async fn stop_on_a_codex_session_whose_app_server_is_gone_reaches_no_run() {
     let paths = Arc::new(Paths::new(home.path().to_path_buf()));
     let dirs = InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
     dirs.create().expect("instance dirs");
-    let decoration = crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone());
+    let decoration = droppen_provider::testing::no_decoration();
     let registry = InjectionRegistry::new(
         paths.clone(),
         &dirs,
@@ -195,7 +195,7 @@ async fn adoption_claims_a_live_run_and_sweeps_a_dead_one_without_the_gate() {
     std::fs::write(&debris, b"1\n").expect("the dead run's lock file");
     let dirs = InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
     dirs.create().expect("instance dirs");
-    let decoration = crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone());
+    let decoration = droppen_provider::testing::no_decoration();
     let registry = InjectionRegistry::new(
         paths.clone(),
         &dirs,
@@ -253,7 +253,7 @@ fn adopting_with(home: &std::path::Path, register: fn(&mut ProviderRegistry, &Ar
     let paths = Arc::new(Paths::new(home.to_path_buf()));
     let dirs = InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
     dirs.create().expect("instance dirs");
-    let decoration = crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone());
+    let decoration = droppen_provider::testing::no_decoration();
     let registry = InjectionRegistry::new(
         paths.clone(),
         &dirs,

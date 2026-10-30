@@ -5,7 +5,7 @@ use droppen_instance::paths::Paths;
 use gotcha::axum::http::StatusCode;
 
 /// The `error` of a `409` for an attachment that is not there any more.
-pub const ATTACHMENT_MISSING: &str = "attachment_missing";
+pub(crate) const ATTACHMENT_MISSING: &str = "attachment_missing";
 
 /// The refusal of an attachment that `/api/uploads` handed out and that is no
 /// longer on this device: swept with the rest of the old uploads, or deleted.
@@ -35,7 +35,7 @@ fn attachment_missing() -> ApiError {
 /// inside the uploads directory. One that is gone (a draft kept across the
 /// sweep of old uploads) is refused with [`ATTACHMENT_MISSING`] rather than
 /// handed to an agent that would find nothing at the path.
-pub fn resolve_attachments(paths: &Paths, images: Vec<String>, files: Vec<String>) -> Result<(Vec<String>, Vec<String>), ApiError> {
+pub(crate) fn resolve_attachments(paths: &Paths, images: Vec<String>, files: Vec<String>) -> Result<(Vec<String>, Vec<String>), ApiError> {
     if images.is_empty() && files.is_empty() {
         return Ok((images, files));
     }

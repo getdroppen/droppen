@@ -77,7 +77,7 @@ where
 }
 
 /// The gateway's socket. Deliberately not annotated with `#[api]` (a
-/// websocket carries no OpenAPI operation; see `feed::global::events_ws`).
+/// websocket carries no OpenAPI operation; see `droppen_drive::feed::global::events_ws`).
 /// Refused before the upgrade unless the caller may see other devices; the
 /// changes to `cloud.json` are listened to from before that check, so one
 /// landing in between is not missed.

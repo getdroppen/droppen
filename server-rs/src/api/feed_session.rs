@@ -1,4 +1,4 @@
-//! A session's feed (`crate::feed`) on the drive the server builds: the
+//! A session's feed (`droppen_drive::feed`) on the drive the server builds: the
 //! transcript cache and paging, a reconnecting client's resume, a rotation
 //! decision, and the drafts in flight. `test_drive` and `claude_turns` serve
 //! `feed_mux` too.
@@ -13,8 +13,8 @@ use droppen_sessions::account::AccountRef;
 use droppen_sessions::loader::RESUME_OVERLAP;
 use droppen_sessions::Source;
 
-use crate::drive::Drive;
-use crate::feed::{
+use droppen_drive::Drive;
+use droppen_drive::feed::{
     attach_session_feed, global, load_session_detail, transcript_page, Attached, FeedAttachment, FeedRegistry, ResumeFrom, DRAFT_THROTTLE,
     SESSION_PAGE_SIZE,
 };
@@ -62,7 +62,7 @@ async fn a_rotation_decision_reaches_an_open_session_feed_without_waiting_for_th
     let paths = Arc::new(Paths::new(dir.path().to_path_buf()));
     let instance = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
     let auth = droppen_auth::Auth::new(&paths, &instance, &droppen_http::config::AuthSettings::default(), false, std::sync::Arc::new(crate::app::NotifyTokens));
-    let drive = Drive::new(paths.clone(), &instance, auth, crate::app::transcript_sources(), crate::app::register_providers, crate::app::logins());
+    let drive = Drive::new(paths.clone(), &instance, auth, crate::app::transcript_sources(), crate::app::register_providers, crate::app::logins(), crate::app::NotifyDecoration::new(paths.clone(), instance.clone()));
     let feeds = FeedRegistry::new();
     drive.injections.host.attach_listeners(feeds.clone(), droppen_http::refresh::Refresh::new(global::GlobalFeed::new()));
 
@@ -173,7 +173,7 @@ pub(crate) fn test_drive(dir: &Path) -> (Arc<Paths>, Arc<Drive>) {
     let paths = Arc::new(Paths::new(dir.to_path_buf()));
     let instance = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
     let auth = droppen_auth::Auth::new(&paths, &instance, &droppen_http::config::AuthSettings::default(), false, std::sync::Arc::new(crate::app::NotifyTokens));
-    let drive = Drive::new(paths.clone(), &instance, auth, crate::app::transcript_sources(), crate::app::register_providers, crate::app::logins());
+    let drive = Drive::new(paths.clone(), &instance, auth, crate::app::transcript_sources(), crate::app::register_providers, crate::app::logins(), crate::app::NotifyDecoration::new(paths.clone(), instance.clone()));
     (paths, drive)
 }
 
@@ -440,4 +440,94 @@ async fn a_burst_of_draft_changes_is_coalesced_and_ends_on_the_latest() {
     assert!(drafts <= allowed, "{drafts} frames for a {burst:?} burst, at most {allowed}");
     assert!(drafts < 20, "twenty changes must not be twenty frames");
     assert_eq!(frames.last().expect("a frame")["blocks"][0]["kind"], "thinking");
+}
+
+/// End to end through a real session feed: the page is sent the count as
+/// the one block of a `draft` frame — never what the agent said, which
+/// reaches it as an item once the transcript has it — then an empty draft
+/// once the think is over; and the turn's close is pushed rather than left
+/// for the poll.
+#[tokio::test]
+async fn a_page_is_sent_the_count_and_never_the_words() {
+    use crate::provider::claude_code::resident::test_harness::{thinks_until_released, until, Harness, SESSION};
+    use droppen_instance::instance::InstanceDirs;
+    use droppen_provider::common::Phase;
+    use std::time::Duration;
+    let harness = Harness::ordinary_with(&thinks_until_released()).await;
+    let prompt = format!(
+        r#"{{"type":"user","uuid":"u-prompt","message":{{"role":"user","content":"think about it"}},"timestamp":"2026-10-10T00:00:00.000Z","cwd":"/tmp","sessionId":"{SESSION}"}}"#
+    );
+    std::fs::write(harness.transcript(), format!("{prompt}\n")).expect("transcript");
+    let paths = Arc::new(Paths::new(harness._home.path().to_path_buf()));
+    let instance = InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
+    let drive = Arc::new(droppen_drive::Drive {
+        auth: droppen_auth::Auth::new(&paths, &instance, &droppen_http::config::AuthSettings::default(), false, std::sync::Arc::new(crate::app::NotifyTokens)),
+        injections: harness.injections.clone(),
+        accounts: Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), crate::app::logins())),
+        quota: Arc::new(droppen_accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins())),
+        composer: droppen_drive::composer_prefs::ComposerPrefsStore::new(paths.clone()),
+        titles: droppen_sessions::titles::TitlesStore::new(paths.clone()),
+        paths,
+        transcripts: crate::app::transcript_sources(),
+        providers: harness.providers(),
+    });
+    let feeds = droppen_drive::feed::FeedRegistry::new();
+    harness.injections.host.attach_listeners(feeds.clone(), droppen_http::refresh::Refresh::new(droppen_drive::feed::global::GlobalFeed::new()));
+    until("the init", || harness.state().phase == Phase::Idle).await;
+    let mut attached = droppen_drive::feed::attach_session_feed(&feeds, &drive, Source::Claude, SESSION, None)
+        .await
+        .expect("attached");
+
+    let mut frames: Vec<Value> = Vec::new();
+    let mut next = async |frames: &mut Vec<Value>| {
+        let frame = tokio::time::timeout(Duration::from_secs(8), attached.attachment.next_frame())
+            .await
+            .unwrap_or_else(|_| panic!("no frame in time; so far {frames:?}"))
+            .expect("the feed is open");
+        let frame: Value = serde_json::from_str(&frame).expect("json");
+        frames.push(frame.clone());
+        frame
+    };
+    let carries_item = |frame: &Value| {
+        matches!(frame["type"].as_str(), Some("delta" | "reset"))
+            && frame["items"]
+                .as_array()
+                .is_some_and(|items| items.iter().any(|item| item["text"] == "said once the think was done"))
+    };
+    let counting = |frame: &Value| frame["type"] == "draft" && frame["blocks"].as_array().is_some_and(|blocks| !blocks.is_empty());
+
+    harness.send("think about it");
+    loop {
+        let frame = next(&mut frames).await;
+        if counting(&frame) && frame["blocks"][0]["thinkingTokens"] == 42 {
+            assert_eq!(frame["blocks"], serde_json::json!([{"index": 0, "kind": "thinking", "thinkingTokens": 42}]));
+            break;
+        }
+    }
+    let released = std::time::Instant::now();
+    harness.release();
+    let ended =
+        |frame: &Value| frame["type"] == "state" && frame["summary"]["resident"]["phase"] == "idle" && frame["injection"]["state"] == "ok";
+    let mut ended_after = None;
+    let (mut item, mut over) = (false, false);
+    while !(item && over && ended_after.is_some()) {
+        let frame = next(&mut frames).await;
+        if ended(&frame) && ended_after.is_none() {
+            ended_after = Some(released.elapsed());
+        }
+        item |= carries_item(&frame);
+        over |= frame["type"] == "draft" && frame["blocks"] == serde_json::json!([]);
+    }
+    for frame in frames.iter().filter(|frame| frame["type"] == "draft") {
+        assert!(!frame.to_string().contains("said once"), "a draft carries no words: {frame}");
+    }
+
+    // The close reaches the page as a state frame of its own, pushed by the
+    // driver the moment the turn ends: the 2 s poll would get there too,
+    // but a second and more later.
+    let ended_after = ended_after.expect("the turn's end was pushed");
+    assert!(
+        ended_after < Duration::from_millis(1500),
+        "the close took {ended_after:?} to reach the page"
+    );
 }

@@ -253,12 +253,7 @@
         {
           "name": "droppen-drive",
           "about": "Send, start and answer; the live and global feeds, search; chats; schedules.",
-          "modules": [
-            "drive",
-            "feed",
-            "chats",
-            "schedule"
-          ],
+          "modules": [],
           "mayUse": [
             "droppen-provider",
             "droppen-sessions",

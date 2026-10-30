@@ -1,0 +1,87 @@
+[package]
+name = "droppen-drive"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+publish = false
+description = "The Droppen server's drive: starting, sending to and answering sessions, the live and global feeds and search, the instant chats and the scheduled tasks"
+
+# What the routes do with a session, whichever CLI runs it: it asks the
+# provider of the session's source (droppen-provider) and reads the session
+# through its reader (droppen-sessions), and names no CLI and no module of the
+# server. The entry builds it, with the providers, logins, readers and spawn
+# decoration it is handed.
+[dependencies]
+droppen-accounts = { path = "../droppen-accounts" }
+droppen-auth = { path = "../droppen-auth" }
+droppen-base = { path = "../droppen-base" }
+droppen-files = { path = "../droppen-files" }
+droppen-http = { path = "../droppen-http" }
+droppen-instance = { path = "../droppen-instance" }
+droppen-notify = { path = "../droppen-notify" }
+droppen-plugin-sdk = { path = "../droppen-plugin-sdk" }
+droppen-provider = { path = "../droppen-provider" }
+droppen-sessions = { path = "../droppen-sessions" }
+# The cron half of `schedule`. croner is pure Rust with no clock of its own,
+# and its DST handling is the reason it was not hand-rolled: it resolves each
+# candidate wall-clock time through the time library rather than assuming
+# every day is 24 hours long. `default-features = false` drops the `jiff`
+# backend, since the `chrono` one below is the only one this crate speaks.
+croner = { version = "4", default-features = false, features = ["chrono"] }
+# The calendar croner does that arithmetic against, and the parser that reads
+# a stored ISO-8601 stamp back. Default features, because `clock` is what
+# gives `Local` its offset and the local zone *is* the contract (see
+# `schedule::cron`).
+chrono = "0.4"
+# Compressing the websocket frames a client asks to have compressed (see
+# `feed::mux`). tungstenite has no permessage-deflate, and nothing between the
+# server and a browser compresses a websocket for it.
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
+futures-util = "0.3"
+gotcha = { version = "0.4.1", features = ["openapi"] }
+# What gotcha's `Schematic` derive expands to names it.
+gotcha_core = "0.4.1"
+regex = "1"
+# The BYO-API chat's outbound HTTP (`chats`). `default-features = false` drops
+# `default-tls` (native-tls/OpenSSL) so the binary keeps linking nothing but
+# rustls; `stream` is what makes the completion response readable chunk by chunk.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "http2", "charset", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { workspace = true }
+thiserror = "1"
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt", "sync", "time"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+tracing = "0.1"
+uuid = { version = "1", features = ["v4"] }
+
+# `testing`: what the server's tests reach of the drive that production code
+# does not. Only the server's [dev-dependencies] turn it on.
+[features]
+test-support = []
+
+[dev-dependencies]
+# An injection registry's host and a spawn decoration that adds nothing
+# (`droppen_provider::testing`), for the fake provider the drive's tests run on.
+droppen-provider = { path = "../droppen-provider", features = ["test-support"] }
+# The accounts' stand-in logins.
+droppen-accounts = { path = "../droppen-accounts", features = ["test-support"] }
+# The lock the tests that install the process-wide session index take.
+droppen-sessions = { path = "../droppen-sessions", features = ["test-support"] }
+# The plugin status's wire shape, which the settings frame's plugins must
+# match (`feed::global`'s tests).
+droppen-plugins = { path = "../droppen-plugins" }
+# A schedule test sets the process's file mode mask (`libc::umask`).
+libc = "0.2"
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "test-util"] }
+
+[lints.rust]
+missing_docs = "deny"
+unreachable_pub = "deny"
+
+# `[lints] workspace = true` cannot be mixed with the rust lints above, so the
+# workspace's two clippy denials (`server-rs/Cargo.toml` `[workspace.lints]`)
+# are repeated here: keep them in step.
+[lints.clippy]
+significant_drop_in_scrutinee = "deny"
+await_holding_lock = "deny"

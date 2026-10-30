@@ -1,7 +1,7 @@
 // In-session search and the first unread message while the machine is away,
 // worked out over the offline copy (`lib/transport/offline-search.ts`).
 //
-// The first half replays `server-rs/src/feed/search.rs`'s own tests against
+// The first half replays `server-rs/crates/droppen-drive/src/feed/search.rs`'s own tests against
 // the port: the same items, the same queries, the same matches, fields,
 // snippets and ranges — so the page cannot tell which side answered. The
 // second half drives the offline transport's routes: absolute indices for a

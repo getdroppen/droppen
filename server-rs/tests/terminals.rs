@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use droppen_auth::users::UsersStore;
-use remote_hand_server::feed::global::LOGIN_RECHECK;
+use droppen_drive::feed::global::LOGIN_RECHECK;
 use droppen_base::procs::alive;
 use droppen_instance::instance::{InstanceDirs, DEFAULT_INSTANCE};
 use droppen_instance::paths::Paths;
