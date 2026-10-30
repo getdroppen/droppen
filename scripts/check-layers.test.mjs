@@ -1,8 +1,9 @@
 // Tests for scripts/check-layers.mjs: `node --test scripts/check-layers.test.mjs`.
 //
 // The code reader, the crate rules over made-up workspaces, the Source
-// ratchet, and server-rs/layers.json's own rules as the check reads them. The
-// real thing is `pnpm check:layers`.
+// exemptions, and server-rs/layers.json's own rules as the check reads them.
+// The real thing is `pnpm check:layers`; the Source count is the server's
+// source scans' (`provider_tests::gate`).
 
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -10,7 +11,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { builtCode, checkCrates, crateCode } from "./check-layers.mjs";
+import { checkCrates, crateCode, testModules } from "./check-layers.mjs";
 
 const ROOT = "/ws";
 
@@ -263,24 +264,15 @@ describe("wrappers", () => {
   });
 });
 
-/** A member's code as {@link crateCode} reads it: `lines`, and a match of Source at each of `sources`. */
-const read = (lines, sources = [], missing = []) => ({ lines, sources, missing });
+/** A member's code as {@link crateCode} reads it: its `lines`, and each `mod x;` with no file. */
+const read = (lines, missing = []) => ({ lines, missing });
 
 describe("Source matches outside the provider crates", () => {
-  const code = new Map([
-    ["sessions", read(10, ["crates/sessions/src/lib.rs:4"])],
-    ["drive", read(10, ["crates/drive/src/routes.rs:7", "crates/drive/src/routes.rs:9"])],
-    ["impl-a", read(10, ["crates/impl-a/src/lib.rs:1", "crates/impl-a/src/lib.rs:2"])],
-    ["gone", read(10, ["crates/gone/src/lib.rs:1"])],
-  ]);
-  const at = (count, exempt = [{ crate: "impl-a", why: "It answers for its Source." }]) => check(undefined, { ...config, sourceMatches: { exempt, count } }, code);
+  const at = (count, exempt) => check(undefined, { ...config, sourceMatches: { exempt, count } });
 
-  test("are as many as recorded: more fails and names the files, fewer fails and says the number; exempt crates and non-members aside", () => {
-    assert.deepEqual(at(3).problems, []);
-    assert.equal(at(3).stats.sourceMatches, 3);
-    one(at(2).problems, /3 matches of Source::Claude\|Codex\|Acp outside the provider crates, more than the 2 sourceMatches records: dispatch through the provider instead \(crates\/drive\/src\/routes\.rs 2, crates\/sessions\/src\/lib\.rs 1\)/);
-    one(at(4).problems, /3 matches of Source::Claude\|Codex\|Acp outside the provider crates, fewer than the 4 sourceMatches records: lower it to 3/);
-    one(at(3, []).problems, /5 matches .* more than the 3/);
+  test("the count is layers.json's, printed as it records it: the server's source scans hold the code to it", () => {
+    assert.deepEqual(at(26, [{ crate: "impl-a", why: "It answers for its Source." }]).problems, []);
+    assert.equal(at(26, []).stats.sourceMatches, 26);
   });
 
   test("an exemption says why, and names a crate layers.json lists", () => {
@@ -301,53 +293,52 @@ describe("what layers.json no longer has", () => {
   });
 
   test("a member's `mod x;` with no file fails", () => {
-    const code = new Map([["auth", read(1, [], [{ at: "crates/auth/src/lib.rs:3", name: "gone" }])]]);
+    const code = new Map([["auth", read(1, [{ at: "crates/auth/src/lib.rs:3", name: "gone" }])]]);
     one(check(undefined, config, code).problems, /^crates\/auth\/src\/lib\.rs:3: mod gone; has no file$/);
   });
 });
 
 describe("what is read of a crate's code", () => {
-  const named = (src) => [...builtCode(src).matchAll(/crate::(\w+)/g)].map((m) => m[1]);
+  /** The test modules of `code` as {@link testModules} finds them: what each range holds, and the files. */
+  const tests = (code) => {
+    const { ranges, files } = testModules(code);
+    return { held: ranges.map(([from, to]) => code.slice(from, to)), files };
+  };
 
-  test("code counts; comments and strings do not", () => {
-    const src = 'use crate::a::X; // crate::b\n/* crate::c /* nested */ crate::d */\nlet s = "crate::e"; let r = r#"crate::f "{" "#;\ncrate::g::h();\n';
-    assert.deepEqual(named(src), ["a", "g"]);
+  test("a module declared #[cfg(test)], inline or a file, other attributes after it, is a test module", () => {
+    const code = "pub fn f() {}\n#[cfg(test)]\nmod tests {\n    fn t() { g(); }\n}\n#[cfg(test)]\n#[allow(dead_code)]\npub(crate) mod helpers { fn h() {} }\n#[cfg(test)]\nmod elsewhere;\nfn after() {}\n";
+    assert.deepEqual(tests(code), {
+      held: ["#[cfg(test)]\nmod tests {\n    fn t() { g(); }\n}", "#[cfg(test)]\n#[allow(dead_code)]\npub(crate) mod helpers { fn h() {} }", "#[cfg(test)]\nmod elsewhere;"],
+      files: ["elsewhere"],
+    });
   });
 
-  test("a test-only item does not count, whatever its shape; cfg(not(test)) does", () => {
-    const src = [
-      "struct S { x: u32,",
-      "  #[cfg(test)]",
-      "  hook: Option<HashMap<u8, Box<dyn Fn(u8, u8)>>>,",
-      "  y: crate::a::Y }",
-      "#[cfg(test)]",
-      "mod tests { use crate::b; fn f() { let s = \"}\"; let c = '{'; } }",
-      "#[cfg(all(test, unix))]",
-      "use crate::c;",
-      "#[cfg(not(test))]",
-      "use crate::d;",
-      "fn g<'a>(s: &'a str) -> &'a str { crate::e::f(); s }",
-    ].join("\n");
-    assert.deepEqual(named(src), ["a", "d", "e"]);
+  test("an inline test module ends at its own closing brace, once comments and literals are blanked as the reader blanks them", () => {
+    // `withoutLiterals` has run: a brace in a string is a blank.
+    const code = '#[cfg(test)]\nmod tests {\n    fn t() { let s = "   "; }\n}\nfn kept() {}\n';
+    assert.deepEqual(tests(code).held, ['#[cfg(test)]\nmod tests {\n    fn t() { let s = "   "; }\n}']);
   });
 
-  test("lines still count after stripping", () => {
-    const src = "// one\n#[cfg(test)]\nmod tests {\n}\nuse crate::a;\n";
-    assert.equal(builtCode(src).split("\n").length, src.split("\n").length);
+  test("anything else under #[cfg(test)] is not a test module, and stays code: a function, a field, cfg(all(test, …))", () => {
+    const code = "#[cfg(test)]\nfn helper() {}\nstruct S { #[cfg(test)] steps: u8 }\n#[cfg(all(test, unix))]\nmod unix_tests {}\n";
+    assert.deepEqual(tests(code), { held: [], files: [] });
   });
 
-  test("a member's library and binaries, through their modules built outside tests: its code lines and Source matches", () => {
+  test("a member's library and binaries, through their modules but the test modules: its code lines and its mod x; with no file", () => {
     const root = mkdtempSync(join(tmpdir(), "check-layers-"));
     after(() => rmSync(root, { recursive: true, force: true }));
     const write = (path, text) => {
       mkdirSync(dirname(join(root, path)), { recursive: true });
       writeFileSync(join(root, path), text);
     };
-    write("crates/the-pty/src/lib.rs", "pub mod ring;\nmod gone;\npub fn f() {}\n#[cfg(test)]\nmod tests {\n    fn t() { let _ = Source::Claude; }\n}\n#[cfg(test)]\nmod only_tests;\n");
-    write("crates/the-pty/src/ring.rs", '// the ring, not Source::Acp\npub struct Ring;\npub fn pick() { let s = "Source::Acp"; match x { Source::Codex => 1 } }\n');
-    write("crates/the-pty/src/only_tests.rs", "fn t() { let _ = Source::Claude; }\n");
-    write("crates/the-pty/src/bin/tool.rs", "fn main() { let _ = Source::Acp; }\n");
-    write("crates/the-pty/tests/it.rs", "fn t() { let _ = Source::Claude; }\n");
+    write(
+      "crates/the-pty/src/lib.rs",
+      'pub mod ring;\nmod gone;\npub fn f() {}\n#[cfg(test)]\nmod tests {\n    fn t() { let s = "}"; }\n}\n#[cfg(test)]\nmod only_tests;\n#[cfg(test)]\nfn helper() {}\n',
+    );
+    write("crates/the-pty/src/ring.rs", "// the ring\npub struct Ring;\npub fn pick() {}\n");
+    write("crates/the-pty/src/only_tests.rs", "fn t() {}\n");
+    write("crates/the-pty/src/bin/tool.rs", "mod nowhere;\nfn main() {}\n");
+    write("crates/the-pty/tests/it.rs", "fn t() {}\n");
     const target = (kind, path) => ({ kind: [kind], src_path: join(root, path) });
     const meta = {
       workspace_root: root,
@@ -365,19 +356,22 @@ describe("what is read of a crate's code", () => {
     const code = crateCode(meta);
     assert.deepEqual([...code.keys()], ["the-pty"]);
     assert.deepEqual(code.get("the-pty"), {
-      // The library's: `pub mod ring;`, `mod gone;`, `pub fn f() {}`, and ring.rs's 2.
-      lines: 5,
-      // The match in code, the library's and the binary's; not the comment's,
-      // the string's, the test module's or the test target's.
-      sources: ["crates/the-pty/src/ring.rs:3", "crates/the-pty/src/bin/tool.rs:1"],
-      missing: [{ at: "crates/the-pty/src/lib.rs:2", name: "gone" }],
+      // The library's: `pub mod ring;`, `mod gone;`, `pub fn f() {}`, the
+      // test-only function's 2, and ring.rs's 2. Not the test modules, the
+      // comment, the binary's or the test target's.
+      lines: 7,
+      // The library's and the binary's; not the test module's file.
+      missing: [
+        { at: "crates/the-pty/src/lib.rs:2", name: "gone" },
+        { at: "crates/the-pty/src/bin/tool.rs:1", name: "nowhere" },
+      ],
     });
   });
 });
 
 describe("the numbers", () => {
   test("the largest cycle with the dev-dependencies, the middle crates' sizes and dependents, the Source count", () => {
-    const code = new Map([["auth", read(120, ["crates/auth/src/lib.rs:1"])]]);
+    const code = new Map([["auth", read(120)]]);
     const { stats } = check((s) => s.auth.push("dev sessions"), { ...config, sourceMatches: { exempt: [], count: 1 } }, code);
     assert.deepEqual(stats.cycle, ["auth", "sessions"]);
     assert.deepEqual(stats.middle.find((c) => c.crate === "auth"), { crate: "auth", code: 120, dependents: 1 });
@@ -388,10 +382,5 @@ describe("the numbers", () => {
 
 test("server-rs/layers.json: its outside crates, forbidden pairs, wrappers and exemptions name what it lists, no mayUse lists a forbidden pair, and nothing places a module", () => {
   const real = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "server-rs", "layers.json"), "utf8"));
-  // With no members read, only the count can be off: the real one is the check's.
-  const found = checkCrates({ packages: [], workspace_members: [] }, real).problems;
-  assert.deepEqual(
-    found.filter((p) => !/matches of Source::/.test(p)),
-    [],
-  );
+  assert.deepEqual(checkCrates({ packages: [], workspace_members: [] }, real).problems, []);
 });

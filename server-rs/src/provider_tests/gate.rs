@@ -1,8 +1,10 @@
-//! The spawn gate and the runs, as the server's sources use them. Each
-//! source file is parsed (`syn`), what is built for tests alone is dropped,
-//! and the rest is read token by token: a comment is no token, and a string
-//! or a doc comment is a literal, which no scan matches.
+//! The spawn gate, the runs and the providers' `Source`, as the server's and
+//! its crates' sources use them. Each source file is parsed (`syn`), what is
+//! built for tests alone is dropped, and the rest is read token by token: a
+//! comment is no token, and a string or a doc comment is a literal, which no
+//! scan matches.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use proc_macro2::{Delimiter, TokenStream, TokenTree};
@@ -25,9 +27,15 @@ struct Source {
 
 impl Source {
     /// Every source file of the server and of every crate of its workspace,
-    /// but the gate's own and this one. Wherever the feed and the drive
-    /// live, the scans read them as code that can reach the base.
+    /// but the gate's own and this one ([`Source::every`]).
     fn all() -> Vec<Self> {
+        Self::every().into_iter().filter(|source| !source.is_gate_or_scan()).collect()
+    }
+
+    /// Every source file of the server and of every crate of its workspace.
+    /// Wherever the feed and the drive live, the scans read them as code that
+    /// can reach the base.
+    fn every() -> Vec<Self> {
         fn walk(dir: &Path, found: &mut Vec<PathBuf>) {
             for entry in std::fs::read_dir(dir).expect("read_dir").flatten() {
                 let path = entry.path();
@@ -83,7 +91,6 @@ impl Source {
                     sees_base,
                 }
             })
-            .filter(|source| !source.is_gate_or_scan())
             .collect();
         for module in ["feed/mod.rs", "droppen-drive/src/lib.rs"] {
             assert!(
@@ -92,6 +99,12 @@ impl Source {
             );
         }
         sources
+    }
+
+    /// The crate it is a file of: the server's own package, or the directory
+    /// under `crates/` that is a crate's (named as its package is).
+    fn krate(&self) -> &str {
+        self.path.strip_prefix("crates/").and_then(|rest| rest.split_once('/')).map_or(env!("CARGO_PKG_NAME"), |(name, _)| name)
     }
 
     /// Whether this is the spawn gate's own source or these scans'.
@@ -149,10 +162,10 @@ enum Tok {
     Literal,
 }
 
-/// The tokens of a file's code built outside tests, or of a pattern to find
-/// in one.
+/// The tokens of a file's code built outside tests and the line each starts
+/// on, or the tokens of a pattern to find in one (and no lines).
 #[derive(Clone, Debug, Default, PartialEq)]
-struct Code(Vec<Tok>);
+struct Code(Vec<Tok>, Vec<usize>);
 
 impl Code {
     /// `text`'s code built outside tests, and the modules it declares for
@@ -174,25 +187,31 @@ impl Code {
     /// A pattern: words separated by spaces, each an identifier, a bracket,
     /// or punctuation one character a token (`::` is two).
     fn pattern(text: &str) -> Self {
-        Self(
-            text.split_whitespace()
-                .flat_map(|word| match word {
-                    "(" | "[" | "{" => vec![Tok::Open(word.chars().next().expect("a bracket"))],
-                    ")" | "]" | "}" => vec![Tok::Close(word.chars().next().expect("a bracket"))],
-                    _ if word.chars().all(|c| c.is_alphanumeric() || c == '_') => vec![Tok::Ident(word.to_string())],
-                    _ => word.chars().map(Tok::Punct).collect(),
-                })
-                .collect(),
-        )
+        let tokens = text
+            .split_whitespace()
+            .flat_map(|word| match word {
+                "(" | "[" | "{" => vec![Tok::Open(word.chars().next().expect("a bracket"))],
+                ")" | "]" | "}" => vec![Tok::Close(word.chars().next().expect("a bracket"))],
+                _ if word.chars().all(|c| c.is_alphanumeric() || c == '_') => vec![Tok::Ident(word.to_string())],
+                _ => word.chars().map(Tok::Punct).collect(),
+            })
+            .collect();
+        Self(tokens, Vec::new())
+    }
+
+    /// `token`, which starts on `line`, added.
+    fn add(&mut self, token: Tok, line: usize) {
+        self.0.push(token);
+        self.1.push(line);
     }
 
     /// `stream`'s tokens added, groups opened and closed around theirs.
     fn push(&mut self, stream: TokenStream) {
         for tree in stream {
             match tree {
-                TokenTree::Ident(ident) => self.0.push(Tok::Ident(ident.to_string().trim_start_matches("r#").to_string())),
-                TokenTree::Punct(punct) => self.0.push(Tok::Punct(punct.as_char())),
-                TokenTree::Literal(_) => self.0.push(Tok::Literal),
+                TokenTree::Ident(ident) => self.add(Tok::Ident(ident.to_string().trim_start_matches("r#").to_string()), ident.span().start().line),
+                TokenTree::Punct(punct) => self.add(Tok::Punct(punct.as_char()), punct.span().start().line),
+                TokenTree::Literal(literal) => self.add(Tok::Literal, literal.span().start().line),
                 TokenTree::Group(group) => {
                     let brackets = match group.delimiter() {
                         Delimiter::Parenthesis => Some(('(', ')')),
@@ -200,9 +219,13 @@ impl Code {
                         Delimiter::Brace => Some(('{', '}')),
                         Delimiter::None => None,
                     };
-                    self.0.extend(brackets.map(|(open, _)| Tok::Open(open)));
+                    if let Some((open, _)) = brackets {
+                        self.add(Tok::Open(open), group.span_open().start().line);
+                    }
                     self.push(group.stream());
-                    self.0.extend(brackets.map(|(_, close)| Tok::Close(close)));
+                    if let Some((_, close)) = brackets {
+                        self.add(Tok::Close(close), group.span_close().start().line);
+                    }
                 }
             }
         }
@@ -256,6 +279,22 @@ impl Code {
         // Bound before it is returned, as in `reads`.
         let makes = self.find(&new).next().is_some();
         makes
+    }
+
+    /// Where it names a provider's `Source`: each `Source::Claude`,
+    /// `Source::Codex` or `Source::Acp` (however it is reached: `crate::`,
+    /// `droppen_sessions::`), as the variant and the line it is on.
+    fn source_matches(&self) -> Vec<(String, usize)> {
+        let path = Self::pattern("Source ::");
+        // Bound before it is returned, as in `reads`.
+        let found = self
+            .find(&path)
+            .filter_map(|at| match self.0.get(at + path.0.len()) {
+                Some(Tok::Ident(variant)) if PROVIDER_SOURCES.contains(&variant.as_str()) => Some((variant.clone(), self.1.get(at).copied().unwrap_or(0))),
+                _ => None,
+            })
+            .collect();
+        found
     }
 
     /// What the scans find in it: how it reaches the runs, the gate's names
@@ -483,6 +522,31 @@ impl VisitMut for TestsOut {
 const RUN_NAMES: [&str; 6] = ["publish_run", "withdraw_run", "rename_run", "running_run", "RunEntry", "runs_file"];
 const RUN_FIELDS: [&str; 2] = ["journal", "drafts"];
 
+/// The `Source` variants that name a provider: outside the providers' crates
+/// a `Source` is only the key that picks one.
+const PROVIDER_SOURCES: [&str; 3] = ["Claude", "Codex", "Acp"];
+
+/// What `layers.json` records of the matches of [`PROVIDER_SOURCES`].
+#[derive(serde::Deserialize)]
+struct Layers {
+    #[serde(rename = "sourceMatches")]
+    source_matches: SourceMatches,
+}
+
+/// How many matches there are outside the crates `exempt` names.
+#[derive(serde::Deserialize)]
+struct SourceMatches {
+    exempt: Vec<Exempt>,
+    count: usize,
+}
+
+/// A provider's crate, whose matches are its own.
+#[derive(serde::Deserialize)]
+struct Exempt {
+    #[serde(rename = "crate")]
+    krate: String,
+}
+
 /// The names that take the spawn gate, mint a permit, build a lease, or
 /// borrow the gate from the registry.
 const GATE_NAMES: [&str; 4] = ["SpawnGate", "SpawnPermit", "SessionLease", "provider_with_gate"];
@@ -614,6 +678,42 @@ fn only_the_providers_keep_the_runs() {
     assert!(found.is_empty(), "a run reached outside the providers: {found:?}");
 }
 
+/// Outside the providers' crates `Source` is only the key that picks a
+/// provider: code that names one of its variants dispatches on a CLI by name.
+/// The matches in the code built outside tests of the server and of every
+/// crate of its workspace, the crates `layers.json` exempts aside, are as
+/// many as its `sourceMatches.count` records: the number only goes down, and
+/// a lower one is written down.
+#[test]
+fn outside_the_providers_a_source_is_named_as_often_as_layers_json_records() {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let layers: Layers = serde_json::from_str(&std::fs::read_to_string(manifest.join("layers.json")).expect("layers.json")).expect("layers.json's sourceMatches");
+    let sources = Source::every();
+    let crates: BTreeSet<&str> = sources.iter().map(Source::krate).collect();
+    let exempt: BTreeSet<&str> = layers.source_matches.exempt.iter().map(|exempt| exempt.krate.as_str()).collect();
+    for name in &exempt {
+        assert!(crates.contains(name), "layers.json exempts {name}, which is no crate of the workspace: {crates:?}");
+    }
+    let found: Vec<String> = sources
+        .iter()
+        .filter(|source| !exempt.contains(source.krate()))
+        .flat_map(|source| source.code.source_matches().into_iter().map(|(variant, line)| format!("{}:{line}: Source::{variant}", source.path)))
+        .collect();
+    let recorded = layers.source_matches.count;
+    assert!(
+        found.len() <= recorded,
+        "{} matches of Source::Claude|Codex|Acp outside the provider crates, more than the {recorded} layers.json's sourceMatches records: dispatch through the provider instead\n{}",
+        found.len(),
+        found.join("\n")
+    );
+    assert!(
+        found.len() >= recorded,
+        "{} matches of Source::Claude|Codex|Acp outside the provider crates, fewer than the {recorded} layers.json's sourceMatches records: lower it to {}",
+        found.len(),
+        found.len()
+    );
+}
+
 /// Production code after or around something built for tests alone is read,
 /// whatever the shape of the test-only part; the test-only part is not.
 /// Each case is a reach the scans must see. The first eighteen are a
@@ -657,6 +757,27 @@ fn the_scans_read_past_a_file_s_tests() {
     for (what, text, reach) in cases {
         assert!(found_in(text).contains(&reach.to_string()), "{what}: {reach} is read in\n{text}\nfound {:?}", found_in(text));
     }
+    // The same shapes with a provider's `Source` where the reach was: the
+    // count sees it past the test-only part, and only it. `Source::Acp` is
+    // in no case's production code, and in one case's test-only part.
+    let acp = |text: &str| Code::of(text).expect("parses").0.source_matches().into_iter().filter(|(variant, _)| variant == "Acp").count();
+    for (what, text, reach) in cases {
+        let (anchor, named) = match *reach {
+            ".journal" => ("h.journal", "Source::Acp"),
+            ".drafts" => ("h.drafts", "Source::Acp"),
+            "withdraw_run" => ("r.host.withdraw_run", "Source::Acp"),
+            "publish_run" => ("r.host.publish_run", "Source::Acp"),
+            "running_run" => ("h.host.running_run", "Source::Acp"),
+            "rename_run" => ("h.host.rename_run", "Source::Acp"),
+            "RunHost { … }" => ("= h;", "= Source::Acp;"),
+            "provider_with_gate" => ("r.provider_with_gate::<P>", "Source::Acp"),
+            "SpawnGate::new" | "RunEntry" | "SpawnPermit" | "SessionLease" => (*reach, "Source::Acp"),
+            other => panic!("{what}: no Source variant for {other}"),
+        };
+        assert!(text.contains(anchor), "{what}: {anchor} is in\n{text}");
+        let variant = text.replacen(anchor, named, 1);
+        assert_eq!(acp(&variant), 1, "{what}: the Source after the test-only part is counted, once, in\n{variant}");
+    }
     // What is built for tests alone, a comment, a string or a doc is not
     // read. The review's E1 is here: `cfg(all(test, unix))` needs `test`,
     // so it is built for tests alone.
@@ -664,14 +785,19 @@ fn the_scans_read_past_a_file_s_tests() {
         ("E1", "#[cfg(all(test, unix))]\nfn plant(r: &Run) {\n    r.host.withdraw_run(Source::Codex, \"id\");\n}\n"),
         ("a test function", "#[cfg(test)] fn f(h: &H) { h.journal.len(); }"),
         ("a test statement", "fn f(h: &H) { #[cfg(test)] h.journal.len(); }"),
-        ("comments and strings", "// h.journal and SpawnGate::new\nfn f() { let s = \"h.journal\"; }"),
-        ("a doc", "/// `h.journal`, `RunHost { .. }`\nfn f() {}"),
+        ("comments and strings", "// h.journal, SpawnGate::new and Source::Claude\nfn f() { let s = \"h.journal Source::Codex\"; }"),
+        ("a doc", "/// `h.journal`, `RunHost { .. }`, `Source::Acp`\nfn f() {}"),
         ("impls of a host", "impl Trait for RunHost {} impl RunHost { fn f(&self) {} }"),
         ("a method named like a field", "fn f(s: &S) { s.drafts(); }"),
     ];
     for (what, text) in quiet {
         assert!(found_in(text).is_empty(), "{what}: nothing is read in\n{text}\nfound {:?}", found_in(text));
+        let sources = Code::of(text).expect("parses").0.source_matches();
+        assert!(sources.is_empty(), "{what}: no Source is counted in\n{text}\nfound {sources:?}");
     }
+    // A match is its variant and its line, however `Source` is reached.
+    let lines = Code::of("fn f() {\n    let _ = Source::Claude;\n    let _ = crate::Source::Codex;\n    let _ = MySource::Acp;\n    let _ = Source::Other;\n}\n").expect("parses").0;
+    assert_eq!(lines.source_matches(), [("Claude".to_string(), 2), ("Codex".to_string(), 3)]);
     // A test module that is a file of its own is noted by its path through
     // the inline modules around it, and not at all under a `#[path]`: its
     // file is then not where its name says, so it stays read.
