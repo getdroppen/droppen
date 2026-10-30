@@ -444,7 +444,7 @@ enum Unset {
 }
 
 pub(super) struct Driver {
-    pub(super) registry: Arc<super::AcpRuns>,
+    pub(super) runs: Arc<super::AcpRuns>,
     /// The agent the session runs on, as it was configured when this process
     /// started.
     pub(super) agent: AcpAgent,
@@ -477,7 +477,7 @@ pub(super) struct Driver {
 impl Driver {
     fn publish(&mut self) {
         *self.shared.lock().unwrap() = self.state.clone();
-        self.registry.poke_feed(Source::Acp, &self.id);
+        self.runs.host.poke_feed(Source::Acp, &self.id);
     }
 
     /// Nothing to do: no turn, no queue, and no message on its way.
@@ -485,11 +485,11 @@ impl Driver {
         !self.state.active && self.state.queue.is_empty() && self.in_flight.load(Ordering::Acquire) == 0
     }
 
-    /// Take this driver's handle out of the registry's map, if it is still
+    /// Take this driver's handle out of the runs' map, if it is still
     /// the one there.
     fn leave(&self) {
-        let key = self.registry.key_of(Source::Acp, &self.id);
-        let mut servers = self.registry.acp_servers.lock().unwrap();
+        let key = self.runs.host.key_of(Source::Acp, &self.id);
+        let mut servers = self.runs.acp_servers.lock().unwrap();
         if servers.get(&key).is_some_and(|handle| handle.shares(&self.shared)) {
             servers.remove(&key);
         }
@@ -524,7 +524,7 @@ impl Driver {
                             let records = self.translator.update(&notification.update);
                             if !records.is_empty() {
                                 self.transcript.append(&records).await;
-                                self.registry.poke_feed(Source::Acp, &self.id);
+                                self.runs.host.poke_feed(Source::Acp, &self.id);
                             }
                         }
                     }
@@ -597,8 +597,8 @@ impl Driver {
                 }
                 let dropped = self.state.queue.remove(index).expect("an index the queue just gave");
                 self.publish();
-                self.registry
-                    .note_receipt(Source::Acp, &self.id, &dropped.id, droppen_sessions::delivery::ReceiptStatus::Failed);
+                self.runs
+                    .host.note_receipt(Source::Acp, &self.id, &dropped.id, droppen_sessions::delivery::ReceiptStatus::Failed);
                 let _ = reply.send(QueueOutcome::Done);
             }
             Cmd::Stop(_) => unreachable!("handled by the loop"),
@@ -618,8 +618,8 @@ impl Driver {
         if let Err(unset) = self.configure(&message).await {
             // The turn never starts: the session would have run on a model or
             // at an effort nobody asked for.
-            self.registry
-                .note_receipt(Source::Acp, &self.id, &message.id, droppen_sessions::delivery::ReceiptStatus::Failed);
+            self.runs
+                .host.note_receipt(Source::Acp, &self.id, &message.id, droppen_sessions::delivery::ReceiptStatus::Failed);
             return match unset {
                 Unset::Refused(reason) => {
                     let said = self.redact(&reason);
@@ -638,8 +638,8 @@ impl Driver {
         }
         self.record_choice().await;
         self.conn.prompt(&self.agent_session, message.prompt).await?;
-        self.registry
-            .note_receipt(Source::Acp, &self.id, &message.id, droppen_sessions::delivery::ReceiptStatus::Sent);
+        self.runs
+            .host.note_receipt(Source::Acp, &self.id, &message.id, droppen_sessions::delivery::ReceiptStatus::Sent);
         self.start_turn();
         Ok(())
     }
@@ -719,7 +719,7 @@ impl Driver {
         let current = |category: &str| {
             option_for(&self.state.options, category)
                 .and_then(|option| option.current_value.clone())
-                .filter(|value| self.registry.acp_id_shown(value))
+                .filter(|value| self.runs.acp_id_shown(value))
         };
         let choice = (current(category::MODEL), current(category::THOUGHT_LEVEL));
         if choice == (None, None) || self.recorded_choice.as_ref() == Some(&choice) {
@@ -781,21 +781,21 @@ impl Driver {
             finished_at: droppen_http::openapi_ext::Nullable(Some(iso8601(SystemTime::now()))),
         });
         self.publish();
-        if let Some(alerts) = self.registry.alerts.get() {
+        if let Some(alerts) = self.runs.host.alerts.get() {
             alerts.turn(
-                self.registry.paths.clone(),
+                self.runs.host.paths.clone(),
                 Source::Acp,
                 self.id.clone(),
                 outcome,
                 error,
-                self.registry.driver_states_of(&*self.registry),
+                self.runs.host.driver_states_of(&*self.runs),
             );
         }
     }
 
     /// What the agent said, fit to be stored and shown.
     fn redact(&self, text: &str) -> String {
-        self.registry.redact_acp(&self.agent, text)
+        self.runs.redact_acp(&self.agent, text)
     }
 
     /// The process went away, or stopped answering: say so, and fail what
@@ -816,8 +816,8 @@ impl Driver {
         }
         self.transcript.append(&records).await;
         for dropped in std::mem::take(&mut self.state.queue) {
-            self.registry
-                .note_receipt(Source::Acp, &self.id, &dropped.id, droppen_sessions::delivery::ReceiptStatus::Failed);
+            self.runs
+                .host.note_receipt(Source::Acp, &self.id, &dropped.id, droppen_sessions::delivery::ReceiptStatus::Failed);
         }
         if self.state.active {
             let interrupted = self.interrupted;
