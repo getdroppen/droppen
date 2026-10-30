@@ -1312,6 +1312,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "droppen-cloud"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "droppen-agent",
+ "droppen-aggregator",
+ "droppen-auth",
+ "droppen-base",
+ "droppen-http",
+ "droppen-instance",
+ "futures-util",
+ "gotcha",
+ "gotcha_core",
+ "rand 0.8.7",
+ "reqwest",
+ "rh-client",
+ "rh-proto",
+ "serde",
+ "serde_json",
+ "subtle",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "zeroize",
+]
+
+[[package]]
 name = "droppen-files"
 version = "0.1.0"
 dependencies = [
@@ -3266,6 +3294,7 @@ dependencies = [
  "droppen-aggregator",
  "droppen-auth",
  "droppen-base",
+ "droppen-cloud",
  "droppen-files",
  "droppen-http",
  "droppen-instance",

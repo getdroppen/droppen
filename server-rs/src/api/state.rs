@@ -21,7 +21,7 @@ use droppen_workbench::apps::AppsState;
 use droppen_sessions::attention::routes::AttentionState;
 use droppen_auth::AuthState;
 use crate::chats::ChatsState;
-use crate::cloud::CloudState;
+use droppen_cloud::CloudState;
 use crate::drive::DriveState;
 use crate::feed::global::{ClaudeDirs, EventsState};
 use droppen_files::FilesState;

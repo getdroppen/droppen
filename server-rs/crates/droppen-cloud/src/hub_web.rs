@@ -84,7 +84,8 @@ struct Inner {
 /// server, in [`super::Cloud`].
 pub struct HubWebs {
     inner: Arc<Inner>,
-    /// Off in unit tests unless a test turns it on: they never reach the network.
+    /// Off in tests (cloud's own, and the server's through `test-support`)
+    /// unless a test turns it on: they never reach the network.
     discover: AtomicBool,
 }
 
@@ -92,18 +93,19 @@ impl Default for HubWebs {
     fn default() -> Self {
         Self {
             inner: Arc::default(),
-            discover: AtomicBool::new(!cfg!(test)),
+            discover: AtomicBool::new(!cfg!(any(test, feature = "test-support"))),
         }
     }
 }
 
-impl HubWebs {
-    /// Tests: look hubs up (or not).
-    #[cfg(test)]
-    pub fn set_discover(&self, on: bool) {
+#[cfg(any(test, feature = "test-support"))]
+impl crate::testing::HubWebsTesting for HubWebs {
+    fn set_discover(&self, on: bool) {
         self.discover.store(on, Ordering::SeqCst);
     }
+}
 
+impl HubWebs {
     /// The web origin a browser opens for `hub` (`wss://…` as
     /// [`droppen_agent::hub::origin`] writes it), for the local page's status:
     /// a kept answer at once (refreshed in the background once stale), a
@@ -316,9 +318,48 @@ fn parent_domain(hub_host: &str) -> Option<&str> {
     (tld.len() > 2).then_some(parent)
 }
 
+/// A hub on a loopback port, `ws://localhost:<port>`: `answer(hub)` is
+/// what `/.well-known/droppen-hub` gets (status, location, JSON), and
+/// every other path the app's shell, as a hub from before the document
+/// answers. How often the document was asked for.
+#[cfg(any(test, feature = "test-support"))]
+pub async fn hub_answering(answer: impl Fn(&str) -> (u16, Option<&'static str>, String)) -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+    use gotcha::axum::http::{StatusCode, Uri};
+    use gotcha::axum::response::IntoResponse;
+    use gotcha::axum::{routing::get, Router};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let hub = format!("ws://localhost:{}", listener.local_addr().unwrap().port());
+    let (status, location, body) = answer(&hub);
+    let asked = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counter = asked.clone();
+    let router = Router::new().fallback(get(move |uri: Uri| {
+        let (counter, body) = (counter.clone(), body.clone());
+        async move {
+            if uri.path() != DISCOVERY_PATH {
+                return (StatusCode::OK, [("content-type", "text/html")], "<!doctype html><title>shell</title>").into_response();
+            }
+            counter.fetch_add(1, Ordering::SeqCst);
+            let mut response = (StatusCode::from_u16(status).unwrap(), [("content-type", "application/json")], body).into_response();
+            if let Some(location) = location {
+                response.headers_mut().insert("location", location.parse().unwrap());
+            }
+            response
+        }
+    }));
+    tokio::spawn(async move { gotcha::axum::serve(listener, router).await });
+    (hub, asked)
+}
+
+/// The port of a hub [`hub_answering`] made.
+#[cfg(any(test, feature = "test-support"))]
+pub fn port(hub: &str) -> &str {
+    hub.rsplit_once(':').unwrap().1
+}
+
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use super::*;
+    use crate::testing::HubWebsTesting;
     use serde_json::json;
 
     #[test]
@@ -416,45 +457,10 @@ pub(crate) mod tests {
         assert_eq!(app_origin(&json!({"app": "http://my.example.com"}), "wss://example.com"), None);
     }
 
-    /// A hub on a loopback port, `ws://localhost:<port>`: `answer(hub)` is
-    /// what `/.well-known/droppen-hub` gets (status, location, JSON), and
-    /// every other path the app's shell, as a hub from before the document
-    /// answers. How often the document was asked for.
-    pub(crate) async fn hub_answering(answer: impl Fn(&str) -> (u16, Option<&'static str>, String)) -> (String, Arc<std::sync::atomic::AtomicUsize>) {
-        use gotcha::axum::http::{StatusCode, Uri};
-        use gotcha::axum::response::IntoResponse;
-        use gotcha::axum::{routing::get, Router};
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let hub = format!("ws://localhost:{}", listener.local_addr().unwrap().port());
-        let (status, location, body) = answer(&hub);
-        let asked = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let counter = asked.clone();
-        let router = Router::new().fallback(get(move |uri: Uri| {
-            let (counter, body) = (counter.clone(), body.clone());
-            async move {
-                if uri.path() != DISCOVERY_PATH {
-                    return (StatusCode::OK, [("content-type", "text/html")], "<!doctype html><title>shell</title>").into_response();
-                }
-                counter.fetch_add(1, Ordering::SeqCst);
-                let mut response = (StatusCode::from_u16(status).unwrap(), [("content-type", "application/json")], body).into_response();
-                if let Some(location) = location {
-                    response.headers_mut().insert("location", location.parse().unwrap());
-                }
-                response
-            }
-        }));
-        tokio::spawn(async move { gotcha::axum::serve(listener, router).await });
-        (hub, asked)
-    }
-
     fn on() -> HubWebs {
         let webs = HubWebs::default();
         webs.set_discover(true);
         webs
-    }
-
-    pub(crate) fn port(hub: &str) -> &str {
-        hub.rsplit_once(':').unwrap().1
     }
 
     #[tokio::test]

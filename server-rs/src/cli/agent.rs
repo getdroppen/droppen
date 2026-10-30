@@ -178,7 +178,7 @@ pub(crate) fn unenroll_instance(paths: &Paths) -> Result<Option<state::AgentStat
     let before = state::AgentState::load(&files).ok().flatten();
     files.unenroll()?;
     droppen_aggregator::forget_all(paths)?;
-    let cloud = crate::cloud::LinkFile::of(paths).path();
+    let cloud = droppen_cloud::LinkFile::of(paths).path();
     match std::fs::remove_file(&cloud) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -221,7 +221,7 @@ pub(crate) fn read_capped_line(input: impl std::io::Read) -> Result<String, Stri
 /// A device linked to Droppen reaches other devices from its page, so that
 /// page must ask who is there: the instance needs a local account, and
 /// authentication must not be switched off — the same two rules the local
-/// settings' "Sign in to Droppen" has (`crate::cloud`). Checked before
+/// settings' "Sign in to Droppen" has (`droppen_cloud`). Checked before
 /// the code is read, so nobody types a code into a command that will refuse it.
 pub(crate) async fn refuse_enroll(paths: &Paths, auth_enabled: Option<bool>) -> Option<String> {
     let name = paths.instance();

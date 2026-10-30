@@ -14,7 +14,7 @@
 //!   there — changing a password nobody has, and signing out of a login the
 //!   app restores at once — and signs in to Droppen through the system browser
 //!   instead of a popup its window cannot have (the browser hand-off,
-//!   [`crate::cloud::link_handoff`]).
+//!   [`droppen_cloud::link_handoff`]).
 //!
 //! Read once, at boot, into [`crate::api::AppState::desktop_app`], so a test
 //! sets the field instead of the process environment every test shares.

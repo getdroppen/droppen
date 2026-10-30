@@ -217,30 +217,31 @@ pub fn sealed_bytes(text: &str) -> Option<Vec<u8>> {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(text.trim_end_matches('=')).ok()
 }
 
-#[cfg(test)]
-pub(crate) mod tests {
-    use super::*;
+/// What droppen.app does with a hand-off URL: read the payload and seal `reply` to it.
+#[cfg(any(test, feature = "test-support"))]
+pub fn answer(url: &str, reply: &serde_json::Value, state_override: Option<[u8; STATE_LEN]>) -> (String, String) {
+    let fragment = url.split_once('#').expect("a fragment").1;
+    let encoded = fragment.strip_prefix(&format!("{LINK_FRAGMENT}=")).expect("the payload");
+    let json = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(encoded).unwrap();
+    let payload: Payload = serde_json::from_slice(&json).unwrap();
+    let unhex = |s: &str| -> Vec<u8> { (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect() };
+    let key: [u8; 32] = unhex(&payload.k).try_into().unwrap();
+    let state: [u8; STATE_LEN] = state_override.unwrap_or_else(|| unhex(&payload.s).try_into().unwrap());
+    let sign: [u8; 32] = unhex(&payload.m.s).try_into().unwrap();
+    let dh: [u8; 32] = unhex(&payload.m.d).try_into().unwrap();
+    let ctx = ReturnContext {
+        attempt: &payload.a,
+        origin: &payload.o,
+        sign_key: &sign,
+        dh_key: &dh,
+    };
+    let sealed = link_return::seal(&key, &state, &ctx, reply.to_string().as_bytes(), &mut rand::rngs::OsRng).unwrap();
+    (payload.a, base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(sealed))
+}
 
-    /// What droppen.app does with a hand-off URL: read the payload and seal `reply` to it.
-    pub(crate) fn answer(url: &str, reply: &serde_json::Value, state_override: Option<[u8; STATE_LEN]>) -> (String, String) {
-        let fragment = url.split_once('#').expect("a fragment").1;
-        let encoded = fragment.strip_prefix(&format!("{LINK_FRAGMENT}=")).expect("the payload");
-        let json = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(encoded).unwrap();
-        let payload: Payload = serde_json::from_slice(&json).unwrap();
-        let unhex = |s: &str| -> Vec<u8> { (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect() };
-        let key: [u8; 32] = unhex(&payload.k).try_into().unwrap();
-        let state: [u8; STATE_LEN] = state_override.unwrap_or_else(|| unhex(&payload.s).try_into().unwrap());
-        let sign: [u8; 32] = unhex(&payload.m.s).try_into().unwrap();
-        let dh: [u8; 32] = unhex(&payload.m.d).try_into().unwrap();
-        let ctx = ReturnContext {
-            attempt: &payload.a,
-            origin: &payload.o,
-            sign_key: &sign,
-            dh_key: &dh,
-        };
-        let sealed = link_return::seal(&key, &state, &ctx, reply.to_string().as_bytes(), &mut rand::rngs::OsRng).unwrap();
-        (payload.a, base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(sealed))
-    }
+#[cfg(test)]
+mod tests {
+    use super::*;
 
     fn machine() -> HandoffMachine {
         HandoffMachine {

@@ -109,7 +109,7 @@ fn unenroll_on_the_command_line_leaves_nothing_of_droppen() {
     // A pending key an older release left behind.
     std::fs::create_dir_all(droppen_aggregator::dir(&paths)).unwrap();
     std::fs::write(droppen_aggregator::key_path(&paths), b"{}").unwrap();
-    let cloud = crate::cloud::LinkFile::of(&paths).path();
+    let cloud = droppen_cloud::LinkFile::of(&paths).path();
     std::fs::write(&cloud, br#"{"owner":"alice"}"#).unwrap();
     let before = unenroll_instance(&paths).unwrap();
     assert_eq!(before.map(|st| st.machine).as_deref(), Some("m-1"));

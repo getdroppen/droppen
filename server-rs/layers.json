@@ -177,9 +177,7 @@
         {
           "name": "droppen-cloud",
           "about": "The Droppen-link routes, the remote-view gate and link control. The StreamSource the link copies sessions from is the entry's (stream_source), so cloud names no sessions code.",
-          "modules": [
-            "cloud"
-          ],
+          "modules": [],
           "mayUse": [
             "droppen-agent",
             "droppen-aggregator",
