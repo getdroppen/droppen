@@ -427,6 +427,14 @@ pub struct Spawned {
     _reaper: Reaper,
 }
 
+impl Spawned {
+    /// Kill its process group now, if its leader is still the server that
+    /// was started ([`kill_group_of`]).
+    pub fn kill(&self) {
+        kill_group_of(self.pid, self.token.as_deref());
+    }
+}
+
 impl Drop for Spawned {
     fn drop(&mut self) {
         kill_group_of(self.pid, self.token.as_deref());
@@ -440,7 +448,7 @@ impl Drop for Spawned {
 /// or with one that cannot be read for `pid` now, nothing is signalled: that
 /// `pid` is alive cannot tell the process that was started from one the
 /// system has given its pid to since.
-fn kill_group_of(pid: u32, token: Option<&str>) {
+pub fn kill_group_of(pid: u32, token: Option<&str>) {
     let Some(token) = token else {
         return;
     };
@@ -781,8 +789,11 @@ pub fn test_home(home: &Path) -> &Path {
             "{name} is set in this test process, so a server under test would use another install's files: unset it to run these tests"
         );
     }
+    let plain = home
+        .components()
+        .all(|part| matches!(part, std::path::Component::RootDir | std::path::Component::Normal(_)));
     assert!(
-        home.is_absolute() && home.starts_with(std::env::temp_dir()) && home != std::env::temp_dir(),
+        plain && home.is_absolute() && home.starts_with(std::env::temp_dir()) && home != std::env::temp_dir(),
         "{} is not a directory of this test's own under {}",
         home.display(),
         std::env::temp_dir().display()
@@ -817,48 +828,133 @@ pub fn kill_journal_runs(home: &Path, instance: &str) {
     }
 }
 
-/// Kill every process of the server binary whose command line names a path
-/// under `home`: the `session-shim`s (their stderr file lives under it), the
-/// `pty-shim`s (their socket does) and a server run from a copy installed
-/// there. A session shim's CLI reads end of file once it is gone, and a
-/// terminal's shell hangs up with its shim. Matched on `<home>/` at the start
-/// of an argument (or of an `--option=` value), so another test's processes,
-/// running at the same time, are never touched.
-pub fn kill_shims_serving(home: &Path) {
-    let home = test_home(home);
-    let Ok(output) = std::process::Command::new("/bin/ps").args(["-A", "-ww", "-o", "pid=,command="]).output() else {
-        return;
-    };
-    let under = format!("{}/", home.display());
-    for line in String::from_utf8_lossy(&output.stdout).lines() {
-        let line = line.trim_start();
-        let Some((pid, command)) = line.split_once(' ') else { continue };
-        let names_home = command
-            .split(' ')
-            .any(|arg| arg.starts_with(&under) || arg.split_once('=').is_some_and(|(_, value)| value.starts_with(&under)));
-        if !command.contains("remote-hand-server") || !names_home {
-            continue;
+/// One process of the server binary that serves a test's home, as
+/// [`server_processes_under`] found it.
+pub struct ServerProcess {
+    pub pid: u32,
+    /// When it started, as `ps` read it in the same listing as its pid, so it
+    /// is never signalled once its pid is another process's.
+    started: String,
+    /// Its arguments, its program first.
+    pub args: Vec<String>,
+}
+
+impl ServerProcess {
+    /// Whether `pid` is still this process: its start time, read again, is
+    /// the one listed with it.
+    fn is_still_running(&self) -> bool {
+        let Ok(output) = std::process::Command::new("/bin/ps")
+            .args(["-o", "lstart=", "-p", &self.pid.to_string()])
+            .env("LC_ALL", "C")
+            .output()
+        else {
+            return false;
+        };
+        same_start(&String::from_utf8_lossy(&output.stdout), &self.started)
+    }
+
+    /// Kill it, if it is still the process that was found.
+    pub fn kill(&self) {
+        if self.is_still_running() {
+            // SAFETY: a signal to a process this test's server started,
+            // checked to be the process that was listed.
+            unsafe { libc::kill(self.pid as libc::pid_t, libc::SIGKILL) };
         }
-        if let Ok(pid) = pid.parse::<libc::pid_t>() {
-            // SAFETY: a signal to a process this test's server started.
-            unsafe { libc::kill(pid, libc::SIGKILL) };
+    }
+
+    /// Kill its process group, if it is still the process that was found.
+    pub fn kill_group(&self) {
+        if self.is_still_running() {
+            // SAFETY: a signal to the group of a process this test's server
+            // started, checked to be the process that was listed.
+            unsafe { libc::kill(-(self.pid as libc::pid_t), libc::SIGKILL) };
         }
     }
 }
 
-/// Kills a process group when it goes out of scope.
+/// Whether two `lstart` readings name the same moment, their spacing aside.
+fn same_start(read: &str, listed: &str) -> bool {
+    let words = |text: &str| text.split_whitespace().map(str::to_owned).collect::<Vec<_>>();
+    !listed.is_empty() && words(read) == words(listed)
+}
+
+/// Every process of the server binary (its program's file name is
+/// `remote-hand-server`) whose command line names a path under `home`: the
+/// `session-shim`s (their stderr file lives under it), the `pty-shim`s (their
+/// socket does) and a server run from a copy installed there. Matched on
+/// `<home>/` at the start of an argument or of an `--option=` value, read
+/// with `ps -ww` together with each process's start time, so another test's
+/// processes, running at the same time, are never among them.
+pub fn server_processes_under(home: &Path) -> Vec<ServerProcess> {
+    let home = test_home(home);
+    // `lstart` in the C locale, where it is five words: in others (zh_CN, ja_JP)
+    // it is four, and the program's path would be read as part of it.
+    let Ok(output) = std::process::Command::new("/bin/ps")
+        .args(["-A", "-ww", "-o", "pid=,lstart=,command="])
+        .env("LC_ALL", "C")
+        .output()
+    else {
+        return Vec::new();
+    };
+    let under = format!("{}/", home.display());
+    let mut found = Vec::new();
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        // `lstart` is five words: weekday, month, day, time and year.
+        let mut words = line.split_whitespace();
+        let Some(pid) = words.next().and_then(|pid| pid.parse::<u32>().ok()) else { continue };
+        let started: Vec<&str> = words.by_ref().take(5).collect();
+        let args: Vec<String> = words.map(str::to_owned).collect();
+        if started.len() < 5 {
+            continue;
+        }
+        let program = args.first().and_then(|program| Path::new(program).file_name());
+        let names_home = args
+            .iter()
+            .any(|arg| arg.starts_with(&under) || arg.split_once('=').is_some_and(|(_, value)| value.starts_with(&under)));
+        if program != Some(std::ffi::OsStr::new("remote-hand-server")) || !names_home {
+            continue;
+        }
+        found.push(ServerProcess { pid, started: started.join(" "), args });
+    }
+    found
+}
+
+/// Kill every process of the server binary serving `home`
+/// ([`server_processes_under`]), each if it is still the process that was
+/// found: a session shim's CLI reads end of file once its shim is gone, and a
+/// terminal's shell hangs up with its shim.
+pub fn kill_shims_serving(home: &Path) {
+    for process in server_processes_under(home) {
+        process.kill();
+    }
+}
+
+/// Kills a process group when it goes out of scope, if its leader is still
+/// the process its start token was taken from ([`kill_group_of`]).
 ///
 /// Both the server and the CLI it spawns lead groups of their own — the server
 /// because [`spawn_server`] says so, the CLI because that is what lets it
 /// outlive the server — so a group signal is what reaches every child they
 /// forked.
-pub struct KillGroupOnDrop(pub u32);
+pub struct KillGroupOnDrop {
+    pid: u32,
+    token: Option<String>,
+}
+
+impl KillGroupOnDrop {
+    /// The group a run's CLI leads: its `cli_pid` and `pid_token`, as the run
+    /// journal records them.
+    pub fn run(record: &Value) -> KillGroupOnDrop {
+        KillGroupOnDrop {
+            pid: record["cli_pid"].as_u64().and_then(|pid| u32::try_from(pid).ok()).expect("cli_pid"),
+            token: record["pid_token"].as_str().map(str::to_owned),
+        }
+    }
+}
 
 impl Drop for KillGroupOnDrop {
     fn drop(&mut self) {
-        // SAFETY: a negative pid names a process group; killing one that has
-        // already gone is an ignored `ESRCH`.
-        unsafe { libc::kill(-(self.0 as libc::pid_t), libc::SIGKILL) };
+        kill_group_of(self.pid, self.token.as_deref());
     }
 }
 

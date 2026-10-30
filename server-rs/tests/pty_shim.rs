@@ -474,11 +474,11 @@ async fn a_socket_whose_shim_was_killed_is_swept_rather_than_adopted() {
 
     // `SIGKILL` gives the shim no chance to write a tombstone or unlink its
     // socket: the socket file is left behind with nothing listening on it.
-    let shim_pid = shim_pid_for(&shims, &info.id);
-    unsafe { libc::kill(shim_pid as libc::pid_t, libc::SIGKILL) };
+    let shim = shim_for(home.path(), &shims, &info.id);
+    shim.kill();
     droppen_pty::child::kill_shell(shell_pid, libc::SIGKILL);
     let sidecars = Sidecars::new(&shims, &info.id);
-    common::wait_for("the shim to die", Duration::from_secs(10), || !alive(shim_pid)).await;
+    common::wait_for("the shim to die", Duration::from_secs(10), || !alive(shim.pid)).await;
     assert!(sidecars.socket().exists(), "the point of this test is the socket that was left behind");
     assert!(!sidecars.tombstoned(), "and that there is no tombstone to explain it");
 
@@ -733,7 +733,7 @@ async fn a_shim_survives_its_server_being_sigkilled_and_is_adopted_by_the_next_o
     let shell_pid = peek_shell_pid(&shims, &id).await;
 
     // The whole process group, so nothing survives by being merely a child.
-    unsafe { libc::kill(-(first.pid as libc::pid_t), libc::SIGKILL) };
+    first.kill();
     common::wait_for("the server to die", Duration::from_secs(10), || !alive(first.pid)).await;
     assert!(
         alive(shell_pid),
@@ -757,10 +757,10 @@ async fn a_shim_survives_its_server_being_sigkilled_and_is_adopted_by_the_next_o
 
     // Found before anything is killed: a shim whose shell is gone announces the
     // exit and leaves on its own, so a lookup after the shell's death can miss it.
-    let shim_pid = shim_pid_for(&shims, &id);
-    unsafe { libc::kill(-(second.pid as libc::pid_t), libc::SIGKILL) };
+    let shim = shim_for(home.path(), &shims, &id);
+    second.kill();
     droppen_pty::child::kill_shell(shell_pid, libc::SIGKILL);
-    unsafe { libc::kill(shim_pid as libc::pid_t, libc::SIGKILL) };
+    shim.kill();
     common::wait_for("the shell to be cleaned up", Duration::from_secs(10), || !alive(shell_pid)).await;
     // Nothing here was given the chance to tidy up after itself, which is the
     // point; the socket is outside the tempdir, so the test removes it.
@@ -771,22 +771,17 @@ async fn a_shim_survives_its_server_being_sigkilled_and_is_adopted_by_the_next_o
     }
 }
 
-/// The pid of the shim minding `id`, read from the process table.
+/// The shim minding `id`, read from the process table: the server binary's
+/// `pty-shim` under `home` whose socket is that terminal's
+/// ([`common::server_processes_under`]).
 ///
 /// The server does not publish it — nothing needs it in production, where a shim
 /// is reached through its socket — but a test that has to prove a process died
 /// needs something to point at.
-fn shim_pid_for(shims: &Path, id: &str) -> u32 {
-    let socket = Sidecars::new(shims, id).socket();
-    let needle = socket.to_string_lossy().into_owned();
-    let output = std::process::Command::new("/bin/ps").args(["-Ao", "pid=,command="]).output().expect("ps");
-    let text = String::from_utf8_lossy(&output.stdout);
-    for line in text.lines() {
-        if line.contains(&needle) && line.contains("pty-shim") {
-            if let Some(pid) = line.split_whitespace().next().and_then(|pid| pid.parse().ok()) {
-                return pid;
-            }
-        }
-    }
-    panic!("no pty-shim process is serving {needle}");
+fn shim_for(home: &Path, shims: &Path, id: &str) -> common::ServerProcess {
+    let socket = Sidecars::new(shims, id).socket().to_string_lossy().into_owned();
+    common::server_processes_under(home)
+        .into_iter()
+        .find(|process| process.args.get(1).map(String::as_str) == Some("pty-shim") && process.args.contains(&socket))
+        .unwrap_or_else(|| panic!("no pty-shim process is serving {socket}"))
 }
