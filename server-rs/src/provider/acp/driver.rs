@@ -16,7 +16,7 @@ use super::client::Client;
 use super::conn::{Conn, Event};
 use crate::provider::acp::protocol::{category, option_for, ConfigOption, SessionUpdate};
 use crate::provider::acp::agents::AcpAgent;
-use crate::provider::{InjectError, Phase, QueueOutcome, ResidentState, Sent};
+use droppen_provider::{InjectError, Phase, QueueOutcome, ResidentState, Sent};
 use crate::provider::acp::sessions::{Record, Translator};
 use droppen_sessions::{Injection, InjectionRunState, Source};
 use droppen_base::time::iso8601;

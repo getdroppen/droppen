@@ -50,7 +50,7 @@ use std::time::{Duration, Instant, SystemTime};
 use tokio::time::MissedTickBehavior;
 
 use super::{cron, ScheduleState, ScheduledTask, TaskStatus};
-use crate::provider::SendOptions;
+use droppen_provider::SendOptions;
 use droppen_notify::notify::{self, Level, Nudge};
 use droppen_http::openapi_ext::Nullable;
 use droppen_instance::paths::Paths;
@@ -319,7 +319,7 @@ async fn fire(state: &ScheduleState, task: ScheduledTask) {
 /// has never run, or the process it started has since exited.
 ///
 /// The question is the same for every CLI and each answers it from where it
-/// keeps its runs ([`crate::provider::Run::schedule_busy`]), because they run
+/// keeps its runs ([`droppen_provider::Run::schedule_busy`]), because they run
 /// differently rather than because one is half-supported.
 fn still_busy(state: &ScheduleState, task: &ScheduledTask) -> Option<&'static str> {
     let previous = task.last_session_id.as_ref()?;

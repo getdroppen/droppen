@@ -59,8 +59,8 @@ use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use super::common::{new_uuid, session_workdir, QueueOutcome, ResidentState};
-use super::{AccountChoice, Capabilities, DriverStatesBuilder, InjectError, InjectionRegistry, Provider, ProviderRuns, Run, RunHost, SendOptions, SendTo, Sent, SpawnGate, SpawnPermit, StartAt, WrittenAt};
+use droppen_provider::common::{new_uuid, session_workdir, QueueOutcome, ResidentState};
+use droppen_provider::{AccountChoice, Capabilities, DriverStatesBuilder, InjectError, InjectionRegistry, Provider, ProviderRuns, Run, RunHost, SendOptions, SendTo, Sent, SpawnGate, SpawnPermit, StartAt, WrittenAt};
 use futures_util::future::BoxFuture;
 use crate::provider::acp::protocol::{category, option_for, ConfigOption, InitializeResponse};
 use crate::provider::acp::agents::{AcpAgent, AcpAgentRegistry, AcpCheck, AcpCheckState};
@@ -329,7 +329,7 @@ pub(crate) struct AcpRuns {
     /// What they run on.
     host: Arc<RunHost>,
     /// The agent process behind each ACP session, keyed
-    /// [`super::RunHost::key_of`].
+    /// [`droppen_provider::RunHost::key_of`].
     acp_servers: Mutex<HashMap<String, Handle>>,
     /// What each ACP agent last said it offers, by agent id: its model list
     /// and effort ladder, for the composer; see [`AcpRuns::acp_options`].
@@ -371,16 +371,16 @@ impl ProviderRuns for AcpRuns {
         "the ACP agent"
     }
 
-    fn readable(&self, _record: &super::runs::RunRecord) -> bool {
+    fn readable(&self, _record: &droppen_provider::runs::RunRecord) -> bool {
         true
     }
 
     // No ACP run names a shim: an agent is not started behind one.
-    fn attach(self: Arc<Self>, record: super::runs::RunRecord, _sidecars: super::shim::Sidecars, _link: super::shim::Link, _lease: super::gate::SessionLease) {
+    fn attach(self: Arc<Self>, record: droppen_provider::runs::RunRecord, _sidecars: droppen_provider::shim::Sidecars, _link: droppen_provider::shim::Link, _lease: droppen_provider::gate::SessionLease) {
         tracing::warn!(session = %record.session_id, "an ACP run names a shim; it is let go");
     }
 
-    fn was_cut_short<'a>(&'a self, _record: &'a super::runs::RunRecord) -> BoxFuture<'a, bool> {
+    fn was_cut_short<'a>(&'a self, _record: &'a droppen_provider::runs::RunRecord) -> BoxFuture<'a, bool> {
         Box::pin(std::future::ready(false))
     }
 
@@ -410,11 +410,11 @@ impl Provider for Acp {
     }
 
     // An agent runs on its own configuration and takes no account.
-    fn continue_on_account<'a>(&'a self, _id: &'a str, _new_id: &'a str) -> BoxFuture<'a, Result<std::path::PathBuf, crate::provider::ContinueError>> {
-        Box::pin(std::future::ready(Err(crate::provider::ContinueError::Unsupported)))
+    fn continue_on_account<'a>(&'a self, _id: &'a str, _new_id: &'a str) -> BoxFuture<'a, Result<std::path::PathBuf, droppen_provider::ContinueError>> {
+        Box::pin(std::future::ready(Err(droppen_provider::ContinueError::Unsupported)))
     }
 
-    fn models(&self) -> &dyn crate::models::Models {
+    fn models(&self) -> &dyn droppen_provider::models::Models {
         &self.models
     }
 
@@ -579,13 +579,13 @@ impl AcpRuns {
 
     /// Whether an id an agent gave — a model, an effort — can be shown and
     /// sent back as it is: no longer than a name, and nothing in it that
-    /// [`super::RunHost::redact`] would take out. The agent's own variables'
+    /// [`droppen_provider::RunHost::redact`] would take out. The agent's own variables'
     /// values are not looked for: they are often what names its model.
     pub(crate) fn acp_id_shown(&self, id: &str) -> bool {
         id.chars().count() <= crate::provider::acp::agents::MAX_AGENT_WORD && self.host.redact(id) == id
     }
 
-    /// What `agent` said, fit to be stored and shown: [`super::RunHost::redact`],
+    /// What `agent` said, fit to be stored and shown: [`droppen_provider::RunHost::redact`],
     /// after its own variables' values are taken out — they are what an API
     /// key looks like — and then cut to a few KB, as a session's error, its
     /// transcript and a push notification carry it.
@@ -1354,9 +1354,9 @@ mod tests {
             Arc::new(droppen_accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins())),
             crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone()),
         );
-        let alerts = Arc::new(crate::provider::testing::TurnAlerts::default());
+        let alerts = Arc::new(droppen_provider::testing::TurnAlerts::default());
         registry.host.attach_alerts(alerts.clone());
-        let providers = crate::provider::ProviderRegistry::new(registry, crate::app::register_providers);
+        let providers = droppen_provider::ProviderRegistry::new(registry, crate::app::register_providers);
         configure_fake(&paths, home.path(), "fake", "");
         let dir = workdirs(home.path(), &["work"]).remove(0);
         let runs = providers.provider::<Acp>().expect("the ACP provider").runs().clone();
@@ -1505,9 +1505,9 @@ mod tests {
         assert!(!scratch.exists(), "{} is left behind", scratch.display());
         gone(helper).await;
     }
-    /// A step of a spawn, as [`crate::provider::testing::Step`] records it.
-    fn step(what: &'static str, gate: bool, claim: Option<bool>) -> crate::provider::testing::Step {
-        crate::provider::testing::Step { what, gate, claim }
+    /// A step of a spawn, as [`droppen_provider::testing::Step`] records it.
+    fn step(what: &'static str, gate: bool, claim: Option<bool>) -> droppen_provider::testing::Step {
+        droppen_provider::testing::Step { what, gate, claim }
     }
 
     /// An ACP start holds the spawn gate only to put the session's placeholder

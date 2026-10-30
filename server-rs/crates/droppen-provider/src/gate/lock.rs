@@ -1,6 +1,6 @@
 //! One CLI per session, across every server on the machine.
 //!
-//! The in-process map in [`crate::provider::InjectionRegistry`] has always refused a
+//! The in-process map in [`crate::InjectionRegistry`] has always refused a
 //! second send while one is running. It can only speak for its own process,
 //! and there are two ordinary ways to have more than one:
 //!

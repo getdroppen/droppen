@@ -12,7 +12,7 @@
 //! `codex app-server` answers `account/rateLimits/read` with the account's
 //! live windows, which is the only reading on this machine that is *current* by
 //! construction. So that is the primary path, and [`CodexQuotaSource`] goes on
-//! the wire beside it the way [`crate::models::ModelListSource`] does, because
+//! the wire beside it the way [`droppen_provider::models::ModelListSource`] does, because
 //! the log scrape is still the fallback and a guess shown as a fact is the bug
 //! this module exists to prevent.
 //!

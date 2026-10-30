@@ -1,0 +1,58 @@
+[package]
+name = "droppen-provider"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+publish = false
+description = "The Droppen server's provider base: the Provider and Run ports, the provider registry, the spawn gate, the run journal and host, the session shim, and the model list's port and route"
+
+# What every CLI's provider stands on, and names no CLI: a provider is
+# registered by the entry, lent the spawn gate for a call, and runs on the host
+# every provider's runs share. The providers themselves are crates of their own
+# (or, until they move, the server's `provider` shell).
+[dependencies]
+droppen-accounts = { path = "../droppen-accounts" }
+droppen-base = { path = "../droppen-base" }
+droppen-http = { path = "../droppen-http" }
+droppen-instance = { path = "../droppen-instance" }
+droppen-pty = { path = "../droppen-pty" }
+droppen-sessions = { path = "../droppen-sessions" }
+# The session shim's own command line (`shim::Args`).
+clap = { version = "4.5", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
+futures-util = "0.3"
+gotcha = { version = "0.4.1", features = ["openapi"] }
+# What gotcha's `Schematic` derive expands to names it.
+gotcha_core = "0.4.1"
+libc = "0.2"
+regex = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { workspace = true }
+thiserror = "1"
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt", "sync", "time"] }
+tracing = "0.1"
+uuid = { version = "1", features = ["v4"] }
+
+# `testing`: the steps of a spawn, the turn alerts, a host timed by the test,
+# an injection registry on the accounts' stand-in logins, a spawn decoration
+# that adds nothing, the session shim run as a test binary's own test (on a
+# runtime of its own), and the gate's, the run journal's and the shim's own
+# probes. Only the server's [dev-dependencies] turn it on.
+[features]
+test-support = ["droppen-accounts/test-support", "tokio/rt-multi-thread"]
+
+[dev-dependencies]
+droppen-accounts = { path = "../droppen-accounts", features = ["test-support"] }
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "test-util"] }
+
+[lints.rust]
+missing_docs = "deny"
+unreachable_pub = "deny"
+
+# `[lints] workspace = true` cannot be mixed with the rust lints above, so the
+# workspace's two clippy denials (`server-rs/Cargo.toml` `[workspace.lints]`)
+# are repeated here: keep them in step.
+[lints.clippy]
+significant_drop_in_scrutinee = "deny"
+await_holding_lock = "deny"

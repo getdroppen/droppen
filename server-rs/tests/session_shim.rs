@@ -13,8 +13,8 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use remote_hand_server::provider::shim::{self, LinkError, Output, Sidecars, Spawn};
-use remote_hand_server::provider::SpawnPermit;
+use droppen_provider::shim::{self, LinkError, Output, Sidecars, Spawn};
+use droppen_provider::SpawnPermit;
 
 mod common;
 

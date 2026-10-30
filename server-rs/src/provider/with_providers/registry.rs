@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use droppen_sessions::{SessionSummary, Source};
 
-use crate::provider::*;
+use droppen_provider::*;
 use crate::provider::acp::agents::{AcpAgentRegistry, AcpAgentUpdate};
 use droppen_instance::instance::InstanceDirs;
 use droppen_instance::paths::Paths;
@@ -142,11 +142,11 @@ async fn only_claude_code_continues_a_session_on_an_account() {
 
     for source in [Source::Codex, Source::Acp] {
         let refused = providers.continue_on_account(source, STUCK, NEW).await;
-        assert!(matches!(refused, Err(crate::provider::ContinueError::Unsupported)), "{source}: {refused:?}");
+        assert!(matches!(refused, Err(droppen_provider::ContinueError::Unsupported)), "{source}: {refused:?}");
     }
     let other = tempfile::tempdir().expect("tempdir");
     let none = providers_from(other.path(), |_, _| {});
-    assert!(matches!(none.continue_on_account(Source::Claude, STUCK, NEW).await, Err(crate::provider::ContinueError::Unsupported)));
+    assert!(matches!(none.continue_on_account(Source::Claude, STUCK, NEW).await, Err(droppen_provider::ContinueError::Unsupported)));
 
     let copy = providers.continue_on_account(Source::Claude, STUCK, NEW).await.expect("Claude Code continues it");
     assert_eq!(copy, crate::provider::claude_code::claude_roots::ClaudeRoots::of(&paths).managed_projects().join("-w").join(format!("{NEW}.jsonl")));
@@ -207,7 +207,7 @@ fn a_chat_refuses_the_attachments_its_cli_cannot_read() {
 async fn an_acp_model_list_names_its_agent_by_an_id_that_can_be_a_directory_name() {
     let home = tempfile::tempdir().expect("tempdir");
     let providers = providers(home.path());
-    let query = |source, agent: Option<&str>| crate::models::ModelsQuery {
+    let query = |source, agent: Option<&str>| droppen_provider::models::ModelsQuery {
         source,
         account_id: None,
         acp_agent: agent.map(str::to_owned),
@@ -223,7 +223,7 @@ async fn an_acp_model_list_names_its_agent_by_an_id_that_can_be_a_directory_name
     }
     let unconfigured = acp.list(&query(Source::Acp, Some("other"))).await.expect("a list");
     assert!(unconfigured.models.is_empty() && unconfigured.hidden.is_none());
-    assert_eq!(unconfigured.source, crate::models::ModelListSource::Fallback, "an agent that is not configured has no list");
+    assert_eq!(unconfigured.source, droppen_provider::models::ModelListSource::Fallback, "an agent that is not configured has no list");
     let codex = providers.models(Source::Codex).expect("the Codex provider");
     assert!(codex.list(&query(Source::Codex, Some("../fake"))).await.is_ok(), "only an ACP list reads acpAgent");
 
@@ -236,7 +236,7 @@ async fn an_acp_model_list_names_its_agent_by_an_id_that_can_be_a_directory_name
 /// for a source no provider runs.
 #[test]
 fn each_cli_spells_its_model_ids_its_own_way() {
-    use crate::models::ModelRule;
+    use droppen_provider::models::ModelRule;
     let home = tempfile::tempdir().expect("tempdir");
     let providers = providers(home.path());
     assert_eq!(providers.model_rule(Source::Claude), ModelRule::NAMED);

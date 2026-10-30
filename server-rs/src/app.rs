@@ -23,7 +23,7 @@ use crate::api::AppState;
 use droppen_http::config::AppConfig;
 use crate::feed::global::GlobalFeed;
 use crate::feed::FeedRegistry;
-use crate::provider::{InjectionRegistry, ProviderRegistry};
+use droppen_provider::{InjectionRegistry, ProviderRegistry};
 use droppen_instance::instance::{InstanceDirs, InstanceLock};
 use droppen_instance::paths::Paths;
 use droppen_sessions::account::{RotationOutcome, RotationTrigger};
@@ -678,13 +678,13 @@ pub fn logins() -> Logins {
 
 /// The drivers' alerts, sent by [`droppen_notify::push`]: Web Push to every subscribed
 /// browser, and the Bark endpoint too for a question or a rotation. Each push
-/// function spawns its sending and returns, as [`crate::provider::Alerts`] asks.
+/// function spawns its sending and returns, as [`droppen_provider::Alerts`] asks.
 struct PushAlerts {
     /// What the alerts read the session's row through.
     transcripts: TranscriptSources,
 }
 
-impl crate::provider::Alerts for PushAlerts {
+impl droppen_provider::Alerts for PushAlerts {
     fn turn(&self, paths: Arc<Paths>, source: Source, id: String, outcome: InjectionRunState, error: Option<String>, driver: DriverStates) {
         droppen_notify::push::notify_turn(paths, self.transcripts.clone(), source, id, outcome, error, driver);
     }
@@ -764,7 +764,7 @@ impl crate::stream_source::LiveSessions for crate::drive::Drive {
 }
 
 /// A claude session's draft, as its driver publishes it.
-struct DraftWatch(tokio::sync::watch::Receiver<crate::provider::drafts::Draft>);
+struct DraftWatch(tokio::sync::watch::Receiver<droppen_provider::drafts::Draft>);
 
 impl droppen_agent::streams::source::DraftFeed for DraftWatch {
     fn changed(&mut self) -> futures_util::future::BoxFuture<'_, bool> {
@@ -857,7 +857,7 @@ mod tests {
     /// nor scheduled tasks.
     #[test]
     fn every_provider_says_what_its_sessions_are_offered_for() {
-        use crate::provider::Capabilities;
+        use droppen_provider::Capabilities;
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Arc::new(Paths::new(home.path().to_path_buf()));
         let dirs = InstanceDirs::new(&paths.data_dir(), "capabilities-test").expect("valid name");

@@ -59,7 +59,7 @@
 //!
 //! A claude session also has a *draft*: the count of the thinking block its
 //! resident is generating, which the transcript cannot say (see
-//! [`crate::provider::drafts`]). It goes out as `{"type":"draft","turn","v","blocks"}`,
+//! [`droppen_provider::drafts`]). It goes out as `{"type":"draft","turn","v","blocks"}`,
 //! throttled to one frame per [`DRAFT_THROTTLE`], and is a separate thing in
 //! every way that matters to the rest of this module: no index, no `sig`, no
 //! fingerprint, nothing a resume or a delta is cut against. A client that does
@@ -79,7 +79,7 @@ use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 
 use crate::drive::Drive;
-use crate::provider::drafts::Draft;
+use droppen_provider::drafts::Draft;
 use droppen_instance::paths::{ClaudeRoot, Paths};
 use droppen_sessions::account::AccountRef;
 use droppen_sessions::loader::{encode_fp, Fp, Transcript, RESUME_OVERLAP};
@@ -258,7 +258,7 @@ pub struct SessionState {
     /// A remote-hand-injected run, when one exists.
     ///
     /// This is the seam onto `crate::provider`: the feed reads it through the
-    /// [`crate::provider::InjectionRegistry`] handle inside [`Drive`] and knows
+    /// [`droppen_provider::InjectionRegistry`] handle inside [`Drive`] and knows
     /// nothing else about the injection subsystem.
     pub injection: Option<Injection>,
     /// Whether the composer may send.
@@ -287,12 +287,12 @@ pub struct SessionState {
     /// for the next poll.
     pub rotation: Option<droppen_sessions::account::SessionRotation>,
     /// The receipts of the messages clients named for this session, from the
-    /// last two hours; see [`crate::provider::receipts`]. Always present, like
+    /// last two hours; see [`droppen_provider::receipts`]. Always present, like
     /// `rotation`, so an absent field means a server too old to send it.
     pub receipts: Vec<droppen_sessions::delivery::MessageReceipt>,
     /// The questions the agent stopped to ask, oldest first: the one it is
     /// blocked on (`pending`), and the recent ones with what became of them —
-    /// who answered, and when. See [`crate::provider::questions`]. Always
+    /// who answered, and when. See [`droppen_provider::questions`]. Always
     /// present; empty for codex, which never asks.
     pub questions: Vec<droppen_sessions::delivery::SessionQuestion>,
 }
@@ -357,9 +357,9 @@ pub async fn load_session_state(drive: &Arc<Drive>, source: Source, id: &str) ->
         Source::Claude => drive.accounts.rotation_log().latest(id),
         Source::Codex | Source::Acp => None,
     };
-    let receipts = drive.injections.host.receipts().for_session(source, id, crate::provider::receipts::now_ms());
+    let receipts = drive.injections.host.receipts().for_session(source, id, droppen_provider::receipts::now_ms());
     let questions = if drive.providers.capabilities(source).questions {
-        drive.injections.host.questions().for_session(id, crate::provider::questions::now_ms())
+        drive.injections.host.questions().for_session(id, droppen_provider::questions::now_ms())
     } else {
         Vec::new()
     };
@@ -535,8 +535,8 @@ impl FeedRegistry {
 }
 
 /// The drivers wake a session's open views through this
-/// ([`crate::provider::SessionFeeds`]): the same call, at the same moment.
-impl crate::provider::SessionFeeds for FeedRegistry {
+/// ([`droppen_provider::SessionFeeds`]): the same call, at the same moment.
+impl droppen_provider::SessionFeeds for FeedRegistry {
     fn poke(&self, key: &str) {
         FeedRegistry::poke(self, key);
     }
@@ -1531,7 +1531,7 @@ mod tests {
         let (tx, mut attachment) = lapped_attachment(&latest, &held);
 
         let mut draft = Draft::default();
-        crate::provider::drafts::apply(&mut draft, &thinking(42));
+        droppen_provider::drafts::apply(&mut draft, &thinking(42));
         let frame = draft_frame(&draft);
         tx.send(Broadcast::Draft(Arc::from(frame.as_str()))).expect("send");
         let got: Value = serde_json::from_str(&attachment.next_frame().await.expect("a frame")).expect("json");

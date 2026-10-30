@@ -373,7 +373,7 @@ export const TERMS: Record<string, Term> = {
       "草稿用的標籤：一輪對話的即時進展（目前是思考進行到哪了），只發給線上的讀者、從不儲存，由可執行 AI 的裝置簽章。",
       "下書き用のラベル：ターンのその場の進み具合（いまは思考がどこまで進んだか）。その場で読んでいる相手にだけ送り、保存はせず、AI を実行できるデバイスが署名する。",
     ],
-    src: "server-rs/src/provider/drafts.rs:1-30",
+    src: "server-rs/crates/droppen-provider/src/drafts.rs:1-30",
   },
   "label.hub-login": {
     kind: "label",

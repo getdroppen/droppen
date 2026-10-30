@@ -74,7 +74,7 @@ pub const DISMISSED: &str = "The user chose not to answer this question. Use you
 
 /// What an agent is told when a question it asked was answered by a message
 /// sent after its process had already gone, and the process turns out to be
-/// still waiting on it after all — see [`crate::provider`]'s replay.
+/// still waiting on it after all — see [`crate`]'s replay.
 pub const ANSWERED_ELSEWHERE: &str = "The user answered this question in a separate message; read it and carry on.";
 
 /// What the user chose, as it is kept and as it is written to the CLI.

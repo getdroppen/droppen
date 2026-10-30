@@ -58,7 +58,7 @@ pub enum Command {
     PtyShim(droppen_pty::child::PtyShimArgs),
     /// Resident pipe owned by an AI session (started by the server).
     #[command(hide = true)]
-    SessionShim(crate::provider::shim::SessionShimArgs),
+    SessionShim(droppen_provider::shim::SessionShimArgs),
 }
 
 /// Arguments a command takes and ignores.
@@ -531,7 +531,7 @@ pub(crate) mod tests {
     /// `provider::shim::spawn_via_shim`): flags, `--`, then the command whole.
     #[test]
     fn the_shim_spawns_are_pinned() {
-        use crate::provider::shim::SessionShimArgs;
+        use droppen_provider::shim::SessionShimArgs;
         use droppen_pty::child::PtyShimArgs;
         let pty = |cols: Option<&str>, rows: Option<&str>, command: &[&str]| {
             Command::PtyShim(PtyShimArgs {

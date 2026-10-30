@@ -9,13 +9,13 @@ mod registry;
 
 /// Where this binary's session shim is: a provider's tests that start a CLI
 /// behind a shim run it as this module's `session_shim`
-/// ([`crate::provider::testing::shims_run_as`]).
+/// ([`droppen_provider::testing::shims_run_as`]).
 pub(crate) const SHIMS: &str = module_path!();
 
 /// Not a test: this binary's session shim
-/// ([`crate::provider::testing::session_shim`]).
+/// ([`droppen_provider::testing::session_shim`]).
 #[test]
 #[ignore = "the session shim a provider test's respawn runs, not a test"]
 fn session_shim() {
-    crate::provider::testing::session_shim();
+    droppen_provider::testing::session_shim();
 }

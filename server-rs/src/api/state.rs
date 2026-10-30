@@ -16,7 +16,7 @@ use crate::provider::claude_code::usage_login::UsageLoginState;
 use droppen_accounts::AccountsState;
 use crate::provider::acp::agents::AcpAgentState;
 use droppen_http::app_window::{AppWindow, ListenPort};
-use crate::models::ModelsState;
+use droppen_provider::models::ModelsState;
 use droppen_workbench::apps::AppsState;
 use droppen_sessions::attention::routes::AttentionState;
 use droppen_auth::AuthState;

@@ -10,7 +10,7 @@ use droppen_instance::paths::Paths;
 use droppen_sessions::{InjectionRunState, Source};
 
 use crate::provider::codex;
-use crate::provider::*;
+use droppen_provider::*;
 
 /// Stop must never signal a pid that has stopped being the run it named.
 ///
@@ -59,7 +59,7 @@ async fn stop_never_signals_a_pid_that_is_no_longer_the_run_it_named() {
     let providers = ProviderRegistry::new(registry.clone(), crate::app::register_providers);
     for (source, session) in [(Source::Claude, CLAUDE), (Source::Codex, CODEX)] {
         let claim = providers.gate().lease(source, session).expect("a free session must be claimable");
-        crate::provider::testing::watch_adopted(&registry, 
+        droppen_provider::testing::watch_adopted(&registry, 
             providers.runs()[&source].clone(),
             runs::RunRecord {
                 run_id: format!("run-{session}"),
@@ -165,7 +165,7 @@ async fn stop_on_a_codex_session_whose_app_server_is_gone_reaches_no_run() {
     assert!(handle.visible() && !handle.alive(), "listed, with no process behind it");
 
     let claim = providers.gate().lease(Source::Codex, SESSION).expect("a free session must be claimable");
-    crate::provider::testing::watch_adopted(&registry, providers.runs()[&Source::Codex].clone(), adopted, claim);
+    droppen_provider::testing::watch_adopted(&registry, providers.runs()[&Source::Codex].clone(), adopted, claim);
 
     assert!(!providers.interrupt(Source::Codex, SESSION), "nothing is left to stop");
     tokio::time::sleep(Duration::from_millis(300)).await;

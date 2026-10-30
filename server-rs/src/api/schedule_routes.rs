@@ -20,7 +20,7 @@ fn paths() -> (tempfile::TempDir, Paths) {
 
 /// The routes' state over a fresh instance, with the providers `register`
 /// adds, and a working directory in its home.
-fn state_with(register: fn(&mut crate::provider::ProviderRegistry, &Arc<crate::provider::InjectionRegistry>)) -> (tempfile::TempDir, ScheduleState, String) {
+fn state_with(register: fn(&mut droppen_provider::ProviderRegistry, &Arc<droppen_provider::InjectionRegistry>)) -> (tempfile::TempDir, ScheduleState, String) {
     let (dir, paths) = paths();
     let paths = Arc::new(paths);
     let cwd = dir.path().join("w");

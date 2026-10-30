@@ -3,7 +3,7 @@
 //! A resident `claude` or a `codex exec` run is spawned with
 //! `kill_on_drop(false)` and is not on the shutdown list, precisely so that a
 //! restart does not throw away a turn the user asked for (see
-//! [`crate::shutdown::Cleanups`]). That has always been true; what was missing
+//! `shutdown::Cleanups`). That has always been true; what was missing
 //! is any way for the *next* server to know the process is there. In-memory
 //! injection state died with the process, so the composer unblocked, a second
 //! send spawned a second CLI against the same session, and two agents wrote to
@@ -133,10 +133,10 @@ impl RunRecord {
 // account's OAuth token, and this journal is an unencrypted table in the
 // instance directory. The consequence is stated where it bites — a re-attached
 // resident cannot be respawned until a message brings a recipe with it; see
-// [`super::claude_code::resident::Driver`].
+// `claude_code::resident::Driver`.
 //
 // The account a managed run uses is likewise not recorded. It is already
-// stored, authoritatively, as the session's binding in `crate::accounts`, and
+// stored, authoritatively, as the session's binding in `accounts`, and
 // adoption never rebuilds an environment — the process it adopts was spawned
 // with one long ago. A second copy could only go stale.
 
@@ -150,7 +150,7 @@ impl RunRecord {
 /// deleted. Leaving it where it is costs nothing: it is inert history.
 ///
 /// The release that added the table also wrote every commit back out as
-/// `runs.json`, because [`droppen_supervisor::supervisor`] demotes to the `.prev` binary
+/// `runs.json`, because `droppen_supervisor::supervisor` demotes to the `.prev` binary
 /// after three fast failures without asking anyone, and the `.prev` of that day
 /// had never heard of the database. A rollback that found no file would have
 /// adopted nothing: every resident orphaned, its queued messages lost, the

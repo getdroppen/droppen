@@ -1,6 +1,6 @@
 //! The run journal, as Claude Code's and Codex's rows are written in it.
 
-use crate::provider::runs::*;
+use droppen_provider::runs::*;
 use droppen_sessions::Source;
 use serde::Serialize;
 use crate::provider::codex::app_server::CodexRun;

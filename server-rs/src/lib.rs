@@ -48,7 +48,7 @@
 //! * [`setup`] — the first-run guide's server half: which AI tools this
 //!   device has, and the `PATH` that finds them;
 //! * [`droppen_workbench::prefs`] / [`droppen_workbench::screens`] — the sidecar stores;
-//! * [`stats`] / [`models`] — token accounting and the model list;
+//! * [`stats`] / [`droppen_provider::models`] — token accounting and the model list;
 //! * [`droppen_http::origin`] — the guard every `/api/*` request passes through.
 //!
 //! # Shared contract plumbing
@@ -82,7 +82,6 @@ pub mod drive;
 pub mod export;
 pub mod feed;
 pub mod provider;
-pub mod models;
 pub mod schedule;
 pub mod sessions;
 pub mod shutdown;

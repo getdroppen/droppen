@@ -443,7 +443,7 @@ fn response_overrides() -> ExtraResponses {
     crate::feed::global::describe(&mut reg);
     droppen_files::describe(&mut reg);
     droppen_files::media::describe(&mut reg);
-    crate::models::describe(&mut reg);
+    droppen_provider::models::describe(&mut reg);
     droppen_notify::notify::describe(&mut reg);
     droppen_plugins::routes::describe(&mut reg);
     droppen_workbench::prefs::describe(&mut reg);
@@ -479,7 +479,7 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
     let router = crate::feed::global::EventsState::routes(router);
     let router = droppen_files::FilesState::routes(router);
     let router = droppen_files::media::routes(router);
-    let router = crate::models::ModelsState::routes(router);
+    let router = droppen_provider::models::ModelsState::routes(router);
     let router = droppen_notify::notify::NotifyState::routes(router);
     let router = droppen_plugins::routes::PluginsState::routes(router);
     let router = droppen_workbench::prefs::PrefsState::routes(router);

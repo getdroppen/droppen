@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use futures_util::future::BoxFuture;
 
-use crate::models::{ModelInfo, ModelList, ModelListSource, ModelRule, Models, ModelsQuery};
+use droppen_provider::models::{ModelInfo, ModelList, ModelListSource, ModelRule, Models, ModelsQuery};
 use crate::provider::acp::AcpRuns;
 use droppen_http::openapi_ext::Nullable;
 use droppen_instance::paths::Paths;

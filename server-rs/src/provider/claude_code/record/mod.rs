@@ -95,7 +95,7 @@ const DETAIL_CAP: usize = 4_000;
 /// How much *replayed* stdout one attach may add to a recording.
 ///
 /// The shim's ring holds a hundred mebibytes of claude's stdout so that a
-/// server upgrade cannot truncate a turn ([`crate::provider::shim`]), and every
+/// server upgrade cannot truncate a turn ([`droppen_provider::shim`]), and every
 /// re-attach replays all of it. That history is worth having in a recording
 /// that has none of its own — but the usual case is a recording that was
 /// written by the server before this one and already holds every one of those
@@ -295,7 +295,7 @@ pub enum Stage {
     Adopt,
     /// claude stopped to ask the user something (`AskUserQuestion`), or what
     /// became of it: answered, dismissed, withdrawn, or left behind by a process
-    /// that went. See [`crate::provider::questions`].
+    /// that went. See [`droppen_provider::questions`].
     Question,
     /// claude asked for a permission and was refused. Every prompt but a
     /// question is: remote-hand grants nothing interactively.

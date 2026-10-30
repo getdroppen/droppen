@@ -213,7 +213,7 @@ pub struct ProviderRegistry {
 impl ProviderRegistry {
     /// The registry over `injections`, with the providers `register` adds.
     ///
-    /// `register` is the entry's `crate::app::register_providers`, the one
+    /// `register` is the entry's `app::register_providers`, the one
     /// place that names every provider; a test passes the same function.
     pub fn new(injections: Arc<InjectionRegistry>, register: impl FnOnce(&mut ProviderRegistry, &Arc<InjectionRegistry>)) -> Arc<Self> {
         let gate = Arc::new(SpawnGate::new(injections.host.paths.data_dir().join("inject-locks")));

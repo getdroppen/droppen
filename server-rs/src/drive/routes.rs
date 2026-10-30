@@ -22,15 +22,15 @@ use crate::feed;
 use droppen_http::error::{ApiError, Hinted};
 use droppen_http::SendResult;
 use droppen_http::extract::{ApiJson, ApiPath, ApiQuery};
-use crate::provider::questions::{self, Answer};
-use crate::provider::receipts::{Kind, LOOKUP_CAP};
-use crate::provider::{self, AccountChoice, AnswerOutcome, ContinueError, Reply, SendOptions};
+use droppen_provider::questions::{self, Answer};
+use droppen_provider::receipts::{Kind, LOOKUP_CAP};
+use droppen_provider::{AccountChoice, AnswerOutcome, ContinueError, Reply, SendOptions};
 use droppen_http::openapi_ext::{double_option, required_nullable, ExtraResponses, Nullable, Optional};
 use droppen_instance::paths::ClaudeRoot;
 use droppen_sessions::delivery::{QuestionState, ReceiptLookup, ReceiptStatus, SessionQuestion};
 use droppen_sessions::sidecars::{is_agent_id, AgentPath, Checklist};
 use droppen_sessions::util::TranscriptItem;
-use crate::models::ModelRule;
+use droppen_provider::models::ModelRule;
 use droppen_sessions::{chats_cwd, file_signature, SessionScope, Source};
 
 /// `POST /api/sessions/{source}/{id}/message` body.
@@ -131,7 +131,7 @@ pub struct NewSession {
     /// for a pair no model-less start reaches (`placed: false`), not a pick —
     /// logged as the start rule's choice and checked again at the spawn.
     #[serde(default, skip_serializing_if = "Optional::is_none")]
-    pub account_from: Optional<provider::AccountFrom>,
+    pub account_from: Optional<droppen_provider::AccountFrom>,
     /// A UUID the client minted for this first message, sent unchanged with
     /// every attempt. A repeat answers the session the first attempt started
     /// (`duplicate: true`) instead of starting a second one.
@@ -449,7 +449,7 @@ pub struct FirstUnreadQuery {
 /// The bounds `SendMessageSchema` and `NewSessionSchema` put on the flag values,
 /// and the composer's choices and a scheduled task's flags with them: a `model`
 /// spelled the way its CLI's `rule` allows (the provider's
-/// [`crate::models::Models::model_rule`]), then the effort and the permission
+/// [`droppen_provider::models::Models::model_rule`]), then the effort and the permission
 /// mode.
 ///
 /// They are not cosmetic: the values become CLI arguments, so an unbounded
@@ -738,7 +738,7 @@ async fn deliver_message(
         if let Some(request_id) = drive.providers.open_question(source, &id) {
             meant_as_answer = true;
             let answer = Answer {
-                response: Some(provider::claude_prompt(&body.text, &images, &attachments)),
+                response: Some(droppen_provider::claude_prompt(&body.text, &images, &attachments)),
                 ..Answer::default()
             };
             if let AnswerOutcome::Delivered(_) = drive
@@ -1075,7 +1075,7 @@ pub async fn session_receipts(
         .drive
         .injections
         .host.receipts()
-        .lookup(source, &id, &ids, crate::provider::receipts::now_ms())
+        .lookup(source, &id, &ids, droppen_provider::receipts::now_ms())
         .map(Json)
         .map_err(|error| ApiError::internal(format!("cannot read message receipts: {error}")))
 }
@@ -1087,10 +1087,10 @@ pub async fn session_receipts(
 /// their own. Choosing the other CLI's account is not one of them: the request
 /// named something that could never have worked, which is the same `400` a
 /// malformed `accountId` gets two functions up.
-fn spawn_refusal(error: provider::InjectError, fallback: &str) -> ApiError {
+fn spawn_refusal(error: droppen_provider::InjectError, fallback: &str) -> ApiError {
     let message = error.client_message(fallback);
     match error {
-        provider::InjectError::ProviderMismatch { .. } => ApiError::bad_request(message),
+        droppen_provider::InjectError::ProviderMismatch { .. } => ApiError::bad_request(message),
         _ => ApiError::conflict(message),
     }
 }
@@ -1178,12 +1178,12 @@ pub async fn stop_background_task(
     ApiPath(TaskPath { source, id, task_id }): ApiPath<TaskPath>,
 ) -> Result<Json<SendResult>, ApiError> {
     match state.drive.providers.stop_background_task(source, &id, &task_id) {
-        provider::StopTaskOutcome::Asked => Ok(Json(SendResult { accepted: true })),
+        droppen_provider::StopTaskOutcome::Asked => Ok(Json(SendResult { accepted: true })),
         // 404 rather than 409: the task is not there to act on, most often
         // because it finished while the button was being pressed.
-        provider::StopTaskOutcome::NoSuchTask => Err(ApiError::not_found("no such background task")),
+        droppen_provider::StopTaskOutcome::NoSuchTask => Err(ApiError::not_found("no such background task")),
         // Only a session this server is driving has a channel to ask down.
-        provider::StopTaskOutcome::NoResident => Err(ApiError::conflict("this session has no live process to ask")),
+        droppen_provider::StopTaskOutcome::NoResident => Err(ApiError::conflict("this session has no live process to ask")),
     }
 }
 
@@ -1193,8 +1193,8 @@ pub async fn stop_background_task(
 /// and the two statuses say which kind it is: a `404` means the message is not
 /// there to act on — usually because the turn in front of it ended while the
 /// request was in flight — and a `409` means it is there and cannot be moved.
-fn queue_result(outcome: provider::QueueOutcome) -> Result<Json<SendResult>, ApiError> {
-    use provider::QueueOutcome;
+fn queue_result(outcome: droppen_provider::QueueOutcome) -> Result<Json<SendResult>, ApiError> {
+    use droppen_provider::QueueOutcome;
     match outcome {
         QueueOutcome::Refused { reason } => Err(ApiError::conflict(reason)),
         QueueOutcome::Done => Ok(Json(SendResult { accepted: true })),
@@ -2185,7 +2185,7 @@ mod tests {
             format!(r#"{{"error":"question_settled","hint":"alice already answered it","question":{row}}}"#)
         );
 
-        let restart = queue_result(provider::QueueOutcome::NeedsRestart {
+        let restart = queue_result(droppen_provider::QueueOutcome::NeedsRestart {
             differences: "another model".into(),
         })
         .expect_err("a refusal");
@@ -2201,7 +2201,7 @@ mod tests {
     }
 
     /// [`drive`], with the providers `register` adds.
-    fn drive_with(register: fn(&mut crate::provider::ProviderRegistry, &Arc<crate::provider::InjectionRegistry>)) -> (tempfile::TempDir, Arc<Drive>) {
+    fn drive_with(register: fn(&mut droppen_provider::ProviderRegistry, &Arc<droppen_provider::InjectionRegistry>)) -> (tempfile::TempDir, Arc<Drive>) {
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = Arc::new(droppen_instance::paths::Paths::new(dir.path().to_path_buf()));
         let instance = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");

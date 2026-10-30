@@ -39,7 +39,7 @@ use tokio_util::sync::CancellationToken;
 use droppen_http::error::ApiError;
 use droppen_http::extract::{ApiJson, ApiPath};
 use droppen_http::SendResult;
-use crate::provider::SendOptions;
+use droppen_provider::SendOptions;
 use droppen_http::openapi_ext::{ExtraResponses, Nullable, Optional};
 use droppen_instance::paths::Paths;
 use droppen_sessions::{chats_cwd, Source};
@@ -209,7 +209,7 @@ pub struct ChatNew {
     /// for a pair no model-less start reaches (`placed: false`), not a pick —
     /// logged as the start rule's choice and checked again at the spawn.
     #[serde(default, skip_serializing_if = "Optional::is_none")]
-    pub account_from: Optional<crate::provider::AccountFrom>,
+    pub account_from: Optional<droppen_provider::AccountFrom>,
 }
 
 /// What `POST /api/chats/new` answers with.
@@ -240,7 +240,7 @@ pub async fn ensure_chats_cwd(paths: &Paths) -> std::io::Result<std::path::PathB
 /// characters.
 ///
 /// The optional bracketed tail is the variant tag
-/// [`crate::models::MODEL_PATTERN`] already accepts on the send
+/// [`droppen_provider::models::MODEL_PATTERN`] already accepts on the send
 /// routes: `claude-opus-5[1m]` is how the long-context variant of a model is
 /// asked for, and it is what the model picker now offers, so a chat started
 /// with the id the composer is showing has to be startable. It is matched as a
@@ -383,7 +383,7 @@ pub async fn new_chat(State(state): State<ChatsState>, ApiJson(body): ApiJson<Ch
         chat: true,
         // A chat is billed to the login picked for it, else whichever one the
         // user made the default.
-        account: crate::provider::AccountChoice::from_start_request(body.account_id, body.account_from.0),
+        account: droppen_provider::AccountChoice::from_start_request(body.account_id, body.account_from.0),
         use_default_account: true,
         ..Default::default()
     };
@@ -763,8 +763,8 @@ mod tests {
         let accounts = Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), crate::app::logins()));
         let quota = Arc::new(droppen_accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins()));
         let decoration = crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone());
-        let injections = crate::provider::InjectionRegistry::new(paths, &dirs, accounts, quota, decoration);
-        let providers = crate::provider::ProviderRegistry::new(injections, crate::app::register_providers);
+        let injections = droppen_provider::InjectionRegistry::new(paths, &dirs, accounts, quota, decoration);
+        let providers = droppen_provider::ProviderRegistry::new(injections, crate::app::register_providers);
         let with_chats: Vec<Source> = providers.sources().filter(|source| providers.capabilities(*source).chats).collect();
         assert!(!with_chats.is_empty());
         for source in providers.sources() {

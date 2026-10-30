@@ -1,9 +1,9 @@
 //! The models each local CLI can be asked for.
 //!
 //! Every CLI is asked in its own way, because each answers in its own way: Codex
-//! publishes a cache file ([`crate::provider::codex::models`]), Claude Code answers over its control
-//! protocol ([`crate::provider::claude_code::models`]), and an ACP agent publishes a `model` option
-//! ([`crate::provider::acp::models`]). So each provider answers [`Models`] for its own CLI, and the
+//! publishes a cache file (`codex::models`), Claude Code answers over its control
+//! protocol (`claude_code::models`), and an ACP agent publishes a `model` option
+//! (`acp::models`). So each provider answers [`Models`] for its own CLI, and the
 //! route asks the provider of the source it is asked about.
 //!
 //! Claude's and Codex's lists degrade to a static guess rather than failing,
@@ -142,7 +142,7 @@ impl ModelRule {
 
 /// What one CLI says about its models: the list a picker offers, the ids a
 /// start is chosen against, and which efforts and permission modes it takes.
-/// Each provider answers for its own CLI ([`crate::provider::Provider::models`]).
+/// Each provider answers for its own CLI ([`crate::Provider::models`]).
 pub trait Models: Send + Sync {
     /// The list `GET /api/models` serves for `query`, or why the query is
     /// refused, in the words of the route's `400`.
@@ -157,7 +157,7 @@ pub trait Models: Send + Sync {
     /// The efforts a CLI would actually accept, or `None` when nothing on this
     /// machine can say.
     ///
-    /// Only [`crate::schedule`] asks. The composer does not need it — a person
+    /// Only `schedule` asks. The composer does not need it — a person
     /// picking from a list cannot pick something that is not in it — but a task that
     /// fires at three in the morning needs its flags checked at the moment somebody
     /// is *there to fix them*, and this is the only place that knows what each CLI
@@ -185,7 +185,7 @@ pub trait Models: Send + Sync {
 #[derive(Clone)]
 pub struct ModelsState {
     /// Every CLI this server drives, each of which lists its own models.
-    pub providers: Arc<crate::provider::ProviderRegistry>,
+    pub providers: Arc<crate::ProviderRegistry>,
 }
 droppen_http::substate!(ModelsState);
 

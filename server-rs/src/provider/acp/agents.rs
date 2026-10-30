@@ -659,7 +659,7 @@ pub struct AcpAgentState {
     /// The live runs, which check an agent and stop its sessions when it goes.
     pub(crate) acp: Arc<crate::provider::acp::AcpRuns>,
     /// The providers, whose spawn gate the runs do that under.
-    pub(crate) providers: Arc<crate::provider::ProviderRegistry>,
+    pub(crate) providers: Arc<droppen_provider::ProviderRegistry>,
 }
 droppen_http::substate!(AcpAgentState);
 
@@ -676,8 +676,8 @@ pub async fn acp_agents(State(state): State<AcpAgentState>) -> Json<AcpAgentList
 impl AcpAgentState {
     /// The spawn gate, as the provider registry lends it to the ACP provider:
     /// the one place outside the registry that names
-    /// [`provider_with_gate`](crate::provider::ProviderRegistry::provider_with_gate).
-    fn gate(&self) -> Result<&crate::provider::SpawnGate, ApiError> {
+    /// [`provider_with_gate`](droppen_provider::ProviderRegistry::provider_with_gate).
+    fn gate(&self) -> Result<&droppen_provider::SpawnGate, ApiError> {
         let (_, gate) = self
             .providers
             .provider_with_gate::<crate::provider::acp::Acp>()
