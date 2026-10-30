@@ -1244,7 +1244,11 @@ mod tests {
                         let challenge = json!({"t": "challenge", "nonce": hex(&[7u8; 32])}).to_string();
                         let _ = socket.send(WsMessage::Text(challenge.into())).await;
                         let mut welcomed = false;
-                        while let Some(Ok(WsMessage::Text(text))) = socket.recv().await {
+                        // The machine's heartbeat, a binary ping, can come
+                        // before the renewal: a relay keeps the connection
+                        // open over it, and so does this one. Only text is kept.
+                        while let Some(Ok(message)) = socket.recv().await {
+                            let WsMessage::Text(text) = message else { continue };
                             kept.lock().unwrap().push(serde_json::from_str(text.as_str()).unwrap());
                             if !welcomed {
                                 welcomed = true;
