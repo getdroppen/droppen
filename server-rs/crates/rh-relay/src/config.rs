@@ -1,7 +1,7 @@
 //! A relay's configuration, from the environment only (§2.5, §2.11, §2.13).
 //!
 //! A relay's variables are `DROPPEN_RELAY_*`; their names from before the
-//! rename to Droppen, `RH_RELAY_*`, are not read. See [`env`].
+//! rename to Droppen, `RH_RELAY_*`, are not read. See [`env`](fn@env).
 //!
 //! | variable | meaning |
 //! |---|---|

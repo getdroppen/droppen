@@ -103,7 +103,7 @@ pub const CODE_FOR_MS: u64 = 10 * 60 * 1000;
 /// How long `link.rotation` says a renewal just happened.
 pub const RENEWED_SHOWN_MS: u64 = 24 * 60 * 60 * 1000;
 /// How long a staging the hub took may still be committed: the hub expires
-/// it a day after it staged it ([`drop_expired`]).
+/// it a day after it staged it (the hub's `drop_expired`).
 pub const STAGED_FOR_MS: u64 = 24 * 60 * 60 * 1000;
 /// At most this many stagings the hub took are kept at once; one more drops
 /// the oldest. A page whose answer was lost asks again with a new nonce, and
@@ -190,7 +190,7 @@ pub struct Rotation {
     inner: Mutex<Inner>,
     /// One `POST /rh/rotate` at a time.
     gate: tokio::sync::Mutex<()>,
-    /// Wakes the hub connection when [`Rotation::switch`] is set.
+    /// Wakes the hub connection when [`Inner::switch`] is set.
     pub(super) wake: tokio::sync::Notify,
 }
 
@@ -445,7 +445,7 @@ pub const REPLACED_ELSEWHERE: &str = "This device's identity key was replaced el
 impl AgentFiles {
     /// The staged seeds this device may use, oldest first: this instance's, and
     /// not the key in use (any other is forgotten here). Whether one expired is
-    /// judged only where that is safe ([`drop_expired`], [`rotate`]): a renewal
+    /// judged only where that is safe (the hub's `drop_expired`, and [`rotate`]): a renewal
     /// committed while this device was away may name any staging the hub took.
     pub(super) fn staged_seeds(&self, current: &MachineIdentity) -> Vec<StagedSeed> {
         let store = FileSeedStore::for_instance(self);

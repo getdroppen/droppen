@@ -2396,7 +2396,7 @@ export interface paths {
          * Look for the AI tools again
          * @description Read the login shell again, adopt its `PATH`, and look for the tools afresh.
          *
-         *     The desktop app's only ([`app_caller`]): it rewrites the `PATH` every
+         *     The desktop app's only (`AppWindow::app_caller`): it rewrites the `PATH` every
          *     child of this server gets from now on, which is no request for anything
          *     but the app's own window to make.
          */
@@ -6227,7 +6227,7 @@ export interface components {
             /**
              * @description Whether this caller may install, sign in and look again from here: only
              *     the desktop app's own window, signed in, on this device, and not on
-             *     behalf of a device linked through Droppen ([`app_caller`]).
+             *     behalf of a device linked through Droppen (`AppWindow::app_caller`).
              */
             canInstall: boolean;
             /** @description Homebrew, Node and git. */

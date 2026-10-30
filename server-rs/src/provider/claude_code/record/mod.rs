@@ -25,7 +25,7 @@
 //! # What is *not* in it, and why the rest can be verbatim
 //!
 //! An account's token reaches claude in exactly one place: the store hands out
-//! an [`AccountEnv`](droppen_accounts::store::AccountEnv) — a
+//! an [`AccountLaunch`](droppen_accounts::store::AccountLaunch) — a
 //! `CLAUDE_CODE_OAUTH_TOKEN` or an `ANTHROPIC_API_KEY` — which
 //! [`droppen_base::process_env`] puts in an [`Env`](droppen_base::process_env::Env) that the
 //! spawn applies over an `env_clear`. It is never written to a stream, never on
@@ -275,7 +275,7 @@ pub enum Stage {
     /// What became of a steered message once the turn it was handed to ended.
     ///
     /// The CLI has two answers and does not say which it chose, so the driver
-    /// has to watch for it — see [`crate::provider::claude_code::resident::Driver::settle_delivered`].
+    /// has to watch for it — see `Driver::settle_delivered` in [`crate::provider::claude_code::resident`].
     /// Either claude opened a turn of its own for the message, or it had already
     /// folded the message into the turn that was running and nothing more is
     /// coming. This is the line that says which happened, and it is the one to

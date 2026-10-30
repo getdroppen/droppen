@@ -3,7 +3,9 @@
 //! hand (or from a script): it signs in to an existing account as a new
 //! device and then does what it is told.
 //!
-//!   rh-device --hub http://127.0.0.1:<port> --email <e> --password-file <f> [--sign-up <invite>]
+//! ```text
+//! rh-device --hub http://127.0.0.1:<port> --email <e> --password-file <f> [--sign-up <invite>]
+//! ```
 //!
 //! With `--sign-up`, it makes the account first (with an invite from the
 //! hub's operator: `cloud-dev.sh invite` for a local one) and becomes its
@@ -19,20 +21,22 @@
 //!
 //! Commands (one per line; each prints `ok ...` or `error ...`):
 //!
-//!   offer                 print this device's QR offer text and wait for the pairing delivery
-//!   code                  show a fresh 8-digit code (new-device side) and wait for a run and the delivery
-//!   accept <RHP1-...>     add the device behind a pasted offer as an admin and deliver the user keys (existing device)
-//!   enter <device> <code> run CPace for the code a new device shows, add it and deliver (existing device)
-//!   approve <device>      approve a pending recovered device
-//!   enroll                issue a machine enrollment code (prints `CODE RH1-...`), then wait for
-//!                         the machine's proof and add it, as the web app's "add a computer" does
-//!                         (chain v3: with its first machine key, put into the keyring and mailed to it)
-//!   remove <device>       remove a device, rotate the user and machine keys, give each agent its new key in a channel (re-encrypt)
-//!   keys                  take mailed user keys; list user key and machine key epochs
-//!   read <machine>        read the machine's status stream with the keys held; print its name and size
-//!   channel <machine>     attest, open a channel and GET /rh/info
-//!   status                this device's standing in the chain
-//!   forge-chain           print a hub-forged chain around the real recovery key (for a test proxy)
+//! ```text
+//! offer                 print this device's QR offer text and wait for the pairing delivery
+//! code                  show a fresh 8-digit code (new-device side) and wait for a run and the delivery
+//! accept <RHP1-...>     add the device behind a pasted offer as an admin and deliver the user keys (existing device)
+//! enter <device> <code> run CPace for the code a new device shows, add it and deliver (existing device)
+//! approve <device>      approve a pending recovered device
+//! enroll                issue a machine enrollment code (prints `CODE RH1-...`), then wait for
+//!                       the machine's proof and add it, as the web app's "add a computer" does
+//!                       (chain v3: with its first machine key, put into the keyring and mailed to it)
+//! remove <device>       remove a device, rotate the user and machine keys, give each agent its new key in a channel (re-encrypt)
+//! keys                  take mailed user keys; list user key and machine key epochs
+//! read <machine>        read the machine's status stream with the keys held; print its name and size
+//! channel <machine>     attest, open a channel and GET /rh/info
+//! status                this device's standing in the chain
+//! forge-chain           print a hub-forged chain around the real recovery key (for a test proxy)
+//! ```
 //!
 //! The account password is read from a file so it never appears in a process
 //! listing. Nothing is stored: the device lives as long as the process.

@@ -7,7 +7,7 @@
 //! `sha2`, `aes-gcm` — all of which are already pure Rust.
 //!
 //! Hand-rolled cryptography is worth exactly as much as the vectors that pin it,
-//! so [`tests::rfc8291_appendix_a_vector`] runs the published example through
+//! so `tests::rfc8291_appendix_a_vector` runs the published example through
 //! [`encrypt_with`] and compares the output byte for byte. That single assertion
 //! covers the whole construction at once: the ECDH, both HKDF layers and their
 //! `info` strings, the record delimiter, the AES-128-GCM call and the header

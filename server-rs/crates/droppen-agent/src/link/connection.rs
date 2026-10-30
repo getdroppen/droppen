@@ -280,7 +280,7 @@ pub(crate) const PUSH_RENEW_AGAIN: [Duration; 4] = [
 /// and endpoints reaches no device that subscribes again. Noted done only
 /// once it is (and by this link only while it runs: else the next start
 /// does it again, which is harmless). Until then the push key is refused
-/// (503 `push_renewing`, [`bridge::push_key_route`]), so a try that fails is
+/// (503 `push_renewing`, [`crate::bridge::push_key_route`]), so a try that fails is
 /// tried again while the link runs ([`PUSH_RENEW_AGAIN`]), not only at the
 /// next start.
 pub(crate) async fn renew_push(shared: Arc<Shared>) {

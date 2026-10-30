@@ -74,7 +74,7 @@ pub struct RunRecord<P = Payload> {
     /// When the run started, ISO-8601, so an adopted run does not claim to have
     /// begun at the moment the server restarted.
     pub started_at: String,
-    /// The pid-reuse guard: see [`super::proc`]. `None` on a platform that has
+    /// The pid-reuse guard: see [`droppen_base::procs`]. `None` on a platform that has
     /// none, and on any record written before the guard existed.
     #[serde(default)]
     pub pid_token: Option<String>,

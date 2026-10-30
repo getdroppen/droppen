@@ -179,7 +179,7 @@ impl AcpAgent {
     /// configured, and is dropped. `false` when it was not kept.
     ///
     /// The crate's own: the check route records the check it ran. A server's
-    /// test records one with [`crate::testing::record_check`].
+    /// test records one with `crate::testing::record_check` (behind `test-support`).
     pub(crate) fn record_check(&self, agents: &AcpAgentRegistry, check: &AcpCheck) -> bool {
         let _writing = WRITES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let db = droppen_instance::db::at(&agents.0);
@@ -333,7 +333,7 @@ impl AcpAgentRegistry {
     /// The crate's own: the routes change an agent under the spawn gate
     /// ([`AcpRuns::reconfigure_acp_agent`](crate::AcpRuns::reconfigure_acp_agent)),
     /// so that no session starts on it halfway. A server's test configures one
-    /// with [`crate::testing::configure`].
+    /// with `crate::testing::configure` (behind `test-support`).
     pub(crate) fn update(&self, id: &str, patch: &AcpAgentUpdate) -> Result<AcpAgent, String> {
         if !valid_agent_id(id) {
             return Err(format!(

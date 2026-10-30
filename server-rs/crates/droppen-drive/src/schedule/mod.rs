@@ -62,7 +62,7 @@
 //!
 //! One row each in [`droppen_instance::db`]'s `scheduled_tasks`, in this instance's state
 //! database. `scheduled-tasks.json` was written for a while after the move, so
-//! that a [`droppen_supervisor::supervisor`] demotion to a `.prev` binary — one that had
+//! that a `droppen_supervisor::supervisor` demotion to a `.prev` binary — one that had
 //! never heard of the database — would not come back having forgotten every
 //! task, which is a silent feature outage. No binary that old is left to
 //! demote to, and the file is no longer read: one left on disk is inert.

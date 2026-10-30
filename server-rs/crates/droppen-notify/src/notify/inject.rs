@@ -67,7 +67,7 @@ pub fn skill_root(env: &Env) -> Option<PathBuf> {
     Some(PathBuf::from(dir).join("skills").join(SKILL_NAME))
 }
 
-/// The one line of shell between an agent and [`cli::run`].
+/// The one line of shell between an agent and [`NotifyArgs::run`](super::cli::NotifyArgs::run).
 ///
 /// `"$@"` is the whole trick: it is the only construct in POSIX shell that
 /// passes arguments through without re-splitting or re-expanding them, so a

@@ -60,7 +60,7 @@ const GH_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
 /// How much of `gh`'s stderr is kept to classify a failure.
 const STDERR_CAP: u64 = 8 * 1024;
-/// How many ref segments [`fetch_image`] will try before giving up.
+/// How many ref segments [`GithubTarget::fetch_image`] will try before giving up.
 const MAX_REF_SEGMENTS: usize = 4;
 /// How many `gh` processes may run at once, server-wide. A transcript with
 /// thirty screenshots should queue thirty calls, not fork thirty processes.

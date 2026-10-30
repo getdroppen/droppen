@@ -363,7 +363,7 @@ pub struct ToolsReport {
     pub helpers: SetupHelpers,
     /// Whether this caller may install, sign in and look again from here: only
     /// the desktop app's own window, signed in, on this device, and not on
-    /// behalf of a device linked through Droppen ([`app_caller`]).
+    /// behalf of a device linked through Droppen (`AppWindow::app_caller`).
     pub can_install: bool,
     /// Always two: claude, then codex.
     pub tools: Vec<Tool>,
@@ -759,7 +759,7 @@ pub async fn tools_report(State(state): State<SetupState>, #[api(skip)] caller: 
 
 /// Read the login shell again, adopt its `PATH`, and look for the tools afresh.
 ///
-/// The desktop app's only ([`app_caller`]): it rewrites the `PATH` every
+/// The desktop app's only (`AppWindow::app_caller`): it rewrites the `PATH` every
 /// child of this server gets from now on, which is no request for anything
 /// but the app's own window to make.
 #[api(id = "setup_rescan_tools", group = "setup", summary = "Look for the AI tools again")]

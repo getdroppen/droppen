@@ -48,7 +48,7 @@
 //! * **A server restart.** The process is behind [`droppen_provider::shim`], so killing
 //!   this server does not touch it. The next boot re-attaches through the shim
 //!   socket named in the journal, replays claude's whole stdout to work out
-//!   where the session got to, and carries on — see [`Driver::attached`] and
+//!   where the session got to, and carries on — see [`ClaudeCodeRuns::attached`] and
 //!   [`Driver::replay`].
 //! * **claude falling over mid-turn.** A resume → fork ladder brings the
 //!   conversation back and the queue is re-delivered into it, with a crash-loop

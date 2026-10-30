@@ -58,7 +58,7 @@ use droppen_instance::paths::Paths;
 use crate::Source;
 
 /// The index's schema, appended to under the same additive-only rule as
-/// [`super::SCHEMA`] — see `migrations.rs` for why an older binary must never
+/// [`droppen_instance::db::SCHEMA`] — see `migrations.rs` for why an older binary must never
 /// refuse a database it does not fully understand.
 ///
 /// A separate list because it is a separate file. It would be tempting to share
@@ -156,7 +156,7 @@ const REPO_KEY_ROWS_MAX: i64 = 4_096;
 
 /// The index, and the connection it speaks through.
 ///
-/// Cloning is an `Arc` bump: [`super::at_with`] keeps one connection per file per
+/// Cloning is an `Arc` bump: [`droppen_instance::db::at_with`] keeps one connection per file per
 /// process, and this is a handle onto it.
 #[derive(Debug, Clone)]
 pub struct Index {

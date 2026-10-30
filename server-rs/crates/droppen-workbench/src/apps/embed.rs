@@ -7,7 +7,7 @@
 //!
 //! gotcha offers two seams — [`fallback_service`](gotcha::GotchaRouter::fallback_service)
 //! and [`layer`](gotcha::GotchaRouter::layer) — and the SPA already owns the
-//! fallback (see [`crate::static_files`]). It also assembles routes in
+//! fallback (see the server's `static_files`). It also assembles routes in
 //! `GotchaApp::routes`, which runs *before* the state exists and so cannot be
 //! handed the [`Registry`]. So the composition happens one level up, in
 //! `app`, on the axum router `GotchaApp::build_router` returns: this

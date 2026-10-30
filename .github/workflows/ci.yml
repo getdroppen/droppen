@@ -315,6 +315,16 @@ jobs:
       # what it carries (a permit that takes no spawn gate, stand-in logins)
       # is for tests alone.
       - run: ../scripts/check-test-support-off.sh
+      # The docs as rustdoc reads them, private items included: a link to an
+      # item that is not there or not where it says, an ambiguous one, and
+      # stray HTML fail the job, so a move that leaves a doc on the old path
+      # is caught in its own PR. A public item's doc may link to a private
+      # one (`private_intra_doc_links` allowed): these docs are only ever
+      # built with private items, where every such link resolves.
+      - run: cargo doc --locked --workspace --no-deps --document-private-items
+        env:
+          RUSTDOCFLAGS: -D warnings -A rustdoc::private_intra_doc_links
+        timeout-minutes: 20
       - name: Report Rust build storage
         if: always()
         run: |

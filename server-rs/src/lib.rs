@@ -26,7 +26,7 @@
 //!   hangs off ([`droppen_drive::Drive`]);
 //! * [`droppen_drive::chats`] — instant chats: CLI sessions in an anchor directory, plus the
 //!   BYO-API backend and its streamed replies;
-//! * [`quota`] — the subscription panel;
+//! * [`droppen_accounts::quota`] — the subscription panel;
 //! * [`droppen_files`] — browsing, reading and uploading under the home directory, and
 //!   the one place a client-supplied path is resolved and bounded;
 //! * [`droppen_files::media`] — images in private GitHub repositories, fetched through the
@@ -38,16 +38,17 @@
 //!   the iframe reaches it through;
 //! * [`droppen_auth`] — local accounts: who may talk to this server at all, and the
 //!   guard every request passes through before [`droppen_http::origin`]'s;
-//! * [`attention`] — which sessions are waiting on you, and [`push`] — telling
+//! * [`droppen_sessions::attention`] — which sessions are waiting on you, and
+//!   [`droppen_notify::push`] — telling
 //!   a phone about it while the tab is closed;
-//! * [`notify`] — the other direction of the same idea: the notification an
+//! * [`droppen_notify::notify`] — the other direction of the same idea: the notification an
 //!   *agent* decides to send, through a channel whose credential it never sees;
 //! * [`droppen_drive::schedule`] — cron tasks: a prompt, a directory and an expression, read in
 //!   the server's own time zone, that start a session while nobody is watching;
-//! * [`setup`] — the first-run guide's server half: which AI tools this
+//! * [`droppen_setup`] — the first-run guide's server half: which AI tools this
 //!   device has, and the `PATH` that finds them;
 //! * [`droppen_workbench::prefs`] / [`droppen_workbench::screens`] — the sidecar stores;
-//! * [`stats`] / [`droppen_provider::models`] — token accounting and the model list;
+//! * [`droppen_sessions::stats`] / [`droppen_provider::models`] — token accounting and the model list;
 //! * [`droppen_http::origin`] — the guard every `/api/*` request passes through.
 //!
 //! # Shared contract plumbing

@@ -226,7 +226,7 @@ impl WindowValue for Option<&Value> {
 /// request with no parameters, and the `result` of its answer.
 ///
 /// Shared by the quota probe (`app_server`, below) and by the first-run guide's account check
-/// ([`droppen_setup`], `account/read`), so there is one copy of the handshake
+/// (`droppen_setup`, `account/read`), so there is one copy of the handshake
 /// and of the shutdown that keeps `~/.codex/tmp/arg0/` clean. `program` is
 /// `codex` for the probe and the binary the guide found for the guide;
 /// `timeout` bounds the conversation, not the exit grace after it.

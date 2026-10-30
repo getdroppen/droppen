@@ -260,7 +260,7 @@ impl PrefsStore {
 impl PrefsStore {
     /// The stored preferences; an empty store reads as the defaults.
     ///
-    /// The rows are reassembled into the object [`prefs_from_value`] already knows
+    /// The rows are reassembled into the object [`PrefsValueExt::prefs_from_value`] already knows
     /// how to read, rather than parsed field by field here. That keeps the fallback
     /// rule and the recognised spellings in exactly one place — a setting saved by a
     /// newer client and a setting hand-edited into nonsense degrade identically.
