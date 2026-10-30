@@ -97,7 +97,7 @@ test("every public page's header links the site's other pages and the client's s
     assert.match(header, /<a href="https:\/\/github\.com\/getdroppen\/droppen"[^>]*data-testid="header-source"/, lng);
     assert.doesNotMatch(header, /href="#/, `${lng}: no anchors into the page`);
   }
-  assert.match(draw("zh-CN").slice(0, draw("zh-CN").indexOf("<main")), /data-testid="header-download"[^>]*>下载<\/a>/);
+  assert.match(draw("zh-CN").slice(0, draw("zh-CN").indexOf("<main")), /data-testid="header-download"[^>]*>[\s\S]*?<span[^>]*>下载<\/span><\/a>/);
 });
 
 test("privacy is said once: not in the header, not in the hero's numbers, one section near the end and the rest on /security", () => {

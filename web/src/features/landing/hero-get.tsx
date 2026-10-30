@@ -1,10 +1,10 @@
 import { useTranslation } from "react-i18next";
-import { ArrowRight, Download } from "lucide-react";
+import { Download } from "lucide-react";
 import type { SignupMode } from "@/lib/hub/api";
 import type { LatestRelease, ReleaseFile } from "@/lib/hub/releases";
 import type { HeroOffer } from "./detect";
 import { type Availability, downloadHref, type DownloadOs, INSTALL_COMMAND, RELEASES_URL } from "./get-droppen";
-import { CommandLine, landingPrimary, landingSecondary } from "./page-kit";
+import { ArrowLink, CommandLine, landingPrimary, landingSecondary } from "./page-kit";
 import { fileFacts, fileLink, LinuxTarballs } from "./release-files";
 import { appHost } from "@/lib/hub/hosts";
 import { APP_PATH, publicLink, SIGN_UP_PATH, WAITLIST_HREF } from "./route";
@@ -155,31 +155,20 @@ export function HeroGet({
       )}
       {offer === "windows" && (
         <div data-testid="hero-windows" className="flex flex-wrap items-center gap-3">
-          <a
+          <ArrowLink
+            variant="primary"
             {...publicLink(signedIn ? APP_PATH : closed ? WAITLIST_HREF : SIGN_UP_PATH)}
             data-variant="primary"
             data-testid="hero-web-signup"
-            className="group flex h-10 shrink-0 items-center justify-between gap-3 whitespace-nowrap border border-fg bg-fg px-4 text-sm font-medium text-bg transition-colors hover:bg-fg/85"
           >
-            <span>{signedIn ? t("Open web app") : closed ? t("Join the web waitlist") : t("Sign up on the web")}</span>
-            <ArrowRight className="size-4 shrink-0 transition-transform duration-150 group-hover:translate-x-0.5" />
-          </a>
-          <a
-            {...publicLink(downloadHref("macos-app"))}
-            data-testid="hero-mac-tab"
-            className="group flex h-10 shrink-0 items-center justify-between gap-3 whitespace-nowrap border border-border-strong bg-bg px-4 text-sm font-medium text-fg transition-colors hover:border-fg hover:bg-hover"
-          >
-            <span>{t("Droppen for Mac")}</span>
-            <ArrowRight className="size-4 shrink-0 transition-transform duration-150 group-hover:translate-x-0.5" />
-          </a>
-          <a
-            {...publicLink(downloadHref("linux"))}
-            data-testid="hero-linux-tab"
-            className="group flex h-10 shrink-0 items-center justify-between gap-3 whitespace-nowrap border border-border-strong bg-bg px-4 text-sm font-medium text-fg transition-colors hover:border-fg hover:bg-hover"
-          >
-            <span>{t("Run Droppen on a Linux server")}</span>
-            <ArrowRight className="size-4 shrink-0 transition-transform duration-150 group-hover:translate-x-0.5" />
-          </a>
+            {signedIn ? t("Open web app") : closed ? t("Join the web waitlist") : t("Sign up on the web")}
+          </ArrowLink>
+          <ArrowLink {...publicLink(downloadHref("macos-app"))} data-testid="hero-mac-tab">
+            {t("Droppen for Mac")}
+          </ArrowLink>
+          <ArrowLink {...publicLink(downloadHref("linux"))} data-testid="hero-linux-tab">
+            {t("Run Droppen on a Linux server")}
+          </ArrowLink>
         </div>
       )}
       {offer === "phone" && (

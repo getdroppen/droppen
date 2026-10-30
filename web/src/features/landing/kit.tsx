@@ -342,7 +342,7 @@ export function Source({ children = "CLAUDE", ink, tone }: { children?: ReactNod
     <span
       data-signal={tone === "ok" ? "working" : undefined}
       className={cn(
-        "shrink-0 border px-1 font-sans text-xs leading-4 tracking-widest whitespace-nowrap",
+        "shrink-0 border px-1 font-sans-text text-xs leading-4 tracking-widest whitespace-nowrap",
         tone === "ok" ? "border-ok/60 text-ok" : ink ? "border-bg/30 opacity-80" : "border-border text-muted",
       )}
     >

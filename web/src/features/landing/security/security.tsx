@@ -56,14 +56,14 @@ export const RENEWAL_PARTS = ["renewal-why", "renewal-entry", "renewal-staging",
  * the column. What is not prose (formulas, quoted labels and paths, the algorithm table, paired
  * lists) takes the topic's whole width, so it is not wrapped short beside empty space.
  */
-const prose = "max-w-[46em] text-base text-pretty text-muted [word-break:auto-phrase]";
+const prose = "max-w-[46em] text-base text-pretty text-muted cjk-wrap";
 
 /** Below xl the 44px contents bar sits under the 56px header; an anchor stops below both. */
 const sectionScroll = "max-xl:scroll-mt-[6.5rem]";
 
 /** A section's head, with this page's 16px reading size for its lead (the shared head's is 14px). */
 function Head(props: ComponentProps<typeof SectionHead>) {
-  return <SectionHead {...props} className={cn("[&>p]:text-base [&>p]:text-pretty [&>p]:[word-break:auto-phrase]", props.className)} />;
+  return <SectionHead {...props} className={cn("[&>p]:text-base [&>p]:text-pretty [&>p]:cjk-wrap", props.className)} />;
 }
 
 /** A word joined by hyphens (`end-to-end`) stays whole: a line never ends on its hyphen. */
@@ -208,7 +208,7 @@ function List({ items }: { items: ReactNode[] }) {
   return (
     <ul className="flex max-w-[46em] flex-col gap-2">
       {items.map((item, i) => (
-        <li key={i} className="flex gap-2.5 text-base text-pretty text-muted [word-break:auto-phrase]">
+        <li key={i} className="flex gap-2.5 text-base text-pretty text-muted cjk-wrap">
           <span className="mt-[9px] size-1.5 shrink-0 bg-fg" />
           <div className="min-w-0">{linked(item)}</div>
         </li>
@@ -299,7 +299,7 @@ function Comparison({ left, right }: { left: { title: string; items: string[] };
                   alone && "md:col-span-2 md:border-r-0",
                 )}
               >
-                <div className="text-base leading-6 text-pretty text-muted [word-break:auto-phrase]">{linked(item)}</div>
+                <div className="text-base leading-6 text-pretty text-muted cjk-wrap">{linked(item)}</div>
               </div>
             );
           })}
@@ -334,7 +334,7 @@ function Table({ label, heads, rows }: { label: string; heads: string[]; rows: s
               key={i}
               role={i === 0 ? "rowheader" : "cell"}
               className={cn(
-                "min-w-0 px-6 text-sm leading-6 text-pretty [word-break:auto-phrase]",
+                "min-w-0 px-6 text-sm leading-6 text-pretty cjk-wrap",
                 wide ? "max-lg:px-4" : "max-md:px-4",
                 i === 0
                   ? cn("pt-3.5 font-semibold text-fg", wide ? "lg:pb-3.5" : "md:pb-3.5")
@@ -343,7 +343,7 @@ function Table({ label, heads, rows }: { label: string; heads: string[]; rows: s
               )}
             >
               {i > 0 && (
-                <CapsLabel face="sans" className={cn("block pb-0.5", wide ? "lg:hidden" : "md:hidden", cjkTracking)}>
+                <CapsLabel face="sans" className={cn("block pb-0.5 text-xs", wide ? "lg:hidden" : "md:hidden", cjkTracking)}>
                   {heads[i]}
                 </CapsLabel>
               )}
@@ -362,7 +362,7 @@ function Note({ children }: { children: ReactNode }) {
   return (
     <div className="flex items-start gap-3 border-t border-border px-6 py-4 max-md:px-4">
       <Info className="mt-0.5 size-4 shrink-0 text-muted" />
-      <Block className="max-w-[60em] text-base text-pretty text-muted [word-break:auto-phrase]">{linked(children, true)}</Block>
+      <Block className="max-w-[60em] text-base text-pretty text-muted cjk-wrap">{linked(children, true)}</Block>
     </div>
   );
 }
@@ -371,10 +371,10 @@ function Hero() {
   const { t } = useTranslation();
   return (
     <div className="flex flex-col gap-5 px-10 pt-16 pb-10 max-lg:pt-12 max-md:px-4 max-md:pt-10 max-md:pb-8">
-      <h1 className="max-w-[18em] text-5xl leading-display font-normal tracking-tight text-balance text-fg [word-break:auto-phrase] md:[&:lang(zh)]:[word-break:keep-all] max-md:text-3xl">
+      <h1 className="max-w-[18em] text-5xl leading-display font-normal tracking-tight text-balance text-fg cjk-wrap md:cjk-keep max-md:text-3xl">
         {titleWords(t("How Droppen's end-to-end encryption works."))}
       </h1>
-      <p className="max-w-[44em] text-base leading-6 text-pretty text-muted [word-break:auto-phrase]">
+      <p className="max-w-[44em] text-base leading-6 text-pretty text-muted cjk-wrap">
         {t("A technical description for anyone who wants to verify our claims: who holds which key, how your devices agree on which devices belong to your account, what our servers can and cannot see, and what each of them could still do if it were malicious or compelled. It describes what Droppen does today; the parts that are not live yet, or still in testing, are marked as such.")}
       </p>
       <p className="text-xs text-faint">{t("Last updated {{date}}", { date: SECURITY_UPDATED })}</p>
@@ -463,7 +463,7 @@ function Definitions() {
                 <dt className="text-base leading-6 text-faint lg:hidden">{label}</dt>
                 <dd
                   className={cn(
-                    "text-base text-pretty text-muted [word-break:auto-phrase] lg:border-b lg:border-border lg:px-6 lg:py-4",
+                    "text-base text-pretty text-muted cjk-wrap lg:border-b lg:border-border lg:px-6 lg:py-4",
                     colAt[i]!,
                     rowAt[j]!,
                     i === 0 && "lg:border-r",
@@ -586,6 +586,9 @@ function TocSidebar({ scroller }: { scroller: RefObject<HTMLDivElement | null> }
   );
 }
 
+const TOC_SHEET =
+  "fixed inset-x-0 bottom-0 z-50 max-h-[80dvh] overflow-y-auto border-t border-border-strong bg-bg outline-none md:right-auto md:left-1/2 md:w-[min(32rem,calc(100vw-2rem))] md:-translate-x-1/2 md:border-x";
+
 /** The phone/tablet chapter sheet: the same eight entries, with their one-line descriptions. */
 function TocSheet({ active, open, onClose }: { active: (typeof SECURITY_SECTIONS)[number]; open: boolean; onClose: () => void }) {
   const { t } = useTranslation();
@@ -601,10 +604,10 @@ function TocSheet({ active, open, onClose }: { active: (typeof SECURITY_SECTIONS
   return (
     <BaseDialog.Portal>
       <BaseDialog.Backdrop className="fixed inset-0 z-40 bg-black/20 dark:bg-black/60" />
-      <BaseDialog.Popup className="fixed inset-x-0 bottom-0 z-50 max-h-[80dvh] overflow-y-auto border-t border-border-strong bg-bg outline-none md:right-auto md:left-1/2 md:w-[min(32rem,calc(100vw-2rem))] md:-translate-x-1/2 md:border-x">
+      <BaseDialog.Popup className={TOC_SHEET}>
         <div className="sticky top-0 z-10 flex h-9 items-center justify-between gap-2 border-b border-border bg-bg px-4">
           <BaseDialog.Title className="min-w-0 py-1.5 text-sm leading-5 font-semibold text-fg">{t("On this page")}</BaseDialog.Title>
-          <BaseDialog.Close aria-label={t("close")} className="flex size-5 shrink-0 items-center justify-center text-muted hover:bg-hover hover:text-fg">
+          <BaseDialog.Close aria-label={t("close")} className="flex size-5 shrink-0 items-center justify-center text-muted hover:bg-hover hover:text-fg pointer-coarse:size-9">
             <X className="size-3.5" />
           </BaseDialog.Close>
         </div>

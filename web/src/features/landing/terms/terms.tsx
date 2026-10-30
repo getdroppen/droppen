@@ -96,7 +96,7 @@ export default function TermsPage({ signedIn = false }: { signedIn?: boolean }) 
         <main className="mx-auto max-w-[1360px] md:border-x md:border-border">
           <div className="flex flex-col gap-5 px-10 pt-16 pb-10 max-lg:pt-12 max-md:px-4 max-md:pt-10 max-md:pb-8">
             <CapsLabel face="sans" className={cn(cjkTracking, "text-xs font-semibold")}>{t("Terms of Service")}</CapsLabel>
-            <h1 className="max-w-[18em] text-5xl leading-display font-normal tracking-tight text-balance text-fg [word-break:auto-phrase] md:[&:lang(zh)]:[word-break:keep-all] max-md:text-3xl">
+            <h1 className="max-w-[18em] text-5xl leading-display font-normal tracking-tight text-balance text-fg cjk-wrap md:cjk-keep max-md:text-3xl">
               {t("What you can expect from us, and what we ask of you.")}
             </h1>
             <p className="max-w-[40em] text-base leading-6 text-muted max-md:text-sm max-md:leading-6">

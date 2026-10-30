@@ -63,7 +63,7 @@ function SettingSwitch({
   disabled?: boolean;
   onChange: (on: boolean) => void;
 }) {
-  return <Switch on={on} blocked={disabled} label={label} onChange={onChange} className="font-sans text-xs font-medium" />;
+  return <Switch on={on} blocked={disabled} label={label} onChange={onChange} className="font-sans-text text-xs font-medium" />;
 }
 
 /**

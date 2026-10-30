@@ -427,7 +427,7 @@ async function auditLive(view) {
   try {
     await scrollLive(page, element, 0);
     await page.screenshot({ path: `${out}/live-${view.name}.png` });
-    const step = Math.max(1, viewport - Math.ceil(overlap));
+    const step = Math.max(64, viewport - Math.ceil(overlap));
     if (height > viewport && viewport > 0) {
       let part = 2;
       for (let top = step; top < height; top += step) {

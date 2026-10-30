@@ -429,9 +429,9 @@ test("`/pricing` and `/privacy` are public pages of their own, signed in or not,
   };
   for (const [name, element] of Object.entries(pages)) {
     const html = renderToStaticMarkup(<I18nextProvider i18n={i18n}>{element}</I18nextProvider>);
-    assert.match(html, /<a href="\/pricing"[^>]*data-testid="header-pricing"[^>]*>Pricing<\/a>/, `${name}: the header`);
+    assert.match(html, /<a href="\/pricing"[^>]*data-testid="header-pricing"[^>]*>[\s\S]*?<span[^>]*>Pricing<\/span><\/a>/, `${name}: the header`);
     assert.match(html, /<a href="\/pricing"[^>]*data-testid="footer-pricing"/, `${name}: the footer`);
-    assert.match(html, /<a href="\/privacy"[^>]*data-testid="footer-privacy"[^>]*>Privacy notice<\/a>/, `${name}: the footer`);
+    assert.match(html, /<a href="\/privacy"[^>]*data-testid="footer-privacy"[^>]*>[\s\S]*?<span[^>]*>Privacy notice<\/span><\/a>/, `${name}: the footer`);
     assert.match(html, /<a href="\/terms#contact"[^>]*data-testid="footer-contact"[^>]*>Contact<\/a>/, `${name}: who to write to`);
   }
   // The landing page's hero does not link the plans (the first screen sells the product, not its price; the owner's call, 2026-10-28): the header and the footer do. By invite, the hero links the waitlist.
@@ -440,8 +440,8 @@ test("`/pricing` and `/privacy` are public pages of their own, signed in or not,
   assert.doesNotMatch(renderToStaticMarkup(<I18nextProvider i18n={i18n}><LandingPage signedIn /></I18nextProvider>), /data-testid="hero-(waitlist|pricing)"/);
   void i18n.changeLanguage("zh-CN");
   const cn = renderToStaticMarkup(<I18nextProvider i18n={i18n}><LandingPage /></I18nextProvider>);
-  assert.match(cn, /data-testid="header-pricing"[^>]*>定价<\/a>/);
-  assert.match(cn, /data-testid="footer-privacy"[^>]*>隐私说明<\/a>/);
+  assert.match(cn, /data-testid="header-pricing"[^>]*>[\s\S]*?<span[^>]*>定价<\/span><\/a>/);
+  assert.match(cn, /data-testid="footer-privacy"[^>]*>[\s\S]*?<span[^>]*>隐私说明<\/span><\/a>/);
   assert.match(renderToStaticMarkup(<I18nextProvider i18n={i18n}><LandingPage signup="invite" /></I18nextProvider>), /data-testid="hero-waitlist"[^>]*>还没有邀请码？加入等候名单<\/a>/);
 });
 

@@ -104,11 +104,11 @@ test("every public page's footer links it", () => {
     terms: <TermsPage />,
   };
   for (const [name, element] of Object.entries(pages)) {
-    assert.match(render(element, "en"), /<a href="\/terms"[^>]*data-testid="footer-terms"[^>]*>Terms of Service<\/a>/, `${name}: the footer`);
+    assert.match(render(element, "en"), /<a href="\/terms"[^>]*data-testid="footer-terms"[^>]*>[\s\S]*?<span[^>]*>Terms of Service<\/span><\/a>/, `${name}: the footer`);
   }
-  assert.match(render(<LandingPage />, "zh-CN"), /data-testid="footer-terms"[^>]*>服务条款<\/a>/);
-  assert.match(render(<LandingPage />, "zh-TW"), /data-testid="footer-terms"[^>]*>服務條款<\/a>/);
-  assert.match(render(<LandingPage />, "ja"), /data-testid="footer-terms"[^>]*>利用規約<\/a>/);
+  assert.match(render(<LandingPage />, "zh-CN"), /data-testid="footer-terms"[^>]*>[\s\S]*?<span[^>]*>服务条款<\/span><\/a>/);
+  assert.match(render(<LandingPage />, "zh-TW"), /data-testid="footer-terms"[^>]*>[\s\S]*?<span[^>]*>服務條款<\/span><\/a>/);
+  assert.match(render(<LandingPage />, "ja"), /data-testid="footer-terms"[^>]*>[\s\S]*?<span[^>]*>利用規約<\/span><\/a>/);
 });
 
 test("the sign-up form links the terms and the privacy notice, each in a new tab; sign-in does not", () => {

@@ -72,8 +72,8 @@ function Shot({
   const { i18n } = useTranslation();
   const dark = useDarkTheme();
   // The theme on show is fetched now (eager on the first tab); the other waits
-  // as a lazy, hidden image, so a toggle still swaps instantly without the
-  // page paying for two 2560px screenshots at first load. The intrinsic size
+  // as a lazy, hidden image and is fetched when it is first shown, so the page
+  // does not pay for two 2560px screenshots at first load. The intrinsic size
   // holds the frame's height while either one is on its way.
   const loading = (shown: boolean) => (eager && shown ? "eager" : "lazy");
   return (
@@ -277,7 +277,7 @@ export function ProductTour() {
             backgroundPosition: "-1px -1px",
           }}
         >
-          <Framed key={active} tab={active} alt={now.alt} eager={active === "sessions"} />
+          <Framed key={active} tab={active} alt={now.alt} eager={active === order[0]} />
         </div>
       </div>
     </div>

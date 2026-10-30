@@ -758,10 +758,10 @@ export default function DownloadPage({
       <div className="md:px-8">
         <main className="mx-auto max-w-[1360px] md:border-x md:border-border">
           <div className="flex flex-col gap-5 px-10 pt-16 pb-10 max-lg:pt-12 max-md:px-4 max-md:pt-10 max-md:pb-8">
-            <h1 className="max-w-[18em] text-5xl leading-display font-normal tracking-tight text-balance text-fg [word-break:auto-phrase] md:[&:lang(zh)]:[word-break:keep-all] max-md:text-4xl xl:text-5xl">
+            <h1 className="max-w-[18em] text-5xl leading-display font-normal tracking-tight text-balance text-fg cjk-wrap md:cjk-keep max-md:text-4xl xl:text-5xl">
               {t("Install Droppen on the device that runs your AI.")}
             </h1>
-            <p className="max-w-[40em] text-base leading-6 text-pretty text-muted [word-break:auto-phrase] md:[&:lang(zh)]:[word-break:keep-all] max-md:text-sm max-md:leading-6">
+            <p className="max-w-[40em] text-base leading-6 text-pretty text-muted cjk-wrap md:cjk-keep max-md:text-sm max-md:leading-6">
               {t(
                 "Droppen goes on the Mac or Linux device where Claude Code or Codex runs, alongside them. Your phone and other devices need nothing installed: open {{app}} in the browser to see every session, answer your AI's questions, steer it and open a terminal.",
                 { app: appHost() },

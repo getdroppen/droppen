@@ -17,6 +17,10 @@ const FILES: Record<string, string> = {
 };
 
 export function devTools(dir: string): Plugin {
+  // `pnpm dev:web:landing` serves the public pages alone; this dev-only marker
+  // points them at the production hub's config, since no local hub is running.
+  // `apply: "serve"` keeps both the marker and the well-known route out of
+  // every build.
   const landingMode = process.env.DROPPEN_DEV_LANDING === "1" || process.env.DROPPEN_WEB_ROLE === "site";
   return {
     name: "rh-dev-tools",

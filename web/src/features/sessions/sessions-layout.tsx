@@ -370,7 +370,7 @@ const SessionChildRow = memo(function SessionChildRow({
         <span aria-hidden="true" className="size-3 shrink-0" />
       )}
       <ChildStatusMark status={child.status} />
-      <span className={cn("min-w-0 flex-1 truncate text-xs text-fg max-md:text-[13px]", child.unread && "font-semibold")}>{child.name}</span>
+      <span className={cn("min-w-0 flex-1 truncate text-xs text-fg max-md:font-sans max-md:text-[13px]", child.unread && "font-semibold")}>{child.name}</span>
       {child.role && <span className="max-w-[30%] shrink-0 truncate font-mono text-2xs text-faint">{child.role}</span>}
       {child.unread && <UnreadMark title={t("not read yet")} />}
       <span className="shrink-0 font-mono text-2xs text-faint">

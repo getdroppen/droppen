@@ -296,7 +296,7 @@ export function RowMenu({ id, items }: { id: string; items: RowMenuItem[] }) {
                   )}
                 >
                   <span className={cn((item.busy || item.blocked !== null) && "opacity-40")}>{item.label}</span>
-                  {(item.blocked ?? item.hint) && <span className="max-w-64 text-[10px] leading-3.5 whitespace-normal text-muted pointer-coarse:text-xs">{item.blocked ?? item.hint}</span>}
+                  {(item.blocked ?? item.hint) && <span className="max-w-64 text-[10px] leading-3.5 whitespace-normal text-muted pointer-coarse:font-sans-text pointer-coarse:text-xs">{item.blocked ?? item.hint}</span>}
                 </Menu.Item>
               </div>
             ))}

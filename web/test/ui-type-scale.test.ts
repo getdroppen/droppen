@@ -37,4 +37,14 @@ test("public pages take font sizes from the theme scale, never a fixed size or t
     );
   });
   assert.deepEqual(offenders, []);
+
+  // `CapsLabel` defaults to the app's 11px `text-2xs`; a public page has to
+  // say `text-xs` itself. This catches the default the rules above cannot see.
+  const labels = files.flatMap((file) => {
+    const source = readFileSync(file, "utf8");
+    return [...source.matchAll(/<CapsLabel\b[^>]*>/g)]
+      .filter((match) => !/\btext-xs\b/.test(match[0]))
+      .map((match) => `${path.relative(root, file)}: ${match[0].slice(0, 80)} (CapsLabel without text-xs)`);
+  });
+  assert.deepEqual(labels, []);
 });

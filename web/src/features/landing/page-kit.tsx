@@ -1,7 +1,7 @@
-import { type ReactNode, useState } from "react";
+import { type AnchorHTMLAttributes, type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Menu } from "@base-ui-components/react/menu";
-import { Check, Copy, LogIn, UserPlus, UserRound } from "lucide-react";
+import { ArrowRight, Check, Copy, LogIn, UserPlus, UserRound } from "lucide-react";
 import { BrandMark } from "@/components/brand-mark";
 import { PrefsControls } from "@/components/prefs-controls";
 import { RegMark } from "@/components/reg-mark";
@@ -32,6 +32,32 @@ import { APP_PATH, publicLink, PRICING_PATH, PRIVACY_PATH, SECURITY_PATH, SIGN_I
  */
 export const landingPrimary = cn(primary, "h-auto min-h-9 py-1.5 text-sm");
 export const landingSecondary = cn(secondary, "h-auto min-h-9 py-1.5 text-sm");
+
+/**
+ * A public page's call to action: its label, then an arrow that steps right
+ * under the pointer. The primary is ink; the secondary is a hairline that
+ * darkens. Both are 40px tall, so a row of them lines up.
+ */
+export function ArrowLink({
+  variant = "secondary",
+  children,
+  className,
+  ...props
+}: AnchorHTMLAttributes<HTMLAnchorElement> & { variant?: "primary" | "secondary" }) {
+  return (
+    <a
+      {...props}
+      className={cn(
+        "group flex h-10 shrink-0 items-center justify-between gap-3 whitespace-nowrap border px-4 text-sm font-medium transition-colors",
+        variant === "primary" ? "border-fg bg-fg text-bg hover:bg-fg/85" : "border-border-strong bg-bg text-fg hover:border-fg hover:bg-hover",
+        className,
+      )}
+    >
+      <span>{children}</span>
+      <ArrowRight className="size-4 shrink-0 transition-transform duration-150 group-hover:translate-x-0.5" />
+    </a>
+  );
+}
 
 /** The two marks where a section's top line meets the frame; `side` keeps one where the other edge is a column divider. */
 export function Seam({ side = "both" }: { side?: "both" | "left" | "right" }) {
@@ -77,7 +103,7 @@ export function SectionHead({ label, title, lead, className }: { label?: string;
   return (
     <div className={cn("flex flex-col gap-3 px-6 pt-10 pb-8 max-md:px-4 max-md:pt-8 max-md:pb-6", className)}>
       {label && <CapsLabel face="sans" className={cn(cjkTracking, "text-xs font-semibold")}>{label}</CapsLabel>}
-      <h2 className="text-3xl leading-tight font-normal tracking-tight text-balance text-fg max-[359px]:text-pretty [word-break:auto-phrase] md:[&:lang(zh)]:[word-break:keep-all] max-md:text-2xl">{title}</h2>
+      <h2 className="text-3xl leading-tight font-normal tracking-tight text-balance text-fg max-[359px]:text-pretty cjk-wrap md:cjk-keep max-md:text-2xl">{title}</h2>
       {lead && <p className="max-w-[38em] text-sm leading-6 text-muted">{lead}</p>}
     </div>
   );
@@ -132,12 +158,20 @@ export function CommandLine({ command, label, testId, primaryCopy = false }: { c
   );
 }
 
-/** A link to another public page, marked when it is the page shown. */
+/**
+ * A link to another public page, marked when it is the page shown. The mark is
+ * semibold — the family has no 500 face — and an invisible semibold copy of
+ * the label holds the link at its bold width, so the nav does not move when
+ * the mark moves from one page to the next.
+ */
 function PageLink({ path, label, className, testId }: { path: string; label: string; className: string; testId?: string }) {
   const here = usePathname().replace(/\/+$/, "") === path;
   return (
-    <a {...publicLink(path)} aria-current={here ? "page" : undefined} data-testid={testId} className={cn(className, here && "text-fg font-medium")}>
-      {label}
+    <a {...publicLink(path)} aria-current={here ? "page" : undefined} data-testid={testId} className={cn("inline-grid", className, here && "text-fg")}>
+      <span aria-hidden="true" className="invisible col-start-1 row-start-1 font-semibold">
+        {label}
+      </span>
+      <span className={cn("col-start-1 row-start-1", here && "font-semibold")}>{label}</span>
     </a>
   );
 }
@@ -156,6 +190,58 @@ const MENU_POPUP =
   "popup-motion max-h-[min(var(--available-height),20rem)] min-w-[10rem] max-w-[20rem] overflow-y-auto border border-border-strong bg-bg py-1.5 outline-none";
 const MENU_ITEM =
   "flex min-h-8 w-full cursor-pointer items-center gap-2 px-3 py-1 text-left text-sm text-fg outline-none pointer-coarse:min-h-11 data-[highlighted]:bg-hover";
+const MENU_TRIGGER =
+  "flex size-9 shrink-0 items-center justify-center border border-border-strong bg-bg text-muted transition-colors hover:bg-hover hover:text-fg data-[popup-open]:bg-hover data-[popup-open]:text-fg";
+
+/** One item in the header's account menu: its icon, then its words. */
+function MenuLink({ path, icon: Icon, children }: { path: string; icon: typeof LogIn; children: ReactNode }) {
+  return (
+    <Menu.Item closeOnClick render={<a {...publicLink(path)} />} className={MENU_ITEM}>
+      <span className="flex size-3.5 shrink-0 items-center justify-center">
+        <Icon className="size-3.5" />
+      </span>
+      <span>{children}</span>
+    </Menu.Item>
+  );
+}
+
+/** The header's account menu: the way into the app, or sign-in and sign-up. */
+function AccountMenu({ signedIn }: { signedIn: boolean }) {
+  const { t } = useTranslation();
+  return (
+    <Menu.Root>
+      <Menu.Trigger
+        aria-label={signedIn ? t("Open app") : t("Sign in")}
+        title={signedIn ? t("Open app") : t("Sign in")}
+        className={MENU_TRIGGER}
+      >
+        <UserRound className="size-3.5" />
+      </Menu.Trigger>
+      {/* The portal stays mounted while the menu is closed, so the popup's
+          120ms exit motion is not cut off and the next open reuses its nodes. */}
+      <Menu.Portal keepMounted>
+        <Menu.Positioner side="bottom" align="end" sideOffset={4} className="z-50 outline-none">
+          <Menu.Popup className={MENU_POPUP}>
+            {signedIn ? (
+              <MenuLink path={APP_PATH} icon={LogIn}>
+                {t("Open app")}
+              </MenuLink>
+            ) : (
+              <>
+                <MenuLink path={SIGN_IN_PATH} icon={LogIn}>
+                  {t("Sign in")}
+                </MenuLink>
+                <MenuLink path={SIGN_UP_PATH} icon={UserPlus}>
+                  {t("Create a free account")}
+                </MenuLink>
+              </>
+            )}
+          </Menu.Popup>
+        </Menu.Positioner>
+      </Menu.Portal>
+    </Menu.Root>
+  );
+}
 
 /**
  * The public pages' header: the mark (home), the site's other pages (download,
@@ -199,56 +285,7 @@ export function PublicHeader({ signedIn }: { signedIn: boolean }) {
           <GitHubMark className="size-4" />
         </a>
         <PrefsControls />
-        <Menu.Root>
-          <Menu.Trigger
-            aria-label={signedIn ? t("Open app") : t("Sign in")}
-            title={signedIn ? t("Open app") : t("Sign in")}
-            className="flex size-9 shrink-0 items-center justify-center border border-border-strong bg-bg text-muted transition-colors hover:bg-hover hover:text-fg data-[popup-open]:bg-hover data-[popup-open]:text-fg"
-          >
-            <UserRound className="size-3.5" />
-          </Menu.Trigger>
-          <Menu.Portal keepMounted>
-            <Menu.Positioner side="bottom" align="end" sideOffset={4} className="z-50 outline-none">
-              <Menu.Popup className={MENU_POPUP}>
-                {signedIn ? (
-                  <Menu.Item
-                    closeOnClick
-                    render={<a {...publicLink(APP_PATH)} />}
-                    className={MENU_ITEM}
-                  >
-                    <span className="flex size-3.5 shrink-0 items-center justify-center">
-                      <LogIn className="size-3.5" />
-                    </span>
-                    <span>{t("Open app")}</span>
-                  </Menu.Item>
-                ) : (
-                  <>
-                    <Menu.Item
-                      closeOnClick
-                      render={<a {...publicLink(SIGN_IN_PATH)} />}
-                      className={MENU_ITEM}
-                    >
-                      <span className="flex size-3.5 shrink-0 items-center justify-center">
-                        <LogIn className="size-3.5" />
-                      </span>
-                      <span>{t("Sign in")}</span>
-                    </Menu.Item>
-                    <Menu.Item
-                      closeOnClick
-                      render={<a {...publicLink(SIGN_UP_PATH)} />}
-                      className={MENU_ITEM}
-                    >
-                      <span className="flex size-3.5 shrink-0 items-center justify-center">
-                        <UserPlus className="size-3.5" />
-                      </span>
-                      <span>{t("Create a free account")}</span>
-                    </Menu.Item>
-                  </>
-                )}
-              </Menu.Popup>
-            </Menu.Positioner>
-          </Menu.Portal>
-        </Menu.Root>
+        <AccountMenu signedIn={signedIn} />
         <RegMark className="-bottom-[5px] -left-[5px]" />
         <RegMark className="-right-[5px] -bottom-[5px]" />
       </div>
