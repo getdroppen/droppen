@@ -1,7 +1,7 @@
 //! Sessions driven over ACP: the transcript this server keeps for them, and
 //! their discovery.
 //!
-//! An agent driven over the Agent Client Protocol ([`crate::provider::acp`])
+//! An agent driven over the Agent Client Protocol ([`crate`])
 //! streams a turn as `session/update` notifications and keeps nothing a client
 //! can read back later except by `session/load`, which means starting the
 //! agent. Its own history is its format, not this server's
@@ -22,7 +22,7 @@
 //! The records, one JSON object per line, each with a `timestamp`:
 //!
 //! * `session` — the first line: `id` (this server's), `agent` (the agent's id,
-//!   [`crate::provider::acp::agents`]), `agentSessionId` (the id the agent gave it) and
+//!   [`crate::agents`]), `agentSessionId` (the id the agent gave it) and
 //!   `cwd`.
 //! * `user` — a message this server sent: `text`, and `images` / `files` paths.
 //! * `delta` — a streamed piece of the agent's answer (`kind` `text`) or of its
@@ -44,7 +44,7 @@
 //! so every one is owned: there is no external ACP session to browse yet.
 //! Listing an agent's own sessions (`session/list`) is left for when it can be
 //! asked without starting a process per listing. A session whose agent was
-//! removed stays listed under the id it recorded ([`crate::provider::acp::agents`] says what
+//! removed stays listed under the id it recorded ([`crate::agents`] says what
 //! that means for sending to it).
 
 use std::collections::{BTreeMap, HashMap};
@@ -60,7 +60,7 @@ use droppen_sessions::util::{
     TranscriptItem,
 };
 use droppen_sessions::{SessionActivity, SessionScope, SessionStatus, SessionSummary, Source};
-use crate::provider::acp::protocol::{ContentBlock, SessionUpdate, ToolCallContent, ToolCallStatus, ToolKind};
+use crate::protocol::{ContentBlock, SessionUpdate, ToolCallContent, ToolCallStatus, ToolKind};
 use droppen_instance::identity::ServerId;
 use droppen_http::openapi_ext::Nullable;
 use droppen_instance::paths::Paths;
@@ -92,7 +92,7 @@ const HEAD_BYTES: usize = 64 * 1024;
 const LINE: usize = 180;
 
 /// The longest agent id.
-pub(crate) const MAX_AGENT_ID: usize = 64;
+pub const MAX_AGENT_ID: usize = 64;
 
 /// Whether `id` can name an agent: ASCII lowercase letters, digits and `-`,
 /// starting with a letter or digit. It is a directory name and a key, so

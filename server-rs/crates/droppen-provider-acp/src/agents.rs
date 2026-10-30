@@ -1,7 +1,7 @@
 //! The ACP agents this machine runs sessions on: a registry keyed by id.
 //!
 //! Any program that speaks the [Agent Client Protocol](https://agentclientprotocol.com)
-//! over stdio can run Droppen sessions ([`crate::provider::acp`]). An agent is a
+//! over stdio can run Droppen sessions ([`crate`]). An agent is a
 //! description — an id, the name it goes by, the command line that starts it in
 //! ACP mode — plus the environment the user gives it. What it can do is not part
 //! of the description: that is what it answers to `initialize` and publishes as
@@ -21,7 +21,7 @@
 //!   [`AcpAgentRegistry::get`]).
 //!
 //! The id is a short slug ([`valid_agent_id`]): it names the directory an agent's
-//! transcripts are kept in ([`crate::provider::acp::sessions`]) and is
+//! transcripts are kept in ([`crate::sessions`]) and is
 //! recorded on every session, so a session is reopened by the agent it ran on
 //! and no other. Removing an agent leaves its sessions alone: they stay listed
 //! and readable, and cannot be continued until an agent with that id is
@@ -38,7 +38,7 @@
 //! `env` is read through [`parse_env_block`], so an agent's block refuses what
 //! an account's block refuses: `PATH`, the loader variables, and everything
 //! else that would move where a child's state lives. The values are what an
-//! API key looks like, so they are handled the way [`crate::chats::provider`]
+//! API key looks like, so they are handled the way `chats::provider`
 //! handles its key: a client is told the names, never the values, and a write
 //! replaces the whole block or leaves it alone.
 
@@ -57,7 +57,7 @@ use droppen_http::SendResult;
 use droppen_http::openapi_ext::{ExtraResponses, Optional};
 use droppen_instance::paths::Paths;
 use droppen_base::process_env::{clean_env_bare, resolve_on_path, Env};
-use crate::provider::acp::sessions::{valid_agent_id, MAX_AGENT_ID};
+use crate::sessions::{valid_agent_id, MAX_AGENT_ID};
 use droppen_sessions::{SessionSummary, Source};
 
 /// The longest name a person needs.
@@ -523,7 +523,7 @@ pub struct AcpAuthMethod {
 }
 
 /// The longest error a check keeps, and what an agent says in a session's
-/// error is cut to ([`crate::provider::acp::AcpRuns::redact_acp`]).
+/// error is cut to ([`crate::AcpRuns::redact_acp`]).
 pub(crate) const MAX_CHECK_ERROR: usize = 4096;
 /// The longest name, title, version or id of what an agent says it is, and
 /// of a model or effort it offers, in characters; and the longest description
@@ -538,7 +538,7 @@ impl AcpCheck {
     /// says of itself goes through `redact`, as its errors do, and is cut short
     /// where it is longer than any name: it is kept, and shown to whoever
     /// lists the agents.
-    pub fn ready(resolved: PathBuf, answer: &crate::provider::acp::protocol::InitializeResponse, redact: impl Fn(&str) -> String) -> Self {
+    pub fn ready(resolved: PathBuf, answer: &crate::protocol::InitializeResponse, redact: impl Fn(&str) -> String) -> Self {
         let caps = &answer.agent_capabilities;
         let said = |text: &str, cap: usize| droppen_base::text::clip(&redact(text), cap);
         let word = |text: &str| said(text, MAX_AGENT_WORD);
@@ -657,9 +657,9 @@ pub struct AcpAgentState {
     /// Where the agents' configuration lives.
     pub paths: Arc<droppen_instance::paths::Paths>,
     /// The live runs, which check an agent and stop its sessions when it goes.
-    pub(crate) acp: Arc<crate::provider::acp::AcpRuns>,
+    pub acp: Arc<crate::AcpRuns>,
     /// The providers, whose spawn gate the runs do that under.
-    pub(crate) providers: Arc<droppen_provider::ProviderRegistry>,
+    pub providers: Arc<droppen_provider::ProviderRegistry>,
 }
 droppen_http::substate!(AcpAgentState);
 
@@ -680,7 +680,7 @@ impl AcpAgentState {
     fn gate(&self) -> Result<&droppen_provider::SpawnGate, ApiError> {
         let (_, gate) = self
             .providers
-            .provider_with_gate::<crate::provider::acp::Acp>()
+            .provider_with_gate::<crate::Acp>()
             .ok_or_else(|| ApiError::internal("no ACP provider is registered"))?;
         Ok(gate)
     }
@@ -992,7 +992,7 @@ mod tests {
     /// its errors are, and no longer than a name.
     #[test]
     fn what_a_ready_agent_says_of_itself_is_redacted_and_bounded() {
-        let answer = crate::provider::acp::protocol::InitializeResponse::read(&serde_json::json!({
+        let answer = crate::protocol::InitializeResponse::read(&serde_json::json!({
             "protocolVersion": 1,
             "agentInfo": {"name": "agent", "title": "for key-1234567890", "version": "x".repeat(MAX_AGENT_WORD * 2)},
             "authMethods": (0..MAX_AUTH_METHODS * 2).map(|i| serde_json::json!({"id": format!("m{i}"), "name": "key-1234567890"})).collect::<Vec<_>>(),

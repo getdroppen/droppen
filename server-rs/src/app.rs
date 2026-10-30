@@ -141,7 +141,7 @@ impl GotchaApp for RemoteHandApp {
             // to start rather than on the first request for an agent.
             let acp = drive
                 .providers
-                .provider::<crate::provider::acp::Acp>()
+                .provider::<droppen_provider_acp::Acp>()
                 .ok_or_else(|| GotchaError::message("no ACP provider is registered"))?
                 .runs()
                 .clone();
@@ -654,7 +654,7 @@ pub fn transcript_sources() -> TranscriptSources {
     let mut sources = TranscriptSources::default();
     sources.register(Arc::new(crate::provider::claude_code::sessions::claude::ClaudeCodeSessions));
     sources.register(Arc::new(crate::provider::codex::sessions::codex::CodexSessions));
-    sources.register(Arc::new(crate::provider::acp::sessions::AcpSessions));
+    sources.register(Arc::new(droppen_provider_acp::sessions::AcpSessions));
     sources
 }
 
@@ -664,7 +664,7 @@ pub fn transcript_sources() -> TranscriptSources {
 pub fn register_providers(providers: &mut ProviderRegistry, registry: &Arc<InjectionRegistry>) {
     providers.register(Arc::new(crate::provider::claude_code::resident::ClaudeCode::new(registry.clone())));
     providers.register(Arc::new(crate::provider::codex::app_server::Codex::new(registry.clone())));
-    providers.register(Arc::new(crate::provider::acp::Acp::new(registry.clone())));
+    providers.register(Arc::new(droppen_provider_acp::Acp::new(registry.clone())));
 }
 
 /// Every CLI's login, as the accounts are handed them: the one place that

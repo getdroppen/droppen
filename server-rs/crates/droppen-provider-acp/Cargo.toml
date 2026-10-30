@@ -1,0 +1,52 @@
+[package]
+name = "droppen-provider-acp"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+publish = false
+description = "The Droppen server's ACP provider: every configured Agent Client Protocol agent, its runs, its routes, its model list and its transcripts"
+
+# Every ACP agent, from data: the user configures which agents there are, and
+# nothing here names one. It stands on the provider base (droppen-provider),
+# the sessions, the HTTP kit, the instance and the base helpers, and names no
+# module of the server: the entry registers it and serves its agents' routes.
+[dependencies]
+droppen-base = { path = "../droppen-base" }
+droppen-http = { path = "../droppen-http" }
+droppen-instance = { path = "../droppen-instance" }
+droppen-provider = { path = "../droppen-provider" }
+droppen-sessions = { path = "../droppen-sessions" }
+# The Agent Client Protocol's own types, for what this provider sends an
+# agent: the spec's encoding rather than one of ours. Without the default
+# `schemars` feature, which only generates the JSON Schema.
+agent-client-protocol-schema = { version = "1.13", default-features = false }
+futures-util = "0.3"
+gotcha = { version = "0.4.1", features = ["openapi"] }
+# What gotcha's `Schematic` derive expands to names it.
+gotcha_core = "0.4.1"
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = { workspace = true }
+# The scratch directory an agent is started in to be checked, or asked what it
+# offers: removed when dropped, a cancelled request's too.
+tempfile = "3"
+tokio = { version = "1", features = ["fs", "io-util", "macros", "process", "rt", "sync", "time"] }
+tracing = "0.1"
+
+[dev-dependencies]
+# The steps of a spawn, the turn alerts and an injection registry on the
+# accounts' stand-in logins (`droppen_provider::testing`), for this
+# provider's own tests.
+droppen-provider = { path = "../droppen-provider", features = ["test-support"] }
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "test-util"] }
+
+[lints.rust]
+missing_docs = "deny"
+unreachable_pub = "deny"
+
+# `[lints] workspace = true` cannot be mixed with the rust lints above, so the
+# workspace's two clippy denials (`server-rs/Cargo.toml` `[workspace.lints]`)
+# are repeated here: keep them in step.
+[lints.clippy]
+significant_drop_in_scrutinee = "deny"
+await_holding_lock = "deny"

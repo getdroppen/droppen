@@ -14,10 +14,10 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::client::Client;
 use super::conn::{Conn, Event};
-use crate::provider::acp::protocol::{category, option_for, ConfigOption, SessionUpdate};
-use crate::provider::acp::agents::AcpAgent;
+use crate::protocol::{category, option_for, ConfigOption, SessionUpdate};
+use crate::agents::AcpAgent;
 use droppen_provider::{InjectError, Phase, QueueOutcome, ResidentState, Sent};
-use crate::provider::acp::sessions::{Record, Translator};
+use crate::sessions::{Record, Translator};
 use droppen_sessions::{Injection, InjectionRunState, Source};
 use droppen_base::time::iso8601;
 
@@ -70,7 +70,7 @@ pub(super) struct Message {
 
 /// What the send path and the routes hold on to.
 #[derive(Clone)]
-pub(in crate::provider) struct Handle {
+pub(crate) struct Handle {
     tx: mpsc::UnboundedSender<Cmd>,
     shared: Arc<Mutex<State>>,
     /// The id of the agent the session runs on.
@@ -90,7 +90,7 @@ pub(super) struct Delivery {
 /// One message in [`Handle::in_flight`], for as long as this lives: it goes
 /// with the message, and the driver lets go of it once the message is in its
 /// queue. A driver that is gone drops it with the message.
-pub(in crate::provider) struct InFlight(Arc<AtomicUsize>);
+pub(crate) struct InFlight(Arc<AtomicUsize>);
 
 impl Drop for InFlight {
     fn drop(&mut self) {
@@ -185,20 +185,20 @@ impl Handle {
         self.shared.lock().unwrap().options.clone()
     }
 
-    pub(in crate::provider) fn alive(&self) -> bool {
+    pub(crate) fn alive(&self) -> bool {
         !self.tx.is_closed()
     }
 
     /// Whether the session row should report this driver at all.
-    pub(in crate::provider) fn visible(&self) -> bool {
+    pub(crate) fn visible(&self) -> bool {
         self.alive()
     }
 
-    pub(in crate::provider) fn injection(&self) -> Option<Injection> {
+    pub(crate) fn injection(&self) -> Option<Injection> {
         self.shared.lock().unwrap().injection.clone()
     }
 
-    pub(in crate::provider) fn state(&self) -> ResidentState {
+    pub(crate) fn state(&self) -> ResidentState {
         let state = self.shared.lock().unwrap();
         ResidentState {
             phase: if state.active { Phase::Working } else { Phase::Idle },
@@ -222,11 +222,11 @@ impl Handle {
         }
     }
 
-    pub(in crate::provider) fn info(&self) -> droppen_sessions::ResidentInfo {
+    pub(crate) fn info(&self) -> droppen_sessions::ResidentInfo {
         self.state().into()
     }
 
-    pub(in crate::provider) fn interrupt(&self) -> bool {
+    pub(crate) fn interrupt(&self) -> bool {
         self.shared.lock().unwrap().active && self.tx.send(Cmd::Interrupt).is_ok()
     }
 
@@ -239,7 +239,7 @@ impl Handle {
     }
 }
 
-pub(in crate::provider) enum Cmd {
+pub(crate) enum Cmd {
     /// A message, the reply its sender waits for, and its count in
     /// [`Handle::in_flight`].
     Deliver(Message, oneshot::Sender<Sent>, InFlight),
@@ -736,7 +736,7 @@ impl Driver {
     }
 
     /// The turn in flight ended: say how, in the transcript and on the row.
-    async fn prompted(&mut self, result: Result<crate::provider::acp::protocol::PromptResponse, String>) {
+    async fn prompted(&mut self, result: Result<crate::protocol::PromptResponse, String>) {
         if !self.state.active {
             return;
         }

@@ -14,7 +14,7 @@ use droppen_accounts::quota::QuotaState;
 use crate::provider::claude_code::setup_token::TokenWizardState;
 use crate::provider::claude_code::usage_login::UsageLoginState;
 use droppen_accounts::AccountsState;
-use crate::provider::acp::agents::AcpAgentState;
+use droppen_provider_acp::agents::AcpAgentState;
 use droppen_http::app_window::{AppWindow, ListenPort};
 use droppen_provider::models::ModelsState;
 use droppen_workbench::apps::AppsState;

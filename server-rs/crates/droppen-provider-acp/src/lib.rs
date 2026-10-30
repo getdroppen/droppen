@@ -2,7 +2,7 @@
 //! session, spoken to over stdio.
 //!
 //! [ACP](https://agentclientprotocol.com) is JSON-RPC 2.0, one message per
-//! line. This server is its client half ([`conn`] for the wire, [`crate::provider::acp::protocol`]
+//! line. This server is its client half ([`conn`] for the wire, [`crate::protocol`]
 //! for the messages), and uses the part of the protocol that holds a
 //! conversation:
 //!
@@ -22,14 +22,14 @@
 //! * `session/cancel` to stop a turn.
 //!
 //! What the agent says is written down as it arrives, in the transcript
-//! [`crate::provider::acp::sessions`] keeps; that file is what the session
+//! [`crate::sessions`] keeps; that file is what the session
 //! view reads.
 //!
 //! Everything here is the same for every ACP agent. Which agents there are is
-//! the user's to configure ([`crate::provider::acp::agents`]); each session records the one
+//! the user's to configure ([`crate::agents`]); each session records the one
 //! it runs on, and is started, reopened and resumed with that agent and no
 //! other. Its id is this server's own and the agent's id is kept beside it
-//! ([`crate::provider::acp::sessions`]): two agents may give two sessions the
+//! ([`crate::sessions`]): two agents may give two sessions the
 //! same id, and both still have to be told apart here.
 //!
 //! One message runs at a time. A message sent mid-turn waits in the driver's
@@ -62,15 +62,15 @@ use std::time::Duration;
 use droppen_provider::common::{new_uuid, session_workdir, QueueOutcome, ResidentState};
 use droppen_provider::{AccountChoice, Capabilities, DriverStatesBuilder, InjectError, InjectionRegistry, Provider, ProviderRuns, Run, RunHost, SendOptions, SendTo, Sent, SpawnGate, SpawnPermit, StartAt, WrittenAt};
 use futures_util::future::BoxFuture;
-use crate::provider::acp::protocol::{category, option_for, ConfigOption, InitializeResponse};
-use crate::provider::acp::agents::{AcpAgent, AcpAgentRegistry, AcpCheck, AcpCheckState};
-use crate::provider::acp::sessions::{has_conversation, read_header, AcpTranscripts, Record, Translator};
+use crate::protocol::{category, option_for, ConfigOption, InitializeResponse};
+use crate::agents::{AcpAgent, AcpAgentRegistry, AcpCheck, AcpCheckState};
+use crate::sessions::{has_conversation, read_header, AcpTranscripts, Record, Translator};
 use droppen_sessions::{Injection, SessionSummary, Source};
 use droppen_http::error::ApiError;
 use droppen_base::process_env::clean_env_bare;
 use client::Client;
 use conn::Conn;
-pub(super) use driver::Handle;
+pub(crate) use driver::Handle;
 use driver::{Cmd, Delivery, Driver, Message, Process, State, StderrTail};
 use serde_json::Value;
 use tokio::sync::mpsc;
@@ -300,23 +300,23 @@ fn scratch(kind: &str) -> std::io::Result<ScratchDir> {
 }
 
 /// Every configured ACP agent, as the provider registry knows them.
-pub(crate) struct Acp {
+pub struct Acp {
     /// Its agents' processes and what they offer.
     runs: Arc<AcpRuns>,
     /// Each agent's models.
-    models: crate::provider::acp::models::AcpModels,
+    models: crate::models::AcpModels,
 }
 
 impl Acp {
     /// The ACP agents, run on `registry`'s host.
-    pub(crate) fn new(registry: Arc<InjectionRegistry>) -> Self {
+    pub fn new(registry: Arc<InjectionRegistry>) -> Self {
         let runs = AcpRuns::new(registry.host.clone());
-        let models = crate::provider::acp::models::AcpModels::new(runs.host.paths.clone(), runs.clone());
+        let models = crate::models::AcpModels::new(runs.host.paths.clone(), runs.clone());
         Self { runs, models }
     }
 
     /// Its runs, for the ACP agents' own routes.
-    pub(crate) fn runs(&self) -> &Arc<AcpRuns> {
+    pub fn runs(&self) -> &Arc<AcpRuns> {
         &self.runs
     }
 }
@@ -325,7 +325,7 @@ impl Acp {
 /// agent offers, and the probes that ask it. Kept here rather than on the
 /// host they run on, whose shared parts — the paths, the runs journal, the
 /// feeds — they reach through it.
-pub(crate) struct AcpRuns {
+pub struct AcpRuns {
     /// What they run on.
     host: Arc<RunHost>,
     /// The agent process behind each ACP session, keyed
@@ -464,7 +464,7 @@ impl Run for Acp {
     fn check_start(&self, acp_agent: Option<&str>) -> Result<(), ApiError> {
         match acp_agent {
             None => Err(ApiError::bad_request("an ACP session needs acpAgent: the agent it runs on")),
-            Some(id) if !crate::provider::acp::sessions::valid_agent_id(id) => Err(ApiError::bad_request(format!("invalid ACP agent id: {id}"))),
+            Some(id) if !crate::sessions::valid_agent_id(id) => Err(ApiError::bad_request(format!("invalid ACP agent id: {id}"))),
             Some(id) if AcpAgentRegistry::of(&self.runs.host.paths).get(id).is_none() => {
                 Err(ApiError::bad_request(format!("no ACP agent \"{id}\" is configured")))
             }
@@ -500,7 +500,7 @@ impl Run for Acp {
 impl AcpRuns {
     /// ACP's part of the session list's snapshot ([`ProviderRuns::add_to`]): the agent processes
     /// the list is to show, and the state of every one's run.
-    pub(super) fn acp_driver_states(&self, states: &mut DriverStatesBuilder) {
+    pub(crate) fn acp_driver_states(&self, states: &mut DriverStatesBuilder) {
         // Already keyed `key_of`, so the keys go in as they are.
         let acp: Vec<(String, Handle)> = self.acp_servers.lock().unwrap().iter().map(|(key, h)| (key.clone(), h.clone())).collect();
         for (key, handle) in acp.iter().filter(|(_, h)| h.visible()) {
@@ -522,7 +522,7 @@ impl AcpRuns {
     /// agent's defaults, which a switched session's are not. With
     /// nothing remembered, a probe opens a session in a scratch directory,
     /// reads its options and closes it, so it leaves no conversation behind.
-    pub async fn acp_options(self: &Arc<Self>, agent: &AcpAgent) -> Result<Vec<ConfigOption>, InjectError> {
+    pub(crate) async fn acp_options(self: &Arc<Self>, agent: &AcpAgent) -> Result<Vec<ConfigOption>, InjectError> {
         if let Some(options) = self.acp_options.lock().unwrap().get(&agent.id) {
             return Ok(options.clone());
         }
@@ -565,7 +565,7 @@ impl AcpRuns {
     }
 
     /// What the agent `agent` offers, as a fresh session reports it.
-    pub(super) fn remember_acp_options(&self, agent: &str, options: &[ConfigOption]) {
+    pub(crate) fn remember_acp_options(&self, agent: &str, options: &[ConfigOption]) {
         if !options.is_empty() {
             self.acp_options.lock().unwrap().insert(agent.to_string(), options.to_vec());
         }
@@ -573,7 +573,7 @@ impl AcpRuns {
 
     /// Forget what the agent `agent` offers: its settings changed, so the next
     /// start may run a different configuration.
-    pub fn forget_acp_options(&self, agent: &str) {
+    pub(crate) fn forget_acp_options(&self, agent: &str) {
         self.acp_options.lock().unwrap().remove(agent);
     }
 
@@ -582,7 +582,7 @@ impl AcpRuns {
     /// [`droppen_provider::RunHost::redact`] would take out. The agent's own variables'
     /// values are not looked for: they are often what names its model.
     pub(crate) fn acp_id_shown(&self, id: &str) -> bool {
-        id.chars().count() <= crate::provider::acp::agents::MAX_AGENT_WORD && self.host.redact(id) == id
+        id.chars().count() <= crate::agents::MAX_AGENT_WORD && self.host.redact(id) == id
     }
 
     /// What `agent` said, fit to be stored and shown: [`droppen_provider::RunHost::redact`],
@@ -590,7 +590,7 @@ impl AcpRuns {
     /// key looks like — and then cut to a few KB, as a session's error, its
     /// transcript and a push notification carry it.
     pub(crate) fn redact_acp(&self, agent: &AcpAgent, text: &str) -> String {
-        droppen_base::text::clip(&self.host.redact(&agent.without_values(text)), crate::provider::acp::agents::MAX_CHECK_ERROR)
+        droppen_base::text::clip(&self.host.redact(&agent.without_values(text)), crate::agents::MAX_CHECK_ERROR)
     }
 
     /// Whether a turn of the agent `agent` is running, in any of its sessions,
@@ -606,7 +606,7 @@ impl AcpRuns {
     /// Under the spawn gate, which a start or a send holds from reading its
     /// agent until its message is handed over: no turn starts between the
     /// look and the removal, and none starts on the agent after it.
-    pub async fn remove_acp_agent(&self, gate: &SpawnGate, agent: &AcpAgent) -> Result<bool, String> {
+    pub(crate) async fn remove_acp_agent(&self, gate: &SpawnGate, agent: &AcpAgent) -> Result<bool, String> {
         let _permit = gate.permit().await;
         if self.acp_agent_busy(&agent.id) {
             return Err(format!(
@@ -626,7 +626,7 @@ impl AcpRuns {
     /// the spawn gate. When its command line or environment changed, its
     /// sessions' processes are renewed ([`AcpRuns::renew_acp_processes`]):
     /// a rotated key, say, reaches every session's next process.
-    pub async fn reconfigure_acp_agent(&self, gate: &SpawnGate, id: &str, patch: &crate::provider::acp::agents::AcpAgentUpdate) -> Result<AcpAgent, String> {
+    pub(crate) async fn reconfigure_acp_agent(&self, gate: &SpawnGate, id: &str, patch: &crate::agents::AcpAgentUpdate) -> Result<AcpAgent, String> {
         let _permit = gate.permit().await;
         let agents = AcpAgentRegistry::of(&self.host.paths);
         let before = agents.get(id);
@@ -663,7 +663,7 @@ impl AcpRuns {
     /// Bounded: `initialize` gets [`CHECK_TIMEOUT`], what the agent wrote to
     /// stderr is its last few lines, and the error is cut to a few KB. What it
     /// says is redacted ([`AcpRuns::redact_acp`]).
-    pub async fn check_acp_agent(&self, agent: &AcpAgent) -> AcpCheck {
+    pub(crate) async fn check_acp_agent(&self, agent: &AcpAgent) -> AcpCheck {
         self.check_acp_agent_within(agent, CHECK_TIMEOUT).await
     }
 
@@ -709,7 +709,7 @@ impl AcpRuns {
         }
     }
 
-    pub(super) fn acp_handle(&self, id: &str) -> Option<Handle> {
+    pub(crate) fn acp_handle(&self, id: &str) -> Option<Handle> {
         self.acp_servers.lock().unwrap().get(&self.host.key_of(Source::Acp, id)).cloned()
     }
 
@@ -721,7 +721,7 @@ impl AcpRuns {
     /// on its way, and not while the agent starts or the driver takes the
     /// message: a slow agent, or one that never answers, holds up no other
     /// send.
-    pub(super) async fn acp_start(self: &Arc<Self>, gate: &SpawnGate, agent: &str, cwd: &str, text: &str, options: &SendOptions) -> Result<String, InjectError> {
+    pub(crate) async fn acp_start(self: &Arc<Self>, gate: &SpawnGate, agent: &str, cwd: &str, text: &str, options: &SendOptions) -> Result<String, InjectError> {
         // The agent is read under the gate, which its removal holds too
         // ([`AcpRuns::remove_acp_agent`]).
         let mut permit = gate.permit().await;
@@ -749,14 +749,14 @@ impl AcpRuns {
     /// Hand a message to the session `id`, starting its own agent if needed:
     /// the one its transcript is kept under, whatever else is configured now.
     /// Under the gate as [`AcpRuns::acp_start`] is.
-    pub(super) async fn acp_send(self: &Arc<Self>, gate: &SpawnGate, id: &str, text: &str, options: &SendOptions) -> Result<Sent, InjectError> {
+    pub(crate) async fn acp_send(self: &Arc<Self>, gate: &SpawnGate, id: &str, text: &str, options: &SendOptions) -> Result<Sent, InjectError> {
         let (agent_id, file) = AcpTranscripts::of(&self.host.paths).locate(id)
             .await
             .ok_or_else(|| InjectError::message("ACP session not found"))?;
         let mut permit = gate.permit().await;
         let agent = AcpAgentRegistry::of(&self.host.paths)
             .get(&agent_id)
-            .ok_or_else(|| InjectError::message(crate::provider::acp::agents::removed(&agent_id)))?;
+            .ok_or_else(|| InjectError::message(crate::agents::removed(&agent_id)))?;
         check_options(&agent, options)?;
         let message = message(text, options);
         let current = self.acp_handle(id).filter(Handle::alive);
@@ -819,7 +819,7 @@ impl AcpRuns {
         (starting, delivery)
     }
 
-    pub(super) async fn acp_queue_action(&self, id: &str, qid: &str, steer: bool) -> QueueOutcome {
+    pub(crate) async fn acp_queue_action(&self, id: &str, qid: &str, steer: bool) -> QueueOutcome {
         match self.acp_handle(id).filter(Handle::alive) {
             Some(handle) => handle.queue_action(qid, steer).await,
             None => QueueOutcome::NoResident,
@@ -832,7 +832,7 @@ impl AcpRuns {
     ///
     /// Refused while a turn is running or a message is waiting, as the other
     /// archives are: the user is told rather than the work being dropped.
-    pub async fn archive_acp(&self, gate: &SpawnGate, id: &str) -> Result<(), droppen_sessions::archive::ArchiveError> {
+    pub(crate) async fn archive_acp(&self, gate: &SpawnGate, id: &str) -> Result<(), droppen_sessions::archive::ArchiveError> {
         use droppen_sessions::archive::ArchiveError;
         let (agent_id, from) = AcpTranscripts::of(&self.host.paths).locate(id)
             .await
@@ -983,12 +983,12 @@ fn absolute(path: &Path) -> PathBuf {
 }
 
 /// What a session's replay is made of, for the caller to translate.
-pub(super) type Replay = Vec<crate::provider::acp::protocol::SessionUpdate>;
+pub(crate) type Replay = Vec<crate::protocol::SessionUpdate>;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider::acp::sessions::tests::unstamped;
+    use crate::sessions::tests::unstamped;
     use droppen_instance::paths::Paths;
     use serde_json::json;
 
@@ -1072,7 +1072,7 @@ mod tests {
     #[test]
     fn a_model_or_effort_is_checked_against_what_the_agent_offers() {
         let agent = &agent();
-        let offered = crate::provider::acp::protocol::config_options(&json!({"configOptions": [
+        let offered = crate::protocol::config_options(&json!({"configOptions": [
             {"id": "model", "name": "Model", "category": "model", "type": "select", "currentValue": "a:x",
              "options": [{"value": "a:x", "name": "X"}, {"value": "a:y", "name": "Y"}]},
             {"id": "reasoning_effort", "name": "Effort", "category": "thought_level", "type": "select", "currentValue": "auto",
@@ -1190,7 +1190,7 @@ mod tests {
         let program = home.join("fake-agent");
         std::fs::write(&program, include_str!("../../../tests/support/fake_acp_agent.py")).expect("agent");
         std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).expect("chmod");
-        let patch = crate::provider::acp::agents::AcpAgentUpdate {
+        let patch = crate::agents::AcpAgentUpdate {
             name: None.into(),
             command: Some(program.to_string_lossy().into_owned()).into(),
             args: Some(vec!["--acp".to_string(), "--stdio".to_string()]).into(),
