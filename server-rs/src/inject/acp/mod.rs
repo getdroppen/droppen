@@ -350,8 +350,9 @@ impl AcpRuns {
     }
 }
 
-/// The host's shared parts, read as if they were the runs' own: the method
-/// bodies that moved here from the injection registry read them as they did.
+/// The host's shared parts — its paths, journal, feeds and keys — read as if
+/// they were the runs' own, so a method here reaches them as plainly as one of
+/// the host's does.
 impl std::ops::Deref for AcpRuns {
     type Target = RunHost;
 
@@ -1527,10 +1528,9 @@ mod tests {
             let (providers, id) = (providers.clone(), id.clone());
             async move { providers.archive(Source::Acp, &id).await }
         });
-        // Not done while the gate is held: an archive lent another gate would
-        // be by then. A slow machine can only make this pass, not fail.
-        tokio::time::sleep(Duration::from_millis(300)).await;
-        assert!(!archive.is_finished(), "an archive waits for the registry's gate");
+        // Among the registry's gate's waiters: an archive lent another gate
+        // never would be.
+        until("the archive to wait for the registry's gate", || providers.gate().waiting() == 1).await;
         drop(held);
         archive.await.expect("joined").expect("archived");
     }

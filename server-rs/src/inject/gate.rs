@@ -62,6 +62,10 @@ pub struct SpawnGate {
     claims: Arc<Claims>,
     /// Set once [`SpawnGate::boot`] has handed out the boot pass.
     booted: AtomicBool,
+    /// How many are waiting to take the gate, for a test that waits until a
+    /// call is blocked on it.
+    #[cfg(test)]
+    waiting: std::sync::atomic::AtomicUsize,
 }
 
 impl SpawnGate {
@@ -73,11 +77,15 @@ impl SpawnGate {
             lock: tokio::sync::Mutex::new(()),
             claims: Arc::new(Claims { dir }),
             booted: AtomicBool::new(false),
+            #[cfg(test)]
+            waiting: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 
     /// Take the gate, for as long as the permit keeps it.
     pub(crate) async fn permit(&self) -> SpawnPermit<'_> {
+        #[cfg(test)]
+        let _waiting = Waiting::on(&self.waiting);
         SpawnPermit {
             claim: None,
             guard: Some(self.lock.lock().await),
@@ -205,8 +213,32 @@ impl Boot<'_> {
     }
 }
 
+/// A caller counted as waiting for the gate until it has it, or gives up.
+#[cfg(test)]
+struct Waiting<'a>(&'a std::sync::atomic::AtomicUsize);
+
+#[cfg(test)]
+impl<'a> Waiting<'a> {
+    fn on(count: &'a std::sync::atomic::AtomicUsize) -> Self {
+        count.fetch_add(1, Ordering::SeqCst);
+        Self(count)
+    }
+}
+
+#[cfg(test)]
+impl Drop for Waiting<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 #[cfg(test)]
 impl SpawnGate {
+    /// How many are waiting to take the gate now.
+    pub(crate) fn waiting(&self) -> usize {
+        self.waiting.load(Ordering::SeqCst)
+    }
+
     /// Whether anyone holds the gate.
     pub(crate) fn held(&self) -> bool {
         self.lock.try_lock().is_err()
@@ -254,33 +286,75 @@ impl SessionLease {
 mod tests {
     use std::path::Path;
 
-    /// The permit that takes no gate starts nothing in the server: only the
-    /// shim's own end-to-end test, outside `src/`, may use it.
-    #[test]
-    fn nothing_in_the_server_starts_a_cli_without_the_gate() {
-        fn walk(dir: &Path, found: &mut Vec<String>) {
+    /// Every source file of the server but this one, and what it says.
+    fn server_sources() -> Vec<(String, String)> {
+        fn walk(dir: &Path, found: &mut Vec<(String, String)>) {
             for entry in std::fs::read_dir(dir).expect("read_dir").flatten() {
                 let path = entry.path();
                 if path.is_dir() {
                     walk(&path, found);
                 } else if path.extension().is_some_and(|ext| ext == "rs") && !path.ends_with("inject/gate.rs") {
-                    let text = std::fs::read_to_string(&path).expect("source");
-                    // The name as a whole identifier, so a call spelt
-                    // `without_a_session ()` or passed as a function is found
-                    // too, and a test named `…_without_a_session_…` is not.
-                    const NAME: &str = "without_a_session";
-                    let ident = |c: char| c.is_alphanumeric() || c == '_';
-                    let named = text
-                        .match_indices(NAME)
-                        .any(|(at, _)| !text[..at].ends_with(ident) && !text[at + NAME.len()..].starts_with(ident));
-                    if named {
-                        found.push(path.display().to_string());
-                    }
+                    found.push((path.display().to_string(), std::fs::read_to_string(&path).expect("source")));
                 }
             }
         }
         let mut found = Vec::new();
         walk(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut found);
+        found
+    }
+
+    /// Whether `c` can be part of an identifier.
+    fn ident(c: char) -> bool {
+        c.is_alphanumeric() || c == '_'
+    }
+
+    /// The permit that takes no gate starts nothing in the server: only the
+    /// shim's own end-to-end test, outside `src/`, may use it.
+    #[test]
+    fn nothing_in_the_server_starts_a_cli_without_the_gate() {
+        // The name as a whole identifier, so a call spelt
+        // `without_a_session ()` or passed as a function is found
+        // too, and a test named `…_without_a_session_…` is not.
+        const NAME: &str = "without_a_session";
+        let found: Vec<String> = server_sources()
+            .into_iter()
+            .filter(|(_, text)| text.match_indices(NAME).any(|(at, _)| !text[..at].ends_with(ident) && !text[at + NAME.len()..].starts_with(ident)))
+            .map(|(path, _)| path)
+            .collect();
         assert!(found.is_empty(), "a CLI started without the spawn gate: {found:?}");
+    }
+
+    /// Only the provider registry makes a spawn gate, so the gate a provider
+    /// is lent is the only one there is: a provider that made its own and took
+    /// that instead would start a CLI beside one the registry's gate keeps
+    /// out. A file's tests make theirs as they like.
+    #[test]
+    fn only_the_provider_registry_makes_a_spawn_gate() {
+        // `SpawnGate::new` as a path, however spaced and whatever it is
+        // reached through, in a file's code: its tests and comments aside.
+        let makes = |text: &str| {
+            let code = text.split("\n#[cfg(test)]\nmod tests").next().unwrap_or_default();
+            let code: Vec<&str> = code.lines().filter(|line| !line.trim_start().starts_with("//")).collect();
+            let code = code.join("\n");
+            code.match_indices("SpawnGate").any(|(at, name)| {
+                let rest = code[at + name.len()..].trim_start();
+                !code[..at].ends_with(ident)
+                    && rest.strip_prefix("::").is_some_and(|rest| {
+                        let rest = rest.trim_start();
+                        rest.starts_with("new") && !rest["new".len()..].starts_with(ident)
+                    })
+            })
+        };
+        let sources = server_sources();
+        assert!(
+            sources.iter().any(|(path, text)| path.ends_with("inject/registry.rs") && makes(text)),
+            "the provider registry makes the gate"
+        );
+        let found: Vec<&str> = sources
+            .iter()
+            .filter(|(path, text)| !path.ends_with("inject/registry.rs") && makes(text))
+            .map(|(path, _)| path.as_str())
+            .collect();
+        assert!(found.is_empty(), "a spawn gate made outside the provider registry: {found:?}");
     }
 }
