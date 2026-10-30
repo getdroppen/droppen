@@ -233,13 +233,8 @@ impl FromRef<AppState> for AcpAgentState {
     fn from_ref(state: &AppState) -> Self {
         Self {
             paths: state.paths.clone(),
-            acp: state
-                .drive
-                .providers
-                .provider::<crate::inject::acp::Acp>()
-                .expect("the entry registers the ACP provider")
-                .runs()
-                .clone(),
+            acp: state.acp.clone(),
+            providers: state.drive.providers.clone(),
         }
     }
 }

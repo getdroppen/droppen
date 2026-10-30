@@ -658,6 +658,8 @@ pub struct AcpAgentState {
     pub paths: Arc<droppen_instance::paths::Paths>,
     /// The live runs, which check an agent and stop its sessions when it goes.
     pub(crate) acp: Arc<crate::inject::acp::AcpRuns>,
+    /// The providers, whose spawn gate the runs do that under.
+    pub(crate) providers: Arc<crate::inject::ProviderRegistry>,
 }
 droppen_http::substate!(AcpAgentState);
 
@@ -683,7 +685,7 @@ pub async fn put_acp_agent(
 ) -> Result<Json<AcpAgentInfo>, ApiError> {
     let agent = state
         .acp
-        .reconfigure_acp_agent(&id, &body)
+        .reconfigure_acp_agent(state.providers.gate(), &id, &body)
         .await
         .map_err(ApiError::bad_request)?;
     Ok(Json(agent.info()))
@@ -699,7 +701,7 @@ pub async fn delete_acp_agent(State(state): State<AcpAgentState>, ApiPath(id): A
     let Some(agent) = AcpAgentRegistry::of(&state.paths).get(&id) else {
         return Err(ApiError::not_found("no such ACP agent"));
     };
-    match state.acp.remove_acp_agent(&agent).await {
+    match state.acp.remove_acp_agent(state.providers.gate(), &agent).await {
         Ok(true) => Ok(Json(SendResult { accepted: true })),
         Ok(false) => Err(ApiError::not_found("no such ACP agent")),
         Err(busy) => Err(ApiError::conflict(busy)),
