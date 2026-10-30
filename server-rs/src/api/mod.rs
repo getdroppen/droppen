@@ -28,7 +28,7 @@ use droppen_sessions::{SessionDetail, SessionList, Settings, Source};
 
 mod state;
 
-/// The ACP agents' routes (`crate::provider::acp::agents`), through the
+/// The ACP agents' routes (`droppen_provider_acp::agents`), through the
 /// router as the server builds it.
 #[cfg(test)]
 mod acp_agents;
@@ -113,7 +113,7 @@ pub struct AppState {
     pub wizards: Arc<crate::provider::claude_code::setup_token::Captures>,
     /// The ACP agents' runs, which their own routes check and stop agents
     /// through: found among the providers once, when this state is built.
-    pub(crate) acp: Arc<crate::provider::acp::AcpRuns>,
+    pub(crate) acp: Arc<droppen_provider_acp::AcpRuns>,
     /// Every live web terminal, so shutdown can kill them.
     pub terminals: Arc<droppen_workbench::terminals::Registry>,
     /// Instant chats: the provider configuration and the API-backed store.
@@ -437,7 +437,7 @@ fn response_overrides() -> ExtraResponses {
     droppen_accounts::describe(&mut reg);
     crate::provider::claude_code::setup_token::describe(&mut reg);
     crate::provider::claude_code::usage_login::describe(&mut reg);
-    crate::provider::acp::agents::describe(&mut reg);
+    droppen_provider_acp::agents::describe(&mut reg);
     droppen_workbench::apps::describe(&mut reg);
     droppen_sessions::attention::routes::describe(&mut reg);
     droppen_auth::describe(&mut reg);
@@ -472,7 +472,7 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
     let router = droppen_accounts::AccountsState::routes(router);
     let router = crate::provider::claude_code::setup_token::TokenWizardState::routes(router);
     let router = crate::provider::claude_code::usage_login::UsageLoginState::routes(router);
-    let router = crate::provider::acp::agents::AcpAgentState::routes(router);
+    let router = droppen_provider_acp::agents::AcpAgentState::routes(router);
     let router = droppen_workbench::apps::AppsState::routes(router);
     let router = droppen_sessions::attention::routes::AttentionState::routes(router);
     let router = droppen_auth::AuthState::routes(router);

@@ -1,8 +1,8 @@
-//! The ACP agents' routes (`crate::provider::acp::agents`) through the router
+//! The ACP agents' routes (`droppen_provider_acp::agents`) through the router
 //! the server builds, behind its login guard and the bridge: who reads a last
 //! check's error.
 
-use crate::provider::acp::agents::{AcpAgentRegistry, AcpAgentUpdate, AcpCheck, AcpCheckState};
+use droppen_provider_acp::agents::{AcpAgentRegistry, AcpAgentUpdate, AcpCheck, AcpCheckState};
 
 fn patch(command: Option<&str>, args: Option<&[&str]>, env: Option<&str>) -> AcpAgentUpdate {
     AcpAgentUpdate {

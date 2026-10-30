@@ -5,7 +5,7 @@ use std::sync::Arc;
 use droppen_sessions::{SessionSummary, Source};
 
 use droppen_provider::*;
-use crate::provider::acp::agents::{AcpAgentRegistry, AcpAgentUpdate};
+use droppen_provider_acp::agents::{AcpAgentRegistry, AcpAgentUpdate};
 use droppen_instance::instance::InstanceDirs;
 use droppen_instance::paths::Paths;
 
@@ -46,7 +46,7 @@ fn codex_only(providers: &mut ProviderRegistry, registry: &Arc<InjectionRegistry
 
 /// The ACP agents alone.
 fn acp_only(providers: &mut ProviderRegistry, registry: &Arc<InjectionRegistry>) {
-    providers.register(Arc::new(crate::provider::acp::Acp::new(registry.clone())));
+    providers.register(Arc::new(droppen_provider_acp::Acp::new(registry.clone())));
 }
 
 /// A session row of `source` that ran on the ACP agent `agent`, if any.
@@ -108,7 +108,7 @@ fn a_second_live_provider_registry_on_one_host_is_refused() {
     );
     drop(first);
     let again = ProviderRegistry::new(injections.clone(), crate::app::register_providers);
-    assert!(again.provider::<crate::provider::acp::Acp>().is_some());
+    assert!(again.provider::<droppen_provider_acp::Acp>().is_some());
     drop(again);
     let register: [(Source, fn(&mut ProviderRegistry, &Arc<InjectionRegistry>)); 3] = [(Source::Claude, claude_only), (Source::Codex, codex_only), (Source::Acp, acp_only)];
     for (source, register) in register {
@@ -213,7 +213,7 @@ async fn an_acp_model_list_names_its_agent_by_an_id_that_can_be_a_directory_name
         acp_agent: agent.map(str::to_owned),
     };
     let acp = providers.models(Source::Acp).expect("the ACP provider");
-    let too_long = "x".repeat(crate::provider::acp::sessions::MAX_AGENT_ID + 1);
+    let too_long = "x".repeat(droppen_provider_acp::sessions::MAX_AGENT_ID + 1);
     for agent in [None, Some("../fake"), Some("Fake"), Some(""), Some("a/b"), Some("a\0b"), Some(too_long.as_str())] {
         assert_eq!(
             acp.list(&query(Source::Acp, agent)).await.err().as_deref(),
@@ -286,7 +286,7 @@ fn a_session_is_blocked_only_when_its_acp_agent_is_gone() {
     let home = tempfile::tempdir().expect("tempdir");
     let providers = providers(home.path());
     assert_eq!(providers.send_block(&row("acp", Some("fake"))), None);
-    assert_eq!(providers.send_block(&row("acp", Some("gone"))), Some(crate::provider::acp::agents::removed("gone")));
+    assert_eq!(providers.send_block(&row("acp", Some("gone"))), Some(droppen_provider_acp::agents::removed("gone")));
     assert_eq!(
         providers.send_block(&row("acp", None)).as_deref(),
         Some("this ACP session does not say which agent it ran on")

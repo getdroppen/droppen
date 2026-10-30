@@ -30,7 +30,7 @@ Besides Claude Code and Codex, it starts and drives any agent that speaks the
 [Agent Client Protocol](https://agentclientprotocol.com) (ACP) over stdio.
 Settings → Agents & accounts → ACP holds one card per agent: add a known one
 from the built-in presets
-([`server-rs/src/provider/acp/acp-agents.json`](../server-rs/src/provider/acp/acp-agents.json)) or give
+([`server-rs/crates/droppen-provider-acp/src/acp-agents.json`](../server-rs/crates/droppen-provider-acp/src/acp-agents.json)) or give
 any agent's command line, and check that it starts. Every session records the
 agent it was started on and is always resumed with that agent.
 

@@ -8141,7 +8141,7 @@ done
             let providers = droppen_provider::ProviderRegistry::new(injections.clone(), |providers, injections| {
                 providers.register(Arc::new(ClaudeCode::on(registry.clone(), injections)));
                 providers.register(Arc::new(crate::provider::codex::app_server::Codex::new(injections.clone())));
-                providers.register(Arc::new(crate::provider::acp::Acp::new(injections.clone())));
+                providers.register(Arc::new(droppen_provider_acp::Acp::new(injections.clone())));
             });
             let log = home.path().join("stdin.log");
             let go = home.path().join("go");

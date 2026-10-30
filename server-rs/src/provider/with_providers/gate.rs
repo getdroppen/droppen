@@ -2,17 +2,17 @@
 
 use std::path::{Path, PathBuf};
 
-/// One source file of the server or of the provider base: what it says, and
-/// its code as these scans read it ([`code`]). A file that is a test
-/// module's has none.
+/// One source file of the server, of the provider base or of a provider's
+/// crate: what it says, and its code as these scans read it ([`code`]). A
+/// file that is a test module's has none.
 struct Source {
     path: String,
     text: String,
     code: String,
 }
 
-/// Every source file of the server and of the provider base, but the gate's
-/// own and this one.
+/// Every source file of the server, of the provider base and of the ACP
+/// provider's crate, but the gate's own and this one.
 fn server_sources() -> Vec<Source> {
     fn walk(dir: &Path, found: &mut Vec<PathBuf>) {
         for entry in std::fs::read_dir(dir).expect("read_dir").flatten() {
@@ -26,7 +26,7 @@ fn server_sources() -> Vec<Source> {
     }
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut paths = Vec::new();
-    for dir in [manifest.join("src"), manifest.join("crates/droppen-provider/src")] {
+    for dir in [manifest.join("src"), manifest.join("crates/droppen-provider/src"), manifest.join("crates/droppen-provider-acp/src")] {
         if dir.is_dir() {
             walk(&dir, &mut paths);
         }
@@ -72,9 +72,10 @@ fn registry(path: &str) -> bool {
     path.ends_with("provider/registry.rs") || path.ends_with("droppen-provider/src/registry.rs")
 }
 
-/// Whether `path` is the providers' own: the base's, or an implementation's.
+/// Whether `path` is the providers' own: the base's, or an implementation's,
+/// in the server or in a crate of its own.
 fn in_provider(path: &str) -> bool {
-    path.contains("/src/provider/") || path.contains("/crates/droppen-provider/")
+    path.contains("/src/provider/") || path.contains("/crates/droppen-provider/") || path.contains("/crates/droppen-provider-acp/")
 }
 
 /// Whether `c` can be part of an identifier.
@@ -317,9 +318,10 @@ fn only_the_provider_registry_makes_a_spawn_gate() {
     assert!(found.is_empty(), "a spawn gate made outside the provider registry: {found:?}");
 }
 
-/// The spawn gate reaches the providers alone. Outside `provider`, no
-/// production code names the gate, a permit or a lease, so none can take
-/// the gate, mint a permit or build a lease. Inside it, the ACP provider's
+/// The spawn gate reaches the providers alone. Outside them (the server's
+/// `provider`, the base's crate and the ACP provider's), no production code
+/// names the gate, a permit or a lease, so none can take the gate, mint a
+/// permit or build a lease. Inside them, the ACP provider's
 /// agent routes, which start and stop its CLI outside a run, are lent the
 /// gate through `provider_with_gate`, which nothing else names but the
 /// registry that defines it: they reach it through `AcpAgentState::gate`,
@@ -334,22 +336,22 @@ fn only_the_providers_reach_the_spawn_gate() {
     for source in &sources {
         if !in_provider(&source.path) {
             found.extend(named(&source.code, &NAMES).into_iter().map(|name| format!("{}: {name}", source.path)));
-        } else if !registry(&source.path) && !source.path.ends_with("provider/acp/agents.rs") && whole(&source.code, LEND).next().is_some() {
+        } else if !registry(&source.path) && !source.path.ends_with("droppen-provider-acp/src/agents.rs") && whole(&source.code, LEND).next().is_some() {
             found.push(format!("{}: {LEND}", source.path));
         }
     }
     assert!(found.is_empty(), "the spawn gate reached outside the providers: {found:?}");
 
-    let routes = sources.iter().find(|source| source.path.ends_with("provider/acp/agents.rs")).expect("the ACP agent routes");
+    let routes = sources.iter().find(|source| source.path.ends_with("droppen-provider-acp/src/agents.rs")).expect("the ACP agent routes");
     let lends: Vec<usize> = whole(&routes.code, LEND).collect();
     assert_eq!(lends.len(), 1, "the ACP agent routes are lent the gate in one place");
     let lent = routes.code[lends[0] + LEND.len()..].split_whitespace().collect::<String>();
-    assert!(lent.starts_with("::<crate::provider::acp::Acp>()"), "the ACP agent routes are lent the gate as the ACP provider");
+    assert!(lent.starts_with("::<crate::Acp>()"), "the ACP agent routes are lent the gate as the ACP provider");
     // The calls the routes make that take the gate: the ACP runs' methods
     // whose first argument is one.
     let gated: Vec<String> = sources
         .iter()
-        .filter(|source| source.path.contains("/provider/acp/"))
+        .filter(|source| source.path.contains("/droppen-provider-acp/src/"))
         .flat_map(|source| {
             let code = source.code.split_whitespace().collect::<Vec<_>>().join(" ");
             code.match_indices("(&self, gate: &SpawnGate")
@@ -371,7 +373,7 @@ fn only_the_providers_reach_the_spawn_gate() {
 }
 
 /// A run's entry and its row in the journal are its driver's, and so is
-/// the draft of its turn: outside `provider`, no production code publishes,
+/// the draft of its turn: outside the providers, no production code publishes,
 /// renames or withdraws a run, holds one's entry, or reaches the host's run
 /// journal or drafts, so none can flip a run's state or forge a journal
 /// row. The feeds watch a draft through the provider registry.

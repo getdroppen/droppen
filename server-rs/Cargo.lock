@@ -1513,6 +1513,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "droppen-provider-acp"
+version = "0.1.0"
+dependencies = [
+ "agent-client-protocol-schema",
+ "droppen-base",
+ "droppen-http",
+ "droppen-instance",
+ "droppen-provider",
+ "droppen-sessions",
+ "futures-util",
+ "gotcha",
+ "gotcha_core",
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "droppen-pty"
 version = "0.1.0"
 dependencies = [
@@ -3391,7 +3412,6 @@ name = "remote-hand-server"
 version = "0.2.135"
 dependencies = [
  "aes-gcm",
- "agent-client-protocol-schema",
  "axum",
  "base64 0.22.1",
  "chrono",
@@ -3410,6 +3430,7 @@ dependencies = [
  "droppen-plugin-sdk",
  "droppen-plugins",
  "droppen-provider",
+ "droppen-provider-acp",
  "droppen-pty",
  "droppen-search-path",
  "droppen-sessions",
