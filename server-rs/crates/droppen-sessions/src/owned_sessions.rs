@@ -31,7 +31,7 @@
 //! For codex it is half the answer. A registry can only ever say "mine": it is
 //! deliberately never read across instances, so it cannot say "someone else's",
 //! and B would go on listing every thread A made as though the user had started
-//! it. The other half is `provider::codex::sessions::codex_claims` — a claim in the *shared* data
+//! it. The other half is `droppen_provider_codex::sessions::codex_claims` — a claim in the *shared* data
 //! directory, which B does read, and on which B hides the row altogether. That
 //! is the same silence an account-backed claude session in A's own Claude root
 //! already gets for free, arrived at the only way one `~/.codex` allows.
@@ -544,7 +544,7 @@ mod tests {
     /// The row first, then its CLI's step, every time. Claim first, and a row
     /// that then fails leaves a claim with no row: a thread every sibling hides
     /// and this instance does not own, which nothing heals. A row whose claim
-    /// failed is healed at boot (`provider::codex::sessions::codex_claims::migrate`).
+    /// failed is healed at boot (`droppen_provider_codex::sessions::codex_claims::migrate`).
     #[tokio::test]
     async fn a_row_is_written_before_its_cli_s_step_runs() {
         let dir = tempfile::tempdir().expect("tempdir");

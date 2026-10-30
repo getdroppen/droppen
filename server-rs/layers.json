@@ -196,7 +196,7 @@
           "notes": [
             "provider's own items, provider::receipts and provider::questions, drafts, runs, and the spawn gate with its claims (provider::gate).",
             "provider::shim, the session shim: Claude Code and Codex both start their CLI through it.",
-            "models keeps its routes and the list's wire types here; each provider's list is its own (provider::claude_code::models with its probe, provider::codex::models, droppen_provider_acp::models)."
+            "models keeps its routes and the list's wire types here; each provider's list is its own (provider::claude_code::models with its probe, droppen_provider_codex::models, droppen_provider_acp::models)."
           ]
         },
         {
@@ -226,15 +226,7 @@
         {
           "name": "droppen-provider-codex",
           "about": "Codex: the app-server driver, its threads and tools, its quota and its login.",
-          "modules": [
-            "provider::codex::app_server",
-            "provider::codex::sessions::codex",
-            "provider::codex::sessions::codex_tools",
-            "provider::codex::sessions::codex_claims",
-            "provider::codex::quota",
-            "provider::codex::login",
-            "provider::codex::models"
-          ],
+          "modules": [],
           "mayUse": [
             "droppen-provider",
             "droppen-sessions",

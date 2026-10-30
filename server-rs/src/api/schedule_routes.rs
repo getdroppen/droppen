@@ -122,7 +122,7 @@ async fn a_codex_effort_is_let_through_when_this_machine_has_never_run_codex() {
     // With a cache, the rungs it names are the ones that count.
     std::fs::create_dir_all(paths.codex_dir()).expect("codex dir");
     std::fs::write(
-        crate::provider::codex::sessions::codex::CodexHome::of(&paths).models_cache(),
+        droppen_provider_codex::sessions::codex::CodexHome::of(&paths).models_cache(),
         r#"{"models":[{"slug":"gpt-5.5","visibility":"list","supported_reasoning_levels":[{"effort":"low"},{"effort":"high"}]}]}"#,
     )
     .expect("seed");

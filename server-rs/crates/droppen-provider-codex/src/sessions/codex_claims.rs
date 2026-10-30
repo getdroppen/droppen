@@ -321,7 +321,7 @@ pub async fn migrate(paths: &Paths) -> usize {
 /// deleting one would un-hide its thread here. And the absence checked is the
 /// rollout *file*, not the thread's visibility — `~/.codex` hides archived and
 /// subagent threads from every cheap lookup, which is why
-/// [`crate::provider::claude_code::sessions::claude::ClaudeCodeSessions::prune_owned`] leaves codex registry entries alone, but an
+/// `claude_code::sessions::claude::ClaudeCodeSessions::prune_owned` leaves codex registry entries alone, but an
 /// archived thread still has its file. No file is the one form of "gone" that is
 /// not a lie. A missing sessions directory says nothing at all, so nothing is
 /// dropped.

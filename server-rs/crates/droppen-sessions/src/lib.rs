@@ -5,7 +5,7 @@
 //! Every session is a file some CLI wrote, and this crate names no CLI: each
 //! one's transcripts are read through the [`Transcripts`] port, which each
 //! provider's reader implements (`provider::claude_code::sessions::claude`,
-//! `provider::codex::sessions::codex`, `droppen_provider_acp::sessions`), and the
+//! `droppen_provider_codex::sessions::codex`, `droppen_provider_acp::sessions`), and the
 //! entry hands them in as one [`TranscriptSources`].
 //!
 //! A name in backticks such as `feed` in these docs is a module of the server,

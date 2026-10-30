@@ -174,7 +174,7 @@ pub fn open(paths: &Paths) -> Index {
 ///
 /// A process-wide handle rather than an argument, and it is worth being honest
 /// about why: `provider::claude_code::sessions::claude::summarize_file`,
-/// `provider::codex::sessions::codex::file_meta` and [`crate::repo::repo_key`]
+/// `droppen_provider_codex::sessions::codex::file_meta` and [`crate::repo::repo_key`]
 /// take a path and nothing else, because what they read is a file on this
 /// machine and not anything belonging to an instance. Threading a `Paths` into
 /// all three to reach the index would change the signature of every caller of
