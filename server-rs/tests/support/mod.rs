@@ -325,7 +325,8 @@ pub struct Probe {
 /// still move the server out of itself, and so that the order relative to the
 /// `tempdir` is stated where it is decided.
 struct ResidentReaper {
-    state_db: PathBuf,
+    home: PathBuf,
+    instance: String,
 }
 
 impl ResidentReaper {
@@ -337,7 +338,7 @@ impl ResidentReaper {
     /// being written would find neither. Killing an already-dead process group
     /// is a no-op, so doing it twice costs nothing.
     fn sweep(&self) {
-        common::kill_journal_runs(&self.state_db);
+        common::kill_journal_runs(&self.home, &self.instance);
     }
 }
 
@@ -345,11 +346,6 @@ impl Drop for ResidentReaper {
     fn drop(&mut self) {
         self.sweep();
     }
-}
-
-/// Where one instance keeps its state, the journal included.
-fn state_db_of(home: &Path, instance: &str) -> PathBuf {
-    home.join(".local/share/remote-hand/instances").join(instance).join("state.db")
 }
 
 impl Probe {
@@ -369,7 +365,8 @@ impl Probe {
         Probe {
             home: home.path().to_path_buf(),
             residents: ResidentReaper {
-                state_db: state_db_of(home.path(), &instance),
+                home: home.path().to_path_buf(),
+                instance: instance.clone(),
             },
             instance,
             server,
@@ -402,7 +399,8 @@ impl Probe {
             instance: instance.to_string(),
             server: common::TestServer::start_at(home, Some(instance)).await,
             residents: ResidentReaper {
-                state_db: state_db_of(home, instance),
+                home: home.to_path_buf(),
+                instance: instance.to_string(),
             },
             _home: None,
         }
@@ -420,7 +418,8 @@ impl Probe {
             instance: instance.to_string(),
             server: common::TestServer::start_at(&self.home, Some(instance)).await,
             residents: ResidentReaper {
-                state_db: state_db_of(&self.home, instance),
+                home: self.home.clone(),
+                instance: instance.to_string(),
             },
             _home: None,
         }

@@ -61,7 +61,7 @@ async fn claude_outlives_the_server_that_started_it() {
     let dir = tempfile::tempdir().expect("tempdir");
     // The shim is the real binary's and outlives this test by design: ended
     // if the test process dies before the test does it.
-    let _reaper = common::Reaper::watch(None, dir.path(), &dir.path().join("state.db"));
+    let _reaper = common::Reaper::watch(None, dir.path(), droppen_instance::instance::DEFAULT_INSTANCE);
     let sidecars = Sidecars::new(dir.path().join("session-shims"), "0011223344556677");
     let env = env();
 
@@ -123,7 +123,7 @@ async fn a_shim_whose_claude_never_started_reports_a_corpse_rather_than_a_sessio
     let dir = tempfile::tempdir().expect("tempdir");
     // The shim is the real binary's and outlives this test by design: ended
     // if the test process dies before the test does it.
-    let _reaper = common::Reaper::watch(None, dir.path(), &dir.path().join("state.db"));
+    let _reaper = common::Reaper::watch(None, dir.path(), droppen_instance::instance::DEFAULT_INSTANCE);
     let sidecars = Sidecars::new(dir.path().join("session-shims"), "8899aabbccddeeff");
     let env = env();
 

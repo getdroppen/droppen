@@ -10,6 +10,7 @@
 
 use std::io::{Read, Write};
 use std::os::unix::fs::PermissionsExt;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -53,14 +54,16 @@ impl Serve {
     fn start(home: &Path, env: &[(&str, &str)]) -> Serve {
         let log = home.join("serve.log");
         let file = std::fs::File::create(&log).expect("serve.log");
+        // A group of its own, which its reaper ends.
         let child = server(home, &["serve"], env)
             .env("APP_SERVER__HOST", "127.0.0.1")
             .env("APP_SERVER__PORT", "0")
             .stdout(file.try_clone().expect("log"))
             .stderr(file)
+            .process_group(0)
             .spawn()
             .expect("start the server");
-        let reaper = common::Reaper::watch(Some(child.id()), home, &home.join("state.db"));
+        let reaper = common::Reaper::watch(Some(child.id()), home, "default");
         Serve { child, log, _reaper: reaper }
     }
 
@@ -251,7 +254,16 @@ fn up_hands_its_server_only_the_new_names() {
     std::fs::create_dir_all(&bin).expect("bin");
     let seen = root.path().join("child.env");
     let installed = bin.join("remote-hand-server");
-    std::fs::write(&installed, format!("#!/bin/sh\nenv > '{}.tmp'\nmv '{0}.tmp' '{0}'\nexec sleep 60\n", seen.display())).expect("fake server");
+    // It waits as a server would, for a minute at most, and goes as soon as
+    // `up` does: nothing else would end it if this test process died first.
+    std::fs::write(
+        &installed,
+        format!(
+            "#!/bin/sh\nenv > '{}.tmp'\nmv '{0}.tmp' '{0}'\nn=0\nwhile [ \"$n\" -lt 300 ] && kill -0 \"$PPID\" 2>/dev/null; do sleep 0.2; n=$((n + 1)); done\n",
+            seen.display()
+        ),
+    )
+    .expect("fake server");
     std::fs::set_permissions(&installed, std::fs::Permissions::from_mode(0o755)).expect("chmod");
 
     let data_s = data.to_string_lossy().into_owned();
@@ -263,13 +275,15 @@ fn up_hands_its_server_only_the_new_names() {
         ("RH_STALL_MS", "5000"),
         ("DROPPEN_AGENT_DIRECT_STUN", ""),
     ];
+    // A group of its own, which its reaper ends if the test process dies
+    // before it is stopped below.
     let mut up = server(&home, &["up", "--", "serve"], &env)
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
+        .process_group(0)
         .spawn()
         .expect("start up");
-    // Ends `up` if the test process dies before it is stopped below.
-    let _reaper = common::Reaper::watch(Some(up.id()), &home, &home.join("state.db"));
+    let _reaper = common::Reaper::watch(Some(up.id()), &home, "bob");
     let deadline = Instant::now() + BUDGET;
     while !seen.exists() {
         if let Ok(Some(status)) = up.try_wait() {

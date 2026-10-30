@@ -166,7 +166,7 @@ fn shims_of(home: &Path) -> std::path::PathBuf {
 /// ([`common::Reaper`]).
 fn bare_home() -> (tempfile::TempDir, common::Reaper) {
     let home = tempfile::tempdir().expect("tempdir");
-    let reaper = common::Reaper::watch(None, home.path(), &Paths::new(home.path().to_path_buf()).instance_db());
+    let reaper = common::Reaper::watch(None, home.path(), DEFAULT_INSTANCE);
     (home, reaper)
 }
 
