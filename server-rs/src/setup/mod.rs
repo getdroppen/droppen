@@ -54,7 +54,7 @@ pub mod tasks;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use gotcha::axum::extract::FromRef;
@@ -62,7 +62,7 @@ use gotcha::{api, GotchaRouter, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
 use droppen_instance::db::scope;
-use droppen_http::app_window::{AppWindow, Caller, ListenPort};
+use droppen_http::app_window::{AppWindow, Caller};
 use droppen_http::created::Created;
 use droppen_http::error::ApiError;
 use droppen_http::extract::{ApiJson, ApiPath};
@@ -464,10 +464,6 @@ pub struct Setup {
     tasks: Mutex<tasks::Tasks>,
     /// The last sign-in poll per tool.
     logins: Mutex<tasks::LoginCache>,
-    /// The port this server listens on, once it does: what a request from the
-    /// app's own window names as its `Host` and `Origin`
-    /// ([`AppWindow`](droppen_http::app_window::AppWindow)).
-    listen_port: Arc<OnceLock<u16>>,
 }
 
 impl std::fmt::Debug for Setup {
@@ -519,34 +515,11 @@ impl Setup {
             generation: AtomicU64::new(0),
             tasks: Mutex::new(tasks::Tasks::default()),
             logins: Mutex::new(tasks::LoginCache::new()),
-            listen_port: Arc::new(OnceLock::new()),
         })
     }
 
     fn db(&self) -> Arc<droppen_instance::db::Db> {
         droppen_instance::db::at(self.paths.instance_db())
-    }
-
-    /// Record the port this server listens on, once it is bound. Until then —
-    /// and in a server that never binds — nothing counts as the app's window.
-    pub fn set_listen_port(&self, port: u16) {
-        let _ = self.listen_port.set(port);
-    }
-
-    /// The port cell [`Self::set_listen_port`] fills, as a handle the
-    /// desktop-window gate ([`AppWindow`](droppen_http::app_window::AppWindow))
-    /// can read but not write.
-    pub fn listen_port(&self) -> ListenPort {
-        ListenPort::new(self.listen_port.clone())
-    }
-
-    /// The desktop app's window as this server knows it: the port cell
-    /// [`Self::set_listen_port`] fills, and whether the app runs this server.
-    ///
-    /// The whole app's state and the guide's own state both build their window
-    /// through this, so the two cannot drift.
-    pub fn window(&self, desktop_app: bool) -> AppWindow {
-        AppWindow::new(self.listen_port(), desktop_app)
     }
 
     /// The directories the user adopted, in the order they were adopted, as
@@ -744,8 +717,7 @@ fn tool_of(raw: &str) -> Result<ToolId, ApiError> {
 /// What the guide's routes use of the server's state.
 #[derive(Clone)]
 pub struct SetupState {
-    /// The guide: tool detection, the children's `PATH`, its tasks and the
-    /// port cell the desktop-window gate reads.
+    /// The guide: tool detection, the children's `PATH` and its tasks.
     pub setup: Arc<Setup>,
     /// Every live web terminal; an install or a sign-in runs in one.
     pub terminals: Arc<droppen_workbench::terminals::Registry>,
@@ -757,14 +729,17 @@ pub struct SetupState {
     pub transcripts: droppen_sessions::TranscriptSources,
     /// Whether the Droppen desktop app runs this server.
     pub desktop_app: bool,
+    /// The desktop app's window, as the server that listens knows it: the
+    /// routes that install, update, sign in or rewrite the `PATH` are the
+    /// app's own window's alone.
+    pub app_window: AppWindow,
 }
 droppen_http::substate!(SetupState);
 
 impl SetupState {
-    /// The desktop app's window as this server knows it: the guide's port cell
-    /// and `desktop_app`.
-    fn window(&self) -> AppWindow {
-        self.setup.window(self.desktop_app)
+    /// The desktop app's window, which the gated routes ask.
+    fn window(&self) -> &AppWindow {
+        &self.app_window
     }
 }
 
@@ -1297,7 +1272,7 @@ pub(crate) mod tests {
         assert!(state.window().app_caller(&window(port)).is_err(), "not run by the desktop app");
         state.desktop_app = true;
         assert!(state.window().app_caller(&window(port)).is_err(), "before the server listens, nothing is its window");
-        state.setup.set_listen_port(port);
+        let _ = state.listen_port.set(port);
 
         assert!(state.window().app_caller(&window(port)).is_ok());
         for peer in ["[::1]:50123", "[::ffff:127.0.0.1]:50123"] {

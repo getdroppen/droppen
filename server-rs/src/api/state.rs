@@ -15,7 +15,7 @@ use crate::accounts::setup_token::TokenWizardState;
 use crate::accounts::usage_login::UsageLoginState;
 use crate::accounts::AccountsState;
 use crate::acp_agent::AcpAgentState;
-use droppen_http::app_window::AppWindow;
+use droppen_http::app_window::{AppWindow, ListenPort};
 use crate::models::ModelsState;
 use droppen_workbench::apps::AppsState;
 use droppen_sessions::attention::routes::AttentionState;
@@ -38,10 +38,13 @@ use droppen_workbench::terminals::TerminalsState;
 
 impl AppState {
     /// The desktop app's window as this server knows it: the port cell
-    /// [`crate::setup::Setup::set_listen_port`] fills, and `desktop_app`, read
-    /// now.
+    /// [`AppState::listen_port`], shared rather than copied, and
+    /// `desktop_app`, read now.
+    ///
+    /// The guide's routes and the setup-token wizard both get their window
+    /// here, so the two cannot drift.
     pub fn window(&self) -> AppWindow {
-        self.setup.window(self.desktop_app)
+        AppWindow::new(ListenPort::new(self.listen_port.clone()), self.desktop_app)
     }
 }
 
@@ -154,6 +157,7 @@ impl FromRef<AppState> for SetupState {
             paths: state.drive.paths.clone(),
             transcripts: state.drive.transcripts.clone(),
             desktop_app: state.desktop_app,
+            app_window: state.window(),
         }
     }
 }

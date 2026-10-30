@@ -55,8 +55,8 @@ impl<S: Send + Sync> FromRequestParts<S> for Caller {
 ///
 /// A handle rather than the shared cell itself: every request builds a window,
 /// and a window that could write the cell would let a request make itself look
-/// like the app's own ([`AppWindow::from_app_window`]). Only the setup guide
-/// that binds the listener writes it.
+/// like the app's own ([`AppWindow::from_app_window`]). Only the server's
+/// entry, which binds the listener, writes it.
 #[derive(Clone)]
 pub struct ListenPort(Arc<OnceLock<u16>>);
 
