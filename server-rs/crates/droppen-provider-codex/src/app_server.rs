@@ -459,7 +459,7 @@ async fn rpc(runs: &CodexRuns, link: &mut shim::Link, method: &str, params: impl
 /// What a Codex run keeps in its journal row, beside what every run says
 /// ([`runs::RunRecord<CodexRun>`]): written after those fields, in this order.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct CodexRun {
+pub(crate) struct CodexRun {
     /// Three keys every row carries and only a Claude Code resident reads: a
     /// Codex run's are `null`, `null` and `[]`, kept as they were read so a
     /// Codex row is written back unchanged.
@@ -590,6 +590,22 @@ impl ProviderRuns for CodexRuns {
             let session = crate::sessions::codex::find_codex_session(&self.host.paths, id).await?;
             std::path::PathBuf::from(session.file_path).written_at().await
         })
+    }
+}
+
+/// A Codex row put in a journal as Codex reads and writes it, for the
+/// server's tests of each CLI's rows side by side. The row's type stays this
+/// crate's own: outside it, a test hands the row over as text.
+#[cfg(any(test, feature = "test-support"))]
+pub trait CodexRowsExt {
+    /// Add `row`, read as a Codex run. Panics if it is not one.
+    fn add_codex_row(&self, row: &str);
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl CodexRowsExt for runs::RunsFile {
+    fn add_codex_row(&self, row: &str) {
+        self.add(serde_json::from_str::<runs::RunRecord<CodexRun>>(row).expect("a Codex row"));
     }
 }
 

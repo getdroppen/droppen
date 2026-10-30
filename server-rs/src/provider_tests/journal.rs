@@ -3,8 +3,8 @@
 //! its tests' (`droppen_provider_claude_code::resident::journal_tests`).
 
 use droppen_provider::runs::*;
-use droppen_provider_codex::app_server::CodexRun;
 use droppen_provider_claude_code::resident::ClaudeRowsExt;
+use droppen_provider_codex::app_server::CodexRowsExt;
 
 // ---- the rows on disk, byte for byte ---------------------------------
 //
@@ -25,9 +25,6 @@ const CODEX_APP_SERVER_LOCAL: &str = r#"{"run_id":"run-codex-local","source":"co
 /// A one-shot `codex exec` run.
 const CODEX_EXEC: &str = r#"{"run_id":"run-exec","source":"codex","session_id":"0199c1a1-0000-4000-8000-000000000003","cwd":"/work/exec","cli_pid":4747,"started_at":"2026-10-30T01:02:03.004Z","pid_token":"start-4747","resident":false,"shim":null,"fingerprint":null,"turn_at":null,"queued":[]}"#;
 
-/// A run's record as Codex reads its rows.
-type CodexRecord = RunRecord<CodexRun>;
-
 /// The one row `add` puts in a journal of its own, as it then is on disk.
 fn on_disk(add: impl FnOnce(&RunsFile)) -> String {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -43,7 +40,7 @@ fn rewritten_as_claude(row: &str) -> String {
 
 /// `row` read as a Codex run and written again.
 fn rewritten_as_codex(row: &str) -> String {
-    on_disk(|journal| journal.add(serde_json::from_str::<CodexRecord>(row).expect("a Codex row")))
+    on_disk(|journal| journal.add_codex_row(row))
 }
 
 #[test]
