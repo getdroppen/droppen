@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import sys
 import threading
+import time
 
 cwd = Path.cwd()
 test_root = next((p for p in [cwd, *cwd.parents] if (p / ".rh-test-root").exists()), None)
@@ -67,6 +68,11 @@ try:
             if "id" not in request:
                 continue
             result = {}
+            # A start held at its first answer for as long as `init-hold` is
+            # there: what a slow app server looks like to the server.
+            if method == "initialize":
+                while (cwd / "init-hold").exists():
+                    time.sleep(0.01)
             if method in ("thread/start", "thread/resume"):
                 thread = params.get("threadId", thread)
                 if method == "thread/resume" and (cwd / "resume-thread.txt").exists():

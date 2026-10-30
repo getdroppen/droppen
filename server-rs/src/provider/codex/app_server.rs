@@ -81,6 +81,11 @@ pub(in crate::provider) struct Handle {
     /// and a message for a different one cannot be delivered into it — see
     /// [`CodexRuns::codex_deliver`].
     account: Option<String>,
+    /// Set while the app server is still starting: the session is reserved
+    /// and messages queue in the channel for the driver to take, but nothing
+    /// has been asked of codex yet ([`Starting`]). Cleared when the driver
+    /// takes over.
+    starting: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Handle {
@@ -88,15 +93,30 @@ impl Handle {
         !self.tx.is_closed()
     }
 
+    /// Whether this session's app server is still starting.
+    fn starting(&self) -> bool {
+        self.starting.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Hand `message` to the driver: what it will answer is the [`Delivery`].
+    fn deliver(&self, message: Message) -> Result<Delivery, InjectError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Cmd::Deliver(message, reply))
+            .map_err(|_| InjectError::message("Codex App Server disconnected"))?;
+        Ok(Delivery(rx))
+    }
+
     /// Whether this process is already running under the account a send wants.
     fn runs_as(&self, account: Option<&str>) -> bool {
         self.account.as_deref() == account
     }
 
-    /// Whether anything is in flight that a shutdown would cut short.
+    /// Whether anything is in flight that a shutdown would cut short; a start
+    /// still under way is.
     fn busy(&self) -> bool {
         let state = self.shared.lock().unwrap();
-        state.active.is_some() || !state.queue.is_empty() || state.archive_request.is_some()
+        self.starting() || state.active.is_some() || !state.queue.is_empty() || state.archive_request.is_some()
     }
     pub(in crate::provider) fn visible(&self) -> bool {
         let state = self.shared.lock().unwrap();
@@ -108,7 +128,9 @@ impl Handle {
     pub(in crate::provider) fn state(&self) -> ResidentState {
         let state = self.shared.lock().unwrap();
         ResidentState {
-            phase: if state.active.is_some() || state.queue.iter().any(|q| q.request.is_some()) {
+            phase: if self.starting() {
+                Phase::Starting
+            } else if state.active.is_some() || state.queue.iter().any(|q| q.request.is_some()) {
                 Phase::Working
             } else {
                 Phase::Idle
@@ -525,7 +547,7 @@ impl ProviderRuns for CodexRuns {
     fn attach(self: Arc<Self>, record: runs::RunRecord, _sidecars: shim::Sidecars, link: shim::Link, lease: SessionLease) {
         match record.decode::<CodexRun>() {
             Ok(record) => {
-                self.codex_attached(record, link, lease);
+                self.codex_attached(record, link, lease, None);
             }
             // Only a record it could read is handed over (`readable`).
             Err(error) => tracing::warn!(%error, "a run record cannot be read; that run will not be adopted"),
@@ -784,6 +806,7 @@ impl CodexRuns {
                 tx,
                 shared: Arc::new(Mutex::new(state)),
                 account,
+                starting: Default::default(),
             },
         );
     }
@@ -792,6 +815,13 @@ impl CodexRuns {
         let Some(handle) = self.codex_handle(id) else {
             return QueueOutcome::NoResident;
         };
+        // Refused at once rather than waited for: its driver takes nothing off
+        // the queue until the app server has answered.
+        if handle.starting() {
+            return QueueOutcome::Refused {
+                reason: "Codex is still starting this session; try again once it has answered".into(),
+            };
+        }
         if handle.alive() {
             return handle.queue_action(qid, steer).await;
         }
@@ -835,6 +865,11 @@ impl CodexRuns {
         // between selecting the archive path and committing its result.
         let mut permit = gate.permit().await;
         if let Some(handle) = self.codex_handle(id) {
+            // Refused at once rather than waited for: the start goes on outside
+            // the gate, and waiting for it here would hold the gate as long.
+            if handle.starting() {
+                return Err(ArchiveError("Codex is still starting this session; archive it once it has answered".into()));
+            }
             {
                 let state = handle.shared.lock().unwrap();
                 if state.archived {
@@ -874,6 +909,7 @@ impl CodexRuns {
                     ..Default::default()
                 })),
                 account: None,
+                starting: Default::default(),
             },
         );
         for record in self
@@ -897,8 +933,23 @@ impl CodexRuns {
         account: Option<CodexAccount>,
     ) -> Result<(String, Sent), InjectError> {
         let message = message(text, options)?;
+        // A new thread: nobody can name it before its app server does, so no
+        // other start can be for it, and the gate it takes its permit from is
+        // given up at once rather than held while it starts. Its id is claimed
+        // once codex has picked it.
+        let Some(id) = id else {
+            let mut permit = gate.permit().await;
+            permit.ungate();
+            let (id, handle) = self.codex_spawn(&mut permit, None, cwd, options, account, None).await?;
+            let sent = handle.deliver(message)?.taken().await?;
+            return Ok((id, sent));
+        };
+        // The gate is held to decide where the message goes and to reserve the
+        // session for it, and not while an app server starts, an old one shuts
+        // down or the driver takes the message: those take minutes at worst,
+        // and every other send would wait them out.
         let mut permit = gate.permit().await;
-        if let Some(handle) = id.and_then(|id| self.codex_handle(id)) {
+        if let Some(handle) = self.codex_handle(id) {
             let state = handle.shared.lock().unwrap();
             if state.archived || state.archive_request.is_some() {
                 return Err(InjectError::message(
@@ -907,33 +958,63 @@ impl CodexRuns {
             }
         }
         let wanted = account.as_ref().map(|account| account.id.as_str());
+        let existing = self.codex_handle(id).filter(Handle::alive);
+        // Into the session's own app server, running or still starting: its
+        // channel keeps the order, so the gate goes before the wait.
+        if let Some(handle) = existing.as_ref().filter(|handle| handle.runs_as(wanted)) {
+            let delivery = handle.deliver(message)?;
+            permit.ungate();
+            return Ok((id.to_owned(), delivery.taken().await?));
+        }
         // A live app-server holds the credential it was started with, so a
         // message for another account cannot go into it. From idle the process
         // is retired and resumed under the new one; mid-turn it is the same
         // refusal a second message would get, because killing a turn the user is
         // watching is not what changing an account means.
-        if let Some(existing) = id.and_then(|id| self.codex_handle(id)).filter(Handle::alive) {
-            if !existing.runs_as(wanted) {
-                if existing.busy() {
-                    return Err(InjectError::message("a message is already running for this session"));
-                }
-                retire(&existing).await?;
-            }
+        if existing.as_ref().is_some_and(Handle::busy) {
+            return Err(InjectError::message("a message is already running for this session"));
         }
-        let (id, handle) = match id
-            .and_then(|id| self.codex_handle(id).filter(Handle::alive).map(|h| (id.to_owned(), h)))
-            .filter(|(_, handle)| handle.runs_as(wanted))
-        {
-            Some(existing) => existing,
-            None => self.codex_spawn(&mut permit, id, cwd, options, account).await?,
+        // Also excludes a legacy codex exec inherited during this upgrade.
+        if self.codex_injection(id).is_some_and(|injection| injection.state == InjectionRunState::Running) {
+            return Err(InjectError::message("a message is already running for this session"));
+        }
+        // Reserved, with the message on its way: a send for this session from
+        // here on queues behind it instead of starting a second app server.
+        let starting = self.codex_starting(id, wanted.map(str::to_owned));
+        let delivery = starting.handle.deliver(message)?;
+        permit.ungate();
+        if let Some(existing) = existing {
+            retire(&existing).await?;
+        }
+        self.codex_spawn(&mut permit, Some(id), cwd, options, account, Some(starting)).await?;
+        let sent = delivery.taken().await?;
+        Ok((id.to_owned(), sent))
+    }
+
+    /// Reserve session `id` for an app server about to start under `account`:
+    /// its handle in the map, marked starting, in place of whatever was there
+    /// (what a dead process left stays on view meanwhile). Under the spawn gate.
+    fn codex_starting(self: &Arc<Self>, id: &str, account: Option<String>) -> Starting {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let mut servers = self.codex_servers.lock().unwrap();
+        let state = servers.get(id).map(|before| before.shared.lock().unwrap().clone()).unwrap_or_default();
+        let handle = Handle {
+            tx,
+            shared: Arc::new(Mutex::new(state)),
+            account,
+            starting: Arc::new(std::sync::atomic::AtomicBool::new(true)),
         };
-        let (reply, rx) = oneshot::channel();
-        handle
-            .tx
-            .send(Cmd::Deliver(message, reply))
-            .map_err(|_| InjectError::message("Codex App Server disconnected"))?;
-        let sent = rx.await.map_err(|_| InjectError::message("Codex App Server disconnected"))??;
-        Ok((id, sent))
+        let before = servers.insert(id.to_owned(), handle.clone());
+        drop(servers);
+        #[cfg(test)]
+        self.host.step("codex reserved", Source::Codex, Some(id));
+        Starting {
+            runs: self.clone(),
+            id: id.to_owned(),
+            handle,
+            rx: Some(rx),
+            before,
+        }
     }
 
     async fn codex_spawn(
@@ -943,11 +1024,8 @@ impl CodexRuns {
         cwd: Option<&str>,
         options: &SendOptions,
         account: Option<CodexAccount>,
+        starting: Option<Starting>,
     ) -> Result<(String, Handle), InjectError> {
-        // Also excludes a legacy codex exec inherited during this upgrade.
-        if id.is_some_and(|id| self.codex_injection(id).is_some_and(|i| i.state == InjectionRunState::Running)) {
-            return Err(InjectError::message("a message is already running for this session"));
-        }
         if let Some(id) = id {
             permit.claim(Source::Codex, id).map_err(claim_refusal)?;
         }
@@ -1083,22 +1161,42 @@ impl CodexRuns {
         if let Some(old) = old {
             self.host.journal.remove(&old.run_id);
         }
-        let handle = self.codex_attached(record, link, permit.lease());
+        let handle = self.codex_attached(record, link, permit.lease(), starting);
         Ok((id, handle))
     }
 
-    pub(in crate::provider) fn codex_attached(self: &Arc<Self>, record: runs::RunRecord<CodexRun>, link: shim::Link, lease: SessionLease) -> Handle {
+    /// Drive `record`'s app server from here: on the channel `starting`
+    /// reserved, with what was sent meanwhile waiting in it, or on a new one.
+    fn codex_attached(
+        self: &Arc<Self>,
+        record: runs::RunRecord<CodexRun>,
+        link: shim::Link,
+        lease: SessionLease,
+        starting: Option<Starting>,
+    ) -> Handle {
         // A finished legacy exec entry must not overwrite this driver's newer
         // finish time in the list snapshot after the session migrates.
         self.host.withdraw_run(Source::Codex, &record.session_id);
         let state = record.payload.codex.clone().unwrap_or_default();
-        let (tx, rx) = mpsc::unbounded_channel();
-        let handle = Handle {
-            tx,
-            shared: Arc::new(Mutex::new(state.clone())),
-            account: record.payload.codex_account.clone(),
+        let (handle, rx) = match starting {
+            Some(mut starting) => {
+                let rx = starting.rx.take().expect("a reserved session is attached once");
+                *starting.handle.shared.lock().unwrap() = state.clone();
+                (starting.handle.clone(), rx)
+            }
+            None => {
+                let (tx, rx) = mpsc::unbounded_channel();
+                let handle = Handle {
+                    tx,
+                    shared: Arc::new(Mutex::new(state.clone())),
+                    account: record.payload.codex_account.clone(),
+                    starting: Default::default(),
+                };
+                (handle, rx)
+            }
         };
         self.codex_servers.lock().unwrap().insert(record.session_id.clone(), handle.clone());
+        handle.starting.store(false, std::sync::atomic::Ordering::SeqCst);
         #[cfg(test)]
         self.host.step("codex mapped", Source::Codex, Some(&record.session_id));
         let driver = Driver {
@@ -1119,6 +1217,50 @@ impl CodexRuns {
         };
         tokio::spawn(driver.run());
         handle
+    }
+}
+
+/// A session reserved under the gate while its app server starts outside it
+/// ([`CodexRuns::codex_deliver`]): its handle in the map, marked starting, with
+/// what is sent meanwhile queued in its channel for the driver to take.
+/// Dropped before it is attached (the start failed), it puts back what the map
+/// held for the session before, and the messages queued on it are answered by
+/// their channel closing.
+struct Starting {
+    runs: Arc<CodexRuns>,
+    id: String,
+    handle: Handle,
+    /// The driver's end of the channel, until it is attached.
+    rx: Option<mpsc::UnboundedReceiver<Cmd>>,
+    before: Option<Handle>,
+}
+
+impl Drop for Starting {
+    fn drop(&mut self) {
+        if self.rx.is_none() {
+            return;
+        }
+        let mut servers = self.runs.codex_servers.lock().unwrap();
+        // Only its own entry: an old process reported dead meanwhile is what
+        // the session is now.
+        if servers.get(&self.id).is_some_and(|handle| Arc::ptr_eq(&handle.shared, &self.handle.shared)) {
+            match self.before.take() {
+                Some(before) => servers.insert(self.id.clone(), before),
+                None => servers.remove(&self.id),
+            };
+        }
+    }
+}
+
+/// A message handed to a driver ([`Handle::deliver`]), and the answer it will
+/// give: awaited after the gate has gone, as the driver can be slow to give it.
+#[must_use]
+struct Delivery(oneshot::Receiver<Result<Sent, InjectError>>);
+
+impl Delivery {
+    /// What the driver answers: the message taken, or why not.
+    async fn taken(self) -> Result<Sent, InjectError> {
+        self.0.await.map_err(|_| InjectError::message("Codex App Server disconnected"))?
     }
 }
 
@@ -1429,7 +1571,14 @@ impl Driver {
                 self.retiring = true;
                 self.runs.host.journal.remove(&self.record.run_id);
                 self.runs.host.withdraw_run(Source::Codex, &self.record.session_id);
-                self.runs.codex_servers.lock().unwrap().remove(&self.record.session_id);
+                // Only its own entry: the send that retires it has put the
+                // session's next app server, still starting, in its place.
+                {
+                    let mut servers = self.runs.codex_servers.lock().unwrap();
+                    if servers.get(&self.record.session_id).is_some_and(|handle| Arc::ptr_eq(&handle.shared, &self.shared)) {
+                        servers.remove(&self.record.session_id);
+                    }
+                }
                 // Released before the reply, because the caller's very next move
                 // is to claim this session for the process it is about to start.
                 self.lease.release();
@@ -1916,6 +2065,7 @@ mod tests {
                     tx,
                     shared: self.driver.shared.clone(),
                     account: None,
+                    starting: Default::default(),
                 },
                 rx,
             )
@@ -2388,6 +2538,7 @@ mod tests {
             tx,
             shared: h.driver.shared.clone(),
             account: None,
+            starting: Default::default(),
         };
         registry.codex_servers.lock().unwrap().insert("test-thread".into(), handle.clone());
         let driver = tokio::spawn(h.driver.run());
@@ -2724,16 +2875,17 @@ mod tests {
         crate::provider::testing::Step { what, gate, claim }
     }
 
-    /// Codex's app server is started under the spawn gate. A thread this
-    /// server has no process for is claimed before the spawn, a new one once
-    /// the app server has named it, and both are in the map before the gate
-    /// goes. A process retired for another account lets its claim go before it
-    /// answers, while the send that retires it still holds the gate. An
-    /// unloaded session is archived with `codex archive` under the gate and its
-    /// claim, and the claim goes first. A resume the app server answers with
-    /// another thread lets its claim go before the app server's stdin closes.
+    /// The spawn gate only reserves a Codex session; its app server starts
+    /// outside it. A new thread takes the gate only to take its permit, and is
+    /// claimed once the app server has named it. A thread this server has no process for is
+    /// reserved under the gate, then claimed and started outside it. A process
+    /// retired for another account is retired outside the gate too, and lets
+    /// its claim go before it answers. An unloaded session is archived with
+    /// `codex archive` under the gate and its claim, and the claim goes first.
+    /// A resume the app server answers with another thread lets its claim go
+    /// before the app server's stdin closes.
     #[tokio::test]
-    async fn codex_starts_retires_and_archives_under_the_gate_and_the_claim() {
+    async fn codex_reserves_under_the_gate_and_starts_and_retires_outside_it() {
         const RESUMED: &str = "0199c1a1-0000-4000-8000-000000000001";
         const UNLOADED: &str = "0199c1a1-0000-4000-8000-000000000002";
         const MISMATCHED: &str = "0199c1a1-0000-4000-8000-000000000003";
@@ -2751,9 +2903,9 @@ mod tests {
         assert_eq!(
             registry.host.steps(),
             [
-                step("codex started", true, None),
-                step("codex thread", true, Some(true)),
-                step("codex mapped", true, Some(true)),
+                step("codex started", false, None),
+                step("codex thread", false, Some(true)),
+                step("codex mapped", false, Some(true)),
             ]
         );
         assert!(!registry.host.gate_held());
@@ -2779,25 +2931,28 @@ mod tests {
         assert_eq!(
             registry.host.steps()[3..],
             [
-                step("codex retired", true, Some(false)),
-                step("codex started", true, Some(true)),
-                step("codex thread", true, Some(true)),
-                step("codex mapped", true, Some(true)),
+                // The old process still holds the session until it retires.
+                step("codex reserved", true, Some(true)),
+                step("codex retired", false, Some(false)),
+                step("codex started", false, Some(true)),
+                step("codex thread", false, Some(true)),
+                step("codex mapped", false, Some(true)),
             ]
         );
 
         codex(&providers).codex_deliver(gate, Some(RESUMED), Some(&work), "resume", &plain, None).await.expect("resumed");
         assert_eq!(
-            registry.host.steps()[7..],
+            registry.host.steps()[8..],
             [
-                step("codex started", true, Some(true)),
-                step("codex thread", true, Some(true)),
-                step("codex mapped", true, Some(true)),
+                step("codex reserved", true, Some(false)),
+                step("codex started", false, Some(true)),
+                step("codex thread", false, Some(true)),
+                step("codex mapped", false, Some(true)),
             ]
         );
 
         codex(&providers).archive_codex(gate, UNLOADED).await.expect("archived");
-        assert_eq!(registry.host.steps()[10..], [step("codex archive", true, Some(true))]);
+        assert_eq!(registry.host.steps()[12..], [step("codex archive", true, Some(true))]);
         assert!(!registry.host.gate_held());
         assert!(!registry.host.claim_held(Source::Codex, UNLOADED), "the claim went with the archive");
 
@@ -2810,10 +2965,11 @@ mod tests {
             .expect_err("another thread is refused");
         assert_eq!(refused.to_string(), "Codex resumed a different thread");
         assert_eq!(
-            registry.host.steps()[11..],
+            registry.host.steps()[13..],
             [
-                step("codex started", true, Some(true)),
-                step("codex setup failed", true, Some(false)),
+                step("codex reserved", true, Some(false)),
+                step("codex started", false, Some(true)),
+                step("codex setup failed", false, Some(false)),
             ]
         );
         assert!(!registry.host.gate_held());
@@ -2830,6 +2986,301 @@ mod tests {
                 retire(&handle).await.expect("retired");
             }
         }
+    }
+
+    /// A scratch home for the tests of a start outside the gate: the fake
+    /// codex's registry and providers, and its working directory.
+    fn unheld(name: &str) -> (tempfile::TempDir, droppen_base::process_env::ChildPathGuard, Arc<InjectionRegistry>, Arc<crate::provider::ProviderRegistry>, std::path::PathBuf) {
+        let home = tempfile::tempdir().expect("tempdir");
+        let (path, registry) = fake_codex_registry(home.path(), name);
+        let providers = crate::provider::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
+        let work = home.path().join("work");
+        std::fs::create_dir_all(&work).expect("work");
+        (home, path, registry, providers, work)
+    }
+
+    /// Wait until the steps taken so far include `what` `times` times.
+    async fn wait_for_step(registry: &InjectionRegistry, what: &str, times: usize) {
+        for _ in 0..1000 {
+            if registry.host.steps().iter().filter(|step| step.what == what).count() >= times {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("no {what:?} ({times}) in {:?}", registry.host.steps());
+    }
+
+    /// Every app server's `turn/start` and `turn/steer` texts, as codex read them, in order.
+    fn sent_texts(work: &std::path::Path) -> Vec<String> {
+        std::fs::read_to_string(work.join("codex-stdin.jsonl"))
+            .unwrap_or_default()
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).expect("json"))
+            .filter(|request| matches!(request["method"].as_str(), Some("turn/start" | "turn/steer")))
+            .filter_map(|request| request["params"]["input"][0]["text"].as_str().map(str::to_owned))
+            .collect()
+    }
+
+    /// Retire every app server the test left running.
+    async fn retire_all(runs: &CodexRuns, ids: &[&str]) {
+        for id in ids {
+            if let Some(handle) = runs.codex_handle(id).filter(Handle::alive) {
+                for _ in 0..500 {
+                    if !handle.busy() {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                retire(&handle).await.expect("retired");
+            }
+        }
+    }
+
+    /// An app server resuming a thread starts outside the spawn gate: another
+    /// send takes the gate while it is held at its first answer. The session is
+    /// reserved meanwhile, as starting, and a second message for it waits for
+    /// that app server rather than starting another: one start, both messages
+    /// delivered, in the order they were sent.
+    #[tokio::test]
+    async fn a_codex_start_holds_no_gate_and_takes_what_is_sent_to_it_meanwhile() {
+        const RESUMED: &str = "0199c1a1-0000-4000-8000-000000000005";
+        let (_home, _path, registry, providers, work) = unheld("codex-unheld");
+        std::fs::write(work.join("init-hold"), "").expect("hold");
+        let runs = codex(&providers).clone();
+        let send = |text: &'static str| {
+            let (runs, providers, work) = (runs.clone(), providers.clone(), work.to_string_lossy().into_owned());
+            tokio::spawn(async move { runs.codex_deliver(providers.gate(), Some(RESUMED), Some(&work), text, &SendOptions::default(), None).await })
+        };
+        let first = send("first");
+        wait_for_step(&registry, "codex started", 1).await;
+        assert!(!registry.host.gate_held(), "the start holds no gate");
+        drop(tokio::time::timeout(Duration::from_secs(1), providers.gate().permit()).await.expect("another send takes the gate meanwhile"));
+        assert_eq!(runs.codex_handle(RESUMED).expect("reserved").state().phase, Phase::Starting);
+
+        let second = send("second");
+        for _ in 0..20 {
+            tokio::task::yield_now().await;
+        }
+        std::fs::remove_file(work.join("init-hold")).expect("release");
+        first.await.expect("joined").expect("the first is delivered");
+        second.await.expect("joined").expect("the second is delivered");
+        assert_eq!(registry.host.steps().iter().filter(|step| step.what == "codex started").count(), 1, "one app server");
+        for _ in 0..500 {
+            if sent_texts(&work).len() == 2 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(sent_texts(&work), ["first", "second"]);
+        retire_all(&runs, &[RESUMED]).await;
+    }
+
+    /// A new thread holds the gate only to take its permit: while its app
+    /// server is held at its first answer, another send takes the gate.
+    #[tokio::test]
+    async fn a_new_codex_thread_starts_outside_the_gate() {
+        let (_home, _path, registry, providers, work) = unheld("codex-new-unheld");
+        std::fs::write(work.join("init-hold"), "").expect("hold");
+        let start = {
+            let (runs, providers, work) = (codex(&providers).clone(), providers.clone(), work.to_string_lossy().into_owned());
+            tokio::spawn(async move { runs.codex_deliver(providers.gate(), None, Some(&work), "hello", &SendOptions::default(), None).await })
+        };
+        wait_for_step(&registry, "codex started", 1).await;
+        assert!(!registry.host.gate_held(), "the start holds no gate");
+        drop(tokio::time::timeout(Duration::from_secs(1), providers.gate().permit()).await.expect("another send takes the gate meanwhile"));
+        std::fs::remove_file(work.join("init-hold")).expect("release");
+        let (id, _) = start.await.expect("joined").expect("started");
+        assert!(registry.host.claim_held(Source::Codex, &id), "claimed once codex named it");
+        retire_all(codex(&providers), &[&id]).await;
+    }
+
+    /// A start that fails gives the session back as it found it: no handle,
+    /// no claim, and a message sent to it meanwhile is answered, not kept.
+    #[tokio::test]
+    async fn a_codex_start_that_fails_gives_the_session_back() {
+        const MISMATCHED: &str = "0199c1a1-0000-4000-8000-000000000006";
+        let (_home, _path, registry, providers, work) = unheld("codex-unheld-fails");
+        std::fs::write(work.join("resume-thread.txt"), "0199c1a1-0000-4000-8000-000000000007").expect("resume answer");
+        std::fs::write(work.join("init-hold"), "").expect("hold");
+        let runs = codex(&providers).clone();
+        let send = |text: &'static str| {
+            let (runs, providers, work) = (runs.clone(), providers.clone(), work.to_string_lossy().into_owned());
+            tokio::spawn(async move { runs.codex_deliver(providers.gate(), Some(MISMATCHED), Some(&work), text, &SendOptions::default(), None).await })
+        };
+        let first = send("first");
+        wait_for_step(&registry, "codex started", 1).await;
+        let second = send("second");
+        for _ in 0..20 {
+            tokio::task::yield_now().await;
+        }
+        std::fs::remove_file(work.join("init-hold")).expect("release");
+        assert_eq!(first.await.expect("joined").expect_err("refused").to_string(), "Codex resumed a different thread");
+        second.await.expect("joined").expect_err("the message sent meanwhile is answered");
+        assert!(runs.codex_handle(MISMATCHED).is_none(), "no handle is left for the session");
+        assert!(!registry.host.claim_held(Source::Codex, MISMATCHED), "nor its claim");
+    }
+
+    /// An archive of a session whose app server is still starting is refused
+    /// at once: waiting for the start would hold the gate as long.
+    #[tokio::test]
+    async fn archive_refuses_a_codex_session_still_starting() {
+        const RESUMED: &str = "0199c1a1-0000-4000-8000-000000000008";
+        let (_home, _path, registry, providers, work) = unheld("codex-unheld-archive");
+        std::fs::write(work.join("init-hold"), "").expect("hold");
+        let runs = codex(&providers).clone();
+        let start = {
+            let (runs, providers, work) = (runs.clone(), providers.clone(), work.to_string_lossy().into_owned());
+            tokio::spawn(async move { runs.codex_deliver(providers.gate(), Some(RESUMED), Some(&work), "hello", &SendOptions::default(), None).await })
+        };
+        wait_for_step(&registry, "codex started", 1).await;
+        let refused = tokio::time::timeout(Duration::from_secs(1), runs.archive_codex(providers.gate(), RESUMED))
+            .await
+            .expect("refused at once")
+            .expect_err("refused");
+        assert!(refused.to_string().contains("still starting"), "{refused}");
+        std::fs::remove_file(work.join("init-hold")).expect("release");
+        start.await.expect("joined").expect("delivered");
+        retire_all(&runs, &[RESUMED]).await;
+    }
+
+    /// A message into a running app server is handed over under the gate and
+    /// waited for outside it: a driver whose loop is stuck (in a write to its
+    /// app server, say) answers late, and nothing else waits for that.
+    #[tokio::test]
+    async fn a_send_into_a_running_app_server_waits_for_its_answer_outside_the_gate() {
+        let (_home, _path, _registry, providers, _work) = unheld("codex-unheld-running");
+        let runs = codex(&providers).clone();
+        // A driver that takes nothing off its channel.
+        let (tx, stuck) = mpsc::unbounded_channel();
+        let handle = Handle {
+            tx,
+            shared: Arc::new(Mutex::new(State::default())),
+            account: None,
+            starting: Default::default(),
+        };
+        runs.codex_servers.lock().unwrap().insert("stuck-thread".into(), handle);
+        let send = {
+            let (runs, providers) = (runs.clone(), providers.clone());
+            tokio::spawn(async move { runs.codex_deliver(providers.gate(), Some("stuck-thread"), None, "again", &SendOptions::default(), None).await })
+        };
+        for _ in 0..500 {
+            if !stuck.is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(!stuck.is_empty(), "the message was handed to the driver");
+        drop(tokio::time::timeout(Duration::from_secs(1), providers.gate().permit()).await.expect("the gate is free while the driver answers"));
+        assert!(!send.is_finished(), "the send is still waiting for its answer");
+        drop(stuck);
+        send.await.expect("joined").expect_err("a driver that went away answers nothing");
+    }
+
+    /// A message sent while a session moves to another account waits for the
+    /// app server it moves to: the old one, retiring, leaves the new one's
+    /// reservation where it is.
+    #[tokio::test]
+    async fn a_send_during_an_account_switch_waits_for_the_new_app_server() {
+        let (_home, _path, registry, providers, work) = unheld("codex-unheld-switch");
+        let work_ = work.to_string_lossy().into_owned();
+        let runs = codex(&providers).clone();
+        let (id, _) = runs.codex_deliver(providers.gate(), None, Some(&work_), "hello", &SendOptions::default(), None).await.expect("a new thread");
+        for _ in 0..500 {
+            if runs.codex_handle(&id).is_some_and(|handle| !handle.busy()) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let other = || CodexAccount {
+            id: "another".to_string(),
+            launch: droppen_accounts::store::AccountLaunch {
+                provider: AccountProvider::Codex,
+                env: vec![],
+                codex_args: vec![],
+            },
+        };
+        std::fs::write(work.join("init-hold"), "").expect("hold");
+        let send = |text: &'static str| {
+            let (runs, providers, work, id, account) = (runs.clone(), providers.clone(), work_.clone(), id.clone(), other());
+            tokio::spawn(async move { runs.codex_deliver(providers.gate(), Some(&id), Some(&work), text, &SendOptions::default(), Some(account)).await })
+        };
+        let switched = send("switched");
+        wait_for_step(&registry, "codex started", 2).await;
+        let after = send("after");
+        for _ in 0..20 {
+            tokio::task::yield_now().await;
+        }
+        std::fs::remove_file(work.join("init-hold")).expect("release");
+        switched.await.expect("joined").expect("delivered under the other account");
+        after.await.expect("joined").expect("delivered into the same app server");
+        assert_eq!(registry.host.steps().iter().filter(|step| step.what == "codex started").count(), 2, "the first and the switched one");
+        retire_all(&runs, &[&id]).await;
+    }
+
+    /// Dropping or steering a queued message of a session whose app server is
+    /// still starting is refused at once: its driver takes nothing off the
+    /// queue until codex has answered, and waiting for it would leave the
+    /// request hanging for the whole start.
+    #[tokio::test]
+    async fn queue_actions_on_a_starting_codex_session_are_refused_at_once() {
+        const RESUMED: &str = "0199c1a1-0000-4000-8000-000000000009";
+        let (_home, _path, registry, providers, work) = unheld("codex-unheld-queue");
+        std::fs::write(work.join("init-hold"), "").expect("hold");
+        let runs = codex(&providers).clone();
+        let start = {
+            let (runs, providers, work) = (runs.clone(), providers.clone(), work.to_string_lossy().into_owned());
+            tokio::spawn(async move { runs.codex_deliver(providers.gate(), Some(RESUMED), Some(&work), "hello", &SendOptions::default(), None).await })
+        };
+        wait_for_step(&registry, "codex started", 1).await;
+        for steer in [false, true] {
+            let outcome = tokio::time::timeout(Duration::from_secs(1), runs.codex_queue_action(RESUMED, "q-1", steer))
+                .await
+                .expect("refused at once");
+            assert!(
+                matches!(&outcome, QueueOutcome::Refused { reason } if reason.contains("still starting")),
+                "steer {steer}: {outcome:?}"
+            );
+        }
+        std::fs::remove_file(work.join("init-hold")).expect("release");
+        start.await.expect("joined").expect("delivered");
+        retire_all(&runs, &[RESUMED]).await;
+    }
+
+    /// A message for another account while a session's app server starts is
+    /// refused at once, as one would be while it runs a turn: the start is the
+    /// account the session is moving to.
+    #[tokio::test]
+    async fn a_send_for_another_account_during_a_start_is_refused() {
+        const RESUMED: &str = "0199c1a1-0000-4000-8000-00000000000a";
+        let (_home, _path, registry, providers, work) = unheld("codex-unheld-other");
+        std::fs::write(work.join("init-hold"), "").expect("hold");
+        let runs = codex(&providers).clone();
+        let work_ = work.to_string_lossy().into_owned();
+        let start = {
+            let (runs, providers, work) = (runs.clone(), providers.clone(), work_.clone());
+            tokio::spawn(async move { runs.codex_deliver(providers.gate(), Some(RESUMED), Some(&work), "hello", &SendOptions::default(), None).await })
+        };
+        wait_for_step(&registry, "codex started", 1).await;
+        let other = CodexAccount {
+            id: "another".to_string(),
+            launch: droppen_accounts::store::AccountLaunch {
+                provider: AccountProvider::Codex,
+                env: vec![],
+                codex_args: vec![],
+            },
+        };
+        let refused = tokio::time::timeout(
+            Duration::from_secs(1),
+            runs.codex_deliver(providers.gate(), Some(RESUMED), Some(&work_), "elsewhere", &SendOptions::default(), Some(other)),
+        )
+        .await
+        .expect("refused at once")
+        .expect_err("refused");
+        assert_eq!(refused.to_string(), "a message is already running for this session");
+        std::fs::remove_file(work.join("init-hold")).expect("release");
+        start.await.expect("joined").expect("delivered");
+        assert_eq!(registry.host.steps().iter().filter(|step| step.what == "codex started").count(), 1, "nothing else was started");
+        retire_all(&runs, &[RESUMED]).await;
     }
 
     /// A session's app server is in the snapshot its driver hands a turn's
@@ -2961,7 +3412,8 @@ mod tests {
             .await
             .expect_err("refused");
         assert_eq!(refused.to_string(), "the session's working directory is not valid UTF-8");
-        assert!(registry.host.steps().is_empty(), "codex was started: {:?}", registry.host.steps());
+        assert_eq!(registry.host.steps(), [step("codex reserved", true, Some(false))], "reserved, and codex was not started");
+        assert!(codex(&providers).codex_handle(THREAD).is_none(), "the reservation was given back");
         assert!(!registry.host.gate_held());
         assert!(!registry.host.claim_held(Source::Codex, THREAD));
     }
