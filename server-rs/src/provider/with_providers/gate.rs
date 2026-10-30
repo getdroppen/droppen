@@ -477,9 +477,10 @@ impl VisitMut for TestsOut {
 
 // ------------------------------------------------------------ the scans
 
-/// The names of a run's entry and of what publishes, renames or withdraws a
-/// run, and the host's fields that hold the runs' journal and drafts.
-const RUN_NAMES: [&str; 5] = ["publish_run", "withdraw_run", "rename_run", "running_run", "RunEntry"];
+/// The names of a run's entry, of what publishes, renames or withdraws a
+/// run, and of where the runs' journal lies (`runs_file`, which only the base
+/// opens), and the host's fields that hold the runs' journal and drafts.
+const RUN_NAMES: [&str; 6] = ["publish_run", "withdraw_run", "rename_run", "running_run", "RunEntry", "runs_file"];
 const RUN_FIELDS: [&str; 2] = ["journal", "drafts"];
 
 /// The names that take the spawn gate, mint a permit, build a lease, or

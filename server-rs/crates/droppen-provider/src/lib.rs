@@ -722,7 +722,7 @@ impl RunHost {
             idle_timeout: timings.idle_timeout,
             interrupt_step: timings.interrupt_step,
             watchdog_interval: timings.watchdog_interval,
-            journal: runs::RunsFile::new(instance.runs_file()),
+            journal: runs::RunsFile::at(instance.runs_file()),
             listeners: std::sync::OnceLock::new(),
             alerts: std::sync::OnceLock::new(),
             drafts: drafts::Drafts::default(),

@@ -3,9 +3,8 @@
 //! its tests' (`droppen_provider_claude_code::resident::journal_tests`).
 
 use droppen_provider::runs::*;
-use serde::Serialize;
 use droppen_provider_codex::app_server::CodexRun;
-use droppen_provider_claude_code::resident::ClaudeRun;
+use droppen_provider_claude_code::resident::ClaudeRowsExt;
 
 // ---- the rows on disk, byte for byte ---------------------------------
 //
@@ -26,26 +25,25 @@ const CODEX_APP_SERVER_LOCAL: &str = r#"{"run_id":"run-codex-local","source":"co
 /// A one-shot `codex exec` run.
 const CODEX_EXEC: &str = r#"{"run_id":"run-exec","source":"codex","session_id":"0199c1a1-0000-4000-8000-000000000003","cwd":"/work/exec","cli_pid":4747,"started_at":"2026-10-30T01:02:03.004Z","pid_token":"start-4747","resident":false,"shim":null,"fingerprint":null,"turn_at":null,"queued":[]}"#;
 
-/// A run's record as Claude Code reads its rows, and as Codex reads its.
-type ClaudeRecord = RunRecord<ClaudeRun>;
+/// A run's record as Codex reads its rows.
 type CodexRecord = RunRecord<CodexRun>;
 
-/// `record` written to a journal of its own, as it then is on disk.
-fn on_disk<P: Serialize>(record: RunRecord<P>) -> String {
+/// The one row `add` puts in a journal of its own, as it then is on disk.
+fn on_disk(add: impl FnOnce(&RunsFile)) -> String {
     let dir = tempfile::tempdir().expect("tempdir");
     let journal = RunsFile::new(dir.path().join("runs.json"));
-    journal.add(record);
+    add(&journal);
     journal.raw().pop().expect("the row")
 }
 
 /// `row` read as a Claude Code run and written again.
 fn rewritten_as_claude(row: &str) -> String {
-    on_disk(serde_json::from_str::<ClaudeRecord>(row).expect("a Claude Code row"))
+    on_disk(|journal| journal.add_claude_row(row))
 }
 
 /// `row` read as a Codex run and written again.
 fn rewritten_as_codex(row: &str) -> String {
-    on_disk(serde_json::from_str::<CodexRecord>(row).expect("a Codex row"))
+    on_disk(|journal| journal.add(serde_json::from_str::<CodexRecord>(row).expect("a Codex row")))
 }
 
 #[test]
@@ -96,7 +94,7 @@ fn a_row_with_an_unknown_source_or_none_is_not_read_and_stays() {
     let journal = RunsFile::new(dir.path().join("runs.json"));
     journal.insert_raw("run-unknown", "77777777-7777-4777-8777-777777777777", &CLAUDE_PRINT.replace("\"run-print\"", "\"run-unknown\"").replace("\"source\":\"claude\"", "\"source\":\"gemini\""));
     journal.insert_raw("run-nameless", "88888888-8888-4888-8888-888888888888", &CLAUDE_PRINT.replace("\"run-print\"", "\"run-nameless\"").replace("\"source\":\"claude\",", ""));
-    journal.add(serde_json::from_str::<ClaudeRecord>(CLAUDE_PRINT).expect("a Claude Code row"));
+    journal.add_claude_row(CLAUDE_PRINT);
     let read: Vec<String> = journal.read().into_iter().map(|run| run.run_id).collect();
     assert_eq!(read, ["run-print"]);
     assert_eq!(journal.raw().len(), 3, "the rows it cannot read stay as they were");

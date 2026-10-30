@@ -183,12 +183,21 @@ impl RunsFile {
     ///
     /// Derived from the old file's path rather than passed in, so that every
     /// caller and every test that already knew where `runs.json` goes needs to
-    /// learn nothing new.
-    pub fn new(path: impl Into<PathBuf>) -> Self {
+    /// learn nothing new. The base's own: a server's journal is its host's
+    /// ([`crate::RunHost::journal`]), and no other code may open one to read
+    /// or remove a run behind the drivers' backs.
+    pub(crate) fn at(path: impl Into<PathBuf>) -> Self {
         let path = path.into();
         Self {
             db: droppen_instance::db::at(path.with_file_name("state.db")),
         }
+    }
+
+    /// A journal of a test's own beside `path` ([`RunsFile::at`]), for the
+    /// tests of how each CLI's rows are written and read.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self::at(path)
     }
 
     /// Every recorded run, or nothing at all.
