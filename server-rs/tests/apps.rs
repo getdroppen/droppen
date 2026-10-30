@@ -444,9 +444,15 @@ fn fake_code_server() {
             while unsafe { libc::kill(test, 0) } == 0 {
                 std::thread::sleep(Duration::from_millis(200));
             }
-            // SAFETY: the process group the spawn created: this process and
-            // the shell that runs it.
-            unsafe { libc::kill(0, libc::SIGKILL) };
+            // Its group is the one the spawn made only if the shell that runs
+            // it leads it; otherwise it goes alone, and its shell with it.
+            // SAFETY: reading this process's group and parent changes nothing.
+            if unsafe { libc::getpgrp() == libc::getppid() } {
+                // SAFETY: the process group the spawn created: this process
+                // and the shell that runs it.
+                unsafe { libc::kill(0, libc::SIGKILL) };
+            }
+            std::process::exit(1);
         });
     }
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("runtime");

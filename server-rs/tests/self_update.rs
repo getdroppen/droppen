@@ -104,8 +104,7 @@ async fn the_server_replaces_its_own_binary_without_dropping_a_terminal_or_a_run
         .await;
     assert_eq!(status, 200, "{body}");
     let record = wait_for_record(&journal).await;
-    let cli_pid = record["cli_pid"].as_u64().expect("cli_pid") as u32;
-    let _cli_guard = common::KillGroupOnDrop(cli_pid);
+    let _cli_guard = common::KillGroupOnDrop::run(&record);
 
     // ---- the upgrade -------------------------------------------------------
 
@@ -214,6 +213,9 @@ struct Supervisor {
     /// The supervisor's own pid; also its process group, so a stray test can be
     /// cleaned up in one signal.
     pid: u32,
+    /// When `pid` started, so it is never signalled once it is another
+    /// process's.
+    token: Option<String>,
     addr: std::net::SocketAddr,
     home: PathBuf,
     stopped: bool,
@@ -228,9 +230,7 @@ impl Drop for Supervisor {
     /// assertion moved than a red test.
     fn drop(&mut self) {
         if !self.stopped {
-            // SAFETY: a negative pid names a process group; signalling one that
-            // has already gone is an ignored `ESRCH`.
-            unsafe { libc::kill(-(self.pid as libc::pid_t), libc::SIGKILL) };
+            common::kill_group_of(self.pid, self.token.as_deref());
             // The server it was supervising runs in a group of its own, from
             // a copy installed under the home.
             common::kill_shims_serving(&self.home);
@@ -288,6 +288,7 @@ impl Supervisor {
         // running.
         let mut supervisor = Supervisor {
             pid,
+            token: droppen_base::procs::start_token(pid),
             addr: ([127, 0, 0, 1], 0).into(),
             home: home.to_path_buf(),
             stopped: false,
@@ -415,11 +416,9 @@ impl Supervisor {
         }
         // Whatever the supervisor chose to leave running — the shims and the
         // CLI, by design — is this test's to clean up.
-        // SAFETY: a negative pid names a process group.
-        unsafe { libc::kill(-(self.pid as libc::pid_t), libc::SIGKILL) };
-        for pid in shim_pids(&self.home) {
-            // SAFETY: as above, for each shim this test's server started.
-            unsafe { libc::kill(-(pid as libc::pid_t), libc::SIGKILL) };
+        common::kill_group_of(self.pid, self.token.as_deref());
+        for shim in pty_shims(&self.home) {
+            common::kill_group_of(shim.pid, shim.token.as_deref());
         }
     }
 }
@@ -542,26 +541,20 @@ async fn shell_pid(shims: &Path, id: &str) -> u32 {
         .shell_pid
 }
 
-/// The pids of every `pty-shim` serving this test's home directory.
-///
-/// Matched on the home path as well as the subcommand, so a shim belonging to
-/// another test running concurrently is never counted.
-fn shim_pids(home: &Path) -> Vec<u32> {
-    let output = std::process::Command::new("/bin/ps")
-        .args(["-A", "-o", "pid=,command="])
-        .output()
-        .expect("ps");
-    let needle = home.to_string_lossy().into_owned();
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter(|line| line.contains("pty-shim") && line.contains(&needle))
-        .filter_map(|line| line.split_whitespace().next()?.parse().ok())
+/// Every `pty-shim` serving this test's home directory: the server binary's
+/// processes under it ([`common::server_processes_under`]) whose subcommand is
+/// `pty-shim`, so a shim belonging to another test running concurrently is
+/// never counted.
+fn pty_shims(home: &Path) -> Vec<common::ServerProcess> {
+    common::server_processes_under(home)
+        .into_iter()
+        .filter(|process| process.args.get(1).map(String::as_str) == Some("pty-shim"))
         .collect()
 }
 
 /// The single shim this test created, or a failure naming what was found.
 fn one_shim_pid(home: &Path) -> u32 {
-    let pids = shim_pids(home);
+    let pids: Vec<u32> = pty_shims(home).iter().map(|shim| shim.pid).collect();
     assert_eq!(pids.len(), 1, "expected exactly one pty shim for this test, found {pids:?}");
     pids[0]
 }
@@ -625,6 +618,9 @@ mod unit {
 /// A server started *without* a supervisor, on a home directory the test owns.
 struct Unsupervised {
     pid: u32,
+    /// When `pid` started, so it is never signalled once it is another
+    /// process's.
+    token: Option<String>,
     addr: std::net::SocketAddr,
     home: PathBuf,
     stopped: bool,
@@ -636,8 +632,7 @@ struct Unsupervised {
 impl Drop for Unsupervised {
     fn drop(&mut self) {
         if !self.stopped {
-            // SAFETY: a negative pid names a process group this test started.
-            unsafe { libc::kill(-(self.pid as libc::pid_t), libc::SIGKILL) };
+            common::kill_group_of(self.pid, self.token.as_deref());
         }
     }
 }
@@ -685,6 +680,7 @@ impl Unsupervised {
         });
         let mut server = Unsupervised {
             pid,
+            token: droppen_base::procs::start_token(pid),
             addr: ([127, 0, 0, 1], 0).into(),
             home: home.to_path_buf(),
             stopped: false,
@@ -696,11 +692,9 @@ impl Unsupervised {
 
     async fn stop(mut self) {
         self.stopped = true;
-        // SAFETY: a negative pid names a process group this test started.
-        unsafe { libc::kill(-(self.pid as libc::pid_t), libc::SIGKILL) };
-        for pid in shim_pids(&self.home) {
-            // SAFETY: as above, for each shim this server started.
-            unsafe { libc::kill(-(pid as libc::pid_t), libc::SIGKILL) };
+        common::kill_group_of(self.pid, self.token.as_deref());
+        for shim in pty_shims(&self.home) {
+            common::kill_group_of(shim.pid, shim.token.as_deref());
         }
     }
 }

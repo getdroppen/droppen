@@ -165,14 +165,20 @@ printf '{"type":"system","subtype":"init","session_id":"%s"}\n' "$session"
 #
 # The child line first, because a subagent's forwarded stream is what an idle
 # session with background work out looks like; the line after it is this thread,
-# and is the one that means a turn is running. Both waits are bounded so a test
-# that fails halfway leaves nothing polling a directory that has gone.
+# and is the one that means a turn is running.
+#
+# Each wait ends when the directory or the shim goes, and gives up after two
+# minutes, as the `hold` loop below does: by exiting, without the turn. It
+# used to give up after 500 polls, about ten seconds, and then run the turn
+# anyway. A loaded run takes longer than that to reach the point where the
+# test asks for the turn, so the turn started on its own before then, and the
+# test never saw the turn it asked for.
 if [ -f "$dir/wake.txt" ]; then
   (
-    n=0; while [ ! -f "$dir/wake" ] && [ "$n" -lt 500 ]; do [ -d "$dir" ] && kill -0 "$PPID" 2>/dev/null || exit 97; sleep 0.02; n=$((n + 1)); done
+    n=0; while [ ! -f "$dir/wake" ]; do [ -d "$dir" ] && kill -0 "$PPID" 2>/dev/null && [ "$n" -lt 6000 ] || exit 97; sleep 0.02; n=$((n + 1)); done
     printf '%s\n' '{"type":"assistant","parent_tool_use_id":"toolu_child","message":{}}'
     printf '%s\n' '{"type":"assistant","message":{}}'
-    n=0; while [ ! -f "$dir/woken" ] && [ "$n" -lt 500 ]; do [ -d "$dir" ] && kill -0 "$PPID" 2>/dev/null || exit 97; sleep 0.02; n=$((n + 1)); done
+    n=0; while [ ! -f "$dir/woken" ]; do [ -d "$dir" ] && kill -0 "$PPID" 2>/dev/null && [ "$n" -lt 6000 ] || exit 97; sleep 0.02; n=$((n + 1)); done
     printf '%s\n' '{"type":"result","subtype":"success","is_error":false}'
   ) &
 fi

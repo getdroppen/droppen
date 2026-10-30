@@ -531,7 +531,7 @@ async fn a_run_survives_its_server_being_sigkilled_and_is_adopted_by_the_next_on
     let cli_pid = record["cli_pid"].as_u64().expect("cli_pid") as u32;
     // The CLI is nobody's child once the first server dies, so the test is what
     // has to guarantee it does not outlive the test.
-    let _cli_guard = common::KillGroupOnDrop(cli_pid);
+    let _cli_guard = common::KillGroupOnDrop::run(&record);
     assert_eq!(record["session_id"], SESSION);
     assert!(record["pid_token"].is_string(), "the pid-reuse guard is recorded: {record}");
     assert!(record["resident"] == true, "a claude run is a resident behind a shim: {record}");
@@ -729,7 +729,7 @@ async fn a_codex_app_server_survives_its_server_being_sigkilled_and_is_reattache
     .await;
     let record = only_record(&journal);
     let cli_pid = record["cli_pid"].as_u64().expect("cli_pid") as u32;
-    let _cli_guard = common::KillGroupOnDrop(cli_pid);
+    let _cli_guard = common::KillGroupOnDrop::run(&record);
     assert!(record["shim"].is_string(), "an app server runs behind a shim: {record}");
     assert_ne!(record["resident"], true, "and is not a Claude Code resident: {record}");
 
