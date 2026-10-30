@@ -68,7 +68,7 @@ use tokio::sync::mpsc;
 use super::{Event, Line, Stop, SCHEMA};
 use droppen_base::watch::{self, FileEvents};
 use droppen_instance::paths::{ClaudeRoot, Paths};
-use crate::provider::claude_code::sessions::transcript::{SubagentFileKind, SubagentFilesExt};
+use crate::sessions::transcript::{SubagentFileKind, SubagentFilesExt};
 use droppen_base::time::{iso8601, mtime_ms};
 
 /// How often the files are looked at when the watcher says nothing.
@@ -254,7 +254,7 @@ impl State {
         // The checklist, which lives beside the config root rather than beside
         // the transcript, and is rewritten in place as tasks change state.
         let session = self.session();
-        if let Some(tasks) = crate::provider::claude_code::sessions::checklist::tasks_dir(&self.tail.paths, root, &session) {
+        if let Some(tasks) = crate::sessions::checklist::tasks_dir(&self.tail.paths, root, &session) {
             for entry in list(&tasks).await {
                 let name = entry.file_name().to_string_lossy().into_owned();
                 if let Some(stem) = name.strip_suffix(".json") {
@@ -280,7 +280,7 @@ impl State {
     /// (a transcript that has not been written yet is the everyday case: a
     /// fresh session has no file until its first turn).
     ///
-    /// It is [`crate::provider::claude_code::sessions::claude::find_claude_session`] rather than a
+    /// It is [`crate::sessions::claude::find_claude_session`] rather than a
     /// scan of its own, so that the recorder follows exactly the file the rest
     /// of the server calls this session's transcript. One consequence worth
     /// knowing: an *archived* session is invisible to that lookup, so archiving
@@ -293,7 +293,7 @@ impl State {
                 return Some((*root, path.clone()));
             }
         }
-        let found = crate::provider::claude_code::sessions::claude::find_claude_session(&self.tail.paths, &session).await?;
+        let found = crate::sessions::claude::find_claude_session(&self.tail.paths, &session).await?;
         self.resolved = Some((session, found.root, found.file_path.clone()));
         Some((found.root, found.file_path))
     }
@@ -312,7 +312,7 @@ impl State {
         if let Some(tasks) = self
             .resolved
             .as_ref()
-            .and_then(|(session, root, _)| crate::provider::claude_code::sessions::checklist::tasks_dir(&self.tail.paths, *root, session))
+            .and_then(|(session, root, _)| crate::sessions::checklist::tasks_dir(&self.tail.paths, *root, session))
         {
             if tokio::fs::try_exists(&tasks).await.unwrap_or(false) {
                 dirs.push(tasks);
@@ -560,8 +560,8 @@ async fn list(dir: &Path) -> Vec<tokio::fs::DirEntry> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider::claude_code::record::{read_log, Recorders};
-    use crate::provider::claude_code::sessions::transcript::{subagent_dir, subagent_path};
+    use crate::record::{read_log, Recorders};
+    use crate::sessions::transcript::{subagent_dir, subagent_path};
     use std::io::Write;
 
     /// A session tree under a temporary home, as the CLI would leave it.
@@ -578,7 +578,7 @@ mod tests {
         let paths = Arc::new(Paths::new(home.path().to_path_buf()));
         let dirs = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
         dirs.create().expect("instance dirs");
-        let project = crate::provider::claude_code::claude_roots::ClaudeRoots::of(&paths).managed_projects().join("-w-repo");
+        let project = crate::claude_roots::ClaudeRoots::of(&paths).managed_projects().join("-w-repo");
         std::fs::create_dir_all(&project).expect("project dir");
         let transcript = project.join(format!("{id}.jsonl"));
         std::fs::write(&transcript, b"").expect("transcript");

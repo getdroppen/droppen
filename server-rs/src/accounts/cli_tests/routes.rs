@@ -10,7 +10,7 @@ use droppen_accounts::store::{Account, AccountKind, AccountProvider, Credential}
 use droppen_accounts::*;
 use crate::api::AppState;
 use droppen_drive::routes::{bind_session_account, continue_session_on_account, ContinuedSession, SessionAccount, SessionContinue};
-use crate::provider::claude_code::sessions::claude;
+use droppen_provider_claude_code::sessions::claude;
 use droppen_http::error::ApiError;
 use droppen_http::extract::{ApiJson, ApiPath};
 use droppen_http::openapi_ext::{Nullable, Optional};
@@ -55,7 +55,7 @@ const STUCK: &str = "11111111-1111-4111-8111-111111111111";
 /// A claude session this server started on the local login, in the user's
 /// own `~/.claude`, with a subagent transcript beside it.
 async fn local_session(paths: &droppen_instance::paths::Paths, id: &str, recorded: bool) -> std::path::PathBuf {
-    let project = crate::provider::claude_code::claude_roots::ClaudeRoots::of(paths).projects_dir(ClaudeRoot::Local).join("-w");
+    let project = droppen_provider_claude_code::claude_roots::ClaudeRoots::of(paths).projects_dir(ClaudeRoot::Local).join("-w");
     std::fs::create_dir_all(project.join(id).join("subagents")).expect("sidecar");
     let path = project.join(format!("{id}.jsonl"));
     std::fs::write(
@@ -72,7 +72,7 @@ async fn local_session(paths: &droppen_instance::paths::Paths, id: &str, recorde
     )
     .expect("subagent");
     if recorded {
-        crate::provider::claude_code::sessions::claude::ClaudeCodeSessions.record_owned(paths, id).await.expect("record");
+        droppen_provider_claude_code::sessions::claude::ClaudeCodeSessions.record_owned(paths, id).await.expect("record");
     }
     path
 }
@@ -135,7 +135,7 @@ async fn a_local_login_session_continues_on_an_account_as_a_new_session() {
     assert!(droppen_sessions::reference::is_path_segment_id(&continued.id));
 
     assert_eq!(std::fs::read(&original).expect("the original"), before, "the original is untouched");
-    let copy = crate::provider::claude_code::sessions::claude::find_in_root(&paths, ClaudeRoot::Managed, &continued.id)
+    let copy = droppen_provider_claude_code::sessions::claude::find_in_root(&paths, ClaudeRoot::Managed, &continued.id)
         .await
         .expect("the copy is in this instance's root");
     let text = std::fs::read_to_string(&copy).expect("copy");
@@ -233,7 +233,7 @@ async fn continuing_refuses_what_is_not_this_servers_to_copy() {
         assert_eq!(error.status().as_u16(), 404, "{id}");
     }
     assert!(
-        !crate::provider::claude_code::claude_roots::ClaudeRoots::of(&paths).projects_dir(ClaudeRoot::Managed).join("-w").exists(),
+        !droppen_provider_claude_code::claude_roots::ClaudeRoots::of(&paths).projects_dir(ClaudeRoot::Managed).join("-w").exists(),
         "not one copy was written"
     );
 }

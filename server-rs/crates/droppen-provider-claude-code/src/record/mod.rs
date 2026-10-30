@@ -262,7 +262,7 @@ pub enum Stage {
     /// A turn ended, however it ended.
     Result,
     /// A turn has produced nothing for long enough to be marked. Nothing is
-    /// killed for it — see [`crate::provider::claude_code::resident`].
+    /// killed for it — see [`crate::resident`].
     Stalled,
     /// Stop was pressed: claude was asked to end the turn.
     Interrupt,
@@ -275,7 +275,7 @@ pub enum Stage {
     /// What became of a steered message once the turn it was handed to ended.
     ///
     /// The CLI has two answers and does not say which it chose, so the driver
-    /// has to watch for it — see `Driver::settle_delivered` in [`crate::provider::claude_code::resident`].
+    /// has to watch for it — see `Driver::settle_delivered` in [`crate::resident`].
     /// Either claude opened a turn of its own for the message, or it had already
     /// folded the message into the turn that was running and nothing more is
     /// coming. This is the line that says which happened, and it is the one to
@@ -388,7 +388,7 @@ impl Recorders {
     /// [`Recorders::new`] reads the process environment, which every test in
     /// this binary shares; a test that wants a ceiling of two kilobytes says so
     /// here instead of racing every other test for `DROPPEN_SESSION_LOG_MAX_MB`.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn new_at(dir: PathBuf, cap: Option<u64>, paths: Arc<Paths>) -> Self {
         Self { dir: Some(dir), cap, paths }
     }

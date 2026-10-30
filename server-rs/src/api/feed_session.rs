@@ -67,7 +67,7 @@ async fn a_rotation_decision_reaches_an_open_session_feed_without_waiting_for_th
     drive.injections.host.attach_listeners(feeds.clone(), droppen_http::refresh::Refresh::new(global::GlobalFeed::new()));
 
     let id = "33333333-3333-4333-8333-333333333333";
-    let project = crate::provider::claude_code::claude_roots::ClaudeRoots::of(&paths).managed_projects().join("-w-repo");
+    let project = droppen_provider_claude_code::claude_roots::ClaudeRoots::of(&paths).managed_projects().join("-w-repo");
     std::fs::create_dir_all(&project).expect("project");
     let line = format!(
         r#"{{"type":"user","message":{{"role":"user","content":"hello"}},"timestamp":"2026-09-29T00:00:00.000Z","cwd":"/tmp","sessionId":"{id}","uuid":"u1"}}"#
@@ -190,7 +190,7 @@ async fn a_restarted_server_resumes_a_reconnecting_client_from_its_marker() {
     let dir = tempfile::tempdir().expect("tempdir");
     let id = "44444444-4444-4444-8444-444444444444";
     let (paths, drive) = test_drive(dir.path());
-    let project = crate::provider::claude_code::claude_roots::ClaudeRoots::of(&paths).managed_projects().join("-w-repo");
+    let project = droppen_provider_claude_code::claude_roots::ClaudeRoots::of(&paths).managed_projects().join("-w-repo");
     std::fs::create_dir_all(&project).expect("project");
     let file = project.join(format!("{id}.jsonl"));
     std::fs::write(&file, claude_turns(id, 0, 250)).expect("transcript");
@@ -280,7 +280,7 @@ fn entry(id: &str, uuid: &str, text: &str) -> String {
 /// A claude session on disk with one prompt in it, and a drive to serve it.
 fn drafted_session(dir: &Path, id: &str) -> (Arc<Drive>, PathBuf) {
     let (paths, drive) = test_drive(dir);
-    let project = crate::provider::claude_code::claude_roots::ClaudeRoots::of(&paths).managed_projects().join("-w-repo");
+    let project = droppen_provider_claude_code::claude_roots::ClaudeRoots::of(&paths).managed_projects().join("-w-repo");
     std::fs::create_dir_all(&project).expect("project");
     let file = project.join(format!("{id}.jsonl"));
     let prompt = serde_json::json!({"type": "user", "uuid": "u-prompt", "message": {"role": "user", "content": "write the module"}, "timestamp": "2026-10-10T00:00:00.000Z", "cwd": "/tmp", "sessionId": id});
@@ -291,7 +291,7 @@ fn drafted_session(dir: &Path, id: &str) -> (Arc<Drive>, PathBuf) {
 /// Stand in for the driver: feed the draft a stdout line the way its
 /// writer does.
 fn draft_hears(drive: &Drive, id: &str, line: &Value) {
-    let claude = drive.providers.provider::<crate::provider::claude_code::resident::ClaudeCode>().expect("Claude Code");
+    let claude = drive.providers.provider::<droppen_provider_claude_code::resident::ClaudeCode>().expect("Claude Code");
     claude.runs().draft_channel(id).send_if_modified(|draft| {
         let changed = droppen_provider::drafts::apply(draft, line);
         if changed {
@@ -449,10 +449,12 @@ async fn a_burst_of_draft_changes_is_coalesced_and_ends_on_the_latest() {
 /// for the poll.
 #[tokio::test]
 async fn a_page_is_sent_the_count_and_never_the_words() {
-    use crate::provider::claude_code::resident::test_harness::{thinks_until_released, until, Harness, SESSION};
+    use droppen_provider_claude_code::resident::test_harness::{thinks_until_released, until, Harness, SESSION};
     use droppen_instance::instance::InstanceDirs;
     use droppen_provider::common::Phase;
     use std::time::Duration;
+    // The crate's own shim hook is for its own tests: this binary's shim is the server's.
+    droppen_provider::testing::shims_run_as(crate::provider::with_providers::SHIMS);
     let harness = Harness::ordinary_with(&thinks_until_released()).await;
     let prompt = format!(
         r#"{{"type":"user","uuid":"u-prompt","message":{{"role":"user","content":"think about it"}},"timestamp":"2026-10-10T00:00:00.000Z","cwd":"/tmp","sessionId":"{SESSION}"}}"#

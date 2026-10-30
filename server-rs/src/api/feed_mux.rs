@@ -18,7 +18,7 @@ const ID: &str = "55555555-5555-4555-8555-555555555555";
 /// A drive with one ~1000-item claude session in its managed root.
 fn session(dir: &std::path::Path) -> (Arc<Drive>, std::path::PathBuf) {
     let (paths, drive) = test_drive(dir);
-    let project = crate::provider::claude_code::claude_roots::ClaudeRoots::of(&paths).managed_projects().join("-w-mux");
+    let project = droppen_provider_claude_code::claude_roots::ClaudeRoots::of(&paths).managed_projects().join("-w-mux");
     std::fs::create_dir_all(&project).expect("project");
     let file = project.join(format!("{ID}.jsonl"));
     std::fs::write(&file, claude_turns(ID, 0, 250)).expect("transcript");

@@ -1,9 +1,7 @@
-//! The provider implementation that is still the server's own: Claude Code's,
-//! until it moves into a crate of its own. What it stands on is the
-//! `droppen_provider` crate; the ACP agents' provider is the
-//! `droppen_provider_acp` crate, and Codex's the `droppen_provider_codex`
-//! crate.
+//! The provider base's tests that need real providers (`with_providers`).
+//! Each provider is a crate of its own on the `droppen_provider` crate:
+//! Claude Code's `droppen_provider_claude_code`, Codex's
+//! `droppen_provider_codex` and the ACP agents' `droppen_provider_acp`.
 
-pub mod claude_code;
 #[cfg(test)]
-mod with_providers;
+pub(crate) mod with_providers;

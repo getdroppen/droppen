@@ -8,7 +8,7 @@
 //!   `rate_limit_info.unifiedWindows`: the utilization and reset instant of each
 //!   window the login has. That is a reading, made by the very credential being
 //!   billed, and it costs nothing. Claude's
-//!   `provider::claude_code::quota::RateLimitWindows::windows_from_rate_limit_info` turns it
+//!   `droppen_provider_claude_code::quota::RateLimitWindows::windows_from_rate_limit_info` turns it
 //!   into [`QuotaWindow`]s and a session's driver hands them to
 //!   [`super::QuotaCache::ingest_session`].
 //! * **The `/usage` probe, as a fallback.** Only when a login's newest window is

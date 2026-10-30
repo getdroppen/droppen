@@ -41,6 +41,7 @@ fn registered_in_source() -> std::collections::BTreeSet<(String, String)> {
         manifest.join("crates/droppen-notify/src"),
         manifest.join("crates/droppen-provider/src"),
         manifest.join("crates/droppen-provider-acp/src"),
+        manifest.join("crates/droppen-provider-claude-code/src"),
         manifest.join("crates/droppen-drive/src"),
     ];
     while let Some(dir) = dirs.pop() {

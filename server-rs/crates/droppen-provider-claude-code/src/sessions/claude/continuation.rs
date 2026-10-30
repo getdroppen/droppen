@@ -47,10 +47,10 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::provider::claude_code::sessions::claude;
+use crate::sessions::claude;
 use droppen_provider::ContinueError;
 use droppen_sessions::reference;
-use crate::provider::claude_code::claude_roots;
+use crate::claude_roots;
 use droppen_instance::paths::{ClaudeRoot, Paths};
 
 /// Suffix the copy wears until it is complete; swept at boot by

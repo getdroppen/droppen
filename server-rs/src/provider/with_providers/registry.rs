@@ -36,7 +36,7 @@ fn providers_from(home: &std::path::Path, register: fn(&mut ProviderRegistry, &A
 
 /// Claude Code alone.
 fn claude_only(providers: &mut ProviderRegistry, registry: &Arc<InjectionRegistry>) {
-    providers.register(Arc::new(crate::provider::claude_code::resident::ClaudeCode::new(registry.clone())));
+    providers.register(Arc::new(droppen_provider_claude_code::resident::ClaudeCode::new(registry.clone())));
 }
 
 /// Codex alone.
@@ -134,7 +134,7 @@ async fn only_claude_code_continues_a_session_on_an_account() {
     let home = tempfile::tempdir().expect("tempdir");
     let providers = providers(home.path());
     let paths = Paths::new(home.path().to_path_buf());
-    let local = crate::provider::claude_code::claude_roots::ClaudeRoots::of(&paths).local_projects().join("-w");
+    let local = droppen_provider_claude_code::claude_roots::ClaudeRoots::of(&paths).local_projects().join("-w");
     std::fs::create_dir_all(&local).expect("project dir");
     const STUCK: &str = "11111111-1111-4111-8111-111111111111";
     const NEW: &str = "22222222-2222-4222-8222-222222222222";
@@ -149,7 +149,7 @@ async fn only_claude_code_continues_a_session_on_an_account() {
     assert!(matches!(none.continue_on_account(Source::Claude, STUCK, NEW).await, Err(droppen_provider::ContinueError::Unsupported)));
 
     let copy = providers.continue_on_account(Source::Claude, STUCK, NEW).await.expect("Claude Code continues it");
-    assert_eq!(copy, crate::provider::claude_code::claude_roots::ClaudeRoots::of(&paths).managed_projects().join("-w").join(format!("{NEW}.jsonl")));
+    assert_eq!(copy, droppen_provider_claude_code::claude_roots::ClaudeRoots::of(&paths).managed_projects().join("-w").join(format!("{NEW}.jsonl")));
 }
 
 /// A source no provider runs is refused at the start and blocked at a send,
@@ -306,7 +306,7 @@ async fn each_provider_archives_its_own_sessions() {
     let providers = providers(home.path());
     let paths = Paths::new(home.path().to_path_buf());
     providers.archive(Source::Claude, "c1").await.expect("archived");
-    assert!(crate::provider::claude_code::sessions::claude::archive::archived_ids(&paths).contains("c1"));
+    assert!(droppen_provider_claude_code::sessions::claude::archive::archived_ids(&paths).contains("c1"));
     assert_eq!(
         providers.archive(Source::Acp, "a1").await,
         Err(droppen_sessions::archive::ArchiveError("cannot archive the ACP session: it is gone".to_string()).to_string())
@@ -317,5 +317,5 @@ async fn each_provider_archives_its_own_sessions() {
     for source in [Source::Claude, Source::Codex, Source::Acp] {
         assert_eq!(none.archive(source, "x").await, Err(format!("no provider runs {source} sessions")), "{source}");
     }
-    assert!(crate::provider::claude_code::sessions::claude::archive::archived_ids(&Paths::new(other.path().to_path_buf())).is_empty(), "nothing was archived");
+    assert!(droppen_provider_claude_code::sessions::claude::archive::archived_ids(&Paths::new(other.path().to_path_buf())).is_empty(), "nothing was archived");
 }

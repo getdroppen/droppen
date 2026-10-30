@@ -1,11 +1,11 @@
 //! The run journal with each CLI's rows side by side: Claude Code's and
 //! Codex's, as each reads and writes them. Claude Code's driver's own rows are
-//! its tests' (`provider::claude_code::resident::journal_tests`).
+//! its tests' (`droppen_provider_claude_code::resident::journal_tests`).
 
 use droppen_provider::runs::*;
 use serde::Serialize;
 use droppen_provider_codex::app_server::CodexRun;
-use crate::provider::claude_code::resident::ClaudeRun;
+use droppen_provider_claude_code::resident::ClaudeRun;
 
 // ---- the rows on disk, byte for byte ---------------------------------
 //

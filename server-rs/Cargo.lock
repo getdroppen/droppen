@@ -1567,6 +1567,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "droppen-provider-claude-code"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "clap",
+ "droppen-accounts",
+ "droppen-base",
+ "droppen-http",
+ "droppen-instance",
+ "droppen-provider",
+ "droppen-sessions",
+ "droppen-workbench",
+ "futures-util",
+ "gotcha",
+ "gotcha_core",
+ "libc",
+ "memchr",
+ "regex",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "droppen-provider-codex"
 version = "0.1.0"
 dependencies = [
@@ -3485,6 +3514,7 @@ dependencies = [
  "droppen-plugins",
  "droppen-provider",
  "droppen-provider-acp",
+ "droppen-provider-claude-code",
  "droppen-provider-codex",
  "droppen-pty",
  "droppen-search-path",

@@ -15,7 +15,7 @@
 //!
 //! * [`droppen_drive::feed`] — the per-session websocket feed, and [`droppen_drive::feed::global`] the
 //!   session-list one behind `GET /api/events`;
-//! * [`provider::claude_code::claude_roots`] / [`droppen_base::process_env`] — what a spawn runs
+//! * [`droppen_provider_claude_code::claude_roots`] / [`droppen_base::process_env`] — what a spawn runs
 //!   against and with;
 //! * [`droppen_base::env`] — the environment variables this server reads,
 //!   under their Droppen names and the ones they had before;

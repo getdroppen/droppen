@@ -15,7 +15,7 @@ use droppen_sessions::{chats_cwd, file_signature, SessionScope, Source};
 use droppen_drive::routes::{send_message, SearchQuery, SendMessage};
 use droppen_drive::{Drive, DriveState};
 use droppen_drive::feed;
-use crate::provider::claude_code::sessions::claude;
+use droppen_provider_claude_code::sessions::claude;
 
 fn drive() -> (tempfile::TempDir, Arc<Drive>) {
     drive_with(crate::app::register_providers)
@@ -64,7 +64,7 @@ async fn a_chat_that_cannot_read_an_attachment_refuses_one() {
     for (register, expected) in cases {
         let (_dir, drive) = drive_with(register);
         let id = "11111111-2222-4333-8444-555555555555";
-        let project = crate::provider::claude_code::claude_roots::ClaudeRoots::of(&drive.paths).managed_projects().join("-chats");
+        let project = droppen_provider_claude_code::claude_roots::ClaudeRoots::of(&drive.paths).managed_projects().join("-chats");
         std::fs::create_dir_all(&project).expect("project");
         let chats = chats_cwd(&drive.paths).to_string_lossy().into_owned();
         let line = serde_json::json!({
@@ -105,7 +105,7 @@ fn search(q: &str) -> SearchQuery {
 /// A claude transcript in the user's own `~/.claude`, which is a session
 /// this server did not start.
 fn external_claude_session(drive: &Drive, id: &str, lines: &[serde_json::Value]) {
-    let project = crate::provider::claude_code::claude_roots::ClaudeRoots::of(&drive.paths).local_projects().join("-w-repo");
+    let project = droppen_provider_claude_code::claude_roots::ClaudeRoots::of(&drive.paths).local_projects().join("-w-repo");
     std::fs::create_dir_all(&project).expect("project");
     let body: String = lines.iter().map(|line| format!("{line}\n")).collect();
     std::fs::write(project.join(format!("{id}.jsonl")), body).expect("transcript");

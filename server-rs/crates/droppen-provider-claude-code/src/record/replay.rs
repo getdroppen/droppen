@@ -501,7 +501,7 @@ mod tests {
 
         // And it really is the file the CLI would have written: the parser that
         // feeds the Session page reads it back without complaint.
-        let items = crate::provider::claude_code::sessions::transcript::parse_claude_transcript(&paths, &root.join(main), false)
+        let items = crate::sessions::transcript::parse_claude_transcript(&paths, &root.join(main), false)
             .await
             .expect("the rebuilt transcript parses");
         let rendered: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
@@ -509,7 +509,7 @@ mod tests {
 
         // The subagent's own transcript is a sidechain, and drills down the way
         // the Session page expects it to.
-        let child = crate::provider::claude_code::sessions::transcript::parse_claude_transcript(&paths, &root.join(agent), true)
+        let child = crate::sessions::transcript::parse_claude_transcript(&paths, &root.join(agent), true)
             .await
             .expect("the rebuilt subagent transcript parses");
         assert_eq!(child.len(), 1);

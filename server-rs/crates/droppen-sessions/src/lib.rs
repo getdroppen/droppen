@@ -4,7 +4,7 @@
 //!
 //! Every session is a file some CLI wrote, and this crate names no CLI: each
 //! one's transcripts are read through the [`Transcripts`] port, which each
-//! provider's reader implements (`provider::claude_code::sessions::claude`,
+//! provider's reader implements (`droppen_provider_claude_code::sessions::claude`,
 //! `droppen_provider_codex::sessions::codex`, `droppen_provider_acp::sessions`), and the
 //! entry hands them in as one [`TranscriptSources`].
 //!
@@ -295,7 +295,7 @@ pub struct ResidentInfo {
     /// Those tasks, oldest first, as far as the CLI described them.
     ///
     /// Empty whenever `background` is zero, and never longer than the cap the
-    /// driver publishes — see `provider::claude_code::resident::TASKS_ON_THE_WIRE`.
+    /// driver publishes — see `droppen_provider_claude_code::resident::TASKS_ON_THE_WIRE`.
     pub tasks: Vec<BackgroundTask>,
     /// Whether the head of the queue is parked waiting for that background work.
     ///

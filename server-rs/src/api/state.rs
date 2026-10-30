@@ -11,8 +11,8 @@ use gotcha::axum::extract::FromRef;
 
 use super::AppState;
 use droppen_accounts::quota::QuotaState;
-use crate::provider::claude_code::setup_token::TokenWizardState;
-use crate::provider::claude_code::usage_login::UsageLoginState;
+use droppen_provider_claude_code::setup_token::TokenWizardState;
+use droppen_provider_claude_code::usage_login::UsageLoginState;
 use droppen_accounts::AccountsState;
 use droppen_provider_acp::agents::AcpAgentState;
 use droppen_http::app_window::{AppWindow, ListenPort};
@@ -255,7 +255,7 @@ impl FromRef<AppState> for AuthState {
 impl FromRef<AppState> for EventsState {
     fn from_ref(state: &AppState) -> Self {
         // Read as the socket opens, the way `/api/settings` reads them.
-        let roots = crate::provider::claude_code::claude_roots::ClaudeRoots::of(&state.drive.paths);
+        let roots = droppen_provider_claude_code::claude_roots::ClaudeRoots::of(&state.drive.paths);
         Self {
             send_limit: state.send_limit,
             cancel: state.cancel.clone(),
