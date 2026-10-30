@@ -210,15 +210,6 @@ pub fn claude_prompt(text: &str, images: &[String], files: &[String]) -> String 
     }
 }
 
-/// codex has no flag for non-image files, so point it at them in the prompt text.
-fn with_codex_files(text: &str, options: &SendOptions) -> String {
-    if options.files.is_empty() {
-        text.to_string()
-    } else {
-        format!("{text}{}", attachment_suffix(&options.files))
-    }
-}
-
 /// Refuse an account that belongs to the other CLI.
 pub fn require_provider(launch: &AccountLaunch, wanted: AccountProvider) -> Result<(), InjectError> {
     if launch.provider == wanted {
@@ -228,15 +219,6 @@ pub fn require_provider(launch: &AccountLaunch, wanted: AccountProvider) -> Resu
         account: launch.provider,
         wanted,
     })
-}
-
-/// One codex account, resolved and ready to be spawned under.
-#[derive(Debug, Clone)]
-pub(crate) struct CodexAccount {
-    /// Which account it is, so a live process can be compared against it.
-    pub(crate) id: String,
-    /// What it contributes to the spawn.
-    pub(crate) launch: AccountLaunch,
 }
 
 /// What a claude spawn's environment gains just before the CLI starts, beyond

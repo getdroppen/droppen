@@ -26,9 +26,27 @@ use crate::provider::common::{busy_message, new_uuid, session_workdir, Phase, Qu
 use crate::provider::gate::{ClaimError, SessionLease, SpawnGate};
 use droppen_sessions::archive::ArchiveError;
 use crate::provider::{
-    require_provider, runs, shim, with_codex_files, AccountChoice, Capabilities, CodexAccount, DriverStatesBuilder,
-    InjectError, InjectionRegistry, Provider, ProviderRuns, Run, RunHost, SendOptions, SendTo, Sent, SpawnPermit, StartAt, WrittenAt,
+    attachment_suffix, require_provider, runs, shim, AccountChoice, Capabilities, DriverStatesBuilder, InjectError, InjectionRegistry,
+    Provider, ProviderRuns, Run, RunHost, SendOptions, SendTo, Sent, SpawnPermit, StartAt, WrittenAt,
 };
+
+/// codex has no flag for non-image files, so point it at them in the prompt text.
+fn with_codex_files(text: &str, options: &SendOptions) -> String {
+    if options.files.is_empty() {
+        text.to_string()
+    } else {
+        format!("{text}{}", attachment_suffix(&options.files))
+    }
+}
+
+/// One codex account, resolved and ready to be spawned under.
+#[derive(Debug, Clone)]
+pub(in crate::provider) struct CodexAccount {
+    /// Which account it is, so a live process can be compared against it.
+    id: String,
+    /// What it contributes to the spawn.
+    launch: droppen_accounts::store::AccountLaunch,
+}
 
 const RPC_TIMEOUT: Duration = Duration::from_secs(30);
 /// How long a retiring app-server is given to actually exit.
