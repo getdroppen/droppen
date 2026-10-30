@@ -22,7 +22,8 @@ use droppen_http::extract::{ApiPath, ApiQuery};
 use droppen_http::{close_within, hostname, node_platform, send_within, Heartbeat, CLOSE_LIMIT, RUNTIME_VERSION, SERVER_VERSION};
 use droppen_http::openapi_ext::{self, ExtraResponses};
 use droppen_instance::paths::Paths;
-use crate::sessions::{claude, codex};
+use crate::provider::claude_code::sessions::claude;
+use crate::sessions::codex;
 use droppen_sessions::{SessionDetail, SessionList, Settings, Source};
 
 mod state;
@@ -256,8 +257,8 @@ pub async fn settings(State(state): State<AppState>, #[api(skip)] who: droppen_a
         node_version: RUNTIME_VERSION.to_string(),
         server_version: SERVER_VERSION.to_string(),
         home_dir: paths.home.to_string_lossy().into_owned(),
-        claude_dir: crate::claude_roots::ClaudeRoots::of(&paths).local_projects().to_string_lossy().into_owned(),
-        claude_managed_dir: crate::claude_roots::ClaudeRoots::of(&paths).managed_projects().to_string_lossy().into_owned(),
+        claude_dir: crate::provider::claude_code::claude_roots::ClaudeRoots::of(&paths).local_projects().to_string_lossy().into_owned(),
+        claude_managed_dir: crate::provider::claude_code::claude_roots::ClaudeRoots::of(&paths).managed_projects().to_string_lossy().into_owned(),
         codex_dir: paths.codex_sessions().to_string_lossy().into_owned(),
         claude_session_count: claude_sessions.len(),
         codex_session_count: codex_sessions.len(),
@@ -682,7 +683,7 @@ mod tests {
     /// The session [`WIDE_ID`] in `state`'s home, holding `turns` turns of
     /// `width`; its transcript's path.
     fn wide_session(state: &AppState, turns: usize, width: usize) -> std::path::PathBuf {
-        let project = crate::claude_roots::ClaudeRoots::of(&state.paths).local_projects().join("-w-wide");
+        let project = crate::provider::claude_code::claude_roots::ClaudeRoots::of(&state.paths).local_projects().join("-w-wide");
         std::fs::create_dir_all(&project).expect("project");
         let file = project.join(format!("{WIDE_ID}.jsonl"));
         std::fs::write(&file, wide_turns(0, turns, width)).expect("transcript");

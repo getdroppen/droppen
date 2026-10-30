@@ -4,10 +4,10 @@
 use std::sync::Arc;
 
 use droppen_accounts::store::AccountProvider;
-use crate::claude_roots;
+use crate::provider::claude_code::claude_roots;
 use crate::provider::common::{new_uuid, session_workdir, CHAT_SYSTEM_PROMPT};
-use crate::provider::{claude_prompt, require_provider, resident, AccountChoice, InjectError, SendOptions, SendTo, Sent, SpawnGate, StartAt};
-use crate::sessions::claude;
+use crate::provider::{claude_prompt, require_provider, claude_code::resident, AccountChoice, InjectError, SendOptions, SendTo, Sent, SpawnGate, StartAt};
+use crate::provider::claude_code::sessions::claude;
 use droppen_sessions::Source;
 use droppen_base::process_env::{claude_env, claude_env_bare, clean_env_bare, Env};
 use droppen_instance::paths::{ClaudeRoot, Paths};
@@ -149,19 +149,19 @@ impl super::ClaudeCodeRuns {
     /// well. Refusing would only make the root's own login (which no-account
     /// sessions need) and account sessions mutually exclusive.
     async fn owned_claude_env(&self, account_id: Option<&str>) -> Result<Env, InjectError> {
-        let dir = claude_roots::ClaudeRoots::of(&self.paths).ensure_managed()
+        let dir = claude_roots::ClaudeRoots::of(&self.host.paths).ensure_managed()
             .await
             .map_err(|error| InjectError::Internal(format!("cannot create this instance's Claude root: {error}")))?;
         let mut vars = vec![("CLAUDE_CONFIG_DIR".to_string(), dir.to_string_lossy().into_owned())];
         if let Some(account_id) = account_id {
-            if let Some(path) = claude_roots::ClaudeRoots::of(&self.paths).managed_file_credentials().await {
+            if let Some(path) = claude_roots::ClaudeRoots::of(&self.host.paths).managed_file_credentials().await {
                 tracing::warn!(
                     path = %path.display(),
                     account = account_id,
                     "the managed root holds file credentials; the account token in the environment takes precedence on current CLIs"
                 );
             }
-            let launch = self.accounts.account_env(account_id).await?;
+            let launch = self.host.accounts.account_env(account_id).await?;
             // A codex key in `ANTHROPIC_API_KEY` would be a 401 under a label that
             // says otherwise; refuse it here, where the account is still nameable.
             require_provider(&launch, AccountProvider::Claude)?;
@@ -221,8 +221,8 @@ impl super::ClaudeCodeRuns {
     /// process, and the resolution — binding, explicit choice, default — happens
     /// only here.
     async fn resume_claude_env(&self, id: &str, options: &SendOptions) -> Result<(Env, ClaudeLogin), InjectError> {
-        let found = claude::find_claude_session(&self.paths, id).await;
-        let bound = self.accounts.session_account_id(id).await;
+        let found = claude::find_claude_session(&self.host.paths, id).await;
+        let bound = self.host.accounts.session_account_id(id).await;
         let owned = found.map(|f| f.root) == Some(ClaudeRoot::Managed) || bound.is_some();
 
         if !owned {
@@ -246,9 +246,9 @@ impl super::ClaudeCodeRuns {
         let env = self.owned_claude_env(account_id.as_deref()).await?;
         if let Some(chosen) = options.account.named() {
             if Some(chosen) != bound.as_deref() {
-                self.accounts.bind_session_account(id, Some(chosen), AccountProvider::Claude).await?;
+                self.host.accounts.bind_session_account(id, Some(chosen), AccountProvider::Claude).await?;
                 // Somebody's choice: nothing moves it ahead of a limit for a while.
-                self.accounts.rotation_log().note_hand_binding(id, droppen_accounts::rest::now_ms());
+                self.host.accounts.rotation_log().note_hand_binding(id, droppen_accounts::rest::now_ms());
             }
         }
         let login = self.login_of(account_id).await;
@@ -280,7 +280,7 @@ impl super::ClaudeCodeRuns {
         // Resolved before anything is built: an unusable account must not spawn.
         let (mut env, login) = self.resume_claude_env(id, options).await?;
         self.notify_decorate(id, &mut env).await;
-        let recipe = claude_recipe(&self.paths, cwd, options, env, login);
+        let recipe = claude_recipe(&self.host.paths, cwd, options, env, login);
         // claude has no image flag, so every attachment reaches it as a path in
         // the prompt, which travels over stdin.
         let prompt = with_claude_attachments(text, options);
@@ -300,11 +300,11 @@ impl super::ClaudeCodeRuns {
             // the local login known to be signed out — an account in the pool:
             // a chat or a scheduled task started there would fail its first turn.
             AccountChoice::Unset if options.use_default_account => {
-                self.start_account(AccountProvider::Claude, options.model.as_deref()).await
+                self.host.start_account(AccountProvider::Claude, options.model.as_deref()).await
             }
             AccountChoice::Unset | AccountChoice::Local => None,
             AccountChoice::Account(id) => Some(id.clone()),
-            AccountChoice::Rule(named) => self.rule_account(AccountProvider::Claude, named, options.model.as_deref()).await,
+            AccountChoice::Rule(named) => self.host.rule_account(AccountProvider::Claude, named, options.model.as_deref()).await,
         };
         match &chosen {
             Some(account_id) => {
@@ -312,7 +312,7 @@ impl super::ClaudeCodeRuns {
                 // Bound before the spawn: a crash mid-launch must not leave a
                 // managed session nobody can resume.
                 self
-                    .accounts
+                    .host.accounts
                     .bind_session_account(&id, Some(account_id), AccountProvider::Claude)
                     .await?;
             }
@@ -322,7 +322,7 @@ impl super::ClaudeCodeRuns {
             // to a session this server started would be absurd. Recorded before
             // the spawn, like the binding above and for the same reason.
             None => {
-                if let Err(error) = crate::sessions::claude::ClaudeCodeSessions.record_owned(&self.paths, &id).await {
+                if let Err(error) = crate::provider::claude_code::sessions::claude::ClaudeCodeSessions.record_owned(&self.host.paths, &id).await {
                     tracing::error!(session = %id, %error, "cannot record this claude session as ours; it will list as external");
                 }
             }
@@ -333,7 +333,7 @@ impl super::ClaudeCodeRuns {
         // session with no transcript is started with `--session-id`.
         self.notify_decorate(&id, &mut env).await;
         let login = self.login_of(chosen).await;
-        let recipe = claude_recipe(&self.paths, Some(cwd), options, env, login);
+        let recipe = claude_recipe(&self.host.paths, Some(cwd), options, env, login);
         let prompt = with_claude_attachments(text, options);
         self.deliver(gate, &id, &prompt, recipe, options.message_id.clone()).await?;
         Ok(id)
@@ -351,10 +351,10 @@ impl super::ClaudeCodeRuns {
     /// store no longer holds, is rebuilt from scratch the way the send path
     /// builds one instead.
     pub(super) async fn retarget_recipe(&self, session: &str, recipe: &resident::Recipe, from: &str, to: &str) -> Result<resident::Recipe, InjectError> {
-        let new = self.accounts.account_env(to).await?;
+        let new = self.host.accounts.account_env(to).await?;
         require_provider(&new, AccountProvider::Claude)?;
         let old = match recipe.fingerprint.account.as_deref() {
-            Some(account) if account == from => self.accounts.account_env(from).await.ok(),
+            Some(account) if account == from => self.host.accounts.account_env(from).await.ok(),
             _ => None,
         };
         let env = match old {
@@ -394,7 +394,7 @@ impl super::ClaudeCodeRuns {
         };
         let env = self.account_spawn_env(session, account).await?;
         let login = self.login_of(Some(account.to_string())).await;
-        Ok(claude_recipe(&self.paths, cwd, &options, env, login))
+        Ok(claude_recipe(&self.host.paths, cwd, &options, env, login))
     }
 
     /// The whole environment a spawn of `session` under `account` gets, built
@@ -412,7 +412,7 @@ impl super::ClaudeCodeRuns {
     /// send — and because the store is the only thing that may answer it.
     async fn login_of(&self, account: Option<String>) -> ClaudeLogin {
         let credential = match account.as_deref() {
-            Some(id) => self.accounts.credential_hash(id).await,
+            Some(id) => self.host.accounts.credential_hash(id).await,
             None => None,
         };
         ClaudeLogin { account, credential }

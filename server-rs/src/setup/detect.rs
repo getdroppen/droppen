@@ -35,7 +35,7 @@ use droppen_base::process_env::{resolve_on_path, Env};
 ///
 /// Every resident session is started with `--input-format stream-json
 /// --output-format stream-json --verbose` (read against claude 2.1.231,
-/// `provider/resident.rs`) and, since `AskUserQuestion` landed, with
+/// `provider/claude_code/resident.rs`) and, since `AskUserQuestion` landed, with
 /// `--permission-prompt-tool stdio`, whose `control_request` protocol the driver
 /// answers was read off claude 2.1.295 (`provider/questions.rs`). Every spawn
 /// depends on both, so the floor is the later of the two: an older CLI may

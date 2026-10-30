@@ -343,7 +343,7 @@ pub enum Access {
 ///   in its markdown.
 /// * `image-cache` — where Claude Code keeps an image pasted into a session,
 ///   whose path it hands the model; a `Read` of it is offered as the tool
-///   result's thumbnail (`sessions::transcript`).
+///   result's thumbnail (`provider::claude_code::sessions::transcript`).
 ///
 /// Plus [`READABLE_IN_PROJECTS`]. Nothing else in the root is linked from
 /// anywhere — its transcripts reach the page through the session routes,

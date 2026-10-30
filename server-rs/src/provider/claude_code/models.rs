@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use futures_util::future::BoxFuture;
 
-use super::{ModelInfo, ModelList, ModelListSource, Models, ModelsQuery};
+use crate::models::{ModelInfo, ModelList, ModelListSource, Models, ModelsQuery};
 use droppen_accounts::store::{Account, AccountKind, AccountsStore};
 use droppen_http::openapi_ext::Nullable;
 use droppen_instance::paths::Paths;

@@ -427,7 +427,7 @@ fn queued_command_line(entry: &Json, timestamp: Option<&str>) -> Option<UserLine
 /// What the resident driver reads to learn that a steered message has been
 /// *taken in* rather than left waiting for a turn of its own: claude writes
 /// nothing on stdout when it folds one, and this entry is the only record of
-/// it — see `provider::resident::Driver::absorb`.
+/// it — see `provider::claude_code::resident::Driver::absorb`.
 pub(crate) fn absorbed_prompt(entry: &Value) -> Option<String> {
     let entry = entry.as_object()?;
     if entry.get("type").and_then(Value::as_str) != Some("attachment")

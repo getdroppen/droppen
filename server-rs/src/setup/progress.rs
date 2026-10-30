@@ -314,7 +314,7 @@ pub async fn put_progress(State(state): State<SetupState>, ApiJson(body): ApiJso
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::claude_roots;
+    use crate::provider::claude_code::claude_roots;
     use crate::setup::runner::fixture::Fixture;
     use crate::setup::tests::{guide, setup_state};
     use droppen_instance::paths::ClaudeRoot;
@@ -523,7 +523,7 @@ mod tests {
         )
         .expect("transcript");
         assert!(answered(&SetupState::from_ref(&state), fresh.clone()).await.auto_open, "the user's own, so far");
-        crate::sessions::claude::ClaudeCodeSessions.record_owned(&state.drive.paths, id).await.expect("record");
+        crate::provider::claude_code::sessions::claude::ClaudeCodeSessions.record_owned(&state.drive.paths, id).await.expect("record");
         assert!(!answered(&SetupState::from_ref(&state), fresh.clone()).await.auto_open, "started by this instance on the local login");
 
         // A Codex thread it started, in the one ~/.codex.

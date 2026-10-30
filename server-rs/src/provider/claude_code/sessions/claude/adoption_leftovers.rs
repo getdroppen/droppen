@@ -13,7 +13,7 @@
 //! at boot, so a server upgraded straight out of an interrupted adoption does
 //! not keep the file for ever. It only ever deletes files with that suffix.
 
-use crate::claude_roots;
+use crate::provider::claude_code::claude_roots;
 use droppen_instance::paths::{ClaudeRoot, Paths};
 
 /// Suffix a half-written adopted transcript wore until it was complete.

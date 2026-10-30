@@ -1337,7 +1337,7 @@ mod tests {
     async fn an_acp_session_is_in_the_registrys_own_snapshot() {
         let home = tempfile::tempdir().expect("tempdir");
         let (state, id, _) = one_turn(home.path(), "", "hi", &SendOptions::default()).await;
-        let own = state.drive.injections.driver_states().resident(Source::Acp, &id).expect("in the registry's snapshot");
+        let own = state.drive.injections.host.driver_states().resident(Source::Acp, &id).expect("in the registry's snapshot");
         assert_eq!(own.phase, droppen_sessions::ResidentPhase::Idle);
         let listed = state.drive.providers.driver_states().resident(Source::Acp, &id).expect("in the providers' snapshot");
         assert_eq!(listed.phase, droppen_sessions::ResidentPhase::Idle);

@@ -28,18 +28,18 @@ cargo clippy --all-targets --all-features -- -D warnings
 | --- | --- |
 | `api/` | HTTP + websocket 表面：`AppState`、扁平的路由注册、错误体、`Created`、返回 JSON 400 的抽取器 |
 | `app.rs` | 应用装配：config / state / routes / bind，以及取代 `GotchaApp::run` 的可停机 serve loop |
-| `sessions/` | 每个 CLI 自己的会话读取器：Claude Code、Codex、ACP 的 transcript、发现与归属，实现 `droppen-sessions` 的 `Transcripts` 端口；随各自的 provider 迁出 |
+| `sessions/` | 每个 CLI 自己的会话读取器：Codex、ACP 的 transcript、发现与归属，实现 `droppen-sessions` 的 `Transcripts` 端口；随各自的 provider 迁出 |
 | `feed/` | 单会话 websocket feed；`feed/global.rs` 是 `GET /api/events` 背后的会话列表 feed |
 | `drive/` | 驱动会话的路由，以及所有进程类子系统挂靠的 `Drive` 状态 |
 | `provider/` | 驱动本机 CLI，每个会话一次运行 |
-| `record/` | 会话飞行记录器：一个会话一份 NDJSON 录像，以及把它放回文件系统的 `replay` 子命令 |
+| `provider/claude_code/record/` | 会话飞行记录器：一个会话一份 NDJSON 录像，以及把它放回文件系统的 `replay` 子命令 |
 | `accounts/` | 每个 CLI 在账号里的那一部分：Claude Code 与 Codex 的登录（实现 `droppen-accounts` 的 `Login` 端口）和用量探测，以及产出 Claude 登录的两个 pty 向导；随各自的 provider 迁出 |
 | `chats/` | 即时聊天：锚点目录里的 CLI 会话，加上 BYO-API 后端与它的流式回复 |
 | `quota/` | 订阅额度面板 |
 | `schedule/` | 定时任务：一条 cron 表达式（按**服务器本地时区**解释）到点新开一个会话；`runner.rs` 是那个五秒一跳、只在持有实例锁时才启动的循环 |
 | `notify/` | 会话自己决定「这件事值得打扰你」时走的推送通道（Bark），以及注进会话的 `rh-notify` 与 skill |
 | `models/` | 模型列表 |
-| `claude_roots.rs` | 一次 spawn 跑在什么根目录下（带什么环境见下面 `droppen-base` 的 `process_env`） |
+| `provider/claude_code/claude_roots.rs` | 一次 spawn 跑在什么根目录下（带什么环境见下面 `droppen-base` 的 `process_env`） |
 | `crates/droppen-base/` | 各子系统都用、却不属于任何一个的底层工具：时钟（`time`）、文本编码（`text`）、只有本用户可读的文件（`fsutil`）、「文件里那个 pid 还是当初那个进程吗」的两道守卫（`procs`）、出站 webhook 的守卫（`outbound`）、读环境变量（`env`）、spawn 的环境与输出脱敏（`process_env`）、二进制的两个名字（`program`） |
 | `crates/droppen-instance/` | 实例的底座：各子系统共用的路径（`paths`）、一个服务端独占的实例目录与宣示所有权的 `flock`（`instance`）、改名也不变的服务端身份（`identity`），以及实例自己的 SQLite 状态库和只增不改的 schema（`db`） |
 | `crates/droppen-http/` | 每个路由模块都站在上面的 HTTP 工具：错误体与状态码、出错即 `400` 的提取器、`201`/`202` 响应、websocket 保活与限时发送、构建身份（`SERVER_VERSION`）、`substate!`；以及手工组装的配置加载器（`config`，带类型化默认值，loopback 8700）、OpenAPI 补丁（`openapi_ext`）和每个 `/api/*` 请求都要过的同源守卫（`origin`） |

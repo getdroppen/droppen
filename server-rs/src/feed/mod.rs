@@ -357,9 +357,9 @@ pub async fn load_session_state(drive: &Arc<Drive>, source: Source, id: &str) ->
         Source::Claude => drive.accounts.rotation_log().latest(id),
         Source::Codex | Source::Acp => None,
     };
-    let receipts = drive.injections.receipts().for_session(source, id, crate::provider::receipts::now_ms());
+    let receipts = drive.injections.host().receipts().for_session(source, id, crate::provider::receipts::now_ms());
     let questions = if drive.providers.capabilities(source).questions {
-        drive.injections.questions().for_session(id, crate::provider::questions::now_ms())
+        drive.injections.host().questions().for_session(id, crate::provider::questions::now_ms())
     } else {
         Vec::new()
     };
@@ -1453,10 +1453,10 @@ mod tests {
         let auth = droppen_auth::Auth::new(&paths, &instance, &droppen_http::config::AuthSettings::default(), false, std::sync::Arc::new(crate::app::NotifyTokens));
         let drive = Drive::new(paths.clone(), &instance, auth, crate::app::transcript_sources(), crate::app::register_providers, crate::app::logins());
         let feeds = FeedRegistry::new();
-        drive.injections.attach_listeners(feeds.clone(), droppen_http::refresh::Refresh::new(global::GlobalFeed::new()));
+        drive.injections.host().attach_listeners(feeds.clone(), droppen_http::refresh::Refresh::new(global::GlobalFeed::new()));
 
         let id = "33333333-3333-4333-8333-333333333333";
-        let project = crate::claude_roots::ClaudeRoots::of(&paths).managed_projects().join("-w-repo");
+        let project = crate::provider::claude_code::claude_roots::ClaudeRoots::of(&paths).managed_projects().join("-w-repo");
         std::fs::create_dir_all(&project).expect("project");
         let line = format!(
             r#"{{"type":"user","message":{{"role":"user","content":"hello"}},"timestamp":"2026-09-29T00:00:00.000Z","cwd":"/tmp","sessionId":"{id}","uuid":"u1"}}"#
@@ -1490,7 +1490,7 @@ mod tests {
                 used_percent: None,
             })
             .expect("record");
-        drive.injections.announce(Source::Claude, id);
+        drive.injections.host().announce(Source::Claude, id);
 
         let frame = tokio::time::timeout(std::time::Duration::from_millis(1500), attached.attachment.next_frame())
             .await
@@ -1634,7 +1634,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let id = "44444444-4444-4444-8444-444444444444";
         let (paths, drive) = test_drive(dir.path());
-        let project = crate::claude_roots::ClaudeRoots::of(&paths).managed_projects().join("-w-repo");
+        let project = crate::provider::claude_code::claude_roots::ClaudeRoots::of(&paths).managed_projects().join("-w-repo");
         std::fs::create_dir_all(&project).expect("project");
         let file = project.join(format!("{id}.jsonl"));
         std::fs::write(&file, claude_turns(id, 0, 250)).expect("transcript");
@@ -1724,7 +1724,7 @@ mod tests {
     /// A claude session on disk with one prompt in it, and a drive to serve it.
     fn drafted_session(dir: &Path, id: &str) -> (Arc<Drive>, PathBuf) {
         let (paths, drive) = test_drive(dir);
-        let project = crate::claude_roots::ClaudeRoots::of(&paths).managed_projects().join("-w-repo");
+        let project = crate::provider::claude_code::claude_roots::ClaudeRoots::of(&paths).managed_projects().join("-w-repo");
         std::fs::create_dir_all(&project).expect("project");
         let file = project.join(format!("{id}.jsonl"));
         let prompt = serde_json::json!({"type": "user", "uuid": "u-prompt", "message": {"role": "user", "content": "write the module"}, "timestamp": "2026-10-10T00:00:00.000Z", "cwd": "/tmp", "sessionId": id});
@@ -1735,7 +1735,7 @@ mod tests {
     /// Stand in for the driver: feed the draft a stdout line the way its
     /// writer does.
     fn draft_hears(drive: &Drive, id: &str, line: &Value) {
-        let claude = drive.providers.provider::<crate::provider::resident::ClaudeCode>().expect("Claude Code");
+        let claude = drive.providers.provider::<crate::provider::claude_code::resident::ClaudeCode>().expect("Claude Code");
         claude.runs().draft_channel(id).send_if_modified(|draft| {
             let changed = crate::provider::drafts::apply(draft, line);
             if changed {

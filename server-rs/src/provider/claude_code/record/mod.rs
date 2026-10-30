@@ -262,7 +262,7 @@ pub enum Stage {
     /// A turn ended, however it ended.
     Result,
     /// A turn has produced nothing for long enough to be marked. Nothing is
-    /// killed for it — see [`crate::provider::resident`].
+    /// killed for it — see [`crate::provider::claude_code::resident`].
     Stalled,
     /// Stop was pressed: claude was asked to end the turn.
     Interrupt,
@@ -275,7 +275,7 @@ pub enum Stage {
     /// What became of a steered message once the turn it was handed to ended.
     ///
     /// The CLI has two answers and does not say which it chose, so the driver
-    /// has to watch for it — see [`crate::provider::resident::Driver::settle_delivered`].
+    /// has to watch for it — see [`crate::provider::claude_code::resident::Driver::settle_delivered`].
     /// Either claude opened a turn of its own for the message, or it had already
     /// folded the message into the turn that was running and nothing more is
     /// coming. This is the line that says which happened, and it is the one to

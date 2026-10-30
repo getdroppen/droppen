@@ -133,8 +133,8 @@ impl GotchaApp for RemoteHandApp {
             // account rotation above all — and has to be able to say so to the
             // two feeds that would otherwise only notice on their next poll.
             let refresh = droppen_http::refresh::Refresh::new(global.clone());
-            drive.injections.attach_listeners(feeds.clone(), refresh.clone());
-            drive.injections.attach_alerts(Arc::new(PushAlerts {
+            drive.injections.host().attach_listeners(feeds.clone(), refresh.clone());
+            drive.injections.host().attach_alerts(Arc::new(PushAlerts {
                 transcripts: drive.transcripts.clone(),
             }));
             // Found once, here: an entry that registers no ACP provider fails
@@ -286,12 +286,12 @@ impl RemoteHandApp {
                 // session out of either place. Renaming a directory two servers
                 // could be reading is an owner's move, so it sits behind the
                 // same lock every adoption below does.
-                crate::claude_roots::migrate_legacy_root(&paths);
+                crate::provider::claude_code::claude_roots::migrate_legacy_root(&paths);
                 // After the move, so a legacy root's leftovers are swept too:
                 // an adoption by an earlier build, interrupted between its copy
                 // and its rename, leaves a full transcript nothing will ever
                 // list.
-                crate::sessions::claude::adoption_leftovers::sweep_partial_adoptions(&paths);
+                crate::provider::claude_code::sessions::claude::adoption_leftovers::sweep_partial_adoptions(&paths);
                 // Who this server is, minted once and kept for ever after.
                 // Under the lock like everything else here: it writes to the
                 // instance's database, and a throwaway in-process server must
@@ -307,7 +307,7 @@ impl RemoteHandApp {
                 // The registry is the one piece of ownership state that cannot
                 // be rebuilt from the filesystem, so the owner tidies it here
                 // rather than on every list refresh.
-                crate::sessions::claude::ClaudeCodeSessions.prune_owned(&paths).await;
+                crate::provider::claude_code::sessions::claude::ClaudeCodeSessions.prune_owned(&paths).await;
                 // A codex thread this instance made before claims existed has a
                 // registry entry and no claim, which is exactly a thread the
                 // sibling instances still list. Mirroring the registry out here
@@ -651,7 +651,7 @@ fn join(result: Result<std::io::Result<()>, tokio::task::JoinError>) -> GotchaRe
 /// names its own [`Source`]; this is the one place that names all of them.
 pub fn transcript_sources() -> TranscriptSources {
     let mut sources = TranscriptSources::default();
-    sources.register(Arc::new(crate::sessions::claude::ClaudeCodeSessions));
+    sources.register(Arc::new(crate::provider::claude_code::sessions::claude::ClaudeCodeSessions));
     sources.register(Arc::new(crate::sessions::codex::CodexSessions));
     sources.register(Arc::new(crate::sessions::acp_transcript::AcpSessions));
     sources
@@ -661,7 +661,7 @@ pub fn transcript_sources() -> TranscriptSources {
 /// Each provider names its own [`Source`]; this is the one place that names
 /// all of them.
 pub fn register_providers(providers: &mut ProviderRegistry, registry: &Arc<InjectionRegistry>) {
-    providers.register(Arc::new(crate::provider::resident::ClaudeCode::new(registry.clone())));
+    providers.register(Arc::new(crate::provider::claude_code::resident::ClaudeCode::new(registry.clone())));
     providers.register(Arc::new(crate::provider::app_server::Codex::new(registry.clone())));
     providers.register(Arc::new(crate::provider::acp::Acp::new(registry.clone())));
 }
@@ -839,7 +839,7 @@ mod tests {
             OwnedSessions::record(&paths, reader, &id).await.expect("record");
             assert_eq!(claimed(&id), reader.source() == Source::Codex, "{} runs its own step", reader.source().as_str());
         }
-        crate::sessions::claude::ClaudeCodeSessions.record_owned(&paths, "claude-b").await.expect("record");
+        crate::provider::claude_code::sessions::claude::ClaudeCodeSessions.record_owned(&paths, "claude-b").await.expect("record");
         crate::sessions::codex::CodexSessions.record_owned(&paths, "codex-b").await.expect("record");
 
         let owned = owned_sessions::read(&paths).await;

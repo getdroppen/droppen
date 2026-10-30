@@ -133,7 +133,7 @@ impl RunRecord {
 // account's OAuth token, and this journal is an unencrypted table in the
 // instance directory. The consequence is stated where it bites — a re-attached
 // resident cannot be respawned until a message brings a recipe with it; see
-// [`super::resident::Driver`].
+// [`super::claude_code::resident::Driver`].
 //
 // The account a managed run uses is likewise not recorded. It is already
 // stored, authoritatively, as the session's binding in `crate::accounts`, and
@@ -315,7 +315,7 @@ impl RunsFile {
 mod tests {
     use super::*;
     use crate::provider::app_server::CodexRun;
-    use crate::provider::resident::{ClaudeJournal, ClaudeRun, Queued};
+    use crate::provider::claude_code::resident::{ClaudeJournal, ClaudeRun, Queued};
 
     fn record(run_id: &str, session_id: &str, pid: u32) -> RunRecord<ClaudeRun> {
         RunRecord {
@@ -409,7 +409,7 @@ mod tests {
     /// boot has to guess at again.
     #[test]
     fn a_fingerprint_learned_after_the_spawn_replaces_what_the_record_said() {
-        use super::super::resident::Fingerprint;
+        use super::super::claude_code::resident::Fingerprint;
 
         let dir = tempfile::tempdir().expect("tempdir");
         let file = RunsFile::new(dir.path().join("runs.json"));

@@ -257,7 +257,7 @@ impl FromRef<AppState> for AuthState {
 impl FromRef<AppState> for EventsState {
     fn from_ref(state: &AppState) -> Self {
         // Read as the socket opens, the way `/api/settings` reads them.
-        let roots = crate::claude_roots::ClaudeRoots::of(&state.drive.paths);
+        let roots = crate::provider::claude_code::claude_roots::ClaudeRoots::of(&state.drive.paths);
         Self {
             send_limit: state.send_limit,
             cancel: state.cancel.clone(),

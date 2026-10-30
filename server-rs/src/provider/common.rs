@@ -103,9 +103,9 @@ pub struct ResidentState {
     /// Deliberately *not* a phase. A turn that dispatched background work ends
     /// like any other — the composer unblocks, the next message goes in — and
     /// the tasks outlive it. What this count changes is only what may end the
-    /// *process*: see [`Driver::minding_background`](super::resident::Driver::minding_background).
+    /// *process*: see [`Driver::minding_background`](super::claude_code::resident::Driver::minding_background).
     pub background: usize,
-    /// What those tasks are, oldest first, capped at [`TASKS_ON_THE_WIRE`](super::resident::TASKS_ON_THE_WIRE).
+    /// What those tasks are, oldest first, capped at [`TASKS_ON_THE_WIRE`](super::claude_code::resident::TASKS_ON_THE_WIRE).
     ///
     /// The count above stays the authoritative one: this is the description of
     /// the work, and a row that showed a hundred of anything is already telling
@@ -189,10 +189,10 @@ pub enum QueueOutcome {
     /// or the message carries no recipe to start anything from.
     ///
     /// Not the answer to a settings change as such — a steer from *idle* does
-    /// the restart, see [`Driver::restart_for_steer`](super::resident::Driver::restart_for_steer).
+    /// the restart, see [`Driver::restart_for_steer`](super::claude_code::resident::Driver::restart_for_steer).
     NeedsRestart {
         /// What the message wants that the running process does not have, in
-        /// the words of [`Fingerprint::differences`](super::resident::Fingerprint::differences).
+        /// the words of [`Fingerprint::differences`](super::claude_code::resident::Fingerprint::differences).
         ///
         /// Carried rather than re-derived at the route, which holds neither
         /// fingerprint: the refusal is only actionable if it says which setting
