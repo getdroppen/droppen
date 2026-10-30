@@ -683,6 +683,26 @@ pub fn describe(reg: &mut ExtraResponses) {
 mod tests {
     use super::*;
 
+    /// What an account route checks before it touches the store: an id that
+    /// is not a uuid is the same `404` as one that names no account, and a
+    /// label is 1 to 100 characters, counted as characters rather than bytes.
+    #[test]
+    fn a_route_takes_only_a_uuid_for_an_id_and_a_label_of_one_to_a_hundred_characters() {
+        assert!("0b6f7a7e-2f7a-4d8e-9d0c-1a2b3c4d5e6f".require_uuid().is_ok());
+        for id in ["", "not-a-uuid", "../0b6f7a7e-2f7a-4d8e-9d0c-1a2b3c4d5e6f", "0b6f7a7e-2f7a-4d8e-9d0c-1a2b3c4d5e6f/x"] {
+            let error = id.require_uuid().expect_err(id);
+            assert_eq!(error.status(), StatusCode::NOT_FOUND, "{id:?}");
+            assert_eq!(error.body().to_string(), account_not_found().body().to_string(), "{id:?}");
+        }
+
+        assert!("W".require_label().is_ok());
+        assert!("é".repeat(100).require_label().is_ok(), "100 characters, 200 bytes");
+        for label in [String::new(), "x".repeat(101)] {
+            let error = label.require_label().expect_err("refused");
+            assert_eq!(error.status(), StatusCode::BAD_REQUEST, "{} characters", label.chars().count());
+        }
+    }
+
     /// The two refusals with a code of their own, byte for byte: the client
     /// acts on `error`, shows `hint`, and names `existingLabel`.
     #[test]
