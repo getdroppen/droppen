@@ -418,7 +418,7 @@ impl Supervisor {
         // CLI, by design — is this test's to clean up.
         common::kill_group_of(self.pid, self.token.as_deref());
         for shim in pty_shims(&self.home) {
-            common::kill_group_of(shim.pid, shim.token.as_deref());
+            shim.kill_group();
         }
     }
 }
@@ -694,7 +694,7 @@ impl Unsupervised {
         self.stopped = true;
         common::kill_group_of(self.pid, self.token.as_deref());
         for shim in pty_shims(&self.home) {
-            common::kill_group_of(shim.pid, shim.token.as_deref());
+            shim.kill_group();
         }
     }
 }

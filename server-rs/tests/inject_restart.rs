@@ -581,7 +581,7 @@ async fn a_run_survives_its_server_being_sigkilled_and_is_adopted_by_the_next_on
     );
     assert!(record["turn_at"].is_u64(), "and so is the turn in front of it: {record}");
 
-    unsafe { libc::kill(-(first.pid as libc::pid_t), libc::SIGKILL) };
+    first.kill();
     common::wait_for("the server to die", Duration::from_secs(20), || !alive(first.pid)).await;
     assert!(alive(cli_pid), "the CLI must survive a SIGKILL aimed at the server's whole process group");
     // The dead server's claim died with its descriptor — no stale lock, and
@@ -654,8 +654,8 @@ async fn a_run_survives_its_server_being_sigkilled_and_is_adopted_by_the_next_on
     // point. The CLI leads a process group of its own — that is what let it
     // outlive the first server — so the group is what has to be killed, or its
     // own `sleep` is left running on the developer's machine.
-    unsafe { libc::kill(-(second.pid as libc::pid_t), libc::SIGKILL) };
-    unsafe { libc::kill(-(cli_pid as libc::pid_t), libc::SIGKILL) };
+    second.kill();
+    drop(_cli_guard);
     common::wait_for("the CLI to be cleaned up", Duration::from_secs(20), || !alive(cli_pid)).await;
 }
 
@@ -733,7 +733,7 @@ async fn a_codex_app_server_survives_its_server_being_sigkilled_and_is_reattache
     assert!(record["shim"].is_string(), "an app server runs behind a shim: {record}");
     assert_ne!(record["resident"], true, "and is not a Claude Code resident: {record}");
 
-    unsafe { libc::kill(-(first.pid as libc::pid_t), libc::SIGKILL) };
+    first.kill();
     common::wait_for("the server to die", Duration::from_secs(20), || !alive(first.pid)).await;
     assert!(alive(cli_pid), "the app server must survive a SIGKILL aimed at the server's whole process group");
 
@@ -760,8 +760,8 @@ async fn a_codex_app_server_survives_its_server_being_sigkilled_and_is_reattache
     assert_eq!(handshakes, 1, "one app server, across both servers");
     assert_eq!(only_record(&journal)["cli_pid"], cli_pid, "and the record still names it");
 
-    unsafe { libc::kill(-(second.pid as libc::pid_t), libc::SIGKILL) };
-    unsafe { libc::kill(-(cli_pid as libc::pid_t), libc::SIGKILL) };
+    second.kill();
+    drop(_cli_guard);
     common::wait_for("the app server to be cleaned up", Duration::from_secs(20), || !alive(cli_pid)).await;
 }
 

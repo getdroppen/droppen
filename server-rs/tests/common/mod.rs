@@ -427,6 +427,14 @@ pub struct Spawned {
     _reaper: Reaper,
 }
 
+impl Spawned {
+    /// Kill its process group now, if its leader is still the server that
+    /// was started ([`kill_group_of`]).
+    pub fn kill(&self) {
+        kill_group_of(self.pid, self.token.as_deref());
+    }
+}
+
 impl Drop for Spawned {
     fn drop(&mut self) {
         kill_group_of(self.pid, self.token.as_deref());
@@ -824,11 +832,46 @@ pub fn kill_journal_runs(home: &Path, instance: &str) {
 /// [`server_processes_under`] found it.
 pub struct ServerProcess {
     pub pid: u32,
-    /// When it started, read as it was found, so it is never signalled once
-    /// its pid is another process's.
-    pub token: Option<String>,
+    /// When it started, as `ps` read it in the same listing as its pid, so it
+    /// is never signalled once its pid is another process's.
+    started: String,
     /// Its arguments, its program first.
     pub args: Vec<String>,
+}
+
+impl ServerProcess {
+    /// Whether `pid` is still this process: its start time, read again, is
+    /// the one listed with it.
+    fn is_still_running(&self) -> bool {
+        let Ok(output) = std::process::Command::new("/bin/ps").args(["-o", "lstart=", "-p", &self.pid.to_string()]).output() else {
+            return false;
+        };
+        same_start(&String::from_utf8_lossy(&output.stdout), &self.started)
+    }
+
+    /// Kill it, if it is still the process that was found.
+    pub fn kill(&self) {
+        if self.is_still_running() {
+            // SAFETY: a signal to a process this test's server started,
+            // checked to be the process that was listed.
+            unsafe { libc::kill(self.pid as libc::pid_t, libc::SIGKILL) };
+        }
+    }
+
+    /// Kill its process group, if it is still the process that was found.
+    pub fn kill_group(&self) {
+        if self.is_still_running() {
+            // SAFETY: a signal to the group of a process this test's server
+            // started, checked to be the process that was listed.
+            unsafe { libc::kill(-(self.pid as libc::pid_t), libc::SIGKILL) };
+        }
+    }
+}
+
+/// Whether two `lstart` readings name the same moment, their spacing aside.
+fn same_start(read: &str, listed: &str) -> bool {
+    let words = |text: &str| text.split_whitespace().map(str::to_owned).collect::<Vec<_>>();
+    !listed.is_empty() && words(read) == words(listed)
 }
 
 /// Every process of the server binary (its program's file name is
@@ -836,18 +879,24 @@ pub struct ServerProcess {
 /// `session-shim`s (their stderr file lives under it), the `pty-shim`s (their
 /// socket does) and a server run from a copy installed there. Matched on
 /// `<home>/` at the start of an argument or of an `--option=` value, read
-/// with `ps -ww`, so another test's processes, running at the same time, are
-/// never among them.
+/// with `ps -ww` together with each process's start time, so another test's
+/// processes, running at the same time, are never among them.
 pub fn server_processes_under(home: &Path) -> Vec<ServerProcess> {
     let home = test_home(home);
-    let Ok(output) = std::process::Command::new("/bin/ps").args(["-A", "-ww", "-o", "pid=,command="]).output() else {
+    let Ok(output) = std::process::Command::new("/bin/ps").args(["-A", "-ww", "-o", "pid=,lstart=,command="]).output() else {
         return Vec::new();
     };
     let under = format!("{}/", home.display());
     let mut found = Vec::new();
     for line in String::from_utf8_lossy(&output.stdout).lines() {
-        let Some((pid, command)) = line.trim_start().split_once(' ') else { continue };
-        let args: Vec<String> = command.split(' ').map(str::to_owned).collect();
+        // `lstart` is five words: weekday, month, day, time and year.
+        let mut words = line.split_whitespace();
+        let Some(pid) = words.next().and_then(|pid| pid.parse::<u32>().ok()) else { continue };
+        let started: Vec<&str> = words.by_ref().take(5).collect();
+        let args: Vec<String> = words.map(str::to_owned).collect();
+        if started.len() < 5 {
+            continue;
+        }
         let program = args.first().and_then(|program| Path::new(program).file_name());
         let names_home = args
             .iter()
@@ -855,13 +904,7 @@ pub fn server_processes_under(home: &Path) -> Vec<ServerProcess> {
         if program != Some(std::ffi::OsStr::new("remote-hand-server")) || !names_home {
             continue;
         }
-        if let Ok(pid) = pid.parse::<u32>() {
-            found.push(ServerProcess {
-                pid,
-                token: droppen_base::procs::start_token(pid),
-                args,
-            });
-        }
+        found.push(ServerProcess { pid, started: started.join(" "), args });
     }
     found
 }
@@ -872,11 +915,7 @@ pub fn server_processes_under(home: &Path) -> Vec<ServerProcess> {
 /// terminal's shell hangs up with its shim.
 pub fn kill_shims_serving(home: &Path) {
     for process in server_processes_under(home) {
-        if process.token.as_deref().is_some_and(|token| droppen_base::procs::start_token(process.pid).as_deref() == Some(token)) {
-            // SAFETY: a signal to a process this test's server started,
-            // checked to be the process that was found.
-            unsafe { libc::kill(process.pid as libc::pid_t, libc::SIGKILL) };
-        }
+        process.kill();
     }
 }
 

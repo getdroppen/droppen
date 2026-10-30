@@ -527,6 +527,9 @@ RH_FAKE_ADDR="$addr" RH_FAKE_TEST="{test}" "{binary}" fake_code_server --exact -
 /// A running fake `code-server`, detached from the test that started it.
 struct Fake {
     pid: u32,
+    /// When `pid` started, so it is never signalled once it is another
+    /// process's.
+    token: Option<String>,
     port: u16,
     _dir: tempfile::TempDir,
 }
@@ -549,6 +552,7 @@ impl Fake {
             .kill_on_drop(false);
         let mut child = command.spawn().expect("spawn the fake code-server");
         let pid = child.id().expect("the fake has a pid");
+        let token = droppen_base::procs::start_token(pid);
         // Reaped, so a killed fake becomes properly dead rather than a zombie
         // that still answers `kill(pid, 0)`.
         tokio::spawn(async move {
@@ -558,11 +562,11 @@ impl Fake {
         let addr: SocketAddr = ([127, 0, 0, 1], port).into();
         for _ in 0..500 {
             if tokio::net::TcpStream::connect(addr).await.is_ok() && request(addr, "GET", "/healthz", None).await.status == 200 {
-                return Fake { pid, port, _dir: dir };
+                return Fake { pid, token, port, _dir: dir };
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
-        kill_group(pid);
+        common::kill_group_of(pid, token.as_deref());
         panic!("the fake code-server never came up on {port}");
     }
 }
@@ -570,7 +574,7 @@ impl Fake {
 impl Drop for Fake {
     /// A fake is detached by construction, so nothing else would ever stop it.
     fn drop(&mut self) {
-        kill_group(self.pid);
+        common::kill_group_of(self.pid, self.token.as_deref());
     }
 }
 
@@ -580,16 +584,6 @@ fn free_port() -> u16 {
     let port = listener.local_addr().expect("addr").port();
     drop(listener);
     port
-}
-
-/// `SIGKILL` a whole process group, for a test's own cleanup.
-fn kill_group(pid: u32) {
-    if pid <= 1 {
-        return;
-    }
-    // SAFETY: a signal to a process group this test spawned with
-    // `process_group(0)`, guarded above against the two wildcard values.
-    unsafe { libc::kill(-(pid as libc::pid_t), libc::SIGKILL) };
 }
 
 /// Put records where a server started on `home` will adopt them from.
@@ -635,7 +629,7 @@ const OTHER_MOMENT: &str = "0.000000";
 /// vector `ps` reports; and a compound command because a shell handed a single
 /// simple one `exec`s straight out of the process whose pid the test is about to
 /// use, taking the name with it.
-async fn bystander(name: &str) -> u32 {
+async fn bystander(name: &str) -> (u32, Option<String>) {
     let mut command = tokio::process::Command::new("/bin/sh");
     command
         .args(["-c", "sleep 30; exit 0", name])
@@ -646,12 +640,13 @@ async fn bystander(name: &str) -> u32 {
         .kill_on_drop(false);
     let mut child = command.spawn().expect("spawn a bystander");
     let pid = child.id().expect("the bystander has a pid");
+    let token = droppen_base::procs::start_token(pid);
     // Reaped, so a killed bystander becomes properly dead rather than a zombie
     // that still answers `kill(pid, 0)`.
     tokio::spawn(async move {
         let _ = child.wait().await;
     });
-    pid
+    (pid, token)
 }
 
 #[tokio::test]
@@ -724,8 +719,8 @@ async fn a_recorded_pid_that_is_now_a_stranger_is_never_signalled() {
     // is nothing to compare, the guard degrades to liveness rather than refusing
     // to adopt anything at all, and the command line is what is left to notice
     // this was never an editor.
-    let convincing = bystander("code-server").await;
-    let obvious = bystander("something-else").await;
+    let (convincing, convincing_token) = bystander("code-server").await;
+    let (obvious, obvious_token) = bystander("something-else").await;
     assert!(
         droppen_base::procs::is_running(convincing, "code-server").await,
         "the first bystander has to be genuinely convincing, or the token is never what saves it"
@@ -754,8 +749,8 @@ async fn a_recorded_pid_that_is_now_a_stranger_is_never_signalled() {
     assert!(alive(obvious), "and neither is anything else that did");
 
     probe.stop().await;
-    kill_group(convincing);
-    kill_group(obvious);
+    common::kill_group_of(convincing, convincing_token.as_deref());
+    common::kill_group_of(obvious, obvious_token.as_deref());
 }
 
 #[tokio::test]
@@ -858,7 +853,7 @@ async fn an_app_survives_its_server_being_sigkilled_and_the_next_one_adopts_it()
     assert!(alive(app), "the app the server started is running");
 
     // The whole process group, so nothing survives by being merely a child.
-    unsafe { libc::kill(-(first.pid as libc::pid_t), libc::SIGKILL) };
+    first.kill();
     common::wait_for("the server to die", Duration::from_secs(10), || !alive(first.pid)).await;
     assert!(alive(app), "the app must survive a SIGKILL aimed at the server's whole process group");
 
@@ -881,9 +876,9 @@ async fn an_app_survives_its_server_being_sigkilled_and_the_next_one_adopts_it()
     assert_eq!(closed.status, 200, "{}", closed.body);
     common::wait_for("the adopted app to be killed with its group", Duration::from_secs(15), || !alive(app)).await;
 
-    unsafe { libc::kill(-(second.pid as libc::pid_t), libc::SIGKILL) };
+    second.kill();
     common::wait_for("the second server to die", Duration::from_secs(10), || !alive(second.pid)).await;
-    kill_group(app);
+    common::kill_group_of(app, records[0].pid_token.as_deref());
 }
 
 /// Start one, with `bin` in front of its `PATH`.
