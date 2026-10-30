@@ -2,7 +2,7 @@
 //! the server builds, behind its login guard and the bridge: who reads a last
 //! check's error.
 
-use droppen_provider_acp::agents::{AcpAgentRegistry, AcpAgentUpdate, AcpCheck, AcpCheckState};
+use droppen_provider_acp::agents::{AcpAgentUpdate, AcpCheck, AcpCheckState};
 
 fn patch(command: Option<&str>, args: Option<&[&str]>, env: Option<&str>) -> AcpAgentUpdate {
     AcpAgentUpdate {
@@ -37,10 +37,9 @@ async fn a_check_error_is_only_on_the_checks_own_route() {
 
     let home = tempfile::tempdir().expect("tempdir");
     let (state, mut router) = crate::api::test_support::guarded_router(home.path(), Some(false)).await;
-    let agents = AcpAgentRegistry::of(&state.paths);
     droppen_provider_acp::testing::configure(&state.paths, "x", &patch(Some("/x/agent"), None, None)).expect("saved");
     let failed = AcpCheck::ended(AcpCheckState::Failed, Some("the agent's own words".into()));
-    assert!(agents.get("x").unwrap().record_check(&agents, &failed));
+    assert!(droppen_provider_acp::testing::record_check(&state.paths, "x", &failed));
     let credential = state.drive.auth.internal_credential().to_string();
     let device = [
         (droppen_http::bridge::CREDENTIAL_HEADER, credential.as_str()),

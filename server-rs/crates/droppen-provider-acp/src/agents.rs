@@ -14,7 +14,7 @@
 //!   about, and its model settings often come from variables a shell profile or
 //!   a project `.env` sets, so only the user can say how it runs here.
 //! * **Configured** agents are rows in the machine-wide state database under
-//!   [`scope::ACP_AGENTS`], one per id, holding `name`, `command`, `args` and
+//!   this module's own kv scope, one per id, holding `name`, `command`, `args` and
 //!   `env` as JSON. One with a built-in's id is that agent as the user set it
 //!   up (a name left empty is the built-in's); any other id is the user's own.
 //!   These are the agents sessions run on ([`AcpAgentRegistry::list`],
@@ -50,7 +50,6 @@ use gotcha::{api, GotchaRouter, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
 use droppen_base::env_block::{parse_env_block, EnvVar};
-use droppen_instance::db::scope;
 use droppen_http::error::ApiError;
 use droppen_http::extract::{ApiJson, ApiPath};
 use droppen_http::SendResult;
@@ -178,10 +177,13 @@ impl AcpAgent {
     /// Keep `check` as this agent's last, unless its command line or
     /// environment changed while it ran: then it describes nothing that is
     /// configured, and is dropped. `false` when it was not kept.
-    pub fn record_check(&self, agents: &AcpAgentRegistry, check: &AcpCheck) -> bool {
+    ///
+    /// The crate's own: the check route records the check it ran. A server's
+    /// test records one with [`crate::testing::record_check`].
+    pub(crate) fn record_check(&self, agents: &AcpAgentRegistry, check: &AcpCheck) -> bool {
         let _writing = WRITES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let db = droppen_instance::db::at(&agents.0);
-        let Some(mut stored) = db.kv_get(scope::ACP_AGENTS, &self.id).and_then(|raw| serde_json::from_str::<Stored>(&raw).ok()) else {
+        let Some(mut stored) = db.kv_get(AGENTS_SCOPE, &self.id).and_then(|raw| serde_json::from_str::<Stored>(&raw).ok()) else {
             return false;
         };
         if !stored.launches_like(self) {
@@ -190,7 +192,7 @@ impl AcpAgent {
         stored.last_check = Some(check.clone());
         match serde_json::to_string(&stored) {
             Ok(raw) => {
-                db.kv_set(scope::ACP_AGENTS, &self.id, &raw);
+                db.kv_set(AGENTS_SCOPE, &self.id, &raw);
                 true
             }
             Err(_) => false,
@@ -198,7 +200,16 @@ impl AcpAgent {
     }
 }
 
-/// A row of [`scope::ACP_AGENTS`].
+/// Where the configured agents are kept in the state database's `kv` table,
+/// one [`Stored`] row per id.
+///
+/// Private, as the accounts' and the users' scopes are to their stores
+/// (`droppen_accounts::store`, `droppen_auth::users`): a write from anywhere
+/// else would change an agent without the spawn gate, without renewing its
+/// processes and without forgetting what it offered.
+const AGENTS_SCOPE: &str = "acp-agents";
+
+/// A row of [`AGENTS_SCOPE`].
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 struct Stored {
     #[serde(default)]
@@ -282,7 +293,7 @@ impl AcpAgentRegistry {
     /// Every configured agent, in id order.
     pub fn list(&self) -> Vec<AcpAgent> {
         droppen_instance::db::at(&self.0)
-            .kv_scope(scope::ACP_AGENTS)
+            .kv_scope(AGENTS_SCOPE)
             .into_iter()
             .filter(|(id, _)| valid_agent_id(id))
             .filter_map(|(id, raw)| parse(&id, &raw))
@@ -294,7 +305,7 @@ impl AcpAgentRegistry {
         if !valid_agent_id(id) {
             return None;
         }
-        let raw = droppen_instance::db::at(&self.0).kv_get(scope::ACP_AGENTS, id)?;
+        let raw = droppen_instance::db::at(&self.0).kv_get(AGENTS_SCOPE, id)?;
         parse(id, &raw)
     }
 
@@ -331,7 +342,7 @@ impl AcpAgentRegistry {
         }
         let _writing = WRITES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let db = droppen_instance::db::at(&self.0);
-        let rows = db.kv_scope(scope::ACP_AGENTS);
+        let rows = db.kv_scope(AGENTS_SCOPE);
         let mut next = match rows.get(id).and_then(|raw| serde_json::from_str::<Stored>(raw).ok()) {
             Some(stored) => stored,
             None if rows.len() >= MAX_AGENTS => return Err(format!("at most {MAX_AGENTS} ACP agents can be configured")),
@@ -375,7 +386,7 @@ impl AcpAgentRegistry {
             next.last_check = None;
         }
         let raw = serde_json::to_string(&next).map_err(|error| error.to_string())?;
-        db.kv_set(scope::ACP_AGENTS, id, &raw);
+        db.kv_set(AGENTS_SCOPE, id, &raw);
         Ok(next.agent(id))
     }
 
@@ -390,10 +401,10 @@ impl AcpAgentRegistry {
         }
         let _writing = WRITES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let db = droppen_instance::db::at(&self.0);
-        if db.kv_get(scope::ACP_AGENTS, id).is_none() {
+        if db.kv_get(AGENTS_SCOPE, id).is_none() {
             return false;
         }
-        db.kv_remove(scope::ACP_AGENTS, id);
+        db.kv_remove(AGENTS_SCOPE, id);
         true
     }
 }
@@ -663,7 +674,8 @@ pub struct AcpAgentUpdate {
 /// What the ACP-agent routes use of the server's state.
 #[derive(Clone)]
 pub struct AcpAgentState {
-    /// Where the agents' configuration lives.
+    /// Where the agents' configuration lives: the runs' own, so the routes
+    /// read the configuration the gated writes change.
     paths: Arc<droppen_instance::paths::Paths>,
     /// The live runs, which check an agent and stop its sessions when it goes:
     /// the ACP provider's own, in `providers`.
@@ -674,11 +686,12 @@ pub struct AcpAgentState {
 droppen_http::substate!(AcpAgentState);
 
 impl AcpAgentState {
-    /// The routes' state over `paths`, with the runs of the ACP provider
-    /// `providers` holds: the runs and the spawn gate the registry lends them
-    /// are one provider's. `None` when it holds no ACP provider.
-    pub fn new(paths: Arc<droppen_instance::paths::Paths>, providers: Arc<droppen_provider::ProviderRegistry>) -> Option<Self> {
+    /// The routes' state over the ACP provider `providers` holds: its runs,
+    /// the spawn gate the registry lends them, and the paths they run on, so
+    /// all three are one provider's. `None` when it holds no ACP provider.
+    pub fn new(providers: Arc<droppen_provider::ProviderRegistry>) -> Option<Self> {
         let acp = providers.provider::<crate::Acp>()?.runs().clone();
+        let paths = acp.host.paths.clone();
         Some(Self { paths, acp, providers })
     }
 }
@@ -818,6 +831,57 @@ pub fn describe(reg: &mut ExtraResponses) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Whether `text` names the agents' kv scope: its string, in any quotes
+    /// or none, but for the built-in descriptions' file name.
+    fn names_the_scope(text: &str) -> bool {
+        text.match_indices(AGENTS_SCOPE).any(|(at, word)| !text[at + word.len()..].starts_with(".json"))
+    }
+
+    /// The agents' kv scope is named here and nowhere else: a raw write to it
+    /// would change an agent without the spawn gate, without renewing its
+    /// processes and without forgetting what it offered
+    /// (`AcpRuns::reconfigure_acp_agent`, `remove_acp_agent`). Its constant is
+    /// private, so the compiler keeps that to this module; this scan keeps its
+    /// string here, in Rust or in SQL, in every crate of the server, tests
+    /// included: a test seeds an agent through [`crate::testing`].
+    #[test]
+    fn only_the_registry_names_the_agents_kv_scope() {
+        for (text, names) in [
+            (r#"db.kv_set("acp-agents", id, &raw)"#, true),
+            ("DELETE FROM kv WHERE scope = 'acp-agents'", true),
+            (r#"include_str!("acp-agents.json")"#, false),
+        ] {
+            assert_eq!(names_the_scope(text), names, "{text}");
+        }
+
+        fn walk(dir: &std::path::Path, found: &mut Vec<PathBuf>) {
+            for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    if path.file_name().is_some_and(|name| name != "target") {
+                        walk(&path, found);
+                    }
+                } else if path.extension().is_some_and(|ext| ext == "rs") {
+                    found.push(path);
+                }
+            }
+        }
+        let server = std::fs::canonicalize(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")).expect("server-rs");
+        let mut files = Vec::new();
+        for dir in ["src", "tests", "crates"] {
+            walk(&server.join(dir), &mut files);
+        }
+        assert!(files.len() > 100, "the scan reads the server's sources: {} files", files.len());
+        let naming: Vec<String> = files
+            .iter()
+            .filter(|path| names_the_scope(&std::fs::read_to_string(path).expect("source")))
+            .map(|path| path.strip_prefix(&server).expect("under server-rs").display().to_string())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        assert_eq!(naming, ["crates/droppen-provider-acp/src/agents.rs"]);
+    }
 
     fn paths() -> (tempfile::TempDir, Paths) {
         let home = tempfile::tempdir().expect("tempdir");

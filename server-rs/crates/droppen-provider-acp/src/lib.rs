@@ -52,8 +52,6 @@ mod driver;
 pub mod models;
 pub mod protocol;
 pub mod sessions;
-/// What a server's test sets up that production code does only under the
-/// spawn gate. Only built for tests and with the `test-support` feature.
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing;
 

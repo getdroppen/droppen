@@ -254,7 +254,9 @@ impl Supervisor {
             .env("APP_AUTH__ENABLED", "false")
             .env("APP_SERVER__PORT", "0")
             .env("APP_SERVER__HOST", "127.0.0.1")
-            .env("RUST_LOG", "remote_hand_server=debug")
+            // The server and every `droppen_*` crate it is made of: a
+            // directive's target matches by prefix.
+            .env("RUST_LOG", "remote_hand_server=debug,droppen=debug")
             // The fake `claude` lives on this process's `PATH`; the supervisor
             // hands it down to the server, which hands it down to the CLI.
             .env("PATH", std::env::var("PATH").unwrap_or_default())

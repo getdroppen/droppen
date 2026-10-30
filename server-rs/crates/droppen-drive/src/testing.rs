@@ -1,8 +1,8 @@
 //! What the server's tests reach of the drive that production code does not:
-//! two of the routes' helpers, for the tests that read a session the providers
-//! the entry registers wrote, and the list feed's broadcast capacity, for the
-//! test of a list client that never reads. Only built for tests and with the
-//! `test-support` feature.
+//! two of the routes' helpers, as [`Drive`] methods, for the tests that read a
+//! session the providers the entry registers wrote, and the list feed's
+//! broadcast capacity, for the test of a list client that never reads. Only
+//! built for tests and with the `test-support` feature.
 
 use droppen_http::error::ApiError;
 use droppen_sessions::attention::FirstUnread;
@@ -16,14 +16,16 @@ use crate::Drive;
 /// hands a client that never reads every one.
 pub const LIST_CHANNEL_CAPACITY: usize = crate::feed::global::CHANNEL_CAPACITY;
 
-/// Search session `id` of `source` as `GET /api/sessions/{source}/{id}/search`
-/// does, in the feed's numbering.
-pub async fn search_session(drive: &Drive, source: Source, id: &str, query: &SearchQuery) -> Result<SessionSearchResult, ApiError> {
-    crate::routes::search_session(drive, source, id, query).await
-}
+impl Drive {
+    /// Search session `id` of `source` as `GET /api/sessions/{source}/{id}/search`
+    /// does, in the feed's numbering.
+    pub async fn search_session(&self, source: Source, id: &str, query: &SearchQuery) -> Result<SessionSearchResult, ApiError> {
+        crate::routes::search_session(self, source, id, query).await
+    }
 
-/// The first item of session `id` of `source` after `after`, as the session
-/// detail's unread marker is found.
-pub async fn first_unread_of(drive: &Drive, source: Source, id: &str, after: Option<&str>) -> Result<FirstUnread, ApiError> {
-    crate::routes::first_unread_of(drive, source, id, after).await
+    /// The first item of session `id` of `source` after `after`, as the session
+    /// detail's unread marker is found.
+    pub async fn first_unread_of(&self, source: Source, id: &str, after: Option<&str>) -> Result<FirstUnread, ApiError> {
+        crate::routes::first_unread_of(self, source, id, after).await
+    }
 }

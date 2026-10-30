@@ -13,7 +13,6 @@ use droppen_http::openapi_ext::Optional;
 use droppen_sessions::{chats_cwd, file_signature, SessionScope, Source};
 
 use droppen_drive::routes::{send_message, SearchQuery, SendMessage};
-use droppen_drive::testing::{first_unread_of, search_session};
 use droppen_drive::{Drive, DriveState};
 use droppen_drive::feed;
 use crate::provider::claude_code::sessions::claude;
@@ -166,23 +165,26 @@ async fn the_first_unread_is_an_index_in_the_feeds_numbering() {
         .load_items(&drive.paths, Source::Claude, std::path::Path::new(&summary.file_path), &sig)
         .await;
 
-    let found = first_unread_of(&drive, Source::Claude, id, Some("2026-10-01T10:00:30.000Z"))
+    let found = drive
+        .first_unread_of(Source::Claude, id, Some("2026-10-01T10:00:30.000Z"))
         .await
         .expect("readable");
     assert_eq!(found.count, 2);
     let index = found.index.0.expect("an unread message");
     assert_eq!(items[index].text, "second answer", "index {index} is the message it names");
 
-    let never = first_unread_of(&drive, Source::Claude, id, None).await.expect("readable");
+    let never = drive.first_unread_of(Source::Claude, id, None).await.expect("readable");
     assert_eq!(
         (never.index.0.map(|index| items[index].text.as_str()), never.count),
         (Some("first answer"), 3)
     );
-    let read = first_unread_of(&drive, Source::Claude, id, Some("2026-10-01T11:00:00.000Z"))
+    let read = drive
+        .first_unread_of(Source::Claude, id, Some("2026-10-01T11:00:00.000Z"))
         .await
         .expect("readable");
     assert_eq!((read.index.0, read.count), (None, 0), "nothing newer than the marker");
-    assert!(first_unread_of(&drive, Source::Claude, "77777777-7777-4777-8777-777777777777", None)
+    assert!(drive
+        .first_unread_of(Source::Claude, "77777777-7777-4777-8777-777777777777", None)
         .await
         .is_err());
 }
@@ -220,9 +222,7 @@ async fn an_external_session_is_searchable_in_the_feeds_numbering() {
     let summary = claude::load_claude_summary(&drive.paths, id).await.expect("the session is there");
     assert_eq!(summary.scope, SessionScope::External, "not this server's own");
 
-    let found = search_session(&drive, Source::Claude, id, &search("LOGIN page"))
-        .await
-        .expect("searchable");
+    let found = drive.search_session(Source::Claude, id, &search("LOGIN page")).await.expect("searchable");
     assert_eq!(found.total, 3);
     let indices: Vec<usize> = found.matches.iter().map(|m| m.index).collect();
     assert_eq!(indices, vec![0, 1, 3], "the result's `src/login/page.tsx` holds both terms too");
@@ -234,9 +234,7 @@ async fn an_external_session_is_searchable_in_the_feeds_numbering() {
         .transcripts
         .load_items(&drive.paths, Source::Claude, std::path::Path::new(&summary.file_path), &sig)
         .await;
-    let ticker = search_session(&drive, Source::Claude, id, &search("useticker"))
-        .await
-        .expect("searchable");
+    let ticker = drive.search_session(Source::Claude, id, &search("useticker")).await.expect("searchable");
     for hit in &ticker.matches {
         let item = &items[hit.index];
         assert_eq!(
@@ -270,13 +268,14 @@ async fn a_codex_thread_is_searchable_too() {
     ];
     std::fs::write(day.join(format!("rollout-2026-10-01T10-00-00-{id}.jsonl")), lines.join("\n") + "\n").expect("rollout");
 
-    let found = search_session(&drive, Source::Codex, id, &search("迁移")).await.expect("searchable");
+    let found = drive.search_session(Source::Codex, id, &search("迁移")).await.expect("searchable");
     let shape: Vec<(usize, droppen_sessions::util::ItemKind)> = found.matches.iter().map(|m| (m.index, m.kind)).collect();
     assert_eq!(found.total, 2, "{shape:?}");
     assert_eq!(found.matches[0].field, feed::search::SearchField::Text, "the user's own words");
     assert_eq!(found.matches[1].field, feed::search::SearchField::Detail, "the command's output");
 
-    let calls = search_session(&drive, Source::Codex, id, &search("ls MIGRATIONS"))
+    let calls = drive
+        .search_session(Source::Codex, id, &search("ls MIGRATIONS"))
         .await
         .expect("searchable");
     assert_eq!(calls.total, 1);
@@ -288,12 +287,14 @@ async fn a_codex_thread_is_searchable_too() {
 async fn an_empty_query_is_refused_before_the_session_is_looked_up() {
     let (_dir, drive) = drive();
     for blank in ["", "   ", "\t\n"] {
-        let error = search_session(&drive, Source::Claude, "no-such-session", &search(blank))
+        let error = drive
+            .search_session(Source::Claude, "no-such-session", &search(blank))
             .await
             .expect_err("refused");
         assert_eq!(error.status(), gotcha::axum::http::StatusCode::BAD_REQUEST, "{blank:?}");
     }
-    let error = search_session(&drive, Source::Claude, "no-such-session", &search("x"))
+    let error = drive
+        .search_session(Source::Claude, "no-such-session", &search("x"))
         .await
         .expect_err("missing");
     assert_eq!(error.status(), gotcha::axum::http::StatusCode::NOT_FOUND);
