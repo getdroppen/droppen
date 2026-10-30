@@ -1553,6 +1553,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "droppen-setup"
+version = "0.1.0"
+dependencies = [
+ "droppen-accounts",
+ "droppen-base",
+ "droppen-http",
+ "droppen-instance",
+ "droppen-pty",
+ "droppen-search-path",
+ "droppen-sessions",
+ "droppen-workbench",
+ "futures-util",
+ "gotcha",
+ "gotcha_core",
+ "libc",
+ "regex",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "droppen-supervisor"
 version = "0.1.0"
 dependencies = [
@@ -3361,6 +3386,7 @@ dependencies = [
  "droppen-pty",
  "droppen-search-path",
  "droppen-sessions",
+ "droppen-setup",
  "droppen-supervisor",
  "droppen-workbench",
  "ed25519-dalek",

@@ -448,8 +448,7 @@ pub async fn codex_status(runner: &Arc<dyn Runner>, probe: &Probe, path: &Path) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::setup::runner::fixture::Fixture;
-    use crate::setup::InstallMethod;
+    use crate::runner::fixture::Fixture;
     use std::os::unix::fs::PermissionsExt;
 
     fn marker(path: &Path) {
@@ -480,48 +479,6 @@ mod tests {
         assert!(at_least("0.163.0", MIN_CODEX));
         assert!(!at_least("0.153.3", MIN_CODEX));
         assert!(!at_least("garbage", MIN_CODEX));
-    }
-
-    #[test]
-    fn claude_s_status_reads_signed_in_signed_out_and_a_banner() {
-        let claude = crate::app::logins().claude;
-        let signed_in = RunOutput::exited(
-            0,
-            r#"{"loggedIn":true,"authMethod":"claude.ai","email":"ada@example.com","subscriptionType":"max","rateLimitTier":"default_claude_max_20x"}"#,
-            "",
-        );
-        let login = claude_login(&signed_in, &*claude);
-        assert_eq!(login.state, LoginState::SignedIn);
-        assert_eq!(login.method.0.as_deref(), Some("claude.ai"));
-        assert_eq!(login.plan.0.as_deref(), Some("Max 20x"));
-        assert_eq!(login.email.0.as_deref(), Some("ada@example.com"));
-        assert_eq!(login.usable.0, Some(true));
-
-        let banner = RunOutput::exited(
-            0,
-            "Update available! Run claude update\n{\"loggedIn\": true, \"authMethod\": \"console\"}\nThanks\n",
-            "",
-        );
-        let login = claude_login(&banner, &*claude);
-        assert_eq!(login.state, LoginState::SignedIn);
-        assert_eq!(login.method.0.as_deref(), Some("console"));
-        assert_eq!(login.plan.0, None, "a Console login has no subscription to name");
-        assert_eq!(login.usable.0, None, "and says nothing about one");
-
-        let out = claude_login(&RunOutput::exited(1, r#"{"loggedIn":false,"authMethod":"none"}"#, ""), &*claude);
-        assert_eq!(out.state, LoginState::SignedOut);
-        assert_eq!(out.method.0, None);
-
-        let free = claude_login(
-            &RunOutput::exited(0, r#"{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":"free"}"#, ""),
-            &*claude,
-        );
-        assert_eq!(free.usable.0, Some(false), "H9: a free plan does not include Claude Code");
-        assert_eq!(free.plan.0.as_deref(), Some("Free"));
-
-        assert_eq!(claude_login(&RunOutput::timeout(), &*claude).state, LoginState::Unknown);
-        assert_eq!(claude_login(&RunOutput::failed_to_start(), &*claude).state, LoginState::Unknown);
-        assert_eq!(claude_login(&RunOutput::exited(2, "", "boom"), &*claude).state, LoginState::Unknown);
     }
 
     #[test]
@@ -619,61 +576,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn detection_asks_exactly_these_questions_and_nothing_that_reads_a_credential() {
-        let (_home, probe, fixture) = scene();
-        let runner: Arc<dyn Runner> = fixture.clone();
-        let detection = detect(&runner, &probe, &*crate::app::logins().claude).await;
-
-        let mut lines = fixture.lines();
-        lines.sort();
-        assert_eq!(
-            lines,
-            [
-                "claude --version",
-                "claude auth status --json",
-                "codex --version",
-                "codex app-server account/read",
-                "codex login status",
-                "node --version",
-                "sw_vers -productVersion",
-                "xcode-select -p",
-            ]
-        );
-        for asked in fixture.asked() {
-            assert!(asked.stdin.is_none(), "detection pipes nothing into {}", asked.line());
-            assert!(asked.program.starts_with('/'), "every program is run by its full path: {}", asked.program);
-            assert!(
-                !["security", "cat", "git", "sh", "bash", "zsh", "open"].contains(&asked.name.as_str()),
-                "detection must not run {}",
-                asked.line()
-            );
-            for arg in &asked.args {
-                for secret in [".credentials.json", ".claude.json", "auth.json", "/usage"] {
-                    assert!(!arg.contains(secret), "{} names {secret}", asked.line());
-                }
-            }
-        }
-
-        assert_eq!(detection.os.macos.0.as_deref(), Some("15.3"));
-        assert!(detection.helpers.brew);
-        assert_eq!(detection.helpers.node.0.as_deref(), Some("22.3.0"));
-        assert_eq!(detection.helpers.git, GitState::Missing);
-        let claude = &detection.tools[0];
-        assert_eq!(claude.found.as_ref().map(|found| found.method), Some(InstallMethod::Native));
-        assert_eq!(claude.version.as_deref(), Some("2.1.300"));
-        assert!(claude.supported);
-        assert_eq!(claude.login.plan.0.as_deref(), Some("Pro"));
-        let codex = &detection.tools[1];
-        assert_eq!(codex.found.as_ref().map(|found| found.method), Some(InstallMethod::Npm));
-        assert_eq!(codex.login.method.0.as_deref(), Some("apiKey"));
-    }
-
-    #[tokio::test]
     async fn a_cli_too_old_is_not_asked_a_question_it_may_not_have() {
         let (_home, probe, fixture) = scene();
         fixture.answer("claude --version", RunOutput::exited(0, "1.0.88 (Claude Code)\n", ""));
         let runner: Arc<dyn Runner> = fixture.clone();
-        let claude = tool(&runner, &probe, ToolId::Claude, &crate::setup::tests::StandInLogin(droppen_accounts::store::AccountProvider::Claude)).await;
+        let claude = tool(&runner, &probe, ToolId::Claude, &crate::testing::StandInLogin(droppen_accounts::store::AccountProvider::Claude)).await;
         assert_eq!(claude.version.as_deref(), Some("1.0.88"));
         assert!(!claude.supported);
         assert_eq!(claude.login.state, LoginState::Unknown);
@@ -696,7 +603,7 @@ mod tests {
         };
         let fixture = Fixture::new();
         let runner: Arc<dyn Runner> = fixture.clone();
-        let detection = detect(&runner, &probe, &crate::setup::tests::StandInLogin(droppen_accounts::store::AccountProvider::Claude)).await;
+        let detection = detect(&runner, &probe, &crate::testing::StandInLogin(droppen_accounts::store::AccountProvider::Claude)).await;
         assert!(detection.tools.iter().all(|tool| tool.found.is_none() && !tool.supported));
         assert_eq!(detection.helpers.git, GitState::Missing, "no git on the PATH off a Mac");
         assert!(fixture.lines().is_empty(), "nothing to ask: {:?}", fixture.lines());

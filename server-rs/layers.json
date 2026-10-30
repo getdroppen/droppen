@@ -144,9 +144,7 @@
         {
           "name": "droppen-setup",
           "about": "The first-run guide, CLI detection and installs.",
-          "modules": [
-            "setup"
-          ],
+          "modules": [],
           "mayUse": [
             "droppen-sessions",
             "droppen-accounts",

@@ -1,0 +1,55 @@
+[package]
+name = "droppen-setup"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+publish = false
+description = "The Droppen server's first-run guide: what is installed and signed in, the installs and sign-ins it runs, the folders it offers and how far the user got"
+
+# The first-run guide. It stands on the accounts (each CLI's login answers it
+# through their `Login` port), the sessions, the terminals an install runs in,
+# the HTTP kit, the instance and the search path, and names no module of the
+# server: the entry builds it, on the logins it is handed.
+[dependencies]
+droppen-accounts = { path = "../droppen-accounts" }
+droppen-base = { path = "../droppen-base" }
+droppen-http = { path = "../droppen-http" }
+droppen-instance = { path = "../droppen-instance" }
+droppen-search-path = { path = "../droppen-search-path" }
+droppen-sessions = { path = "../droppen-sessions" }
+droppen-workbench = { path = "../droppen-workbench" }
+futures-util = "0.3"
+gotcha = { version = "0.4.1", features = ["openapi"] }
+# What gotcha's `Schematic` derive expands to names it.
+gotcha_core = "0.4.1"
+libc = "0.2"
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = { workspace = true }
+tokio = { version = "1", features = ["fs", "io-util", "macros", "process", "rt", "sync", "time"] }
+tracing = "0.1"
+uuid = { version = "1", features = ["v4"] }
+
+# `testing` (a stand-in login for each CLI, the guide's state without a server,
+# a guide on a scratch home) and `runner::fixture`, for the server's tests of
+# the guide on its own logins. Only the server's [dev-dependencies] turn it on.
+[features]
+test-support = []
+
+[dev-dependencies]
+# The child-`PATH` guard the tests that set the override take.
+droppen-base = { path = "../droppen-base", features = ["test-support"] }
+droppen-pty = { path = "../droppen-pty" }
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "test-util"] }
+
+[lints.rust]
+missing_docs = "deny"
+unreachable_pub = "deny"
+
+# `[lints] workspace = true` cannot be mixed with the rust lints above, so the
+# workspace's two clippy denials (`server-rs/Cargo.toml` `[workspace.lints]`)
+# are repeated here: keep them in step.
+[lints.clippy]
+significant_drop_in_scrutinee = "deny"
+await_holding_lock = "deny"

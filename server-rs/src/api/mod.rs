@@ -139,7 +139,7 @@ pub struct AppState {
     /// see [`crate::desktop_app`]): no self-upgrade, and the app owns the login.
     pub desktop_app: bool,
     /// The first-run guide: tool detection and the children's `PATH`.
-    pub setup: Arc<crate::setup::Setup>,
+    pub setup: Arc<droppen_setup::Setup>,
     /// The port this server listens on, once it does: what a request from the
     /// app's own window names as its `Host` and `Origin`. Filled once, by the
     /// entry when its listener is bound; read by the desktop-window gate
@@ -452,7 +452,7 @@ fn response_overrides() -> ExtraResponses {
     crate::schedule::describe(&mut reg);
     droppen_workbench::screens::describe(&mut reg);
     droppen_supervisor::selfupdate::describe(&mut reg);
-    crate::setup::describe(&mut reg);
+    droppen_setup::describe(&mut reg);
     droppen_sessions::stats::describe(&mut reg);
     droppen_workbench::terminals::describe(&mut reg);
     reg
@@ -488,7 +488,7 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
     let router = crate::schedule::ScheduleState::routes(router);
     let router = droppen_workbench::screens::ScreensState::routes(router);
     let router = droppen_supervisor::selfupdate::SelfUpdateState::routes(router);
-    let router = crate::setup::SetupState::routes(router);
+    let router = droppen_setup::SetupState::routes(router);
     let router = droppen_sessions::stats::StatsState::routes(router);
     let router = droppen_workbench::terminals::TerminalsState::routes(router);
     router

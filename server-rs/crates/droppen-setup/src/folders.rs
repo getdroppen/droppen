@@ -56,7 +56,7 @@ pub enum FolderTool {
 impl FolderTool {
     /// The CLI that ran a session outside Droppen, by its source's wire name;
     /// `None` when no tool has that name.
-    fn of(source: Source) -> Option<Self> {
+    pub fn of(source: Source) -> Option<Self> {
         use serde::de::IntoDeserializer;
         Self::deserialize(IntoDeserializer::<serde::de::value::Error>::into_deserializer(source.as_str())).ok()
     }
@@ -240,70 +240,7 @@ pub async fn practice_folder(State(state): State<SetupState>) -> Result<Created<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::setup::runner::fixture::Fixture;
-
-    fn session(cwd: &str, source: Source, scope: SessionScope, updated_at: &str) -> SessionSummary {
-        let mut row: SessionSummary = serde_json::from_value(serde_json::json!({
-            "pinned": false, "id": "s", "source": "claude", "scope": "owned", "server": "s", "title": "t",
-            "cwd": null, "repoKey": null, "gitBranch": null, "updatedAt": "", "createdAt": "",
-            "sizeBytes": 1, "filePath": "/x", "status": "idle", "activity": "idle", "resident": null,
-            "claudeRoot": null, "accountId": null, "attentionAt": null, "unread": false, "unreadCount": 0,
-        }))
-        .unwrap_or_else(|error| panic!("a session row: {error}"));
-        row.cwd = Nullable(Some(cwd.to_string()));
-        row.source = source;
-        row.scope = scope;
-        row.updated_at = updated_at.to_string();
-        row
-    }
-
-    #[test]
-    fn recent_folders_are_grouped_newest_first_and_only_those_still_there() {
-        let sessions = [
-            session("/w/site", Source::Claude, SessionScope::External, "2026-10-10T00:00:00Z"),
-            session("/w/site", Source::Codex, SessionScope::Owned, "2026-10-18T00:00:00Z"),
-            session("/w/site", Source::Claude, SessionScope::Owned, "2026-10-01T00:00:00Z"),
-            session("/w/api", Source::Codex, SessionScope::External, "2026-10-19T00:00:00Z"),
-            session("/w/gone", Source::Claude, SessionScope::Owned, "2026-10-20T00:00:00Z"),
-            session("", Source::Claude, SessionScope::Owned, "2026-10-20T00:00:00Z"),
-        ];
-        let transcripts = crate::app::transcript_sources();
-        let folders = recent_from(&sessions, &transcripts, |path| path != Path::new("/w/gone"));
-        assert_eq!(folders.iter().map(|folder| folder.path.as_str()).collect::<Vec<_>>(), ["/w/api", "/w/site"]);
-        let site = &folders[1];
-        assert_eq!(site.name, "site");
-        assert_eq!(site.tools, [FolderTool::Droppen, FolderTool::Claude]);
-        assert_eq!(site.sessions, 3);
-        assert_eq!(site.last_used.0.as_deref(), Some("2026-10-18T00:00:00Z"));
-        assert_eq!(folders[0].tools, [FolderTool::Codex]);
-
-        let many: Vec<SessionSummary> = (0..10)
-            .map(|n| session(&format!("/w/p{n}"), Source::Claude, SessionScope::Owned, &format!("2026-10-1{n}T00:00:00Z")))
-            .collect();
-        let folders = recent_from(&many, &transcripts, |_| true);
-        assert_eq!(folders.len(), RECENT_LIMIT);
-        assert_eq!(folders[0].path, "/w/p9");
-    }
-
-    /// A session this instance did not start is its CLI's when the user runs
-    /// that CLI too, and another Droppen's when only Droppen runs it.
-    #[test]
-    fn a_session_started_elsewhere_names_the_tool_that_ran_it() {
-        let transcripts = crate::app::transcript_sources();
-        let tool = |source| {
-            let sessions = [session("/w/a", source, SessionScope::External, "2026-10-10T00:00:00Z")];
-            recent_from(&sessions, &transcripts, |_| true)[0].tools.clone()
-        };
-        assert_eq!(tool(Source::Claude), [FolderTool::Claude]);
-        assert_eq!(tool(Source::Codex), [FolderTool::Codex]);
-        assert_eq!(tool(Source::Acp), [FolderTool::Droppen]);
-        // The bridge is by wire name, so a source whose sessions are run outside
-        // Droppen needs a tool of the same name.
-        for reader in transcripts.iter().filter(|reader| reader.foreign_sessions()) {
-            let source = reader.source();
-            assert_eq!(FolderTool::of(source).map(|tool| serde_json::to_value(tool).expect("json")), Some(serde_json::json!(source.as_str())));
-        }
-    }
+    use crate::runner::fixture::Fixture;
 
     #[test]
     fn a_practice_folder_is_always_a_new_empty_one() {
@@ -358,7 +295,7 @@ mod tests {
     #[tokio::test]
     async fn the_route_remembers_the_practice_folder_it_made() {
         let home = tempfile::tempdir().expect("tempdir");
-        let state = crate::setup::tests::setup_state(home.path(), crate::setup::tests::guide(home.path(), Fixture::new(), None));
+        let state = crate::testing::setup_state(home.path(), crate::testing::guide(home.path(), Fixture::new(), None));
         let first = practice_folder(State(state.clone())).await.expect("made").0.path;
         let again = practice_folder(State(state.clone())).await.expect("again").0.path;
         assert_eq!(again, first, "still empty: the same folder");

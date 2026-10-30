@@ -17,7 +17,7 @@ import type { SetupProgress } from "./types";
  * How long the first paint waits for the answer, and a missing answer is
  * "no". A local server answers in milliseconds however many transcripts the
  * user has: whether this install owns sessions is read from its own records,
- * not from a session listing (`server-rs/src/setup/progress.rs`).
+ * not from a session listing (`server-rs/crates/droppen-setup/src/progress.rs`).
  */
 const WAIT_MS = 1500;
 

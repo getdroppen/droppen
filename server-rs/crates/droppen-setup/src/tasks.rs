@@ -918,10 +918,10 @@ mod tests {
     }
 
     use super::*;
-    use crate::setup::runner::fixture::Fixture;
-    use crate::setup::runner::RunOutput;
-    use crate::setup::tests::{guide, marker, setup_state};
-    use crate::setup::{LoginState, PathRead};
+    use crate::runner::fixture::Fixture;
+    use crate::runner::RunOutput;
+    use crate::testing::{guide, marker, setup_state};
+    use crate::{LoginState, PathRead};
 
     #[test]
     fn the_tail_is_what_a_terminal_would_show() {
@@ -1129,7 +1129,7 @@ mod tests {
         setup.record_exit(ToolId::Claude, &id, Some(0), vec!["Already up to date".to_string()]);
         setup.after_exit(ToolId::Claude, &id).await;
         let task = setup.task_view(ToolId::Claude, &state.terminals).expect("task");
-        assert!(task.failed, "2.1.1 is still older than {}", crate::setup::detect::MIN_CLAUDE);
+        assert!(task.failed, "2.1.1 is still older than {}", crate::detect::MIN_CLAUDE);
     }
 
     #[tokio::test]
@@ -1317,7 +1317,7 @@ mod tests {
     async fn only_an_executable_named_for_the_tool_is_adopted() {
         let _guard = droppen_base::process_env::ChildPathGuard::take();
         let (home, state) = scene(Fixture::new()).await;
-        let scratch = crate::setup::tests::TrustRoot::at(home.path());
+        let scratch = crate::tests::TrustRoot::at(home.path());
         let root = scratch.0.clone();
         let setup = state.setup.clone();
         let picked = root.join("opt/claude-somewhere/bin/claude");
@@ -1473,7 +1473,7 @@ mod tests {
         // Its terminals' folder made, as the instance's owner does at boot.
         let state = setup_state(
             home.path(),
-            crate::setup::tests::guide_in_shell(home.path(), Fixture::new(), Some(PathRead::Ok), &shell.to_string_lossy()),
+            crate::testing::guide_in_shell(home.path(), Fixture::new(), Some(PathRead::Ok), &shell.to_string_lossy()),
         );
         let entry = commands::find(CommandTool::Claude, TaskKind::Install, "native").expect("whitelisted");
 

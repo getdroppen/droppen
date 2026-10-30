@@ -157,7 +157,7 @@ impl GotchaApp for RemoteHandApp {
                 wizards: crate::provider::claude_code::setup_token::Captures::new(),
                 terminals: droppen_workbench::terminals::Registry::new(paths.clone(), instance.clone()),
                 apps: droppen_workbench::apps::Registry::new(paths.clone(), instance.clone()),
-                setup: crate::setup::Setup::new(paths.clone(), &logins),
+                setup: droppen_setup::Setup::new(paths.clone(), &logins),
                 listen_port: Arc::new(std::sync::OnceLock::new()),
                 paths,
                 instance,
@@ -1108,15 +1108,18 @@ mod tests {
         fn no_source_the_module_runs_names_a_credential_path() {
             let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
             let mut checked = 0;
-            for entry in std::fs::read_dir(src.join("setup")).expect("src/setup") {
+            for entry in std::fs::read_dir(src.join("../crates/droppen-setup/src")).expect("crates/droppen-setup/src") {
                 let path = entry.expect("entry").path();
                 if path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
                     continue;
                 }
                 let source = std::fs::read_to_string(&path).expect("source");
                 // The tests below spell the fragments out to check for them; the
-                // scan stops where a file's tests begin.
-                let code = source.split("#[cfg(test)]").next().unwrap_or_default();
+                // scan stops where a file's tests module begins. Not at its first
+                // `#[cfg(test)]`, which can be a test-only item above code that
+                // runs (`tasks`' `TRUST_ROOT`).
+                let tests = regex::Regex::new(r"#\[cfg\(test\)\]\n(pub\(crate\) )?mod tests\b").expect("the tests-module pattern");
+                let code = tests.find(&source).map_or(source.as_str(), |found| &source[..found.start()]);
                 assert_eq!(credential_mentions(code), Vec::<String>::new(), "{}", path.display());
                 checked += 1;
             }

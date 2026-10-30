@@ -1,7 +1,7 @@
 //! The `PATH` the Droppen server runs with.
 //!
 //! One rule, shared by the desktop app (`desktop/core/src/env_path.rs`), the
-//! server's setup guide (`server-rs/src/setup/locate.rs`) and — pinned by
+//! server's setup guide (`server-rs/crates/droppen-setup/src/locate.rs`) and — pinned by
 //! test against this crate — the command-line installer
 //! (`scripts/install.sh` `service_path`). Every copy used to carry its own
 //! implementation; this crate is the only one now.
@@ -18,7 +18,7 @@
 //! fallback for what the shell did not say (or when it would not answer). The
 //! shell first, so the server runs the `node` and `claude` the user's terminal
 //! runs: nvm's, say, rather than Homebrew's. The server appends the folders
-//! adopted in Settings after all of it (`with_overlay` in `setup::locate`).
+//! adopted in Settings after all of it (`with_overlay` in `droppen_setup::locate`).
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};

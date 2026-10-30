@@ -284,7 +284,7 @@ mod tests {
         // HOME and shell PATH: the launchd agent (or systemd unit) of a
         // command-line install gives the server what the desktop app does, in
         // the same order.
-        let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/install.sh");
+        let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../scripts/install.sh");
         let script = std::fs::read_to_string(&script).expect("install.sh");
         let start = script.find("\nservice_path() {").expect("service_path in install.sh");
         let end = start + script[start..].find("\n}\n").expect("end of service_path") + 3;

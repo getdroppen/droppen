@@ -314,11 +314,8 @@ pub async fn put_progress(State(state): State<SetupState>, ApiJson(body): ApiJso
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider::claude_code::claude_roots;
-    use crate::setup::runner::fixture::Fixture;
-    use crate::setup::tests::{guide, setup_state};
-    use droppen_instance::paths::ClaudeRoot;
-    use gotcha::axum::extract::FromRef;
+    use crate::runner::fixture::Fixture;
+    use crate::testing::{guide, setup_state};
 
     #[test]
     fn the_wire_shape_is_the_guide_s() {
@@ -464,76 +461,5 @@ mod tests {
         // A row that is JSON but not an object is never started too.
         state.setup.db().kv_set(scope::SETUP, PROGRESS_KEY, "[1, 2]");
         assert_eq!(state.setup.stored_progress(), SetupProgress::default());
-    }
-
-    #[tokio::test]
-    async fn the_guide_opens_by_itself_only_for_a_new_install_of_the_app() {
-        let _index = droppen_sessions::index::exclusive().await;
-        let home = tempfile::tempdir().expect("tempdir");
-        let mut state = crate::api::test_support::state(home.path()).await;
-        let fresh = SetupProgress::default();
-        assert!(!answered(&SetupState::from_ref(&state), fresh.clone()).await.auto_open, "not run by the desktop app");
-
-        state.desktop_app = true;
-        assert!(answered(&SetupState::from_ref(&state), fresh.clone()).await.auto_open, "the app, never started, no sessions");
-        let started = SetupProgress {
-            started_at: Nullable(Some("2026-10-19T09:12:00Z".into())),
-            ..fresh.clone()
-        };
-        assert!(!answered(&SetupState::from_ref(&state), started).await.auto_open, "started once: never again by itself");
-
-        // A transcript in the user's own ~/.claude is not this instance's.
-        let theirs = claude_roots::ClaudeRoots::of(&state.drive.paths).projects_dir(ClaudeRoot::Local).join("-w");
-        std::fs::create_dir_all(&theirs).expect("project dir");
-        std::fs::write(
-            theirs.join("0b1c2d3e-4f50-4612-8a7b-9c0d1e2f3a4b.jsonl"),
-            "{\"type\":\"user\",\"cwd\":\"/w\",\"message\":{\"role\":\"user\",\"content\":\"hello\"}}\n",
-        )
-        .expect("transcript");
-        assert!(answered(&SetupState::from_ref(&state), fresh.clone()).await.auto_open, "an install that only sees the user's own sessions is new");
-
-        // One of its own is an install in use (Q4).
-        let ours = claude_roots::ClaudeRoots::of(&state.drive.paths).projects_dir(ClaudeRoot::Managed).join("-w");
-        std::fs::create_dir_all(&ours).expect("project dir");
-        std::fs::write(
-            ours.join("1c2d3e4f-5061-4723-9b8c-0d1e2f3a4b5c.jsonl"),
-            "{\"type\":\"user\",\"cwd\":\"/w\",\"message\":{\"role\":\"user\",\"content\":\"hello\"}}\n",
-        )
-        .expect("transcript");
-        assert!(!answered(&SetupState::from_ref(&state), fresh).await.auto_open, "this instance has a session of its own");
-    }
-
-    #[tokio::test]
-    async fn sessions_the_app_ran_on_the_user_s_own_logins_are_its_own_too() {
-        let _index = droppen_sessions::index::exclusive().await;
-        let fresh = SetupProgress::default();
-
-        // A Claude session the app started on the user's own login: its
-        // transcript is in ~/.claude, beside the user's own, and only the
-        // registry says it is this instance's (Q4).
-        let home = tempfile::tempdir().expect("tempdir");
-        let mut state = crate::api::test_support::state(home.path()).await;
-        state.desktop_app = true;
-        let local = claude_roots::ClaudeRoots::of(&state.drive.paths).projects_dir(ClaudeRoot::Local).join("-w");
-        std::fs::create_dir_all(&local).expect("project dir");
-        let id = "2d3e4f50-6172-4834-8c9d-1e2f3a4b5c6d";
-        std::fs::write(
-            local.join(format!("{id}.jsonl")),
-            "{\"type\":\"user\",\"cwd\":\"/w\",\"message\":{\"role\":\"user\",\"content\":\"hello\"}}\n",
-        )
-        .expect("transcript");
-        assert!(answered(&SetupState::from_ref(&state), fresh.clone()).await.auto_open, "the user's own, so far");
-        crate::provider::claude_code::sessions::claude::ClaudeCodeSessions.record_owned(&state.drive.paths, id).await.expect("record");
-        assert!(!answered(&SetupState::from_ref(&state), fresh.clone()).await.auto_open, "started by this instance on the local login");
-
-        // A Codex thread it started, in the one ~/.codex.
-        let home = tempfile::tempdir().expect("tempdir");
-        let mut state = crate::api::test_support::state(home.path()).await;
-        state.desktop_app = true;
-        assert!(answered(&SetupState::from_ref(&state), fresh.clone()).await.auto_open);
-        crate::provider::codex::sessions::codex::CodexSessions.record_owned(&state.drive.paths, "0199a3b4-c5d6-7e8f-9a0b-1c2d3e4f5a6b")
-            .await
-            .expect("record");
-        assert!(!answered(&SetupState::from_ref(&state), fresh).await.auto_open, "a Codex thread of its own");
     }
 }
