@@ -88,7 +88,7 @@ fn server_sources() -> Vec<Source> {
         })
         .filter(|source| !gate_or_scan(&source.path))
         .collect();
-    for module in ["feed/mod.rs", "drive/mod.rs"] {
+    for module in ["feed/mod.rs", "droppen-drive/src/lib.rs"] {
         assert!(
             sources.iter().any(|source| source.path.ends_with(module) && !source.code.is_empty()),
             "the scans read {module}"

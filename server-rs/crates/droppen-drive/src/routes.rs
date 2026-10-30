@@ -894,7 +894,7 @@ struct QuestionSettled<'a> {
 
 /// Answer or dismiss one question, wherever it stands.
 async fn settle_question(
-    drive: &crate::drive::Drive,
+    drive: &crate::Drive,
     source: Source,
     id: &str,
     request_id: &str,
@@ -959,7 +959,7 @@ async fn settle_question(
 /// The record moves first, as it does for a live question, so two screens
 /// cannot both send the message; a send that fails puts it back.
 async fn settle_expired(
-    drive: &crate::drive::Drive,
+    drive: &crate::Drive,
     summary: &droppen_sessions::SessionSummary,
     stored: &questions::Stored,
     reply: Reply,
@@ -1131,7 +1131,7 @@ pub(crate) fn external_session(hint: String) -> ApiError {
 /// browsing somebody else's session is the entire point of `scope=external`, and
 /// an unread badge that could not be cleared would make that browsing worse
 /// rather than safer.
-pub(crate) async fn writable_session(drive: &crate::drive::Drive, source: Source, id: &str) -> Result<droppen_sessions::SessionSummary, ApiError> {
+pub(crate) async fn writable_session(drive: &crate::Drive, source: Source, id: &str) -> Result<droppen_sessions::SessionSummary, ApiError> {
     let mut summary = drive
         .transcripts
         .find_summary(&drive.paths, source, id)
@@ -1354,7 +1354,7 @@ pub async fn session_search(
 
 /// [`session_search`] without the extractors, for the tests.
 pub(crate) async fn search_session(
-    drive: &crate::drive::Drive,
+    drive: &crate::Drive,
     source: Source,
     id: &str,
     query: &SearchQuery,
@@ -1383,7 +1383,7 @@ pub(crate) async fn search_session(
 /// read of every live registration and a walk back through the transcript's
 /// tail, and nothing that reads the items needs it. The scope is deliberately
 /// not checked either — reading is never gated.
-async fn whole_transcript(drive: &crate::drive::Drive, source: Source, id: &str) -> Result<(std::sync::Arc<Vec<TranscriptItem>>, String), ApiError> {
+async fn whole_transcript(drive: &crate::Drive, source: Source, id: &str) -> Result<(std::sync::Arc<Vec<TranscriptItem>>, String), ApiError> {
     let not_found = || ApiError::not_found("session not found");
     let file_path = drive.transcripts.find_file(&drive.paths, source, id).await.ok_or_else(not_found)?;
     let sig = file_signature(&file_path).await.ok_or_else(not_found)?;
@@ -1414,7 +1414,7 @@ pub async fn session_first_unread(
 
 /// [`session_first_unread`] without the extractors, for the tests.
 pub(crate) async fn first_unread_of(
-    drive: &crate::drive::Drive,
+    drive: &crate::Drive,
     source: Source,
     id: &str,
     after: Option<&str>,
@@ -1716,7 +1716,7 @@ pub async fn continue_session_on_account(
     }
     // The same row, and the same ownership verdict, the list and the composer
     // were given: somebody else's session is not this server's to copy.
-    let summary = crate::drive::routes::writable_session(&state.drive, Source::Claude, &id).await?;
+    let summary = crate::routes::writable_session(&state.drive, Source::Claude, &id).await?;
     if summary.claude_root != Some(ClaudeRoot::Local) {
         return Err(ApiError::refusal(
             StatusCode::CONFLICT,
@@ -1793,7 +1793,7 @@ fn continue_not_supported() -> ApiError {
 /// client that already renders `external_session` renders this too.
 async fn bind_codex_session(state: &DriveState, id: &str, account_id: Option<String>) -> Result<Json<SessionAccount>, ApiError> {
     let bound = state.drive.accounts.session_account_id_for(id, AccountProvider::Codex).await;
-    match crate::drive::routes::writable_session(&state.drive, Source::Codex, id).await {
+    match crate::routes::writable_session(&state.drive, Source::Codex, id).await {
         Ok(_) => {}
         // A session with no transcript yet but a binding already written is one
         // this server is in the middle of starting; it is ours by construction.
@@ -2151,8 +2151,8 @@ pub fn describe(reg: &mut ExtraResponses) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::drive::attachments::ATTACHMENT_MISSING;
-    use crate::drive::{fake, Drive};
+    use crate::attachments::ATTACHMENT_MISSING;
+    use crate::{fake, Drive};
     use droppen_instance::paths::Paths;
     use std::sync::Arc;
 

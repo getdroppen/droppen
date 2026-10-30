@@ -1,4 +1,4 @@
-//! The drive's routes (`crate::drive::routes`) on the drive the server
+//! The drive's routes (`droppen_drive::routes`) on the drive the server
 //! builds, with its providers, logins and transcript readers (`crate::app`):
 //! where a session may run, what a chat may attach, and search in the feed's
 //! numbering.
@@ -12,9 +12,10 @@ use droppen_http::extract::{ApiJson, ApiPath};
 use droppen_http::openapi_ext::Optional;
 use droppen_sessions::{chats_cwd, file_signature, SessionScope, Source};
 
-use crate::drive::routes::{first_unread_of, search_session, send_message, SearchQuery, SendMessage};
-use crate::drive::{Drive, DriveState};
-use crate::feed;
+use droppen_drive::routes::{send_message, SearchQuery, SendMessage};
+use droppen_drive::testing::{first_unread_of, search_session};
+use droppen_drive::{Drive, DriveState};
+use droppen_drive::feed;
 use crate::provider::claude_code::sessions::claude;
 
 fn drive() -> (tempfile::TempDir, Arc<Drive>) {
@@ -27,7 +28,7 @@ fn drive_with(register: fn(&mut droppen_provider::ProviderRegistry, &Arc<droppen
     let paths = Arc::new(droppen_instance::paths::Paths::new(dir.path().to_path_buf()));
     let instance = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
     let auth = droppen_auth::Auth::new(&paths, &instance, &droppen_http::config::AuthSettings::default(), false, std::sync::Arc::new(crate::app::NotifyTokens));
-    let drive = Drive::new(paths, &instance, auth, crate::app::transcript_sources(), register, crate::app::logins());
+    let drive = Drive::new(paths.clone(), &instance, auth, crate::app::transcript_sources(), register, crate::app::logins(), crate::app::NotifyDecoration::new(paths.clone(), instance.clone()));
     (dir, drive)
 }
 
@@ -75,8 +76,8 @@ async fn a_chat_that_cannot_read_an_attachment_refuses_one() {
         let state = DriveState {
             drive: drive.clone(),
             paths: drive.paths.clone(),
-            global: crate::feed::global::GlobalFeed::new(),
-            refresh: droppen_http::refresh::Refresh::new(crate::feed::global::GlobalFeed::new()),
+            global: droppen_drive::feed::global::GlobalFeed::new(),
+            refresh: droppen_http::refresh::Refresh::new(droppen_drive::feed::global::GlobalFeed::new()),
         };
         let body = SendMessage {
             text: "look".into(),

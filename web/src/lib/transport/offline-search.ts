@@ -3,7 +3,7 @@
  * copy while the machine is away (`offline.ts`) — the server's own
  * answers, computed in the page over the decrypted window the copy holds.
  *
- * A port of `server-rs/src/feed/search.rs` (`search_items`, `snippet_of`, the
+ * A port of `server-rs/crates/droppen-drive/src/feed/search.rs` (`search_items`, `snippet_of`, the
  * fold, the haystacks of an item) and `attention::first_unread`, rule for
  * rule, so a match, its field, its snippet and the hit ranges in it are the
  * ones the machine would have sent for the same items, and the view above

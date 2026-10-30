@@ -38,7 +38,7 @@
 //! `env` is read through [`parse_env_block`], so an agent's block refuses what
 //! an account's block refuses: `PATH`, the loader variables, and everything
 //! else that would move where a child's state lives. The values are what an
-//! API key looks like, so they are handled the way `chats::provider`
+//! API key looks like, so they are handled the way `droppen_drive::chats::provider`
 //! handles its key: a client is told the names, never the values, and a write
 //! replaces the whole block or leaves it alone.
 

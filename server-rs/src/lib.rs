@@ -13,7 +13,7 @@
 //! is registered with one line each in [`api`]. Its state is one struct, and it
 //! adds one field to [`api::AppState`].
 //!
-//! * [`feed`] — the per-session websocket feed, and [`feed::global`] the
+//! * [`droppen_drive::feed`] — the per-session websocket feed, and [`droppen_drive::feed::global`] the
 //!   session-list one behind `GET /api/events`;
 //! * [`provider::claude_code::claude_roots`] / [`droppen_base::process_env`] — what a spawn runs
 //!   against and with;
@@ -22,9 +22,9 @@
 //! * [`accounts`] — several Claude logins, stored server-side, and the two pty
 //!   wizards that mint them;
 //! * [`provider`] — driving the local CLIs, one run per session;
-//! * [`drive`] — the session-driving routes, and the state all of the above
-//!   hangs off ([`drive::Drive`]);
-//! * [`chats`] — instant chats: CLI sessions in an anchor directory, plus the
+//! * [`droppen_drive`] — the session-driving routes, and the state all of the above
+//!   hangs off ([`droppen_drive::Drive`]);
+//! * [`droppen_drive::chats`] — instant chats: CLI sessions in an anchor directory, plus the
 //!   BYO-API backend and its streamed replies;
 //! * [`quota`] — the subscription panel;
 //! * [`droppen_files`] — browsing, reading and uploading under the home directory, and
@@ -42,7 +42,7 @@
 //!   a phone about it while the tab is closed;
 //! * [`notify`] — the other direction of the same idea: the notification an
 //!   *agent* decides to send, through a channel whose credential it never sees;
-//! * [`schedule`] — cron tasks: a prompt, a directory and an expression, read in
+//! * [`droppen_drive::schedule`] — cron tasks: a prompt, a directory and an expression, read in
 //!   the server's own time zone, that start a session while nobody is watching;
 //! * [`setup`] — the first-run guide's server half: which AI tools this
 //!   device has, and the `PATH` that finds them;
@@ -74,14 +74,10 @@ pub use gotcha::{GotchaError, GotchaResult};
 pub mod accounts;
 pub mod api;
 pub mod app;
-pub mod chats;
 pub mod cli;
 pub mod desktop_app;
-pub mod drive;
 pub mod export;
-pub mod feed;
 pub mod provider;
-pub mod schedule;
 pub mod shutdown;
 #[cfg(test)]
 mod setup_tests;

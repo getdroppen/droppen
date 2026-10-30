@@ -2,7 +2,7 @@
 //!
 //! One row per session in the machine-wide state database ([`droppen_instance::db`]), under
 //! [`scope::SEEN`] and keyed `"<source>/<id>"` — the same key the global feed
-//! diffs its rows by (`feed::global`) and the same one a push
+//! diffs its rows by (`droppen_drive::feed::global`) and the same one a push
 //! notification's `tag` carries, so the three never have to be translated into
 //! each other.
 //!

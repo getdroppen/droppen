@@ -20,6 +20,13 @@ pub mod composer_prefs;
 pub(crate) mod fake;
 pub(crate) mod idempotent;
 pub mod routes;
+pub mod chats;
+pub mod feed;
+pub mod schedule;
+/// What the server's tests reach of the drive that production code does not.
+/// Only built for tests and with the `test-support` feature.
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing;
 
 use std::sync::Arc;
 
@@ -28,10 +35,6 @@ use droppen_accounts::quota::QuotaCache;
 use droppen_accounts::store::AccountsStore;
 use droppen_auth::Auth;
 use droppen_provider::{InjectionRegistry, ProviderRegistry, SpawnDecoration};
-use droppen_sessions::Source;
-use droppen_base::process_env::Env;
-use droppen_instance::instance::InstanceDirs;
-use futures_util::future::BoxFuture;
 use droppen_instance::paths::Paths;
 use droppen_sessions::{titles, TranscriptSources};
 
@@ -68,9 +71,9 @@ pub struct Drive {
     /// Local accounts, live logins, tickets and failed-login counters.
     ///
     /// Here rather than as a field of its own on
-    /// [`crate::api::AppState`] so the merge surface stays one line, and because
+    /// `api::AppState` so the merge surface stays one line, and because
     /// the `/api/auth/*` routes reach it exactly the way every other subsystem
-    /// reaches its own state. [`crate::app::RemoteHandApp::prepare`] takes a
+    /// reaches its own state. `app::RemoteHandApp::prepare` takes a
     /// second handle to it for the middleware, which runs outside the router and
     /// so cannot go through `State<AppState>`.
     pub auth: Arc<Auth>,
@@ -83,9 +86,10 @@ impl Drive {
     /// records its in-flight runs in the instance directory, so a restart can
     /// find them again. `auth` is built by the caller rather than here, because
     /// the middleware needs the same handle and is mounted outside the router.
-    /// `providers` is the entry's `crate::app::register_providers`, which
+    /// `providers` is the entry's `app::register_providers`, which
     /// names every CLI; `logins` likewise, each a CLI's own code, which only
-    /// the entry names.
+    /// the entry names. `decoration` is what a spawn's environment gains: the
+    /// entry's notify channel.
     pub fn new(
         paths: Arc<Paths>,
         instance: &droppen_instance::instance::InstanceDirs,
@@ -93,10 +97,10 @@ impl Drive {
         transcripts: TranscriptSources,
         providers: fn(&mut ProviderRegistry, &Arc<InjectionRegistry>),
         logins: Logins,
+        decoration: Arc<dyn SpawnDecoration>,
     ) -> Arc<Self> {
         let accounts = Arc::new(AccountsStore::new(paths.clone(), logins.clone()));
         let quota = Arc::new(QuotaCache::new(paths.clone(), logins));
-        let decoration = NotifyDecoration::new(paths.clone(), instance.clone());
         let injections = InjectionRegistry::new(paths.clone(), instance, accounts.clone(), quota.clone(), decoration);
         Arc::new(Self {
             auth,
@@ -109,28 +113,5 @@ impl Drive {
             paths,
             transcripts,
         })
-    }
-}
-
-/// The notify channel, as a claude spawn's environment gains it: the
-/// `droppen-notify` program on its `PATH`, this server's address and a token
-/// for the session, when the channel is on (see [`droppen_notify::notify::inject`]).
-pub(crate) struct NotifyDecoration {
-    /// Where the channel's settings and secret are stored.
-    paths: Arc<Paths>,
-    /// This server's own instance directory: its port and the program.
-    instance: InstanceDirs,
-}
-
-impl NotifyDecoration {
-    /// The channel of the server at `paths` and `instance`.
-    pub(crate) fn new(paths: Arc<Paths>, instance: InstanceDirs) -> Arc<Self> {
-        Arc::new(Self { paths, instance })
-    }
-}
-
-impl SpawnDecoration for NotifyDecoration {
-    fn decorate<'a>(&'a self, source: Source, id: &'a str, env: &'a mut Env) -> BoxFuture<'a, ()> {
-        Box::pin(droppen_notify::notify::inject::decorate(&self.paths, &self.instance, source, id, env))
     }
 }

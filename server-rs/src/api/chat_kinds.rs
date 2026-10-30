@@ -1,4 +1,4 @@
-//! The chat kinds (`crate::chats`) against the providers the server registers
+//! The chat kinds (`droppen_drive::chats`) against the providers the server registers
 //! (`crate::app`): which CLIs have instant chats.
 
 use std::sync::Arc;
@@ -6,7 +6,7 @@ use std::sync::Arc;
 use droppen_instance::paths::Paths;
 use droppen_sessions::Source;
 
-use crate::chats::ChatKind;
+use droppen_drive::chats::ChatKind;
 
 /// The chat kinds and the CLIs are tied by wire name: of the CLIs the server
 /// registers, one has the chat kind of its name exactly when its provider runs
@@ -20,7 +20,7 @@ fn every_cli_with_chats_has_the_chat_kind_of_its_name() {
     dirs.create().expect("instance dirs");
     let accounts = Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), crate::app::logins()));
     let quota = Arc::new(droppen_accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins()));
-    let decoration = crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone());
+    let decoration = droppen_provider::testing::no_decoration();
     let injections = droppen_provider::InjectionRegistry::new(paths, &dirs, accounts, quota, decoration);
     let providers = droppen_provider::ProviderRegistry::new(injections, crate::app::register_providers);
     let with_chats: Vec<Source> = providers.sources().filter(|source| providers.capabilities(*source).chats).collect();

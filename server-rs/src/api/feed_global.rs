@@ -1,4 +1,4 @@
-//! The session-list socket (`crate::feed::global`) as the server serves it:
+//! The session-list socket (`droppen_drive::feed::global`) as the server serves it:
 //! what a cloud subscriber hears, when a login's sockets close, and a client
 //! that never reads.
 
@@ -9,7 +9,7 @@ use futures_util::{SinkExt, StreamExt};
 use tokio::time::Instant;
 
 use crate::api::AppState;
-use crate::feed::global::LOGIN_RECHECK;
+use droppen_drive::feed::global::LOGIN_RECHECK;
 
 /// A bridged subscriber is droppen.app, and plugins are this computer's
 /// own (`docs/plugins/runtime.md` §5): its `settings` frame says there are
@@ -268,7 +268,7 @@ async fn a_shutdown_does_not_wait_for_a_list_client_that_never_reads() {
     // As many as the broadcast holds, so the socket is handed every one:
     // megabytes more than the kernel's buffers take.
     let frame = wide_frame();
-    for _ in 0..crate::feed::global::LIST_CHANNEL_CAPACITY {
+    for _ in 0..droppen_drive::testing::LIST_CHANNEL_CAPACITY {
         state.global.publish(frame.clone());
     }
     tokio::time::sleep(Duration::from_millis(500)).await;

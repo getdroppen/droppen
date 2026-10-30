@@ -6,7 +6,7 @@
  * a TCP and a TLS handshake to the edge, a ticket and an upgrade — so a page
  * that opened one per session it showed paid seconds of handshaking for every
  * session it switched to on a weak link. The server can carry session feeds on
- * the list's socket instead (`server-rs/src/feed/mux.rs`), and this is the
+ * the list's socket instead (`server-rs/crates/droppen-drive/src/feed/mux.rs`), and this is the
  * client half: one socket, kept alive and reconnected here, and a *channel* per
  * session feed that looks to `session-feed-pool.ts` exactly like the socket it
  * used to open, so none of its resume, resync or backoff logic had to change.

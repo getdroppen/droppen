@@ -14,8 +14,8 @@ use gotcha::{api, state, GotchaRouter, Json, Schematic, State, WebSocketUpgrade}
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
-use crate::drive::Drive;
-use crate::feed;
+use droppen_drive::Drive;
+use droppen_drive::feed;
 use droppen_plugins::CloudIdentityExt;
 use droppen_http::error::ApiError;
 use droppen_http::extract::{ApiPath, ApiQuery};
@@ -40,7 +40,7 @@ mod auth_routes;
 /// every route the server registers.
 #[cfg(test)]
 mod bridge_routes;
-/// The chat kinds (`crate::chats`) against the providers the server registers.
+/// The chat kinds (`droppen_drive::chats`) against the providers the server registers.
 #[cfg(test)]
 mod chat_kinds;
 /// Cloud's routes and the remote-view gate (`droppen_cloud`) on the state the
@@ -54,9 +54,9 @@ mod cloud_gateway;
 #[cfg(test)]
 mod cloud_routes;
 /// The drive's routes, a session's feed, the session feeds' socket, the
-/// session-list socket and the scheduled-task routes (`crate::drive::routes`,
-/// `crate::feed`, `crate::feed::mux`, `crate::feed::global`,
-/// `crate::schedule`) on the drive and the router the server builds.
+/// session-list socket and the scheduled-task routes (`droppen_drive::routes`,
+/// `droppen_drive::feed`, `droppen_drive::feed::mux`, `droppen_drive::feed::global`,
+/// `droppen_drive::schedule`) on the drive and the router the server builds.
 #[cfg(test)]
 mod drive_routes;
 #[cfg(test)]
@@ -120,7 +120,7 @@ pub struct AppState {
     /// Every live web terminal, so shutdown can kill them.
     pub terminals: Arc<droppen_workbench::terminals::Registry>,
     /// Instant chats: the provider configuration and the API-backed store.
-    pub chats: Arc<crate::chats::Chats>,
+    pub chats: Arc<droppen_drive::chats::Chats>,
     /// Every running embedded app, so shutdown can kill them and the
     /// `/embed/{id}/*` proxy can find their ports.
     pub apps: Arc<droppen_workbench::apps::Registry>,
@@ -299,7 +299,7 @@ pub async fn settings(State(state): State<AppState>, #[api(skip)] who: droppen_a
 ///
 /// Query: `?since=<endIndex>&fp=<prefixFp>` when the client already holds a
 /// window, so it can be resumed with a `delta` instead of re-sent a snapshot;
-/// see the module docs of [`crate::feed`] for the frames.
+/// see the module docs of [`droppen_drive::feed`] for the frames.
 ///
 /// A socket opened by a login closes with 4401 once that login no longer
 /// stands ([`droppen_auth::Auth::watch_login`]).
@@ -317,7 +317,7 @@ pub async fn session_feed_ws(
 
 /// Query for the session websocket.
 ///
-/// Both strings, and read leniently by [`feed::ResumeFrom::parse`]: a socket a
+/// Both strings, and read leniently by [`droppen_drive::feed::ResumeFrom::parse`]: a socket a
 /// browser cannot open looks to it like a network failure, so a malformed
 /// marker must cost a snapshot, never the connection.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -444,10 +444,10 @@ fn response_overrides() -> ExtraResponses {
     droppen_workbench::apps::describe(&mut reg);
     droppen_sessions::attention::routes::describe(&mut reg);
     droppen_auth::describe(&mut reg);
-    crate::chats::describe(&mut reg);
+    droppen_drive::chats::describe(&mut reg);
     droppen_cloud::describe(&mut reg);
-    crate::drive::describe(&mut reg);
-    crate::feed::global::describe(&mut reg);
+    droppen_drive::describe(&mut reg);
+    droppen_drive::feed::global::describe(&mut reg);
     droppen_files::describe(&mut reg);
     droppen_files::media::describe(&mut reg);
     droppen_provider::models::describe(&mut reg);
@@ -456,7 +456,7 @@ fn response_overrides() -> ExtraResponses {
     droppen_workbench::prefs::describe(&mut reg);
     droppen_notify::push::describe(&mut reg);
     droppen_accounts::quota::describe(&mut reg);
-    crate::schedule::describe(&mut reg);
+    droppen_drive::schedule::describe(&mut reg);
     droppen_workbench::screens::describe(&mut reg);
     droppen_supervisor::selfupdate::describe(&mut reg);
     droppen_setup::describe(&mut reg);
@@ -479,11 +479,11 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
     let router = droppen_workbench::apps::AppsState::routes(router);
     let router = droppen_sessions::attention::routes::AttentionState::routes(router);
     let router = droppen_auth::AuthState::routes(router);
-    let router = crate::chats::ChatsState::routes(router);
+    let router = droppen_drive::chats::ChatsState::routes(router);
     let router = droppen_cloud::CloudState::routes(router);
     let router = droppen_cloud::gateway::routes(router);
-    let router = crate::drive::DriveState::routes(router);
-    let router = crate::feed::global::EventsState::routes(router);
+    let router = droppen_drive::DriveState::routes(router);
+    let router = droppen_drive::feed::global::EventsState::routes(router);
     let router = droppen_files::FilesState::routes(router);
     let router = droppen_files::media::routes(router);
     let router = droppen_provider::models::ModelsState::routes(router);
@@ -492,7 +492,7 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
     let router = droppen_workbench::prefs::PrefsState::routes(router);
     let router = droppen_notify::push::PushState::routes(router);
     let router = droppen_accounts::quota::QuotaState::routes(router);
-    let router = crate::schedule::ScheduleState::routes(router);
+    let router = droppen_drive::schedule::ScheduleState::routes(router);
     let router = droppen_workbench::screens::ScreensState::routes(router);
     let router = droppen_supervisor::selfupdate::SelfUpdateState::routes(router);
     let router = droppen_setup::SetupState::routes(router);
@@ -751,7 +751,7 @@ mod tests {
         let _client = never_reading_feed(&state, addr).await;
         until("the socket attaches to the feed", Duration::from_secs(30), || state.feeds.len() == 1).await;
 
-        let page = wide_turns(1, crate::feed::SESSION_PAGE_SIZE / 2, droppen_sessions::util::TEXT_LIMIT);
+        let page = wide_turns(1, droppen_drive::feed::SESSION_PAGE_SIZE / 2, droppen_sessions::util::TEXT_LIMIT);
         let mut transcript = std::fs::OpenOptions::new().append(true).open(&file).expect("open");
         std::io::Write::write_all(&mut transcript, page.as_bytes()).expect("append");
         until(
@@ -771,7 +771,7 @@ mod tests {
         let (state, addr) = test_support::served(home.path()).await;
         assert_eq!(state.send_limit, droppen_http::SEND_LIMIT);
         // An opening snapshot of megabytes, more than the kernel's buffers hold.
-        wide_session(&state, crate::feed::SESSION_PAGE_SIZE / 2, droppen_sessions::util::TEXT_LIMIT);
+        wide_session(&state, droppen_drive::feed::SESSION_PAGE_SIZE / 2, droppen_sessions::util::TEXT_LIMIT);
         let _client = never_reading_feed(&state, addr).await;
         until("the socket attaches to the feed", Duration::from_secs(30), || state.feeds.len() == 1).await;
         tokio::time::sleep(Duration::from_millis(500)).await;

@@ -1,7 +1,7 @@
 //! The global feed's two inputs, for the subsystems that sit below it.
 //!
 //! A route that changes what the session list or another device shows tells
-//! the global feed (the server's `feed::global`): it asks for a prompt re-list, or it
+//! the global feed (`droppen_drive::feed::global`): it asks for a prompt re-list, or it
 //! pushes a frame of its own. Accounts, attention, prefs, screens and plugins do
 //! this but sit below the feed, so they hold a [`Refresh`] and the feed
 //! implements [`RefreshSink`]. Both inputs are fire-and-forget: with no client

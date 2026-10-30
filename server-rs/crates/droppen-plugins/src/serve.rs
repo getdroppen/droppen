@@ -25,7 +25,7 @@
 //! refuses it again, so a request that came in over droppen.app gets nothing
 //! even with the right key. The secret never leaves this server's own pages:
 //! it is given to `/api/plugins` callers and to feed subscribers, the feed's
-//! per-subscriber filter (`feed::global`, which hands a `cloud:` subscriber
+//! per-subscriber filter (`droppen_drive::feed::global`, which hands a `cloud:` subscriber
 //! `plugins: []`) keeps it out of the cloud's frames, and `agent::bridge`
 //! refuses plugin paths for a device before they are ever forwarded here.
 //!

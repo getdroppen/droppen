@@ -21,8 +21,8 @@ use crate::provider::codex::login::CodexLogin;
 use droppen_accounts::login::Logins;
 use crate::api::AppState;
 use droppen_http::config::AppConfig;
-use crate::feed::global::GlobalFeed;
-use crate::feed::FeedRegistry;
+use droppen_drive::feed::global::GlobalFeed;
+use droppen_drive::feed::FeedRegistry;
 use droppen_provider::{InjectionRegistry, ProviderRegistry};
 use droppen_instance::instance::{InstanceDirs, InstanceLock};
 use droppen_instance::paths::Paths;
@@ -126,7 +126,7 @@ impl GotchaApp for RemoteHandApp {
             });
             let auth = droppen_auth::Auth::new(&paths, &instance, &auth_settings, auth_disabled, Arc::new(NotifyTokens));
             let logins = logins();
-            let drive = crate::drive::Drive::new(paths.clone(), &instance, auth, transcript_sources(), register_providers, logins.clone());
+            let drive = droppen_drive::Drive::new(paths.clone(), &instance, auth, transcript_sources(), register_providers, logins.clone(), NotifyDecoration::new(paths.clone(), instance.as_ref().clone()));
             let feeds = FeedRegistry::new();
             let global = GlobalFeed::new();
             // A session's driver changes things no file shows — an automatic
@@ -148,7 +148,7 @@ impl GotchaApp for RemoteHandApp {
                 // first status, the instance database by the first switch or
                 // store, and `boot` below.
                 plugins: droppen_plugins::Plugins::load(&paths, &plugins_config, Some(refresh.clone())),
-                chats: crate::chats::Chats::new(paths.clone()),
+                chats: droppen_drive::chats::Chats::new(paths.clone()),
                 drive,
                 wizards: crate::provider::claude_code::setup_token::Captures::new(),
                 terminals: droppen_workbench::terminals::Registry::new(paths.clone(), instance.clone()),
@@ -339,7 +339,7 @@ impl RemoteHandApp {
                 // fire the user's real nine-o'clock task. Acting on a schedule
                 // without owning the instance is exactly the thing this block
                 // exists to prevent.
-                crate::schedule::runner::spawn(&crate::schedule::ScheduleState::from_ref(&state));
+                droppen_drive::schedule::runner::spawn(&droppen_drive::schedule::ScheduleState::from_ref(&state));
                 // The quota fallback probe starts CLIs as well — against the
                 // usage logins every instance on this machine shares — so it
                 // sits behind the same gate. It only probes a login nothing has
@@ -714,7 +714,7 @@ impl droppen_agent::link::LinkHost for PushLinkHost {
 /// frame: the same reading `/api/settings` takes.
 pub(crate) struct PluginHost(pub(crate) Arc<droppen_plugins::Plugins>);
 
-impl crate::feed::global::PluginStatuses for PluginHost {
+impl droppen_drive::feed::global::PluginStatuses for PluginHost {
     fn status(&self) -> futures_util::future::BoxFuture<'_, Vec<droppen_plugin_sdk::PluginStatus>> {
         Box::pin(self.0.status_async())
     }
@@ -741,9 +741,32 @@ impl droppen_auth::NotifyCredential for NotifyTokens {
     }
 }
 
+/// The notify channel, as a claude spawn's environment gains it: the
+/// `droppen-notify` program on its `PATH`, this server's address and a token
+/// for the session, when the channel is on (see [`droppen_notify::notify::inject`]).
+pub(crate) struct NotifyDecoration {
+    /// Where the channel's settings and secret are stored.
+    paths: Arc<Paths>,
+    /// This server's own instance directory: its port and the program.
+    instance: InstanceDirs,
+}
+
+impl NotifyDecoration {
+    /// The channel of the server at `paths` and `instance`.
+    pub(crate) fn new(paths: Arc<Paths>, instance: InstanceDirs) -> Arc<Self> {
+        Arc::new(Self { paths, instance })
+    }
+}
+
+impl droppen_provider::SpawnDecoration for NotifyDecoration {
+    fn decorate<'a>(&'a self, source: Source, id: &'a str, env: &'a mut droppen_base::process_env::Env) -> futures_util::future::BoxFuture<'a, ()> {
+        Box::pin(droppen_notify::notify::inject::decorate(&self.paths, &self.instance, source, id, env))
+    }
+}
+
 /// The link's streams read the account bindings, the drivers and the drafts
 /// from the drive, as the session list does.
-impl crate::stream_source::LiveSessions for crate::drive::Drive {
+impl crate::stream_source::LiveSessions for droppen_drive::Drive {
     fn bindings(&self) -> futures_util::future::BoxFuture<'_, std::collections::BTreeMap<String, String>> {
         Box::pin(self.accounts.session_account_map())
     }
@@ -812,7 +835,7 @@ mod tests {
         dirs.create().expect("instance dirs");
         let accounts = Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), logins()));
         let quota = Arc::new(droppen_accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins()));
-        let decoration = crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone());
+        let decoration = NotifyDecoration::new(paths.clone(), dirs.clone());
         let providers = ProviderRegistry::new(InjectionRegistry::new(paths, &dirs, accounts, quota, decoration), register_providers);
 
         let transcripts: Vec<Source> = transcript_sources().iter().map(|reader| reader.source()).collect();
@@ -877,7 +900,7 @@ mod tests {
         dirs.create().expect("instance dirs");
         let accounts = Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), logins()));
         let quota = Arc::new(droppen_accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins()));
-        let decoration = crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone());
+        let decoration = NotifyDecoration::new(paths.clone(), dirs.clone());
         let providers = ProviderRegistry::new(InjectionRegistry::new(paths, &dirs, accounts, quota, decoration), register_providers);
 
         let all = Capabilities {

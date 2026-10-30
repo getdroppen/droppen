@@ -3076,7 +3076,7 @@
         "type": "object"
       },
       "NotifyConfigInfo": {
-        "description": "What a client is allowed to learn about the configuration.\n\nThe endpoint is not in it. Its last path segment is the Bark device key,\nwhich is the entirety of Bark's authorization, so what comes back is a mask:\nenough to recognise the endpoint you configured, and not enough to send to\nit. Same rule as `chats::provider::ChatProviderInfo`'s `hasKey`, one\nstep friendlier because there is only ever one of these and a user with two\nphones should be able to tell which one is armed.",
+        "description": "What a client is allowed to learn about the configuration.\n\nThe endpoint is not in it. Its last path segment is the Bark device key,\nwhich is the entirety of Bark's authorization, so what comes back is a mask:\nenough to recognise the endpoint you configured, and not enough to send to\nit. Same rule as `droppen_drive::chats::provider::ChatProviderInfo`'s `hasKey`, one\nstep friendlier because there is only ever one of these and a user with two\nphones should be able to tell which one is armed.",
         "properties": {
           "baseUrl": {
             "description": "How a phone reaches this server, for the link a notification carries.\nNot a secret, and returned in full so the settings page can edit it.",

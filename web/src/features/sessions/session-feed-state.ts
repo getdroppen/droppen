@@ -6,7 +6,7 @@ export type TranscriptItem = components["schemas"]["TranscriptItem"];
  * The session websocket's transcript frames. They are not in the OpenAPI
  * contract (the socket route is not documented there), so their shape lives
  * here, next to the code that reads them; the server side is the module docs of
- * `server-rs/src/feed/mod.rs`.
+ * `server-rs/crates/droppen-drive/src/feed/mod.rs`.
  *
  * - `snapshot` (attach) and `reset`: a fresh window — `items`, `startIndex`,
  *   `endIndex`, `totalItems`, `hasMoreBefore`, `sig` — plus `prefixFp` and
@@ -374,7 +374,7 @@ export function trimLiveWindow(current: TranscriptWindow): TranscriptWindow {
 /**
  * The state half of a session, exactly as a `state` frame carries it.
  *
- * The server's `SessionState` (`server-rs/src/feed/mod.rs`) serializes to these
+ * The server's `SessionState` (`server-rs/crates/droppen-drive/src/feed/mod.rs`) serializes to these
  * fields and nothing else, and a `state` frame is that object with a `type`
  * glued on — so this is also the complete list of what such a frame is allowed
  * to change on the client. `rotation` is the one it may leave out: a server
@@ -441,7 +441,7 @@ function held<V>(previous: V, next: V): V {
  * so a fresh object for an unchanged state re-renders the entire transcript —
  * which is deliberately not virtualized, so that is every row in the window,
  * up to `LIVE_WINDOW_CAP` of them. The server already suppresses a frame whose
- * *serialization* is unchanged (`push_state` in `server-rs/src/feed/mod.rs`),
+ * *serialization* is unchanged (`push_state` in `server-rs/crates/droppen-drive/src/feed/mod.rs`),
  * so what reaches here is frames that differ somewhere; the reason to check
  * again is what they usually differ in. A working session rewrites its
  * transcript file constantly, and `summary.sizeBytes` and `summary.updatedAt`

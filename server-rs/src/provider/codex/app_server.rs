@@ -2016,7 +2016,7 @@ mod tests {
             dirs.create().unwrap();
             let accounts = Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), crate::app::logins()));
             let quota = Arc::new(droppen_accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins()));
-            let decoration = crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone());
+            let decoration = droppen_provider::testing::no_decoration();
             let registry = InjectionRegistry::new(paths, &dirs, accounts, quota, decoration);
             let providers = droppen_provider::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
             let socket = home.path().join("mock.sock");
@@ -2881,7 +2881,7 @@ mod tests {
         dirs.create().unwrap();
         let accounts = Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), crate::app::logins()));
         let quota = Arc::new(droppen_accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins()));
-        let decoration = crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone());
+        let decoration = droppen_provider::testing::no_decoration();
         (guard, InjectionRegistry::new(paths, &dirs, accounts, quota, decoration))
     }
 

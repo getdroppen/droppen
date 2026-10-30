@@ -539,7 +539,7 @@ impl Entry {
 /// Every live terminal.
 ///
 /// Lives in the application state rather than in a `static` — like
-/// `feed::FeedRegistry`, and for the same reason: two servers in one
+/// `droppen_drive::feed::FeedRegistry`, and for the same reason: two servers in one
 /// process (which is what the integration tests run) must not share or reap each
 /// other's terminals. With shims that reason is stronger, not weaker: the
 /// registry is scoped to one [`InstanceDirs`], and two registries on different

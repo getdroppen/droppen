@@ -493,7 +493,7 @@ trait TaskFlagsExt {
     /// Two layers, and they answer different questions:
     ///
     /// 1. **shape** — the composer's own check
-    ///    ([`crate::drive::routes::validate_flags`]), reused rather than restated so
+    ///    ([`crate::routes::validate_flags`]), reused rather than restated so
     ///    the two surfaces cannot drift. These values become `argv`, and this is what
     ///    stops a `model` from reading as a flag. Identical for both CLIs, because
     ///    the hazard is.
@@ -520,7 +520,7 @@ trait TaskFlagsExt {
 impl TaskFlagsExt for dyn droppen_provider::models::Models + '_ {
     fn check_task_flags<'a>(&'a self, source: Source, model: Option<&'a str>, effort: Option<&'a str>, permission: Option<&'a str>) -> BoxFuture<'a, Result<(), ApiError>> {
         Box::pin(async move {
-            crate::drive::routes::validate_flags(self.model_rule(), model, effort, permission).map_err(ApiError::bad_request)?;
+            crate::routes::validate_flags(self.model_rule(), model, effort, permission).map_err(ApiError::bad_request)?;
 
             if let Some(effort) = effort.filter(|effort| !effort.is_empty()) {
                 if let Some(accepted) = self.accepted_efforts(model).await {
@@ -582,7 +582,7 @@ pub struct ScheduleState {
     /// The instance's paths, under which the tasks live.
     pub paths: Arc<Paths>,
     /// Accounts, injections and the spawn dependencies a fired task starts with.
-    pub drive: Arc<crate::drive::Drive>,
+    pub drive: Arc<crate::Drive>,
     /// The shared session-list feed, told when a fired task's session appears.
     pub global: Arc<crate::feed::global::GlobalFeed>,
     /// Cancelled by the shutdown supervisor; the runner stops on it.
@@ -606,7 +606,7 @@ pub async fn create_scheduled_task(
 ) -> Result<Json<ScheduledTask>, ApiError> {
     let paths = state.paths.as_ref();
     let expr = validated_expr(&body.expr)?;
-    crate::drive::routes::validate_text(&body.prompt).map_err(ApiError::bad_request)?;
+    crate::routes::validate_text(&body.prompt).map_err(ApiError::bad_request)?;
     let (model, effort, permission) = (
         flag(body.model.as_deref()),
         flag(body.effort.as_deref()),
@@ -662,7 +662,7 @@ pub async fn update_scheduled_task(
     let paths = state.paths.as_ref();
     let expr = body.expr.as_deref().map(validated_expr).transpose()?;
     if let Some(prompt) = body.prompt.as_deref() {
-        crate::drive::routes::validate_text(prompt).map_err(ApiError::bad_request)?;
+        crate::routes::validate_text(prompt).map_err(ApiError::bad_request)?;
     }
     // Read before the lock, because what the flags have to be checked against is
     // the task *as it will be*: a patch that only switches `source` still has to

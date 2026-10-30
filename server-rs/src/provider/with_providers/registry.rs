@@ -30,7 +30,7 @@ fn providers_from(home: &std::path::Path, register: fn(&mut ProviderRegistry, &A
     droppen_provider_acp::testing::configure(&paths, "fake", &agent).expect("saved");
     let accounts = Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), crate::app::logins()));
     let quota = Arc::new(droppen_accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins()));
-    let decoration = crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone());
+    let decoration = droppen_provider::testing::no_decoration();
     ProviderRegistry::new(InjectionRegistry::new(paths, &dirs, accounts, quota, decoration), register)
 }
 

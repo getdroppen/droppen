@@ -89,10 +89,10 @@ pub struct ComposerPrefs {
 pub struct ComposerPrefsError(pub String);
 
 /// The bounds `ComposerChoiceSchema` puts on each field: the send routes' own
-/// ([`crate::drive::routes::validate_flags`]), so a choice the composer keeps
+/// ([`crate::routes::validate_flags`]), so a choice the composer keeps
 /// is one a message can be sent with.
 fn validate(rule: ModelRule, choice: &ComposerChoice) -> Result<(), ComposerPrefsError> {
-    crate::drive::routes::validate_flags(rule, choice.model.as_deref(), choice.effort.as_deref(), choice.permission.as_deref()).map_err(ComposerPrefsError)
+    crate::routes::validate_flags(rule, choice.model.as_deref(), choice.effort.as_deref(), choice.permission.as_deref()).map_err(ComposerPrefsError)
 }
 
 /// The composer preferences, over the machine-wide state database.

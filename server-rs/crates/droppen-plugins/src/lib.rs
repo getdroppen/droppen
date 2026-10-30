@@ -41,7 +41,7 @@
 //! It reaches a page only inside [`droppen_plugin_sdk::PluginStatus::entry`],
 //! and that only through a signed-in, non-cloud caller: the `/api/plugins…`
 //! handlers and the asset route refuse a bridged (`cloud:`) identity, the
-//! feed's own per-subscriber filter (`feed::global`) hands a `cloud:`
+//! feed's own per-subscriber filter (`droppen_drive::feed::global`) hands a `cloud:`
 //! subscriber `plugins: []`, and `agent::bridge` refuses the plugin paths for
 //! a device before they reach this server. The asset route compares the key
 //! in constant time ([`Plugins::asset`]).

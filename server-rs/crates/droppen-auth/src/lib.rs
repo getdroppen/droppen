@@ -248,7 +248,7 @@ pub trait NotifyCredential: Send + Sync {
 
 /// Everything the guard and the `/api/auth/*` routes need.
 ///
-/// Hangs off `drive::Drive`, like every other registry in this server,
+/// Hangs off `droppen_drive::Drive`, like every other registry in this server,
 /// so two servers in one process cannot see each other's sessions, tickets or
 /// failure counts.
 pub struct Auth {

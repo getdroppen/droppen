@@ -1,4 +1,4 @@
-//! The session feeds' socket (`crate::feed::mux`) end to end, on the drive
+//! The session feeds' socket (`droppen_drive::feed::mux`) end to end, on the drive
 //! the server builds (`feed_session`'s `test_drive`).
 
 use std::sync::Arc;
@@ -7,9 +7,9 @@ use std::time::Duration;
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-use crate::drive::Drive;
-use crate::feed::mux::{parse_client_message, ClientMessage, Subscriptions, MAX_SUBSCRIPTIONS};
-use crate::feed::FeedRegistry;
+use droppen_drive::Drive;
+use droppen_drive::feed::mux::{parse_client_message, ClientMessage, Subscriptions, MAX_SUBSCRIPTIONS};
+use droppen_drive::feed::FeedRegistry;
 
 use super::feed_session::{claude_turns, test_drive};
 

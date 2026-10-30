@@ -11,7 +11,7 @@
 //! origin-bound: the endpoint names the user's phone, which is the same phone
 //! whichever instance an agent happens to be running under. Configuring it once
 //! and having every instance find it is the behaviour the user expects, so it
-//! sits in the machine-wide database beside the server's `chats::provider` rows.
+//! sits in the machine-wide database beside `droppen_drive::chats::provider` rows.
 //! That also ends the race the two servers had over the file, which no mutex in
 //! either process could have arbitrated.
 //!
@@ -126,7 +126,7 @@ fn store(paths: &Paths) -> Arc<Db> {
 ///
 /// Anything unusable reads as "nothing configured" rather than as an error — the
 /// settings panel has to stay usable so the user can fix whatever went wrong,
-/// exactly as the server's `chats::provider::read_provider` argues. Per-field
+/// exactly as `droppen_drive::chats::provider::read_provider` argues. Per-field
 /// coercion for the same reason: a number where a string belongs degrades to an
 /// empty field rather than throwing the other three away.
 fn from_value(raw: &Value) -> StoredNotify {

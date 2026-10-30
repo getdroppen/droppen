@@ -9,7 +9,7 @@ use gotcha::State;
 use droppen_accounts::store::{Account, AccountKind, AccountProvider, Credential};
 use droppen_accounts::*;
 use crate::api::AppState;
-use crate::drive::routes::{bind_session_account, continue_session_on_account, ContinuedSession, SessionAccount, SessionContinue};
+use droppen_drive::routes::{bind_session_account, continue_session_on_account, ContinuedSession, SessionAccount, SessionContinue};
 use crate::provider::claude_code::sessions::claude;
 use droppen_http::error::ApiError;
 use droppen_http::extract::{ApiJson, ApiPath};
@@ -92,7 +92,7 @@ async fn claude_account(state: &AppState, label: &str) -> Account {
 
 async fn continue_on(state: &AppState, source: Source, id: &str, account_id: &str) -> Result<ContinuedSession, ApiError> {
     continue_session_on_account(
-        State(crate::drive::DriveState::from_ref(state)),
+        State(droppen_drive::DriveState::from_ref(state)),
         ApiPath((source, id.to_string())),
         ApiJson(SessionContinue {
             account_id: account_id.to_string(),
@@ -118,7 +118,7 @@ async fn a_local_login_session_continues_on_an_account_as_a_new_session() {
 
     // Binding is still refused, and now says what to do instead.
     let refused = bind_session_account(
-        State(crate::drive::DriveState::from_ref(&state)),
+        State(droppen_drive::DriveState::from_ref(&state)),
         ApiPath((Source::Claude, STUCK.to_string())),
         ApiJson(SessionAccount {
             account_id: Nullable(Some(work.id.clone())),

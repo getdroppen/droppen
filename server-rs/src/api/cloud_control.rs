@@ -95,7 +95,7 @@ fn link_env(paths: &Paths) -> LinkEnv {
         addr: "127.0.0.1:9".parse().unwrap(),
         credential: "test".into(),
         streams: {
-            let drive = crate::drive::Drive::new(std::sync::Arc::new(paths.clone()), &instance, auth, crate::app::transcript_sources(), crate::app::register_providers, crate::app::logins());
+            let drive = droppen_drive::Drive::new(std::sync::Arc::new(paths.clone()), &instance, auth, crate::app::transcript_sources(), crate::app::register_providers, crate::app::logins(), crate::app::NotifyDecoration::new(std::sync::Arc::new(paths.clone()), instance.clone()));
             std::sync::Arc::new(crate::stream_source::SessionStreams::new(drive.paths.clone(), drive.transcripts.clone(), drive))
         },
         host: std::sync::Arc::new(crate::app::PushLinkHost),

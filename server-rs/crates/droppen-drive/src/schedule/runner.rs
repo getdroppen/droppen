@@ -2,7 +2,7 @@
 //!
 //! # Where it is started, and why that matters more than it looks
 //!
-//! [`spawn`] is called from [`crate::app::RemoteHandApp::prepare`] **inside the
+//! [`spawn`] is called from `app::RemoteHandApp::prepare` **inside the
 //! block that has already proven this process holds the instance lock**, beside
 //! the adoptions. Anywhere else and it would run in two servers that must not
 //! both act: `export-openapi` builds a throwaway in-process server on a
