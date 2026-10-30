@@ -14,6 +14,10 @@
 
 mod attachments;
 pub mod composer_prefs;
+/// A provider and a transcript reader of the tests' own, for the tests of the
+/// drive's own rules.
+#[cfg(test)]
+pub(crate) mod fake;
 pub(crate) mod idempotent;
 pub mod routes;
 

@@ -547,18 +547,15 @@ mod tests {
 
     // ---------------------------------------------------------- end to end
 
-    use super::super::tests::{claude_turns, test_drive};
+    use crate::drive::fake;
     use std::time::Duration;
 
     const ID: &str = "55555555-5555-4555-8555-555555555555";
 
     /// A drive with one ~1000-item claude session in its managed root.
     fn session(dir: &std::path::Path) -> (Arc<Drive>, std::path::PathBuf) {
-        let (paths, drive) = test_drive(dir);
-        let project = crate::provider::claude_code::claude_roots::ClaudeRoots::of(&paths).managed_projects().join("-w-mux");
-        std::fs::create_dir_all(&project).expect("project");
-        let file = project.join(format!("{ID}.jsonl"));
-        std::fs::write(&file, claude_turns(ID, 0, 250)).expect("transcript");
+        let (paths, drive) = fake::drive(dir);
+        let file = fake::session(&paths, ID, &fake::turns(0, 250));
         (drive, file)
     }
 
@@ -608,7 +605,7 @@ mod tests {
         let mut turns = 250;
         let append = |turn: usize| {
             let mut handle = std::fs::OpenOptions::new().append(true).open(&file).expect("open");
-            std::io::Write::write_all(&mut handle, claude_turns(ID, turn, 1).as_bytes()).expect("append");
+            std::io::Write::write_all(&mut handle, fake::turns(turn, 1).as_bytes()).expect("append");
         };
         let deadline = tokio::time::Instant::now() + PATIENCE;
         while rx.len() < OUT_CAPACITY {

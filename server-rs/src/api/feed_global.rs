@@ -255,3 +255,29 @@ async fn a_list_client_that_never_reads_is_given_up_on() {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
 }
+
+/// A server shutting down does not wait on a list client that has stopped
+/// reading: the send it is stuck on gives way at once, well inside the
+/// real limit.
+#[tokio::test]
+async fn a_shutdown_does_not_wait_for_a_list_client_that_never_reads() {
+    let home = tempfile::tempdir().unwrap();
+    let (state, addr) = crate::api::test_support::served(home.path()).await;
+    assert_eq!(state.send_limit, droppen_http::SEND_LIMIT);
+    let _client = never_reading_list(&state, addr).await;
+    // As many as the broadcast holds, so the socket is handed every one:
+    // megabytes more than the kernel's buffers take.
+    let frame = wide_frame();
+    for _ in 0..crate::feed::global::LIST_CHANNEL_CAPACITY {
+        state.global.publish(frame.clone());
+    }
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    state.cancel.cancel();
+    let released = tokio::time::timeout(Duration::from_secs(10), async {
+        while state.global.is_running() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    });
+    released.await.expect("a shutdown lets the stuck socket go at once");
+}

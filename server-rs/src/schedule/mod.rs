@@ -819,20 +819,6 @@ mod tests {
         (dir, paths)
     }
 
-    /// [`TaskFlagsExt::check_task_flags`] for `source`, against the model list of the
-    /// provider the entry registers for it over `paths`.
-    async fn flags(paths: &Paths, source: Source, model: Option<&str>, effort: Option<&str>, permission: Option<&str>) -> Result<(), ApiError> {
-        let paths = Arc::new(paths.clone());
-        let dirs = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
-        dirs.create().expect("instance dirs");
-        let accounts = Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), crate::app::logins()));
-        let quota = Arc::new(droppen_accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins()));
-        let decoration = crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone());
-        let injections = droppen_provider::InjectionRegistry::new(paths, &dirs, accounts, quota, decoration);
-        let providers = droppen_provider::ProviderRegistry::new(injections, crate::app::register_providers);
-        providers.models(source).expect("a provider").check_task_flags(source, model, effort, permission).await
-    }
-
     fn task(id: &str) -> ScheduledTask {
         ScheduledTask {
             id: id.to_string(),
@@ -1014,92 +1000,6 @@ mod tests {
         assert_eq!(sanitize_name(Some("   "), "task 1"), "task 1");
         assert_eq!(sanitize_name(None, "task 3"), "task 3");
         assert_eq!(sanitize_name(Some(&"x".repeat(MAX_NAME + 40)), "task 1").chars().count(), MAX_NAME);
-    }
-
-    #[tokio::test]
-    async fn each_cli_is_checked_against_its_own_permission_modes() {
-        let (_dir, paths) = paths();
-        // The values the composer offers for each, and neither CLI's are the
-        // other's: `acceptEdits` is not a sandbox and `read-only` is not a
-        // permission mode.
-        assert!(flags(&paths, Source::Claude, None, None, Some("acceptEdits")).await.is_ok());
-        assert!(flags(&paths, Source::Codex, None, None, Some("read-only")).await.is_ok());
-        assert!(flags(&paths, Source::Claude, None, None, Some("read-only")).await.is_err());
-        assert!(flags(&paths, Source::Codex, None, None, Some("acceptEdits")).await.is_err());
-        assert!(flags(&paths, Source::Claude, None, None, Some("nonsense")).await.is_err());
-    }
-
-    #[tokio::test]
-    async fn a_claude_effort_is_checked_against_the_ladder_the_model_actually_has() {
-        let (_dir, paths) = paths();
-        assert!(flags(&paths, Source::Claude, Some("opus"), Some("max"), None).await.is_ok());
-        assert!(
-            flags(&paths, Source::Claude, Some("haiku"), Some("high"), None).await.is_err(),
-            "the haiku tier takes no --effort at all"
-        );
-        assert!(
-            flags(&paths, Source::Claude, Some("claude-opus-4-5"), Some("xhigh"), None)
-                .await
-                .is_err(),
-            "that generation predates the rung"
-        );
-        assert!(flags(&paths, Source::Claude, None, Some("nonsense"), None).await.is_err());
-    }
-
-    #[tokio::test]
-    async fn a_codex_effort_is_let_through_when_this_machine_has_never_run_codex() {
-        let (_dir, paths) = paths();
-        // No `models_cache.json`, so nothing here is entitled to an opinion —
-        // refusing would hide a rung a new model was released for.
-        assert!(flags(&paths, Source::Codex, None, Some("xhigh"), None).await.is_ok());
-
-        // With a cache, the rungs it names are the ones that count.
-        std::fs::create_dir_all(paths.codex_dir()).expect("codex dir");
-        std::fs::write(
-            crate::provider::codex::sessions::codex::CodexHome::of(&paths).models_cache(),
-            r#"{"models":[{"slug":"gpt-5.5","visibility":"list","supported_reasoning_levels":[{"effort":"low"},{"effort":"high"}]}]}"#,
-        )
-        .expect("seed");
-        assert!(flags(&paths, Source::Codex, None, Some("high"), None).await.is_ok());
-        assert!(flags(&paths, Source::Codex, None, Some("xhigh"), None).await.is_err());
-        assert!(
-            flags(&paths, Source::Codex, Some("gpt-5.5"), Some("low"), None).await.is_ok(),
-            "a named model answers for itself"
-        );
-    }
-
-    /// The routes' state over a fresh instance, with the providers `register`
-    /// adds, and a working directory in its home.
-    fn state_with(register: fn(&mut droppen_provider::ProviderRegistry, &Arc<droppen_provider::InjectionRegistry>)) -> (tempfile::TempDir, ScheduleState, String) {
-        let (dir, paths) = paths();
-        let paths = Arc::new(paths);
-        let cwd = dir.path().join("w");
-        std::fs::create_dir_all(&cwd).expect("cwd");
-        let instance = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
-        let auth = droppen_auth::Auth::new(&paths, &instance, &droppen_http::config::AuthSettings::default(), false, Arc::new(crate::app::NotifyTokens));
-        let drive = crate::drive::Drive::new(paths.clone(), &instance, auth, crate::app::transcript_sources(), register, crate::app::logins());
-        let state = ScheduleState {
-            paths,
-            drive,
-            global: crate::feed::global::GlobalFeed::new(),
-            cancel: tokio_util::sync::CancellationToken::new(),
-        };
-        (dir, state, cwd.to_string_lossy().into_owned())
-    }
-
-    /// The status and message of a refusal.
-    fn refusal(error: ApiError) -> (u16, String) {
-        (error.status().as_u16(), error.body()["error"].as_str().unwrap_or_default().to_string())
-    }
-
-    /// A source no provider runs takes no scheduled tasks either.
-    #[tokio::test]
-    async fn a_task_on_a_cli_no_provider_runs_is_refused() {
-        let (_dir, state, _cwd) = state_with(|_, _| {});
-        for source in [Source::Claude, Source::Codex, Source::Acp] {
-            let error = state.check_cli(source, None, None, None).await.expect_err("refused");
-            assert_eq!(refusal(error), (400, "scheduled tasks run on Claude Code or Codex".to_string()), "{source}");
-        }
     }
 
     #[tokio::test]

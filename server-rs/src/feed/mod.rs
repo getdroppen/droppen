@@ -1463,57 +1463,9 @@ mod tests {
         assert_eq!(encode_fp(&chain[3]).len(), 22, "short enough for a query string");
     }
 
-    /// A synthetic claude session of `turns` × 4 items — prompt, prose, a tool
-    /// call and its output — at roughly the sizes a real one has.
-    pub(crate) fn claude_turns(id: &str, from: usize, turns: usize) -> String {
-        let mut out = String::new();
-        for turn in from..from + turns {
-            let stamp = format!("2026-09-29T00:{:02}:{:02}.000Z", (turn / 60) % 60, turn % 60);
-            let prose = format!("Turn {turn}: ") + &"Here is what I found while reading the code, and what I intend to do next. ".repeat(6);
-            let output = format!("output of turn {turn}\n") + &"-rw-r--r--  1 user  staff  4096 Sep 29 00:00 some/path/to/a/file.rs\n".repeat(12);
-            let lines = [
-                serde_json::json!({"type":"user","message":{"role":"user","content":format!("please look at part {turn} of the codebase")},"timestamp":stamp,"cwd":"/tmp","sessionId":id,"uuid":format!("u{turn}")}),
-                serde_json::json!({"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":prose}]},"timestamp":stamp,"cwd":"/tmp","sessionId":id,"uuid":format!("a{turn}")}),
-                serde_json::json!({"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":format!("toolu_{turn}"),"name":"Bash","input":{"command":format!("ls -la part{turn}")}}]},"timestamp":stamp,"cwd":"/tmp","sessionId":id,"uuid":format!("t{turn}")}),
-                serde_json::json!({"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":format!("toolu_{turn}"),"content":output}]},"timestamp":stamp,"cwd":"/tmp","sessionId":id,"uuid":format!("r{turn}")}),
-            ];
-            for line in lines {
-                out.push_str(&line.to_string());
-                out.push('\n');
-            }
-        }
-        out
-    }
-
-    pub(crate) fn test_drive(dir: &Path) -> (Arc<Paths>, Arc<Drive>) {
-        let paths = Arc::new(Paths::new(dir.to_path_buf()));
-        let instance = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
-        let auth = droppen_auth::Auth::new(&paths, &instance, &droppen_http::config::AuthSettings::default(), false, std::sync::Arc::new(crate::app::NotifyTokens));
-        let drive = Drive::new(paths.clone(), &instance, auth, crate::app::transcript_sources(), crate::app::register_providers, crate::app::logins());
-        (paths, drive)
-    }
-
     /// The `thinking_tokens` line claude prints with each chunk of a think.
     fn thinking(tokens: u64) -> Value {
         serde_json::json!({"type": "system", "subtype": "thinking_tokens", "estimated_tokens": tokens})
-    }
-
-    /// The transcript entry a block becomes, a moment later.
-    fn entry(id: &str, uuid: &str, text: &str) -> String {
-        serde_json::json!({"type": "assistant", "uuid": uuid, "message": {"id": "msg_1", "role": "assistant", "content": [{"type": "text", "text": text}]}, "timestamp": "2026-10-10T00:00:01.000Z", "cwd": "/tmp", "sessionId": id})
-            .to_string()
-            + "\n"
-    }
-
-    /// A claude session on disk with one prompt in it, and a drive to serve it.
-    fn drafted_session(dir: &Path, id: &str) -> (Arc<Drive>, PathBuf) {
-        let (paths, drive) = test_drive(dir);
-        let project = crate::provider::claude_code::claude_roots::ClaudeRoots::of(&paths).managed_projects().join("-w-repo");
-        std::fs::create_dir_all(&project).expect("project");
-        let file = project.join(format!("{id}.jsonl"));
-        let prompt = serde_json::json!({"type": "user", "uuid": "u-prompt", "message": {"role": "user", "content": "write the module"}, "timestamp": "2026-10-10T00:00:00.000Z", "cwd": "/tmp", "sessionId": id});
-        std::fs::write(&file, format!("{prompt}\n")).expect("transcript");
-        (drive, file)
     }
 
     fn append(file: &Path, text: &str) {
@@ -1586,10 +1538,11 @@ mod tests {
     async fn transcript_frames_name_no_agent_entries() {
         let dir = tempfile::tempdir().expect("tempdir");
         let id = "55555555-5555-4555-8555-555555555555";
-        let (drive, file) = drafted_session(dir.path(), id);
-        append(&file, &entry(id, "u-text", "said"));
+        let (paths, drive) = crate::drive::fake::drive(dir.path());
+        let file = crate::drive::fake::session(&paths, id, "write the module\n");
+        append(&file, "said\n");
         let sig = file_signature(&file).await.expect("sig");
-        let transcript = drive.transcripts.load(&drive.paths, Source::Claude, &file, &sig).await;
+        let transcript = drive.transcripts.load(&drive.paths, crate::drive::fake::SOURCE, &file, &sig).await;
         let delta: Value = serde_json::from_str(&delta_frame(&sig, None, &transcript, 0)).expect("json");
         let reset: Value = serde_json::from_str(&reset_frame(&sig, &transcript)).expect("json");
         for frame in [&delta, &reset] {

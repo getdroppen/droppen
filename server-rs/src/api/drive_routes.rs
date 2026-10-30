@@ -297,3 +297,36 @@ async fn an_empty_query_is_refused_before_the_session_is_looked_up() {
         .expect_err("missing");
     assert_eq!(error.status(), gotcha::axum::http::StatusCode::NOT_FOUND);
 }
+
+/// A message to a session this server did not start is refused with its CLI's
+/// own reason: Codex's, for a thread in the user's own `~/.codex`.
+#[tokio::test]
+async fn a_message_to_a_codex_thread_started_elsewhere_is_refused_with_codex_s_reason() {
+    use gotcha::axum::extract::FromRef;
+    let _guard = droppen_sessions::index::exclusive().await;
+    let home = tempfile::tempdir().expect("tempdir");
+    let state = crate::api::test_support::state(home.path()).await;
+    let id = "77777777-7777-4777-8777-777777777777";
+    let day = state.drive.paths.codex_sessions().join("2026").join("10").join("01");
+    std::fs::create_dir_all(&day).expect("rollout dir");
+    let meta = r#"{"type":"session_meta","payload":{"cwd":"/w","id":"x"}}"#;
+    std::fs::write(day.join(format!("rollout-2026-10-01T10-00-00-{id}.jsonl")), format!("{meta}\n")).expect("rollout");
+    let body = SendMessage {
+        text: "hi".into(),
+        images: Optional(None),
+        files: Optional(None),
+        model: Optional(None),
+        effort: Optional(None),
+        permission: Optional(None),
+        account_id: None,
+        client_message_id: Optional(None),
+    };
+    let error = send_message(State(DriveState::from_ref(&state)), MaybeIdentity(None), ApiPath((Source::Codex, id.to_string())), ApiJson(body))
+        .await
+        .expect_err("refused");
+    assert_eq!(error.status().as_u16(), 409);
+    assert_eq!(
+        error.body().to_string(),
+        r#"{"error":"external_session","hint":"this codex session was started elsewhere; continue it where it was started"}"#
+    );
+}
