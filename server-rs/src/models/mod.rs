@@ -145,7 +145,7 @@ impl ModelRule {
 
 /// What one CLI says about its models: the list a picker offers, the ids a
 /// start is chosen against, and which efforts and permission modes it takes.
-/// Each provider answers for its own CLI ([`crate::inject::Provider::models`]).
+/// Each provider answers for its own CLI ([`crate::provider::Provider::models`]).
 pub trait Models: Send + Sync {
     /// The list `GET /api/models` serves for `query`, or why the query is
     /// refused, in the words of the route's `400`.
@@ -188,7 +188,7 @@ pub trait Models: Send + Sync {
 #[derive(Clone)]
 pub struct ModelsState {
     /// Every CLI this server drives, each of which lists its own models.
-    pub providers: Arc<crate::inject::ProviderRegistry>,
+    pub providers: Arc<crate::provider::ProviderRegistry>,
 }
 droppen_http::substate!(ModelsState);
 

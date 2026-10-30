@@ -1,6 +1,6 @@
 //! The route half of idempotent sends.
 //!
-//! [`crate::inject::receipts`] keeps the claims; this decides what a request
+//! [`crate::provider::receipts`] keeps the claims; this decides what a request
 //! does with one. Three answers, and the order they are tried in matters:
 //!
 //! * the id was never seen — this request **owns** it, and runs the send on a
@@ -26,7 +26,7 @@ use serde_json::Value;
 use droppen_http::error::{ApiError, Hinted};
 use droppen_http::openapi_ext::Optional;
 use super::routes::{NewSessionResult, SendMessageResult};
-use crate::inject::receipts::{self, Claim, InFlight, Kind, Receipts};
+use crate::provider::receipts::{self, Claim, InFlight, Kind, Receipts};
 use droppen_sessions::Source;
 
 /// How long a retry waits for the attempt it collided with to answer.

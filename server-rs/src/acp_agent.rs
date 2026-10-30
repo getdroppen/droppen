@@ -1,7 +1,7 @@
 //! The ACP agents this machine runs sessions on: a registry keyed by id.
 //!
 //! Any program that speaks the [Agent Client Protocol](https://agentclientprotocol.com)
-//! over stdio can run Droppen sessions ([`crate::inject::acp`]). An agent is a
+//! over stdio can run Droppen sessions ([`crate::provider::acp`]). An agent is a
 //! description — an id, the name it goes by, the command line that starts it in
 //! ACP mode — plus the environment the user gives it. What it can do is not part
 //! of the description: that is what it answers to `initialize` and publishes as
@@ -523,7 +523,7 @@ pub struct AcpAuthMethod {
 }
 
 /// The longest error a check keeps, and what an agent says in a session's
-/// error is cut to ([`crate::inject::acp::AcpRuns::redact_acp`]).
+/// error is cut to ([`crate::provider::acp::AcpRuns::redact_acp`]).
 pub(crate) const MAX_CHECK_ERROR: usize = 4096;
 /// The longest name, title, version or id of what an agent says it is, and
 /// of a model or effort it offers, in characters; and the longest description
@@ -657,9 +657,9 @@ pub struct AcpAgentState {
     /// Where the agents' configuration lives.
     pub paths: Arc<droppen_instance::paths::Paths>,
     /// The live runs, which check an agent and stop its sessions when it goes.
-    pub(crate) acp: Arc<crate::inject::acp::AcpRuns>,
+    pub(crate) acp: Arc<crate::provider::acp::AcpRuns>,
     /// The providers, whose spawn gate the runs do that under.
-    pub(crate) providers: Arc<crate::inject::ProviderRegistry>,
+    pub(crate) providers: Arc<crate::provider::ProviderRegistry>,
 }
 droppen_http::substate!(AcpAgentState);
 

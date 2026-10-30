@@ -7592,7 +7592,7 @@ mod tests {
         injections: Arc<InjectionRegistry>,
         /// Every provider over `registry`, as the routes and the feeds ask
         /// them, and the spawn gate they lend.
-        providers: Arc<crate::inject::ProviderRegistry>,
+        providers: Arc<crate::provider::ProviderRegistry>,
         tx: mpsc::UnboundedSender<Cmd>,
         shared: Arc<Mutex<ResidentState>>,
         /// Every line the fake claude read off its stdin, in order.
@@ -7636,9 +7636,9 @@ mod tests {
         let paths = Arc::new(Paths::new(home.to_path_buf()));
         let dirs = InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
         dirs.create().expect("instance directories");
-        let host = Arc::new(crate::inject::RunHost {
-            receipts: Arc::new(crate::inject::receipts::Receipts::new(droppen_instance::db::at(paths.instance_db()))),
-            questions: Arc::new(crate::inject::questions::Questions::new(droppen_instance::db::at(paths.instance_db()))),
+        let host = Arc::new(crate::provider::RunHost {
+            receipts: Arc::new(crate::provider::receipts::Receipts::new(droppen_instance::db::at(paths.instance_db()))),
+            questions: Arc::new(crate::provider::questions::Questions::new(droppen_instance::db::at(paths.instance_db()))),
             accounts: Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins())),
             quota: Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins())),
             server: droppen_instance::identity::ServerId::local(&paths),
@@ -7651,7 +7651,7 @@ mod tests {
             journal: runs::RunsFile::new(dirs.runs_file()),
             listeners: std::sync::OnceLock::new(),
             alerts: std::sync::OnceLock::new(),
-            drafts: crate::inject::drafts::Drafts::default(),
+            drafts: crate::provider::drafts::Drafts::default(),
             steps: Mutex::new(Vec::new()),
             gate: Mutex::new(std::sync::Weak::new()),
             paths: paths.clone(),
@@ -8156,10 +8156,10 @@ done
             } = adoption;
             let (injections, registry) = registry(home.path(), stall, tick, step, settle, absorb_poll);
             // Every provider, Claude Code's over this harness's own runs.
-            let providers = crate::inject::ProviderRegistry::new(injections.clone(), |providers, injections| {
+            let providers = crate::provider::ProviderRegistry::new(injections.clone(), |providers, injections| {
                 providers.register(Arc::new(ClaudeCode::on(registry.clone(), injections)));
-                providers.register(Arc::new(crate::inject::app_server::Codex::new(injections.clone())));
-                providers.register(Arc::new(crate::inject::acp::Acp::new(injections.clone())));
+                providers.register(Arc::new(crate::provider::app_server::Codex::new(injections.clone())));
+                providers.register(Arc::new(crate::provider::acp::Acp::new(injections.clone())));
             });
             let log = home.path().join("stdin.log");
             let go = home.path().join("go");
@@ -8439,12 +8439,12 @@ done
         fn named(&self, text: &str) -> String {
             let receipts = self.registry.receipts();
             let client = uuid::Uuid::new_v4().to_string();
-            let now = crate::inject::receipts::now_ms();
+            let now = crate::provider::receipts::now_ms();
             let qid = match receipts
-                .claim(&client, crate::inject::receipts::Kind::Message, Source::Claude, Some(SESSION), now)
+                .claim(&client, crate::provider::receipts::Kind::Message, Source::Claude, Some(SESSION), now)
                 .expect("claim")
             {
-                crate::inject::receipts::Claim::Owned { qid } => qid,
+                crate::provider::receipts::Claim::Owned { qid } => qid,
                 other => panic!("a fresh id is owned, got {other:?}"),
             };
             receipts.complete(&client, "{}", None, now);
@@ -8456,7 +8456,7 @@ done
         fn receipt(&self, qid: &str) -> Option<ReceiptStatus> {
             self.registry
                 .receipts()
-                .for_session(Source::Claude, SESSION, crate::inject::receipts::now_ms())
+                .for_session(Source::Claude, SESSION, crate::provider::receipts::now_ms())
                 .into_iter()
                 .find(|receipt| receipt.qid.0.as_deref() == Some(qid))
                 .map(|receipt| receipt.status)
@@ -8521,7 +8521,7 @@ done
 
         /// Every provider over this harness's registry, as the routes and the
         /// feeds ask them.
-        fn providers(&self) -> Arc<crate::inject::ProviderRegistry> {
+        fn providers(&self) -> Arc<crate::provider::ProviderRegistry> {
             self.providers.clone()
         }
 
@@ -9010,7 +9010,7 @@ done
             "*) printf '%s\\n' '{\"type\":\"system\",\"subtype\":\"task_started\",\"task_id\":\"uploads-task\",\"description\":\"still working\"}'; printf",
         );
         harness.plan_claude(&script);
-        let make_recipe = |options: &crate::inject::SendOptions| {
+        let make_recipe = |options: &crate::provider::SendOptions| {
             super::spawn::claude_recipe(
                 &harness.registry.paths,
                 harness.bin.to_str(),
@@ -9030,15 +9030,15 @@ done
         assert_eq!(harness.spawns().len(), 1);
         assert!(harness.spawns()[0].contains("--add-dir"));
         for (i, options) in [
-            crate::inject::SendOptions {
+            crate::provider::SendOptions {
                 images: vec!["/uploads/screenshot.png".into()],
                 ..Default::default()
             },
-            crate::inject::SendOptions {
+            crate::provider::SendOptions {
                 files: vec!["/uploads/log.txt".into()],
                 ..Default::default()
             },
-            crate::inject::SendOptions::default(),
+            crate::provider::SendOptions::default(),
         ]
         .into_iter()
         .enumerate()
@@ -12942,7 +12942,7 @@ done
     }
 
     /// What the session's draft holds right now.
-    fn draft_of(harness: &Harness) -> crate::inject::drafts::Draft {
+    fn draft_of(harness: &Harness) -> crate::provider::drafts::Draft {
         harness
             .providers()
             .draft_watch(Source::Claude, SESSION)
@@ -13087,9 +13087,9 @@ done
 
     // ------------------------------------------------ the gate and the claim
 
-    /// A step of a spawn, as [`crate::inject::Step`] records it.
-    fn step(what: &'static str, gate: bool, claim: Option<bool>) -> crate::inject::Step {
-        crate::inject::Step { what, gate, claim }
+    /// A step of a spawn, as [`crate::provider::Step`] records it.
+    fn step(what: &'static str, gate: bool, claim: Option<bool>) -> crate::provider::Step {
+        crate::provider::Step { what, gate, claim }
     }
 
     /// A new resident starts under the spawn gate and with its claim, and both

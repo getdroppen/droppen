@@ -1,6 +1,6 @@
 //! A resident claude, across a server that goes away.
 //!
-//! The unit tests in `inject::shim` run the shim inside the test process, which
+//! The unit tests in `provider::shim` run the shim inside the test process, which
 //! proves the protocol and nothing about the deployment. These run the **real
 //! binary** under its `session-shim` subcommand, which is the only way to find
 //! out whether the subcommand is wired up at all — and then kill the client and
@@ -13,8 +13,8 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use remote_hand_server::inject::shim::{self, LinkError, Output, Sidecars, Spawn};
-use remote_hand_server::inject::SpawnPermit;
+use remote_hand_server::provider::shim::{self, LinkError, Output, Sidecars, Spawn};
+use remote_hand_server::provider::SpawnPermit;
 
 mod common;
 

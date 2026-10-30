@@ -56,7 +56,7 @@ pub fn bin_dir(instance: &InstanceDirs) -> PathBuf {
 /// run with — or `None` when that is somewhere this server will not write.
 ///
 /// Claude Code reads personal skills out of `$CLAUDE_CONFIG_DIR/skills`, and
-/// the server's `inject::owned_claude_env` sets that variable to the root this
+/// the server's `provider::owned_claude_env` sets that variable to the root this
 /// instance owns. So the presence of the variable in the spawn environment is
 /// exactly the question "is this a root remote-hand owns" — which is the
 /// question that decides whether writing a file into it is housekeeping or

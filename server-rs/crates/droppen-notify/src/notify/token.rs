@@ -8,7 +8,7 @@
 //! two constraints neither of those has:
 //!
 //! * **It must survive a server restart.** A resident claude outlives the
-//!   server that spawned it (the server's `inject::shim` exists for exactly that),
+//!   server that spawned it (the server's `provider::shim` exists for exactly that),
 //!   and its environment was fixed at spawn: there is no way to hand a
 //!   re-started server's new in-memory table to a process that is already
 //!   running. So verification is *stateless* — a keyed MAC recomputed from the

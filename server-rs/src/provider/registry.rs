@@ -473,7 +473,7 @@ mod tests {
 
     /// Claude Code alone.
     fn claude_only(providers: &mut ProviderRegistry, registry: &Arc<InjectionRegistry>) {
-        providers.register(Arc::new(crate::inject::resident::ClaudeCode::new(registry.clone())));
+        providers.register(Arc::new(crate::provider::resident::ClaudeCode::new(registry.clone())));
     }
 
     /// A session row of `source` that ran on the ACP agent `agent`, if any.
@@ -495,9 +495,9 @@ mod tests {
         let home = tempfile::tempdir().expect("tempdir");
         let providers = providers(home.path());
         let listed = |source| providers.injections.runs_of(source).expect("listed");
-        let codex = providers.provider::<crate::inject::app_server::Codex>().expect("Codex");
+        let codex = providers.provider::<crate::provider::app_server::Codex>().expect("Codex");
         assert!(std::ptr::addr_eq(Arc::as_ptr(codex.runs()), Arc::as_ptr(&listed(Source::Codex))), "Codex's");
-        let claude = providers.provider::<crate::inject::resident::ClaudeCode>().expect("Claude Code");
+        let claude = providers.provider::<crate::provider::resident::ClaudeCode>().expect("Claude Code");
         assert!(std::ptr::addr_eq(Arc::as_ptr(claude.runs()), Arc::as_ptr(&listed(Source::Claude))), "Claude Code's");
     }
 
@@ -515,7 +515,7 @@ mod tests {
         assert!(why.contains("runs are listed on this host already"), "{why}");
         drop(first);
         let again = ProviderRegistry::new(injections, crate::app::register_providers);
-        assert!(again.provider::<crate::inject::acp::Acp>().is_some());
+        assert!(again.provider::<crate::provider::acp::Acp>().is_some());
     }
 
     /// A source no provider runs is refused at the start and blocked at a send,

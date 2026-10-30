@@ -91,7 +91,7 @@ pub struct AppState {
     pub drive: Arc<Drive>,
     /// The ACP agents' runs, which their own routes check and stop agents
     /// through: found among the providers once, when this state is built.
-    pub(crate) acp: Arc<crate::inject::acp::AcpRuns>,
+    pub(crate) acp: Arc<crate::provider::acp::AcpRuns>,
     /// Every live web terminal, so shutdown can kill them.
     pub terminals: Arc<droppen_workbench::terminals::Registry>,
     /// Instant chats: the provider configuration and the API-backed store.

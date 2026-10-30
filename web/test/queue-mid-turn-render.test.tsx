@@ -2,7 +2,7 @@
 //
 // The server decides where the message is: a resident takes a steered message
 // off its queue the moment claude's transcript shows it folded into the turn in
-// flight (`Driver::absorb` in server-rs/src/inject/resident.rs), and keeps it
+// flight (`Driver::absorb` in server-rs/src/provider/resident.rs), and keeps it
 // queued — delivered, waiting to start — when claude holds it for a turn of its
 // own. These tests pin that every surface reads that one answer: the queue
 // panel, its Stop hint, the strip above the composer and the session list chip.

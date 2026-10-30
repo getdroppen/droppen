@@ -28,7 +28,7 @@
 //! would cut the only channel a constraint travels down.
 //!
 //! * `inject-locks` — one instance's claim on a running session, which is what
-//!   stops another spawning a second CLI against it (the server's `inject::lock`).
+//!   stops another spawning a second CLI against it (the server's `provider::lock`).
 //! * `codex-claims` — which instance made which codex thread
 //!   (the server's `sessions::codex_claims`). Every other kind of ownership can be a
 //!   directory; this one cannot, because `~/.codex` is one directory for the
@@ -288,7 +288,7 @@ impl InstanceDirs {
 /// [`InstanceLock::verify_still_held`] is how a caller finds out, and
 /// [`InstanceLock::identity`] is what makes the answer possible: the file's
 /// `(device, inode)` is recorded at acquire time, exactly as
-/// the server's `inject::lock` records its own.
+/// the server's `provider::lock` records its own.
 #[derive(Debug)]
 pub struct InstanceLock {
     /// Kept open: closing it is what releases the `flock`. Also read by

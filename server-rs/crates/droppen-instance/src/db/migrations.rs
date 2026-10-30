@@ -284,7 +284,7 @@ pub const SCHEMA: &[&str] = &[
     // can be retried without the message running twice. The row is inserted
     // *before* the message is enqueued, under the primary key, which is what
     // makes two concurrent attempts unable to both enqueue; see
-    // the server's `inject::receipts`.
+    // the server's `provider::receipts`.
     //
     // `response_json` is `NULL` while the first attempt is still running and
     // holds exactly what it answered once it has; a retry answers the same.
@@ -331,7 +331,7 @@ pub const SCHEMA: &[&str] = &[
     // 10 — the questions an agent stopped to ask.
     //
     // A resident claude now offers `AskUserQuestion` and blocks its turn on the
-    // answer (see the server's `inject::questions`). One row per question, keyed by
+    // answer (see the server's `provider::questions`). One row per question, keyed by
     // the CLI's own `request_id`, so a second device answering finds the row the
     // first already moved: an answer is a compare-and-set out of `pending`,
     // taken before anything is written to the CLI. `state` is `pending`,

@@ -293,7 +293,7 @@ mod tests {
                 let path = entry.path();
                 if path.is_dir() {
                     walk(&path, found);
-                } else if path.extension().is_some_and(|ext| ext == "rs") && !path.ends_with("inject/gate.rs") {
+                } else if path.extension().is_some_and(|ext| ext == "rs") && !path.ends_with("provider/gate.rs") {
                     found.push((path.display().to_string(), std::fs::read_to_string(&path).expect("source")));
                 }
             }
@@ -347,12 +347,12 @@ mod tests {
         };
         let sources = server_sources();
         assert!(
-            sources.iter().any(|(path, text)| path.ends_with("inject/registry.rs") && makes(text)),
+            sources.iter().any(|(path, text)| path.ends_with("provider/registry.rs") && makes(text)),
             "the provider registry makes the gate"
         );
         let found: Vec<&str> = sources
             .iter()
-            .filter(|(path, text)| !path.ends_with("inject/registry.rs") && makes(text))
+            .filter(|(path, text)| !path.ends_with("provider/registry.rs") && makes(text))
             .map(|(path, _)| path.as_str())
             .collect();
         assert!(found.is_empty(), "a spawn gate made outside the provider registry: {found:?}");

@@ -4,7 +4,7 @@
 //!
 //! Every store this replaces was a *whole-file rewrite of a small map*: read
 //! `runs.json`, change one record, encode the lot, `fsync`, rename over the top.
-//! That shape is correct on its own — the server's `inject::runs` wrote it carefully,
+//! That shape is correct on its own — the server's `provider::runs` wrote it carefully,
 //! down to syncing the directory after the rename — and it is the reason none of
 //! these files has ever been found torn. What it cannot do is any of the three
 //! things a database does for free:

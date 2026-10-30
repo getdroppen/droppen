@@ -3,8 +3,8 @@
 //!
 //! These are session vocabulary: [`super::SessionDetail`] and the live feed's
 //! frames carry them, and the routes answer with them. The stores that keep
-//! them and the drivers that move them (`inject::receipts`,
-//! `inject::questions`) build on sessions, so the shapes live here and
+//! them and the drivers that move them (`provider::receipts`,
+//! `provider::questions`) build on sessions, so the shapes live here and
 //! the stores fill them in.
 
 use std::collections::HashMap;

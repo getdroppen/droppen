@@ -24,7 +24,7 @@
 //!
 //! # The switch itself
 //!
-//! Not here: [`crate::inject`] owns the process. What this module hands it is a
+//! Not here: [`crate::provider`] owns the process. What this module hands it is a
 //! [`Plan`] and the words — the continuation prompt the new account's process is
 //! given ([`continuation_prompt`]) and the notification ([`notice`]).
 //!

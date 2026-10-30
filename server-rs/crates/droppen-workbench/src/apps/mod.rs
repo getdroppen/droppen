@@ -680,7 +680,7 @@ impl Registry {
     /// and is not the app, and adopting on liveness alone would put a stranger's
     /// process in the list and eventually signal it. A record written before the
     /// token existed carries none and falls back to liveness, which is the same
-    /// trade `inject::runs` makes — a guard that cannot tell must not
+    /// trade `provider::runs` makes — a guard that cannot tell must not
     /// refuse, or every restart would throw away a live editor.
     async fn survivor(&self, record: &AppRecord) -> Survivor {
         match (

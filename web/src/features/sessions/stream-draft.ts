@@ -3,7 +3,7 @@
  * middle of has run, which the transcript cannot say until the think is over
  * and its API response has ended.
  *
- * The server keeps the CLI's running estimate (`server-rs/src/inject/drafts.rs`)
+ * The server keeps the CLI's running estimate (`server-rs/src/provider/drafts.rs`)
  * and sends it as `{"type":"draft","turn","v","blocks":[{"index":0,"kind":"thinking","thinkingTokens":N}]}`,
  * or `"blocks":[]` once nothing is being thought. A page shows it in the
  * activity bar above the composer (`turn-status.tsx`), and nowhere else: the

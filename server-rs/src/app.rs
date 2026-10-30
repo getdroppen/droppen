@@ -23,7 +23,7 @@ use crate::api::AppState;
 use droppen_http::config::AppConfig;
 use crate::feed::global::GlobalFeed;
 use crate::feed::FeedRegistry;
-use crate::inject::{InjectionRegistry, ProviderRegistry};
+use crate::provider::{InjectionRegistry, ProviderRegistry};
 use droppen_instance::instance::{InstanceDirs, InstanceLock};
 use droppen_instance::paths::Paths;
 use droppen_sessions::account::{RotationOutcome, RotationTrigger};
@@ -141,7 +141,7 @@ impl GotchaApp for RemoteHandApp {
             // to start rather than on the first request for an agent.
             let acp = drive
                 .providers
-                .provider::<crate::inject::acp::Acp>()
+                .provider::<crate::provider::acp::Acp>()
                 .ok_or_else(|| GotchaError::message("no ACP provider is registered"))?
                 .runs()
                 .clone();
@@ -661,9 +661,9 @@ pub fn transcript_sources() -> TranscriptSources {
 /// Each provider names its own [`Source`]; this is the one place that names
 /// all of them.
 pub fn register_providers(providers: &mut ProviderRegistry, registry: &Arc<InjectionRegistry>) {
-    providers.register(Arc::new(crate::inject::resident::ClaudeCode::new(registry.clone())));
-    providers.register(Arc::new(crate::inject::app_server::Codex::new(registry.clone())));
-    providers.register(Arc::new(crate::inject::acp::Acp::new(registry.clone())));
+    providers.register(Arc::new(crate::provider::resident::ClaudeCode::new(registry.clone())));
+    providers.register(Arc::new(crate::provider::app_server::Codex::new(registry.clone())));
+    providers.register(Arc::new(crate::provider::acp::Acp::new(registry.clone())));
 }
 
 /// Every CLI's login, as the accounts are handed them: the one place that
@@ -677,13 +677,13 @@ pub fn logins() -> Logins {
 
 /// The drivers' alerts, sent by [`droppen_notify::push`]: Web Push to every subscribed
 /// browser, and the Bark endpoint too for a question or a rotation. Each push
-/// function spawns its sending and returns, as [`crate::inject::Alerts`] asks.
+/// function spawns its sending and returns, as [`crate::provider::Alerts`] asks.
 struct PushAlerts {
     /// What the alerts read the session's row through.
     transcripts: TranscriptSources,
 }
 
-impl crate::inject::Alerts for PushAlerts {
+impl crate::provider::Alerts for PushAlerts {
     fn turn(&self, paths: Arc<Paths>, source: Source, id: String, outcome: InjectionRunState, error: Option<String>, driver: DriverStates) {
         droppen_notify::push::notify_turn(paths, self.transcripts.clone(), source, id, outcome, error, driver);
     }
@@ -763,7 +763,7 @@ impl crate::stream_source::LiveSessions for crate::drive::Drive {
 }
 
 /// A claude session's draft, as its driver publishes it.
-struct DraftWatch(tokio::sync::watch::Receiver<crate::inject::drafts::Draft>);
+struct DraftWatch(tokio::sync::watch::Receiver<crate::provider::drafts::Draft>);
 
 impl droppen_agent::streams::source::DraftFeed for DraftWatch {
     fn changed(&mut self) -> futures_util::future::BoxFuture<'_, bool> {
@@ -856,7 +856,7 @@ mod tests {
     /// nor scheduled tasks.
     #[test]
     fn every_provider_says_what_its_sessions_are_offered_for() {
-        use crate::inject::Capabilities;
+        use crate::provider::Capabilities;
         let home = tempfile::tempdir().expect("tempdir");
         let paths = Arc::new(Paths::new(home.path().to_path_buf()));
         let dirs = InstanceDirs::new(&paths.data_dir(), "capabilities-test").expect("valid name");

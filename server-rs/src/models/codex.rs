@@ -138,11 +138,11 @@ impl Models for CodexModels {
         })
     }
 
-    // The CLI's own modes, asked of [`crate::inject::codex_permission_flags`] so
+    // The CLI's own modes, asked of [`crate::provider::codex_permission_flags`] so
     // the two cannot drift: that function is what turns the value into `argv`,
     // and it already refuses what it does not know.
     fn permission_is_known(&self, permission: &str) -> bool {
-        crate::inject::codex_permission_flags(permission).is_ok()
+        crate::provider::codex_permission_flags(permission).is_ok()
     }
 }
 

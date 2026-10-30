@@ -190,7 +190,7 @@
           "name": "droppen-provider",
           "about": "Provider, Run, Models, the registry, the spawn gate, the session shim, queue, receipts, questions, drafts.",
           "modules": [
-            "inject",
+            "provider",
             "models",
             "sessions"
           ],
@@ -199,8 +199,8 @@
             "droppen-accounts"
           ],
           "notes": [
-            "inject's own items, inject::receipts and inject::questions, drafts, runs, and the spawn gate with its claims (inject::gate).",
-            "inject::shim, the session shim: Claude Code and Codex both start their CLI through it.",
+            "provider's own items, provider::receipts and provider::questions, drafts, runs, and the spawn gate with its claims (provider::gate).",
+            "provider::shim, the session shim: Claude Code and Codex both start their CLI through it.",
             "models keeps its routes and the list's wire types here; each provider's list is its own (models::claude with its probe, models::codex, models::acp)."
           ]
         },
@@ -208,7 +208,7 @@
           "name": "droppen-provider-claude-code",
           "about": "Claude Code: the resident driver, its transcripts, roots, readings, logins and recordings.",
           "modules": [
-            "inject::resident",
+            "provider::resident",
             "sessions::transcript",
             "sessions::claude",
             "sessions::subagents",
@@ -232,7 +232,7 @@
           "name": "droppen-provider-codex",
           "about": "Codex: the app-server driver, its threads and tools, its quota and its login.",
           "modules": [
-            "inject::app_server",
+            "provider::app_server",
             "sessions::codex",
             "sessions::codex_tools",
             "sessions::codex_claims",
@@ -252,7 +252,7 @@
           "modules": [
             "acp",
             "acp_agent",
-            "inject::acp",
+            "provider::acp",
             "sessions::acp_transcript",
             "models::acp"
           ],

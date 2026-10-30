@@ -1,12 +1,12 @@
 //! The part of the [Agent Client Protocol](https://agentclientprotocol.com)
 //! this server reads, as Rust types.
 //!
-//! What [`crate::inject::acp`] sends is the official schema crate's
+//! What [`crate::provider::acp`] sends is the official schema crate's
 //! (`agent_client_protocol_schema`). What it reads is defined here, because
 //! the crate's tagged enums have no fallback: one update kind, content block
 //! or stop reason newer than the crate would fail the whole message.
 //!
-//! Only what [`crate::inject::acp`] reads is here, and reading is
+//! Only what [`crate::provider::acp`] reads is here, and reading is
 //! lenient the way ACP asks clients to be: an update kind, content block,
 //! tool kind or stop reason this build does not know is kept as `Other`
 //! rather than failing the message, and unknown fields are ignored.

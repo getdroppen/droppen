@@ -23,7 +23,7 @@ use crate::accounts::quota::QuotaCache;
 use crate::accounts::setup_token::Captures;
 use crate::accounts::store::AccountsStore;
 use droppen_auth::Auth;
-use crate::inject::{InjectionRegistry, ProviderRegistry, SpawnDecoration};
+use crate::provider::{InjectionRegistry, ProviderRegistry, SpawnDecoration};
 use droppen_sessions::Source;
 use droppen_base::process_env::Env;
 use droppen_instance::instance::InstanceDirs;

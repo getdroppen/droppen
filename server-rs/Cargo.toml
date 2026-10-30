@@ -123,7 +123,7 @@ tower-service = "0.3"
 tower-http = { version = "0.6", features = ["compression-br", "compression-gzip", "map-response-body"] }
 libc = "0.2"
 # The scratch directory an ACP agent is started in to be checked, or asked
-# what it offers (`inject::acp`): removed when dropped, a cancelled request's
+# what it offers (`provider::acp`): removed when dropped, a cancelled request's
 # too. Already in the graph for the tests.
 tempfile = "3"
 
@@ -133,7 +133,7 @@ tempfile = "3"
 clap = { version = "4.5", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { workspace = true }
-# The Agent Client Protocol's own types, for what `inject::acp` sends an
+# The Agent Client Protocol's own types, for what `provider::acp` sends an
 # agent: the spec's encoding rather than one of ours. Without the default
 # `schemars` feature, which only generates the JSON Schema.
 agent-client-protocol-schema = { version = "1.13", default-features = false }

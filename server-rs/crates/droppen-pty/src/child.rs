@@ -942,7 +942,7 @@ fn write_tombstone(path: &Path, code: i32) {
 /// (APFS allocates monotonically, which is why this never showed on macOS).
 /// The change time pins the identity to one particular creation.
 ///
-/// Shared with the server's `inject::shim`: a session shim binds its socket, waits
+/// Shared with the server's `provider::shim`: a session shim binds its socket, waits
 /// out the same kind of linger and faces the same successor.
 pub fn path_identity(path: &Path) -> Option<(u64, u64, i64, i64)> {
     use std::os::unix::fs::MetadataExt;

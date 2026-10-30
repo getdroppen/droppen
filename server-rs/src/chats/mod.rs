@@ -9,7 +9,7 @@
 //!   is stored here: it is a session like any other, and the only things that
 //!   make it a chat are the anchor directory and the persona
 //!   ([`ensure_chats_cwd`] for codex, `--system-prompt` for claude, both applied
-//!   by [`crate::inject`]). Those sessions are hidden from `GET /api/sessions`
+//!   by [`crate::provider`]). Those sessions are hidden from `GET /api/sessions`
 //!   and surface only through [`list_chats`].
 //! * **API-backed** — messages remote-hand stores itself ([`store`]) and
 //!   answers by streaming from any OpenAI-compatible endpoint the user
@@ -39,7 +39,7 @@ use tokio_util::sync::CancellationToken;
 use droppen_http::error::ApiError;
 use droppen_http::extract::{ApiJson, ApiPath};
 use droppen_http::SendResult;
-use crate::inject::SendOptions;
+use crate::provider::SendOptions;
 use droppen_http::openapi_ext::{ExtraResponses, Nullable, Optional};
 use droppen_instance::paths::Paths;
 use droppen_sessions::{chats_cwd, Source};
@@ -209,7 +209,7 @@ pub struct ChatNew {
     /// for a pair no model-less start reaches (`placed: false`), not a pick —
     /// logged as the start rule's choice and checked again at the spawn.
     #[serde(default, skip_serializing_if = "Optional::is_none")]
-    pub account_from: Optional<crate::inject::AccountFrom>,
+    pub account_from: Optional<crate::provider::AccountFrom>,
 }
 
 /// What `POST /api/chats/new` answers with.
@@ -383,7 +383,7 @@ pub async fn new_chat(State(state): State<ChatsState>, ApiJson(body): ApiJson<Ch
         chat: true,
         // A chat is billed to the login picked for it, else whichever one the
         // user made the default.
-        account: crate::inject::AccountChoice::from_start_request(body.account_id, body.account_from.0),
+        account: crate::provider::AccountChoice::from_start_request(body.account_id, body.account_from.0),
         use_default_account: true,
         ..Default::default()
     };
@@ -763,8 +763,8 @@ mod tests {
         let accounts = Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins()));
         let quota = Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins()));
         let decoration = crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone());
-        let injections = crate::inject::InjectionRegistry::new(paths, &dirs, accounts, quota, decoration);
-        let providers = crate::inject::ProviderRegistry::new(injections, crate::app::register_providers);
+        let injections = crate::provider::InjectionRegistry::new(paths, &dirs, accounts, quota, decoration);
+        let providers = crate::provider::ProviderRegistry::new(injections, crate::app::register_providers);
         let with_chats: Vec<Source> = providers.sources().filter(|source| providers.capabilities(*source).chats).collect();
         assert!(!with_chats.is_empty());
         for source in providers.sources() {

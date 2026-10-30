@@ -5,7 +5,7 @@ use std::sync::Arc;
 use futures_util::future::BoxFuture;
 
 use super::{ModelInfo, ModelList, ModelListSource, ModelRule, Models, ModelsQuery};
-use crate::inject::acp::AcpRuns;
+use crate::provider::acp::AcpRuns;
 use droppen_http::openapi_ext::Nullable;
 use droppen_instance::paths::Paths;
 
