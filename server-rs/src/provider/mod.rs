@@ -179,7 +179,7 @@ pub struct SendOptions {
     /// `None` mints one, as every send did before.
     pub message_id: Option<String>,
     /// New ACP sessions only: the id of the configured agent to start
-    /// ([`crate::acp_agent`]). A message to an existing session always goes to
+    /// ([`crate::provider::acp::agents`]). A message to an existing session always goes to
     /// the agent that session runs on.
     pub acp_agent: Option<String>,
 }

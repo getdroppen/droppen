@@ -73,7 +73,7 @@ use droppen_instance::paths::Paths;
 /// The sources a row may name, by wire name: the CLIs whose sessions this
 /// instance records. A row naming any other is dropped ([`stored`]); an ACP
 /// session is owned by where its transcript is kept, not by a row here (see
-/// `sessions::acp_transcript`).
+/// `provider::acp::sessions`).
 const RECORDED: [&str; 2] = ["claude", "codex"];
 
 /// The ids one instance claims, per CLI, each with the server that made it.

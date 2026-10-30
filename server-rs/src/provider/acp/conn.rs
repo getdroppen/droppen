@@ -35,7 +35,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::client::Client;
 use super::{absolute, InjectError, Replay};
-use crate::acp::{config_options, ConfigOption, PromptResponse, SessionNotification};
+use crate::provider::acp::protocol::{config_options, ConfigOption, PromptResponse, SessionNotification};
 
 /// How long a write to the agent's stdin may block.
 const WRITE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
@@ -202,7 +202,7 @@ impl Conn {
                 let created = self.call(AGENT_METHOD_NAMES.session_new, NewSessionRequest::new(cwd)).await?;
                 let id = created["sessionId"]
                     .as_str()
-                    .filter(|id| crate::sessions::acp_transcript::valid_id(id))
+                    .filter(|id| crate::provider::acp::sessions::valid_id(id))
                     .ok_or_else(|| InjectError::message("the agent returned no usable session id"))?;
                 Ok(Opened {
                     id: id.to_string(),

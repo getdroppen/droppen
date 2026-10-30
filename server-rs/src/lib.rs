@@ -73,8 +73,6 @@
 pub use gotcha::{GotchaError, GotchaResult};
 
 pub mod accounts;
-pub mod acp;
-pub mod acp_agent;
 pub mod api;
 pub mod app;
 pub mod chats;

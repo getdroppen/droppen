@@ -93,7 +93,7 @@ async fn start(server: &TestServer, agent: &str, workdir: &Path, text: &str) -> 
 
 /// The `session` record a transcript opens with.
 fn header(server: &TestServer, agent: &str, id: &str) -> Value {
-    let file = remote_hand_server::sessions::acp_transcript::AcpTranscripts::of(&server.paths).dir().join(agent).join(format!("{id}.jsonl"));
+    let file = remote_hand_server::provider::acp::sessions::AcpTranscripts::of(&server.paths).dir().join(agent).join(format!("{id}.jsonl"));
     let text = std::fs::read_to_string(&file).unwrap_or_else(|error| panic!("{}: {error}", file.display()));
     serde_json::from_str(text.lines().next().expect("a first line")).expect("json")
 }
@@ -365,7 +365,7 @@ async fn a_session_this_server_lost_is_given_the_agents_own_history() {
     // A transcript with nothing in it but which session it is and where it
     // ran: what is left when the conversation this server wrote down is gone.
     let id = "9b2f61c4-56f1-4c1e-9a4d-0d1f2e3c4b5a";
-    let dir = remote_hand_server::sessions::acp_transcript::AcpTranscripts::of(&server.paths).dir().join("fake");
+    let dir = remote_hand_server::provider::acp::sessions::AcpTranscripts::of(&server.paths).dir().join("fake");
     std::fs::create_dir_all(&dir).expect("dir");
     std::fs::write(
         dir.join(format!("{id}.jsonl")),
@@ -1200,7 +1200,7 @@ async fn a_model_is_left_out_only_when_its_id_looks_like_a_key() {
     let detail = wait_for(&server, &id, "the turn", finished).await;
     assert_eq!(detail["cliChoice"]["effort"], "auto", "{detail:#}");
     assert!(detail["cliChoice"]["model"].is_null(), "{detail:#}");
-    let file = remote_hand_server::sessions::acp_transcript::AcpTranscripts::of(&server.paths).dir().join("fake").join(format!("{id}.jsonl"));
+    let file = remote_hand_server::provider::acp::sessions::AcpTranscripts::of(&server.paths).dir().join("fake").join(format!("{id}.jsonl"));
     assert!(!std::fs::read_to_string(file).unwrap().contains("sk-ant-model-like-a-key"));
 
     // An agent whose models all show says nothing of hidden ones.

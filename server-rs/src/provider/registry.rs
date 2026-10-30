@@ -493,7 +493,7 @@ impl droppen_accounts::ModelIds for ProviderRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::acp_agent::{AcpAgentRegistry, AcpAgentUpdate};
+    use crate::provider::acp::agents::{AcpAgentRegistry, AcpAgentUpdate};
     use droppen_instance::instance::InstanceDirs;
     use droppen_instance::paths::Paths;
 
@@ -692,7 +692,7 @@ mod tests {
             acp_agent: agent.map(str::to_owned),
         };
         let acp = providers.models(Source::Acp).expect("the ACP provider");
-        let too_long = "x".repeat(crate::sessions::acp_transcript::MAX_AGENT_ID + 1);
+        let too_long = "x".repeat(crate::provider::acp::sessions::MAX_AGENT_ID + 1);
         for agent in [None, Some("../fake"), Some("Fake"), Some(""), Some("a/b"), Some("a\0b"), Some(too_long.as_str())] {
             assert_eq!(
                 acp.list(&query(Source::Acp, agent)).await.err().as_deref(),
@@ -765,7 +765,7 @@ mod tests {
         let home = tempfile::tempdir().expect("tempdir");
         let providers = providers(home.path());
         assert_eq!(providers.send_block(&row("acp", Some("fake"))), None);
-        assert_eq!(providers.send_block(&row("acp", Some("gone"))), Some(crate::acp_agent::removed("gone")));
+        assert_eq!(providers.send_block(&row("acp", Some("gone"))), Some(crate::provider::acp::agents::removed("gone")));
         assert_eq!(
             providers.send_block(&row("acp", None)).as_deref(),
             Some("this ACP session does not say which agent it ran on")
