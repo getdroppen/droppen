@@ -18,7 +18,7 @@ export interface ChainAlertsDeps {
   pinned(): boolean;
   /** Where this device stands in the chain. */
   standing(): Standing;
-  /** What this device acknowledged, as kept (`null`: nothing kept). */
+  /** What this device acknowledged, as kept, or as this page keeps it when the store would not (`null`: nothing kept). */
   readAck(): AckRecord | null;
   writeAck(ack: AckRecord): void;
 }
@@ -31,7 +31,7 @@ export class ChainAlerts {
 
   alerts(): ChainAlert[] {
     if (!this.deps.pinned() || this.deps.standing() !== "active") return [];
-    const ack = this.deps.readAck() ?? { through: this.basics.state?.seq ?? 0, extra: [] };
+    const ack = this.ack();
     const extra = new Set(ack.extra);
     return this.alertCandidates(ack.through)
       .filter((c) => !c.pending && !extra.has(c.alert.seq))
@@ -39,12 +39,31 @@ export class ChainAlerts {
   }
 
   acknowledge(seq: number): void {
-    const ack = this.deps.readAck() ?? { through: this.basics.state?.seq ?? 0, extra: [] };
+    const ack = this.ack();
     const extra = new Set([...ack.extra, seq]);
     const open = this.alertCandidates(ack.through).filter((c) => c.pending || !extra.has(c.alert.seq));
     const through = open.length ? open[0]!.alert.seq - 1 : (this.basics.state?.seq ?? ack.through);
     this.deps.writeAck({ through: Math.max(ack.through, through), extra: [...extra].filter((s) => s > Math.max(ack.through, through)).sort((a, b) => a - b) });
     this.basics.emit();
+  }
+
+  /**
+   * What this device acknowledged; with nothing kept (the store would not
+   * keep where alerts start), from where it came into the account: the entry
+   * that let it in, or the genesis it made. Never from the head, which would
+   * take every alert away, the ones still to come too.
+   */
+  private ack(): AckRecord {
+    const kept = this.deps.readAck();
+    if (kept) return kept;
+    const chain = this.basics.state;
+    if (!chain) return { through: 0, extra: [] };
+    for (let seq = chain.seq; seq >= 1; seq--) {
+      const action = chain.entryAt(seq)?.draft.action;
+      const joins = action?.type === "addDevice" || action?.type === "addDevice3" || action?.type === "recoveryJoin" || action?.type === "recoveryJoin3";
+      if (joins && action.device.id === this.basics.deviceId) return { through: seq - 1, extra: [] };
+    }
+    return { through: 0, extra: [] };
   }
 
   /** Device-changing entries since `through` this device did not sign or act on: `{entry, pending}` (a pending recovery join waits in its own banner). */

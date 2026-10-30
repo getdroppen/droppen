@@ -1334,7 +1334,16 @@ export class CloudAccount {
 
   // ------------------------------------------------------------ alerts
 
+  /**
+   * What this device acknowledged here, when the store would not keep it (it
+   * is full, or off): what this page reads instead, for its life. So "that was
+   * me" takes an alert away on this page only, and a page that keeps nothing
+   * is told of every change from where this device came in (`ChainAlerts`).
+   */
+  private unkeptAck: AckRecord | null = null;
+
   private readAck(): AckRecord | null {
+    if (this.unkeptAck) return this.unkeptAck;
     try {
       const raw = this.read(ackKey(this.account, this.deviceId));
       if (!raw) return null;
@@ -1347,7 +1356,10 @@ export class CloudAccount {
   }
 
   private writeAck(ack: AckRecord): void {
-    this.write(ackKey(this.account, this.deviceId), JSON.stringify(ack));
+    const key = ackKey(this.account, this.deviceId);
+    const raw = JSON.stringify(ack);
+    this.write(key, raw);
+    this.unkeptAck = this.read(key) === raw ? null : ack;
   }
 
   /**
@@ -4457,6 +4469,7 @@ export class CloudAccount {
    */
   async wipe(): Promise<void> {
     this.stopSession();
+    this.unkeptAck = null;
     const hosts = (this.state?.hosts() ?? []).map((m) => m.info.id);
     await forgetBrowser({
       store: this.store,

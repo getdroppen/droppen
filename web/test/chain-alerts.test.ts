@@ -4,7 +4,7 @@
 // device. Every kind is pinned here appearing and being acknowledged (a
 // renewed identity key in host-rotation-renewal.test.ts, which can renew one),
 // and so is where alerts start: the acknowledgement written when a device pins
-// the account.
+// the account, and where they start in a browser whose store will not keep it.
 import assert from "node:assert/strict";
 import test from "node:test";
 import { PASSKEY_DELAY_MS, PAUSE_CANCELLED, PAUSE_COMPLETED, PAUSE_START, RECOVERY_DELAY_MS } from "../src/lib/e2e/index.js";
@@ -247,6 +247,97 @@ test("alerts: the founding device's fallback pin leaves where its alerts start a
   assert.equal(a.pinned, true, "pinned where older pages keep it");
   assert.ok(a.chain!.seq > 0);
   assert.deepEqual(ackOf(a), { through: 0, extra: [] }, "kept as it was, not moved to the genesis it made");
+});
+
+/** `storage` from now on refuses the acknowledgement (full, say), and keeps everything else, until it is told to take it again. */
+function refuseAcks(storage: ReturnType<typeof browserStorage>): () => void {
+  const setItem = storage.setItem;
+  storage.setItem = (key, value) => {
+    if (key.startsWith("rh.hub.ack.")) throw new DOMException("the quota is used up", "QuotaExceededError");
+    setItem(key, value);
+  };
+  return () => {
+    storage.setItem = setItem;
+  };
+}
+
+test("alerts: a browser that keeps no acknowledgement is still told of every change; one acknowledged goes for that page only", async () => {
+  const { hub, a } = await v2Account();
+  const store = new RecordingKeyStore();
+  refuseAcks(browserStorage(store));
+  const c = await pairBrowser(hub, a, { admin: true, store });
+  await c.receiveMail();
+  assert.equal(c.pinned, true);
+  assert.equal(ackOf(c), null, "where its alerts start could not be kept");
+  assert.deepEqual(c.alerts(), [], "what came before is history, on this page too");
+  await a.setRecoveryWords();
+  const d = await pairBrowser(hub, a, { admin: true });
+  await c.sync();
+  const told = (x: CloudAccount) => x.alerts().map((y) => [y.kind, y.subject]);
+  const both = [
+    ["setRecoveryKey", null],
+    ["addDevice", d.deviceId],
+  ];
+  assert.deepEqual(told(c), both, "every change since is told");
+  c.acknowledge(c.alerts()[0]!.seq);
+  assert.deepEqual(told(c), both.slice(1), "acknowledged here: that one alone goes, for this page");
+  const again = await hub.reload(c);
+  assert.equal(ackOf(again), null);
+  assert.deepEqual(told(again), both, "the next page kept nothing: it starts where this device came in, and the acknowledged one is back");
+  await a.removeDevice(d.deviceId, new FakeCourier());
+  await again.sync();
+  assert.deepEqual(told(again), [...both, ["removeDevice", d.deviceId]], "and what comes later is told as well");
+});
+
+test("alerts: a page that keeps nothing starts a recovered device at its recovery join and the device that made the account at its genesis, as if where they start were kept", async (t) => {
+  const t0 = Date.now();
+  t.mock.timers.enable({ apis: ["Date"], now: t0 });
+  const { hub, a } = await v2Account();
+  await a.upgradeToV3({ writable: true });
+  const words = (await a.setRecoveryWords()).join(" ");
+  const store = new RecordingKeyStore();
+  refuseAcks(browserStorage(store));
+  const y = await hub.device("tok", store);
+  await y.recover(words);
+  await a.sync();
+  t.mock.timers.setTime(t0 + RECOVERY_DELAY_MS + 60_000);
+  await y.activateRecovered(words);
+  const c = await pairBrowser(hub, a, { admin: false });
+  await y.sync();
+  await a.sync();
+  const told = (x: CloudAccount) => x.alerts().map((z) => [z.kind, z.subject]);
+  assert.equal(ackOf(y), null, "where y's alerts start could not be kept");
+  assert.deepEqual(told(y), [["addDevice", c.deviceId]], "on the page that pinned, they start where it pinned");
+  assert.deepEqual(told(await hub.reload(y)), told(y), "on the next, at its recovery join: the same");
+  const founder = told(a);
+  assert.ok(founder.length > 0);
+  browserStorage(a.store).removeItem(`rh.hub.ack.${a.account}.${a.deviceId}`);
+  refuseAcks(browserStorage(a.store));
+  assert.deepEqual(told(await hub.reload(a)), founder, "the device that made the account: at its genesis, the same again");
+});
+
+test("alerts: while the store will not take the acknowledgement, what is acknowledged goes for that page only, and the kept one stands", async () => {
+  const { hub, a } = await v2Account();
+  const c = await pairBrowser(hub, a, { admin: true });
+  await c.receiveMail();
+  const kept = ackOf(c);
+  assert.ok(kept);
+  await a.setRecoveryWords();
+  const d = await pairBrowser(hub, a, { admin: true });
+  await c.sync();
+  const takeAcksAgain = refuseAcks(browserStorage(c.store));
+  const all = c.alerts().map((x) => x.seq);
+  assert.equal(all.length, 2);
+  c.acknowledge(all[1]!);
+  assert.deepEqual(c.alerts().map((x) => x.seq), [all[0]], "the newer one goes on this page, the older stays");
+  assert.deepEqual(ackOf(c), kept, "nothing new was kept");
+  const other = await hub.reload(c);
+  assert.deepEqual(other.alerts().map((x) => [x.seq, x.subject]), [[all[0], null], [all[1], d.deviceId]], "another page reads where the store kept it");
+  takeAcksAgain();
+  c.acknowledge(all[0]!);
+  assert.deepEqual(ackOf(c), { through: c.chain!.seq, extra: [] }, "once the store takes it again, this page's acknowledgements are kept");
+  assert.deepEqual(c.alerts(), []);
+  assert.deepEqual((await hub.reload(c)).alerts(), [], "and the next page reads them");
 });
 
 test("alerts: a waiting recovery join acknowledged by its seq keeps where alerts start below it", async () => {
