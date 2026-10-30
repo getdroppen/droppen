@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use futures_util::future::BoxFuture;
 
-use crate::accounts::store::{AccountError, AccountLaunch, AccountProvider};
+use droppen_accounts::store::{AccountError, AccountLaunch, AccountProvider};
 use droppen_instance::identity::ServerId;
 use droppen_instance::instance::InstanceDirs;
 use droppen_instance::paths::Paths;
@@ -278,11 +278,11 @@ pub struct Sent {
 impl RunHost {
     /// An account the start rule named for a pair no model-less start reaches
     /// (`accountFrom: "start"`), checked again now: still the login a start naming
-    /// no model gets ([`crate::accounts::rotation::StartInputs::still_names`]) —
+    /// no model gets ([`droppen_accounts::rotation::StartInputs::still_names`]) —
     /// then it, logged as the rule's choice — or, if the rule has moved on since
     /// the page asked, wherever the rule places this start's model now.
     async fn rule_account(&self, provider: AccountProvider, named: &str, model: Option<&str>) -> Option<String> {
-        let inputs = crate::accounts::rotation::StartInputs::gather(&self.accounts, &self.quota, provider).await;
+        let inputs = droppen_accounts::rotation::StartInputs::gather(&self.accounts, &self.quota, provider).await;
         if inputs.still_names(named) {
             tracing::info!(
                 provider = provider.label(),
@@ -305,12 +305,12 @@ impl RunHost {
         fresh
     }
 
-    /// Where a start that names no account runs ([`crate::accounts::rotation::start_for`]),
+    /// Where a start that names no account runs ([`droppen_accounts::rotation::start_for`]),
     /// and a line in the log whenever that is not simply the default or the local
     /// login: which login the start was moved off, which it went to, and why.
     async fn start_account(&self, provider: AccountProvider, model: Option<&str>) -> Option<String> {
-        use crate::accounts::rotation::StartReason;
-        let start = crate::accounts::rotation::start_for(&self.accounts, &self.quota, provider, model).await;
+        use droppen_accounts::rotation::StartReason;
+        let start = droppen_accounts::rotation::start_for(&self.accounts, &self.quota, provider, model).await;
         let to = start.account_id.0;
         let provider_name = provider.label();
         let default = match start.reason {
@@ -366,11 +366,11 @@ impl RunHost {
     ///
     /// Synchronous like every state-database write in this server, and only
     /// ever reached on a path where a CLI has already failed.
-    pub(crate) fn record_limit(&self, mut observation: crate::accounts::rest::Observation) {
-        use crate::accounts::rest;
+    pub(crate) fn record_limit(&self, mut observation: droppen_accounts::rest::Observation) {
+        use droppen_accounts::rest;
         observation.raw = self.redact(&observation.raw);
         observation.reason = if observation.reason.is_empty() {
-            crate::accounts::limits::reason_line(&observation.raw, observation.verdict.class)
+            droppen_accounts::limits::reason_line(&observation.raw, observation.verdict.class)
         } else {
             self.redact(&observation.reason)
         };
@@ -400,16 +400,16 @@ impl RunHost {
     ///
     /// Such a rest has no end of its own. The claude local login heals by
     /// reading (a reading newer than the refusal outweighs it,
-    /// [`crate::accounts::local_login`]); codex has no reading of its login,
+    /// [`droppen_accounts::local_login`]); codex has no reading of its login,
     /// and a stored account's rest only ended with a new credential. Without
     /// this, one passing refusal would mark a login signed out for good — and a
     /// signed-out local login hands every start that names no account to a
-    /// stand-in ([`crate::accounts::rotation::start_choice`]).
+    /// stand-in ([`droppen_accounts::rotation::start_choice`]).
     pub(crate) fn credential_accepted(&self, account_id: &str, session_id: &str) {
         use droppen_sessions::account::LimitClass;
         let log = self.accounts.limit_log();
         if log
-            .active_observed_ms(account_id, LimitClass::Auth, crate::accounts::rest::now_ms())
+            .active_observed_ms(account_id, LimitClass::Auth, droppen_accounts::rest::now_ms())
             .is_none()
         {
             return;
@@ -502,12 +502,12 @@ pub struct RunHost {
     /// The stored logins, for one job only: taking the credentials this server
     /// injected back out of whatever the CLI printed. See
     /// [`RunHost::redact`].
-    accounts: Arc<crate::accounts::store::AccountsStore>,
+    accounts: Arc<droppen_accounts::store::AccountsStore>,
     /// The quota readings, for one job only: every `rate_limit_event` a
     /// resident's claude writes is a reading of the login it runs on, and the
     /// driver files it here. The same handle [`crate::drive::Drive::quota`]
     /// serves the panel from, so a reading is on the panel the moment it lands.
-    quota: Arc<crate::accounts::quota::QuotaCache>,
+    quota: Arc<droppen_accounts::quota::QuotaCache>,
     /// This server's name, so the keys below can say whose they are.
     ///
     /// Only ever this process' own: everything keyed by it is in memory and
@@ -656,8 +656,8 @@ impl InjectionRegistry {
     pub fn new(
         paths: Arc<Paths>,
         instance: &InstanceDirs,
-        accounts: Arc<crate::accounts::store::AccountsStore>,
-        quota: Arc<crate::accounts::quota::QuotaCache>,
+        accounts: Arc<droppen_accounts::store::AccountsStore>,
+        quota: Arc<droppen_accounts::quota::QuotaCache>,
         decoration: Arc<dyn SpawnDecoration>,
     ) -> Arc<Self> {
         Arc::new(Self {
@@ -682,8 +682,8 @@ impl RunHost {
     fn new(
         paths: Arc<Paths>,
         instance: &InstanceDirs,
-        accounts: Arc<crate::accounts::store::AccountsStore>,
-        quota: Arc<crate::accounts::quota::QuotaCache>,
+        accounts: Arc<droppen_accounts::store::AccountsStore>,
+        quota: Arc<droppen_accounts::quota::QuotaCache>,
     ) -> Arc<Self> {
         let receipts = Arc::new(receipts::Receipts::new(droppen_instance::db::at(paths.instance_db())));
         let questions = Arc::new(questions::Questions::new(droppen_instance::db::at(paths.instance_db())));
@@ -1605,8 +1605,8 @@ mod tests {
         let registry = InjectionRegistry::new(
             paths.clone(),
             &dirs,
-            Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins())),
-            Arc::new(crate::accounts::quota::QuotaCache::new(paths, crate::app::logins())),
+            Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), crate::app::logins())),
+            Arc::new(droppen_accounts::quota::QuotaCache::new(paths, crate::app::logins())),
             decoration,
         );
 
@@ -1690,8 +1690,8 @@ mod tests {
         let registry = InjectionRegistry::new(
             paths.clone(),
             &dirs,
-            Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins())),
-            Arc::new(crate::accounts::quota::QuotaCache::new(paths, crate::app::logins())),
+            Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), crate::app::logins())),
+            Arc::new(droppen_accounts::quota::QuotaCache::new(paths, crate::app::logins())),
             decoration,
         );
         let providers = ProviderRegistry::new(registry.clone(), crate::app::register_providers);
@@ -1763,8 +1763,8 @@ mod tests {
         let registry = InjectionRegistry::new(
             paths.clone(),
             &dirs,
-            Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins())),
-            Arc::new(crate::accounts::quota::QuotaCache::new(paths, crate::app::logins())),
+            Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), crate::app::logins())),
+            Arc::new(droppen_accounts::quota::QuotaCache::new(paths, crate::app::logins())),
             decoration,
         );
         let providers = ProviderRegistry::new(registry.clone(), crate::app::register_providers);
@@ -1816,8 +1816,8 @@ mod tests {
         let registry = InjectionRegistry::new(
             paths.clone(),
             &dirs,
-            Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins())),
-            Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins())),
+            Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), crate::app::logins())),
+            Arc::new(droppen_accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins())),
             decoration,
         );
         let providers = ProviderRegistry::new(registry.clone(), crate::app::register_providers);

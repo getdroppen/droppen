@@ -33,6 +33,7 @@ fn registered_in_source() -> std::collections::BTreeSet<(String, String)> {
         manifest.join("crates/droppen-files/src"),
         manifest.join("crates/droppen-workbench/src"),
         manifest.join("crates/droppen-plugins/src"),
+        manifest.join("crates/droppen-accounts/src"),
         manifest.join("crates/droppen-sessions/src"),
         manifest.join("crates/droppen-agent/src"),
         manifest.join("crates/droppen-cloud/src"),

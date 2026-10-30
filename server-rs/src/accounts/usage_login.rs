@@ -26,8 +26,8 @@ use droppen_http::openapi_ext::{ExtraResponses, Optional};
 use droppen_base::process_env::{apply_env, claude_env, clean_env_bare, resolve_on_path};
 use droppen_workbench::terminals::{CreateSpec, Registry};
 
-use super::store::{Account, AccountKind, AccountPatch, AccountProvider};
-use super::{account_not_found, parse_auth_status, require_uuid, AccountsState};
+use droppen_accounts::store::{Account, AccountKind, AccountPatch, AccountProvider};
+use droppen_accounts::{account_not_found, parse_auth_status, require_uuid, AccountsState};
 
 /// `POST /api/accounts/{id}/usage-login` response.
 #[derive(Debug, Clone, Serialize, Deserialize, Schematic)]
@@ -98,7 +98,7 @@ pub async fn start(drive: &Arc<Drive>, terminals: &Arc<Registry>, account: &Acco
         return Err(UsageLoginError::NoCli);
     }
 
-    let probe = |dir: Result<std::path::PathBuf, super::store::AccountError>| dir.map_err(|error| UsageLoginError::Probe(error.to_string()));
+    let probe = |dir: Result<std::path::PathBuf, droppen_accounts::store::AccountError>| dir.map_err(|error| UsageLoginError::Probe(error.to_string()));
     let config_dir = probe(drive.accounts.usage_config_dir(&account.id))?;
     // An empty working directory, so the CLI adopts no project of the user's.
     let cwd = probe(drive.accounts.usage_cwd(&account.id))?;
@@ -136,7 +136,7 @@ droppen_http::substate!(UsageLoginState);
 /// Start `claude auth login` for one account, in a terminal.
 #[api(id = "start_usage_login", group = "accounts", summary = "Start an account's usage login")]
 pub async fn start_usage_login(State(state): State<UsageLoginState>, ApiPath(id): ApiPath<String>) -> Result<Created<UsageLoginStarted>, ApiError> {
-    super::require_uuid(&id)?;
+    droppen_accounts::require_uuid(&id)?;
     let Some(account) = state.drive.accounts.get(&id).await else {
         return Err(ApiError::not_found("account not found"));
     };

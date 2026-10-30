@@ -177,6 +177,7 @@ mod tests {
             manifest.join("../droppen-files/src"),
             manifest.join("../droppen-workbench/src"),
             manifest.join("../droppen-plugins/src"),
+            manifest.join("../droppen-accounts/src"),
             manifest.join("../droppen-sessions/src"),
             manifest.join("../droppen-aggregator/src"),
             manifest.join("../droppen-agent/src"),

@@ -69,13 +69,13 @@ use futures_util::future::BoxFuture;
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-use crate::accounts::limits::{self, Verdict};
+use droppen_accounts::limits::{self, Verdict};
 use crate::accounts::login::claude::ClaudeCodeLogin;
-use crate::accounts::login::Login;
+use droppen_accounts::login::Login;
 use crate::accounts::quota::claude::RateLimitWindows;
-use crate::accounts::rest::{self, Observation};
-use crate::accounts::rotation::{self, AheadGuards, AheadPlan, Plan, Wait};
-use crate::accounts::store::AccountProvider;
+use droppen_accounts::rest::{self, Observation};
+use droppen_accounts::rotation::{self, AheadGuards, AheadPlan, Plan, Wait};
+use droppen_accounts::store::AccountProvider;
 use droppen_http::openapi_ext::Optional;
 use droppen_base::process_env::Env;
 use droppen_base::procs;
@@ -239,7 +239,7 @@ pub(super) struct Fingerprint {
     ///
     /// The hash the store already keeps — of an OAuth token, or of an env
     /// block — and never a value; see
-    /// [`crate::accounts::store::AccountsStore::credential_hash`].
+    /// [`droppen_accounts::store::AccountsStore::credential_hash`].
     ///
     /// The account id is not enough, and the case that proved it is the whole
     /// reason this field exists: a user whose env account pointed at a base URL
@@ -802,7 +802,7 @@ impl ClaudeCodeRuns {
                 Some(ms) => Some(Duration::from_millis(ms)),
                 None => Some(Duration::from_secs(30 * 60)),
             },
-            rotate_ahead: crate::accounts::rotation::ahead_threshold_from_env(),
+            rotate_ahead: droppen_accounts::rotation::ahead_threshold_from_env(),
             // `/tmp`, not `TMPDIR`: claude writes here, and on macOS `TMPDIR` is
             // a per-process directory under `/var/folders` that it never uses.
             task_root: droppen_base::env::var("DROPPEN_TASK_ROOT").map(PathBuf::from).unwrap_or_else(|| {
@@ -992,7 +992,7 @@ pub(super) struct Queued {
     /// How many times an automatic account rotation has already moved the
     /// message chain this one belongs to: `0` for anything a person sent, and
     /// the count for the continuation a rotation queued in its place. Kept so
-    /// the cap in [`crate::accounts::rotation::ROTATION_CAP`] survives a
+    /// the cap in [`droppen_accounts::rotation::ROTATION_CAP`] survives a
     /// restart; absent, and zero, on every record written before there was one.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub(super) rotation_attempt: u8,
@@ -1244,7 +1244,7 @@ impl ClaudeCodeRuns {
     /// The one `info` line per decision is here, so every path that decides —
     /// a switch, nowhere to go, the cap — is logged the same way. Returns the
     /// record's id, for a switch that learns later how much it interrupted.
-    fn record_rotation(&self, decision: &crate::accounts::rotation::Decision, notice: &str) -> Option<i64> {
+    fn record_rotation(&self, decision: &droppen_accounts::rotation::Decision, notice: &str) -> Option<i64> {
         let id = match self.accounts.rotation_log().record(decision) {
             Ok(id) => Some(id),
             Err(error) => {
@@ -1258,7 +1258,7 @@ impl ClaudeCodeRuns {
             to = %decision.to.id,
             class = decision.class.as_str(),
             scope = %decision.scope,
-            until = decision.until_ms.map(crate::accounts::rest::iso_ms).as_deref().unwrap_or("-"),
+            until = decision.until_ms.map(droppen_accounts::rest::iso_ms).as_deref().unwrap_or("-"),
             interrupted = decision.interrupted_tasks,
             outcome = decision.outcome.as_str(),
             trigger = decision.trigger.as_str(),
@@ -3525,7 +3525,7 @@ impl Driver {
     /// Every event carries them, `allowed` as much as `rejected`, and they are
     /// the reading the quota panel now lives on: made by the credential actually
     /// being billed, at no cost, and with no second login to keep alive. See
-    /// [`crate::accounts::quota::readings`].
+    /// [`droppen_accounts::quota::readings`].
     async fn note_usage(&self, info: &Value) {
         let windows = info.windows_from_rate_limit_info();
         if windows.is_empty() {
@@ -3535,7 +3535,7 @@ impl Driver {
             tracing::debug!(session = %self.id, "a quota reading from a session on the managed root's own login; not filed");
             return;
         };
-        if let crate::accounts::quota::UsageLogin::Account(id) = &login {
+        if let droppen_accounts::quota::UsageLogin::Account(id) = &login {
             // Only for an account that still exists: a reading must not
             // recreate the directory of one deleted under a running session.
             if self.registry.accounts.get(id).await.is_none() {
@@ -3560,7 +3560,7 @@ impl Driver {
     /// is nobody's to file under. The root is read off the recipe's environment
     /// when this server started the process, and off where the transcript lives
     /// when it inherited one.
-    async fn usage_login(&self) -> Option<crate::accounts::quota::UsageLogin> {
+    async fn usage_login(&self) -> Option<droppen_accounts::quota::UsageLogin> {
         let account = match &self.live {
             Some(live) => live.account.clone(),
             None => self.registry.accounts.session_account_id_for(&self.id, AccountProvider::Claude).await,
@@ -4114,7 +4114,7 @@ impl Driver {
         let own: Vec<rotation::Window> = self
             .registry
             .quota
-            .cached(&crate::accounts::quota::UsageLogin::Account(from_id.clone()))
+            .cached(&droppen_accounts::quota::UsageLogin::Account(from_id.clone()))
             .windows
             .iter()
             .map(rotation::Window::from_quota)
@@ -7551,7 +7551,7 @@ mod tests {
     #[test]
     fn a_usage_reading_goes_to_the_login_the_process_runs_on() {
         use crate::accounts::quota::claude::session_login;
-        use crate::accounts::quota::UsageLogin;
+        use droppen_accounts::quota::UsageLogin;
         use droppen_instance::paths::ClaudeRoot;
 
         let local = droppen_base::process_env::claude_env_bare();
@@ -7639,8 +7639,8 @@ mod tests {
         let host = Arc::new(crate::provider::RunHost {
             receipts: Arc::new(crate::provider::receipts::Receipts::new(droppen_instance::db::at(paths.instance_db()))),
             questions: Arc::new(crate::provider::questions::Questions::new(droppen_instance::db::at(paths.instance_db()))),
-            accounts: Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins())),
-            quota: Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins())),
+            accounts: Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), crate::app::logins())),
+            quota: Arc::new(droppen_accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins())),
             server: droppen_instance::identity::ServerId::local(&paths),
             listed: Mutex::new(std::collections::BTreeMap::new()),
             runs: Mutex::new(HashMap::new()),
@@ -7665,7 +7665,7 @@ mod tests {
             await_background: Some(Duration::from_millis(400)),
             // The production default, set here rather than read for the reason
             // the timings are: no test's answer may depend on the shell.
-            rotate_ahead: Some(crate::accounts::rotation::AHEAD_DEFAULT_PERCENT),
+            rotate_ahead: Some(droppen_accounts::rotation::AHEAD_DEFAULT_PERCENT),
             // This test's own, so the corroboration probe reads a directory the
             // test controls rather than whatever `/tmp` happens to hold.
             task_root: home.join("task-root"),
@@ -8942,10 +8942,10 @@ done
         let file = harness.registry.paths.data_dir().join("local-usage.json");
         until("the reading to be filed", || file.is_file()).await;
 
-        let reading = harness.registry.quota.cached(&crate::accounts::quota::UsageLogin::Local);
+        let reading = harness.registry.quota.cached(&droppen_accounts::quota::UsageLogin::Local);
         let windows: Vec<(&str, f64)> = reading.windows.iter().map(|w| (w.label.as_str(), w.used_percent)).collect();
         assert_eq!(windows, [("5h", 19.0), ("weekly", 46.0)]);
-        assert_eq!(reading.source, Some(crate::accounts::quota::QuotaReadingSource::Session));
+        assert_eq!(reading.source, Some(droppen_accounts::quota::QuotaReadingSource::Session));
         assert!(reading.updated_at.is_some());
     }
 
@@ -11177,8 +11177,8 @@ done
     /// Store `wanted` accounts in `home` — `(label, oauth)`: an OAuth account
     /// is in the pool by default, an env one is not — bind the session to the
     /// first, and describe a process started under it running `model`.
-    async fn accounts_in(home: &Path, wanted: &[(&str, bool)], model: Option<&str>) -> (Vec<crate::accounts::store::Account>, Fingerprint) {
-        use crate::accounts::store::{AccountsStore, Credential};
+    async fn accounts_in(home: &Path, wanted: &[(&str, bool)], model: Option<&str>) -> (Vec<droppen_accounts::store::Account>, Fingerprint) {
+        use droppen_accounts::store::{AccountsStore, Credential};
         use droppen_base::env_block::parse_env_block;
         let store = AccountsStore::new(Arc::new(Paths::new(home.to_path_buf())), crate::app::logins());
         let mut accounts = Vec::new();
@@ -11681,7 +11681,7 @@ dir=$(dirname "$GO")
         let home = tempfile::tempdir().expect("tempdir");
         let (accounts, live) = accounts_in(home.path(), &[("a@work", true), ("b@team", true)], Some("fable")).await;
         let b = accounts[1].clone();
-        let store = crate::accounts::store::AccountsStore::new(Arc::new(Paths::new(home.path().to_path_buf())), crate::app::logins());
+        let store = droppen_accounts::store::AccountsStore::new(Arc::new(Paths::new(home.path().to_path_buf())), crate::app::logins());
         store
             .bind_session_account(SESSION, Some(&b.id), AccountProvider::Claude)
             .await
@@ -11975,7 +11975,7 @@ done
         let windows = info.windows_from_rate_limit_info();
         registry
             .quota
-            .ingest_session(crate::accounts::quota::UsageLogin::Account(account.to_string()), windows);
+            .ingest_session(droppen_accounts::quota::UsageLogin::Account(account.to_string()), windows);
     }
 
     /// The whole of a move ahead of a limit, on the everyday case: a turn ends
@@ -13016,8 +13016,8 @@ done
             auth: droppen_auth::Auth::new(&paths, &instance, &droppen_http::config::AuthSettings::default(), false, std::sync::Arc::new(crate::app::NotifyTokens)),
             wizards: crate::accounts::setup_token::Captures::new(),
             injections: harness.injections.clone(),
-            accounts: Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins())),
-            quota: Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins())),
+            accounts: Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), crate::app::logins())),
+            quota: Arc::new(droppen_accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins())),
             composer: crate::drive::composer_prefs::ComposerPrefsStore::new(paths.clone()),
             titles: droppen_sessions::titles::TitlesStore::new(paths.clone()),
             paths,

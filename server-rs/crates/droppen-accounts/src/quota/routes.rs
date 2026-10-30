@@ -6,7 +6,7 @@ use gotcha::axum::extract::FromRef;
 use gotcha::{api, GotchaRouter, Json, State};
 
 use super::{Quota, QuotaCache};
-use crate::accounts::store::AccountsStore;
+use crate::store::AccountsStore;
 use droppen_http::openapi_ext::ExtraResponses;
 
 /// What the quota route uses of the server's state.

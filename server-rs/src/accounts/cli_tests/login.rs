@@ -2,9 +2,9 @@
 
 use crate::accounts::login::claude::ClaudeCodeLogin;
 use crate::accounts::login::codex::{CodexLogin, CODEX_DEFAULT_BASE_URL};
-use crate::accounts::login::{Login, Logins};
-use crate::accounts::store::{AccountError, AccountKind, AccountLaunch, AccountProvider, Credential};
-use crate::accounts::verify::paths_where_no_scratch_can_be_made;
+use droppen_accounts::login::{Login, Logins};
+use droppen_accounts::store::{AccountError, AccountKind, AccountLaunch, AccountProvider, Credential};
+use droppen_accounts::verify::paths_where_no_scratch_can_be_made;
 use droppen_base::env_block::parse_env_block;
 
 /// The entry files each login under the CLI it is for: a launch says which

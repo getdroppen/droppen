@@ -11,7 +11,7 @@ use std::sync::Arc;
 use futures_util::future::BoxFuture;
 
 use super::{ModelInfo, ModelList, ModelListSource, Models, ModelsQuery};
-use crate::accounts::store::{Account, AccountKind, AccountsStore};
+use droppen_accounts::store::{Account, AccountKind, AccountsStore};
 use droppen_http::openapi_ext::Nullable;
 use droppen_instance::paths::Paths;
 
@@ -47,7 +47,7 @@ const CLAUDE_ALIAS_VARS: [(&str, &str); 3] = [
 
 /// Every variable of a claude block this module reads.
 ///
-/// Named one by one because that is what [`crate::accounts::store::AccountsStore::env_values`]
+/// Named one by one because that is what [`droppen_accounts::store::AccountsStore::env_values`]
 /// takes: the block also holds the credential, and the list of keys is the only
 /// thing keeping it there.
 const CLAUDE_MODEL_VARS: [&str; 5] = [
@@ -172,13 +172,13 @@ fn claude_env_models(vars: &BTreeMap<String, String>) -> Option<Vec<ModelInfo>> 
 /// The directory an account's list can be asked of, when there is one.
 ///
 /// The quota panel's rule, not a new one: only an OAuth account that has opted
-/// into probing has a logged-in config root of its own — [`crate::accounts::quota`] picks
+/// into probing has a logged-in config root of its own — [`droppen_accounts::quota`] picks
 /// the directories it probes on exactly this pair of conditions, and a model
 /// list for a root the quota panel will not read would be a second rule.
 /// An env account authenticates per request and has no root to ask; an account
 /// with probing off has a directory with no login in it, and asking would
 /// answer for nobody. Either way the honest answer is the fallback list.
-fn probe_dir(accounts: &crate::accounts::store::AccountsStore, account: &Account) -> Option<PathBuf> {
+fn probe_dir(accounts: &droppen_accounts::store::AccountsStore, account: &Account) -> Option<PathBuf> {
     if !account.usage_enabled || account.kind != AccountKind::OauthToken {
         return None;
     }

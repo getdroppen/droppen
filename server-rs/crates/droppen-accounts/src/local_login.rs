@@ -18,7 +18,7 @@
 //! * **a reading.** Every window a session or a probe read for the local login
 //!   was read by a login that worked at that instant.
 //!
-//! Claude Code's login ([`super::login::claude::ClaudeCodeLogin`]) weighs them
+//! Claude Code's login (`accounts::login::claude::ClaudeCodeLogin`) weighs them
 //! by *when*: the newest piece of evidence decides.
 //! That is what lets the answer heal on its own — a user who signs in again and
 //! runs one turn on the local login produces a reading newer than the rest that

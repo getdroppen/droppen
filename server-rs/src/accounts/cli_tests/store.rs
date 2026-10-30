@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use crate::accounts::store::*;
+use droppen_accounts::store::*;
 use droppen_base::env_block::parse_env_block;
 use droppen_instance::paths::Paths;
 

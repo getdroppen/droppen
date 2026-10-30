@@ -35,7 +35,7 @@
 //! and the two callers differ: a pasted credential is stored with the reason
 //! attached, so the UI can say "saved, but nothing proved this works", while a
 //! capture with two possible readings refuses to guess — see
-//! [`super::setup_token::choose_reading`].
+//! `accounts::setup_token::choose_reading`.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -47,14 +47,14 @@ use super::login::Logins;
 use super::store::{AccountError, AccountProvider, Credential};
 
 /// The prompt the probe sends. Short on purpose: it is billed like any other.
-pub(crate) const PROBE_PROMPT: &str = "ping";
+pub const PROBE_PROMPT: &str = "ping";
 /// A cold `claude` start plus one round trip, with room for a slow link.
 ///
 /// Under a minute on purpose: this runs inside a `POST`/`PATCH`, and the reverse
 /// proxy in front of a typical deployment gives up on a response at 60 s. A
 /// check that outlived the request it belongs to would reach the user as a
 /// gateway error rather than as a verdict.
-pub(crate) const PROBE_TIMEOUT: Duration = Duration::from_secs(30);
+pub const PROBE_TIMEOUT: Duration = Duration::from_secs(30);
 /// How much of a failing CLI's output is quoted back to the user.
 const MAX_REASON: usize = 300;
 
@@ -75,7 +75,7 @@ pub enum Verdict {
 /// A failing CLI happily echoes the credential it was handed ("Authentication
 /// failed for sk-ant-…"), so the redaction is not optional: this string ends up
 /// in an API response and in the capture status the browser polls.
-pub(crate) fn reason(stderr: &str, stdout: &str, secrets: &[&str]) -> String {
+pub fn reason(stderr: &str, stdout: &str, secrets: &[&str]) -> String {
     let raw = if stderr.trim().is_empty() { stdout } else { stderr };
     // The credential being checked is known *here*, before anything has been
     // stored, so it is taken out by value rather than guessed at by shape —
@@ -111,10 +111,12 @@ pub(crate) fn reason(stderr: &str, stdout: &str, secrets: &[&str]) -> String {
 /// Fresh per probe, and removed afterwards. It must not be the managed root: the
 /// probe must answer for this token alone, with no login of the root's own in
 /// reach and no session state left behind in a root that real sessions use.
-pub(crate) struct Scratch(PathBuf);
+pub struct Scratch(PathBuf);
 
 impl Scratch {
-    pub(crate) async fn make(paths: &Paths) -> std::io::Result<Self> {
+    /// A fresh scratch under the data directory, with its config, working and
+    /// `CODEX_HOME` directories made.
+    pub async fn make(paths: &Paths) -> std::io::Result<Self> {
         let root = paths.data_dir().join("verify").join(uuid::Uuid::new_v4().to_string());
         tokio::fs::create_dir_all(root.join("claude")).await?;
         tokio::fs::create_dir_all(root.join("cwd")).await?;
@@ -122,18 +124,20 @@ impl Scratch {
         Ok(Self(root))
     }
 
-    pub(crate) fn config_dir(&self) -> PathBuf {
+    /// The config directory a probe's CLI is pointed at, with no login in it.
+    pub fn config_dir(&self) -> PathBuf {
         self.0.join("claude")
     }
 
-    pub(crate) fn cwd(&self) -> PathBuf {
+    /// The empty directory a probe runs in.
+    pub fn cwd(&self) -> PathBuf {
         self.0.join("cwd")
     }
 
     /// `CODEX_HOME` for a codex probe. Created by [`Scratch::make`], never left
     /// to the CLI: `codex` exits with "Error finding codex home" rather than
     /// creating a `CODEX_HOME` that is not there.
-    pub(crate) fn codex_home(&self) -> PathBuf {
+    pub fn codex_home(&self) -> PathBuf {
         self.0.join("codex")
     }
 }
@@ -152,8 +156,8 @@ impl Drop for Scratch {
 
 /// A path set under `home` whose data directory is a file, so no check can make
 /// its scratch directory, and every check stops before it starts a CLI.
-#[cfg(test)]
-pub(crate) fn paths_where_no_scratch_can_be_made(home: &std::path::Path) -> Paths {
+#[cfg(any(test, feature = "test-support"))]
+pub fn paths_where_no_scratch_can_be_made(home: &std::path::Path) -> Paths {
     let paths = Paths::new(home.to_path_buf());
     let data = paths.data_dir();
     assert!(data.starts_with(home), "DROPPEN_DATA_DIR is set, so this would write outside the test's home");
@@ -167,12 +171,13 @@ pub(crate) fn paths_where_no_scratch_can_be_made(home: &std::path::Path) -> Path
 /// per line in `argv`, its working directory in `cwd`, each named variable in a
 /// file of that name, all beside itself — and then runs the given tail. Builtins
 /// only, because nothing else is on that `PATH`.
-#[cfg(test)]
-pub(crate) struct StubCli(tempfile::TempDir);
+#[cfg(any(test, feature = "test-support"))]
+pub struct StubCli(tempfile::TempDir);
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl StubCli {
-    pub(crate) fn new(name: &str, vars: &[&str], tail: &str) -> Self {
+    /// A stub called `name` that writes down `vars` and then runs `tail`.
+    pub fn new(name: &str, vars: &[&str], tail: &str) -> Self {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().expect("the stub's directory");
         let at = dir.path().display();
@@ -188,12 +193,12 @@ impl StubCli {
     }
 
     /// The `PATH` that finds the stub and nothing else.
-    pub(crate) fn path(&self) -> String {
+    pub fn path(&self) -> String {
         self.0.path().to_string_lossy().into_owned()
     }
 
     /// What the stub wrote down under `what`.
-    pub(crate) fn recorded(&self, what: &str) -> String {
+    pub fn recorded(&self, what: &str) -> String {
         std::fs::read_to_string(self.0.path().join(what)).unwrap_or_else(|error| panic!("the stub never wrote {what}: {error}"))
     }
 }
@@ -233,8 +238,8 @@ impl Logins {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::accounts::login::Login;
-    use crate::accounts::store::{AccountError, AccountKind, AccountLaunch};
+    use crate::login::Login;
+    use crate::store::{AccountError, AccountKind, AccountLaunch};
     use droppen_base::env_block::{parse_env_block, EnvVar};
     use futures_util::future::BoxFuture;
     use std::sync::{Arc, Mutex};
@@ -275,7 +280,7 @@ mod tests {
             None
         }
 
-        fn local_quota<'a>(&'a self, _roots: &'a crate::accounts::quota::ProbeRoots) -> Option<BoxFuture<'a, Option<crate::accounts::quota::CodexQuota>>> {
+        fn local_quota<'a>(&'a self, _roots: &'a crate::quota::ProbeRoots) -> Option<BoxFuture<'a, Option<crate::quota::CodexQuota>>> {
             None
         }
 
@@ -293,13 +298,13 @@ mod tests {
 
         fn probe<'a>(
             &'a self,
-            _roots: &'a crate::accounts::quota::ProbeRoots,
+            _roots: &'a crate::quota::ProbeRoots,
             _config_dir: Option<&'a std::path::Path>,
-        ) -> Option<BoxFuture<'a, crate::accounts::quota::UsageProbe>> {
+        ) -> Option<BoxFuture<'a, crate::quota::UsageProbe>> {
             None
         }
 
-        fn local_plan<'a>(&'a self, _paths: &'a Paths) -> Option<BoxFuture<'a, crate::accounts::login::LocalPlan>> {
+        fn local_plan<'a>(&'a self, _paths: &'a Paths) -> Option<BoxFuture<'a, crate::login::LocalPlan>> {
             None
         }
 
@@ -307,8 +312,8 @@ mod tests {
             None
         }
 
-        fn local_state(&self, _refused_at: Option<i64>, _local_reading: &crate::accounts::quota::readings::SharedReading) -> crate::accounts::local_login::LocalLoginState {
-            crate::accounts::local_login::LocalLoginState::Unknown
+        fn local_state(&self, _refused_at: Option<i64>, _local_reading: &crate::quota::readings::SharedReading) -> crate::local_login::LocalLoginState {
+            crate::local_login::LocalLoginState::Unknown
         }
     }
 

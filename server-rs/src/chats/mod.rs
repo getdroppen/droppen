@@ -287,7 +287,7 @@ fn validate_new(body: &ChatNew) -> Result<(), ApiError> {
     // The session route's rule: a malformed id is a bad request; a well-formed
     // one that names nothing is refused by the spawn.
     if let Some(Some(id)) = &body.account_id {
-        if !crate::accounts::store::is_uuid(id) {
+        if !droppen_accounts::store::is_uuid(id) {
             return Err(ApiError::bad_request(format!("invalid account id: {id}")));
         }
     }
@@ -760,8 +760,8 @@ mod tests {
         let paths = Arc::new(Paths::new(home.path().to_path_buf()));
         let dirs = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), "chats-test").expect("valid name");
         dirs.create().expect("instance dirs");
-        let accounts = Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins()));
-        let quota = Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins()));
+        let accounts = Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), crate::app::logins()));
+        let quota = Arc::new(droppen_accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins()));
         let decoration = crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone());
         let injections = crate::provider::InjectionRegistry::new(paths, &dirs, accounts, quota, decoration);
         let providers = crate::provider::ProviderRegistry::new(injections, crate::app::register_providers);

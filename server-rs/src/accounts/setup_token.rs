@@ -49,7 +49,7 @@
 //! rejoin runs across a line break anyway ([`wrapped_segments`]), for a CLI that
 //! wraps to something narrower than its terminal. And because a rejoin cannot be
 //! told from a hint printed on the next line, the token scanner reports *both*
-//! readings and [`super::verify`] puts the question to Anthropic rather than
+//! readings and [`droppen_accounts::verify`] puts the question to Anthropic rather than
 //! guessing.
 //!
 //! # Shape
@@ -84,8 +84,8 @@ use droppen_base::process_env::{claude_env, clean_env_bare, resolve_on_path};
 use droppen_workbench::terminals::{CreateSpec, Registry};
 use droppen_base::text::strip_ansi;
 
-use super::store::{AccountError, AccountKind, AccountPatch, AccountProvider, Credential};
-use super::verify::Verdict;
+use droppen_accounts::store::{AccountError, AccountKind, AccountPatch, AccountProvider, Credential};
+use droppen_accounts::verify::Verdict;
 
 /// How long a finished capture stays pollable.
 const EXPIRY: Duration = Duration::from_secs(60 * 60);
@@ -221,7 +221,7 @@ fn wrapped_segments(text: &str, at: usize, settled: bool) -> Segments<'_> {
 /// from the bytes alone — a hint printed at column 0 on the next line joins
 /// exactly as a wrapped continuation would — so both are offered, in the order
 /// "what the screen literally says" first, and the live check in
-/// [`super::verify`] decides between them.
+/// [`droppen_accounts::verify`] decides between them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TokenMatch {
     readings: Vec<String>,
@@ -1000,7 +1000,7 @@ pub async fn start_setup_token(
 ) -> Result<Created<SetupTokenStarted>, ApiError> {
     // `z.string().min(1).max(100)`, which fails in the validator before the
     // TypeScript handler runs — so it is a 400 there too, undocumented.
-    super::require_label(&body.label)?;
+    droppen_accounts::require_label(&body.label)?;
     let open_browser = state.window().app_caller(&caller).is_ok();
     start(state.drive.clone(), state.terminals.clone(), Target::New(body.label), open_browser)
         .await
@@ -1019,7 +1019,7 @@ pub async fn reauth_account(
     #[api(skip)] caller: droppen_http::app_window::Caller,
     ApiPath(id): ApiPath<String>,
 ) -> Result<Created<SetupTokenStarted>, ApiError> {
-    super::require_uuid(&id)?;
+    droppen_accounts::require_uuid(&id)?;
     let Some(account) = state.drive.accounts.get(&id).await else {
         return Err(ApiError::not_found("account not found"));
     };

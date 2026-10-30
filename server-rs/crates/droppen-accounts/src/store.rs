@@ -18,7 +18,7 @@
 //! is not a thing to keep on disk for a reason that no longer exists. Nothing
 //! reads the file any more.
 //!
-//! [`droppen_auth::users`] keeps its file and this one does not, which looks like
+//! `droppen_auth::users` keeps its file and this one does not, which looks like
 //! an inconsistency and is not: that store's copy is a *second opinion*, because
 //! an empty users table means authentication is switched off. An empty accounts
 //! table means the user has not added a login yet, which is an ordinary answer,
@@ -1234,7 +1234,7 @@ impl AccountsStore {
     /// — ask for keys whose values may be shown, and nothing else.
     ///
     /// An OAuth account has no block, and answers with nothing.
-    pub(crate) async fn env_values(&self, id: &str, wanted: &[&str]) -> BTreeMap<String, String> {
+    pub async fn env_values(&self, id: &str, wanted: &[&str]) -> BTreeMap<String, String> {
         let Some(account) = self.stored(id).filter(|account| account.kind == AccountKind::Env) else {
             return BTreeMap::new();
         };
@@ -1258,7 +1258,7 @@ impl AccountsStore {
     /// wrong `ANTHROPIC_BASE_URL` in its block, changes nothing about the
     /// process already running. Carrying this in the resident's fingerprint is
     /// what makes the next message retire it.
-    pub(crate) async fn credential_hash(&self, id: &str) -> Option<String> {
+    pub async fn credential_hash(&self, id: &str) -> Option<String> {
         self.stored(id).map(|account| account.secret_sha256)
     }
 }

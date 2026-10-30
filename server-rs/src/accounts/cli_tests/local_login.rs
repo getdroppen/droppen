@@ -2,11 +2,11 @@
 
 use std::sync::Arc;
 
-use crate::accounts::limits::Verdict;
-use crate::accounts::local_login::*;
-use crate::accounts::quota::readings::SharedReading;
-use crate::accounts::quota::{QuotaProbeError, QuotaReadingSource, QuotaWindow};
-use crate::accounts::rest::{LimitLog, Observation, LOCAL_CLAUDE};
+use droppen_accounts::limits::Verdict;
+use droppen_accounts::local_login::*;
+use droppen_accounts::quota::readings::SharedReading;
+use droppen_accounts::quota::{QuotaProbeError, QuotaReadingSource, QuotaWindow};
+use droppen_accounts::rest::{LimitLog, Observation, LOCAL_CLAUDE};
 use droppen_instance::db::Db;
 use droppen_sessions::account::LimitClass;
 

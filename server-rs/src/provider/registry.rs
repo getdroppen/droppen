@@ -429,7 +429,7 @@ impl ProviderRegistry {
     }
 }
 
-impl crate::accounts::ModelIds for ProviderRegistry {
+impl droppen_accounts::ModelIds for ProviderRegistry {
     // A source no provider runs offers no model of its own.
     fn model_ids<'a>(&'a self, source: Source, account_id: Option<&'a str>) -> BoxFuture<'a, Vec<String>> {
         match self.models(source) {
@@ -465,8 +465,8 @@ mod tests {
             env: None.into(),
         };
         AcpAgentRegistry::of(&paths).update("fake", &agent).expect("saved");
-        let accounts = Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins()));
-        let quota = Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins()));
+        let accounts = Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), crate::app::logins()));
+        let quota = Arc::new(droppen_accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins()));
         let decoration = crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone());
         ProviderRegistry::new(InjectionRegistry::new(paths, &dirs, accounts, quota, decoration), register)
     }

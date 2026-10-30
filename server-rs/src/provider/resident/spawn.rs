@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use crate::accounts::store::AccountProvider;
+use droppen_accounts::store::AccountProvider;
 use crate::claude_roots;
 use crate::provider::common::{new_uuid, session_workdir, CHAT_SYSTEM_PROMPT};
 use crate::provider::{claude_prompt, require_provider, resident, AccountChoice, InjectError, SendOptions, SendTo, Sent, SpawnGate, StartAt};
@@ -248,7 +248,7 @@ impl super::ClaudeCodeRuns {
             if Some(chosen) != bound.as_deref() {
                 self.accounts.bind_session_account(id, Some(chosen), AccountProvider::Claude).await?;
                 // Somebody's choice: nothing moves it ahead of a limit for a while.
-                self.accounts.rotation_log().note_hand_binding(id, crate::accounts::rest::now_ms());
+                self.accounts.rotation_log().note_hand_binding(id, droppen_accounts::rest::now_ms());
             }
         }
         let login = self.login_of(account_id).await;

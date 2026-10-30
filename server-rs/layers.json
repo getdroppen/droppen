@@ -124,9 +124,7 @@
         {
           "name": "droppen-accounts",
           "about": "The account store, rotation, the quota cache and sweep, limits; owns the Login port.",
-          "modules": [
-            "accounts"
-          ],
+          "modules": [],
           "mayUse": [
             "droppen-sessions",
             "droppen-workbench"
@@ -192,7 +190,8 @@
           "modules": [
             "provider",
             "models",
-            "sessions"
+            "sessions",
+            "accounts"
           ],
           "mayUse": [
             "droppen-sessions",

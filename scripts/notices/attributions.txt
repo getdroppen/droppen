@@ -13,7 +13,7 @@ BIP-39 English word list
     This BIP falls under the MIT License.
 
 magpie
-  The rate-limit signal phrases in server-rs/src/accounts/limits.rs are
+  The rate-limit signal phrases in server-rs/crates/droppen-accounts/src/limits.rs are
   adapted from the router of magpie (https://github.com/yetone/magpie), which
   is published under the MIT License below with this notice:
 

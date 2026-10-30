@@ -374,7 +374,7 @@ fn receipt_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MessageReceipt> {
         client_message_id: row.get(0)?,
         status: ReceiptStatus::from_stored(&row.get::<_, String>(1)?),
         qid: Optional(row.get::<_, Option<String>>(2)?),
-        at: crate::accounts::rest::iso_ms(row.get(3)?),
+        at: droppen_accounts::rest::iso_ms(row.get(3)?),
     })
 }
 
