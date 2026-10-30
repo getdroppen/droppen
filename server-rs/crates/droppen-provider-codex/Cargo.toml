@@ -25,6 +25,12 @@ serde_json = { workspace = true }
 tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt", "sync", "time"] }
 tracing = "0.1"
 
+# What another crate's tests reach of this one: a Codex row added to a run
+# journal as Codex reads it (`app_server::CodexRowsExt`), for the server's
+# tests of each CLI's rows. Only dev-dependencies turn it on.
+[features]
+test-support = []
+
 [dev-dependencies]
 droppen-accounts = { path = "../droppen-accounts", features = ["test-support"] }
 droppen-base = { path = "../droppen-base", features = ["test-support"] }

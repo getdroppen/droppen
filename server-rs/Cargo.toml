@@ -229,6 +229,9 @@ droppen-provider-acp = { path = "crates/droppen-provider-acp", features = ["test
 # The resident's test harness (`resident::test_harness`), for the test in
 # `api::feed_session` that runs a resident through a real session feed.
 droppen-provider-claude-code = { path = "crates/droppen-provider-claude-code", features = ["test-support"] }
+# A Codex row added to a run journal as Codex reads it
+# (`app_server::CodexRowsExt`), for the tests of each CLI's journal rows.
+droppen-provider-codex = { path = "crates/droppen-provider-codex", features = ["test-support"] }
 # The guide's stand-in logins, its state without a server and its runner
 # fixture (`droppen_setup::{testing, runner::fixture}`), for the server's tests
 # of the guide on its own logins (`src/setup_tests.rs`).
