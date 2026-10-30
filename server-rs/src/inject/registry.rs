@@ -488,6 +488,17 @@ mod tests {
         .unwrap_or_else(|error| panic!("a session row: {error}"))
     }
 
+    /// Each provider runs its sessions on the runs the injection registry
+    /// keeps, lists and adopts into, not on runs of its own that nothing lists
+    /// or adopts.
+    #[test]
+    fn each_provider_runs_on_the_registrys_runs() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let providers = providers(home.path());
+        let codex = providers.provider::<crate::inject::Codex>().expect("Codex");
+        assert!(Arc::ptr_eq(codex.runs(), &providers.injections.codex), "Codex's");
+    }
+
     /// One provider's runs per source on a host: a second provider registry
     /// over the same injection registry is refused while the first's ACP
     /// runs last, and builds once they have gone.

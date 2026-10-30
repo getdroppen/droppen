@@ -433,6 +433,12 @@ impl Codex {
             models,
         }
     }
+
+    /// Its runs, for a test that checks whose they are.
+    #[cfg(test)]
+    pub(crate) fn runs(&self) -> &Arc<CodexRuns> {
+        &self.runs
+    }
 }
 
 /// Codex's runs: the app server behind each session. Kept here rather than
