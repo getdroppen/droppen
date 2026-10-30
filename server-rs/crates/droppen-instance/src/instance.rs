@@ -245,11 +245,6 @@ impl InstanceDirs {
         self.root.join("server.port")
     }
 
-    /// Injected runs that outlive the server.
-    pub fn runs_file(&self) -> PathBuf {
-        self.root.join("runs.json")
-    }
-
     /// Embedded apps that outlive the server.
     pub fn apps_file(&self) -> PathBuf {
         self.root.join("apps.json")
@@ -533,7 +528,6 @@ mod tests {
         assert_eq!(dirs.session_logs(), dirs.root().join("session-logs"));
         assert_eq!(dirs.lock_file(), dirs.root().join("lock"));
         assert_eq!(dirs.port_file(), dirs.root().join("server.port"));
-        assert_eq!(dirs.runs_file(), dirs.root().join("runs.json"));
         assert_eq!(dirs.apps_file(), dirs.root().join("apps.json"));
     }
 

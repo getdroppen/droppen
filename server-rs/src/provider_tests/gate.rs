@@ -2,7 +2,8 @@
 //! its crates' sources use them. Each source file is parsed (`syn`), what is
 //! built for tests alone is dropped, and the rest is read token by token: a
 //! comment is no token, and a string or a doc comment is a literal, which no
-//! scan matches.
+//! scan of names matches. The scan of the runs' table reads the strings, doc
+//! comments aside.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -152,14 +153,15 @@ impl ManifestExt for toml::Table {
 
 /// A token of a file's code as the scans match it: an identifier, a
 /// punctuation character, a bracket that opens or closes a group, or a
-/// literal, whose text no scan matches.
+/// literal, whose text no pattern matches: a string's value is kept for
+/// [`Code::strings`], and a doc comment's is not.
 #[derive(Clone, Debug, PartialEq)]
 enum Tok {
     Ident(String),
     Punct(char),
     Open(char),
     Close(char),
-    Literal,
+    Literal(Option<String>),
 }
 
 /// The tokens of a file's code built outside tests and the line each starts
@@ -207,11 +209,21 @@ impl Code {
 
     /// `stream`'s tokens added, groups opened and closed around theirs.
     fn push(&mut self, stream: TokenStream) {
+        self.push_in(stream, false);
+    }
+
+    /// `stream`'s tokens added, a string's value kept unless the stream is a
+    /// doc comment's (`doc = "…"`, inside the `#[…]` it is written as).
+    fn push_in(&mut self, stream: TokenStream, doc: bool) {
         for tree in stream {
             match tree {
                 TokenTree::Ident(ident) => self.add(Tok::Ident(ident.to_string().trim_start_matches("r#").to_string()), ident.span().start().line),
                 TokenTree::Punct(punct) => self.add(Tok::Punct(punct.as_char()), punct.span().start().line),
-                TokenTree::Literal(literal) => self.add(Tok::Literal, literal.span().start().line),
+                TokenTree::Literal(literal) => {
+                    let line = literal.span().start().line;
+                    let string = (!doc).then(|| syn::parse2::<syn::LitStr>(literal.into_token_stream()).ok().map(|string| string.value())).flatten();
+                    self.add(Tok::Literal(string), line);
+                }
                 TokenTree::Group(group) => {
                     let brackets = match group.delimiter() {
                         Delimiter::Parenthesis => Some(('(', ')')),
@@ -219,16 +231,27 @@ impl Code {
                         Delimiter::Brace => Some(('{', '}')),
                         Delimiter::None => None,
                     };
+                    let doc = doc
+                        || (group.delimiter() == Delimiter::Bracket
+                            && matches!(group.stream().into_iter().next(), Some(TokenTree::Ident(ident)) if ident == "doc"));
                     if let Some((open, _)) = brackets {
                         self.add(Tok::Open(open), group.span_open().start().line);
                     }
-                    self.push(group.stream());
+                    self.push_in(group.stream(), doc);
                     if let Some((_, close)) = brackets {
                         self.add(Tok::Close(close), group.span_close().start().line);
                     }
                 }
             }
         }
+    }
+
+    /// The strings it holds, doc comments aside.
+    fn strings(&self) -> impl Iterator<Item = &str> {
+        self.0.iter().filter_map(|tok| match tok {
+            Tok::Literal(Some(string)) => Some(string.as_str()),
+            _ => None,
+        })
     }
 
     /// Where `pattern` starts.
@@ -516,10 +539,9 @@ impl VisitMut for TestsOut {
 
 // ------------------------------------------------------------ the scans
 
-/// The names of a run's entry, of what publishes, renames or withdraws a
-/// run, and of where the runs' journal lies (`runs_file`, which only the base
-/// opens), and the host's fields that hold the runs' journal and drafts.
-const RUN_NAMES: [&str; 6] = ["publish_run", "withdraw_run", "rename_run", "running_run", "RunEntry", "runs_file"];
+/// The names of a run's entry and of what publishes, renames or withdraws a
+/// run, and the host's fields that hold the runs' journal and drafts.
+const RUN_NAMES: [&str; 5] = ["publish_run", "withdraw_run", "rename_run", "running_run", "RunEntry"];
 const RUN_FIELDS: [&str; 2] = ["journal", "drafts"];
 
 /// The `Source` variants that name a provider: outside the providers' crates
@@ -712,6 +734,40 @@ fn outside_the_providers_a_source_is_named_as_often_as_layers_json_records() {
         found.len(),
         found.len()
     );
+}
+
+/// The runs' table is the base's too: outside the `droppen-provider*`
+/// crates, no code built outside tests names it in SQL (`FROM`, `JOIN`,
+/// `INTO`, `UPDATE` or `TABLE runs`, schema-qualified or quoted), nor
+/// holds its name as a string of its own, which a query could be put
+/// together from (`concat!`, `format!`, a `const`). So none can read or
+/// delete a run through a connection of its own to the instance's
+/// database. The one other place is the migration that creates it
+/// (droppen-instance's `db/migrations.rs`). Every crate is read, not only
+/// those that can reach the base: the table is in droppen-instance's
+/// database, which far more of them open.
+#[test]
+fn only_the_providers_query_the_runs_table() {
+    const CREATES: &str = "crates/droppen-instance/src/db/migrations.rs";
+    let sql = regex::Regex::new(r#"(?i)\b(from|join|into|update|table)\s+(if\s+not\s+exists\s+)?(\w+\.)?["`\[]?runs\b"#).expect("the pattern");
+    let name = regex::Regex::new(r#"(?i)^\s*["`\[]?runs["`\]]?\s*$"#).expect("the pattern");
+    let sources = Source::all();
+    let queries = |source: &Source| {
+        source
+            .code
+            .strings()
+            .filter(|string| sql.is_match(string) || name.is_match(string))
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+    };
+    assert!(sources.iter().any(|source| source.in_provider() && !queries(source).is_empty()), "the providers query the runs table");
+    assert!(sources.iter().any(|source| source.path == CREATES && !queries(source).is_empty()), "the migration creates it");
+    let found: Vec<String> = sources
+        .iter()
+        .filter(|source| !source.in_provider() && source.path != CREATES)
+        .flat_map(|source| queries(source).into_iter().map(|query| format!("{}: {query}", source.path)))
+        .collect();
+    assert!(found.is_empty(), "the runs table queried outside the providers: {found:?}");
 }
 
 /// Production code after or around something built for tests alone is read,

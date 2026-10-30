@@ -665,10 +665,11 @@ impl InjectionRegistry {
     /// agentic run can legitimately work for hours, and a wall-clock cap would
     /// execute it mid-task.
     ///
-    /// `instance` says where `runs.json` goes, and it is the only per-instance
-    /// thing here: the session claims deliberately live one level up, in the
-    /// data directory every instance shares. `decoration` is what a claude
-    /// spawn's environment gains before it starts.
+    /// `instance` says where the session shims go and where a provider keeps
+    /// what is its runs' alone ([`InjectionRegistry::instance`]), and it is the
+    /// only per-instance thing here: the session claims deliberately live one
+    /// level up, in the data directory every instance shares. `decoration` is
+    /// what a claude spawn's environment gains before it starts.
     pub fn new(
         paths: Arc<Paths>,
         instance: &InstanceDirs,
@@ -722,7 +723,7 @@ impl RunHost {
             idle_timeout: timings.idle_timeout,
             interrupt_step: timings.interrupt_step,
             watchdog_interval: timings.watchdog_interval,
-            journal: runs::RunsFile::at(instance.runs_file()),
+            journal: runs::RunsFile::with_db(droppen_instance::db::at(paths.instance_db())),
             listeners: std::sync::OnceLock::new(),
             alerts: std::sync::OnceLock::new(),
             drafts: drafts::Drafts::default(),

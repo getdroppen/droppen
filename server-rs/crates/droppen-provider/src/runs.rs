@@ -179,25 +179,19 @@ pub struct RunsFile {
 }
 
 impl RunsFile {
-    /// The journal beside `path`, in the same directory's `state.db`.
-    ///
-    /// Derived from the old file's path rather than passed in, so that every
-    /// caller and every test that already knew where `runs.json` goes needs to
-    /// learn nothing new. The base's own: a server's journal is its host's
-    /// ([`crate::RunHost::journal`]), and no other code may open one to read
-    /// or remove a run behind the drivers' backs.
-    pub(crate) fn at(path: impl Into<PathBuf>) -> Self {
-        let path = path.into();
-        Self {
-            db: droppen_instance::db::at(path.with_file_name("state.db")),
-        }
+    /// The journal in `db`, the instance's `state.db`. The base's own: a
+    /// server's journal is its host's ([`crate::RunHost::journal`]), and no
+    /// other code may open one to read or remove a run behind the drivers'
+    /// backs.
+    pub(crate) fn with_db(db: std::sync::Arc<droppen_instance::db::Db>) -> Self {
+        Self { db }
     }
 
-    /// A journal of a test's own beside `path` ([`RunsFile::at`]), for the
+    /// A journal of a test's own, in the `state.db` beside `path`, for the
     /// tests of how each CLI's rows are written and read.
     #[cfg(any(test, feature = "test-support"))]
     pub fn new(path: impl Into<PathBuf>) -> Self {
-        Self::at(path)
+        Self::with_db(droppen_instance::db::at(path.into().with_file_name("state.db")))
     }
 
     /// Every recorded run, or nothing at all.
