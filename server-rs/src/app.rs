@@ -661,8 +661,8 @@ pub fn transcript_sources() -> TranscriptSources {
 /// Each provider names its own [`Source`]; this is the one place that names
 /// all of them.
 pub fn register_providers(providers: &mut ProviderRegistry, registry: &Arc<InjectionRegistry>) {
-    providers.register(Arc::new(crate::inject::ClaudeCode::new(registry.clone())));
-    providers.register(Arc::new(crate::inject::Codex::new(registry.clone())));
+    providers.register(Arc::new(crate::inject::resident::ClaudeCode::new(registry.clone())));
+    providers.register(Arc::new(crate::inject::app_server::Codex::new(registry.clone())));
     providers.register(Arc::new(crate::inject::acp::Acp::new(registry.clone())));
 }
 

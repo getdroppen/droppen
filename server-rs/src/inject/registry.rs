@@ -182,7 +182,7 @@ impl ProviderRegistry {
     ///
     /// `register` is the entry's `crate::app::register_providers`, the one
     /// place that names every provider; a test passes the same function.
-    pub fn new(injections: Arc<InjectionRegistry>, register: fn(&mut ProviderRegistry, &Arc<InjectionRegistry>)) -> Arc<Self> {
+    pub fn new(injections: Arc<InjectionRegistry>, register: impl FnOnce(&mut ProviderRegistry, &Arc<InjectionRegistry>)) -> Arc<Self> {
         let gate = Arc::new(SpawnGate::new(injections.paths.data_dir().join("inject-locks")));
         #[cfg(test)]
         injections.watch_gate(&gate);
@@ -488,31 +488,31 @@ mod tests {
         .unwrap_or_else(|error| panic!("a session row: {error}"))
     }
 
-    /// Each provider runs its sessions on the runs the injection registry
-    /// keeps, lists and adopts into, not on runs of its own that nothing lists
-    /// or adopts.
+    /// Each provider runs its sessions on the runs its host lists and adopts
+    /// into, not on runs of its own that nothing lists or adopts.
     #[test]
-    fn each_provider_runs_on_the_registrys_runs() {
+    fn each_provider_runs_on_the_runs_its_host_adopts_into() {
         let home = tempfile::tempdir().expect("tempdir");
         let providers = providers(home.path());
-        let codex = providers.provider::<crate::inject::Codex>().expect("Codex");
-        assert!(Arc::ptr_eq(codex.runs(), &providers.injections.codex), "Codex's");
-        let claude = providers.provider::<crate::inject::ClaudeCode>().expect("Claude Code");
-        assert!(Arc::ptr_eq(claude.runs(), &providers.injections.claude), "Claude Code's");
+        let listed = |source| providers.injections.runs_of(source).expect("listed");
+        let codex = providers.provider::<crate::inject::app_server::Codex>().expect("Codex");
+        assert!(std::ptr::addr_eq(Arc::as_ptr(codex.runs()), Arc::as_ptr(&listed(Source::Codex))), "Codex's");
+        let claude = providers.provider::<crate::inject::resident::ClaudeCode>().expect("Claude Code");
+        assert!(std::ptr::addr_eq(Arc::as_ptr(claude.runs()), Arc::as_ptr(&listed(Source::Claude))), "Claude Code's");
     }
 
     /// One provider's runs per source on a host: a second provider registry
-    /// over the same injection registry is refused while the first's ACP
-    /// runs last, and builds once they have gone.
+    /// over the same injection registry is refused while the first's runs
+    /// last, and builds once they have gone.
     #[test]
-    fn a_second_live_acp_runs_on_one_registry_is_refused() {
+    fn a_second_live_provider_registry_on_one_host_is_refused() {
         let home = tempfile::tempdir().expect("tempdir");
         let first = providers(home.path());
         let injections = first.injections.clone();
         let second = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| ProviderRegistry::new(injections.clone(), crate::app::register_providers)));
         let refused = second.err().expect("refused while the first lasts");
         let why = refused.downcast_ref::<String>().map(String::as_str).unwrap_or_default();
-        assert!(why.contains("acp runs are listed on this host already"), "{why}");
+        assert!(why.contains("runs are listed on this host already"), "{why}");
         drop(first);
         let again = ProviderRegistry::new(injections, crate::app::register_providers);
         assert!(again.provider::<crate::inject::acp::Acp>().is_some());

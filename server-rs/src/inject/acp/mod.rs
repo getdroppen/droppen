@@ -56,7 +56,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use super::common::{new_uuid, session_workdir, QueueOutcome, ResidentState};
-use super::{AccountChoice, Capabilities, DriverStatesBuilder, InjectError, InjectionRegistry, ListsRuns, Provider, Run, RunHost, SendOptions, SendTo, Sent, SpawnGate, SpawnPermit, StartAt};
+use super::{AccountChoice, Capabilities, DriverStatesBuilder, InjectError, InjectionRegistry, Provider, ProviderRuns, Run, RunHost, SendOptions, SendTo, Sent, SpawnGate, SpawnPermit, StartAt, WrittenAt};
 use futures_util::future::BoxFuture;
 use crate::acp::{category, option_for, ConfigOption, InitializeResponse};
 use crate::acp_agent::{AcpAgent, AcpAgentRegistry, AcpCheck, AcpCheckState};
@@ -344,7 +344,7 @@ impl AcpRuns {
             acp_options: Mutex::new(HashMap::new()),
             acp_probes: Mutex::new(HashMap::new()),
         });
-        let listed: Arc<dyn ListsRuns> = runs.clone();
+        let listed: Arc<dyn ProviderRuns> = runs.clone();
         runs.host.list(Source::Acp, Arc::downgrade(&listed));
         runs
     }
@@ -361,9 +361,32 @@ impl std::ops::Deref for AcpRuns {
     }
 }
 
-impl ListsRuns for AcpRuns {
+/// An ACP agent's process is never journalled, so no run of one is adopted:
+/// it dies with the server that started it.
+impl ProviderRuns for AcpRuns {
     fn add_to(&self, states: &mut DriverStatesBuilder) {
         self.acp_driver_states(states);
+    }
+
+    fn cli_name(&self) -> &'static str {
+        "the ACP agent"
+    }
+
+    fn readable(&self, _record: &super::runs::RunRecord) -> bool {
+        true
+    }
+
+    // No ACP run names a shim: an agent is not started behind one.
+    fn attach(self: Arc<Self>, record: super::runs::RunRecord, _sidecars: super::shim::Sidecars, _link: super::shim::Link, _lease: super::gate::SessionLease) {
+        tracing::warn!(session = %record.session_id, "an ACP run names a shim; it is let go");
+    }
+
+    fn was_cut_short<'a>(&'a self, _record: &'a super::runs::RunRecord) -> BoxFuture<'a, bool> {
+        Box::pin(std::future::ready(false))
+    }
+
+    fn last_write<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Option<std::time::Instant>> {
+        Box::pin(async move { AcpTranscripts::of(&self.paths).locate(id).await?.1.written_at().await })
     }
 }
 

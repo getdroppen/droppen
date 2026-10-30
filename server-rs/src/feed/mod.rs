@@ -1735,7 +1735,7 @@ mod tests {
     /// Stand in for the driver: feed the draft a stdout line the way its
     /// writer does.
     fn draft_hears(drive: &Drive, id: &str, line: &Value) {
-        let claude = drive.providers.provider::<crate::inject::ClaudeCode>().expect("Claude Code");
+        let claude = drive.providers.provider::<crate::inject::resident::ClaudeCode>().expect("Claude Code");
         claude.runs().draft_channel(id).send_if_modified(|draft| {
             let changed = crate::inject::drafts::apply(draft, line);
             if changed {
