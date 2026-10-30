@@ -492,7 +492,7 @@ impl Setup {
             Some(found) => {
                 let path = PathBuf::from(found.path);
                 match tool {
-                    ToolId::Claude => super::detect::login(&self.runner, &probe, tool, &path).await,
+                    ToolId::Claude => super::detect::login(&self.runner, &probe, tool, &path, &*self.claude).await,
                     ToolId::Codex => super::detect::codex_status(&self.runner, &probe, &path).await,
                 }
             }

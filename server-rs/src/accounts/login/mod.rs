@@ -67,6 +67,11 @@ pub trait Login: Send + Sync {
     /// whose plan arrives with its quota reading instead.
     fn local_plan<'a>(&'a self, paths: &'a Paths) -> Option<BoxFuture<'a, LocalPlan>>;
 
+    /// A login's plan as the quota panel and the first-run guide name it
+    /// (`Max 20x`), from the subscription and the rate-limit tier this CLI
+    /// reports for it. `None` back is a CLI that reports no such pair.
+    fn plan_label(&self, subscription: Option<&str>, tier: Option<&str>) -> Option<String>;
+
     /// The quota of the user's own login of this CLI, read whole: its plan
     /// and windows, live or out of the CLI's own logs. `None` back is a CLI
     /// whose quota is read per login instead ([`Login::probe`]).

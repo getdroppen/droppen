@@ -230,27 +230,6 @@ pub struct UsageProbe {
 
 // ------------------------------------------------------------ claude: parsing
 
-/// `Max 20x` from `subscriptionType: "max"` plus `rateLimitTier: "…20x…"`.
-///
-/// Crate-visible because the first-run guide ([`crate::setup`]) labels the
-/// plan `claude auth status` reports the same way the quota panel does.
-pub(crate) fn claude_plan_label(subscription_type: Option<&str>, tier: Option<&str>) -> String {
-    let base = match subscription_type {
-        Some(value) if !value.is_empty() => {
-            let mut chars = value.chars();
-            let first = chars.next().expect("non-empty").to_uppercase().to_string();
-            format!("{first}{}", chars.as_str())
-        }
-        _ => "Claude".to_string(),
-    };
-    static MULT: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    let re = MULT.get_or_init(|| regex::Regex::new(r"(\d+)x").expect("valid multiplier pattern"));
-    match tier.and_then(|tier| re.captures(tier)) {
-        Some(caps) => format!("{base} {}x", &caps[1]),
-        None => base,
-    }
-}
-
 fn window(label: String, minutes: i64, used: f64, resets_at: Option<String>) -> QuotaWindow {
     let used = used.clamp(0.0, 100.0);
     QuotaWindow {
@@ -833,14 +812,6 @@ mod tests {
     use super::*;
     use crate::accounts::quota::claude::RateLimitWindows;
     use serde_json::Value;
-
-    #[test]
-    fn the_plan_label_joins_the_subscription_and_the_multiplier() {
-        assert_eq!(claude_plan_label(Some("max"), Some("default_max_20x")), "Max 20x");
-        assert_eq!(claude_plan_label(Some("pro"), None), "Pro");
-        assert_eq!(claude_plan_label(None, Some("tier_5x")), "Claude 5x");
-        assert_eq!(claude_plan_label(None, None), "Claude");
-    }
 
     const ACCOUNT: &str = "0b6f7a7e-2f7a-4d8e-9d0c-1a2b3c4d5e6f";
 

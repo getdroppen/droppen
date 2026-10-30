@@ -262,6 +262,12 @@ impl Login for CodexLogin {
         None
     }
 
+    /// None: codex names a login's plan itself (`planType`), so there is no
+    /// pair to make a label of.
+    fn plan_label(&self, _subscription: Option<&str>, _tier: Option<&str>) -> Option<String> {
+        None
+    }
+
     /// The app server's `account/rateLimits/read` when it can be reached, the
     /// newest reading in the session logs when not ([`CodexReadingExt::codex`]).
     fn local_quota<'a>(&'a self, roots: &'a ProbeRoots) -> Option<BoxFuture<'a, Option<CodexQuota>>> {

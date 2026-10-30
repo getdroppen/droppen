@@ -68,6 +68,7 @@ use droppen_http::error::ApiError;
 use droppen_http::extract::{ApiJson, ApiPath};
 use droppen_http::openapi_ext::{ExtraResponses, Nullable, Optional};
 use droppen_instance::paths::Paths;
+use crate::accounts::login::{Login, Logins};
 use detect::{Detection, Probe};
 use runner::{Runner, SystemRunner};
 use shell::ShellSnapshot;
@@ -441,6 +442,9 @@ struct ShellState {
 pub struct Setup {
     paths: Arc<Paths>,
     runner: Arc<dyn Runner>,
+    /// Claude Code's login, which names the plan `claude auth status`
+    /// reports ([`detect::claude_login`]).
+    claude: Arc<dyn Login>,
     probe: ProbeFn,
     /// The login shell's path.
     shell_program: String,
@@ -481,21 +485,31 @@ impl Setup {
     /// the CLIs' own code, which only the entry names.
     ///
     /// Touches nothing — no process, no database — until a request asks.
-    pub fn new(paths: Arc<Paths>, logins: &crate::accounts::login::Logins) -> Arc<Self> {
+    pub fn new(paths: Arc<Paths>, logins: &Logins) -> Arc<Self> {
         Self::with(
             paths,
             Arc::new(SystemRunner::new(logins)),
+            logins,
             Arc::new(|paths: &Paths, overlay| Probe::live(paths.home.clone(), overlay)),
             shell::login_shell(),
             PathRead::from_app(std::env::var(droppen_base::process_env::SHELL_READ_ENV).ok().as_deref()),
         )
     }
 
-    /// The guide with every input named.
-    fn with(paths: Arc<Paths>, runner: Arc<dyn Runner>, probe: ProbeFn, shell_program: String, app_read: Option<PathRead>) -> Arc<Self> {
+    /// The guide with every input named. Of `logins` it keeps Claude Code's,
+    /// the one that names the plan its `auth status` reports.
+    fn with(
+        paths: Arc<Paths>,
+        runner: Arc<dyn Runner>,
+        logins: &Logins,
+        probe: ProbeFn,
+        shell_program: String,
+        app_read: Option<PathRead>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             paths,
             runner,
+            claude: logins.claude.clone(),
             probe,
             shell_program,
             app_read,
@@ -650,7 +664,7 @@ impl Setup {
             }
         }
         let probe = (self.probe)(&self.paths, self.overlay());
-        let detection = Arc::new(detect::detect(&self.runner, &probe).await);
+        let detection = Arc::new(detect::detect(&self.runner, &probe, &*self.claude).await);
         *cached = Some((Instant::now(), generation, detection.clone()));
         detection
     }
@@ -1052,7 +1066,7 @@ pub(crate) mod tests {
                 macos: true,
             }
         });
-        Setup::with(Arc::new(Paths::new(home.to_path_buf())), fixture, probe, shell.to_string(), app_read)
+        Setup::with(Arc::new(Paths::new(home.to_path_buf())), fixture, &crate::app::logins(), probe, shell.to_string(), app_read)
     }
 
     pub(crate) fn marker(path: &std::path::Path) {
@@ -1507,7 +1521,7 @@ pub(crate) mod tests {
         for (file, functions) in [
             ("accounts/mod.rs", &["parse_auth_status"][..]),
             ("../crates/droppen-base/src/text.rs", &["strip_ansi"][..]),
-            ("accounts/quota/mod.rs", &["claude_plan_label"][..]),
+            ("accounts/login/claude.rs", &["plan_label"][..]),
             ("accounts/quota/codex.rs", &["app_server_call", "ask", "send", "reply"][..]),
             ("accounts/login/codex.rs", &["app_server_call"][..]),
             ("../crates/droppen-base/src/process_env.rs", &["apply_env"][..]),
@@ -1523,6 +1537,28 @@ pub(crate) mod tests {
             ["let path = home.join(\".codex/auth.json\");"],
             "the scan would see one"
         );
+    }
+
+    /// Claude's plan is named by Claude Code's own login, whether the guide
+    /// looks or a sign-in in progress is polled.
+    #[tokio::test]
+    async fn the_guide_names_claude_s_plan_through_claude_s_login() {
+        let home = tempfile::tempdir().expect("tempdir");
+        marker(&home.path().join("bin/claude"));
+        let fixture = Fixture::new();
+        fixture.answer("claude --version", RunOutput::exited(0, "2.1.300 (Claude Code)\n", "")).answer(
+            "claude auth status --json",
+            RunOutput::exited(
+                0,
+                r#"{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":"max","rateLimitTier":"default_claude_max_20x"}"#,
+                "",
+            ),
+        );
+        let setup = guide(home.path(), fixture, None);
+
+        let detection = setup.detection(true).await;
+        assert_eq!(detection.tools[0].login.plan.0.as_deref(), Some("Max 20x"));
+        assert_eq!(setup.poll_login(ToolId::Claude).await.plan.0.as_deref(), Some("Max 20x"));
     }
 
     /// The guide the entry builds asks codex's app server through codex's own
