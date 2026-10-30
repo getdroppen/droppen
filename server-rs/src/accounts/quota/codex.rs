@@ -545,10 +545,8 @@ impl CodexReadingExt for ProbeRoots {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::accounts::quota::CodexQuotaCache;
     use droppen_instance::paths::Paths;
     use serde_json::json;
-    use std::sync::Arc;
 
     /// `2026-09-20T12:00:00Z` — a fixed "now" for the readings below.
     const NOW_MS: u64 = 1_790_078_400_000;
@@ -795,39 +793,6 @@ mod tests {
     async fn no_sessions_at_all_is_no_reading() {
         let home = tempfile::tempdir().expect("tempdir");
         assert!(ProbeRoots::of(&Paths::new(home.path().to_path_buf())).log_reading(now()).await.is_none());
-    }
-
-    // --------------------------------------------------------------- the cache
-
-    fn cache() -> (tempfile::TempDir, Arc<CodexQuotaCache>) {
-        let home = tempfile::tempdir().expect("tempdir");
-        let cache = Arc::new(CodexQuotaCache::new(
-            ProbeRoots::of(&Paths::new(home.path().to_path_buf())),
-            Arc::new(crate::accounts::login::codex::CodexLogin),
-        ));
-        (home, cache)
-    }
-
-    #[tokio::test]
-    async fn a_fresh_reading_is_not_re_probed_and_a_failure_keeps_the_last_one() {
-        let (_home, cache) = cache();
-        let good = live_reply().rate_limits_reading(now()).expect("a reading");
-
-        // Planted rather than probed: nothing is spawned in a unit test.
-        cache.store(Some(good.clone()));
-        assert_eq!(cache.cached(), Some(good.clone()));
-        assert!(cache.refresh().is_none(), "inside the TTL there is nothing to do");
-        assert!(cache.in_flight.lock().expect("lock").is_none());
-
-        cache.store(None);
-        assert_eq!(cache.cached(), Some(good), "a failed probe must not blank the panel");
-        assert!(cache.refresh().is_none(), "and a failure is cached too, so it costs one probe per TTL");
-    }
-
-    #[tokio::test]
-    async fn an_unprobed_cache_holds_nothing() {
-        let (_home, cache) = cache();
-        assert_eq!(cache.cached(), None);
     }
 
     /// The end-to-end check, against the `codex` actually installed here.

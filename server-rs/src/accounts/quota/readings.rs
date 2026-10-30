@@ -514,12 +514,8 @@ impl Throttle {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::accounts::quota::claude::RateLimitWindows;
     use crate::accounts::quota::window;
     use serde_json::Value;
-
-    /// An `allowed` event, the kind claude writes before nearly every turn.
-    const ALLOWED: &str = r#"{"type":"rate_limit_event","rate_limit_info":{"isUsingOverage":false,"overageDisabledReason":"org_level_disabled","overageStatus":"rejected","rateLimitType":"five_hour","resetsAt":1790436000,"status":"allowed","unifiedWindows":{"five_hour":{"resetsAt":1790436000,"utilization":0.19},"seven_day":{"resetsAt":1790460000,"utilization":0.46}}}}"#;
 
     const MINUTE: i64 = 60_000;
 
@@ -545,8 +541,11 @@ mod tests {
             QuotaReadingSource::Probe,
         );
         // A session event names two of the three.
-        let info: Value = serde_json::from_str::<Value>(ALLOWED).expect("json")["rate_limit_info"].clone();
-        reading.merge(info.windows_from_rate_limit_info(), t0 + 20 * MINUTE, QuotaReadingSource::Session);
+        reading.merge(
+            vec![window("5h".into(), 300, 19.0, None), window("weekly".into(), 10080, 46.0, None)],
+            t0 + 20 * MINUTE,
+            QuotaReadingSource::Session,
+        );
 
         assert_eq!(labels(&reading.windows), ["5h", "weekly", "weekly (Fable)"]);
         let by = |label: &str| reading.windows.iter().find(|w| w.label == label).expect(label).clone();

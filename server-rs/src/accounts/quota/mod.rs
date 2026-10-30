@@ -810,14 +810,13 @@ pub fn spawn_fallback_ticker(quota: Arc<QuotaCache>, store: Arc<crate::accounts:
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::accounts::quota::claude::RateLimitWindows;
-    use serde_json::Value;
+    use crate::accounts::rest::iso_ms;
 
     const ACCOUNT: &str = "0b6f7a7e-2f7a-4d8e-9d0c-1a2b3c4d5e6f";
 
     /// A cache over a home of its own, so its shared files are the test's.
     fn cache_in(home: &Path) -> Arc<QuotaCache> {
-        Arc::new(QuotaCache::new(Arc::new(Paths::new(home.to_path_buf())), crate::app::logins()))
+        Arc::new(QuotaCache::new(Arc::new(Paths::new(home.to_path_buf())), Logins::stand_ins()))
     }
 
     fn account(id: &str, kind: AccountKind, usage_enabled: bool) -> Account {
@@ -837,13 +836,13 @@ mod tests {
         }
     }
 
-    /// The windows of the `allowed` event fixture.
+    /// The windows an `allowed` event names: 19 % of the 5 h window and 46 %
+    /// of the week, as a session hands them over.
     fn allowed_windows() -> Vec<QuotaWindow> {
-        let line: Value = serde_json::from_str(
-            r#"{"type":"rate_limit_event","rate_limit_info":{"isUsingOverage":false,"overageDisabledReason":"org_level_disabled","overageStatus":"rejected","rateLimitType":"five_hour","resetsAt":1790436000,"status":"allowed","unifiedWindows":{"five_hour":{"resetsAt":1790436000,"utilization":0.19},"seven_day":{"resetsAt":1790460000,"utilization":0.46}}}}"#,
-        )
-        .expect("json");
-        line["rate_limit_info"].windows_from_rate_limit_info()
+        vec![
+            window("5h".into(), 300, 19.0, Some(iso_ms(1_790_436_000_000))),
+            window("weekly".into(), 10080, 46.0, Some(iso_ms(1_790_460_000_000))),
+        ]
     }
 
     /// The poll budget, stated as the arithmetic that produces it.
@@ -1027,6 +1026,50 @@ mod tests {
         cache.probe(&login, &target).await;
         assert_eq!(std::fs::read(&target.reading_file).expect("file"), before);
         assert!(target.lock.exists(), "the lock was taken, and the decision asked again under it");
+    }
+
+    // --------------------------------------------------------- the codex cache
+
+    fn codex_cache() -> (tempfile::TempDir, Arc<CodexQuotaCache>) {
+        let home = tempfile::tempdir().expect("tempdir");
+        let cache = Arc::new(CodexQuotaCache::new(
+            ProbeRoots::of(&Paths::new(home.path().to_path_buf())),
+            Logins::stand_ins().codex,
+        ));
+        (home, cache)
+    }
+
+    /// A reading as the app server gives one: the week spent, on `pro`.
+    fn codex_reading() -> CodexQuota {
+        CodexQuota {
+            plan: Nullable(Some("pro".into())),
+            updated_at: Nullable(Some(iso_ms(1_790_000_000_000))),
+            windows: vec![window("weekly".into(), 10080, 100.0, Some(iso_ms(1_790_128_010_000)))],
+            source: CodexQuotaSource::AppServer,
+            blocked: Nullable(Some(true)),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_fresh_reading_is_not_re_probed_and_a_failure_keeps_the_last_one() {
+        let (_home, cache) = codex_cache();
+        let good = codex_reading();
+
+        // Planted rather than probed: nothing is spawned in a unit test.
+        cache.store(Some(good.clone()));
+        assert_eq!(cache.cached(), Some(good.clone()));
+        assert!(cache.refresh().is_none(), "inside the TTL there is nothing to do");
+        assert!(cache.in_flight.lock().expect("lock").is_none());
+
+        cache.store(None);
+        assert_eq!(cache.cached(), Some(good), "a failed probe must not blank the panel");
+        assert!(cache.refresh().is_none(), "and a failure is cached too, so it costs one probe per TTL");
+    }
+
+    #[tokio::test]
+    async fn an_unprobed_cache_holds_nothing() {
+        let (_home, cache) = codex_cache();
+        assert_eq!(cache.cached(), None);
     }
 
     #[test]

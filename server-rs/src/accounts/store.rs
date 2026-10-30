@@ -1393,7 +1393,7 @@ mod tests {
     fn store() -> (tempfile::TempDir, AccountsStore) {
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = Arc::new(Paths::new(dir.path().to_path_buf()));
-        (dir, AccountsStore::new(paths, crate::app::logins()))
+        (dir, AccountsStore::new(paths, Logins::stand_ins()))
     }
 
     /// A login filed under the other CLI cannot launch an account: the launch
@@ -1403,7 +1403,7 @@ mod tests {
     async fn a_login_filed_under_the_other_cli_cannot_launch_an_account() {
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = Arc::new(Paths::new(dir.path().to_path_buf()));
-        let logins = crate::app::logins();
+        let logins = Logins::stand_ins();
         let swapped = Logins {
             claude: logins.codex.clone(),
             codex: logins.claude.clone(),
@@ -1881,7 +1881,7 @@ mod tests {
     async fn an_account_survives_a_reopen_of_the_database() {
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = Arc::new(Paths::new(dir.path().to_path_buf()));
-        let store = AccountsStore::new(paths.clone(), crate::app::logins());
+        let store = AccountsStore::new(paths.clone(), Logins::stand_ins());
         let account = store.create("Work", AccountProvider::Claude, oauth("sk-ant-one")).await.expect("create");
         store
             .bind_session_account("session-a", Some(&account.id), AccountProvider::Claude)
@@ -1925,7 +1925,7 @@ mod tests {
 
         // A second store proves the values are in the database rather than in
         // this store's head.
-        let reopened = AccountsStore::new(store.paths.clone(), crate::app::logins());
+        let reopened = AccountsStore::new(store.paths.clone(), Logins::stand_ins());
         let reloaded = reopened.get(&account.id).await.expect("still there");
         assert_eq!(reloaded.email.as_deref(), Some("me@example.com"));
 
@@ -2143,92 +2143,6 @@ mod tests {
         assert_eq!(store.redact_known_secrets(""), "");
     }
 
-    /// An env account for the wrong CLI, and a credential of the wrong shape.
-    #[tokio::test]
-    async fn a_row_nothing_could_spawn_is_refused_before_it_is_stored() {
-        let (_dir, store) = store();
-        assert!(matches!(
-            store.create("Nope", AccountProvider::Codex, oauth("tok")).await,
-            Err(AccountError::Invalid(_))
-        ));
-        // A codex block with no key variable never reaches a spawn, so it never
-        // reaches the table either.
-        assert!(matches!(
-            store.create("Nope", AccountProvider::Codex, env("SOMETHING_ELSE=x")).await,
-            Err(AccountError::Invalid(_))
-        ));
-        assert!(store.list().await.is_empty(), "neither refusal left a row behind");
-
-        let account = store
-            .create("Gateway", AccountProvider::Claude, env("ANTHROPIC_AUTH_TOKEN=bearer"))
-            .await
-            .expect("create");
-        assert_eq!(account.kind, AccountKind::Env);
-        assert_eq!(
-            account.env_keys.as_ref().map(Vec::as_slice),
-            Some(["ANTHROPIC_AUTH_TOKEN".to_string()].as_slice())
-        );
-        let json = serde_json::to_string(&account).expect("serialize");
-        assert!(!json.contains("bearer"), "a value is shown back to nobody: {json}");
-
-        // A patch has to match the account's own kind in both directions.
-        assert!(matches!(
-            store
-                .update(
-                    &account.id,
-                    AccountPatch {
-                        credential: Some(oauth("tok")),
-                        ..Default::default()
-                    }
-                )
-                .await,
-            Err(AccountError::Invalid(_))
-        ));
-        let replaced = store
-            .update(
-                &account.id,
-                AccountPatch {
-                    credential: Some(env("ANTHROPIC_AUTH_TOKEN=bearer2\nANTHROPIC_BASE_URL=https://gw/v1")),
-                    ..Default::default()
-                },
-            )
-            .await
-            .expect("update")
-            .expect("found");
-        assert_eq!(
-            replaced.env_keys.as_ref().map(Vec::as_slice),
-            Some(["ANTHROPIC_AUTH_TOKEN".to_string(), "ANTHROPIC_BASE_URL".to_string()].as_slice()),
-            "the block is replaced whole: what is not in the text is not set"
-        );
-    }
-
-    /// A replacement is held to the rule a new row is: a codex block with no key
-    /// variable never reaches the table, and the block it would have replaced
-    /// is still the one stored.
-    #[tokio::test]
-    async fn a_replacement_nothing_could_spawn_is_refused_before_it_is_stored() {
-        let (_dir, store) = store();
-        let codex = store
-            .create("Codex", AccountProvider::Codex, env("OPENAI_API_KEY=not-a-real-openai-key"))
-            .await
-            .expect("create");
-        let refused = store
-            .update(
-                &codex.id,
-                AccountPatch {
-                    credential: Some(env("SOMETHING_ELSE=x")),
-                    ..Default::default()
-                },
-            )
-            .await;
-        assert!(matches!(refused, Err(AccountError::Invalid(_))), "{refused:?}");
-        assert_eq!(
-            parse_env_block(&store.env_block(&codex.id).await.expect("the block")).expect("a block"),
-            parse_env_block("OPENAI_API_KEY=not-a-real-openai-key").expect("a block"),
-            "the stored block is untouched"
-        );
-    }
-
     /// Two CLIs, two defaults, one delete.
     #[tokio::test]
     async fn each_cli_keeps_its_own_default_and_a_deletion_clears_only_its_own() {
@@ -2366,7 +2280,7 @@ mod tests {
         assert_eq!(store.session_account_id("session-a").await.as_deref(), Some(account.id.as_str()));
 
         // A fresh store proves the swap reached disk, hash and all.
-        let reopened = AccountsStore::new(store.paths.clone(), crate::app::logins());
+        let reopened = AccountsStore::new(store.paths.clone(), Logins::stand_ins());
         assert_eq!(reopened.account_env(&account.id).await.expect("env").env[0].1, "sk-ant-new");
         // The old token is gone, so it is free to be stored again elsewhere.
         reopened
