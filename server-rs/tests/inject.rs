@@ -854,7 +854,7 @@ async fn owned_codex_thread(probe: &Probe, instance: &str, id: &str) -> std::pat
     )
     .expect("seed codex rollout");
     let paths = droppen_instance::paths::Paths::for_instance(probe.home.clone(), instance);
-    remote_hand_server::sessions::codex::CodexSessions.record_owned(&paths, id)
+    remote_hand_server::provider::codex::sessions::codex::CodexSessions.record_owned(&paths, id)
         .await
         .expect("own codex session");
     rollout
@@ -960,7 +960,7 @@ async fn a_queued_codex_message_is_dropped_before_codex_sees_it() {
     )
     .expect("seed codex rollout");
     let paths = droppen_instance::paths::Paths::for_instance(probe.home.clone(), INSTANCE);
-    remote_hand_server::sessions::codex::CodexSessions.record_owned(&paths, id)
+    remote_hand_server::provider::codex::sessions::codex::CodexSessions.record_owned(&paths, id)
         .await
         .expect("own codex session");
     support::plan_slow_cli(&workspace, 120.0);

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use futures_util::future::BoxFuture;
 use serde_json::Value;
 
-use super::{ModelInfo, ModelList, ModelListSource, Models, ModelsQuery};
+use crate::models::{ModelInfo, ModelList, ModelListSource, Models, ModelsQuery};
 use droppen_http::openapi_ext::Nullable;
 use droppen_instance::paths::Paths;
 
@@ -89,7 +89,7 @@ impl CodexModels {
 
     /// What Codex's own cache lists, or the static fallback.
     async fn cached(&self) -> (Vec<ModelInfo>, ModelListSource) {
-        codex_models(&crate::sessions::codex::CodexHome::of(&self.paths).models_cache()).await
+        codex_models(&crate::provider::codex::sessions::codex::CodexHome::of(&self.paths).models_cache()).await
     }
 }
 
@@ -138,11 +138,11 @@ impl Models for CodexModels {
         })
     }
 
-    // The CLI's own modes, asked of [`crate::provider::codex_permission_flags`] so
+    // The CLI's own modes, asked of [`crate::provider::codex::app_server::codex_permission_flags`] so
     // the two cannot drift: that function is what turns the value into `argv`,
     // and it already refuses what it does not know.
     fn permission_is_known(&self, permission: &str) -> bool {
-        crate::provider::codex_permission_flags(permission).is_ok()
+        crate::provider::codex::app_server::codex_permission_flags(permission).is_ok()
     }
 }
 

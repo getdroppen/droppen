@@ -217,7 +217,7 @@ impl Paths {
     /// [`Paths::instance_dir`]: a claim exists precisely to be read by the
     /// instances that did *not* write it, which is the only way one of them can
     /// tell another's thread from the user's own in the `~/.codex` they share.
-    /// See [`codex_claims`](crate::sessions::codex_claims).
+    /// See [`codex_claims`](crate::provider::codex::sessions::codex_claims).
     pub fn codex_claims_dir(&self) -> PathBuf {
         self.data_dir.join("codex-claims")
     }

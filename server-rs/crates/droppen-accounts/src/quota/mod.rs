@@ -38,7 +38,7 @@
 //! ([`readings::PROBE_FAILURE_BACKOFF`]).
 //!
 //! Codex's windows are read of a different CLI over a different protocol, so
-//! they live in `accounts::quota::codex`, with a reading reused for [`USAGE_TTL`], probes
+//! they live in `provider::codex::quota`, with a reading reused for [`USAGE_TTL`], probes
 //! serialized and requests bounded by [`COLLECT_BUDGET`]. Scraping a session
 //! file on every request instead would report a three-day-old percentage as the
 //! current one.

@@ -22,11 +22,11 @@ use droppen_base::process_env::{apply_env, clean_env, clean_env_bare};
 use droppen_base::procs;
 use droppen_base::time::iso8601;
 
-use super::common::{busy_message, new_uuid, session_workdir, Phase, QueueOutcome, ResidentState, CHAT_SYSTEM_PROMPT};
-use super::gate::{ClaimError, SessionLease, SpawnGate};
+use crate::provider::common::{busy_message, new_uuid, session_workdir, Phase, QueueOutcome, ResidentState, CHAT_SYSTEM_PROMPT};
+use crate::provider::gate::{ClaimError, SessionLease, SpawnGate};
 use droppen_sessions::archive::ArchiveError;
-use super::{
-    codex_permission_flags, require_provider, runs, shim, with_codex_files, AccountChoice, Capabilities, CodexAccount, DriverStatesBuilder,
+use crate::provider::{
+    require_provider, runs, shim, with_codex_files, AccountChoice, Capabilities, CodexAccount, DriverStatesBuilder,
     InjectError, InjectionRegistry, Provider, ProviderRuns, Run, RunHost, SendOptions, SendTo, Sent, SpawnPermit, StartAt, WrittenAt,
 };
 
@@ -40,7 +40,7 @@ const RETIRE_EXIT_WAIT: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
-pub(super) struct State {
+pub(in crate::provider) struct State {
     cursor: u64,
     active: Option<String>,
     completed_turn: Option<String>,
@@ -69,7 +69,7 @@ struct Message {
 }
 
 #[derive(Clone)]
-pub(super) struct Handle {
+pub(in crate::provider) struct Handle {
     tx: mpsc::UnboundedSender<Cmd>,
     shared: Arc<Mutex<State>>,
     /// The account this process was started under, or `None` for the machine's
@@ -84,7 +84,7 @@ pub(super) struct Handle {
 }
 
 impl Handle {
-    pub(super) fn alive(&self) -> bool {
+    pub(in crate::provider) fn alive(&self) -> bool {
         !self.tx.is_closed()
     }
 
@@ -98,14 +98,14 @@ impl Handle {
         let state = self.shared.lock().unwrap();
         state.active.is_some() || !state.queue.is_empty() || state.archive_request.is_some()
     }
-    pub(super) fn visible(&self) -> bool {
+    pub(in crate::provider) fn visible(&self) -> bool {
         let state = self.shared.lock().unwrap();
         !state.archived && (self.alive() || !state.queue.is_empty())
     }
-    pub(super) fn injection(&self) -> Option<Injection> {
+    pub(in crate::provider) fn injection(&self) -> Option<Injection> {
         self.shared.lock().unwrap().injection.clone()
     }
-    pub(super) fn state(&self) -> ResidentState {
+    pub(in crate::provider) fn state(&self) -> ResidentState {
         let state = self.shared.lock().unwrap();
         ResidentState {
             phase: if state.active.is_some() || state.queue.iter().any(|q| q.request.is_some()) {
@@ -134,14 +134,14 @@ impl Handle {
             question: None,
         }
     }
-    pub(super) fn info(&self) -> droppen_sessions::ResidentInfo {
+    pub(in crate::provider) fn info(&self) -> droppen_sessions::ResidentInfo {
         self.state().into()
     }
-    pub(super) fn interrupt(&self) -> bool {
+    pub(in crate::provider) fn interrupt(&self) -> bool {
         let state = self.shared.lock().unwrap();
         (state.active.is_some() || state.queue.iter().any(|q| q.request.is_some())) && self.tx.send(Cmd::Interrupt).is_ok()
     }
-    pub(super) async fn queue_action(&self, id: &str, steer: bool) -> QueueOutcome {
+    pub(in crate::provider) async fn queue_action(&self, id: &str, steer: bool) -> QueueOutcome {
         let (reply, rx) = oneshot::channel();
         if self.tx.send(Cmd::Queue { id: id.into(), steer, reply }).is_err() {
             return QueueOutcome::Unreachable;
@@ -359,7 +359,7 @@ fn message(text: &str, options: &SendOptions) -> Result<Message, InjectError> {
     };
     Ok(Message {
         // The send path's choice when a client named the message, so its
-        // receipt can follow it; see [`super::receipts`].
+        // receipt can follow it; see [`crate::provider::receipts`].
         id: options.message_id.clone().unwrap_or_else(new_uuid),
         text: text.into(),
         // A stored value, because the journal reads back rows other builds
@@ -419,7 +419,7 @@ async fn rpc(registry: &CodexRuns, link: &mut shim::Link, method: &str, params: 
 /// What a Codex run keeps in its journal row, beside what every run says
 /// ([`runs::RunRecord<CodexRun>`]): written after those fields, in this order.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub(super) struct CodexRun {
+pub(in crate::provider) struct CodexRun {
     /// Three keys every row carries and only a Claude Code resident reads: a
     /// Codex run's are `null`, `null` and `[]`, kept as they were read so a
     /// Codex row is written back unchanged.
@@ -432,7 +432,7 @@ pub(super) struct CodexRun {
     /// Codex App Server delivery state and replay checkpoint. Absent for a
     /// legacy exec run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(super) codex: Option<State>,
+    pub(in crate::provider) codex: Option<State>,
     /// The stored account a codex app-server was started under.
     ///
     /// The codex half of a Claude Code run's fingerprint, and a field of its own
@@ -441,7 +441,7 @@ pub(super) struct CodexRun {
     /// and never a secret. `None` is the machine's own `~/.codex` login, which
     /// is what every record written before accounts had a second CLI means.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(super) codex_account: Option<String>,
+    pub(in crate::provider) codex_account: Option<String>,
 }
 
 /// Codex, as the provider registry knows it.
@@ -449,13 +449,13 @@ pub(crate) struct Codex {
     /// Its sessions' app servers.
     runs: Arc<CodexRuns>,
     /// Its CLI's models.
-    models: crate::models::codex::CodexModels,
+    models: crate::provider::codex::models::CodexModels,
 }
 
 impl Codex {
     /// Codex, its runs on `registry`'s host.
     pub(crate) fn new(registry: Arc<InjectionRegistry>) -> Self {
-        let models = crate::models::codex::CodexModels::new(registry.host.paths.clone());
+        let models = crate::provider::codex::models::CodexModels::new(registry.host.paths.clone());
         Self {
             runs: CodexRuns::new(registry.host.clone()),
             models,
@@ -481,7 +481,7 @@ pub(crate) struct CodexRuns {
 
 impl CodexRuns {
     /// None yet, on `host`.
-    pub(super) fn new(host: Arc<RunHost>) -> Arc<Self> {
+    pub(in crate::provider) fn new(host: Arc<RunHost>) -> Arc<Self> {
         let runs = Arc::new(Self {
             host,
             codex_servers: Mutex::new(HashMap::new()),
@@ -541,7 +541,7 @@ impl ProviderRuns for CodexRuns {
 
     fn was_cut_short<'a>(&'a self, record: &'a runs::RunRecord) -> BoxFuture<'a, bool> {
         Box::pin(async move {
-            match crate::sessions::codex::find_codex_session(&self.paths, &record.session_id).await {
+            match crate::provider::codex::sessions::codex::find_codex_session(&self.paths, &record.session_id).await {
                 None => true,
                 // Codex reads `Idle` for a transcript nothing has touched
                 // lately, which after a long outage is every transcript. That
@@ -554,7 +554,7 @@ impl ProviderRuns for CodexRuns {
 
     fn last_write<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Option<Instant>> {
         Box::pin(async move {
-            let session = crate::sessions::codex::find_codex_session(&self.paths, id).await?;
+            let session = crate::provider::codex::sessions::codex::find_codex_session(&self.paths, id).await?;
             std::path::PathBuf::from(session.file_path).written_at().await
         })
     }
@@ -624,7 +624,7 @@ impl Run for Codex {
             // which thread it actually made. A failure here costs the session its
             // ownership (it lists as external) and nothing else, so it is logged rather
             // than turned into a refusal of a run that has already started.
-            if let Err(error) = crate::sessions::codex::CodexSessions.record_owned(&self.runs.paths, &id).await {
+            if let Err(error) = crate::provider::codex::sessions::codex::CodexSessions.record_owned(&self.runs.paths, &id).await {
                 tracing::error!(session = %id, %error, "cannot record this codex session as ours; it will list as external");
             }
             // Written beside the ownership record and for the same reason: the thread id
@@ -687,7 +687,7 @@ impl Run for Codex {
 impl Codex {
     /// Which account a codex spawn runs under, and what it puts into it.
     ///
-    /// The same three-state resolution [`super::claude_code::resident::ClaudeCodeRuns::resume_claude_env`] does, and for the same
+    /// The same three-state resolution [`crate::provider::claude_code::resident::ClaudeCodeRuns::resume_claude_env`] does, and for the same
     /// reason: `accountId: null` is "the machine's own codex login" even when a
     /// default is configured, absent is "whatever this thread is already bound to",
     /// and a named account both wins and is written down.
@@ -730,7 +730,7 @@ impl CodexRuns {
     /// The state of a codex session's run: its app server's, whenever there is
     /// a handle (even one that has nothing to say yet), and otherwise the runs
     /// map's, where a `codex exec` run adopted from the previous server is.
-    pub(super) fn codex_injection(&self, id: &str) -> Option<Injection> {
+    pub(in crate::provider) fn codex_injection(&self, id: &str) -> Option<Injection> {
         if let Some(handle) = self.codex_handle(id) {
             return handle.injection();
         }
@@ -739,7 +739,7 @@ impl CodexRuns {
 
     /// Codex's part of the session list's snapshot ([`ProviderRuns::add_to`]): the app servers
     /// the list is to show, and the state of every app server's run.
-    pub(super) fn codex_driver_states(&self, states: &mut DriverStatesBuilder) {
+    pub(in crate::provider) fn codex_driver_states(&self, states: &mut DriverStatesBuilder) {
         for (id, handle) in self.codex_servers.lock().unwrap().iter().filter(|(_, h)| h.visible()) {
             states.resident(self.key_of(Source::Codex, id), handle.info());
         }
@@ -751,7 +751,7 @@ impl CodexRuns {
     }
 
     /// A dead CLI must not take already-accepted, undelivered messages with it.
-    pub(super) fn codex_dead(&self, mut record: runs::RunRecord<CodexRun>) {
+    pub(in crate::provider) fn codex_dead(&self, mut record: runs::RunRecord<CodexRun>) {
         let mut state = record.payload.codex.clone().unwrap_or_default();
         let interrupted = state.interrupt_requested || state.injection.as_ref().is_some_and(|i| i.interrupted);
         let unfinished = state.active.take().is_some() || state.queue.iter().any(|q| q.request.is_some());
@@ -795,7 +795,7 @@ impl CodexRuns {
         );
     }
 
-    pub(super) async fn codex_queue_action(&self, id: &str, qid: &str, steer: bool) -> QueueOutcome {
+    pub(in crate::provider) async fn codex_queue_action(&self, id: &str, qid: &str, steer: bool) -> QueueOutcome {
         let Some(handle) = self.codex_handle(id) else {
             return QueueOutcome::NoResident;
         };
@@ -831,7 +831,7 @@ impl CodexRuns {
             .find(|r| r.payload.codex.is_some())
     }
 
-    pub(super) fn codex_handle(&self, id: &str) -> Option<Handle> {
+    pub(in crate::provider) fn codex_handle(&self, id: &str) -> Option<Handle> {
         self.codex_servers.lock().unwrap().get(id).cloned()
     }
 
@@ -894,7 +894,7 @@ impl CodexRuns {
         Ok(())
     }
 
-    pub(super) async fn codex_deliver(
+    pub(in crate::provider) async fn codex_deliver(
         self: &Arc<Self>,
         gate: &SpawnGate,
         id: Option<&str>,
@@ -1094,7 +1094,7 @@ impl CodexRuns {
         Ok((id, handle))
     }
 
-    pub(super) fn codex_attached(self: &Arc<Self>, record: runs::RunRecord<CodexRun>, link: shim::Link, lease: SessionLease) -> Handle {
+    pub(in crate::provider) fn codex_attached(self: &Arc<Self>, record: runs::RunRecord<CodexRun>, link: shim::Link, lease: SessionLease) -> Handle {
         // A finished legacy exec entry must not overwrite this driver's newer
         // finish time in the list snapshot after the session migrates.
         self.runs.lock().unwrap().remove(&self.key_of(Source::Codex, &record.session_id));
@@ -1802,9 +1802,36 @@ impl Driver {
     }
 }
 
+/// Mode names aligned with current Codex terminology, mapped onto what
+/// `codex exec` actually supports (approvals are always "never" headless).
+/// Raw sandbox values are kept as aliases for older stored preferences.
+pub(crate) fn codex_permission_flags(permission: &str) -> Result<Vec<&'static str>, InjectError> {
+    Ok(match permission {
+        "auto" | "workspace-write" => vec!["--sandbox", "workspace-write"],
+        "read-only" => vec!["--sandbox", "read-only"],
+        "full-access" | "danger-full-access" => vec!["--sandbox", "danger-full-access"],
+        "bypass-all" => vec!["--dangerously-bypass-approvals-and-sandbox"],
+        other => return Err(InjectError::message(format!("unknown codex permission mode: {other}"))),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn codex_permission_aliases_map_onto_exec_flags() {
+        assert_eq!(codex_permission_flags("auto").expect("auto"), ["--sandbox", "workspace-write"]);
+        assert_eq!(
+            codex_permission_flags("workspace-write").expect("alias"),
+            ["--sandbox", "workspace-write"]
+        );
+        assert_eq!(
+            codex_permission_flags("bypass-all").expect("bypass"),
+            ["--dangerously-bypass-approvals-and-sandbox"]
+        );
+        assert!(codex_permission_flags("nonsense").is_err());
+    }
     use droppen_instance::instance::InstanceDirs;
     use droppen_instance::paths::Paths;
     use serde_json::json;

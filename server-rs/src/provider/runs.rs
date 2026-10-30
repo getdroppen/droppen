@@ -314,7 +314,7 @@ impl RunsFile {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider::app_server::CodexRun;
+    use crate::provider::codex::app_server::CodexRun;
     use crate::provider::claude_code::resident::{ClaudeJournal, ClaudeRun, Queued};
 
     fn record(run_id: &str, session_id: &str, pid: u32) -> RunRecord<ClaudeRun> {

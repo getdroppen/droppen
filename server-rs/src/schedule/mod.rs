@@ -1056,7 +1056,7 @@ mod tests {
         // With a cache, the rungs it names are the ones that count.
         std::fs::create_dir_all(paths.codex_dir()).expect("codex dir");
         std::fs::write(
-            crate::sessions::codex::CodexHome::of(&paths).models_cache(),
+            crate::provider::codex::sessions::codex::CodexHome::of(&paths).models_cache(),
             r#"{"models":[{"slug":"gpt-5.5","visibility":"list","supported_reasoning_levels":[{"effort":"low"},{"effort":"high"}]}]}"#,
         )
         .expect("seed");

@@ -3,6 +3,3 @@
 //! [`droppen_sessions::Transcripts`] port. Claude Code's is its provider's
 //! ([`crate::provider::claude_code::sessions`]).
 
-pub mod codex;
-pub mod codex_claims;
-pub mod codex_tools;

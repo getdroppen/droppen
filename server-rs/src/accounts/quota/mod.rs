@@ -2,4 +2,3 @@
 //! [`droppen_accounts::quota`] keeps.
 
 pub mod claude;
-pub mod codex;

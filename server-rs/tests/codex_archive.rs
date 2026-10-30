@@ -2,7 +2,7 @@
 mod support;
 
 use droppen_instance::paths::Paths;
-use remote_hand_server::sessions::codex::CodexSessions;
+use remote_hand_server::provider::codex::sessions::codex::CodexSessions;
 use serde_json::json;
 use support::Probe;
 

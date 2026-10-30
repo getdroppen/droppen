@@ -273,7 +273,7 @@ pub(crate) async fn app_server_call(program: &Path, cwd: &Path, env: &droppen_ba
 /// The whole conversation: handshake, one request, one answer.
 ///
 /// `initialized` is sent only after `initialize` has been answered, which is
-/// the order [`crate::provider::app_server`] uses against the same protocol.
+/// the order [`crate::provider::codex::app_server`] uses against the same protocol.
 async fn ask(mut stdin: ChildStdin, stdout: ChildStdout, method: &str) -> Option<Value> {
     let mut lines = BufReader::new(stdout.take(MAX_PROBE_OUTPUT)).lines();
     let initialize = InitializeParams {
@@ -300,7 +300,7 @@ async fn ask(mut stdin: ChildStdin, stdout: ChildStdout, method: &str) -> Option
 }
 
 /// A JSON-RPC 2.0 message to the app server: a request when it has an id, a
-/// notification when not. Unlike [`crate::provider::app_server`]'s, it names
+/// notification when not. Unlike [`crate::provider::codex::app_server`]'s, it names
 /// the protocol version.
 #[derive(Serialize)]
 struct JsonRpc<'a, P> {
@@ -438,7 +438,7 @@ trait CodexSourcesExt {
     /// out of its answer.
     ///
     /// A short-lived child of this module's own rather than the session client in
-    /// [`crate::provider::app_server`]: that one is one app server *per session* over
+    /// [`crate::provider::codex::app_server`]: that one is one app server *per session* over
     /// the restart-safe shim, and it exists to keep a turn alive across a server
     /// restart — it claims the session lock, writes a run journal record and leaves
     /// shim sidecars on disk. None of that belongs to a read that needs no thread

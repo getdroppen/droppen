@@ -4,7 +4,7 @@
 //! `tool_use` block carries a parsed JSON object, so everything here starts
 //! from one. Codex hands over the *source text* of a JavaScript cell or a
 //! JSON-encoded argument string, and records what actually ran somewhere else
-//! entirely; that half lives in `sessions::codex_tools`. Both borrow the
+//! entirely; that half lives in `provider::codex::sessions::codex_tools`. Both borrow the
 //! generic helpers in [`droppen_sessions::tool_display`], so that a tool
 //! nothing knows by name reads the same from either CLI.
 
