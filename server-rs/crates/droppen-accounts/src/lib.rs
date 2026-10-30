@@ -683,6 +683,45 @@ pub fn describe(reg: &mut ExtraResponses) {
 mod tests {
     use super::*;
 
+    /// The model lists of no login: the id routes never ask for one.
+    struct NoModels;
+
+    impl ModelIds for NoModels {
+        fn model_ids<'a>(&'a self, _source: droppen_sessions::Source, _account_id: Option<&'a str>) -> futures_util::future::BoxFuture<'a, Vec<String>> {
+            Box::pin(async { Vec::new() })
+        }
+    }
+
+    /// A route refuses an id that is not a uuid before it asks the store
+    /// anything. The store would answer for such an id: here a stored
+    /// account's row is renamed behind its back, so reading or deleting under
+    /// the new name would find it.
+    #[tokio::test]
+    async fn a_route_asks_the_store_nothing_about_an_id_that_is_not_a_uuid() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let paths = Arc::new(droppen_instance::paths::Paths::new(dir.path().to_path_buf()));
+        let accounts = Arc::new(store::AccountsStore::new(paths.clone(), login::Logins::stand_ins()));
+        let block = droppen_base::env_block::parse_env_block("ANTHROPIC_AUTH_TOKEN=t\nANTHROPIC_BASE_URL=https://relay.example").expect("block");
+        let account = accounts.create("Relay", AccountProvider::Claude, Credential::Env(block)).await.expect("stored");
+        let renamed = "not-a-uuid";
+        let db = rusqlite::Connection::open(paths.config_db()).expect("the store's database");
+        assert_eq!(db.execute("UPDATE accounts SET id = ?1 WHERE id = ?2", (renamed, &account.id)).expect("rename"), 1);
+        let state = AccountsState {
+            accounts,
+            quota: Arc::new(quota::QuotaCache::new(paths.clone(), login::Logins::stand_ins())),
+            paths,
+            model_ids: Arc::new(NoModels),
+            recheck_holds: Arc::new(|| {}),
+        };
+
+        let read = get_account_env(State(state.clone()), ApiPath(renamed.to_string())).await;
+        assert_eq!(read.err().expect("refused").status(), StatusCode::NOT_FOUND, "the block is not read");
+        let deleted = delete_account(State(state), ApiPath(renamed.to_string())).await;
+        assert_eq!(deleted.err().expect("refused").status(), StatusCode::NOT_FOUND);
+        let left: i64 = db.query_row("SELECT COUNT(*) FROM accounts WHERE id = ?1", (renamed,), |row| row.get(0)).expect("count");
+        assert_eq!(left, 1, "the row is not deleted");
+    }
+
     /// What an account route checks before it touches the store: an id that
     /// is not a uuid is the same `404` as one that names no account, and a
     /// label is 1 to 100 characters, counted as characters rather than bytes.
