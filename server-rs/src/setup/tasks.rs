@@ -918,11 +918,9 @@ mod tests {
     }
 
     use super::*;
-    use crate::api::AppState;
-    use gotcha::axum::extract::FromRef;
     use crate::setup::runner::fixture::Fixture;
     use crate::setup::runner::RunOutput;
-    use crate::setup::tests::{guide, marker};
+    use crate::setup::tests::{guide, marker, setup_state};
     use crate::setup::{LoginState, PathRead};
 
     #[test]
@@ -1048,10 +1046,9 @@ mod tests {
     }
 
     /// A state whose guide only ever looks in a scratch home.
-    async fn scene(fixture: Arc<Fixture>) -> (tempfile::TempDir, AppState) {
+    async fn scene(fixture: Arc<Fixture>) -> (tempfile::TempDir, SetupState) {
         let home = tempfile::tempdir().expect("tempdir");
-        let mut state = crate::api::test_support::state(home.path()).await;
-        state.setup = guide(home.path(), fixture, Some(PathRead::Ok));
+        let state = setup_state(home.path(), guide(home.path(), fixture, Some(PathRead::Ok)));
         (home, state)
     }
 
@@ -1070,7 +1067,7 @@ mod tests {
             .answer("claude auth status --json", RunOutput::exited(1, "{}", ""));
         let (home, state) = scene(fixture.clone()).await;
         let setup = state.setup.clone();
-        assert!(setup.report(&SetupState::from_ref(&state), false).await.tools[0].found.0.is_none());
+        assert!(setup.report(&state, false).await.tools[0].found.0.is_none());
 
         let record = running(ToolId::Claude, TaskKind::Install, "native");
         let id = record.id.clone();
@@ -1085,7 +1082,7 @@ mod tests {
         let settling = setup.task_view(ToolId::Claude, &state.terminals).expect("task");
         assert!(settling.running && !settling.failed, "an exit of 0 is not yet a success");
         setup.after_exit(ToolId::Claude, &id).await;
-        let report = setup.report(&SetupState::from_ref(&state), false).await;
+        let report = setup.report(&state, false).await;
         let claude = &report.tools[0];
         assert!(claude.found.0.is_some(), "found after the install");
         assert_eq!(claude.version.0.as_deref(), Some("2.1.300"));
@@ -1150,7 +1147,7 @@ mod tests {
         // a download that fails is the line's status (6: no such host).
         let mut tail = Tail::default();
         tail.push("Downloading codex…\r\nAuthorization: sk-ant-oat01-AbCdEfGhIjKlMnOp\r\ncurl: (6) Could not resolve host: chatgpt.com\r\n");
-        setup.record_exit(ToolId::Codex, &id, Some(6), redact(tail.lines(), &state.drive.accounts));
+        setup.record_exit(ToolId::Codex, &id, Some(6), redact(tail.lines(), &state.accounts));
         let task = setup.task_view(ToolId::Codex, &state.terminals).expect("task");
         assert_eq!(task.exit_code.0, Some(6));
         assert!(task.failed && !task.running);
@@ -1212,7 +1209,7 @@ mod tests {
         let (home, state) = scene(fixture.clone()).await;
         marker(&home.path().join("bin/codex"));
 
-        let task = login_with_api_key(&SetupState::from_ref(&state), &format!("  {key}  ")).await.expect("ran");
+        let task = login_with_api_key(&state, &format!("  {key}  ")).await.expect("ran");
         let login = fixture
             .asked()
             .into_iter()
@@ -1229,8 +1226,8 @@ mod tests {
         let serialized = serde_json::to_string(&task).unwrap();
         assert!(!serialized.contains("TESTKEY"), "the key is never echoed: {serialized}");
         assert!(task.tail.iter().any(|line| line.contains("[redacted]")), "{:?}", task.tail);
-        assert!(login_with_api_key(&SetupState::from_ref(&state), "has a space").await.is_err());
-        assert!(login_with_api_key(&SetupState::from_ref(&state), "").await.is_err());
+        assert!(login_with_api_key(&state, "has a space").await.is_err());
+        assert!(login_with_api_key(&state, "").await.is_err());
     }
 
     /// The request that carried the key goes away (the window closed, the
@@ -1249,7 +1246,7 @@ mod tests {
 
         let request = tokio::spawn({
             let state = state.clone();
-            async move { login_with_api_key(&SetupState::from_ref(&state), "sk-proj-TESTKEY0123456789").await }
+            async move { login_with_api_key(&state, "sk-proj-TESTKEY0123456789").await }
         });
         for _ in 0..200 {
             if fixture.lines().iter().any(|line| line.starts_with("codex login --with-api-key")) {
@@ -1452,7 +1449,7 @@ mod tests {
         } else {
             eprintln!("this disk tells case apart: the other-case spelling was not tried");
         }
-        let claude = &setup.report(&SetupState::from_ref(&state), false).await.tools[0];
+        let claude = &setup.report(&state, false).await.tools[0];
         assert_eq!(claude.found.0.as_ref().map(|found| found.via), Some(super::super::FoundVia::Picked));
     }
 
@@ -1473,16 +1470,16 @@ mod tests {
         let shell = home.path().join("stand-in-shell");
         std::fs::write(&shell, "#!/bin/sh\nsleep 1\nexit 0\n").expect("write");
         std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o755)).expect("chmod");
-        let mut state = crate::api::test_support::state(home.path()).await;
-        // What the instance lock's owner makes at boot, and this lock-less
-        // state does not: where terminals keep their identity and socket.
-        std::fs::create_dir_all(state.instance.pty_shims()).expect("the shims' folder");
-        state.setup = crate::setup::tests::guide_in_shell(home.path(), Fixture::new(), Some(PathRead::Ok), &shell.to_string_lossy());
+        // Its terminals' folder made, as the instance's owner does at boot.
+        let state = setup_state(
+            home.path(),
+            crate::setup::tests::guide_in_shell(home.path(), Fixture::new(), Some(PathRead::Ok), &shell.to_string_lossy()),
+        );
         let entry = commands::find(CommandTool::Claude, TaskKind::Install, "native").expect("whitelisted");
 
         let request = tokio::spawn({
             let state = state.clone();
-            async move { start_in_terminal(&SetupState::from_ref(&state), ToolId::Claude, entry).await }
+            async move { start_in_terminal(&state, ToolId::Claude, entry).await }
         });
         // Once the tool is claimed, the opening is under way: drop the request.
         for _ in 0..2000 {

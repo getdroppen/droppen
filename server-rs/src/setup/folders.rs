@@ -240,7 +240,7 @@ pub async fn practice_folder(State(state): State<SetupState>) -> Result<Created<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gotcha::axum::extract::FromRef;
+    use crate::setup::runner::fixture::Fixture;
 
     fn session(cwd: &str, source: Source, scope: SessionScope, updated_at: &str) -> SessionSummary {
         let mut row: SessionSummary = serde_json::from_value(serde_json::json!({
@@ -358,12 +358,12 @@ mod tests {
     #[tokio::test]
     async fn the_route_remembers_the_practice_folder_it_made() {
         let home = tempfile::tempdir().expect("tempdir");
-        let state = crate::api::test_support::state(home.path()).await;
-        let first = practice_folder(State(SetupState::from_ref(&state))).await.expect("made").0.path;
-        let again = practice_folder(State(SetupState::from_ref(&state))).await.expect("again").0.path;
+        let state = crate::setup::tests::setup_state(home.path(), crate::setup::tests::guide(home.path(), Fixture::new(), None));
+        let first = practice_folder(State(state.clone())).await.expect("made").0.path;
+        let again = practice_folder(State(state.clone())).await.expect("again").0.path;
         assert_eq!(again, first, "still empty: the same folder");
         std::fs::write(Path::new(&first).join("a.txt"), "x").expect("write");
-        let next = practice_folder(State(SetupState::from_ref(&state))).await.expect("next").0.path;
+        let next = practice_folder(State(state.clone())).await.expect("next").0.path;
         assert_ne!(next, first);
         assert!(next.ends_with("first-session-2"), "{next}");
     }

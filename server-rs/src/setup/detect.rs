@@ -673,7 +673,7 @@ mod tests {
         let (_home, probe, fixture) = scene();
         fixture.answer("claude --version", RunOutput::exited(0, "1.0.88 (Claude Code)\n", ""));
         let runner: Arc<dyn Runner> = fixture.clone();
-        let claude = tool(&runner, &probe, ToolId::Claude, &*crate::app::logins().claude).await;
+        let claude = tool(&runner, &probe, ToolId::Claude, &crate::setup::tests::StandInLogin(crate::accounts::store::AccountProvider::Claude)).await;
         assert_eq!(claude.version.as_deref(), Some("1.0.88"));
         assert!(!claude.supported);
         assert_eq!(claude.login.state, LoginState::Unknown);
@@ -696,7 +696,7 @@ mod tests {
         };
         let fixture = Fixture::new();
         let runner: Arc<dyn Runner> = fixture.clone();
-        let detection = detect(&runner, &probe, &*crate::app::logins().claude).await;
+        let detection = detect(&runner, &probe, &crate::setup::tests::StandInLogin(crate::accounts::store::AccountProvider::Claude)).await;
         assert!(detection.tools.iter().all(|tool| tool.found.is_none() && !tool.supported));
         assert_eq!(detection.helpers.git, GitState::Missing, "no git on the PATH off a Mac");
         assert!(fixture.lines().is_empty(), "nothing to ask: {:?}", fixture.lines());
