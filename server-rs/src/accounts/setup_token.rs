@@ -73,7 +73,6 @@ use gotcha::{api, GotchaRouter, Schematic, State};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
-use crate::drive::Drive;
 use droppen_http::created::Created;
 use droppen_http::error::ApiError;
 use droppen_http::extract::{ApiJson, ApiPath};
@@ -83,8 +82,9 @@ use droppen_http::openapi_ext::{ExtraResponses, Optional};
 use droppen_base::process_env::{claude_env, clean_env_bare, resolve_on_path};
 use droppen_workbench::terminals::{CreateSpec, Registry};
 use droppen_base::text::strip_ansi;
+use droppen_instance::paths::Paths;
 
-use droppen_accounts::store::{AccountError, AccountKind, AccountPatch, AccountProvider, Credential};
+use droppen_accounts::store::{AccountError, AccountKind, AccountPatch, AccountProvider, AccountsStore, Credential};
 use droppen_accounts::verify::Verdict;
 use droppen_accounts::AccountInputExt;
 
@@ -595,9 +595,10 @@ impl Entry {
 
 /// Every capture this server has started, live and recently finished.
 ///
-/// Lives in [`Drive`] rather than in a `static` — like every other registry in
-/// the port, so two servers in one process (which is what the integration tests
-/// run) cannot see each other's captures.
+/// Lives in the server's state (its `AppState::wizards`) rather than in a
+/// `static` — like every other registry in the port, so two servers in one
+/// process (which is what the integration tests run) cannot see each other's
+/// captures.
 #[derive(Debug, Default)]
 pub struct Captures {
     entries: Mutex<HashMap<String, Entry>>,
@@ -709,7 +710,7 @@ enum Event {
 /// `open_browser` leaves the CLI's browser opener alone (see the module docs:
 /// only for the desktop app on its own device); otherwise every opener is a
 /// no-op.
-pub async fn start(drive: Arc<Drive>, terminals: Arc<Registry>, target: Target, open_browser: bool) -> Result<SetupTokenStarted, SetupTokenError> {
+pub async fn start(state: TokenWizardState, target: Target, open_browser: bool) -> Result<SetupTokenStarted, SetupTokenError> {
     if resolve_on_path("claude", &clean_env_bare()).is_none() {
         return Err(SetupTokenError::NoCli);
     }
@@ -717,7 +718,7 @@ pub async fn start(drive: Arc<Drive>, terminals: Arc<Registry>, target: Target, 
     let capture_id = uuid::Uuid::new_v4().to_string();
     // A directory of our own, never ~/.claude and never the managed root: the
     // wizard writes credentials there that we do not want and do not keep.
-    let home = drive.paths.data_dir().join("setup-token").join(&capture_id);
+    let home = state.paths.data_dir().join("setup-token").join(&capture_id);
     let config_dir = home.join("claude");
     let _ = tokio::fs::remove_dir_all(&home).await;
     tokio::fs::create_dir_all(&config_dir)
@@ -785,7 +786,7 @@ pub async fn start(drive: Arc<Drive>, terminals: Arc<Registry>, target: Target, 
         }
     }));
 
-    let info = terminals.create_terminal_with(spec).await.map_err(|error| {
+    let info = state.terminals.create_terminal_with(spec).await.map_err(|error| {
         tracing::error!(%error, "the setup-token wizard could not open a terminal");
         SetupTokenError::Terminal
     })?;
@@ -793,8 +794,8 @@ pub async fn start(drive: Arc<Drive>, terminals: Arc<Registry>, target: Target, 
     // `run_capture` ends — once the terminal is gone for good.
     drop(events);
 
-    drive.wizards.insert(capture_id.clone(), info.id.clone(), home);
-    tokio::spawn(run_capture(drive, terminals, capture_id.clone(), target, incoming));
+    state.wizards.insert(capture_id.clone(), info.id.clone(), home);
+    tokio::spawn(run_capture(state, capture_id.clone(), target, incoming));
     Ok(SetupTokenStarted {
         capture_id,
         terminal_id: info.id,
@@ -802,20 +803,20 @@ pub async fn start(drive: Arc<Drive>, terminals: Arc<Registry>, target: Target, 
 }
 
 /// The one owner of a capture's mutations, fed by the two pty hooks in order.
-async fn run_capture(drive: Arc<Drive>, terminals: Arc<Registry>, capture_id: String, target: Target, mut incoming: mpsc::UnboundedReceiver<Event>) {
+async fn run_capture(state: TokenWizardState, capture_id: String, target: Target, mut incoming: mpsc::UnboundedReceiver<Event>) {
     while let Some(event) = incoming.recv().await {
         match event {
-            Event::AuthUrl(url) => drive.wizards.saw_auth_url(&capture_id, url),
+            Event::AuthUrl(url) => state.wizards.saw_auth_url(&capture_id, url),
             Event::Token(found) => {
-                store(&drive, &capture_id, &target, &found).await;
-                retire_terminal(&drive.wizards, &terminals, &capture_id);
+                store(&state, &capture_id, &target, &found).await;
+                retire_terminal(&state.wizards, &state.terminals, &capture_id);
             }
             Event::Exit(exit_code) => {
-                drive.wizards.note_exit(&capture_id, exit_code);
-                if let Some(home) = drive.wizards.home(&capture_id) {
+                state.wizards.note_exit(&capture_id, exit_code);
+                if let Some(home) = state.wizards.home(&capture_id) {
                     let _ = tokio::fs::remove_dir_all(&home).await;
                 }
-                expire_later(Arc::downgrade(&drive.wizards), capture_id.clone());
+                expire_later(Arc::downgrade(&state.wizards), capture_id.clone());
             }
         }
     }
@@ -893,9 +894,9 @@ impl Reading {
 }
 
 /// [`choose_reading`] against the real Anthropic check.
-async fn accepted_reading(drive: &Arc<Drive>, found: &TokenMatch) -> Result<Reading, String> {
-    let paths = drive.paths.clone();
-    let logins = drive.accounts.logins().clone();
+async fn accepted_reading(state: &TokenWizardState, found: &TokenMatch) -> Result<Reading, String> {
+    let paths = state.paths.clone();
+    let logins = state.accounts.logins().clone();
     choose_reading(found, move |candidate| {
         let paths = paths.clone();
         let logins = logins.clone();
@@ -911,37 +912,37 @@ async fn accepted_reading(drive: &Arc<Drive>, found: &TokenMatch) -> Result<Read
 }
 
 /// Hand the captured token to the accounts store, and record where it landed.
-async fn store(drive: &Arc<Drive>, capture_id: &str, target: &Target, found: &TokenMatch) {
-    let reading = match accepted_reading(drive, found).await {
+async fn store(state: &TokenWizardState, capture_id: &str, target: &Target, found: &TokenMatch) {
+    let reading = match accepted_reading(state, found).await {
         Ok(reading) => reading,
-        Err(reason) => return drive.wizards.failed(capture_id, reason),
+        Err(reason) => return state.wizards.failed(capture_id, reason),
     };
     let unverified = reading.unverified;
     match target {
-        Target::New(label) => match drive
+        Target::New(label) => match state
             .accounts
             .create(label, AccountProvider::Claude, Credential::Oauth(reading.token.clone()))
             .await
         {
-            Ok(account) => drive.wizards.captured(capture_id, account.id, false, unverified),
+            Ok(account) => state.wizards.captured(capture_id, account.id, false, unverified),
             // Re-authorizing a login already on file is a success, not a clash. The
             // stored label wins: it is the one the user has been reading in the
             // account list, and this run only proved the token still works.
             Err(AccountError::Duplicate { existing_id, .. }) => {
-                let _ = drive.accounts.update(&existing_id, AccountPatch::default()).await;
-                drive.wizards.captured(capture_id, existing_id, true, unverified);
+                let _ = state.accounts.update(&existing_id, AccountPatch::default()).await;
+                state.wizards.captured(capture_id, existing_id, true, unverified);
             }
-            Err(error) => drive.wizards.failed(capture_id, error.to_string()),
+            Err(error) => state.wizards.failed(capture_id, error.to_string()),
         },
         Target::Existing { id, .. } => {
             let patch = AccountPatch {
                 credential: Some(Credential::Oauth(reading.token)),
                 ..Default::default()
             };
-            match drive.accounts.update(id, patch).await {
-                Ok(Some(account)) => drive.wizards.captured(capture_id, account.id, false, unverified),
-                Ok(None) => drive.wizards.failed(capture_id, "that account is gone".to_string()),
-                Err(error) => drive.wizards.failed(capture_id, error.to_string()),
+            match state.accounts.update(id, patch).await {
+                Ok(Some(account)) => state.wizards.captured(capture_id, account.id, false, unverified),
+                Ok(None) => state.wizards.failed(capture_id, "that account is gone".to_string()),
+                Err(error) => state.wizards.failed(capture_id, error.to_string()),
             }
         }
     }
@@ -976,8 +977,12 @@ fn expire_later(wizards: Weak<Captures>, capture_id: String) {
 /// What the setup-token routes use of the server's state.
 #[derive(Clone)]
 pub struct TokenWizardState {
-    /// Accounts, the wizard registry and what a capture stores the token with.
-    pub drive: Arc<Drive>,
+    /// Where a capture's own home is made, and what its token is checked with.
+    pub paths: Arc<Paths>,
+    /// The stored logins a captured token is stored in.
+    pub accounts: Arc<AccountsStore>,
+    /// Every `claude setup-token` run this server has started.
+    pub wizards: Arc<Captures>,
     /// Every live web terminal; the wizard runs in one.
     pub terminals: Arc<Registry>,
     /// The desktop app's window, which may let the CLI open the browser.
@@ -1003,7 +1008,7 @@ pub async fn start_setup_token(
     // TypeScript handler runs — so it is a 400 there too, undocumented.
     body.label.require_label()?;
     let open_browser = state.window().app_caller(&caller).is_ok();
-    start(state.drive.clone(), state.terminals.clone(), Target::New(body.label), open_browser)
+    start(state, Target::New(body.label), open_browser)
         .await
         .map(Created)
         .map_err(|error| ApiError::internal(error.to_string()))
@@ -1021,7 +1026,7 @@ pub async fn reauth_account(
     ApiPath(id): ApiPath<String>,
 ) -> Result<Created<SetupTokenStarted>, ApiError> {
     id.require_uuid()?;
-    let Some(account) = state.drive.accounts.get(&id).await else {
+    let Some(account) = state.accounts.get(&id).await else {
         return Err(ApiError::not_found("account not found"));
     };
     // `setup-token` mints a Claude OAuth token and nothing else: a pasted key
@@ -1040,7 +1045,7 @@ pub async fn reauth_account(
         label: account.label,
     };
     let open_browser = state.window().app_caller(&caller).is_ok();
-    start(state.drive.clone(), state.terminals.clone(), target, open_browser)
+    start(state, target, open_browser)
         .await
         .map(Created)
         .map_err(|error| ApiError::internal(error.to_string()))
@@ -1062,7 +1067,7 @@ pub async fn submit_setup_token_code(
     if code.is_empty() || code.chars().count() > 1024 || code.chars().any(char::is_control) {
         return Err(ApiError::bad_request("that does not look like an authorization code"));
     }
-    let Some(status) = state.drive.wizards.status(&capture_id) else {
+    let Some(status) = state.wizards.status(&capture_id) else {
         return Err(ApiError::not_found("capture not found"));
     };
     if status.status != SetupTokenState::Pending {
@@ -1081,7 +1086,6 @@ pub async fn setup_token_status(
     ApiPath(capture_id): ApiPath<String>,
 ) -> Result<gotcha::Json<SetupTokenStatus>, ApiError> {
     state
-        .drive
         .wizards
         .status(&capture_id)
         .map(gotcha::Json)

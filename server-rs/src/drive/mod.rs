@@ -20,7 +20,6 @@ use std::sync::Arc;
 
 use droppen_accounts::login::Logins;
 use droppen_accounts::quota::QuotaCache;
-use crate::accounts::setup_token::Captures;
 use droppen_accounts::store::AccountsStore;
 use droppen_auth::Auth;
 use crate::provider::{InjectionRegistry, ProviderRegistry, SpawnDecoration};
@@ -46,8 +45,6 @@ pub struct Drive {
     /// spawn's captured output is redacted against the credentials this server
     /// injected, and the only thing that knows what those are is this.
     pub accounts: Arc<AccountsStore>,
-    /// Every `claude setup-token` run this server has started.
-    pub wizards: Arc<Captures>,
     /// Every run remote-hand started.
     pub injections: Arc<InjectionRegistry>,
     /// Every CLI this server drives: what the routes, the feeds and the
@@ -98,7 +95,6 @@ impl Drive {
         let injections = InjectionRegistry::new(paths.clone(), instance, accounts.clone(), quota.clone(), decoration);
         Arc::new(Self {
             auth,
-            wizards: Captures::new(),
             providers: ProviderRegistry::new(injections.clone(), providers),
             injections,
             accounts,

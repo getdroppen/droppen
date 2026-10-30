@@ -321,19 +321,5 @@
     ],
     "count": 26
   },
-  "allowed": [
-    {
-      "why": "Drive holds Claude Code's setup-token captures. They go through the provider base.",
-      "edges": [
-        "drive -> accounts::setup_token"
-      ]
-    },
-    {
-      "why": "The login wizards take drive::Drive, which holds every service a spawn needs. They go when they take only the services they use, as a session's spawn asks its provider (ProviderRegistry) rather than the drive.",
-      "edges": [
-        "accounts::setup_token -> drive",
-        "accounts::usage_login -> drive"
-      ]
-    }
-  ]
+  "allowed": []
 }
