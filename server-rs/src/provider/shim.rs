@@ -1142,8 +1142,8 @@ pub async fn attach(sidecars: &Sidecars) -> Result<Link, LinkError> {
 /// ring, the tombstone, and a real child process on the other end of the pipes.
 /// (A respawn in those tests does get a shim process of its own, through
 /// [`shim_command`].)
-#[cfg(test)]
-pub(super) async fn connect_in_process(socket: &Path) -> Result<Link, LinkError> {
+#[cfg(any(test, feature = "test-support"))]
+pub async fn connect_in_process(socket: &Path) -> Result<Link, LinkError> {
     connect(socket, SPAWN_PATIENCE).await
 }
 

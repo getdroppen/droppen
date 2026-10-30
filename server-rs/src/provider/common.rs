@@ -15,7 +15,7 @@ use super::questions;
 use droppen_sessions::delivery::SessionQuestion;
 
 /// The instant-chat persona: the text the CLI is actually launched with.
-pub(super) const CHAT_SYSTEM_PROMPT: &str = concat!(
+pub const CHAT_SYSTEM_PROMPT: &str = concat!(
     "You are a friendly general-purpose assistant in a casual chat app. ",
     "This is not a coding tool: have a normal conversation, answer in the user's language, ",
     "and keep answers conversational. You have no tools; never claim to read files or run commands."
@@ -36,14 +36,15 @@ pub(super) const CHAT_SYSTEM_PROMPT: &str = concat!(
 ///
 /// One `stat` on the send path, which is cheap next to the process this is about
 /// to start.
-pub(super) fn session_workdir(paths: &Paths, cwd: Option<&str>) -> PathBuf {
+pub fn session_workdir(paths: &Paths, cwd: Option<&str>) -> PathBuf {
     match cwd.map(PathBuf::from) {
         Some(dir) if dir.is_dir() => dir,
         _ => paths.home.clone(),
     }
 }
 
-pub(super) fn new_uuid() -> String {
+/// A fresh random id, for a queued message or a session made here.
+pub fn new_uuid() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
@@ -53,7 +54,7 @@ pub(super) fn new_uuid() -> String {
 /// produced, deliberately: from the composer's point of view the two are the
 /// same condition, and it is the reason the send was refused, not the mechanism
 /// that noticed, that belongs in a message to the user.
-pub(super) fn busy_message(holder: Option<u32>) -> String {
+pub fn busy_message(holder: Option<u32>) -> String {
     match holder {
         Some(pid) => format!("a message is already running for this session (Droppen pid {pid})"),
         None => "a message is already running for this session".to_string(),

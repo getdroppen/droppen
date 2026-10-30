@@ -231,14 +231,24 @@ impl ProviderRegistry {
     /// registry's host.
     pub fn register(&mut self, provider: Arc<dyn Provider>) {
         let source = provider.source();
-        assert!(Arc::ptr_eq(provider.runs().host(), &self.injections.host), "the {source} provider's runs are on another host than this registry's");
+        let runs = provider.runs();
+        assert_eq!(runs.source(), source, "the {source} provider's runs run another source's sessions");
+        assert!(Arc::ptr_eq(runs.host(), &self.injections.host), "the {source} provider's runs are on another host than this registry's");
         assert!(!self.providers.contains_key(&source), "a {source} provider is registered already: one per source");
         self.providers.insert(source, provider);
     }
 
-    /// The spawn gate, for a provider's own route that starts or stops its
-    /// CLI outside a [`Run`] call.
-    pub(crate) fn gate(&self) -> &SpawnGate {
+    /// The provider of type `P` and the spawn gate, for a route of that
+    /// provider's own that starts or stops its CLI outside a [`Run`] call;
+    /// `None` when none is registered. Only a provider's own type is lent the
+    /// gate this way, so only its code can reach it.
+    pub fn provider_with_gate<P: Provider + 'static>(&self) -> Option<(&P, &SpawnGate)> {
+        Some((self.provider::<P>()?, &self.gate))
+    }
+
+    /// The spawn gate, for a test that drives a provider by hand.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn gate(&self) -> &SpawnGate {
         &self.gate
     }
 
@@ -572,7 +582,10 @@ mod tests {
         let why = refusal(|| {
             ProviderRegistry::new(injections, |providers, _| providers.register(Arc::new(crate::provider::codex::app_server::Codex::new(foreign))));
         });
-        assert!(why.as_deref().is_some_and(|why| why.contains("the codex provider's runs are on another host")), "{why:?}");
+        assert!(
+            why.as_deref().is_some_and(|why| why.contains("the codex provider's runs are on another host")),
+            "Codex over another host's injection registry: refused for another reason, or not at all: {why:?}"
+        );
     }
 
     /// One provider registry per host, and one provider per source in it: a
@@ -587,7 +600,10 @@ mod tests {
         let why = refusal(|| {
             ProviderRegistry::new(injections.clone(), crate::app::register_providers);
         });
-        assert!(why.as_deref().is_some_and(|why| why.contains("a provider registry is over this host already")), "{why:?}");
+        assert!(
+            why.as_deref().is_some_and(|why| why.contains("a provider registry is over this host already")),
+            "a second live provider registry on one host: refused for another reason, or not at all: {why:?}"
+        );
         drop(first);
         let again = ProviderRegistry::new(injections.clone(), crate::app::register_providers);
         assert!(again.provider::<crate::provider::acp::Acp>().is_some());
@@ -600,7 +616,10 @@ mod tests {
                     register(providers, injections);
                 });
             });
-            assert!(why.as_deref().is_some_and(|why| why.contains(&format!("a {source} provider is registered already"))), "{source}: {why:?}");
+            assert!(
+                why.as_deref().is_some_and(|why| why.contains(&format!("a {source} provider is registered already"))),
+                "a second {source} provider in one registry: refused for another reason, or not at all: {why:?}"
+            );
         }
     }
 

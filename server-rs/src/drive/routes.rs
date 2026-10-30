@@ -548,7 +548,7 @@ pub async fn new_session(State(state): State<DriveState>, ApiJson(body): ApiJson
         return start_session(state, body, None).await.map(Json);
     };
     idempotent::validate_id(&client_id)?;
-    let receipts = state.drive.injections.host().receipts().clone();
+    let receipts = state.drive.injections.host.receipts().clone();
     let key = Key {
         id: &client_id,
         kind: Kind::NewSession,
@@ -646,7 +646,7 @@ pub async fn send_message(
         return deliver_message(state, source, id, body, None, by).await.map(Json);
     };
     idempotent::validate_id(&client_id)?;
-    let receipts = state.drive.injections.host().receipts().clone();
+    let receipts = state.drive.injections.host.receipts().clone();
     let key = Key {
         id: &client_id,
         kind: Kind::Message,
@@ -665,7 +665,7 @@ pub async fn send_message(
             };
             let answer = idempotent::settle(receipts, client_id, work).await?;
             // The receipt the answer just wrote rides on the next state frame.
-            injections.host().poke_feed(source, &id);
+            injections.host.poke_feed(source, &id);
             answer
         }
     };
@@ -747,7 +747,7 @@ async fn deliver_message(
                 .await
             {
                 if let Some(qid) = &qid {
-                    drive.injections.host().note_receipt(source, &id, qid, ReceiptStatus::Sent);
+                    drive.injections.host.note_receipt(source, &id, qid, ReceiptStatus::Sent);
                 }
                 return Ok(SendMessageResult {
                     accepted: true,
@@ -789,7 +789,7 @@ pub async fn session_questions(
     ApiPath((source, id)): ApiPath<(Source, String)>,
 ) -> Result<Json<SessionQuestions>, ApiError> {
     let questions = if state.drive.providers.capabilities(source).questions {
-        state.drive.injections.host().questions().for_session(&id, questions::now_ms())
+        state.drive.injections.host.questions().for_session(&id, questions::now_ms())
     } else {
         Vec::new()
     };
@@ -910,7 +910,7 @@ async fn settle_question(
         return Err(ApiError::not_found("no such question"));
     }
     let summary = writable_session(drive, source, id).await?;
-    let store = drive.injections.host().questions().clone();
+    let store = drive.injections.host.questions().clone();
     let stored = store
         .get(request_id)
         .filter(|stored| stored.session_id == id)
@@ -948,7 +948,7 @@ async fn settle_question(
         _ => Err(already_settled(stored.wire())),
     };
     if settled.is_ok() {
-        drive.injections.host().announce(source, id);
+        drive.injections.host.announce(source, id);
     }
     settled
 }
@@ -965,7 +965,7 @@ async fn settle_expired(
     reply: Reply,
     by: Option<String>,
 ) -> Result<QuestionAnswerResult, ApiError> {
-    let store = drive.injections.host().questions();
+    let store = drive.injections.host.questions();
     let now = questions::now_ms();
     let answer = match reply {
         Reply::Dismiss => {
@@ -1074,7 +1074,7 @@ pub async fn session_receipts(
     state
         .drive
         .injections
-        .host().receipts()
+        .host.receipts()
         .lookup(source, &id, &ids, crate::provider::receipts::now_ms())
         .map(Json)
         .map_err(|error| ApiError::internal(format!("cannot read message receipts: {error}")))
@@ -2558,7 +2558,7 @@ mod tests {
 
         let asked = "q".repeat(60_000);
         let questions_json = serde_json::json!([{ "question": asked, "header": "Long", "options": [{ "label": "a" }], "multiSelect": false }]);
-        let store = drive.injections.host().questions();
+        let store = drive.injections.host.questions();
         store.open("req-long", id, Some("toolu_long"), &questions_json, questions::now_ms());
         assert!(store.close("req-long", QuestionState::Expired, questions::now_ms()));
 

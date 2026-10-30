@@ -241,7 +241,7 @@ impl Drafts {
 }
 
 /// A driver's hold on its session's draft. The only writer.
-pub(super) struct DraftWriter {
+pub struct DraftWriter {
     channel: Arc<watch::Sender<Draft>>,
 }
 
@@ -251,27 +251,27 @@ impl DraftWriter {
     /// Emptied first: whatever a previous driver of this session left in it is
     /// about a process that is not this one, and a re-attached driver starts
     /// empty on purpose (see the module docs).
-    pub(super) fn new(channel: Arc<watch::Sender<Draft>>) -> Self {
+    pub fn new(channel: Arc<watch::Sender<Draft>>) -> Self {
         let writer = Self { channel };
         writer.end();
         writer
     }
 
     /// One live line of claude's stdout.
-    pub(super) fn observe(&self, line: &Value) {
+    pub fn observe(&self, line: &Value) {
         if let Some(said) = read(line) {
             modify(&self.channel, |draft| fold(draft, said));
         }
     }
 
     /// Nothing more is coming: the turn ended, or the process is gone.
-    pub(super) fn end(&self) {
+    pub fn end(&self) {
         modify(&self.channel, end);
     }
 
     /// Follow the session to another id: claude forked it. The old id's draft
     /// is emptied, since nothing will ever move it there again.
-    pub(super) fn retarget(&mut self, channel: Arc<watch::Sender<Draft>>) {
+    pub fn retarget(&mut self, channel: Arc<watch::Sender<Draft>>) {
         self.end();
         self.channel = channel;
         self.end();

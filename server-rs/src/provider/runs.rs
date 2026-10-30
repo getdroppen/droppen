@@ -261,7 +261,7 @@ impl RunsFile {
     /// can no longer have one of them silently win. Naming a run that is not
     /// there is not an error — a turn can end after the process that was running
     /// it has already been retired.
-    pub(super) fn patch<P: Serialize + DeserializeOwned>(&self, what: &'static str, run_id: &str, change: impl FnOnce(&mut RunRecord<P>)) {
+    pub fn patch<P: Serialize + DeserializeOwned>(&self, what: &'static str, run_id: &str, change: impl FnOnce(&mut RunRecord<P>)) {
         self.db.commit(what, |tx| {
             let found: Option<String> = tx
                 .query_row("SELECT payload FROM runs WHERE run_id = ?1", (run_id,), |row| row.get(0))
@@ -285,10 +285,10 @@ impl RunsFile {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl RunsFile {
     /// Put a row in as it is, `payload` and all: one another version wrote.
-    pub(crate) fn insert_raw(&self, run_id: &str, session_id: &str, payload: &str) {
+    pub fn insert_raw(&self, run_id: &str, session_id: &str, payload: &str) {
         self.db.commit("a row as written", |tx| {
             let next: i64 = tx.query_row("SELECT COALESCE(MAX(ordinal), 0) + 1 FROM runs", [], |row| row.get(0))?;
             tx.execute(
@@ -300,7 +300,7 @@ impl RunsFile {
     }
 
     /// Every row's payload as it is on disk, oldest first.
-    pub(crate) fn raw(&self) -> Vec<String> {
+    pub fn raw(&self) -> Vec<String> {
         self.db
             .read(|conn| {
                 let mut statement = conn.prepare("SELECT payload FROM runs ORDER BY ordinal")?;

@@ -23,11 +23,11 @@ use std::sync::Arc;
 use droppen_sessions::Source;
 
 /// A held claim on one session; dropping it lets the session go.
-pub(crate) type SessionClaim = lock::InjectLock;
+pub type SessionClaim = lock::InjectLock;
 
 /// Why a session could not be claimed.
 #[derive(Debug)]
-pub(crate) enum ClaimError {
+pub enum ClaimError {
     /// Another server, or another run of this one, holds it.
     Busy {
         /// The pid the holder recorded, when one could be read.
@@ -64,7 +64,7 @@ pub struct SpawnGate {
     booted: AtomicBool,
     /// How many are waiting to take the gate, for a test that waits until a
     /// call is blocked on it.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     waiting: std::sync::atomic::AtomicUsize,
 }
 
@@ -77,14 +77,14 @@ impl SpawnGate {
             lock: tokio::sync::Mutex::new(()),
             claims: Arc::new(Claims { dir }),
             booted: AtomicBool::new(false),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             waiting: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 
     /// Take the gate, for as long as the permit keeps it.
-    pub(crate) async fn permit(&self) -> SpawnPermit<'_> {
-        #[cfg(test)]
+    pub async fn permit(&self) -> SpawnPermit<'_> {
+        #[cfg(any(test, feature = "test-support"))]
         let _waiting = Waiting::on(&self.waiting);
         SpawnPermit {
             claim: None,
@@ -128,26 +128,26 @@ impl SpawnPermit<'_> {
     }
 
     /// Claim session `id` of `source` for this start.
-    pub(crate) fn claim(&mut self, source: Source, id: &str) -> Result<(), ClaimError> {
+    pub fn claim(&mut self, source: Source, id: &str) -> Result<(), ClaimError> {
         self.claim = Some(self.claims.take(source, id)?);
         Ok(())
     }
 
     /// Let the claim go before the permit does: a start that failed after it
     /// claimed lets its session go where the claim's own scope used to end.
-    pub(crate) fn unclaim(&mut self) {
+    pub fn unclaim(&mut self) {
         self.claim = None;
     }
 
     /// Give up the gate and keep the rest: an ACP start, once its placeholder
     /// is in the map, starts its agent outside the gate.
-    pub(crate) fn ungate(&mut self) {
+    pub fn ungate(&mut self) {
         self.guard = None;
     }
 
     /// The claim, for the driver that runs the session from here; the gate
     /// stays with the permit.
-    pub(crate) fn lease(&mut self) -> SessionLease {
+    pub fn lease(&mut self) -> SessionLease {
         SessionLease {
             claim: self.claim.take(),
             claims: self.claims.clone(),
@@ -166,7 +166,7 @@ pub struct SessionLease {
 impl SessionLease {
     /// A permit for a respawn: no gate, because the driver's entry in the map
     /// already keeps a second start away, and the claim stays with the lease.
-    pub(crate) fn respawn_permit(&self) -> SpawnPermit<'static> {
+    pub fn respawn_permit(&self) -> SpawnPermit<'static> {
         SpawnPermit {
             claim: None,
             guard: None,
@@ -176,17 +176,17 @@ impl SessionLease {
 
     /// A claim on session `id` of `source`, for a driver that follows its
     /// session to a new id.
-    pub(crate) fn claim_other(&self, source: Source, id: &str) -> Result<SessionClaim, ClaimError> {
+    pub fn claim_other(&self, source: Source, id: &str) -> Result<SessionClaim, ClaimError> {
         self.claims.take(source, id)
     }
 
     /// Hold `claim` in place of the one held now, which goes.
-    pub(crate) fn replace(&mut self, claim: Option<SessionClaim>) {
+    pub fn replace(&mut self, claim: Option<SessionClaim>) {
         drop(std::mem::replace(&mut self.claim, claim));
     }
 
     /// Let the session go.
-    pub(crate) fn release(&mut self) {
+    pub fn release(&mut self) {
         self.claim = None;
     }
 }
@@ -214,10 +214,10 @@ impl Boot<'_> {
 }
 
 /// A caller counted as waiting for the gate until it has it, or gives up.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 struct Waiting<'a>(&'a std::sync::atomic::AtomicUsize);
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl<'a> Waiting<'a> {
     fn on(count: &'a std::sync::atomic::AtomicUsize) -> Self {
         count.fetch_add(1, Ordering::SeqCst);
@@ -225,29 +225,29 @@ impl<'a> Waiting<'a> {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl Drop for Waiting<'_> {
     fn drop(&mut self) {
         self.0.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl SpawnGate {
     /// How many are waiting to take the gate now.
-    pub(crate) fn waiting(&self) -> usize {
+    pub fn waiting(&self) -> usize {
         self.waiting.load(Ordering::SeqCst)
     }
 
     /// Whether anyone holds the gate.
-    pub(crate) fn held(&self) -> bool {
+    pub fn held(&self) -> bool {
         self.lock.try_lock().is_err()
     }
 
     /// Whether anyone holds session `id`'s claim: its file is locked. The probe
     /// neither creates the file nor removes it, so a test still sees what the
     /// server left behind.
-    pub(crate) fn claim_held(&self, source: Source, id: &str) -> bool {
+    pub fn claim_held(&self, source: Source, id: &str) -> bool {
         use std::os::fd::AsRawFd;
         let path = self.claims.dir.join(droppen_sessions::reference::lock_name(source.as_str(), id));
         let Ok(file) = std::fs::File::open(path) else { return false };
@@ -258,7 +258,7 @@ impl SpawnGate {
     }
 
     /// A lease with no claim, for a driver a test builds by hand.
-    pub(crate) fn empty_lease(&self) -> SessionLease {
+    pub fn empty_lease(&self) -> SessionLease {
         SessionLease {
             claim: None,
             claims: self.claims.clone(),
@@ -266,7 +266,7 @@ impl SpawnGate {
     }
 
     /// A lease on session `id` of `source`, for a run a test hands a driver.
-    pub(crate) fn lease(&self, source: Source, id: &str) -> Result<SessionLease, ClaimError> {
+    pub fn lease(&self, source: Source, id: &str) -> Result<SessionLease, ClaimError> {
         Ok(SessionLease {
             claim: Some(self.claims.take(source, id)?),
             claims: self.claims.clone(),
@@ -274,10 +274,10 @@ impl SpawnGate {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl SessionLease {
     /// Whether the lease still holds its claim.
-    pub(crate) fn holds(&self) -> bool {
+    pub fn holds(&self) -> bool {
         self.claim.is_some()
     }
 }
@@ -356,5 +356,37 @@ mod tests {
             .map(|(path, _)| path.as_str())
             .collect();
         assert!(found.is_empty(), "a spawn gate made outside the provider registry: {found:?}");
+    }
+
+    /// The spawn gate reaches the providers alone. Outside `provider`, no
+    /// production code names the gate, a permit or a lease, so none can take
+    /// the gate, mint a permit or build a lease. Inside it, the ACP provider's
+    /// agent routes, which start and stop its CLI outside a run, are lent the
+    /// gate through `provider_with_gate` as that provider's own. A file's
+    /// tests aside.
+    #[test]
+    fn only_the_providers_reach_the_spawn_gate() {
+        const NAMES: [&str; 4] = ["SpawnGate", "SpawnPermit", "SessionLease", "provider_with_gate"];
+        let named = |text: &str| -> Vec<&'static str> {
+            let code = text.split("\n#[cfg(test)]\nmod tests").next().unwrap_or_default();
+            let code: Vec<&str> = code.lines().filter(|line| !line.trim_start().starts_with("//")).collect();
+            let code = code.join("\n");
+            NAMES
+                .into_iter()
+                .filter(|name| code.match_indices(name).any(|(at, _)| !code[..at].ends_with(ident) && !code[at + name.len()..].starts_with(ident)))
+                .collect()
+        };
+        let mut found = Vec::new();
+        let mut lent = false;
+        for (path, text) in server_sources() {
+            let names = named(&text);
+            if path.contains("/src/provider/") {
+                lent |= path.contains("/src/provider/acp/") && names.contains(&"provider_with_gate");
+                continue;
+            }
+            found.extend(names.into_iter().map(|name| format!("{path}: {name}")));
+        }
+        assert!(lent, "the ACP provider's agent routes take the gate through provider_with_gate");
+        assert!(found.is_empty(), "the spawn gate reached outside the providers: {found:?}");
     }
 }

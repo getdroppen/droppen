@@ -64,7 +64,7 @@ async fn a_rotation_decision_reaches_an_open_session_feed_without_waiting_for_th
     let auth = droppen_auth::Auth::new(&paths, &instance, &droppen_http::config::AuthSettings::default(), false, std::sync::Arc::new(crate::app::NotifyTokens));
     let drive = Drive::new(paths.clone(), &instance, auth, crate::app::transcript_sources(), crate::app::register_providers, crate::app::logins());
     let feeds = FeedRegistry::new();
-    drive.injections.host().attach_listeners(feeds.clone(), droppen_http::refresh::Refresh::new(global::GlobalFeed::new()));
+    drive.injections.host.attach_listeners(feeds.clone(), droppen_http::refresh::Refresh::new(global::GlobalFeed::new()));
 
     let id = "33333333-3333-4333-8333-333333333333";
     let project = crate::provider::claude_code::claude_roots::ClaudeRoots::of(&paths).managed_projects().join("-w-repo");
@@ -101,7 +101,7 @@ async fn a_rotation_decision_reaches_an_open_session_feed_without_waiting_for_th
             used_percent: None,
         })
         .expect("record");
-    drive.injections.host().announce(Source::Claude, id);
+    drive.injections.host.announce(Source::Claude, id);
 
     let frame = tokio::time::timeout(std::time::Duration::from_millis(1500), attached.attachment.next_frame())
         .await
