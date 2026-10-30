@@ -321,7 +321,7 @@ pub async fn migrate(paths: &Paths) -> usize {
 /// deleting one would un-hide its thread here. And the absence checked is the
 /// rollout *file*, not the thread's visibility — `~/.codex` hides archived and
 /// subagent threads from every cheap lookup, which is why
-/// [`crate::provider::claude_code::sessions::claude::ClaudeCodeSessions::prune_owned`] leaves codex registry entries alone, but an
+/// `claude_code::sessions::claude::ClaudeCodeSessions::prune_owned` leaves codex registry entries alone, but an
 /// archived thread still has its file. No file is the one form of "gone" that is
 /// not a lie. A missing sessions directory says nothing at all, so nothing is
 /// dropped.
@@ -495,8 +495,9 @@ mod tests {
     async fn the_boot_migration_mirrors_the_registry_once_and_never_steals() {
         let dir = tempfile::tempdir().expect("tempdir");
         let (a, b) = instances(&dir);
-        crate::provider::claude_code::sessions::claude::ClaudeCodeSessions.record_owned(&a, "session-a")
-            .await
+        // The row Claude Code's reader writes for a session of its own.
+        droppen_instance::db::at(a.instance_db())
+            .write(|tx| tx.execute("INSERT INTO owned_sessions (source, session_id) VALUES ('claude', 'session-a')", ()))
             .expect("record");
         assert_eq!(migrate(&a).await, 0, "a claude session is not a codex thread");
 

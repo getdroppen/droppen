@@ -28,9 +28,9 @@ cargo clippy --all-targets --all-features -- -D warnings
 | --- | --- |
 | `api/` | HTTP + websocket 表面：`AppState`、扁平的路由注册、错误体、`Created`、返回 JSON 400 的抽取器 |
 | `app.rs` | 应用装配：config / state / routes / bind，以及取代 `GotchaApp::run` 的可停机 serve loop |
-| `provider/` | 还在服务端的各 CLI provider（Claude Code、Codex），各自迁出前留在这里；它们站在 `droppen-provider` 上，需要真 provider 的底座测试在 `with_providers` |
+| `provider/` | 还在服务端的 CLI provider（Claude Code），迁出前留在这里；它站在 `droppen-provider` 上，需要真 provider 的底座测试在 `with_providers` |
 | `provider/claude_code/record/` | 会话飞行记录器：一个会话一份 NDJSON 录像，以及把它放回文件系统的 `replay` 子命令 |
-| `accounts/` | 账号规则在入口构造的真实登录上的测试（`cli_tests`）；每个 CLI 在账号里的那一部分（登录、用量探测、Claude 的两个登录向导）在它的 provider 里：`provider/claude_code/`、`provider/codex/` |
+| `accounts/` | 账号规则在入口构造的真实登录上的测试（`cli_tests`）；每个 CLI 在账号里的那一部分（登录、用量探测、Claude 的两个登录向导）在它的 provider 里：`provider/claude_code/`、`crates/droppen-provider-codex/` |
 | `quota/` | 订阅额度面板 |
 | `notify/` | 会话自己决定「这件事值得打扰你」时走的推送通道（Bark），以及注进会话的 `rh-notify` 与 skill |
 | `provider/claude_code/claude_roots.rs` | 一次 spawn 跑在什么根目录下（带什么环境见下面 `droppen-base` 的 `process_env`） |
@@ -46,6 +46,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 | `crates/droppen-accounts/` | 账号本身：服务端保存的多个登录（`store`）、会话从哪个账号启动、碰到限额换到哪个（`rotation`）、限额与休息（`limits`、`rest`）、本机自己的登录（`local_login`）、凭据保存前的验证（`verify`）、用量缓存与探测调度（`quota`）和 `/api/accounts*` 路由；与 CLI 有关的一切都经 `Login` 端口问各 CLI 的登录，由服务端 `accounts/` 实现 |
 | `crates/droppen-provider/` | 各 CLI provider 共用的底座：`Provider` 与 `Run` 端口、provider 注册表、spawn 闸门与会话认领（`gate`）、运行日志（`runs`）与各 provider 的运行共用的宿主（`RunHost`）、会话 shim（`shim`）、排队、回执（`receipts`）、提问（`questions`）、草稿（`drafts`），以及模型列表的端口和路由（`models`）；`testing` 是给测试用的探针，只在 `test-support` 下 |
 | `crates/droppen-provider-acp/` | ACP agent 的 provider：用户配置的每个 ACP agent 及其路由（`agents`，内置预设在 `acp-agents.json`）、每个会话一个 agent 进程（`conn`、`client`、`driver`）、协议消息（`protocol`）、模型列表（`models`）和 transcript（`sessions`）；不点名任何具体 agent，由入口注册 |
+| `crates/droppen-provider-codex/` | Codex 的 provider：app-server 驱动（`app_server`）、Codex 线程的读取、工具卡片与跨实例认领（`sessions`）、模型列表（`models`）、额度读取（`quota`）和登录（`login`）；由入口注册 |
 | `crates/droppen-drive/` | 驱动会话的路由，以及所有进程类子系统挂靠的 `Drive` 状态；`feed/` 是单会话 websocket feed；`feed/global.rs` 是 `GET /api/events` 背后的会话列表 feed；`chats/` 是即时聊天：锚点目录里的 CLI 会话，加上 BYO-API 后端与它的流式回复；`schedule/` 是定时任务：一条 cron 表达式（按**服务器本地时区**解释）到点新开一个会话；`runner.rs` 是那个五秒一跳、只在持有实例锁时才启动的循环；`testing` 是给服务端测试用的探针，只在 `test-support` 下 |
 | `crates/droppen-setup/` | 首次使用向导：检测装了什么、登录了没有（`detect`、`locate`、`shell`）、在终端里跑的安装与登录（`tasks`、`commands`、`runner`）、最近用过的文件夹（`folders`）和向导进度（`progress`）；各 CLI 的登录经 `droppen-accounts` 的 `Login` 端口回答，由服务端实现 |
 | `crates/droppen-aggregator/` | 设备角色：这台电脑以它跑 AI 的那个身份，作为账号的设备去控制其他设备。在 hub 上签到、取管理员封给它的其他主机的机器密钥（`controller`、`hub`、`keys`），按 `access` 选定的范围跟随它们的索引、状态和最新会话（`copies`），存进 `aggregator/copies.db`（`store`），并在内存里交给本机页面（`live`）；另有给 `docs/hub-api/` 契约检查用的流量记录（`traffic`）。它需要的入网状态经 `Enrollment` 端口由 agent 填上 |

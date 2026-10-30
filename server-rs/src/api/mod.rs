@@ -23,7 +23,7 @@ use droppen_http::{close_within, hostname, node_platform, send_within, Heartbeat
 use droppen_http::openapi_ext::{self, ExtraResponses};
 use droppen_instance::paths::Paths;
 use crate::provider::claude_code::sessions::claude;
-use crate::provider::codex::sessions::codex;
+use droppen_provider_codex::sessions::codex;
 use droppen_sessions::{SessionDetail, SessionList, Settings, Source};
 
 mod state;

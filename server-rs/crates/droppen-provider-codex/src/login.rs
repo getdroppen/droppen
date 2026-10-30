@@ -5,7 +5,7 @@ use futures_util::future::BoxFuture;
 
 use droppen_accounts::login::{LocalPlan, Login};
 use droppen_accounts::local_login::LocalLoginState;
-use crate::provider::codex::quota::{app_server_call, CodexReadingExt};
+use crate::quota::{app_server_call, CodexReadingExt};
 use droppen_accounts::quota::readings::SharedReading;
 use droppen_accounts::quota::{CliTextExt, CodexQuota, ProbeRoots, UsageProbe};
 use droppen_accounts::store::{AccountError, AccountKind, AccountLaunch, AccountProvider, CODEX_BASE_URL_VAR, CODEX_KEY_CANDIDATES};
@@ -134,7 +134,7 @@ impl CodexLogin {
     ///   deleted afterwards rather than appearing in the session list — and so the
     ///   probe cannot fall back on the user's own `auth.json` and answer for a login
     ///   that is not the one being checked;
-    /// * the provider override from [`crate::provider::codex::login::CodexBaseUrl::provider_args`],
+    /// * the provider override from [`crate::login::CodexBaseUrl::provider_args`],
     ///   which is the whole of how a key reaches codex: `app-server` reads neither
     ///   `OPENAI_API_KEY` nor `CODEX_API_KEY`, so a probe that only set a variable
     ///   would be checking nothing at all.

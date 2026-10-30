@@ -1567,6 +1567,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "droppen-provider-codex"
+version = "0.1.0"
+dependencies = [
+ "droppen-accounts",
+ "droppen-base",
+ "droppen-http",
+ "droppen-instance",
+ "droppen-provider",
+ "droppen-sessions",
+ "futures-util",
+ "libc",
+ "regex",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "droppen-pty"
 version = "0.1.0"
 dependencies = [
@@ -3464,6 +3485,7 @@ dependencies = [
  "droppen-plugins",
  "droppen-provider",
  "droppen-provider-acp",
+ "droppen-provider-codex",
  "droppen-pty",
  "droppen-search-path",
  "droppen-sessions",

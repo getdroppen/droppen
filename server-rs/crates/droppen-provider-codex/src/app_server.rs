@@ -41,7 +41,7 @@ fn with_codex_files(text: &str, options: &SendOptions) -> String {
 
 /// One codex account, resolved and ready to be spawned under.
 #[derive(Debug, Clone)]
-pub(in crate::provider) struct CodexAccount {
+pub(crate) struct CodexAccount {
     /// Which account it is, so a live process can be compared against it.
     id: String,
     /// What it contributes to the spawn.
@@ -58,7 +58,7 @@ const RETIRE_EXIT_WAIT: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
-pub(in crate::provider) struct State {
+pub(crate) struct State {
     cursor: u64,
     active: Option<String>,
     completed_turn: Option<String>,
@@ -87,7 +87,7 @@ struct Message {
 }
 
 #[derive(Clone)]
-pub(in crate::provider) struct Handle {
+pub(crate) struct Handle {
     tx: mpsc::UnboundedSender<Cmd>,
     shared: Arc<Mutex<State>>,
     /// The account this process was started under, or `None` for the machine's
@@ -107,7 +107,7 @@ pub(in crate::provider) struct Handle {
 }
 
 impl Handle {
-    pub(in crate::provider) fn alive(&self) -> bool {
+    pub(crate) fn alive(&self) -> bool {
         !self.tx.is_closed()
     }
 
@@ -136,14 +136,14 @@ impl Handle {
         let state = self.shared.lock().unwrap();
         self.starting() || state.active.is_some() || !state.queue.is_empty() || state.archive_request.is_some()
     }
-    pub(in crate::provider) fn visible(&self) -> bool {
+    pub(crate) fn visible(&self) -> bool {
         let state = self.shared.lock().unwrap();
         !state.archived && (self.alive() || !state.queue.is_empty())
     }
-    pub(in crate::provider) fn injection(&self) -> Option<Injection> {
+    pub(crate) fn injection(&self) -> Option<Injection> {
         self.shared.lock().unwrap().injection.clone()
     }
-    pub(in crate::provider) fn state(&self) -> ResidentState {
+    pub(crate) fn state(&self) -> ResidentState {
         let state = self.shared.lock().unwrap();
         ResidentState {
             phase: if self.starting() {
@@ -174,14 +174,14 @@ impl Handle {
             question: None,
         }
     }
-    pub(in crate::provider) fn info(&self) -> droppen_sessions::ResidentInfo {
+    pub(crate) fn info(&self) -> droppen_sessions::ResidentInfo {
         self.state().into()
     }
-    pub(in crate::provider) fn interrupt(&self) -> bool {
+    pub(crate) fn interrupt(&self) -> bool {
         let state = self.shared.lock().unwrap();
         (state.active.is_some() || state.queue.iter().any(|q| q.request.is_some())) && self.tx.send(Cmd::Interrupt).is_ok()
     }
-    pub(in crate::provider) async fn queue_action(&self, id: &str, steer: bool) -> QueueOutcome {
+    pub(crate) async fn queue_action(&self, id: &str, steer: bool) -> QueueOutcome {
         let (reply, rx) = oneshot::channel();
         if self.tx.send(Cmd::Queue { id: id.into(), steer, reply }).is_err() {
             return QueueOutcome::Unreachable;
@@ -459,7 +459,7 @@ async fn rpc(runs: &CodexRuns, link: &mut shim::Link, method: &str, params: impl
 /// What a Codex run keeps in its journal row, beside what every run says
 /// ([`runs::RunRecord<CodexRun>`]): written after those fields, in this order.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub(in crate::provider) struct CodexRun {
+pub struct CodexRun {
     /// Three keys every row carries and only a Claude Code resident reads: a
     /// Codex run's are `null`, `null` and `[]`, kept as they were read so a
     /// Codex row is written back unchanged.
@@ -472,7 +472,7 @@ pub(in crate::provider) struct CodexRun {
     /// Codex App Server delivery state and replay checkpoint. Absent for a
     /// legacy exec run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(in crate::provider) codex: Option<State>,
+    pub(crate) codex: Option<State>,
     /// The stored account a codex app-server was started under.
     ///
     /// The codex half of a Claude Code run's fingerprint, and a field of its own
@@ -481,21 +481,21 @@ pub(in crate::provider) struct CodexRun {
     /// and never a secret. `None` is the machine's own `~/.codex` login, which
     /// is what every record written before accounts had a second CLI means.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(in crate::provider) codex_account: Option<String>,
+    pub(crate) codex_account: Option<String>,
 }
 
 /// Codex, as the provider registry knows it.
-pub(crate) struct Codex {
+pub struct Codex {
     /// Its sessions' app servers.
     runs: Arc<CodexRuns>,
     /// Its CLI's models.
-    models: crate::provider::codex::models::CodexModels,
+    models: crate::models::CodexModels,
 }
 
 impl Codex {
     /// Codex, its runs on `registry`'s host.
-    pub(crate) fn new(registry: Arc<InjectionRegistry>) -> Self {
-        let models = crate::provider::codex::models::CodexModels::new(registry.host.paths.clone());
+    pub fn new(registry: Arc<InjectionRegistry>) -> Self {
+        let models = crate::models::CodexModels::new(registry.host.paths.clone());
         Self {
             runs: CodexRuns::new(registry.host.clone()),
             models,
@@ -521,7 +521,7 @@ pub(crate) struct CodexRuns {
 
 impl CodexRuns {
     /// None yet, on `host`.
-    pub(in crate::provider) fn new(host: Arc<RunHost>) -> Arc<Self> {
+    pub(crate) fn new(host: Arc<RunHost>) -> Arc<Self> {
         let runs = Arc::new(Self {
             host,
             codex_servers: Mutex::new(HashMap::new()),
@@ -574,7 +574,7 @@ impl ProviderRuns for CodexRuns {
 
     fn was_cut_short<'a>(&'a self, record: &'a runs::RunRecord) -> BoxFuture<'a, bool> {
         Box::pin(async move {
-            match crate::provider::codex::sessions::codex::find_codex_session(&self.host.paths, &record.session_id).await {
+            match crate::sessions::codex::find_codex_session(&self.host.paths, &record.session_id).await {
                 None => true,
                 // Codex reads `Idle` for a transcript nothing has touched
                 // lately, which after a long outage is every transcript. That
@@ -587,7 +587,7 @@ impl ProviderRuns for CodexRuns {
 
     fn last_write<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Option<Instant>> {
         Box::pin(async move {
-            let session = crate::provider::codex::sessions::codex::find_codex_session(&self.host.paths, id).await?;
+            let session = crate::sessions::codex::find_codex_session(&self.host.paths, id).await?;
             std::path::PathBuf::from(session.file_path).written_at().await
         })
     }
@@ -657,7 +657,7 @@ impl Run for Codex {
             // which thread it actually made. A failure here costs the session its
             // ownership (it lists as external) and nothing else, so it is logged rather
             // than turned into a refusal of a run that has already started.
-            if let Err(error) = crate::provider::codex::sessions::codex::CodexSessions.record_owned(&self.runs.host.paths, &id).await {
+            if let Err(error) = crate::sessions::codex::CodexSessions.record_owned(&self.runs.host.paths, &id).await {
                 tracing::error!(session = %id, %error, "cannot record this codex session as ours; it will list as external");
             }
             // Written beside the ownership record and for the same reason: the thread id
@@ -720,7 +720,7 @@ impl Run for Codex {
 impl Codex {
     /// Which account a codex spawn runs under, and what it puts into it.
     ///
-    /// The same three-state resolution [`crate::provider::claude_code::resident::ClaudeCodeRuns::resume_claude_env`] does, and for the same
+    /// The same three-state resolution `claude_code::resident::ClaudeCodeRuns::resume_claude_env` does, and for the same
     /// reason: `accountId: null` is "the machine's own codex login" even when a
     /// default is configured, absent is "whatever this thread is already bound to",
     /// and a named account both wins and is written down.
@@ -763,7 +763,7 @@ impl CodexRuns {
     /// The state of a codex session's run: its app server's, whenever there is
     /// a handle (even one that has nothing to say yet), and otherwise the runs
     /// map's, where a `codex exec` run adopted from the previous server is.
-    pub(in crate::provider) fn codex_injection(&self, id: &str) -> Option<Injection> {
+    pub(crate) fn codex_injection(&self, id: &str) -> Option<Injection> {
         if let Some(handle) = self.codex_handle(id) {
             return handle.injection();
         }
@@ -772,7 +772,7 @@ impl CodexRuns {
 
     /// Codex's part of the session list's snapshot ([`ProviderRuns::add_to`]): the app servers
     /// the list is to show, and the state of every app server's run.
-    pub(in crate::provider) fn codex_driver_states(&self, states: &mut DriverStatesBuilder) {
+    pub(crate) fn codex_driver_states(&self, states: &mut DriverStatesBuilder) {
         for (id, handle) in self.codex_servers.lock().unwrap().iter().filter(|(_, h)| h.visible()) {
             states.resident(self.host.key_of(Source::Codex, id), handle.info());
         }
@@ -784,7 +784,7 @@ impl CodexRuns {
     }
 
     /// A dead CLI must not take already-accepted, undelivered messages with it.
-    pub(in crate::provider) fn codex_dead(&self, mut record: runs::RunRecord<CodexRun>) {
+    pub(crate) fn codex_dead(&self, mut record: runs::RunRecord<CodexRun>) {
         let mut state = record.payload.codex.clone().unwrap_or_default();
         let interrupted = state.interrupt_requested || state.injection.as_ref().is_some_and(|i| i.interrupted);
         let unfinished = state.active.take().is_some() || state.queue.iter().any(|q| q.request.is_some());
@@ -829,7 +829,7 @@ impl CodexRuns {
         );
     }
 
-    pub(in crate::provider) async fn codex_queue_action(&self, id: &str, qid: &str, steer: bool) -> QueueOutcome {
+    pub(crate) async fn codex_queue_action(&self, id: &str, qid: &str, steer: bool) -> QueueOutcome {
         let Some(handle) = self.codex_handle(id) else {
             return QueueOutcome::NoResident;
         };
@@ -872,13 +872,13 @@ impl CodexRuns {
             .find(|r| r.payload.codex.is_some())
     }
 
-    pub(in crate::provider) fn codex_handle(&self, id: &str) -> Option<Handle> {
+    pub(crate) fn codex_handle(&self, id: &str) -> Option<Handle> {
         self.codex_servers.lock().unwrap().get(id).cloned()
     }
 
     /// A loaded thread's writer owns its archive operation too. A separate
     /// `codex archive` cannot acquire that writer lock, even between turns.
-    pub async fn archive_codex(self: &Arc<Self>, gate: &SpawnGate, id: &str) -> Result<(), droppen_sessions::archive::ArchiveError> {
+    pub(crate) async fn archive_codex(self: &Arc<Self>, gate: &SpawnGate, id: &str) -> Result<(), droppen_sessions::archive::ArchiveError> {
         // Match delivery's gate: no new resident or accepted message can slip
         // between selecting the archive path and committing its result.
         let mut permit = gate.permit().await;
@@ -941,7 +941,7 @@ impl CodexRuns {
         Ok(())
     }
 
-    pub(in crate::provider) async fn codex_deliver(
+    pub(crate) async fn codex_deliver(
         self: &Arc<Self>,
         gate: &SpawnGate,
         id: Option<&str>,
@@ -1060,7 +1060,7 @@ impl CodexRuns {
         // whatever `~/.codex/auth.json` holds. An account adds a model
         // provider that reads its key from a variable of ours, because
         // `app-server` reads no key variable of codex's own — see
-        // [`crate::provider::codex::login::CodexBaseUrl::provider_args`].
+        // [`crate::login::CodexBaseUrl::provider_args`].
         let launch = account.as_ref().map(|account| &account.launch);
         let mut args: Vec<String> = vec!["app-server".into()];
         args.extend(launch.into_iter().flat_map(|launch| launch.codex_args.iter().cloned()));
@@ -1069,7 +1069,7 @@ impl CodexRuns {
             None => clean_env_bare(),
         };
         #[cfg(test)]
-        droppen_provider::testing::shims_run_as(crate::provider::with_providers::SHIMS);
+        droppen_provider::testing::shims_run_as(tests::SHIMS);
         let mut link = shim::spawn_via_shim(shim::Spawn {
             permit,
             sidecars: &sidecars,
@@ -1087,7 +1087,7 @@ impl CodexRuns {
             let client_info = ClientInfo {
                 name: "remote_hand",
                 title: "remote-hand",
-                version: env!("CARGO_PKG_VERSION"),
+                version: droppen_http::PACKAGE_VERSION,
             };
             rpc(self, &mut link, "initialize", InitializeParams { client_info }).await?;
             write(
@@ -1107,7 +1107,7 @@ impl CodexRuns {
                 // on the thread as well costs nothing if the flag already took.
                 model_provider: launch
                     .is_some_and(|launch| !launch.codex_args.is_empty())
-                    .then_some(crate::provider::codex::login::CODEX_PROVIDER_ID),
+                    .then_some(crate::login::CODEX_PROVIDER_ID),
                 base_instructions: options.chat.then_some(CHAT_SYSTEM_PROMPT),
             };
             let result = rpc(self, &mut link, if id.is_some() { "thread/resume" } else { "thread/start" }, params).await?;
@@ -1999,6 +1999,35 @@ mod tests {
         UnixListener,
     };
 
+    /// Where this binary's session shim is: Codex's spawns under test run it
+    /// as this module's `session_shim`
+    /// ([`droppen_provider::testing::shims_run_as`]).
+    pub(super) const SHIMS: &str = module_path!();
+
+    /// Not a test: the session shim Codex's spawns under test run
+    /// ([`droppen_provider::testing::session_shim`]).
+    #[test]
+    #[ignore = "the session shim a Codex test's spawn runs, not a test"]
+    fn session_shim() {
+        droppen_provider::testing::session_shim();
+    }
+
+    /// The logins the accounts are handed here: Codex's own, and a stand-in
+    /// for Claude Code's, which nothing here starts.
+    fn logins() -> droppen_accounts::login::Logins {
+        droppen_accounts::login::Logins {
+            codex: Arc::new(crate::login::CodexLogin),
+            ..droppen_accounts::login::Logins::stand_ins()
+        }
+    }
+
+    /// The providers over `registry`: Codex alone, the one these tests drive.
+    fn codex_only(registry: &Arc<InjectionRegistry>) -> Arc<droppen_provider::ProviderRegistry> {
+        droppen_provider::ProviderRegistry::new(registry.clone(), |providers, registry| {
+            providers.register(Arc::new(Codex::new(registry.clone())))
+        })
+    }
+
     struct Harness {
         driver: Driver,
         input: BufReader<OwnedReadHalf>,
@@ -2014,11 +2043,11 @@ mod tests {
             let paths = Arc::new(Paths::new(home.path().into()));
             let dirs = InstanceDirs::new(&paths.data_dir(), "codex-test").unwrap();
             dirs.create().unwrap();
-            let accounts = Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), crate::app::logins()));
-            let quota = Arc::new(droppen_accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins()));
+            let accounts = Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), logins()));
+            let quota = Arc::new(droppen_accounts::quota::QuotaCache::new(paths.clone(), logins()));
             let decoration = droppen_provider::testing::no_decoration();
             let registry = InjectionRegistry::new(paths, &dirs, accounts, quota, decoration);
-            let providers = droppen_provider::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
+            let providers = codex_only(&registry);
             let socket = home.path().join("mock.sock");
             let listener = UnixListener::bind(&socket).unwrap();
             let connector = tokio::spawn(async move { shim::connect_in_process(&socket).await.unwrap() });
@@ -2868,7 +2897,7 @@ mod tests {
         let bin = home.join("bin");
         std::fs::create_dir_all(&bin).expect("bin");
         let codex = bin.join("codex");
-        let fake = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/support/fake_codex.py");
+        let fake = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/support/fake_codex.py");
         std::fs::write(&codex, format!("#!/bin/sh\nexec python3 {fake} \"$@\"\n")).expect("codex");
         {
             use std::os::unix::fs::PermissionsExt;
@@ -2879,8 +2908,8 @@ mod tests {
         let paths = Arc::new(Paths::new(home.into()));
         let dirs = InstanceDirs::new(&paths.data_dir(), instance).unwrap();
         dirs.create().unwrap();
-        let accounts = Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), crate::app::logins()));
-        let quota = Arc::new(droppen_accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins()));
+        let accounts = Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), logins()));
+        let quota = Arc::new(droppen_accounts::quota::QuotaCache::new(paths.clone(), logins()));
         let decoration = droppen_provider::testing::no_decoration();
         (guard, InjectionRegistry::new(paths, &dirs, accounts, quota, decoration))
     }
@@ -2912,7 +2941,7 @@ mod tests {
         const OTHER: &str = "0199c1a1-0000-4000-8000-000000000004";
         let home = tempfile::tempdir().expect("tempdir");
         let (_path, registry) = fake_codex_registry(home.path(), "codex-steps");
-        let providers = droppen_provider::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
+        let providers = codex_only(&registry);
         let gate = providers.gate();
         let work = home.path().join("work");
         std::fs::create_dir_all(&work).expect("work");
@@ -3013,7 +3042,7 @@ mod tests {
     fn unheld(name: &str) -> (tempfile::TempDir, droppen_base::process_env::ChildPathGuard, Arc<InjectionRegistry>, Arc<droppen_provider::ProviderRegistry>, std::path::PathBuf) {
         let home = tempfile::tempdir().expect("tempdir");
         let (path, registry) = fake_codex_registry(home.path(), name);
-        let providers = droppen_provider::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
+        let providers = codex_only(&registry);
         let work = home.path().join("work");
         std::fs::create_dir_all(&work).expect("work");
         (home, path, registry, providers, work)
@@ -3312,7 +3341,7 @@ mod tests {
         let (_path, registry) = fake_codex_registry(home.path(), "codex-snapshot");
         let alerts = Arc::new(droppen_provider::testing::TurnAlerts::default());
         registry.host.attach_alerts(alerts.clone());
-        let providers = droppen_provider::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
+        let providers = codex_only(&registry);
         let work = home.path().join("work");
         std::fs::create_dir_all(&work).expect("work");
         let work = work.to_string_lossy().into_owned();
@@ -3345,7 +3374,7 @@ mod tests {
         const THREAD: &str = "0199c1a1-0000-4000-8000-000000000005";
         let home = tempfile::tempdir().expect("tempdir");
         let (_path, registry) = fake_codex_registry(home.path(), "codex-wire");
-        let providers = droppen_provider::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
+        let providers = codex_only(&registry);
         let work = home.path().join("work");
         std::fs::create_dir_all(&work).expect("work");
         let log = work.join("codex-stdin.jsonl");
@@ -3355,7 +3384,7 @@ mod tests {
             launch: droppen_accounts::store::AccountLaunch {
                 provider: AccountProvider::Codex,
                 env: vec![],
-                codex_args: crate::provider::codex::login::CodexBaseUrl::parse("https://api.example.test/v1").expect("a base URL").provider_args(),
+                codex_args: crate::login::CodexBaseUrl::parse("https://api.example.test/v1").expect("a base URL").provider_args(),
             },
         };
         let chat = SendOptions {
@@ -3383,7 +3412,7 @@ mod tests {
             lines[0],
             wire(
                 r#"{"id":"UUID","method":"initialize","params":{"clientInfo":{"name":"remote_hand","title":"remote-hand","version":"VERSION"}}}"#,
-                &[("UUID", &id_of(&lines[0])), ("VERSION", env!("CARGO_PKG_VERSION"))]
+                &[("UUID", &id_of(&lines[0])), ("VERSION", droppen_http::PACKAGE_VERSION)]
             )
         );
         assert_eq!(lines[1], wire(r#"{"method":"initialized","params":{}}"#, &[]));
@@ -3427,7 +3456,7 @@ mod tests {
         let home = root.path().join(std::ffi::OsStr::from_bytes(b"\xff"));
         std::fs::create_dir_all(&home).expect("home");
         let (_path, registry) = fake_codex_registry(&home, "codex-utf8");
-        let providers = droppen_provider::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
+        let providers = codex_only(&registry);
         let refused = codex(&providers).codex_deliver(providers.gate(), Some(THREAD), None, "hi", &SendOptions::default(), None)
             .await
             .expect_err("refused");
@@ -3436,5 +3465,214 @@ mod tests {
         assert!(codex(&providers).codex_handle(THREAD).is_none(), "the reservation was given back");
         assert!(!registry.host.gate_held());
         assert!(!registry.host.claim_held(Source::Codex, THREAD));
+    }
+
+    /// A codex session whose app server is gone with messages still queued
+    /// keeps its handle in the list, and Stop on it stops nothing: the turn was
+    /// closed when the process went. A live adopted run is put under the same
+    /// session, the one the fallback would signal, so the test fails if Stop
+    /// ever gets past the handle.
+    #[tokio::test]
+    async fn stop_on_a_codex_session_whose_app_server_is_gone_reaches_no_run() {
+        const SESSION: &str = "0199c1a1-6666-7666-8666-dddddddddddd";
+
+        let home = tempfile::tempdir().expect("tempdir");
+        let paths = Arc::new(Paths::new(home.path().to_path_buf()));
+        let dirs = InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
+        dirs.create().expect("instance dirs");
+        let decoration = droppen_provider::testing::no_decoration();
+        let registry = InjectionRegistry::new(
+            paths.clone(),
+            &dirs,
+            Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), logins())),
+            Arc::new(droppen_accounts::quota::QuotaCache::new(paths, logins())),
+            decoration,
+        );
+        let providers = codex_only(&registry);
+
+        let mut live = std::process::Command::new("/bin/sh")
+            .args(["-c", "sleep 30"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn a stand-in");
+        let adopted = runs::RunRecord {
+            run_id: "run-adopted".to_string(),
+            source: Source::Codex,
+            session_id: SESSION.to_string(),
+            cwd: None,
+            cli_pid: live.id(),
+            started_at: "2026-01-01T00:00:00.000Z".to_string(),
+            pid_token: procs::start_token(live.id()),
+            resident: false,
+            shim: None,
+            payload: runs::Payload::new(),
+        };
+
+        let codex = providers.provider::<Codex>().expect("Codex").runs().clone();
+        let app_server = runs::RunRecord {
+            run_id: "run-app-server".to_string(),
+            resident: true,
+            payload: serde_json::from_value(serde_json::json!({"codex": {"queue": [{"id": "q1", "text": "next", "params": {}, "request": null}]}}))
+                .expect("a codex state"),
+            ..adopted.clone()
+        };
+        codex.codex_dead(app_server.decode().expect("a Codex record"));
+        let handle = codex.codex_handle(SESSION).expect("the handle stays");
+        assert!(handle.visible() && !handle.alive(), "listed, with no process behind it");
+
+        let claim = providers.gate().lease(Source::Codex, SESSION).expect("a free session must be claimable");
+        registry.watch_adopted(providers.runs()[&Source::Codex].clone(), adopted, claim);
+
+        assert!(!providers.interrupt(Source::Codex, SESSION), "nothing is left to stop");
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(live.try_wait().expect("try_wait").is_none(), "Stop got past the handle and signalled the adopted run");
+        let seen = registry.host.run_injection(Source::Codex, SESSION).expect("the adopted run");
+        assert_eq!(seen.state, InjectionRunState::Running);
+        assert!(!seen.interrupted);
+
+        let _ = live.kill();
+        let _ = live.wait();
+    }
+
+    /// A Codex row of the run journal, `run_id` and `payload` aside: session
+    /// `id`, on this process, nothing else known.
+    fn gone_run(run_id: &str, id: &str, payload: runs::Payload) -> runs::RunRecord {
+        runs::RunRecord {
+            run_id: run_id.to_string(),
+            source: Source::Codex,
+            session_id: id.to_string(),
+            cwd: None,
+            cli_pid: std::process::id(),
+            started_at: "2026-01-01T00:00:00.000Z".to_string(),
+            pid_token: None,
+            resident: false,
+            shim: None,
+            payload,
+        }
+    }
+
+    /// What the base asks Codex's runs of a row: whether they can read it,
+    /// whether it holds state a dead run must keep (an app server's queue and
+    /// checkpoint; a `codex exec` run's row holds none), and which CLI to name
+    /// when it reports on one.
+    #[tokio::test]
+    async fn the_runs_say_which_rows_hold_state_and_name_their_cli() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let registry = droppen_provider::testing::injection_registry(home.path());
+        let codex_runs = CodexRuns::new(registry.host.clone());
+        let exec = gone_run("run-exec", "0199c1a1-9999-7999-8999-dddddddddddd", runs::Payload::new());
+        let app_server = gone_run(
+            "run-app-server",
+            "0199c1a1-9999-7999-8999-dddddddddddd",
+            serde_json::from_value(json!({"codex": {"queue": []}})).expect("a codex state"),
+        );
+        assert!(codex_runs.readable(&exec) && codex_runs.readable(&app_server), "both are Codex's rows");
+        assert!(!codex_runs.holds_state(&exec), "a `codex exec` run keeps nothing");
+        assert!(codex_runs.holds_state(&app_server), "an app server keeps its queue and checkpoint");
+        assert_eq!(codex_runs.cli_name(), "codex");
+    }
+
+    /// What the boot pass asks Codex's runs of a run whose CLI is gone: whether
+    /// its thread was cut short mid-turn, and when the thread was last
+    /// written. A thread nothing can find counts as cut short, and so does one
+    /// whose rollout ends with the user's message; one that ends with Codex's
+    /// answer does not.
+    #[tokio::test]
+    async fn a_gone_runs_thread_says_whether_it_was_cut_short_and_when_it_was_written() {
+        const ASKED: &str = "aaaaaaaa-2222-4222-8222-aaaaaaaaaaaa";
+        const ANSWERED: &str = "aaaaaaaa-3333-4333-8333-aaaaaaaaaaaa";
+        const MISSING: &str = "aaaaaaaa-4444-4444-8444-aaaaaaaaaaaa";
+        let _guard = droppen_sessions::index::exclusive().await;
+        let home = tempfile::tempdir().expect("tempdir");
+        let registry = droppen_provider::testing::injection_registry(home.path());
+        let codex_runs = CodexRuns::new(registry.host.clone());
+        let day = registry.host.paths.codex_sessions().join("2026").join("09").join("21");
+        std::fs::create_dir_all(&day).expect("rollout dir");
+        for (id, last) in [(ASKED, "user_message"), (ANSWERED, "task_complete")] {
+            let meta = json!({"type": "session_meta", "payload": {"cwd": "/w", "id": id}});
+            let event = json!({"type": "event_msg", "payload": {"type": last}});
+            std::fs::write(day.join(format!("rollout-2026-09-21T10-00-00-{id}.jsonl")), format!("{meta}\n{event}\n")).expect("rollout");
+        }
+        let gone = |id: &str| gone_run("run-gone", id, runs::Payload::new());
+        assert!(codex_runs.was_cut_short(&gone(ASKED)).await, "the user's message was the last thing written");
+        assert!(!codex_runs.was_cut_short(&gone(ANSWERED)).await, "Codex had answered");
+        assert!(codex_runs.was_cut_short(&gone(MISSING)).await, "a thread that cannot be found is not known to be done");
+        assert!(codex_runs.last_write(ASKED).await.is_some(), "its rollout was written");
+        assert!(codex_runs.last_write(MISSING).await.is_none());
+    }
+
+    /// An app server that is gone is the session's resident only while it
+    /// holds messages: with its queue empty there is nothing to show or to
+    /// decide.
+    #[tokio::test]
+    async fn a_gone_app_server_is_a_resident_only_while_it_holds_messages() {
+        const KEPT: &str = "0199c1a1-7777-7777-8777-dddddddddddd";
+        const EMPTY: &str = "0199c1a1-8888-7888-8888-dddddddddddd";
+        let home = tempfile::tempdir().expect("tempdir");
+        let registry = droppen_provider::testing::injection_registry(home.path());
+        let providers = codex_only(&registry);
+        let codex = providers.provider::<Codex>().expect("Codex");
+        let dead = |run_id: &str, id: &str, queue: Value| {
+            let payload = serde_json::from_value(json!({"codex": {"queue": queue}})).expect("a codex state");
+            gone_run(run_id, id, payload).decode().expect("a Codex record")
+        };
+        codex.runs().codex_dead(dead("run-kept", KEPT, json!([{"id": "q1", "text": "next", "params": {}, "request": null}])));
+        codex.runs().codex_dead(dead("run-empty", EMPTY, json!([])));
+        assert!(codex.run().resident(KEPT).is_some_and(|state| state.queued == 1), "its message is still there to decide on");
+        assert!(codex.run().resident(EMPTY).is_none(), "nothing is left to show");
+    }
+
+    /// A schedule waits for a Codex session's turn: while one runs, the
+    /// session is busy for it, and once it is over it is not.
+    #[tokio::test]
+    async fn a_schedule_waits_while_a_codex_turn_runs() {
+        let mut h = Harness::new().await;
+        let (handle, _rx) = h.handle();
+        h.driver.runs.codex_servers.lock().unwrap().insert("test-thread".into(), handle);
+        let providers = h.providers.clone();
+        let busy = || providers.provider::<Codex>().expect("Codex").run().schedule_busy("test-thread");
+        assert_eq!(busy(), None, "nothing has run yet");
+        h.start().await;
+        assert_eq!(busy(), Some("the previous run has not finished"));
+        h.complete("completed").await;
+        assert_eq!(busy(), None, "the turn is over");
+    }
+
+    /// A thread started under a stored account is bound to it as a Codex
+    /// account, so the next message finds the login this one ran under.
+    #[tokio::test]
+    async fn a_thread_started_under_an_account_is_bound_to_it() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let (_path, registry) = fake_codex_registry(home.path(), "codex-bound");
+        let providers = codex_only(&registry);
+        let account = registry
+            .host
+            .accounts
+            .create(
+                "Relay",
+                AccountProvider::Codex,
+                droppen_accounts::store::Credential::Env(vec![droppen_base::env_block::EnvVar {
+                    key: "OPENAI_API_KEY".into(),
+                    value: "not-a-real-key".into(),
+                }]),
+            )
+            .await
+            .expect("a Codex account");
+        let work = home.path().join("work");
+        std::fs::create_dir_all(&work).expect("work");
+        let options = SendOptions {
+            account: AccountChoice::Account(account.id.clone()),
+            ..SendOptions::default()
+        };
+        let codex = providers.provider::<Codex>().expect("Codex");
+        let at = StartAt {
+            cwd: &work.to_string_lossy(),
+            text: "hello",
+            options: &options,
+        };
+        let id = codex.run().start(providers.gate(), at).await.expect("a new thread");
+        assert_eq!(registry.host.accounts.session_account_id(&id).await, Some(account.id));
     }
 }

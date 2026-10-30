@@ -41,7 +41,7 @@ fn claude_only(providers: &mut ProviderRegistry, registry: &Arc<InjectionRegistr
 
 /// Codex alone.
 fn codex_only(providers: &mut ProviderRegistry, registry: &Arc<InjectionRegistry>) {
-    providers.register(Arc::new(crate::provider::codex::app_server::Codex::new(registry.clone())));
+    providers.register(Arc::new(droppen_provider_codex::app_server::Codex::new(registry.clone())));
 }
 
 /// The ACP agents alone.
@@ -82,7 +82,7 @@ fn a_provider_whose_runs_are_on_another_host_is_refused() {
     let elsewhere = tempfile::tempdir().expect("tempdir");
     let foreign = providers_from(elsewhere.path(), |_, _| {}).injections().clone();
     let why = refusal(|| {
-        ProviderRegistry::new(injections, |providers, _| providers.register(Arc::new(crate::provider::codex::app_server::Codex::new(foreign))));
+        ProviderRegistry::new(injections, |providers, _| providers.register(Arc::new(droppen_provider_codex::app_server::Codex::new(foreign))));
     });
     assert!(
         why.as_deref().is_some_and(|why| why.contains("the codex provider's runs are on another host")),

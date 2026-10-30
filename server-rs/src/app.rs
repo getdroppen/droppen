@@ -17,7 +17,7 @@ use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 
 use crate::provider::claude_code::login::ClaudeCodeLogin;
-use crate::provider::codex::login::CodexLogin;
+use droppen_provider_codex::login::CodexLogin;
 use droppen_accounts::login::Logins;
 use crate::api::AppState;
 use droppen_http::config::AppConfig;
@@ -312,8 +312,8 @@ impl RemoteHandApp {
                 // from everybody else's list. Pruning follows, so the shared
                 // directory does not keep a file per thread the user deleted;
                 // only this instance's own claims are ever dropped.
-                crate::provider::codex::sessions::codex_claims::migrate(&paths).await;
-                crate::provider::codex::sessions::codex_claims::prune(&paths).await;
+                droppen_provider_codex::sessions::codex_claims::migrate(&paths).await;
+                droppen_provider_codex::sessions::codex_claims::prune(&paths).await;
                 let adopted = state.terminals.readopt_all().await;
                 if adopted > 0 {
                     tracing::info!(adopted, "re-adopted surviving terminals");
@@ -649,7 +649,7 @@ fn join(result: Result<std::io::Result<()>, tokio::task::JoinError>) -> GotchaRe
 pub fn transcript_sources() -> TranscriptSources {
     let mut sources = TranscriptSources::default();
     sources.register(Arc::new(crate::provider::claude_code::sessions::claude::ClaudeCodeSessions));
-    sources.register(Arc::new(crate::provider::codex::sessions::codex::CodexSessions));
+    sources.register(Arc::new(droppen_provider_codex::sessions::codex::CodexSessions));
     sources.register(Arc::new(droppen_provider_acp::sessions::AcpSessions));
     sources
 }
@@ -659,7 +659,7 @@ pub fn transcript_sources() -> TranscriptSources {
 /// all of them.
 pub fn register_providers(providers: &mut ProviderRegistry, registry: &Arc<InjectionRegistry>) {
     providers.register(Arc::new(crate::provider::claude_code::resident::ClaudeCode::new(registry.clone())));
-    providers.register(Arc::new(crate::provider::codex::app_server::Codex::new(registry.clone())));
+    providers.register(Arc::new(droppen_provider_codex::app_server::Codex::new(registry.clone())));
     providers.register(Arc::new(droppen_provider_acp::Acp::new(registry.clone())));
 }
 
@@ -877,7 +877,7 @@ mod tests {
             assert_eq!(claimed(&id), reader.source() == Source::Codex, "{} runs its own step", reader.source().as_str());
         }
         crate::provider::claude_code::sessions::claude::ClaudeCodeSessions.record_owned(&paths, "claude-b").await.expect("record");
-        crate::provider::codex::sessions::codex::CodexSessions.record_owned(&paths, "codex-b").await.expect("record");
+        droppen_provider_codex::sessions::codex::CodexSessions.record_owned(&paths, "codex-b").await.expect("record");
 
         let owned = owned_sessions::read(&paths).await;
         assert_eq!(owned.ids(Source::Codex).collect::<Vec<_>>(), ["codex-a", "codex-b"]);
@@ -1165,8 +1165,8 @@ mod tests {
                 ("../crates/droppen-accounts/src/lib.rs", &["parse_auth_status"][..]),
                 ("../crates/droppen-base/src/text.rs", &["strip_ansi"][..]),
                 ("provider/claude_code/login.rs", &["plan_label"][..]),
-                ("provider/codex/quota.rs", &["app_server_call", "ask", "send", "reply"][..]),
-                ("provider/codex/login.rs", &["app_server_call"][..]),
+                ("../crates/droppen-provider-codex/src/quota.rs", &["app_server_call", "ask", "send", "reply"][..]),
+                ("../crates/droppen-provider-codex/src/login.rs", &["app_server_call"][..]),
                 ("../crates/droppen-base/src/process_env.rs", &["apply_env"][..]),
             ] {
                 let source = std::fs::read_to_string(src.join(file)).expect(file);

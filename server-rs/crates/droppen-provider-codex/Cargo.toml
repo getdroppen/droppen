@@ -1,0 +1,45 @@
+[package]
+name = "droppen-provider-codex"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+publish = false
+description = "The Droppen server's Codex provider: the app-server driver, Codex's threads, tools and claims, its model list, its quota reading and its login"
+
+# Codex's provider. It stands on the provider base, the sessions (its thread
+# reader is a `Transcripts`) and the accounts (its login is a `Login`), and
+# names no module of the server: the entry registers it.
+[dependencies]
+droppen-accounts = { path = "../droppen-accounts" }
+droppen-base = { path = "../droppen-base" }
+droppen-http = { path = "../droppen-http" }
+droppen-instance = { path = "../droppen-instance" }
+droppen-provider = { path = "../droppen-provider" }
+droppen-sessions = { path = "../droppen-sessions" }
+futures-util = "0.3"
+libc = "0.2"
+regex = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { workspace = true }
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt", "sync", "time"] }
+tracing = "0.1"
+
+[dev-dependencies]
+droppen-accounts = { path = "../droppen-accounts", features = ["test-support"] }
+droppen-base = { path = "../droppen-base", features = ["test-support"] }
+droppen-provider = { path = "../droppen-provider", features = ["test-support"] }
+droppen-sessions = { path = "../droppen-sessions", features = ["test-support"] }
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "test-util"] }
+
+[lints.rust]
+missing_docs = "deny"
+unreachable_pub = "deny"
+
+# `[lints] workspace = true` cannot be mixed with the rust lints above, so the
+# workspace's two clippy denials (`server-rs/Cargo.toml` `[workspace.lints]`)
+# are repeated here: keep them in step.
+[lints.clippy]
+significant_drop_in_scrutinee = "deny"
+await_holding_lock = "deny"
