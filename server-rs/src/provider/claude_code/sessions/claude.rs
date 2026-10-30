@@ -743,6 +743,11 @@ impl droppen_sessions::Transcripts for ClaudeCodeSessions {
         Box::pin(find_claude_session_file(paths, id))
     }
 
+    // Managed first and archived hidden, as every lookup by id finds it.
+    fn find_root<'a>(&'a self, paths: &'a Paths, id: &'a str) -> BoxFuture<'a, Option<ClaudeRoot>> {
+        Box::pin(async move { Some(find_claude_session(paths, id).await?.root) })
+    }
+
     // The main chain only: a subagent's sidechain is read as its own transcript.
     fn parse<'a>(&'a self, paths: &'a Paths, file_path: &'a Path) -> BoxFuture<'a, std::io::Result<Vec<util::TranscriptItem>>> {
         Box::pin(super::transcript::parse_claude_transcript(paths, file_path, false))
@@ -1443,6 +1448,33 @@ mod tests {
             ["one".to_string(), "two".to_string()].into_iter().collect(),
             "discovery asks the same table"
         );
+    }
+
+    /// The root a session is bound by is found as every lookup by id finds
+    /// it: managed first, an archived session not at all, and only by Claude
+    /// Code's reader, the one whose sessions live in a Claude root.
+    #[tokio::test]
+    async fn a_session_s_root_is_found_managed_first_and_never_when_archived() {
+        use droppen_sessions::Transcripts;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let paths = Paths::new(dir.path().to_path_buf());
+        for (root, ids) in [(ClaudeRoot::Local, ["local", "both", "hidden"].as_slice()), (ClaudeRoot::Managed, ["both"].as_slice())] {
+            let project = claude_roots::ClaudeRoots::of(&paths).projects_dir(root).join("-w");
+            std::fs::create_dir_all(&project).expect("project dir");
+            for id in ids {
+                std::fs::write(project.join(format!("{id}.jsonl")), "{}\n").expect("transcript");
+            }
+        }
+        archive::archive_claude_session(&paths, "hidden").await.expect("archive");
+
+        assert_eq!(ClaudeCodeSessions.find_root(&paths, "local").await, Some(ClaudeRoot::Local));
+        assert_eq!(ClaudeCodeSessions.find_root(&paths, "both").await, Some(ClaudeRoot::Managed), "managed wins");
+        assert!(find_in_root(&paths, ClaudeRoot::Local, "hidden").await.is_some(), "the file is there");
+        assert_eq!(ClaudeCodeSessions.find_root(&paths, "hidden").await, None, "but archived");
+        assert_eq!(ClaudeCodeSessions.find_root(&paths, "nothing").await, None);
+        assert_eq!(crate::sessions::codex::CodexSessions.find_root(&paths, "local").await, None, "codex has no Claude root");
+        assert_eq!(crate::sessions::acp_transcript::AcpSessions.find_root(&paths, "local").await, None, "nor an ACP agent");
     }
 
     /// What Claude Code says to the user: the speech the attention clock, the

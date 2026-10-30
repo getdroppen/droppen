@@ -36,7 +36,7 @@ pub mod shim;
 
 pub use common::{AnswerOutcome, Phase, QueueOutcome, Reply, ResidentState, StopTaskOutcome};
 pub use gate::{SpawnGate, SpawnPermit};
-pub use registry::{Capabilities, Provider, ProviderRegistry, Run, SendTo, StartAt};
+pub use registry::{Capabilities, ContinueError, Provider, ProviderRegistry, Run, SendTo, StartAt};
 
 /// How often an adopted run's pid is probed.
 ///

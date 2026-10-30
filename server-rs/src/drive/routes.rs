@@ -24,13 +24,14 @@ use droppen_http::SendResult;
 use droppen_http::extract::{ApiJson, ApiPath, ApiQuery};
 use crate::provider::questions::{self, Answer};
 use crate::provider::receipts::{Kind, LOOKUP_CAP};
-use crate::provider::{self, AccountChoice, AnswerOutcome, Reply, SendOptions};
+use crate::provider::{self, AccountChoice, AnswerOutcome, ContinueError, Reply, SendOptions};
 use droppen_http::openapi_ext::{double_option, required_nullable, ExtraResponses, Nullable, Optional};
 use droppen_instance::paths::ClaudeRoot;
 use droppen_sessions::delivery::{QuestionState, ReceiptLookup, ReceiptStatus, SessionQuestion};
 use droppen_sessions::sidecars::{is_agent_id, AgentPath, Checklist};
 use droppen_sessions::util::TranscriptItem;
 use crate::models::ModelRule;
+#[cfg(test)]
 use crate::provider::claude_code::sessions::claude;
 use droppen_sessions::{chats_cwd, file_signature, SessionScope, Source};
 
@@ -1654,7 +1655,7 @@ pub async fn bind_session_account(
     if source == Source::Codex {
         return bind_codex_session(&state, &id, account_id).await;
     }
-    let found = claude::find_claude_session(&state.paths, &id).await;
+    let found = state.drive.transcripts.find_root(&state.paths, source, &id).await;
     // Scoped to claude, because the binding table holds both CLIs' rows: a
     // codex thread id posted here would otherwise skip the not-found check on
     // the strength of its *codex* binding, and then overwrite it.
@@ -1669,7 +1670,7 @@ pub async fn bind_session_account(
     // would fork the conversation. The fork is a separate, explicit step —
     // [`continue_session_on_account`] — that makes a *new* session and leaves
     // this one as it was.
-    if account_id.is_some() && found.map(|f| f.root) == Some(ClaudeRoot::Local) {
+    if account_id.is_some() && found == Some(ClaudeRoot::Local) {
         return Err(ApiError::refusal(
             gotcha::axum::http::StatusCode::CONFLICT,
             Hinted {
@@ -1706,13 +1707,7 @@ pub async fn continue_session_on_account(
     ApiJson(body): ApiJson<SessionContinue>,
 ) -> Result<Json<ContinuedSession>, ApiError> {
     if source != Source::Claude {
-        return Err(ApiError::refusal(
-            StatusCode::BAD_REQUEST,
-            Hinted {
-                error: "continue_not_supported",
-                hint: "a codex session switches accounts in place; bind it to the account instead",
-            },
-        ));
+        return Err(continue_not_supported());
     }
     require_uuid(&body.account_id)?;
     let Some(account) = state.drive.accounts.get(&body.account_id).await else {
@@ -1735,16 +1730,15 @@ pub async fn continue_session_on_account(
     }
 
     let new_id = uuid::Uuid::new_v4().to_string();
-    let copy = crate::provider::claude_code::sessions::claude::continuation::copy_local_session(&state.paths, &id, &new_id)
-        .await
-        .map_err(|error| match error {
-            crate::provider::claude_code::sessions::claude::continuation::ContinueError::NotFound => ApiError::not_found("session not found"),
-            crate::provider::claude_code::sessions::claude::continuation::ContinueError::Taken => ApiError::conflict(error.to_string()),
-            crate::provider::claude_code::sessions::claude::continuation::ContinueError::Io(_) => {
-                tracing::warn!(session = %id, %error, "cannot copy a local-login session into this instance's root");
-                ApiError::internal("cannot copy the conversation")
-            }
-        })?;
+    let copy = state.drive.providers.continue_on_account(source, &id, &new_id).await.map_err(|error| match error {
+        ContinueError::Unsupported => continue_not_supported(),
+        ContinueError::NotFound => ApiError::not_found("session not found"),
+        ContinueError::Taken => ApiError::conflict(error.to_string()),
+        ContinueError::Io(_) => {
+            tracing::warn!(session = %id, %error, "cannot copy a local-login session into this instance's root");
+            ApiError::internal("cannot copy the conversation")
+        }
+    })?;
     if let Err(error) = state
         .drive
         .accounts
@@ -1779,6 +1773,17 @@ pub async fn continue_session_on_account(
         source: Source::Claude,
         id: new_id,
     }))
+}
+
+/// Continuing a session on an account is refused for its CLI.
+fn continue_not_supported() -> ApiError {
+    ApiError::refusal(
+        StatusCode::BAD_REQUEST,
+        Hinted {
+            error: "continue_not_supported",
+            hint: "a codex session switches accounts in place; bind it to the account instead",
+        },
+    )
 }
 
 /// The codex half of the route above.

@@ -1099,6 +1099,13 @@ impl Provider for ClaudeCode {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
+
+    /// A session on the local login lives in the user's own root, and an
+    /// account spawn runs in this instance's: it is carried over as a copy
+    /// ([`crate::provider::claude_code::sessions::claude::continuation`]).
+    fn continue_on_account<'a>(&'a self, id: &'a str, new_id: &'a str) -> BoxFuture<'a, Result<std::path::PathBuf, crate::provider::ContinueError>> {
+        Box::pin(crate::provider::claude_code::sessions::claude::continuation::copy_local_session(&self.runs.host.paths, id, new_id))
+    }
 }
 
 impl Run for ClaudeCode {

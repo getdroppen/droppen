@@ -323,10 +323,9 @@
   },
   "allowed": [
     {
-      "why": "drive finds a Claude Code session by its id itself (provider::claude_code::sessions::claude), and Drive holds Claude Code's setup-token captures. They go through the provider base (Provider, Transcripts).",
+      "why": "Drive holds Claude Code's setup-token captures. They go through the provider base.",
       "edges": [
-        "drive -> accounts::setup_token",
-        "drive -> provider::claude_code::sessions::claude"
+        "drive -> accounts::setup_token"
       ]
     },
     {

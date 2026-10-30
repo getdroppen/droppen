@@ -45,6 +45,13 @@ pub trait Transcripts: Send + Sync {
         Box::pin(async move { self.find(paths, id).await.map(|summary| PathBuf::from(summary.file_path)) })
     }
 
+    /// The Claude root session `id`'s transcript is in, found as
+    /// [`Self::find_file`] finds it, or `None` when there is no such session.
+    /// A CLI whose sessions live in no Claude root answers `None`.
+    fn find_root<'a>(&'a self, _paths: &'a Paths, _id: &'a str) -> BoxFuture<'a, Option<ClaudeRoot>> {
+        Box::pin(std::future::ready(None))
+    }
+
     /// The items the session view draws, read from the transcript at
     /// `file_path`.
     fn parse<'a>(&'a self, paths: &'a Paths, file_path: &'a Path) -> BoxFuture<'a, std::io::Result<Vec<TranscriptItem>>>;
@@ -266,6 +273,12 @@ impl TranscriptSources {
     /// [`Transcripts::find_file`].
     pub async fn find_file(&self, paths: &Paths, source: Source, id: &str) -> Option<PathBuf> {
         self.get(source)?.find_file(paths, id).await
+    }
+
+    /// The Claude root of session `id` of `source`; see
+    /// [`Transcripts::find_root`].
+    pub async fn find_root(&self, paths: &Paths, source: Source, id: &str) -> Option<ClaudeRoot> {
+        self.get(source)?.find_root(paths, id).await
     }
 
     /// See [`Transcripts::settles_reaped_runs`]; false for a source with no
