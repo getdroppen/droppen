@@ -40,6 +40,9 @@ mod auth_routes;
 /// every route the server registers.
 #[cfg(test)]
 mod bridge_routes;
+/// The chat kinds (`crate::chats`) against the providers the server registers.
+#[cfg(test)]
+mod chat_kinds;
 /// Cloud's routes and the remote-view gate (`droppen_cloud`) on the state the
 /// server builds, its link control (`droppen_cloud::control`) with the link
 /// `app` attaches, and the aggregator gateway (`droppen_cloud::gateway`) as

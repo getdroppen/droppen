@@ -58,6 +58,10 @@ const DISCOVERY_RETRY: [Duration; 4] = [
 ];
 /// How many frames a slow client may fall behind before it is resynchronised.
 const CHANNEL_CAPACITY: usize = 64;
+/// [`CHANNEL_CAPACITY`], for the entry's test of a list client that never
+/// reads, which fills the broadcast to it.
+#[cfg(test)]
+pub(crate) const LIST_CHANNEL_CAPACITY: usize = CHANNEL_CAPACITY;
 
 /// The feed's shared state, alive only while a client is attached.
 struct Live {
@@ -771,9 +775,7 @@ mod tests {
     use std::collections::BTreeSet;
     use std::path::PathBuf;
 
-
     use super::*;
-    use crate::api::AppState;
     use droppen_http::openapi_ext::Nullable;
     use droppen_sessions::{SessionStatus, Settings};
 
@@ -1047,53 +1049,4 @@ mod tests {
         }
     }
 
-    /// The list socket of `state`'s server at `addr`, opened by its owner and
-    /// then never read from; once the socket has attached to the list feed.
-    async fn never_reading_list(
-        state: &AppState,
-        addr: std::net::SocketAddr,
-    ) -> tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>> {
-        let ticket = crate::api::test_support::owner_ticket(state).await;
-        let (client, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/api/events?ticket={ticket}"))
-            .await
-            .expect("let in");
-        let attached = tokio::time::timeout(Duration::from_secs(30), async {
-            while !state.global.is_running() {
-                tokio::time::sleep(Duration::from_millis(20)).await;
-            }
-        });
-        attached.await.expect("the socket attaches to the list feed");
-        client
-    }
-
-    /// A frame of a quarter of a megabyte, for a client that takes none.
-    fn wide_frame() -> String {
-        format!(r#"{{"type":"screens:list","pad":"{}"}}"#, "x".repeat(256 * 1024))
-    }
-
-    /// A server shutting down does not wait on a list client that has stopped
-    /// reading: the send it is stuck on gives way at once, well inside the
-    /// real limit.
-    #[tokio::test]
-    async fn a_shutdown_does_not_wait_for_a_list_client_that_never_reads() {
-        let home = tempfile::tempdir().unwrap();
-        let (state, addr) = crate::api::test_support::served(home.path()).await;
-        assert_eq!(state.send_limit, droppen_http::SEND_LIMIT);
-        let _client = never_reading_list(&state, addr).await;
-        // As many as the broadcast holds, so the socket is handed every one:
-        // megabytes more than the kernel's buffers take.
-        let frame = wide_frame();
-        for _ in 0..CHANNEL_CAPACITY {
-            state.global.publish(frame.clone());
-        }
-        tokio::time::sleep(Duration::from_millis(500)).await;
-
-        state.cancel.cancel();
-        let released = tokio::time::timeout(Duration::from_secs(10), async {
-            while state.global.is_running() {
-                tokio::time::sleep(Duration::from_millis(20)).await;
-            }
-        });
-        released.await.expect("a shutdown lets the stuck socket go at once");
-    }
 }

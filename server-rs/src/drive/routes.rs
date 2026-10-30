@@ -2152,18 +2152,19 @@ pub fn describe(reg: &mut ExtraResponses) {
 mod tests {
     use super::*;
     use crate::drive::attachments::ATTACHMENT_MISSING;
-    use crate::drive::Drive;
+    use crate::drive::{fake, Drive};
+    use droppen_instance::paths::Paths;
     use std::sync::Arc;
 
     /// The routes' own refusals, byte for byte: clients act on `error`, show
     /// `hint`, and the settled question's screen reads `question`.
     #[test]
     fn the_session_refusals_are_written_as_pinned() {
-        let external = external_session(crate::app::transcript_sources().external_reason(Source::Codex));
+        let external = external_session("this session was started elsewhere; continue it where it was started".to_string());
         assert_eq!(external.status(), gotcha::axum::http::StatusCode::CONFLICT);
         assert_eq!(
             external.body().to_string(),
-            r#"{"error":"external_session","hint":"this codex session was started elsewhere; continue it where it was started"}"#
+            r#"{"error":"external_session","hint":"this session was started elsewhere; continue it where it was started"}"#
         );
 
         let question = SessionQuestion {
@@ -2196,18 +2197,24 @@ mod tests {
         );
     }
 
+    /// A drive on the fake provider and reader ([`fake`]).
     fn drive() -> (tempfile::TempDir, Arc<Drive>) {
-        drive_with(crate::app::register_providers)
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (_, drive) = fake::drive(dir.path());
+        (dir, drive)
     }
 
-    /// [`drive`], with the providers `register` adds.
-    fn drive_with(register: fn(&mut droppen_provider::ProviderRegistry, &Arc<droppen_provider::InjectionRegistry>)) -> (tempfile::TempDir, Arc<Drive>) {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let paths = Arc::new(droppen_instance::paths::Paths::new(dir.path().to_path_buf()));
-        let instance = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
-        let auth = droppen_auth::Auth::new(&paths, &instance, &droppen_http::config::AuthSettings::default(), false, std::sync::Arc::new(crate::app::NotifyTokens));
-        let drive = Drive::new(paths, &instance, auth, crate::app::transcript_sources(), register, crate::app::logins());
-        (dir, drive)
+    /// The drive routes' state over [`drive`]'s, with a session list of its own.
+    fn state() -> (tempfile::TempDir, DriveState) {
+        let (dir, drive) = drive();
+        let global = feed::global::GlobalFeed::new();
+        let state = DriveState {
+            paths: drive.paths.clone(),
+            drive,
+            refresh: droppen_http::refresh::Refresh::new(global.clone()),
+            global,
+        };
+        (dir, state)
     }
 
     #[test]
@@ -2274,8 +2281,8 @@ mod tests {
     }
 
     /// An upload on disk, as `POST /api/uploads` leaves one: `uploads/<dir>/<name>`.
-    fn uploaded(drive: &Drive, name: &str) -> String {
-        let path = drive.paths.uploads_dir().join("abc").join(name);
+    fn uploaded(paths: &Paths, name: &str) -> String {
+        let path = paths.uploads_dir().join("abc").join(name);
         std::fs::create_dir_all(path.parent().expect("parent")).expect("uploads dir");
         std::fs::write(&path, b"x").expect("upload");
         path.to_string_lossy().into_owned()
@@ -2283,17 +2290,18 @@ mod tests {
 
     #[test]
     fn only_paths_inside_the_uploads_directory_may_be_attached() {
-        let (_dir, drive) = drive();
-        let uploads = drive.paths.uploads_dir();
-        let images = vec![uploaded(&drive, "a.png")];
+        let _dir = tempfile::tempdir().expect("tempdir");
+        let paths = Paths::new(_dir.path().to_path_buf());
+        let uploads = paths.uploads_dir();
+        let images = vec![uploaded(&paths, "a.png")];
         assert_eq!(
-            resolve_attachments(&drive.paths, images.clone(), vec![]).expect("an upload").0,
+            resolve_attachments(&paths, images.clone(), vec![]).expect("an upload").0,
             images
         );
-        assert!(resolve_attachments(&drive.paths, vec!["/etc/passwd".to_string()], vec![]).is_err());
+        assert!(resolve_attachments(&paths, vec!["/etc/passwd".to_string()], vec![]).is_err());
         assert!(
             resolve_attachments(
-                &drive.paths,
+                &paths,
                 vec![],
                 vec![uploads.join("../../.ssh/id_rsa").to_string_lossy().into_owned()]
             )
@@ -2308,8 +2316,9 @@ mod tests {
     /// that a symlink takes out of the uploads directory.
     #[test]
     fn an_attachment_must_still_be_a_file_in_the_uploads_directory() {
-        let (dir, drive) = drive();
-        let uploads = drive.paths.uploads_dir();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let paths = Paths::new(dir.path().to_path_buf());
+        let uploads = paths.uploads_dir();
         let code = |result: Result<(Vec<String>, Vec<String>), ApiError>| {
             let error = result.expect_err("refused");
             (error.status().as_u16(), error.body()["error"].as_str().map(str::to_string))
@@ -2319,17 +2328,17 @@ mod tests {
         // Before the uploads directory was ever made…
         assert!(!uploads.exists());
         let gone = uploads.join("abc/gone.png").to_string_lossy().into_owned();
-        assert_eq!(code(resolve_attachments(&drive.paths, vec![gone.clone()], vec![])), missing);
+        assert_eq!(code(resolve_attachments(&paths, vec![gone.clone()], vec![])), missing);
         // …and after.
-        let real = uploaded(&drive, "kept.txt");
+        let real = uploaded(&paths, "kept.txt");
         assert_eq!(
-            code(resolve_attachments(&drive.paths, vec![], vec![real.clone(), gone])),
+            code(resolve_attachments(&paths, vec![], vec![real.clone(), gone])),
             missing,
             "one gone refuses the message"
         );
         assert_eq!(
             code(resolve_attachments(
-                &drive.paths,
+                &paths,
                 vec![],
                 vec![uploads.join("abc").to_string_lossy().into_owned()]
             )),
@@ -2337,7 +2346,7 @@ mod tests {
             "a directory is not a file"
         );
         let refused = resolve_attachments(
-            &drive.paths,
+            &paths,
             vec![uploads.join("abc/also-gone.png").to_string_lossy().into_owned()],
             vec![],
         )
@@ -2355,22 +2364,21 @@ mod tests {
             std::fs::write(&secret, b"s").expect("secret");
             let link = uploads.join("abc/link.txt");
             std::os::unix::fs::symlink(&secret, &link).expect("symlink");
-            let error = resolve_attachments(&drive.paths, vec![], vec![link.to_string_lossy().into_owned()]).expect_err("refused");
+            let error = resolve_attachments(&paths, vec![], vec![link.to_string_lossy().into_owned()]).expect_err("refused");
             assert_eq!(
                 (error.status().as_u16(), error.body()["error"].as_str()),
                 (409, Some("attachment paths must come from /api/uploads")),
                 "a symlink out of the uploads directory is not an upload"
             );
         }
-        assert!(resolve_attachments(&drive.paths, vec![], vec![real]).is_ok());
+        assert!(resolve_attachments(&paths, vec![], vec![real]).is_ok());
     }
 
     /// The message route refuses a missing upload with the same 409, before it
     /// looks for the session at all.
     #[tokio::test]
     async fn a_message_with_an_attachment_that_is_gone_is_refused() {
-        let home = tempfile::tempdir().expect("tempdir");
-        let state = crate::api::test_support::state(home.path()).await;
+        let (_home, state) = state();
         let gone = state.drive.paths.uploads_dir().join("abc/gone.png").to_string_lossy().into_owned();
         let body = |images: Vec<String>| SendMessage {
             text: "look".into(),
@@ -2384,9 +2392,9 @@ mod tests {
         };
         let id = "99999999-9999-4999-8999-999999999999".to_string();
         let error = send_message(
-            State(DriveState::from_ref(&state)),
+            State(state.clone()),
             MaybeIdentity(None),
-            ApiPath((Source::Claude, id.clone())),
+            ApiPath((fake::SOURCE, id.clone())),
             ApiJson(body(vec![gone])),
         )
         .await
@@ -2401,9 +2409,9 @@ mod tests {
         std::fs::create_dir_all(path.parent().expect("parent")).expect("uploads dir");
         std::fs::write(&path, b"x").expect("upload");
         let error = send_message(
-            State(DriveState::from_ref(&state)),
+            State(state.clone()),
             MaybeIdentity(None),
-            ApiPath((Source::Claude, id)),
+            ApiPath((fake::SOURCE, id)),
             ApiJson(body(vec![path.to_string_lossy().into_owned()])),
         )
         .await
@@ -2414,7 +2422,7 @@ mod tests {
     /// A `POST /api/sessions/new` body as a client sends it, with attachments.
     fn new_session_body(cwd: &str, images: Option<Vec<String>>, files: Option<Vec<String>>) -> NewSession {
         NewSession {
-            source: Source::Claude,
+            source: fake::SOURCE,
             cwd: cwd.to_string(),
             text: "look at this".to_string(),
             images: Optional(images),
@@ -2451,8 +2459,7 @@ mod tests {
     /// stops this test short of starting a CLI.
     #[tokio::test]
     async fn a_new_sessions_attachments_must_come_from_the_uploads_directory() {
-        let home = tempfile::tempdir().expect("tempdir");
-        let state = crate::api::test_support::state(home.path()).await;
+        let (home, state) = state();
         let uploads = state.drive.paths.uploads_dir();
         let missing_cwd = home.path().join("no-such-project").to_string_lossy().into_owned();
         let refused = |error: ApiError| (error.status().as_u16(), error.body()["error"].as_str().map(str::to_string));
@@ -2460,24 +2467,24 @@ mod tests {
 
         // Not from `/api/uploads` at all.
         let outside = new_session_body(&missing_cwd, Some(vec!["/etc/passwd".into()]), None);
-        let error = new_session(State(DriveState::from_ref(&state)), ApiJson(outside)).await.expect_err("refused");
+        let error = new_session(State(state.clone()), ApiJson(outside)).await.expect_err("refused");
         assert_eq!(refused(error), (409, not_an_upload.clone()));
 
         // A traversal that starts inside the uploads directory and leaves it.
         let escape = uploads.join("abc/../../../.ssh/id_rsa").to_string_lossy().into_owned();
         let traversal = new_session_body(&missing_cwd, None, Some(vec![escape]));
-        let error = new_session(State(DriveState::from_ref(&state)), ApiJson(traversal)).await.expect_err("refused");
+        let error = new_session(State(state.clone()), ApiJson(traversal)).await.expect_err("refused");
         assert_eq!(refused(error), (409, not_an_upload.clone()));
 
         // The uploads directory itself is not an upload.
         let bare = new_session_body(&missing_cwd, Some(vec![uploads.to_string_lossy().into_owned()]), None);
-        let error = new_session(State(DriveState::from_ref(&state)), ApiJson(bare)).await.expect_err("refused");
+        let error = new_session(State(state.clone()), ApiJson(bare)).await.expect_err("refused");
         assert_eq!(refused(error), (409, not_an_upload));
 
         // An upload that is no longer on the device: its own reason, the draft kept.
         let gone = uploads.join("abc/gone.png").to_string_lossy().into_owned();
         let missing = new_session_body(&missing_cwd, Some(vec![gone]), None);
-        let error = new_session(State(DriveState::from_ref(&state)), ApiJson(missing)).await.expect_err("refused");
+        let error = new_session(State(state.clone()), ApiJson(missing)).await.expect_err("refused");
         assert_eq!(refused(error), (409, Some(ATTACHMENT_MISSING.to_string())));
 
         // Uploaded paths pass, and the next thing said no is the directory.
@@ -2487,7 +2494,7 @@ mod tests {
         let image = uploads.join("abc/a.png").to_string_lossy().into_owned();
         let file = uploads.join("abc/notes.txt").to_string_lossy().into_owned();
         let valid = new_session_body(&missing_cwd, Some(vec![image]), Some(vec![file]));
-        let error = new_session(State(DriveState::from_ref(&state)), ApiJson(valid)).await.expect_err("no such directory");
+        let error = new_session(State(state.clone()), ApiJson(valid)).await.expect_err("no such directory");
         let (status, said) = refused(error);
         assert_eq!(status, 400);
         assert!(said.unwrap_or_default().starts_with("not a directory"), "past the attachment gate");
@@ -2496,10 +2503,10 @@ mod tests {
         // same id with the attachment fixed is a first attempt, not a replay.
         let mut named = new_session_body(&missing_cwd, Some(vec!["/etc/passwd".into()]), None);
         named.client_message_id = Optional(Some("6f1c2a52-3b7e-4d1f-9a0c-2b8f1e4d5c6a".into()));
-        let error = new_session(State(DriveState::from_ref(&state)), ApiJson(named.clone())).await.expect_err("refused");
+        let error = new_session(State(state.clone()), ApiJson(named.clone())).await.expect_err("refused");
         assert_eq!(refused(error).0, 409);
         named.images = Optional(None);
-        let error = new_session(State(DriveState::from_ref(&state)), ApiJson(named)).await.expect_err("no such directory");
+        let error = new_session(State(state.clone()), ApiJson(named)).await.expect_err("no such directory");
         assert_eq!(refused(error).0, 400, "answered afresh, not with the recorded refusal");
     }
 
@@ -2527,11 +2534,11 @@ mod tests {
             response: Some("x".repeat(questions::MAX_ANSWER_CHARS + 1)),
             ..Answer::default()
         };
-        let error = settle_question(&drive, Source::Claude, "no-such-session", "req", Reply::Answer(huge), None)
+        let error = settle_question(&drive, fake::SOURCE, "no-such-session", "req", Reply::Answer(huge), None)
             .await
             .expect_err("refused");
         assert_eq!(error.status(), gotcha::axum::http::StatusCode::BAD_REQUEST);
-        let error = settle_question(&drive, Source::Claude, "no-such-session", "req", Reply::Dismiss, None)
+        let error = settle_question(&drive, fake::SOURCE, "no-such-session", "req", Reply::Dismiss, None)
             .await
             .expect_err("missing");
         assert_eq!(
@@ -2550,11 +2557,8 @@ mod tests {
         let _guard = droppen_sessions::index::exclusive().await;
         let (_dir, drive) = drive();
         let id = "99999999-9999-4999-8999-999999999999";
-        // A session of this server's own: its transcript in the managed root.
-        let project = crate::provider::claude_code::claude_roots::ClaudeRoots::of(&drive.paths).managed_projects().join("-w-repo");
-        std::fs::create_dir_all(&project).expect("project");
-        let line = serde_json::json!({"type":"user","message":{"role":"user","content":"hi"},"timestamp":"2026-10-01T10:00:00.000Z","cwd":"/w/repo","sessionId":id,"uuid":"u1"});
-        std::fs::write(project.join(format!("{id}.jsonl")), format!("{line}\n")).expect("transcript");
+        // A session of this server's own: the fake reader's.
+        fake::session(&drive.paths, id, "hi\n");
 
         let asked = "q".repeat(60_000);
         let questions_json = serde_json::json!([{ "question": asked, "header": "Long", "options": [{ "label": "a" }], "multiSelect": false }]);
@@ -2567,7 +2571,7 @@ mod tests {
             ..Answer::default()
         };
         assert!(questions::check_answer_size(&answer).is_ok(), "the answer itself is within the bound");
-        let error = settle_question(&drive, Source::Claude, id, "req-long", Reply::Answer(answer), None)
+        let error = settle_question(&drive, fake::SOURCE, id, "req-long", Reply::Answer(answer), None)
             .await
             .expect_err("refused");
         assert_eq!(error.status(), gotcha::axum::http::StatusCode::BAD_REQUEST);
