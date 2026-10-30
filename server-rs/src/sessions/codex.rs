@@ -34,6 +34,7 @@ use super::codex_tools::{CodexTools, Context};
 use droppen_instance::paths::Paths;
 use droppen_base::time::{iso8601, mtime_ms, now_ms};
 use droppen_sessions::context::ContextUsage;
+use droppen_sessions::mentions::FileCitation;
 use droppen_sessions::sources::{TokenUsage, UsageFile, UsageFold};
 use droppen_sessions::util::{
     date_of, is_jsonl, make_item, num, read_head_lines, read_tail_lines, title_line, try_parse, FileCache, ItemKind, LossyLines, Role,
@@ -1122,7 +1123,7 @@ pub async fn parse_codex_transcript(paths: &Paths, file_path: &Path) -> std::io:
             _ => {}
         }
     }
-    droppen_sessions::mentions::annotate_mentioned_files(&paths.home, &mut items, cwd.as_deref()).await;
+    droppen_sessions::mentions::annotate_mentioned_files(&paths.home, &mut items, cwd.as_deref(), file_citations).await;
     Ok(items)
 }
 
@@ -1223,10 +1224,44 @@ async fn read_codex_context(file_path: &Path) -> Option<ContextUsage> {
     None
 }
 
+/// Codex's quoted file directive is structured data, not a prose token. In
+/// particular, spaces, Unicode and parentheses are all part of the path.
+pub fn file_citations(text: &str) -> Vec<FileCitation> {
+    static CITATION: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r#":codex-file-citation\{((?:[^"{}]|"(?:\\.|[^"\\])*")*)\}"#).expect("valid file-citation pattern"));
+    static ATTRIBUTE: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r#"^([A-Za-z][A-Za-z0-9_-]*)\s*=\s*("(?:\\.|[^"\\])*")"#).expect("valid citation-attribute pattern"));
+    CITATION
+        .captures_iter(text)
+        .filter_map(|citation| {
+            let mut attrs = citation[1].trim();
+            let mut path = None;
+            while !attrs.is_empty() {
+                let attribute = ATTRIBUTE.captures(attrs)?;
+                let value: String = serde_json::from_str(&attribute[2]).ok()?;
+                if &attribute[1] == "path" && path.replace(value).is_some() {
+                    return None;
+                }
+                attrs = &attrs[attribute[0].len()..];
+                if !attrs.is_empty() && !attrs.starts_with(char::is_whitespace) {
+                    return None;
+                }
+                attrs = attrs.trim_start();
+            }
+            let path = path.filter(|p| !p.is_empty() && p.len() <= 4096 && !p.chars().any(char::is_control))?;
+            Some(FileCitation {
+                range: citation.get(0)?.range(),
+                path,
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::io::Write;
+    use droppen_sessions::mentions::{annotate_mentioned_files, candidate_paths, MAX_FILES_PER_ITEM};
 
     fn rollout(lines: &[&str]) -> (tempfile::TempDir, PathBuf) {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -1721,5 +1756,116 @@ mod tests {
         let behind = std::fs::metadata(&path).expect("size").len() - reading.len() as u64;
         assert!(TAIL_BYTES < behind && behind < droppen_sessions::context::TAIL_BYTES, "{behind}");
         assert_eq!(read_codex_context(&path).await.map(|usage| usage.tokens), Some(1_200));
+    }
+
+    #[test]
+    fn codex_file_citations_preserve_the_entire_quoted_path() {
+        let path = "/Users/ada/Downloads/Garden/每周花园记录/outputs/种植计划汇总版_20260907-0913/种植计划（汇总版）.xlsx";
+        let text = format!("生成汇总版：:codex-file-citation{{path=\"{path}\" purpose=\"output\"}}");
+        assert_eq!(candidate_paths(&text, file_citations), vec![path]);
+        let path = "/home/me/weekly reports/strategy (verified) {final}.xlsx";
+        let text = format!(":codex-file-citation{{purpose=\"output\" path=\"{path}\"}}");
+        assert_eq!(
+            candidate_paths(&text, file_citations),
+            vec![path],
+            "quoted punctuation is not trimmed and fragments are not rediscovered"
+        );
+    }
+
+    #[test]
+    fn codex_file_citations_decode_escapes_and_deduplicate_normal_mentions() {
+        let text = r#":codex-file-citation{path="/home/me/report \"final\".txt" purpose="output"} :codex-file-citation{path="/home/me/a.md"} `/home/me/a.md`"#;
+        assert_eq!(candidate_paths(text, file_citations), vec!["/home/me/report \"final\".txt", "/home/me/a.md"]);
+        assert_eq!(
+            candidate_paths(r#":codex-file-citation{ path = "~/\u62a5\u544a.xlsx" }"#, file_citations),
+            vec!["~/报告.xlsx"]
+        );
+    }
+
+    #[test]
+    fn malformed_or_ambiguous_file_citations_are_not_interpreted() {
+        for text in [
+            r#":codex-file-citation{path="a.md" path="b.md"}"#,
+            r#":codex-file-citation{path="a.md"garbage}"#,
+            r#":codex-file-citation{purpose="path=a.md"}"#,
+            r#":codex-file-citation{path="a.md""#,
+            r#":codex-file-citation{path="bad\q.txt"}"#,
+            r#":codex-file-citation{path="bad\u0000.txt"}"#,
+            r#":codex-file-citation{path=""}"#,
+        ] {
+            assert!(file_citations(text).is_empty(), "{text}");
+        }
+    }
+
+    #[tokio::test]
+    async fn citations_use_the_same_existence_boundary_budget_and_deduplication() {
+        let home = tempfile::tempdir().unwrap();
+        let outside = tempfile::NamedTempFile::new().unwrap();
+        let real = home.path().join("综合策略 (核查版).xlsx");
+        std::fs::write(&real, b"PK\0test").unwrap();
+        let reference = format!(
+            ":codex-file-citation{{path={} purpose=\"output\"}}",
+            serde_json::to_string(&real.to_string_lossy()).unwrap()
+        );
+        let missing = ":codex-file-citation{path=\"missing.xlsx\" purpose=\"output\"}";
+        let forbidden = format!(":codex-file-citation{{path=\"{}\"}}", outside.path().display());
+        let mut items = vec![
+            make_item(
+                Role::Assistant,
+                ItemKind::Text,
+                &format!("生成：{reference} {reference} {missing} {forbidden}"),
+                None,
+            ),
+            make_item(Role::User, ItemKind::Text, &reference, None),
+            make_item(Role::Assistant, ItemKind::Thinking, &reference, None),
+        ];
+        annotate_mentioned_files(home.path(), &mut items, home.path().to_str(), file_citations).await;
+        let files = items[0].files.as_ref().unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, real.to_string_lossy());
+        assert_eq!(files[0].name, "综合策略 (核查版).xlsx");
+        assert!(
+            !items[0].text.contains(&reference),
+            "a verified citation becomes a readable label, not raw internal markup"
+        );
+        assert!(items[0].text.contains(missing), "a missing reference is not silently hidden");
+        assert!(items[0].text.contains(&forbidden), "an inaccessible reference is not silently hidden");
+        assert_eq!(items[1].text, reference);
+        assert!(items[1].files.is_none());
+        assert!(items[2].files.is_none());
+        annotate_mentioned_files(home.path(), &mut items, home.path().to_str(), file_citations).await;
+        assert_eq!(
+            items[0].files.as_ref().unwrap().len(),
+            1,
+            "reannotation does not duplicate existing chips"
+        );
+    }
+
+    #[tokio::test]
+    async fn over_budget_citations_keep_their_visible_reference() {
+        let home = tempfile::tempdir().unwrap();
+        let mut references = Vec::new();
+        for n in 0..MAX_FILES_PER_ITEM + 1 {
+            std::fs::write(home.path().join(format!("报告 {n}.txt")), "hi").unwrap();
+            references.push(format!(":codex-file-citation{{path=\"报告 {n}.txt\"}}"));
+        }
+        let mut items = vec![make_item(Role::Assistant, ItemKind::Text, &references.join("\n"), None)];
+        annotate_mentioned_files(home.path(), &mut items, home.path().to_str(), file_citations).await;
+        assert_eq!(items[0].files.as_ref().unwrap().len(), MAX_FILES_PER_ITEM);
+        assert!(items[0].text.contains(references.last().unwrap()));
+    }
+
+    /// Codex's parse hands its own directive to the crate: a file a message
+    /// cites becomes a chip, and the directive its label.
+    #[tokio::test]
+    async fn a_file_a_codex_message_cites_becomes_a_chip() {
+        let text = r#"wrote :codex-file-citation{path="~/report.txt" purpose="output"}"#;
+        let line = serde_json::json!({"type": "response_item", "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": text}]}});
+        let (dir, path) = rollout(&[&line.to_string()]);
+        std::fs::write(dir.path().join("report.txt"), "hi").expect("write");
+        let items = parse_codex_transcript(&Paths::new(dir.path().to_path_buf()), &path).await.expect("parse");
+        let files: Vec<&str> = items[0].files.iter().flatten().map(|file| file.name.as_str()).collect();
+        assert_eq!(files, ["report.txt"]);
+        assert_eq!(items[0].text, r"wrote report\.txt");
     }
 }

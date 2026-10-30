@@ -1042,7 +1042,9 @@ pub async fn parse_claude_transcript(paths: &droppen_instance::paths::Paths, fil
         }
     }
 
-    droppen_sessions::mentions::annotate_mentioned_files(&paths.home, &mut items, cwd.as_deref()).await;
+    // Claude Code has no file markup of its own: every file it names is found
+    // in its prose.
+    droppen_sessions::mentions::annotate_mentioned_files(&paths.home, &mut items, cwd.as_deref(), droppen_sessions::mentions::no_citations).await;
     Ok(items)
 }
 
@@ -1092,6 +1094,24 @@ mod tests {
             file.write_all(b"\n").expect("write");
         }
         (dir, path)
+    }
+
+    /// Claude Code has no file markup of its own: the files a Claude session
+    /// names are found in its prose, and Codex's directive is Codex's reader's
+    /// to read, so one quoted here is left as written.
+    #[tokio::test]
+    async fn a_claude_session_s_files_are_found_in_its_prose_alone() {
+        let text = r#"wrote `~/report.txt` after :codex-file-citation{path="~/other report.txt"}"#;
+        let line = serde_json::json!({"type": "assistant", "message": {"content": [{"type": "text", "text": text}]}});
+        let (dir, path) = write_jsonl(&[&line.to_string()]);
+        std::fs::write(dir.path().join("report.txt"), "hi").expect("write");
+        std::fs::write(dir.path().join("other report.txt"), "hi").expect("write");
+        let items = parse_claude_transcript(&droppen_instance::paths::Paths::new(dir.path().to_path_buf()), &path, false)
+            .await
+            .expect("parse");
+        let files: Vec<&str> = items[0].files.iter().flatten().map(|file| file.name.as_str()).collect();
+        assert_eq!(files, ["report.txt"]);
+        assert_eq!(items[0].text, text);
     }
 
     #[tokio::test]
