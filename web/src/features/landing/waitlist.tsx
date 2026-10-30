@@ -125,8 +125,8 @@ function Joined({ plan, signup, onAgain }: { plan: WaitlistPlan; signup: SignupM
               : t("You're on the list: we'll e-mail you an invite.")}
         </span>
       </p>
-      <p className="text-xs leading-5 text-muted">{t("We'll send nothing else. To be taken off the list, write to {{email}}.", { email: PRIVACY_EMAIL })}</p>
-      <button type="button" onClick={onAgain} data-testid="waitlist-again" className="w-fit text-xs text-fg underline underline-offset-4 hover:no-underline">
+      <p className="text-sm leading-6 text-muted">{t("We'll send nothing else. To be taken off the list, write to {{email}}.", { email: PRIVACY_EMAIL })}</p>
+      <button type="button" onClick={onAgain} data-testid="waitlist-again" className="w-fit text-sm text-fg underline underline-offset-4 hover:no-underline">
         {t("Add another address")}
       </button>
     </div>
@@ -208,7 +208,7 @@ export function WaitlistForm({
           {sending && <Loader2 aria-hidden="true" className="size-3.5 animate-spin" />}
           {t("Join the waitlist")}
         </button>
-        <p className="text-xs leading-5 text-muted">
+        <p className="text-sm leading-6 text-muted">
           {t("No confirmation mail and no newsletter: we use your address only to send what you asked for.")}{" "}
           <a {...publicLink(PRIVACY_PATH)} data-testid="waitlist-privacy" className="whitespace-nowrap text-fg underline underline-offset-4 hover:no-underline">
             {t("Privacy notice")}

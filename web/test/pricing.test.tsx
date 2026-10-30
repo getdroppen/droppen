@@ -149,7 +149,8 @@ test("in English, and every number on the page is a plan's own", () => {
     `$${PRO_PRICE.monthly} a month, or $${PRO_PRICE.yearly} a year`,
     `past ${gb(free.transferBytes)} GB that traffic slows to ${THROTTLED_KB_PER_SEC} KB/s`,
     `past ${gb(pro.transferBytes)} GB is billed by use`,
-    "End-to-end encrypted: we can't read your sessions, code or terminals",
+    "End-to-end encrypted",
+    "We can't read your sessions, code or terminals",
     "Prices in US dollars. Pro is not on sale yet, and nothing is charged before you choose to pay.",
     // The cloud's copy expires once a device has been offline that long (docs/relay-and-plans.md §3.4): offline, not off.
     `Free keeps an encrypted copy of each device's last ${free.retentionDays} days of sessions in the cloud, Pro its last ${pro.retentionDays}.`,
@@ -164,7 +165,7 @@ test("in English, and every number on the page is a plan's own", () => {
   assert.equal(yearlySaving(), 20);
   // Every plan says it is end-to-end encrypted: the compare table's last row has a mark in each column.
   const compare = part(html, "compare", "waitlist");
-  const encrypted = compare.slice(compare.lastIndexOf('role="rowheader"'));
+  const encrypted = compare.slice(compare.indexOf("End-to-end encrypted"));
   assert.equal((encrypted.match(/>included</g) ?? []).length, 3);
   // Section ids the header's anchors and the cards' buttons go to.
   for (const id of ["plans", "compare", "waitlist", "faq"]) assert.match(html, new RegExp(`id="${id}"`));
