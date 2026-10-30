@@ -180,10 +180,7 @@ const zhCN: Bundle = {
   "Have a prompt run automatically on the computer you choose, for example every morning or every hour on weekdays.":
     "让发给 AI 的 Prompt 按预设计划在指定的电脑上自动运行，例如每个工作日早晨定时触发。",
 
-  // The beta's caveat, above the hero
-  "Droppen is in beta: its encryption design has had internal security reviews, not an external audit. Due to browser limitations, we recommend the more secure Mac app.":
-    "Droppen 正在测试中，其加密设计经过内部安全评审，尚未进行外部审计。受限于浏览器环境，我们推荐使用安全性更好的 Mac 版本。",
-  // The same caveat, whole, on /security.
+  // The beta's caveat, on /security.
   "Droppen is in beta. Its encryption design has had internal security reviews, not an external audit. In a browser you trust the page code as it was loaded that time: that code can use your private keys, and could copy them out.":
     "Droppen 目前是测试版。加密设计经过了内部安全评审，还没有做过外部审计。在浏览器里使用时，你需要信任当次加载的页面代码：这份代码能使用你的私钥，也能把它们复制出去。",
 
@@ -314,9 +311,7 @@ const zhTW: Bundle = {
   "Have a prompt run automatically on the computer you choose, for example every morning or every hour on weekdays.":
     "讓一個給 AI 的指令按排程在指定的電腦上自動執行，例如每天早上或工作日每小時。",
 
-  "Droppen is in beta: its encryption design has had internal security reviews, not an external audit. Due to browser limitations, we recommend the more secure Mac app.":
-    "Droppen 正在測試中，其加密設計經過內部安全審查，尚未進行外部稽核。受限於瀏覽器環境，我們推薦使用安全性更好的 Mac 版本。",
-  // The same caveat, whole, on /security.
+  // The beta's caveat, on /security.
   "Droppen is in beta. Its encryption design has had internal security reviews, not an external audit. In a browser you trust the page code as it was loaded that time: that code can use your private keys, and could copy them out.":
     "Droppen 目前是測試版。加密設計經過內部安全審查，還沒有做過外部稽核。在瀏覽器裡使用時，你需要信任當次載入的頁面程式碼：這份程式碼能使用你的私密金鑰，也能把它們複製出去。",
 
@@ -447,9 +442,7 @@ const ja: Bundle = {
   "Have a prompt run automatically on the computer you choose, for example every morning or every hour on weekdays.":
     "AI への指示を、選んだコンピュータで決まった時間に自動実行。たとえば毎朝、平日は毎時など。",
 
-  "Droppen is in beta: its encryption design has had internal security reviews, not an external audit. Due to browser limitations, we recommend the more secure Mac app.":
-    "Droppen はベータ版で、暗号設計は社内のセキュリティレビューを受けていますが、外部監査はまだです。ブラウザ環境の制約があるため、より安全な Mac 版をおすすめします。",
-  // The same caveat, whole, on /security.
+  // The beta's caveat, on /security.
   "Droppen is in beta. Its encryption design has had internal security reviews, not an external audit. In a browser you trust the page code as it was loaded that time: that code can use your private keys, and could copy them out.":
     "Droppen はベータ版です。暗号設計は社内のセキュリティレビューを受けていますが、外部監査はまだです。ブラウザで使う場合は、そのとき読み込んだページのコードを信頼することになります。そのコードは秘密鍵を使えるうえ、持ち出すこともできます。",
 
