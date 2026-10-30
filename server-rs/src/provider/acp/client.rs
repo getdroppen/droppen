@@ -292,7 +292,7 @@ impl Client {
                     use std::os::unix::process::ExitStatusExt;
                     Exit {
                         code: status.code(),
-                        signal: status.signal().map(super::super::signal_name),
+                        signal: status.signal().map(droppen_provider::signal_name),
                     }
                 }
                 Err(_) => Exit { code: None, signal: None },

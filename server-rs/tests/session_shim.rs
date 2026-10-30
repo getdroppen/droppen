@@ -13,8 +13,7 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use remote_hand_server::provider::shim::{self, LinkError, Output, Sidecars, Spawn};
-use remote_hand_server::provider::SpawnPermit;
+use droppen_provider::shim::{self, LinkError, Output, Sidecars, Spawn};
 
 mod common;
 
@@ -64,7 +63,7 @@ async fn claude_outlives_the_server_that_started_it() {
     let env = env();
 
     let mut link = shim::spawn_via_shim(Spawn {
-        permit: &SpawnPermit::without_a_session(),
+        permit: &droppen_provider::testing::without_a_session(),
         sidecars: &sidecars,
         program: "/bin/cat",
         args: &[],
@@ -125,7 +124,7 @@ async fn a_shim_whose_claude_never_started_reports_a_corpse_rather_than_a_sessio
     // A program that exits immediately: the shim comes up, buries it, and
     // lingers with a live socket over a dead claude.
     let link = shim::spawn_via_shim(Spawn {
-        permit: &SpawnPermit::without_a_session(),
+        permit: &droppen_provider::testing::without_a_session(),
         sidecars: &sidecars,
         program: "/usr/bin/false",
         args: &[],

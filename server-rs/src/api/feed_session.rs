@@ -293,7 +293,7 @@ fn drafted_session(dir: &Path, id: &str) -> (Arc<Drive>, PathBuf) {
 fn draft_hears(drive: &Drive, id: &str, line: &Value) {
     let claude = drive.providers.provider::<crate::provider::claude_code::resident::ClaudeCode>().expect("Claude Code");
     claude.runs().draft_channel(id).send_if_modified(|draft| {
-        let changed = crate::provider::drafts::apply(draft, line);
+        let changed = droppen_provider::drafts::apply(draft, line);
         if changed {
             draft.v += 1;
         }

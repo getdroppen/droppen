@@ -6,7 +6,7 @@ use std::sync::Arc;
 use futures_util::future::BoxFuture;
 use serde_json::Value;
 
-use crate::models::{ModelInfo, ModelList, ModelListSource, Models, ModelsQuery};
+use droppen_provider::models::{ModelInfo, ModelList, ModelListSource, Models, ModelsQuery};
 use droppen_http::openapi_ext::Nullable;
 use droppen_instance::paths::Paths;
 

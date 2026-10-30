@@ -36,7 +36,7 @@ use droppen_instance::db::{scope, Db};
 use droppen_http::openapi_ext::Optional;
 use droppen_instance::paths::Paths;
 use droppen_sessions::reference::local_key;
-use crate::models::ModelRule;
+use droppen_provider::models::ModelRule;
 use droppen_sessions::Source;
 use droppen_base::time::iso8601;
 

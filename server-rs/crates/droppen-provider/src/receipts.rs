@@ -309,7 +309,7 @@ impl Receipts {
     /// A claim stranded by a server that died mid-send is listed as unknown
     /// when nothing shows it got as far as a driver: sending it again is safe,
     /// because the retry finds the claim and settles it before enqueuing — see
-    /// [`crate::drive::idempotent`].
+    /// `drive::idempotent`.
     pub fn lookup(&self, source: Source, session: &str, ids: &[String], now: i64) -> rusqlite::Result<ReceiptLookup> {
         let booted = self.booted_ms;
         self.db.read(|conn| {

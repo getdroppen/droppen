@@ -141,8 +141,8 @@ impl Logins {
     /// it is handed, under its own CLI's name, checks, reads and names nothing,
     /// and its probe runs and finds no window. A test that asserts what a CLI's own
     /// login answers uses the real ones the entry builds instead.
-    #[cfg(test)]
-    pub(crate) fn stand_ins() -> Self {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn stand_ins() -> Self {
         Self {
             claude: Arc::new(StandIn(AccountProvider::Claude)),
             codex: Arc::new(StandIn(AccountProvider::Codex)),
@@ -151,10 +151,10 @@ impl Logins {
 }
 
 /// A login that names its CLI and nothing else ([`Logins::stand_ins`]).
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 struct StandIn(AccountProvider);
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl Login for StandIn {
     fn spawn_env(&self, kind: AccountKind, secret: &str, env: &[EnvVar]) -> Result<AccountLaunch, AccountError> {
         Ok(AccountLaunch {

@@ -4,7 +4,8 @@
 //! The routes are ports of the session-driving half of the former TypeScript
 //! server's `app.ts`; the composer preferences are a port of its
 //! `composer-prefs.ts`. The title and archive stores the routes write live in
-//! [`crate::sessions`], which reads them to build the session list.
+//! [`droppen_sessions::titles`] and [`droppen_sessions::archive`], which the
+//! session list is built from.
 //!
 //! [`Drive`] is the one field this subsystem adds to `AppState`. It owns the
 //! account store, the setup-token captures, the injection registry, the quota
@@ -22,7 +23,7 @@ use droppen_accounts::login::Logins;
 use droppen_accounts::quota::QuotaCache;
 use droppen_accounts::store::AccountsStore;
 use droppen_auth::Auth;
-use crate::provider::{InjectionRegistry, ProviderRegistry, SpawnDecoration};
+use droppen_provider::{InjectionRegistry, ProviderRegistry, SpawnDecoration};
 use droppen_sessions::Source;
 use droppen_base::process_env::Env;
 use droppen_instance::instance::InstanceDirs;

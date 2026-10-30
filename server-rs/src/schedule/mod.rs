@@ -17,11 +17,11 @@
 //! Injection into an existing session is a later version's problem.
 //!
 //! Both CLIs, though: which one a task runs is a field on it, because
-//! [`crate::provider::ProviderRegistry::start_new_session`] already takes a [`Source`] and there is
+//! [`droppen_provider::ProviderRegistry::start_new_session`] already takes a [`Source`] and there is
 //! nothing about a timer that prefers one. The two differ in three places, all of
 //! them handled rather than papered over — the flag values each accepts (see
-//! [`crate::models::Models::accepted_efforts`] and
-//! [`crate::models::Models::permission_is_known`]), what "still busy" means (see
+//! [`droppen_provider::models::Models::accepted_efforts`] and
+//! [`droppen_provider::models::Models::permission_is_known`]), what "still busy" means (see
 //! [`runner`]), and the fact that only a claude spawn is decorated with the
 //! `rh-notify` skill, so a codex session started by a task cannot nudge a phone
 //! from inside itself. That last one is Claude Code's own mechanism and not
@@ -485,7 +485,7 @@ impl ScheduleState {
     }
 }
 
-/// What a scheduled task asks of its CLI's [`crate::models::Models`].
+/// What a scheduled task asks of its CLI's [`droppen_provider::models::Models`].
 trait TaskFlagsExt {
     /// The flag values, checked now rather than at the moment of the spawn, and
     /// checked against the CLI that will actually be handed them.
@@ -501,7 +501,7 @@ trait TaskFlagsExt {
     ///    mode. Not identical, and not something one rule can cover: claude's efforts
     ///    are a ladder that narrows per model and its permission modes are its own
     ///    five, while codex reads its rungs out of the cache the CLI writes and
-    ///    names its sandbox modes differently. See [`crate::models::Models::accepted_efforts`]
+    ///    names its sandbox modes differently. See [`droppen_provider::models::Models::accepted_efforts`]
     ///    for why a codex machine with no cache is let through.
     ///
     /// The second layer is what this feature is *for*. The composer has a person in
@@ -517,7 +517,7 @@ trait TaskFlagsExt {
     fn check_task_flags<'a>(&'a self, source: Source, model: Option<&'a str>, effort: Option<&'a str>, permission: Option<&'a str>) -> BoxFuture<'a, Result<(), ApiError>>;
 }
 
-impl TaskFlagsExt for dyn crate::models::Models + '_ {
+impl TaskFlagsExt for dyn droppen_provider::models::Models + '_ {
     fn check_task_flags<'a>(&'a self, source: Source, model: Option<&'a str>, effort: Option<&'a str>, permission: Option<&'a str>) -> BoxFuture<'a, Result<(), ApiError>> {
         Box::pin(async move {
             crate::drive::routes::validate_flags(self.model_rule(), model, effort, permission).map_err(ApiError::bad_request)?;
@@ -828,8 +828,8 @@ mod tests {
         let accounts = Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), crate::app::logins()));
         let quota = Arc::new(droppen_accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins()));
         let decoration = crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone());
-        let injections = crate::provider::InjectionRegistry::new(paths, &dirs, accounts, quota, decoration);
-        let providers = crate::provider::ProviderRegistry::new(injections, crate::app::register_providers);
+        let injections = droppen_provider::InjectionRegistry::new(paths, &dirs, accounts, quota, decoration);
+        let providers = droppen_provider::ProviderRegistry::new(injections, crate::app::register_providers);
         providers.models(source).expect("a provider").check_task_flags(source, model, effort, permission).await
     }
 
@@ -1070,7 +1070,7 @@ mod tests {
 
     /// The routes' state over a fresh instance, with the providers `register`
     /// adds, and a working directory in its home.
-    fn state_with(register: fn(&mut crate::provider::ProviderRegistry, &Arc<crate::provider::InjectionRegistry>)) -> (tempfile::TempDir, ScheduleState, String) {
+    fn state_with(register: fn(&mut droppen_provider::ProviderRegistry, &Arc<droppen_provider::InjectionRegistry>)) -> (tempfile::TempDir, ScheduleState, String) {
         let (dir, paths) = paths();
         let paths = Arc::new(paths);
         let cwd = dir.path().join("w");

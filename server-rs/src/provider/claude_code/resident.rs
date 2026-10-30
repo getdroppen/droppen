@@ -14,7 +14,7 @@
 //! claude -p --input-format stream-json --output-format stream-json --verbose
 //! ```
 //!
-//! …started once, held open by [`crate::provider::shim`], and handed one line of JSON per
+//! …started once, held open by [`droppen_provider::shim`], and handed one line of JSON per
 //! message. The two events the old model conflated are now separate, and the
 //! whole of this file is the consequence:
 //!
@@ -45,7 +45,7 @@
 //!
 //! Three of them, and they are the reason a resident is worth its complexity.
 //!
-//! * **A server restart.** The process is behind [`crate::provider::shim`], so killing
+//! * **A server restart.** The process is behind [`droppen_provider::shim`], so killing
 //!   this server does not touch it. The next boot re-attaches through the shim
 //!   socket named in the journal, replays claude's whole stdout to work out
 //!   where the session got to, and carries on — see [`Driver::attached`] and
@@ -85,12 +85,12 @@ use droppen_sessions::delivery::{QuestionState, ReceiptStatus};
 use droppen_sessions::{Injection, InjectionRunState, SessionStatus, Source};
 use droppen_base::time::iso8601;
 
-use crate::provider::questions::{self, PermissionRequest, Stored};
-use crate::provider::shim::{self, Link, Output, Sidecars, Spawn};
-use crate::provider::common::{busy_message, new_uuid, AnswerOutcome, Phase, QueueOutcome, Reply, ResidentState, StopTaskOutcome};
-use crate::provider::drafts::Draft;
-use crate::provider::gate::{ClaimError, SessionLease, SpawnGate};
-use crate::provider::{runs, Capabilities, DriverStatesBuilder, InjectError, InjectionRegistry, Provider, ProviderRuns, Run, RunEntry, RunHost, SendTo, Sent, SpawnPermit, StartAt, WrittenAt};
+use droppen_provider::questions::{self, PermissionRequest, Stored};
+use droppen_provider::shim::{self, Link, Output, Sidecars, Spawn};
+use droppen_provider::common::{busy_message, new_uuid, AnswerOutcome, Phase, QueueOutcome, Reply, ResidentState, StopTaskOutcome};
+use droppen_provider::drafts::Draft;
+use droppen_provider::gate::{ClaimError, SessionLease, SpawnGate};
+use droppen_provider::{runs, Capabilities, DriverStatesBuilder, InjectError, InjectionRegistry, Provider, ProviderRuns, Run, RunEntry, RunHost, SendTo, Sent, SpawnPermit, StartAt, WrittenAt};
 mod spawn;
 
 /// The mode flags every resident is started with.
@@ -264,7 +264,7 @@ pub(in crate::provider) struct Fingerprint {
     pub uploads: bool,
     /// Whether `--permission-prompt-tool stdio` and the plan-mode
     /// `--disallowedTools` are: whether this process can ask the user a
-    /// question at all. See [`crate::provider::questions`].
+    /// question at all. See [`droppen_provider::questions`].
     ///
     /// Written down and never compared. Every spawn this server makes has it,
     /// and a resident started before it existed is not restarted to get it:
@@ -572,7 +572,7 @@ impl Pending {
     }
 
     /// The same, under a queue id the send path already chose — the one a
-    /// client's receipt follows; see [`crate::provider::receipts`].
+    /// client's receipt follows; see [`droppen_provider::receipts`].
     fn with_id(id: String, text: &str, recipe: Recipe) -> Pending {
         Pending {
             id,
@@ -760,7 +760,7 @@ pub(crate) struct ClaudeCodeRuns {
     /// for claude having taken them into the turn in flight.
     ///
     /// The backstop for a session nobody is watching: a watched one is told the
-    /// moment its transcript grows — see [`crate::provider::ProviderRegistry::transcript_grew`].
+    /// moment its transcript grows — see [`droppen_provider::ProviderRegistry::transcript_grew`].
     /// Production runs [`ABSORB_POLL`], or `DROPPEN_ABSORB_POLL_MS`.
     absorb_poll: Duration,
     /// Where a session's flight recording goes, if it is being made at all.
@@ -772,7 +772,7 @@ pub(crate) struct ClaudeCodeRuns {
     /// What a claude spawn's environment gains before it starts: on the send
     /// path, and for the process an automatic rotation moves a session to,
     /// which a driver builds by itself.
-    decoration: Arc<dyn crate::provider::SpawnDecoration>,
+    decoration: Arc<dyn droppen_provider::SpawnDecoration>,
     /// When a quota reading last woke the residents holding a queue; see
     /// [`ClaudeCodeRuns::recheck_holds`].
     reading_recheck: Mutex<Option<Instant>>,
@@ -782,14 +782,14 @@ impl ClaudeCodeRuns {
     /// None yet, on `host`, timed as the environment asks. `instance` says
     /// where the flight recordings go; `decoration` is what a claude spawn's
     /// environment gains before it starts.
-    pub(in crate::provider) fn new(host: Arc<RunHost>, instance: &droppen_instance::instance::InstanceDirs, decoration: Arc<dyn crate::provider::SpawnDecoration>) -> Arc<Self> {
+    pub(in crate::provider) fn new(host: Arc<RunHost>, instance: &droppen_instance::instance::InstanceDirs, decoration: Arc<dyn droppen_provider::SpawnDecoration>) -> Arc<Self> {
         let recorders = crate::provider::claude_code::record::Recorders::new(host.paths.clone(), instance);
         Arc::new(Self {
             host,
             residents: Mutex::new(std::collections::HashMap::new()),
             // Ten minutes of silence is a *report*, not a sentence: the only
             // thing that happens at this threshold is that the turn is marked.
-            stall_after: crate::provider::env_ms("DROPPEN_STALL_MS", Duration::from_secs(10 * 60)),
+            stall_after: droppen_provider::env_ms("DROPPEN_STALL_MS", Duration::from_secs(10 * 60)),
             // Half an hour: past every background job short enough that waiting
             // is the obvious answer, and well short of a session that is stuck.
             // Zero means "wait for ever", which is why this does not go through
@@ -816,8 +816,8 @@ impl ClaudeCodeRuns {
                 .filter(|ms| *ms > 0)
                 .map(Duration::from_millis),
             recovery_backoff: RECOVERY_BACKOFF,
-            steer_settle: crate::provider::env_ms("DROPPEN_STEER_SETTLE_MS", STEER_SETTLE),
-            absorb_poll: crate::provider::env_ms("DROPPEN_ABSORB_POLL_MS", ABSORB_POLL),
+            steer_settle: droppen_provider::env_ms("DROPPEN_STEER_SETTLE_MS", STEER_SETTLE),
+            absorb_poll: droppen_provider::env_ms("DROPPEN_ABSORB_POLL_MS", ABSORB_POLL),
             recorders,
             decoration,
             reading_recheck: Mutex::new(None),
@@ -1102,7 +1102,7 @@ impl Provider for ClaudeCode {
         self.runs.clone()
     }
 
-    fn models(&self) -> &dyn crate::models::Models {
+    fn models(&self) -> &dyn droppen_provider::models::Models {
         &self.models
     }
 
@@ -1113,7 +1113,7 @@ impl Provider for ClaudeCode {
     /// A session on the local login lives in the user's own root, and an
     /// account spawn runs in this instance's: it is carried over as a copy
     /// ([`crate::provider::claude_code::sessions::claude::continuation`]).
-    fn continue_on_account<'a>(&'a self, id: &'a str, new_id: &'a str) -> BoxFuture<'a, Result<std::path::PathBuf, crate::provider::ContinueError>> {
+    fn continue_on_account<'a>(&'a self, id: &'a str, new_id: &'a str) -> BoxFuture<'a, Result<std::path::PathBuf, droppen_provider::ContinueError>> {
         Box::pin(crate::provider::claude_code::sessions::claude::continuation::copy_local_session(&self.runs.host.paths, id, new_id))
     }
 }
@@ -1225,15 +1225,15 @@ impl ClaudeCode {
 impl ClaudeCodeRuns {
     /// The channel claude session `id`'s draft is published on.
     ///
-    /// Its driver's [`crate::provider::drafts::DraftWriter`] is the only thing that writes to it
+    /// Its driver's [`droppen_provider::drafts::DraftWriter`] is the only thing that writes to it
     /// in a running server; a test of the feed stands in for that driver here.
-    pub(crate) fn draft_channel(&self, id: &str) -> Arc<tokio::sync::watch::Sender<crate::provider::drafts::Draft>> {
+    pub(crate) fn draft_channel(&self, id: &str) -> Arc<tokio::sync::watch::Sender<droppen_provider::drafts::Draft>> {
         self.host.drafts.channel(&self.host.key_of(Source::Claude, id))
     }
 
     /// The writer a driver for session `id` publishes its draft through.
-    fn draft_writer(&self, id: &str) -> crate::provider::drafts::DraftWriter {
-        crate::provider::drafts::DraftWriter::new(self.draft_channel(id))
+    fn draft_writer(&self, id: &str) -> droppen_provider::drafts::DraftWriter {
+        droppen_provider::drafts::DraftWriter::new(self.draft_channel(id))
     }
 
     /// Write a rotation decision down and tell everyone who should hear of it:
@@ -1273,7 +1273,7 @@ impl ClaudeCodeRuns {
         // few minutes. One push per account pair per window says it; the rest
         // would only bury it. A limit-driven rotation always pushes.
         let ahead_burst = decision.trigger == droppen_sessions::account::RotationTrigger::Ahead
-            && !crate::provider::first_ahead_push(&decision.from.id, &decision.to.id, std::time::Instant::now());
+            && !droppen_provider::first_ahead_push(&decision.from.id, &decision.to.id, std::time::Instant::now());
         if !ahead_burst {
             if let Some(alerts) = self.host.alerts.get() {
                 alerts.rotation(
@@ -1522,6 +1522,8 @@ impl ClaudeCodeRuns {
         }
         args.extend(recipe.args.iter().cloned());
 
+        #[cfg(test)]
+        droppen_provider::testing::shims_run_as(crate::provider::with_providers::SHIMS);
         let link = shim::spawn_via_shim(Spawn {
             permit,
             sidecars: &sidecars,
@@ -2413,8 +2415,8 @@ struct Driver {
     replay_gapped: bool,
     /// The count of the think claude is in the middle of, which the
     /// transcript cannot say, for the session feed's activity bar. See
-    /// [`crate::provider::drafts`].
-    draft: crate::provider::drafts::DraftWriter,
+    /// [`droppen_provider::drafts`].
+    draft: droppen_provider::drafts::DraftWriter,
     /// Set by [`Driver::set_phase`] when the phase moved, and taken by the
     /// next [`Driver::publish`], which pokes the feed again: see `set_phase`.
     /// Atomic only because the driver is shared by reference across awaits.
@@ -6088,7 +6090,7 @@ impl Driver {
     /// What the tombstone and the stderr tail say about the exit just seen.
     fn death_reason(&self) -> String {
         let reason = match self.sidecars.read_tombstone() {
-            Some(shim::Exit { signal: Some(signal), .. }) => format!("claude was {}", crate::provider::signal_name(signal).to_lowercase()),
+            Some(shim::Exit { signal: Some(signal), .. }) => format!("claude was {}", droppen_provider::signal_name(signal).to_lowercase()),
             Some(shim::Exit { status: Some(code), .. }) => format!("claude exited with code {code}"),
             _ => "claude exited for an unknown reason".to_string(),
         };
@@ -6458,7 +6460,7 @@ impl Driver {
     }
 
     /// Tell the receipt store what became of a message — a no-op for one no
-    /// client named. See [`crate::provider::receipts`].
+    /// client named. See [`droppen_provider::receipts`].
     fn receipt(&self, pending: &Pending, status: ReceiptStatus) {
         self.runs.host.note_receipt(Source::Claude, &self.id, &pending.id, status);
     }
@@ -6648,7 +6650,7 @@ enum Event {
     /// A `system` line this driver does not act on: `commands_changed`,
     /// `task_updated`, `thinking_tokens`, and whatever the next CLI release
     /// adds beside them. (`thinking_tokens` does move the draft's counter —
-    /// see [`crate::provider::drafts`] — which is a reading, not an act: the turn, the
+    /// see [`droppen_provider::drafts`] — which is a reading, not an act: the turn, the
     /// queue and the replay are exactly as they would be without it.)
     ///
     /// Told apart from [`Event::Other`] because the *replay* has to treat the
@@ -6812,7 +6814,7 @@ fn classify_value(value: &Value) -> Event {
             info: value["rate_limit_info"].clone(),
         },
         Some("control_response") => Event::ControlResponse,
-        // claude asking *us*. The shapes are [`crate::provider::questions`]'s to read,
+        // claude asking *us*. The shapes are [`droppen_provider::questions`]'s to read,
         // and the only place they are spelled.
         Some("control_request") => match PermissionRequest::parse(value) {
             Some(request) => Event::Permission(Box::new(request)),
@@ -7545,7 +7547,7 @@ mod tests {
         injections: Arc<InjectionRegistry>,
         /// Every provider over `registry`, as the routes and the feeds ask
         /// them, and the spawn gate they lend.
-        providers: Arc<crate::provider::ProviderRegistry>,
+        providers: Arc<droppen_provider::ProviderRegistry>,
         tx: mpsc::UnboundedSender<Cmd>,
         shared: Arc<Mutex<ResidentState>>,
         /// Every line the fake claude read off its stdin, in order.
@@ -7589,7 +7591,7 @@ mod tests {
         let paths = Arc::new(Paths::new(home.to_path_buf()));
         let dirs = InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
         dirs.create().expect("instance directories");
-        let host = crate::provider::testing::host(
+        let host = droppen_provider::testing::host(
             paths.clone(),
             &dirs,
             Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), crate::app::logins())),
@@ -7623,11 +7625,8 @@ mod tests {
             reading_recheck: Mutex::new(None),
             host: host.clone(),
         });
-        let injections = Arc::new(InjectionRegistry {
-            host,
-            decoration: crate::drive::NotifyDecoration::new(paths, dirs.clone()),
-            instance: dirs,
-        });
+        let decoration = crate::drive::NotifyDecoration::new(paths, dirs.clone());
+        let injections = droppen_provider::testing::injection_registry_on(host, dirs, decoration);
         (injections, claude)
     }
 
@@ -7643,7 +7642,7 @@ mod tests {
         let home = tempfile::tempdir().expect("tempdir");
         let minute = Duration::from_secs(60);
         let (injections, claude) = registry(home.path(), minute, minute, minute, minute, minute);
-        let providers = crate::provider::ProviderRegistry::new(injections.clone(), |providers, injections| {
+        let providers = droppen_provider::ProviderRegistry::new(injections.clone(), |providers, injections| {
             providers.register(Arc::new(ClaudeCode::on(claude.clone(), injections)));
         });
         let (tx, _rx) = mpsc::unbounded_channel();
@@ -8139,7 +8138,7 @@ done
             } = adoption;
             let (injections, registry) = registry(home.path(), stall, tick, step, settle, absorb_poll);
             // Every provider, Claude Code's over this harness's own runs.
-            let providers = crate::provider::ProviderRegistry::new(injections.clone(), |providers, injections| {
+            let providers = droppen_provider::ProviderRegistry::new(injections.clone(), |providers, injections| {
                 providers.register(Arc::new(ClaudeCode::on(registry.clone(), injections)));
                 providers.register(Arc::new(crate::provider::codex::app_server::Codex::new(injections.clone())));
                 providers.register(Arc::new(crate::provider::acp::Acp::new(injections.clone())));
@@ -8422,12 +8421,12 @@ done
         fn named(&self, text: &str) -> String {
             let receipts = self.registry.host.receipts();
             let client = uuid::Uuid::new_v4().to_string();
-            let now = crate::provider::receipts::now_ms();
+            let now = droppen_provider::receipts::now_ms();
             let qid = match receipts
-                .claim(&client, crate::provider::receipts::Kind::Message, Source::Claude, Some(SESSION), now)
+                .claim(&client, droppen_provider::receipts::Kind::Message, Source::Claude, Some(SESSION), now)
                 .expect("claim")
             {
-                crate::provider::receipts::Claim::Owned { qid } => qid,
+                droppen_provider::receipts::Claim::Owned { qid } => qid,
                 other => panic!("a fresh id is owned, got {other:?}"),
             };
             receipts.complete(&client, "{}", None, now);
@@ -8439,7 +8438,7 @@ done
         fn receipt(&self, qid: &str) -> Option<ReceiptStatus> {
             self.registry
                 .host.receipts()
-                .for_session(Source::Claude, SESSION, crate::provider::receipts::now_ms())
+                .for_session(Source::Claude, SESSION, droppen_provider::receipts::now_ms())
                 .into_iter()
                 .find(|receipt| receipt.qid.0.as_deref() == Some(qid))
                 .map(|receipt| receipt.status)
@@ -8504,7 +8503,7 @@ done
 
         /// Every provider over this harness's registry, as the routes and the
         /// feeds ask them.
-        fn providers(&self) -> Arc<crate::provider::ProviderRegistry> {
+        fn providers(&self) -> Arc<droppen_provider::ProviderRegistry> {
             self.providers.clone()
         }
 
@@ -8973,7 +8972,7 @@ done
     #[tokio::test]
     async fn a_turn_s_alert_sees_its_session_s_resident() {
         let harness = Harness::ordinary().await;
-        let alerts = Arc::new(crate::provider::testing::TurnAlerts::default());
+        let alerts = Arc::new(droppen_provider::testing::TurnAlerts::default());
         harness.registry.host.attach_alerts(alerts.clone());
         until("the init to land", || harness.state().phase == Phase::Idle).await;
         harness.send("first");
@@ -9010,7 +9009,7 @@ done
             "*) printf '%s\\n' '{\"type\":\"system\",\"subtype\":\"task_started\",\"task_id\":\"uploads-task\",\"description\":\"still working\"}'; printf",
         );
         harness.plan_claude(&script);
-        let make_recipe = |options: &crate::provider::SendOptions| {
+        let make_recipe = |options: &droppen_provider::SendOptions| {
             super::spawn::claude_recipe(
                 &harness.registry.host.paths,
                 harness.bin.to_str(),
@@ -9030,15 +9029,15 @@ done
         assert_eq!(harness.spawns().len(), 1);
         assert!(harness.spawns()[0].contains("--add-dir"));
         for (i, options) in [
-            crate::provider::SendOptions {
+            droppen_provider::SendOptions {
                 images: vec!["/uploads/screenshot.png".into()],
                 ..Default::default()
             },
-            crate::provider::SendOptions {
+            droppen_provider::SendOptions {
                 files: vec!["/uploads/log.txt".into()],
                 ..Default::default()
             },
-            crate::provider::SendOptions::default(),
+            droppen_provider::SendOptions::default(),
         ]
         .into_iter()
         .enumerate()
@@ -12942,7 +12941,7 @@ done
     }
 
     /// What the session's draft holds right now.
-    fn draft_of(harness: &Harness) -> crate::provider::drafts::Draft {
+    fn draft_of(harness: &Harness) -> droppen_provider::drafts::Draft {
         harness
             .providers()
             .draft_watch(Source::Claude, SESSION)
@@ -13086,9 +13085,9 @@ done
 
     // ------------------------------------------------ the gate and the claim
 
-    /// A step of a spawn, as [`crate::provider::testing::Step`] records it.
-    fn step(what: &'static str, gate: bool, claim: Option<bool>) -> crate::provider::testing::Step {
-        crate::provider::testing::Step { what, gate, claim }
+    /// A step of a spawn, as [`droppen_provider::testing::Step`] records it.
+    fn step(what: &'static str, gate: bool, claim: Option<bool>) -> droppen_provider::testing::Step {
+        droppen_provider::testing::Step { what, gate, claim }
     }
 
     /// A new resident starts under the spawn gate and with its claim, and both
@@ -13167,7 +13166,7 @@ done
             .find(|record| record.session_id == OTHER)
             .expect("its record")
             .cli_pid;
-        crate::provider::testing::signal(pid, libc::SIGKILL);
+        droppen_provider::testing::signal(pid, libc::SIGKILL);
         until("the driver to end", || registry.host.steps().len() == 5).await;
         assert_eq!(registry.host.steps()[4..], [step("resident ended", false, Some(false))]);
         assert!(!registry.residents.lock().expect("residents").contains_key(OTHER));

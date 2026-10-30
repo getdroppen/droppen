@@ -22,13 +22,31 @@ use droppen_base::process_env::{apply_env, clean_env, clean_env_bare};
 use droppen_base::procs;
 use droppen_base::time::iso8601;
 
-use crate::provider::common::{busy_message, new_uuid, session_workdir, Phase, QueueOutcome, ResidentState, CHAT_SYSTEM_PROMPT};
-use crate::provider::gate::{ClaimError, SessionLease, SpawnGate};
+use droppen_provider::common::{busy_message, new_uuid, session_workdir, Phase, QueueOutcome, ResidentState, CHAT_SYSTEM_PROMPT};
+use droppen_provider::gate::{ClaimError, SessionLease, SpawnGate};
 use droppen_sessions::archive::ArchiveError;
-use crate::provider::{
-    require_provider, runs, shim, with_codex_files, AccountChoice, Capabilities, CodexAccount, DriverStatesBuilder,
-    InjectError, InjectionRegistry, Provider, ProviderRuns, Run, RunHost, SendOptions, SendTo, Sent, SpawnPermit, StartAt, WrittenAt,
+use droppen_provider::{
+    attachment_suffix, require_provider, runs, shim, AccountChoice, Capabilities, DriverStatesBuilder, InjectError, InjectionRegistry,
+    Provider, ProviderRuns, Run, RunHost, SendOptions, SendTo, Sent, SpawnPermit, StartAt, WrittenAt,
 };
+
+/// codex has no flag for non-image files, so point it at them in the prompt text.
+fn with_codex_files(text: &str, options: &SendOptions) -> String {
+    if options.files.is_empty() {
+        text.to_string()
+    } else {
+        format!("{text}{}", attachment_suffix(&options.files))
+    }
+}
+
+/// One codex account, resolved and ready to be spawned under.
+#[derive(Debug, Clone)]
+pub(in crate::provider) struct CodexAccount {
+    /// Which account it is, so a live process can be compared against it.
+    id: String,
+    /// What it contributes to the spawn.
+    launch: droppen_accounts::store::AccountLaunch,
+}
 
 const RPC_TIMEOUT: Duration = Duration::from_secs(30);
 /// How long a retiring app-server is given to actually exit.
@@ -381,7 +399,7 @@ fn message(text: &str, options: &SendOptions) -> Result<Message, InjectError> {
     };
     Ok(Message {
         // The send path's choice when a client named the message, so its
-        // receipt can follow it; see [`crate::provider::receipts`].
+        // receipt can follow it; see [`droppen_provider::receipts`].
         id: options.message_id.clone().unwrap_or_else(new_uuid),
         text: text.into(),
         // A stored value, because the journal reads back rows other builds
@@ -600,11 +618,11 @@ impl Provider for Codex {
     }
 
     // A thread switches accounts in place: its login is a binding, not a root.
-    fn continue_on_account<'a>(&'a self, _id: &'a str, _new_id: &'a str) -> BoxFuture<'a, Result<std::path::PathBuf, crate::provider::ContinueError>> {
-        Box::pin(std::future::ready(Err(crate::provider::ContinueError::Unsupported)))
+    fn continue_on_account<'a>(&'a self, _id: &'a str, _new_id: &'a str) -> BoxFuture<'a, Result<std::path::PathBuf, droppen_provider::ContinueError>> {
+        Box::pin(std::future::ready(Err(droppen_provider::ContinueError::Unsupported)))
     }
 
-    fn models(&self) -> &dyn crate::models::Models {
+    fn models(&self) -> &dyn droppen_provider::models::Models {
         &self.models
     }
 
@@ -1050,6 +1068,8 @@ impl CodexRuns {
             Some(launch) => clean_env(launch.env.iter().cloned()),
             None => clean_env_bare(),
         };
+        #[cfg(test)]
+        droppen_provider::testing::shims_run_as(crate::provider::with_providers::SHIMS);
         let mut link = shim::spawn_via_shim(shim::Spawn {
             permit,
             sidecars: &sidecars,
@@ -1984,7 +2004,7 @@ mod tests {
         input: BufReader<OwnedReadHalf>,
         output: OwnedWriteHalf,
         /// The providers over the driver's registry, for their spawn gate.
-        providers: Arc<crate::provider::ProviderRegistry>,
+        providers: Arc<droppen_provider::ProviderRegistry>,
         _home: tempfile::TempDir,
     }
 
@@ -1998,7 +2018,7 @@ mod tests {
             let quota = Arc::new(droppen_accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins()));
             let decoration = crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone());
             let registry = InjectionRegistry::new(paths, &dirs, accounts, quota, decoration);
-            let providers = crate::provider::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
+            let providers = droppen_provider::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
             let socket = home.path().join("mock.sock");
             let listener = UnixListener::bind(&socket).unwrap();
             let connector = tokio::spawn(async move { shim::connect_in_process(&socket).await.unwrap() });
@@ -2780,13 +2800,13 @@ mod tests {
     /// failed when it is withdrawn instead.
     #[tokio::test]
     async fn a_named_messages_receipt_follows_it_into_codex_and_out_of_the_queue() {
-        use crate::provider::receipts::{Claim, Kind};
+        use droppen_provider::receipts::{Claim, Kind};
         use droppen_sessions::delivery::ReceiptStatus;
         let mut h = Harness::new().await;
         let receipts = h.driver.runs.host.receipts().clone();
         let named = |text: &str| {
             let client = new_uuid();
-            let now = crate::provider::receipts::now_ms();
+            let now = droppen_provider::receipts::now_ms();
             let Claim::Owned { qid } = receipts.claim(&client, Kind::Message, Source::Codex, Some("test-thread"), now).unwrap() else {
                 panic!("a fresh id is owned");
             };
@@ -2799,9 +2819,9 @@ mod tests {
             assert_eq!(message.id, qid, "the message travels under the queue id the claim chose");
             message
         };
-        let status = |receipts: &crate::provider::receipts::Receipts, qid: &str| {
+        let status = |receipts: &droppen_provider::receipts::Receipts, qid: &str| {
             receipts
-                .for_session(Source::Codex, "test-thread", crate::provider::receipts::now_ms())
+                .for_session(Source::Codex, "test-thread", droppen_provider::receipts::now_ms())
                 .into_iter()
                 .find(|receipt| receipt.qid.0.as_deref() == Some(qid))
                 .map(|receipt| receipt.status)
@@ -2866,13 +2886,13 @@ mod tests {
     }
 
     /// The Codex runs `providers` hold.
-    fn codex(providers: &crate::provider::ProviderRegistry) -> &Arc<CodexRuns> {
+    fn codex(providers: &droppen_provider::ProviderRegistry) -> &Arc<CodexRuns> {
         providers.provider::<Codex>().expect("Codex").runs()
     }
 
-    /// A step of a spawn, as [`crate::provider::testing::Step`] records it.
-    fn step(what: &'static str, gate: bool, claim: Option<bool>) -> crate::provider::testing::Step {
-        crate::provider::testing::Step { what, gate, claim }
+    /// A step of a spawn, as [`droppen_provider::testing::Step`] records it.
+    fn step(what: &'static str, gate: bool, claim: Option<bool>) -> droppen_provider::testing::Step {
+        droppen_provider::testing::Step { what, gate, claim }
     }
 
     /// The spawn gate only reserves a Codex session; its app server starts
@@ -2892,7 +2912,7 @@ mod tests {
         const OTHER: &str = "0199c1a1-0000-4000-8000-000000000004";
         let home = tempfile::tempdir().expect("tempdir");
         let (_path, registry) = fake_codex_registry(home.path(), "codex-steps");
-        let providers = crate::provider::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
+        let providers = droppen_provider::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
         let gate = providers.gate();
         let work = home.path().join("work");
         std::fs::create_dir_all(&work).expect("work");
@@ -2990,10 +3010,10 @@ mod tests {
 
     /// A scratch home for the tests of a start outside the gate: the fake
     /// codex's registry and providers, and its working directory.
-    fn unheld(name: &str) -> (tempfile::TempDir, droppen_base::process_env::ChildPathGuard, Arc<InjectionRegistry>, Arc<crate::provider::ProviderRegistry>, std::path::PathBuf) {
+    fn unheld(name: &str) -> (tempfile::TempDir, droppen_base::process_env::ChildPathGuard, Arc<InjectionRegistry>, Arc<droppen_provider::ProviderRegistry>, std::path::PathBuf) {
         let home = tempfile::tempdir().expect("tempdir");
         let (path, registry) = fake_codex_registry(home.path(), name);
-        let providers = crate::provider::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
+        let providers = droppen_provider::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
         let work = home.path().join("work");
         std::fs::create_dir_all(&work).expect("work");
         (home, path, registry, providers, work)
@@ -3290,9 +3310,9 @@ mod tests {
     async fn a_codex_session_is_in_its_turn_alert_s_snapshot() {
         let home = tempfile::tempdir().expect("tempdir");
         let (_path, registry) = fake_codex_registry(home.path(), "codex-snapshot");
-        let alerts = Arc::new(crate::provider::testing::TurnAlerts::default());
+        let alerts = Arc::new(droppen_provider::testing::TurnAlerts::default());
         registry.host.attach_alerts(alerts.clone());
-        let providers = crate::provider::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
+        let providers = droppen_provider::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
         let work = home.path().join("work");
         std::fs::create_dir_all(&work).expect("work");
         let work = work.to_string_lossy().into_owned();
@@ -3325,7 +3345,7 @@ mod tests {
         const THREAD: &str = "0199c1a1-0000-4000-8000-000000000005";
         let home = tempfile::tempdir().expect("tempdir");
         let (_path, registry) = fake_codex_registry(home.path(), "codex-wire");
-        let providers = crate::provider::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
+        let providers = droppen_provider::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
         let work = home.path().join("work");
         std::fs::create_dir_all(&work).expect("work");
         let log = work.join("codex-stdin.jsonl");
@@ -3407,7 +3427,7 @@ mod tests {
         let home = root.path().join(std::ffi::OsStr::from_bytes(b"\xff"));
         std::fs::create_dir_all(&home).expect("home");
         let (_path, registry) = fake_codex_registry(&home, "codex-utf8");
-        let providers = crate::provider::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
+        let providers = droppen_provider::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
         let refused = codex(&providers).codex_deliver(providers.gate(), Some(THREAD), None, "hi", &SendOptions::default(), None)
             .await
             .expect_err("refused");

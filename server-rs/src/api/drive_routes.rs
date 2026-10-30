@@ -22,7 +22,7 @@ fn drive() -> (tempfile::TempDir, Arc<Drive>) {
 }
 
 /// [`drive`], with the providers `register` adds.
-fn drive_with(register: fn(&mut crate::provider::ProviderRegistry, &Arc<crate::provider::InjectionRegistry>)) -> (tempfile::TempDir, Arc<Drive>) {
+fn drive_with(register: fn(&mut droppen_provider::ProviderRegistry, &Arc<droppen_provider::InjectionRegistry>)) -> (tempfile::TempDir, Arc<Drive>) {
     let dir = tempfile::tempdir().expect("tempdir");
     let paths = Arc::new(droppen_instance::paths::Paths::new(dir.path().to_path_buf()));
     let instance = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
@@ -57,7 +57,7 @@ fn uploaded(drive: &Drive, name: &str) -> String {
 /// which the send block turns away before the chat check is reached.
 #[tokio::test]
 async fn a_chat_that_cannot_read_an_attachment_refuses_one() {
-    let cases: [(fn(&mut crate::provider::ProviderRegistry, &Arc<crate::provider::InjectionRegistry>), &str); 2] = [
+    let cases: [(fn(&mut droppen_provider::ProviderRegistry, &Arc<droppen_provider::InjectionRegistry>), &str); 2] = [
         (crate::app::register_providers, "attachments are not supported in claude instant chats"),
         (|_, _| {}, "no provider runs claude sessions"),
     ];

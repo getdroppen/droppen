@@ -48,7 +48,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::provider::claude_code::sessions::claude;
-use crate::provider::ContinueError;
+use droppen_provider::ContinueError;
 use droppen_sessions::reference;
 use crate::provider::claude_code::claude_roots;
 use droppen_instance::paths::{ClaudeRoot, Paths};

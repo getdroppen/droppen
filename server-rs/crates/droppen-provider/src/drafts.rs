@@ -16,7 +16,7 @@
 //! it is generating, carrying its running estimate of the block's length. The
 //! resident reads every stdout line anyway (`resident.rs`), so this keeps that
 //! estimate per session, and the session feed sends it beside the transcript as
-//! a `draft` frame (see [`crate::feed`]); the cloud agent relays the same body
+//! a `draft` frame (see `feed`); the cloud agent relays the same body
 //! to the hub as an ephemeral record. A draft is never part of the transcript —
 //! no index, no fingerprint, nothing a resume, an unread count or a search is
 //! computed from.

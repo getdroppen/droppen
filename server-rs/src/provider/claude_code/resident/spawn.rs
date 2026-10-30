@@ -5,8 +5,9 @@ use std::sync::Arc;
 
 use droppen_accounts::store::AccountProvider;
 use crate::provider::claude_code::claude_roots;
-use crate::provider::common::{new_uuid, session_workdir, CHAT_SYSTEM_PROMPT};
-use crate::provider::{claude_prompt, require_provider, claude_code::resident, AccountChoice, InjectError, SendOptions, SendTo, Sent, SpawnGate, StartAt};
+use droppen_provider::common::{new_uuid, session_workdir, CHAT_SYSTEM_PROMPT};
+use crate::provider::claude_code::resident;
+use droppen_provider::{claude_prompt, require_provider, AccountChoice, InjectError, SendOptions, SendTo, Sent, SpawnGate, StartAt};
 use crate::provider::claude_code::sessions::claude;
 use droppen_sessions::Source;
 use droppen_base::process_env::{claude_env, claude_env_bare, clean_env_bare, Env};
@@ -26,7 +27,7 @@ fn claude_chat_flags() -> Vec<String> {
 /// The plan-mode pair, because of what `--permission-prompt-tool stdio` does to
 /// them: `EnterPlanMode` runs without asking anyone, and the only way back out
 /// is `ExitPlanMode`, which is a permission prompt — and every permission
-/// prompt a resident raises is refused (see [`crate::provider::questions`]). A model that
+/// prompt a resident raises is refused (see [`droppen_provider::questions`]). A model that
 /// entered plan mode would be shut in it, read-only, for the rest of the
 /// session. Without the prompt tool the CLI never offered either of them to a
 /// `-p` process, so nothing is lost by saying so.
@@ -66,7 +67,7 @@ fn claude_resident_flags(paths: &Paths, options: &SendOptions) -> Vec<String> {
     // down the stream, as a `control_request` the driver answers. This is what
     // makes `AskUserQuestion` exist at all for a `-p` process — and it routes
     // every other permission prompt the same way, each of which the driver
-    // refuses exactly as `--permission-mode` used to. See [`crate::provider::questions`].
+    // refuses exactly as `--permission-mode` used to. See [`droppen_provider::questions`].
     args.extend(["--permission-prompt-tool".to_string(), "stdio".to_string()]);
     // Prepare every process for later screenshots, even when its first prompt
     // is text-only. Adding this flag later would require a process restart.
@@ -87,7 +88,7 @@ fn claude_resident_flags(paths: &Paths, options: &SendOptions) -> Vec<String> {
 /// Assembled on the send path rather than in the driver because this is where
 /// the account store, the uploads directory and the session's own working
 /// directory are reachable; the driver only ever compares it and hands it to
-/// [`crate::provider::shim::spawn_via_shim`].
+/// [`droppen_provider::shim::spawn_via_shim`].
 pub(super) fn claude_recipe(paths: &Paths, cwd: Option<&str>, options: &SendOptions, env: Env, login: ClaudeLogin) -> resident::Recipe {
     resident::Recipe {
         args: claude_resident_flags(paths, options),
@@ -263,7 +264,7 @@ impl super::ClaudeCodeRuns {
     /// `rh-notify` would work perfectly well on a `codex exec` command line, but
     /// nothing would ever tell codex that it exists — skills are a Claude Code
     /// mechanism, and a `codex` thread's id is not even known until after the spawn
-    /// that would have carried the token. See [`crate::provider::SpawnDecoration`].
+    /// that would have carried the token. See [`droppen_provider::SpawnDecoration`].
     ///
     /// Deliberately infallible. A session that cannot notify is a session; a session
     /// that would not start because a notification channel could not be set up is a

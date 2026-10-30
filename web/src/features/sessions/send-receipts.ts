@@ -122,7 +122,7 @@ export function readOutbox(parsed: unknown, mint: () => string = newClientMessag
  *   `clientMessageId` (one from before ids, by its whole stored form), and the
  *   id travels with it, so an entry one side already sent is answered by the
  *   server, not run again (for the week the server remembers an id,
- *   `KEEP_FOR_MS` in `server-rs/src/provider/receipts.rs`);
+ *   `KEEP_FOR_MS` in `server-rs/crates/droppen-provider/src/receipts.rs`);
  * - an entry on both sides is the machine's, unless the old tab may already
  *   have sent it (`sending`, `unknown`) while the machine's has not (`saved`):
  *   then the old one, so the server is asked about it before it goes again;

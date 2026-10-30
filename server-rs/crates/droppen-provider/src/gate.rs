@@ -23,7 +23,7 @@ use std::sync::Arc;
 use droppen_sessions::Source;
 
 /// A held claim on one session; dropping it lets the session go.
-pub type SessionClaim = lock::InjectLock;
+pub use lock::InjectLock as SessionClaim;
 
 /// Why a session could not be claimed.
 #[derive(Debug)]
@@ -115,11 +115,11 @@ pub struct SpawnPermit<'g> {
 
 impl SpawnPermit<'_> {
     /// A permit for a shim that runs no session, with neither the gate nor a
-    /// claim: the shim's own end-to-end test starts the real binary with it.
-    /// Nothing in the server may, and a test reads every file under `src/` to
-    /// keep it so.
-    #[doc(hidden)]
-    pub fn without_a_session() -> SpawnPermit<'static> {
+    /// claim: the shim's own end-to-end test starts the real binary with it
+    /// ([`crate::testing::without_a_session`]). Nothing in the server may, and
+    /// a test reads every file under `src/` to keep it so.
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn without_a_session() -> SpawnPermit<'static> {
         SpawnPermit {
             claim: None,
             guard: None,
@@ -279,114 +279,5 @@ impl SessionLease {
     /// Whether the lease still holds its claim.
     pub fn holds(&self) -> bool {
         self.claim.is_some()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::path::Path;
-
-    /// Every source file of the server but this one, and what it says.
-    fn server_sources() -> Vec<(String, String)> {
-        fn walk(dir: &Path, found: &mut Vec<(String, String)>) {
-            for entry in std::fs::read_dir(dir).expect("read_dir").flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    walk(&path, found);
-                } else if path.extension().is_some_and(|ext| ext == "rs") && !path.ends_with("provider/gate.rs") {
-                    found.push((path.display().to_string(), std::fs::read_to_string(&path).expect("source")));
-                }
-            }
-        }
-        let mut found = Vec::new();
-        walk(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut found);
-        found
-    }
-
-    /// Whether `c` can be part of an identifier.
-    fn ident(c: char) -> bool {
-        c.is_alphanumeric() || c == '_'
-    }
-
-    /// The permit that takes no gate starts nothing in the server: only the
-    /// shim's own end-to-end test, outside `src/`, may use it.
-    #[test]
-    fn nothing_in_the_server_starts_a_cli_without_the_gate() {
-        // The name as a whole identifier, so a call spelt
-        // `without_a_session ()` or passed as a function is found
-        // too, and a test named `…_without_a_session_…` is not.
-        const NAME: &str = "without_a_session";
-        let found: Vec<String> = server_sources()
-            .into_iter()
-            .filter(|(_, text)| text.match_indices(NAME).any(|(at, _)| !text[..at].ends_with(ident) && !text[at + NAME.len()..].starts_with(ident)))
-            .map(|(path, _)| path)
-            .collect();
-        assert!(found.is_empty(), "a CLI started without the spawn gate: {found:?}");
-    }
-
-    /// Only the provider registry makes a spawn gate, so the gate a provider
-    /// is lent is the only one there is: a provider that made its own and took
-    /// that instead would start a CLI beside one the registry's gate keeps
-    /// out. A file's tests make theirs as they like.
-    #[test]
-    fn only_the_provider_registry_makes_a_spawn_gate() {
-        // `SpawnGate::new` as a path, however spaced and whatever it is
-        // reached through, in a file's code: its tests and comments aside.
-        let makes = |text: &str| {
-            let code = text.split("\n#[cfg(test)]\nmod tests").next().unwrap_or_default();
-            let code: Vec<&str> = code.lines().filter(|line| !line.trim_start().starts_with("//")).collect();
-            let code = code.join("\n");
-            code.match_indices("SpawnGate").any(|(at, name)| {
-                let rest = code[at + name.len()..].trim_start();
-                !code[..at].ends_with(ident)
-                    && rest.strip_prefix("::").is_some_and(|rest| {
-                        let rest = rest.trim_start();
-                        rest.starts_with("new") && !rest["new".len()..].starts_with(ident)
-                    })
-            })
-        };
-        let sources = server_sources();
-        assert!(
-            sources.iter().any(|(path, text)| path.ends_with("provider/registry.rs") && makes(text)),
-            "the provider registry makes the gate"
-        );
-        let found: Vec<&str> = sources
-            .iter()
-            .filter(|(path, text)| !path.ends_with("provider/registry.rs") && makes(text))
-            .map(|(path, _)| path.as_str())
-            .collect();
-        assert!(found.is_empty(), "a spawn gate made outside the provider registry: {found:?}");
-    }
-
-    /// The spawn gate reaches the providers alone. Outside `provider`, no
-    /// production code names the gate, a permit or a lease, so none can take
-    /// the gate, mint a permit or build a lease. Inside it, the ACP provider's
-    /// agent routes, which start and stop its CLI outside a run, are lent the
-    /// gate through `provider_with_gate` as that provider's own. A file's
-    /// tests aside.
-    #[test]
-    fn only_the_providers_reach_the_spawn_gate() {
-        const NAMES: [&str; 4] = ["SpawnGate", "SpawnPermit", "SessionLease", "provider_with_gate"];
-        let named = |text: &str| -> Vec<&'static str> {
-            let code = text.split("\n#[cfg(test)]\nmod tests").next().unwrap_or_default();
-            let code: Vec<&str> = code.lines().filter(|line| !line.trim_start().starts_with("//")).collect();
-            let code = code.join("\n");
-            NAMES
-                .into_iter()
-                .filter(|name| code.match_indices(name).any(|(at, _)| !code[..at].ends_with(ident) && !code[at + name.len()..].starts_with(ident)))
-                .collect()
-        };
-        let mut found = Vec::new();
-        let mut lent = false;
-        for (path, text) in server_sources() {
-            let names = named(&text);
-            if path.contains("/src/provider/") {
-                lent |= path.contains("/src/provider/acp/") && names.contains(&"provider_with_gate");
-                continue;
-            }
-            found.extend(names.into_iter().map(|name| format!("{path}: {name}")));
-        }
-        assert!(lent, "the ACP provider's agent routes take the gate through provider_with_gate");
-        assert!(found.is_empty(), "the spawn gate reached outside the providers: {found:?}");
     }
 }

@@ -10,7 +10,7 @@
 //! B, browsable, indistinguishable from the user's own `codex` runs.
 //!
 //! The claim is therefore kept in the shared data directory, beside the inject
-//! locks and for the reason [`crate::provider::lock`] gives: what is being divided
+//! locks and for the reason [`droppen_provider::lock`] gives: what is being divided
 //! is shared, so the bookkeeping has to be shared too.
 //!
 //! ```text
