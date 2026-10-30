@@ -61,6 +61,8 @@
 //! channel, and one task per capture ([`run_capture`]) consumes it in order and
 //! owns every mutation. That is the same serialization, expressed as ownership
 //! rather than as a promise chain.
+//!
+//! [`run_capture`]: TokenWizardState::run_capture
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -694,7 +696,7 @@ impl Captures {
 
 // ------------------------------------------------------------------ the wizard
 
-/// What a pty hook tells [`run_capture`].
+/// What a pty hook tells [`run_capture`](TokenWizardState::run_capture).
 #[derive(Debug)]
 enum Event {
     /// The CLI printed the URL the user has to authorize.
@@ -795,31 +797,11 @@ pub async fn start(state: TokenWizardState, target: Target, open_browser: bool) 
     drop(events);
 
     state.wizards.insert(capture_id.clone(), info.id.clone(), home);
-    tokio::spawn(run_capture(state, capture_id.clone(), target, incoming));
+    tokio::spawn(state.run_capture(capture_id.clone(), target, incoming));
     Ok(SetupTokenStarted {
         capture_id,
         terminal_id: info.id,
     })
-}
-
-/// The one owner of a capture's mutations, fed by the two pty hooks in order.
-async fn run_capture(state: TokenWizardState, capture_id: String, target: Target, mut incoming: mpsc::UnboundedReceiver<Event>) {
-    while let Some(event) = incoming.recv().await {
-        match event {
-            Event::AuthUrl(url) => state.wizards.saw_auth_url(&capture_id, url),
-            Event::Token(found) => {
-                store(&state, &capture_id, &target, &found).await;
-                retire_terminal(&state.wizards, &state.terminals, &capture_id);
-            }
-            Event::Exit(exit_code) => {
-                state.wizards.note_exit(&capture_id, exit_code);
-                if let Some(home) = state.wizards.home(&capture_id) {
-                    let _ = tokio::fs::remove_dir_all(&home).await;
-                }
-                expire_later(Arc::downgrade(&state.wizards), capture_id.clone());
-            }
-        }
-    }
 }
 
 /// Which reading of the capture Anthropic accepts.
@@ -893,56 +875,78 @@ impl Reading {
     }
 }
 
-/// [`choose_reading`] against the real Anthropic check.
-async fn accepted_reading(state: &TokenWizardState, found: &TokenMatch) -> Result<Reading, String> {
-    let paths = state.paths.clone();
-    let logins = state.accounts.logins().clone();
-    choose_reading(found, move |candidate| {
-        let paths = paths.clone();
-        let logins = logins.clone();
-        async move {
-            // A reading with nothing to check is a refused one: never stored.
-            logins
-                .verify_secret(&paths, AccountProvider::Claude, &Credential::Oauth(candidate))
-                .await
-                .unwrap_or_else(|error| Verdict::Invalid(error.to_string()))
-        }
-    })
-    .await
-}
-
-/// Hand the captured token to the accounts store, and record where it landed.
-async fn store(state: &TokenWizardState, capture_id: &str, target: &Target, found: &TokenMatch) {
-    let reading = match accepted_reading(state, found).await {
-        Ok(reading) => reading,
-        Err(reason) => return state.wizards.failed(capture_id, reason),
-    };
-    let unverified = reading.unverified;
-    match target {
-        Target::New(label) => match state
-            .accounts
-            .create(label, AccountProvider::Claude, Credential::Oauth(reading.token.clone()))
-            .await
-        {
-            Ok(account) => state.wizards.captured(capture_id, account.id, false, unverified),
-            // Re-authorizing a login already on file is a success, not a clash. The
-            // stored label wins: it is the one the user has been reading in the
-            // account list, and this run only proved the token still works.
-            Err(AccountError::Duplicate { existing_id, .. }) => {
-                let _ = state.accounts.update(&existing_id, AccountPatch::default()).await;
-                state.wizards.captured(capture_id, existing_id, true, unverified);
+impl TokenWizardState {
+    /// The one owner of a capture's mutations, fed by the two pty hooks in order.
+    async fn run_capture(self, capture_id: String, target: Target, mut incoming: mpsc::UnboundedReceiver<Event>) {
+        while let Some(event) = incoming.recv().await {
+            match event {
+                Event::AuthUrl(url) => self.wizards.saw_auth_url(&capture_id, url),
+                Event::Token(found) => {
+                    self.store(&capture_id, &target, &found).await;
+                    retire_terminal(&self.wizards, &self.terminals, &capture_id);
+                }
+                Event::Exit(exit_code) => {
+                    self.wizards.note_exit(&capture_id, exit_code);
+                    if let Some(home) = self.wizards.home(&capture_id) {
+                        let _ = tokio::fs::remove_dir_all(&home).await;
+                    }
+                    expire_later(Arc::downgrade(&self.wizards), capture_id.clone());
+                }
             }
-            Err(error) => state.wizards.failed(capture_id, error.to_string()),
-        },
-        Target::Existing { id, .. } => {
-            let patch = AccountPatch {
-                credential: Some(Credential::Oauth(reading.token)),
-                ..Default::default()
-            };
-            match state.accounts.update(id, patch).await {
-                Ok(Some(account)) => state.wizards.captured(capture_id, account.id, false, unverified),
-                Ok(None) => state.wizards.failed(capture_id, "that account is gone".to_string()),
-                Err(error) => state.wizards.failed(capture_id, error.to_string()),
+        }
+    }
+
+    /// [`choose_reading`] against the real Anthropic check.
+    async fn accepted_reading(&self, found: &TokenMatch) -> Result<Reading, String> {
+        let paths = self.paths.clone();
+        let logins = self.accounts.logins().clone();
+        choose_reading(found, move |candidate| {
+            let paths = paths.clone();
+            let logins = logins.clone();
+            async move {
+                // A reading with nothing to check is a refused one: never stored.
+                logins
+                    .verify_secret(&paths, AccountProvider::Claude, &Credential::Oauth(candidate))
+                    .await
+                    .unwrap_or_else(|error| Verdict::Invalid(error.to_string()))
+            }
+        })
+        .await
+    }
+
+    /// Hand the captured token to the accounts store, and record where it landed.
+    async fn store(&self, capture_id: &str, target: &Target, found: &TokenMatch) {
+        let reading = match self.accepted_reading(found).await {
+            Ok(reading) => reading,
+            Err(reason) => return self.wizards.failed(capture_id, reason),
+        };
+        let unverified = reading.unverified;
+        match target {
+            Target::New(label) => match self
+                .accounts
+                .create(label, AccountProvider::Claude, Credential::Oauth(reading.token.clone()))
+                .await
+            {
+                Ok(account) => self.wizards.captured(capture_id, account.id, false, unverified),
+                // Re-authorizing a login already on file is a success, not a clash. The
+                // stored label wins: it is the one the user has been reading in the
+                // account list, and this run only proved the token still works.
+                Err(AccountError::Duplicate { existing_id, .. }) => {
+                    let _ = self.accounts.update(&existing_id, AccountPatch::default()).await;
+                    self.wizards.captured(capture_id, existing_id, true, unverified);
+                }
+                Err(error) => self.wizards.failed(capture_id, error.to_string()),
+            },
+            Target::Existing { id, .. } => {
+                let patch = AccountPatch {
+                    credential: Some(Credential::Oauth(reading.token)),
+                    ..Default::default()
+                };
+                match self.accounts.update(id, patch).await {
+                    Ok(Some(account)) => self.wizards.captured(capture_id, account.id, false, unverified),
+                    Ok(None) => self.wizards.failed(capture_id, "that account is gone".to_string()),
+                    Err(error) => self.wizards.failed(capture_id, error.to_string()),
+                }
             }
         }
     }
