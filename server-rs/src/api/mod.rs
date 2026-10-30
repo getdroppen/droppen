@@ -28,6 +28,10 @@ use droppen_sessions::{SessionDetail, SessionList, Settings, Source};
 
 mod state;
 
+/// The ACP agents' routes (`crate::provider::acp::agents`), through the
+/// router as the server builds it.
+#[cfg(test)]
+mod acp_agents;
 /// The login guard and the `/api/auth/*` routes (`droppen_auth`), through the
 /// router as the server builds it.
 #[cfg(test)]

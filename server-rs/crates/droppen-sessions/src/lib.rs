@@ -3,9 +3,10 @@
 //! ownership, the session list and the usage stats.
 //!
 //! Every session is a file some CLI wrote, and this crate names no CLI: each
-//! one's transcripts are read through the [`Transcripts`] port, which the
-//! server's readers (`sessions::{claude, codex, acp_transcript}`) implement, and
-//! the entry hands them in as one [`TranscriptSources`].
+//! one's transcripts are read through the [`Transcripts`] port, which each
+//! provider's reader implements (`provider::claude_code::sessions::claude`,
+//! `provider::codex::sessions::codex`, `provider::acp::sessions`), and the
+//! entry hands them in as one [`TranscriptSources`].
 //!
 //! A name in backticks such as `feed` in these docs is a module of the server,
 //! which this crate cannot link to.
