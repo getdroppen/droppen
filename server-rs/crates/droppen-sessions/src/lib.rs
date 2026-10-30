@@ -294,7 +294,7 @@ pub struct ResidentInfo {
     /// Those tasks, oldest first, as far as the CLI described them.
     ///
     /// Empty whenever `background` is zero, and never longer than the cap the
-    /// driver publishes — see `provider::resident::TASKS_ON_THE_WIRE`.
+    /// driver publishes — see `provider::claude_code::resident::TASKS_ON_THE_WIRE`.
     pub tasks: Vec<BackgroundTask>,
     /// Whether the head of the queue is parked waiting for that background work.
     ///

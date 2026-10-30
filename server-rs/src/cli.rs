@@ -47,7 +47,7 @@ pub enum Command {
     #[command(hide = true, override_usage = droppen_notify::notify::cli::USAGE_LINE)]
     Notify(droppen_notify::notify::cli::NotifyArgs),
     /// Rebuild a recorded session's transcript files under a scratch home.
-    Replay(crate::record::replay::ReplayArgs),
+    Replay(crate::provider::claude_code::record::replay::ReplayArgs),
     /// Write the served OpenAPI spec to a file.
     ExportOpenapi(crate::export::ExportOpenapiArgs),
     /// Check that this build loads its configuration, then print its version.
@@ -118,7 +118,7 @@ impl Cli {
             .mut_subcommand("open", |command| command.after_long_help(long(droppen_auth::cli::OPEN_USAGE)))
             .mut_subcommand("plugin", |command| command.after_long_help(long(droppen_plugins::cli::USAGE)))
             .mut_subcommand("agent", |command| command.after_long_help(long(agent::USAGE)))
-            .mut_subcommand("replay", |command| command.after_long_help(long(crate::record::replay::USAGE)))
+            .mut_subcommand("replay", |command| command.after_long_help(long(crate::provider::claude_code::record::replay::USAGE)))
     }
 
     /// This process' command line. clap prints help and usage errors and exits
@@ -187,7 +187,7 @@ impl Command {
             // this, and it is documented where it is spawned rather than in a usage
             // string a user might act on.
             Command::PtyShim(args) => args.run().await.map_err(GotchaError::message),
-            // The other half of `crate::record`, and the one a person runs: it
+            // The other half of `crate::provider::claude_code::record`, and the one a person runs: it
             // rebuilds a recorded session's transcript files under a scratch $HOME,
             // at the pace they were written, so a server pointed at that home
             // renders a real session through the real pipeline. Not hidden — it is

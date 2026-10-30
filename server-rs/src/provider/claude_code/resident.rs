@@ -14,7 +14,7 @@
 //! claude -p --input-format stream-json --output-format stream-json --verbose
 //! ```
 //!
-//! …started once, held open by [`super::shim`], and handed one line of JSON per
+//! …started once, held open by [`crate::provider::shim`], and handed one line of JSON per
 //! message. The two events the old model conflated are now separate, and the
 //! whole of this file is the consequence:
 //!
@@ -45,7 +45,7 @@
 //!
 //! Three of them, and they are the reason a resident is worth its complexity.
 //!
-//! * **A server restart.** The process is behind [`super::shim`], so killing
+//! * **A server restart.** The process is behind [`crate::provider::shim`], so killing
 //!   this server does not touch it. The next boot re-attaches through the shim
 //!   socket named in the journal, replays claude's whole stdout to work out
 //!   where the session got to, and carries on — see [`Driver::attached`] and
@@ -79,18 +79,18 @@ use droppen_accounts::store::AccountProvider;
 use droppen_http::openapi_ext::Optional;
 use droppen_base::process_env::Env;
 use droppen_base::procs;
-use crate::record::{Recorder, SpawnSummary, Stage};
+use crate::provider::claude_code::record::{Recorder, SpawnSummary, Stage};
 use droppen_sessions::account::{AccountRef, LimitClass, RotationOutcome, RotationTrigger};
 use droppen_sessions::delivery::{QuestionState, ReceiptStatus};
 use droppen_sessions::{Injection, InjectionRunState, SessionStatus, Source};
 use droppen_base::time::iso8601;
 
-use super::questions::{self, PermissionRequest, Stored};
-use super::shim::{self, Link, Output, Sidecars, Spawn};
-use super::common::{busy_message, new_uuid, AnswerOutcome, Phase, QueueOutcome, Reply, ResidentState, StopTaskOutcome};
-use super::drafts::Draft;
-use super::gate::{ClaimError, SessionLease, SpawnGate};
-use super::{runs, Capabilities, DriverStatesBuilder, InjectError, InjectionRegistry, Provider, ProviderRuns, Run, RunEntry, RunHost, RunState, SendTo, Sent, SpawnPermit, StartAt, WrittenAt};
+use crate::provider::questions::{self, PermissionRequest, Stored};
+use crate::provider::shim::{self, Link, Output, Sidecars, Spawn};
+use crate::provider::common::{busy_message, new_uuid, AnswerOutcome, Phase, QueueOutcome, Reply, ResidentState, StopTaskOutcome};
+use crate::provider::drafts::Draft;
+use crate::provider::gate::{ClaimError, SessionLease, SpawnGate};
+use crate::provider::{runs, Capabilities, DriverStatesBuilder, InjectError, InjectionRegistry, Provider, ProviderRuns, Run, RunEntry, RunHost, RunState, SendTo, Sent, SpawnPermit, StartAt, WrittenAt};
 mod spawn;
 
 /// The mode flags every resident is started with.
@@ -128,7 +128,7 @@ const QUEUE_PREVIEW_CAP: usize = 200;
 /// rung is unreachable, and a claude that is briefly unspawnable — the seconds an
 /// upgrade takes to swap the binary is the everyday case — would take the session
 /// with it.
-pub(super) const RECOVERY_BACKOFF: [Duration; 3] = [Duration::from_secs(1), Duration::from_secs(5), Duration::from_secs(30)];
+pub(in crate::provider) const RECOVERY_BACKOFF: [Duration; 3] = [Duration::from_secs(1), Duration::from_secs(5), Duration::from_secs(30)];
 
 /// How long a steered message's turn waits for claude to prove it is running.
 ///
@@ -139,7 +139,7 @@ pub(super) const RECOVERY_BACKOFF: [Duration; 3] = [Duration::from_secs(1), Dura
 /// first thing it writes. Two seconds is three orders of magnitude past that
 /// and still fast enough that a queue behind an absorbed message does not look
 /// stuck. See [`Driver::settle_delivered`].
-pub(super) const STEER_SETTLE: Duration = Duration::from_secs(2);
+pub(in crate::provider) const STEER_SETTLE: Duration = Duration::from_secs(2);
 
 /// How often a resident holding steered messages reads its transcript for them.
 ///
@@ -147,7 +147,7 @@ pub(super) const STEER_SETTLE: Duration = Duration::from_secs(2);
 /// look. A watched session hears sooner — its feed says when the file grows —
 /// so this is the pace of the session list for a session nobody has open. See
 /// [`Driver::absorb`].
-pub(super) const ABSORB_POLL: Duration = Duration::from_secs(1);
+pub(in crate::provider) const ABSORB_POLL: Duration = Duration::from_secs(1);
 
 /// The shortest a settle will ever wait before asking again.
 ///
@@ -202,7 +202,7 @@ const TRANSCRIPT_SETTLES_AFTER: Duration = Duration::from_secs(30);
 /// leave in-place switching to a phase that can verify it took.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
-pub(super) struct Fingerprint {
+pub(in crate::provider) struct Fingerprint {
     /// `--model`, as the command line asked for it.
     pub model: Option<String>,
     /// The name the CLI answered under, when the process is the one being
@@ -264,7 +264,7 @@ pub(super) struct Fingerprint {
     pub uploads: bool,
     /// Whether `--permission-prompt-tool stdio` and the plan-mode
     /// `--disallowedTools` are: whether this process can ask the user a
-    /// question at all. See [`super::questions`].
+    /// question at all. See [`crate::provider::questions`].
     ///
     /// Written down and never compared. Every spawn this server makes has it,
     /// and a resident started before it existed is not restarted to get it:
@@ -295,7 +295,7 @@ impl Fingerprint {
     /// touch. The account is the exception, because `None` there is a real
     /// value (the local login, no token) and treating it as a wildcard would
     /// quietly keep billing an account the sender chose to drop.
-    pub(super) fn satisfied_by(&self, live: &Fingerprint) -> bool {
+    pub(in crate::provider) fn satisfied_by(&self, live: &Fingerprint) -> bool {
         fn wants(asked: &Option<String>, running: &Option<String>) -> bool {
             asked.is_none() || asked == running
         }
@@ -418,7 +418,7 @@ impl Fingerprint {
 /// carried by the message so that a queued message which does not fit the
 /// running process still knows what process it does fit.
 #[derive(Debug, Clone)]
-pub(super) struct Recipe {
+pub(in crate::provider) struct Recipe {
     /// Everything after the session selector: model, effort, permission,
     /// `--add-dir`, the chat persona. The selector itself is the driver's,
     /// because a respawn resumes an id the first spawn may not have known.
@@ -434,7 +434,7 @@ pub(super) struct Recipe {
 // ---------------------------------------------------------------- the mirror
 
 /// What the send path and the routes hold on to.
-pub(super) struct Handle {
+pub(in crate::provider) struct Handle {
     tx: mpsc::UnboundedSender<Cmd>,
     shared: Arc<Mutex<ResidentState>>,
 }
@@ -445,7 +445,7 @@ impl Handle {
     }
 
     /// The mirror in the shape the API speaks in.
-    pub(super) fn info(&self) -> droppen_sessions::ResidentInfo {
+    pub(in crate::provider) fn info(&self) -> droppen_sessions::ResidentInfo {
         self.state().into()
     }
 }
@@ -553,7 +553,7 @@ struct Pending {
 /// loses neither.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(super) struct Continuation {
+pub(in crate::provider) struct Continuation {
     /// The rotation log entry, when one was written.
     record: Option<i64>,
     /// The account moved off and the one moved to, as the text names them.
@@ -572,7 +572,7 @@ impl Pending {
     }
 
     /// The same, under a queue id the send path already chose — the one a
-    /// client's receipt follows; see [`super::receipts`].
+    /// client's receipt follows; see [`crate::provider::receipts`].
     fn with_id(id: String, text: &str, recipe: Recipe) -> Pending {
         Pending {
             id,
@@ -612,7 +612,7 @@ impl Pending {
 // ------------------------------------------------------------- the send path
 
 /// What a delivery did, for the caller to report.
-pub(super) struct Delivery {
+pub(in crate::provider) struct Delivery {
     /// True when the message went in behind a turn that is still running.
     pub queued: bool,
 }
@@ -660,13 +660,13 @@ pub(crate) struct ClaudeCode {
     /// Its sessions' residents.
     runs: Arc<ClaudeCodeRuns>,
     /// Its CLI's models, per login.
-    models: crate::models::claude::ClaudeModels,
+    models: crate::provider::claude_code::models::ClaudeModels,
 }
 
 impl ClaudeCode {
     /// Claude Code, its runs on `registry`'s host.
     pub(crate) fn new(registry: Arc<InjectionRegistry>) -> Self {
-        let models = crate::models::claude::ClaudeModels::new(registry.paths.clone(), registry.accounts.clone());
+        let models = crate::provider::claude_code::models::ClaudeModels::new(registry.paths.clone(), registry.accounts.clone());
         Self {
             runs: ClaudeCodeRuns::new(registry.host.clone(), &registry.instance, registry.decoration.clone()),
             models,
@@ -683,7 +683,7 @@ impl ClaudeCode {
     /// Claude Code on runs a test made, timed as it needs.
     #[cfg(test)]
     pub(crate) fn on(runs: Arc<ClaudeCodeRuns>, registry: &InjectionRegistry) -> Self {
-        let models = crate::models::claude::ClaudeModels::new(registry.paths.clone(), registry.accounts.clone());
+        let models = crate::provider::claude_code::models::ClaudeModels::new(registry.paths.clone(), registry.accounts.clone());
         Self { runs, models }
     }
 }
@@ -697,7 +697,7 @@ pub(crate) struct ClaudeCodeRuns {
     host: Arc<RunHost>,
     /// The resident claude behind each session, keyed by session id alone —
     /// there is no codex resident, so the source is not part of the key.
-    pub(super) residents: Mutex<std::collections::HashMap<String, Handle>>,
+    pub(in crate::provider) residents: Mutex<std::collections::HashMap<String, Handle>>,
     /// How long a claude turn may make no progress before it is *marked*
     /// stalled. Nothing is ever killed for it; see [`self`].
     stall_after: Duration,
@@ -760,19 +760,19 @@ pub(crate) struct ClaudeCodeRuns {
     /// for claude having taken them into the turn in flight.
     ///
     /// The backstop for a session nobody is watching: a watched one is told the
-    /// moment its transcript grows — see [`super::ProviderRegistry::transcript_grew`].
+    /// moment its transcript grows — see [`crate::provider::ProviderRegistry::transcript_grew`].
     /// Production runs [`ABSORB_POLL`], or `DROPPEN_ABSORB_POLL_MS`.
     absorb_poll: Duration,
     /// Where a session's flight recording goes, if it is being made at all.
     ///
     /// A factory rather than a recorder: one is opened per *resident*, lives on
     /// its driver, and is what carries the session's life into
-    /// [`crate::record`]. See [`Driver::recorder`].
-    recorders: crate::record::Recorders,
+    /// [`crate::provider::claude_code::record`]. See [`Driver::recorder`].
+    recorders: crate::provider::claude_code::record::Recorders,
     /// What a claude spawn's environment gains before it starts: on the send
     /// path, and for the process an automatic rotation moves a session to,
     /// which a driver builds by itself.
-    decoration: Arc<dyn super::SpawnDecoration>,
+    decoration: Arc<dyn crate::provider::SpawnDecoration>,
     /// When a quota reading last woke the residents holding a queue; see
     /// [`ClaudeCodeRuns::recheck_holds`].
     reading_recheck: Mutex<Option<Instant>>,
@@ -783,14 +783,14 @@ impl ClaudeCodeRuns {
     /// list from now on. `instance` says where the flight recordings go;
     /// `decoration` is what a claude spawn's environment gains before it
     /// starts.
-    pub(super) fn new(host: Arc<RunHost>, instance: &droppen_instance::instance::InstanceDirs, decoration: Arc<dyn super::SpawnDecoration>) -> Arc<Self> {
-        let recorders = crate::record::Recorders::new(host.paths.clone(), instance);
+    pub(in crate::provider) fn new(host: Arc<RunHost>, instance: &droppen_instance::instance::InstanceDirs, decoration: Arc<dyn crate::provider::SpawnDecoration>) -> Arc<Self> {
+        let recorders = crate::provider::claude_code::record::Recorders::new(host.paths.clone(), instance);
         Arc::new(Self {
             host,
             residents: Mutex::new(std::collections::HashMap::new()),
             // Ten minutes of silence is a *report*, not a sentence: the only
             // thing that happens at this threshold is that the turn is marked.
-            stall_after: super::env_ms("DROPPEN_STALL_MS", Duration::from_secs(10 * 60)),
+            stall_after: crate::provider::env_ms("DROPPEN_STALL_MS", Duration::from_secs(10 * 60)),
             // Half an hour: past every background job short enough that waiting
             // is the obvious answer, and well short of a session that is stuck.
             // Zero means "wait for ever", which is why this does not go through
@@ -817,8 +817,8 @@ impl ClaudeCodeRuns {
                 .filter(|ms| *ms > 0)
                 .map(Duration::from_millis),
             recovery_backoff: RECOVERY_BACKOFF,
-            steer_settle: super::env_ms("DROPPEN_STEER_SETTLE_MS", STEER_SETTLE),
-            absorb_poll: super::env_ms("DROPPEN_ABSORB_POLL_MS", ABSORB_POLL),
+            steer_settle: crate::provider::env_ms("DROPPEN_STEER_SETTLE_MS", STEER_SETTLE),
+            absorb_poll: crate::provider::env_ms("DROPPEN_ABSORB_POLL_MS", ABSORB_POLL),
             recorders,
             decoration,
             reading_recheck: Mutex::new(None),
@@ -861,17 +861,17 @@ impl ProviderRuns for ClaudeCodeRuns {
 
     fn was_cut_short<'a>(&'a self, record: &'a runs::RunRecord) -> BoxFuture<'a, bool> {
         Box::pin(async move {
-            match crate::sessions::claude::find_claude_session_file(&self.paths, &record.session_id).await {
+            match crate::provider::claude_code::sessions::claude::find_claude_session_file(&self.paths, &record.session_id).await {
                 // No transcript at all: the CLI died before writing a line of
                 // the turn it was given.
                 None => true,
-                Some(path) => crate::sessions::claude::claude_activity_status(&path).await == SessionStatus::Running,
+                Some(path) => crate::provider::claude_code::sessions::claude::claude_activity_status(&path).await == SessionStatus::Running,
             }
         })
     }
 
     fn last_write<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Option<Instant>> {
-        Box::pin(async move { crate::sessions::claude::find_claude_session_file(&self.paths, id).await?.written_at().await })
+        Box::pin(async move { crate::provider::claude_code::sessions::claude::find_claude_session_file(&self.paths, id).await?.written_at().await })
     }
 
     fn question_holders(&self) -> Vec<String> {
@@ -882,7 +882,7 @@ impl ProviderRuns for ClaudeCodeRuns {
 /// What a Claude Code run keeps in its journal row, beside what every run
 /// says ([`runs::RunRecord`]): written after those fields, in this order.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
-pub(super) struct ClaudeRun {
+pub(in crate::provider) struct ClaudeRun {
     /// What this resident's command line settled: model, effort, permission
     /// mode, account, persona, uploads.
     ///
@@ -907,7 +907,7 @@ pub(super) struct ClaudeRun {
     /// next server reads is what the process is really running rather than what
     /// some older server managed to write down.
     #[serde(default)]
-    pub(super) fingerprint: Option<Fingerprint>,
+    pub(in crate::provider) fingerprint: Option<Fingerprint>,
     /// Where in claude's stdout a turn was written into this resident, if one
     /// was still in flight when this was last written.
     ///
@@ -927,7 +927,7 @@ pub(super) struct ClaudeRun {
     /// first `result` after it is this turn's end. `None` means "no turn was in
     /// flight", which is also what every record written before this existed says.
     #[serde(default)]
-    pub(super) turn_at: Option<u64>,
+    pub(in crate::provider) turn_at: Option<u64>,
     /// The messages accepted for this resident and not yet written to it.
     ///
     /// The other half of what used to die with a server. A send is answered
@@ -939,14 +939,14 @@ pub(super) struct ClaudeRun {
     ///
     /// In order, popped as each one goes in, and empty the rest of the time.
     #[serde(default)]
-    pub(super) queued: Vec<Queued>,
+    pub(in crate::provider) queued: Vec<Queued>,
     /// A claude resident's queue held after a limit with no account to move
     /// to, so the next server keeps holding it rather than feeding the queue
     /// to the account that refused. See [`Hold`]. Absent on
     /// every record that is not holding anything, and on every record written
     /// before there was a hold.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(super) hold: Option<Hold>,
+    pub(in crate::provider) hold: Option<Hold>,
 }
 
 /// One message waiting its turn, as it survives on disk.
@@ -957,7 +957,7 @@ pub(super) struct ClaudeRun {
 /// the session has ever had — so this reveals nothing the transcript does not,
 /// and it holds it only until claude has it.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub(super) struct Queued {
+pub(in crate::provider) struct Queued {
     /// What the queue routes name this message by, kept across a restart so a
     /// client holding an id from before it still holds a usable one.
     ///
@@ -965,9 +965,9 @@ pub(super) struct Queued {
     /// a re-attached resident answers by minting a fresh id on the way back in:
     /// the message survives, only its name changes.
     #[serde(default)]
-    pub(super) id: String,
+    pub(in crate::provider) id: String,
     /// The prompt as claude will see it, attachment suffix included.
-    pub(super) text: String,
+    pub(in crate::provider) text: String,
     /// The process this message needs, so a re-attached server can tell whether
     /// the resident it inherited may answer it at all.
     ///
@@ -977,7 +977,7 @@ pub(super) struct Queued {
     /// it wanted is what lets adoption notice, and say so, instead of sending an
     /// opus message to a haiku process.
     #[serde(default)]
-    pub(super) fingerprint: Fingerprint,
+    pub(in crate::provider) fingerprint: Fingerprint,
     /// Whether this message had already been written to the running process'
     /// stdin, ahead of its turn, when this was recorded.
     ///
@@ -988,19 +988,19 @@ pub(super) struct Queued {
     /// any *other* process (there is no such path today) would have to treat it
     /// as undelivered.
     #[serde(default)]
-    pub(super) steered: bool,
+    pub(in crate::provider) steered: bool,
     /// How many times an automatic account rotation has already moved the
     /// message chain this one belongs to: `0` for anything a person sent, and
     /// the count for the continuation a rotation queued in its place. Kept so
     /// the cap in [`droppen_accounts::rotation::ROTATION_CAP`] survives a
     /// restart; absent, and zero, on every record written before there was one.
     #[serde(default, skip_serializing_if = "is_zero")]
-    pub(super) rotation_attempt: u8,
+    pub(in crate::provider) rotation_attempt: u8,
     /// For a rotation's continuation, what it needs to say which background
     /// tasks its respawn cut short — kept so a continuation parked behind
     /// background work survives a restart whole. Absent on everything else.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(super) continuation: Option<Continuation>,
+    pub(in crate::provider) continuation: Option<Continuation>,
 }
 
 /// Whether a counter is at its default, so a record that never rotated is
@@ -1011,7 +1011,7 @@ fn is_zero(value: &u8) -> bool {
 
 /// What a Claude Code resident's driver writes into its run's row as it goes:
 /// each a change to the one row, in one transaction ([`runs::RunsFile`]).
-pub(super) trait ClaudeJournal {
+pub(in crate::provider) trait ClaudeJournal {
     /// Say what a resident is in the middle of: the turn in flight, and what is
     /// still waiting behind it.
     ///
@@ -1202,7 +1202,7 @@ impl Run for ClaudeCode {
     // No gate: putting the transcript away starts no CLI.
     fn archive<'a>(&'a self, _gate: &'a SpawnGate, id: &'a str) -> BoxFuture<'a, Result<(), String>> {
         Box::pin(async move {
-            crate::sessions::claude::archive::archive_claude_session(&self.runs.paths, id)
+            crate::provider::claude_code::sessions::claude::archive::archive_claude_session(&self.runs.paths, id)
                 .await
                 .map_err(|_| "archive failed".to_string())
         })
@@ -1218,24 +1218,24 @@ impl ClaudeCode {
 
 impl ClaudeCodeRuns {
     /// Itself, listed with its host as Claude Code's runs
-    /// ([`super::RunHost::driver_states`]).
+    /// ([`crate::provider::RunHost::driver_states`]).
     fn listed(self: Arc<Self>) -> Arc<Self> {
-        let runs: Arc<dyn super::ProviderRuns> = self.clone();
+        let runs: Arc<dyn crate::provider::ProviderRuns> = self.clone();
         self.host.list(Source::Claude, Arc::downgrade(&runs));
         self
     }
 
     /// The channel claude session `id`'s draft is published on.
     ///
-    /// Its driver's [`super::drafts::DraftWriter`] is the only thing that writes to it
+    /// Its driver's [`crate::provider::drafts::DraftWriter`] is the only thing that writes to it
     /// in a running server; a test of the feed stands in for that driver here.
-    pub(crate) fn draft_channel(&self, id: &str) -> Arc<tokio::sync::watch::Sender<super::drafts::Draft>> {
+    pub(crate) fn draft_channel(&self, id: &str) -> Arc<tokio::sync::watch::Sender<crate::provider::drafts::Draft>> {
         self.drafts.channel(&self.key_of(Source::Claude, id))
     }
 
     /// The writer a driver for session `id` publishes its draft through.
-    fn draft_writer(&self, id: &str) -> super::drafts::DraftWriter {
-        super::drafts::DraftWriter::new(self.draft_channel(id))
+    fn draft_writer(&self, id: &str) -> crate::provider::drafts::DraftWriter {
+        crate::provider::drafts::DraftWriter::new(self.draft_channel(id))
     }
 
     /// Write a rotation decision down and tell everyone who should hear of it:
@@ -1275,7 +1275,7 @@ impl ClaudeCodeRuns {
         // few minutes. One push per account pair per window says it; the rest
         // would only bury it. A limit-driven rotation always pushes.
         let ahead_burst = decision.trigger == droppen_sessions::account::RotationTrigger::Ahead
-            && !super::first_ahead_push(&decision.from.id, &decision.to.id, std::time::Instant::now());
+            && !crate::provider::first_ahead_push(&decision.from.id, &decision.to.id, std::time::Instant::now());
         if !ahead_burst {
             if let Some(alerts) = self.alerts.get() {
                 alerts.rotation(
@@ -1292,8 +1292,8 @@ impl ClaudeCodeRuns {
         id
     }
 
-    /// Claude's part of [`super::RunHost::driver_states`]: every resident.
-    pub(super) fn claude_driver_states(&self, states: &mut DriverStatesBuilder) {
+    /// Claude's part of [`crate::provider::RunHost::driver_states`]: every resident.
+    pub(in crate::provider) fn claude_driver_states(&self, states: &mut DriverStatesBuilder) {
         for (id, handle) in self.residents.lock().expect("residents poisoned").iter() {
             states.resident(self.key_of(Source::Claude, id), handle.info());
         }
@@ -1319,7 +1319,7 @@ impl ClaudeCodeRuns {
     /// Posting and returning, as this once did, answered `200` while the message
     /// was still sitting in the driver's inbox, and a `SIGKILL` in that window
     /// lost a message the user had been told was accepted.
-    pub(super) async fn deliver(self: &Arc<Self>, gate: &SpawnGate, id: &str, text: &str, recipe: Recipe, qid: Option<String>) -> Result<Delivery, InjectError> {
+    pub(in crate::provider) async fn deliver(self: &Arc<Self>, gate: &SpawnGate, id: &str, text: &str, recipe: Recipe, qid: Option<String>) -> Result<Delivery, InjectError> {
         let qid = qid.unwrap_or_else(new_uuid);
         // Twice at most: the second pass is only for a driver that ended with
         // this message still in its inbox, and by the time that is known its
@@ -1388,7 +1388,7 @@ impl ClaudeCodeRuns {
         // A session that already has a transcript is resumed; one that does not
         // is being created, and `--session-id` is what makes the id the client
         // was already told about the one claude writes under.
-        let selector = match crate::sessions::claude::find_claude_session_file(&self.paths, id).await {
+        let selector = match crate::provider::claude_code::sessions::claude::find_claude_session_file(&self.paths, id).await {
             Some(_) => Selector::Resume,
             None => Selector::Fresh,
         };
@@ -1571,7 +1571,7 @@ impl ClaudeCodeRuns {
         tracing::info!(session = %id, pid = link.claude_pid(), shim = %sidecars.id(), ?selector, "started a resident claude");
         // The recording gets the *summary*, never the recipe: `recipe.env`
         // holds the account's token, and the type this takes has nowhere to put
-        // one. See [`crate::record`].
+        // one. See [`crate::provider::claude_code::record`].
         recorder.spawned(SpawnSummary {
             selector: selector.name(),
             pid: link.claude_pid(),
@@ -1614,12 +1614,12 @@ impl ClaudeCodeRuns {
     /// reason every other decision in this file is the driver's: the queue is
     /// its state, and a route that reached into it would be racing the pump
     /// that is about to write its head to claude.
-    pub(super) async fn drop_queued(&self, id: &str, qid: &str) -> QueueOutcome {
+    pub(in crate::provider) async fn drop_queued(&self, id: &str, qid: &str) -> QueueOutcome {
         self.ask(id, |reply| Cmd::Drop { qid: qid.to_string(), reply }).await
     }
 
     /// Hand a queued message to claude now, ahead of the turn in flight.
-    pub(super) async fn steer_queued(&self, id: &str, qid: &str) -> QueueOutcome {
+    pub(in crate::provider) async fn steer_queued(&self, id: &str, qid: &str) -> QueueOutcome {
         self.ask(id, |reply| Cmd::Steer { qid: qid.to_string(), reply }).await
     }
 
@@ -1656,7 +1656,7 @@ impl ClaudeCodeRuns {
     /// cold CLI, a bad `--resume` id or a wedged launch sits in — the times a
     /// user is *most* likely to press Stop — and refusing it there left the only
     /// escape being to wait out a process that was never going to answer.
-    pub(super) fn interrupt_resident(&self, id: &str) -> bool {
+    pub(in crate::provider) fn interrupt_resident(&self, id: &str) -> bool {
         let residents = self.residents.lock().expect("residents poisoned");
         let Some(handle) = residents.get(id) else { return false };
         if handle.state().phase == Phase::Idle {
@@ -1678,7 +1678,7 @@ impl ClaudeCodeRuns {
     /// A task the mirror does not name is [`StopTaskOutcome::NoSuchTask`] even
     /// when claude might still know it — the honest report of a race, not a
     /// claim that the task never existed.
-    pub(super) fn stop_resident_task(&self, id: &str, task_id: &str) -> StopTaskOutcome {
+    pub(in crate::provider) fn stop_resident_task(&self, id: &str, task_id: &str) -> StopTaskOutcome {
         let residents = self.residents.lock().expect("residents poisoned");
         let Some(handle) = residents.get(id) else {
             return StopTaskOutcome::NoResident;
@@ -1776,7 +1776,7 @@ impl ClaudeCodeRuns {
     /// The claim is the caller's to have taken — adoption takes it before
     /// dialling, because a socket that does not answer still leaves a process
     /// running that nobody else may talk to.
-    pub(super) fn attached(self: &Arc<Self>, record: &runs::RunRecord<ClaudeRun>, sidecars: Sidecars, link: Link, lease: SessionLease) {
+    pub(in crate::provider) fn attached(self: &Arc<Self>, record: &runs::RunRecord<ClaudeRun>, sidecars: Sidecars, link: Link, lease: SessionLease) {
         // A record from before the fingerprint was written down says *unknown*,
         // and is carried through as unknown rather than as the default. The
         // default is "no flags at all", which is a real and very specific
@@ -2261,7 +2261,7 @@ struct Driver {
     /// Held by the driver rather than the registry because its lifetime *is*
     /// the resident's: opening it starts the task that follows the session's
     /// transcript files, and dropping it — which happens when this driver ends
-    /// — is what stops that task after one last sweep. See [`crate::record`].
+    /// — is what stops that task after one last sweep. See [`crate::provider::claude_code::record`].
     recorder: Recorder,
     /// The settings the live process was started with, and what every message
     /// is compared against.
@@ -2421,8 +2421,8 @@ struct Driver {
     replay_gapped: bool,
     /// The count of the think claude is in the middle of, which the
     /// transcript cannot say, for the session feed's activity bar. See
-    /// [`super::drafts`].
-    draft: super::drafts::DraftWriter,
+    /// [`crate::provider::drafts`].
+    draft: crate::provider::drafts::DraftWriter,
     /// Set by [`Driver::set_phase`] when the phase moved, and taken by the
     /// next [`Driver::publish`], which pokes the feed again: see `set_phase`.
     /// Atomic only because the driver is shared by reference across awaits.
@@ -2547,7 +2547,7 @@ async fn appended_lines(path: &Path, offset: u64, needle: &[u8]) -> (Vec<Value>,
 /// holding — see [`ClaudeRun::hold`].
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(super) struct Hold {
+pub(in crate::provider) struct Hold {
     /// The account that refused.
     account: String,
     /// Its display name, for the continuation that follows the lift.
@@ -3094,7 +3094,7 @@ impl Driver {
     /// The transcript is written by claude itself and is already trusted for
     /// exactly this question elsewhere: [`ClaudeCodeRuns::was_cut_short`]
     /// reads it to decide whether a run that outlived its server was cut short.
-    /// Reusing [`crate::sessions::claude::claude_activity_status`] keeps one
+    /// Reusing [`crate::provider::claude_code::sessions::claude::claude_activity_status`] keeps one
     /// definition of mid-turn rather than two that can drift — a tail ending on
     /// the assistant's answer is a turn that finished, and one ending on a
     /// `tool_use` or a person speaking is a turn that did not.
@@ -3110,7 +3110,7 @@ impl Driver {
     /// * **a scan that runs out of budget**, which `claude_activity_status`
     ///   already reports as `Running` for the same reason.
     async fn transcript_is_between_turns(&self) -> bool {
-        let Some(path) = crate::sessions::claude::find_claude_session_file(&self.registry.paths, &self.id).await else {
+        let Some(path) = crate::provider::claude_code::sessions::claude::find_claude_session_file(&self.registry.paths, &self.id).await else {
             return false;
         };
         let settled = tokio::fs::metadata(&path)
@@ -3122,7 +3122,7 @@ impl Driver {
         if !settled {
             return false;
         }
-        crate::sessions::claude::claude_activity_status(&path).await == SessionStatus::Waiting
+        crate::provider::claude_code::sessions::claude::claude_activity_status(&path).await == SessionStatus::Waiting
     }
 
     /// Let go of a turn claude's transcript says is not happening.
@@ -3422,7 +3422,7 @@ impl Driver {
         // The page following the old id would otherwise show a think in
         // flight for ever; the one following the new id sees the rest of it.
         self.draft.retarget(self.registry.draft_channel(id));
-        if let Err(error) = crate::sessions::claude::ClaudeCodeSessions.record_owned(&self.registry.paths, id).await {
+        if let Err(error) = crate::provider::claude_code::sessions::claude::ClaudeCodeSessions.record_owned(&self.registry.paths, id).await {
             tracing::error!(session = %id, %error, "cannot record the adopted claude session as ours; it will list as external");
         }
         #[cfg(test)]
@@ -3463,7 +3463,7 @@ impl Driver {
         let root = match (&account, &self.recipe) {
             (Some(_), _) => None,
             (None, Some(recipe)) => Some(recipe_root(&recipe.env)),
-            (None, None) => crate::sessions::claude::find_claude_session(&self.registry.paths, &self.id)
+            (None, None) => crate::provider::claude_code::sessions::claude::find_claude_session(&self.registry.paths, &self.id)
                 .await
                 .map(|found| found.root),
         };
@@ -3568,7 +3568,7 @@ impl Driver {
         let root = match (&account, &self.recipe) {
             (Some(_), _) => None,
             (None, Some(recipe)) => Some(recipe_root(&recipe.env)),
-            (None, None) => crate::sessions::claude::find_claude_session(&self.registry.paths, &self.id)
+            (None, None) => crate::provider::claude_code::sessions::claude::find_claude_session(&self.registry.paths, &self.id)
                 .await
                 .map(|found| found.root),
         };
@@ -5266,10 +5266,10 @@ impl Driver {
     /// [`ClaudeCodeRuns::task_root`]. A replayed set of the second kind has
     /// no witness in the first place, so both are read and the newest wins.
     async fn subagents_recently_active(&self) -> bool {
-        let Some(file) = crate::sessions::claude::find_claude_session_file(&self.registry.paths, &self.id).await else {
+        let Some(file) = crate::provider::claude_code::sessions::claude::find_claude_session_file(&self.registry.paths, &self.id).await else {
             return false;
         };
-        let mut newest = newest_write(&crate::sessions::transcript::subagent_dir(&file)).await;
+        let mut newest = newest_write(&crate::provider::claude_code::sessions::transcript::subagent_dir(&file)).await;
         if let Some(tasks) = self.task_output_dir().await {
             // `Option<SystemTime>` orders `None` below every `Some`, so this is
             // "the newer of the two, or whichever one exists".
@@ -5530,7 +5530,7 @@ impl Driver {
     /// The transcript is read from the moment of the steer on — only the bytes
     /// past [`AbsorbAnchor::offset`], only lines that name a queued command, and
     /// only the folds of a person's message (see
-    /// [`crate::sessions::transcript::absorbed_prompt`]). A fold whose text is a
+    /// [`crate::provider::claude_code::sessions::transcript::absorbed_prompt`]). A fold whose text is a
     /// steered message's takes the oldest such message out. Its turn will never
     /// open, nothing about it is queued any more, and it is not this driver's to
     /// deliver again: it is in the conversation now rather than in the pipe, so
@@ -5566,13 +5566,13 @@ impl Driver {
         let anchor = self.absorb.anchor.as_mut().expect("checked just above");
         if anchor.file.is_none() {
             // There was no transcript when the watch began, so all of it is newer.
-            anchor.file = crate::sessions::claude::find_claude_session_file(&self.registry.paths, &self.id).await;
+            anchor.file = crate::provider::claude_code::sessions::claude::find_claude_session_file(&self.registry.paths, &self.id).await;
         }
         let Some(path) = anchor.file.clone() else { return false };
         let (lines, offset) = appended_lines(&path, anchor.offset, b"\"queued_command\"").await;
         anchor.offset = offset;
         let mut taken = Vec::new();
-        for text in lines.iter().filter_map(crate::sessions::transcript::absorbed_prompt) {
+        for text in lines.iter().filter_map(crate::provider::claude_code::sessions::transcript::absorbed_prompt) {
             if let Some(at) = self.delivered_ahead.iter().position(|pending| same_prompt(&pending.text, &text)) {
                 taken.push(self.delivered_ahead.remove(at).expect("the index came from this queue"));
             }
@@ -5616,7 +5616,7 @@ impl Driver {
     /// of a line claude is still writing; that fragment fails to parse and is
     /// stepped over, and it cannot be the fold of a message not yet written.
     async fn anchor_absorb(&mut self) {
-        let file = crate::sessions::claude::find_claude_session_file(&self.registry.paths, &self.id).await;
+        let file = crate::provider::claude_code::sessions::claude::find_claude_session_file(&self.registry.paths, &self.id).await;
         let offset = match &file {
             Some(path) => tokio::fs::metadata(path).await.map(|meta| meta.len()).unwrap_or(0),
             None => 0,
@@ -6102,7 +6102,7 @@ impl Driver {
     /// What the tombstone and the stderr tail say about the exit just seen.
     fn death_reason(&self) -> String {
         let reason = match self.sidecars.read_tombstone() {
-            Some(shim::Exit { signal: Some(signal), .. }) => format!("claude was {}", super::signal_name(signal).to_lowercase()),
+            Some(shim::Exit { signal: Some(signal), .. }) => format!("claude was {}", crate::provider::signal_name(signal).to_lowercase()),
             Some(shim::Exit { status: Some(code), .. }) => format!("claude exited with code {code}"),
             _ => "claude exited for an unknown reason".to_string(),
         };
@@ -6483,7 +6483,7 @@ impl Driver {
     }
 
     /// Tell the receipt store what became of a message — a no-op for one no
-    /// client named. See [`super::receipts`].
+    /// client named. See [`crate::provider::receipts`].
     fn receipt(&self, pending: &Pending, status: ReceiptStatus) {
         self.registry.note_receipt(Source::Claude, &self.id, &pending.id, status);
     }
@@ -6695,7 +6695,7 @@ enum Event {
     /// A `system` line this driver does not act on: `commands_changed`,
     /// `task_updated`, `thinking_tokens`, and whatever the next CLI release
     /// adds beside them. (`thinking_tokens` does move the draft's counter —
-    /// see [`super::drafts`] — which is a reading, not an act: the turn, the
+    /// see [`crate::provider::drafts`] — which is a reading, not an act: the turn, the
     /// queue and the replay are exactly as they would be without it.)
     ///
     /// Told apart from [`Event::Other`] because the *replay* has to treat the
@@ -6859,7 +6859,7 @@ fn classify_value(value: &Value) -> Event {
             info: value["rate_limit_info"].clone(),
         },
         Some("control_response") => Event::ControlResponse,
-        // claude asking *us*. The shapes are [`super::questions`]'s to read,
+        // claude asking *us*. The shapes are [`crate::provider::questions`]'s to read,
         // and the only place they are spelled.
         Some("control_request") => match PermissionRequest::parse(value) {
             Some(request) => Event::Permission(Box::new(request)),
@@ -7676,7 +7676,7 @@ mod tests {
             // same reason the timings are set by hand: `Recorders::new` reads
             // the environment, and `a_session_records_its_whole_life` needs the
             // answer to be yes whatever the developer's shell says.
-            recorders: crate::record::Recorders::new_at(dirs.session_logs(), None, paths.clone()),
+            recorders: crate::provider::claude_code::record::Recorders::new_at(dirs.session_logs(), None, paths.clone()),
             decoration: crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone()),
             reading_recheck: Mutex::new(None),
             host: host.clone(),
@@ -8173,7 +8173,7 @@ done
             // behind, written where a real one is: under the session's own
             // transcript, by the process itself.
             let transcript = transcript_path(home.path());
-            let subagents = crate::sessions::transcript::subagent_dir(&transcript);
+            let subagents = crate::provider::claude_code::sessions::transcript::subagent_dir(&transcript);
             // Where claude would put this session's task output: under the root
             // the test registry owns, behind a slug the probe never has to
             // guess — it finds the session id one level down instead.
@@ -8535,10 +8535,10 @@ done
         }
 
         /// This session's flight recording, in the order it was written.
-        fn recording(&self) -> Vec<crate::record::Event> {
+        fn recording(&self) -> Vec<crate::provider::claude_code::record::Event> {
             let paths = Paths::new(self._home.path().to_path_buf());
             let dirs = InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
-            crate::record::read_log(&dirs.session_logs().join(format!("{SESSION}.ndjson")))
+            crate::provider::claude_code::record::read_log(&dirs.session_logs().join(format!("{SESSION}.ndjson")))
                 .unwrap_or_default()
                 .into_iter()
                 .map(|line| line.event)
@@ -8558,16 +8558,16 @@ done
     /// the fake claude's script has to name it.
     fn transcript_path(home: &Path) -> PathBuf {
         let paths = Paths::new(home.to_path_buf());
-        let project = crate::claude_roots::ClaudeRoots::of(&paths).managed_projects().join("-w-repo");
+        let project = crate::provider::claude_code::claude_roots::ClaudeRoots::of(&paths).managed_projects().join("-w-repo");
         std::fs::create_dir_all(&project).expect("project dir");
         project.join(format!("{SESSION}.jsonl"))
     }
 
     /// Whether a recording holds a lifecycle line for this stage.
-    fn staged(events: &[crate::record::Event], stage: crate::record::Stage) -> bool {
+    fn staged(events: &[crate::provider::claude_code::record::Event], stage: crate::provider::claude_code::record::Stage) -> bool {
         events
             .iter()
-            .any(|event| matches!(event, crate::record::Event::Lifecycle { event, .. } if *event == stage))
+            .any(|event| matches!(event, crate::provider::claude_code::record::Event::Lifecycle { event, .. } if *event == stage))
     }
 
     /// Poll until `check` passes, or fail rather than hang forever.
@@ -8719,7 +8719,7 @@ done
 
     // ------------------------------------------------------ the recording
 
-    /// One ordinary turn, as [`crate::record`] writes it down.
+    /// One ordinary turn, as [`crate::provider::claude_code::record`] writes it down.
     ///
     /// The sequence is the contract replay depends on: what went in, what came
     /// back, where the turn opened and closed, and — the part no stdio stream
@@ -8727,7 +8727,7 @@ done
     /// a subagent that appeared mid-turn included.
     #[tokio::test]
     async fn a_session_records_everything_the_replay_will_need() {
-        use crate::record::Event;
+        use crate::provider::claude_code::record::Event;
 
         let harness = Harness::ordinary().await;
         until("the init", || harness.state().phase == Phase::Idle).await;
@@ -8742,7 +8742,7 @@ done
         until("the turn", || harness.state().phase == Phase::Working).await;
         std::fs::write(&transcript, "{\"type\":\"user\",\"n\":1}\n{\"type\":\"assistant\",\"n\":2}\n").expect("transcript");
         // …and a subagent that only exists because this turn started one.
-        let agent = crate::sessions::transcript::subagent_path(&transcript, "a1");
+        let agent = crate::provider::claude_code::sessions::transcript::subagent_path(&transcript, "a1");
         std::fs::create_dir_all(agent.parent().expect("subagents")).expect("mkdir");
         std::fs::write(&agent, "{\"type\":\"assistant\",\"isSidechain\":true}\n").expect("agent transcript");
 
@@ -8782,13 +8782,13 @@ done
         assert!(stdout.iter().any(|line| line.contains("this line is not json")), "{stdout:?}");
         assert!(stdout.iter().any(|line| line.contains("\"type\":\"result\"")), "{stdout:?}");
 
-        assert!(staged(&events, crate::record::Stage::TurnOpen));
-        assert!(staged(&events, crate::record::Stage::Result));
+        assert!(staged(&events, crate::provider::claude_code::record::Stage::TurnOpen));
+        assert!(staged(&events, crate::provider::claude_code::record::Stage::Result));
         // Order, not just presence: a turn opens before it ends, and the prompt
         // goes in before the answer comes back.
         let position = |wanted: fn(&Event) -> bool| events.iter().position(wanted).expect("an expected event");
-        let opened = position(|event| matches!(event, Event::Lifecycle { event, .. } if *event == crate::record::Stage::TurnOpen));
-        let ended = position(|event| matches!(event, Event::Lifecycle { event, .. } if *event == crate::record::Stage::Result));
+        let opened = position(|event| matches!(event, Event::Lifecycle { event, .. } if *event == crate::provider::claude_code::record::Stage::TurnOpen));
+        let ended = position(|event| matches!(event, Event::Lifecycle { event, .. } if *event == crate::provider::claude_code::record::Stage::Result));
         let prompt = position(|event| matches!(event, Event::Stdin { line } if line.contains("\"first\"")));
         assert!(prompt < opened || opened < ended, "the turn's line order is wrong: {events:?}");
         assert!(opened < ended, "a turn ends after it opens: {events:?}");
@@ -8860,8 +8860,8 @@ done
             harness.recording().iter().any(|event| {
                 matches!(
                     event,
-                    crate::record::Event::Lifecycle {
-                        event: crate::record::Stage::TurnOpen,
+                    crate::provider::claude_code::record::Event::Lifecycle {
+                        event: crate::provider::claude_code::record::Stage::TurnOpen,
                         detail: Some(detail),
                         ..
                     } if detail.contains("a turn of its own")
@@ -9267,7 +9267,7 @@ done
             InjectionRunState::Ok,
             "every turn ended normally"
         );
-        assert!(staged(&harness.recording(), crate::record::Stage::Steer), "the recording says why");
+        assert!(staged(&harness.recording(), crate::provider::claude_code::record::Stage::Steer), "the recording says why");
     }
 
     /// The session-killer, reproduced: claude answers the steered message
@@ -9330,7 +9330,7 @@ done
         );
         assert_eq!(harness.seen().len(), 3, "and nothing was written twice: {:?}", harness.seen());
         assert!(
-            staged(&harness.recording(), crate::record::Stage::Absorb),
+            staged(&harness.recording(), crate::provider::claude_code::record::Stage::Absorb),
             "the recording says which of the two things the CLI did: {:?}",
             harness.recording()
         );
@@ -9553,7 +9553,7 @@ done
         assert_eq!(harness.seen().len(), 3, "nothing was written twice: {:?}", harness.seen());
         assert_eq!(harness.injection().expect("a run").state, InjectionRunState::Ok);
         assert!(
-            staged(&harness.recording(), crate::record::Stage::Absorb),
+            staged(&harness.recording(), crate::provider::claude_code::record::Stage::Absorb),
             "the recording says the message was folded: {:?}",
             harness.recording()
         );
@@ -9732,12 +9732,12 @@ done
             harness.injection()
         );
         assert!(
-            !staged(&harness.recording(), crate::record::Stage::Escalate),
+            !staged(&harness.recording(), crate::provider::claude_code::record::Stage::Escalate),
             "a turn claude had already answered was not signalled: {:?}",
             harness.recording()
         );
         assert!(
-            !staged(&harness.recording(), crate::record::Stage::Exit),
+            !staged(&harness.recording(), crate::provider::claude_code::record::Stage::Exit),
             "and the process outlived the stop: {:?}",
             harness.recording()
         );
@@ -10225,7 +10225,7 @@ await() {{ n=0; while [ ! -f "$dir/$1" ] && [ "$n" -lt 400 ]; do [ -d "$dir" ] |
         // its own, so it is behind the mirror by however long that task takes to
         // be scheduled — which on a loaded machine is longer than the mirror
         // update this test just saw.
-        until("the recording to say so", || staged(&harness.recording(), crate::record::Stage::Settle)).await;
+        until("the recording to say so", || staged(&harness.recording(), crate::provider::claude_code::record::Stage::Settle)).await;
 
         // The proof it is not merely counted differently: a settings change goes
         // straight through instead of parking.
@@ -10396,7 +10396,7 @@ await() {{ n=0; while [ ! -f "$dir/$1" ] && [ "$n" -lt 400 ]; do [ -d "$dir" ] |
         .await;
         until("the replay to settle", || harness.state().phase == Phase::Idle).await;
         assert!(
-            !crate::sessions::transcript::subagent_dir(&harness.transcript()).exists(),
+            !crate::provider::claude_code::sessions::transcript::subagent_dir(&harness.transcript()).exists(),
             "the point of this witness is that there is no transcript directory to read"
         );
         assert_eq!(harness.state().background, 1, "a task output file written now corroborates the task");
@@ -10423,7 +10423,7 @@ await() {{ n=0; while [ ! -f "$dir/$1" ] && [ "$n" -lt 400 ]; do [ -d "$dir" ] |
         until("the replay to settle", || harness.state().phase == Phase::Idle).await;
         assert_eq!(harness.state().background, 0, "an old transcript is not a sign of life");
         assert!(harness.state().tasks.is_empty(), "and nothing is left to name");
-        until("the recording to say so", || staged(&harness.recording(), crate::record::Stage::Settle)).await;
+        until("the recording to say so", || staged(&harness.recording(), crate::provider::claude_code::record::Stage::Settle)).await;
 
         // The proof it is a drop and not merely a different count: a settings
         // change goes straight through instead of parking behind the ghost.
@@ -10812,11 +10812,11 @@ done
         // so is the spawn that answered it — with the settings that caused it
         // and, emphatically, without the environment that carried the token.
         let events = harness.recording();
-        assert!(staged(&events, crate::record::Stage::Respawn), "{events:?}");
+        assert!(staged(&events, crate::provider::claude_code::record::Stage::Respawn), "{events:?}");
         let spawn = events
             .iter()
             .find_map(|event| match event {
-                crate::record::Event::Spawned { selector, model, cwd, .. } => Some((selector.clone(), model.clone(), cwd.clone())),
+                crate::provider::claude_code::record::Event::Spawned { selector, model, cwd, .. } => Some((selector.clone(), model.clone(), cwd.clone())),
                 _ => None,
             })
             .expect("the replacement's spawn line");
@@ -11323,7 +11323,7 @@ done
         );
         assert_eq!(rotation.interrupted_tasks, 0);
         assert!(
-            staged(&harness.recording(), crate::record::Stage::Rotate),
+            staged(&harness.recording(), crate::provider::claude_code::record::Stage::Rotate),
             "and the flight recording says so"
         );
     }
@@ -11747,7 +11747,7 @@ dir=$(dirname "$GO")
         assert!(harness.spawns().is_empty(), "and nothing was restarted while the task ran");
 
         // The task ends: its transcript goes quiet and claude says so.
-        let subagents = crate::sessions::transcript::subagent_dir(&harness.transcript());
+        let subagents = crate::provider::claude_code::sessions::transcript::subagent_dir(&harness.transcript());
         quiet(&subagents.join("agent-ghost.jsonl"));
         quiet(&subagents);
         harness.nudge("tasks-done");
@@ -12040,7 +12040,7 @@ done
         assert_eq!(rotation.until_at.0, Some(rest::iso_ms(resets * 1000)), "when that window resets");
         assert_eq!(rotation.interrupted_tasks, 0);
         assert!(
-            staged(&harness.recording(), crate::record::Stage::Rotate),
+            staged(&harness.recording(), crate::provider::claude_code::record::Stage::Rotate),
             "and the flight recording says so"
         );
 
@@ -12545,7 +12545,7 @@ done
         .expect("transcript");
         long_ago(&transcript);
         assert_eq!(
-            crate::sessions::claude::claude_activity_status(&transcript).await,
+            crate::provider::claude_code::sessions::claude::claude_activity_status(&transcript).await,
             SessionStatus::Waiting,
             "the transcript would call this between turns"
         );
@@ -12813,7 +12813,7 @@ done
         // The recording is written by a task of its own, so the gap can reach
         // the file after the driver has already acted on it.
         until("the recording to show the history lost its start", || {
-            harness.recording().iter().any(|event| matches!(event, crate::record::Event::Gap { .. }))
+            harness.recording().iter().any(|event| matches!(event, crate::provider::claude_code::record::Event::Gap { .. }))
         })
         .await;
         assert_eq!(harness.state().phase, Phase::Working, "the turn the question blocks is open");
@@ -13168,7 +13168,7 @@ done
             .find(|record| record.session_id == OTHER)
             .expect("its record")
             .cli_pid;
-        super::super::signal(pid, libc::SIGKILL);
+        crate::provider::signal(pid, libc::SIGKILL);
         until("the driver to end", || registry.steps().len() == 5).await;
         assert_eq!(registry.steps()[4..], [step("resident ended", false, Some(false))]);
         assert!(!registry.residents.lock().expect("residents").contains_key(OTHER));

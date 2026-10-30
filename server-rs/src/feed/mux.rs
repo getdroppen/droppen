@@ -555,7 +555,7 @@ mod tests {
     /// A drive with one ~1000-item claude session in its managed root.
     fn session(dir: &std::path::Path) -> (Arc<Drive>, std::path::PathBuf) {
         let (paths, drive) = test_drive(dir);
-        let project = crate::claude_roots::ClaudeRoots::of(&paths).managed_projects().join("-w-mux");
+        let project = crate::provider::claude_code::claude_roots::ClaudeRoots::of(&paths).managed_projects().join("-w-mux");
         std::fs::create_dir_all(&project).expect("project");
         let file = project.join(format!("{ID}.jsonl"));
         std::fs::write(&file, claude_turns(ID, 0, 250)).expect("transcript");

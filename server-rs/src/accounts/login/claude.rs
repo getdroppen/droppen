@@ -12,7 +12,7 @@ use droppen_accounts::quota::{is_rate_limited, mentions_status, CodexQuota, Prob
 use droppen_accounts::store::{AccountError, AccountKind, AccountLaunch, AccountProvider};
 use droppen_base::env_block::EnvVar;
 use droppen_accounts::verify::{reason, Scratch, Verdict, PROBE_PROMPT, PROBE_TIMEOUT};
-use crate::claude_roots::ClaudeRoots;
+use crate::provider::claude_code::claude_roots::ClaudeRoots;
 use droppen_base::process_env::{apply_env, claude_env, clean_env_bare, resolve_on_path, Env};
 use droppen_instance::paths::Paths;
 use serde_json::Value;

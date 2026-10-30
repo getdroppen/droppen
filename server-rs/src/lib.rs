@@ -16,7 +16,7 @@
 //! * [`sessions`] — discovery, the transcript normalizer and the wire shapes;
 //! * [`feed`] — the per-session websocket feed, and [`feed::global`] the
 //!   session-list one behind `GET /api/events`;
-//! * [`claude_roots`] / [`droppen_base::process_env`] — what a spawn runs
+//! * [`provider::claude_code::claude_roots`] / [`droppen_base::process_env`] — what a spawn runs
 //!   against and with;
 //! * [`droppen_base::env`] — the environment variables this server reads,
 //!   under their Droppen names and the ones they had before;
@@ -78,7 +78,6 @@ pub mod acp_agent;
 pub mod api;
 pub mod app;
 pub mod chats;
-pub mod claude_roots;
 pub mod cli;
 pub mod desktop_app;
 pub mod drive;
@@ -86,7 +85,6 @@ pub mod export;
 pub mod feed;
 pub mod provider;
 pub mod models;
-pub mod record;
 pub mod schedule;
 pub mod sessions;
 pub mod setup;

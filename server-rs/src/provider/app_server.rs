@@ -677,7 +677,7 @@ impl Run for Codex {
 impl Codex {
     /// Which account a codex spawn runs under, and what it puts into it.
     ///
-    /// The same three-state resolution [`super::resident::ClaudeCodeRuns::resume_claude_env`] does, and for the same
+    /// The same three-state resolution [`super::claude_code::resident::ClaudeCodeRuns::resume_claude_env`] does, and for the same
     /// reason: `accountId: null` is "the machine's own codex login" even when a
     /// default is configured, absent is "whatever this thread is already bound to",
     /// and a named account both wins and is written down.

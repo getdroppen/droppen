@@ -24,13 +24,13 @@ use gotcha::Schematic;
 
 pub mod acp;
 pub(crate) mod app_server;
+pub mod claude_code;
 mod common;
 pub mod drafts;
 mod gate;
 pub mod questions;
 pub mod receipts;
 mod registry;
-pub(crate) mod resident;
 mod runs;
 pub mod shim;
 
@@ -497,7 +497,7 @@ impl RunEntry {
 /// receipts, questions and drafts, whom a change is told to, the accounts a
 /// start is placed on, and the watchdog's timings. Each provider's own runs
 /// reach it through themselves ([`app_server::CodexRuns`],
-/// [`resident::ClaudeCodeRuns`], [`acp::AcpRuns`]).
+/// [`claude_code::resident::ClaudeCodeRuns`], [`acp::AcpRuns`]).
 pub struct RunHost {
     /// The stored logins, for one job only: taking the credentials this server
     /// injected back out of whatever the CLI printed. See
@@ -738,7 +738,7 @@ impl RunHost {
     /// the session's own view must hear about in a particular order: a resident
     /// that took a steered message off its queue on the transcript's word pokes
     /// the feed only once that feed has shown the transcript — see
-    /// `resident::Driver::on_absorb` — while the list, which shows no
+    /// `claude_code::resident::Driver::on_absorb` — while the list, which shows no
     /// transcript, can be told straight away.
     pub(crate) fn refresh_list(&self) {
         let Some(listeners) = self.listeners.get() else { return };
@@ -1351,7 +1351,7 @@ impl InjectionRegistry {
 /// shim, and the watchdog is skipped for it. Not as a caution: a resident is the
 /// *session*, so "quiet for twenty minutes" is what a session between messages
 /// looks like, and signalling one would end every conversation on the machine
-/// that nobody happened to be talking to. See [`resident::Driver::watchdog`] for
+/// that nobody happened to be talking to. See [`claude_code::resident::Driver::watchdog`] for
 /// why a live resident is only ever marked, never reaped.
 async fn watch_adopted(run: Arc<RunEntry>, record: runs::RunRecord, registry: Arc<InjectionRegistry>, runs: Arc<dyn ProviderRuns>) {
     let mut since_watchdog = Instant::now();
@@ -1860,7 +1860,7 @@ mod tests {
             "started_at": "2026-01-01T00:00:00.000Z",
         });
         registry.journal.insert_raw("run-claude", CLAUDE, &claude.to_string());
-        let transcript = crate::claude_roots::ClaudeRoots::of(&paths).managed_projects().join("-work").join(format!("{CLAUDE}.jsonl"));
+        let transcript = crate::provider::claude_code::claude_roots::ClaudeRoots::of(&paths).managed_projects().join("-work").join(format!("{CLAUDE}.jsonl"));
         std::fs::create_dir_all(transcript.parent().expect("parent")).expect("project");
         let lines = [
             serde_json::json!({"type": "user", "cwd": "/work", "timestamp": "2026-01-01T00:00:00.000Z", "message": {"content": [{"type": "text", "text": "do the thing"}]}}),

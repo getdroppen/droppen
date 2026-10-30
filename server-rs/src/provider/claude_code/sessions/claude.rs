@@ -17,7 +17,7 @@ use droppen_sessions::sources::{TokenUsage, UsageFile, UsageFold};
 use super::transcript::{content_blocks, user_title_candidate};
 use droppen_sessions::util::{self, read_head_lines, read_tail_lines, title_line, try_parse, FileCache};
 use droppen_sessions::{SessionActivity, SessionScope, SessionStatus, SessionSummary, Source};
-use crate::claude_roots;
+use crate::provider::claude_code::claude_roots;
 use droppen_http::openapi_ext::Nullable;
 use droppen_instance::paths::{ClaudeRoot, Paths};
 use droppen_base::time::{iso8601, mtime_ms};
@@ -838,7 +838,7 @@ impl droppen_sessions::Transcripts for ClaudeCodeSessions {
     fn usage_files<'a>(&'a self, paths: &'a Paths, cutoff_ms: f64) -> BoxFuture<'a, Vec<UsageFile>> {
         Box::pin(async move {
             let mut out = Vec::new();
-            for (_, projects) in crate::claude_roots::ClaudeRoots::of(&paths).projects_dirs() {
+            for (_, projects) in crate::provider::claude_code::claude_roots::ClaudeRoots::of(&paths).projects_dirs() {
                 let Ok(mut roots) = tokio::fs::read_dir(&projects).await else { continue };
                 while let Ok(Some(project)) = roots.next_entry().await {
                     let Ok(mut files) = tokio::fs::read_dir(project.path()).await else {
@@ -953,7 +953,7 @@ mod tests {
     /// user deletes leaves one for a session that no longer does.
     #[tokio::test]
     async fn the_prune_drops_claude_ids_with_no_transcript_and_keeps_the_rest() {
-        use crate::claude_roots;
+        use crate::provider::claude_code::claude_roots;
         use droppen_sessions::owned_sessions;
 
         let dir = tempfile::tempdir().expect("tempdir");
@@ -1664,7 +1664,7 @@ mod tests {
                 format!("{ask}\n{}\n{}\n{tool}\n{side}\n{}\n{undated}\n", said(1), said(2), said(3)),
             )
             .expect("write");
-            let items = crate::sessions::transcript::parse_claude_transcript(&paths, &file, false)
+            let items = crate::provider::claude_code::sessions::transcript::parse_claude_transcript(&paths, &file, false)
                 .await
                 .expect("parse");
             // The row's `updatedAt` is the transcript's mtime: the ledger's stand-in.

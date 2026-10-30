@@ -370,7 +370,7 @@ impl ProviderRegistry {
 
     /// Hand a queued message to the CLI now, ahead of the turn in flight.
     ///
-    /// See `resident::Driver::steer` for what that means to claude and why it
+    /// See `claude_code::resident::Driver::steer` for what that means to claude and why it
     /// is a delivery rather than an interruption.
     pub async fn steer_queued_message(&self, source: Source, id: &str, qid: &str) -> QueueOutcome {
         match self.run(source) {
@@ -473,7 +473,7 @@ mod tests {
 
     /// Claude Code alone.
     fn claude_only(providers: &mut ProviderRegistry, registry: &Arc<InjectionRegistry>) {
-        providers.register(Arc::new(crate::provider::resident::ClaudeCode::new(registry.clone())));
+        providers.register(Arc::new(crate::provider::claude_code::resident::ClaudeCode::new(registry.clone())));
     }
 
     /// A session row of `source` that ran on the ACP agent `agent`, if any.
@@ -497,7 +497,7 @@ mod tests {
         let listed = |source| providers.injections.runs_of(source).expect("listed");
         let codex = providers.provider::<crate::provider::app_server::Codex>().expect("Codex");
         assert!(std::ptr::addr_eq(Arc::as_ptr(codex.runs()), Arc::as_ptr(&listed(Source::Codex))), "Codex's");
-        let claude = providers.provider::<crate::provider::resident::ClaudeCode>().expect("Claude Code");
+        let claude = providers.provider::<crate::provider::claude_code::resident::ClaudeCode>().expect("Claude Code");
         assert!(std::ptr::addr_eq(Arc::as_ptr(claude.runs()), Arc::as_ptr(&listed(Source::Claude))), "Claude Code's");
     }
 
@@ -672,7 +672,7 @@ mod tests {
         let providers = providers(home.path());
         let paths = Paths::new(home.path().to_path_buf());
         providers.archive(Source::Claude, "c1").await.expect("archived");
-        assert!(crate::sessions::claude::archive::archived_ids(&paths).contains("c1"));
+        assert!(crate::provider::claude_code::sessions::claude::archive::archived_ids(&paths).contains("c1"));
         assert_eq!(
             providers.archive(Source::Acp, "a1").await,
             Err(droppen_sessions::archive::ArchiveError("cannot archive the ACP session: it is gone".to_string()).to_string())
@@ -683,6 +683,6 @@ mod tests {
         for source in [Source::Claude, Source::Codex, Source::Acp] {
             assert_eq!(none.archive(source, "x").await, Err(format!("no provider runs {source} sessions")), "{source}");
         }
-        assert!(crate::sessions::claude::archive::archived_ids(&Paths::new(other.path().to_path_buf())).is_empty(), "nothing was archived");
+        assert!(crate::provider::claude_code::sessions::claude::archive::archived_ids(&Paths::new(other.path().to_path_buf())).is_empty(), "nothing was archived");
     }
 }

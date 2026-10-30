@@ -4076,7 +4076,7 @@
             "type": "boolean"
           },
           "tasks": {
-            "description": "Those tasks, oldest first, as far as the CLI described them.\n\nEmpty whenever `background` is zero, and never longer than the cap the\ndriver publishes — see `provider::resident::TASKS_ON_THE_WIRE`.",
+            "description": "Those tasks, oldest first, as far as the CLI described them.\n\nEmpty whenever `background` is zero, and never longer than the cap the\ndriver publishes — see `provider::claude_code::resident::TASKS_ON_THE_WIRE`.",
             "items": {
               "$ref": "#/components/schemas/BackgroundTask"
             },

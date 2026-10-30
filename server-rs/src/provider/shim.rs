@@ -1018,7 +1018,7 @@ pub struct Spawn<'a> {
     /// The directory claude runs in.
     ///
     /// Applied as given. A caller that wants a fallback for a directory the user
-    /// has since deleted has to name one — see [`super::resident::spawn::claude_recipe`] — because
+    /// has since deleted has to name one — see [`super::claude_code::resident::spawn::claude_recipe`] — because
     /// the only fallback available *here* is the server's own working directory,
     /// and starting somebody's agent in the source tree of the server driving it
     /// is worse than not starting it at all.
@@ -1103,7 +1103,7 @@ fn shim_command(argv: &[OsString], env: &Env) -> Command {
 /// which `cargo test --lib` never builds, and which any other run may have left
 /// there from older source. Absent, the test binary itself was run as
 /// `session-shim --socket …`, libtest refused the option and exited 101, and
-/// every respawn in [`super::resident`]'s tests timed out on a socket nobody
+/// every respawn in [`super::claude_code::resident`]'s tests timed out on a socket nobody
 /// would bind. Present, the shim under test was whatever that binary happened
 /// to be. The test binary is always there, and always this source.
 #[cfg(test)]
@@ -1136,7 +1136,7 @@ pub async fn attach(sidecars: &Sidecars) -> Result<Link, LinkError> {
 /// Dial a shim this process is hosting itself.
 ///
 /// The real path re-execs this binary under its `session-shim` subcommand, and a
-/// unit-test harness binary has no such subcommand — so [`super::resident`]'s
+/// unit-test harness binary has no such subcommand — so [`super::claude_code::resident`]'s
 /// tests run [`run`] as a task for the process a harness starts with, and dial
 /// it here. Everything above the fork is still the real thing: the wire, the
 /// ring, the tombstone, and a real child process on the other end of the pipes.

@@ -31,7 +31,7 @@ use droppen_sessions::delivery::{QuestionState, ReceiptLookup, ReceiptStatus, Se
 use droppen_sessions::sidecars::{is_agent_id, AgentPath, Checklist};
 use droppen_sessions::util::TranscriptItem;
 use crate::models::ModelRule;
-use crate::sessions::claude;
+use crate::provider::claude_code::sessions::claude;
 use droppen_sessions::{chats_cwd, file_signature, SessionScope, Source};
 
 /// `POST /api/sessions/{source}/{id}/message` body.
@@ -1735,12 +1735,12 @@ pub async fn continue_session_on_account(
     }
 
     let new_id = uuid::Uuid::new_v4().to_string();
-    let copy = crate::sessions::claude::continuation::copy_local_session(&state.paths, &id, &new_id)
+    let copy = crate::provider::claude_code::sessions::claude::continuation::copy_local_session(&state.paths, &id, &new_id)
         .await
         .map_err(|error| match error {
-            crate::sessions::claude::continuation::ContinueError::NotFound => ApiError::not_found("session not found"),
-            crate::sessions::claude::continuation::ContinueError::Taken => ApiError::conflict(error.to_string()),
-            crate::sessions::claude::continuation::ContinueError::Io(_) => {
+            crate::provider::claude_code::sessions::claude::continuation::ContinueError::NotFound => ApiError::not_found("session not found"),
+            crate::provider::claude_code::sessions::claude::continuation::ContinueError::Taken => ApiError::conflict(error.to_string()),
+            crate::provider::claude_code::sessions::claude::continuation::ContinueError::Io(_) => {
                 tracing::warn!(session = %id, %error, "cannot copy a local-login session into this instance's root");
                 ApiError::internal("cannot copy the conversation")
             }
@@ -2433,7 +2433,7 @@ mod tests {
         for (register, expected) in cases {
             let (_dir, drive) = drive_with(register);
             let id = "11111111-2222-4333-8444-555555555555";
-            let project = crate::claude_roots::ClaudeRoots::of(&drive.paths).managed_projects().join("-chats");
+            let project = crate::provider::claude_code::claude_roots::ClaudeRoots::of(&drive.paths).managed_projects().join("-chats");
             std::fs::create_dir_all(&project).expect("project");
             let chats = chats_cwd(&drive.paths).to_string_lossy().into_owned();
             let line = serde_json::json!({
@@ -2581,7 +2581,7 @@ mod tests {
     /// A claude transcript in the user's own `~/.claude`, which is a session
     /// this server did not start.
     fn external_claude_session(drive: &Drive, id: &str, lines: &[serde_json::Value]) {
-        let project = crate::claude_roots::ClaudeRoots::of(&drive.paths).local_projects().join("-w-repo");
+        let project = crate::provider::claude_code::claude_roots::ClaudeRoots::of(&drive.paths).local_projects().join("-w-repo");
         std::fs::create_dir_all(&project).expect("project");
         let body: String = lines.iter().map(|line| format!("{line}\n")).collect();
         std::fs::write(project.join(format!("{id}.jsonl")), body).expect("transcript");
@@ -2792,7 +2792,7 @@ mod tests {
         let (_dir, drive) = drive();
         let id = "99999999-9999-4999-8999-999999999999";
         // A session of this server's own: its transcript in the managed root.
-        let project = crate::claude_roots::ClaudeRoots::of(&drive.paths).managed_projects().join("-w-repo");
+        let project = crate::provider::claude_code::claude_roots::ClaudeRoots::of(&drive.paths).managed_projects().join("-w-repo");
         std::fs::create_dir_all(&project).expect("project");
         let line = serde_json::json!({"type":"user","message":{"role":"user","content":"hi"},"timestamp":"2026-10-01T10:00:00.000Z","cwd":"/w/repo","sessionId":id,"uuid":"u1"});
         std::fs::write(project.join(format!("{id}.jsonl")), format!("{line}\n")).expect("transcript");

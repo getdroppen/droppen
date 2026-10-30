@@ -200,25 +200,25 @@
           "notes": [
             "provider's own items, provider::receipts and provider::questions, drafts, runs, and the spawn gate with its claims (provider::gate).",
             "provider::shim, the session shim: Claude Code and Codex both start their CLI through it.",
-            "models keeps its routes and the list's wire types here; each provider's list is its own (models::claude with its probe, models::codex, models::acp)."
+            "models keeps its routes and the list's wire types here; each provider's list is its own (provider::claude_code::models with its probe, models::codex, models::acp)."
           ]
         },
         {
           "name": "droppen-provider-claude-code",
           "about": "Claude Code: the resident driver, its transcripts, roots, readings, logins and recordings.",
           "modules": [
-            "provider::resident",
-            "sessions::transcript",
-            "sessions::claude",
-            "sessions::subagents",
-            "sessions::checklist",
-            "claude_roots",
+            "provider::claude_code::resident",
+            "provider::claude_code::sessions::transcript",
+            "provider::claude_code::sessions::claude",
+            "provider::claude_code::sessions::subagents",
+            "provider::claude_code::sessions::checklist",
+            "provider::claude_code::claude_roots",
             "accounts::quota::claude",
             "accounts::setup_token",
             "accounts::usage_login",
             "accounts::login::claude",
-            "record",
-            "models::claude"
+            "provider::claude_code::record",
+            "provider::claude_code::models"
           ],
           "mayUse": [
             "droppen-provider",
@@ -323,10 +323,10 @@
   },
   "allowed": [
     {
-      "why": "drive finds a Claude Code session by its id itself (sessions::claude), and Drive holds Claude Code's setup-token captures. They go through the provider base (Provider, Transcripts).",
+      "why": "drive finds a Claude Code session by its id itself (provider::claude_code::sessions::claude), and Drive holds Claude Code's setup-token captures. They go through the provider base (Provider, Transcripts).",
       "edges": [
         "drive -> accounts::setup_token",
-        "drive -> sessions::claude"
+        "drive -> provider::claude_code::sessions::claude"
       ]
     },
     {
