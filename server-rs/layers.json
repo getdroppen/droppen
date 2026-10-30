@@ -135,13 +135,9 @@
         {
           "name": "droppen-notify",
           "about": "Alert channels: Bark, Web Push and the alert fan-out.",
-          "modules": [
-            "notify",
-            "push"
-          ],
+          "modules": [],
           "mayUse": [
-            "droppen-sessions",
-            "droppen-accounts"
+            "droppen-sessions"
           ],
           "notes": [
             "Answers droppen-auth's NotifyCredential port from the entry; its caller travels in droppen-http's NotifyGrant, which neither crate has to name the other for."

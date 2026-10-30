@@ -1392,6 +1392,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "droppen-notify"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm",
+ "base64 0.22.1",
+ "clap",
+ "droppen-base",
+ "droppen-http",
+ "droppen-instance",
+ "droppen-pty",
+ "droppen-sessions",
+ "gotcha",
+ "gotcha_core",
+ "hkdf",
+ "hmac",
+ "libc",
+ "p256",
+ "rand 0.8.7",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "subtle",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "droppen-plugin-sdk"
 version = "0.1.0"
 dependencies = [
@@ -3298,6 +3329,7 @@ dependencies = [
  "droppen-files",
  "droppen-http",
  "droppen-instance",
+ "droppen-notify",
  "droppen-plugin-sdk",
  "droppen-plugins",
  "droppen-pty",

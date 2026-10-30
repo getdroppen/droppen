@@ -7,7 +7,7 @@
 //! devices. See [`droppen_instance::instance`] for why the sidecars are per-instance.
 //!
 //! Stored `0600`, because it holds a private key — the same rule (and the same
-//! reasoning) as [`crate::accounts::store`]. The mode is now the database's; see
+//! reasoning) as the server's `accounts::store`. The mode is now the database's; see
 //! "Where the file actually is" below.
 //!
 //! What the private key is worth is worth being precise about. It is not a
@@ -31,7 +31,7 @@
 //! device; the VAPID private scalar is one string, so it is a `kv` row under
 //! [`scope::PUSH`].
 //!
-//! `push.json` was written for a while after the move — a [`droppen_supervisor::supervisor`]
+//! `push.json` was written for a while after the move — a `droppen_supervisor::supervisor`
 //! demotion to a `.prev` binary that had never heard of the database would
 //! otherwise have come up with no devices and no key, and a fresh key
 //! unsubscribes every device there is. No binary that old is left to demote to,

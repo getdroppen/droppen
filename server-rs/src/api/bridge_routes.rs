@@ -36,6 +36,7 @@ fn registered_in_source() -> std::collections::BTreeSet<(String, String)> {
         manifest.join("crates/droppen-sessions/src"),
         manifest.join("crates/droppen-agent/src"),
         manifest.join("crates/droppen-cloud/src"),
+        manifest.join("crates/droppen-notify/src"),
     ];
     while let Some(dir) = dirs.pop() {
         for entry in std::fs::read_dir(&dir).unwrap() {

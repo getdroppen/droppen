@@ -398,7 +398,7 @@ enum Notice {
     Finished(String),
     Failed(String),
     /// A limit moved the session to another account, or found nowhere to move
-    /// it: the sentence [`crate::accounts::rotation::notice`] wrote.
+    /// it: the sentence the server's `accounts::rotation::notice` wrote.
     Rotated(String),
 }
 
@@ -674,7 +674,7 @@ fn question_body(question: &str) -> String {
 /// A run has reached its final state; notify if that is worth doing.
 ///
 /// Fire-and-forget by design. This is called from the one place in
-/// [`crate::inject`] where a run's outcome is written, and a push service being
+/// the server's `inject` where a run's outcome is written, and a push service being
 /// slow (or a phone being asleep) must not hold up releasing the injection lock.
 ///
 /// `driver` is the caller's snapshot of what the injection subsystem knows, and

@@ -8,7 +8,7 @@ fn main() -> std::process::ExitCode {
     // `notify` is run by a session's `droppen-notify` script, and an agent
     // reads its errors under that name.
     let prefix = match command {
-        Command::Notify(_) => remote_hand_server::notify::cli::NAME,
+        Command::Notify(_) => droppen_notify::notify::cli::NAME,
         _ => Name::invoked().error_prefix(),
     };
 

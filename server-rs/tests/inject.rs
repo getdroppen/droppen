@@ -1385,9 +1385,9 @@ async fn assert_own_channel(probe: &Probe, spawn: &support::Spawn, id: &str) {
     let url = format!("http://127.0.0.1:{}/api/notify", port.trim());
     assert_eq!(spawn.env("DROPPEN_NOTIFY_URL"), Some(url.as_str()), "this server's notify route");
     let token = spawn.env("DROPPEN_NOTIFY_TOKEN").expect("the session's token reached claude");
-    let secret = remote_hand_server::notify::store::secret(&paths).await.expect("the notify secret");
+    let secret = droppen_notify::notify::store::secret(&paths).await.expect("the notify secret");
     assert_eq!(
-        remote_hand_server::notify::token::verify(&secret, instance, token),
+        droppen_notify::notify::token::verify(&secret, instance, token),
         Some(format!("claude/{id}")),
         "minted by this server, for this session"
     );

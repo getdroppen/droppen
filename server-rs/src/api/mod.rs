@@ -426,10 +426,10 @@ fn response_overrides() -> ExtraResponses {
     droppen_files::describe(&mut reg);
     droppen_files::media::describe(&mut reg);
     crate::models::describe(&mut reg);
-    crate::notify::describe(&mut reg);
+    droppen_notify::notify::describe(&mut reg);
     droppen_plugins::routes::describe(&mut reg);
     droppen_workbench::prefs::describe(&mut reg);
-    crate::push::describe(&mut reg);
+    droppen_notify::push::describe(&mut reg);
     crate::accounts::quota::describe(&mut reg);
     crate::schedule::describe(&mut reg);
     droppen_workbench::screens::describe(&mut reg);
@@ -462,10 +462,10 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
     let router = droppen_files::FilesState::routes(router);
     let router = droppen_files::media::routes(router);
     let router = crate::models::ModelsState::routes(router);
-    let router = crate::notify::NotifyState::routes(router);
+    let router = droppen_notify::notify::NotifyState::routes(router);
     let router = droppen_plugins::routes::PluginsState::routes(router);
     let router = droppen_workbench::prefs::PrefsState::routes(router);
-    let router = crate::push::PushState::routes(router);
+    let router = droppen_notify::push::PushState::routes(router);
     let router = crate::accounts::quota::QuotaState::routes(router);
     let router = crate::schedule::ScheduleState::routes(router);
     let router = droppen_workbench::screens::ScreensState::routes(router);

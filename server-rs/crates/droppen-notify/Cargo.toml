@@ -1,0 +1,69 @@
+[package]
+name = "droppen-notify"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+publish = false
+description = "The Droppen server's alert channels: Bark (a session's own nudges, and the token they carry) and Web Push, and the alert fan-out to both"
+
+# The two channels a person is told through. They stand on the session
+# vocabulary, the pty shims' rules, the instance and the HTTP kit, and name
+# none of the server's subsystems: the auth guard asks them about a caller
+# through droppen-http's `NotifyCredential` port, and the runs, rotations and
+# link events they announce reach them through ports the entry fills.
+[dependencies]
+# Web Push's payload encryption (RFC 8291).
+aes-gcm = "0.10"
+base64 = "0.22"
+# The `notify` command line (`droppen-notify` on a session's PATH), which the
+# server mounts. The features are the server's, so they parse alike.
+clap = { version = "4.5", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
+droppen-base = { path = "../droppen-base" }
+droppen-http = { path = "../droppen-http" }
+droppen-instance = { path = "../droppen-instance" }
+droppen-pty = { path = "../droppen-pty" }
+droppen-sessions = { path = "../droppen-sessions" }
+gotcha = { version = "0.4.1", features = ["openapi"] }
+# What gotcha's `Schematic` derive expands to names it.
+gotcha_core = "0.4.1"
+hkdf = "0.12"
+# The notify token's MAC.
+hmac = "0.12"
+libc = "0.2"
+# The VAPID key (ES256) and Web Push's key agreement.
+p256 = { version = "0.13", features = ["ecdh"] }
+rand = "0.8"
+# Bark's and Web Push's requests. `default-features = false` drops
+# `default-tls` (native-tls/OpenSSL) so the binary keeps linking nothing but
+# rustls; the features are the server's, so it builds one reqwest.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "http2", "charset", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { workspace = true }
+sha2 = "0.10"
+# Constant-time comparison of the notify token's MAC.
+subtle = "2"
+thiserror = "1"
+tokio = { version = "1", features = ["fs", "io-util", "macros", "rt", "sync", "time"] }
+tracing = "0.1"
+uuid = { version = "1", features = ["v4"] }
+
+# `testing`: what the server's tests of the `notify` command line
+# (`cli::tests::notify`) reach of it. Only the server's [dev-dependencies]
+# turn it on.
+[features]
+test-support = []
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "test-util"] }
+
+[lints.rust]
+missing_docs = "deny"
+unreachable_pub = "deny"
+
+# `[lints] workspace = true` cannot be mixed with the rust lints above, so the
+# workspace's two clippy denials (`server-rs/Cargo.toml` `[workspace.lints]`)
+# are repeated here: keep them in step.
+[lints.clippy]
+significant_drop_in_scrutinee = "deny"
+await_holding_lock = "deny"
