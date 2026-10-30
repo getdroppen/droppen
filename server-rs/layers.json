@@ -311,5 +311,86 @@
     ],
     "count": 26
   },
-  "allowed": []
+  "allowed": [],
+  "outside": {
+    "about": "Workspace members that are not the server's crates: the relay, as a library and as its binary, and the developer kit. Each uses the crates of the open layers and the others outside, and no crate of the layers depends on one of them.",
+    "crates": [
+      "rh-relay",
+      "droppen-relay",
+      "rh-devkit"
+    ]
+  },
+  "forbidden": [
+    {
+      "name": "the provider base names no implementation",
+      "why": "The provider base names no implementation: each registers itself on the base, and only the entry names one.",
+      "from": [
+        "droppen-provider"
+      ],
+      "to": [
+        "droppen-provider-claude-code",
+        "droppen-provider-codex",
+        "droppen-provider-acp"
+      ]
+    },
+    {
+      "name": "the implementations and drive do not see one another",
+      "why": "The three implementations and drive stand side by side on the provider base and do not see one another.",
+      "from": [
+        "droppen-provider-claude-code",
+        "droppen-provider-codex",
+        "droppen-provider-acp",
+        "droppen-drive"
+      ],
+      "to": [
+        "droppen-provider-claude-code",
+        "droppen-provider-codex",
+        "droppen-provider-acp",
+        "droppen-drive"
+      ]
+    },
+    {
+      "name": "the domain is under the providers",
+      "why": "The providers stand on the domain, never the other way round: a domain crate that needs one declares a port, and the entry wires it.",
+      "from": [
+        "@domain"
+      ],
+      "to": [
+        "@providers"
+      ]
+    },
+    {
+      "name": "the transport carries no app",
+      "why": "The machine's transport carries no app: the agent and the aggregator use no other domain crate, only the agent the aggregator below it.",
+      "from": [
+        "droppen-agent",
+        "droppen-aggregator"
+      ],
+      "to": [
+        "@domain"
+      ],
+      "except": [
+        "droppen-agent -> droppen-aggregator"
+      ]
+    }
+  ],
+  "wrappers": [
+    {
+      "crate": "portable-pty",
+      "why": "A pseudo-terminal is droppen-pty's, with the shims that keep one alive across a restart; everything else opens one through it.",
+      "wrappers": [
+        "droppen-pty"
+      ]
+    },
+    {
+      "crate": "tokio-tungstenite",
+      "why": "A websocket outside the routes axum serves is the link's: the hub and relay client, the agent's sockets to the hub, the relays and this server, the relay itself and the developer kit. Tests use it as a client as they like.",
+      "wrappers": [
+        "rh-client",
+        "droppen-agent",
+        "rh-relay",
+        "rh-devkit"
+      ]
+    }
+  ]
 }
