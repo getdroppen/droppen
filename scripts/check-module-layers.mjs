@@ -44,7 +44,10 @@
  *   an exception that is gone may not come back unnoticed;
  * - more or fewer `Source::Claude|Codex|Acp` matches outside the provider
  *   crates than `sourceMatches` records: outside them `Source` is only the
- *   key that picks a provider, so that number too only goes down.
+ *   key that picks a provider, so that number too only goes down. The
+ *   server's modules and every workspace crate are read, so moving a match
+ *   into a crate of its own does not take it off the count;
+ * - an entry of `sourceMatches.exempt` with no reason, or naming no crate.
  * It also prints the largest dependency cycle (strongly connected group) of
  * modules and of crates, each middle crate's size and fan-in, and the most
  * used modules: the numbers a change to the layers is judged by.
@@ -435,8 +438,10 @@ export function manifestDependencies(manifest) {
 
 /**
  * The workspace's other members (`members` of `<serverDir>/Cargo.toml`, the
- * server itself aside): `[{ name, manifest, dependencies, lines }]`, `lines`
- * being the code lines of its library built outside tests.
+ * server itself aside): `[{ name, manifest, dependencies, lines, sources }]`,
+ * `lines` being the code lines of its library built outside tests, and
+ * `sources` where its library or binary, built outside tests, matches
+ * `Source::Claude|Codex|Acp` (`file:line`, as the server's own files are read).
  */
 export function workspaceCrates(serverDir) {
   const root = readFileSync(join(serverDir, "Cargo.toml"), "utf8");
@@ -448,7 +453,13 @@ export function workspaceCrates(serverDir) {
       const manifest = readFileSync(join(serverDir, dir, "Cargo.toml"), "utf8");
       const lib = join(serverDir, dir, "src", "lib.rs");
       const lines = existsSync(lib) ? moduleFiles(lib, []).files.reduce((n, f) => n + f.lines, 0) : 0;
-      return { name: libName(manifest).replace(/_/g, "-"), manifest: join(dir, "Cargo.toml"), dependencies: manifestDependencies(manifest), lines };
+      const sources = ["lib.rs", "main.rs"]
+        .map((name) => join(serverDir, dir, "src", name))
+        .filter(existsSync)
+        .flatMap((file) => moduleFiles(file, []).files)
+        .filter((f, i, all) => all.findIndex((g) => g.file === f.file) === i)
+        .flatMap(({ file, code }) => [...code.matchAll(SOURCE_MATCH)].map((m) => `${relative(serverDir, file)}:${lineAt(code, m.index)}`));
+      return { name: libName(manifest).replace(/_/g, "-"), manifest: join(dir, "Cargo.toml"), dependencies: manifestDependencies(manifest), lines, sources };
     });
 }
 
@@ -510,7 +521,9 @@ const count = (edges, from, to, where) => {
  *   of the open layers below it (`*`: every crate below it);
  * - `allowed`, each `{ why, edges: ["from -> to", …] }`, from a module to a
  *   module or to a crate that has left the server;
- * - `sourceMatches`, `{ providers: [crate, …], count }`;
+ * - `sourceMatches`, `{ exempt: [{ crate, why }, …], count }`: how many
+ *   matches of `Source::Claude|Codex|Acp` there are in the server's modules
+ *   and the workspace's crates, the crates `exempt` names aside;
  * and `workspace` ({@link workspaceCrates}): the crates that have left.
  * Returns `{ problems, violations, stats }`.
  */
@@ -619,12 +632,20 @@ export function checkLayers(graph, config, workspace = []) {
     if (!actual.has(edge)) problems.push(`allowed lists ${edge}, which is no longer a use between crates that may not use each other: drop it`);
   }
 
-  // Source matches outside the provider crates.
-  const providers = new Set(config.sourceMatches?.providers ?? []);
-  for (const p of providers) if (!crates.has(p)) problems.push(`sourceMatches names ${p}, which layers.json does not list`);
-  const sources = graph.sizes
-    .filter((f) => !providers.has(crateOf.get(unitOf(f.path))))
-    .flatMap((f) => f.sources.map((where) => ({ crate: crateOf.get(unitOf(f.path)), where })));
+  // Source matches outside the provider crates: in the server's own modules
+  // and in every crate that has left it, so a move does not hide a match.
+  const exempt = new Set();
+  for (const { crate, why } of config.sourceMatches?.exempt ?? []) {
+    if (!crates.has(crate) && !workspace.some((w) => w.name === crate)) problems.push(`sourceMatches exempts ${crate}, which layers.json does not list`);
+    if (!why?.trim()) problems.push(`sourceMatches exempts ${crate} without saying why`);
+    exempt.add(crate);
+  }
+  const sources = [
+    ...graph.sizes
+      .filter((f) => !exempt.has(crateOf.get(unitOf(f.path))))
+      .flatMap((f) => f.sources.map((where) => ({ crate: crateOf.get(unitOf(f.path)), where }))),
+    ...workspace.filter((w) => !exempt.has(w.name)).flatMap((w) => (w.sources ?? []).map((where) => ({ crate: w.name, where }))),
+  ];
   const recorded = config.sourceMatches?.count ?? 0;
   if (sources.length !== recorded) {
     const files = new Map();
