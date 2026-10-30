@@ -37,6 +37,19 @@ if sys.argv[1:] != ["--acp", "--stdio"]:
 print("agent: loading plugins", flush=True)
 
 cwd = Path.cwd()
+# The process that started this one. A slow or deaf request's wait ends the
+# moment it is gone, which took this process's stdin with it: a test process
+# that was killed would otherwise leave this one asleep for as long as asked.
+parent = os.getppid()
+
+
+def nap(seconds):
+    """Sleep this long, unless the process that started this one goes first."""
+    until = time.monotonic() + seconds
+    while time.monotonic() < until:
+        if os.getppid() != parent:
+            sys.exit(97)
+        time.sleep(min(0.05, max(0.0, until - time.monotonic())))
 # Renamed into place, so a reader never sees half of it.
 spawned = cwd / "agent-spawn.json.tmp"
 spawned.write_text(json.dumps({"argv": sys.argv[1:], "env": dict(os.environ)}))
@@ -184,7 +197,7 @@ for raw in sys.stdin:
         continue
     params = request.get("params", {})
     log({"method": method, "params": params, "mark": os.environ.get("FAKE_AGENT_MARK")})
-    time.sleep(slow.get(method, 0))
+    nap(slow.get(method, 0))
     if method == "session/cancel":
         done = waiting.pop(params.get("sessionId"), None)
         if done:
@@ -219,4 +232,4 @@ for raw in sys.stdin:
         threading.Thread(target=run_turn, args=(request,), daemon=True).start()
     elif "id" in request:
         emit({"jsonrpc": "2.0", "id": request["id"], "error": {"code": -32601, "message": "unknown"}})
-    time.sleep(deaf.get(method, 0))
+    nap(deaf.get(method, 0))

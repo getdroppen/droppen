@@ -52,6 +52,8 @@ struct Boot {
     /// `vi`, a swap file — behind to confuse the next run. `Drop` kills what a
     /// finished test did not.
     stopped: bool,
+    /// Ends the terminals' shims if the test process dies before `Drop` can.
+    _reaper: common::Reaper,
 }
 
 impl Drop for Boot {
@@ -88,6 +90,7 @@ impl Boot {
             cancel,
             task: Some(task),
             stopped: false,
+            _reaper: common::Reaper::watch(None, home, &Paths::for_instance(home.to_path_buf(), instance).instance_db()),
         }
     }
 

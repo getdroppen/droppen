@@ -17,6 +17,8 @@ use std::time::{Duration, Instant};
 /// How long a server is given to come up, or a supervised child to start.
 const BUDGET: Duration = Duration::from_secs(60);
 
+mod common;
+
 /// The server binary with nothing in its environment but a scratch home, a
 /// `PATH` and `env`.
 fn server(home: &Path, args: &[&str], env: &[(&str, &str)]) -> Command {
@@ -43,6 +45,8 @@ fn run(home: &Path, args: &[&str], env: &[(&str, &str)]) -> (bool, String, Strin
 struct Serve {
     child: Child,
     log: PathBuf,
+    /// Ends it if the test process dies before it is dropped.
+    _reaper: common::Reaper,
 }
 
 impl Serve {
@@ -56,7 +60,8 @@ impl Serve {
             .stderr(file)
             .spawn()
             .expect("start the server");
-        Serve { child, log }
+        let reaper = common::Reaper::watch(Some(child.id()), home, &home.join("state.db"));
+        Serve { child, log, _reaper: reaper }
     }
 
     /// The port the server recorded under `data` once it listens there; a
@@ -263,6 +268,8 @@ fn up_hands_its_server_only_the_new_names() {
         .stderr(Stdio::piped())
         .spawn()
         .expect("start up");
+    // Ends `up` if the test process dies before it is stopped below.
+    let _reaper = common::Reaper::watch(Some(up.id()), &home, &home.join("state.db"));
     let deadline = Instant::now() + BUDGET;
     while !seen.exists() {
         if let Ok(Some(status)) = up.try_wait() {

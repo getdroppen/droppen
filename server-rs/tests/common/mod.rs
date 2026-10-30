@@ -54,6 +54,11 @@ pub struct TestServer {
     /// An `Option` so `stop` can take it: this struct has a `Drop`, and a type
     /// with one cannot have a field moved out of it.
     server: Option<tokio::task::JoinHandle<std::io::Result<()>>>,
+    /// Ends the terminals' shims and the CLIs this server started if the test
+    /// process dies before this is dropped: its own shims are this test
+    /// binary's and go with it ([`shims_end_with_this_process`]), but a
+    /// terminal's are the server binary's.
+    _reaper: Reaper,
     /// `None` when the caller owns the home directory — see
     /// [`TestServer::start_at`], where the whole point is that it outlives any
     /// one server.
@@ -117,6 +122,7 @@ impl TestServer {
     }
 
     async fn boot_with(home: &Path, instance: Option<&str>, auth_enabled: Option<bool>, desktop_app: Option<bool>) -> TestServer {
+        shims_end_with_this_process();
         let app = || RemoteHandApp {
             home_override: Some(home.to_path_buf()),
             port_override: Some(0),
@@ -164,6 +170,11 @@ impl TestServer {
             cleanups,
             cancel,
             server: Some(server),
+            _reaper: Reaper::watch(
+                None,
+                home,
+                &Paths::for_instance(home.to_path_buf(), instance.unwrap_or(droppen_instance::instance::DEFAULT_INSTANCE)).instance_db(),
+            ),
             _home: None,
         }
     }
@@ -399,11 +410,131 @@ pub async fn create_account_id(server: &TestServer, label: &str, secret: &str) -
 
 /// A server started from the real binary, on a home directory the test owns.
 ///
-/// Killing it is the caller's business: a group signal to `pid` reaches the
-/// server and everything it did not detach.
+/// A test may kill it whenever it likes: a group signal to `pid` reaches the
+/// server and everything it did not detach. Dropped, it does the same, and
+/// then kills every CLI its run journal names and every shim serving its
+/// home, which a server detaches on purpose so that they outlive it. In that
+/// order, so that a server still running starts nothing after they were
+/// looked for. And if the test process dies before this is dropped, its
+/// [`Reaper`] does it all.
 pub struct Spawned {
     pub pid: u32,
     pub addr: SocketAddr,
+    /// The home directory it runs on.
+    home: PathBuf,
+    /// The run journal of the instance it runs.
+    journal: PathBuf,
+    _reaper: Reaper,
+}
+
+impl Drop for Spawned {
+    fn drop(&mut self) {
+        // SAFETY: a negative pid names a process group this test started;
+        // signalling one that has already gone is an ignored `ESRCH`.
+        unsafe { libc::kill(-(self.pid as libc::pid_t), libc::SIGKILL) };
+        kill_journal_runs(&self.journal);
+        kill_shims_serving(&self.home);
+    }
+}
+
+/// What a test runs out of process outlives the test process if it dies
+/// before its guards are dropped: killed by a timeout or an interrupted run,
+/// it leaves a server that goes on starting sessions on its schedules, and the
+/// shims and CLIs it started. So a guard that starts one also starts this:
+/// the test binary run as its helper entry ([`session_shim`], which then
+/// [`reap`]s), in a process group of its own so that a signal to the test's
+/// group does not take it too. It reads a pipe from this process to its end.
+/// A guard dropped in time has done the work itself, and says so down the
+/// pipe before it closes it; a pipe that closes without a word was closed by
+/// this process dying, and then the reaper kills what the guard would have:
+/// the server's group, the server holding the instance, every shim serving
+/// the home and every CLI the run journal names.
+pub struct Reaper {
+    child: Option<std::process::Child>,
+}
+
+/// The reaper's task, in its environment, one line each: the server's process
+/// group (`-` for a server in this process), the home it serves and its run
+/// journal.
+const REAPER_TASK: &str = "DROPPEN_TEST_REAPER";
+
+impl Reaper {
+    /// Watch a server on `home`: out of process, the process group `pgid` (or
+    /// the process, if it leads none); in this one, `None`.
+    pub fn watch(pgid: Option<u32>, home: &Path, journal: &Path) -> Reaper {
+        use std::os::unix::process::CommandExt;
+        // libtest names a test by its path inside the binary.
+        let (_binary, module) = module_path!().split_once("::").expect("a module inside a test binary");
+        let child = std::process::Command::new(std::env::current_exe().expect("this test binary"))
+            .args(["--ignored", "--exact", "--quiet", &format!("{module}::session_shim")])
+            .env(
+                REAPER_TASK,
+                format!("{}\n{}\n{}", pgid.map_or("-".to_string(), |pgid| pgid.to_string()), home.display(), journal.display()),
+            )
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .process_group(0)
+            .spawn()
+            .expect("start the reaper");
+        Reaper { child: Some(child) }
+    }
+}
+
+/// What a guard says down the pipe when it lets its reaper go.
+const REAPER_RELEASE: &[u8] = b"released\n";
+
+impl Drop for Reaper {
+    /// Tell the reaper it has nothing to do, close the pipe, and wait for it
+    /// to go.
+    fn drop(&mut self) {
+        use std::io::Write;
+        if let Some(mut child) = self.child.take() {
+            if let Some(mut pipe) = child.stdin.take() {
+                let _ = pipe.write_all(REAPER_RELEASE);
+            }
+            let _ = child.wait();
+        }
+    }
+}
+
+/// A guard's [`Reaper`], run as this binary's helper entry: wait for the
+/// guard's word, or for the test process to go, and then do the guard's work.
+fn reap() {
+    let Ok(task) = std::env::var(REAPER_TASK) else {
+        return;
+    };
+    let mut task = task.lines();
+    let pgid: Option<libc::pid_t> = task.next().and_then(|pgid| pgid.parse().ok());
+    let home = PathBuf::from(task.next().expect("the home"));
+    let journal = PathBuf::from(task.next().expect("the run journal"));
+    // Until the guard lets it go, or the pipe closes with the test process.
+    let mut said = Vec::new();
+    let _ = std::io::Read::read_to_end(&mut std::io::stdin(), &mut said);
+    if said == REAPER_RELEASE {
+        return;
+    }
+    if let Some(pgid) = pgid {
+        // SAFETY: signals to the process group the test started, and to its
+        // leader, for a server started in the test's own group.
+        unsafe {
+            libc::kill(-pgid, libc::SIGKILL);
+            libc::kill(pgid, libc::SIGKILL);
+        }
+        // A server a supervisor had just started may take the instance a
+        // moment after its supervisor is gone.
+        for _ in 0..25 {
+            kill_instance_holder(&journal);
+            std::thread::sleep(Duration::from_millis(200));
+        }
+    }
+    // Twice, a moment apart: a shim the dead process had just forked may not
+    // have been the server binary yet the first time.
+    for _ in 0..2 {
+        kill_shims_serving(&home);
+        kill_journal_runs(&journal);
+        std::thread::sleep(Duration::from_millis(500));
+    }
 }
 
 /// Start the real server binary on `home` and wait until it is listening.
@@ -444,9 +575,18 @@ pub async fn spawn_server(home: &Path, instance: &str, extra_env: &[(&str, &str)
     tokio::spawn(async move {
         let _ = child.wait().await;
     });
-
-    let addr = wait_for_listener(home, instance, Duration::from_secs(30)).await;
-    Spawned { pid, addr }
+    let journal = Paths::for_instance(home.to_path_buf(), instance).instance_db();
+    // Armed before the wait below, so a server that never comes up is still
+    // ended with the test.
+    let mut spawned = Spawned {
+        pid,
+        addr: ([127, 0, 0, 1], 0).into(),
+        _reaper: Reaper::watch(Some(pid), home, &journal),
+        home: home.to_path_buf(),
+        journal,
+    };
+    spawned.addr = wait_for_listener(home, instance, Duration::from_secs(30)).await;
+    spawned
 }
 
 /// Wait until the server rooted at `home` has written its port and answers on
@@ -573,6 +713,108 @@ fn dechunk(body: &str) -> String {
         rest = remainder[size..].strip_prefix("\r\n").unwrap_or("");
     }
     out
+}
+
+/// Run every session shim a server in this process starts as this test
+/// binary's own [`session_shim`] entry, rather than as the server binary's
+/// `session-shim` ([`droppen_provider::testing::shims_run_as`]).
+///
+/// The server's shim outlives whoever started it, which is what a server
+/// needs: in a test it kept a shim and its CLI running for good behind every
+/// test process that ended before its guards could run, killed by a timeout
+/// or an interrupted run. The test binary's shim ends with the test process
+/// that started it, and its CLI reads end of file and goes too.
+pub fn shims_end_with_this_process() {
+    droppen_provider::testing::shims_run_as(module_path!());
+}
+
+/// Not a test: what this binary runs as when a test starts it as one of its
+/// helpers. Either the session shim of a server this binary runs in-process
+/// ([`droppen_provider::testing::session_shim`], which only
+/// [`shims_run_as`](droppen_provider::testing::shims_run_as) can name and
+/// which names this entry), or a guard's [`Reaper`]; each does nothing unless
+/// it was started as such.
+#[test]
+#[ignore = "the session shim and the reaper a test runs this binary as, not a test"]
+fn session_shim() {
+    droppen_provider::testing::session_shim();
+    reap();
+}
+
+/// Kill every CLI the run journal `state_db` names: the residents and app
+/// servers a server started, each in a process group of its own so that it
+/// outlives the server, which is why no shutdown ends one. Its session shim
+/// follows it out. Read-only, and every failure is a silent return: the
+/// journal may not exist yet, its server may be gone, and a guard that
+/// panicked would fail the test it is cleaning up after.
+pub fn kill_journal_runs(state_db: &Path) {
+    let flags = rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_URI;
+    let Ok(conn) = rusqlite::Connection::open_with_flags(state_db, flags) else {
+        return;
+    };
+    let Ok(mut statement) = conn.prepare("SELECT payload FROM runs") else {
+        return;
+    };
+    let Ok(rows) = statement.query_map([], |row| row.get::<_, String>(0)) else {
+        return;
+    };
+    for payload in rows.filter_map(Result::ok) {
+        let Ok(record) = serde_json::from_str::<Value>(&payload) else { continue };
+        let Some(pid) = record["cli_pid"].as_u64() else { continue };
+        // SAFETY: `kill` delivers a signal to a process group and cannot
+        // corrupt this process' own state.
+        unsafe { libc::kill(-(pid as libc::pid_t), libc::SIGKILL) };
+    }
+}
+
+/// Kill the server that holds the instance whose run journal is `state_db`,
+/// and its group: what `remote-hand-server up` serves runs in a group of its
+/// own, which a signal to the supervisor's group does not reach. Only while
+/// it really holds the instance, so a pid a server wrote into the lock file
+/// before it exited is never signalled: the `flock` is the truth, the pid
+/// beside it only names the holder.
+pub fn kill_instance_holder(state_db: &Path) {
+    use std::os::fd::AsRawFd;
+    let Ok(file) = std::fs::File::open(state_db.with_file_name("lock")) else {
+        return;
+    };
+    // SAFETY: a non-blocking `flock` on a descriptor this function owns.
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+        // Nobody holds it. Closing the file lets it go again.
+        return;
+    }
+    let Some(holder) = std::fs::read_to_string(state_db.with_file_name("lock")).ok().and_then(|raw| raw.trim().parse::<libc::pid_t>().ok()) else {
+        return;
+    };
+    // SAFETY: signals to the process, and its group, that holds the instance
+    // a test started.
+    unsafe {
+        libc::kill(-holder, libc::SIGKILL);
+        libc::kill(holder, libc::SIGKILL);
+    }
+}
+
+/// Kill every process of the server binary whose command line names `home`:
+/// the `session-shim`s (their stderr file lives under it), the `pty-shim`s
+/// (their socket does) and a server run from a copy installed there. A
+/// session shim's CLI reads end of file once it is gone, and a terminal's
+/// shell hangs up with its shim. Matched on the home path as well as the
+/// binary, so another test's processes, running at the same time, are never
+/// touched.
+pub fn kill_shims_serving(home: &Path) {
+    let Ok(output) = std::process::Command::new("/bin/ps").args(["-A", "-o", "pid=,command="]).output() else {
+        return;
+    };
+    let needle = home.to_string_lossy().into_owned();
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        if !line.contains("remote-hand-server") || !line.contains(&needle) {
+            continue;
+        }
+        if let Some(pid) = line.split_whitespace().next().and_then(|pid| pid.parse::<libc::pid_t>().ok()) {
+            // SAFETY: a signal to a process this test's server started.
+            unsafe { libc::kill(pid, libc::SIGKILL) };
+        }
+    }
 }
 
 /// Kills a process group when it goes out of scope.

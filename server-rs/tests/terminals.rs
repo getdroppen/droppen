@@ -161,6 +161,15 @@ fn shims_of(home: &Path) -> std::path::PathBuf {
     instance_of(home).pty_shims()
 }
 
+/// A home directory for terminals with no server around them, and the reaper
+/// that ends their shims if the test process dies before it can
+/// ([`common::Reaper`]).
+fn bare_home() -> (tempfile::TempDir, common::Reaper) {
+    let home = tempfile::tempdir().expect("tempdir");
+    let reaper = common::Reaper::watch(None, home.path(), &Paths::new(home.path().to_path_buf()).instance_db());
+    (home, reaper)
+}
+
 /// A registry over `home`'s default instance, with no server around it.
 ///
 /// Adoption needs two registries over one home directory, one after the other,
@@ -731,7 +740,7 @@ async fn an_attach_opens_with_a_frame_even_when_nothing_is_buffered() {
 /// server that had not started listening.
 #[tokio::test]
 async fn a_directory_of_dead_shims_does_not_hold_the_live_ones_up() {
-    let home = tempfile::tempdir().expect("tempdir");
+    let (home, _reaper) = bare_home();
     let first = registry_at(home.path());
     let mut created = Vec::new();
     for _ in 0..3 {
@@ -771,7 +780,7 @@ async fn a_directory_of_dead_shims_does_not_hold_the_live_ones_up() {
 /// create path enforces, or a stuffed directory would be the way around it.
 #[tokio::test]
 async fn adoption_honours_the_cap_the_create_path_enforces() {
-    let home = tempfile::tempdir().expect("tempdir");
+    let (home, _reaper) = bare_home();
     let registry = registry_at(home.path());
     let shims = shims_of(home.path());
 

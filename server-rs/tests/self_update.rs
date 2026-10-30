@@ -217,6 +217,10 @@ struct Supervisor {
     addr: std::net::SocketAddr,
     home: PathBuf,
     stopped: bool,
+    /// Ends the supervisor's group, the server holding the instance and the
+    /// CLIs its servers started if this test process dies before the guard is
+    /// dropped.
+    _reaper: common::Reaper,
 }
 
 impl Drop for Supervisor {
@@ -228,6 +232,8 @@ impl Drop for Supervisor {
             // SAFETY: a negative pid names a process group; signalling one that
             // has already gone is an ignored `ESRCH`.
             unsafe { libc::kill(-(self.pid as libc::pid_t), libc::SIGKILL) };
+            // The server it was supervising runs in a group of its own.
+            common::kill_instance_holder(&droppen_instance::paths::Paths::new(self.home.clone()).instance_db());
         }
     }
 }
@@ -284,6 +290,7 @@ impl Supervisor {
             addr: ([127, 0, 0, 1], 0).into(),
             home: home.to_path_buf(),
             stopped: false,
+            _reaper: common::Reaper::watch(Some(pid), home, &droppen_instance::paths::Paths::new(home.to_path_buf()).instance_db()),
         };
         supervisor.addr = common::wait_for_listener(home, DEFAULT_INSTANCE, BUDGET).await;
         supervisor
@@ -620,6 +627,9 @@ struct Unsupervised {
     addr: std::net::SocketAddr,
     home: PathBuf,
     stopped: bool,
+    /// Ends the server's group and the CLIs it started if this test process
+    /// dies before the guard is dropped.
+    _reaper: common::Reaper,
 }
 
 impl Drop for Unsupervised {
@@ -676,6 +686,7 @@ impl Unsupervised {
             addr: ([127, 0, 0, 1], 0).into(),
             home: home.to_path_buf(),
             stopped: false,
+            _reaper: common::Reaper::watch(Some(pid), home, &droppen_instance::paths::Paths::new(home.to_path_buf()).instance_db()),
         };
         server.addr = common::wait_for_listener(home, DEFAULT_INSTANCE, BUDGET).await;
         server
