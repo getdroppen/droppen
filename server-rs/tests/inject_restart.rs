@@ -659,6 +659,167 @@ async fn a_run_survives_its_server_being_sigkilled_and_is_adopted_by_the_next_on
     common::wait_for("the CLI to be cleaned up", Duration::from_secs(20), || !alive(cli_pid)).await;
 }
 
+// ------------------------------------------------------------ Codex's app server
+
+/// The thread `tests/support/fake_codex.py` answers for.
+const CODEX_SESSION: &str = "0199c1a1-2b3c-4d5e-8f60-112233445566";
+
+/// A Codex thread of this instance's, working in `cwd`: its rollout, and the
+/// ownership row the server writes for a thread it started.
+fn seed_codex_session(home: &Path, cwd: &Path) {
+    let dir = home.join(".codex/sessions/2026/09/14");
+    std::fs::create_dir_all(&dir).expect("rollout dir");
+    std::fs::write(
+        dir.join(format!("rollout-2026-09-14T10-00-00-{CODEX_SESSION}.jsonl")),
+        format!(
+            "{}\n",
+            json!({"type": "session_meta", "timestamp": "2026-09-14T10:00:00Z", "payload": {"id": CODEX_SESSION, "cwd": cwd}})
+        ),
+    )
+    .expect("seed rollout");
+    let paths = droppen_instance::paths::Paths::new(home.to_path_buf());
+    droppen_instance::db::at(paths.instance_db())
+        .write(|tx| {
+            tx.execute(
+                "INSERT OR IGNORE INTO owned_sessions (source, session_id) VALUES ('codex', ?1)",
+                (CODEX_SESSION,),
+            )
+        })
+        .expect("seed the ownership registry");
+}
+
+/// The App Server requests the fake Codex was handed, by every process it ran
+/// as, in `cwd`.
+fn codex_requests(cwd: &Path) -> Vec<Value> {
+    std::fs::read_to_string(cwd.join("codex-stdin.jsonl"))
+        .unwrap_or_default()
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("a request is JSON"))
+        .collect()
+}
+
+/// Codex's app server outlives a `SIGKILL` of its server the way a Claude Code
+/// resident does, and the next server re-attaches to it through its shim
+/// rather than only watching its pid: the session has a live resident at once,
+/// and the next message goes into the same process.
+#[tokio::test]
+async fn a_codex_app_server_survives_its_server_being_sigkilled_and_is_reattached_by_the_next_one() {
+    let home = tempfile::tempdir().expect("tempdir");
+    let probe = Probe::start_at(home.path()).await;
+    let workspace = probe.workspace();
+    let journal = probe.instance_db();
+    probe.stop().await;
+    seed_codex_session(home.path(), &workspace);
+    // The first turn outlasts the kill and the next boot, then ends by itself.
+    std::fs::write(workspace.join("sleep.txt"), "8").expect("turn length");
+
+    let first = spawn_server(home.path()).await;
+    let (status, body) = http_json(
+        first.addr,
+        "POST",
+        &format!("/api/sessions/codex/{CODEX_SESSION}/message"),
+        r#"{"text":"carry on"}"#,
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    common::wait_for("the first message to be taken into a turn", Duration::from_secs(20), || {
+        recorded_runs(&journal).first().is_some_and(|run| run["codex"]["active"].is_string())
+    })
+    .await;
+    let record = only_record(&journal);
+    let cli_pid = record["cli_pid"].as_u64().expect("cli_pid") as u32;
+    let _cli_guard = common::KillGroupOnDrop(cli_pid);
+    assert!(record["shim"].is_string(), "an app server runs behind a shim: {record}");
+    assert_ne!(record["resident"], true, "and is not a Claude Code resident: {record}");
+
+    unsafe { libc::kill(-(first.pid as libc::pid_t), libc::SIGKILL) };
+    common::wait_for("the server to die", Duration::from_secs(20), || !alive(first.pid)).await;
+    assert!(alive(cli_pid), "the app server must survive a SIGKILL aimed at the server's whole process group");
+
+    let second = spawn_server(home.path()).await;
+    let seen: Value = serde_json::from_str(&http_get(second.addr, &format!("/api/sessions/codex/{CODEX_SESSION}")).await).expect("json");
+    assert!(
+        seen["summary"]["resident"].is_object(),
+        "the second server is driving the app server again, not only watching its pid: {seen}"
+    );
+
+    let (status, body) = http_json(
+        second.addr,
+        "POST",
+        &format!("/api/sessions/codex/{CODEX_SESSION}/message"),
+        r#"{"text":"and then this"}"#,
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    common::wait_for("the second message to reach the app server", Duration::from_secs(30), || {
+        codex_requests(&workspace).iter().any(|request| request.to_string().contains("and then this"))
+    })
+    .await;
+    let handshakes = codex_requests(&workspace).iter().filter(|request| request["method"] == "initialize").count();
+    assert_eq!(handshakes, 1, "one app server, across both servers");
+    assert_eq!(only_record(&journal)["cli_pid"], cli_pid, "and the record still names it");
+
+    unsafe { libc::kill(-(second.pid as libc::pid_t), libc::SIGKILL) };
+    unsafe { libc::kill(-(cli_pid as libc::pid_t), libc::SIGKILL) };
+    common::wait_for("the app server to be cleaned up", Duration::from_secs(20), || !alive(cli_pid)).await;
+}
+
+/// A Codex app server whose shim cannot be reached is adopted by its pid, and
+/// what was waiting in its queue outlives it: once the pid goes, the session
+/// has a resident again, not running and holding the queue, and the row keeps
+/// it, so nothing accepted is lost before the user says what to do with it.
+#[tokio::test]
+async fn a_watched_codex_app_server_that_dies_leaves_its_queue_with_a_resident() {
+    let home = tempfile::tempdir().expect("tempdir");
+    let workspace = home.path().join("workspace");
+    std::fs::create_dir_all(&workspace).expect("workspace");
+    std::fs::write(home.path().join(".rh-test-root"), "").expect("marker");
+    seed_codex_session(home.path(), &workspace);
+    let stand = Stand::start("sleep 30");
+    let db = droppen_instance::paths::Paths::new(home.path().to_path_buf()).instance_db();
+    let record = json!({
+        "run_id": "codex-run-under-test",
+        "source": "codex",
+        "session_id": CODEX_SESSION,
+        "cwd": workspace,
+        "cli_pid": stand.pid,
+        "started_at": "2026-01-01T00:00:00.000Z",
+        "fingerprint": null,
+        "turn_at": null,
+        "queued": [],
+        "codex": {"queue": [{"id": "q-1", "text": "waiting", "params": {}, "request": null}]},
+    });
+    droppen_instance::db::at(&db)
+        .write(|tx| {
+            tx.execute(
+                "INSERT INTO runs (run_id, session_id, ordinal, payload) VALUES (?1, ?2, 0, ?3)",
+                ("codex-run-under-test", CODEX_SESSION, record.to_string()),
+            )
+        })
+        .expect("seed the run journal");
+
+    let probe = Probe::start_at(home.path()).await;
+    let path = format!("/api/sessions/codex/{CODEX_SESSION}");
+    let seen = probe.get_json(&path).await;
+    assert_eq!(seen["injection"]["state"], "running", "adopted, and watched by its pid: {seen}");
+
+    drop(stand);
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    let seen = loop {
+        let seen = probe.get_json(&path).await;
+        if seen["summary"]["resident"].is_object() {
+            break seen;
+        }
+        assert!(std::time::Instant::now() < deadline, "the dead app server's queue never came back as a resident: {seen}");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    assert_eq!(seen["summary"]["resident"]["queued"], 1, "holding what was waiting: {seen}");
+    let row = only_record(&db);
+    let queue: Vec<&str> = row["codex"]["queue"].as_array().expect("a queue").iter().map(|q| q["text"].as_str().expect("text")).collect();
+    assert_eq!(queue, ["waiting"], "and the row keeps it: {row}");
+    probe.stop().await;
+}
+
 /// A server started from the real binary, on a home directory the test owns.
 ///
 /// It kills its own process group on the way out. Without that, a test that

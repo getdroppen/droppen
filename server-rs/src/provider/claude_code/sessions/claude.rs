@@ -972,7 +972,7 @@ mod tests {
         // Codex is left alone whatever the filesystem says: `~/.codex` hides
         // archived threads from every lookup cheap enough to run at boot, so
         // "not found" there is not "gone".
-        crate::sessions::codex::CodexSessions.record_owned(&paths, "archived-thread").await.expect("record");
+        crate::provider::codex::sessions::codex::CodexSessions.record_owned(&paths, "archived-thread").await.expect("record");
 
         ClaudeCodeSessions.prune_owned(&paths).await;
 
@@ -1473,7 +1473,7 @@ mod tests {
         assert!(find_in_root(&paths, ClaudeRoot::Local, "hidden").await.is_some(), "the file is there");
         assert_eq!(ClaudeCodeSessions.find_root(&paths, "hidden").await, None, "but archived");
         assert_eq!(ClaudeCodeSessions.find_root(&paths, "nothing").await, None);
-        assert_eq!(crate::sessions::codex::CodexSessions.find_root(&paths, "local").await, None, "codex has no Claude root");
+        assert_eq!(crate::provider::codex::sessions::codex::CodexSessions.find_root(&paths, "local").await, None, "codex has no Claude root");
         assert_eq!(crate::provider::acp::sessions::AcpSessions.find_root(&paths, "local").await, None, "nor an ACP agent");
     }
 

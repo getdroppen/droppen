@@ -30,7 +30,7 @@
 //! * `inject-locks` — one instance's claim on a running session, which is what
 //!   stops another spawning a second CLI against it (the server's `provider::lock`).
 //! * `codex-claims` — which instance made which codex thread
-//!   (the server's `sessions::codex_claims`). Every other kind of ownership can be a
+//!   (the server's `provider::codex::sessions::codex_claims`). Every other kind of ownership can be a
 //!   directory; this one cannot, because `~/.codex` is one directory for the
 //!   whole machine, so a sibling can only tell A's thread from the user's own if
 //!   A says so somewhere the sibling reads.

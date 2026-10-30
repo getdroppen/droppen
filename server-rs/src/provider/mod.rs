@@ -23,8 +23,8 @@ use droppen_base::time::iso8601;
 use gotcha::Schematic;
 
 pub mod acp;
-pub(crate) mod app_server;
 pub mod claude_code;
+pub mod codex;
 mod common;
 pub mod drafts;
 mod gate;
@@ -182,19 +182,6 @@ pub struct SendOptions {
     /// ([`crate::provider::acp::agents`]). A message to an existing session always goes to
     /// the agent that session runs on.
     pub acp_agent: Option<String>,
-}
-
-/// Mode names aligned with current Codex terminology, mapped onto what
-/// `codex exec` actually supports (approvals are always "never" headless).
-/// Raw sandbox values are kept as aliases for older stored preferences.
-pub(crate) fn codex_permission_flags(permission: &str) -> Result<Vec<&'static str>, InjectError> {
-    Ok(match permission {
-        "auto" | "workspace-write" => vec!["--sandbox", "workspace-write"],
-        "read-only" => vec!["--sandbox", "read-only"],
-        "full-access" | "danger-full-access" => vec!["--sandbox", "danger-full-access"],
-        "bypass-all" => vec!["--dangerously-bypass-approvals-and-sandbox"],
-        other => return Err(InjectError::message(format!("unknown codex permission mode: {other}"))),
-    })
 }
 
 /// The suffix that tells a CLI where its attachments are.
@@ -496,7 +483,7 @@ impl RunEntry {
 /// What every provider's runs share: the runs map and its journal, the
 /// receipts, questions and drafts, whom a change is told to, the accounts a
 /// start is placed on, and the watchdog's timings. Each provider's own runs
-/// reach it through themselves ([`app_server::CodexRuns`],
+/// reach it through themselves ([`codex::app_server::CodexRuns`],
 /// [`claude_code::resident::ClaudeCodeRuns`], [`acp::AcpRuns`]).
 pub struct RunHost {
     /// The stored logins, for one job only: taking the credentials this server
@@ -1566,20 +1553,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn codex_permission_aliases_map_onto_exec_flags() {
-        assert_eq!(codex_permission_flags("auto").expect("auto"), ["--sandbox", "workspace-write"]);
-        assert_eq!(
-            codex_permission_flags("workspace-write").expect("alias"),
-            ["--sandbox", "workspace-write"]
-        );
-        assert_eq!(
-            codex_permission_flags("bypass-all").expect("bypass"),
-            ["--dangerously-bypass-approvals-and-sandbox"]
-        );
-        assert!(codex_permission_flags("nonsense").is_err());
-    }
-
-    #[test]
     fn the_attachment_suffix_is_what_the_transcript_parser_reads_back() {
         let suffix = attachment_suffix(&["/tmp/a.png".to_string(), "/tmp/b.txt".to_string()]);
         let split = droppen_sessions::util::parse_attachment_suffix(&format!("hi{suffix}"));
@@ -1749,7 +1722,7 @@ mod tests {
             payload: runs::Payload::new(),
         };
 
-        let codex = providers.provider::<app_server::Codex>().expect("Codex").runs().clone();
+        let codex = providers.provider::<codex::app_server::Codex>().expect("Codex").runs().clone();
         let app_server = runs::RunRecord {
             run_id: "run-app-server".to_string(),
             resident: true,

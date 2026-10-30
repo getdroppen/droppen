@@ -5,7 +5,7 @@ use futures_util::future::BoxFuture;
 
 use droppen_accounts::login::{LocalPlan, Login};
 use droppen_accounts::local_login::LocalLoginState;
-use crate::accounts::quota::codex::{app_server_call, CodexReadingExt};
+use crate::provider::codex::quota::{app_server_call, CodexReadingExt};
 use droppen_accounts::quota::readings::SharedReading;
 use droppen_accounts::quota::{CliTextExt, CodexQuota, ProbeRoots, UsageProbe};
 use droppen_accounts::store::{AccountError, AccountKind, AccountLaunch, AccountProvider, CODEX_BASE_URL_VAR, CODEX_KEY_CANDIDATES};

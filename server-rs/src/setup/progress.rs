@@ -531,7 +531,7 @@ mod tests {
         let mut state = crate::api::test_support::state(home.path()).await;
         state.desktop_app = true;
         assert!(answered(&SetupState::from_ref(&state), fresh.clone()).await.auto_open);
-        crate::sessions::codex::CodexSessions.record_owned(&state.drive.paths, "0199a3b4-c5d6-7e8f-9a0b-1c2d3e4f5a6b")
+        crate::provider::codex::sessions::codex::CodexSessions.record_owned(&state.drive.paths, "0199a3b4-c5d6-7e8f-9a0b-1c2d3e4f5a6b")
             .await
             .expect("record");
         assert!(!answered(&SetupState::from_ref(&state), fresh).await.auto_open, "a Codex thread of its own");

@@ -2012,7 +2012,7 @@ mod tests {
         let mut body = vec![line("session_meta", json!({"id": "x", "cwd": "/Users/me/proj"}))];
         body.extend(lines.iter().cloned());
         std::fs::write(&path, body.join("\n") + "\n").expect("rollout");
-        crate::sessions::codex::parse_codex_transcript(&Paths::new(home.to_path_buf()), &path)
+        crate::provider::codex::sessions::codex::parse_codex_transcript(&Paths::new(home.to_path_buf()), &path)
             .await
             .expect("parse")
     }

@@ -1,7 +1,7 @@
 //! The models each local CLI can be asked for.
 //!
 //! Every CLI is asked in its own way, because each answers in its own way: Codex
-//! publishes a cache file ([`codex`]), Claude Code answers over its control
+//! publishes a cache file ([`crate::provider::codex::models`]), Claude Code answers over its control
 //! protocol ([`crate::provider::claude_code::models`]), and an ACP agent publishes a `model` option
 //! ([`crate::provider::acp::models`]). So each provider answers [`Models`] for its own CLI, and the
 //! route asks the provider of the source it is asked about.
@@ -22,7 +22,6 @@ use droppen_http::extract::ApiQuery;
 use droppen_http::openapi_ext::{ExtraResponses, Nullable, Optional};
 use droppen_sessions::Source;
 
-pub mod codex;
 
 /// One model the local CLI can be asked for.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Schematic)]
