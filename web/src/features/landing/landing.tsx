@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import i18n from "i18next";
 import { useTranslation } from "react-i18next";
-import { Bell, CalendarClock, Code, FolderOpen, Info, KeyRound, ListChecks, Lock, MessageSquareReply, SquarePlus } from "lucide-react";
+import { Bell, CalendarClock, Code, FolderOpen, KeyRound, ListChecks, Lock, MessageSquareReply, SquarePlus } from "lucide-react";
 import { appHost } from "@/lib/hub/hosts";
 import { cn } from "@/lib/cn";
 import { landingBundles } from "./copy";
@@ -168,43 +168,42 @@ function Features() {
 }
 
 /**
- * The one caveat the page owes a visitor before anything else: it is a beta,
- * the encryption has not been audited, and a browser trusts the code it loaded.
- * First line of the framed column, above the hero; it links the whole account
- * of it (/security).
- */
-function BetaNote() {
-  const { t, i18n: active } = useTranslation();
-  return (
-    <div className="flex items-start gap-3 border-b border-border px-6 py-4 max-md:px-4">
-      <Info className="mt-0.5 size-4 shrink-0 text-muted" />
-      <p className="max-w-[60em] text-xs leading-5 text-pretty text-muted">
-        {t("Droppen is in beta: its encryption design has had internal security reviews, not an external audit. Due to browser limitations, we recommend the more secure Mac app.")}
-        {gapBefore(active.language)}
-        <a {...publicLink(SECURITY_PATH)} data-testid="landing-security" className="whitespace-nowrap text-fg underline underline-offset-4 hover:no-underline">
-          {t("How the encryption works")}
-        </a>
-      </p>
-    </div>
-  );
-}
-
-/**
  * End-to-end encryption and the open-source client, once and briefly: three
- * cards and the way to the whole account (/security, `security/security.tsx`).
+ * cards, the encryption's linking the whole account of it (/security,
+ * `security/security.tsx`, where the beta's caveat is), and the client's its
+ * source.
  */
 function Security() {
   const { t, i18n: active } = useTranslation();
+  const linkClass = "whitespace-nowrap text-fg underline underline-offset-4 hover:no-underline";
   const cards = [
     { icon: KeyRound, title: t("Only devices you approve can join"), body: t("A new phone or browser can join only when a device you already have approves it. If one is lost, remove it from another phone or browser of yours: it can't decrypt anything written afterwards, and what was already synced to it can't be recalled.") },
-    { icon: Lock, title: t("End-to-end encrypted"), body: t("Encrypted on your computer and decrypted only on your devices. Droppen Hub stores only encrypted copies and Droppen relays forward only ciphertext; neither holds a key that can decrypt them.") },
-    { icon: Code, title: t("Open-source client"), body: t("The droppen command-line program, the Mac app and the web app are open source under AGPL-3.0. Droppen Hub is not open source.") },
+    {
+      icon: Lock,
+      title: t("End-to-end encrypted"),
+      body: t("Encrypted on your computer and decrypted only on your devices. Droppen Hub stores only encrypted copies and Droppen relays forward only ciphertext; neither holds a key that can decrypt them."),
+      link: (
+        <a {...publicLink(SECURITY_PATH)} data-testid="landing-security" className={linkClass}>
+          {t("How the encryption works")}
+        </a>
+      ),
+    },
+    {
+      icon: Code,
+      title: t("Open-source client"),
+      body: t("The droppen command-line program, the Mac app and the web app are open source under AGPL-3.0. Droppen Hub is not open source."),
+      link: (
+        <a href={SOURCE_URL} data-testid="landing-source" className={linkClass}>
+          {t("Read the source")}
+        </a>
+      ),
+    },
   ];
   return (
     <Section id="security">
       <SectionHead title={t("Droppen can't read your code.")} />
       <ul className="grid border-t border-border md:grid-cols-3">
-        {cards.map(({ icon: Icon, title, body }, i) => (
+        {cards.map(({ icon: Icon, title, body, link }, i) => (
           <li key={title} className={cn("flex flex-col gap-2.5 px-6 py-7 max-md:px-4", i > 0 && "border-border max-md:border-t md:border-l")}>
             <div className="flex items-center gap-2.5">
               <Icon className="size-5 shrink-0 text-fg" />
@@ -212,12 +211,10 @@ function Security() {
             </div>
             <span className="text-sm leading-6 text-pretty text-muted">
               {body}
-              {i === 2 && (
+              {link && (
                 <>
                   {gapBefore(active.language)}
-                  <a href={SOURCE_URL} data-testid="landing-source" className="whitespace-nowrap text-fg underline underline-offset-4 hover:no-underline">
-                    {t("Read the source")}
-                  </a>
+                  {link}
                 </>
               )}
             </span>
@@ -314,7 +311,6 @@ export default function LandingPage({
       <PublicHeader signedIn={signedIn} />
       <div className="md:px-8">
         <main className="mx-auto max-w-[1360px] md:border-x md:border-border">
-          <BetaNote />
           <Hero signedIn={signedIn} signup={signup} offer={offer} availability={availability} release={latest} cpu={cpu === undefined ? detectedCpu : cpu} />
           <Section id="tour">
             <ProductTour />

@@ -213,7 +213,18 @@ test("only what ships is described as live: the renewal is in testing, a passkey
   assert.ok(words.includes("their source code is at github.com/getdroppen/droppen. Droppen Hub is not open source."));
   assert.doesNotMatch(words, /will be published|available on request|until the repository is public/i);
   assert.ok(words.includes("Internal security reviews only; no external audit yet."));
+  assert.match(words, /Droppen is in beta\. Its encryption design has had internal security reviews, not an external audit\./);
   for (const claim of [/unhackable/i, /zero risk/i, /\baudited\b/i, /military[- ]grade/i, /100% secure/i, /is open[- ]source/i, /are open[- ]source/i]) assert.doesNotMatch(words, claim);
+});
+
+test("every localized beta caveat says there has been no external audit", () => {
+  for (const [lng, caveat] of [
+    ["zh-CN", /内部安全评审，还没有做过外部审计/],
+    ["zh-TW", /內部安全審查，還沒有做過外部稽核/],
+    ["ja", /社内のセキュリティレビューを受けていますが、外部監査はまだです/],
+  ] as const) {
+    assert.match(text(draw(lng)), caveat, lng);
+  }
 });
 
 test("the web-delivery gap is said plainly: a modified page can do anything the browser can, and export its keys", () => {

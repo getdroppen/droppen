@@ -110,7 +110,7 @@ test("privacy is said once: not in the header, not in the hero's numbers, one se
     assert.doesNotMatch(hero, /recovery words|keys on our servers|恢复词|復原詞|リカバリーワード|密文|ciphertext|暗号文/, lng);
     // The one section on it comes after everything the product does, and links to the whole account of it.
     assert.ok(html.indexOf('id="security"') > html.indexOf('id="offline"'), lng);
-    assert.match(html, /<a href="\/security"[^>]*data-testid="landing-security"/, lng);
+    assert.match(html.slice(html.indexOf('id="security"')), /<a href="\/security"[^>]*data-testid="landing-security"/, lng);
   }
   // No line-by-line ledger of what we can and cannot see: that is /security's.
   assert.doesNotMatch(text(draw("en")), /What we can see|What we cannot see|Who holds the keys/);
@@ -192,21 +192,18 @@ test("the numbers are the measured ones, and nothing claims more than the build 
   for (const n of ["63–73 ms", "215–227 ms", "1.5 s"]) assert.ok(words.includes(n), `missing: ${n}`);
   // What a phone can read while the computer is off: the plan's window (the agent syncs min(30 days, the plan's retention)).
   assert.ok(words.includes(`the last ${PLAN_NUMBERS.free.retentionDays} days (${PLAN_NUMBERS.pro.retentionDays} on Pro)`));
-  assert.match(words, /internal security reviews, not an external audit/);
-  assert.match(words, /Droppen is in beta[.:]/);
   for (const claim of [/unhackable/i, /zero risk/i, /\baudited\b/i, /military[- ]grade/i, /100% secure/i]) {
     assert.doesNotMatch(words, claim);
   }
   assert.deepEqual(MEASURED, { same: { direct: [1, 2], hub: [170, 215] }, phone: { direct: [63, 73], hub: [215, 227] } });
 });
 
-test("every localized beta caveat says there has been no external audit", () => {
-  for (const [lng, caveat] of [
-    ["zh-CN", /内部安全评审，尚未进行外部审计/],
-    ["zh-TW", /內部安全審查，尚未進行外部稽核/],
-    ["ja", /社内のセキュリティレビューを受けていますが、外部監査はまだです/],
-  ] as const) {
-    assert.match(text(draw(lng)), caveat, lng);
+test("the hero is the first thing on the page: the beta's caveat is /security's, not a note above it", () => {
+  for (const lng of ["en", "zh-CN", "zh-TW", "ja"]) {
+    const html = draw(lng);
+    const main = html.slice(html.indexOf("<main"));
+    assert.doesNotMatch(main.slice(0, main.indexOf("<h1")), /<p\b|<svg\b/, `${lng}: nothing above the hero's headline`);
+    assert.doesNotMatch(text(html), /external audit|外部审计|外部稽核|外部監査/, lng);
   }
 });
 
