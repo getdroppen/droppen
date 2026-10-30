@@ -41,7 +41,7 @@ fn with_codex_files(text: &str, options: &SendOptions) -> String {
 
 /// One codex account, resolved and ready to be spawned under.
 #[derive(Debug, Clone)]
-pub(in crate::provider) struct CodexAccount {
+pub(in crate::provider::codex) struct CodexAccount {
     /// Which account it is, so a live process can be compared against it.
     id: String,
     /// What it contributes to the spawn.
@@ -58,7 +58,7 @@ const RETIRE_EXIT_WAIT: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
-pub(in crate::provider) struct State {
+pub(in crate::provider::codex) struct State {
     cursor: u64,
     active: Option<String>,
     completed_turn: Option<String>,
@@ -87,7 +87,7 @@ struct Message {
 }
 
 #[derive(Clone)]
-pub(in crate::provider) struct Handle {
+pub(in crate::provider::codex) struct Handle {
     tx: mpsc::UnboundedSender<Cmd>,
     shared: Arc<Mutex<State>>,
     /// The account this process was started under, or `None` for the machine's
@@ -107,7 +107,7 @@ pub(in crate::provider) struct Handle {
 }
 
 impl Handle {
-    pub(in crate::provider) fn alive(&self) -> bool {
+    pub(in crate::provider::codex) fn alive(&self) -> bool {
         !self.tx.is_closed()
     }
 
@@ -136,14 +136,14 @@ impl Handle {
         let state = self.shared.lock().unwrap();
         self.starting() || state.active.is_some() || !state.queue.is_empty() || state.archive_request.is_some()
     }
-    pub(in crate::provider) fn visible(&self) -> bool {
+    pub(in crate::provider::codex) fn visible(&self) -> bool {
         let state = self.shared.lock().unwrap();
         !state.archived && (self.alive() || !state.queue.is_empty())
     }
-    pub(in crate::provider) fn injection(&self) -> Option<Injection> {
+    pub(in crate::provider::codex) fn injection(&self) -> Option<Injection> {
         self.shared.lock().unwrap().injection.clone()
     }
-    pub(in crate::provider) fn state(&self) -> ResidentState {
+    pub(in crate::provider::codex) fn state(&self) -> ResidentState {
         let state = self.shared.lock().unwrap();
         ResidentState {
             phase: if self.starting() {
@@ -174,14 +174,14 @@ impl Handle {
             question: None,
         }
     }
-    pub(in crate::provider) fn info(&self) -> droppen_sessions::ResidentInfo {
+    pub(in crate::provider::codex) fn info(&self) -> droppen_sessions::ResidentInfo {
         self.state().into()
     }
-    pub(in crate::provider) fn interrupt(&self) -> bool {
+    pub(in crate::provider::codex) fn interrupt(&self) -> bool {
         let state = self.shared.lock().unwrap();
         (state.active.is_some() || state.queue.iter().any(|q| q.request.is_some())) && self.tx.send(Cmd::Interrupt).is_ok()
     }
-    pub(in crate::provider) async fn queue_action(&self, id: &str, steer: bool) -> QueueOutcome {
+    pub(in crate::provider::codex) async fn queue_action(&self, id: &str, steer: bool) -> QueueOutcome {
         let (reply, rx) = oneshot::channel();
         if self.tx.send(Cmd::Queue { id: id.into(), steer, reply }).is_err() {
             return QueueOutcome::Unreachable;
@@ -459,7 +459,7 @@ async fn rpc(runs: &CodexRuns, link: &mut shim::Link, method: &str, params: impl
 /// What a Codex run keeps in its journal row, beside what every run says
 /// ([`runs::RunRecord<CodexRun>`]): written after those fields, in this order.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub(in crate::provider) struct CodexRun {
+pub struct CodexRun {
     /// Three keys every row carries and only a Claude Code resident reads: a
     /// Codex run's are `null`, `null` and `[]`, kept as they were read so a
     /// Codex row is written back unchanged.
@@ -472,7 +472,7 @@ pub(in crate::provider) struct CodexRun {
     /// Codex App Server delivery state and replay checkpoint. Absent for a
     /// legacy exec run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(in crate::provider) codex: Option<State>,
+    pub(in crate::provider::codex) codex: Option<State>,
     /// The stored account a codex app-server was started under.
     ///
     /// The codex half of a Claude Code run's fingerprint, and a field of its own
@@ -481,11 +481,11 @@ pub(in crate::provider) struct CodexRun {
     /// and never a secret. `None` is the machine's own `~/.codex` login, which
     /// is what every record written before accounts had a second CLI means.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(in crate::provider) codex_account: Option<String>,
+    pub(in crate::provider::codex) codex_account: Option<String>,
 }
 
 /// Codex, as the provider registry knows it.
-pub(crate) struct Codex {
+pub struct Codex {
     /// Its sessions' app servers.
     runs: Arc<CodexRuns>,
     /// Its CLI's models.
@@ -494,7 +494,7 @@ pub(crate) struct Codex {
 
 impl Codex {
     /// Codex, its runs on `registry`'s host.
-    pub(crate) fn new(registry: Arc<InjectionRegistry>) -> Self {
+    pub fn new(registry: Arc<InjectionRegistry>) -> Self {
         let models = crate::provider::codex::models::CodexModels::new(registry.host.paths.clone());
         Self {
             runs: CodexRuns::new(registry.host.clone()),
@@ -521,7 +521,7 @@ pub(crate) struct CodexRuns {
 
 impl CodexRuns {
     /// None yet, on `host`.
-    pub(in crate::provider) fn new(host: Arc<RunHost>) -> Arc<Self> {
+    pub(in crate::provider::codex) fn new(host: Arc<RunHost>) -> Arc<Self> {
         let runs = Arc::new(Self {
             host,
             codex_servers: Mutex::new(HashMap::new()),
@@ -763,7 +763,7 @@ impl CodexRuns {
     /// The state of a codex session's run: its app server's, whenever there is
     /// a handle (even one that has nothing to say yet), and otherwise the runs
     /// map's, where a `codex exec` run adopted from the previous server is.
-    pub(in crate::provider) fn codex_injection(&self, id: &str) -> Option<Injection> {
+    pub(in crate::provider::codex) fn codex_injection(&self, id: &str) -> Option<Injection> {
         if let Some(handle) = self.codex_handle(id) {
             return handle.injection();
         }
@@ -772,7 +772,7 @@ impl CodexRuns {
 
     /// Codex's part of the session list's snapshot ([`ProviderRuns::add_to`]): the app servers
     /// the list is to show, and the state of every app server's run.
-    pub(in crate::provider) fn codex_driver_states(&self, states: &mut DriverStatesBuilder) {
+    pub(in crate::provider::codex) fn codex_driver_states(&self, states: &mut DriverStatesBuilder) {
         for (id, handle) in self.codex_servers.lock().unwrap().iter().filter(|(_, h)| h.visible()) {
             states.resident(self.host.key_of(Source::Codex, id), handle.info());
         }
@@ -784,7 +784,7 @@ impl CodexRuns {
     }
 
     /// A dead CLI must not take already-accepted, undelivered messages with it.
-    pub(in crate::provider) fn codex_dead(&self, mut record: runs::RunRecord<CodexRun>) {
+    pub(in crate::provider::codex) fn codex_dead(&self, mut record: runs::RunRecord<CodexRun>) {
         let mut state = record.payload.codex.clone().unwrap_or_default();
         let interrupted = state.interrupt_requested || state.injection.as_ref().is_some_and(|i| i.interrupted);
         let unfinished = state.active.take().is_some() || state.queue.iter().any(|q| q.request.is_some());
@@ -829,7 +829,7 @@ impl CodexRuns {
         );
     }
 
-    pub(in crate::provider) async fn codex_queue_action(&self, id: &str, qid: &str, steer: bool) -> QueueOutcome {
+    pub(in crate::provider::codex) async fn codex_queue_action(&self, id: &str, qid: &str, steer: bool) -> QueueOutcome {
         let Some(handle) = self.codex_handle(id) else {
             return QueueOutcome::NoResident;
         };
@@ -872,13 +872,13 @@ impl CodexRuns {
             .find(|r| r.payload.codex.is_some())
     }
 
-    pub(in crate::provider) fn codex_handle(&self, id: &str) -> Option<Handle> {
+    pub(in crate::provider::codex) fn codex_handle(&self, id: &str) -> Option<Handle> {
         self.codex_servers.lock().unwrap().get(id).cloned()
     }
 
     /// A loaded thread's writer owns its archive operation too. A separate
     /// `codex archive` cannot acquire that writer lock, even between turns.
-    pub async fn archive_codex(self: &Arc<Self>, gate: &SpawnGate, id: &str) -> Result<(), droppen_sessions::archive::ArchiveError> {
+    pub(in crate::provider::codex) async fn archive_codex(self: &Arc<Self>, gate: &SpawnGate, id: &str) -> Result<(), droppen_sessions::archive::ArchiveError> {
         // Match delivery's gate: no new resident or accepted message can slip
         // between selecting the archive path and committing its result.
         let mut permit = gate.permit().await;
@@ -941,7 +941,7 @@ impl CodexRuns {
         Ok(())
     }
 
-    pub(in crate::provider) async fn codex_deliver(
+    pub(in crate::provider::codex) async fn codex_deliver(
         self: &Arc<Self>,
         gate: &SpawnGate,
         id: Option<&str>,
