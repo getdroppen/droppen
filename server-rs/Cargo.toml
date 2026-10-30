@@ -201,6 +201,15 @@ opt-level = 3
 [dev-dependencies]
 # Reading a compressed answer back (`static_files`' tests).
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
+# The source scans of the spawn gate and the runs (`provider::with_providers::gate`):
+# each file parsed, what it builds for tests alone dropped, and the rest read
+# token by token; `toml` reads a crate's manifest for whether it depends on the
+# provider base. The versions the lock has already, for tests alone; with
+# `span-locations`, a file the scans cannot parse is named with its line.
+syn = { version = "2", features = ["full", "visit-mut"] }
+quote = "1"
+proc-macro2 = { version = "1", features = ["span-locations"] }
+toml = "0.8"
 # Scratch homes and directories for the tests.
 tempfile = "3"
 # `start_paused` runtimes, so the websocket heartbeat's minute-scale schedule can
