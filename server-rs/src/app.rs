@@ -139,14 +139,10 @@ impl GotchaApp for RemoteHandApp {
             }));
             // Found once, here: an entry that registers no ACP provider fails
             // to start rather than on the first request for an agent.
-            let acp = drive
-                .providers
-                .provider::<droppen_provider_acp::Acp>()
-                .ok_or_else(|| GotchaError::message("no ACP provider is registered"))?
-                .runs()
-                .clone();
+            let acp_agents = droppen_provider_acp::agents::AcpAgentState::new(paths.clone(), drive.providers.clone())
+                .ok_or_else(|| GotchaError::message("no ACP provider is registered"))?;
             Ok(AppState {
-                acp,
+                acp_agents,
                 cloud: droppen_cloud::Cloud::new(paths.as_ref().clone()),
                 // Touches nothing yet: the installed packages are read by the
                 // first status, the instance database by the first switch or

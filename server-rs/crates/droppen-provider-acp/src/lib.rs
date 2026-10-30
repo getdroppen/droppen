@@ -52,6 +52,10 @@ mod driver;
 pub mod models;
 pub mod protocol;
 pub mod sessions;
+/// What a server's test sets up that production code does only under the
+/// spawn gate. Only built for tests and with the `test-support` feature.
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -316,7 +320,7 @@ impl Acp {
     }
 
     /// Its runs, for the ACP agents' own routes.
-    pub fn runs(&self) -> &Arc<AcpRuns> {
+    pub(crate) fn runs(&self) -> &Arc<AcpRuns> {
         &self.runs
     }
 }
@@ -325,7 +329,7 @@ impl Acp {
 /// agent offers, and the probes that ask it. Kept here rather than on the
 /// host they run on, whose shared parts — the paths, the runs journal, the
 /// feeds — they reach through it.
-pub struct AcpRuns {
+pub(crate) struct AcpRuns {
     /// What they run on.
     host: Arc<RunHost>,
     /// The agent process behind each ACP session, keyed

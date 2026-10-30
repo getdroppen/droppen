@@ -114,9 +114,9 @@ pub struct AppState {
     /// Every `claude setup-token` run this server has started, which the token
     /// wizard's routes start, poll and finish.
     pub wizards: Arc<crate::provider::claude_code::setup_token::Captures>,
-    /// The ACP agents' runs, which their own routes check and stop agents
-    /// through: found among the providers once, when this state is built.
-    pub(crate) acp: Arc<droppen_provider_acp::AcpRuns>,
+    /// The ACP agents' routes' state: the ACP provider's runs, found among the
+    /// providers once, when this state is built.
+    pub(crate) acp_agents: droppen_provider_acp::agents::AcpAgentState,
     /// Every live web terminal, so shutdown can kill them.
     pub terminals: Arc<droppen_workbench::terminals::Registry>,
     /// Instant chats: the provider configuration and the API-backed store.

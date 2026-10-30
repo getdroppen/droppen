@@ -318,7 +318,12 @@ impl AcpAgentRegistry {
     /// Apply a patch to the agent `id`, adding it when there is none, and persist
     /// it; or say why it was refused. A new agent with a built-in's id starts from
     /// that description.
-    pub fn update(&self, id: &str, patch: &AcpAgentUpdate) -> Result<AcpAgent, String> {
+    ///
+    /// The crate's own: the routes change an agent under the spawn gate
+    /// ([`AcpRuns::reconfigure_acp_agent`](crate::AcpRuns::reconfigure_acp_agent)),
+    /// so that no session starts on it halfway. A server's test configures one
+    /// with [`crate::testing::configure`].
+    pub(crate) fn update(&self, id: &str, patch: &AcpAgentUpdate) -> Result<AcpAgent, String> {
         if !valid_agent_id(id) {
             return Err(format!(
                 "an agent id is at most {MAX_AGENT_ID} lowercase letters, digits and dashes, starting with a letter or digit"
@@ -375,7 +380,11 @@ impl AcpAgentRegistry {
     }
 
     /// Forget the agent `id`; `false` when there was none. Its sessions stay.
-    pub fn remove(&self, id: &str) -> bool {
+    ///
+    /// The crate's own: the route removes an agent under the spawn gate, and
+    /// only when none of its sessions is busy
+    /// ([`AcpRuns::remove_acp_agent`](crate::AcpRuns::remove_acp_agent)).
+    pub(crate) fn remove(&self, id: &str) -> bool {
         if !valid_agent_id(id) {
             return false;
         }
@@ -655,13 +664,24 @@ pub struct AcpAgentUpdate {
 #[derive(Clone)]
 pub struct AcpAgentState {
     /// Where the agents' configuration lives.
-    pub paths: Arc<droppen_instance::paths::Paths>,
-    /// The live runs, which check an agent and stop its sessions when it goes.
-    pub acp: Arc<crate::AcpRuns>,
+    paths: Arc<droppen_instance::paths::Paths>,
+    /// The live runs, which check an agent and stop its sessions when it goes:
+    /// the ACP provider's own, in `providers`.
+    acp: Arc<crate::AcpRuns>,
     /// The providers, whose spawn gate the runs do that under.
-    pub providers: Arc<droppen_provider::ProviderRegistry>,
+    providers: Arc<droppen_provider::ProviderRegistry>,
 }
 droppen_http::substate!(AcpAgentState);
+
+impl AcpAgentState {
+    /// The routes' state over `paths`, with the runs of the ACP provider
+    /// `providers` holds: the runs and the spawn gate the registry lends them
+    /// are one provider's. `None` when it holds no ACP provider.
+    pub fn new(paths: Arc<droppen_instance::paths::Paths>, providers: Arc<droppen_provider::ProviderRegistry>) -> Option<Self> {
+        let acp = providers.provider::<crate::Acp>()?.runs().clone();
+        Some(Self { paths, acp, providers })
+    }
+}
 
 /// The ACP agents configured on this machine, and the built-in descriptions.
 #[api(id = "acp_agents", group = "acp", summary = "ACP agents")]
