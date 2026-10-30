@@ -253,8 +253,9 @@ droppen-provider = { path = "crates/droppen-provider", features = ["test-support
 # What the server's tests reach of the drive (`droppen_drive::testing`): the
 # search and first-unread helpers, and the list broadcast's capacity.
 droppen-drive = { path = "crates/droppen-drive", features = ["test-support"] }
-# An ACP agent configured without the gate (`droppen_provider_acp::testing`),
-# for the provider registry's and the agents' routes' tests.
+# An ACP agent configured without the gate, and an agent's last check
+# recorded (`droppen_provider_acp::testing`), for the provider registry's and
+# the agents' routes' tests.
 droppen-provider-acp = { path = "crates/droppen-provider-acp", features = ["test-support"] }
 # The guide's stand-in logins, its state without a server and its runner
 # fixture (`droppen_setup::{testing, runner::fixture}`), for the server's tests
