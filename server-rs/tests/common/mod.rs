@@ -843,7 +843,11 @@ impl ServerProcess {
     /// Whether `pid` is still this process: its start time, read again, is
     /// the one listed with it.
     fn is_still_running(&self) -> bool {
-        let Ok(output) = std::process::Command::new("/bin/ps").args(["-o", "lstart=", "-p", &self.pid.to_string()]).output() else {
+        let Ok(output) = std::process::Command::new("/bin/ps")
+            .args(["-o", "lstart=", "-p", &self.pid.to_string()])
+            .env("LC_ALL", "C")
+            .output()
+        else {
             return false;
         };
         same_start(&String::from_utf8_lossy(&output.stdout), &self.started)
@@ -883,7 +887,13 @@ fn same_start(read: &str, listed: &str) -> bool {
 /// processes, running at the same time, are never among them.
 pub fn server_processes_under(home: &Path) -> Vec<ServerProcess> {
     let home = test_home(home);
-    let Ok(output) = std::process::Command::new("/bin/ps").args(["-A", "-ww", "-o", "pid=,lstart=,command="]).output() else {
+    // `lstart` in the C locale, where it is five words: in others (zh_CN, ja_JP)
+    // it is four, and the program's path would be read as part of it.
+    let Ok(output) = std::process::Command::new("/bin/ps")
+        .args(["-A", "-ww", "-o", "pid=,lstart=,command="])
+        .env("LC_ALL", "C")
+        .output()
+    else {
         return Vec::new();
     };
     let under = format!("{}/", home.display());
