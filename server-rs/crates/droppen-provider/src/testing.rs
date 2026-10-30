@@ -139,10 +139,12 @@ pub fn injection_registry_on(host: Arc<RunHost>, instance: InstanceDirs, decorat
     Arc::new(InjectionRegistry { host, instance, decoration })
 }
 
-/// Watch `record`'s run as the boot pass does once it has claimed it with
-/// `claim`: back in the runs map, its pid watched until it ends.
-pub fn watch_adopted(registry: &Arc<InjectionRegistry>, runs: Arc<dyn ProviderRuns>, record: runs::RunRecord, claim: gate::SessionLease) {
-    registry.clone().resume(runs, record, claim);
+impl InjectionRegistry {
+    /// Watch `record`'s run as the boot pass does once it has claimed it
+    /// with `claim`: back in the runs map, its pid watched until it ends.
+    pub fn watch_adopted(self: &Arc<Self>, runs: Arc<dyn ProviderRuns>, record: runs::RunRecord, claim: gate::SessionLease) {
+        self.clone().resume(runs, record, claim);
+    }
 }
 
 /// Send `sig` to `pid`, as the host does to a run it has proved is its own:
@@ -201,11 +203,11 @@ static SHIM_MODULE: OnceLock<&'static str> = OnceLock::new();
 ///
 /// [`droppen_pty::shim_program`] cannot serve a test. From a test binary it
 /// falls back to the server binary beside it in `target/debug`, which
-/// `cargo test --lib` never builds and which any other run may have left there
-/// from older source. Absent, the test binary itself was run as
-/// `session-shim --socket …`, libtest refused the option and exited 101, and
-/// every respawn timed out on a socket nobody would bind. Present, the shim
-/// under test was whatever that binary happened to be. The test binary is
+/// `cargo test --lib` does not build and which another run may have left
+/// there from older source. Where there is none, the test binary itself is
+/// run as `session-shim --socket …`: libtest refuses the option and exits
+/// 101, and every respawn waits out a socket nobody binds. Where there is
+/// one, the shim under test is whatever that binary is. The test binary is
 /// always there, and always this source. This crate's own tests run theirs
 /// without asking.
 pub fn shims_run_as(module: &'static str) {

@@ -15,7 +15,7 @@ use droppen_provider::*;
 /// Stop must never signal a pid that has stopped being the run it named.
 ///
 /// The window this closes is real and routine rather than exotic: an
-/// adopted run has no `Child` to be woken by, so [`watch_adopted`] only
+/// adopted run has no `Child` to be woken by, so its watch only
 /// learns its CLI has exited on a two-second poll, and the kernel is free
 /// to hand that pid to anything at all in between. Pressing Stop inside
 /// those two seconds used to `SIGTERM` whatever now holds the number.
@@ -59,7 +59,7 @@ async fn stop_never_signals_a_pid_that_is_no_longer_the_run_it_named() {
     let providers = ProviderRegistry::new(registry.clone(), crate::app::register_providers);
     for (source, session) in [(Source::Claude, CLAUDE), (Source::Codex, CODEX)] {
         let claim = providers.gate().lease(source, session).expect("a free session must be claimable");
-        droppen_provider::testing::watch_adopted(&registry, 
+        registry.watch_adopted(
             providers.runs()[&source].clone(),
             runs::RunRecord {
                 run_id: format!("run-{session}"),
@@ -165,7 +165,7 @@ async fn stop_on_a_codex_session_whose_app_server_is_gone_reaches_no_run() {
     assert!(handle.visible() && !handle.alive(), "listed, with no process behind it");
 
     let claim = providers.gate().lease(Source::Codex, SESSION).expect("a free session must be claimable");
-    droppen_provider::testing::watch_adopted(&registry, providers.runs()[&Source::Codex].clone(), adopted, claim);
+    registry.watch_adopted(providers.runs()[&Source::Codex].clone(), adopted, claim);
 
     assert!(!providers.interrupt(Source::Codex, SESSION), "nothing is left to stop");
     tokio::time::sleep(Duration::from_millis(300)).await;
