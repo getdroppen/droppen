@@ -2,6 +2,10 @@
 //! controls, on a registry whose timings the test sets. A module of its own,
 //! outside the tests, because the server's feed tests run a resident too.
 
+// Under `test-support` the server's feed test uses only what is `pub`; the
+// rest is the resident tests' own, and unused outside them.
+#![cfg_attr(not(test), allow(dead_code))]
+
 use super::*;
 use std::collections::HashMap;
 use std::path::Path;
@@ -9,21 +13,22 @@ use droppen_instance::instance::InstanceDirs;
 use droppen_instance::paths::Paths;
 
 /// The id every fake claude in this module answers under.
-pub(crate) const SESSION: &str = "11111111-1111-4111-8111-111111111111";
+pub const SESSION: &str = "11111111-1111-4111-8111-111111111111";
 
 /// The id a `--fork-session` answers under instead.
 pub(super) const FORKED: &str = "22222222-2222-4222-8222-222222222222";
 
 /// A driver, the fake claude it is driving, and the files both write.
-pub(crate) struct Harness {
-    pub(crate) _home: tempfile::TempDir,
+pub struct Harness {
+    /// The test's home, kept for as long as the harness is.
+    pub _home: tempfile::TempDir,
     /// Claude Code's runs, which the driver under test is one of.
     pub(super) registry: Arc<ClaudeCodeRuns>,
     /// The injection registry over them, as a server's `Drive` holds it.
-    pub(crate) injections: Arc<InjectionRegistry>,
+    pub injections: Arc<InjectionRegistry>,
     /// Every provider over `registry`, as the routes and the feeds ask
     /// them, and the spawn gate they lend.
-    pub(crate) providers: Arc<droppen_provider::ProviderRegistry>,
+    pub providers: Arc<droppen_provider::ProviderRegistry>,
     pub(super) tx: mpsc::UnboundedSender<Cmd>,
     pub(super) shared: Arc<Mutex<ResidentState>>,
     /// Every line the fake claude read off its stdin, in order.
@@ -63,7 +68,7 @@ impl Drop for Harness {
 /// Codex's, which no Claude Code run asks.
 pub(super) fn logins() -> droppen_accounts::login::Logins {
     droppen_accounts::login::Logins {
-        claude: Arc::new(crate::provider::claude_code::login::ClaudeCodeLogin),
+        claude: Arc::new(crate::login::ClaudeCodeLogin),
         codex: droppen_accounts::login::Logins::stand_ins().codex,
     }
 }
@@ -106,7 +111,7 @@ pub(super) fn registry(home: &Path, stall: Duration, tick: Duration, step: Durat
         // same reason the timings are set by hand: `Recorders::new` reads
         // the environment, and `a_session_records_its_whole_life` needs the
         // answer to be yes whatever the developer's shell says.
-        recorders: crate::provider::claude_code::record::Recorders::new_at(dirs.session_logs(), None, paths.clone()),
+        recorders: crate::record::Recorders::new_at(dirs.session_logs(), None, paths.clone()),
         decoration: droppen_provider::testing::no_decoration(),
         reading_recheck: Mutex::new(None),
         host: host.clone(),
@@ -359,7 +364,7 @@ pub(super) struct Adoption {
     /// What the session's transcript says when the driver attaches, written
     /// and backdated past [`TRANSCRIPT_SETTLES_AFTER`] — so the transcript is
     /// a witness the replay's settle really asks. Attach only.
-    pub(crate) transcript: Option<String>,
+    pub transcript: Option<String>,
     /// How often the driver reads the transcript for folded steers. Short
     /// by default, so a test watching for one sees it inside its own wait;
     /// [`NEVER_SETTLES`] for a test that has to show the feed's nudge alone
@@ -531,7 +536,7 @@ impl Harness {
         // behind, written where a real one is: under the session's own
         // transcript, by the process itself.
         let transcript = transcript_path(home.path());
-        let subagents = crate::provider::claude_code::sessions::transcript::subagent_dir(&transcript);
+        let subagents = crate::sessions::transcript::subagent_dir(&transcript);
         // Where claude would put this session's task output: under the root
         // the test registry owns, behind a slug the probe never has to
         // guess — it finds the session id one level down instead.
@@ -715,12 +720,12 @@ impl Harness {
     }
 
     /// The ordinary timings around a different `claude`.
-    pub(crate) async fn ordinary_with(body: &str) -> Harness {
+    pub async fn ordinary_with(body: &str) -> Harness {
         Harness::start(body, Duration::from_secs(3600), Duration::from_secs(3600), Duration::from_millis(120)).await
     }
 
     /// A message that fits the running process, and could start another.
-    pub(crate) fn send(&self, text: &str) {
+    pub fn send(&self, text: &str) {
         self.send_with(text, self.recipe(Fingerprint::default()));
     }
 
@@ -821,7 +826,7 @@ impl Harness {
     }
 
     /// Let the fake claude finish the turn it is holding.
-    pub(crate) fn release(&self) {
+    pub fn release(&self) {
         std::fs::write(&self.go, b"").expect("go");
     }
 
@@ -843,7 +848,8 @@ impl Harness {
             .expect("a Claude Code record")
     }
 
-    pub(crate) fn state(&self) -> ResidentState {
+    /// The resident's state as its driver last published it.
+    pub fn state(&self) -> ResidentState {
         self.shared.lock().expect("mirror").clone()
     }
 
@@ -879,7 +885,7 @@ impl Harness {
 
     /// Every provider over this harness's registry, as the routes and the
     /// feeds ask them.
-    pub(crate) fn providers(&self) -> Arc<droppen_provider::ProviderRegistry> {
+    pub fn providers(&self) -> Arc<droppen_provider::ProviderRegistry> {
         self.providers.clone()
     }
 
@@ -893,10 +899,10 @@ impl Harness {
     }
 
     /// This session's flight recording, in the order it was written.
-    pub(super) fn recording(&self) -> Vec<crate::provider::claude_code::record::Event> {
+    pub(super) fn recording(&self) -> Vec<crate::record::Event> {
         let paths = Paths::new(self._home.path().to_path_buf());
         let dirs = InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
-        crate::provider::claude_code::record::read_log(&dirs.session_logs().join(format!("{SESSION}.ndjson")))
+        crate::record::read_log(&dirs.session_logs().join(format!("{SESSION}.ndjson")))
             .unwrap_or_default()
             .into_iter()
             .map(|line| line.event)
@@ -905,7 +911,7 @@ impl Harness {
 
     /// Where the transcript of this session would be if a real claude were
     /// writing one, and the directory its subagents write into.
-    pub(crate) fn transcript(&self) -> PathBuf {
+    pub fn transcript(&self) -> PathBuf {
         transcript_path(self._home.path())
     }
 }
@@ -916,13 +922,13 @@ impl Harness {
 /// the fake claude's script has to name it.
 pub(super) fn transcript_path(home: &Path) -> PathBuf {
     let paths = Paths::new(home.to_path_buf());
-    let project = crate::provider::claude_code::claude_roots::ClaudeRoots::of(&paths).managed_projects().join("-w-repo");
+    let project = crate::claude_roots::ClaudeRoots::of(&paths).managed_projects().join("-w-repo");
     std::fs::create_dir_all(&project).expect("project dir");
     project.join(format!("{SESSION}.jsonl"))
 }
 
 /// Poll until `check` passes, or fail rather than hang forever.
-pub(crate) async fn until(what: &str, mut check: impl FnMut() -> bool) {
+pub async fn until(what: &str, mut check: impl FnMut() -> bool) {
     for _ in 0..400 {
         if check() {
             return;
@@ -1026,7 +1032,7 @@ impl Harness {
 /// A CLI that thinks for as long as the test holds it: a count on stdout
 /// and a subagent's line beside it, then — on `$GO` — the finished text,
 /// its entry in the transcript and the `result`.
-pub(crate) fn thinks_until_released() -> String {
+pub fn thinks_until_released() -> String {
     let said = r#"{"type":"assistant","uuid":"u-early","message":{"id":"msg_early","role":"assistant","content":[{"type":"text","text":"said once the think was done"}]}}"#;
     let entry = format!(
         r#"{{"type":"assistant","uuid":"u-early","message":{{"id":"msg_early","role":"assistant","content":[{{"type":"text","text":"said once the think was done"}}]}},"timestamp":"2026-10-10T00:00:02.000Z","cwd":"/tmp","sessionId":"{SESSION}"}}"#

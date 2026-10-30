@@ -26,7 +26,7 @@ use crate::util::{read_tail_lines, try_parse};
 use crate::{Source, TranscriptSources, Transcripts};
 
 /// How much of a transcript's end is read. `TAIL_BYTES` in
-/// `provider::claude_code::sessions::claude` and `droppen_provider_codex::sessions::codex`, for the same
+/// `droppen_provider_claude_code::sessions::claude` and `droppen_provider_codex::sessions::codex`, for the same
 /// reason: it is comfortably more than one turn's worth of trailing entries.
 pub const TAIL_BYTES: u64 = 64 * 1024;
 

@@ -16,7 +16,7 @@ workspace = true
 # package stays the default member, so a bare `cargo build`/`cargo test` here
 # still means the server and nothing else.
 [workspace]
-members = [".", "crates/rh-proto", "crates/rh-relay", "crates/droppen-relay", "crates/rh-client", "crates/rh-devkit", "crates/droppen-plugin-sdk", "crates/droppen-search-path", "crates/droppen-base", "crates/droppen-instance", "crates/droppen-http", "crates/droppen-pty", "crates/droppen-supervisor", "crates/droppen-auth", "crates/droppen-files", "crates/droppen-workbench", "crates/droppen-plugins", "crates/droppen-aggregator", "crates/droppen-sessions", "crates/droppen-agent", "crates/droppen-cloud", "crates/droppen-notify", "crates/droppen-accounts", "crates/droppen-setup", "crates/droppen-provider", "crates/droppen-provider-acp", "crates/droppen-drive", "crates/droppen-provider-codex"]
+members = [".", "crates/rh-proto", "crates/rh-relay", "crates/droppen-relay", "crates/rh-client", "crates/rh-devkit", "crates/droppen-plugin-sdk", "crates/droppen-search-path", "crates/droppen-base", "crates/droppen-instance", "crates/droppen-http", "crates/droppen-pty", "crates/droppen-supervisor", "crates/droppen-auth", "crates/droppen-files", "crates/droppen-workbench", "crates/droppen-plugins", "crates/droppen-aggregator", "crates/droppen-sessions", "crates/droppen-agent", "crates/droppen-cloud", "crates/droppen-notify", "crates/droppen-accounts", "crates/droppen-setup", "crates/droppen-provider", "crates/droppen-provider-acp", "crates/droppen-drive", "crates/droppen-provider-codex", "crates/droppen-provider-claude-code"]
 
 # Every member takes serde_json from here, so `preserve_order` is on in every
 # build: a `Value` writes its keys in insertion order rather than sorted. Cargo
@@ -99,6 +99,10 @@ droppen-provider-acp = { path = "crates/droppen-provider-acp" }
 # Codex's provider: its app-server driver, its threads and their claims, its
 # model list, quota reading and login. The entry registers it.
 droppen-provider-codex = { path = "crates/droppen-provider-codex" }
+# Claude Code's provider: its resident driver, its transcripts and their
+# roots, its model list, quota reading and logins, and the flight recorder.
+# The entry registers it.
+droppen-provider-claude-code = { path = "crates/droppen-provider-claude-code" }
 # The drive: starting, sending to and answering sessions, the feeds, the
 # instant chats and the scheduled tasks. The entry builds it.
 droppen-drive = { path = "crates/droppen-drive" }
@@ -190,7 +194,7 @@ mime_guess = { version = "2", optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "http2", "charset", "json"] }
 
 # The calendar Claude Code's usage windows are counted in, and the stamps its
-# subagents' records carry (`provider::claude_code`).
+# subagents' records carry (`droppen_provider_claude_code`).
 chrono = "0.4"
 # An unoptimized argon2 at 64 MiB and three passes takes seconds rather than
 # milliseconds, which would put minutes on every `cargo test` run that touches a
@@ -258,6 +262,9 @@ droppen-drive = { path = "crates/droppen-drive", features = ["test-support"] }
 # recorded (`droppen_provider_acp::testing`), for the provider registry's and
 # the agents' routes' tests.
 droppen-provider-acp = { path = "crates/droppen-provider-acp", features = ["test-support"] }
+# The resident's test harness (`resident::test_harness`), for the test in
+# `api::feed_session` that runs a resident through a real session feed.
+droppen-provider-claude-code = { path = "crates/droppen-provider-claude-code", features = ["test-support"] }
 # The guide's stand-in logins, its state without a server and its runner
 # fixture (`droppen_setup::{testing, runner::fixture}`), for the server's tests
 # of the guide on its own logins (`src/setup_tests.rs`).

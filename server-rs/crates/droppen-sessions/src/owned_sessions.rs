@@ -247,7 +247,7 @@ async fn insert(paths: &Paths, source: Source, id: &str) -> std::io::Result<()> 
 /// Drop `id` from the registry, because the session no longer needs to be in it.
 ///
 /// The caller is Claude Code's prune at boot
-/// (`provider::claude_code::sessions::claude::ClaudeCodeSessions::prune_owned`): an entry for a
+/// (`droppen_provider_claude_code::sessions::claude::ClaudeCodeSessions::prune_owned`): an entry for a
 /// transcript that is in neither root stands for a session nothing lists or
 /// resumes.
 pub async fn forget(paths: &Paths, source: Source, id: &str) -> std::io::Result<()> {

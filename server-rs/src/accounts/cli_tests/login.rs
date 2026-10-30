@@ -1,6 +1,6 @@
 //! The logins the entry builds, and what each one's launch is.
 
-use crate::provider::claude_code::login::ClaudeCodeLogin;
+use droppen_provider_claude_code::login::ClaudeCodeLogin;
 use droppen_provider_codex::login::{CodexLogin, CODEX_DEFAULT_BASE_URL};
 use droppen_accounts::login::{Login, Logins};
 use droppen_accounts::store::{AccountError, AccountKind, AccountLaunch, AccountProvider, Credential};

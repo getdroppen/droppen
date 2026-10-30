@@ -31,7 +31,7 @@
 //!   is the hook.
 //! * **claude** is a resident process that answers message after message, so
 //!   the turn ends at a `{"type":"result"}` line and the process keeps going.
-//!   `provider::claude_code::resident` fires this once per result, which is the
+//!   `droppen_provider_claude_code::resident` fires this once per result, which is the
 //!   correction that matters: hanging the notification on the *process* would
 //!   have meant one notification per session per day, arriving when the user
 //!   closed it.

@@ -35,7 +35,7 @@
 //! and the two callers differ: a pasted credential is stored with the reason
 //! attached, so the UI can say "saved, but nothing proved this works", while a
 //! capture with two possible readings refuses to guess — see
-//! `provider::claude_code::setup_token::choose_reading`.
+//! `droppen_provider_claude_code::setup_token::choose_reading`.
 
 use std::path::PathBuf;
 use std::time::Duration;

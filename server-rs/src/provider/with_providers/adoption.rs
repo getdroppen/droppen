@@ -231,7 +231,7 @@ async fn adoption_hands_each_run_to_its_own_cli() {
         "started_at": "2026-01-01T00:00:00.000Z",
     });
     registry.host.journal.insert_raw("run-claude", CLAUDE, &claude.to_string());
-    let transcript = crate::provider::claude_code::claude_roots::ClaudeRoots::of(&paths).managed_projects().join("-work").join(format!("{CLAUDE}.jsonl"));
+    let transcript = droppen_provider_claude_code::claude_roots::ClaudeRoots::of(&paths).managed_projects().join("-work").join(format!("{CLAUDE}.jsonl"));
     std::fs::create_dir_all(transcript.parent().expect("parent")).expect("project");
     let lines = [
         serde_json::json!({"type": "user", "cwd": "/work", "timestamp": "2026-01-01T00:00:00.000Z", "message": {"content": [{"type": "text", "text": "do the thing"}]}}),
@@ -283,7 +283,7 @@ async fn a_row_of_a_source_no_provider_runs_is_left_where_it_is() {
     const CODEX: &str = "0199c1a1-7777-4777-8777-777777777777";
     let home = tempfile::tempdir().expect("tempdir");
     let (_paths, registry, providers) = adopting_with(home.path(), |providers, injections| {
-        providers.register(Arc::new(crate::provider::claude_code::resident::ClaudeCode::new(injections.clone())));
+        providers.register(Arc::new(droppen_provider_claude_code::resident::ClaudeCode::new(injections.clone())));
     });
     let row = serde_json::json!({
         "run_id": "run-codex", "source": "codex", "session_id": CODEX, "cwd": "/work", "cli_pid": gone(),

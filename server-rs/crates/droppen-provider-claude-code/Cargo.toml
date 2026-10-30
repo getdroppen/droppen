@@ -1,0 +1,65 @@
+[package]
+name = "droppen-provider-claude-code"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+publish = false
+description = "Claude Code's provider for the Droppen server: its resident driver, model list, session reader, config roots and recordings, and its login, usage probe and sign-in wizards"
+
+# One CLI's provider, on the provider base: it implements the base's Provider
+# and Run ports, the accounts' Login port and the sessions' Transcripts port,
+# and the entry registers it. It names no other CLI's code.
+[dependencies]
+droppen-accounts = { path = "../droppen-accounts" }
+droppen-base = { path = "../droppen-base" }
+droppen-http = { path = "../droppen-http" }
+droppen-instance = { path = "../droppen-instance" }
+droppen-provider = { path = "../droppen-provider" }
+droppen-sessions = { path = "../droppen-sessions" }
+droppen-workbench = { path = "../droppen-workbench" }
+chrono = "0.4"
+# The replay command's own command line (`record::replay::ReplayArgs`).
+clap = { version = "4.5", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
+futures-util = "0.3"
+gotcha = { version = "0.4.1", features = ["openapi"] }
+# What gotcha's `Schematic` derive expands to names it.
+gotcha_core = "0.4.1"
+libc = "0.2"
+memchr = "2"
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = { workspace = true }
+thiserror = "1"
+tokio = { version = "1", features = ["fs", "io-util", "macros", "process", "rt", "sync", "time"] }
+tracing = "0.1"
+uuid = { version = "1", features = ["v4"] }
+# The test harness's home (`resident::test_harness`), with `test-support` only.
+tempfile = { version = "3", optional = true }
+
+# `resident::test_harness`: a resident run over a fake `claude` a test
+# controls, for the server's tests that run one through the feed. Only the
+# server's [dev-dependencies] turn it on.
+[features]
+test-support = ["droppen-accounts/test-support", "droppen-provider/test-support", "droppen-sessions/test-support", "dep:tempfile"]
+
+[dev-dependencies]
+droppen-accounts = { path = "../droppen-accounts", features = ["test-support"] }
+# The child PATH a test sets, held per thread rather than process-wide
+# (`process_env::set_child_path`), so two login tests do not race on it.
+droppen-base = { path = "../droppen-base", features = ["test-support"] }
+droppen-provider = { path = "../droppen-provider", features = ["test-support"] }
+droppen-sessions = { path = "../droppen-sessions", features = ["test-support"] }
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "test-util"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[lints.rust]
+missing_docs = "deny"
+unreachable_pub = "deny"
+
+# `[lints] workspace = true` cannot be mixed with the rust lints above, so the
+# workspace's two clippy denials (`server-rs/Cargo.toml` `[workspace.lints]`)
+# are repeated here: keep them in step.
+[lints.clippy]
+significant_drop_in_scrutinee = "deny"
+await_holding_lock = "deny"

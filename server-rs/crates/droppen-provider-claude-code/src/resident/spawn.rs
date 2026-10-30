@@ -4,11 +4,11 @@
 use std::sync::Arc;
 
 use droppen_accounts::store::AccountProvider;
-use crate::provider::claude_code::claude_roots;
+use crate::claude_roots;
 use droppen_provider::common::{new_uuid, session_workdir, CHAT_SYSTEM_PROMPT};
-use crate::provider::claude_code::resident;
+use crate::resident;
 use droppen_provider::{claude_prompt, require_provider, AccountChoice, InjectError, SendOptions, SendTo, Sent, SpawnGate, StartAt};
-use crate::provider::claude_code::sessions::claude;
+use crate::sessions::claude;
 use droppen_sessions::Source;
 use droppen_base::process_env::{claude_env, claude_env_bare, clean_env_bare, Env};
 use droppen_instance::paths::{ClaudeRoot, Paths};
@@ -323,7 +323,7 @@ impl super::ClaudeCodeRuns {
             // to a session this server started would be absurd. Recorded before
             // the spawn, like the binding above and for the same reason.
             None => {
-                if let Err(error) = crate::provider::claude_code::sessions::claude::ClaudeCodeSessions.record_owned(&self.host.paths, &id).await {
+                if let Err(error) = crate::sessions::claude::ClaudeCodeSessions.record_owned(&self.host.paths, &id).await {
                     tracing::error!(session = %id, %error, "cannot record this claude session as ours; it will list as external");
                 }
             }

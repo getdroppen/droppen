@@ -1,6 +1,6 @@
 //! The provider base's tests that need what only the server has: the
-//! providers the entry registers, the app, and the server's own sources. They
-//! stay in the server until the providers leave it.
+//! providers the entry registers, the app, and the server's own sources. Only
+//! the server has all three.
 
 mod adoption;
 mod gate;

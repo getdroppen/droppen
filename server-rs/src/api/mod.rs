@@ -22,7 +22,7 @@ use droppen_http::extract::{ApiPath, ApiQuery};
 use droppen_http::{close_within, hostname, node_platform, send_within, Heartbeat, CLOSE_LIMIT, RUNTIME_VERSION, SERVER_VERSION};
 use droppen_http::openapi_ext::{self, ExtraResponses};
 use droppen_instance::paths::Paths;
-use crate::provider::claude_code::sessions::claude;
+use droppen_provider_claude_code::sessions::claude;
 use droppen_provider_codex::sessions::codex;
 use droppen_sessions::{SessionDetail, SessionList, Settings, Source};
 
@@ -113,7 +113,7 @@ pub struct AppState {
     pub drive: Arc<Drive>,
     /// Every `claude setup-token` run this server has started, which the token
     /// wizard's routes start, poll and finish.
-    pub wizards: Arc<crate::provider::claude_code::setup_token::Captures>,
+    pub wizards: Arc<droppen_provider_claude_code::setup_token::Captures>,
     /// The ACP agents' routes' state: the ACP provider's runs, found among the
     /// providers once, when this state is built.
     pub(crate) acp_agents: droppen_provider_acp::agents::AcpAgentState,
@@ -281,8 +281,8 @@ pub async fn settings(State(state): State<AppState>, #[api(skip)] who: droppen_a
         node_version: RUNTIME_VERSION.to_string(),
         server_version: SERVER_VERSION.to_string(),
         home_dir: paths.home.to_string_lossy().into_owned(),
-        claude_dir: crate::provider::claude_code::claude_roots::ClaudeRoots::of(&paths).local_projects().to_string_lossy().into_owned(),
-        claude_managed_dir: crate::provider::claude_code::claude_roots::ClaudeRoots::of(&paths).managed_projects().to_string_lossy().into_owned(),
+        claude_dir: droppen_provider_claude_code::claude_roots::ClaudeRoots::of(&paths).local_projects().to_string_lossy().into_owned(),
+        claude_managed_dir: droppen_provider_claude_code::claude_roots::ClaudeRoots::of(&paths).managed_projects().to_string_lossy().into_owned(),
         codex_dir: paths.codex_sessions().to_string_lossy().into_owned(),
         claude_session_count: claude_sessions.len(),
         codex_session_count: codex_sessions.len(),
@@ -438,8 +438,8 @@ fn response_overrides() -> ExtraResponses {
     let mut reg = ExtraResponses::default();
     describe(&mut reg);
     droppen_accounts::describe(&mut reg);
-    crate::provider::claude_code::setup_token::describe(&mut reg);
-    crate::provider::claude_code::usage_login::describe(&mut reg);
+    droppen_provider_claude_code::setup_token::describe(&mut reg);
+    droppen_provider_claude_code::usage_login::describe(&mut reg);
     droppen_provider_acp::agents::describe(&mut reg);
     droppen_workbench::apps::describe(&mut reg);
     droppen_sessions::attention::routes::describe(&mut reg);
@@ -473,8 +473,8 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
         .get("/api/sessions/{source}/{id}/ws", session_feed_ws)
         .get("/api/settings", settings);
     let router = droppen_accounts::AccountsState::routes(router);
-    let router = crate::provider::claude_code::setup_token::TokenWizardState::routes(router);
-    let router = crate::provider::claude_code::usage_login::UsageLoginState::routes(router);
+    let router = droppen_provider_claude_code::setup_token::TokenWizardState::routes(router);
+    let router = droppen_provider_claude_code::usage_login::UsageLoginState::routes(router);
     let router = droppen_provider_acp::agents::AcpAgentState::routes(router);
     let router = droppen_workbench::apps::AppsState::routes(router);
     let router = droppen_sessions::attention::routes::AttentionState::routes(router);
@@ -707,7 +707,7 @@ mod tests {
     /// The session [`WIDE_ID`] in `state`'s home, holding `turns` turns of
     /// `width`; its transcript's path.
     fn wide_session(state: &AppState, turns: usize, width: usize) -> std::path::PathBuf {
-        let project = crate::provider::claude_code::claude_roots::ClaudeRoots::of(&state.paths).local_projects().join("-w-wide");
+        let project = droppen_provider_claude_code::claude_roots::ClaudeRoots::of(&state.paths).local_projects().join("-w-wide");
         std::fs::create_dir_all(&project).expect("project");
         let file = project.join(format!("{WIDE_ID}.jsonl"));
         std::fs::write(&file, wide_turns(0, turns, width)).expect("transcript");

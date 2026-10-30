@@ -482,7 +482,7 @@ mod progress {
     use droppen_setup::SetupState;
     use gotcha::axum::extract::FromRef;
 
-    use crate::provider::claude_code::claude_roots;
+    use droppen_provider_claude_code::claude_roots;
 
     #[tokio::test]
     async fn the_guide_opens_by_itself_only_for_a_new_install_of_the_app() {
@@ -541,7 +541,7 @@ mod progress {
         )
         .expect("transcript");
         assert!(answered(&SetupState::from_ref(&state), fresh.clone()).await.auto_open, "the user's own, so far");
-        crate::provider::claude_code::sessions::claude::ClaudeCodeSessions.record_owned(&state.drive.paths, id).await.expect("record");
+        droppen_provider_claude_code::sessions::claude::ClaudeCodeSessions.record_owned(&state.drive.paths, id).await.expect("record");
         assert!(!answered(&SetupState::from_ref(&state), fresh.clone()).await.auto_open, "started by this instance on the local login");
 
         // A Codex thread it started, in the one ~/.codex.

@@ -19,7 +19,7 @@
 //! `archived.json` was a mirror for one version, so a `.prev` binary that had
 //! never heard of the database would still hide the same sessions; the rollback
 //! floor has since risen to a build that reads the database, and
-//! `provider::claude_code::sessions::claude::archived_ids` — the last reader that went to the
+//! `droppen_provider_claude_code::sessions::claude::archived_ids` — the last reader that went to the
 //! file — now comes back through [`archived_ids`] here. Nothing reads the file
 //! any more.
 

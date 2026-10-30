@@ -16,7 +16,7 @@ use gotcha::{ConfigWrapper, GotchaApp, GotchaContext, GotchaError, GotchaResult,
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 
-use crate::provider::claude_code::login::ClaudeCodeLogin;
+use droppen_provider_claude_code::login::ClaudeCodeLogin;
 use droppen_provider_codex::login::CodexLogin;
 use droppen_accounts::login::Logins;
 use crate::api::AppState;
@@ -150,7 +150,7 @@ impl GotchaApp for RemoteHandApp {
                 plugins: droppen_plugins::Plugins::load(&paths, &plugins_config, Some(refresh.clone())),
                 chats: droppen_drive::chats::Chats::new(paths.clone()),
                 drive,
-                wizards: crate::provider::claude_code::setup_token::Captures::new(),
+                wizards: droppen_provider_claude_code::setup_token::Captures::new(),
                 terminals: droppen_workbench::terminals::Registry::new(paths.clone(), instance.clone()),
                 apps: droppen_workbench::apps::Registry::new(paths.clone(), instance.clone()),
                 setup: droppen_setup::Setup::new(paths.clone(), &logins),
@@ -283,12 +283,12 @@ impl RemoteHandApp {
                 // session out of either place. Renaming a directory two servers
                 // could be reading is an owner's move, so it sits behind the
                 // same lock every adoption below does.
-                crate::provider::claude_code::claude_roots::migrate_legacy_root(&paths);
+                droppen_provider_claude_code::claude_roots::migrate_legacy_root(&paths);
                 // After the move, so a legacy root's leftovers are swept too:
                 // an adoption by an earlier build, interrupted between its copy
                 // and its rename, leaves a full transcript nothing will ever
                 // list.
-                crate::provider::claude_code::sessions::claude::adoption_leftovers::sweep_partial_adoptions(&paths);
+                droppen_provider_claude_code::sessions::claude::adoption_leftovers::sweep_partial_adoptions(&paths);
                 // Who this server is, minted once and kept for ever after.
                 // Under the lock like everything else here: it writes to the
                 // instance's database, and a throwaway in-process server must
@@ -304,7 +304,7 @@ impl RemoteHandApp {
                 // The registry is the one piece of ownership state that cannot
                 // be rebuilt from the filesystem, so the owner tidies it here
                 // rather than on every list refresh.
-                crate::provider::claude_code::sessions::claude::ClaudeCodeSessions.prune_owned(&paths).await;
+                droppen_provider_claude_code::sessions::claude::ClaudeCodeSessions.prune_owned(&paths).await;
                 // A codex thread this instance made before claims existed has a
                 // registry entry and no claim, which is exactly a thread the
                 // sibling instances still list. Mirroring the registry out here
@@ -648,7 +648,7 @@ fn join(result: Result<std::io::Result<()>, tokio::task::JoinError>) -> GotchaRe
 /// names its own [`Source`]; this is the one place that names all of them.
 pub fn transcript_sources() -> TranscriptSources {
     let mut sources = TranscriptSources::default();
-    sources.register(Arc::new(crate::provider::claude_code::sessions::claude::ClaudeCodeSessions));
+    sources.register(Arc::new(droppen_provider_claude_code::sessions::claude::ClaudeCodeSessions));
     sources.register(Arc::new(droppen_provider_codex::sessions::codex::CodexSessions));
     sources.register(Arc::new(droppen_provider_acp::sessions::AcpSessions));
     sources
@@ -658,7 +658,7 @@ pub fn transcript_sources() -> TranscriptSources {
 /// Each provider names its own [`Source`]; this is the one place that names
 /// all of them.
 pub fn register_providers(providers: &mut ProviderRegistry, registry: &Arc<InjectionRegistry>) {
-    providers.register(Arc::new(crate::provider::claude_code::resident::ClaudeCode::new(registry.clone())));
+    providers.register(Arc::new(droppen_provider_claude_code::resident::ClaudeCode::new(registry.clone())));
     providers.register(Arc::new(droppen_provider_codex::app_server::Codex::new(registry.clone())));
     providers.register(Arc::new(droppen_provider_acp::Acp::new(registry.clone())));
 }
@@ -849,7 +849,7 @@ mod tests {
     async fn only_claude_code_s_reader_finds_a_claude_root() {
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(dir.path().to_path_buf());
-        let project = crate::provider::claude_code::claude_roots::ClaudeRoots::of(&paths)
+        let project = droppen_provider_claude_code::claude_roots::ClaudeRoots::of(&paths)
             .projects_dir(droppen_instance::paths::ClaudeRoot::Local)
             .join("-w");
         std::fs::create_dir_all(&project).expect("project dir");
@@ -876,7 +876,7 @@ mod tests {
             OwnedSessions::record(&paths, reader, &id).await.expect("record");
             assert_eq!(claimed(&id), reader.source() == Source::Codex, "{} runs its own step", reader.source().as_str());
         }
-        crate::provider::claude_code::sessions::claude::ClaudeCodeSessions.record_owned(&paths, "claude-b").await.expect("record");
+        droppen_provider_claude_code::sessions::claude::ClaudeCodeSessions.record_owned(&paths, "claude-b").await.expect("record");
         droppen_provider_codex::sessions::codex::CodexSessions.record_owned(&paths, "codex-b").await.expect("record");
 
         let owned = owned_sessions::read(&paths).await;
@@ -1164,7 +1164,7 @@ mod tests {
             for (file, functions) in [
                 ("../crates/droppen-accounts/src/lib.rs", &["parse_auth_status"][..]),
                 ("../crates/droppen-base/src/text.rs", &["strip_ansi"][..]),
-                ("provider/claude_code/login.rs", &["plan_label"][..]),
+                ("../crates/droppen-provider-claude-code/src/login.rs", &["plan_label"][..]),
                 ("../crates/droppen-provider-codex/src/quota.rs", &["app_server_call", "ask", "send", "reply"][..]),
                 ("../crates/droppen-provider-codex/src/login.rs", &["app_server_call"][..]),
                 ("../crates/droppen-base/src/process_env.rs", &["apply_env"][..]),

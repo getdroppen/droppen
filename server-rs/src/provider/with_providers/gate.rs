@@ -104,10 +104,10 @@ impl Source {
         self.path == "crates/droppen-provider/src/registry.rs"
     }
 
-    /// Whether this is the providers' own: the base's, or an
-    /// implementation's, in the server or in a `droppen-provider*` crate.
+    /// Whether this is the providers' own: the base's or an
+    /// implementation's, each a `droppen-provider*` crate.
     fn in_provider(&self) -> bool {
-        self.path.starts_with("src/provider/") || self.path.starts_with("crates/droppen-provider")
+        self.path.starts_with("crates/droppen-provider")
     }
 }
 
@@ -526,8 +526,8 @@ fn only_the_provider_registry_makes_a_spawn_gate() {
     assert!(found.is_empty(), "a spawn gate made outside the provider registry: {found:?}");
 }
 
-/// The spawn gate reaches the providers alone. Outside them (the server's
-/// `provider` and the `droppen-provider*` crates), no production code of the
+/// The spawn gate reaches the providers alone. Outside them (the
+/// `droppen-provider*` crates), no production code of the
 /// server or of a crate that depends on the base names the gate, a permit or
 /// a lease, so none can take the gate, mint a permit or build a lease.
 /// Inside them, the ACP provider's agent routes, which start and stop its
