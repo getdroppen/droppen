@@ -13,7 +13,6 @@
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
-use std::sync::LazyLock;
 
 use super::util::{FileRef, ItemKind, Role, TranscriptItem};
 
@@ -22,42 +21,22 @@ pub const MAX_FILES_PER_ITEM: usize = 6;
 /// How many `stat` calls one transcript may cost.
 pub const MAX_STATS_PER_TRANSCRIPT: usize = 600;
 
-struct FileCitation {
-    range: Range<usize>,
-    path: String,
+/// A file a message names in its CLI's own markup rather than in prose: where
+/// the reference sits in the text, and the path it names.
+pub struct FileCitation {
+    /// Where the reference sits in the message's text: what its chip's label replaces.
+    pub range: Range<usize>,
+    /// The path it names, as written.
+    pub path: String,
 }
 
-/// Codex's quoted file directive is structured data, not a prose token. In
-/// particular, spaces, Unicode and parentheses are all part of the path.
-fn file_citations(text: &str) -> Vec<FileCitation> {
-    static CITATION: LazyLock<regex::Regex> =
-        LazyLock::new(|| regex::Regex::new(r#":codex-file-citation\{((?:[^"{}]|"(?:\\.|[^"\\])*")*)\}"#).expect("valid file-citation pattern"));
-    static ATTRIBUTE: LazyLock<regex::Regex> =
-        LazyLock::new(|| regex::Regex::new(r#"^([A-Za-z][A-Za-z0-9_-]*)\s*=\s*("(?:\\.|[^"\\])*")"#).expect("valid citation-attribute pattern"));
-    CITATION
-        .captures_iter(text)
-        .filter_map(|citation| {
-            let mut attrs = citation[1].trim();
-            let mut path = None;
-            while !attrs.is_empty() {
-                let attribute = ATTRIBUTE.captures(attrs)?;
-                let value: String = serde_json::from_str(&attribute[2]).ok()?;
-                if &attribute[1] == "path" && path.replace(value).is_some() {
-                    return None;
-                }
-                attrs = &attrs[attribute[0].len()..];
-                if !attrs.is_empty() && !attrs.starts_with(char::is_whitespace) {
-                    return None;
-                }
-                attrs = attrs.trim_start();
-            }
-            let path = path.filter(|p| !p.is_empty() && p.len() <= 4096 && !p.chars().any(char::is_control))?;
-            Some(FileCitation {
-                range: citation.get(0)?.range(),
-                path,
-            })
-        })
-        .collect()
+/// How a CLI marks the files its messages name, if it has a way: its reader's
+/// to say, as the crate knows no CLI's markup.
+pub type FileCitations = fn(&str) -> Vec<FileCitation>;
+
+/// A CLI with no markup of its own: every file is found in the prose.
+pub fn no_citations(_text: &str) -> Vec<FileCitation> {
+    Vec::new()
 }
 
 fn clean_token(token: &str) -> &str {
@@ -78,9 +57,9 @@ fn looks_pathy(token: &str) -> bool {
     token.contains('/') || bare.is_match(token)
 }
 
-/// Explicit Codex file citations, followed by backtick spans and prose paths.
-pub fn candidate_paths(text: &str) -> Vec<String> {
-    candidate_paths_with_citations(text, &file_citations(text))
+/// The files `citations` finds, followed by backtick spans and prose paths.
+pub fn candidate_paths(text: &str, citations: FileCitations) -> Vec<String> {
+    candidate_paths_with_citations(text, &citations(text))
 }
 
 fn candidate_paths_with_citations(text: &str, citations: &[FileCitation]) -> Vec<String> {
@@ -156,8 +135,9 @@ pub fn resolve_within_home(home: &Path, candidate: &str, cwd: Option<&Path>) -> 
     (absolute == home || absolute.starts_with(home)).then_some(absolute)
 }
 
-/// Attach download chips for files an assistant message points at.
-pub async fn annotate_mentioned_files(home: &Path, items: &mut [TranscriptItem], cwd: Option<&str>) {
+/// Attach download chips for files an assistant message points at, the ones
+/// its CLI's markup names (`citations`, from the reader) first.
+pub async fn annotate_mentioned_files(home: &Path, items: &mut [TranscriptItem], cwd: Option<&str>, citations_of: FileCitations) {
     let cwd = cwd.map(Path::new);
     let mut exists: HashMap<PathBuf, bool> = HashMap::new();
     let mut stat_budget = MAX_STATS_PER_TRANSCRIPT;
@@ -166,7 +146,7 @@ pub async fn annotate_mentioned_files(home: &Path, items: &mut [TranscriptItem],
         if item.role != Role::Assistant || item.kind != ItemKind::Text || item.text.is_empty() {
             continue;
         }
-        let citations = file_citations(&item.text);
+        let citations = citations_of(&item.text);
         let candidates = candidate_paths_with_citations(&item.text, &citations);
         let mut seen: HashSet<PathBuf> = item.files.iter().flatten().map(|file| PathBuf::from(&file.path)).collect();
         let existing_count = seen.len();
@@ -231,7 +211,7 @@ mod tests {
 
     #[test]
     fn code_spans_and_bare_paths_are_both_candidates() {
-        let candidates = candidate_paths("see `src/app.rs` and /etc/hosts, plus ./notes.md (and `not a path`)");
+        let candidates = candidate_paths("see `src/app.rs` and /etc/hosts, plus ./notes.md (and `not a path`)", no_citations);
         assert!(candidates.contains(&"src/app.rs".to_string()));
         assert!(candidates.contains(&"/etc/hosts".to_string()), "the trailing comma is trimmed");
         assert!(candidates.contains(&"./notes.md".to_string()));
@@ -244,45 +224,6 @@ mod tests {
         assert!(looks_pathy("a/b"));
         assert!(!looks_pathy("README"), "a bare word is prose, not a file");
         assert!(!looks_pathy(&"x".repeat(500)));
-    }
-
-    #[test]
-    fn codex_file_citations_preserve_the_entire_quoted_path() {
-        let path = "/Users/ada/Downloads/Garden/每周花园记录/outputs/种植计划汇总版_20260907-0913/种植计划（汇总版）.xlsx";
-        let text = format!("生成汇总版：:codex-file-citation{{path=\"{path}\" purpose=\"output\"}}");
-        assert_eq!(candidate_paths(&text), vec![path]);
-        let path = "/home/me/weekly reports/strategy (verified) {final}.xlsx";
-        let text = format!(":codex-file-citation{{purpose=\"output\" path=\"{path}\"}}");
-        assert_eq!(
-            candidate_paths(&text),
-            vec![path],
-            "quoted punctuation is not trimmed and fragments are not rediscovered"
-        );
-    }
-
-    #[test]
-    fn codex_file_citations_decode_escapes_and_deduplicate_normal_mentions() {
-        let text = r#":codex-file-citation{path="/home/me/report \"final\".txt" purpose="output"} :codex-file-citation{path="/home/me/a.md"} `/home/me/a.md`"#;
-        assert_eq!(candidate_paths(text), vec!["/home/me/report \"final\".txt", "/home/me/a.md"]);
-        assert_eq!(
-            candidate_paths(r#":codex-file-citation{ path = "~/\u62a5\u544a.xlsx" }"#),
-            vec!["~/报告.xlsx"]
-        );
-    }
-
-    #[test]
-    fn malformed_or_ambiguous_file_citations_are_not_interpreted() {
-        for text in [
-            r#":codex-file-citation{path="a.md" path="b.md"}"#,
-            r#":codex-file-citation{path="a.md"garbage}"#,
-            r#":codex-file-citation{purpose="path=a.md"}"#,
-            r#":codex-file-citation{path="a.md""#,
-            r#":codex-file-citation{path="bad\q.txt"}"#,
-            r#":codex-file-citation{path="bad\u0000.txt"}"#,
-            r#":codex-file-citation{path=""}"#,
-        ] {
-            assert!(file_citations(text).is_empty(), "{text}");
-        }
     }
 
     #[test]
@@ -317,70 +258,12 @@ mod tests {
             ),
             make_item(Role::User, ItemKind::Text, &format!("`{}`", real.display()), None),
         ];
-        annotate_mentioned_files(home.path(), &mut items, None).await;
+        annotate_mentioned_files(home.path(), &mut items, None, no_citations).await;
 
         let files = items[0].files.as_ref().expect("one chip");
         assert_eq!(files.len(), 1, "the file that does not exist is not offered");
         assert_eq!(files[0].name, "notes.md");
         assert!(items[1].files.is_none(), "only assistant text is annotated");
-    }
-
-    #[tokio::test]
-    async fn citations_use_the_same_existence_boundary_budget_and_deduplication() {
-        let home = tempfile::tempdir().unwrap();
-        let outside = tempfile::NamedTempFile::new().unwrap();
-        let real = home.path().join("综合策略 (核查版).xlsx");
-        std::fs::write(&real, b"PK\0test").unwrap();
-        let reference = format!(
-            ":codex-file-citation{{path={} purpose=\"output\"}}",
-            serde_json::to_string(&real.to_string_lossy()).unwrap()
-        );
-        let missing = ":codex-file-citation{path=\"missing.xlsx\" purpose=\"output\"}";
-        let forbidden = format!(":codex-file-citation{{path=\"{}\"}}", outside.path().display());
-        let mut items = vec![
-            make_item(
-                Role::Assistant,
-                ItemKind::Text,
-                &format!("生成：{reference} {reference} {missing} {forbidden}"),
-                None,
-            ),
-            make_item(Role::User, ItemKind::Text, &reference, None),
-            make_item(Role::Assistant, ItemKind::Thinking, &reference, None),
-        ];
-        annotate_mentioned_files(home.path(), &mut items, home.path().to_str()).await;
-        let files = items[0].files.as_ref().unwrap();
-        assert_eq!(files.len(), 1);
-        assert_eq!(files[0].path, real.to_string_lossy());
-        assert_eq!(files[0].name, "综合策略 (核查版).xlsx");
-        assert!(
-            !items[0].text.contains(&reference),
-            "a verified citation becomes a readable label, not raw internal markup"
-        );
-        assert!(items[0].text.contains(missing), "a missing reference is not silently hidden");
-        assert!(items[0].text.contains(&forbidden), "an inaccessible reference is not silently hidden");
-        assert_eq!(items[1].text, reference);
-        assert!(items[1].files.is_none());
-        assert!(items[2].files.is_none());
-        annotate_mentioned_files(home.path(), &mut items, home.path().to_str()).await;
-        assert_eq!(
-            items[0].files.as_ref().unwrap().len(),
-            1,
-            "reannotation does not duplicate existing chips"
-        );
-    }
-
-    #[tokio::test]
-    async fn over_budget_citations_keep_their_visible_reference() {
-        let home = tempfile::tempdir().unwrap();
-        let mut references = Vec::new();
-        for n in 0..MAX_FILES_PER_ITEM + 1 {
-            std::fs::write(home.path().join(format!("报告 {n}.txt")), "hi").unwrap();
-            references.push(format!(":codex-file-citation{{path=\"报告 {n}.txt\"}}"));
-        }
-        let mut items = vec![make_item(Role::Assistant, ItemKind::Text, &references.join("\n"), None)];
-        annotate_mentioned_files(home.path(), &mut items, home.path().to_str()).await;
-        assert_eq!(items[0].files.as_ref().unwrap().len(), MAX_FILES_PER_ITEM);
-        assert!(items[0].text.contains(references.last().unwrap()));
     }
 
     #[tokio::test]
@@ -393,7 +276,7 @@ mod tests {
             text.push_str(&format!(" `{}`", path.display()));
         }
         let mut items = vec![make_item(Role::Assistant, ItemKind::Text, &text, None)];
-        annotate_mentioned_files(home.path(), &mut items, None).await;
+        annotate_mentioned_files(home.path(), &mut items, None, no_citations).await;
         assert_eq!(items[0].files.as_ref().expect("chips").len(), MAX_FILES_PER_ITEM);
     }
 }
