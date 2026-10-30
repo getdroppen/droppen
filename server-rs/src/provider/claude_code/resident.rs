@@ -94,6 +94,8 @@ use droppen_provider::{runs, Capabilities, DriverStatesBuilder, InjectError, Inj
 mod spawn;
 #[cfg(test)]
 pub(crate) mod test_harness;
+#[cfg(test)]
+mod journal_tests;
 
 /// The mode flags every resident is started with.
 ///
