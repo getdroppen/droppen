@@ -38,7 +38,7 @@ async fn a_check_error_is_only_on_the_checks_own_route() {
     let home = tempfile::tempdir().expect("tempdir");
     let (state, mut router) = crate::api::test_support::guarded_router(home.path(), Some(false)).await;
     let agents = AcpAgentRegistry::of(&state.paths);
-    agents.update("x", &patch(Some("/x/agent"), None, None)).expect("saved");
+    droppen_provider_acp::testing::configure(&state.paths, "x", &patch(Some("/x/agent"), None, None)).expect("saved");
     let failed = AcpCheck::ended(AcpCheckState::Failed, Some("the agent's own words".into()));
     assert!(agents.get("x").unwrap().record_check(&agents, &failed));
     let credential = state.drive.auth.internal_credential().to_string();
@@ -71,7 +71,7 @@ async fn a_check_error_is_only_on_the_checks_own_route() {
     let (status, check) = get(&mut router, "/api/acp/agents/x/check", &device).await;
     assert_eq!((status, check["error"].as_str()), (200, Some("the agent's own words")), "{check:#}");
 
-    agents.update("y", &patch(Some("/y/agent"), None, None)).expect("saved");
+    droppen_provider_acp::testing::configure(&state.paths, "y", &patch(Some("/y/agent"), None, None)).expect("saved");
     assert_eq!(get(&mut router, "/api/acp/agents/y/check", &[]).await.0, 404, "never checked");
     assert_eq!(get(&mut router, "/api/acp/agents/z/check", &[]).await.0, 404, "no such agent");
 }

@@ -33,6 +33,12 @@ tempfile = "3"
 tokio = { version = "1", features = ["fs", "io-util", "macros", "process", "rt", "sync", "time"] }
 tracing = "0.1"
 
+# `testing`: an agent configured without the spawn gate, for the server's
+# tests that need one on file before anything runs. Only the server's
+# [dev-dependencies] turn it on.
+[features]
+test-support = []
+
 [dev-dependencies]
 # The steps of a spawn, the turn alerts and an injection registry on the
 # accounts' stand-in logins (`droppen_provider::testing`), for this
