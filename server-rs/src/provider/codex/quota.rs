@@ -280,7 +280,7 @@ async fn ask(mut stdin: ChildStdin, stdout: ChildStdout, method: &str) -> Option
         client_info: ClientInfo {
             name: "remote_hand",
             title: "remote-hand",
-            version: env!("CARGO_PKG_VERSION"),
+            version: droppen_http::PACKAGE_VERSION,
         },
         capabilities: ClientCapabilities { experimental_api: true },
     };

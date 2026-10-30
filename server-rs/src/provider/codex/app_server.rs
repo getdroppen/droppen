@@ -1087,7 +1087,7 @@ impl CodexRuns {
             let client_info = ClientInfo {
                 name: "remote_hand",
                 title: "remote-hand",
-                version: env!("CARGO_PKG_VERSION"),
+                version: droppen_http::PACKAGE_VERSION,
             };
             rpc(self, &mut link, "initialize", InitializeParams { client_info }).await?;
             write(
@@ -3412,7 +3412,7 @@ mod tests {
             lines[0],
             wire(
                 r#"{"id":"UUID","method":"initialize","params":{"clientInfo":{"name":"remote_hand","title":"remote-hand","version":"VERSION"}}}"#,
-                &[("UUID", &id_of(&lines[0])), ("VERSION", env!("CARGO_PKG_VERSION"))]
+                &[("UUID", &id_of(&lines[0])), ("VERSION", droppen_http::PACKAGE_VERSION)]
             )
         );
         assert_eq!(lines[1], wire(r#"{"method":"initialized","params":{}}"#, &[]));
