@@ -3,8 +3,8 @@
 //! Port of the account routes in the former TypeScript server's `app.ts`. The
 //! routes that drive `claude` against one account live with Claude Code's
 //! code in the server and register themselves, because only that CLI has them:
-//! `accounts::setup_token` mints a token off `claude setup-token`'s own output,
-//! and `accounts::usage_login` puts `claude auth login` on screen against an
+//! `provider::claude_code::setup_token` mints a token off `claude setup-token`'s own output,
+//! and `provider::claude_code::usage_login` puts `claude auth login` on screen against an
 //! account's probe directory and checks it with `claude auth status --json`.
 //!
 //! This crate names no CLI: what differs between them is asked of each one's

@@ -16,8 +16,8 @@ use gotcha::{ConfigWrapper, GotchaApp, GotchaContext, GotchaError, GotchaResult,
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 
-use crate::accounts::login::claude::ClaudeCodeLogin;
-use crate::accounts::login::codex::CodexLogin;
+use crate::provider::claude_code::login::ClaudeCodeLogin;
+use crate::provider::codex::login::CodexLogin;
 use droppen_accounts::login::Logins;
 use crate::api::AppState;
 use droppen_http::config::AppConfig;
@@ -154,7 +154,7 @@ impl GotchaApp for RemoteHandApp {
                 plugins: droppen_plugins::Plugins::load(&paths, &plugins_config, Some(refresh.clone())),
                 chats: crate::chats::Chats::new(paths.clone()),
                 drive,
-                wizards: crate::accounts::setup_token::Captures::new(),
+                wizards: crate::provider::claude_code::setup_token::Captures::new(),
                 terminals: droppen_workbench::terminals::Registry::new(paths.clone(), instance.clone()),
                 apps: droppen_workbench::apps::Registry::new(paths.clone(), instance.clone()),
                 setup: crate::setup::Setup::new(paths.clone(), &logins),
@@ -1125,9 +1125,9 @@ mod tests {
             for (file, functions) in [
                 ("../crates/droppen-accounts/src/lib.rs", &["parse_auth_status"][..]),
                 ("../crates/droppen-base/src/text.rs", &["strip_ansi"][..]),
-                ("accounts/login/claude.rs", &["plan_label"][..]),
+                ("provider/claude_code/login.rs", &["plan_label"][..]),
                 ("provider/codex/quota.rs", &["app_server_call", "ask", "send", "reply"][..]),
-                ("accounts/login/codex.rs", &["app_server_call"][..]),
+                ("provider/codex/login.rs", &["app_server_call"][..]),
                 ("../crates/droppen-base/src/process_env.rs", &["apply_env"][..]),
             ] {
                 let source = std::fs::read_to_string(src.join(file)).expect(file);

@@ -106,7 +106,7 @@ pub struct AppState {
     pub drive: Arc<Drive>,
     /// Every `claude setup-token` run this server has started, which the token
     /// wizard's routes start, poll and finish.
-    pub wizards: Arc<crate::accounts::setup_token::Captures>,
+    pub wizards: Arc<crate::provider::claude_code::setup_token::Captures>,
     /// The ACP agents' runs, which their own routes check and stop agents
     /// through: found among the providers once, when this state is built.
     pub(crate) acp: Arc<crate::provider::acp::AcpRuns>,
@@ -431,8 +431,8 @@ fn response_overrides() -> ExtraResponses {
     let mut reg = ExtraResponses::default();
     describe(&mut reg);
     droppen_accounts::describe(&mut reg);
-    crate::accounts::setup_token::describe(&mut reg);
-    crate::accounts::usage_login::describe(&mut reg);
+    crate::provider::claude_code::setup_token::describe(&mut reg);
+    crate::provider::claude_code::usage_login::describe(&mut reg);
     crate::provider::acp::agents::describe(&mut reg);
     droppen_workbench::apps::describe(&mut reg);
     droppen_sessions::attention::routes::describe(&mut reg);
@@ -466,8 +466,8 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
         .get("/api/sessions/{source}/{id}/ws", session_feed_ws)
         .get("/api/settings", settings);
     let router = droppen_accounts::AccountsState::routes(router);
-    let router = crate::accounts::setup_token::TokenWizardState::routes(router);
-    let router = crate::accounts::usage_login::UsageLoginState::routes(router);
+    let router = crate::provider::claude_code::setup_token::TokenWizardState::routes(router);
+    let router = crate::provider::claude_code::usage_login::UsageLoginState::routes(router);
     let router = crate::provider::acp::agents::AcpAgentState::routes(router);
     let router = droppen_workbench::apps::AppsState::routes(router);
     let router = droppen_sessions::attention::routes::AttentionState::routes(router);

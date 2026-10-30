@@ -6,7 +6,7 @@ use futures_util::future::BoxFuture;
 use droppen_accounts::login::{LocalPlan, Login};
 use droppen_accounts::local_login::LocalLoginState;
 use droppen_accounts::quota::readings::SharedReading;
-use crate::accounts::quota::claude::ClaudeUsageProbeExt;
+use crate::provider::claude_code::quota::ClaudeUsageProbeExt;
 use droppen_accounts::rotation::FAMILIES;
 use droppen_accounts::quota::{CliTextExt, CodexQuota, ProbeRoots, QuotaProbeError, UsageProbe};
 use droppen_accounts::store::{AccountError, AccountKind, AccountLaunch, AccountProvider};

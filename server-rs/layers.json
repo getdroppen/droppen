@@ -213,10 +213,10 @@
             "provider::claude_code::sessions::subagents",
             "provider::claude_code::sessions::checklist",
             "provider::claude_code::claude_roots",
-            "accounts::quota::claude",
-            "accounts::setup_token",
-            "accounts::usage_login",
-            "accounts::login::claude",
+            "provider::claude_code::quota",
+            "provider::claude_code::setup_token",
+            "provider::claude_code::usage_login",
+            "provider::claude_code::login",
             "provider::claude_code::record",
             "provider::claude_code::models"
           ],
@@ -236,7 +236,7 @@
             "provider::codex::sessions::codex_tools",
             "provider::codex::sessions::codex_claims",
             "provider::codex::quota",
-            "accounts::login::codex",
+            "provider::codex::login",
             "provider::codex::models"
           ],
           "mayUse": [

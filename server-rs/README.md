@@ -33,7 +33,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 | `drive/` | 驱动会话的路由，以及所有进程类子系统挂靠的 `Drive` 状态 |
 | `provider/` | 驱动本机 CLI，每个会话一次运行 |
 | `provider/claude_code/record/` | 会话飞行记录器：一个会话一份 NDJSON 录像，以及把它放回文件系统的 `replay` 子命令 |
-| `accounts/` | 每个 CLI 在账号里的那一部分：Claude Code 与 Codex 的登录（实现 `droppen-accounts` 的 `Login` 端口）和用量探测，以及产出 Claude 登录的两个 pty 向导；随各自的 provider 迁出 |
+| `accounts/` | 账号规则在入口构造的真实登录上的测试（`cli_tests`）；每个 CLI 在账号里的那一部分（登录、用量探测、Claude 的两个登录向导）在它的 provider 里：`provider/claude_code/`、`provider/codex/` |
 | `chats/` | 即时聊天：锚点目录里的 CLI 会话，加上 BYO-API 后端与它的流式回复 |
 | `quota/` | 订阅额度面板 |
 | `schedule/` | 定时任务：一条 cron 表达式（按**服务器本地时区**解释）到点新开一个会话；`runner.rs` 是那个五秒一跳、只在持有实例锁时才启动的循环 |
