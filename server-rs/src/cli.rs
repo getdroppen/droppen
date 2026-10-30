@@ -301,8 +301,10 @@ pub(crate) mod tests {
     /// `--version` and `preflight` print the HTTP kit's version, which has to
     /// be this binary's build and not the kit crate's own `0.1.0`, and in a git
     /// checkout it names the commit, which self-update tells builds apart by.
+    /// The plain version the crates name the release by is this binary's too.
     #[test]
     fn the_version_printed_is_the_servers_own() {
+        assert_eq!(droppen_http::PACKAGE_VERSION, env!("CARGO_PKG_VERSION"));
         assert_eq!(droppen_http::RUNTIME_VERSION, concat!("rust/", env!("CARGO_PKG_VERSION")));
         let rev = droppen_http::SERVER_VERSION.strip_prefix(env!("CARGO_PKG_VERSION")).expect("the server's version first");
         // The build script asks git from this same checkout. A tree with no

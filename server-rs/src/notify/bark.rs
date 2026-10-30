@@ -50,7 +50,7 @@ pub const ALLOW_INSECURE_ENDPOINT_ENV: &str = "DROPPEN_NOTIFY_ALLOW_INSECURE_END
 /// `http://127.0.0.1:<port>/…` — that is, the loopback-only services on this
 /// host, including this server's own API.
 static CLIENT: std::sync::LazyLock<Option<reqwest::Client>> =
-    std::sync::LazyLock::new(|| droppen_base::outbound::no_redirect_client(SEND_TIMEOUT, env!("CARGO_PKG_VERSION")));
+    std::sync::LazyLock::new(|| droppen_base::outbound::no_redirect_client(SEND_TIMEOUT, droppen_http::PACKAGE_VERSION));
 
 /// Whether plain-HTTP loopback endpoints are permitted in this process.
 fn insecure_endpoints_allowed() -> bool {
