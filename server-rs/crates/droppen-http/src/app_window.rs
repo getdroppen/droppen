@@ -3,7 +3,7 @@
 //!
 //! The routes it guards are in more than one subsystem: the first-run guide's
 //! installs and sign-ins (the server's `setup`) and Claude Code's setup-token wizard
-//! (the server's `accounts::setup_token`). So the gate sits in the HTTP kit, below
+//! (the server's `provider::claude_code::setup_token`). So the gate sits in the HTTP kit, below
 //! both.
 
 use std::net::SocketAddr;

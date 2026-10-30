@@ -1,11 +1,6 @@
-//! Each CLI's part of the accounts, until it moves into its provider: Claude
-//! Code's and Codex's [`droppen_accounts::login::Login`] and quota probes, and
-//! the two wizards that sign Claude Code in (`setup_token`, `usage_login`).
-
-pub mod login;
-pub mod quota;
-pub mod setup_token;
-pub mod usage_login;
+//! The accounts' rules against each CLI's own login, on the logins the entry
+//! builds (`cli_tests`). Each CLI's part of the accounts is its provider's:
+//! [`crate::provider::claude_code`] and [`crate::provider::codex`].
 
 #[cfg(test)]
 mod cli_tests;

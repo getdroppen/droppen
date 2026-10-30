@@ -964,7 +964,7 @@ impl CodexRuns {
         // whatever `~/.codex/auth.json` holds. An account adds a model
         // provider that reads its key from a variable of ours, because
         // `app-server` reads no key variable of codex's own — see
-        // [`crate::accounts::login::codex::CodexBaseUrl::provider_args`].
+        // [`crate::provider::codex::login::CodexBaseUrl::provider_args`].
         let launch = account.as_ref().map(|account| &account.launch);
         let mut args: Vec<String> = vec!["app-server".into()];
         args.extend(launch.into_iter().flat_map(|launch| launch.codex_args.iter().cloned()));
@@ -1009,7 +1009,7 @@ impl CodexRuns {
                 // on the thread as well costs nothing if the flag already took.
                 model_provider: launch
                     .is_some_and(|launch| !launch.codex_args.is_empty())
-                    .then_some(crate::accounts::login::codex::CODEX_PROVIDER_ID),
+                    .then_some(crate::provider::codex::login::CODEX_PROVIDER_ID),
                 base_instructions: options.chat.then_some(CHAT_SYSTEM_PROMPT),
             };
             let result = rpc(self, &mut link, if id.is_some() { "thread/resume" } else { "thread/start" }, params).await?;
@@ -2884,7 +2884,7 @@ mod tests {
             launch: droppen_accounts::store::AccountLaunch {
                 provider: AccountProvider::Codex,
                 env: vec![],
-                codex_args: crate::accounts::login::codex::CodexBaseUrl::parse("https://api.example.test/v1").expect("a base URL").provider_args(),
+                codex_args: crate::provider::codex::login::CodexBaseUrl::parse("https://api.example.test/v1").expect("a base URL").provider_args(),
             },
         };
         let chat = SendOptions {

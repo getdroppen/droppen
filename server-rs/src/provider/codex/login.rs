@@ -134,7 +134,7 @@ impl CodexLogin {
     ///   deleted afterwards rather than appearing in the session list — and so the
     ///   probe cannot fall back on the user's own `auth.json` and answer for a login
     ///   that is not the one being checked;
-    /// * the provider override from [`crate::accounts::login::codex::CodexBaseUrl::provider_args`],
+    /// * the provider override from [`crate::provider::codex::login::CodexBaseUrl::provider_args`],
     ///   which is the whole of how a key reaches codex: `app-server` reads neither
     ///   `OPENAI_API_KEY` nor `CODEX_API_KEY`, so a probe that only set a variable
     ///   would be checking nothing at all.

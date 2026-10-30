@@ -83,7 +83,7 @@ pub struct Args {
     /// Given at `openpty` rather than sent as a resize afterwards, because the
     /// child reads its width the moment it starts: a terminal widened a
     /// millisecond later has already wrapped whatever it printed first. The
-    /// account wizards depend on that ordering — see `accounts::setup_token`.
+    /// account wizards depend on that ordering — see `provider::claude_code::setup_token`.
     pub size: Option<(u16, u16)>,
 }
 
