@@ -495,8 +495,9 @@ mod tests {
     async fn the_boot_migration_mirrors_the_registry_once_and_never_steals() {
         let dir = tempfile::tempdir().expect("tempdir");
         let (a, b) = instances(&dir);
-        crate::provider::claude_code::sessions::claude::ClaudeCodeSessions.record_owned(&a, "session-a")
-            .await
+        // The row Claude Code's reader writes for a session of its own.
+        droppen_instance::db::at(a.instance_db())
+            .write(|tx| tx.execute("INSERT INTO owned_sessions (source, session_id) VALUES ('claude', 'session-a')", ()))
             .expect("record");
         assert_eq!(migrate(&a).await, 0, "a claude session is not a codex thread");
 

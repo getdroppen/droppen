@@ -1069,7 +1069,7 @@ impl CodexRuns {
             None => clean_env_bare(),
         };
         #[cfg(test)]
-        droppen_provider::testing::shims_run_as(crate::provider::with_providers::SHIMS);
+        droppen_provider::testing::shims_run_as(tests::SHIMS);
         let mut link = shim::spawn_via_shim(shim::Spawn {
             permit,
             sidecars: &sidecars,
@@ -1999,6 +1999,35 @@ mod tests {
         UnixListener,
     };
 
+    /// Where this binary's session shim is: Codex's spawns under test run it
+    /// as this module's `session_shim`
+    /// ([`droppen_provider::testing::shims_run_as`]).
+    pub(super) const SHIMS: &str = module_path!();
+
+    /// Not a test: the session shim Codex's spawns under test run
+    /// ([`droppen_provider::testing::session_shim`]).
+    #[test]
+    #[ignore = "the session shim a Codex test's spawn runs, not a test"]
+    fn session_shim() {
+        droppen_provider::testing::session_shim();
+    }
+
+    /// The logins the accounts are handed here: Codex's own, and a stand-in
+    /// for Claude Code's, which nothing here starts.
+    fn logins() -> droppen_accounts::login::Logins {
+        droppen_accounts::login::Logins {
+            codex: Arc::new(crate::provider::codex::login::CodexLogin),
+            ..droppen_accounts::login::Logins::stand_ins()
+        }
+    }
+
+    /// The providers over `registry`: Codex alone, the one these tests drive.
+    fn codex_only(registry: &Arc<InjectionRegistry>) -> Arc<droppen_provider::ProviderRegistry> {
+        droppen_provider::ProviderRegistry::new(registry.clone(), |providers, registry| {
+            providers.register(Arc::new(Codex::new(registry.clone())))
+        })
+    }
+
     struct Harness {
         driver: Driver,
         input: BufReader<OwnedReadHalf>,
@@ -2014,11 +2043,11 @@ mod tests {
             let paths = Arc::new(Paths::new(home.path().into()));
             let dirs = InstanceDirs::new(&paths.data_dir(), "codex-test").unwrap();
             dirs.create().unwrap();
-            let accounts = Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), crate::app::logins()));
-            let quota = Arc::new(droppen_accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins()));
+            let accounts = Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), logins()));
+            let quota = Arc::new(droppen_accounts::quota::QuotaCache::new(paths.clone(), logins()));
             let decoration = droppen_provider::testing::no_decoration();
             let registry = InjectionRegistry::new(paths, &dirs, accounts, quota, decoration);
-            let providers = droppen_provider::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
+            let providers = codex_only(&registry);
             let socket = home.path().join("mock.sock");
             let listener = UnixListener::bind(&socket).unwrap();
             let connector = tokio::spawn(async move { shim::connect_in_process(&socket).await.unwrap() });
@@ -2879,8 +2908,8 @@ mod tests {
         let paths = Arc::new(Paths::new(home.into()));
         let dirs = InstanceDirs::new(&paths.data_dir(), instance).unwrap();
         dirs.create().unwrap();
-        let accounts = Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), crate::app::logins()));
-        let quota = Arc::new(droppen_accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins()));
+        let accounts = Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), logins()));
+        let quota = Arc::new(droppen_accounts::quota::QuotaCache::new(paths.clone(), logins()));
         let decoration = droppen_provider::testing::no_decoration();
         (guard, InjectionRegistry::new(paths, &dirs, accounts, quota, decoration))
     }
@@ -2912,7 +2941,7 @@ mod tests {
         const OTHER: &str = "0199c1a1-0000-4000-8000-000000000004";
         let home = tempfile::tempdir().expect("tempdir");
         let (_path, registry) = fake_codex_registry(home.path(), "codex-steps");
-        let providers = droppen_provider::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
+        let providers = codex_only(&registry);
         let gate = providers.gate();
         let work = home.path().join("work");
         std::fs::create_dir_all(&work).expect("work");
@@ -3013,7 +3042,7 @@ mod tests {
     fn unheld(name: &str) -> (tempfile::TempDir, droppen_base::process_env::ChildPathGuard, Arc<InjectionRegistry>, Arc<droppen_provider::ProviderRegistry>, std::path::PathBuf) {
         let home = tempfile::tempdir().expect("tempdir");
         let (path, registry) = fake_codex_registry(home.path(), name);
-        let providers = droppen_provider::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
+        let providers = codex_only(&registry);
         let work = home.path().join("work");
         std::fs::create_dir_all(&work).expect("work");
         (home, path, registry, providers, work)
@@ -3312,7 +3341,7 @@ mod tests {
         let (_path, registry) = fake_codex_registry(home.path(), "codex-snapshot");
         let alerts = Arc::new(droppen_provider::testing::TurnAlerts::default());
         registry.host.attach_alerts(alerts.clone());
-        let providers = droppen_provider::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
+        let providers = codex_only(&registry);
         let work = home.path().join("work");
         std::fs::create_dir_all(&work).expect("work");
         let work = work.to_string_lossy().into_owned();
@@ -3345,7 +3374,7 @@ mod tests {
         const THREAD: &str = "0199c1a1-0000-4000-8000-000000000005";
         let home = tempfile::tempdir().expect("tempdir");
         let (_path, registry) = fake_codex_registry(home.path(), "codex-wire");
-        let providers = droppen_provider::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
+        let providers = codex_only(&registry);
         let work = home.path().join("work");
         std::fs::create_dir_all(&work).expect("work");
         let log = work.join("codex-stdin.jsonl");
@@ -3427,7 +3456,7 @@ mod tests {
         let home = root.path().join(std::ffi::OsStr::from_bytes(b"\xff"));
         std::fs::create_dir_all(&home).expect("home");
         let (_path, registry) = fake_codex_registry(&home, "codex-utf8");
-        let providers = droppen_provider::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
+        let providers = codex_only(&registry);
         let refused = codex(&providers).codex_deliver(providers.gate(), Some(THREAD), None, "hi", &SendOptions::default(), None)
             .await
             .expect_err("refused");
@@ -3436,5 +3465,74 @@ mod tests {
         assert!(codex(&providers).codex_handle(THREAD).is_none(), "the reservation was given back");
         assert!(!registry.host.gate_held());
         assert!(!registry.host.claim_held(Source::Codex, THREAD));
+    }
+
+    /// A codex session whose app server is gone with messages still queued
+    /// keeps its handle in the list, and Stop on it stops nothing: the turn was
+    /// closed when the process went. A live adopted run is put under the same
+    /// session, the one the fallback would signal, so the test fails if Stop
+    /// ever gets past the handle.
+    #[tokio::test]
+    async fn stop_on_a_codex_session_whose_app_server_is_gone_reaches_no_run() {
+        const SESSION: &str = "0199c1a1-6666-7666-8666-dddddddddddd";
+
+        let home = tempfile::tempdir().expect("tempdir");
+        let paths = Arc::new(Paths::new(home.path().to_path_buf()));
+        let dirs = InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
+        dirs.create().expect("instance dirs");
+        let decoration = droppen_provider::testing::no_decoration();
+        let registry = InjectionRegistry::new(
+            paths.clone(),
+            &dirs,
+            Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), logins())),
+            Arc::new(droppen_accounts::quota::QuotaCache::new(paths, logins())),
+            decoration,
+        );
+        let providers = codex_only(&registry);
+
+        let mut live = std::process::Command::new("/bin/sh")
+            .args(["-c", "sleep 30"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn a stand-in");
+        let adopted = runs::RunRecord {
+            run_id: "run-adopted".to_string(),
+            source: Source::Codex,
+            session_id: SESSION.to_string(),
+            cwd: None,
+            cli_pid: live.id(),
+            started_at: "2026-01-01T00:00:00.000Z".to_string(),
+            pid_token: procs::start_token(live.id()),
+            resident: false,
+            shim: None,
+            payload: runs::Payload::new(),
+        };
+
+        let codex = providers.provider::<Codex>().expect("Codex").runs().clone();
+        let app_server = runs::RunRecord {
+            run_id: "run-app-server".to_string(),
+            resident: true,
+            payload: serde_json::from_value(serde_json::json!({"codex": {"queue": [{"id": "q1", "text": "next", "params": {}, "request": null}]}}))
+                .expect("a codex state"),
+            ..adopted.clone()
+        };
+        codex.codex_dead(app_server.decode().expect("a Codex record"));
+        let handle = codex.codex_handle(SESSION).expect("the handle stays");
+        assert!(handle.visible() && !handle.alive(), "listed, with no process behind it");
+
+        let claim = providers.gate().lease(Source::Codex, SESSION).expect("a free session must be claimable");
+        registry.watch_adopted(providers.runs()[&Source::Codex].clone(), adopted, claim);
+
+        assert!(!providers.interrupt(Source::Codex, SESSION), "nothing is left to stop");
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(live.try_wait().expect("try_wait").is_none(), "Stop got past the handle and signalled the adopted run");
+        let seen = registry.host.run_injection(Source::Codex, SESSION).expect("the adopted run");
+        assert_eq!(seen.state, InjectionRunState::Running);
+        assert!(!seen.interrupted);
+
+        let _ = live.kill();
+        let _ = live.wait();
     }
 }

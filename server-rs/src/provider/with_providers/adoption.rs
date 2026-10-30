@@ -9,7 +9,6 @@ use droppen_instance::instance::InstanceDirs;
 use droppen_instance::paths::Paths;
 use droppen_sessions::{InjectionRunState, Source};
 
-use crate::provider::codex;
 use droppen_provider::*;
 
 /// Stop must never signal a pid that has stopped being the run it named.
@@ -107,75 +106,6 @@ async fn stop_never_signals_a_pid_that_is_no_longer_the_run_it_named() {
 
     let _ = stranger.kill();
     let _ = stranger.wait();
-}
-
-/// A codex session whose app server is gone with messages still queued
-/// keeps its handle in the list, and Stop on it stops nothing: the turn was
-/// closed when the process went. A live adopted run is put under the same
-/// session, the one the fallback would signal, so the test fails if Stop
-/// ever gets past the handle.
-#[tokio::test]
-async fn stop_on_a_codex_session_whose_app_server_is_gone_reaches_no_run() {
-    const SESSION: &str = "0199c1a1-6666-7666-8666-dddddddddddd";
-
-    let home = tempfile::tempdir().expect("tempdir");
-    let paths = Arc::new(Paths::new(home.path().to_path_buf()));
-    let dirs = InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
-    dirs.create().expect("instance dirs");
-    let decoration = droppen_provider::testing::no_decoration();
-    let registry = InjectionRegistry::new(
-        paths.clone(),
-        &dirs,
-        Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), crate::app::logins())),
-        Arc::new(droppen_accounts::quota::QuotaCache::new(paths, crate::app::logins())),
-        decoration,
-    );
-    let providers = ProviderRegistry::new(registry.clone(), crate::app::register_providers);
-
-    let mut live = std::process::Command::new("/bin/sh")
-        .args(["-c", "sleep 30"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("spawn a stand-in");
-    let adopted = runs::RunRecord {
-        run_id: "run-adopted".to_string(),
-        source: Source::Codex,
-        session_id: SESSION.to_string(),
-        cwd: None,
-        cli_pid: live.id(),
-        started_at: "2026-01-01T00:00:00.000Z".to_string(),
-        pid_token: procs::start_token(live.id()),
-        resident: false,
-        shim: None,
-        payload: runs::Payload::new(),
-    };
-
-    let codex = providers.provider::<codex::app_server::Codex>().expect("Codex").runs().clone();
-    let app_server = runs::RunRecord {
-        run_id: "run-app-server".to_string(),
-        resident: true,
-        payload: serde_json::from_value(serde_json::json!({"codex": {"queue": [{"id": "q1", "text": "next", "params": {}, "request": null}]}}))
-            .expect("a codex state"),
-        ..adopted.clone()
-    };
-    codex.codex_dead(app_server.decode().expect("a Codex record"));
-    let handle = codex.codex_handle(SESSION).expect("the handle stays");
-    assert!(handle.visible() && !handle.alive(), "listed, with no process behind it");
-
-    let claim = providers.gate().lease(Source::Codex, SESSION).expect("a free session must be claimable");
-    registry.watch_adopted(providers.runs()[&Source::Codex].clone(), adopted, claim);
-
-    assert!(!providers.interrupt(Source::Codex, SESSION), "nothing is left to stop");
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    assert!(live.try_wait().expect("try_wait").is_none(), "Stop got past the handle and signalled the adopted run");
-    let seen = registry.host.run_injection(Source::Codex, SESSION).expect("the adopted run");
-    assert_eq!(seen.state, InjectionRunState::Running);
-    assert!(!seen.interrupted);
-
-    let _ = live.kill();
-    let _ = live.wait();
 }
 
 /// Adoption claims each session it takes back without the spawn gate: it
