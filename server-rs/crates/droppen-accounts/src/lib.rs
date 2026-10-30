@@ -178,30 +178,42 @@ pub fn provider_mismatch() -> ApiError {
     )
 }
 
-/// An id that is not a uuid names no account, so it gets the same `404` a uuid
-/// that names nothing does.
-///
-/// The TypeScript answered `400` here — `z.string().uuid()` on the path
-/// parameter failed before the handler ran, and `@hono/zod-validator` renders
-/// every failure as `c.json(result, 400)`. But that status was never part of the
-/// contract: `DELETE /api/accounts/{id}`, `/usage-login` and `/usage-verify`
-/// document only `404` for a missing account, and `PATCH`'s `400` is documented
-/// as "unusable label". A client written against the contract handles `404`; it
-/// has no reason to expect a `400` that is not written down.
-pub fn require_uuid(id: &str) -> Result<(), ApiError> {
-    if store::is_uuid(id) {
-        Ok(())
-    } else {
-        Err(account_not_found())
-    }
+/// The checks an account route makes of what a request names before it
+/// touches the store: an account id from the path, a label from the body.
+pub trait AccountInputExt {
+    /// An id that is not a uuid names no account, so it gets the same `404` a uuid
+    /// that names nothing does.
+    ///
+    /// The TypeScript answered `400` here — `z.string().uuid()` on the path
+    /// parameter failed before the handler ran, and `@hono/zod-validator` renders
+    /// every failure as `c.json(result, 400)`. But that status was never part of the
+    /// contract: `DELETE /api/accounts/{id}`, `/usage-login` and `/usage-verify`
+    /// document only `404` for a missing account, and `PATCH`'s `400` is documented
+    /// as "unusable label". A client written against the contract handles `404`; it
+    /// has no reason to expect a `400` that is not written down.
+    fn require_uuid(&self) -> Result<(), ApiError>;
+
+    /// `z.string().min(1).max(100)` on a label.
+    fn require_label(&self) -> Result<(), ApiError>;
 }
 
-/// `z.string().min(1).max(100)` on a label.
-pub fn require_label(label: &str) -> Result<(), ApiError> {
-    match label.chars().count() {
-        0 => Err(ApiError::bad_request("the label is empty")),
-        n if n > 100 => Err(ApiError::bad_request("the label is too long")),
-        _ => Ok(()),
+impl AccountInputExt for str {
+    fn require_uuid(&self) -> Result<(), ApiError> {
+        let id = self;
+        if store::is_uuid(id) {
+            Ok(())
+        } else {
+            Err(account_not_found())
+        }
+    }
+
+    fn require_label(&self) -> Result<(), ApiError> {
+        let label = self;
+        match label.chars().count() {
+            0 => Err(ApiError::bad_request("the label is empty")),
+            n if n > 100 => Err(ApiError::bad_request("the label is too long")),
+            _ => Ok(()),
+        }
     }
 }
 
@@ -336,7 +348,7 @@ fn touches_credential(body: &AccountUpdate) -> bool {
 /// Store a new Claude account.
 #[api(id = "create_account", group = "accounts", summary = "Add an account")]
 pub async fn create_account(State(state): State<AccountsState>, ApiJson(body): ApiJson<AccountCreate>) -> Result<Created<Account>, ApiError> {
-    require_label(&body.label)?;
+    body.label.require_label()?;
     let provider = body.provider.0.unwrap_or_default();
     // The shape is checked before a request is spent on the credential: a
     // combination that could never spawn is not worth a round trip to a vendor.
@@ -367,9 +379,9 @@ pub async fn update_account(
     ApiPath(id): ApiPath<String>,
     ApiJson(body): ApiJson<AccountUpdate>,
 ) -> Result<Json<Account>, ApiError> {
-    require_uuid(&id)?;
+    id.require_uuid()?;
     if let Some(label) = body.label.as_deref() {
-        require_label(label)?;
+        label.require_label()?;
     }
     let mut unchecked = None;
     let mut credential = None;
@@ -417,7 +429,7 @@ pub async fn update_account(
 /// somebody asks for that account, not with every list a picker fetches.
 #[api(id = "get_account_env", group = "accounts", summary = "Get an account's environment block")]
 pub async fn get_account_env(State(state): State<AccountsState>, ApiPath(id): ApiPath<String>) -> Result<Json<AccountEnvBlock>, ApiError> {
-    require_uuid(&id)?;
+    id.require_uuid()?;
     match state.accounts.env_block(&id).await {
         Ok(env) => Ok(Json(AccountEnvBlock { env })),
         Err(AccountError::NotFound(_)) => Err(account_not_found()),
@@ -428,7 +440,7 @@ pub async fn get_account_env(State(state): State<AccountsState>, ApiPath(id): Ap
 /// Delete an account, its session bindings and its probe login.
 #[api(id = "delete_account", group = "accounts", summary = "Delete an account")]
 pub async fn delete_account(State(state): State<AccountsState>, ApiPath(id): ApiPath<String>) -> Result<Json<SendResult>, ApiError> {
-    require_uuid(&id)?;
+    id.require_uuid()?;
     if !state
         .accounts
         .delete(&id)
@@ -457,7 +469,7 @@ pub async fn set_default_account(State(state): State<AccountsState>, ApiJson(bod
         return Ok(Json(state.accounts.account_list().await));
     }
     if let Some(id) = account_id.as_deref() {
-        require_uuid(id)?;
+        id.require_uuid()?;
     }
     if !state
         .accounts
@@ -539,7 +551,7 @@ async fn limit_subject(state: &AccountsState, id: &str) -> Result<(), ApiError> 
     if rest::is_local(id) {
         return Ok(());
     }
-    require_uuid(id)?;
+    id.require_uuid()?;
     match state.accounts.get(id).await {
         Some(_) => Ok(()),
         None => Err(account_not_found()),
@@ -670,6 +682,65 @@ pub fn describe(reg: &mut ExtraResponses) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The model lists of no login: the id routes never ask for one.
+    struct NoModels;
+
+    impl ModelIds for NoModels {
+        fn model_ids<'a>(&'a self, _source: droppen_sessions::Source, _account_id: Option<&'a str>) -> futures_util::future::BoxFuture<'a, Vec<String>> {
+            Box::pin(async { Vec::new() })
+        }
+    }
+
+    /// A route refuses an id that is not a uuid before it asks the store
+    /// anything. The store would answer for such an id: here a stored
+    /// account's row is renamed behind its back, so reading or deleting under
+    /// the new name would find it.
+    #[tokio::test]
+    async fn a_route_asks_the_store_nothing_about_an_id_that_is_not_a_uuid() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let paths = Arc::new(droppen_instance::paths::Paths::new(dir.path().to_path_buf()));
+        let accounts = Arc::new(store::AccountsStore::new(paths.clone(), login::Logins::stand_ins()));
+        let block = droppen_base::env_block::parse_env_block("ANTHROPIC_AUTH_TOKEN=t\nANTHROPIC_BASE_URL=https://relay.example").expect("block");
+        let account = accounts.create("Relay", AccountProvider::Claude, Credential::Env(block)).await.expect("stored");
+        let renamed = "not-a-uuid";
+        let db = rusqlite::Connection::open(paths.config_db()).expect("the store's database");
+        assert_eq!(db.execute("UPDATE accounts SET id = ?1 WHERE id = ?2", (renamed, &account.id)).expect("rename"), 1);
+        let state = AccountsState {
+            accounts,
+            quota: Arc::new(quota::QuotaCache::new(paths.clone(), login::Logins::stand_ins())),
+            paths,
+            model_ids: Arc::new(NoModels),
+            recheck_holds: Arc::new(|| {}),
+        };
+
+        let read = get_account_env(State(state.clone()), ApiPath(renamed.to_string())).await;
+        assert_eq!(read.err().expect("refused").status(), StatusCode::NOT_FOUND, "the block is not read");
+        let deleted = delete_account(State(state), ApiPath(renamed.to_string())).await;
+        assert_eq!(deleted.err().expect("refused").status(), StatusCode::NOT_FOUND);
+        let left: i64 = db.query_row("SELECT COUNT(*) FROM accounts WHERE id = ?1", (renamed,), |row| row.get(0)).expect("count");
+        assert_eq!(left, 1, "the row is not deleted");
+    }
+
+    /// What an account route checks before it touches the store: an id that
+    /// is not a uuid is the same `404` as one that names no account, and a
+    /// label is 1 to 100 characters, counted as characters rather than bytes.
+    #[test]
+    fn a_route_takes_only_a_uuid_for_an_id_and_a_label_of_one_to_a_hundred_characters() {
+        assert!("0b6f7a7e-2f7a-4d8e-9d0c-1a2b3c4d5e6f".require_uuid().is_ok());
+        for id in ["", "not-a-uuid", "../0b6f7a7e-2f7a-4d8e-9d0c-1a2b3c4d5e6f", "0b6f7a7e-2f7a-4d8e-9d0c-1a2b3c4d5e6f/x"] {
+            let error = id.require_uuid().expect_err(id);
+            assert_eq!(error.status(), StatusCode::NOT_FOUND, "{id:?}");
+            assert_eq!(error.body().to_string(), account_not_found().body().to_string(), "{id:?}");
+        }
+
+        assert!("W".require_label().is_ok());
+        assert!("é".repeat(100).require_label().is_ok(), "100 characters, 200 bytes");
+        for label in [String::new(), "x".repeat(101)] {
+            let error = label.require_label().expect_err("refused");
+            assert_eq!(error.status(), StatusCode::BAD_REQUEST, "{} characters", label.chars().count());
+        }
+    }
 
     /// The two refusals with a code of their own, byte for byte: the client
     /// acts on `error`, shows `hint`, and names `existingLabel`.

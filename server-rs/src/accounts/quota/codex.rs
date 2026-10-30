@@ -41,7 +41,7 @@ use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{ChildStdin, ChildStdout};
 
-use droppen_accounts::quota::{window, CodexQuota, CodexQuotaSource, QuotaWindow};
+use droppen_accounts::quota::{CodexQuota, CodexQuotaSource, QuotaWindow};
 use droppen_http::openapi_ext::Nullable;
 use droppen_accounts::quota::ProbeRoots;
 use droppen_base::process_env::{apply_env, clean_env_bare};
@@ -203,14 +203,14 @@ impl WindowValue for Option<&Value> {
         let object = (*self)?.as_object()?;
         let used = object.get("usedPercent")?.as_f64()?;
         let minutes = object.get("windowDurationMins").and_then(Value::as_i64).unwrap_or(0);
-        Some(window(window_label(minutes), minutes, used, object.get("resetsAt").resets_at()))
+        Some(QuotaWindow::new(window_label(minutes), minutes, used, object.get("resetsAt").resets_at()))
     }
 
     fn log_window(&self) -> Option<QuotaWindow> {
         let object = (*self)?.as_object()?;
         let used = object.get("used_percent")?.as_f64()?;
         let minutes = object.get("window_minutes").and_then(Value::as_i64).unwrap_or(0);
-        Some(window(window_label(minutes), minutes, used, object.get("resets_at").resets_at()))
+        Some(QuotaWindow::new(window_label(minutes), minutes, used, object.get("resets_at").resets_at()))
     }
 
     fn resets_at(&self) -> Option<String> {

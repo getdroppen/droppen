@@ -514,13 +514,12 @@ impl Throttle {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::quota::window;
     use serde_json::Value;
 
     const MINUTE: i64 = 60_000;
 
     fn stored(label: &str, minutes: i64, used: f64, at_ms: i64, source: QuotaReadingSource) -> StoredWindow {
-        StoredWindow::new(window(label.to_string(), minutes, used, None), at_ms, source)
+        StoredWindow::new(QuotaWindow::new(label.to_string(), minutes, used, None), at_ms, source)
     }
 
     fn labels(windows: &[StoredWindow]) -> Vec<&str> {
@@ -533,16 +532,16 @@ mod tests {
         let mut reading = SharedReading::default();
         reading.merge(
             vec![
-                window("5h".into(), 300, 10.0, None),
-                window("weekly".into(), 10080, 40.0, None),
-                window("weekly (Fable)".into(), 10080, 80.0, None),
+                QuotaWindow::new("5h".into(), 300, 10.0, None),
+                QuotaWindow::new("weekly".into(), 10080, 40.0, None),
+                QuotaWindow::new("weekly (Fable)".into(), 10080, 80.0, None),
             ],
             t0,
             QuotaReadingSource::Probe,
         );
         // A session event names two of the three.
         reading.merge(
-            vec![window("5h".into(), 300, 19.0, None), window("weekly".into(), 10080, 46.0, None)],
+            vec![QuotaWindow::new("5h".into(), 300, 19.0, None), QuotaWindow::new("weekly".into(), 10080, 46.0, None)],
             t0 + 20 * MINUTE,
             QuotaReadingSource::Session,
         );
@@ -562,7 +561,7 @@ mod tests {
         assert_eq!(newest.source, QuotaReadingSource::Session);
 
         // A reading older than what is held cannot wind a window back.
-        reading.merge(vec![window("5h".into(), 300, 99.0, None)], t0 + MINUTE, QuotaReadingSource::Probe);
+        reading.merge(vec![QuotaWindow::new("5h".into(), 300, 99.0, None)], t0 + MINUTE, QuotaReadingSource::Probe);
         assert_eq!(by_label(&reading, "5h").used_percent, 19.0);
 
         // Stamped on the way out.
@@ -580,7 +579,7 @@ mod tests {
         let mut reading = SharedReading::default();
         reading.record_probe(
             UsageProbe {
-                windows: vec![window("5h".into(), 300, 10.0, None)],
+                windows: vec![QuotaWindow::new("5h".into(), 300, 10.0, None)],
                 error: None,
                 rate_limited: false,
             },
@@ -606,7 +605,7 @@ mod tests {
         // A clean probe clears the verdict.
         reading.record_probe(
             UsageProbe {
-                windows: vec![window("5h".into(), 300, 12.0, None)],
+                windows: vec![QuotaWindow::new("5h".into(), 300, 12.0, None)],
                 error: None,
                 rate_limited: false,
             },
@@ -625,7 +624,7 @@ mod tests {
         assert_eq!(SharedReading::default().fallback(t0, after), Fallback::Due);
 
         let mut reading = SharedReading::default();
-        reading.merge(vec![window("5h".into(), 300, 10.0, None)], t0, QuotaReadingSource::Session);
+        reading.merge(vec![QuotaWindow::new("5h".into(), 300, 10.0, None)], t0, QuotaReadingSource::Session);
         assert_eq!(reading.fallback(t0 + 14 * MINUTE, after), Fallback::Fresh, "a session read it lately");
         assert_eq!(reading.fallback(t0 + 15 * MINUTE, after), Fallback::Due, "nothing has run for 15 minutes");
 
@@ -668,7 +667,7 @@ mod tests {
 
         // A fresh session reading beats a stale failure: nothing to probe for.
         let mut revived = limited.clone();
-        revived.merge(vec![window("5h".into(), 300, 30.0, None)], t0 + 60 * MINUTE, QuotaReadingSource::Session);
+        revived.merge(vec![QuotaWindow::new("5h".into(), 300, 30.0, None)], t0 + 60 * MINUTE, QuotaReadingSource::Session);
         assert_eq!(revived.fallback(t0 + 61 * MINUTE, after), Fallback::Fresh);
     }
 
@@ -700,7 +699,7 @@ mod tests {
         let t0 = 1_790_000_000_000;
         let written = update(&path, |r| {
             r.merge(
-                vec![window("5h".into(), 300, 19.0, Some("2026-09-26T15:20:00.000Z".into()))],
+                vec![QuotaWindow::new("5h".into(), 300, 19.0, Some("2026-09-26T15:20:00.000Z".into()))],
                 t0,
                 QuotaReadingSource::Session,
             );
@@ -734,7 +733,7 @@ mod tests {
         std::fs::write(&path, b"{ not json").expect("garbage");
         assert_eq!(load(&path), SharedReading::default());
         update(&path, |r| {
-            r.merge(vec![window("weekly".into(), 10080, 1.0, None)], t0, QuotaReadingSource::Probe)
+            r.merge(vec![QuotaWindow::new("weekly".into(), 10080, 1.0, None)], t0, QuotaReadingSource::Probe)
         })
         .expect("rewritten");
         assert_eq!(labels(&load(&path).windows), ["weekly"]);
@@ -751,7 +750,7 @@ mod tests {
                 let path = path.clone();
                 std::thread::spawn(move || {
                     update(&path, |r| {
-                        r.merge(vec![window(format!("w{n}"), 60, n as f64, None)], 1, QuotaReadingSource::Session)
+                        r.merge(vec![QuotaWindow::new(format!("w{n}"), 60, n as f64, None)], 1, QuotaReadingSource::Session)
                     })
                     .expect("written");
                 })

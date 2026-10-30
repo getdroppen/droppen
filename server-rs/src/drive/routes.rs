@@ -16,7 +16,7 @@ use super::attachments::resolve_attachments;
 use super::composer_prefs::{ComposerChoice, ComposerPrefs};
 use super::idempotent::{self, Begun, Key};
 use droppen_accounts::store::{AccountError, AccountProvider};
-use droppen_accounts::{account_not_found, provider_mismatch, require_uuid};
+use droppen_accounts::{account_not_found, provider_mismatch, AccountInputExt};
 use droppen_auth::MaybeIdentity;
 use crate::feed;
 use droppen_http::error::{ApiError, Hinted};
@@ -1641,7 +1641,7 @@ pub async fn bind_session_account(
         ));
     };
     if let Some(account_id) = account_id.as_deref() {
-        require_uuid(account_id)?;
+        account_id.require_uuid()?;
         // Before anything is read off disk: an account for the other CLI is a
         // client bug, and it is the same answer whatever the session turns out
         // to be.
@@ -1709,7 +1709,7 @@ pub async fn continue_session_on_account(
     if source != Source::Claude {
         return Err(continue_not_supported());
     }
-    require_uuid(&body.account_id)?;
+    body.account_id.require_uuid()?;
     let Some(account) = state.drive.accounts.get(&body.account_id).await else {
         return Err(account_not_found());
     };

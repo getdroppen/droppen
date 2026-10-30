@@ -70,39 +70,50 @@ pub enum Verdict {
     Unverifiable(String),
 }
 
-/// The first few lines of whatever the CLI complained about, fit to be shown.
-///
-/// A failing CLI happily echoes the credential it was handed ("Authentication
-/// failed for sk-ant-…"), so the redaction is not optional: this string ends up
-/// in an API response and in the capture status the browser polls.
-pub fn reason(stderr: &str, stdout: &str, secrets: &[&str]) -> String {
-    let raw = if stderr.trim().is_empty() { stdout } else { stderr };
-    // The credential being checked is known *here*, before anything has been
-    // stored, so it is taken out by value rather than guessed at by shape —
-    // every value of the block, because any of them can be the one the CLI
-    // quotes back. It has to be done this way: a gateway's bearer token and a
-    // relay key are arbitrary strings, and the pattern below can only find the
-    // ones that look like credentials. The pattern still runs, for the ones this probe
-    // was never handed — a `CLAUDE_CONFIG_DIR` login the CLI mentions, a key in
-    // the CLI's own diagnostics.
-    let raw = redact_values(raw, secrets.iter().copied());
-    let text = redact_secrets(&raw)
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .collect::<Vec<_>>()
-        .join(" · ");
-    if text.is_empty() {
-        return "the claude CLI rejected the token without saying why".to_string();
+/// What a CLI printed: its standard output and its standard error.
+#[derive(Debug, Clone, Copy)]
+pub struct CliOutput<'a> {
+    /// Standard output.
+    pub stdout: &'a str,
+    /// Standard error.
+    pub stderr: &'a str,
+}
+
+impl CliOutput<'_> {
+    /// The first few lines of whatever the CLI complained about, fit to be shown.
+    ///
+    /// A failing CLI happily echoes the credential it was handed ("Authentication
+    /// failed for sk-ant-…"), so the redaction is not optional: this string ends up
+    /// in an API response and in the capture status the browser polls.
+    pub fn reason(&self, secrets: &[&str]) -> String {
+        let raw = if self.stderr.trim().is_empty() { self.stdout } else { self.stderr };
+        // The credential being checked is known *here*, before anything has been
+        // stored, so it is taken out by value rather than guessed at by shape —
+        // every value of the block, because any of them can be the one the CLI
+        // quotes back. It has to be done this way: a gateway's bearer token and a
+        // relay key are arbitrary strings, and the pattern below can only find the
+        // ones that look like credentials. The pattern still runs, for the ones this probe
+        // was never handed — a `CLAUDE_CONFIG_DIR` login the CLI mentions, a key in
+        // the CLI's own diagnostics.
+        let raw = redact_values(raw, secrets.iter().copied());
+        let text = redact_secrets(&raw)
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>()
+            .join(" · ");
+        if text.is_empty() {
+            return "the claude CLI rejected the token without saying why".to_string();
+        }
+        if text.len() <= MAX_REASON {
+            return text;
+        }
+        let mut cut = MAX_REASON;
+        while !text.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        text[..cut].to_string()
     }
-    if text.len() <= MAX_REASON {
-        return text;
-    }
-    let mut cut = MAX_REASON;
-    while !text.is_char_boundary(cut) {
-        cut -= 1;
-    }
-    text[..cut].to_string()
 }
 
 /// Where a probe runs: a config directory with no login of its own, plus an
@@ -376,7 +387,7 @@ mod tests {
 
     #[test]
     fn a_refusal_is_quoted_back_without_the_credential_in_it() {
-        let text = reason("Authentication failed for sk-ant-oat01-AbCdEfGhIjKlMnOp\n\nrun /login\n", "", &[]);
+        let text = CliOutput { stdout: "", stderr: "Authentication failed for sk-ant-oat01-AbCdEfGhIjKlMnOp\n\nrun /login\n" }.reason(&[]);
         assert!(!text.contains("AbCdEfGhIjKlMnOp"), "the secret must never reach a response: {text}");
         assert!(text.contains("[redacted]"), "{text}");
         assert_eq!(text, "Authentication failed for sk-ant-\u{2026}[redacted] · run /login");
@@ -388,17 +399,13 @@ mod tests {
     #[test]
     fn the_credential_being_probed_is_removed_by_value_before_it_is_ever_stored() {
         let secret = "hunter2-gateway-issued-value";
-        let text = reason(&format!("401 unauthorized for {secret} at https://gw/v1"), "", &[secret]);
+        let text = CliOutput { stdout: "", stderr: &format!("401 unauthorized for {secret} at https://gw/v1") }.reason(&[secret]);
         assert!(!text.contains("hunter2"), "the value must not reach a 400 body: {text}");
         assert_eq!(text, "401 unauthorized for [redacted] at https://gw/v1");
 
         // And the pattern still runs underneath, for credentials this probe was
         // never handed — a login the CLI found for itself, a key in its output.
-        let both = reason(
-            "bad token hunter2-gateway-issued-value; config has sk-ant-oat01-AbCdEfGhIj",
-            "",
-            &[secret],
-        );
+        let both = CliOutput { stdout: "", stderr: "bad token hunter2-gateway-issued-value; config has sk-ant-oat01-AbCdEfGhIj" }.reason(&[secret]);
         assert!(!both.contains("hunter2") && !both.contains("AbCdEfGhIj"), "{both}");
 
         // A short "secret" is a word, and replacing every occurrence of one
@@ -409,13 +416,13 @@ mod tests {
 
     #[test]
     fn stdout_is_used_when_the_cli_said_nothing_on_stderr() {
-        assert_eq!(reason("  \n", "{\"error\":\"invalid token\"}", &[]), "{\"error\":\"invalid token\"}");
-        assert_eq!(reason("", "", &[]), "the claude CLI rejected the token without saying why");
+        assert_eq!(CliOutput { stdout: "{\"error\":\"invalid token\"}", stderr: "  \n" }.reason(&[]), "{\"error\":\"invalid token\"}");
+        assert_eq!(CliOutput { stdout: "", stderr: "" }.reason(&[]), "the claude CLI rejected the token without saying why");
     }
 
     #[test]
     fn a_wall_of_output_is_cut_to_something_showable() {
-        let text = reason(&"x".repeat(4096), "", &[]);
+        let text = CliOutput { stdout: "", stderr: &"x".repeat(4096) }.reason(&[]);
         assert!(text.len() <= MAX_REASON, "cut to {} characters", text.len());
     }
 
