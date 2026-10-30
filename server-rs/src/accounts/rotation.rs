@@ -617,8 +617,11 @@ impl StartInputs {
 
     /// Whether the model a start asks for can change the login it runs on:
     /// a default resting (or about to run out) on one family and not another, a
-    /// signed-out local login whose stand-in depends on the family. Never for
-    /// codex, whose models name no family.
+    /// signed-out local login whose stand-in depends on the family. The
+    /// families asked about are Claude Code's ([`START_FAMILIES`]) whichever
+    /// CLI starts, so for codex, whose models name no family, it is `true`
+    /// when a stand-in for its signed-out local login rests under one of them,
+    /// and the start then reads model lists it has no use for.
     pub fn model_matters(&self) -> bool {
         let first = self.place_family(None).account_id;
         START_FAMILIES[1..]
@@ -1866,6 +1869,73 @@ mod tests {
         // A configured default is the user's and always wins — even one out of the pool.
         store.set_default(Some(&gateway.id), AccountProvider::Claude).await.expect("default");
         assert_eq!(start(AccountProvider::Claude, None).await, (Some(gateway.id.clone()), StartReason::Default));
+    }
+
+    /// A codex start goes to its configured default however that default
+    /// rests, with a free pool account beside it: codex sessions do not move
+    /// between accounts. Through the store, so the start is handed the login
+    /// of its own CLI ([`StartInputs::gather`]) from the logins the entry builds.
+    #[tokio::test]
+    async fn a_codex_start_stays_on_its_resting_default() {
+        use crate::accounts::limits::Verdict;
+        use crate::accounts::rest::{now_ms, Observation};
+        use crate::accounts::store::{AccountPatch, Credential};
+        use droppen_base::env_block::parse_env_block;
+        use droppen_instance::paths::Paths;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let paths = Arc::new(Paths::new(dir.path().to_path_buf()));
+        let store = AccountsStore::new(paths.clone(), crate::app::logins());
+        let quota = QuotaCache::new(paths, crate::app::logins());
+        let mut pooled = Vec::new();
+        for label in ["A", "B"] {
+            let block = parse_env_block(&format!("OPENAI_API_KEY=key-{label}")).expect("block");
+            let account = store
+                .create(label, AccountProvider::Codex, Credential::Env(block))
+                .await
+                .expect("codex account");
+            store
+                .update(
+                    &account.id,
+                    AccountPatch {
+                        rotation: Some(true),
+                        ..AccountPatch::default()
+                    },
+                )
+                .await
+                .expect("into the pool");
+            pooled.push(account);
+        }
+        let (a, b) = (&pooled[0], &pooled[1]);
+        store.set_default(Some(&a.id), AccountProvider::Codex).await.expect("default");
+        store
+            .limit_log()
+            .record(
+                &Observation {
+                    account_id: a.id.clone(),
+                    session_id: Some("s".into()),
+                    source: "codex:turn",
+                    model: None,
+                    verdict: Verdict {
+                        class: LimitClass::Session,
+                        scope: "all".into(),
+                        until_ms: Some(now_ms() + 60 * MINUTE),
+                    },
+                    raw: "You've hit your usage limit".into(),
+                    reason: "You've hit your usage limit".into(),
+                    may_rest: true,
+                },
+                now_ms(),
+            )
+            .expect("rest");
+
+        let picked = start_for(&store, &quota, AccountProvider::Codex, None).await;
+        assert_eq!(
+            (picked.account_id.0, picked.reason),
+            (Some(a.id.clone()), StartReason::Default),
+            "not {}, the free pool account beside it",
+            b.label
+        );
     }
 
     fn tokyo(y: i32, mo: u32, d: u32, h: u32, mi: u32) -> DateTime<FixedOffset> {
