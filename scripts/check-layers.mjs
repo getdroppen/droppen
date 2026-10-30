@@ -24,11 +24,11 @@
  *   both members yet is waiting, and is listed so.
  * - Only the members a `wrappers` entry lists depend on its external crate,
  *   and each of them still does: the list only shrinks.
- * - The matches of `Source::Claude|Codex|Acp` in the members' code built
- *   outside tests, the crates `sourceMatches.exempt` names aside (each with
- *   its reason), are as many as `sourceMatches.count` records: outside the
- *   providers `Source` is only the key that picks one, so the number only
- *   goes down, and a lower one is written down.
+ * - Each crate `sourceMatches.exempt` names, a provider whose
+ *   `Source::Claude|Codex|Acp` matches are its own, is one layers.json lists,
+ *   and says why. The matches outside them are counted, from each file's
+ *   parsed code, by the server's source scans (`provider_tests::gate`), which
+ *   hold them to `sourceMatches.count`; this prints the number.
  * - layers.json places no module (`modules`) and lists no exception between
  *   modules (`allowed`): every crate is a member of its own, so nothing
  *   reads them.
@@ -43,14 +43,17 @@
  * apart, and links a second copy of the crate under test into it.
  *
  * A member's code is the files of its library and binaries (`cargo
- * metadata`'s targets), followed through their `mod x;` declarations that
- * are built outside tests. Comments, string literals and `#[cfg(test)]`
- * items do not count.
+ * metadata`'s targets), followed through their `mod x;` declarations. A
+ * module declared `#[cfg(test)]` is no code: an inline one (`mod tests { …
+ * }`, its braces matched once comments and literals are read as such) and a
+ * file of its own (`mod tests;`). Its code lines are the lines left that
+ * are neither blank nor comment; a test-only item outside a test module
+ * counts.
  *
  * It also prints what the layers are judged by: the largest crate cycle with
  * the dev-dependencies (Cargo refuses one in `[dependencies]`), each middle
- * crate's code lines and how many members depend on it, and the `Source::`
- * count.
+ * crate's library's code lines and how many members depend on it, and the
+ * `Source::` count.
  *
  *   node scripts/check-layers.mjs [--json]     (pnpm check:layers)
  */
@@ -67,7 +70,7 @@ const IDENT = /[A-Za-z0-9_]/;
 
 /**
  * `code` (comments already blanked) with the contents of every string and
- * char literal blanked too, quotes kept, so that a `{` or a `Source::` in
+ * char literal blanked too, quotes kept, so that a `{` or a `mod x;` in
  * text is not taken for code. Newlines stay, so lines still count.
  */
 export function withoutLiterals(code) {
@@ -125,106 +128,69 @@ function closing(code, at) {
   return code.length;
 }
 
-/** `cfg(test)` or `cfg(all(…, test, …))`: compiled for tests only. */
-const testOnly = (predicate) => {
-  const p = predicate.replace(/\s+/g, "");
-  return p === "test" || (p.startsWith("all(") && p.slice(4, -1).split(",").includes("test"));
-};
-
 /** `text` with each `[from, to)` of `ranges` blanked. */
 const blankRanges = (text, ranges) =>
   ranges.reduce((out, [from, to]) => out.slice(0, from) + blank(out.slice(from, to)) + out.slice(to), text);
 
 /**
- * The `[from, to)` ranges of `code` (comments and literals blanked) that are
- * an item, statement or field under a test-only `#[cfg(…)]`, attribute
- * included.
+ * The modules `code` (comments and literals blanked) declares for tests
+ * alone: `#[cfg(test)]`, any other attributes after it, on `mod name { … }`
+ * or `mod name;`. Each one's `[from, to)` range, attribute included and an
+ * inline module's braces matched (`ranges`), and the names of those that
+ * are files of their own (`files`).
  */
-function testRanges(code) {
+export function testModules(code) {
   const ranges = [];
-  let out = code;
-  const cfg = /#\s*\[\s*cfg\s*\(/g;
-  let m;
-  while ((m = cfg.exec(out))) {
-    const open = m.index + m[0].length - 1;
-    const close = closing(out, open);
-    if (!testOnly(out.slice(open + 1, close - 1))) continue;
-    // the attribute's `]`, then any other attributes on the same item
-    let i = out.indexOf("]", close) + 1;
+  const files = [];
+  for (const m of code.matchAll(/#\s*\[\s*cfg\s*\(\s*test\s*\)\s*\]/g)) {
+    let i = m.index + m[0].length;
     for (;;) {
-      while (/\s/.test(out[i] ?? "")) i++;
-      if (out[i] !== "#") break;
-      i = closing(out, out.indexOf("[", i));
+      while (/\s/.test(code[i] ?? "")) i++;
+      if (code[i] !== "#") break;
+      i = closing(code, code.indexOf("[", i));
     }
-    // The item ends at its `;`, at the `}` of its body, at a `,` (a field) or
-    // at the `}` that closes the block around it. `<…>` is counted so that the
-    // comma in a field's `HashMap<K, V>` does not end it.
-    let depth = 0;
-    let angles = 0;
-    let end = out.length;
-    for (let j = i; j < out.length; j++) {
-      const c = out[j];
-      if (c === "(" || c === "[") depth++;
-      else if (c === ")" || c === "]") depth--;
-      else if (c === "<") angles++;
-      else if (c === ">" && out[j - 1] !== "-" && out[j - 1] !== "=") angles = Math.max(0, angles - 1);
-      else if (depth === 0 && c === "{") {
-        end = closing(out, j);
-        if (/^\s*;/.test(out.slice(end))) end = out.indexOf(";", end) + 1;
-        break;
-      } else if (depth === 0 && (c === ";" || (c === "," && angles === 0))) {
-        end = j + 1;
-        break;
-      } else if (depth === 0 && c === "}") {
-        end = j;
-        break;
-      }
-    }
-    ranges.push([m.index, end]);
-    out = out.slice(0, m.index) + blank(out.slice(m.index, end)) + out.slice(end);
-    cfg.lastIndex = m.index + 1;
+    const declared = /^(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+(?:r#)?([A-Za-z_][A-Za-z0-9_]*)\s*([;{])/.exec(code.slice(i));
+    if (!declared) continue;
+    const end = i + declared[0].length;
+    if (declared[2] === ";") {
+      files.push(declared[1]);
+      ranges.push([m.index, end]);
+    } else ranges.push([m.index, closing(code, end - 1)]);
   }
-  return ranges;
+  return { ranges, files };
 }
 
-/** What is read of a Rust source: the code that is built outside tests. */
-export const builtCode = (src) => {
-  const literals = withoutLiterals(codeOnly(src, "rs"));
-  return blankRanges(literals, testRanges(literals));
-};
-
 /**
- * A source file as it is read (`code`, as {@link builtCode}), and its size:
- * the lines that hold code built outside tests, string literals included
- * (`lines`).
+ * A source file as it is read: its code (comments and literals blanked)
+ * without its test modules, their files' names (`tests`), and its code
+ * lines, string literals included (`lines`).
  */
 function readSource(file) {
   const comments = codeOnly(readFileSync(file, "utf8"), "rs");
   const literals = withoutLiterals(comments);
-  const tests = testRanges(literals);
-  const code = blankRanges(literals, tests);
-  const lines = blankRanges(comments, tests)
+  const { ranges, files } = testModules(literals);
+  const lines = blankRanges(comments, ranges)
     .split("\n")
     .filter((line) => line.trim()).length;
-  return { code, lines };
+  return { code: blankRanges(literals, ranges), lines, tests: new Set(files) };
 }
 
 const lineAt = (text, at) => text.slice(0, at).split("\n").length;
 const MOD_DECL = /(?<![A-Za-z0-9_])mod\s+(?:r#)?([A-Za-z_][A-Za-z0-9_]*)\s*;/g;
-const SOURCE_MATCH = /(?<![A-Za-z0-9_])Source\s*::\s*(?:Claude|Codex|Acp)(?![A-Za-z0-9_])/g;
 
 /**
  * The files of the module whose root file is `file`, following its `mod x;`
- * declarations that are built outside tests (`x.rs` or `x/mod.rs` next to a
+ * declarations but its test modules' (`x.rs` or `x/mod.rs` next to a
  * `mod.rs`, `lib.rs` or `main.rs`, else under the file's own directory).
  * `missing` lists a declaration with no file.
  */
 function moduleFiles(file, out = [], missing = []) {
-  const { code, lines } = readSource(file);
-  out.push({ file, code, lines });
+  const { code, lines, tests } = readSource(file);
+  out.push({ file, lines });
   const name = basename(file);
   const dir = ["mod.rs", "lib.rs", "main.rs"].includes(name) ? dirname(file) : join(dirname(file), name.slice(0, -3));
   for (const m of code.matchAll(MOD_DECL)) {
+    if (tests.has(m[1])) continue;
     const child = [join(dir, `${m[1]}.rs`), join(dir, m[1], "mod.rs")].find(existsSync);
     if (child) moduleFiles(child, out, missing);
     else missing.push({ file, line: lineAt(code, m.index), name: m[1] });
@@ -237,10 +203,9 @@ const LIBRARY = new Set(["lib", "rlib", "dylib", "cdylib", "staticlib", "proc-ma
 
 /**
  * Each member's code, from `cargo metadata` (`meta`): `Map<name, { lines,
- * sources, missing }>`. `lines` counts its library's code lines, `sources`
- * where its library and binaries match `Source::Claude|Codex|Acp`
- * (`file:line`, from the workspace's root), and `missing` its `mod x;` with
- * no file (`{ at: "file:line", name }`).
+ * missing }>`. `lines` counts its library's code lines, and `missing` its
+ * library's and binaries' `mod x;` with no file (`{ at: "file:line", name }`,
+ * from the workspace's root).
  */
 export function crateCode(meta) {
   const ids = new Set(meta.workspace_members);
@@ -249,18 +214,13 @@ export function crateCode(meta) {
   const code = new Map();
   for (const p of meta.packages.filter((p) => ids.has(p.id))) {
     const missing = [];
-    const read = new Map();
     let lines = 0;
     for (const target of p.targets ?? []) {
       const library = target.kind.some((kind) => LIBRARY.has(kind));
       if (!library && !target.kind.includes("bin")) continue;
-      for (const f of moduleFiles(target.src_path, [], missing)) {
-        if (library) lines += f.lines;
-        read.set(f.file, f.code);
-      }
+      for (const f of moduleFiles(target.src_path, [], missing)) if (library) lines += f.lines;
     }
-    const sources = [...read].flatMap(([file, text]) => [...text.matchAll(SOURCE_MATCH)].map((m) => `${show(file)}:${lineAt(text, m.index)}`));
-    code.set(p.name, { lines, sources, missing: missing.map((m) => ({ at: `${show(m.file)}:${m.line}`, name: m.name })) });
+    code.set(p.name, { lines, missing: missing.map((m) => ({ at: `${show(m.file)}:${m.line}`, name: m.name })) });
   }
   return code;
 }
@@ -356,8 +316,9 @@ function chains(from, edges) {
  * - `forbidden`, each `{ name, why, from: [names], to: [names], except?: ["a -> b"] }`;
  * - `wrappers`, each `{ crate, why, wrappers: [names] }`: the members that may
  *   depend on the external `crate`.
- * - `sourceMatches`, `{ exempt: [{ crate, why }, …], count }`: the matches of
- *   `Source::Claude|Codex|Acp` in the members' code, the exempt crates aside;
+ * - `sourceMatches`, `{ exempt: [{ crate, why }, …], count }`: the provider
+ *   crates whose `Source::Claude|Codex|Acp` matches are their own, and how
+ *   many there are outside them (counted by the server's source scans);
  * and each member's code (`code`, as {@link crateCode} reads it).
  * Returns `{ problems, stats }`.
  */
@@ -499,25 +460,13 @@ export function checkCrates(meta, config, code = new Map()) {
   }
 
   // ------------------------------------------------------------ Source matches
-  // Outside the providers `Source` is only the key that picks one: a match
-  // anywhere else dispatches on a CLI by name.
-  const exempt = new Set();
+  // Outside the providers `Source` is only the key that picks one. The
+  // server's source scans count the matches outside the exempt crates and
+  // hold them to `count`; what is checked here is that the exemptions name
+  // crates layers.json lists, each with its reason.
   for (const { crate, why } of config.sourceMatches?.exempt ?? []) {
     if (!listed(crate)) problems.push(`sourceMatches exempts ${crate}, which layers.json does not list`);
     if (!why?.trim()) problems.push(`sourceMatches exempts ${crate} without saying why`);
-    exempt.add(crate);
-  }
-  const sources = [...code].filter(([name]) => all.has(name) && !exempt.has(name)).flatMap(([, c]) => c.sources);
-  const recorded = config.sourceMatches?.count ?? 0;
-  if (sources.length !== recorded) {
-    const files = new Map();
-    for (const where of sources) files.set(where.split(":")[0], (files.get(where.split(":")[0]) ?? 0) + 1);
-    const list = [...files].sort((a, b) => b[1] - a[1]).map(([f, n]) => `${f} ${n}`).join(", ");
-    problems.push(
-      sources.length > recorded
-        ? `${sources.length} matches of Source::Claude|Codex|Acp outside the provider crates, more than the ${recorded} sourceMatches records: dispatch through the provider instead (${list})`
-        : `${sources.length} matches of Source::Claude|Codex|Acp outside the provider crates, fewer than the ${recorded} sourceMatches records: lower it to ${sources.length}`,
-    );
   }
 
   // ------------------------------------------------------------ the numbers
@@ -534,7 +483,7 @@ export function checkCrates(meta, config, code = new Map()) {
     middle: [...placed.values()]
       .filter((c) => c.middle && all.has(c.name))
       .map((c) => ({ crate: c.name, code: code.get(c.name)?.lines ?? 0, dependents: dependents.get(c.name) ?? 0 })),
-    sourceMatches: sources.length,
+    sourceMatches: config.sourceMatches?.count ?? 0,
   };
   return { problems, stats };
 }
@@ -572,7 +521,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     `wrappers: ${stats.wrappers.map((w) => `${w.crate} only in ${w.wrappers.join(", ")}`).join("; ")}`,
     `largest crate cycle, dev-dependencies included: ${stats.cycle.length} crates${stats.cycle.length ? ` (${stats.cycle.join(", ")})` : ""}`,
     `middle crates (code lines, members depending on each): ${stats.middle.map((c) => `${c.crate} ${c.code} / ${c.dependents}`).join(", ")}`,
-    `Source::Claude|Codex|Acp outside the provider crates: ${stats.sourceMatches}`,
+    `Source::Claude|Codex|Acp outside the provider crates: ${stats.sourceMatches}, as layers.json records (counted by the server's provider_tests::gate scans)`,
   ];
   if (problems.length) {
     console.error(`layers: ${problems.length} problem(s)`);

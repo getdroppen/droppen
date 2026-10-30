@@ -267,8 +267,8 @@ jobs:
       # so the subsystems do not grow back into one dependency cycle; no crate
       # reaches a pair the file forbids or depends on the entry; portable-pty
       # and tokio-tungstenite are depended on only by the crates that wrap
-      # them; and the Source matches outside the provider crates may only
-      # shrink.
+      # them. (The Source matches outside the provider crates, which may only
+      # shrink, are counted by the server's source scans, in its tests.)
       - run: node --test ../scripts/check-layers.test.mjs
       - run: node ../scripts/check-layers.mjs
       # No `cargo fmt --check`, and of clippy only the two deadlock lints
