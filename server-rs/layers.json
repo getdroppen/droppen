@@ -200,7 +200,7 @@
           "notes": [
             "provider's own items, provider::receipts and provider::questions, drafts, runs, and the spawn gate with its claims (provider::gate).",
             "provider::shim, the session shim: Claude Code and Codex both start their CLI through it.",
-            "models keeps its routes and the list's wire types here; each provider's list is its own (provider::claude_code::models with its probe, models::codex, models::acp)."
+            "models keeps its routes and the list's wire types here; each provider's list is its own (provider::claude_code::models with its probe, models::codex, provider::acp::models)."
           ]
         },
         {
@@ -249,11 +249,7 @@
           "name": "droppen-provider-acp",
           "about": "Every configured ACP agent, from data.",
           "modules": [
-            "acp",
-            "acp_agent",
-            "provider::acp",
-            "sessions::acp_transcript",
-            "models::acp"
+            "provider::acp"
           ],
           "mayUse": [
             "droppen-provider",

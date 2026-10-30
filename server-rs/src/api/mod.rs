@@ -433,7 +433,7 @@ fn response_overrides() -> ExtraResponses {
     droppen_accounts::describe(&mut reg);
     crate::accounts::setup_token::describe(&mut reg);
     crate::accounts::usage_login::describe(&mut reg);
-    crate::acp_agent::describe(&mut reg);
+    crate::provider::acp::agents::describe(&mut reg);
     droppen_workbench::apps::describe(&mut reg);
     droppen_sessions::attention::routes::describe(&mut reg);
     droppen_auth::describe(&mut reg);
@@ -468,7 +468,7 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
     let router = droppen_accounts::AccountsState::routes(router);
     let router = crate::accounts::setup_token::TokenWizardState::routes(router);
     let router = crate::accounts::usage_login::UsageLoginState::routes(router);
-    let router = crate::acp_agent::AcpAgentState::routes(router);
+    let router = crate::provider::acp::agents::AcpAgentState::routes(router);
     let router = droppen_workbench::apps::AppsState::routes(router);
     let router = droppen_sessions::attention::routes::AttentionState::routes(router);
     let router = droppen_auth::AuthState::routes(router);

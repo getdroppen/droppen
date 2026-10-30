@@ -22,7 +22,7 @@
 //! The records, one JSON object per line, each with a `timestamp`:
 //!
 //! * `session` — the first line: `id` (this server's), `agent` (the agent's id,
-//!   [`crate::acp_agent`]), `agentSessionId` (the id the agent gave it) and
+//!   [`crate::provider::acp::agents`]), `agentSessionId` (the id the agent gave it) and
 //!   `cwd`.
 //! * `user` — a message this server sent: `text`, and `images` / `files` paths.
 //! * `delta` — a streamed piece of the agent's answer (`kind` `text`) or of its
@@ -44,7 +44,7 @@
 //! so every one is owned: there is no external ACP session to browse yet.
 //! Listing an agent's own sessions (`session/list`) is left for when it can be
 //! asked without starting a process per listing. A session whose agent was
-//! removed stays listed under the id it recorded ([`crate::acp_agent`] says what
+//! removed stays listed under the id it recorded ([`crate::provider::acp::agents`] says what
 //! that means for sending to it).
 
 use std::collections::{BTreeMap, HashMap};
@@ -60,7 +60,7 @@ use droppen_sessions::util::{
     TranscriptItem,
 };
 use droppen_sessions::{SessionActivity, SessionScope, SessionStatus, SessionSummary, Source};
-use crate::acp::{ContentBlock, SessionUpdate, ToolCallContent, ToolCallStatus, ToolKind};
+use crate::provider::acp::protocol::{ContentBlock, SessionUpdate, ToolCallContent, ToolCallStatus, ToolKind};
 use droppen_instance::identity::ServerId;
 use droppen_http::openapi_ext::Nullable;
 use droppen_instance::paths::Paths;

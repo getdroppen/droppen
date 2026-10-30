@@ -21,7 +21,7 @@ import { MemoryStorage } from "./storage.js";
 
 const ICONS = fileURLToPath(new URL("../src/features/sessions/presets/icons/", import.meta.url));
 /** The server's built-in agent descriptions, which `GET /api/acp/agents` serves as `presets`. */
-const BUILT_IN = fileURLToPath(new URL("../../server-rs/src/acp-agents.json", import.meta.url));
+const BUILT_IN = fileURLToPath(new URL("../../server-rs/src/provider/acp/acp-agents.json", import.meta.url));
 const SLUG = /^[a-z0-9][a-z0-9-]*$/;
 
 test("every built-in agent is well-formed: a unique slug id, a name, one executable and its arguments", () => {

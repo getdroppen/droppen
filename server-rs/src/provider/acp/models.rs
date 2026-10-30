@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use futures_util::future::BoxFuture;
 
-use super::{ModelInfo, ModelList, ModelListSource, ModelRule, Models, ModelsQuery};
+use crate::models::{ModelInfo, ModelList, ModelListSource, ModelRule, Models, ModelsQuery};
 use crate::provider::acp::AcpRuns;
 use droppen_http::openapi_ext::Nullable;
 use droppen_instance::paths::Paths;
@@ -40,8 +40,8 @@ impl AcpModels {
     ///
     /// With the models, how many were left out: see [`ModelList::hidden`].
     async fn agent_models(&self, agent: &str) -> (Vec<ModelInfo>, ModelListSource, u32) {
-        use crate::acp::{category, option_for};
-        let Some(agent) = crate::acp_agent::AcpAgentRegistry::of(&self.paths).get(agent) else {
+        use crate::provider::acp::protocol::{category, option_for};
+        let Some(agent) = crate::provider::acp::agents::AcpAgentRegistry::of(&self.paths).get(agent) else {
             return (Vec::new(), ModelListSource::Fallback, 0);
         };
         let options = match self.injections.acp_options(&agent).await {
@@ -57,7 +57,7 @@ impl AcpModels {
         // or is too long to show whole, is left out rather than shown altered
         // ([`AcpRuns::acp_id_shown`]).
         let injections = &self.injections;
-        let shown = |text: &str| droppen_base::text::clip(&injections.redact_acp(&agent, text), crate::acp_agent::MAX_AGENT_WORD);
+        let shown = |text: &str| droppen_base::text::clip(&injections.redact_acp(&agent, text), crate::provider::acp::agents::MAX_AGENT_WORD);
         let usable = |id: &str| injections.acp_id_shown(id);
         let effort = option_for(&options, category::THOUGHT_LEVEL);
         let efforts = effort.map(|effort| {
@@ -96,7 +96,7 @@ impl Models for AcpModels {
             let agent = query
                 .acp_agent
                 .as_deref()
-                .filter(|id| crate::sessions::acp_transcript::valid_agent_id(id))
+                .filter(|id| crate::provider::acp::sessions::valid_agent_id(id))
                 .ok_or_else(|| "acpAgent names the ACP agent to list models for".to_string())?;
             let (models, source, hidden) = self.agent_models(agent).await;
             Ok(ModelList {

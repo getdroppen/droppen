@@ -14,10 +14,10 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::client::Client;
 use super::conn::{Conn, Event};
-use crate::acp::{category, option_for, ConfigOption, SessionUpdate};
-use crate::acp_agent::AcpAgent;
+use crate::provider::acp::protocol::{category, option_for, ConfigOption, SessionUpdate};
+use crate::provider::acp::agents::AcpAgent;
 use crate::provider::{InjectError, Phase, QueueOutcome, ResidentState, Sent};
-use crate::sessions::acp_transcript::{Record, Translator};
+use crate::provider::acp::sessions::{Record, Translator};
 use droppen_sessions::{Injection, InjectionRunState, Source};
 use droppen_base::time::iso8601;
 
@@ -736,7 +736,7 @@ impl Driver {
     }
 
     /// The turn in flight ended: say how, in the transcript and on the row.
-    async fn prompted(&mut self, result: Result<crate::acp::PromptResponse, String>) {
+    async fn prompted(&mut self, result: Result<crate::provider::acp::protocol::PromptResponse, String>) {
         if !self.state.active {
             return;
         }

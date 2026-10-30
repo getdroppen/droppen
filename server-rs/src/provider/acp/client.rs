@@ -35,7 +35,7 @@ use serde_json::Value;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::sync::watch;
 
-use crate::acp::{CreateTerminalParams, ReadTextFileParams, TerminalParams, WriteTextFileParams};
+use crate::provider::acp::protocol::{CreateTerminalParams, ReadTextFileParams, TerminalParams, WriteTextFileParams};
 use droppen_base::process_env::Env;
 
 /// How much of a terminal's output is kept when the agent names no limit.

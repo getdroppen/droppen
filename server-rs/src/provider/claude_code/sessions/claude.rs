@@ -1474,7 +1474,7 @@ mod tests {
         assert_eq!(ClaudeCodeSessions.find_root(&paths, "hidden").await, None, "but archived");
         assert_eq!(ClaudeCodeSessions.find_root(&paths, "nothing").await, None);
         assert_eq!(crate::sessions::codex::CodexSessions.find_root(&paths, "local").await, None, "codex has no Claude root");
-        assert_eq!(crate::sessions::acp_transcript::AcpSessions.find_root(&paths, "local").await, None, "nor an ACP agent");
+        assert_eq!(crate::provider::acp::sessions::AcpSessions.find_root(&paths, "local").await, None, "nor an ACP agent");
     }
 
     /// What Claude Code says to the user: the speech the attention clock, the

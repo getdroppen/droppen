@@ -2,7 +2,7 @@
 //! session, spoken to over stdio.
 //!
 //! [ACP](https://agentclientprotocol.com) is JSON-RPC 2.0, one message per
-//! line. This server is its client half ([`conn`] for the wire, [`crate::acp`]
+//! line. This server is its client half ([`conn`] for the wire, [`crate::provider::acp::protocol`]
 //! for the messages), and uses the part of the protocol that holds a
 //! conversation:
 //!
@@ -22,14 +22,14 @@
 //! * `session/cancel` to stop a turn.
 //!
 //! What the agent says is written down as it arrives, in the transcript
-//! [`crate::sessions::acp_transcript`] keeps; that file is what the session
+//! [`crate::provider::acp::sessions`] keeps; that file is what the session
 //! view reads.
 //!
 //! Everything here is the same for every ACP agent. Which agents there are is
-//! the user's to configure ([`crate::acp_agent`]); each session records the one
+//! the user's to configure ([`crate::provider::acp::agents`]); each session records the one
 //! it runs on, and is started, reopened and resumed with that agent and no
 //! other. Its id is this server's own and the agent's id is kept beside it
-//! ([`crate::sessions::acp_transcript`]): two agents may give two sessions the
+//! ([`crate::provider::acp::sessions`]): two agents may give two sessions the
 //! same id, and both still have to be told apart here.
 //!
 //! One message runs at a time. A message sent mid-turn waits in the driver's
@@ -45,9 +45,13 @@
 //! is closed, for the same reason: the agent keeps the conversation, and an idle
 //! process per session is not worth keeping for it.
 
+pub mod agents;
 mod client;
 mod conn;
 mod driver;
+pub mod models;
+pub mod protocol;
+pub mod sessions;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -58,9 +62,9 @@ use std::time::Duration;
 use super::common::{new_uuid, session_workdir, QueueOutcome, ResidentState};
 use super::{AccountChoice, Capabilities, DriverStatesBuilder, InjectError, InjectionRegistry, Provider, ProviderRuns, Run, RunHost, SendOptions, SendTo, Sent, SpawnGate, SpawnPermit, StartAt, WrittenAt};
 use futures_util::future::BoxFuture;
-use crate::acp::{category, option_for, ConfigOption, InitializeResponse};
-use crate::acp_agent::{AcpAgent, AcpAgentRegistry, AcpCheck, AcpCheckState};
-use crate::sessions::acp_transcript::{has_conversation, read_header, AcpTranscripts, Record, Translator};
+use crate::provider::acp::protocol::{category, option_for, ConfigOption, InitializeResponse};
+use crate::provider::acp::agents::{AcpAgent, AcpAgentRegistry, AcpCheck, AcpCheckState};
+use crate::provider::acp::sessions::{has_conversation, read_header, AcpTranscripts, Record, Translator};
 use droppen_sessions::{Injection, SessionSummary, Source};
 use droppen_http::error::ApiError;
 use droppen_base::process_env::clean_env_bare;
@@ -300,14 +304,14 @@ pub(crate) struct Acp {
     /// Its agents' processes and what they offer.
     runs: Arc<AcpRuns>,
     /// Each agent's models.
-    models: crate::models::acp::AcpModels,
+    models: crate::provider::acp::models::AcpModels,
 }
 
 impl Acp {
     /// The ACP agents, run on `registry`'s host.
     pub(crate) fn new(registry: Arc<InjectionRegistry>) -> Self {
         let runs = AcpRuns::new(registry.host.clone());
-        let models = crate::models::acp::AcpModels::new(runs.paths.clone(), runs.clone());
+        let models = crate::provider::acp::models::AcpModels::new(runs.paths.clone(), runs.clone());
         Self { runs, models }
     }
 
@@ -467,7 +471,7 @@ impl Run for Acp {
     fn check_start(&self, acp_agent: Option<&str>) -> Result<(), ApiError> {
         match acp_agent {
             None => Err(ApiError::bad_request("an ACP session needs acpAgent: the agent it runs on")),
-            Some(id) if !crate::sessions::acp_transcript::valid_agent_id(id) => Err(ApiError::bad_request(format!("invalid ACP agent id: {id}"))),
+            Some(id) if !crate::provider::acp::sessions::valid_agent_id(id) => Err(ApiError::bad_request(format!("invalid ACP agent id: {id}"))),
             Some(id) if AcpAgentRegistry::of(&self.runs.paths).get(id).is_none() => {
                 Err(ApiError::bad_request(format!("no ACP agent \"{id}\" is configured")))
             }
@@ -585,7 +589,7 @@ impl AcpRuns {
     /// [`super::RunHost::redact`] would take out. The agent's own variables'
     /// values are not looked for: they are often what names its model.
     pub(crate) fn acp_id_shown(&self, id: &str) -> bool {
-        id.chars().count() <= crate::acp_agent::MAX_AGENT_WORD && self.redact(id) == id
+        id.chars().count() <= crate::provider::acp::agents::MAX_AGENT_WORD && self.redact(id) == id
     }
 
     /// What `agent` said, fit to be stored and shown: [`super::RunHost::redact`],
@@ -593,7 +597,7 @@ impl AcpRuns {
     /// key looks like — and then cut to a few KB, as a session's error, its
     /// transcript and a push notification carry it.
     pub(crate) fn redact_acp(&self, agent: &AcpAgent, text: &str) -> String {
-        droppen_base::text::clip(&self.redact(&agent.without_values(text)), crate::acp_agent::MAX_CHECK_ERROR)
+        droppen_base::text::clip(&self.redact(&agent.without_values(text)), crate::provider::acp::agents::MAX_CHECK_ERROR)
     }
 
     /// Whether a turn of the agent `agent` is running, in any of its sessions,
@@ -629,7 +633,7 @@ impl AcpRuns {
     /// the spawn gate. When its command line or environment changed, its
     /// sessions' processes are renewed ([`AcpRuns::renew_acp_processes`]):
     /// a rotated key, say, reaches every session's next process.
-    pub async fn reconfigure_acp_agent(&self, gate: &SpawnGate, id: &str, patch: &crate::acp_agent::AcpAgentUpdate) -> Result<AcpAgent, String> {
+    pub async fn reconfigure_acp_agent(&self, gate: &SpawnGate, id: &str, patch: &crate::provider::acp::agents::AcpAgentUpdate) -> Result<AcpAgent, String> {
         let _permit = gate.permit().await;
         let agents = AcpAgentRegistry::of(&self.paths);
         let before = agents.get(id);
@@ -759,7 +763,7 @@ impl AcpRuns {
         let mut permit = gate.permit().await;
         let agent = AcpAgentRegistry::of(&self.paths)
             .get(&agent_id)
-            .ok_or_else(|| InjectError::message(crate::acp_agent::removed(&agent_id)))?;
+            .ok_or_else(|| InjectError::message(crate::provider::acp::agents::removed(&agent_id)))?;
         check_options(&agent, options)?;
         let message = message(text, options);
         let current = self.acp_handle(id).filter(Handle::alive);
@@ -986,12 +990,12 @@ fn absolute(path: &Path) -> PathBuf {
 }
 
 /// What a session's replay is made of, for the caller to translate.
-pub(super) type Replay = Vec<crate::acp::SessionUpdate>;
+pub(super) type Replay = Vec<crate::provider::acp::protocol::SessionUpdate>;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sessions::acp_transcript::tests::unstamped;
+    use crate::provider::acp::sessions::tests::unstamped;
     use droppen_instance::paths::Paths;
     use serde_json::json;
 
@@ -1052,7 +1056,7 @@ mod tests {
     #[test]
     fn a_model_or_effort_is_checked_against_what_the_agent_offers() {
         let agent = &agent();
-        let offered = crate::acp::config_options(&json!({"configOptions": [
+        let offered = crate::provider::acp::protocol::config_options(&json!({"configOptions": [
             {"id": "model", "name": "Model", "category": "model", "type": "select", "currentValue": "a:x",
              "options": [{"value": "a:x", "name": "X"}, {"value": "a:y", "name": "Y"}]},
             {"id": "reasoning_effort", "name": "Effort", "category": "thought_level", "type": "select", "currentValue": "auto",
@@ -1170,7 +1174,7 @@ mod tests {
         let program = home.join("fake-agent");
         std::fs::write(&program, include_str!("../../../tests/support/fake_acp_agent.py")).expect("agent");
         std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).expect("chmod");
-        let patch = crate::acp_agent::AcpAgentUpdate {
+        let patch = crate::provider::acp::agents::AcpAgentUpdate {
             name: None.into(),
             command: Some(program.to_string_lossy().into_owned()).into(),
             args: Some(vec!["--acp".to_string(), "--stdio".to_string()]).into(),

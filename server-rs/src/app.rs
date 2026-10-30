@@ -654,7 +654,7 @@ pub fn transcript_sources() -> TranscriptSources {
     let mut sources = TranscriptSources::default();
     sources.register(Arc::new(crate::provider::claude_code::sessions::claude::ClaudeCodeSessions));
     sources.register(Arc::new(crate::sessions::codex::CodexSessions));
-    sources.register(Arc::new(crate::sessions::acp_transcript::AcpSessions));
+    sources.register(Arc::new(crate::provider::acp::sessions::AcpSessions));
     sources
 }
 
