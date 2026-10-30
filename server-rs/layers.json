@@ -308,10 +308,6 @@
     "about": "Matches of Source::Claude, Source::Codex or Source::Acp in code built outside tests, in the server's modules and in every workspace crate, the crates exempt names aside. Outside them Source is only the key that picks a provider, so the number may only go down; moving code into a crate of its own does not take its matches off the count. Three are Source::as_str's own arms in droppen-sessions, the wire names. Two stay on purpose: schedule's task_at reads a stored task's source by name (\"codex\" as Codex, anything else as Claude Code), because decoding it through the providers would put the provider registry into the task store.",
     "exempt": [
       {
-        "crate": "droppen-provider",
-        "why": "The provider base: it registers each CLI's provider under that CLI's Source."
-      },
-      {
         "crate": "droppen-provider-claude-code",
         "why": "Claude Code's provider: it answers for Source::Claude."
       },
@@ -332,16 +328,6 @@
       "edges": [
         "drive -> accounts::setup_token",
         "drive -> sessions::claude"
-      ]
-    },
-    {
-      "why": "inject names each implementation: the registry starts them. They go when each provider registers itself from the entry (ClaudeCode::register, Codex::register, Acp::register).",
-      "edges": [
-        "inject -> inject::app_server",
-        "inject -> inject::resident",
-        "inject -> sessions::acp_transcript",
-        "inject -> sessions::claude",
-        "inject -> sessions::codex"
       ]
     },
     {

@@ -90,7 +90,7 @@ use super::shim::{self, Link, Output, Sidecars, Spawn};
 use super::common::{busy_message, new_uuid, AnswerOutcome, Phase, QueueOutcome, Reply, ResidentState, StopTaskOutcome};
 use super::drafts::Draft;
 use super::gate::{ClaimError, SessionLease, SpawnGate};
-use super::{runs, Capabilities, DriverStatesBuilder, InjectError, InjectionRegistry, ListsRuns, Provider, Run, RunEntry, RunHost, RunState, SendTo, Sent, SpawnPermit, StartAt};
+use super::{runs, Capabilities, DriverStatesBuilder, InjectError, InjectionRegistry, Provider, ProviderRuns, Run, RunEntry, RunHost, RunState, SendTo, Sent, SpawnPermit, StartAt, WrittenAt};
 mod spawn;
 
 /// The mode flags every resident is started with.
@@ -588,8 +588,8 @@ impl Pending {
     ///
     /// `steered` is the driver's, not the message's: it says which side of the
     /// stdin write this entry was on when the record was rewritten.
-    fn recorded(&self, steered: bool) -> runs::Queued {
-        runs::Queued {
+    fn recorded(&self, steered: bool) -> Queued {
+        Queued {
             id: self.id.clone(),
             text: self.text.clone(),
             fingerprint: self.fingerprint.clone(),
@@ -664,11 +664,11 @@ pub(crate) struct ClaudeCode {
 }
 
 impl ClaudeCode {
-    /// Claude Code, on the runs `registry` keeps for it.
+    /// Claude Code, its runs on `registry`'s host.
     pub(crate) fn new(registry: Arc<InjectionRegistry>) -> Self {
         let models = crate::models::claude::ClaudeModels::new(registry.paths.clone(), registry.accounts.clone());
         Self {
-            runs: registry.claude.clone(),
+            runs: ClaudeCodeRuns::new(registry.host.clone(), &registry.instance, registry.decoration.clone()),
             models,
         }
     }
@@ -678,6 +678,13 @@ impl ClaudeCode {
     #[cfg(test)]
     pub(crate) fn runs(&self) -> &Arc<ClaudeCodeRuns> {
         &self.runs
+    }
+
+    /// Claude Code on runs a test made, timed as it needs.
+    #[cfg(test)]
+    pub(crate) fn on(runs: Arc<ClaudeCodeRuns>, registry: &InjectionRegistry) -> Self {
+        let models = crate::models::claude::ClaudeModels::new(registry.paths.clone(), registry.accounts.clone());
+        Self { runs, models }
     }
 }
 
@@ -831,9 +838,247 @@ impl std::ops::Deref for ClaudeCodeRuns {
     }
 }
 
-impl ListsRuns for ClaudeCodeRuns {
+impl ProviderRuns for ClaudeCodeRuns {
     fn add_to(&self, states: &mut DriverStatesBuilder) {
         self.claude_driver_states(states);
+    }
+
+    fn cli_name(&self) -> &'static str {
+        "claude"
+    }
+
+    fn readable(&self, record: &runs::RunRecord) -> bool {
+        record.clone().decode::<ClaudeRun>().is_ok()
+    }
+
+    fn attach(self: Arc<Self>, record: runs::RunRecord, sidecars: Sidecars, link: Link, lease: SessionLease) {
+        match record.decode::<ClaudeRun>() {
+            Ok(record) => self.attached(&record, sidecars, link, lease),
+            // Only a record it could read is handed over (`readable`).
+            Err(error) => tracing::warn!(%error, "a run record cannot be read; that run will not be adopted"),
+        }
+    }
+
+    fn was_cut_short<'a>(&'a self, record: &'a runs::RunRecord) -> BoxFuture<'a, bool> {
+        Box::pin(async move {
+            match crate::sessions::claude::find_claude_session_file(&self.paths, &record.session_id).await {
+                // No transcript at all: the CLI died before writing a line of
+                // the turn it was given.
+                None => true,
+                Some(path) => crate::sessions::claude::claude_activity_status(&path).await == SessionStatus::Running,
+            }
+        })
+    }
+
+    fn last_write<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Option<Instant>> {
+        Box::pin(async move { crate::sessions::claude::find_claude_session_file(&self.paths, id).await?.written_at().await })
+    }
+
+    fn question_holders(&self) -> Vec<String> {
+        self.residents.lock().expect("residents poisoned").keys().cloned().collect()
+    }
+}
+
+/// What a Claude Code run keeps in its journal row, beside what every run
+/// says ([`runs::RunRecord`]): written after those fields, in this order.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub(super) struct ClaudeRun {
+    /// What this resident's command line settled: model, effort, permission
+    /// mode, account, persona, uploads.
+    ///
+    /// Recorded because a re-attached resident has to answer "may this message
+    /// go to the process that is already running" — and the answer is a
+    /// comparison against the settings the process was *started* with, which
+    /// nothing else on disk remembers. Getting it wrong in either direction
+    /// costs: a false mismatch throws a warm session away on the first message
+    /// after every restart, and a false match sends an opus message to a
+    /// haiku process.
+    ///
+    /// Every field is a setting the user chose, and none is a secret. `None`
+    /// in a record from before this existed, which reads as "unknown" and is
+    /// handled as such rather than as "no settings at all" — see
+    /// [`Fingerprint`].
+    ///
+    /// Written at the spawn and then *healed* rather than left alone: an
+    /// unknown one is filled in by the first message an adopted resident is
+    /// given, and the model is rewritten when `system:init` resolves the alias
+    /// the command line asked for into the name the CLI answers under. Both are
+    /// [`ClaudeJournal::mark_fingerprint`], and both exist so that the record the
+    /// next server reads is what the process is really running rather than what
+    /// some older server managed to write down.
+    #[serde(default)]
+    pub(super) fingerprint: Option<Fingerprint>,
+    /// Where in claude's stdout a turn was written into this resident, if one
+    /// was still in flight when this was last written.
+    ///
+    /// The one thing a re-attached server cannot work out for itself. A turn
+    /// begins when a prompt is written to claude's *stdin*, and the shim records
+    /// only its stdout — so a turn that has said nothing yet, which is every
+    /// turn spent thinking or inside a long tool call, is invisible in the
+    /// replay. Without this a restart in that window reads the session as idle,
+    /// unblocks the composer, and lets the next message be written into the
+    /// middle of a turn that is very much still running.
+    ///
+    /// A byte offset rather than a flag, because *when* is the whole question: a
+    /// turn that ended while no server was attached left its `result` in the
+    /// shim's ring, and adoption has to be able to tell that `result` from the
+    /// ones belonging to earlier turns. The offset is the reader's cursor at the
+    /// moment the prompt went in, so everything before it is history and the
+    /// first `result` after it is this turn's end. `None` means "no turn was in
+    /// flight", which is also what every record written before this existed says.
+    #[serde(default)]
+    pub(super) turn_at: Option<u64>,
+    /// The messages accepted for this resident and not yet written to it.
+    ///
+    /// The other half of what used to die with a server. A send is answered
+    /// `200` the moment it is queued — that is what lets a second message be
+    /// composed while the first is still running — and the queue itself was in
+    /// memory, so a restart between "accepted" and "written to claude's stdin"
+    /// threw the message away in silence. That window is not small: a message
+    /// sent behind a turn sits in it for as long as the turn takes.
+    ///
+    /// In order, popped as each one goes in, and empty the rest of the time.
+    #[serde(default)]
+    pub(super) queued: Vec<Queued>,
+    /// A claude resident's queue held after a limit with no account to move
+    /// to, so the next server keeps holding it rather than feeding the queue
+    /// to the account that refused. See [`Hold`]. Absent on
+    /// every record that is not holding anything, and on every record written
+    /// before there was a hold.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) hold: Option<Hold>,
+}
+
+/// One message waiting its turn, as it survives on disk.
+///
+/// The prompt is here in plain text, which is a line worth saying out loud why
+/// it is crossed: it is one step away from being written into the session
+/// transcript — a plain file in the same data directory, holding every prompt
+/// the session has ever had — so this reveals nothing the transcript does not,
+/// and it holds it only until claude has it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(super) struct Queued {
+    /// What the queue routes name this message by, kept across a restart so a
+    /// client holding an id from before it still holds a usable one.
+    ///
+    /// Empty in every record written before the queue was addressable, which
+    /// a re-attached resident answers by minting a fresh id on the way back in:
+    /// the message survives, only its name changes.
+    #[serde(default)]
+    pub(super) id: String,
+    /// The prompt as claude will see it, attachment suffix included.
+    pub(super) text: String,
+    /// The process this message needs, so a re-attached server can tell whether
+    /// the resident it inherited may answer it at all.
+    ///
+    /// The environment is not here and cannot be — it carries the account's
+    /// token — so a message that does *not* fit the running process cannot be
+    /// re-delivered by a server that did not start that process. Recording what
+    /// it wanted is what lets adoption notice, and say so, instead of sending an
+    /// opus message to a haiku process.
+    #[serde(default)]
+    pub(super) fingerprint: Fingerprint,
+    /// Whether this message had already been written to the running process'
+    /// stdin, ahead of its turn, when this was recorded.
+    ///
+    /// The difference matters to exactly one reader: the server that re-attaches
+    /// to the process this record names. That process still holds the line in
+    /// its stdin buffer and will run it, so re-delivering it would run it twice
+    /// — see [`inherited_queue`]. A record read back against
+    /// any *other* process (there is no such path today) would have to treat it
+    /// as undelivered.
+    #[serde(default)]
+    pub(super) steered: bool,
+    /// How many times an automatic account rotation has already moved the
+    /// message chain this one belongs to: `0` for anything a person sent, and
+    /// the count for the continuation a rotation queued in its place. Kept so
+    /// the cap in [`crate::accounts::rotation::ROTATION_CAP`] survives a
+    /// restart; absent, and zero, on every record written before there was one.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub(super) rotation_attempt: u8,
+    /// For a rotation's continuation, what it needs to say which background
+    /// tasks its respawn cut short — kept so a continuation parked behind
+    /// background work survives a restart whole. Absent on everything else.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) continuation: Option<Continuation>,
+}
+
+/// Whether a counter is at its default, so a record that never rotated is
+/// written exactly as it always was.
+fn is_zero(value: &u8) -> bool {
+    *value == 0
+}
+
+/// What a Claude Code resident's driver writes into its run's row as it goes:
+/// each a change to the one row, in one transaction ([`runs::RunsFile`]).
+pub(super) trait ClaudeJournal {
+    /// Say what a resident is in the middle of: the turn in flight, and what is
+    /// still waiting behind it.
+    ///
+    /// Both in one transaction, and that is the point rather than an
+    /// optimisation. Handing a message to claude moves it out of the queue *and*
+    /// opens a turn, and a crash between two separate commits would leave the
+    /// record claiming either that a delivered message is still waiting — so the
+    /// next boot sends it twice — or that neither is happening, which unblocks
+    /// the composer on a live turn. One transaction has neither state.
+    fn mark_progress(&self, run_id: &str, turn_at: Option<u64>, queued: &[Queued]);
+
+    /// Say whether this resident's queue is held after a limit, and on what.
+    fn mark_hold(&self, run_id: &str, hold: Option<Hold>);
+
+    /// Say what the process this record names is really running.
+    ///
+    /// A write of its own rather than another argument to
+    /// [`ClaudeJournal::mark_progress`], because it happens on a different rhythm:
+    /// the settings are fixed for a process' whole life and are recorded at the
+    /// spawn, so this is only ever a *correction* — the record that predates the
+    /// field and whose driver has since been told what it is holding, and the
+    /// model alias `system:init` resolves. Rare, and each one saves the next
+    /// server from having to learn the same thing again.
+    ///
+    /// The account is part of what is written, and is the reason this is not
+    /// simply left to the next spawn: a record that says nothing is one the next
+    /// boot cannot compare a message against, and comparing against the default
+    /// instead is what threw queued messages away after an upgrade.
+    fn mark_fingerprint(&self, run_id: &str, fingerprint: &Fingerprint);
+
+    /// Point a run at the session id the CLI actually chose.
+    ///
+    /// Claude's `--fork-session` adopt path needs this: the CLI may keep the
+    /// session under an id of its own choosing rather than the one the fork
+    /// asked for, and announces it on `system:init`, so a run is recorded under
+    /// a provisional id first. Without the rewrite, adoption would re-arm the
+    /// idle watchdog on a transcript that does not exist.
+    fn repoint(&self, run_id: &str, session_id: &str);
+}
+
+impl ClaudeJournal for runs::RunsFile {
+    fn mark_progress(&self, run_id: &str, turn_at: Option<u64>, queued: &[Queued]) {
+        let queued = queued.to_vec();
+        self.patch("progress on a run", run_id, move |run: &mut runs::RunRecord<ClaudeRun>| {
+            run.payload.turn_at = turn_at;
+            run.payload.queued = queued;
+        });
+    }
+
+    fn mark_hold(&self, run_id: &str, hold: Option<Hold>) {
+        self.patch("a held queue", run_id, move |run: &mut runs::RunRecord<ClaudeRun>| {
+            run.payload.hold = hold;
+        });
+    }
+
+    fn mark_fingerprint(&self, run_id: &str, fingerprint: &Fingerprint) {
+        let fingerprint = fingerprint.clone();
+        self.patch("what a run is holding", run_id, move |run: &mut runs::RunRecord<ClaudeRun>| {
+            run.payload.fingerprint = Some(fingerprint);
+        });
+    }
+
+    fn repoint(&self, run_id: &str, session_id: &str) {
+        let session_id = session_id.to_string();
+        self.patch("the session a run belongs to", run_id, move |run: &mut runs::RunRecord<ClaudeRun>| {
+            run.session_id = session_id;
+        });
     }
 }
 
@@ -975,7 +1220,7 @@ impl ClaudeCodeRuns {
     /// Itself, listed with its host as Claude Code's runs
     /// ([`super::RunHost::driver_states`]).
     fn listed(self: Arc<Self>) -> Arc<Self> {
-        let runs: Arc<dyn super::ListsRuns> = self.clone();
+        let runs: Arc<dyn super::ProviderRuns> = self.clone();
         self.host.list(Source::Claude, Arc::downgrade(&runs));
         self
     }
@@ -1255,7 +1500,7 @@ impl ClaudeCodeRuns {
         recipe: &Recipe,
         selector: Selector,
         retiring: Option<&str>,
-        queued: &[runs::Queued],
+        queued: &[Queued],
         recorder: &Recorder,
     ) -> Result<Spawned, InjectError> {
         // On a fresh install no attachment has created this directory yet.
@@ -1312,16 +1557,16 @@ impl ClaudeCodeRuns {
             pid_token: procs::start_token(link.claude_pid()),
             resident: true,
             shim: Some(sidecars.id().to_string()),
-            fingerprint: Some(recipe.fingerprint.clone()),
-            // A process that has not been written to yet has no turn in flight,
-            // whatever the one it replaces was in the middle of.
-            turn_at: None,
-            // What it does inherit is the backlog: the messages that made this
-            // spawn happen, and that this process exists to answer.
-            queued: queued.to_vec(),
-            codex: None,
-            codex_account: None,
-            hold: None,
+            payload: ClaudeRun {
+                fingerprint: Some(recipe.fingerprint.clone()),
+                // A process that has not been written to yet has no turn in
+                // flight, whatever the one it replaces was in the middle of.
+                turn_at: None,
+                // What it does inherit is the backlog: the messages that made
+                // this spawn happen, and that this process exists to answer.
+                queued: queued.to_vec(),
+                hold: None,
+            },
         });
         tracing::info!(session = %id, pid = link.claude_pid(), shim = %sidecars.id(), ?selector, "started a resident claude");
         // The recording gets the *summary*, never the recipe: `recipe.env`
@@ -1531,7 +1776,7 @@ impl ClaudeCodeRuns {
     /// The claim is the caller's to have taken — adoption takes it before
     /// dialling, because a socket that does not answer still leaves a process
     /// running that nobody else may talk to.
-    pub(super) fn attached(self: &Arc<Self>, record: &runs::RunRecord, sidecars: Sidecars, link: Link, lease: SessionLease) {
+    pub(super) fn attached(self: &Arc<Self>, record: &runs::RunRecord<ClaudeRun>, sidecars: Sidecars, link: Link, lease: SessionLease) {
         // A record from before the fingerprint was written down says *unknown*,
         // and is carried through as unknown rather than as the default. The
         // default is "no flags at all", which is a real and very specific
@@ -1540,12 +1785,12 @@ impl ClaudeCodeRuns {
         // wrong answer that then throws the session's whole backlog away. See
         // [`Fingerprint::accepted_by`] for what unknown does instead, and
         // [`Driver::take_settings`] for how long it lasts.
-        let live = record.fingerprint.clone();
-        let Inherited { delivered_ahead, queue } = inherited_queue(&record.session_id, &record.queued, live.as_ref());
+        let live = record.payload.fingerprint.clone();
+        let Inherited { delivered_ahead, queue } = inherited_queue(&record.session_id, &record.payload.queued, live.as_ref());
         let outstanding = delivered_ahead.len() + queue.len();
         // The ones that did not survive are the tail past the kept prefix: a
         // client that named one is told it failed rather than left waiting.
-        for lost in record.queued.iter().skip(outstanding) {
+        for lost in record.payload.queued.iter().skip(outstanding) {
             self.note_receipt(Source::Claude, &record.session_id, &lost.id, ReceiptStatus::Failed);
         }
         let shared = Arc::new(Mutex::new(ResidentState {
@@ -1581,7 +1826,7 @@ impl ClaudeCodeRuns {
         // trip to a shim away, and the composer would be open for all of it. So
         // the pessimistic half goes in now and the driver corrects it — the same
         // bargain [`ClaudeCodeRuns::start_resident`] makes for a cold CLI.
-        if record.turn_at.is_some() || outstanding > 0 {
+        if record.payload.turn_at.is_some() || outstanding > 0 {
             self.runs
                 .lock()
                 .expect("injections poisoned")
@@ -1595,7 +1840,7 @@ impl ClaudeCodeRuns {
         // one file per session for its whole life, however many servers and
         // however many processes that life spans.
         let recorder = self.recorders.open(&record.session_id);
-        recorder.attached(record.cli_pid, record.shim.as_deref(), record.turn_at, outstanding, link.total());
+        recorder.attached(record.cli_pid, record.shim.as_deref(), record.payload.turn_at, outstanding, link.total());
         let driver = Driver {
             registry: self.clone(),
             id: record.session_id.clone(),
@@ -1620,7 +1865,7 @@ impl ClaudeCodeRuns {
             replay_marked: false,
             // What the last server knew and the shim could not: whether a prompt
             // had gone in and not yet been answered.
-            pending_turn: record.turn_at,
+            pending_turn: record.payload.turn_at,
             idle_since: None,
             seq: 0,
             fatal: None,
@@ -1636,7 +1881,7 @@ impl ClaudeCodeRuns {
             // A queue held after a limit stays held across the restart: the
             // alternative is a pump that feeds it straight to the account that
             // refused, and a second decision about the same limit.
-            hold: record.hold.clone(),
+            hold: record.payload.hold.clone(),
             asked: Vec::new(),
             replay_asked: Vec::new(),
             replay_refusals: Vec::new(),
@@ -1651,7 +1896,7 @@ impl ClaudeCodeRuns {
             session = %record.session_id,
             pid = record.cli_pid,
             shim = ?record.shim,
-            turn = ?record.turn_at,
+            turn = ?record.payload.turn_at,
             queued = outstanding,
             steered = driver.delivered_ahead.len(),
             "re-attached to a resident claude that outlived the last server"
@@ -1702,7 +1947,7 @@ struct Inherited {
 /// and re-judging them with *less* information than the decision was first made
 /// with can only be wrong more often. The queue is kept whole and the first
 /// message to bring a recipe says what the process is.
-fn inherited_queue(session: &str, queued: &[runs::Queued], live: Option<&Fingerprint>) -> Inherited {
+fn inherited_queue(session: &str, queued: &[Queued], live: Option<&Fingerprint>) -> Inherited {
     let mut inherited = Inherited {
         delivered_ahead: VecDeque::new(),
         queue: VecDeque::new(),
@@ -1762,7 +2007,7 @@ struct Turn {
     ///
     /// The offset the journal records, kept here so that every rewrite of the
     /// record can restate it rather than having to remember whether it already
-    /// had. See [`runs::RunRecord::turn_at`].
+    /// had. See [`ClaudeRun::turn_at`].
     at: u64,
     /// Distinguishes this turn from the next, so a ladder rung that comes due
     /// after it ended cannot signal the turn that replaced it.
@@ -2100,7 +2345,7 @@ struct Driver {
     ///
     /// Only ever set by [`ClaudeCodeRuns::attached`], and only until the
     /// replay walks past it. It is the half of the session's state that claude's
-    /// stdout cannot carry — see [`runs::RunRecord::turn_at`] — and it is
+    /// stdout cannot carry — see [`ClaudeRun::turn_at`] — and it is
     /// consumed exactly like a line of the replay, in its place in the stream,
     /// so that a `result` recorded after it still ends the turn it opened.
     pending_turn: Option<u64>,
@@ -2299,7 +2544,7 @@ async fn appended_lines(path: &Path, offset: u64, needle: &[u8]) -> (Vec<Value>,
 /// * a new process under another account, for whatever reason it started.
 ///
 /// Journalled on the run record, so a server that restarts mid-hold keeps
-/// holding — see [`runs::RunRecord::hold`].
+/// holding — see [`ClaudeRun::hold`].
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct Hold {
@@ -2847,7 +3092,7 @@ impl Driver {
     /// the queue behind it never moves. That is the ghost this asks about.
     ///
     /// The transcript is written by claude itself and is already trusted for
-    /// exactly this question elsewhere: [`super::InjectionRegistry::was_cut_short`]
+    /// exactly this question elsewhere: [`ClaudeCodeRuns::was_cut_short`]
     /// reads it to decide whether a run that outlived its server was cut short.
     /// Reusing [`crate::sessions::claude::claude_activity_status`] keeps one
     /// definition of mid-turn rather than two that can drift — a tail ending on
@@ -5615,7 +5860,7 @@ impl Driver {
         }
         // The transcript is the other half of "quiet": a turn writing tool
         // results is making progress even while the stream-json side is silent.
-        if let Some(progress) = super::transcript_progress(Source::Claude, &self.registry.paths, &self.id).await {
+        if let Some(progress) = self.registry.last_write(&self.id).await {
             if progress > self.heard {
                 self.heard = progress;
             }
@@ -6990,7 +7235,7 @@ mod tests {
     #[test]
     fn an_attach_leaves_a_steered_message_with_the_process_that_already_has_it() {
         let live = Fingerprint::default();
-        let queued = |id: &str, text: &str, steered: bool| runs::Queued {
+        let queued = |id: &str, text: &str, steered: bool| Queued {
             id: id.to_string(),
             text: text.to_string(),
             fingerprint: live.clone(),
@@ -7015,7 +7260,7 @@ mod tests {
         // The prefix rule is unchanged, and applies across both: the queue is
         // answered in order, so a message the running process cannot take takes
         // everything behind it with it.
-        let mismatch = runs::Queued {
+        let mismatch = Queued {
             id: "q-2".to_string(),
             text: "under another model".to_string(),
             fingerprint: Fingerprint {
@@ -7387,7 +7632,7 @@ mod tests {
     /// Built field by field rather than through [`InjectionRegistry::new`] on
     /// purpose: `new` reads the timings out of the environment, which is
     /// process-global and shared with every other test in this binary.
-    fn registry(home: &Path, stall: Duration, tick: Duration, step: Duration, settle: Duration, absorb_poll: Duration) -> Arc<InjectionRegistry> {
+    fn registry(home: &Path, stall: Duration, tick: Duration, step: Duration, settle: Duration, absorb_poll: Duration) -> (Arc<InjectionRegistry>, Arc<ClaudeCodeRuns>) {
         let paths = Arc::new(Paths::new(home.to_path_buf()));
         let dirs = InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
         dirs.create().expect("instance directories");
@@ -7432,16 +7677,17 @@ mod tests {
             // the environment, and `a_session_records_its_whole_life` needs the
             // answer to be yes whatever the developer's shell says.
             recorders: crate::record::Recorders::new_at(dirs.session_logs(), None, paths.clone()),
-            decoration: crate::drive::NotifyDecoration::new(paths.clone(), dirs),
+            decoration: crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone()),
             reading_recheck: Mutex::new(None),
             host: host.clone(),
         })
         .listed();
-        Arc::new(InjectionRegistry {
-            codex: crate::inject::app_server::CodexRuns::new(host.clone()),
-            claude,
+        let injections = Arc::new(InjectionRegistry {
             host,
-        })
+            decoration: crate::drive::NotifyDecoration::new(paths, dirs.clone()),
+            instance: dirs,
+        });
+        (injections, claude)
     }
 
     /// The bounded wait every fake CLI in here uses to sit on `$GO`, prepended
@@ -7740,7 +7986,7 @@ done
         live: Option<Fingerprint>,
         /// The backlog the record was holding, as the journal kept it: no
         /// recipe, because a journal cannot carry an environment.
-        queued: Vec<runs::Queued>,
+        queued: Vec<Queued>,
         /// The fingerprint of the recipe the driver holds, when it is not the
         /// default: a process started under an account, for the rotation tests.
         recipe: Option<Fingerprint>,
@@ -7847,7 +8093,7 @@ done
         ///
         /// The production scenario in one call: `None` is the record written
         /// before the journal carried a fingerprint at all.
-        async fn start_inherited(live: Option<Fingerprint>, queued: Vec<runs::Queued>) -> Harness {
+        async fn start_inherited(live: Option<Fingerprint>, queued: Vec<Queued>) -> Harness {
             Harness::build(
                 &preamble(),
                 hold_until_released(),
@@ -7908,9 +8154,13 @@ done
                 transcript: tail,
                 absorb_poll,
             } = adoption;
-            let injections = registry(home.path(), stall, tick, step, settle, absorb_poll);
-            let providers = crate::inject::ProviderRegistry::new(injections.clone(), crate::app::register_providers);
-            let registry = injections.claude.clone();
+            let (injections, registry) = registry(home.path(), stall, tick, step, settle, absorb_poll);
+            // Every provider, Claude Code's over this harness's own runs.
+            let providers = crate::inject::ProviderRegistry::new(injections.clone(), |providers, injections| {
+                providers.register(Arc::new(ClaudeCode::on(registry.clone(), injections)));
+                providers.register(Arc::new(crate::inject::app_server::Codex::new(injections.clone())));
+                providers.register(Arc::new(crate::inject::acp::Acp::new(injections.clone())));
+            });
             let log = home.path().join("stdin.log");
             let go = home.path().join("go");
             let bin = home.path().join("bin");
@@ -7984,9 +8234,6 @@ done
             // into the void, and two of the things worth asserting about a
             // restart are what it wrote down.
             registry.journal.add(runs::RunRecord {
-                codex: None,
-                codex_account: None,
-                hold: hold.clone(),
                 run_id: "record-under-test".to_string(),
                 source: Source::Claude,
                 session_id: SESSION.to_string(),
@@ -7996,9 +8243,12 @@ done
                 pid_token: procs::start_token(link.claude_pid()),
                 resident: true,
                 shim: Some(sidecars.id().to_string()),
-                fingerprint: live.clone(),
-                turn_at: None,
-                queued: queued.clone(),
+                payload: ClaudeRun {
+                    fingerprint: live.clone(),
+                    turn_at: None,
+                    queued: queued.clone(),
+                    hold: hold.clone(),
+                },
             });
             // Split exactly as an attach splits it, so a harness given a backlog
             // inherits it under the same rules the real thing applies.
@@ -8071,7 +8321,8 @@ done
                         .read()
                         .into_iter()
                         .find(|record| record.run_id == "record-under-test")
-                        .and_then(|record| record.hold),
+                        .and_then(|record| record.decode::<ClaudeRun>().ok())
+                        .and_then(|record| record.payload.hold),
                     asked: Vec::new(),
                     replay_asked: Vec::new(),
                     replay_refusals: Vec::new(),
@@ -8150,7 +8401,8 @@ done
                 .read()
                 .into_iter()
                 .find(|record| record.session_id == SESSION)
-                .and_then(|record| record.fingerprint)
+                .and_then(|record| record.decode::<ClaudeRun>().ok())
+                .and_then(|record| record.payload.fingerprint)
         }
 
         /// Every line a replacement process read off its stdin.
@@ -8222,13 +8474,15 @@ done
         }
 
         /// This driver's journal record, as the next server would read it.
-        fn record(&self) -> runs::RunRecord {
+        fn record(&self) -> runs::RunRecord<ClaudeRun> {
             self.registry
                 .journal
                 .read()
                 .into_iter()
                 .find(|record| record.run_id == "record-under-test")
                 .expect("the journal still holds this driver's record")
+                .decode()
+                .expect("a Claude Code record")
         }
 
         fn state(&self) -> ResidentState {
@@ -8363,7 +8617,7 @@ done
         until("the init", || harness.state().phase == Phase::Idle).await;
         harness.send("first");
         until("the first to be taken into a turn", || {
-            harness.state().phase == Phase::Working && harness.record().turn_at.is_some()
+            harness.state().phase == Phase::Working && harness.record().payload.turn_at.is_some()
         })
         .await;
 
@@ -8375,11 +8629,11 @@ done
         let record = harness.record();
         assert!(delivery.queued, "it waits behind the turn in flight");
         assert_eq!(
-            record.queued.iter().map(|queued| queued.text.as_str()).collect::<Vec<_>>(),
+            record.payload.queued.iter().map(|queued| queued.text.as_str()).collect::<Vec<_>>(),
             vec!["second"],
             "the accepted message is on disk when the send is answered, not merely in the driver's inbox: {record:?}"
         );
-        assert!(record.turn_at.is_some(), "behind the turn that is still in flight: {record:?}");
+        assert!(record.payload.turn_at.is_some(), "behind the turn that is still in flight: {record:?}");
 
         // And it is still a queue that moves: the turn ends, and it goes in.
         harness.release();
@@ -8643,7 +8897,7 @@ done
         );
         // On disk as well as in memory: a restart in this window has to find it.
         until("the journal to hold it", || {
-            harness.record().queued.iter().any(|queued| queued.text.contains("所以结论呢"))
+            harness.record().payload.queued.iter().any(|queued| queued.text.contains("所以结论呢"))
         })
         .await;
 
@@ -9282,7 +9536,7 @@ done
             "the identical message in the queue is untouched: {state:?}"
         );
         assert!(!state.queued_messages[0].steered, "and still undelivered: {state:?}");
-        let journalled: Vec<_> = harness.record().queued.into_iter().map(|queued| queued.id).collect();
+        let journalled: Vec<_> = harness.record().payload.queued.into_iter().map(|queued| queued.id).collect();
         assert_eq!(
             journalled,
             std::slice::from_ref(&waiting),
@@ -9749,7 +10003,7 @@ done
             "a session that is between turns has no run: {:?}",
             harness.injection()
         );
-        assert_eq!(harness.record().turn_at, None, "and nothing for the next boot to re-read as a turn");
+        assert_eq!(harness.record().payload.turn_at, None, "and nothing for the next boot to re-read as a turn");
 
         // The half that hurt: a message sent afterwards must go in rather than
         // park behind a turn that can never end.
@@ -10588,7 +10842,7 @@ done
     /// overrule it.
     #[tokio::test]
     async fn a_resident_with_no_recorded_settings_delivers_the_backlog_it_inherited() {
-        let waiting = runs::Queued {
+        let waiting = Queued {
             id: "q-1".to_string(),
             text: "still waiting from before the restart".to_string(),
             fingerprint: Fingerprint {
@@ -10715,7 +10969,7 @@ done
                 // before anything is pumped: that ordering is the scenario.
                 attach: Some(Witness::None),
                 live: Some(asked.clone()),
-                queued: vec![runs::Queued {
+                queued: vec![Queued {
                     id: "q-1".to_string(),
                     text: "queued under the name the composer sends".to_string(),
                     fingerprint: asked.clone(),
@@ -10794,7 +11048,7 @@ done
             account: Some("work".into()),
             ..Default::default()
         };
-        let queued = |id: &str, text: &str| runs::Queued {
+        let queued = |id: &str, text: &str| Queued {
             id: id.to_string(),
             text: text.to_string(),
             fingerprint: wanted.clone(),
@@ -11109,14 +11363,14 @@ done
         assert_eq!(harness.state().queued, 1, "and nothing was dropped");
         assert_eq!(harness.state().phase, Phase::Idle);
         assert!(harness.spawns().is_empty(), "and nothing was respawned");
-        let journalled = harness.record().hold.expect("the hold is on the record, for the next server");
+        let journalled = harness.record().payload.hold.expect("the hold is on the record, for the next server");
         assert_eq!(journalled.account, accounts[0].id);
         assert!(journalled.continue_failed);
 
         // Somebody acts: the held message goes first, then the new one.
         harness.send_with("third", harness.recipe(live.clone()));
         until("the held message to go in", || harness.seen().len() == 2).await;
-        assert_eq!(harness.record().hold, None, "and the record stops saying so");
+        assert_eq!(harness.record().payload.hold, None, "and the record stops saying so");
         assert!(harness.seen()[1].contains("second"), "{:?}", harness.seen());
         harness.release();
         until("the new one after it", || harness.seen().len() == 3).await;
@@ -11311,8 +11565,8 @@ dir=$(dirname "$GO")
     }
 
     /// A message as the journal keeps it.
-    fn journalled(id: &str, text: &str, fingerprint: &Fingerprint, rotation_attempt: u8, continuation: Option<Continuation>) -> runs::Queued {
-        runs::Queued {
+    fn journalled(id: &str, text: &str, fingerprint: &Fingerprint, rotation_attempt: u8, continuation: Option<Continuation>) -> Queued {
+        Queued {
             id: id.to_string(),
             text: text.to_string(),
             fingerprint: fingerprint.clone(),
@@ -11339,7 +11593,7 @@ dir=$(dirname "$GO")
             body: &str,
             live: Fingerprint,
             tick: Duration,
-            queued: Vec<runs::Queued>,
+            queued: Vec<Queued>,
             hold: Option<Hold>,
         ) -> Harness {
             Harness::build_in(
@@ -11413,7 +11667,7 @@ dir=$(dirname "$GO")
             harness.rotations().is_empty(),
             "no second decision about the same limit, however often it was re-checked"
         );
-        assert_eq!(harness.record().hold, Some(hold), "and the record still says it is held");
+        assert_eq!(harness.record().payload.hold, Some(hold), "and the record still says it is held");
     }
 
     /// M1: a server restarted while a continuation waited behind background

@@ -4,7 +4,7 @@
 //! runs are still adopted by PID until they finish, but no new exec is spawned.
 
 use std::collections::{BTreeMap, HashMap};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 #[cfg(test)]
 use std::process::Stdio;
 use std::sync::{Arc, Mutex, Weak};
@@ -18,28 +18,25 @@ use droppen_instance::instance::InstanceDirs;
 use droppen_instance::paths::Paths;
 use droppen_base::process_env::{redact_secrets, Env};
 use droppen_base::procs;
-use crate::sessions::{claude, codex};
-use droppen_sessions::{Injection, InjectionRunState, SessionRef, SessionStatus, Source};
+use droppen_sessions::{Injection, InjectionRunState, SessionRef, Source};
 use droppen_base::time::iso8601;
 use gotcha::Schematic;
 
 pub mod acp;
-mod app_server;
+pub(crate) mod app_server;
 mod common;
 pub mod drafts;
 mod gate;
 pub mod questions;
 pub mod receipts;
 mod registry;
-mod resident;
+pub(crate) mod resident;
 mod runs;
 pub mod shim;
 
-pub(crate) use app_server::Codex;
 pub use common::{AnswerOutcome, Phase, QueueOutcome, Reply, ResidentState, StopTaskOutcome};
 pub use gate::{SpawnGate, SpawnPermit};
 pub use registry::{Capabilities, Provider, ProviderRegistry, Run, SendTo, StartAt};
-pub(crate) use resident::ClaudeCode;
 
 /// How often an adopted run's pid is probed.
 ///
@@ -428,14 +425,6 @@ impl RunHost {
     }
 }
 
-fn cli_binary(source: Source) -> &'static str {
-    match source {
-        Source::Claude => "claude",
-        Source::Codex => "codex",
-        Source::Acp => "the ACP agent",
-    }
-}
-
 // -------------------------------------------------------------------- registry
 
 /// One run's mutable state.
@@ -526,8 +515,8 @@ pub struct RunHost {
     server: ServerId,
     /// Every provider's runs, by the source they run, which
     /// [`Self::driver_states`] gathers: each listed itself as it was made
-    /// ([`ListsRuns`]).
-    listed: Mutex<BTreeMap<Source, Weak<dyn ListsRuns>>>,
+    /// ([`ProviderRuns`]).
+    listed: Mutex<BTreeMap<Source, Weak<dyn ProviderRuns>>>,
     runs: Mutex<HashMap<String, Arc<RunEntry>>>,
     /// Where a resident's shim leaves its socket, stderr tail and tombstone.
     shim_dir: PathBuf,
@@ -575,18 +564,20 @@ pub struct RunHost {
     gate: Mutex<Weak<gate::SpawnGate>>,
 }
 
-/// Where the runs the previous server left behind are adopted
-/// ([`Self::adopt_all`]), each handed to its own provider's runs, on the host
-/// whose runs every provider shares ([`RunHost`]).
+/// The host whose runs every provider shares ([`RunHost`]), what a provider
+/// needs to make its own runs on it, and where the runs the previous server
+/// left behind are adopted ([`Self::adopt_all`]), each by the provider of its
+/// CLI.
 pub struct InjectionRegistry {
     /// What its runs share with every provider's.
     host: Arc<RunHost>,
-    /// Codex's runs, which its provider keeps, and adoption hands a surviving
-    /// app server to until each provider adopts its own.
-    codex: Arc<app_server::CodexRuns>,
-    /// Claude Code's runs, which its provider keeps, and adoption hands a
-    /// surviving resident to until each provider adopts its own.
-    claude: Arc<resident::ClaudeCodeRuns>,
+    /// This server's own instance directory, where a provider keeps what is
+    /// its runs' alone (Claude Code's flight recordings).
+    instance: InstanceDirs,
+    /// What a claude spawn's environment gains before it starts: on the send
+    /// path, and for the process an automatic rotation moves a session to,
+    /// which a driver builds by itself.
+    decoration: Arc<dyn SpawnDecoration>,
 }
 
 /// The per-session feeds as the drivers see them: the open views of a session
@@ -669,11 +660,10 @@ impl InjectionRegistry {
         quota: Arc<crate::accounts::quota::QuotaCache>,
         decoration: Arc<dyn SpawnDecoration>,
     ) -> Arc<Self> {
-        let host = RunHost::new(paths, instance, accounts, quota);
         Arc::new(Self {
-            codex: app_server::CodexRuns::new(host.clone()),
-            claude: resident::ClaudeCodeRuns::new(host.clone(), instance, decoration),
-            host,
+            host: RunHost::new(paths, instance, accounts, quota),
+            instance: instance.clone(),
+            decoration,
         })
     }
 }
@@ -819,7 +809,7 @@ impl RunHost {
         // In [`Source`]'s order: Claude Code's, then Codex's, then ACP's.
         // Taken out of the list first, so that no provider's lock is taken
         // under it.
-        let listed: Vec<Arc<dyn ListsRuns>> = self.listed.lock().expect("listed runs").values().filter_map(Weak::upgrade).collect();
+        let listed: Vec<Arc<dyn ProviderRuns>> = self.listed.lock().expect("listed runs").values().filter_map(Weak::upgrade).collect();
         for runs in listed {
             runs.add_to(&mut states);
         }
@@ -831,12 +821,17 @@ impl RunHost {
         droppen_sessions::DriverStates::new(self.server.clone(), states.residents, states.running, states.finished)
     }
 
+    /// The runs `source`'s provider listed, while they last.
+    pub(crate) fn runs_of(&self, source: Source) -> Option<Arc<dyn ProviderRuns>> {
+        self.listed.lock().expect("listed runs").get(&source).and_then(Weak::upgrade)
+    }
+
     /// Show `runs`, `source`'s, in every snapshot [`Self::driver_states`]
     /// takes from now on, for as long as they last.
     ///
     /// One provider's runs per source: a second, while the first lasts, is
     /// refused, as two would each hold a part of one source's sessions.
-    pub(crate) fn list(&self, source: Source, runs: Weak<dyn ListsRuns>) {
+    pub(crate) fn list(&self, source: Source, runs: Weak<dyn ProviderRuns>) {
         let mut listed = self.listed.lock().expect("listed runs");
         if listed.get(&source).is_some_and(|runs| runs.strong_count() > 0) {
             drop(listed);
@@ -865,7 +860,8 @@ impl RunHost {
         let Some(pid) = state.pid else { return false };
         if !procs::is_same_process(pid, state.pid_token.as_deref()) {
             tracing::info!(pid, session = %id, source = %source, "the run's pid is no longer its CLI; ending it instead of signalling");
-            vanished(&mut state, source, self.idle_timeout);
+            let cli = self.runs_of(source).map_or("the CLI", |runs| runs.cli_name());
+            vanished(&mut state, cli, self.idle_timeout);
             let claim = release(self, &mut state);
             drop(state);
             drop(claim);
@@ -879,11 +875,72 @@ impl RunHost {
     }
 }
 
-/// A provider's runs, kept by the provider rather than here, that the session
-/// list shows ([`RunHost::driver_states`]).
-pub(crate) trait ListsRuns: Send + Sync {
+/// A provider's runs, kept by the provider rather than here: what the session
+/// list shows of them ([`RunHost::driver_states`]), and what becomes of a run
+/// of its CLI that the previous server left behind ([`InjectionRegistry::adopt_all`]).
+///
+/// The record each method is handed is one of this provider's own CLI: adoption
+/// hands each run to the provider of the source it names.
+pub(crate) trait ProviderRuns: Send + Sync {
     /// Add its sessions' processes and the state of their runs to `states`.
     fn add_to(&self, states: &mut DriverStatesBuilder);
+
+    /// Its CLI, as an ended run's error names it.
+    fn cli_name(&self) -> &'static str;
+
+    /// Whether the provider can read its part of `record`. A run it cannot is
+    /// one this version cannot read, and is not adopted.
+    fn readable(&self, record: &runs::RunRecord) -> bool;
+
+    /// Whether `record` holds state of the provider's own that outlives its
+    /// process: such a run is re-attached to through its shim while it lives,
+    /// and handed back ([`ProviderRuns::dead`]) rather than buried once it has
+    /// gone.
+    fn holds_state(&self, _record: &runs::RunRecord) -> bool {
+        false
+    }
+
+    /// Take back a run whose process is gone and that holds state of the
+    /// provider's own ([`ProviderRuns::holds_state`]).
+    fn dead(&self, _record: runs::RunRecord) {}
+
+    /// Drive again the process `record` names, whose shim answered: `link` is
+    /// its stdio, and `lease` its session's claim.
+    fn attach(self: Arc<Self>, record: runs::RunRecord, sidecars: shim::Sidecars, link: shim::Link, lease: gate::SessionLease);
+
+    /// Whether the session's transcript ends mid-turn, for a run whose process
+    /// went with the last server.
+    ///
+    /// Each CLI already has a "is this session in the middle of something"
+    /// reading, derived from the tail of its transcript, and it is exactly the
+    /// question here: a turn that ended with the assistant's answer is a turn
+    /// that completed, whereas one ending on the user's message or a tool call
+    /// never got its reply. Reusing it keeps one definition of mid-turn in the
+    /// codebase rather than two that can drift.
+    fn was_cut_short<'a>(&'a self, record: &'a runs::RunRecord) -> BoxFuture<'a, bool>;
+
+    /// When session `id`'s transcript was last written, on the clock an
+    /// adopted run's watchdog counts progress by.
+    fn last_write<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Option<Instant>>;
+
+    /// The sessions whose questions can still be answered in the turn that
+    /// asked them: those whose process came back with them.
+    fn question_holders(&self) -> Vec<String> {
+        Vec::new()
+    }
+}
+
+/// When a file was last written, on the clock `Instant` keeps.
+pub(crate) trait WrittenAt {
+    async fn written_at(&self) -> Option<Instant>;
+}
+
+impl WrittenAt for Path {
+    async fn written_at(&self) -> Option<Instant> {
+        let modified = tokio::fs::metadata(self).await.ok()?.modified().ok()?;
+        let age = std::time::SystemTime::now().duration_since(modified).ok()?;
+        Instant::now().checked_sub(age)
+    }
 }
 
 /// The session list's view of the runs, gathered a CLI at a time; see
@@ -1023,11 +1080,18 @@ impl InjectionRegistry {
             return report;
         };
         for record in self.journal.read() {
+            // Each run is its own CLI's provider's to take back. One whose part
+            // that provider cannot read is one this version cannot read, and is
+            // left where it is.
+            let Some(runs) = self.runs_of(record.source).filter(|runs| runs.readable(&record)) else {
+                tracing::warn!(session = %record.session_id, source = %record.source, "a run record cannot be read; that run will not be adopted");
+                continue;
+            };
             if !procs::is_same_process(record.cli_pid, record.pid_token.as_deref()) {
-                if record.codex.is_some() {
-                    self.codex.codex_dead(record);
+                if runs.holds_state(&record) {
+                    runs.dead(record);
                 } else {
-                    self.bury(&record, &boot).await;
+                    self.bury(&*runs, &record, &boot).await;
                 }
                 report.finished += 1;
                 continue;
@@ -1064,18 +1128,18 @@ impl InjectionRegistry {
             // process' stdio open across the restart, so this server gets the
             // conversation back rather than just the knowledge that a pid
             // exists. A `codex exec` child has no such thing and is watched.
-            if record.resident || record.codex.is_some() {
-                match self.clone().reattach(&record, claim, &boot).await {
+            if record.resident || runs.holds_state(&record) {
+                match self.clone().reattach(&runs, &record, claim, &boot).await {
                     Reattached::Driving => report.recovered += 1,
                     Reattached::Watching(claim) => {
-                        self.clone().resume(record, claim);
+                        self.clone().resume(runs, record, claim);
                         report.recovered += 1;
                     }
                     Reattached::Buried => report.finished += 1,
                 }
                 continue;
             }
-            self.clone().resume(record, claim);
+            self.clone().resume(runs, record, claim);
             report.recovered += 1;
         }
         // A question can only be answered into the turn that asked it, and that
@@ -1083,7 +1147,8 @@ impl InjectionRegistry {
         // never take the answer. Those are expired here, once every survivor is
         // in the map, and stay answerable as an ordinary message. A survivor's
         // own questions are its driver's to settle when its replay ends.
-        let held: std::collections::HashSet<String> = self.claude.residents.lock().expect("residents poisoned").keys().cloned().collect();
+        let listed: Vec<Arc<dyn ProviderRuns>> = self.listed.lock().expect("listed runs").values().filter_map(Weak::upgrade).collect();
+        let held: std::collections::HashSet<String> = listed.iter().flat_map(|runs| runs.question_holders()).collect();
         let expired = self.questions.expire_unheld(&held, questions::now_ms());
         if expired > 0 {
             tracing::info!(
@@ -1107,7 +1172,7 @@ impl InjectionRegistry {
     ///   against a transcript the first is still writing;
     /// * the shim is minding a corpse, or the pid went while we were asking →
     ///   there is nothing to attach to, and the record is buried.
-    async fn reattach(self: Arc<Self>, record: &runs::RunRecord, claim: gate::SessionLease, boot: &gate::Boot<'_>) -> Reattached {
+    async fn reattach(self: Arc<Self>, runs: &Arc<dyn ProviderRuns>, record: &runs::RunRecord, claim: gate::SessionLease, boot: &gate::Boot<'_>) -> Reattached {
         let Some(shim_id) = record.shim.as_deref() else {
             // A resident record with no shim named cannot be dialled at all.
             // Only reachable from a record written by a server old enough to
@@ -1118,11 +1183,7 @@ impl InjectionRegistry {
         let sidecars = shim::Sidecars::new(self.shim_dir.clone(), shim_id);
         match shim::attach(&sidecars).await {
             Ok(link) => {
-                if record.source == Source::Codex {
-                    self.codex.codex_attached(record.clone(), link, claim);
-                } else {
-                    self.claude.attached(record, sidecars, link, claim);
-                }
+                runs.clone().attach(record.clone(), sidecars, link, claim);
                 Reattached::Driving
             }
             // A tombstone, or a pid that went during the handshake. The process
@@ -1131,14 +1192,14 @@ impl InjectionRegistry {
             Err(shim::LinkError::Corpse(why)) => {
                 tracing::info!(session = %record.session_id, %why, "the resident named by this record is already dead");
                 drop(claim);
-                self.bury_resident(record, &sidecars, boot).await;
+                self.bury_resident(&**runs, record, &sidecars, boot).await;
                 Reattached::Buried
             }
             Err(error) => {
                 if !procs::is_same_process(record.cli_pid, record.pid_token.as_deref()) {
                     tracing::info!(session = %record.session_id, %error, "the resident named by this record has gone");
                     drop(claim);
-                    self.bury_resident(record, &sidecars, boot).await;
+                    self.bury_resident(&**runs, record, &sidecars, boot).await;
                     return Reattached::Buried;
                 }
                 // The socket is unreachable and the process is not. Everything
@@ -1168,21 +1229,21 @@ impl InjectionRegistry {
     /// out is to write down how claude ended, and that note is worth more than
     /// an inference — so it is used where it exists and the sidecars are swept
     /// up behind it.
-    async fn bury_resident(&self, record: &runs::RunRecord, sidecars: &shim::Sidecars, boot: &gate::Boot<'_>) {
-        if record.codex.is_some() {
-            self.codex.codex_dead(record.clone());
+    async fn bury_resident(&self, runs: &dyn ProviderRuns, record: &runs::RunRecord, sidecars: &shim::Sidecars, boot: &gate::Boot<'_>) {
+        if runs.holds_state(record) {
+            runs.dead(record.clone());
             return;
         }
         if let Some(exit) = sidecars.read_tombstone() {
             tracing::info!(session = %record.session_id, ?exit, "the resident's shim recorded how it ended");
         }
-        self.bury(record, boot).await;
+        self.bury(runs, record, boot).await;
         let _ = std::fs::remove_file(sidecars.exit());
         let _ = std::fs::remove_file(sidecars.stderr());
     }
 
     /// Put an inherited run back in the map and start watching its pid.
-    fn resume(self: Arc<Self>, record: runs::RunRecord, claim: gate::SessionLease) {
+    fn resume(self: Arc<Self>, runs: Arc<dyn ProviderRuns>, record: runs::RunRecord, claim: gate::SessionLease) {
         let (finished_tx, _) = tokio::sync::watch::channel(false);
         let run = Arc::new(RunEntry {
             state: Mutex::new(RunState {
@@ -1223,7 +1284,7 @@ impl InjectionRegistry {
             pid = record.cli_pid,
             "adopted a run that outlived the last server"
         );
-        tokio::spawn(watch_adopted(run, record, self));
+        tokio::spawn(watch_adopted(run, record, self, runs));
     }
 
     /// Deal with a record whose CLI is gone.
@@ -1234,14 +1295,14 @@ impl InjectionRegistry {
     /// transcript can tell the two apart, so that is what is asked — and only
     /// when it says the turn was cut short does anything surface, because a
     /// spurious failure on every restart would be worse than silence.
-    async fn bury(&self, record: &runs::RunRecord, boot: &gate::Boot<'_>) {
+    async fn bury(&self, runs: &dyn ProviderRuns, record: &runs::RunRecord, boot: &gate::Boot<'_>) {
         self.journal.remove(&record.run_id);
         // Taken and immediately dropped: a lock file whose run is over is
         // debris, and leaving it would keep the session claimed by nobody.
         boot.sweep(record.source, &record.session_id);
         #[cfg(test)]
         self.step("buried", record.source, Some(&record.session_id));
-        if !self.was_cut_short(record).await {
+        if !runs.was_cut_short(record).await {
             tracing::info!(session = %record.session_id, "a run finished while the server was down");
             return;
         }
@@ -1277,36 +1338,6 @@ impl InjectionRegistry {
         self.runs.lock().expect("injections poisoned").insert(key, run);
         tracing::info!(session = %record.session_id, source = %record.source, "a run was cut short by a restart");
     }
-
-    /// Whether the session's transcript ends mid-turn.
-    ///
-    /// Both CLIs already have a "is this session in the middle of something"
-    /// reading, derived from the tail of the transcript, and it is exactly the
-    /// question here: a turn that ended with the assistant's answer is a turn
-    /// that completed, whereas one ending on the user's message or a tool call
-    /// never got its reply. Reusing them keeps one definition of mid-turn in
-    /// the codebase rather than two that can drift.
-    async fn was_cut_short(&self, record: &runs::RunRecord) -> bool {
-        match record.source {
-            Source::Claude => match claude::find_claude_session_file(&self.paths, &record.session_id).await {
-                // No transcript at all: the CLI died before writing a line of
-                // the turn it was given.
-                None => true,
-                Some(path) => claude::claude_activity_status(&path).await == SessionStatus::Running,
-            },
-            Source::Codex => match codex::find_codex_session(&self.paths, &record.session_id).await {
-                None => true,
-                // Codex reads `Idle` for a transcript nothing has touched
-                // lately, which after a long outage is every transcript. That
-                // makes the answer conservative rather than wrong: silence,
-                // where claude would have said something.
-                Some(session) => session.status == SessionStatus::Running,
-            },
-            // An ACP agent process is never journalled, so it is never adopted: it
-            // dies with the server that started it (see `acp`).
-            Source::Acp => false,
-        }
-    }
 }
 
 /// Watch an adopted run's pid until it exits, re-arming the idle watchdog.
@@ -1322,7 +1353,7 @@ impl InjectionRegistry {
 /// looks like, and signalling one would end every conversation on the machine
 /// that nobody happened to be talking to. See [`resident::Driver::watchdog`] for
 /// why a live resident is only ever marked, never reaped.
-async fn watch_adopted(run: Arc<RunEntry>, record: runs::RunRecord, registry: Arc<InjectionRegistry>) {
+async fn watch_adopted(run: Arc<RunEntry>, record: runs::RunRecord, registry: Arc<InjectionRegistry>, runs: Arc<dyn ProviderRuns>) {
     let mut since_watchdog = Instant::now();
     loop {
         tokio::time::sleep(ADOPTED_POLL).await;
@@ -1330,9 +1361,9 @@ async fn watch_adopted(run: Arc<RunEntry>, record: runs::RunRecord, registry: Ar
         if !procs::is_same_process(record.cli_pid, record.pid_token.as_deref()) {
             break;
         }
-        if !record.resident && record.codex.is_none() && since_watchdog.elapsed() >= registry.watchdog_interval {
+        if !(record.resident || runs.holds_state(&record)) && since_watchdog.elapsed() >= registry.watchdog_interval {
             since_watchdog = Instant::now();
-            if let Some(pid) = check_idle(&run, record.source, &registry.paths, registry.idle_timeout).await {
+            if let Some(pid) = check_idle(&run, &*runs, registry.idle_timeout).await {
                 // Checked again rather than relying on the check at the top of
                 // the loop: `check_idle` reads the transcript's mtime, and a pid
                 // can stop being this run across that await.
@@ -1350,16 +1381,17 @@ async fn watch_adopted(run: Arc<RunEntry>, record: runs::RunRecord, registry: Ar
     }
 
     let mut state = run.state.lock().expect("run state poisoned");
-    vanished(&mut state, record.source, registry.idle_timeout);
-    let claim = if record.codex.is_some() {
+    vanished(&mut state, runs.cli_name(), registry.idle_timeout);
+    let holds_state = runs.holds_state(&record);
+    let claim = if holds_state {
         state.lock.take()
     } else {
         release(&registry, &mut state)
     };
     drop(state);
     drop(claim);
-    if record.codex.is_some() {
-        registry.codex.codex_dead(record);
+    if holds_state {
+        runs.dead(record);
     }
     let _ = run.finished.send(true);
 }
@@ -1406,7 +1438,7 @@ fn release(registry: &RunHost, state: &mut RunState) -> Option<gate::SessionLeas
 /// process, and no later check undoes it. Declining to signal a run that has in
 /// fact already ended costs nothing at all — the run is over either way, and
 /// saying so here is the truth rather than a guess.
-fn vanished(state: &mut RunState, source: Source, idle_timeout: Duration) {
+fn vanished(state: &mut RunState, cli: &str, idle_timeout: Duration) {
     state.pid = None;
     state.finished_at = Some(iso8601(std::time::SystemTime::now()));
     // There is no exit status to read: the process that could have reaped this
@@ -1421,7 +1453,7 @@ fn vanished(state: &mut RunState, source: Source, idle_timeout: Duration) {
         state.state = InjectionRunState::Failed;
         state.error = Some(format!(
             "{} stopped making progress for {} minutes, so Droppen ended it",
-            cli_binary(source),
+            cli,
             (idle_timeout.as_secs_f64() / 60.0).round() as u64
         ));
     } else {
@@ -1446,9 +1478,9 @@ fn signal_name(signal: i32) -> String {
 /// Progress is either CLI output (codex exec --json streams events) or growth of
 /// the session transcript, which both CLIs write continuously — that is what
 /// the live feed renders.
-async fn check_idle(run: &RunEntry, source: Source, paths: &Paths, idle_timeout: Duration) -> Option<u32> {
+async fn check_idle(run: &RunEntry, runs: &dyn ProviderRuns, idle_timeout: Duration) -> Option<u32> {
     let current_id = run.state.lock().expect("run state poisoned").current_id.clone();
-    let transcript_progress = transcript_progress(source, paths, &current_id).await;
+    let transcript_progress = runs.last_write(&current_id).await;
 
     let mut state = run.state.lock().expect("run state poisoned");
     if let Some(progress) = transcript_progress {
@@ -1461,21 +1493,6 @@ async fn check_idle(run: &RunEntry, source: Source, paths: &Paths, idle_timeout:
     }
     state.idle_killed = true;
     state.pid
-}
-
-/// The transcript's last write, expressed on the same clock as `last_progress`.
-async fn transcript_progress(source: Source, paths: &Paths, id: &str) -> Option<Instant> {
-    let path = match source {
-        Source::Claude => claude::find_claude_session_file(paths, id).await,
-        // Codex discovery is the sibling agent's; against the current stub this
-        // is always `None`, which falls back to output activity exactly as the
-        // TypeScript does for a session with no file yet.
-        Source::Codex => codex::find_codex_session(paths, id).await.map(|s| std::path::PathBuf::from(s.file_path)),
-        Source::Acp => crate::sessions::acp_transcript::AcpTranscripts::of(paths).locate(id).await.map(|(_, file)| file),
-    }?;
-    let modified = tokio::fs::metadata(&path).await.ok()?.modified().ok()?;
-    let age = std::time::SystemTime::now().duration_since(modified).ok()?;
-    Instant::now().checked_sub(age)
 }
 
 /// How long one push stands for every other move ahead between the same two
@@ -1607,10 +1624,8 @@ mod tests {
         for (source, session) in [(Source::Claude, CLAUDE), (Source::Codex, CODEX)] {
             let claim = providers.gate().lease(source, session).expect("a free session must be claimable");
             registry.clone().resume(
+                registry.runs_of(source).expect("the source's runs"),
                 runs::RunRecord {
-                    codex: None,
-                    codex_account: None,
-                    hold: None,
                     run_id: format!("run-{session}"),
                     source,
                     session_id: session.to_string(),
@@ -1623,9 +1638,7 @@ mod tests {
                     pid_token: Some("1.000000".to_string()),
                     resident: false,
                     shim: None,
-                    fingerprint: None,
-                    turn_at: None,
-                    queued: Vec::new(),
+                    payload: runs::Payload::new(),
                 },
                 claim,
             );
@@ -1691,9 +1704,6 @@ mod tests {
             .spawn()
             .expect("spawn a stand-in");
         let adopted = runs::RunRecord {
-            codex: None,
-            codex_account: None,
-            hold: None,
             run_id: "run-adopted".to_string(),
             source: Source::Codex,
             session_id: SESSION.to_string(),
@@ -1703,25 +1713,23 @@ mod tests {
             pid_token: procs::start_token(live.id()),
             resident: false,
             shim: None,
-            fingerprint: None,
-            turn_at: None,
-            queued: Vec::new(),
+            payload: runs::Payload::new(),
         };
 
-        let queued: app_server::State =
-            serde_json::from_value(serde_json::json!({"queue": [{"id": "q1", "text": "next", "params": {}, "request": null}]}))
-                .expect("a codex state");
-        registry.codex.codex_dead(runs::RunRecord {
-            codex: Some(queued),
+        let codex = providers.provider::<app_server::Codex>().expect("Codex").runs().clone();
+        let app_server = runs::RunRecord {
             run_id: "run-app-server".to_string(),
             resident: true,
+            payload: serde_json::from_value(serde_json::json!({"codex": {"queue": [{"id": "q1", "text": "next", "params": {}, "request": null}]}}))
+                .expect("a codex state"),
             ..adopted.clone()
-        });
-        let handle = registry.codex.codex_handle(SESSION).expect("the handle stays");
+        };
+        codex.codex_dead(app_server.decode().expect("a Codex record"));
+        let handle = codex.codex_handle(SESSION).expect("the handle stays");
         assert!(handle.visible() && !handle.alive(), "listed, with no process behind it");
 
         let claim = providers.gate().lease(Source::Codex, SESSION).expect("a free session must be claimable");
-        registry.clone().resume(adopted, claim);
+        registry.clone().resume(registry.runs_of(Source::Codex).expect("Codex's runs"), adopted, claim);
 
         assert!(!providers.interrupt(Source::Codex, SESSION), "nothing is left to stop");
         tokio::time::sleep(Duration::from_millis(300)).await;
@@ -1773,9 +1781,6 @@ mod tests {
         let mut dead = spawn("exit 0");
         dead.wait().expect("it exits");
         let record = |session: &str, pid: u32| runs::RunRecord {
-            codex: None,
-            codex_account: None,
-            hold: None,
             run_id: format!("run-{session}"),
             source: Source::Claude,
             session_id: session.to_string(),
@@ -1785,9 +1790,7 @@ mod tests {
             pid_token: procs::start_token(pid),
             resident: false,
             shim: None,
-            fingerprint: None,
-            turn_at: None,
-            queued: Vec::new(),
+            payload: runs::Payload::new(),
         };
         registry.journal.add(record(LIVE, live.id()));
         registry.journal.add(record(DEAD, dead.id()));

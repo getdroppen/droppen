@@ -49,20 +49,22 @@
 
 use std::path::PathBuf;
 
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use droppen_sessions::Source;
 
-/// One in-flight run, as it survives on disk.
+/// One in-flight run, as it survives on disk: what every CLI's run says, and
+/// beside it, in the same row, what the provider that started it keeps there.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RunRecord {
+pub struct RunRecord<P = Payload> {
     /// Identifies this run across a rename, so completion removes the entry it
     /// created even after the session id underneath it changed.
     pub run_id: String,
     /// Which CLI is running.
     pub source: Source,
     /// The session the run belongs to. Rewritten by
-    /// [`RunsFile::repoint`] when codex announces its real thread id.
+    /// the provider when its CLI announces the id it actually chose.
     pub session_id: String,
     /// Where the CLI was started, for the record; adoption does not re-derive
     /// anything from it, since the process is already running.
@@ -96,143 +98,34 @@ pub struct RunRecord {
     /// shim, and the only one.
     #[serde(default)]
     pub shim: Option<String>,
-    /// What this resident's command line settled: model, effort, permission
-    /// mode, account, persona, uploads.
-    ///
-    /// Recorded because a re-attached resident has to answer "may this message
-    /// go to the process that is already running" — and the answer is a
-    /// comparison against the settings the process was *started* with, which
-    /// nothing else on disk remembers. Getting it wrong in either direction
-    /// costs: a false mismatch throws a warm session away on the first message
-    /// after every restart, and a false match sends an opus message to a
-    /// haiku process.
-    ///
-    /// Every field is a setting the user chose, and none is a secret. `None`
-    /// in a record from before this existed, which reads as "unknown" and is
-    /// handled as such rather than as "no settings at all" — see
-    /// [`super::resident::Fingerprint`].
-    ///
-    /// Written at the spawn and then *healed* rather than left alone: an
-    /// unknown one is filled in by the first message an adopted resident is
-    /// given, and the model is rewritten when `system:init` resolves the alias
-    /// the command line asked for into the name the CLI answers under. Both are
-    /// [`RunsFile::mark_fingerprint`], and both exist so that the record the
-    /// next server reads is what the process is really running rather than what
-    /// some older server managed to write down.
-    #[serde(default)]
-    pub fingerprint: Option<super::resident::Fingerprint>,
-    /// Where in claude's stdout a turn was written into this resident, if one
-    /// was still in flight when this was last written.
-    ///
-    /// The one thing a re-attached server cannot work out for itself. A turn
-    /// begins when a prompt is written to claude's *stdin*, and the shim records
-    /// only its stdout — so a turn that has said nothing yet, which is every
-    /// turn spent thinking or inside a long tool call, is invisible in the
-    /// replay. Without this a restart in that window reads the session as idle,
-    /// unblocks the composer, and lets the next message be written into the
-    /// middle of a turn that is very much still running.
-    ///
-    /// A byte offset rather than a flag, because *when* is the whole question: a
-    /// turn that ended while no server was attached left its `result` in the
-    /// shim's ring, and adoption has to be able to tell that `result` from the
-    /// ones belonging to earlier turns. The offset is the reader's cursor at the
-    /// moment the prompt went in, so everything before it is history and the
-    /// first `result` after it is this turn's end. `None` means "no turn was in
-    /// flight", which is also what every record written before this existed says.
-    #[serde(default)]
-    pub turn_at: Option<u64>,
-    /// The messages accepted for this resident and not yet written to it.
-    ///
-    /// The other half of what used to die with a server. A send is answered
-    /// `200` the moment it is queued — that is what lets a second message be
-    /// composed while the first is still running — and the queue itself was in
-    /// memory, so a restart between "accepted" and "written to claude's stdin"
-    /// threw the message away in silence. That window is not small: a message
-    /// sent behind a turn sits in it for as long as the turn takes.
-    ///
-    /// In order, popped as each one goes in, and empty the rest of the time.
-    #[serde(default)]
-    pub queued: Vec<Queued>,
-    /// Codex App Server delivery state and replay checkpoint. Absent for legacy
-    /// exec runs and Claude residents.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub codex: Option<super::app_server::State>,
-    /// The stored account a codex app-server was started under.
-    ///
-    /// The codex half of [`RunRecord::fingerprint`], and a field of its own
-    /// rather than a reuse of it because the two are read by different drivers
-    /// and the claude one carries six settings this has no opinion about. An id
-    /// and never a secret. `None` is the machine's own `~/.codex` login, which
-    /// is what every record written before accounts had a second CLI means.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub codex_account: Option<String>,
-    /// A claude resident's queue held after a limit with no account to move
-    /// to, so the next server keeps holding it rather than feeding the queue
-    /// to the account that refused. See [`super::resident::Hold`]. Absent on
-    /// every record that is not holding anything, and on every record written
-    /// before there was a hold.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub hold: Option<super::resident::Hold>,
+    /// What the provider that started the run keeps beside the fields above,
+    /// in the order it writes them: `P` as that provider reads it, and
+    /// [`Payload`] while the row is read as no provider's.
+    #[serde(flatten)]
+    pub payload: P,
 }
 
-/// One message waiting its turn, as it survives on disk.
-///
-/// The prompt is here in plain text, which is a line worth saying out loud why
-/// it is crossed: it is one step away from being written into the session
-/// transcript — a plain file in the same data directory, holding every prompt
-/// the session has ever had — so this reveals nothing the transcript does not,
-/// and it holds it only until claude has it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Queued {
-    /// What the queue routes name this message by, kept across a restart so a
-    /// client holding an id from before it still holds a usable one.
-    ///
-    /// Empty in every record written before the queue was addressable, which
-    /// [`super::resident`] answers by minting a fresh id on the way back in:
-    /// the message survives, only its name changes.
-    #[serde(default)]
-    pub id: String,
-    /// The prompt as claude will see it, attachment suffix included.
-    pub text: String,
-    /// The process this message needs, so a re-attached server can tell whether
-    /// the resident it inherited may answer it at all.
-    ///
-    /// The environment is not here and cannot be — it carries the account's
-    /// token — so a message that does *not* fit the running process cannot be
-    /// re-delivered by a server that did not start that process. Recording what
-    /// it wanted is what lets adoption notice, and say so, instead of sending an
-    /// opus message to a haiku process.
-    #[serde(default)]
-    pub fingerprint: super::resident::Fingerprint,
-    /// Whether this message had already been written to the running process'
-    /// stdin, ahead of its turn, when this was recorded.
-    ///
-    /// The difference matters to exactly one reader: the server that re-attaches
-    /// to the process this record names. That process still holds the line in
-    /// its stdin buffer and will run it, so re-delivering it would run it twice
-    /// — see [`super::resident::inherited_queue`]. A record read back against
-    /// any *other* process (there is no such path today) would have to treat it
-    /// as undelivered.
-    #[serde(default)]
-    pub steered: bool,
-    /// How many times an automatic account rotation has already moved the
-    /// message chain this one belongs to: `0` for anything a person sent, and
-    /// the count for the continuation a rotation queued in its place. Kept so
-    /// the cap in [`crate::accounts::rotation::ROTATION_CAP`] survives a
-    /// restart; absent, and zero, on every record written before there was one.
-    #[serde(default, skip_serializing_if = "is_zero")]
-    pub rotation_attempt: u8,
-    /// For a rotation's continuation, what it needs to say which background
-    /// tasks its respawn cut short — kept so a continuation parked behind
-    /// background work survives a restart whole. Absent on everything else.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub continuation: Option<super::resident::Continuation>,
-}
+/// A row's provider part as it was read, before any provider reads it as its
+/// own: every key the fields every run has leave over, in the row's order.
+pub type Payload = serde_json::Map<String, serde_json::Value>;
 
-/// Whether a counter is at its default, so a record that never rotated is
-/// written exactly as it always was.
-fn is_zero(value: &u8) -> bool {
-    *value == 0
+impl RunRecord {
+    /// This run as the provider whose `P` it is reads it.
+    pub fn decode<P: DeserializeOwned>(self) -> serde_json::Result<RunRecord<P>> {
+        let payload = serde_json::from_value(serde_json::Value::Object(self.payload))?;
+        Ok(RunRecord {
+            run_id: self.run_id,
+            source: self.source,
+            session_id: self.session_id,
+            cwd: self.cwd,
+            cli_pid: self.cli_pid,
+            started_at: self.started_at,
+            pid_token: self.pid_token,
+            resident: self.resident,
+            shim: self.shim,
+            payload,
+        })
+    }
 }
 
 // The argv and the environment a resident was spawned with are deliberately
@@ -334,7 +227,7 @@ impl RunsFile {
     }
 
     /// Record a run that has just been spawned.
-    pub fn add(&self, record: RunRecord) {
+    pub fn add<P: Serialize>(&self, record: RunRecord<P>) {
         self.db.commit("a started run", |tx| {
             let Ok(payload) = serde_json::to_string(&record) else {
                 return Ok(());
@@ -360,65 +253,6 @@ impl RunsFile {
         });
     }
 
-    /// Say what a resident is in the middle of: the turn in flight, and what is
-    /// still waiting behind it.
-    ///
-    /// Both in one transaction, and that is the point rather than an
-    /// optimisation. Handing a message to claude moves it out of the queue *and*
-    /// opens a turn, and a crash between two separate commits would leave the
-    /// record claiming either that a delivered message is still waiting — so the
-    /// next boot sends it twice — or that neither is happening, which unblocks
-    /// the composer on a live turn. One transaction has neither state.
-    pub fn mark_progress(&self, run_id: &str, turn_at: Option<u64>, queued: &[Queued]) {
-        let queued = queued.to_vec();
-        self.patch("progress on a run", run_id, move |run| {
-            run.turn_at = turn_at;
-            run.queued = queued;
-        });
-    }
-
-    /// Say whether this resident's queue is held after a limit, and on what.
-    pub fn mark_hold(&self, run_id: &str, hold: Option<super::resident::Hold>) {
-        self.patch("a held queue", run_id, move |run| {
-            run.hold = hold;
-        });
-    }
-
-    /// Say what the process this record names is really running.
-    ///
-    /// A write of its own rather than another argument to
-    /// [`RunsFile::mark_progress`], because it happens on a different rhythm:
-    /// the settings are fixed for a process' whole life and are recorded at the
-    /// spawn, so this is only ever a *correction* — the record that predates the
-    /// field and whose driver has since been told what it is holding, and the
-    /// model alias `system:init` resolves. Rare, and each one saves the next
-    /// server from having to learn the same thing again.
-    ///
-    /// The account is part of what is written, and is the reason this is not
-    /// simply left to the next spawn: a record that says nothing is one the next
-    /// boot cannot compare a message against, and comparing against the default
-    /// instead is what threw queued messages away after an upgrade.
-    pub fn mark_fingerprint(&self, run_id: &str, fingerprint: &super::resident::Fingerprint) {
-        let fingerprint = fingerprint.clone();
-        self.patch("what a run is holding", run_id, move |run| {
-            run.fingerprint = Some(fingerprint);
-        });
-    }
-
-    /// Point a run at the session id the CLI actually chose.
-    ///
-    /// Claude's `--fork-session` adopt path needs this: the CLI may keep the
-    /// session under an id of its own choosing rather than the one the fork
-    /// asked for, and announces it on `system:init`, so a run is recorded under
-    /// a provisional id first. Without the rewrite, adoption would re-arm the
-    /// idle watchdog on a transcript that does not exist.
-    pub fn repoint(&self, run_id: &str, session_id: &str) {
-        let session_id = session_id.to_string();
-        self.patch("the session a run belongs to", run_id, move |run| {
-            run.session_id = session_id;
-        });
-    }
-
     /// Change one record, in one transaction, and only the record named.
     ///
     /// The read-modify-write happens *inside* the transaction, which is the
@@ -427,7 +261,7 @@ impl RunsFile {
     /// can no longer have one of them silently win. Naming a run that is not
     /// there is not an error — a turn can end after the process that was running
     /// it has already been retired.
-    fn patch(&self, what: &'static str, run_id: &str, change: impl FnOnce(&mut RunRecord)) {
+    pub(super) fn patch<P: Serialize + DeserializeOwned>(&self, what: &'static str, run_id: &str, change: impl FnOnce(&mut RunRecord<P>)) {
         self.db.commit(what, |tx| {
             let found: Option<String> = tx
                 .query_row("SELECT payload FROM runs WHERE run_id = ?1", (run_id,), |row| row.get(0))
@@ -435,7 +269,7 @@ impl RunsFile {
             let Some(json) = found else {
                 return Ok(());
             };
-            let Ok(mut record) = serde_json::from_str::<RunRecord>(&json) else {
+            let Ok(mut record) = serde_json::from_str::<RunRecord<P>>(&json) else {
                 return Ok(());
             };
             change(&mut record);
@@ -480,12 +314,11 @@ impl RunsFile {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::inject::app_server::CodexRun;
+    use crate::inject::resident::{ClaudeJournal, ClaudeRun, Queued};
 
-    fn record(run_id: &str, session_id: &str, pid: u32) -> RunRecord {
+    fn record(run_id: &str, session_id: &str, pid: u32) -> RunRecord<ClaudeRun> {
         RunRecord {
-            codex: None,
-            codex_account: None,
-            hold: None,
             run_id: run_id.to_string(),
             source: Source::Claude,
             session_id: session_id.to_string(),
@@ -495,10 +328,13 @@ mod tests {
             pid_token: Some("123.000000".to_string()),
             resident: false,
             shim: None,
-            fingerprint: None,
-            turn_at: None,
-            queued: Vec::new(),
+            payload: ClaudeRun::default(),
         }
+    }
+
+    /// Every run in `file`, read as Claude Code's.
+    fn claude_runs(file: &RunsFile) -> Vec<RunRecord<ClaudeRun>> {
+        file.read().into_iter().map(|run| run.decode().expect("a Claude Code run")).collect()
     }
 
     #[test]
@@ -506,11 +342,11 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let file = RunsFile::new(dir.path().join("runs.json"));
 
-        assert!(file.read().is_empty(), "an empty database is an empty journal, not an error");
+        assert!(claude_runs(&file).is_empty(), "an empty database is an empty journal, not an error");
 
         file.add(record("run-1", "session-a", 4242));
         file.add(record("run-2", "session-b", 4243));
-        let runs = file.read();
+        let runs = claude_runs(&file);
         assert_eq!(runs.len(), 2);
         assert_eq!(runs[0].session_id, "session-a");
         assert_eq!(runs[0].cli_pid, 4242);
@@ -520,16 +356,16 @@ mod tests {
         // Re-adding one run replaces it rather than duplicating it, so a retry
         // cannot leave two records pointing at one process.
         file.add(record("run-1", "session-a", 5555));
-        assert_eq!(file.read().len(), 2);
-        assert_eq!(file.read()[1].cli_pid, 5555, "the newest wins and moves to the end");
+        assert_eq!(claude_runs(&file).len(), 2);
+        assert_eq!(claude_runs(&file)[1].cli_pid, 5555, "the newest wins and moves to the end");
 
         file.repoint("run-2", "0199c1a1-2b3c-4d5e-8f60-112233445566");
-        assert_eq!(file.read()[0].session_id, "0199c1a1-2b3c-4d5e-8f60-112233445566");
+        assert_eq!(claude_runs(&file)[0].session_id, "0199c1a1-2b3c-4d5e-8f60-112233445566");
 
         // The turn mark and the queue go on and come off the record they name,
         // and only it: a resident answering one session must not mark another's
         // turn open or inherit its backlog.
-        assert!(file.read().iter().all(|run| run.turn_at.is_none()), "no turn is in flight to begin with");
+        assert!(claude_runs(&file).iter().all(|run| run.payload.turn_at.is_none()), "no turn is in flight to begin with");
         let waiting = vec![Queued {
             id: "q-1".to_string(),
             text: "next please".to_string(),
@@ -539,25 +375,25 @@ mod tests {
             continuation: None,
         }];
         file.mark_progress("run-1", Some(4096), &waiting);
-        let runs = file.read();
+        let runs = claude_runs(&file);
         let marked = runs.iter().find(|run| run.run_id == "run-1").expect("run-1");
-        assert_eq!(marked.turn_at, Some(4096));
-        assert_eq!(marked.queued, waiting);
+        assert_eq!(marked.payload.turn_at, Some(4096));
+        assert_eq!(marked.payload.queued, waiting);
         let untouched = runs.iter().find(|run| run.run_id == "run-2").expect("run-2");
-        assert_eq!(untouched.turn_at, None);
-        assert!(untouched.queued.is_empty());
+        assert_eq!(untouched.payload.turn_at, None);
+        assert!(untouched.payload.queued.is_empty());
         file.mark_progress("run-1", None, &[]);
-        let runs = file.read();
-        assert!(runs.iter().all(|run| run.turn_at.is_none()), "and the turn ending takes it off again");
-        assert!(runs.iter().all(|run| run.queued.is_empty()), "and the delivered message with it");
+        let runs = claude_runs(&file);
+        assert!(runs.iter().all(|run| run.payload.turn_at.is_none()), "and the turn ending takes it off again");
+        assert!(runs.iter().all(|run| run.payload.queued.is_empty()), "and the delivered message with it");
         // Marking a run that is not there is not an error: a turn can end after
         // the process that was running it has already been retired.
         file.mark_progress("run-gone", Some(1), &waiting);
 
         file.remove("run-2");
-        assert_eq!(file.read().len(), 1);
+        assert_eq!(claude_runs(&file).len(), 1);
         file.remove("run-1");
-        assert!(file.read().is_empty(), "a finished run leaves nothing behind");
+        assert!(claude_runs(&file).is_empty(), "a finished run leaves nothing behind");
         // Removing what is not there is not an error: completion paths overlap.
         file.remove("run-1");
     }
@@ -579,7 +415,7 @@ mod tests {
         let file = RunsFile::new(dir.path().join("runs.json"));
         file.add(record("run-1", "session-a", 4242));
         file.add(record("run-2", "session-b", 4243));
-        assert!(file.read()[0].fingerprint.is_none(), "a record from before the field says nothing");
+        assert!(claude_runs(&file)[0].payload.fingerprint.is_none(), "a record from before the field says nothing");
 
         let learned = Fingerprint {
             model: Some("claude-opus-4-5".to_string()),
@@ -587,11 +423,11 @@ mod tests {
             ..Default::default()
         };
         file.mark_fingerprint("run-1", &learned);
-        let runs = file.read();
+        let runs = claude_runs(&file);
         let healed = runs.iter().find(|run| run.run_id == "run-1").expect("run-1");
-        assert_eq!(healed.fingerprint.as_ref(), Some(&learned));
+        assert_eq!(healed.payload.fingerprint.as_ref(), Some(&learned));
         let untouched = runs.iter().find(|run| run.run_id == "run-2").expect("run-2");
-        assert!(untouched.fingerprint.is_none(), "and only the run it names");
+        assert!(untouched.payload.fingerprint.is_none(), "and only the run it names");
 
         // A correction of a correction is the model alias case, and it wins:
         // the newest thing the driver was told is the one the process answers to.
@@ -600,7 +436,7 @@ mod tests {
             ..learned.clone()
         };
         file.mark_fingerprint("run-1", &resolved);
-        assert_eq!(file.read()[0].fingerprint.as_ref(), Some(&resolved));
+        assert_eq!(claude_runs(&file)[0].payload.fingerprint.as_ref(), Some(&resolved));
         // Naming a run that is not there is not an error, for the same reason
         // marking progress on one is not: a driver can outlive its record.
         file.mark_fingerprint("run-gone", &resolved);
@@ -631,7 +467,7 @@ mod tests {
         std::fs::write(&path, &planted).expect("write");
         file.remove("run-2");
         file.mark_progress("run-1", Some(4096), &[]);
-        assert_eq!(file.read().len(), 1, "the journal is the table, not the file beside it");
+        assert_eq!(claude_runs(&file).len(), 1, "the journal is the table, not the file beside it");
         assert_eq!(std::fs::read(&path).expect("read"), planted, "and the file is byte for byte what it was");
         assert!(
             !dir.path().join("runs.json.tmp").exists(),
@@ -651,10 +487,10 @@ mod tests {
         }
         // A second `RunsFile` over the same directory is the next boot.
         let next = RunsFile::new(&path);
-        let runs = next.read();
+        let runs = claude_runs(&next);
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].cli_pid, 4242);
-        assert_eq!(runs[0].turn_at, Some(4096), "including what it was in the middle of");
+        assert_eq!(runs[0].payload.turn_at, Some(4096), "including what it was in the middle of");
     }
 
     /// A row that will not parse costs that run, not the whole adoption.
@@ -672,12 +508,12 @@ mod tests {
         .expect("a half-written row");
 
         let file = RunsFile::new(&path);
-        assert!(file.read().is_empty());
+        assert!(claude_runs(&file).is_empty());
 
         // And it costs only the run in the rubbish: the table came up otherwise
         // whole, so the next run is recorded normally.
         file.add(record("run-1", "session-a", 7));
-        assert_eq!(file.read().len(), 1);
+        assert_eq!(claude_runs(&file).len(), 1);
         assert!(!path.exists(), "and nothing here creates a file");
     }
 
@@ -701,11 +537,11 @@ mod tests {
     const CODEX_EXEC: &str = r#"{"run_id":"run-exec","source":"codex","session_id":"0199c1a1-0000-4000-8000-000000000003","cwd":"/work/exec","cli_pid":4747,"started_at":"2026-10-30T01:02:03.004Z","pid_token":"start-4747","resident":false,"shim":null,"fingerprint":null,"turn_at":null,"queued":[]}"#;
 
     /// A run's record as Claude Code reads its rows, and as Codex reads its.
-    type ClaudeRecord = RunRecord;
-    type CodexRecord = RunRecord;
+    type ClaudeRecord = RunRecord<ClaudeRun>;
+    type CodexRecord = RunRecord<CodexRun>;
 
     /// `record` written to a journal of its own, as it then is on disk.
-    fn on_disk(record: RunRecord) -> String {
+    fn on_disk<P: Serialize>(record: RunRecord<P>) -> String {
         let dir = tempfile::tempdir().expect("tempdir");
         let journal = RunsFile::new(dir.path().join("runs.json"));
         journal.add(record);
