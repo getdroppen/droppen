@@ -16,7 +16,7 @@ workspace = true
 # package stays the default member, so a bare `cargo build`/`cargo test` here
 # still means the server and nothing else.
 [workspace]
-members = [".", "crates/rh-proto", "crates/rh-relay", "crates/droppen-relay", "crates/rh-client", "crates/rh-devkit", "crates/droppen-plugin-sdk", "crates/droppen-search-path", "crates/droppen-base", "crates/droppen-instance", "crates/droppen-http", "crates/droppen-pty", "crates/droppen-supervisor", "crates/droppen-auth", "crates/droppen-files", "crates/droppen-workbench", "crates/droppen-plugins", "crates/droppen-aggregator", "crates/droppen-sessions", "crates/droppen-agent", "crates/droppen-cloud", "crates/droppen-notify"]
+members = [".", "crates/rh-proto", "crates/rh-relay", "crates/droppen-relay", "crates/rh-client", "crates/rh-devkit", "crates/droppen-plugin-sdk", "crates/droppen-search-path", "crates/droppen-base", "crates/droppen-instance", "crates/droppen-http", "crates/droppen-pty", "crates/droppen-supervisor", "crates/droppen-auth", "crates/droppen-files", "crates/droppen-workbench", "crates/droppen-plugins", "crates/droppen-aggregator", "crates/droppen-sessions", "crates/droppen-agent", "crates/droppen-cloud", "crates/droppen-notify", "crates/droppen-accounts"]
 
 # Every member takes serde_json from here, so `preserve_order` is on in every
 # build: a `Value` writes its keys in insertion order rather than sorted. Cargo
@@ -89,6 +89,9 @@ droppen-plugins = { path = "crates/droppen-plugins" }
 # Sessions: their vocabulary, stores, listing, attention and usage stats, and
 # the `Transcripts` port the readers in `src/sessions` implement.
 droppen-sessions = { path = "crates/droppen-sessions" }
+# Accounts: the store, rotation, limits, the quota cache and the `Login` port
+# each CLI's login in `src/accounts` implements.
+droppen-accounts = { path = "crates/droppen-accounts" }
 # The device role: verified copies of the account's other machines.
 droppen-aggregator = { path = "crates/droppen-aggregator" }
 # The machine role: identity, enrollment, the hub link, chain, relays, streams.
@@ -242,6 +245,9 @@ droppen-plugins = { path = "crates/droppen-plugins", features = ["test-support"]
 # transcript parse forgotten as a restart forgets it (`droppen_sessions::{index,
 # loader}`), for the readers', the feed's and the routes' tests.
 droppen-sessions = { path = "crates/droppen-sessions", features = ["test-support"] }
+# The scratch-less paths and the stub CLI the logins' checks are tested with
+# (`droppen_accounts::verify`), for the tests of each CLI's login.
+droppen-accounts = { path = "crates/droppen-accounts", features = ["test-support"] }
 # The options a parsed `notify` command line asks for, for its tests through
 # this binary's command tree (`cli::tests::notify`, `droppen_notify::testing`).
 droppen-notify = { path = "crates/droppen-notify", features = ["test-support"] }

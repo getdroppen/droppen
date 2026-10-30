@@ -1,0 +1,55 @@
+[package]
+name = "droppen-accounts"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+publish = false
+description = "The Droppen server's account store, rotation, limits and quota cache, and the Login port each CLI's login implements"
+
+# The accounts the CLIs run under, and what is known about each one's limits and
+# quota. It stands on the instance, the HTTP kit and the sessions, and names no
+# CLI: what differs between them is asked of each one's `Login`, which the server
+# implements and the entry hands in as one `Logins`.
+[dependencies]
+chrono = "0.4"
+droppen-base = { path = "../droppen-base" }
+droppen-http = { path = "../droppen-http" }
+droppen-instance = { path = "../droppen-instance" }
+droppen-sessions = { path = "../droppen-sessions" }
+futures-util = "0.3"
+gotcha = { version = "0.4.1", features = ["openapi"] }
+# What gotcha's `Schematic` derive expands to names it.
+gotcha_core = "0.4.1"
+libc = "0.2"
+regex = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { workspace = true }
+# The stub CLI's directory (`verify::StubCli`), with `test-support` only.
+tempfile = { version = "3", optional = true }
+thiserror = "1"
+tokio = { version = "1", features = ["fs", "io-util", "macros", "rt", "sync", "time"] }
+tokio-util = "0.7"
+tracing = "0.1"
+uuid = { version = "1", features = ["v4"] }
+
+# `verify::{paths_where_no_scratch_can_be_made, StubCli}`, the paths and the
+# stand-in CLI the server's tests of each CLI's login check with. Only the
+# server's [dev-dependencies] turn it on.
+[features]
+test-support = ["dep:tempfile"]
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "test-util"] }
+
+[lints.rust]
+missing_docs = "deny"
+unreachable_pub = "deny"
+
+# `[lints] workspace = true` cannot be mixed with the rust lints above, so the
+# workspace's two clippy denials (`server-rs/Cargo.toml` `[workspace.lints]`)
+# are repeated here: keep them in step.
+[lints.clippy]
+significant_drop_in_scrutinee = "deny"
+await_holding_lock = "deny"

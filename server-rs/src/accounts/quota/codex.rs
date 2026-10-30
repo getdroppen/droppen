@@ -19,9 +19,9 @@
 //! # Cost
 //!
 //! An app-server spawn is ~0.8 s, where a file read is microseconds, so the
-//! reading is kept by the parent's [`super::CodexQuotaCache`], which obeys the
+//! reading is kept by the parent's [`droppen_accounts::quota::CodexQuotaCache`], which obeys the
 //! three rules the parent module's header sets out: one probe per
-//! [`crate::accounts::quota::USAGE_TTL`], **failures cached too**, one probe in flight at
+//! [`droppen_accounts::quota::USAGE_TTL`], **failures cached too**, one probe in flight at
 //! a time, and a request waits only inside the collect budget it already had.
 //!
 //! # Security
@@ -41,9 +41,9 @@ use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{ChildStdin, ChildStdout};
 
-use super::{window, CodexQuota, CodexQuotaSource, QuotaWindow};
+use droppen_accounts::quota::{window, CodexQuota, CodexQuotaSource, QuotaWindow};
 use droppen_http::openapi_ext::Nullable;
-use super::ProbeRoots;
+use droppen_accounts::quota::ProbeRoots;
 use droppen_base::process_env::{apply_env, clean_env_bare};
 use droppen_base::time::parse_iso_ms;
 use droppen_sessions::util::{read_tail_lines, try_parse};
@@ -57,7 +57,7 @@ const RATE_LIMITS: &str = "account/rateLimits/read";
 /// The live CLI answers in ~0.8 s including its own startup, so this is a
 /// ceiling on the one probe that finds the cache cold rather than a budget
 /// anything is expected to spend. It is deliberately longer than
-/// [`crate::accounts::quota::COLLECT_BUDGET`]: a request never waits for the whole of it,
+/// [`droppen_accounts::quota::COLLECT_BUDGET`]: a request never waits for the whole of it,
 /// but a probe that needs six seconds should still land in the cache for the
 /// next poll instead of being thrown away.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);

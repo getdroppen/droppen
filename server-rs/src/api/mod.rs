@@ -412,7 +412,7 @@ fn describe(reg: &mut ExtraResponses) {
 fn response_overrides() -> ExtraResponses {
     let mut reg = ExtraResponses::default();
     describe(&mut reg);
-    crate::accounts::describe(&mut reg);
+    droppen_accounts::describe(&mut reg);
     crate::accounts::setup_token::describe(&mut reg);
     crate::accounts::usage_login::describe(&mut reg);
     crate::acp_agent::describe(&mut reg);
@@ -430,7 +430,7 @@ fn response_overrides() -> ExtraResponses {
     droppen_plugins::routes::describe(&mut reg);
     droppen_workbench::prefs::describe(&mut reg);
     droppen_notify::push::describe(&mut reg);
-    crate::accounts::quota::describe(&mut reg);
+    droppen_accounts::quota::describe(&mut reg);
     crate::schedule::describe(&mut reg);
     droppen_workbench::screens::describe(&mut reg);
     droppen_supervisor::selfupdate::describe(&mut reg);
@@ -447,7 +447,7 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
         .get("/api/sessions/{source}/{id}", session_detail)
         .get("/api/sessions/{source}/{id}/ws", session_feed_ws)
         .get("/api/settings", settings);
-    let router = crate::accounts::AccountsState::routes(router);
+    let router = droppen_accounts::AccountsState::routes(router);
     let router = crate::accounts::setup_token::TokenWizardState::routes(router);
     let router = crate::accounts::usage_login::UsageLoginState::routes(router);
     let router = crate::acp_agent::AcpAgentState::routes(router);
@@ -466,7 +466,7 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
     let router = droppen_plugins::routes::PluginsState::routes(router);
     let router = droppen_workbench::prefs::PrefsState::routes(router);
     let router = droppen_notify::push::PushState::routes(router);
-    let router = crate::accounts::quota::QuotaState::routes(router);
+    let router = droppen_accounts::quota::QuotaState::routes(router);
     let router = crate::schedule::ScheduleState::routes(router);
     let router = droppen_workbench::screens::ScreensState::routes(router);
     let router = droppen_supervisor::selfupdate::SelfUpdateState::routes(router);

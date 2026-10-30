@@ -24,7 +24,7 @@ use std::time::Duration;
 use futures_util::future::BoxFuture;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::accounts::login::{Login, Logins};
+use droppen_accounts::login::{Login, Logins};
 use droppen_base::process_env::{apply_env, Env};
 
 /// The most output kept from one stream of one invocation. A version string or

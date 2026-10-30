@@ -16,7 +16,7 @@ use serde_json::Value;
 use tokio::io::AsyncBufReadExt;
 use tokio::sync::{mpsc, oneshot};
 
-use crate::accounts::store::AccountProvider;
+use droppen_accounts::store::AccountProvider;
 use droppen_sessions::{Injection, InjectionRunState, Source};
 use droppen_base::process_env::{apply_env, clean_env, clean_env_bare};
 use droppen_base::procs;
@@ -1648,14 +1648,14 @@ impl Driver {
     /// The account and model this process runs, as the limit log names them.
     fn limit_subject(&self) -> (String, Option<String>) {
         (
-            crate::accounts::rest::account_key(self.record.payload.codex_account.as_deref(), AccountProvider::Codex),
+            droppen_accounts::rest::account_key(self.record.payload.codex_account.as_deref(), AccountProvider::Codex),
             self.state.settings.get("model").and_then(Value::as_str).map(str::to_owned),
         )
     }
 
     /// A turn that completed: the login it ran on took its credential, so a
     /// refused-credential rest on it is over. Codex has no reading to heal its
-    /// local login the way claude's heals ([`crate::accounts::local_login`]);
+    /// local login the way claude's heals ([`droppen_accounts::local_login`]);
     /// this is how a `signed_out` codex login comes back.
     fn note_turn_completed(&self) {
         if !self.live() {
@@ -1672,7 +1672,7 @@ impl Driver {
             return;
         }
         let (account_id, model) = self.limit_subject();
-        let Some(verdict) = crate::accounts::limits::read_codex_turn_error(error) else {
+        let Some(verdict) = droppen_accounts::limits::read_codex_turn_error(error) else {
             return;
         };
         let message = error
@@ -1681,7 +1681,7 @@ impl Driver {
             .or_else(|| error.as_str())
             .unwrap_or_default()
             .to_string();
-        self.registry.record_limit(crate::accounts::rest::Observation {
+        self.registry.record_limit(droppen_accounts::rest::Observation {
             account_id,
             session_id: Some(self.record.session_id.clone()),
             source: "codex:turn",
@@ -1702,7 +1702,7 @@ impl Driver {
         if !self.live() {
             return;
         }
-        let Some(verdict) = crate::accounts::limits::read_codex_rate_limits(params) else {
+        let Some(verdict) = droppen_accounts::limits::read_codex_rate_limits(params) else {
             return;
         };
         let (account_id, model) = self.limit_subject();
@@ -1712,7 +1712,7 @@ impl Driver {
             .and_then(Value::as_str)
             .map(|kind| format!("codex rate limits: {kind}"))
             .unwrap_or_else(|| "codex rate limits: a window is at 100%".to_string());
-        self.registry.record_limit(crate::accounts::rest::Observation {
+        self.registry.record_limit(droppen_accounts::rest::Observation {
             account_id,
             session_id: Some(self.record.session_id.clone()),
             source: "codex:rate_limits",
@@ -1819,8 +1819,8 @@ mod tests {
             let paths = Arc::new(Paths::new(home.path().into()));
             let dirs = InstanceDirs::new(&paths.data_dir(), "codex-test").unwrap();
             dirs.create().unwrap();
-            let accounts = Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins()));
-            let quota = Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins()));
+            let accounts = Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), crate::app::logins()));
+            let quota = Arc::new(droppen_accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins()));
             let decoration = crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone());
             let registry = InjectionRegistry::new(paths, &dirs, accounts, quota, decoration);
             let providers = crate::provider::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
@@ -1953,10 +1953,10 @@ mod tests {
     /// quota rest is left alone.
     #[tokio::test]
     async fn a_completed_turn_ends_a_refused_credential_rest_on_its_login() {
-        use crate::accounts::limits::Verdict;
+        use droppen_accounts::limits::Verdict;
         use droppen_sessions::account::LimitClass;
-        use crate::accounts::local_login::LocalLoginState;
-        use crate::accounts::rest::{now_ms, Observation, LOCAL_CODEX};
+        use droppen_accounts::local_login::LocalLoginState;
+        use droppen_accounts::rest::{now_ms, Observation, LOCAL_CODEX};
         let mut h = Harness::new().await;
         h.start().await;
         let accounts = h.driver.registry.accounts.clone();
@@ -2027,8 +2027,8 @@ mod tests {
 
         // One rest for the whole account: the known reset, which the usage
         // limit's thirty-minute default did not cut short.
-        let rests = log.active_rests(crate::accounts::rest::now_ms());
-        let local = &rests[crate::accounts::rest::LOCAL_CODEX];
+        let rests = log.active_rests(droppen_accounts::rest::now_ms());
+        let local = &rests[droppen_accounts::rest::LOCAL_CODEX];
         assert_eq!(local.len(), 1);
         assert_eq!(local[0].class, LimitClass::Rate);
         assert!(local[0].until_at.0.as_deref().is_some_and(|at| at.starts_with("2100-01-01")));
@@ -2682,8 +2682,8 @@ mod tests {
         let paths = Arc::new(Paths::new(home.into()));
         let dirs = InstanceDirs::new(&paths.data_dir(), instance).unwrap();
         dirs.create().unwrap();
-        let accounts = Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins()));
-        let quota = Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins()));
+        let accounts = Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), crate::app::logins()));
+        let quota = Arc::new(droppen_accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins()));
         let decoration = crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone());
         (guard, InjectionRegistry::new(paths, &dirs, accounts, quota, decoration))
     }
@@ -2741,7 +2741,7 @@ mod tests {
         }
         let other = CodexAccount {
             id: "another".to_string(),
-            launch: crate::accounts::store::AccountLaunch {
+            launch: droppen_accounts::store::AccountLaunch {
                 provider: AccountProvider::Codex,
                 env: vec![],
                 codex_args: vec![],
@@ -2849,7 +2849,7 @@ mod tests {
         let work = work.to_string_lossy().into_owned();
         let account = CodexAccount {
             id: "own-key".to_string(),
-            launch: crate::accounts::store::AccountLaunch {
+            launch: droppen_accounts::store::AccountLaunch {
                 provider: AccountProvider::Codex,
                 env: vec![],
                 codex_args: crate::accounts::login::codex::CodexBaseUrl::parse("https://api.example.test/v1").expect("a base URL").provider_args(),

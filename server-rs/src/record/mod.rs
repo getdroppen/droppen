@@ -25,7 +25,7 @@
 //! # What is *not* in it, and why the rest can be verbatim
 //!
 //! An account's token reaches claude in exactly one place: the store hands out
-//! an [`AccountEnv`](crate::accounts::store::AccountEnv) — a
+//! an [`AccountEnv`](droppen_accounts::store::AccountEnv) — a
 //! `CLAUDE_CODE_OAUTH_TOKEN` or an `ANTHROPIC_API_KEY` — which
 //! [`droppen_base::process_env`] puts in an [`Env`](droppen_base::process_env::Env) that the
 //! spawn applies over an `env_clear`. It is never written to a stream, never on
@@ -289,7 +289,7 @@ pub enum Stage {
     Recover,
     /// A limit ended the turn and the session was moved to another account —
     /// or had nowhere to go, and its queue is held. See
-    /// [`crate::accounts::rotation`].
+    /// [`droppen_accounts::rotation`].
     Rotate,
     /// claude answered under a different session id and everything followed it.
     Adopt,
@@ -845,7 +845,7 @@ mod tests {
         // the file below.
         let mut env = droppen_base::process_env::Env::new();
         env.insert(
-            crate::accounts::store::CLAUDE_OAUTH_ENV.into(),
+            droppen_accounts::store::CLAUDE_OAUTH_ENV.into(),
             "sk-ant-oat01-SUPERSECRETVALUE-000".into(),
         );
         env.insert("ANTHROPIC_API_KEY".into(), "sk-ant-api03-ALSOSECRET-111".into());
@@ -866,7 +866,7 @@ mod tests {
         for secret in ["SUPERSECRETVALUE", "ALSOSECRET", "sk-ant-"] {
             assert!(!raw.contains(secret), "an environment must never reach a recording: {raw}");
         }
-        for name in [crate::accounts::store::CLAUDE_OAUTH_ENV, "ANTHROPIC_API_KEY"] {
+        for name in [droppen_accounts::store::CLAUDE_OAUTH_ENV, "ANTHROPIC_API_KEY"] {
             assert!(!raw.contains(name), "not even the names of the variables: {raw}");
         }
         assert!(raw.contains("acceptEdits"), "the settings that decide rendering are kept: {raw}");

@@ -18,7 +18,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::accounts::login::claude::ClaudeCodeLogin;
 use crate::accounts::login::codex::CodexLogin;
-use crate::accounts::login::Logins;
+use droppen_accounts::login::Logins;
 use crate::api::AppState;
 use droppen_http::config::AppConfig;
 use crate::feed::global::GlobalFeed;
@@ -347,7 +347,7 @@ impl RemoteHandApp {
                 // usage logins every instance on this machine shares — so it
                 // sits behind the same gate. It only probes a login nothing has
                 // read for a while, and never one another process is probing.
-                crate::accounts::quota::spawn_fallback_ticker(state.drive.quota.clone(), state.drive.accounts.clone(), state.cancel.clone());
+                droppen_accounts::quota::spawn_fallback_ticker(state.drive.quota.clone(), state.drive.accounts.clone(), state.cancel.clone());
             }
         }
         let cancel = state.cancel.clone();
@@ -813,8 +813,8 @@ mod tests {
         let paths = Arc::new(Paths::new(home.path().to_path_buf()));
         let dirs = InstanceDirs::new(&paths.data_dir(), "providers-test").expect("valid name");
         dirs.create().expect("instance dirs");
-        let accounts = Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), logins()));
-        let quota = Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins()));
+        let accounts = Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), logins()));
+        let quota = Arc::new(droppen_accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins()));
         let decoration = crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone());
         let providers = ProviderRegistry::new(InjectionRegistry::new(paths, &dirs, accounts, quota, decoration), register_providers);
 
@@ -861,8 +861,8 @@ mod tests {
         let paths = Arc::new(Paths::new(home.path().to_path_buf()));
         let dirs = InstanceDirs::new(&paths.data_dir(), "capabilities-test").expect("valid name");
         dirs.create().expect("instance dirs");
-        let accounts = Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), logins()));
-        let quota = Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins()));
+        let accounts = Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), logins()));
+        let quota = Arc::new(droppen_accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins()));
         let decoration = crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone());
         let providers = ProviderRegistry::new(InjectionRegistry::new(paths, &dirs, accounts, quota, decoration), register_providers);
 
@@ -1122,7 +1122,7 @@ mod tests {
             assert!(checked >= 6, "the scan found the module's files");
 
             for (file, functions) in [
-                ("accounts/mod.rs", &["parse_auth_status"][..]),
+                ("../crates/droppen-accounts/src/lib.rs", &["parse_auth_status"][..]),
                 ("../crates/droppen-base/src/text.rs", &["strip_ansi"][..]),
                 ("accounts/login/claude.rs", &["plan_label"][..]),
                 ("accounts/quota/codex.rs", &["app_server_call", "ask", "send", "reply"][..]),

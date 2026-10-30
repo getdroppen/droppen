@@ -68,7 +68,7 @@ use droppen_http::error::ApiError;
 use droppen_http::extract::{ApiJson, ApiPath};
 use droppen_http::openapi_ext::{ExtraResponses, Nullable, Optional};
 use droppen_instance::paths::Paths;
-use crate::accounts::login::{Login, Logins};
+use droppen_accounts::login::{Login, Logins};
 use detect::{Detection, Probe};
 use runner::{Runner, SystemRunner};
 use shell::ShellSnapshot;
@@ -133,10 +133,10 @@ impl ToolId {
     }
 
     /// The Droppen accounts that drive this CLI.
-    pub fn provider(self) -> crate::accounts::store::AccountProvider {
+    pub fn provider(self) -> droppen_accounts::store::AccountProvider {
         match self {
-            ToolId::Claude => crate::accounts::store::AccountProvider::Claude,
-            ToolId::Codex => crate::accounts::store::AccountProvider::Codex,
+            ToolId::Claude => droppen_accounts::store::AccountProvider::Claude,
+            ToolId::Codex => droppen_accounts::store::AccountProvider::Codex,
         }
     }
 
@@ -722,7 +722,7 @@ pub struct SetupState {
     /// Every live web terminal; an install or a sign-in runs in one.
     pub terminals: Arc<droppen_workbench::terminals::Registry>,
     /// The stored accounts, which count as a tool's login.
-    pub accounts: Arc<crate::accounts::store::AccountsStore>,
+    pub accounts: Arc<droppen_accounts::store::AccountsStore>,
     /// The instance's paths: the home directory and the sessions it owns.
     pub paths: Arc<Paths>,
     /// Each CLI's transcripts, which the recent folders are listed from.
@@ -1020,16 +1020,16 @@ pub(crate) mod tests {
     /// plan, holds no conversation, reads nothing and moves no session; an
     /// account's launch is its block as given. What each CLI's own login
     /// answers is pinned by the tests on `crate::app::logins()`.
-    pub(crate) struct StandInLogin(pub(crate) crate::accounts::store::AccountProvider);
+    pub(crate) struct StandInLogin(pub(crate) droppen_accounts::store::AccountProvider);
 
     impl Login for StandInLogin {
         fn spawn_env(
             &self,
-            _kind: crate::accounts::store::AccountKind,
+            _kind: droppen_accounts::store::AccountKind,
             _secret: &str,
             env: &[droppen_base::env_block::EnvVar],
-        ) -> Result<crate::accounts::store::AccountLaunch, crate::accounts::store::AccountError> {
-            Ok(crate::accounts::store::AccountLaunch {
+        ) -> Result<droppen_accounts::store::AccountLaunch, droppen_accounts::store::AccountError> {
+            Ok(droppen_accounts::store::AccountLaunch {
                 provider: self.0,
                 env: env.iter().map(|var| (var.key.clone(), var.value.clone())).collect(),
                 codex_args: Vec::new(),
@@ -1039,29 +1039,29 @@ pub(crate) mod tests {
         fn verify<'a>(
             &'a self,
             _paths: &'a Paths,
-            _launch: &'a crate::accounts::store::AccountLaunch,
+            _launch: &'a droppen_accounts::store::AccountLaunch,
             _secrets: &'a [&'a str],
-        ) -> futures_util::future::BoxFuture<'a, crate::accounts::verify::Verdict> {
+        ) -> futures_util::future::BoxFuture<'a, droppen_accounts::verify::Verdict> {
             unreachable!("the guide verifies no account")
         }
 
         fn local_state(
             &self,
             _refused_at: Option<i64>,
-            _local_reading: &crate::accounts::quota::readings::SharedReading,
-        ) -> crate::accounts::local_login::LocalLoginState {
-            crate::accounts::local_login::LocalLoginState::Unknown
+            _local_reading: &droppen_accounts::quota::readings::SharedReading,
+        ) -> droppen_accounts::local_login::LocalLoginState {
+            droppen_accounts::local_login::LocalLoginState::Unknown
         }
 
         fn probe<'a>(
             &'a self,
-            _roots: &'a crate::accounts::quota::ProbeRoots,
+            _roots: &'a droppen_accounts::quota::ProbeRoots,
             _config_dir: Option<&'a std::path::Path>,
-        ) -> Option<futures_util::future::BoxFuture<'a, crate::accounts::quota::UsageProbe>> {
+        ) -> Option<futures_util::future::BoxFuture<'a, droppen_accounts::quota::UsageProbe>> {
             None
         }
 
-        fn local_plan<'a>(&'a self, _paths: &'a Paths) -> Option<futures_util::future::BoxFuture<'a, crate::accounts::login::LocalPlan>> {
+        fn local_plan<'a>(&'a self, _paths: &'a Paths) -> Option<futures_util::future::BoxFuture<'a, droppen_accounts::login::LocalPlan>> {
             None
         }
 
@@ -1071,8 +1071,8 @@ pub(crate) mod tests {
 
         fn local_quota<'a>(
             &'a self,
-            _roots: &'a crate::accounts::quota::ProbeRoots,
-        ) -> Option<futures_util::future::BoxFuture<'a, Option<crate::accounts::quota::CodexQuota>>> {
+            _roots: &'a droppen_accounts::quota::ProbeRoots,
+        ) -> Option<futures_util::future::BoxFuture<'a, Option<droppen_accounts::quota::CodexQuota>>> {
             None
         }
 
@@ -1103,8 +1103,8 @@ pub(crate) mod tests {
     /// A stand-in login for each CLI ([`StandInLogin`]).
     pub(crate) fn stand_in_logins() -> Logins {
         Logins {
-            claude: Arc::new(StandInLogin(crate::accounts::store::AccountProvider::Claude)),
-            codex: Arc::new(StandInLogin(crate::accounts::store::AccountProvider::Codex)),
+            claude: Arc::new(StandInLogin(droppen_accounts::store::AccountProvider::Claude)),
+            codex: Arc::new(StandInLogin(droppen_accounts::store::AccountProvider::Codex)),
         }
     }
 
@@ -1120,7 +1120,7 @@ pub(crate) mod tests {
         SetupState {
             setup,
             terminals: droppen_workbench::terminals::Registry::new(paths.clone(), instance),
-            accounts: Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), stand_in_logins())),
+            accounts: Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), stand_in_logins())),
             paths,
             transcripts: droppen_sessions::TranscriptSources::default(),
             desktop_app: false,
@@ -1255,14 +1255,14 @@ pub(crate) mod tests {
             .accounts
             .create(
                 "work gateway",
-                crate::accounts::store::AccountProvider::Claude,
-                crate::accounts::store::Credential::Oauth("sk-ant-oat01-test-only".into()),
+                droppen_accounts::store::AccountProvider::Claude,
+                droppen_accounts::store::Credential::Oauth("sk-ant-oat01-test-only".into()),
             )
             .await
             .expect("account");
         state
             .accounts
-            .set_default(Some(&account.id), crate::accounts::store::AccountProvider::Claude)
+            .set_default(Some(&account.id), droppen_accounts::store::AccountProvider::Claude)
             .await
             .expect("default");
         state.desktop_app = true;

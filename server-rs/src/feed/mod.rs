@@ -1444,7 +1444,7 @@ mod tests {
     /// shows it was the poke that sent it.
     #[tokio::test]
     async fn a_rotation_decision_reaches_an_open_session_feed_without_waiting_for_the_poll() {
-        use crate::accounts::rotation::Decision;
+        use droppen_accounts::rotation::Decision;
         use droppen_sessions::account::{LimitClass, RotationOutcome, RotationTrigger};
 
         let dir = tempfile::tempdir().expect("tempdir");
@@ -1502,7 +1502,7 @@ mod tests {
         assert_eq!(frame["rotation"]["from"]["label"], "a@work");
         assert_eq!(frame["rotation"]["to"]["label"], "b@team");
         assert_eq!(frame["rotation"]["interruptedTasks"], 1);
-        assert_eq!(frame["rotation"]["untilAt"], crate::accounts::rest::iso_ms(1_790_003_600_000));
+        assert_eq!(frame["rotation"]["untilAt"], droppen_accounts::rest::iso_ms(1_790_003_600_000));
         assert_eq!(frame["rotation"]["trigger"], "limit", "always present: {frame}");
 
         let detail = load_session_detail(&drive, Source::Claude, id).await.expect("detail");

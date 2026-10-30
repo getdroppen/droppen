@@ -25,7 +25,7 @@ use std::time::Duration;
 use serde_json::Value;
 
 use super::locate::{self, Search};
-use crate::accounts::login::Login;
+use droppen_accounts::login::Login;
 use super::runner::{Invocation, RpcCall, RunOutput, Runner};
 use super::{GitState, LoginState, SetupHelpers, SetupOs, ToolFound, ToolId, ToolLogin};
 use droppen_http::openapi_ext::Nullable;
@@ -123,7 +123,7 @@ fn signed_out() -> ToolLogin {
 /// JSON is read for what it adds: `authMethod` (documented), and `email`,
 /// `subscriptionType`, `rateLimitTier` (observed, undocumented — used when
 /// present). A banner around the JSON is tolerated
-/// ([`crate::accounts::parse_auth_status`]).
+/// ([`droppen_accounts::parse_auth_status`]).
 ///
 /// `usable` is a best effort: `subscriptionType: "free"` is a
 /// login whose plan does not include Claude Code. Any other subscription says
@@ -135,7 +135,7 @@ pub fn claude_login(output: &RunOutput, claude: &dyn Login) -> ToolLogin {
         Some(1) => return signed_out(),
         _ => return unknown_login(),
     }
-    let status = crate::accounts::parse_auth_status(&output.stdout).unwrap_or_default();
+    let status = droppen_accounts::parse_auth_status(&output.stdout).unwrap_or_default();
     if status.get("loggedIn").and_then(Value::as_bool) == Some(false) {
         return signed_out();
     }
@@ -673,7 +673,7 @@ mod tests {
         let (_home, probe, fixture) = scene();
         fixture.answer("claude --version", RunOutput::exited(0, "1.0.88 (Claude Code)\n", ""));
         let runner: Arc<dyn Runner> = fixture.clone();
-        let claude = tool(&runner, &probe, ToolId::Claude, &crate::setup::tests::StandInLogin(crate::accounts::store::AccountProvider::Claude)).await;
+        let claude = tool(&runner, &probe, ToolId::Claude, &crate::setup::tests::StandInLogin(droppen_accounts::store::AccountProvider::Claude)).await;
         assert_eq!(claude.version.as_deref(), Some("1.0.88"));
         assert!(!claude.supported);
         assert_eq!(claude.login.state, LoginState::Unknown);
@@ -696,7 +696,7 @@ mod tests {
         };
         let fixture = Fixture::new();
         let runner: Arc<dyn Runner> = fixture.clone();
-        let detection = detect(&runner, &probe, &crate::setup::tests::StandInLogin(crate::accounts::store::AccountProvider::Claude)).await;
+        let detection = detect(&runner, &probe, &crate::setup::tests::StandInLogin(droppen_accounts::store::AccountProvider::Claude)).await;
         assert!(detection.tools.iter().all(|tool| tool.found.is_none() && !tool.supported));
         assert_eq!(detection.helpers.git, GitState::Missing, "no git on the PATH off a Mac");
         assert!(fixture.lines().is_empty(), "nothing to ask: {:?}", fixture.lines());

@@ -15,8 +15,8 @@ use serde::{Deserialize, Serialize};
 use super::attachments::resolve_attachments;
 use super::composer_prefs::{ComposerChoice, ComposerPrefs};
 use super::idempotent::{self, Begun, Key};
-use crate::accounts::store::{AccountError, AccountProvider};
-use crate::accounts::{account_not_found, provider_mismatch, require_uuid};
+use droppen_accounts::store::{AccountError, AccountProvider};
+use droppen_accounts::{account_not_found, provider_mismatch, require_uuid};
 use droppen_auth::MaybeIdentity;
 use crate::feed;
 use droppen_http::error::{ApiError, Hinted};
@@ -500,7 +500,7 @@ fn validate_body(
     // `accountId: z.string().uuid().nullable().optional()` — a malformed id is
     // a bad request; a well-formed one that names nothing is a 409 further down.
     if let Some(Some(id)) = account_id {
-        if !crate::accounts::store::is_uuid(id) {
+        if !droppen_accounts::store::is_uuid(id) {
             return Err(ApiError::bad_request(format!("invalid account id: {id}")));
         }
     }
@@ -1765,7 +1765,7 @@ pub async fn continue_session_on_account(
         .drive
         .accounts
         .rotation_log()
-        .note_hand_binding(&new_id, crate::accounts::rest::now_ms());
+        .note_hand_binding(&new_id, droppen_accounts::rest::now_ms());
     // A name somebody gave the conversation goes with it.
     let titles = state.drive.titles.read().await;
     if let Some(title) = titles.get(&droppen_sessions::reference::title_key(Source::Claude, &id)) {
@@ -1817,9 +1817,9 @@ async fn write_binding(state: &DriveState, source: Source, id: &str, account_id:
         })?;
     // Somebody chose this account for the session: nothing moves it ahead of a
     // limit until the choice has stood for a while (see
-    // [`crate::accounts::rotation::HAND_BINDING_GRACE_MS`]).
+    // [`droppen_accounts::rotation::HAND_BINDING_GRACE_MS`]).
     if source == Source::Claude && account_id.is_some() {
-        state.drive.accounts.rotation_log().note_hand_binding(id, crate::accounts::rest::now_ms());
+        state.drive.accounts.rotation_log().note_hand_binding(id, droppen_accounts::rest::now_ms());
     }
     // The binding shows on the session row, so the list has to be re-read.
     state.refresh.request_refresh(Some((&source, id)));

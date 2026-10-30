@@ -238,7 +238,7 @@ pub fn classify(lines: &[String]) -> Option<TaskFailure> {
 
 /// Every line through both redactions: the credentials this server stores,
 /// by value, then anything shaped like a key.
-fn redact(lines: Vec<String>, accounts: &crate::accounts::store::AccountsStore) -> Vec<String> {
+fn redact(lines: Vec<String>, accounts: &droppen_accounts::store::AccountsStore) -> Vec<String> {
     lines
         .into_iter()
         .map(|line| process_env::redact_secrets(&accounts.redact_known_secrets(&line)))

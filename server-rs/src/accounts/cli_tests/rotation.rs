@@ -3,10 +3,10 @@
 
 use std::sync::Arc;
 
-use crate::accounts::quota::readings::UsageLogin;
-use crate::accounts::quota::{QuotaCache, QuotaWindow};
-use crate::accounts::rotation::*;
-use crate::accounts::store::{Account, AccountKind, AccountProvider, AccountsStore};
+use droppen_accounts::quota::readings::UsageLogin;
+use droppen_accounts::quota::{QuotaCache, QuotaWindow};
+use droppen_accounts::rotation::*;
+use droppen_accounts::store::{Account, AccountKind, AccountProvider, AccountsStore};
 use droppen_http::openapi_ext::{Nullable, Optional};
 use droppen_sessions::account::LimitClass;
 
@@ -40,8 +40,8 @@ fn public(provider: AccountProvider, kind: AccountKind, rotation: bool) -> Accou
     }
 }
 
-fn local(state: crate::accounts::local_login::LocalLoginState, is_default: bool) -> crate::accounts::local_login::LocalLogin {
-    crate::accounts::local_login::LocalLogin {
+fn local(state: droppen_accounts::local_login::LocalLoginState, is_default: bool) -> droppen_accounts::local_login::LocalLogin {
+    droppen_accounts::local_login::LocalLogin {
         state,
         rest: Vec::new(),
         is_default,
@@ -81,7 +81,7 @@ fn only_limits_that_outlast_a_respawn_trigger_a_rotation() {
 async fn default_for(accounts: &AccountsStore, quota: &QuotaCache, default_id: &str, model: Option<&str>) -> String {
     let pool = pool_of(accounts, quota, AccountProvider::Claude).await;
     let family = accounts.logins().claude.model_family(model);
-    default_for_new_session(default_id, &pool, family, ahead_threshold_from_env(), crate::accounts::rest::now_ms())
+    default_for_new_session(default_id, &pool, family, ahead_threshold_from_env(), droppen_accounts::rest::now_ms())
 }
 
 /// The same rule against a real store: the default resting under the
@@ -89,9 +89,9 @@ async fn default_for(accounts: &AccountsStore, quota: &QuotaCache, default_id: &
 /// family rest only a session of that family, and nothing else moves.
 #[tokio::test]
 async fn a_new_session_passes_over_a_resting_default() {
-    use crate::accounts::limits::Verdict;
-    use crate::accounts::rest::{now_ms, Observation};
-    use crate::accounts::store::Credential;
+    use droppen_accounts::limits::Verdict;
+    use droppen_accounts::rest::{now_ms, Observation};
+    use droppen_accounts::store::Credential;
     use droppen_instance::paths::Paths;
 
     let dir = tempfile::tempdir().expect("tempdir");
@@ -147,7 +147,7 @@ async fn a_new_session_passes_over_a_resting_default() {
 /// account carries none, whatever is filed under its id.
 #[tokio::test]
 async fn only_a_cli_that_reads_each_login_ranks_its_pool_by_readings() {
-    use crate::accounts::store::Credential;
+    use droppen_accounts::store::Credential;
     use droppen_base::env_block::parse_env_block;
     use droppen_instance::paths::Paths;
 
@@ -193,7 +193,7 @@ async fn only_a_cli_that_reads_each_login_ranks_its_pool_by_readings() {
 /// *in the pool*, and with none the local login after all.
 #[test]
 fn a_start_nobody_pointed_takes_a_pool_account_only_for_a_signed_out_local_login() {
-    use crate::accounts::local_login::LocalLoginState::{SignedIn, SignedOut, Unknown};
+    use droppen_accounts::local_login::LocalLoginState::{SignedIn, SignedOut, Unknown};
     let start = |provider, default: Option<&str>, login, pool: &[PoolAccount], family| {
         let picked = start_choice(crate::app::logins().of(provider).as_ref(), default, &login, pool, family, None, NOW);
         (picked.account_id.0, picked.reason)
@@ -267,7 +267,7 @@ fn a_start_nobody_pointed_takes_a_pool_account_only_for_a_signed_out_local_login
 /// on a login and one of its own models that the rule places there.
 #[test]
 fn a_start_choosing_its_model_settles_on_a_login_and_a_model_placed_on_it() {
-    use crate::accounts::local_login::LocalLoginState::{SignedIn, SignedOut};
+    use droppen_accounts::local_login::LocalLoginState::{SignedIn, SignedOut};
     let ids = |models: &[&str]| models.iter().map(|model| model.to_string()).collect::<Vec<_>>();
     // D, the default, was probed and its list leads with opus — on which
     // D is resting. E, in the pool, was not probed: the static list, fable first.
@@ -365,7 +365,7 @@ fn a_start_choosing_its_model_settles_on_a_login_and_a_model_placed_on_it() {
 /// the way of it.
 #[test]
 fn a_family_is_named_by_the_start_s_own_cli() {
-    use crate::accounts::local_login::LocalLoginState::SignedOut;
+    use droppen_accounts::local_login::LocalLoginState::SignedOut;
     let codex = StartInputs {
         login: crate::app::logins().codex.clone(),
         default: None,
@@ -394,9 +394,9 @@ fn a_family_is_named_by_the_start_s_own_cli() {
 /// explicitly chosen local login and a configured default.
 #[tokio::test]
 async fn a_start_against_the_store_skips_a_signed_out_local_login_only_for_the_pool() {
-    use crate::accounts::limits::Verdict;
-    use crate::accounts::rest::{now_ms, Observation, LOCAL_CLAUDE, LOCAL_CODEX};
-    use crate::accounts::store::{AccountPatch, Credential};
+    use droppen_accounts::limits::Verdict;
+    use droppen_accounts::rest::{now_ms, Observation, LOCAL_CLAUDE, LOCAL_CODEX};
+    use droppen_accounts::store::{AccountPatch, Credential};
     use droppen_base::env_block::parse_env_block;
     use droppen_instance::paths::Paths;
 
@@ -545,9 +545,9 @@ async fn a_start_against_the_store_skips_a_signed_out_local_login_only_for_the_p
 /// of its own CLI ([`StartInputs::gather`]) from the logins the entry builds.
 #[tokio::test]
 async fn a_codex_start_stays_on_its_resting_default() {
-    use crate::accounts::limits::Verdict;
-    use crate::accounts::rest::{now_ms, Observation};
-    use crate::accounts::store::{AccountPatch, Credential};
+    use droppen_accounts::limits::Verdict;
+    use droppen_accounts::rest::{now_ms, Observation};
+    use droppen_accounts::store::{AccountPatch, Credential};
     use droppen_base::env_block::parse_env_block;
     use droppen_instance::paths::Paths;
 

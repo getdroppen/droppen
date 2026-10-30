@@ -3,15 +3,15 @@
 
 use futures_util::future::BoxFuture;
 
-use super::{LocalPlan, Login};
-use crate::accounts::local_login::LocalLoginState;
-use crate::accounts::quota::readings::SharedReading;
+use droppen_accounts::login::{LocalPlan, Login};
+use droppen_accounts::local_login::LocalLoginState;
+use droppen_accounts::quota::readings::SharedReading;
 use crate::accounts::quota::claude::ClaudeUsageProbeExt;
-use crate::accounts::rotation::FAMILIES;
-use crate::accounts::quota::{is_rate_limited, mentions_status, CodexQuota, ProbeRoots, QuotaProbeError, UsageProbe};
-use crate::accounts::store::{AccountError, AccountKind, AccountLaunch, AccountProvider};
+use droppen_accounts::rotation::FAMILIES;
+use droppen_accounts::quota::{is_rate_limited, mentions_status, CodexQuota, ProbeRoots, QuotaProbeError, UsageProbe};
+use droppen_accounts::store::{AccountError, AccountKind, AccountLaunch, AccountProvider};
 use droppen_base::env_block::EnvVar;
-use crate::accounts::verify::{reason, Scratch, Verdict, PROBE_PROMPT, PROBE_TIMEOUT};
+use droppen_accounts::verify::{reason, Scratch, Verdict, PROBE_PROMPT, PROBE_TIMEOUT};
 use crate::claude_roots::ClaudeRoots;
 use droppen_base::process_env::{apply_env, claude_env, clean_env_bare, resolve_on_path, Env};
 use droppen_instance::paths::Paths;
@@ -310,9 +310,9 @@ impl Login for ClaudeCodeLogin {
 mod tests {
     use super::*;
     use droppen_base::env_block::parse_env_block;
-    use crate::accounts::verify::StubCli;
+    use droppen_accounts::verify::StubCli;
     use droppen_base::process_env::set_child_path;
-    use crate::accounts::quota::{QuotaReadingSource, QuotaWindow};
+    use droppen_accounts::quota::{QuotaReadingSource, QuotaWindow};
 
     #[test]
     fn model_ids_and_aliases_name_their_family() {
@@ -410,7 +410,7 @@ mod tests {
         let empty = tempfile::tempdir().expect("a PATH directory with nothing in it");
         set_child_path(Some(empty.path().to_string_lossy().into_owned()));
         let home = tempfile::tempdir().expect("tempdir");
-        let paths = crate::accounts::verify::paths_where_no_scratch_can_be_made(home.path());
+        let paths = droppen_accounts::verify::paths_where_no_scratch_can_be_made(home.path());
         let not_on_path = "the `claude` CLI is not on PATH, so the token cannot be checked";
 
         let verdict = ClaudeCodeLogin.verify(&paths, &launch("https://gw.example.com/v1"), &[]).await;

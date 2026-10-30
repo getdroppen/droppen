@@ -33,7 +33,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 | `drive/` | 驱动会话的路由，以及所有进程类子系统挂靠的 `Drive` 状态 |
 | `provider/` | 驱动本机 CLI，每个会话一次运行 |
 | `record/` | 会话飞行记录器：一个会话一份 NDJSON 录像，以及把它放回文件系统的 `replay` 子命令 |
-| `accounts/` | 服务端保存的多个 Claude 登录，以及产出它们的两个 pty 向导 |
+| `accounts/` | 每个 CLI 在账号里的那一部分：Claude Code 与 Codex 的登录（实现 `droppen-accounts` 的 `Login` 端口）和用量探测，以及产出 Claude 登录的两个 pty 向导；随各自的 provider 迁出 |
 | `chats/` | 即时聊天：锚点目录里的 CLI 会话，加上 BYO-API 后端与它的流式回复 |
 | `quota/` | 订阅额度面板 |
 | `schedule/` | 定时任务：一条 cron 表达式（按**服务器本地时区**解释）到点新开一个会话；`runner.rs` 是那个五秒一跳、只在持有实例锁时才启动的循环 |
@@ -49,6 +49,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 | `crates/droppen-workbench/` | 会话周围的窗格与布局：浏览器通过 websocket 驱动的 PTY（`terminals`）、每个 app 一个 code-server 及 iframe 用的 `/embed/{id}/*` 反向代理（`apps`，`apps/embed.rs`）、持久化分屏布局（`screens`）、界面偏好（`prefs`） |
 | `crates/droppen-plugins/` | 插件宿主：本实例装了哪些插件、哪些开着（配置 > 实例自己的决定 > 关）、它们的代码从哪里供给（`serve`，带实例级的能力密钥）、每个插件自己的文档存储（`store`）、安装包的校验（`install`）、`/api/plugins*`（`routes`）和 `plugin` 命令行（`cli`）；经 Droppen 进来的设备看不到任何插件 |
 | `crates/droppen-sessions/` | 会话本身：各处共用的会话词汇与线上数据形状、会话列表、未读与已读标记（`attention`，`…/seen` 路由在 `attention::routes`）、标题、置顶、归档、本实例的会话归属（`owned_sessions`）、`index.db`（`index`）、transcript 加载器（`loader`）和 token 用量统计（`stats`）；每个 CLI 的 transcript 都经 `Transcripts` 端口读，由服务端 `sessions/` 里的读取器实现 |
+| `crates/droppen-accounts/` | 账号本身：服务端保存的多个登录（`store`）、会话从哪个账号启动、碰到限额换到哪个（`rotation`）、限额与休息（`limits`、`rest`）、本机自己的登录（`local_login`）、凭据保存前的验证（`verify`）、用量缓存与探测调度（`quota`）和 `/api/accounts*` 路由；与 CLI 有关的一切都经 `Login` 端口问各 CLI 的登录，由服务端 `accounts/` 实现 |
 | `crates/droppen-aggregator/` | 设备角色：这台电脑以它跑 AI 的那个身份，作为账号的设备去控制其他设备。在 hub 上签到、取管理员封给它的其他主机的机器密钥（`controller`、`hub`、`keys`），按 `access` 选定的范围跟随它们的索引、状态和最新会话（`copies`），存进 `aggregator/copies.db`（`store`），并在内存里交给本机页面（`live`）；另有给 `docs/hub-api/` 契约检查用的流量记录（`traffic`）。它需要的入网状态经 `Enrollment` 端口由 agent 填上 |
 | `crates/droppen-agent/` | 机器角色：这台电脑在账号里的身份（种子与机器密钥，`seed`、`fingerprint`）、用设备发的注册码加入账号（`enroll`）、到 hub 的连接与设备的端到端握手（`link`、`hub`）、账号链的状态与争议声明（`state`、`dispute`）、中继（`relays`）与直连路径（`direct`）、通道到本机回环 API 的桥接（`bridge`）、加密的流（`streams`）和身份密钥轮换（`rotation`）；`agent enroll` / `agent status` 的执行部分（`cli`）。推送密钥、账号变化提醒和要复制的会话经 `LinkHost`、`StreamSource` 端口由入口填上 |
 | `crates/droppen-pty/` | 活过服务端重启的 pty：shim 进程（本二进制的隐藏子命令 `pty-shim`）、它的帧格式、环形缓冲与屏幕模型、留在磁盘上的边车文件，以及服务端这一侧的连接 |

@@ -8,7 +8,7 @@
 //!   `rate_limit_info.unifiedWindows`: the utilization and reset instant of each
 //!   window the login has. That is a reading, made by the very credential being
 //!   billed, and it costs nothing. Claude's
-//!   [`super::claude::RateLimitWindows::windows_from_rate_limit_info`] turns it
+//!   `accounts::quota::claude::RateLimitWindows::windows_from_rate_limit_info` turns it
 //!   into [`QuotaWindow`]s and a session's driver hands them to
 //!   [`super::QuotaCache::ingest_session`].
 //! * **The `/usage` probe, as a fallback.** Only when a login's newest window is
@@ -51,8 +51,8 @@ use gotcha::Schematic;
 use serde::{Deserialize, Serialize};
 
 use super::{QuotaProbeError, QuotaWindow, UsageProbe, RATE_LIMIT_BACKOFF};
-use crate::accounts::rest::iso_ms;
-use crate::accounts::store::{account_dir_in, usage_config_dir_in};
+use crate::rest::iso_ms;
+use crate::store::{account_dir_in, usage_config_dir_in};
 use droppen_http::openapi_ext::{Nullable, Optional};
 use droppen_instance::paths::Paths;
 
@@ -514,7 +514,7 @@ impl Throttle {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::accounts::quota::window;
+    use crate::quota::window;
     use serde_json::Value;
 
     const MINUTE: i64 = 60_000;

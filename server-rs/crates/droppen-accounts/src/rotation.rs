@@ -24,7 +24,7 @@
 //!
 //! # The switch itself
 //!
-//! Not here: [`crate::provider`] owns the process. What this module hands it is a
+//! Not here: `provider` owns the process. What this module hands it is a
 //! [`Plan`] and the words — the continuation prompt the new account's process is
 //! given ([`continuation_prompt`]) and the notification ([`notice`]).
 //!
@@ -1153,7 +1153,7 @@ mod tests {
     /// release wrote reads back as the limit it was.
     #[test]
     fn a_database_at_step_eight_gains_the_rotation_trigger_and_old_rows_read_as_limits() {
-        use crate::accounts::rotation::RotationLog;
+        use crate::rotation::RotationLog;
         use droppen_instance::db::{Db, SCHEMA};
         use droppen_sessions::account::RotationTrigger;
         let dir = tempfile::tempdir().expect("tempdir");

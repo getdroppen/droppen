@@ -6,8 +6,8 @@ use std::sync::Arc;
 use gotcha::axum::extract::FromRef;
 use gotcha::State;
 
-use crate::accounts::store::{Account, AccountKind, AccountProvider, Credential};
-use crate::accounts::*;
+use droppen_accounts::store::{Account, AccountKind, AccountProvider, Credential};
+use droppen_accounts::*;
 use crate::api::AppState;
 use crate::drive::routes::{bind_session_account, continue_session_on_account, ContinuedSession, SessionAccount, SessionContinue};
 use crate::sessions::claude;
@@ -242,7 +242,7 @@ async fn continuing_refuses_what_is_not_this_servers_to_copy() {
 /// stop offering a broken one as the default.
 #[tokio::test]
 async fn the_account_list_reports_the_local_logins_state() {
-    use crate::accounts::local_login::LocalLoginState;
+    use droppen_accounts::local_login::LocalLoginState;
     let home = tempfile::tempdir().expect("tempdir");
     let state = crate::api::test_support::state(home.path()).await;
     let listed = list_accounts(State(AccountsState::from_ref(&state))).await.0;

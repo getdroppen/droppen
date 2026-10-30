@@ -66,7 +66,7 @@ pub(crate) enum Begun {
 
 /// A `clientMessageId` is a UUID, which keeps the table to ids a client minted.
 pub(crate) fn validate_id(id: &str) -> Result<(), ApiError> {
-    if crate::accounts::store::is_uuid(id) {
+    if droppen_accounts::store::is_uuid(id) {
         Ok(())
     } else {
         Err(ApiError::bad_request("invalid clientMessageId: expected a UUID"))

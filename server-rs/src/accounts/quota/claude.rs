@@ -1,15 +1,15 @@
 //! Claude's quota readings: the windows a `rate_limit_event` carries, the
 //! login a session's reading is filed under, and the `/usage` probe that
 //! reads a login nothing has run under lately. The files the readings are kept
-//! in are the accounts' ([`super::readings`]).
+//! in are the accounts' ([`droppen_accounts::quota::readings`]).
 
 use std::path::Path;
 use std::time::Duration;
 
 use serde_json::Value;
 
-use super::{is_rate_limited, window, ProbeRoots, QuotaProbeError, QuotaWindow, UsageLogin, UsageProbe};
-use crate::accounts::rest::iso_ms;
+use droppen_accounts::quota::{is_rate_limited, window, ProbeRoots, QuotaProbeError, QuotaWindow, UsageLogin, UsageProbe};
+use droppen_accounts::rest::iso_ms;
 use droppen_sessions::util::try_parse;
 use droppen_base::process_env::{apply_env, claude_env};
 use droppen_base::time::{iso8601, now_ms};
