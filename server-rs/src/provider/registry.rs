@@ -8,6 +8,7 @@
 //! registers the providers, names them.
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use futures_util::future::BoxFuture;
@@ -36,6 +37,36 @@ pub trait Provider: Send + Sync {
     /// Itself, for a route of its own that needs it by its type
     /// ([`ProviderRegistry::provider`]).
     fn as_any(&self) -> &dyn std::any::Any;
+
+    /// Carry session `id` onto an account as the new session `new_id`: its
+    /// conversation copied into this instance's own root, the original left
+    /// as it was. Answers where the copy's transcript is.
+    ///
+    /// Only a CLI whose sessions can sit in a root this instance does not own
+    /// has one to carry; every other provider refuses
+    /// ([`ContinueError::Unsupported`]), its sessions switching accounts in
+    /// place.
+    fn continue_on_account<'a>(&'a self, _id: &'a str, _new_id: &'a str) -> BoxFuture<'a, Result<PathBuf, ContinueError>> {
+        Box::pin(std::future::ready(Err(ContinueError::Unsupported)))
+    }
+}
+
+/// Why a session could not be continued on an account
+/// ([`Provider::continue_on_account`]).
+#[derive(Debug, thiserror::Error)]
+pub enum ContinueError {
+    /// Its CLI's sessions switch accounts in place; there is nothing to carry.
+    #[error("this CLI's sessions are not continued on an account")]
+    Unsupported,
+    /// No such session where a continued one comes from.
+    #[error("session not found")]
+    NotFound,
+    /// The new id is already taken; nothing was written.
+    #[error("the new session id is already in use")]
+    Taken,
+    /// The copy failed part-way; nothing usable was left behind.
+    #[error("cannot copy the transcript: {0}")]
+    Io(String),
 }
 
 /// What a provider's sessions can do that not every CLI's can.
@@ -246,6 +277,15 @@ impl ProviderRegistry {
         match self.run(source) {
             Some(run) => run.start(&self.gate, StartAt { cwd, text, options }).await,
             None => Err(InjectError::Internal(format!("no provider runs {source} sessions"))),
+        }
+    }
+
+    /// Continue session `id` on an account as the new session `new_id`, by
+    /// its own provider ([`Provider::continue_on_account`]).
+    pub async fn continue_on_account(&self, source: Source, id: &str, new_id: &str) -> Result<PathBuf, ContinueError> {
+        match self.providers.get(&source) {
+            Some(provider) => provider.continue_on_account(id, new_id).await,
+            None => Err(ContinueError::Unsupported),
         }
     }
 
@@ -535,6 +575,33 @@ mod tests {
         drop(first);
         let again = ProviderRegistry::new(injections, crate::app::register_providers);
         assert!(again.provider::<crate::provider::acp::Acp>().is_some());
+    }
+
+    /// Only Claude Code carries a session onto an account, and each source's
+    /// request reaches its own provider: Codex and the ACP agents refuse
+    /// before anything is read, and a registry without Claude Code refuses
+    /// Claude's too.
+    #[tokio::test]
+    async fn only_claude_code_continues_a_session_on_an_account() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let providers = providers(home.path());
+        let paths = Paths::new(home.path().to_path_buf());
+        let local = crate::provider::claude_code::claude_roots::ClaudeRoots::of(&paths).local_projects().join("-w");
+        std::fs::create_dir_all(&local).expect("project dir");
+        const STUCK: &str = "11111111-1111-4111-8111-111111111111";
+        const NEW: &str = "22222222-2222-4222-8222-222222222222";
+        std::fs::write(local.join(format!("{STUCK}.jsonl")), format!("{{\"sessionId\":\"{STUCK}\"}}\n")).expect("transcript");
+
+        for source in [Source::Codex, Source::Acp] {
+            let refused = providers.continue_on_account(source, STUCK, NEW).await;
+            assert!(matches!(refused, Err(super::ContinueError::Unsupported)), "{source}: {refused:?}");
+        }
+        let other = tempfile::tempdir().expect("tempdir");
+        let none = providers_from(other.path(), |_, _| {});
+        assert!(matches!(none.continue_on_account(Source::Claude, STUCK, NEW).await, Err(super::ContinueError::Unsupported)));
+
+        let copy = providers.continue_on_account(Source::Claude, STUCK, NEW).await.expect("Claude Code continues it");
+        assert_eq!(copy, crate::provider::claude_code::claude_roots::ClaudeRoots::of(&paths).managed_projects().join("-w").join(format!("{NEW}.jsonl")));
     }
 
     /// A source no provider runs is refused at the start and blocked at a send,

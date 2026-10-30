@@ -48,6 +48,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::provider::claude_code::sessions::claude;
+use crate::provider::ContinueError;
 use droppen_sessions::reference;
 use crate::provider::claude_code::claude_roots;
 use droppen_instance::paths::{ClaudeRoot, Paths};
@@ -56,23 +57,11 @@ use droppen_instance::paths::{ClaudeRoot, Paths};
 /// [`super::adoption_leftovers::sweep_partial_adoptions`].
 pub const PARTIAL_SUFFIX: &str = "jsonl.continuing";
 
-/// Why a session could not be copied.
-#[derive(Debug, thiserror::Error)]
-pub enum ContinueError {
-    /// No transcript of that id in the user's own root.
-    #[error("session not found")]
-    NotFound,
-    /// The new id is already taken; nothing was written.
-    #[error("the new session id is already in use")]
-    Taken,
-    /// The copy failed part-way; nothing usable was left behind.
-    #[error("cannot copy the transcript: {0}")]
-    Io(String),
-}
-
 /// Copy a local-root claude session into the managed root as `new_id`.
 ///
 /// Returns the new transcript's path. The original is only read.
+/// [`ContinueError::NotFound`] when there is no transcript of that id in the
+/// user's own root.
 pub async fn copy_local_session(paths: &Paths, id: &str, new_id: &str) -> Result<PathBuf, ContinueError> {
     // The strict rule for both: each becomes a directory name below.
     if !reference::is_path_segment_id(id) || !reference::is_path_segment_id(new_id) || id == new_id {
