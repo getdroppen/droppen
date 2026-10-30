@@ -2,17 +2,39 @@
 
 use std::path::{Path, PathBuf};
 
-/// One source file of the server, of the provider base or of a provider's
-/// crate: what it says, and its code as these scans read it ([`code`]). A
-/// file that is a test module's has none.
+/// One source file of the server or of a crate of its workspace: its path
+/// from `server-rs` (`src/…`, `crates/<crate>/src/…`), what it says, its
+/// code as these scans read it ([`code`]), and whether that code can reach
+/// the provider base at all ([`sees_the_base`]). A file that is a test
+/// module's has no code.
 struct Source {
     path: String,
     text: String,
     code: String,
+    sees_base: bool,
 }
 
-/// Every source file of the server, of the provider base and of the ACP
-/// provider's crate, but the gate's own and this one.
+/// Whether a crate with this manifest can name the provider base's items:
+/// whether its `[dependencies]` (per target too, but not its dev- or
+/// build-dependencies) have `droppen-provider`. One that cannot has fields
+/// and names of its own that only sound like the base's (the agent's
+/// `drafts` are its stream tasks).
+fn sees_the_base(manifest: &str) -> bool {
+    let mut linked = false;
+    manifest.lines().any(|line| {
+        let line = line.trim();
+        if let Some(header) = line.strip_prefix('[') {
+            let header = header.trim_end_matches(']');
+            linked = header == "dependencies" || (header.starts_with("target.") && header.ends_with(".dependencies"));
+            return false;
+        }
+        linked && line.strip_prefix("droppen-provider").is_some_and(|rest| rest.trim_start().starts_with(['=', '.']))
+    })
+}
+
+/// Every source file of the server and of every crate of its workspace, but
+/// the gate's own and this one. Wherever the feed and the drive live, the
+/// scans read them.
 fn server_sources() -> Vec<Source> {
     fn walk(dir: &Path, found: &mut Vec<PathBuf>) {
         for entry in std::fs::read_dir(dir).expect("read_dir").flatten() {
@@ -26,7 +48,8 @@ fn server_sources() -> Vec<Source> {
     }
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut paths = Vec::new();
-    for dir in [manifest.join("src"), manifest.join("crates/droppen-provider/src"), manifest.join("crates/droppen-provider-acp/src")] {
+    let crates = std::fs::read_dir(manifest.join("crates")).expect("the workspace's crates").flatten();
+    for dir in std::iter::once(manifest.join("src")).chain(crates.map(|entry| entry.path().join("src"))) {
         if dir.is_dir() {
             walk(&dir, &mut paths);
         }
@@ -48,34 +71,46 @@ fn server_sources() -> Vec<Source> {
         };
         tests.extend(modules.iter().map(|module| dir.join(module)));
     }
-    read.into_iter()
-        .filter(|(path, _, _)| !gate_or_scan(path))
+    let sources: Vec<Source> = read
+        .into_iter()
         .map(|(path, text, (code, _))| {
             let test = tests.iter().any(|module| path.starts_with(module) || path == module.with_extension("rs"));
+            let path = path.strip_prefix(manifest).expect("under server-rs").display().to_string();
+            let sees_base = path.strip_prefix("crates/").and_then(|rest| rest.split_once('/')).is_none_or(|(name, _)| {
+                sees_the_base(&std::fs::read_to_string(manifest.join("crates").join(name).join("Cargo.toml")).unwrap_or_default())
+            });
             Source {
-                path: path.display().to_string(),
+                path,
                 text,
                 code: if test { String::new() } else { code },
+                sees_base,
             }
         })
-        .collect()
+        .filter(|source| !gate_or_scan(&source.path))
+        .collect();
+    for module in ["feed/mod.rs", "drive/mod.rs"] {
+        assert!(
+            sources.iter().any(|source| source.path.ends_with(module) && !source.code.is_empty()),
+            "the scans read {module}"
+        );
+    }
+    sources
 }
 
-/// Whether `path` is the spawn gate's own source, the test probe that hands
-/// out its gateless permit, or these scans'.
-fn gate_or_scan(path: &Path) -> bool {
-    ["provider/gate.rs", "droppen-provider/src/gate.rs", "droppen-provider/src/testing.rs", "with_providers/gate.rs"].iter().any(|own| path.ends_with(own))
+/// Whether `path` is the spawn gate's own source or these scans'.
+fn gate_or_scan(path: &str) -> bool {
+    ["crates/droppen-provider/src/gate.rs", "src/provider/with_providers/gate.rs"].contains(&path)
 }
 
 /// Whether `path` is the provider registry's source.
 fn registry(path: &str) -> bool {
-    path.ends_with("provider/registry.rs") || path.ends_with("droppen-provider/src/registry.rs")
+    path == "crates/droppen-provider/src/registry.rs"
 }
 
 /// Whether `path` is the providers' own: the base's, or an implementation's,
-/// in the server or in a crate of its own.
+/// in the server or in a `droppen-provider*` crate.
 fn in_provider(path: &str) -> bool {
-    path.contains("/src/provider/") || path.contains("/crates/droppen-provider/") || path.contains("/crates/droppen-provider-acp/")
+    path.starts_with("src/provider/") || path.starts_with("crates/droppen-provider")
 }
 
 /// Whether `c` can be part of an identifier.
@@ -103,6 +138,27 @@ fn fields(code: &str, names: &[&'static str]) -> Vec<&'static str> {
         .copied()
         .filter(|name| whole(code, name).any(|at| code[..at].ends_with('.') && !code[at + name.len()..].trim_start().starts_with('(')))
         .collect()
+}
+
+/// The names of a run's entry, of what publishes, renames or withdraws a
+/// run, and the host's fields that hold the runs' journal and drafts.
+const RUN_NAMES: [&str; 5] = ["publish_run", "withdraw_run", "rename_run", "running_run", "RunEntry"];
+const RUN_FIELDS: [&str; 2] = ["journal", "drafts"];
+
+/// How `code` reaches the runs: each of [`RUN_NAMES`] it names, each of
+/// [`RUN_FIELDS`] it reads off a value (`.journal`), and `RunHost { … }`
+/// where it takes a host apart (`let RunHost { journal, .. } = host;`),
+/// which reads its fields without a `.`.
+fn runs_reached(code: &str) -> Vec<String> {
+    let names = named(code, &RUN_NAMES).into_iter().map(str::to_string);
+    let read = fields(code, &RUN_FIELDS).into_iter().map(|name| format!(".{name}"));
+    let apart = whole(code, "RunHost")
+        .any(|at| {
+            let before = code[..at].trim_end();
+            code[at + "RunHost".len()..].trim_start().starts_with('{') && !before.ends_with("for") && !before.ends_with("impl")
+        })
+        .then(|| "RunHost { … }".to_string());
+    names.chain(read).chain(apart).collect()
 }
 
 /// The attribute of an item, a statement or a field there for tests alone.
@@ -223,17 +279,31 @@ fn token_end(text: &str, at: usize) -> usize {
     one
 }
 
-/// Where the item, statement or field whose attribute ends at `from` in
-/// `text` ends: past the `;` or the `}` of its body that ends an item or a
-/// statement, or past the `,` or `;` that ends a field, a variant or an
-/// arm. A field is `name: Type`, its angle brackets counted; a variant, a
-/// path or a struct starts with a capital.
-fn tests_only_end(text: &str, from: usize) -> usize {
-    let mut cut = text.len().min(from + 400);
+/// Up to `len` bytes of `text` from `from`, cut at a character's start.
+fn ahead(text: &str, from: usize, len: usize) -> &str {
+    let mut cut = text.len().min(from + len);
     while !text.is_char_boundary(cut) {
         cut -= 1;
     }
-    let head = code_of(&text[from..cut]);
+    &text[from..cut]
+}
+
+/// The words that start an item, or a statement that ends at its `;` or
+/// at the `}` of its body rather than at a `,`.
+const ITEMS: [&str; 21] = [
+    "fn", "impl", "mod", "struct", "enum", "union", "trait", "use", "const", "static", "type", "let", "macro_rules", "extern", "async", "unsafe",
+    "if", "match", "for", "while", "loop",
+];
+
+/// Where the item, statement, field, variant or arm whose attribute ends at
+/// `from` in `text` ends. One that starts with a word of [`ITEMS`], with a
+/// block or with a macro (`name!`) ends past its `;` or the `}` of its body.
+/// Anything else ends past the `,` or `;` at its own depth, or at the
+/// bracket that closes the list it is in; a `}` of its own ends it too when
+/// what follows starts another one, as a match arm's block does. A field
+/// (`name: Type`) counts its angle brackets, so `HashMap<K, V>` is one.
+fn tests_only_end(text: &str, from: usize) -> usize {
+    let head = code_of(ahead(text, from, 400));
     let mut head = head.trim_start();
     while head.starts_with("#[") {
         head = head.split_once(']').map_or("", |(_, rest)| rest).trim_start();
@@ -242,10 +312,11 @@ fn tests_only_end(text: &str, from: usize) -> usize {
         let rest = rest.trim_start();
         rest.strip_prefix('(').and_then(|rest| rest.split_once(')')).map_or(rest, |(_, rest)| rest)
     });
-    let word: String = unscoped.trim_start().chars().take_while(|&c| ident(c)).collect();
-    let after = unscoped.trim_start()[word.len()..].trim_start();
+    let unscoped = unscoped.trim_start();
+    let word: String = unscoped.chars().take_while(|&c| ident(c)).collect();
+    let after = unscoped[word.len()..].trim_start();
+    let item = ITEMS.contains(&word.as_str()) || unscoped.starts_with('{') || (!word.is_empty() && after.starts_with('!'));
     let declared = !word.is_empty() && after.starts_with(':') && !after.starts_with("::");
-    let listed = declared || word.starts_with(char::is_uppercase);
     let mut depth = 0usize;
     let mut at = from;
     while at < text.len() {
@@ -259,12 +330,14 @@ fn tests_only_end(text: &str, from: usize) -> usize {
             ")" | "]" => depth -= 1,
             "}" => {
                 depth -= 1;
-                if depth == 0 && !listed {
+                let next = code_of(ahead(text, end, 200));
+                let next = next.trim_start();
+                if depth == 0 && (item || next.starts_with(|c: char| ident(c) || c == '#')) {
                     return end;
                 }
             }
             ";" if depth == 0 => return end,
-            "," if depth == 0 && listed => return end,
+            "," if depth == 0 && !item => return end,
             _ => {}
         }
         at = end;
@@ -273,16 +346,18 @@ fn tests_only_end(text: &str, from: usize) -> usize {
 }
 
 /// The permit that takes no gate starts nothing in the server: only the
-/// shim's own end-to-end test, outside `src/`, may use it.
+/// test probe that hands it out (`droppen_provider::testing`) names it, and
+/// the shim's own end-to-end test, outside `src/`, uses it.
 #[test]
 fn nothing_in_the_server_starts_a_cli_without_the_gate() {
     // The name as a whole identifier, so a call spelt
     // `without_a_session ()` or passed as a function is found
     // too, and a test named `…_without_a_session_…` is not.
     const NAME: &str = "without_a_session";
+    const PROBE: &str = "crates/droppen-provider/src/testing.rs";
     let found: Vec<String> = server_sources()
         .into_iter()
-        .filter(|source| whole(&source.text, NAME).next().is_some())
+        .filter(|source| source.path != PROBE && whole(&source.text, NAME).next().is_some())
         .map(|source| source.path)
         .collect();
     assert!(found.is_empty(), "a CLI started without the spawn gate: {found:?}");
@@ -319,10 +394,10 @@ fn only_the_provider_registry_makes_a_spawn_gate() {
 }
 
 /// The spawn gate reaches the providers alone. Outside them (the server's
-/// `provider`, the base's crate and the ACP provider's), no production code
-/// names the gate, a permit or a lease, so none can take the gate, mint a
-/// permit or build a lease. Inside them, the ACP provider's
-/// agent routes, which start and stop its CLI outside a run, are lent the
+/// `provider` and the `droppen-provider*` crates), no production code of the
+/// server or of a crate that depends on the base names the gate, a permit or
+/// a lease, so none can take the gate, mint a permit or build a lease.
+/// Inside them, the ACP provider's agent routes, which start and stop its CLI outside a run, are lent the
 /// gate through `provider_with_gate`, which nothing else names but the
 /// registry that defines it: they reach it through `AcpAgentState::gate`,
 /// and every call of theirs that takes the gate is handed it from there.
@@ -331,18 +406,19 @@ fn only_the_provider_registry_makes_a_spawn_gate() {
 fn only_the_providers_reach_the_spawn_gate() {
     const NAMES: [&str; 4] = ["SpawnGate", "SpawnPermit", "SessionLease", "provider_with_gate"];
     const LEND: &str = "provider_with_gate";
+    const ROUTES: &str = "crates/droppen-provider-acp/src/agents.rs";
     let sources = server_sources();
     let mut found = Vec::new();
     for source in &sources {
-        if !in_provider(&source.path) {
+        if !in_provider(&source.path) && source.sees_base {
             found.extend(named(&source.code, &NAMES).into_iter().map(|name| format!("{}: {name}", source.path)));
-        } else if !registry(&source.path) && !source.path.ends_with("droppen-provider-acp/src/agents.rs") && whole(&source.code, LEND).next().is_some() {
+        } else if !registry(&source.path) && source.path != ROUTES && whole(&source.code, LEND).next().is_some() {
             found.push(format!("{}: {LEND}", source.path));
         }
     }
     assert!(found.is_empty(), "the spawn gate reached outside the providers: {found:?}");
 
-    let routes = sources.iter().find(|source| source.path.ends_with("droppen-provider-acp/src/agents.rs")).expect("the ACP agent routes");
+    let routes = sources.iter().find(|source| source.path == ROUTES).expect("the ACP agent routes");
     let lends: Vec<usize> = whole(&routes.code, LEND).collect();
     assert_eq!(lends.len(), 1, "the ACP agent routes are lent the gate in one place");
     let lent = routes.code[lends[0] + LEND.len()..].split_whitespace().collect::<String>();
@@ -351,7 +427,7 @@ fn only_the_providers_reach_the_spawn_gate() {
     // whose first argument is one.
     let gated: Vec<String> = sources
         .iter()
-        .filter(|source| source.path.contains("/droppen-provider-acp/src/"))
+        .filter(|source| source.path.starts_with("crates/droppen-provider-acp/src/"))
         .flat_map(|source| {
             let code = source.code.split_whitespace().collect::<Vec<_>>().join(" ");
             code.match_indices("(&self, gate: &SpawnGate")
@@ -373,36 +449,33 @@ fn only_the_providers_reach_the_spawn_gate() {
 }
 
 /// A run's entry and its row in the journal are its driver's, and so is
-/// the draft of its turn: outside the providers, no production code publishes,
+/// the draft of its turn: outside `provider`, no production code publishes,
 /// renames or withdraws a run, holds one's entry, or reaches the host's run
 /// journal or drafts, so none can flip a run's state or forge a journal
-/// row. The feeds watch a draft through the provider registry.
+/// row. The feeds watch a draft through the provider registry. The server
+/// and every crate that depends on the base are read, so code that moves
+/// out of the server is still held to this.
 #[test]
 fn only_the_providers_keep_the_runs() {
-    const NAMES: [&str; 5] = ["publish_run", "withdraw_run", "rename_run", "running_run", "RunEntry"];
-    const FIELDS: [&str; 2] = ["journal", "drafts"];
     let sources = server_sources();
     let (inside, outside): (Vec<&Source>, Vec<&Source>) = sources.iter().partition(|source| in_provider(&source.path));
-    for name in NAMES {
+    for name in RUN_NAMES {
         assert!(inside.iter().any(|source| !named(&source.code, &[name]).is_empty()), "the providers use {name}");
     }
-    for name in FIELDS {
+    for name in RUN_FIELDS {
         assert!(inside.iter().any(|source| !fields(&source.code, &[name]).is_empty()), "the providers read .{name}");
     }
     let found: Vec<String> = outside
         .iter()
-        .flat_map(|source| {
-            let names = named(&source.code, &NAMES).into_iter().map(str::to_string);
-            let fields = fields(&source.code, &FIELDS).into_iter().map(|name| format!(".{name}"));
-            names.chain(fields).map(|name| format!("{}: {name}", source.path)).collect::<Vec<_>>()
-        })
+        .filter(|source| source.sees_base)
+        .flat_map(|source| runs_reached(&source.code).into_iter().map(|how| format!("{}: {how}", source.path)))
         .collect();
     assert!(found.is_empty(), "a run reached outside the providers: {found:?}");
 }
 
 /// The scans read code as the compiler does: a `#[cfg(test)]` item,
-/// statement or field goes, and the code after it stays; so do strings
-/// with braces in them.
+/// statement, field, variant or arm goes, and the code after it stays; so
+/// do strings with braces in them. What stays is still read for the runs.
 #[test]
 fn the_scans_read_past_a_file_s_tests() {
     let text = r##"
@@ -422,18 +495,67 @@ fn also_kept<'a>(x: &'a str) {
     #[cfg(test)]
     self.host.step("a", Source::Acp, None);
     after();
+    #[cfg(test)]
+    {
+        block_gone();
+    }
+    after_block();
 }
 #[cfg(test)]
 impl Probe { fn gone_too() {} }
+#[cfg(test)]
+thread_local! { static GONE_LOCAL: u8 = 0; }
+fn e1(h: &RunHost) -> S {
+    S {
+        #[cfg(test)]
+        steps,
+        journal: h.journal.clone(),
+    }
+}
+fn e2(r: Run) {
+    match r {
+        #[cfg(test)]
+        other if p => drop(other),
+        _ => r.host.withdraw_run(Source::Codex, "id"),
+    }
+}
+fn arm(r: Run) {
+    match r {
+        #[cfg(test)]
+        Probe(p) => {
+            arm_gone(p);
+        }
+        Run::Live(l) => arm_kept(l),
+    }
+}
+fn apart(h: &RunHost) {
+    let RunHost { drafts, .. } = h;
+}
 // SpawnGate::new in a comment
 fn last() {}
 "##;
     let (code, modules) = code(text);
-    for kept in ["fn kept()", r#"let brace = "}";"#, r##"r#"{"#"##, "'}'", "struct Host {", "kept: u8,", "fn also_kept<'a>", "after();", "fn last() {}"] {
+    for kept in [
+        "fn kept()",
+        r#"let brace = "}";"#,
+        r##"r#"{"#"##,
+        "'}'",
+        "struct Host {",
+        "kept: u8,",
+        "fn also_kept<'a>",
+        "after();",
+        "after_block();",
+        "journal: h.journal.clone()",
+        "_ => r.host.withdraw_run",
+        "Run::Live(l) => arm_kept(l)",
+        "let RunHost { drafts, .. } = h;",
+        "fn last() {}",
+    ] {
         assert!(code.contains(kept), "{kept} is kept:\n{code}");
     }
-    for gone in ["mod tests", "gone()", "mod elsewhere", "steps", "self.host.step", "Probe", "gone_too", "SpawnGate"] {
+    for gone in ["mod tests", "gone()", "mod elsewhere", "steps", "self.host.step", "block_gone", "Probe", "gone_too", "GONE_LOCAL", "other if p", "arm_gone", "SpawnGate"] {
         assert!(!code.contains(gone), "{gone} is gone:\n{code}");
     }
     assert_eq!(modules, ["elsewhere"]);
+    assert_eq!(runs_reached(&code), ["withdraw_run", ".journal", "RunHost { … }"]);
 }

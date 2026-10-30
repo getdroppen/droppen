@@ -265,11 +265,18 @@ impl ProviderRegistry {
     /// Re-attach to every run the previous server left behind; see
     /// [`InjectionRegistry::adopt_all`].
     pub async fn adopt_all(&self) -> super::Adopted {
-        self.injections.adopt_all(&self.gate, &self.runs()).await
+        self.injections.adopt_all(&self.gate, &self.all_runs()).await
+    }
+
+    /// Each source's provider's runs, for a test that adopts a run by hand
+    /// ([`InjectionRegistry::watch_adopted`]).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn runs(&self) -> BTreeMap<Source, Arc<dyn ProviderRuns>> {
+        self.all_runs()
     }
 
     /// Each source's provider's runs.
-    pub fn runs(&self) -> BTreeMap<Source, Arc<dyn ProviderRuns>> {
+    fn all_runs(&self) -> BTreeMap<Source, Arc<dyn ProviderRuns>> {
         self.providers.iter().map(|(source, provider)| (*source, provider.runs())).collect()
     }
 
@@ -354,7 +361,7 @@ impl ProviderRegistry {
     /// Everything the session list needs from every provider's runs, in
     /// [`Source`]'s order, and from the runs map, in one pass.
     pub fn driver_states(&self) -> DriverStates {
-        let runs = self.runs();
+        let runs = self.all_runs();
         self.injections.host.snapshot(runs.values().map(|runs| &**runs))
     }
 
