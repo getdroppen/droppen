@@ -96,7 +96,7 @@ impl Source {
 
     /// Whether this is the spawn gate's own source or these scans'.
     fn is_gate_or_scan(&self) -> bool {
-        ["crates/droppen-provider/src/gate.rs", "src/provider/with_providers/gate.rs"].contains(&self.path.as_str())
+        ["crates/droppen-provider/src/gate.rs", "src/provider_tests/gate.rs"].contains(&self.path.as_str())
     }
 
     /// Whether this is the provider registry's source.

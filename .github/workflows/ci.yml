@@ -262,20 +262,15 @@ jobs:
       # leaves the repository, and the open crates and web/src name none of
       # the hub's code or environment (docs/local-aggregator.md §2.1).
       - run: node ../scripts/check-open-boundary.mjs
-      # The server's target crates (`pnpm check:layers`): a module of
-      # server-rs/src uses only what the crate server-rs/layers.json places it
-      # in may use, so the subsystems do not grow back into one dependency
-      # cycle. The exceptions listed there, each with its reason, and the
-      # Source matches outside the provider crates may only shrink.
-      - run: node --test ../scripts/check-module-layers.test.mjs
-      - run: node ../scripts/check-module-layers.mjs
-      # The crates as Cargo builds them (`pnpm check:crate-layers`): every
-      # workspace member sits in server-rs/layers.json and depends only on what
-      # its layer may use, no crate reaches a pair the file forbids or depends
-      # on the entry, and portable-pty and tokio-tungstenite are depended on
-      # only by the crates that wrap them.
-      - run: node --test ../scripts/check-crate-layers.test.mjs
-      - run: node ../scripts/check-crate-layers.mjs
+      # The crates' layers (`pnpm check:layers`): every workspace member sits
+      # in server-rs/layers.json and depends only on what its layer may use,
+      # so the subsystems do not grow back into one dependency cycle; no crate
+      # reaches a pair the file forbids or depends on the entry; portable-pty
+      # and tokio-tungstenite are depended on only by the crates that wrap
+      # them; and the Source matches outside the provider crates may only
+      # shrink.
+      - run: node --test ../scripts/check-layers.test.mjs
+      - run: node ../scripts/check-layers.mjs
       # No `cargo fmt --check`, and of clippy only the two deadlock lints
       # `server-rs/Cargo.toml`'s `[workspace.lints.clippy]` denies gate CI:
       # a guard made in a match/if-let scrutinee lives through the whole

@@ -7,23 +7,19 @@
       "crates": [
         {
           "name": "droppen-base",
-          "about": "The clock, text codecs, private files, process guards, outbound webhooks, the environment, the program's name.",
-          "modules": []
+          "about": "The clock, text codecs, private files, process guards, outbound webhooks, the environment, the program's name."
         },
         {
           "name": "droppen-search-path",
-          "about": "The PATH rule shared with the desktop app.",
-          "modules": []
+          "about": "The PATH rule shared with the desktop app."
         },
         {
           "name": "rh-proto",
-          "about": "The cloud protocol, shared with the hub, the relays and the test device.",
-          "modules": []
+          "about": "The cloud protocol, shared with the hub, the relays and the test device."
         },
         {
           "name": "droppen-plugin-sdk",
-          "about": "The plugin contract.",
-          "modules": []
+          "about": "The plugin contract."
         }
       ]
     },
@@ -36,13 +32,11 @@
         {
           "name": "droppen-instance",
           "about": "The shared Paths, the instance's directories and lock, its identity, the databases.",
-          "modules": [],
           "mayUse": []
         },
         {
           "name": "droppen-http",
           "about": "Errors, extractors, response types, the OpenAPI helpers, the origin guard, the config.",
-          "modules": [],
           "mayUse": [
             "droppen-instance"
           ]
@@ -50,7 +44,6 @@
         {
           "name": "droppen-pty",
           "about": "The pty shims that outlive the server.",
-          "modules": [],
           "mayUse": [
             "droppen-instance"
           ]
@@ -58,7 +51,6 @@
         {
           "name": "droppen-supervisor",
           "about": "The supervising process and self-update.",
-          "modules": [],
           "mayUse": [
             "droppen-instance",
             "droppen-http"
@@ -67,7 +59,6 @@
         {
           "name": "rh-client",
           "about": "A device's side of the hub API.",
-          "modules": [],
           "mayUse": []
         }
       ]
@@ -80,7 +71,6 @@
         {
           "name": "droppen-auth",
           "about": "Users, logins, tickets, the Identity extractor.",
-          "modules": [],
           "mayUse": [],
           "notes": [
             "Asks for notify's caller capability through its NotifyCredential port, which the entry fills."
@@ -89,7 +79,6 @@
         {
           "name": "droppen-files",
           "about": "Home-directory access behind the path guard, and the media proxy.",
-          "modules": [],
           "mayUse": [
             "droppen-auth"
           ]
@@ -97,7 +86,6 @@
         {
           "name": "droppen-workbench",
           "about": "Terminal and app panes, saved screens, UI preferences.",
-          "modules": [],
           "mayUse": [
             "droppen-auth",
             "droppen-files"
@@ -106,7 +94,6 @@
         {
           "name": "droppen-plugins",
           "about": "The plugin store, installs and serving.",
-          "modules": [],
           "mayUse": [
             "droppen-auth"
           ]
@@ -114,7 +101,6 @@
         {
           "name": "droppen-sessions",
           "about": "The session vocabulary, stores, listing and attention; owns the Transcripts port.",
-          "modules": [],
           "mayUse": [
             "droppen-auth",
             "droppen-workbench",
@@ -124,7 +110,6 @@
         {
           "name": "droppen-accounts",
           "about": "The account store, rotation, the quota cache and sweep, limits; owns the Login port.",
-          "modules": [],
           "mayUse": [
             "droppen-sessions",
             "droppen-workbench"
@@ -133,7 +118,6 @@
         {
           "name": "droppen-notify",
           "about": "Alert channels: Bark, Web Push and the alert fan-out.",
-          "modules": [],
           "mayUse": [
             "droppen-sessions"
           ],
@@ -144,7 +128,6 @@
         {
           "name": "droppen-setup",
           "about": "The first-run guide, CLI detection and installs.",
-          "modules": [],
           "mayUse": [
             "droppen-sessions",
             "droppen-accounts",
@@ -155,13 +138,11 @@
         {
           "name": "droppen-aggregator",
           "about": "The device role: copies of other machines; owns the Enrollment port.",
-          "modules": [],
           "mayUse": []
         },
         {
           "name": "droppen-agent",
           "about": "The machine role: link, chain, relays, direct path, streams, rotation; owns the StreamSource and LinkHost ports.",
-          "modules": [],
           "mayUse": [
             "droppen-aggregator"
           ]
@@ -169,7 +150,6 @@
         {
           "name": "droppen-cloud",
           "about": "The Droppen-link routes, the remote-view gate and link control. The StreamSource the link copies sessions from is the entry's (stream_source), so cloud names no sessions code.",
-          "modules": [],
           "mayUse": [
             "droppen-agent",
             "droppen-aggregator",
@@ -185,24 +165,19 @@
         {
           "name": "droppen-provider",
           "about": "Provider, Run, Models, the registry, the spawn gate, the session shim, queue, receipts, questions, drafts.",
-          "modules": [
-            "provider",
-            "accounts"
-          ],
           "mayUse": [
             "droppen-sessions",
             "droppen-accounts"
           ],
           "notes": [
-            "provider's own items, provider::receipts and provider::questions, drafts, runs, and the spawn gate with its claims (provider::gate).",
-            "provider::shim, the session shim: Claude Code and Codex both start their CLI through it.",
+            "The base's own items: receipts and questions, drafts, the run journal (runs), and the spawn gate with its claims (gate).",
+            "shim, the session shim: Claude Code and Codex both start their CLI through it.",
             "models keeps its routes and the list's wire types here; each provider's list is its own (droppen_provider_claude_code::models with its probe, droppen_provider_codex::models, droppen_provider_acp::models)."
           ]
         },
         {
           "name": "droppen-provider-claude-code",
           "about": "Claude Code: the resident driver, its transcripts, roots, readings, logins and recordings.",
-          "modules": [],
           "mayUse": [
             "droppen-provider",
             "droppen-sessions",
@@ -213,7 +188,6 @@
         {
           "name": "droppen-provider-codex",
           "about": "Codex: the app-server driver, its threads and tools, its quota and its login.",
-          "modules": [],
           "mayUse": [
             "droppen-provider",
             "droppen-sessions",
@@ -223,7 +197,6 @@
         {
           "name": "droppen-provider-acp",
           "about": "Every configured ACP agent, from data.",
-          "modules": [],
           "mayUse": [
             "droppen-provider",
             "droppen-sessions"
@@ -232,7 +205,6 @@
         {
           "name": "droppen-drive",
           "about": "Send, start and answer; the live and global feeds, search; chats; schedules.",
-          "modules": [],
           "mayUse": [
             "droppen-provider",
             "droppen-sessions",
@@ -251,24 +223,13 @@
         {
           "name": "remote-hand-server",
           "about": "The router, the app, the web files, the desktop app's settings, shutdown, export and the binary.",
-          "modules": [
-            "api",
-            "app",
-            "static_files",
-            "desktop_app",
-            "shutdown",
-            "export",
-            "main",
-            "cli",
-            "stream_source"
-          ],
           "mayUse": "*"
         }
       ]
     }
   ],
   "sourceMatches": {
-    "about": "Matches of Source::Claude, Source::Codex or Source::Acp in code built outside tests, in the server's modules and in every workspace crate, the crates exempt names aside. Outside them Source is only the key that picks a provider, so the number may only go down; moving code into a crate of its own does not take its matches off the count. Three are Source::as_str's own arms in droppen-sessions, the wire names. Two stay on purpose: schedule's task_at reads a stored task's source by name (\"codex\" as Codex, anything else as Claude Code), because decoding it through the providers would put the provider registry into the task store.",
+    "about": "Matches of Source::Claude, Source::Codex or Source::Acp in code built outside tests, in every workspace member's library and binaries, the crates exempt names aside. Outside them Source is only the key that picks a provider, so the number may only go down. Three are Source::as_str's own arms in droppen-sessions, the wire names. Two stay on purpose: schedule's task_at reads a stored task's source by name (\"codex\" as Codex, anything else as Claude Code), because decoding it through the providers would put the provider registry into the task store.",
     "exempt": [
       {
         "crate": "droppen-provider-claude-code",
@@ -285,7 +246,6 @@
     ],
     "count": 26
   },
-  "allowed": [],
   "outside": {
     "about": "Workspace members that are not the server's crates: the relay, as a library and as its binary, and the developer kit. Each uses the crates of the open layers and the others outside, and no crate of the layers depends on one of them.",
     "crates": [

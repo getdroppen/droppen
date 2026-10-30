@@ -1,23 +1,21 @@
 #!/usr/bin/env node
 /**
- * The server's crates as Cargo builds them. `check-module-layers.mjs` holds
- * the modules still in `server-rs/src` to the crates they are going to; this
- * holds the workspace's members to `server-rs/layers.json`, read from
- * `cargo metadata --no-deps`: the declared dependencies, whatever a manifest's
- * spelling (renamed, per target, inherited from the workspace), with no
- * resolution and no network.
+ * The server's crates as Cargo builds them: the workspace's members held to
+ * `server-rs/layers.json`, read from `cargo metadata --no-deps`: the declared
+ * dependencies, whatever a manifest's spelling (renamed, per target,
+ * inherited from the workspace), with no resolution and no network. The
+ * server itself is the entry, the one crate whose `mayUse` is `*`.
  *
  * - Every member is a crate of a layer, or one of the crates `outside` lists
  *   (the relay and the developer kit), not both. A crate layers.json declares
- *   that is no member yet (its code is still a module of the server, or is
- *   still to come) is left out of every rule below until it is one.
+ *   that is no member yet is left out of every rule below until it is one.
  * - A crate of the layers depends on its own layer or a lower one: on a crate
  *   of an open layer below its own, on one its `mayUse` lists, or, for the
- *   entry (`mayUse: "*"`), on any crate below it. These are the module rules,
- *   held to `[dependencies]`. It depends on no crate outside the layers, and a
- *   crate outside them depends only on the open layers and on one another.
- * - No member depends on the entry (the crate whose `mayUse` is `*`) in any
- *   way: not even its tests may need the whole server.
+ *   entry (`mayUse: "*"`), on any crate below it. It depends on no crate
+ *   outside the layers, and a crate outside them depends only on the open
+ *   layers and on one another.
+ * - No member depends on the entry in any way: not even its tests may need
+ *   the whole server.
  * - No crate of a `forbidden` rule's `from` reaches one of its `to` through
  *   any chain of dependencies, its own dev- and build-dependencies included,
  *   and no `mayUse` lists such a pair. `@<layer>` stands for a layer's
@@ -26,6 +24,14 @@
  *   both members yet is waiting, and is listed so.
  * - Only the members a `wrappers` entry lists depend on its external crate,
  *   and each of them still does: the list only shrinks.
+ * - The matches of `Source::Claude|Codex|Acp` in the members' code built
+ *   outside tests, the crates `sourceMatches.exempt` names aside (each with
+ *   its reason), are as many as `sourceMatches.count` records: outside the
+ *   providers `Source` is only the key that picks one, so the number only
+ *   goes down, and a lower one is written down.
+ * - layers.json places no module (`modules`) and lists no exception between
+ *   modules (`allowed`): every crate is a member of its own, so nothing
+ *   reads them.
  *
  * A dependency is one of `[dependencies]`, per target too and optional ones
  * included: what a crate links into the program. Dev-dependencies link only
@@ -36,20 +42,264 @@
  * or of one provider on another, brings back the coupling the crates keep
  * apart, and links a second copy of the crate under test into it.
  *
+ * A member's code is the files of its library and binaries (`cargo
+ * metadata`'s targets), followed through their `mod x;` declarations that
+ * are built outside tests. Comments, string literals and `#[cfg(test)]`
+ * items do not count.
+ *
  * It also prints what the layers are judged by: the largest crate cycle with
  * the dev-dependencies (Cargo refuses one in `[dependencies]`), each middle
- * crate's code lines and how many members depend on it, and the matches of
- * `Source::Claude|Codex|Acp` outside the provider crates, counted as
- * `check-module-layers.mjs` counts them while the server still holds
- * modules that are going to other crates.
+ * crate's code lines and how many members depend on it, and the `Source::`
+ * count.
  *
- *   node scripts/check-crate-layers.mjs [--json]     (pnpm check:crate-layers)
+ *   node scripts/check-layers.mjs [--json]     (pnpm check:layers)
  */
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { checkLayers, cycles, moduleGraph, workspaceCrates } from "./check-module-layers.mjs";
+import { codeOnly } from "./check-open-boundary.mjs";
+
+// ------------------------------------------------------------ reading a crate's code
+
+const blank = (text) => text.replace(/[^\n]/g, " ");
+const IDENT = /[A-Za-z0-9_]/;
+
+/**
+ * `code` (comments already blanked) with the contents of every string and
+ * char literal blanked too, quotes kept, so that a `{` or a `Source::` in
+ * text is not taken for code. Newlines stay, so lines still count.
+ */
+export function withoutLiterals(code) {
+  const n = code.length;
+  let out = "";
+  let i = 0;
+  while (i < n) {
+    const c = code[i];
+    // raw strings: r"…", r#"…"#, br"…", cr#"…"#
+    const raw = (i === 0 || !IDENT.test(code[i - 1])) && /^(?:b|c)?r(#*)"/.exec(code.slice(i, i + 40));
+    if (raw) {
+      const close = '"' + raw[1];
+      const end = code.indexOf(close, i + raw[0].length);
+      if (end < 0) return out + blank(code.slice(i));
+      out += raw[0] + blank(code.slice(i + raw[0].length, end)) + close;
+      i = end + close.length;
+      continue;
+    }
+    if (c === '"') {
+      let j = i + 1;
+      while (j < n && code[j] !== '"') j += code[j] === "\\" ? 2 : 1;
+      out += '"' + blank(code.slice(i + 1, j)) + '"';
+      i = j + 1;
+      continue;
+    }
+    if (c === "'") {
+      // a char literal ('x', '\n', '\''), or a lifetime ('a), which stays
+      if (code[i + 1] === "\\") {
+        const end = code.indexOf("'", i + 3);
+        const stop = end < 0 ? n : end + 1;
+        out += "'" + blank(code.slice(i + 1, stop - 1)) + "'";
+        i = stop;
+        continue;
+      }
+      const width = (code.codePointAt(i + 1) ?? 0) > 0xffff ? 2 : 1;
+      if (code[i + 1 + width] === "'") {
+        out += "'" + " ".repeat(width) + "'";
+        i += 2 + width;
+        continue;
+      }
+    }
+    out += c;
+    i++;
+  }
+  return out;
+}
+
+/** The index just past the bracket group that opens at `at` (`(`, `[` or `{`). */
+function closing(code, at) {
+  let depth = 0;
+  for (let i = at; i < code.length; i++) {
+    if ("([{".includes(code[i])) depth++;
+    else if (")]}".includes(code[i]) && --depth === 0) return i + 1;
+  }
+  return code.length;
+}
+
+/** `cfg(test)` or `cfg(all(…, test, …))`: compiled for tests only. */
+const testOnly = (predicate) => {
+  const p = predicate.replace(/\s+/g, "");
+  return p === "test" || (p.startsWith("all(") && p.slice(4, -1).split(",").includes("test"));
+};
+
+/** `text` with each `[from, to)` of `ranges` blanked. */
+const blankRanges = (text, ranges) =>
+  ranges.reduce((out, [from, to]) => out.slice(0, from) + blank(out.slice(from, to)) + out.slice(to), text);
+
+/**
+ * The `[from, to)` ranges of `code` (comments and literals blanked) that are
+ * an item, statement or field under a test-only `#[cfg(…)]`, attribute
+ * included.
+ */
+function testRanges(code) {
+  const ranges = [];
+  let out = code;
+  const cfg = /#\s*\[\s*cfg\s*\(/g;
+  let m;
+  while ((m = cfg.exec(out))) {
+    const open = m.index + m[0].length - 1;
+    const close = closing(out, open);
+    if (!testOnly(out.slice(open + 1, close - 1))) continue;
+    // the attribute's `]`, then any other attributes on the same item
+    let i = out.indexOf("]", close) + 1;
+    for (;;) {
+      while (/\s/.test(out[i] ?? "")) i++;
+      if (out[i] !== "#") break;
+      i = closing(out, out.indexOf("[", i));
+    }
+    // The item ends at its `;`, at the `}` of its body, at a `,` (a field) or
+    // at the `}` that closes the block around it. `<…>` is counted so that the
+    // comma in a field's `HashMap<K, V>` does not end it.
+    let depth = 0;
+    let angles = 0;
+    let end = out.length;
+    for (let j = i; j < out.length; j++) {
+      const c = out[j];
+      if (c === "(" || c === "[") depth++;
+      else if (c === ")" || c === "]") depth--;
+      else if (c === "<") angles++;
+      else if (c === ">" && out[j - 1] !== "-" && out[j - 1] !== "=") angles = Math.max(0, angles - 1);
+      else if (depth === 0 && c === "{") {
+        end = closing(out, j);
+        if (/^\s*;/.test(out.slice(end))) end = out.indexOf(";", end) + 1;
+        break;
+      } else if (depth === 0 && (c === ";" || (c === "," && angles === 0))) {
+        end = j + 1;
+        break;
+      } else if (depth === 0 && c === "}") {
+        end = j;
+        break;
+      }
+    }
+    ranges.push([m.index, end]);
+    out = out.slice(0, m.index) + blank(out.slice(m.index, end)) + out.slice(end);
+    cfg.lastIndex = m.index + 1;
+  }
+  return ranges;
+}
+
+/** What is read of a Rust source: the code that is built outside tests. */
+export const builtCode = (src) => {
+  const literals = withoutLiterals(codeOnly(src, "rs"));
+  return blankRanges(literals, testRanges(literals));
+};
+
+/**
+ * A source file as it is read (`code`, as {@link builtCode}), and its size:
+ * the lines that hold code built outside tests, string literals included
+ * (`lines`).
+ */
+function readSource(file) {
+  const comments = codeOnly(readFileSync(file, "utf8"), "rs");
+  const literals = withoutLiterals(comments);
+  const tests = testRanges(literals);
+  const code = blankRanges(literals, tests);
+  const lines = blankRanges(comments, tests)
+    .split("\n")
+    .filter((line) => line.trim()).length;
+  return { code, lines };
+}
+
+const lineAt = (text, at) => text.slice(0, at).split("\n").length;
+const MOD_DECL = /(?<![A-Za-z0-9_])mod\s+(?:r#)?([A-Za-z_][A-Za-z0-9_]*)\s*;/g;
+const SOURCE_MATCH = /(?<![A-Za-z0-9_])Source\s*::\s*(?:Claude|Codex|Acp)(?![A-Za-z0-9_])/g;
+
+/**
+ * The files of the module whose root file is `file`, following its `mod x;`
+ * declarations that are built outside tests (`x.rs` or `x/mod.rs` next to a
+ * `mod.rs`, `lib.rs` or `main.rs`, else under the file's own directory).
+ * `missing` lists a declaration with no file.
+ */
+function moduleFiles(file, out = [], missing = []) {
+  const { code, lines } = readSource(file);
+  out.push({ file, code, lines });
+  const name = basename(file);
+  const dir = ["mod.rs", "lib.rs", "main.rs"].includes(name) ? dirname(file) : join(dirname(file), name.slice(0, -3));
+  for (const m of code.matchAll(MOD_DECL)) {
+    const child = [join(dir, `${m[1]}.rs`), join(dir, m[1], "mod.rs")].find(existsSync);
+    if (child) moduleFiles(child, out, missing);
+    else missing.push({ file, line: lineAt(code, m.index), name: m[1] });
+  }
+  return out;
+}
+
+/** The kinds of target a crate links into a program, a library's or a binary's. */
+const LIBRARY = new Set(["lib", "rlib", "dylib", "cdylib", "staticlib", "proc-macro"]);
+
+/**
+ * Each member's code, from `cargo metadata` (`meta`): `Map<name, { lines,
+ * sources, missing }>`. `lines` counts its library's code lines, `sources`
+ * where its library and binaries match `Source::Claude|Codex|Acp`
+ * (`file:line`, from the workspace's root), and `missing` its `mod x;` with
+ * no file (`{ at: "file:line", name }`).
+ */
+export function crateCode(meta) {
+  const ids = new Set(meta.workspace_members);
+  const root = meta.workspace_root ?? "";
+  const show = (file) => (root ? relative(root, file) : file);
+  const code = new Map();
+  for (const p of meta.packages.filter((p) => ids.has(p.id))) {
+    const missing = [];
+    const read = new Map();
+    let lines = 0;
+    for (const target of p.targets ?? []) {
+      const library = target.kind.some((kind) => LIBRARY.has(kind));
+      if (!library && !target.kind.includes("bin")) continue;
+      for (const f of moduleFiles(target.src_path, [], missing)) {
+        if (library) lines += f.lines;
+        read.set(f.file, f.code);
+      }
+    }
+    const sources = [...read].flatMap(([file, text]) => [...text.matchAll(SOURCE_MATCH)].map((m) => `${show(file)}:${lineAt(text, m.index)}`));
+    code.set(p.name, { lines, sources, missing: missing.map((m) => ({ at: `${show(m.file)}:${m.line}`, name: m.name })) });
+  }
+  return code;
+}
+
+/** The strongly connected groups of more than one node, largest first (Tarjan's algorithm). */
+export function cycles(nodes, edges) {
+  let next = 0;
+  const index = new Map();
+  const low = new Map();
+  const stack = [];
+  const onStack = new Set();
+  const groups = [];
+  const visit = (v) => {
+    index.set(v, next);
+    low.set(v, next++);
+    stack.push(v);
+    onStack.add(v);
+    for (const w of edges.get(v)?.keys() ?? []) {
+      if (!index.has(w)) {
+        visit(w);
+        low.set(v, Math.min(low.get(v), low.get(w)));
+      } else if (onStack.has(w)) low.set(v, Math.min(low.get(v), index.get(w)));
+    }
+    if (low.get(v) === index.get(v)) {
+      const group = [];
+      let w;
+      do {
+        w = stack.pop();
+        onStack.delete(w);
+        group.push(w);
+      } while (w !== v);
+      if (group.length > 1) groups.push(group.sort());
+    }
+  };
+  for (const v of nodes) if (!index.has(v)) visit(v);
+  return groups.sort((a, b) => b.length - a.length);
+}
+
+// ------------------------------------------------------------ the members
 
 /**
  * The members of a workspace from its `cargo metadata` (format 1):
@@ -106,10 +356,12 @@ function chains(from, edges) {
  * - `forbidden`, each `{ name, why, from: [names], to: [names], except?: ["a -> b"] }`;
  * - `wrappers`, each `{ crate, why, wrappers: [names] }`: the members that may
  *   depend on the external `crate`.
- * Returns `{ problems, stats }`; `sizes` (`Map<name, code lines>`) and
- * `sourceMatches` only go into `stats`.
+ * - `sourceMatches`, `{ exempt: [{ crate, why }, …], count }`: the matches of
+ *   `Source::Claude|Codex|Acp` in the members' code, the exempt crates aside;
+ * and each member's code (`code`, as {@link crateCode} reads it).
+ * Returns `{ problems, stats }`.
  */
-export function checkCrates(meta, config, { sizes = new Map(), sourceMatches } = {}) {
+export function checkCrates(meta, config, code = new Map()) {
   const problems = [];
   const all = members(meta);
   const layers = config.layers ?? [];
@@ -130,6 +382,16 @@ export function checkCrates(meta, config, { sizes = new Map(), sourceMatches } =
     if (!listed(m.name)) problems.push(`${m.manifest}: ${m.name} is a workspace member that layers.json neither places in a layer nor lists outside the layers`);
   }
   const waiting = [...placed.keys()].filter((name) => !all.has(name));
+  // What placed the server's modules while it held other crates' code.
+  if ("allowed" in config) problems.push("layers.json has `allowed`, the exceptions between the server's modules, which nothing reads: the server is the entry. Drop it");
+  for (const layer of layers) {
+    for (const c of layer.crates ?? []) {
+      if ("modules" in c) problems.push(`layers.json places modules in ${c.name} (\`modules\`), which nothing reads: every crate is a workspace member of its own. Drop it`);
+    }
+  }
+  for (const [name, c] of code) {
+    if (all.has(name)) for (const { at, name: module } of c.missing) problems.push(`${at}: mod ${module}; has no file`);
+  }
 
   // ------------------------------------------------------------ the layer rules
   const mayUse = (x, y) => {
@@ -236,6 +498,28 @@ export function checkCrates(meta, config, { sizes = new Map(), sourceMatches } =
     wrapped.push({ crate: w.crate, wrappers: [...may].filter((n) => all.has(n)) });
   }
 
+  // ------------------------------------------------------------ Source matches
+  // Outside the providers `Source` is only the key that picks one: a match
+  // anywhere else dispatches on a CLI by name.
+  const exempt = new Set();
+  for (const { crate, why } of config.sourceMatches?.exempt ?? []) {
+    if (!listed(crate)) problems.push(`sourceMatches exempts ${crate}, which layers.json does not list`);
+    if (!why?.trim()) problems.push(`sourceMatches exempts ${crate} without saying why`);
+    exempt.add(crate);
+  }
+  const sources = [...code].filter(([name]) => all.has(name) && !exempt.has(name)).flatMap(([, c]) => c.sources);
+  const recorded = config.sourceMatches?.count ?? 0;
+  if (sources.length !== recorded) {
+    const files = new Map();
+    for (const where of sources) files.set(where.split(":")[0], (files.get(where.split(":")[0]) ?? 0) + 1);
+    const list = [...files].sort((a, b) => b[1] - a[1]).map(([f, n]) => `${f} ${n}`).join(", ");
+    problems.push(
+      sources.length > recorded
+        ? `${sources.length} matches of Source::Claude|Codex|Acp outside the provider crates, more than the ${recorded} sourceMatches records: dispatch through the provider instead (${list})`
+        : `${sources.length} matches of Source::Claude|Codex|Acp outside the provider crates, fewer than the ${recorded} sourceMatches records: lower it to ${sources.length}`,
+    );
+  }
+
   // ------------------------------------------------------------ the numbers
   const dependents = new Map();
   for (const out of links.values()) for (const to of out) dependents.set(to, (dependents.get(to) ?? 0) + 1);
@@ -249,8 +533,8 @@ export function checkCrates(meta, config, { sizes = new Map(), sourceMatches } =
     cycle: cycles([...all.keys()], withTests)[0] ?? [],
     middle: [...placed.values()]
       .filter((c) => c.middle && all.has(c.name))
-      .map((c) => ({ crate: c.name, code: sizes.get(c.name) ?? 0, dependents: dependents.get(c.name) ?? 0 })),
-    sourceMatches,
+      .map((c) => ({ crate: c.name, code: code.get(c.name)?.lines ?? 0, dependents: dependents.get(c.name) ?? 0 })),
+    sourceMatches: sources.length,
   };
   return { problems, stats };
 }
@@ -269,17 +553,14 @@ function cargoMetadata(serverDir) {
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const serverDir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "server-rs");
   const config = JSON.parse(readFileSync(join(serverDir, "layers.json"), "utf8"));
-  const workspace = workspaceCrates(serverDir);
-  const sizes = new Map(workspace.map((w) => [w.name, w.lines]));
-  const { stats: moduleStats } = checkLayers(moduleGraph(serverDir, { crates: workspace.map((w) => w.name) }), config, workspace);
   let meta;
   try {
     meta = cargoMetadata(serverDir);
   } catch (error) {
-    console.error(`crate layers: cargo metadata cannot read server-rs/Cargo.toml:\n  ${error.message.split("\n").join("\n  ")}`);
+    console.error(`layers: cargo metadata cannot read server-rs/Cargo.toml:\n  ${error.message.split("\n").join("\n  ")}`);
     process.exit(1);
   }
-  const { problems, stats } = checkCrates(meta, config, { sizes, sourceMatches: moduleStats.sourceMatches });
+  const { problems, stats } = checkCrates(meta, config, crateCode(meta));
   if (process.argv.includes("--json")) {
     console.log(JSON.stringify({ ...stats, problems }, null, 2));
     process.exit(problems.length ? 1 : 0);
@@ -294,15 +575,16 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     `Source::Claude|Codex|Acp outside the provider crates: ${stats.sourceMatches}`,
   ];
   if (problems.length) {
-    console.error(`crate layers: ${problems.length} problem(s)`);
+    console.error(`layers: ${problems.length} problem(s)`);
     for (const p of problems) console.error(`  - ${p}`);
     console.error(
       "\nA crate depends on the crates its mayUse lists, and on the crates of the open layers below it " +
         "(server-rs/layers.json); nothing depends on the entry. Move the shared piece down to where both sides can reach it, " +
-        "or declare a port in the lower crate that the upper one implements.",
+        "or declare a port in the lower crate that the upper one implements. Outside the providers, dispatch on a Source " +
+        "through the provider registry.",
     );
     process.exit(1);
   }
-  console.log("crate layers: ok");
+  console.log("layers: ok");
   for (const line of summary) console.log(`  ${line}`);
 }

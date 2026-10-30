@@ -3494,10 +3494,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 name = "remote-hand-server"
 version = "0.2.135"
 dependencies = [
- "aes-gcm",
  "axum",
- "base64 0.22.1",
- "chrono",
  "clap",
  "droppen-accounts",
  "droppen-agent",
@@ -3517,20 +3514,15 @@ dependencies = [
  "droppen-provider-claude-code",
  "droppen-provider-codex",
  "droppen-pty",
- "droppen-search-path",
  "droppen-sessions",
  "droppen-setup",
  "droppen-supervisor",
  "droppen-workbench",
- "ed25519-dalek",
  "flate2",
  "futures-util",
  "gotcha",
  "gotcha_core",
- "hkdf",
- "hmac",
  "libc",
- "memchr",
  "mime_guess",
  "p256",
  "proc-macro2",
@@ -3544,11 +3536,8 @@ dependencies = [
  "rust-embed",
  "serde",
  "serde_json",
- "sha2 0.10.9",
- "subtle",
  "syn 2.0.119",
  "tempfile",
- "thiserror 1.0.69",
  "tokio",
  "tokio-tungstenite",
  "tokio-util",
@@ -3556,9 +3545,6 @@ dependencies = [
  "tower-http",
  "tower-service",
  "tracing",
- "tracing-subscriber",
- "uuid",
- "zeroize",
 ]
 
 [[package]]

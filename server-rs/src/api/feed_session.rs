@@ -454,7 +454,7 @@ async fn a_page_is_sent_the_count_and_never_the_words() {
     use droppen_provider::common::Phase;
     use std::time::Duration;
     // The crate's own shim hook is for its own tests: this binary's shim is the server's.
-    droppen_provider::testing::shims_run_as(crate::provider::with_providers::SHIMS);
+    droppen_provider::testing::shims_run_as(crate::provider_tests::SHIMS);
     let harness = Harness::ordinary_with(&thinks_until_released()).await;
     let prompt = format!(
         r#"{{"type":"user","uuid":"u-prompt","message":{{"role":"user","content":"think about it"}},"timestamp":"2026-10-10T00:00:00.000Z","cwd":"/tmp","sessionId":"{SESSION}"}}"#

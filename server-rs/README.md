@@ -21,17 +21,22 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 ## 布局
 
-每个子系统都是一个模块目录，对外只暴露 `routes` 与 `describe` 两个函数，在 `api/mod.rs`
-里各占一行注册；它的状态是一个 struct，在 `api::AppState` 上加一个字段。
+服务端 crate 只是入口：每个子系统都是 `crates/` 下自己的 crate，按 `layers.json` 给的层次依赖彼此。
+子系统的路由跑在它自己的状态上，在 `api/mod.rs` 里各占一行注册（大多是 `XxxState::routes`）；
+`api/state.rs` 是唯一知道 `AppState` 各字段的地方，从它造出每个子系统的状态。
 
 | 路径 | 负责 |
 | --- | --- |
-| `api/` | HTTP + websocket 表面：`AppState`、扁平的路由注册、错误体、`Created`、返回 JSON 400 的抽取器 |
-| `app.rs` | 应用装配：config / state / routes / bind，以及取代 `GotchaApp::run` 的可停机 serve loop |
-| `provider/` | 需要真 provider 的底座测试（`with_providers`）；各 CLI 的 provider 都是自己的 crate，站在 `droppen-provider` 上 |
-| `accounts/` | 账号规则在入口构造的真实登录上的测试（`cli_tests`）；每个 CLI 在账号里的那一部分（登录、用量探测、Claude 的两个登录向导）在它的 provider 里：`crates/droppen-provider-claude-code/src/`、`crates/droppen-provider-codex/` |
-| `quota/` | 订阅额度面板 |
-| `notify/` | 会话自己决定「这件事值得打扰你」时走的推送通道（Bark），以及注进会话的 `rh-notify` 与 skill |
+| `api/` | 路由：每个子系统的路由各占一行注册、`AppState` 与它造出的各子系统状态（`state.rs`），以及要同时读几个子系统的会话列表、详情、会话 websocket 和设置 |
+| `app.rs` | 应用装配：config / state / routes / bind、本服务驱动的 CLI（`register_providers`、`transcript_sources`、`logins`）、一个 crate 声明而由另一个 crate 的类型回答的端口，以及取代 `GotchaApp::run` 的可停机 serve loop |
+| `stream_source.rs` | link 从本机会话复制的内容：agent 的 `StreamSource`，读会话与 drive 的实时状态 |
+| `cli.rs`、`cli/` | 命令行：一棵 clap 树；`export.rs` 是其中的 `export-openapi` |
+| `static_files.rs` | 打进二进制的前端 |
+| `desktop_app.rs` | 由桌面 app 启动的服务端 |
+| `shutdown.rs` | 让服务端停下的信号，以及停下时要收拾的东西 |
+| `provider_tests/` | 需要真 provider 的底座测试：在入口注册的 provider 上（`register_providers`），以及 spawn 闸门与运行的源码扫描 |
+| `accounts_tests/`、`setup_tests.rs` | 账号规则与首次使用向导在入口构造的真实登录上的测试（`logins`） |
+| `crates/droppen-notify/` | 服务端的两条提醒通道：会话自己决定「这件事值得打扰你」时走的 Bark，以及注进会话的 `rh-notify` 与 skill（`notify`）；服务端决定发的 Web Push 与同时转给 Bark 的分发（`push`） |
 | `crates/droppen-base/` | 各子系统都用、却不属于任何一个的底层工具：时钟（`time`）、文本编码（`text`）、只有本用户可读的文件（`fsutil`）、「文件里那个 pid 还是当初那个进程吗」的两道守卫（`procs`）、出站 webhook 的守卫（`outbound`）、读环境变量（`env`）、spawn 的环境与输出脱敏（`process_env`）、二进制的两个名字（`program`） |
 | `crates/droppen-instance/` | 实例的底座：各子系统共用的路径（`paths`）、一个服务端独占的实例目录与宣示所有权的 `flock`（`instance`）、改名也不变的服务端身份（`identity`），以及实例自己的 SQLite 状态库和只增不改的 schema（`db`） |
 | `crates/droppen-http/` | 每个路由模块都站在上面的 HTTP 工具：错误体与状态码、出错即 `400` 的提取器、`201`/`202` 响应、websocket 保活与限时发送、构建身份（`SERVER_VERSION`）、`substate!`；以及手工组装的配置加载器（`config`，带类型化默认值，loopback 8700）、OpenAPI 补丁（`openapi_ext`）和每个 `/api/*` 请求都要过的同源守卫（`origin`） |
@@ -41,7 +46,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 | `crates/droppen-workbench/` | 会话周围的窗格与布局：浏览器通过 websocket 驱动的 PTY（`terminals`）、每个 app 一个 code-server 及 iframe 用的 `/embed/{id}/*` 反向代理（`apps`，`apps/embed.rs`）、持久化分屏布局（`screens`）、界面偏好（`prefs`） |
 | `crates/droppen-plugins/` | 插件宿主：本实例装了哪些插件、哪些开着（配置 > 实例自己的决定 > 关）、它们的代码从哪里供给（`serve`，带实例级的能力密钥）、每个插件自己的文档存储（`store`）、安装包的校验（`install`）、`/api/plugins*`（`routes`）和 `plugin` 命令行（`cli`）；经 Droppen 进来的设备看不到任何插件 |
 | `crates/droppen-sessions/` | 会话本身：各处共用的会话词汇与线上数据形状、会话列表、未读与已读标记（`attention`，`…/seen` 路由在 `attention::routes`）、标题、置顶、归档、本实例的会话归属（`owned_sessions`）、`index.db`（`index`）、transcript 加载器（`loader`）和 token 用量统计（`stats`）；每个 CLI 的 transcript 都经 `Transcripts` 端口读，由各自 provider 里的读取器实现 |
-| `crates/droppen-accounts/` | 账号本身：服务端保存的多个登录（`store`）、会话从哪个账号启动、碰到限额换到哪个（`rotation`）、限额与休息（`limits`、`rest`）、本机自己的登录（`local_login`）、凭据保存前的验证（`verify`）、用量缓存与探测调度（`quota`）和 `/api/accounts*` 路由；与 CLI 有关的一切都经 `Login` 端口问各 CLI 的登录，由服务端 `accounts/` 实现 |
+| `crates/droppen-accounts/` | 账号本身：服务端保存的多个登录（`store`）、会话从哪个账号启动、碰到限额换到哪个（`rotation`）、限额与休息（`limits`、`rest`）、本机自己的登录（`local_login`）、凭据保存前的验证（`verify`）、用量缓存与探测调度（`quota`）和 `/api/accounts*` 路由；与 CLI 有关的一切都经 `Login` 端口问各 CLI 的登录，由各 CLI 的 provider 实现（`droppen-provider-claude-code`、`droppen-provider-codex` 的 `login`） |
 | `crates/droppen-provider/` | 各 CLI provider 共用的底座：`Provider` 与 `Run` 端口、provider 注册表、spawn 闸门与会话认领（`gate`）、运行日志（`runs`）与各 provider 的运行共用的宿主（`RunHost`）、会话 shim（`shim`）、排队、回执（`receipts`）、提问（`questions`）、草稿（`drafts`），以及模型列表的端口和路由（`models`）；`testing` 是给测试用的探针，只在 `test-support` 下 |
 | `crates/droppen-provider-acp/` | ACP agent 的 provider：用户配置的每个 ACP agent 及其路由（`agents`，内置预设在 `acp-agents.json`）、每个会话一个 agent 进程（`conn`、`client`、`driver`）、协议消息（`protocol`）、模型列表（`models`）和 transcript（`sessions`）；不点名任何具体 agent，由入口注册 |
 | `crates/droppen-provider-claude-code/` | Claude Code 的 provider：常驻驱动（`resident`）、模型列表（`models`）、会话读取器（`sessions`）、一次 spawn 跑在什么根目录下（`claude_roots`）、会话飞行记录器与它的 `replay` 子命令（`record`），以及它在账号里的那一部分：登录（`login`）、用量探测（`quota`）和两个登录向导（`setup_token`、`usage_login`） |
