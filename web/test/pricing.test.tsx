@@ -104,7 +104,7 @@ test("the pricing page leads with what you get, in zh-CN first", () => {
     "仅本地",
     "免费版",
     "无论身在何处，都能在手机上使用你的 AI。",
-    "包含免费版的全部功能，额度更高：",
+    "包含免费版的全部功能，额度更高。",
     "3 台可运行 AI 的设备",
     "20 台可运行 AI 的设备",
     "共 8 台设备，含可运行 AI 的设备、手机和浏览器",
@@ -134,7 +134,7 @@ test("in English, and every number on the page is a plan's own", () => {
   for (const line of [
     "Start free. Go Pro when you need more.",
     "Local only",
-    "Everything in Free, with higher limits:",
+    "Everything in Free, with higher limits.",
     `${free.hosts} devices that run AI`,
     `${pro.hosts} devices that run AI`,
     `${free.devices} devices in all, including those that run AI, phones and browsers`,

@@ -52,7 +52,7 @@ import { APP_PATH, publicLink, SECURITY_PATH, SIGN_UP_PATH, WAITLIST_HREF } from
 // Added, never overwriting: a key the app already translates keeps its wording.
 for (const [lng, bundle] of Object.entries(landingBundles)) i18n.addResourceBundle(lng, "translation", bundle, true, false);
 
-const headline = "font-normal text-balance text-fg [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all]";
+const headline = "font-normal text-balance text-fg [word-break:auto-phrase] md:[&:lang(zh)]:[word-break:keep-all]";
 
 /** The space before a link that follows a sentence: none after Chinese or Japanese punctuation. */
 const gapBefore = (language: string) => (/^(zh|ja)/.test(language) ? "" : " ");
@@ -76,10 +76,10 @@ function Hero({
   const { t } = useTranslation();
   return (
     <div className="flex flex-col px-10 pt-16 pb-12 max-lg:pt-12 max-md:px-4 max-md:pt-10 max-md:pb-8">
-      <h1 className="mb-6 max-w-[14em] text-5xl leading-display font-normal tracking-tighter text-balance text-fg [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-md:text-4xl">
+      <h1 className="mb-6 max-w-[14em] text-5xl leading-display font-normal tracking-tighter text-balance text-fg [word-break:auto-phrase] md:[&:lang(zh)]:[word-break:keep-all] max-md:text-4xl">
         {t("Your computer's AI, from your phone.")}
       </h1>
-      <p className="max-w-[36em] leading-6 text-pretty text-muted [overflow-wrap:anywhere] [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all]">
+      <p className="max-w-[36em] leading-6 text-pretty text-muted [overflow-wrap:anywhere] [word-break:auto-phrase] md:[&:lang(zh)]:[word-break:keep-all]">
         {t("Claude Code and Codex keep running on your own computers. From a browser on your phone or another device, answer their questions, steer them and open a terminal on the computer.")}
       </p>
       {/* The way onto this device, and the account's way in (signed in: back into the app). */}
@@ -157,7 +157,7 @@ function Features() {
           >
             <div className="flex items-center gap-2.5">
               <Icon className="size-5 shrink-0 text-fg" />
-              <h3 className="text-base leading-6 font-semibold text-fg">{title}</h3>
+              <h3 className="text-base leading-6 font-semibold text-fg [&:lang(en)]:text-balance [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all]">{title}</h3>
             </div>
             <span className="text-sm leading-6 text-pretty text-muted">{body}</span>
           </li>
@@ -208,7 +208,7 @@ function Security() {
           <li key={title} className={cn("flex flex-col gap-2.5 px-6 py-7 max-md:px-4", i > 0 && "border-border max-md:border-t md:border-l")}>
             <div className="flex items-center gap-2.5">
               <Icon className="size-5 shrink-0 text-fg" />
-              <h3 className="text-base leading-6 font-semibold text-fg">{title}</h3>
+              <h3 className="text-base leading-6 font-semibold text-fg [&:lang(en)]:text-balance [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all]">{title}</h3>
             </div>
             <span className="text-sm leading-6 text-pretty text-muted">
               {body}
@@ -314,7 +314,7 @@ export default function LandingPage({
     };
   }, [offer, cpu]);
   return (
-    <div data-testid="landing" className="h-full w-full overflow-y-auto bg-bg text-base [scrollbar-gutter:stable]">
+    <div data-testid="landing" className="h-full w-full overflow-x-hidden overflow-y-auto bg-bg text-base [scrollbar-gutter:stable]">
       <PublicHeader signedIn={signedIn} />
       <div className="md:px-8">
         <main className="mx-auto max-w-[1360px] md:border-x md:border-border">

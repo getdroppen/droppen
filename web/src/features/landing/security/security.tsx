@@ -59,7 +59,7 @@ export const RENEWAL_PARTS = ["renewal-why", "renewal-entry", "renewal-staging",
 const prose = "max-w-[46em] text-base text-muted";
 
 /** Below xl the 44px contents bar sits under the 56px header; an anchor stops below both. */
-const sectionScroll = "max-xl:scroll-mt-[6.25rem]";
+const sectionScroll = "max-xl:scroll-mt-[6.5rem]";
 
 /** A section's head, with this page's 16px reading size for its lead (the shared head's is 14px). */
 function Head(props: ComponentProps<typeof SectionHead>) {
@@ -234,7 +234,7 @@ function Chip({ children }: { children: ReactNode }) {
 /** One mechanism: its number and name on the left (above, when narrow), what it does on the right; `#t2-6` and the like unless it has an id of its own. */
 function Topic({ id, n, title, children }: { id?: string; n: string; title: string; children: ReactNode }) {
   return (
-    <div id={id ?? `t${n.replace(".", "-")}`} className="grid scroll-mt-14 border-t border-border lg:grid-cols-[minmax(0,1fr)_minmax(0,2.4fr)]">
+    <div id={id ?? `t${n.replace(".", "-")}`} className={cn("grid scroll-mt-14 border-t border-border lg:grid-cols-[minmax(0,1fr)_minmax(0,2.4fr)]", sectionScroll)}>
       <div className="flex gap-3 px-6 pt-6 max-md:px-4 max-md:pt-5 lg:pb-6">
         <span className="w-7 shrink-0 text-xs font-semibold leading-5 text-faint tabular-nums">{n}</span>
         <h3 className="text-base leading-6 font-semibold text-balance text-fg">{withConcepts(title)}</h3>
@@ -552,7 +552,7 @@ function TocBar({ scroller }: { scroller: RefObject<HTMLDivElement | null> }) {
   const current = entries.find((e) => e.id === active) ?? entries[0]!;
   const index = entries.findIndex((e) => e.id === current.id);
   return (
-    <div data-security-toc-bar className="sticky top-14 z-30 border-b border-border bg-bg xl:hidden">
+    <div data-security-toc-bar className="sticky top-14 z-40 border-b border-border bg-bg xl:hidden">
       <BaseDialog.Root open={open} onOpenChange={setOpen}>
         <BaseDialog.Trigger
           data-testid="security-toc-trigger"
@@ -1165,9 +1165,19 @@ export default function SecurityPage({ signedIn = false }: { signedIn?: boolean 
   useDocumentMeta();
   const scrollRef = useRef<HTMLDivElement>(null);
   // Arrived at a part of the page (`/security#renewal`): the page was not there to scroll to yet.
+  // Fonts swap in after that first scroll, so ask again once they have settled.
   useEffect(() => {
     const id = location.hash.slice(1);
-    if (id) requestAnimationFrame(() => document.getElementById(id)?.scrollIntoView());
+    if (!id) return;
+    const to = () => document.getElementById(id)?.scrollIntoView();
+    requestAnimationFrame(to);
+    let live = true;
+    void document.fonts?.ready.then(() => {
+      if (live) to();
+    });
+    return () => {
+      live = false;
+    };
   }, []);
   return (
     <div ref={scrollRef} data-testid="security" className="h-full w-full overflow-y-auto bg-bg text-base [scrollbar-gutter:stable]">

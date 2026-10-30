@@ -109,6 +109,7 @@ function Steps({ items, testId, stack = false }: { items: { title: string; body:
               : cn(
                   "max-sm:border-b max-sm:last:border-b-0",
                   "sm:max-lg:[&:nth-child(2n)]:border-l sm:max-lg:[&:not(:nth-last-child(-n+2))]:border-b",
+                  items.length % 2 === 1 && "sm:max-lg:[&:nth-child(2)]:border-b",
                   i > 0 && "lg:border-l",
                 ),
           )}
@@ -486,12 +487,12 @@ function Environments({
             key={value}
             value={value}
             data-testid={`os-${value}`}
-            className="group relative flex h-12 shrink-0 items-center gap-2 text-base text-muted outline-none hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent data-[active]:font-semibold data-[active]:text-fg"
+            className="group relative flex h-12 shrink-0 items-center gap-2 text-base text-muted hover:text-fg data-[active]:font-semibold data-[active]:text-fg"
           >
             <Icon aria-hidden="true" className="size-4 shrink-0" />
             {label}
             {value === marked && (
-              <span data-testid="detected" className="border border-border px-1.5 text-xs font-semibold leading-4 font-normal text-muted max-[360px]:hidden">
+              <span data-testid="detected" className="border border-border px-1.5 text-xs font-semibold leading-4 font-normal text-muted max-[400px]:hidden">
                 {t("Detected")}
               </span>
             )}
@@ -501,7 +502,7 @@ function Environments({
         ))}
       </BaseTabs.List>
       {tabs.map(({ os: value }) => (
-        <BaseTabs.Panel key={value} value={value} data-testid={`panel-${value}`} className="outline-none">
+        <BaseTabs.Panel key={value} value={value} tabIndex={-1} data-testid={`panel-${value}`}>
           {value === "macos-app" && (
             <>
               {/* Both ways, side by side: no switch to find, and nothing hidden behind one. */}
@@ -757,10 +758,10 @@ export default function DownloadPage({
       <div className="md:px-8">
         <main className="mx-auto max-w-[1360px] md:border-x md:border-border">
           <div className="flex flex-col gap-5 px-10 pt-16 pb-10 max-lg:pt-12 max-md:px-4 max-md:pt-10 max-md:pb-8">
-            <h1 className="max-w-[18em] text-5xl leading-display font-normal tracking-tight text-balance text-fg [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-md:text-4xl xl:text-5xl">
+            <h1 className="max-w-[18em] text-5xl leading-display font-normal tracking-tight text-balance text-fg [word-break:auto-phrase] md:[&:lang(zh)]:[word-break:keep-all] max-md:text-4xl xl:text-5xl">
               {t("Install Droppen on the device that runs your AI.")}
             </h1>
-            <p className="max-w-[40em] text-base leading-6 text-pretty text-muted [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-md:text-sm max-md:leading-6">
+            <p className="max-w-[40em] text-base leading-6 text-pretty text-muted [word-break:auto-phrase] md:[&:lang(zh)]:[word-break:keep-all] max-md:text-sm max-md:leading-6">
               {t(
                 "Droppen goes on the Mac or Linux device where Claude Code or Codex runs, alongside them. Your phone and other devices need nothing installed: open {{app}} in the browser to see every session, answer your AI's questions, steer it and open a terminal.",
                 { app: appHost() },

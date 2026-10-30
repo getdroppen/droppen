@@ -400,7 +400,7 @@ function Tools({ block, legendId, showLegend, onLegend }: { block: BlockId; lege
                 tabIndex={view === party ? 0 : -1}
                 onClick={() => choose(party)}
                 className={cn(
-                  "-ml-px h-6 border border-border-strong px-1.5 text-xs leading-none text-muted first:ml-0 hover:text-fg focus-visible:relative focus-visible:-outline-offset-2",
+                  "-ml-px h-6 border border-border-strong px-1.5 text-xs leading-none text-muted first:ml-0 hover:text-fg focus-visible:relative focus-visible:z-10 pointer-coarse:h-11",
                   view === party && "border-fg bg-fg text-bg hover:text-bg",
                 )}
               >

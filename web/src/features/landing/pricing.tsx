@@ -199,7 +199,7 @@ function Plans({ signedIn, signup, onChoose }: { signedIn: boolean; signup: Sign
             </a>
           }
           aside={<span className="text-xs font-semibold leading-4 text-faint">{t("Payments are not open yet: we'll e-mail you when they are.")}</span>}
-          lead={t("Everything in Free, with higher limits:")}
+          lead={t("Everything in Free, with higher limits.")}
           points={[
             t("{{n}} devices that run AI", { n: pro.hosts }),
             t("{{n}} devices in all, including those that run AI, phones and browsers", { n: pro.devices }),
@@ -452,7 +452,7 @@ export default function PricingPage({
       <div className="md:px-8">
         <main className="mx-auto max-w-[1360px] md:border-x md:border-border">
           <div className="flex flex-col gap-5 px-10 pt-16 pb-10 max-lg:pt-12 max-md:px-4 max-md:pt-10 max-md:pb-8">
-            <h1 className="max-w-[18em] text-5xl leading-display font-normal tracking-tighter text-balance text-fg [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-md:text-4xl">
+            <h1 className="max-w-[18em] text-5xl leading-display font-normal tracking-tighter text-balance text-fg [word-break:auto-phrase] md:[&:lang(zh)]:[word-break:keep-all] max-md:text-4xl">
               {t("Start free. Go Pro when you need more.")}
             </h1>
             <p className="max-w-[40em] text-base leading-6 text-muted">

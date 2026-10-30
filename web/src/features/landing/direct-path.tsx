@@ -362,17 +362,16 @@ export function DirectPath() {
   ];
   return (
     <div ref={root} data-path="direct" className="flex h-full flex-col">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border px-6 py-3 max-md:px-4">
-        <div role="tablist" aria-label={t("measured on")} className="flex h-9 border border-border-strong">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border px-6 py-3 max-md:px-4 max-[360px]:px-3">
+        <div role="group" aria-label={t("measured on")} className="flex h-9 border border-border-strong">
           {scenarios.map((s) => (
             <button
               key={s.id}
               type="button"
-              role="tab"
-              aria-selected={scenario === s.id}
+              aria-pressed={scenario === s.id}
               onClick={() => setScenario(s.id)}
               className={cn(
-                "flex items-center border-r border-border px-3 text-xs font-semibold last:border-r-0",
+                "flex shrink-0 items-center border-r border-border px-3 text-xs font-semibold whitespace-nowrap last:border-r-0 max-[360px]:px-2",
                 scenario === s.id ? "bg-fg text-bg" : "text-muted hover:text-fg",
               )}
             >
@@ -496,7 +495,7 @@ export function DirectPath() {
       </Stage>
       {/* Fixed height and a fixed-width count: a status that changes length moves nothing on the page. */}
       {/* Fixed height and a fixed-width count: a status that changes length moves nothing on the page. */}
-      <div className="grid h-10 grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-t border-border px-6 max-md:h-14 max-md:px-4">
+      <div className="grid h-10 grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-t border-border px-6 max-md:h-14 max-md:px-4 max-[360px]:px-3">
         <span
           ref={status}
           data-tone="ok"

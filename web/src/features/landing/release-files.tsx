@@ -97,9 +97,9 @@ export function LinuxTarballs({
       {t("Or download it:")}{" "}
       {files.map((file, i) => (
         <Fragment key={file.name}>
-          {i > 0 && " · "}
-          {/* A file's name is one token where the line is wide; below 360px it may wrap at a hyphen rather than push the card past the screen. */}
-          <span className="whitespace-nowrap max-[360px]:whitespace-normal">
+          {i > 0 && <span className="max-[360px]:hidden"> · </span>}
+          {/* A file's name is one token where the line is wide; below 360px each file takes its own row, so a long name has the full card width. */}
+          <span className="whitespace-nowrap max-[360px]:block max-[360px]:whitespace-normal">
             <a
               href={file.href}
               data-testid={`${testId}-file`}

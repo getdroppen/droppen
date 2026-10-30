@@ -65,7 +65,7 @@ export const pricingZhCN: Bundle = {
   "Waitlist": "等候名单",
   "or ${{price}} a year: save {{saving}}%": "或每年 ${{price}}，省 {{saving}}%",
   "Payments are not open yet: we'll e-mail you when they are.": "尚未开放付款，开放时我们会发邮件通知你。",
-  "Everything in Free, with higher limits:": "包含免费版的全部功能，额度更高：",
+  "Everything in Free, with higher limits.": "包含免费版的全部功能，额度更高。",
   "{{n}} GB a month through our servers, then billed by use, at full speed": "每月经我们的服务器转发 {{n}} GB，超出部分不限速，按量计费",
 
   // Compare
@@ -272,7 +272,7 @@ export const pricingZhTW: Bundle = {
   "Waitlist": "等候名單",
   "or ${{price}} a year: save {{saving}}%": "或每年 ${{price}}，省 {{saving}}%",
   "Payments are not open yet: we'll e-mail you when they are.": "尚未開放付款，開放時我們會寄信通知你。",
-  "Everything in Free, with higher limits:": "包含免費版的全部功能，額度更高：",
+  "Everything in Free, with higher limits.": "包含免費版的全部功能，額度更高。",
   "{{n}} GB a month through our servers, then billed by use, at full speed": "每月經我們的伺服器轉送 {{n}} GB，超出部分不限速，按用量計費",
 
   "Compare": "比較",
@@ -476,7 +476,7 @@ export const pricingJa: Bundle = {
   "Waitlist": "ウェイトリスト",
   "or ${{price}} a year: save {{saving}}%": "年払いなら ${{price}}（{{saving}}% お得）",
   "Payments are not open yet: we'll e-mail you when they are.": "お支払いはまだ受け付けていません。始まったらメールでお知らせします。",
-  "Everything in Free, with higher limits:": "無料プランのすべての機能を、より大きな上限で：",
+  "Everything in Free, with higher limits.": "無料プランのすべての機能を、より大きな上限で。",
   "{{n}} GB a month through our servers, then billed by use, at full speed": "私たちのサーバー経由の転送は月 {{n}} GB。超えた分も速度はそのままで、従量課金",
 
   "Compare": "比較",

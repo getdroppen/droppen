@@ -30,8 +30,8 @@ import { APP_PATH, publicLink, PRICING_PATH, PRIVACY_PATH, SECURITY_PATH, SIGN_I
  * the app's own 13px label, and the theme's `text-base` page does not borrow it.
  * `cn` drops the narrower size in favour of the page's 14px.
  */
-export const landingPrimary = cn(primary, "text-sm");
-export const landingSecondary = cn(secondary, "text-sm");
+export const landingPrimary = cn(primary, "h-auto min-h-9 py-1.5 text-sm");
+export const landingSecondary = cn(secondary, "h-auto min-h-9 py-1.5 text-sm");
 
 /** The two marks where a section's top line meets the frame. */
 export function Seam() {
@@ -88,27 +88,32 @@ export function CommandLine({ command, label, testId, primaryCopy = false }: { c
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
   return (
-    <div className="flex min-w-0 items-stretch border border-border-strong bg-raised max-sm:flex-col">
-      <code data-testid={testId} className="min-w-0 flex-1 px-3 py-2.5 font-mono text-xs leading-5 whitespace-pre-wrap text-fg select-all [overflow-wrap:anywhere]">
-        <span aria-hidden="true" className="mr-2 text-faint select-none">$</span>
-        {command}
-      </code>
-      <button
-        type="button"
-        data-variant={primaryCopy ? "primary" : undefined}
-        data-testid={testId ? `${testId}-copy` : undefined}
-        aria-label={label}
-        onClick={() => {
-          void navigator.clipboard?.writeText(command).then(() => {
-            setCopied(true);
-            setTimeout(() => setCopied(false), 1500);
-          });
-        }}
-        className={cn(primaryCopy ? landingPrimary : landingSecondary, "h-auto shrink-0 rounded-none border-0 max-sm:h-9 sm:border-l sm:border-border-strong")}
-      >
-        {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-        {copied ? t("copied") : label}
-      </button>
+    <div className="@container/command">
+      <div className="flex min-w-0 items-stretch border border-border-strong bg-raised @max-[30rem]/command:flex-col">
+        <code data-testid={testId} className="min-w-0 flex-1 px-3 py-2.5 font-mono text-xs leading-5 whitespace-pre-wrap text-fg select-all [overflow-wrap:anywhere]">
+          <span aria-hidden="true" className="mr-2 text-faint select-none">$</span>
+          {command}
+        </code>
+        <button
+          type="button"
+          data-variant={primaryCopy ? "primary" : undefined}
+          data-testid={testId ? `${testId}-copy` : undefined}
+          aria-label={copied ? t("copied") : label}
+          onClick={() => {
+            void navigator.clipboard?.writeText(command).then(() => {
+              setCopied(true);
+              setTimeout(() => setCopied(false), 1500);
+            });
+          }}
+          className={cn(
+            primaryCopy ? landingPrimary : landingSecondary,
+            "h-auto min-w-[11rem] shrink-0 justify-center rounded-none border-0 @max-[30rem]/command:h-9 @max-[30rem]/command:border-t @max-[30rem]/command:border-border-strong @min-[30rem]/command:border-l @min-[30rem]/command:border-border-strong",
+          )}
+        >
+          {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+          {copied ? t("copied") : label}
+        </button>
+      </div>
     </div>
   );
 }

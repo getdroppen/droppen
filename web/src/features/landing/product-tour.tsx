@@ -240,7 +240,7 @@ export function ProductTour() {
   const now = copy[active];
   return (
     <div data-testid="product-tour">
-      <div role="tablist" aria-label={t("What Droppen looks like")} onKeyDown={onKey} className="relative grid grid-cols-6 border-b border-border max-md:flex max-md:overflow-x-auto max-md:[scrollbar-width:none]">
+      <div role="tablist" aria-label={t("What Droppen looks like")} onKeyDown={onKey} className="relative grid grid-cols-6 border-b border-border max-lg:flex max-lg:overflow-x-auto max-lg:[scrollbar-width:none]">
         {order.map((tab, i) => {
           const on = tab === active;
           return (
@@ -256,7 +256,7 @@ export function ProductTour() {
               data-tab={tab}
               onClick={() => pick(tab)}
               className={cn(
-                "relative flex h-12 items-center justify-center px-4 text-base whitespace-nowrap transition-colors max-md:shrink-0 max-md:px-5",
+                "relative flex h-12 items-center justify-center px-4 text-base whitespace-nowrap transition-colors max-lg:shrink-0",
                 i > 0 && "border-l border-border",
                 on ? "bg-raised font-semibold text-fg" : "text-muted hover:text-fg",
               )}

@@ -539,7 +539,7 @@ test("the diagrams that carry content mark what is encrypted where: a padlock on
   assert.doesNotMatch(text(html), /\b[0-9a-f]{4} [0-9a-f]{4} [0-9a-f]{4}\b/);
   // The speed figure opens on the phone on 4G, the case its headline is about.
   const direct = html.slice(html.indexOf('data-diagram="direct"') - 3000, html.indexOf('data-diagram="direct"'));
-  assert.match(direct, /aria-selected="true"[^>]*>手机 · 4G 网络</);
+  assert.match(direct, /aria-pressed="true"[^>]*>手机 · 4G 网络</);
 });
 
 test("no region is named anywhere on the page: the relay is Droppen's, wherever it runs", () => {
