@@ -13065,7 +13065,6 @@ done
         let instance = InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
         let drive = Arc::new(crate::drive::Drive {
             auth: droppen_auth::Auth::new(&paths, &instance, &droppen_http::config::AuthSettings::default(), false, std::sync::Arc::new(crate::app::NotifyTokens)),
-            wizards: crate::accounts::setup_token::Captures::new(),
             injections: harness.injections.clone(),
             accounts: Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), crate::app::logins())),
             quota: Arc::new(droppen_accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins())),

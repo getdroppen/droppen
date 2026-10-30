@@ -195,7 +195,9 @@ impl FromRef<AppState> for QuotaState {
 impl FromRef<AppState> for TokenWizardState {
     fn from_ref(state: &AppState) -> Self {
         Self {
-            drive: state.drive.clone(),
+            paths: state.drive.paths.clone(),
+            accounts: state.drive.accounts.clone(),
+            wizards: state.wizards.clone(),
             terminals: state.terminals.clone(),
             app_window: state.window(),
         }
@@ -205,7 +207,7 @@ impl FromRef<AppState> for TokenWizardState {
 impl FromRef<AppState> for UsageLoginState {
     fn from_ref(state: &AppState) -> Self {
         Self {
-            drive: state.drive.clone(),
+            accounts: state.drive.accounts.clone(),
             terminals: state.terminals.clone(),
         }
     }

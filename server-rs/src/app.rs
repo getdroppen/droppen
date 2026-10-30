@@ -154,6 +154,7 @@ impl GotchaApp for RemoteHandApp {
                 plugins: droppen_plugins::Plugins::load(&paths, &plugins_config, Some(refresh.clone())),
                 chats: crate::chats::Chats::new(paths.clone()),
                 drive,
+                wizards: crate::accounts::setup_token::Captures::new(),
                 terminals: droppen_workbench::terminals::Registry::new(paths.clone(), instance.clone()),
                 apps: droppen_workbench::apps::Registry::new(paths.clone(), instance.clone()),
                 setup: crate::setup::Setup::new(paths.clone(), &logins),

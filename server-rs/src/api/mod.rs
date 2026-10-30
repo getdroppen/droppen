@@ -90,6 +90,9 @@ pub struct AppState {
     /// Accounts, injections, quota and composer preferences — the one field the
     /// process-driving subsystems add.
     pub drive: Arc<Drive>,
+    /// Every `claude setup-token` run this server has started, which the token
+    /// wizard's routes start, poll and finish.
+    pub wizards: Arc<crate::accounts::setup_token::Captures>,
     /// The ACP agents' runs, which their own routes check and stop agents
     /// through: found among the providers once, when this state is built.
     pub(crate) acp: Arc<crate::provider::acp::AcpRuns>,

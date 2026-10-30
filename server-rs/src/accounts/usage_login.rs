@@ -18,7 +18,6 @@ use gotcha::axum::extract::FromRef;
 use gotcha::{api, GotchaRouter, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
-use crate::drive::Drive;
 use droppen_http::created::Created;
 use droppen_http::error::ApiError;
 use droppen_http::extract::ApiPath;
@@ -26,7 +25,7 @@ use droppen_http::openapi_ext::{ExtraResponses, Optional};
 use droppen_base::process_env::{apply_env, claude_env, clean_env_bare, resolve_on_path};
 use droppen_workbench::terminals::{CreateSpec, Registry};
 
-use droppen_accounts::store::{Account, AccountKind, AccountPatch, AccountProvider};
+use droppen_accounts::store::{Account, AccountKind, AccountPatch, AccountProvider, AccountsStore};
 use droppen_accounts::{account_not_found, parse_auth_status, AccountInputExt, AccountsState};
 
 /// `POST /api/accounts/{id}/usage-login` response.
@@ -90,7 +89,7 @@ pub enum UsageLoginError {
 ///
 /// The api-key rejection comes first, deliberately: nothing is spawned and no
 /// directory is created for an account that can never have a login.
-pub async fn start(drive: &Arc<Drive>, terminals: &Arc<Registry>, account: &Account) -> Result<UsageLoginStarted, UsageLoginError> {
+pub async fn start(accounts: &AccountsStore, terminals: &Arc<Registry>, account: &Account) -> Result<UsageLoginStarted, UsageLoginError> {
     if let Some(refusal) = claude_oauth_refusal(account, "perform") {
         return Err(UsageLoginError::NotSupported(refusal));
     }
@@ -99,9 +98,9 @@ pub async fn start(drive: &Arc<Drive>, terminals: &Arc<Registry>, account: &Acco
     }
 
     let probe = |dir: Result<std::path::PathBuf, droppen_accounts::store::AccountError>| dir.map_err(|error| UsageLoginError::Probe(error.to_string()));
-    let config_dir = probe(drive.accounts.usage_config_dir(&account.id))?;
+    let config_dir = probe(accounts.usage_config_dir(&account.id))?;
     // An empty working directory, so the CLI adopts no project of the user's.
-    let cwd = probe(drive.accounts.usage_cwd(&account.id))?;
+    let cwd = probe(accounts.usage_cwd(&account.id))?;
     for dir in [&config_dir, &cwd] {
         tokio::fs::create_dir_all(dir)
             .await
@@ -126,8 +125,8 @@ pub async fn start(drive: &Arc<Drive>, terminals: &Arc<Registry>, account: &Acco
 /// What the usage-login route uses of the server's state.
 #[derive(Clone)]
 pub struct UsageLoginState {
-    /// Accounts and what a login's terminal is started with.
-    pub drive: Arc<Drive>,
+    /// The stored logins, and each account's probe directory a login runs in.
+    pub accounts: Arc<AccountsStore>,
     /// Every live web terminal; the login runs in one.
     pub terminals: Arc<Registry>,
 }
@@ -137,10 +136,10 @@ droppen_http::substate!(UsageLoginState);
 #[api(id = "start_usage_login", group = "accounts", summary = "Start an account's usage login")]
 pub async fn start_usage_login(State(state): State<UsageLoginState>, ApiPath(id): ApiPath<String>) -> Result<Created<UsageLoginStarted>, ApiError> {
     id.require_uuid()?;
-    let Some(account) = state.drive.accounts.get(&id).await else {
+    let Some(account) = state.accounts.get(&id).await else {
         return Err(ApiError::not_found("account not found"));
     };
-    match start(&state.drive, &state.terminals, &account).await {
+    match start(&state.accounts, &state.terminals, &account).await {
         Ok(started) => Ok(Created(started)),
         Err(UsageLoginError::NotSupported(message)) => Err(ApiError::conflict(message)),
         Err(error) => Err(ApiError::internal(error.to_string())),
