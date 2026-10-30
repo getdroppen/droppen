@@ -46,6 +46,20 @@ mod cloud_control;
 mod cloud_gateway;
 #[cfg(test)]
 mod cloud_routes;
+/// The drive's routes, a session's feed, the session feeds' socket, the
+/// session-list socket and the scheduled-task routes (`crate::drive::routes`,
+/// `crate::feed`, `crate::feed::mux`, `crate::feed::global`,
+/// `crate::schedule`) on the drive and the router the server builds.
+#[cfg(test)]
+mod drive_routes;
+#[cfg(test)]
+mod feed_global;
+#[cfg(test)]
+mod feed_mux;
+#[cfg(test)]
+mod feed_session;
+#[cfg(test)]
+mod schedule_routes;
 
 /// The plugin routes (`droppen_plugins::routes`) and the plugin assets
 /// (`droppen_plugins::serve`), through the router as the server builds it.
