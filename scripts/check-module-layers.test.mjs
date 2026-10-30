@@ -63,8 +63,8 @@ describe("the module graph of a crate", () => {
   };
   write("Cargo.toml", '[package]\nname = "the-server"\n\n[workspace]\nmembers = [".", "crates/the-pty"]\n');
   write("crates/the-pty/Cargo.toml", '[package]\nname = "the-pty"\n\n[dependencies]\ndroppen-base = { path = "../droppen-base" }\n');
-  write("crates/the-pty/src/lib.rs", "pub mod ring;\npub fn f() {}\n#[cfg(test)]\nmod tests {\n}\n");
-  write("crates/the-pty/src/ring.rs", "// the ring\npub struct Ring;\n");
+  write("crates/the-pty/src/lib.rs", "pub mod ring;\npub fn f() {}\n#[cfg(test)]\nmod tests {\n    fn t() { let _ = Source::Claude; }\n}\n");
+  write("crates/the-pty/src/ring.rs", '// the ring, not Source::Acp\npub struct Ring;\npub fn pick() { let s = "Source::Acp"; match x { Source::Codex => 1 } }\n');
   write("src/lib.rs", "pub mod low;\npub mod high;\n#[cfg(test)]\nmod only_tests;\n");
   write("src/low.rs", "pub fn f() {}\nmod inner;\n#[cfg(test)]\nmod tests;\n");
   write("src/low/inner.rs", "use crate::high::H;\n");
@@ -93,9 +93,16 @@ describe("the module graph of a crate", () => {
     assert.deepEqual([...g.edges.get("cli").keys()], ["high"], "and not a module of this one");
   });
 
-  test("the workspace's other crates: their names, dependencies and code lines", () => {
+  test("the workspace's other crates: their names, dependencies, code lines and Source matches", () => {
     assert.deepEqual(workspaceCrates(root), [
-      { name: "the-pty", manifest: "crates/the-pty/Cargo.toml", dependencies: [{ name: "droppen-base", line: 5 }], lines: 3 },
+      {
+        name: "the-pty",
+        manifest: "crates/the-pty/Cargo.toml",
+        dependencies: [{ name: "droppen-base", line: 5 }],
+        lines: 4,
+        // The match in code; not the comment's, the string's or the test's.
+        sources: ["crates/the-pty/src/ring.rs:3"],
+      },
     ]);
   });
 
@@ -317,11 +324,34 @@ describe("the crate rules", () => {
   test("Source matches outside the provider crates only go down", () => {
     const uses = ["sessions -> time", "inject -> sessions"];
     const sources = { sessions: 2, "inject::resident": 5, inject: 1 };
-    const at = (count) => check(uses, { sources, sourceMatches: { providers: ["c-provider", "c-claude"], count } });
+    const exempt = [
+      { crate: "c-provider", why: "the provider base" },
+      { crate: "c-claude", why: "answers for Source::Claude" },
+    ];
+    const at = (count) => check(uses, { sources, sourceMatches: { exempt, count } });
     assert.deepEqual(at(2).problems, []);
     assert.equal(at(2).stats.sourceMatches, 2);
     assert.match(at(1).problems.join("\n"), /2 matches of Source::Claude\|Codex\|Acp outside the provider crates, more than the 1/);
     assert.match(at(3).problems.join("\n"), /fewer than the 3 sourceMatches records: lower it to 2/);
+  });
+
+  test("a crate that has left keeps its Source matches on the count, unless it is exempt", () => {
+    const crate = (name, sources) => ({ name, manifest: `crates/${name}/Cargo.toml`, dependencies: [], lines: 1, sources });
+    const workspace = [crate("c-pty", ["crates/c-pty/src/lib.rs:4"]), crate("c-claude", ["crates/c-claude/src/lib.rs:1", "crates/c-claude/src/lib.rs:2"])];
+    const exempt = [{ crate: "c-claude", why: "answers for Source::Claude" }];
+    const at = (count) => checkLayers(graph(["sessions -> time"], { sessions: 1 }, placed), { layers, allowed: [], sourceMatches: { exempt, count } }, workspace);
+    assert.deepEqual(at(2).problems, [], "the module's and the crate's, not the exempt crate's");
+    assert.equal(at(2).stats.sourceMatches, 2);
+    assert.match(at(1).problems.join("\n"), /2 matches of Source::Claude\|Codex\|Acp outside the provider crates, more than the 1 .*crates\/c-pty\/src\/lib\.rs 1/);
+  });
+
+  test("an exemption says why, and names a crate there is", () => {
+    const { problems } = check(["sessions -> time"], {
+      sourceMatches: { exempt: [{ crate: "c-claude" }, { crate: "c-nowhere", why: "no such crate" }], count: 0 },
+    });
+    const text = problems.join("\n");
+    assert.match(text, /sourceMatches exempts c-claude without saying why/);
+    assert.match(text, /sourceMatches exempts c-nowhere, which layers.json does not list/);
   });
 
   test("the numbers: the largest cycles, the middle crates, who is used most", () => {
