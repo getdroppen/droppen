@@ -1045,4 +1045,97 @@ mod tests {
             );
         }
     }
+
+    /// What the first-run guide runs never names a credential path: a scan of
+    /// the guide's files and of every function they call into, in whichever
+    /// crate it lives. Here, at the entry, because the entry is the one place
+    /// that sees them all by path.
+    mod credential_paths {
+        /// The credential paths the guide must never name outside a comment.
+        const CREDENTIAL_FRAGMENTS: [&str; 6] = [
+            ".credentials.json",
+            ".claude.json",
+            ".codex/auth.json",
+            "auth.json",
+            "find-generic-password",
+            "Claude Code-credentials",
+        ];
+
+        /// Every non-comment line of `code` that names a credential path.
+        fn credential_mentions(code: &str) -> Vec<String> {
+            code.lines()
+                .filter(|line| !line.trim_start().starts_with("//"))
+                .filter(|line| CREDENTIAL_FRAGMENTS.iter().any(|fragment| line.contains(fragment)))
+                .map(str::to_string)
+                .collect()
+        }
+
+        /// The source of `fn name` in `source`: from its signature to the brace
+        /// that closes its body.
+        fn function_source<'a>(source: &'a str, name: &str) -> &'a str {
+            let start = [format!("fn {name}("), format!("fn {name}<")]
+                .iter()
+                .find_map(|signature| source.find(signature.as_str()))
+                .unwrap_or_else(|| panic!("fn {name} is where the scan expects it"));
+            let open = start + source[start..].find('{').expect("a body");
+            let mut depth = 0usize;
+            for (offset, c) in source[open..].char_indices() {
+                match c {
+                    '{' => depth += 1,
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            return &source[start..open + offset + 1];
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            panic!("fn {name} ends")
+        }
+
+        /// The module promises it never opens a credential file. Words in comments
+        /// are how the promise is written down; anywhere else, a fragment of one of
+        /// these paths is a read waiting to happen. The promise covers what the
+        /// module calls into, too: the `claude auth status` parser, the plan label,
+        /// the codex app-server conversation and the terminal-text cleaner.
+        #[test]
+        fn no_source_the_module_runs_names_a_credential_path() {
+            let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+            let mut checked = 0;
+            for entry in std::fs::read_dir(src.join("setup")).expect("src/setup") {
+                let path = entry.expect("entry").path();
+                if path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
+                    continue;
+                }
+                let source = std::fs::read_to_string(&path).expect("source");
+                // The tests below spell the fragments out to check for them; the
+                // scan stops where a file's tests begin.
+                let code = source.split("#[cfg(test)]").next().unwrap_or_default();
+                assert_eq!(credential_mentions(code), Vec::<String>::new(), "{}", path.display());
+                checked += 1;
+            }
+            assert!(checked >= 6, "the scan found the module's files");
+
+            for (file, functions) in [
+                ("accounts/mod.rs", &["parse_auth_status"][..]),
+                ("../crates/droppen-base/src/text.rs", &["strip_ansi"][..]),
+                ("accounts/login/claude.rs", &["plan_label"][..]),
+                ("accounts/quota/codex.rs", &["app_server_call", "ask", "send", "reply"][..]),
+                ("accounts/login/codex.rs", &["app_server_call"][..]),
+                ("../crates/droppen-base/src/process_env.rs", &["apply_env"][..]),
+            ] {
+                let source = std::fs::read_to_string(src.join(file)).expect(file);
+                for name in functions {
+                    let body = function_source(&source, name);
+                    assert_eq!(credential_mentions(body), Vec::<String>::new(), "{file}: fn {name}");
+                }
+            }
+            assert_eq!(
+                credential_mentions("let path = home.join(\".codex/auth.json\");"),
+                ["let path = home.join(\".codex/auth.json\");"],
+                "the scan would see one"
+            );
+        }
+    }
 }
