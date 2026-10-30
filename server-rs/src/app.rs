@@ -157,6 +157,7 @@ impl GotchaApp for RemoteHandApp {
                 terminals: droppen_workbench::terminals::Registry::new(paths.clone(), instance.clone()),
                 apps: droppen_workbench::apps::Registry::new(paths.clone(), instance.clone()),
                 setup: crate::setup::Setup::new(paths.clone(), &logins),
+                listen_port: Arc::new(std::sync::OnceLock::new()),
                 paths,
                 instance,
                 started_at: Arc::from(iso8601(std::time::SystemTime::now()).as_str()),
@@ -357,7 +358,7 @@ impl RemoteHandApp {
         let link_settings = state.cloud.clone();
         let drive_for_link = state.drive.clone();
         let aggregator_switch = state.cloud.aggregator_switch();
-        let setup = state.setup.clone();
+        let listen_port = state.listen_port.clone();
         let cleanups = Cleanups {
             feeds: state.feeds.clone(),
             global: state.global.clone(),
@@ -407,8 +408,9 @@ impl RemoteHandApp {
         let addr = listener.local_addr().map_err(GotchaError::Io)?;
         // The address the desktop app's window is at, `127.0.0.1:<port>`, is
         // what the first-run guide's install routes check a request against
-        // (`http::app_window`).
-        setup.set_listen_port(addr.port());
+        // (`http::app_window`). Recorded once; until now nothing counted as
+        // the app's window.
+        let _ = listen_port.set(addr.port());
         // Same rule: the port file says where *the owner* is listening, and a
         // throwaway server writing its own would send every reader somewhere
         // that is about to stop existing.

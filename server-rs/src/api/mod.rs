@@ -122,6 +122,12 @@ pub struct AppState {
     pub desktop_app: bool,
     /// The first-run guide: tool detection and the children's `PATH`.
     pub setup: Arc<crate::setup::Setup>,
+    /// The port this server listens on, once it does: what a request from the
+    /// app's own window names as its `Host` and `Origin`. Filled once, by the
+    /// entry when its listener is bound; read by the desktop-window gate
+    /// through [`AppState::window`]. Until then, and in a server that never
+    /// binds, nothing counts as the app's window.
+    pub listen_port: Arc<std::sync::OnceLock<u16>>,
     /// How long one frame on any of this server's websockets may take to
     /// leave before its socket is given up on: [`SEND_LIMIT`](droppen_http::SEND_LIMIT), except in a test
     /// that cannot wait that long.
@@ -560,7 +566,7 @@ pub(crate) mod test_support {
             .layer(droppen_auth::layer(auth));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
         let addr = listener.local_addr().expect("addr");
-        state.setup.set_listen_port(addr.port());
+        let _ = state.listen_port.set(addr.port());
         tokio::spawn(async move {
             let _ = gotcha::axum::serve(listener, router.into_make_service_with_connect_info::<std::net::SocketAddr>()).await;
         });
