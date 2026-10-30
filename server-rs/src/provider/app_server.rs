@@ -480,14 +480,12 @@ pub(crate) struct CodexRuns {
 }
 
 impl CodexRuns {
-    /// None yet, on `host`, and in its session list from now on.
+    /// None yet, on `host`.
     pub(super) fn new(host: Arc<RunHost>) -> Arc<Self> {
         let runs = Arc::new(Self {
             host,
             codex_servers: Mutex::new(HashMap::new()),
         });
-        let listed: Arc<dyn ProviderRuns> = runs.clone();
-        runs.host.list(Source::Codex, Arc::downgrade(&listed));
         runs
     }
 }
@@ -504,6 +502,10 @@ impl std::ops::Deref for CodexRuns {
 }
 
 impl ProviderRuns for CodexRuns {
+    fn host(&self) -> &Arc<RunHost> {
+        &self.host
+    }
+
     fn add_to(&self, states: &mut DriverStatesBuilder) {
         self.codex_driver_states(states);
     }
@@ -576,6 +578,15 @@ impl Provider for Codex {
 
     fn run(&self) -> &dyn Run {
         self
+    }
+
+    fn runs(&self) -> Arc<dyn ProviderRuns> {
+        self.runs.clone()
+    }
+
+    // A thread switches accounts in place: its login is a binding, not a root.
+    fn continue_on_account<'a>(&'a self, _id: &'a str, _new_id: &'a str) -> BoxFuture<'a, Result<std::path::PathBuf, crate::provider::ContinueError>> {
+        Box::pin(std::future::ready(Err(crate::provider::ContinueError::Unsupported)))
     }
 
     fn models(&self) -> &dyn crate::models::Models {
@@ -663,7 +674,7 @@ impl Run for Codex {
         if self.runs.codex_handle(id).is_some_and(|handle| handle.visible()) {
             return false;
         }
-        self.runs.interrupt_legacy(Source::Codex, id)
+        self.runs.interrupt_legacy(&*self.runs, Source::Codex, id)
     }
 
     // Through the session's app server, or `codex archive` when it has none:
@@ -726,7 +737,7 @@ impl CodexRuns {
         self.run_injection(Source::Codex, id)
     }
 
-    /// Codex's part of [`super::RunHost::driver_states`]: the app servers
+    /// Codex's part of the session list's snapshot ([`ProviderRuns::add_to`]): the app servers
     /// the list is to show, and the state of every app server's run.
     pub(super) fn codex_driver_states(&self, states: &mut DriverStatesBuilder) {
         for (id, handle) in self.codex_servers.lock().unwrap().iter().filter(|(_, h)| h.visible()) {
@@ -1626,7 +1637,7 @@ impl Driver {
                                 self.record.session_id.clone(),
                                 injection.state,
                                 injection.error.0.clone(),
-                                self.registry.driver_states(),
+                                self.registry.driver_states_of(&*self.registry),
                             );
                         }
                     }
@@ -2805,13 +2816,15 @@ mod tests {
         }
     }
 
-    /// A session's app server is in the snapshot the injection registry takes
-    /// itself, which a turn's alert carries, as well as in the one the session
+    /// A session's app server is in the snapshot its driver hands a turn's
+    /// alert ([`RunHost::driver_states_of`]), as well as in the one the session
     /// list asks the providers for.
     #[tokio::test]
-    async fn a_codex_session_is_in_the_registrys_own_snapshot() {
+    async fn a_codex_session_is_in_its_turn_alert_s_snapshot() {
         let home = tempfile::tempdir().expect("tempdir");
         let (_path, registry) = fake_codex_registry(home.path(), "codex-snapshot");
+        let alerts = Arc::new(crate::provider::TurnAlerts::default());
+        registry.host.attach_alerts(alerts.clone());
         let providers = crate::provider::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
         let work = home.path().join("work");
         std::fs::create_dir_all(&work).expect("work");
@@ -2820,15 +2833,19 @@ mod tests {
             .codex_deliver(providers.gate(), None, Some(&work), "hello", &SendOptions::default(), None)
             .await
             .expect("a new thread");
-        assert!(registry.host.driver_states().resident(Source::Codex, &id).is_some(), "in the registry's snapshot");
         assert!(providers.driver_states().resident(Source::Codex, &id).is_some(), "in the providers' snapshot");
         let handle = codex(&providers).codex_handle(&id).expect("its app server");
         for _ in 0..500 {
-            if !handle.busy() {
+            if !handle.busy() && !alerts.seen().is_empty() {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
+        let seen = alerts.seen();
+        assert!(
+            seen.iter().any(|(source, alerted, resident)| *source == Source::Codex && *alerted == id && resident.is_some()),
+            "the turn's alert saw its app server: {seen:?}"
+        );
         retire(&handle).await.expect("retired");
     }
 

@@ -35,7 +35,7 @@ mod runs;
 pub mod shim;
 
 pub use common::{AnswerOutcome, Phase, QueueOutcome, Reply, ResidentState, StopTaskOutcome};
-pub use gate::{SpawnGate, SpawnPermit};
+pub use gate::{SessionLease, SpawnGate, SpawnPermit};
 pub use registry::{Capabilities, ContinueError, Provider, ProviderRegistry, Run, SendTo, StartAt};
 
 /// How often an adopted run's pid is probed.
@@ -513,10 +513,6 @@ pub struct RunHost {
     /// Only ever this process' own: everything keyed by it is in memory and
     /// dies with the registry. See [`RunHost::key_of`].
     server: ServerId,
-    /// Every provider's runs, by the source they run, which
-    /// [`Self::driver_states`] gathers: each listed itself as it was made
-    /// ([`ProviderRuns`]).
-    listed: Mutex<BTreeMap<Source, Weak<dyn ProviderRuns>>>,
     runs: Mutex<HashMap<String, Arc<RunEntry>>>,
     /// Where a resident's shim leaves its socket, stderr tail and tombstone.
     shim_dir: PathBuf,
@@ -558,9 +554,10 @@ pub struct RunHost {
     /// of a spawn; see [`Step`].
     #[cfg(test)]
     steps: Mutex<Vec<Step>>,
-    /// The spawn gate the steps are read off: the newest provider registry's
-    /// over this host ([`ProviderRegistry::new`]).
-    #[cfg(test)]
+    /// The spawn gate of the provider registry over this host, while that
+    /// registry lasts: one registry per host, as two would each run a part
+    /// of one source's sessions ([`Self::hold_gate`]). The steps are read off
+    /// it.
     gate: Mutex<Weak<gate::SpawnGate>>,
 }
 
@@ -614,6 +611,41 @@ pub trait Alerts: Send + Sync {
         trigger: droppen_sessions::account::RotationTrigger,
         text: String,
     );
+}
+
+/// The turn alerts a test's drivers raised, each with what its snapshot said
+/// of the alert's own session: its resident, if the snapshot had one.
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct TurnAlerts(Mutex<Vec<(Source, String, Option<droppen_sessions::ResidentInfo>)>>);
+
+#[cfg(test)]
+impl TurnAlerts {
+    /// Every turn alert so far, oldest first.
+    pub(crate) fn seen(&self) -> Vec<(Source, String, Option<droppen_sessions::ResidentInfo>)> {
+        self.0.lock().expect("turn alerts").clone()
+    }
+}
+
+#[cfg(test)]
+impl Alerts for TurnAlerts {
+    fn turn(&self, _paths: Arc<Paths>, source: Source, id: String, _outcome: InjectionRunState, _error: Option<String>, driver: droppen_sessions::DriverStates) {
+        let resident = driver.resident(source, &id);
+        self.0.lock().expect("turn alerts").push((source, id, resident));
+    }
+
+    fn question(&self, _paths: Arc<Paths>, _source: Source, _id: String, _question: String) {}
+
+    fn rotation(
+        &self,
+        _paths: Arc<Paths>,
+        _source: Source,
+        _id: String,
+        _outcome: droppen_sessions::account::RotationOutcome,
+        _trigger: droppen_sessions::account::RotationTrigger,
+        _text: String,
+    ) {
+    }
 }
 
 /// Whoever follows a session from outside the driver: the per-session feed and
@@ -690,7 +722,6 @@ impl RunHost {
             accounts,
             quota,
             server: ServerId::local(&paths),
-            listed: Mutex::new(BTreeMap::new()),
             runs: Mutex::new(HashMap::new()),
             shim_dir: instance.session_shims(),
             idle_timeout: env_ms("DROPPEN_IDLE_TIMEOUT_MS", Duration::from_secs(20 * 60)),
@@ -702,7 +733,6 @@ impl RunHost {
             drafts: drafts::Drafts::default(),
             #[cfg(test)]
             steps: Mutex::new(Vec::new()),
-            #[cfg(test)]
             gate: Mutex::new(Weak::new()),
             paths,
         })
@@ -793,7 +823,9 @@ impl RunHost {
             .map(|run| run.injection())
     }
 
-    /// Everything the session list needs from this subsystem, in one pass.
+    /// What `parts`' processes and the runs map say of their sessions, in one
+    /// pass: the session list's snapshot when `parts` are every provider's
+    /// runs ([`ProviderRegistry::driver_states`]).
     ///
     /// Taken once per listing rather than asked per row: a list of two hundred
     /// sessions would otherwise take the residents lock and the runs lock four
@@ -801,13 +833,9 @@ impl RunHost {
     /// on. Both registries are bounded by sessions this server process has
     /// driven, rather than by transcript or list rows, so the snapshot is cheap
     /// to make and cheap to carry.
-    pub fn driver_states(&self) -> droppen_sessions::DriverStates {
+    fn snapshot<'a>(&self, parts: impl IntoIterator<Item = &'a dyn ProviderRuns>) -> droppen_sessions::DriverStates {
         let mut states = DriverStatesBuilder::default();
-        // In [`Source`]'s order: Claude Code's, then Codex's, then ACP's.
-        // Taken out of the list first, so that no provider's lock is taken
-        // under it.
-        let listed: Vec<Arc<dyn ProviderRuns>> = self.listed.lock().expect("listed runs").values().filter_map(Weak::upgrade).collect();
-        for runs in listed {
+        for runs in parts {
             runs.add_to(&mut states);
         }
         // Last, so that where a run here and a CLI's own handle share a key,
@@ -818,23 +846,24 @@ impl RunHost {
         droppen_sessions::DriverStates::new(self.server.clone(), states.residents, states.running, states.finished)
     }
 
-    /// The runs `source`'s provider listed, while they last.
-    pub(crate) fn runs_of(&self, source: Source) -> Option<Arc<dyn ProviderRuns>> {
-        self.listed.lock().expect("listed runs").get(&source).and_then(Weak::upgrade)
+    /// The snapshot a driver of `runs` hands the alert for one of their
+    /// sessions' turns ([`Alerts::turn`]): `runs`' own processes and the runs
+    /// map, which is all the alert reads of that session. Taken synchronously
+    /// by the driver, as the alert asks.
+    pub(crate) fn driver_states_of(&self, runs: &dyn ProviderRuns) -> droppen_sessions::DriverStates {
+        self.snapshot([runs])
     }
 
-    /// Show `runs`, `source`'s, in every snapshot [`Self::driver_states`]
-    /// takes from now on, for as long as they last.
-    ///
-    /// One provider's runs per source: a second, while the first lasts, is
-    /// refused, as two would each hold a part of one source's sessions.
-    pub(crate) fn list(&self, source: Source, runs: Weak<dyn ProviderRuns>) {
-        let mut listed = self.listed.lock().expect("listed runs");
-        if listed.get(&source).is_some_and(|runs| runs.strong_count() > 0) {
-            drop(listed);
-            panic!("{source} runs are listed on this host already: one provider's runs per source");
+    /// Lend the spawn gate of the provider registry over this host: one at a
+    /// time, as two registries would each run a part of one source's
+    /// sessions. A second, while the first's gate lasts, is refused.
+    fn hold_gate(&self, gate: &Arc<gate::SpawnGate>) {
+        let mut held = self.gate.lock().expect("held gate");
+        if held.strong_count() > 0 {
+            drop(held);
+            panic!("a provider registry is over this host already: one per host");
         }
-        listed.insert(source, runs);
+        *held = Arc::downgrade(gate);
     }
 
     /// Stop a run in the runs map, which no resident drives: a one-shot run
@@ -844,7 +873,7 @@ impl RunHost {
     /// old rule applies: a pid that no longer names the run it was recorded for
     /// is *not* signalled, and the run is closed out as finished instead — see
     /// [`vanished`] for why that is the only safe direction.
-    pub(crate) fn interrupt_legacy(&self, source: Source, id: &str) -> bool {
+    pub(crate) fn interrupt_legacy(&self, runs: &dyn ProviderRuns, source: Source, id: &str) -> bool {
         // The handle is cloned out so the map lock is released first: the
         // fail-closed path below rewrites `runs.json` and unlinks a claim, and
         // neither belongs under a lock every route contends on.
@@ -857,8 +886,7 @@ impl RunHost {
         let Some(pid) = state.pid else { return false };
         if !procs::is_same_process(pid, state.pid_token.as_deref()) {
             tracing::info!(pid, session = %id, source = %source, "the run's pid is no longer its CLI; ending it instead of signalling");
-            let cli = self.runs_of(source).map_or("the CLI", |runs| runs.cli_name());
-            vanished(&mut state, cli, self.idle_timeout);
+            vanished(&mut state, runs.cli_name(), self.idle_timeout);
             let claim = release(self, &mut state);
             drop(state);
             drop(claim);
@@ -873,12 +901,16 @@ impl RunHost {
 }
 
 /// A provider's runs, kept by the provider rather than here: what the session
-/// list shows of them ([`RunHost::driver_states`]), and what becomes of a run
-/// of its CLI that the previous server left behind ([`InjectionRegistry::adopt_all`]).
+/// list shows of them ([`ProviderRegistry::driver_states`]), and what becomes
+/// of a run of its CLI that the previous server left behind
+/// ([`InjectionRegistry::adopt_all`]).
 ///
 /// The record each method is handed is one of this provider's own CLI: adoption
 /// hands each run to the provider of the source it names.
-pub(crate) trait ProviderRuns: Send + Sync {
+pub trait ProviderRuns: Send + Sync {
+    /// The host they run on.
+    fn host(&self) -> &Arc<RunHost>;
+
     /// Add its sessions' processes and the state of their runs to `states`.
     fn add_to(&self, states: &mut DriverStatesBuilder);
 
@@ -941,9 +973,9 @@ impl WrittenAt for Path {
 }
 
 /// The session list's view of the runs, gathered a CLI at a time; see
-/// [`RunHost::driver_states`].
+/// [`ProviderRuns::add_to`].
 #[derive(Default)]
-pub(crate) struct DriverStatesBuilder {
+pub struct DriverStatesBuilder {
     residents: HashMap<String, droppen_sessions::ResidentInfo>,
     running: std::collections::HashSet<String>,
     finished: HashMap<String, String>,
@@ -1014,14 +1046,9 @@ impl RunHost {
         self.watched_gate().is_some_and(|gate| gate.claim_held(source, id))
     }
 
-    /// Read the steps off `gate` from now on.
-    pub(crate) fn watch_gate(&self, gate: &Arc<gate::SpawnGate>) {
-        *self.gate.lock().expect("watched gate") = Arc::downgrade(gate);
-    }
-
     /// The gate the steps are read off, while its registry lasts.
     fn watched_gate(&self) -> Option<Arc<gate::SpawnGate>> {
-        self.gate.lock().expect("watched gate").upgrade()
+        self.gate.lock().expect("held gate").upgrade()
     }
 }
 
@@ -1068,7 +1095,11 @@ impl InjectionRegistry {
     /// ownership for the same reason terminal adoption is — `export-openapi`
     /// runs a throwaway server in-process, and a throwaway server must not
     /// claim a real one's runs.
-    pub async fn adopt_all(self: &Arc<Self>, gate: &gate::SpawnGate) -> Adopted {
+    ///
+    /// `by_source` is each source's provider's runs, as the provider registry
+    /// holds them ([`ProviderRegistry::adopt_all`]): each run goes to the
+    /// provider of the source it names.
+    pub(crate) async fn adopt_all(self: &Arc<Self>, gate: &gate::SpawnGate, by_source: &BTreeMap<Source, Arc<dyn ProviderRuns>>) -> Adopted {
         let mut report = Adopted::default();
         // Its claims need no gate because it runs once, before the server
         // listens: no send can race it.
@@ -1082,7 +1113,7 @@ impl InjectionRegistry {
             // left where it is. One of a source no runs are listed for has no
             // provider to take it back at all: this server was put together
             // without it.
-            let Some(runs) = self.host.runs_of(record.source) else {
+            let Some(runs) = by_source.get(&record.source).cloned() else {
                 tracing::error!(session = %record.session_id, source = %record.source, "no runs are listed for this run's source; that run will not be adopted");
                 continue;
             };
@@ -1150,8 +1181,7 @@ impl InjectionRegistry {
         // never take the answer. Those are expired here, once every survivor is
         // in the map, and stay answerable as an ordinary message. A survivor's
         // own questions are its driver's to settle when its replay ends.
-        let listed: Vec<Arc<dyn ProviderRuns>> = self.host.listed.lock().expect("listed runs").values().filter_map(Weak::upgrade).collect();
-        let held: std::collections::HashSet<String> = listed.iter().flat_map(|runs| runs.question_holders()).collect();
+        let held: std::collections::HashSet<String> = by_source.values().flat_map(|runs| runs.question_holders()).collect();
         let expired = self.host.questions.expire_unheld(&held, questions::now_ms());
         if expired > 0 {
             tracing::info!(
@@ -1627,7 +1657,7 @@ mod tests {
         for (source, session) in [(Source::Claude, CLAUDE), (Source::Codex, CODEX)] {
             let claim = providers.gate().lease(source, session).expect("a free session must be claimable");
             registry.clone().resume(
-                registry.host.runs_of(source).expect("the source's runs"),
+                providers.runs()[&source].clone(),
                 runs::RunRecord {
                     run_id: format!("run-{session}"),
                     source,
@@ -1732,7 +1762,7 @@ mod tests {
         assert!(handle.visible() && !handle.alive(), "listed, with no process behind it");
 
         let claim = providers.gate().lease(Source::Codex, SESSION).expect("a free session must be claimable");
-        registry.clone().resume(registry.host.runs_of(Source::Codex).expect("Codex's runs"), adopted, claim);
+        registry.clone().resume(providers.runs()[&Source::Codex].clone(), adopted, claim);
 
         assert!(!providers.interrupt(Source::Codex, SESSION), "nothing is left to stop");
         tokio::time::sleep(Duration::from_millis(300)).await;
@@ -1812,6 +1842,11 @@ mod tests {
     /// The providers over a fresh instance in `home`, as the server builds
     /// them, and the injection registry under them.
     fn adopting(home: &std::path::Path) -> (Arc<Paths>, Arc<InjectionRegistry>, Arc<ProviderRegistry>) {
+        adopting_with(home, crate::app::register_providers)
+    }
+
+    /// [`adopting`], with the providers `register` adds.
+    fn adopting_with(home: &std::path::Path, register: fn(&mut ProviderRegistry, &Arc<InjectionRegistry>)) -> (Arc<Paths>, Arc<InjectionRegistry>, Arc<ProviderRegistry>) {
         let paths = Arc::new(Paths::new(home.to_path_buf()));
         let dirs = InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
         dirs.create().expect("instance dirs");
@@ -1823,7 +1858,7 @@ mod tests {
             Arc::new(droppen_accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins())),
             decoration,
         );
-        let providers = ProviderRegistry::new(registry.clone(), crate::app::register_providers);
+        let providers = ProviderRegistry::new(registry.clone(), register);
         (paths, registry, providers)
     }
 
@@ -1905,5 +1940,28 @@ mod tests {
         assert!(adopted.is_empty(), "{adopted:?}");
         assert!(registry.host.steps().is_empty(), "nothing was claimed or buried: {:?}", registry.host.steps());
         assert_eq!(registry.host.journal.raw().len(), 2, "both rows stay as they were");
+    }
+
+    /// A row of a source no provider is registered for is adopted by no one,
+    /// for want of runs to hand it to: nothing claims its session or buries
+    /// it, and it stays where it is.
+    #[tokio::test]
+    async fn a_row_of_a_source_no_provider_runs_is_left_where_it_is() {
+        const CODEX: &str = "0199c1a1-7777-4777-8777-777777777777";
+        let home = tempfile::tempdir().expect("tempdir");
+        let (_paths, registry, providers) = adopting_with(home.path(), |providers, injections| {
+            providers.register(Arc::new(crate::provider::claude_code::resident::ClaudeCode::new(injections.clone())));
+        });
+        let row = serde_json::json!({
+            "run_id": "run-codex", "source": "codex", "session_id": CODEX, "cwd": "/work", "cli_pid": gone(),
+            "started_at": "2026-01-01T00:00:00.000Z", "pid_token": null, "resident": false, "shim": null,
+            "fingerprint": null, "turn_at": null, "queued": [],
+        });
+        registry.host.journal.insert_raw("run-codex", CODEX, &row.to_string());
+
+        let adopted = providers.adopt_all().await;
+        assert!(adopted.is_empty(), "{adopted:?}");
+        assert!(registry.host.steps().is_empty(), "nothing was claimed or buried: {:?}", registry.host.steps());
+        assert_eq!(registry.host.journal.raw().len(), 1, "the row stays as it was");
     }
 }

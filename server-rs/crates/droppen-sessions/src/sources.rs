@@ -48,9 +48,7 @@ pub trait Transcripts: Send + Sync {
     /// The Claude root session `id`'s transcript is in, found as
     /// [`Self::find_file`] finds it, or `None` when there is no such session.
     /// A CLI whose sessions live in no Claude root answers `None`.
-    fn find_root<'a>(&'a self, _paths: &'a Paths, _id: &'a str) -> BoxFuture<'a, Option<ClaudeRoot>> {
-        Box::pin(std::future::ready(None))
-    }
+    fn find_root<'a>(&'a self, paths: &'a Paths, id: &'a str) -> BoxFuture<'a, Option<ClaudeRoot>>;
 
     /// The items the session view draws, read from the transcript at
     /// `file_path`.
@@ -396,6 +394,11 @@ pub(crate) mod test_reader {
         }
 
         fn find<'a>(&'a self, _paths: &'a Paths, _id: &'a str) -> BoxFuture<'a, Option<SessionSummary>> {
+            Box::pin(std::future::ready(None))
+        }
+
+        // A stand-in finds no session, so none has a root.
+        fn find_root<'a>(&'a self, _paths: &'a Paths, _id: &'a str) -> BoxFuture<'a, Option<droppen_instance::paths::ClaudeRoot>> {
             Box::pin(std::future::ready(None))
         }
 

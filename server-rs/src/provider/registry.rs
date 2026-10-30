@@ -14,7 +14,7 @@ use std::sync::Arc;
 use futures_util::future::BoxFuture;
 use tokio::sync::watch;
 
-use super::{drafts, AnswerOutcome, InjectError, InjectionRegistry, QueueOutcome, Reply, ResidentState, SendOptions, Sent, SpawnGate, StopTaskOutcome};
+use super::{drafts, AnswerOutcome, InjectError, InjectionRegistry, ProviderRuns, QueueOutcome, Reply, ResidentState, SendOptions, Sent, SpawnGate, StopTaskOutcome};
 use crate::models::Models;
 use droppen_sessions::{DriverStates, Injection, InjectionRunState, ResidentInfo, SessionSummary, Source};
 use droppen_http::error::ApiError;
@@ -29,6 +29,10 @@ pub trait Provider: Send + Sync {
 
     /// What it says about those sessions.
     fn run(&self) -> &dyn Run;
+
+    /// The runs it drives those sessions on, on its registry's host: what the
+    /// registry lists and adopts into for its source.
+    fn runs(&self) -> Arc<dyn ProviderRuns>;
 
     /// The models its CLI offers, and which efforts and permission modes it
     /// takes.
@@ -46,9 +50,7 @@ pub trait Provider: Send + Sync {
     /// has one to carry; every other provider refuses
     /// ([`ContinueError::Unsupported`]), its sessions switching accounts in
     /// place.
-    fn continue_on_account<'a>(&'a self, _id: &'a str, _new_id: &'a str) -> BoxFuture<'a, Result<PathBuf, ContinueError>> {
-        Box::pin(std::future::ready(Err(ContinueError::Unsupported)))
-    }
+    fn continue_on_account<'a>(&'a self, id: &'a str, new_id: &'a str) -> BoxFuture<'a, Result<PathBuf, ContinueError>>;
 }
 
 /// Why a session could not be continued on an account
@@ -215,8 +217,7 @@ impl ProviderRegistry {
     /// place that names every provider; a test passes the same function.
     pub fn new(injections: Arc<InjectionRegistry>, register: impl FnOnce(&mut ProviderRegistry, &Arc<InjectionRegistry>)) -> Arc<Self> {
         let gate = Arc::new(SpawnGate::new(injections.host.paths.data_dir().join("inject-locks")));
-        #[cfg(test)]
-        injections.host.watch_gate(&gate);
+        injections.host.hold_gate(&gate);
         let mut registry = Self {
             providers: BTreeMap::new(),
             injections: injections.clone(),
@@ -226,13 +227,12 @@ impl ProviderRegistry {
         Arc::new(registry)
     }
 
-    /// Add `provider` under its own source, which its runs are listed under
-    /// on the host. A host lists one provider's runs per source
-    /// ([`RunHost::list`](super::RunHost::list)), so a second provider for a
-    /// source is refused when its runs are made, before it gets here.
+    /// Add `provider` under its own source: one per source, its runs on this
+    /// registry's host.
     pub fn register(&mut self, provider: Arc<dyn Provider>) {
         let source = provider.source();
-        assert!(self.injections.host.runs_of(source).is_some(), "the {source} provider's runs are not listed under {source}");
+        assert!(Arc::ptr_eq(provider.runs().host(), &self.injections.host), "the {source} provider's runs are on another host than this registry's");
+        assert!(!self.providers.contains_key(&source), "a {source} provider is registered already: one per source");
         self.providers.insert(source, provider);
     }
 
@@ -245,7 +245,12 @@ impl ProviderRegistry {
     /// Re-attach to every run the previous server left behind; see
     /// [`InjectionRegistry::adopt_all`].
     pub async fn adopt_all(&self) -> super::Adopted {
-        self.injections.adopt_all(&self.gate).await
+        self.injections.adopt_all(&self.gate, &self.runs()).await
+    }
+
+    /// Each source's provider's runs.
+    pub(super) fn runs(&self) -> BTreeMap<Source, Arc<dyn ProviderRuns>> {
+        self.providers.iter().map(|(source, provider)| (*source, provider.runs())).collect()
     }
 
     /// Every source a provider is registered for, in [`Source`]'s order.
@@ -326,10 +331,11 @@ impl ProviderRegistry {
             .is_some_and(|info| info.queued_messages.iter().any(|message| message.id == qid))
     }
 
-    /// Everything the session list needs from the runs, in one pass; see
-    /// [`super::RunHost::driver_states`].
+    /// Everything the session list needs from every provider's runs, in
+    /// [`Source`]'s order, and from the runs map, in one pass.
     pub fn driver_states(&self) -> DriverStates {
-        self.injections.host.driver_states()
+        let runs = self.runs();
+        self.injections.host.snapshot(runs.values().map(|runs| &**runs))
     }
 
     /// See [`Run::draft_watch`]; `None` for a source with no provider.
@@ -543,38 +549,59 @@ mod tests {
         .unwrap_or_else(|error| panic!("a session row: {error}"))
     }
 
-    /// Each provider runs its sessions on the runs its host lists and adopts
-    /// into, not on runs of its own that nothing lists or adopts.
-    #[test]
-    fn each_provider_runs_on_the_runs_its_host_adopts_into() {
-        let home = tempfile::tempdir().expect("tempdir");
-        let providers = providers(home.path());
-        let listed = |source| providers.injections.host.runs_of(source).expect("listed");
-        let codex = providers.provider::<crate::provider::app_server::Codex>().expect("Codex");
-        assert!(std::ptr::addr_eq(Arc::as_ptr(codex.runs()), Arc::as_ptr(&listed(Source::Codex))), "Codex's");
-        let claude = providers.provider::<crate::provider::claude_code::resident::ClaudeCode>().expect("Claude Code");
-        assert!(std::ptr::addr_eq(Arc::as_ptr(claude.runs()), Arc::as_ptr(&listed(Source::Claude))), "Claude Code's");
+    /// Why `build` panicked, or `None` when it did not.
+    fn refusal(build: impl FnOnce()) -> Option<String> {
+        let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(build)).err()?;
+        Some(refused.downcast_ref::<String>().cloned().or_else(|| refused.downcast_ref::<&str>().map(|why| why.to_string())).unwrap_or_default())
     }
 
-    /// One provider's runs per source on a host: a second provider registry
-    /// over the same injection registry is refused while the first's runs
-    /// last, whichever provider it starts with, and builds once they have gone.
+    /// A provider is registered only over the host its runs are on: the
+    /// registry lists and adopts into the runs its providers hold, and runs on
+    /// another host would be driven where none of that reaches.
+    #[test]
+    fn a_provider_whose_runs_are_on_another_host_is_refused() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let providers = providers(home.path());
+        for runs in providers.runs().values() {
+            assert!(Arc::ptr_eq(runs.host(), &providers.injections.host));
+        }
+        let injections = providers.injections.clone();
+        drop(providers);
+        let elsewhere = tempfile::tempdir().expect("tempdir");
+        let foreign = providers_from(elsewhere.path(), |_, _| {}).injections.clone();
+        let why = refusal(|| {
+            ProviderRegistry::new(injections, |providers, _| providers.register(Arc::new(crate::provider::app_server::Codex::new(foreign))));
+        });
+        assert!(why.as_deref().is_some_and(|why| why.contains("the codex provider's runs are on another host")), "{why:?}");
+    }
+
+    /// One provider registry per host, and one provider per source in it: a
+    /// second registry over the same injection registry is refused while the
+    /// first lasts and builds once it has gone, and a second provider for a
+    /// source is refused, whichever source it is.
     #[test]
     fn a_second_live_provider_registry_on_one_host_is_refused() {
         let home = tempfile::tempdir().expect("tempdir");
         let first = providers(home.path());
         let injections = first.injections.clone();
-        let register: [(Source, fn(&mut ProviderRegistry, &Arc<InjectionRegistry>)); 4] =
-            [(Source::Claude, crate::app::register_providers), (Source::Claude, claude_only), (Source::Codex, codex_only), (Source::Acp, acp_only)];
-        for (source, register) in register {
-            let second = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| ProviderRegistry::new(injections.clone(), register)));
-            let refused = second.err().unwrap_or_else(|| panic!("a second {source} provider refused while the first lasts"));
-            let why = refused.downcast_ref::<String>().map(String::as_str).unwrap_or_default();
-            assert!(why.contains(&format!("{source} runs are listed on this host already")), "{why}");
-        }
+        let why = refusal(|| {
+            ProviderRegistry::new(injections.clone(), crate::app::register_providers);
+        });
+        assert!(why.as_deref().is_some_and(|why| why.contains("a provider registry is over this host already")), "{why:?}");
         drop(first);
-        let again = ProviderRegistry::new(injections, crate::app::register_providers);
+        let again = ProviderRegistry::new(injections.clone(), crate::app::register_providers);
         assert!(again.provider::<crate::provider::acp::Acp>().is_some());
+        drop(again);
+        let register: [(Source, fn(&mut ProviderRegistry, &Arc<InjectionRegistry>)); 3] = [(Source::Claude, claude_only), (Source::Codex, codex_only), (Source::Acp, acp_only)];
+        for (source, register) in register {
+            let why = refusal(|| {
+                ProviderRegistry::new(injections.clone(), |providers, injections| {
+                    register(providers, injections);
+                    register(providers, injections);
+                });
+            });
+            assert!(why.as_deref().is_some_and(|why| why.contains(&format!("a {source} provider is registered already"))), "{source}: {why:?}");
+        }
     }
 
     /// Only Claude Code carries a session onto an account, and each source's

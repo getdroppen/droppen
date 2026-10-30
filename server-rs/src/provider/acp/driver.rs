@@ -788,7 +788,7 @@ impl Driver {
                 self.id.clone(),
                 outcome,
                 error,
-                self.registry.driver_states(),
+                self.registry.driver_states_of(&*self.registry),
             );
         }
     }
