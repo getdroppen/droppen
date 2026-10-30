@@ -88,8 +88,10 @@ test("`/terms` is a public page of its own, signed in or not", () => {
     assert.ok(isFrontPath(path) && !isAuthPath(path));
   }
   assert.match(draw("en"), /data-testid="terms"/);
-  // Signed in: the way back into the app instead of sign-in.
-  assert.match(draw("en", true), /href="\/sessions"[^>]*>Open app</);
+  // Signed in: the way back into the app instead of sign-in, from the header's account menu.
+  const signedIn = draw("en", true);
+  assert.match(signedIn, /aria-label="Open app"/, "the way back into the app");
+  assert.doesNotMatch(signedIn, /aria-label="Sign in"/, "and no sign-in, once signed in");
 });
 
 test("every public page's footer links it", () => {
@@ -102,11 +104,11 @@ test("every public page's footer links it", () => {
     terms: <TermsPage />,
   };
   for (const [name, element] of Object.entries(pages)) {
-    assert.match(render(element, "en"), /<a href="\/terms"[^>]*data-testid="footer-terms"[^>]*>Terms of Service<\/a>/, `${name}: the footer`);
+    assert.match(render(element, "en"), /<a href="\/terms"[^>]*data-testid="footer-terms"[^>]*>[\s\S]*?<span[^>]*>Terms of Service<\/span><\/a>/, `${name}: the footer`);
   }
-  assert.match(render(<LandingPage />, "zh-CN"), /data-testid="footer-terms"[^>]*>服务条款<\/a>/);
-  assert.match(render(<LandingPage />, "zh-TW"), /data-testid="footer-terms"[^>]*>服務條款<\/a>/);
-  assert.match(render(<LandingPage />, "ja"), /data-testid="footer-terms"[^>]*>利用規約<\/a>/);
+  assert.match(render(<LandingPage />, "zh-CN"), /data-testid="footer-terms"[^>]*>[\s\S]*?<span[^>]*>服务条款<\/span><\/a>/);
+  assert.match(render(<LandingPage />, "zh-TW"), /data-testid="footer-terms"[^>]*>[\s\S]*?<span[^>]*>服務條款<\/span><\/a>/);
+  assert.match(render(<LandingPage />, "ja"), /data-testid="footer-terms"[^>]*>[\s\S]*?<span[^>]*>利用規約<\/span><\/a>/);
 });
 
 test("the sign-up form links the terms and the privacy notice, each in a new tab; sign-in does not", () => {
@@ -170,8 +172,8 @@ test("every string on the page is translated into zh-CN, zh-TW and ja, and the t
 
 test("the page reads in each language, with nothing left in English", () => {
   const lines = {
-    "zh-CN": ["服务条款", "我们承诺什么，也请你遵守什么。", "一人一个账号", "你的设备，你的 AI 工具", "测试版，按现状提供", "离开，以及删除账号", "最后更新：2026-10-28"],
-    "zh-TW": ["服務條款", "我們承諾什麼，也請你遵守什麼。", "一人一個帳號", "你的裝置，你的 AI 工具", "測試版，依現狀提供", "離開，以及刪除帳號", "最後更新：2026-10-28"],
+    "zh-CN": ["服务条款", "我们承诺什么，也请你遵守什么", "一人一个账号", "你的设备，你的 AI 工具", "测试版，按现状提供", "离开，以及删除账号", "最后更新：2026-10-28"],
+    "zh-TW": ["服務條款", "我們承諾什麼，也請你遵守什麼", "一人一個帳號", "你的裝置，你的 AI 工具", "測試版，依現狀提供", "離開，以及刪除帳號", "最後更新：2026-10-28"],
     ja: ["利用規約", "私たちがお約束すること、お願いすること。", "1 人に 1 アカウント", "あなたのデバイス、あなたの AI ツール", "ベータ版、現状のままでの提供", "退会とアカウントの削除", "最終更新：2026-10-28"],
   };
   for (const lng of LANGS) {

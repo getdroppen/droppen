@@ -2,6 +2,7 @@ import { type KeyboardEvent, type ReactNode, useEffect, useId, useRef, useState 
 import { useTranslation } from "react-i18next";
 import { Lock } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { useDarkTheme } from "@/lib/theme";
 import { useReducedMotion } from "./motion";
 
 /*
@@ -21,6 +22,14 @@ import { useReducedMotion } from "./motion";
 
 export const TOUR_TABS = ["sessions", "split", "terminal", "cloud", "phone", "security"] as const;
 export type TourTab = (typeof TOUR_TABS)[number];
+
+/**
+ * The order a phone gets: the phone's own screens first, because the desktop
+ * app's window is too small to read at that width; the rest follow. The
+ * rendered order is the DOM order, so the keyboard moves in the same order
+ * the reader sees. Desktop keeps {@link TOUR_TABS}.
+ */
+export const MOBILE_TOUR_TABS: readonly TourTab[] = ["phone", "sessions", "split", "terminal", "cloud", "security"];
 
 type FrameKind = "app" | "browser" | "phone";
 
@@ -45,13 +54,48 @@ export function tourShot(shot: string, language: string, theme: "light" | "dark"
 }
 
 /** One screenshot in both themes: the page's theme (the `dark` class) shows one of them. */
-function Shot({ shot, alt, className, eager }: { shot: string; alt: string; className?: string; eager?: boolean }) {
+function Shot({
+  shot,
+  alt,
+  className,
+  eager,
+  width,
+  height,
+}: {
+  shot: string;
+  alt: string;
+  className?: string;
+  eager?: boolean;
+  width: number;
+  height: number;
+}) {
   const { i18n } = useTranslation();
-  const loading = eager ? "eager" : "lazy";
+  const dark = useDarkTheme();
+  // The theme on show is fetched now (eager on the first tab); the other waits
+  // as a lazy, hidden image and is fetched when it is first shown, so the page
+  // does not pay for two 2560px screenshots at first load. The intrinsic size
+  // holds the frame's height while either one is on its way.
+  const loading = (shown: boolean) => (eager && shown ? "eager" : "lazy");
   return (
     <>
-      <img src={tourShot(shot, i18n.language, "light")} alt={alt} loading={loading} decoding="async" className={cn("block w-full dark:hidden", className)} />
-      <img src={tourShot(shot, i18n.language, "dark")} alt="" aria-hidden="true" loading={loading} decoding="async" className={cn("hidden w-full dark:block", className)} />
+      <img
+        src={tourShot(shot, i18n.language, "light")}
+        alt={alt}
+        width={width}
+        height={height}
+        loading={loading(!dark)}
+        decoding="async"
+        className={cn("block h-auto w-full dark:hidden", className)}
+      />
+      <img
+        src={tourShot(shot, i18n.language, "dark")}
+        alt={alt}
+        width={width}
+        height={height}
+        loading={loading(dark)}
+        decoding="async"
+        className={cn("hidden h-auto w-full dark:block", className)}
+      />
     </>
   );
 }
@@ -81,7 +125,7 @@ function BrowserWindow({ children }: { children: ReactNode }) {
             <span key={i} className="size-3 rounded-full border border-border-strong bg-bg" />
           ))}
         </span>
-        <span className="mx-auto flex h-6 w-full max-w-[22rem] items-center justify-center gap-1.5 rounded-md border border-border bg-bg font-mono text-[11px] text-muted">
+        <span className="mx-auto flex h-6 w-full max-w-[22rem] items-center justify-center gap-1.5 rounded-md border border-border bg-bg font-mono text-xs text-muted">
           <Lock className="size-3" />
           my.droppen.app
         </span>
@@ -97,7 +141,7 @@ function Phone({ children }: { children: ReactNode }) {
   return (
     <div className="w-full max-w-[340px] rounded-[44px] border border-border-strong bg-raised p-[9px] shadow-[0_24px_60px_-28px_rgb(0_0_0/0.35)]">
       <div className="relative overflow-hidden rounded-[36px] border border-border bg-bg">
-        <div aria-hidden="true" className="relative flex h-9 items-center justify-between px-6 text-[11px] font-semibold text-fg tabular-nums">
+        <div aria-hidden="true" className="relative flex h-9 items-center justify-between px-6 text-xs font-semibold text-fg tabular-nums">
           <span>9:41</span>
           <span className="absolute top-2 left-1/2 h-[22px] w-[78px] -translate-x-1/2 rounded-full bg-fg" />
           {/* Signal and battery, drawn as the system draws them: bars and a pill. */}
@@ -120,13 +164,14 @@ function Phone({ children }: { children: ReactNode }) {
 
 function Framed({ tab, alt, eager }: { tab: TourTab; alt: string; eager?: boolean }) {
   const { frame, shots } = TOUR_SHOTS[tab];
+  const size = frame === "phone" ? { width: 640, height: 1386 } : { width: 2560, height: 1600 };
   if (frame === "phone") {
     return (
       <div className="flex items-start justify-center gap-10 max-sm:gap-4">
         {shots.map((shot, i) => (
           <div key={shot} className={cn("flex flex-1 justify-center", i > 0 && "max-sm:hidden")}>
             <Phone>
-              <Shot shot={shot} alt={i === 0 ? alt : ""} eager={eager} />
+              <Shot shot={shot} alt={i === 0 ? alt : ""} eager={eager} {...size} />
             </Phone>
           </div>
         ))}
@@ -136,17 +181,29 @@ function Framed({ tab, alt, eager }: { tab: TourTab; alt: string; eager?: boolea
   const Window = frame === "app" ? AppWindow : BrowserWindow;
   return (
     <Window>
-      <Shot shot={shots[0]!} alt={alt} eager={eager} />
+      <Shot shot={shots[0]!} alt={alt} eager={eager} {...size} />
     </Window>
   );
+}
+
+/**
+ * The tab order for this page: {@link MOBILE_TOUR_TABS} on a phone, else
+ * {@link TOUR_TABS}. Read once, so a reader's tab does not move under them
+ * when the window changes size.
+ */
+function tourOrder(): readonly TourTab[] {
+  const narrow = typeof window !== "undefined" && window.matchMedia?.("(max-width: 767px)")?.matches === true;
+  return narrow ? MOBILE_TOUR_TABS : TOUR_TABS;
 }
 
 export function ProductTour() {
   const { t } = useTranslation();
   const id = useId();
   const reduced = useReducedMotion();
-  const [active, setActive] = useState<TourTab>("sessions");
+  const [order] = useState<readonly TourTab[]>(tourOrder);
+  const [active, setActive] = useState<TourTab>(order[0]!);
   const tabs = useRef<Partial<Record<TourTab, HTMLButtonElement | null>>>({});
+  const firstScroll = useRef(true);
 
   // A tab is its name: the picture under it says the rest (and its alt text, to a screen reader).
   const copy: Record<TourTab, { label: string; alt: string }> = {
@@ -163,7 +220,8 @@ export function ProductTour() {
     const tab = tabs.current[active];
     const list = tab?.parentElement;
     if (!tab || !list || list.scrollWidth <= list.clientWidth) return;
-    list.scrollTo({ left: tab.offsetLeft - (list.clientWidth - tab.offsetWidth) / 2, behavior: reduced ? "auto" : "smooth" });
+    list.scrollTo({ left: tab.offsetLeft - (list.clientWidth - tab.offsetWidth) / 2, behavior: firstScroll.current || reduced ? "auto" : "smooth" });
+    firstScroll.current = false;
   }, [active, reduced]);
 
   const pick = (tab: TourTab, focus = false) => {
@@ -172,18 +230,18 @@ export function ProductTour() {
   };
   // The tab list's keys: left and right move between tabs, Home and End to the ends.
   const onKey = (e: KeyboardEvent) => {
-    const at = TOUR_TABS.indexOf(active);
-    const to = e.key === "ArrowRight" ? at + 1 : e.key === "ArrowLeft" ? at - 1 : e.key === "Home" ? 0 : e.key === "End" ? TOUR_TABS.length - 1 : null;
+    const at = order.indexOf(active);
+    const to = e.key === "ArrowRight" ? at + 1 : e.key === "ArrowLeft" ? at - 1 : e.key === "Home" ? 0 : e.key === "End" ? order.length - 1 : null;
     if (to === null) return;
     e.preventDefault();
-    pick(TOUR_TABS[(to + TOUR_TABS.length) % TOUR_TABS.length]!, true);
+    pick(order[(to + order.length) % order.length]!, true);
   };
 
   const now = copy[active];
   return (
     <div data-testid="product-tour">
-      <div role="tablist" aria-label={t("What Droppen looks like")} onKeyDown={onKey} className="relative grid grid-cols-6 border-b border-border max-md:flex max-md:overflow-x-auto max-md:[scrollbar-width:none]">
-        {TOUR_TABS.map((tab, i) => {
+      <div role="tablist" aria-label={t("What Droppen looks like")} onKeyDown={onKey} className="relative grid grid-cols-6 border-b border-border max-lg:flex max-lg:overflow-x-auto max-lg:[scrollbar-width:none]">
+        {order.map((tab, i) => {
           const on = tab === active;
           return (
             <button
@@ -198,7 +256,7 @@ export function ProductTour() {
               data-tab={tab}
               onClick={() => pick(tab)}
               className={cn(
-                "relative flex h-12 items-center justify-center px-4 text-sm whitespace-nowrap transition-colors max-md:shrink-0 max-md:px-5",
+                "relative flex h-12 items-center justify-center px-4 text-base whitespace-nowrap transition-colors max-lg:shrink-0",
                 i > 0 && "border-l border-border",
                 on ? "bg-raised font-semibold text-fg" : "text-muted hover:text-fg",
               )}
@@ -219,7 +277,7 @@ export function ProductTour() {
             backgroundPosition: "-1px -1px",
           }}
         >
-          <Framed key={active} tab={active} alt={now.alt} eager={active === "sessions"} />
+          <Framed key={active} tab={active} alt={now.alt} eager={active === order[0]} />
         </div>
       </div>
     </div>

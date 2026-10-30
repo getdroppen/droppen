@@ -1,5 +1,63 @@
 @import "tailwindcss";
 
+/*
+ * IBM Plex Sans and IBM Plex Sans SC, self-hosted (SIL OFL 1.1, see
+ * fonts/OFL.txt). Only the weights with real files are declared: 400 and 600.
+ * A `font-medium` (500) request falls back to 400 and a `font-bold` (700) to
+ * 600, instead of claiming a face the files do not contain.
+ */
+@font-face {
+  font-family: "IBM Plex Sans";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./fonts/IBMPlexSans-Regular.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "IBM Plex Sans";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("./fonts/IBMPlexSans-SemiBold.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "IBM Plex Sans SC";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./fonts/IBMPlexSansSC-Regular.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "IBM Plex Sans SC";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("./fonts/IBMPlexSansSC-SemiBold.woff2") format("woff2");
+}
+
+/* 12px text reads in IBM Plex Sans SC's Text cut, a half-step heavier than
+   Regular so small CJK keeps its weight on light paper. The app and the public
+   pages switch to it with `.text-xs` (the base rule below); everything else
+   stays in Regular. */
+@font-face {
+  font-family: "IBM Plex Sans SC Text";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./fonts/IBMPlexSansSC-Text.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "IBM Plex Sans SC Text";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("./fonts/IBMPlexSansSC-SemiBold.woff2") format("woff2");
+}
+
 /* The UI audit fixture (`web/ui-audit`, run by `scripts/ui-audit`) and the
    product tour's (`web/tour`, run by `scripts/landing-shots/cloud`) render the
    real components outside the app. They are not a source of production CSS:
@@ -37,7 +95,10 @@
   --color-border-strong: #a3a3a3;
   --color-fg: #1a1e23;
   --color-muted: #666666;
-  --color-faint: #8f8f8f;
+  /* The least text there is still has to be read: 4.95:1 on the paper and
+     4.58:1 in a raised well, where #8f8f8f gave 3.23:1 and 2.99:1 (below AA).
+     The dark sheet's `faint` already clears it (5.4:1 / 4.78:1). */
+  --color-faint: #707070;
   --color-mark: #1a1e23;
   --color-accent: #1a1e23;
   --color-ok: #128a3c;
@@ -60,12 +121,18 @@
   --color-claude: #666666;
   --color-codex: #666666;
 
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+  --font-sans: "IBM Plex Sans", "IBM Plex Sans SC", ui-sans-serif, system-ui, -apple-system, "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+  --font-sans-text: "IBM Plex Sans", "IBM Plex Sans SC Text", ui-sans-serif, system-ui, -apple-system, "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
   --font-mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
 
   --text-2xs: 0.6875rem;
   --text-2xs--line-height: 1rem;
   --tracking-label: 0.12em;
+  /* A display heading's own leading: `text-5xl`/`text-6xl` ship a line-height
+     of 1, which is right for one line and tight for two (a Chinese heading at
+     that size has no descenders to open the gap). `leading-display` is the
+     step between them, kept a variable so no page hand-writes the ratio. */
+  --leading-display: 1.15;
 
   /* Square corners and no elevation, at the scale itself: every `rounded*` and
      `shadow-*` utility resolves to nothing. Floating layers are separated by a
@@ -133,6 +200,13 @@
   :focus-visible {
     outline: 2px solid var(--color-fg);
     outline-offset: 1px;
+  }
+
+  /* 12px text reads in the SC Text cut; every other size, headings included,
+     stays in Regular. A font-family utility on the element (font-mono,
+     font-sans) still wins. */
+  .text-xs {
+    font-family: var(--font-sans-text);
   }
 }
 
@@ -209,6 +283,19 @@ svg.lucide[stroke-width="2"] {
   font-family: var(--font-mono);
   text-transform: uppercase;
   letter-spacing: var(--tracking-label);
+}
+
+/* Chinese line breaking: break at phrase boundaries; headlines add `cjk-keep`
+   (or `md:cjk-keep`) to keep whole words, while long prose only gets the
+   phrase break. */
+@utility cjk-wrap {
+  word-break: auto-phrase;
+}
+
+@utility cjk-keep {
+  &:lang(zh) {
+    word-break: keep-all;
+  }
 }
 
 html,

@@ -15,7 +15,7 @@ const LOOK = {
   public: {
     popup:
       "popup-motion max-h-[min(var(--available-height),20rem)] min-w-[10rem] max-w-[20rem] overflow-y-auto border border-border-strong bg-bg py-1.5 outline-none",
-    item: "flex min-h-8 w-full cursor-pointer items-center gap-2 px-3 py-1 text-left text-[13px] text-fg outline-none pointer-coarse:min-h-11 data-[highlighted]:bg-hover",
+    item: "flex min-h-8 w-full cursor-pointer items-center gap-2 px-3 py-1 text-left text-sm text-fg outline-none pointer-coarse:min-h-11 data-[highlighted]:bg-hover",
   },
   guide: {
     popup: "min-w-36 border border-border-strong bg-bg py-1 outline-none",

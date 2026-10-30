@@ -91,7 +91,7 @@ test("`/security` is a public page of its own, signed in or not", () => {
   }
   assert.match(draw("en"), /data-testid="security"/);
   // Signed in: the way back into the app instead of sign-in.
-  assert.match(draw("en", true), /href="\/sessions"[^>]*>Open app</);
+  assert.match(draw("en", true), /aria-label="Open app"/);
 });
 
 test("every public page links it: the footer everywhere, the landing page's security section and the privacy notice", () => {
@@ -103,7 +103,7 @@ test("every public page links it: the footer everywhere, the landing page's secu
     security: <SecurityPage />,
   };
   for (const [name, element] of Object.entries(pages)) {
-    assert.match(render(element, "en"), /<a href="\/security"[^>]*data-testid="footer-security"[^>]*>Security<\/a>/, `${name}: the footer`);
+    assert.match(render(element, "en"), /<a href="\/security"[^>]*data-testid="footer-security"[^>]*>[\s\S]*?<span[^>]*>Security<\/span><\/a>/, `${name}: the footer`);
   }
   assert.match(render(<LandingPage />, "en"), /<a href="\/security"[^>]*data-testid="landing-security"[^>]*>How the encryption works<\/a>/);
   assert.match(render(<PrivacyPage />, "en"), /<a href="\/security"[^>]*data-testid="privacy-security"[^>]*>How the encryption works, in detail<\/a>/);
@@ -122,6 +122,8 @@ test("the sections come in order, each with an anchor the table of contents link
   }
   const contents = html.slice(html.indexOf('data-testid="security-contents"'), html.indexOf('id="overview"'));
   assert.deepEqual([...contents.matchAll(/href="#([a-z-]+)"/g)].map((m) => m[1]), [...SECURITY_SECTIONS]);
+  // Below xl the same contents open as a sheet from the sticky bar.
+  assert.match(html, /data-testid="security-toc-trigger"/);
   const renewal = html.slice(html.indexOf('id="renewal"'), html.indexOf('id="threats"'));
   for (const id of RENEWAL_PARTS) assert.match(renewal, new RegExp(`id="${id}"`), id);
   assert.equal(RENEWAL_PARTS.length, 7);
@@ -156,8 +158,8 @@ test("every string on the page is translated into zh-CN, zh-TW and ja, and the t
 test("the page reads in each language, with nothing left in English but the code it quotes", () => {
   const lines = {
     en: ["How Droppen's end-to-end encryption works.", "Your devices hold the keys. Our servers carry ciphertext.", "One signed list decides who is in your account.", "Renewing the identity key of a device that runs AI.", "Don't take our word for it."],
-    "zh-CN": ["Droppen 端到端加密的工作原理。", "钥匙由你的设备持有，我们的服务器只经手密文。", "哪些设备属于你的账户，由一份签名名单决定。", "更换可运行 AI 的设备的身份密钥。", "请自行核实我们的说法。", "测试中"],
-    "zh-TW": ["Droppen 端對端加密的運作原理。", "金鑰由你的裝置持有，我們的伺服器只經手密文。", "更換可執行 AI 的裝置的身分金鑰。", "測試中"],
+    "zh-CN": ["Droppen 端到端加密的工作原理", "钥匙由你的设备持有，我们的服务器只经手密文。", "哪些设备属于你的账户，由一份签名名单决定。", "更换可运行 AI 的设备的身份密钥。", "请自行核实我们的说法。", "测试中"],
+    "zh-TW": ["Droppen 端對端加密的運作原理", "金鑰由你的裝置持有，我們的伺服器只經手密文。", "更換可執行 AI 的裝置的身分金鑰。", "測試中"],
     ja: ["Droppen のエンドツーエンド暗号化のしくみ。", "鍵はあなたのデバイスに。私たちのサーバーは暗号文を運ぶだけ。", "AI を実行できるデバイスの ID 鍵を更新する。", "テスト中"],
   };
   for (const [lng, want] of Object.entries(lines)) {

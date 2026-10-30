@@ -55,6 +55,10 @@ export function installJsdom(): { window: Window; document: Document; container:
     define(key);
   }
   for (const key of OVERRIDE) define(key);
+  // `features/landing/route.ts` subscribes to `popstate` through the bare
+  // global functions, as a browser allows; bind them to the jsdom window.
+  g.addEventListener = win.addEventListener.bind(win);
+  g.removeEventListener = win.removeEventListener.bind(win);
   g.IS_REACT_ACT_ENVIRONMENT = true;
 
   const container = win.document.createElement("div");

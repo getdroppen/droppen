@@ -264,7 +264,7 @@ export function OfflineCopy() {
           rows={[
             // What it does with a page: passes it on, sealed as it came.
             <span key="p" className="opacity-80">
-              {t("hands the copy to your phone")}
+              {t("passes it on, sealed")}
             </span>,
           ]}
         />
@@ -278,7 +278,7 @@ export function OfflineCopy() {
         }
         rows={[
           <span key="c" className="text-fg">
-            {t("Droppen can't decrypt it")}
+            {t("Droppen can't read it")}
           </span>,
         ]}
       />

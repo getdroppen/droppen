@@ -27,8 +27,8 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
 
   [
     "How Droppen's end-to-end encryption works.",
-    "Droppen 端到端加密的工作原理。",
-    "Droppen 端對端加密的運作原理。",
+    "Droppen 端到端加密的工作原理",
+    "Droppen 端對端加密的運作原理",
     "Droppen のエンドツーエンド暗号化のしくみ。",
   ],
   [
@@ -36,6 +36,12 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "本文是一份技术说明，供希望核实我们各项声明的读者参阅：每把钥匙由谁持有；你的设备如何就哪些设备属于这个账户达成一致；我们的服务器能看到什么、看不到什么；以及这些服务器一旦作恶或被强迫，各自仍能做什么。本文描述 Droppen 当前的做法；尚未启用或仍在测试的部分均已标明。",
     "本文是一份技術說明，供希望核實我們各項聲明的讀者參閱：每把金鑰由誰持有；你的裝置如何就哪些裝置屬於這個帳戶達成一致；我們的伺服器能看到什麼、看不到什麼；以及這些伺服器一旦作惡或遭到強迫，各自仍能做什麼。本文描述 Droppen 目前的做法；尚未啟用或仍在測試的部分均已標明。",
     "私たちの主張を検証したい方のための技術資料です。どの鍵を誰が持つのか、あなたのデバイスがアカウントに属するデバイスについてどのように合意するのか、私たちのサーバーに何が見え何が見えないのか、そしてサーバーが悪意を持った場合や強制された場合に、それぞれ何ができるのかを扱います。記載しているのは Droppen の現在の実装です。まだ有効になっていない部分やテスト中の部分は、その旨を明記しています。",
+  ],
+  [
+    "Terms",
+    "术语",
+    "術語",
+    "用語",
   ],
   [
     "Overview",
@@ -161,7 +167,7 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "copies frames, keeps nothing",
     "只转发帧，不留存任何内容",
     "只轉送幀，不留存任何內容",
-    "フレームを中継するだけ、何も残さない",
+    "中継するだけ、何も残さない",
   ],
   [
     "none of your keys",
@@ -191,7 +197,7 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "device chain · mail · encrypted copies",
     "设备链 · 信箱 · 加密副本",
     "裝置鏈 · 信箱 · 加密副本",
-    "デバイスチェーン · 鍵メール · 暗号化コピー",
+    "チェーン・鍵メール・暗号化コピー",
   ],
   [
     "Noise ciphertext",
@@ -581,7 +587,7 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "Each browser or phone:\n- made by WebCrypto\n- used as a non-extractable key\n- stored sealed under a key of this browser",
     "每个浏览器、每部手机各一把：\n- 由 WebCrypto 生成\n- 使用时是不可导出的钥匙\n- 存储时用这个浏览器的一把钥匙加密",
     "每個瀏覽器、每支手機各一把：\n- 由 WebCrypto 產生\n- 使用時是不可匯出的金鑰\n- 儲存時以這個瀏覽器的一把金鑰加密",
-    "ブラウザやスマホごとに 1 つ：\n- WebCrypto で生成\n- エクスポート不可の鍵として使用\n- このブラウザの鍵で暗号化して保存",
+    "ブラウザやスマホごとに 1\u00A0つ：\n- WebCrypto で生成\n- エクスポート不可の鍵として使用\n- このブラウザの鍵で暗号化して保存",
   ],
   [
     "The device's identity:\n- signs chain entries, attestations and sign-ins\n- its Noise static key\n- receives sealed keys",
@@ -605,7 +611,7 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "Ed25519 + X25519 from one random 32-byte seed",
     "由一个 32 字节随机种子派生的 Ed25519 + X25519",
     "由一個 32 位元組隨機種子衍生的 Ed25519 + X25519",
-    "32 バイトのランダムなシード 1 つから導く Ed25519 + X25519",
+    "32 バイトのランダムなシード 1\u00A0つから導く Ed25519 + X25519",
   ],
   [
     "That device only, in a file only its user can read",
@@ -1992,6 +1998,7 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "你查看和操控的地方：瀏覽器或手機上的 my.droppen.app。你現在配對的每一台都是完整裝置：它持有使用者金鑰，並簽署帳戶的鏈項目。",
     "見たり操作したりする場所：ブラウザやスマホで開く my.droppen.app。いまペアリングするものはすべてフルデバイスで、ユーザー鍵を持ち、アカウントのチェーンのエントリに署名します。",
   ],
+  ["close", "关闭", "關閉", "閉じる"],
 ];
 
 const column = (i: 1 | 2 | 3): Bundle => Object.fromEntries(LINES.map((line) => [line[0], line[i]]));

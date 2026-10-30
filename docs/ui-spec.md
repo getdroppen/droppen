@@ -6,7 +6,10 @@
 
 - 颜色源为 `web/src/index.css` 的 light / `.dark` 变量：`bg`、`panel`、`raised`、`hover`、`border`、`border-strong`、`fg`、`muted`、`faint`、`mark`。`panel` 与 `bg` 同值：区域靠细线分开，不靠底色块；`raised` 只用于井（用户消息带、代码/输出块、只读输入）。
 - 没有蓝色强调色：`accent` 的值等于 `fg`（墨色），主操作是实心墨块，焦点是墨色。状态色是唯一的色相：工作中/活着 `ok`，在问你 `warn`（实心底）与 `warn-fg`（作文字），失败/离线/破坏操作 `danger`，未读 `unread`（= 墨色实心方块）。CLI 来源 `claude` / `codex` 用中性文字标签区分，不着色。这些语义不能互换，也不能拿状态色做装饰。
-- 字体只用系统栈，不加载 webfont：sans = `ui-sans-serif, system-ui, -apple-system, "PingFang SC", …`；mono = `ui-monospace, "SF Mono", …`。内容使用 sans；界面标签、路径、时间、数字和工具栏使用 mono。正文主流 12–13px，transcript 正文 13px / 21px 且段落最大宽 48em；辅助标签 `text-2xs`（11px/16px），界面内容 `text-xs`（12px/16px）。
+- 字体：sans 为自托管的 IBM Plex Sans / IBM Plex Sans SC（`web/src/index.css` 的 `@font-face` 与 `--font-sans`，不请求第三方字体服务）；CJK 默认用 Regular，12px（`text-xs`）用同族的 Text 字重档，其余字号（含标题）仍用 Regular；mono 为系统栈 `ui-monospace, "SF Mono", …`。内容使用 sans；界面标签、路径、时间、数字和工具栏使用 mono。
+- 字号默认用 Tailwind 的命名阶梯，不自己造尺寸：`text-xs` 12/16、`text-sm` 14/20、`text-base` 16/24、`text-lg` 18/28、`text-xl` 20/28、`text-2xl` 24/32、`text-3xl` 30/36、`text-4xl` 36/40、`text-5xl` 48/48。公共页面（`features/landing`）只用这套；展示型标题配 `leading-display`（1.15），大写标签配 `tracking-label`（0.12em）。
+- 应用界面是紧凑例外：沿用 `text-2xs` 11/16、`text-xs` 12/16，transcript 正文 13/21 且段落最大宽 48em；10px 只用于表头与消息角色，9px 只用于已有微型 chip。往既有应用界面加内容时匹配该界面的档位，不把默认阶梯带进去。
+- 新代码不写 `text-[13px]` 这类固定 px/rem 的一次性字号；缺档时先在 `@theme` 增加命名 token 并更新本节，再使用。不得覆盖 `--text-sm` 等 Tailwind 默认档，因为公共页面与应用共用同一个 `@theme`。应用页现有的 `text-[13px]` / `text-[10px]` / `text-[9px]` 是历史值，不要求本次迁移，但不得再新增。
 - 标签（分区标题、表头、消息角色、步骤组）统一为 `label`：mono、uppercase、字距 0.12em、muted；11px，消息角色与表头可用 10px。面板标题为 sans 12–13px / semibold。计数、时间、额度、diff 统计使用 `tabular-nums`。
 - 9–10px 仅用于已有微型状态（chip、未读数）、额度、rail 标签、消息角色头与表头，不扩散到正文或表单。
 - 大号字（display，600，字距 −0.045em，CJK −0.03em）只用于空状态和云端页面标题，不进会话主屏。
@@ -100,3 +103,5 @@ composer 的附加文件/拍照与 ghost 选项为 24px，主发送按钮为 26p
 | V10 | 主操作按钮为 `bg-fg text-bg`；页面内同时可见的 primary 不超过 1 个（弹窗内 1 个） | 扫描 `[data-variant=primary]` | 分屏的每个窗格各算一页 |
 | V11 | 分区标题为 sans 16px/24、600（可配 10px mono 编号），不与 badge / meta 同字号；标题下只有一条 1px 线，分组之间用留白 | `[data-section-head] h2` 的 computed 字号 / 行高 / 字重；页内 `border-b` 计线 | 折叠的「更多设置」「已移除的设备」是 13px muted 的补充标题，不算分区标题 |
 | V12 | 「我的设备」每行首行固定 56px（`h-14`），状态最多一行、详情在 `<details>`；离线 / 待批准 / 已移除不改变行高，待批准与已移除用独立紧凑行 | `[data-testid^=device-]` 首行高度与 `[data-status]` 结构 | — |
+
+字号阶梯另由 `web/test/ui-type-scale.test.ts` 守住：`features/landing` 源码里不得出现固定的 `text-[Npx]` 或应用的 `text-2xs`；应用页现有的 13/10/9px 是历史值，不在此检查内。

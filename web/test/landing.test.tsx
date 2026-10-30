@@ -21,7 +21,7 @@ import { I18nextProvider, initReactI18next } from "react-i18next";
 import { renderToStaticMarkup } from "react-dom/server";
 import { landingBundles } from "../src/features/landing/copy.js";
 import { MEASURED, schedule } from "../src/features/landing/direct-path.js";
-import { TOUR_SHOTS, TOUR_TABS, tourLanguage, tourShot } from "../src/features/landing/product-tour.js";
+import { MOBILE_TOUR_TABS, TOUR_SHOTS, TOUR_TABS, tourLanguage, tourShot } from "../src/features/landing/product-tour.js";
 import { DIRECT_HUB, directLayout, directWires } from "../src/features/landing/direct-path.js";
 import { offlineLayout, offlineWires } from "../src/features/landing/offline-copy.js";
 import LandingPage from "../src/features/landing/landing.js";
@@ -66,15 +66,15 @@ test("the landing page leads with what you get, in zh-CN first", () => {
   const words = text(html);
   for (const line of [
     // The selling points: your computer's AI on your phone, every session in one list, code only you can read.
-    "电脑上的 AI，手机上接着用。",
+    "电脑上的 AI，手机上接着用",
     "Claude Code 和 Codex 仍在你自己的电脑上运行。",
-    "三步完成设置，离开电脑也能继续。",
-    "不在电脑前，这些事也能在手机上处理。",
+    "三步完成设置，离开电脑也能继续",
+    "不在电脑前，这些事也能在手机上处理",
     "所有电脑，一个列表",
-    "你的代码，Droppen 无法读取。",
+    "你的代码，Droppen 无法读取",
     // The deep sections, each headed by what it gets you.
-    "在手机上输入，响应及时。",
-    "电脑离线时，会话仍可查看。",
+    "直连快速响应，断连自动接管，手机输入不丢键",
+    "电脑合盖或离线，会话依然随时查阅",
     "免费注册",
     "登录",
   ]) {
@@ -97,7 +97,7 @@ test("every public page's header links the site's other pages and the client's s
     assert.match(header, /<a href="https:\/\/github\.com\/getdroppen\/droppen"[^>]*data-testid="header-source"/, lng);
     assert.doesNotMatch(header, /href="#/, `${lng}: no anchors into the page`);
   }
-  assert.match(draw("zh-CN").slice(0, draw("zh-CN").indexOf("<main")), /data-testid="header-download"[^>]*>下载<\/a>/);
+  assert.match(draw("zh-CN").slice(0, draw("zh-CN").indexOf("<main")), /data-testid="header-download"[^>]*>[\s\S]*?<span[^>]*>下载<\/span><\/a>/);
 });
 
 test("privacy is said once: not in the header, not in the hero's numbers, one section near the end and the rest on /security", () => {
@@ -121,10 +121,11 @@ test("one primary action, and the calls to action go to sign-up and sign-in", ()
   const primaries = html.match(/data-variant="primary"/g) ?? [];
   assert.equal(primaries.length, 1, "one primary per page (docs/ui-spec.md V10)");
   assert.match(html, /<a href="\/signup"[^>]*data-variant="primary"[^>]*>Create a free account<\/a>/);
-  // Signing in is the header's and the end's; the hero does not offer it a second time.
-  assert.equal((html.match(/<a href="\/signin"/g) ?? []).length, 2, "sign-in in the header and at the end");
+  // Sign-in is the header's user menu and nothing else: the page ends on sign-up alone.
+  assert.match(html, /aria-label="Sign in"/, "sign-in in the header user menu");
+  assert.equal((html.match(/<a href="\/signin"/g) ?? []).length, 0, "no sign-in link on the page");
   // The page ends on the same call to action, as a secondary.
-  assert.equal((html.match(/<a href="\/signup"[^>]*>Create a free account<\/a>/g) ?? []).length, 2, "sign-up in the hero and at the end");
+  assert.match(html, /<a href="\/signup"[^>]*>[\s\S]*Sign up on the web[\s\S]*<\/a>/, "sign-up at the end");
 });
 
 test("signed in, the landing page is still the landing page, with a way back into the app instead of sign-in and sign-up", () => {
@@ -137,8 +138,9 @@ test("signed in, the landing page is still the landing page, with a way back int
     ["ja", "アプリを開く", "しくみ"],
   ] as const) {
     const html = draw(lng, { signedIn: true });
-    // The header's way in and the hero's primary both open the app.
-    assert.equal((html.match(new RegExp(`<a href="${APP_PATH}"`, "g")) ?? []).length, 2, lng);
+    // The hero's primary opens the app; the header offers entry via user menu.
+    assert.match(html, new RegExp(`aria-label="${open}"`), `${lng}: header user menu opens app`);
+    assert.equal((html.match(new RegExp(`<a href="${APP_PATH}"`, "g")) ?? []).length, 1, lng);
     assert.match(html, app(open, true), `${lng}: the hero's primary opens the app`);
     assert.equal((html.match(/data-variant="primary"/g) ?? []).length, 1, `${lng}: one primary`);
     assert.match(html, new RegExp(`<a href="#how"[^>]*>${how}</a>`), `${lng}: the secondary reads on through the page`);
@@ -198,6 +200,16 @@ test("the numbers are the measured ones, and nothing claims more than the build 
   assert.deepEqual(MEASURED, { same: { direct: [1, 2], hub: [170, 215] }, phone: { direct: [63, 73], hub: [215, 227] } });
 });
 
+test("every localized beta caveat says there has been no external audit", () => {
+  for (const [lng, caveat] of [
+    ["zh-CN", /内部安全评审，尚未进行外部审计/],
+    ["zh-TW", /內部安全審查，尚未進行外部稽核/],
+    ["ja", /社内のセキュリティレビューを受けていますが、外部監査はまだです/],
+  ] as const) {
+    assert.match(text(draw(lng)), caveat, lng);
+  }
+});
+
 test("only the client is called open source: the hub never is, and nothing says all of Droppen is", () => {
   const en = text(draw("en"));
   assert.match(en, /open-source client/i);
@@ -248,8 +260,8 @@ test("open sign-up by default: no invite wording; the invite wording only where 
   assert.doesNotMatch(text(closed), /invite|Public beta|Sign up with your/i);
   // The ways in: the waitlist where "Get started" was (the hero's and the footer's), and sign-in.
   assert.doesNotMatch(closed, /href="\/signup"|Create a free account/);
-  assert.equal((closed.match(/<a href="\/pricing#waitlist"[^>]*>Join the waitlist<\/a>/g) ?? []).length, 3, "the hero's line, its account action and the footer's");
-  assert.match(closed, /<a href="\/signin"[^>]*>Sign in<\/a>/);
+  assert.equal((closed.match(/<a href="\/pricing#waitlist"[^>]*>[\s\S]*?Join the waitlist[\s\S]*?<\/a>/g) ?? []).length, 3, "the hero's line, its account action and the footer's");
+  assert.match(closed, /aria-label="Sign in"/, "sign-in stays in the header's user menu");
   for (const signup of ["open", "invite"] as const) assert.match(draw("en", { signup }), /<a href="\/signup"[^>]*>Create a free account<\/a>/, signup);
   for (const [lng, line] of [["zh-CN", "目前暂停注册。"], ["zh-TW", "目前暫停註冊。"], ["ja", "現在、新規登録を停止しています。"]] as const) {
     const words = text(draw(lng, { signup: "closed" }));
@@ -304,8 +316,8 @@ test("the home page's words are its own: no key it draws is one the app translat
 
 test("the page reads in zh-TW and ja", () => {
   const tw = text(draw("zh-TW"));
-  assert.ok(tw.includes("電腦上的 AI，手機上接著用。"));
-  assert.ok(tw.includes("你的程式碼，Droppen 無法讀取。"));
+  assert.ok(tw.includes("電腦上的 AI，手機上接著用"));
+  assert.ok(tw.includes("你的程式碼，Droppen 無法讀取"));
   assert.ok(tw.includes("所有電腦，一個清單"));
   assert.ok(tw.includes("登入"));
   const jp = text(draw("ja"));
@@ -503,13 +515,19 @@ test("the tour shows the product: six tabs of real screenshots, each in its fram
   assert.equal((tour.match(/role="tab"/g) ?? []).length, TOUR_TABS.length);
   assert.doesNotMatch(tour, /animate-/);
   assert.match(tour, /role="tab"[^>]*aria-selected="true"[^>]*data-tab="sessions"/);
-  for (const label of ["会话", "多栏", "终端", "我的设备", "手机", "添加设备"]) assert.ok(text(tour).includes(label), label);
-  // Its picture in both themes, the light one described.
+  for (const label of ["会话", "分屏", "终端", "我的设备", "移动端", "添加设备"]) assert.ok(text(tour).includes(label), label);
+  // Its picture in both themes, each described when it is the one shown.
   assert.match(tour, /<img src="\/tour\/app-session-zh-CN-light\.webp" alt="Mac 上的 Droppen[^"]*"/);
-  assert.match(tour, /<img src="\/tour\/app-session-zh-CN-dark\.webp" alt="" aria-hidden="true"/);
+  assert.match(tour, /<img src="\/tour\/app-session-zh-CN-dark\.webp" alt="Mac 上的 Droppen[^"]*"/);
+  assert.doesNotMatch(tour, /<img src="\/tour\/app-session-zh-CN-dark\.webp"[^>]*aria-hidden/);
   // Chinese pages show the app in Chinese, every other page in English.
   assert.deepEqual(["zh-CN", "zh-TW", "ja", "en"].map(tourLanguage), ["zh-CN", "zh-CN", "en", "en"]);
   assert.match(draw("en"), /<img src="\/tour\/app-session-en-light\.webp" alt="Droppen on a Mac[^"]*"/);
+  // A phone gets the same six tabs in an order whose first is the phone's own
+  // screens; desktop keeps the product's order. The DOM order is the visual
+  // one, so the arrow keys follow it too.
+  assert.equal(MOBILE_TOUR_TABS[0], "phone");
+  assert.deepEqual([...MOBILE_TOUR_TABS].sort(), [...TOUR_TABS].sort());
 });
 
 test("every screenshot the tour can show is in the build, in both languages and both themes, and nothing it cannot", () => {
@@ -531,7 +549,7 @@ test("the diagrams that carry content mark what is encrypted where: a padlock on
   assert.doesNotMatch(text(html), /\b[0-9a-f]{4} [0-9a-f]{4} [0-9a-f]{4}\b/);
   // The speed figure opens on the phone on 4G, the case its headline is about.
   const direct = html.slice(html.indexOf('data-diagram="direct"') - 3000, html.indexOf('data-diagram="direct"'));
-  assert.match(direct, /aria-selected="true"[^>]*>手机 · 4G 网络</);
+  assert.match(direct, /aria-pressed="true"[^>]*>手机 · 4G 网络</);
 });
 
 test("no region is named anywhere on the page: the relay is Droppen's, wherever it runs", () => {

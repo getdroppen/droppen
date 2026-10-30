@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import i18n from "i18next";
 import { useTranslation } from "react-i18next";
 import { Bell, CalendarClock, Code, FolderOpen, Info, KeyRound, ListChecks, Lock, MessageSquareReply, SquarePlus } from "lucide-react";
-import { secondary } from "@/features/cloud/ui";
 import { appHost } from "@/lib/hub/hosts";
 import { cn } from "@/lib/cn";
 import { landingBundles } from "./copy";
@@ -13,11 +12,11 @@ import { DirectPath } from "./direct-path";
 import { type Availability, AVAILABILITY } from "./get-droppen";
 import { HeroGet } from "./hero-get";
 import { OfflineCopy } from "./offline-copy";
-import { FooterLine, PublicHeader, Section, SectionHead, SOURCE_URL } from "./page-kit";
+import { ArrowLink, FooterLine, PublicHeader, Section, SectionHead, SOURCE_URL } from "./page-kit";
 import { PLAN_NUMBERS } from "./pricing-plans";
 import { ProductTour } from "./product-tour";
 import { useLatestRelease } from "./release-files";
-import { APP_PATH, publicLink, SECURITY_PATH, SIGN_IN_PATH, SIGN_UP_PATH, WAITLIST_HREF } from "./route";
+import { APP_PATH, publicLink, SECURITY_PATH, SIGN_UP_PATH, WAITLIST_HREF } from "./route";
 
 /*
  * The landing page: what a signed-out visitor sees at `/` in cloud mode
@@ -53,7 +52,7 @@ import { APP_PATH, publicLink, SECURITY_PATH, SIGN_IN_PATH, SIGN_UP_PATH, WAITLI
 // Added, never overwriting: a key the app already translates keeps its wording.
 for (const [lng, bundle] of Object.entries(landingBundles)) i18n.addResourceBundle(lng, "translation", bundle, true, false);
 
-const headline = "font-semibold text-balance text-fg [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all]";
+const headline = "font-normal text-balance text-fg cjk-wrap md:cjk-keep";
 
 /** The space before a link that follows a sentence: none after Chinese or Japanese punctuation. */
 const gapBefore = (language: string) => (/^(zh|ja)/.test(language) ? "" : " ");
@@ -77,10 +76,10 @@ function Hero({
   const { t } = useTranslation();
   return (
     <div className="flex flex-col px-10 pt-16 pb-12 max-lg:pt-12 max-md:px-4 max-md:pt-10 max-md:pb-8">
-      <h1 className={cn(headline, "mb-6 max-w-[14em] text-[64px] leading-[1.02] tracking-[-0.04em] max-lg:text-[52px] max-md:text-[36px] max-md:leading-[1.08]")}>
+      <h1 className="mb-6 max-w-[14em] text-5xl leading-display font-normal tracking-tighter text-balance text-fg cjk-wrap md:cjk-keep max-md:text-4xl">
         {t("Your computer's AI, from your phone.")}
       </h1>
-      <p className="max-w-[36em] text-[17px] leading-7 text-pretty text-muted [overflow-wrap:anywhere] [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-md:text-[15px] max-md:leading-6">
+      <p className="max-w-[36em] leading-6 text-pretty text-muted [overflow-wrap:anywhere] cjk-wrap md:cjk-keep">
         {t("Claude Code and Codex keep running on your own computers. From a browser on your phone or another device, answer their questions, steer them and open a terminal on the computer.")}
       </p>
       {/* The way onto this device, and the account's way in (signed in: back into the app). */}
@@ -120,8 +119,10 @@ function HowItWorks() {
       <ol className="grid border-t border-border md:grid-cols-3">
         {steps.map(({ title, body }, i) => (
           <li key={title} className={cn("flex flex-col gap-2.5 px-6 py-7 max-md:px-4", i > 0 && "border-border max-md:border-t md:border-l")}>
-            <span className="flex size-6 items-center justify-center bg-fg font-mono text-xs font-medium text-bg tabular-nums">{i + 1}</span>
-            <span className="text-[15px] leading-6 font-semibold text-fg">{title}</span>
+            <div className="flex items-center gap-2.5">
+              <span className="flex size-6 shrink-0 items-center justify-center bg-fg font-mono text-xs font-medium text-bg tabular-nums">{i + 1}</span>
+              <h3 className="text-base leading-6 font-semibold text-fg [&:lang(en)]:text-balance cjk-wrap cjk-keep">{title}</h3>
+            </div>
             <span className="text-sm leading-6 text-pretty text-muted">{body}</span>
           </li>
         ))}
@@ -154,8 +155,10 @@ function Features() {
               "lg:[&:nth-child(-n+3)]:border-b lg:[&:not(:nth-child(3n+1))]:border-l",
             )}
           >
-            <Icon className="size-5 text-fg" />
-            <span className="text-[15px] leading-6 font-semibold text-fg">{title}</span>
+            <div className="flex items-center gap-2.5">
+              <Icon className="size-5 shrink-0 text-fg" />
+              <h3 className="text-base leading-6 font-semibold text-fg [&:lang(en)]:text-balance cjk-wrap cjk-keep">{title}</h3>
+            </div>
             <span className="text-sm leading-6 text-pretty text-muted">{body}</span>
           </li>
         ))}
@@ -165,9 +168,30 @@ function Features() {
 }
 
 /**
+ * The one caveat the page owes a visitor before anything else: it is a beta,
+ * the encryption has not been audited, and a browser trusts the code it loaded.
+ * First line of the framed column, above the hero; it links the whole account
+ * of it (/security).
+ */
+function BetaNote() {
+  const { t, i18n: active } = useTranslation();
+  return (
+    <div className="flex items-start gap-3 border-b border-border px-6 py-4 max-md:px-4">
+      <Info className="mt-0.5 size-4 shrink-0 text-muted" />
+      <p className="max-w-[60em] text-xs leading-5 text-pretty text-muted">
+        {t("Droppen is in beta: its encryption design has had internal security reviews, not an external audit. Due to browser limitations, we recommend the more secure Mac app.")}
+        {gapBefore(active.language)}
+        <a {...publicLink(SECURITY_PATH)} data-testid="landing-security" className="whitespace-nowrap text-fg underline underline-offset-4 hover:no-underline">
+          {t("How the encryption works")}
+        </a>
+      </p>
+    </div>
+  );
+}
+
+/**
  * End-to-end encryption and the open-source client, once and briefly: three
- * cards, the beta's caveat, and the way to the whole account (/security,
- * `security/security.tsx`).
+ * cards and the way to the whole account (/security, `security/security.tsx`).
  */
 function Security() {
   const { t, i18n: active } = useTranslation();
@@ -182,8 +206,10 @@ function Security() {
       <ul className="grid border-t border-border md:grid-cols-3">
         {cards.map(({ icon: Icon, title, body }, i) => (
           <li key={title} className={cn("flex flex-col gap-2.5 px-6 py-7 max-md:px-4", i > 0 && "border-border max-md:border-t md:border-l")}>
-            <Icon className="size-5 text-fg" />
-            <span className="text-[15px] leading-6 font-semibold text-fg">{title}</span>
+            <div className="flex items-center gap-2.5">
+              <Icon className="size-5 shrink-0 text-fg" />
+              <h3 className="text-base leading-6 font-semibold text-fg [&:lang(en)]:text-balance cjk-wrap cjk-keep">{title}</h3>
+            </div>
             <span className="text-sm leading-6 text-pretty text-muted">
               {body}
               {i === 2 && (
@@ -198,16 +224,6 @@ function Security() {
           </li>
         ))}
       </ul>
-      <div className="flex items-start gap-3 border-t border-border px-6 py-5 max-md:px-4">
-        <Info className="mt-1 size-4 shrink-0 text-muted" />
-        <p className="max-w-[60em] text-sm leading-6 text-pretty text-muted">
-          {t("Droppen is in beta: its encryption design has had internal security reviews, not an external audit. In a browser, the page code loaded each time can use your private keys and, if tampered with, could copy them out; for higher assurance, use the Mac app.")}
-          {gapBefore(active.language)}
-          <a {...publicLink(SECURITY_PATH)} data-testid="landing-security" className="whitespace-nowrap text-fg underline underline-offset-4 hover:no-underline">
-            {t("How the encryption works")}
-          </a>
-        </p>
-      </div>
     </Section>
   );
 }
@@ -220,14 +236,11 @@ function Footer({ signedIn, signup }: { signedIn: boolean; signup: SignupMode })
       {!signedIn && (
         <Section>
           <div className="flex flex-col gap-6 px-6 py-16 max-md:px-4 max-md:py-10 md:flex-row md:items-end md:justify-between">
-            <p className={cn(headline, "text-[36px] leading-[1.1] tracking-[-0.03em] max-md:text-[28px]")}>{t("Your AI keeps working on your computer. When it needs you, answer from your phone.")}</p>
+            <p className={cn(headline, "text-4xl leading-display tracking-tight max-md:text-2xl max-md:max-[360px]:text-xl")}>{t("Your AI keeps working on your computer. When it needs you, answer from your phone.")}</p>
             <div className="flex flex-wrap gap-3">
-              <a {...publicLink(signup === "closed" ? WAITLIST_HREF : SIGN_UP_PATH)} className={secondary}>
-                {signup === "closed" ? t("Join the waitlist") : t("Create a free account")}
-              </a>
-              <a {...publicLink(SIGN_IN_PATH)} className={secondary}>
-                {t("Sign in")}
-              </a>
+              <ArrowLink variant="primary" {...publicLink(signup === "closed" ? WAITLIST_HREF : SIGN_UP_PATH)}>
+                {signup === "closed" ? t("Join the waitlist") : t("Sign up on the web")}
+              </ArrowLink>
             </div>
           </div>
         </Section>
@@ -283,7 +296,9 @@ export default function LandingPage({
   const { t } = useTranslation();
   useDocumentMeta();
   const offer = useMemo(() => heroOffer(detectKind(hints ?? browserHints() ?? { userAgent: "" }), availability), [hints, availability]);
-  const latest = useLatestRelease(release);
+  // A phone or Windows hero names no release file: do not ask the hub for one.
+  const needsRelease = offer === "mac" || offer === "linux" || offer === "all";
+  const latest = useLatestRelease(release === undefined && !needsRelease ? null : release);
   // Linux's processor, for its tarball (the high-entropy hints, else the user agent).
   const [detectedCpu, setDetectedCpu] = useState<string | null>(null);
   useEffect(() => {
@@ -295,10 +310,11 @@ export default function LandingPage({
     };
   }, [offer, cpu]);
   return (
-    <div data-testid="landing" className="h-full w-full overflow-y-auto bg-bg [scrollbar-gutter:stable]">
+    <div data-testid="landing" className="h-full w-full overflow-x-hidden overflow-y-auto bg-bg text-base [scrollbar-gutter:stable]">
       <PublicHeader signedIn={signedIn} />
       <div className="md:px-8">
         <main className="mx-auto max-w-[1360px] md:border-x md:border-border">
+          <BetaNote />
           <Hero signedIn={signedIn} signup={signup} offer={offer} availability={availability} release={latest} cpu={cpu === undefined ? detectedCpu : cpu} />
           <Section id="tour">
             <ProductTour />

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { fetchLatestRelease, formatSize, type LatestRelease, type ReleaseFile } from "@/lib/hub/releases";
 import { LINUX_CPUS } from "./detect";
@@ -92,22 +92,25 @@ export function LinuxTarballs({
   const files = platforms.map((platform) => release.files[platform]).filter((file): file is ReleaseFile => !!file);
   if (files.length === 0) return null;
   return (
-    <p data-testid={testId} className="font-mono text-2xs leading-5 text-faint">
+    <p data-testid={testId} className="font-mono text-xs font-semibold leading-5 text-faint">
       {sayUnbuilt && cpu && !built && <>{t("Droppen's Linux builds are for x86_64 and aarch64.")} </>}
       {t("Or download it:")}{" "}
       {files.map((file, i) => (
-        <span key={file.name}>
-          {i > 0 && " · "}
-          <a
-            href={file.href}
-            data-testid={`${testId}-file`}
-            className="text-muted underline underline-offset-4 [overflow-wrap:anywhere] hover:text-fg"
-            rel={countedLink(file) ? "nofollow" : undefined}
-          >
-            {file.name}
-          </a>{" "}
-          ({formatSize(file.size)})
-        </span>
+        <Fragment key={file.name}>
+          {i > 0 && <span className="max-[360px]:hidden"> · </span>}
+          {/* A file's name is one token where the line is wide; below 360px each file takes its own row, so a long name has the full card width. */}
+          <span className="whitespace-nowrap max-[360px]:block max-[360px]:whitespace-normal">
+            <a
+              href={file.href}
+              data-testid={`${testId}-file`}
+              className="text-muted underline underline-offset-4 hover:text-fg"
+              rel={countedLink(file) ? "nofollow" : undefined}
+            >
+              {file.name}
+            </a>{" "}
+            <span className="whitespace-nowrap">({formatSize(file.size)})</span>
+          </span>
+        </Fragment>
       ))}
     </p>
   );

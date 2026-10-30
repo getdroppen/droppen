@@ -44,7 +44,7 @@ export const MINIMUM_AGE = 16;
 function Block({ title, items }: { title: string; items: string[] }) {
   return (
     <div className="flex min-w-0 flex-col gap-3 px-6 py-6 max-md:px-4">
-      <span className="text-[13px] leading-5 font-semibold text-fg">{title}</span>
+      <span className="text-sm leading-5 font-semibold text-fg">{title}</span>
       <Points items={items} />
     </div>
   );
@@ -90,19 +90,19 @@ export default function TermsPage({ signedIn = false }: { signedIn?: boolean }) 
     </a>
   );
   return (
-    <div data-testid="terms" className="h-full w-full overflow-y-auto bg-bg [scrollbar-gutter:stable]">
+    <div data-testid="terms" className="h-full w-full overflow-y-auto bg-bg text-base [scrollbar-gutter:stable]">
       <PublicHeader signedIn={signedIn} />
       <div className="md:px-8">
         <main className="mx-auto max-w-[1360px] md:border-x md:border-border">
           <div className="flex flex-col gap-5 px-10 pt-16 pb-10 max-lg:pt-12 max-md:px-4 max-md:pt-10 max-md:pb-8">
-            <CapsLabel className={cjkTracking}>{t("Terms of Service")}</CapsLabel>
-            <h1 className="max-w-[18em] text-[44px] leading-[1.05] font-semibold tracking-[-0.035em] text-balance text-fg [word-break:auto-phrase] [&:lang(zh)]:[word-break:keep-all] max-md:text-[30px]">
+            <CapsLabel face="sans" className={cn(cjkTracking, "text-xs font-semibold")}>{t("Terms of Service")}</CapsLabel>
+            <h1 className="max-w-[18em] text-5xl leading-display font-normal tracking-tight text-balance text-fg cjk-wrap md:cjk-keep max-md:text-3xl">
               {t("What you can expect from us, and what we ask of you.")}
             </h1>
-            <p className="max-w-[40em] text-[15px] leading-[26px] text-muted max-md:text-sm max-md:leading-6">
+            <p className="max-w-[40em] text-base leading-6 text-muted max-md:text-sm max-md:leading-6">
               {t("These terms are the agreement between you and Droppen (“we”), which operates droppen.app. Creating an account, or using the service, means you accept them.")}
             </p>
-            <p className="font-mono text-2xs text-faint">{t("Last updated {{date}}", { date: TERMS_UPDATED })}</p>
+            <p className="text-xs text-faint">{t("Last updated {{date}}", { date: TERMS_UPDATED })}</p>
           </div>
           <Section id="service">
             <SectionHead label={t("The service")} title={t("What these terms cover")} />
@@ -309,7 +309,7 @@ export default function TermsPage({ signedIn = false }: { signedIn?: boolean }) 
           </Section>
           <Section id="contact">
             <div className="flex flex-col gap-3 px-6 py-8 max-md:px-4">
-              <CapsLabel className={cjkTracking}>{t("Contact")}</CapsLabel>
+              <CapsLabel face="sans" className={cn(cjkTracking, "text-xs font-semibold")}>{t("Contact")}</CapsLabel>
               <p className="text-sm leading-6 text-muted">
                 {t("Questions about these terms, or a request about your account:")} {mail(PRIVACY_EMAIL, "terms-email")}
               </p>

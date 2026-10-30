@@ -1,7 +1,7 @@
-// Third-party notices for the npm packages the web app bundles: what actually
-// reaches `web/dist`, not everything `package.json` lists. Node >= 20, no
-// dependencies of its own; inside `web/` so every build of the app can use it
-// (the Hub's image builds `web/` alone).
+// Third-party notices for the npm packages the web app bundles and the
+// self-hosted fonts: what actually reaches `web/dist`, not everything
+// `package.json` lists. Node >= 20, no dependencies of its own; inside `web/`
+// so every build of the app can use it (the Hub's image builds `web/` alone).
 //
 // Two users:
 //   - `thirdPartyNotices()`, a Vite plugin in `vite.config.ts`: every build
@@ -15,9 +15,10 @@
 // every asset's source file and every `/*! name vX` banner in the CSS, each
 // mapped to the npm package it came from (the package directory after the
 // last `node_modules/`). First-party code — `web/src` and the workspace
-// packages — is not listed. A package whose licence is missing (and not
-// clarified below) or not on the allow-list below (AGPL-3.0-compatible
-// permissive licences only) fails.
+// packages — is not listed; the self-hosted fonts are, under their own
+// heading, with the OFL text that ships beside them. A package whose licence
+// is missing (and not clarified below) or not on the allow-list below
+// (AGPL-3.0-compatible permissive licences only) fails.
 
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
@@ -60,6 +61,9 @@ const USUAL = new Set(["MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC
 
 /** The file the plugin writes, at the root of `web/dist`. */
 export const NOTICES_FILE = "THIRD_PARTY_NOTICES.txt";
+
+/** The self-hosted fonts' licence, shipped in full in the notices. */
+const FONT_LICENSE = readFileSync(new URL("../src/fonts/OFL.txt", import.meta.url), "utf8").trimEnd();
 
 /** Whether an SPDX expression can be satisfied with allowed licences, and the ids it names. */
 export function evaluate(expression) {
@@ -238,7 +242,7 @@ export function collect(webDir, { files, banners }, clarified = CLARIFIED) {
   return { entries, helpers: [...helpers].sort(), failures, unusual, withoutText, summary };
 }
 
-/** The notices as text: `intro` (lines), then every package and its licence files in full. */
+/** The notices as text: `intro` (lines), every package and its licence files in full, then the fonts. */
 export function render({ entries, helpers }, intro) {
   const rule = "-".repeat(80);
   const lines = [
@@ -259,6 +263,16 @@ export function render({ entries, helpers }, intro) {
       lines.push(`(The package ships no licence file. Its package.json declares ${e.license}.)`, "");
     }
   }
+  lines.push(
+    rule,
+    "Self-hosted fonts",
+    "IBM Plex Sans / IBM Plex Sans SC / IBM Plex Sans SC Text  SIL OFL 1.1",
+    "https://github.com/IBM/plex",
+    "",
+    "[OFL.txt]",
+    FONT_LICENSE,
+    "",
+  );
   return lines.filter((line, i) => line !== "" || lines[i - 1] !== "").join("\n") + "\n";
 }
 

@@ -22,7 +22,7 @@ type Bundle = Record<string, string>;
 /** Each line once: the English (the key), then zh-CN, zh-TW and ja, in the order the page says them. */
 const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: string])[] = [
   ["Terms of Service — Droppen", "服务条款 — Droppen", "服務條款 — Droppen", "利用規約 — Droppen"],
-  ["What you can expect from us, and what we ask of you.", "我们承诺什么，也请你遵守什么。", "我們承諾什麼，也請你遵守什麼。", "私たちがお約束すること、お願いすること。"],
+  ["What you can expect from us, and what we ask of you.", "我们承诺什么，也请你遵守什么", "我們承諾什麼，也請你遵守什麼", "私たちがお約束すること、お願いすること。"],
   [
     "These terms are the agreement between you and Droppen (“we”), which operates droppen.app. Creating an account, or using the service, means you accept them.",
     "本条款是你与 Droppen（下称「我们」，droppen.app 的运营方）之间的协议。创建账号或使用这项服务，即表示你接受本条款。",

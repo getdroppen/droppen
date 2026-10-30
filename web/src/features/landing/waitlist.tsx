@@ -2,12 +2,11 @@ import { type FormEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Check, Loader2 } from "lucide-react";
 import { CapsLabel } from "@/components/ui/caps-label";
-import { field, primary } from "@/features/cloud/ui";
 import { type HubApi, HubApiError, type SignupMode, type WaitlistPlan } from "@/lib/hub/api";
 import { cn } from "@/lib/cn";
 import { PRO_PRICE } from "./pricing-plans";
 import { publicLink, PRIVACY_PATH } from "./route";
-import { cjkTracking } from "./page-kit";
+import { cjkTracking, landingPrimary } from "./page-kit";
 
 /*
  * The waitlist form on droppen.app/pricing (`#waitlist`): an e-mail address,
@@ -89,21 +88,21 @@ function PlanChoice({ plan, onPlan }: { plan: WaitlistPlan; onPlan: (plan: Waitl
   return (
     <fieldset className="flex flex-col gap-1.5">
       <legend className="mb-1.5">
-        <CapsLabel className={cjkTracking}>{t("Plan")}</CapsLabel>
+        <CapsLabel face="sans" className={cn(cjkTracking, "text-xs font-semibold")}>{t("Plan")}</CapsLabel>
       </legend>
       <div className="grid grid-cols-2 gap-px border border-border-strong bg-border-strong">
         {options.map((o) => (
           <label
             key={o.id}
             className={cn(
-              "flex h-9 cursor-pointer items-center justify-center gap-2 bg-bg px-3 text-[13px] font-medium text-fg hover:bg-hover",
+              "flex h-9 cursor-pointer items-center justify-center gap-2 bg-bg px-3 text-sm font-medium text-fg hover:bg-hover max-md:h-10",
               "has-[:focus-visible]:outline-2 has-[:focus-visible]:-outline-offset-2 has-[:focus-visible]:outline-accent",
               plan === o.id && "bg-fg text-bg hover:bg-fg",
             )}
           >
             <input type="radio" name="plan" value={o.id} checked={plan === o.id} onChange={() => onPlan(o.id)} data-testid={`waitlist-plan-${o.id}`} className="sr-only" />
             <span>{o.name}</span>
-            <span className={cn("font-mono text-2xs", plan === o.id ? "text-bg/70" : "text-faint")}>{o.price}</span>
+            <span className={cn("text-xs font-semibold tabular-nums", plan === o.id ? "text-bg/70" : "text-faint")}>{o.price}</span>
           </label>
         ))}
       </div>
@@ -116,7 +115,7 @@ function Joined({ plan, signup, onAgain }: { plan: WaitlistPlan; signup: SignupM
   const { t } = useTranslation();
   return (
     <div role="status" data-testid="waitlist-done" data-plan={plan} className="flex max-w-[34rem] flex-col gap-3 border border-border bg-raised px-5 py-5 max-md:px-4">
-      <p className="flex items-start gap-2.5 text-[15px] leading-6 font-semibold text-fg">
+      <p className="flex items-start gap-2.5 text-base leading-6 font-semibold text-fg">
         <Check aria-hidden="true" className="mt-1 size-4 shrink-0" />
         <span>
           {plan === "pro"
@@ -126,13 +125,22 @@ function Joined({ plan, signup, onAgain }: { plan: WaitlistPlan; signup: SignupM
               : t("You're on the list: we'll e-mail you an invite.")}
         </span>
       </p>
-      <p className="text-xs leading-5 text-muted">{t("We'll send nothing else. To be taken off the list, write to {{email}}.", { email: PRIVACY_EMAIL })}</p>
-      <button type="button" onClick={onAgain} data-testid="waitlist-again" className="w-fit text-xs text-fg underline underline-offset-4 hover:no-underline">
+      <p className="text-sm leading-6 text-muted">{t("We'll send nothing else. To be taken off the list, write to {{email}}.", { email: PRIVACY_EMAIL })}</p>
+      <button type="button" onClick={onAgain} data-testid="waitlist-again" className="w-fit text-sm text-fg underline underline-offset-4 hover:no-underline">
         {t("Add another address")}
       </button>
     </div>
   );
 }
+
+/**
+ * The e-mail field at the public pages' size and face: 36px, sans 14px (16px
+ * on phones), the field's own border as the auxiliary cue and the page's 2px
+ * keyboard-focus ring (docs/ui-spec.md §1). `field` in `features/cloud/ui` is
+ * the app's 12px mono control, which is not this page's face.
+ */
+const emailField =
+  "h-9 w-full border border-border bg-bg px-2.5 text-sm text-fg placeholder:text-faint focus:border-fg max-md:h-10 max-md:text-base";
 
 /**
  * The form. `plan` is the page's (the plan cards choose it too); with
@@ -170,7 +178,7 @@ export function WaitlistForm({
     <form noValidate onSubmit={(e) => void submit(e)} data-testid="waitlist-form" data-plan={plan} className="flex max-w-[34rem] flex-col gap-5">
       {onPlan && <PlanChoice plan={plan} onPlan={onPlan} />}
       <label className="flex flex-col gap-1.5">
-        <CapsLabel className={cjkTracking}>{t("E-mail address")}</CapsLabel>
+        <CapsLabel face="sans" className={cn(cjkTracking, "text-xs font-semibold")}>{t("E-mail address")}</CapsLabel>
         <input
           id="waitlist-email"
           type="email"
@@ -187,22 +195,22 @@ export function WaitlistForm({
           placeholder="you@example.com"
           aria-invalid={refused?.reason === "email" || refused?.reason === "disposable" ? true : undefined}
           aria-describedby={refused ? "waitlist-error" : undefined}
-          className={field}
+          className={emailField}
         />
       </label>
       {refused && (
-        <p id="waitlist-error" role="alert" data-signal="failed" data-testid="waitlist-error" data-reason={refused.reason} className="font-mono text-2xs leading-4 text-danger">
+        <p id="waitlist-error" role="alert" data-signal="failed" data-testid="waitlist-error" data-reason={refused.reason} className="text-xs font-semibold leading-4 text-danger">
           {problemText(refused, t)}
         </p>
       )}
       <div className="flex flex-col gap-3">
-        <button type="submit" data-variant="primary" data-testid="waitlist-submit" disabled={sending} className={cn(primary, "w-full sm:w-fit")}>
+        <button type="submit" data-variant="primary" data-testid="waitlist-submit" disabled={sending} className={cn(landingPrimary, "w-full sm:w-fit max-md:h-10")}>
           {sending && <Loader2 aria-hidden="true" className="size-3.5 animate-spin" />}
           {t("Join the waitlist")}
         </button>
-        <p className="text-xs leading-5 text-muted">
+        <p className="text-sm leading-6 text-muted">
           {t("No confirmation mail and no newsletter: we use your address only to send what you asked for.")}{" "}
-          <a {...publicLink(PRIVACY_PATH)} data-testid="waitlist-privacy" className="text-fg underline underline-offset-4 hover:no-underline">
+          <a {...publicLink(PRIVACY_PATH)} data-testid="waitlist-privacy" className="whitespace-nowrap text-fg underline underline-offset-4 hover:no-underline">
             {t("Privacy notice")}
           </a>
         </p>

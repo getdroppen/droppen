@@ -46,6 +46,11 @@ against a production account.
 
 ## Rules
 
+- A new font size is a spec change. Use the named steps in `docs/ui-spec.md`:
+  Tailwind's default `text-xs`…`text-5xl` on public pages, the compact
+  `text-2xs`/`text-xs` scale inside the app. Never add a fixed
+  `text-[13px]`-style one-off; if a step is missing, add a `@theme` token and
+  update the spec first.
 - Do not "fix" the fixture to make the check pass; fix the component.
 - Do not disable or weaken a check without changing `docs/ui-spec.md` in the
   same change.

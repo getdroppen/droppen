@@ -79,6 +79,8 @@ test("what a build renders is mapped to its packages, listed with their licences
     assert.ok(text.includes("zed@1.0.0  MIT\nhttps://example.com/zed.git\n\n[LICENSE]\nzed's licence\n"), text);
     assert.ok(text.includes("(The package ships no licence file. Its package.json declares Apache-2.0.)"), text);
     assert.ok(!text.includes("unused"), "a package the build does not render is not listed");
+    assert.match(text, /Self-hosted fonts\nIBM Plex Sans \/ IBM Plex Sans SC \/ IBM Plex Sans SC Text {2}SIL OFL 1\.1/);
+    assert.match(text, /Copyright © 2017 IBM Corp/, "the fonts' OFL text follows in full");
 
     // A package with a refused licence, or with none, fails.
     const bad = pkg("copyleft", { license: "GPL-3.0-only" });

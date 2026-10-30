@@ -16,7 +16,7 @@ import { applyThemeMode, MODE_ICONS, NEXT_MODE, storedThemeMode, type ThemeMode 
  * does.
  */
 
-const control = "flex h-9 shrink-0 items-center justify-center gap-1.5 border border-border-strong bg-bg text-muted hover:bg-hover hover:text-fg";
+const control = "flex h-9 shrink-0 items-center justify-center gap-1.5 border border-border-strong bg-bg text-muted transition-colors hover:bg-hover hover:text-fg data-[popup-open]:bg-hover data-[popup-open]:text-fg";
 
 export function PrefsControls() {
   const { t, i18n } = useTranslation();
@@ -35,12 +35,12 @@ export function PrefsControls() {
   };
   const Icon = MODE_ICONS[theme];
   const themeLabel = t("theme: {{mode}} (click for {{next}})", { mode: t(theme), next: t(NEXT_MODE[theme]) });
+  const langLabel = `${t("language")}: ${active.label}`;
   return (
     <div data-prefs="" className="flex shrink-0 items-center gap-2">
       <LanguageMenu value={language} onChoose={chooseLanguage} look="public">
-        <Menu.Trigger aria-label={t("language")} title={t("language")} className={cn(control, "px-2.5 font-mono text-2xs")}>
+        <Menu.Trigger aria-label={langLabel} title={langLabel} className={cn(control, "w-9")}>
           <Globe className="size-3.5" />
-          <span lang={active.id}>{active.label}</span>
         </Menu.Trigger>
       </LanguageMenu>
       <button

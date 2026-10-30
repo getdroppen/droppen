@@ -10,6 +10,7 @@
   "scripts": {
     "dev:server": "DROPPEN_ALLOW_MISSING_WEB_DIST=1 cargo run --manifest-path server-rs/Cargo.toml -- serve",
     "dev:web": "pnpm --filter @remote-hand/web dev",
+    "dev:web:landing": "DROPPEN_DEV_LANDING=1 pnpm --filter @remote-hand/web dev",
     "build:server": "cargo build --release --manifest-path server-rs/Cargo.toml",
     "build:web": "pnpm --filter @remote-hand/web build",
     "gen:api": "DROPPEN_EXPORT_ROOT=$(mktemp -d) && DROPPEN_CONFIG_DIR=$DROPPEN_EXPORT_ROOT/config DROPPEN_DATA_DIR=$DROPPEN_EXPORT_ROOT/data APP_INSTANCE=openapi-export DROPPEN_ALLOW_MISSING_WEB_DIST=1 cargo run --quiet --manifest-path server-rs/Cargo.toml -- export-openapi --out openapi/openapi.json; status=$?; rm -rf $DROPPEN_EXPORT_ROOT; [ $status -eq 0 ] && pnpm --filter @remote-hand/web gen:api",
@@ -26,6 +27,7 @@
     "test:publish-release": "node --test scripts/publish-release.test.mjs",
     "test:release-notes": "node --test scripts/release-notes.test.mjs",
     "test:ai-attribution": "node --test scripts/check-ai-attribution.test.mjs",
+    "test:ui-audit": "node --test scripts/ui-audit/run.test.mjs",
     "test:sdk": "pnpm --filter @droppen/plugin-sdk test",
     "ui-audit": "node scripts/ui-audit/run.mjs",
     "build:web:app": "rm -rf web/dist && DROPPEN_WEB_MODE=cloud DROPPEN_WEB_ROLE=app pnpm --filter @remote-hand/web build",

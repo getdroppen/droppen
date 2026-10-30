@@ -98,13 +98,13 @@ const part = (html: string, from: string, to?: string) => {
 test("the pricing page leads with what you get, in zh-CN first", () => {
   const words = text(draw("zh-CN"));
   for (const line of [
-    "免费开始，需要更多时升级 Pro。",
+    "免费开始，需要更多时升级 Pro",
     "所有方案均端到端加密：无论哪个方案，我们都无法读取你的会话、代码和终端。",
     "价格以美元计。Pro 尚未开放购买；在你决定付款之前，不会产生任何费用。",
     "仅本地",
     "免费版",
     "无论身在何处，都能在手机上使用你的 AI。",
-    "包含免费版的全部功能，额度更高：",
+    "包含免费版的全部功能，额度更高。",
     "3 台可运行 AI 的设备",
     "20 台可运行 AI 的设备",
     "共 8 台设备，含可运行 AI 的设备、手机和浏览器",
@@ -115,7 +115,7 @@ test("the pricing page leads with what you get, in zh-CN first", () => {
     "或每年 $96，省 20%",
     "加入等候名单",
     "各方案包含的内容",
-    "留下邮箱，Pro 开放购买时我们会发邮件通知你。",
+    "留下邮箱，Pro 开放时通知",
     "每月流量额度用完后会怎样？",
     "「仅本地」是什么意思？",
     "可以自行部署吗？",
@@ -134,7 +134,7 @@ test("in English, and every number on the page is a plan's own", () => {
   for (const line of [
     "Start free. Go Pro when you need more.",
     "Local only",
-    "Everything in Free, with higher limits:",
+    "Everything in Free, with higher limits.",
     `${free.hosts} devices that run AI`,
     `${pro.hosts} devices that run AI`,
     `${free.devices} devices in all, including those that run AI, phones and browsers`,
@@ -149,7 +149,8 @@ test("in English, and every number on the page is a plan's own", () => {
     `$${PRO_PRICE.monthly} a month, or $${PRO_PRICE.yearly} a year`,
     `past ${gb(free.transferBytes)} GB that traffic slows to ${THROTTLED_KB_PER_SEC} KB/s`,
     `past ${gb(pro.transferBytes)} GB is billed by use`,
-    "End-to-end encrypted: we can't read your sessions, code or terminals",
+    "End-to-end encrypted",
+    "We can't read your sessions, code or terminals",
     "Prices in US dollars. Pro is not on sale yet, and nothing is charged before you choose to pay.",
     // The cloud's copy expires once a device has been offline that long (docs/relay-and-plans.md §3.4): offline, not off.
     `Free keeps an encrypted copy of each device's last ${free.retentionDays} days of sessions in the cloud, Pro its last ${pro.retentionDays}.`,
@@ -164,7 +165,7 @@ test("in English, and every number on the page is a plan's own", () => {
   assert.equal(yearlySaving(), 20);
   // Every plan says it is end-to-end encrypted: the compare table's last row has a mark in each column.
   const compare = part(html, "compare", "waitlist");
-  const encrypted = compare.slice(compare.lastIndexOf('role="rowheader"'));
+  const encrypted = compare.slice(compare.indexOf("End-to-end encrypted"));
   assert.equal((encrypted.match(/>included</g) ?? []).length, 3);
   // Section ids the header's anchors and the cards' buttons go to.
   for (const id of ["plans", "compare", "waitlist", "faq"]) assert.match(html, new RegExp(`id="${id}"`));
@@ -238,7 +239,7 @@ test("open sign-up: the form is Pro's alone — no plan to choose, whatever the 
   for (const line of [
     "Sign up with an e-mail address",
     "Free, with an account",
-    "Leave your address, and we'll write when Pro opens.",
+    "Leave your address, and we'll write when Pro opens",
     "Pro is not on sale yet: payments are on their way. Submitting the form is all it takes.",
   ]) {
     assert.ok(words.includes(line), `missing: ${line}`);
@@ -250,7 +251,7 @@ test("open sign-up: the form is Pro's alone — no plan to choose, whatever the 
   }
   // By invite, as before.
   const invited = text(draw("en", { signup: "invite" }));
-  for (const line of ["Sign-up is by invite for now", "Free; sign-up by invite for now", "Have an invite code? Sign up", "Leave your address, and we'll write when it's your turn."]) {
+  for (const line of ["Sign-up is by invite for now", "Free; sign-up by invite for now", "Have an invite code? Sign up", "Leave your address, and we'll write when it's your turn"]) {
     assert.ok(invited.includes(line), `invite missing: ${line}`);
   }
 });
@@ -261,7 +262,7 @@ test("closed sign-up: closed for now, Free's waitlist and Pro's, and no invite c
   for (const line of [
     "Sign-up is closed for now",
     "Free; sign-up is closed for now",
-    "Leave your address, and we'll write when sign-up or Pro opens.",
+    "Leave your address, and we'll write when sign-up or Pro opens",
     "Sign-up is closed for now, and Pro is not on sale yet. Pick what you are waiting for: we'll e-mail you when sign-up opens, or when Pro does. Submitting the form is all it takes.",
   ]) {
     assert.ok(words.includes(line), `missing: ${line}`);
@@ -386,9 +387,9 @@ test("the hub client joins with POST /v1/waitlist, with no session and only what
 
 test("the page reads in zh-TW and ja, with nothing left in English", () => {
   const tw = text(draw("zh-TW"));
-  for (const line of ["免費開始，需要更多時升級 Pro。", "僅本地", "加入等候名單", "3 台可執行 AI 的裝置", "各方案包含的內容", "可以自行架設嗎？", "裝置長時間離線會怎樣？"]) assert.ok(tw.includes(line), `zh-TW missing: ${line}`);
+  for (const line of ["免費開始，需要更多時升級 Pro", "僅本地", "加入等候名單", "3 台可執行 AI 的裝置", "各方案包含的內容", "可以自行架設嗎？", "裝置長時間離線會怎樣？"]) assert.ok(tw.includes(line), `zh-TW missing: ${line}`);
   const jp = text(draw("ja"));
-  for (const line of ["無料で始めて、必要になったら Pro へ。", "ローカルのみ", "ウェイトリストに登録", "AI を実行できるデバイス 3 台", "各プランの内容", "セルフホストできますか？", "デバイスが長くオフラインのままだと？"]) assert.ok(jp.includes(line), `ja missing: ${line}`);
+  for (const line of ["無料で始めて、必要なら Pro へ。", "ローカルのみ", "ウェイトリストに登録", "AI を実行できるデバイス 3 台", "各プランの内容", "セルフホストできますか？", "デバイスが長くオフラインのままだと？"]) assert.ok(jp.includes(line), `ja missing: ${line}`);
   for (const words of [tw, jp, text(draw("zh-CN"))]) {
     assert.doesNotMatch(words, /Join the waitlist|Start free|Local only|Everything in Free|What each plan includes|Before you choose|devices that run AI/);
   }
@@ -428,9 +429,9 @@ test("`/pricing` and `/privacy` are public pages of their own, signed in or not,
   };
   for (const [name, element] of Object.entries(pages)) {
     const html = renderToStaticMarkup(<I18nextProvider i18n={i18n}>{element}</I18nextProvider>);
-    assert.match(html, /<a href="\/pricing"[^>]*data-testid="header-pricing"[^>]*>Pricing<\/a>/, `${name}: the header`);
+    assert.match(html, /<a href="\/pricing"[^>]*data-testid="header-pricing"[^>]*>[\s\S]*?<span[^>]*>Pricing<\/span><\/a>/, `${name}: the header`);
     assert.match(html, /<a href="\/pricing"[^>]*data-testid="footer-pricing"/, `${name}: the footer`);
-    assert.match(html, /<a href="\/privacy"[^>]*data-testid="footer-privacy"[^>]*>Privacy notice<\/a>/, `${name}: the footer`);
+    assert.match(html, /<a href="\/privacy"[^>]*data-testid="footer-privacy"[^>]*>[\s\S]*?<span[^>]*>Privacy notice<\/span><\/a>/, `${name}: the footer`);
     assert.match(html, /<a href="\/terms#contact"[^>]*data-testid="footer-contact"[^>]*>Contact<\/a>/, `${name}: who to write to`);
   }
   // The landing page's hero does not link the plans (the first screen sells the product, not its price; the owner's call, 2026-10-28): the header and the footer do. By invite, the hero links the waitlist.
@@ -439,8 +440,8 @@ test("`/pricing` and `/privacy` are public pages of their own, signed in or not,
   assert.doesNotMatch(renderToStaticMarkup(<I18nextProvider i18n={i18n}><LandingPage signedIn /></I18nextProvider>), /data-testid="hero-(waitlist|pricing)"/);
   void i18n.changeLanguage("zh-CN");
   const cn = renderToStaticMarkup(<I18nextProvider i18n={i18n}><LandingPage /></I18nextProvider>);
-  assert.match(cn, /data-testid="header-pricing"[^>]*>定价<\/a>/);
-  assert.match(cn, /data-testid="footer-privacy"[^>]*>隐私说明<\/a>/);
+  assert.match(cn, /data-testid="header-pricing"[^>]*>[\s\S]*?<span[^>]*>定价<\/span><\/a>/);
+  assert.match(cn, /data-testid="footer-privacy"[^>]*>[\s\S]*?<span[^>]*>隐私说明<\/span><\/a>/);
   assert.match(renderToStaticMarkup(<I18nextProvider i18n={i18n}><LandingPage signup="invite" /></I18nextProvider>), /data-testid="hero-waitlist"[^>]*>还没有邀请码？加入等候名单<\/a>/);
 });
 
@@ -484,7 +485,7 @@ test("the privacy notice: what the waitlist keeps and why, for how long, how to 
   assert.match(html, new RegExp(`<a href="mailto:${PRIVACY_EMAIL}"`));
   assert.equal(primaries(html), 0, "nothing to do here but read");
   const cn = text(drawPrivacy("zh-CN"));
-  for (const line of ["我们保存什么，又看不到什么。", "不保存你的 IP 地址", "最长不超过你最后一次加入后的 12 个月", "我们的服务器看得到", "看不到", "如果你删除了账号", "保留 7 天", "如果你下载了 Droppen", "每项下载每天一个计数", "最多一小时，不写到任何地方", "按地址和网络计数请求，最多保留一天"]) assert.ok(cn.includes(line), `zh-CN missing: ${line}`);
+  for (const line of ["我们保存什么，又看不到什么", "不保存你的 IP 地址", "最长不超过你最后一次加入后的 12 个月", "我们的服务器看得到", "看不到", "如果你删除了账号", "保留 7 天", "如果你下载了 Droppen", "每项下载每天一个计数", "最多一小时，不写到任何地方", "按地址和网络计数请求，最多保留一天"]) assert.ok(cn.includes(line), `zh-CN missing: ${line}`);
   for (const lng of ["zh-TW", "ja"]) assert.doesNotMatch(text(drawPrivacy(lng)), /What we keep|If you joined the waitlist|What our servers can see|If you delete your account|A keyed hash|Our providers|How long we keep it|If you download Droppen|What we count|What we don't keep|for an hour at most/, lng);
 });
 

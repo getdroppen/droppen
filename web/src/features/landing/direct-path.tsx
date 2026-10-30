@@ -350,26 +350,28 @@ export function DirectPath() {
     [w, scenario, t],
   );
 
+  /** The colours a reading (or the path it took) is tinted by, without a face of its own. */
+  const latencyInk = "data-[latency=ok]:text-ok data-[latency=warn]:text-warn-fg data-[latency=danger]:text-danger";
   const readout =
-    "pointer-events-none absolute flex h-6 items-center gap-1.5 border bg-bg px-2 font-mono text-[11px] whitespace-nowrap tabular-nums data-[active=false]:border-dashed data-[active=false]:border-border-strong data-[active=true]:border-fg";
-  const value = "data-[latency=ok]:text-ok data-[latency=warn]:text-warn-fg data-[latency=danger]:text-danger";
+    "pointer-events-none absolute flex h-6 items-center gap-1.5 border bg-bg px-2 text-xs whitespace-nowrap data-[active=false]:border-dashed data-[active=false]:border-border-strong data-[active=true]:border-fg";
+  /** A reading, or "断开" when the path is cut: tabular figures keep the digits still. */
+  const value = `tabular-nums ${latencyInk}`;
   const scenarios: { id: Scenario; label: string }[] = [
     { id: "phone", label: t("phone on 4G") },
     { id: "same", label: t("browser on the same computer") },
   ];
   return (
     <div ref={root} data-path="direct" className="flex h-full flex-col">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border px-6 py-3 max-md:px-4">
-        <div role="tablist" aria-label={t("measured on")} className="flex h-9 border border-border-strong">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border px-6 py-3 max-md:px-4 max-[360px]:px-3">
+        <div role="group" aria-label={t("measured on")} className="flex h-9 border border-border-strong">
           {scenarios.map((s) => (
             <button
               key={s.id}
               type="button"
-              role="tab"
-              aria-selected={scenario === s.id}
+              aria-pressed={scenario === s.id}
               onClick={() => setScenario(s.id)}
               className={cn(
-                "flex items-center border-r border-border px-3 font-mono text-2xs font-medium last:border-r-0",
+                "flex shrink-0 items-center border-r border-border px-3 text-xs font-semibold whitespace-nowrap last:border-r-0 max-[360px]:px-2",
                 scenario === s.id ? "bg-fg text-bg" : "text-muted hover:text-fg",
               )}
             >
@@ -377,7 +379,7 @@ export function DirectPath() {
             </button>
           ))}
         </div>
-        <span className="font-mono text-2xs text-faint tabular-nums">
+        <span className="text-xs text-faint tabular-nums">
           {t("measured median round trip · direct {{d}} · via a Droppen relay {{h}}", {
             d: `${m.direct[0]}–${m.direct[1]} ms`,
             h: `${m.hub[0]}–${m.hub[1]} ms`,
@@ -448,7 +450,7 @@ export function DirectPath() {
           ref={cut}
           data-on="false"
           data-signal="failed"
-          className="absolute flex size-4 items-center justify-center bg-bg font-mono text-[13px] leading-none text-danger data-[on=false]:hidden"
+          className="absolute flex size-4 items-center justify-center bg-bg font-mono text-sm leading-none text-danger data-[on=false]:hidden"
           style={{ left: L.cut.x - 8, top: L.cut.y - 8 }}
         >
           ×
@@ -466,9 +468,9 @@ export function DirectPath() {
               </>
             )
           }
-          status={<span ref={devPath} data-signal="latency" className={cn("min-w-[11ch] text-right tabular-nums", value)} />}
+          status={<span ref={devPath} data-signal="latency" className={cn("min-w-[11ch] text-right tabular-nums", latencyInk)} />}
           rows={[
-            <span key="t" className="text-xs text-fg">
+            <span key="t" className="font-mono text-xs text-fg">
               {/* The caret is painted at the end of the line's own box: it grows with the line, nothing moves. */}
               <span ref={typed} className="bg-[linear-gradient(to_left,var(--color-fg)_6px,transparent_6px)] pr-[7px]">
                 ${" "}
@@ -486,23 +488,23 @@ export function DirectPath() {
           status={<LiveDot />}
           rows={[]}
         >
-          <span ref={term} className="block px-2.5 py-1.5 font-mono text-xs leading-[18px] whitespace-pre text-fg">
+          <span ref={term} className="block px-2.5 py-1.5 font-mono text-xs leading-5 whitespace-pre text-fg">
             {TERMINAL_HISTORY.join("\n")}
           </span>
         </Ledger>
       </Stage>
       {/* Fixed height and a fixed-width count: a status that changes length moves nothing on the page. */}
       {/* Fixed height and a fixed-width count: a status that changes length moves nothing on the page. */}
-      <div className="grid h-10 grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-t border-border px-6 max-md:h-14 max-md:px-4">
+      <div className="grid h-10 grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-t border-border px-6 max-md:h-14 max-md:px-4 max-[360px]:px-3">
         <span
           ref={status}
           data-tone="ok"
           data-signal="path"
-          className="line-clamp-2 font-mono text-2xs leading-4 data-[tone=danger]:text-danger data-[tone=ok]:text-ok"
+          className="line-clamp-2 text-xs font-semibold leading-4 data-[tone=danger]:text-danger data-[tone=ok]:text-ok"
         >
           {directLive}
         </span>
-        <span ref={counts} className="min-w-[24ch] text-right font-mono text-2xs text-muted tabular-nums" />
+        <span ref={counts} className="min-w-[24ch] text-right text-xs font-semibold text-muted tabular-nums" />
       </div>
     </div>
   );
