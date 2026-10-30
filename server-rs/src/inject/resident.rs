@@ -90,7 +90,7 @@ use super::shim::{self, Link, Output, Sidecars, Spawn};
 use super::common::{busy_message, new_uuid, AnswerOutcome, Phase, QueueOutcome, Reply, ResidentState, StopTaskOutcome};
 use super::drafts::Draft;
 use super::gate::{ClaimError, SessionLease, SpawnGate};
-use super::{runs, Capabilities, DriverStatesBuilder, InjectError, InjectionRegistry, Provider, Run, RunEntry, RunState, SendTo, Sent, SpawnPermit, StartAt};
+use super::{runs, Capabilities, DriverStatesBuilder, InjectError, InjectionRegistry, ListsRuns, Provider, Run, RunEntry, RunHost, RunState, SendTo, Sent, SpawnPermit, StartAt};
 mod spawn;
 
 /// The mode flags every resident is started with.
@@ -159,7 +159,7 @@ pub(super) const ABSORB_POLL: Duration = Duration::from_secs(1);
 const SETTLE_RECHECK: Duration = Duration::from_millis(25);
 
 /// How often a quota reading with headroom may wake the residents holding
-/// their queues after a limit; see [`InjectionRegistry::recheck_holds`].
+/// their queues after a limit; see [`ClaudeCodeRuns::recheck_holds`].
 const READING_RECHECK_EVERY: Duration = Duration::from_secs(5);
 
 /// How many deaths inside [`RECOVERY_WINDOW`] mean the session is not coming back.
@@ -457,7 +457,7 @@ enum Cmd {
         pending: Box<Pending>,
         /// Answered once the message is in the journal, which is what the send
         /// route waits for before it says `200`; see
-        /// [`InjectionRegistry::deliver`].
+        /// [`ClaudeCodeRuns::deliver`].
         recorded: tokio::sync::oneshot::Sender<()>,
     },
     /// Take a message back out of the queue before it goes in.
@@ -623,7 +623,7 @@ pub(super) struct Delivery {
 const SLOW_JOURNAL: Duration = Duration::from_secs(2);
 
 /// Wait for a resident's driver to say a message is on disk — exactly the
-/// wait [`InjectionRegistry::deliver`] has always made (it is what keeps an
+/// wait [`ClaudeCodeRuns::deliver`] has always made (it is what keeps an
 /// accepted message from being lost to a kill) — logging it when it takes
 /// longer than [`SLOW_JOURNAL`]: once when it passes that mark, so a wait
 /// that never ends is seen too, and again with the total when it ends.
@@ -657,17 +657,183 @@ async fn wait_recorded(
 
 /// Claude Code, as the provider registry knows it.
 pub(crate) struct ClaudeCode {
-    /// The registry it reads its residents from.
-    registry: Arc<InjectionRegistry>,
+    /// Its sessions' residents.
+    runs: Arc<ClaudeCodeRuns>,
     /// Its CLI's models, per login.
     models: crate::models::claude::ClaudeModels,
 }
 
 impl ClaudeCode {
-    /// Claude Code over `registry`.
+    /// Claude Code, on the runs `registry` keeps for it.
     pub(crate) fn new(registry: Arc<InjectionRegistry>) -> Self {
         let models = crate::models::claude::ClaudeModels::new(registry.paths.clone(), registry.accounts.clone());
-        Self { registry, models }
+        Self {
+            runs: registry.claude.clone(),
+            models,
+        }
+    }
+
+    /// Its runs, for a test that stands in for a driver or checks whose they
+    /// are.
+    #[cfg(test)]
+    pub(crate) fn runs(&self) -> &Arc<ClaudeCodeRuns> {
+        &self.runs
+    }
+}
+
+/// Claude Code's runs: the resident behind each session, and how their
+/// drivers are timed, recorded and started. Kept here rather than on the
+/// host they run on, whose shared parts — the paths, the runs journal, the
+/// feeds — they reach through it.
+pub(crate) struct ClaudeCodeRuns {
+    /// What they run on.
+    host: Arc<RunHost>,
+    /// The resident claude behind each session, keyed by session id alone —
+    /// there is no codex resident, so the source is not part of the key.
+    pub(super) residents: Mutex<std::collections::HashMap<String, Handle>>,
+    /// How long a claude turn may make no progress before it is *marked*
+    /// stalled. Nothing is ever killed for it; see [`self`].
+    stall_after: Duration,
+    /// How long a settings change may be parked behind claude's background work
+    /// before the process is restarted anyway; `None` to wait for ever.
+    ///
+    /// A ceiling rather than a policy: parking is right, and the tasks a
+    /// resident exists to protect can legitimately run for an hour. What this
+    /// stops is the *unbounded* case — a background set that is wrong about
+    /// work which is not there, holding a message nobody can stop or take back.
+    /// See [`Driver::waited_long_enough`].
+    await_background: Option<Duration>,
+    /// `DROPPEN_ROTATE_AHEAD_PERCENT`: the used percent of a window at which a
+    /// session is moved off its account at the next quiet point, before the
+    /// limit refuses a turn; `None` when that is switched off. See
+    /// [`Driver::rotate_ahead`].
+    rotate_ahead: Option<f64>,
+    /// Where claude drops a background task's output file.
+    ///
+    /// The CLI writes one `<task-id>.output` per background task under
+    /// `<root>/<cwd-slug>/<session-id>/tasks/`, and streams into it while the
+    /// task runs — so for a `local_bash` task, which has no subagent transcript
+    /// anywhere, this is the *only* place on disk that says it is still alive.
+    /// [`Driver::subagents_recently_active`] reads it for exactly that
+    /// reason.
+    ///
+    /// A root rather than the directory itself because the slug in the middle is
+    /// the working directory with its separators and its non-ASCII mangled, and
+    /// reproducing that encoding is a guess; looking for the session id one level
+    /// down is not. Overridable so a test can point it at a directory it owns.
+    task_root: PathBuf,
+    /// How long a resident may sit idle before it is retired, or `None` — the
+    /// default — for never.
+    ///
+    /// Off by default because the resident model's whole promise is that the
+    /// next message goes into a process that is already there and that nothing
+    /// running in the background is ever cut off, and both are weakened by
+    /// ending idle processes. It exists because a resident costs three or four
+    /// hundred megabytes, and a machine with enough sessions open needs a way to
+    /// say so. See [`Driver::idle_shutdown`].
+    resident_idle: Option<Duration>,
+    /// How long the recovery ladder waits before each restart of a resident
+    /// that died unexpectedly: one entry per death inside the breaker's window,
+    /// the last reused past the end.
+    ///
+    /// A field rather than the constant it defaults to so a test can walk the
+    /// whole ladder — resume, fork, breaker — without sitting out real
+    /// backoffs; production always runs [`RECOVERY_BACKOFF`].
+    recovery_backoff: [Duration; 3],
+    /// How long a turn opened for a *steered* message is given to prove it
+    /// exists before the driver concludes claude answered the message inside
+    /// the turn it was handed to.
+    ///
+    /// The whole of the merged/deferred ambiguity is timed by this, so it is a
+    /// field for the same reason [`Self::recovery_backoff`] is: a test has to
+    /// be able to watch both outcomes without sitting out the real one.
+    /// Production runs [`STEER_SETTLE`], or `DROPPEN_STEER_SETTLE_MS`.
+    steer_settle: Duration,
+    /// How often a resident holding steered messages looks in the transcript
+    /// for claude having taken them into the turn in flight.
+    ///
+    /// The backstop for a session nobody is watching: a watched one is told the
+    /// moment its transcript grows — see [`super::ProviderRegistry::transcript_grew`].
+    /// Production runs [`ABSORB_POLL`], or `DROPPEN_ABSORB_POLL_MS`.
+    absorb_poll: Duration,
+    /// Where a session's flight recording goes, if it is being made at all.
+    ///
+    /// A factory rather than a recorder: one is opened per *resident*, lives on
+    /// its driver, and is what carries the session's life into
+    /// [`crate::record`]. See [`Driver::recorder`].
+    recorders: crate::record::Recorders,
+    /// What a claude spawn's environment gains before it starts: on the send
+    /// path, and for the process an automatic rotation moves a session to,
+    /// which a driver builds by itself.
+    decoration: Arc<dyn super::SpawnDecoration>,
+    /// When a quota reading last woke the residents holding a queue; see
+    /// [`ClaudeCodeRuns::recheck_holds`].
+    reading_recheck: Mutex<Option<Instant>>,
+}
+
+impl ClaudeCodeRuns {
+    /// None yet, on `host`, timed as the environment asks, and in its session
+    /// list from now on. `instance` says where the flight recordings go;
+    /// `decoration` is what a claude spawn's environment gains before it
+    /// starts.
+    pub(super) fn new(host: Arc<RunHost>, instance: &droppen_instance::instance::InstanceDirs, decoration: Arc<dyn super::SpawnDecoration>) -> Arc<Self> {
+        let recorders = crate::record::Recorders::new(host.paths.clone(), instance);
+        Arc::new(Self {
+            host,
+            residents: Mutex::new(std::collections::HashMap::new()),
+            // Ten minutes of silence is a *report*, not a sentence: the only
+            // thing that happens at this threshold is that the turn is marked.
+            stall_after: super::env_ms("DROPPEN_STALL_MS", Duration::from_secs(10 * 60)),
+            // Half an hour: past every background job short enough that waiting
+            // is the obvious answer, and well short of a session that is stuck.
+            // Zero means "wait for ever", which is why this does not go through
+            // `env_ms` either.
+            await_background: match droppen_base::env::var("DROPPEN_AWAIT_BACKGROUND_MS")
+                .and_then(|raw| raw.trim().parse::<u64>().ok())
+            {
+                Some(0) => None,
+                Some(ms) => Some(Duration::from_millis(ms)),
+                None => Some(Duration::from_secs(30 * 60)),
+            },
+            rotate_ahead: crate::accounts::rotation::ahead_threshold_from_env(),
+            // `/tmp`, not `TMPDIR`: claude writes here, and on macOS `TMPDIR` is
+            // a per-process directory under `/var/folders` that it never uses.
+            task_root: droppen_base::env::var("DROPPEN_TASK_ROOT").map(PathBuf::from).unwrap_or_else(|| {
+                // SAFETY: `getuid` reads the calling process' own uid and cannot fail.
+                PathBuf::from(format!("/tmp/claude-{}", unsafe { libc::getuid() }))
+            }),
+            // Zero, absent and unparseable all mean "never", which is why this
+            // is the one timing here that does not go through `env_ms`: its
+            // fallback is not a duration.
+            resident_idle: droppen_base::env::var("DROPPEN_RESIDENT_IDLE_MS")
+                .and_then(|raw| raw.trim().parse::<u64>().ok())
+                .filter(|ms| *ms > 0)
+                .map(Duration::from_millis),
+            recovery_backoff: RECOVERY_BACKOFF,
+            steer_settle: super::env_ms("DROPPEN_STEER_SETTLE_MS", STEER_SETTLE),
+            absorb_poll: super::env_ms("DROPPEN_ABSORB_POLL_MS", ABSORB_POLL),
+            recorders,
+            decoration,
+            reading_recheck: Mutex::new(None),
+        })
+        .listed()
+    }
+}
+
+/// The host's shared parts — its paths, journal, feeds and keys — read as if
+/// they were the runs' own, so a method here reaches them as plainly as one of
+/// the host's does.
+impl std::ops::Deref for ClaudeCodeRuns {
+    type Target = RunHost;
+
+    fn deref(&self) -> &RunHost {
+        &self.host
+    }
+}
+
+impl ListsRuns for ClaudeCodeRuns {
+    fn add_to(&self, states: &mut DriverStatesBuilder) {
+        self.claude_driver_states(states);
     }
 }
 
@@ -703,21 +869,21 @@ impl Provider for ClaudeCode {
 
 impl Run for ClaudeCode {
     fn send<'a>(&'a self, gate: &'a SpawnGate, to: SendTo<'a>) -> BoxFuture<'a, Result<Sent, InjectError>> {
-        Box::pin(self.registry.claude_send(gate, to))
+        Box::pin(self.runs.claude_send(gate, to))
     }
 
     fn start<'a>(&'a self, gate: &'a SpawnGate, at: StartAt<'a>) -> BoxFuture<'a, Result<String, InjectError>> {
-        Box::pin(self.registry.claude_start(gate, at))
+        Box::pin(self.runs.claude_start(gate, at))
     }
 
     /// A resident publishes each turn in the runs map, so that is where a
     /// claude session's run is.
     fn injection(&self, id: &str) -> Option<Injection> {
-        self.registry.run_injection(Source::Claude, id)
+        self.runs.run_injection(Source::Claude, id)
     }
 
     fn resident(&self, id: &str) -> Option<ResidentState> {
-        Some(self.registry.residents.lock().expect("residents poisoned").get(id)?.state())
+        Some(self.runs.residents.lock().expect("residents poisoned").get(id)?.state())
     }
 
     /// claude keeps a resident between turns, so the honest reading is its
@@ -738,7 +904,7 @@ impl Run for ClaudeCode {
     /// session long before anything is sent to it, and has to be holding the
     /// channel the driver will write into when something is.
     fn draft_watch(&self, id: &str) -> Option<tokio::sync::watch::Receiver<Draft>> {
-        Some(self.registry.drafts.subscribe(&self.registry.key_of(Source::Claude, id)))
+        Some(self.runs.drafts.subscribe(&self.runs.key_of(Source::Claude, id)))
     }
 
     /// Its resident looks for steered messages claude folded into the turn in
@@ -746,52 +912,52 @@ impl Run for ClaudeCode {
     /// message leaves the queue on screen in the same moment it appears in the
     /// transcript. Cheap for a resident with nothing steered: it returns at once.
     fn transcript_grew(&self, id: &str) {
-        if let Some(handle) = self.registry.residents.lock().expect("residents poisoned").get(id) {
+        if let Some(handle) = self.runs.residents.lock().expect("residents poisoned").get(id) {
             let _ = handle.tx.send(Cmd::Absorb { nudged: true });
         }
     }
 
     fn recheck_holds(&self) {
-        self.registry.recheck_holds();
+        self.runs.recheck_holds();
     }
 
     fn drop_queued<'a>(&'a self, id: &'a str, qid: &'a str) -> BoxFuture<'a, QueueOutcome> {
-        Box::pin(self.registry.drop_queued(id, qid))
+        Box::pin(self.runs.drop_queued(id, qid))
     }
 
     fn steer_queued<'a>(&'a self, id: &'a str, qid: &'a str) -> BoxFuture<'a, QueueOutcome> {
-        Box::pin(self.registry.steer_queued(id, qid))
+        Box::pin(self.runs.steer_queued(id, qid))
     }
 
     /// The resident, when this server holds one; otherwise a run adopted
     /// from the previous server.
     fn interrupt(&self, id: &str) -> bool {
         if self.holds(id) {
-            return self.registry.interrupt_resident(id);
+            return self.runs.interrupt_resident(id);
         }
-        self.registry.interrupt_legacy(Source::Claude, id)
+        self.runs.interrupt_legacy(Source::Claude, id)
     }
 
     fn stop_background_task(&self, id: &str, task_id: &str) -> StopTaskOutcome {
         if !self.holds(id) {
             return StopTaskOutcome::NoResident;
         }
-        self.registry.stop_resident_task(id, task_id)
+        self.runs.stop_resident_task(id, task_id)
     }
 
     fn open_question(&self, id: &str) -> Option<String> {
-        self.registry.open_question(id)
+        self.runs.open_question(id)
     }
 
     fn answer_question<'a>(&'a self, id: &'a str, request_id: &'a str, reply: Reply, by: Option<String>) -> BoxFuture<'a, AnswerOutcome> {
-        Box::pin(self.registry.answer_question(id, request_id, reply, by))
+        Box::pin(self.runs.answer_question(id, request_id, reply, by))
     }
 
     // Onto this server's hidden list: claude keeps no archive of its own.
     // No gate: putting the transcript away starts no CLI.
     fn archive<'a>(&'a self, _gate: &'a SpawnGate, id: &'a str) -> BoxFuture<'a, Result<(), String>> {
         Box::pin(async move {
-            droppen_sessions::archive::archive_claude_session(&self.registry.paths, id)
+            droppen_sessions::archive::archive_claude_session(&self.runs.paths, id)
                 .await
                 .map_err(|_| "archive failed".to_string())
         })
@@ -801,17 +967,84 @@ impl Run for ClaudeCode {
 impl ClaudeCode {
     /// Whether this server holds a resident for session `id`.
     fn holds(&self, id: &str) -> bool {
-        self.registry.residents.lock().expect("residents poisoned").contains_key(id)
+        self.runs.residents.lock().expect("residents poisoned").contains_key(id)
     }
 }
 
-impl InjectionRegistry {
-    /// Itself, listed with its host as Claude Code's runs: its residents
+impl ClaudeCodeRuns {
+    /// Itself, listed with its host as Claude Code's runs
     /// ([`super::RunHost::driver_states`]).
-    pub(super) fn listed(self: Arc<Self>) -> Arc<Self> {
+    fn listed(self: Arc<Self>) -> Arc<Self> {
         let runs: Arc<dyn super::ListsRuns> = self.clone();
         self.host.list(Source::Claude, Arc::downgrade(&runs));
         self
+    }
+
+    /// The channel claude session `id`'s draft is published on.
+    ///
+    /// Its driver's [`super::drafts::DraftWriter`] is the only thing that writes to it
+    /// in a running server; a test of the feed stands in for that driver here.
+    pub(crate) fn draft_channel(&self, id: &str) -> Arc<tokio::sync::watch::Sender<super::drafts::Draft>> {
+        self.drafts.channel(&self.key_of(Source::Claude, id))
+    }
+
+    /// The writer a driver for session `id` publishes its draft through.
+    fn draft_writer(&self, id: &str) -> super::drafts::DraftWriter {
+        super::drafts::DraftWriter::new(self.draft_channel(id))
+    }
+
+    /// Write a rotation decision down and tell everyone who should hear of it:
+    /// the log line, the phone, the session's feed and the list.
+    ///
+    /// The one `info` line per decision is here, so every path that decides —
+    /// a switch, nowhere to go, the cap — is logged the same way. Returns the
+    /// record's id, for a switch that learns later how much it interrupted.
+    fn record_rotation(&self, decision: &crate::accounts::rotation::Decision, notice: &str) -> Option<i64> {
+        let id = match self.accounts.rotation_log().record(decision) {
+            Ok(id) => Some(id),
+            Err(error) => {
+                tracing::warn!(session = %decision.session_id, %error, "cannot record an account rotation");
+                None
+            }
+        };
+        tracing::info!(
+            session = %decision.session_id,
+            from = %decision.from.id,
+            to = %decision.to.id,
+            class = decision.class.as_str(),
+            scope = %decision.scope,
+            until = decision.until_ms.map(crate::accounts::rest::iso_ms).as_deref().unwrap_or("-"),
+            interrupted = decision.interrupted_tasks,
+            outcome = decision.outcome.as_str(),
+            trigger = decision.trigger.as_str(),
+            used = ?decision.used_percent,
+            "decided an account rotation"
+        );
+        // Known limitation: the failed turn behind this decision has
+        // already sent its own "Run failed" notification a moment earlier, so
+        // a limit reaches the phone twice — the failure, then what was done
+        // about it. The second is the one that bypasses the throttle. A move
+        // ahead of a limit has no failure before it, and reaches it once.
+        // Every session on one account crosses the threshold together, so a
+        // move ahead tends to come in a burst: N sessions from A to B within a
+        // few minutes. One push per account pair per window says it; the rest
+        // would only bury it. A limit-driven rotation always pushes.
+        let ahead_burst = decision.trigger == droppen_sessions::account::RotationTrigger::Ahead
+            && !super::first_ahead_push(&decision.from.id, &decision.to.id, std::time::Instant::now());
+        if !ahead_burst {
+            if let Some(alerts) = self.alerts.get() {
+                alerts.rotation(
+                    self.paths.clone(),
+                    Source::Claude,
+                    decision.session_id.clone(),
+                    decision.outcome,
+                    decision.trigger,
+                    notice.to_string(),
+                );
+            }
+        }
+        self.announce(Source::Claude, &decision.session_id);
+        id
     }
 
     /// Claude's part of [`super::RunHost::driver_states`]: every resident.
@@ -835,7 +1068,7 @@ impl InjectionRegistry {
     /// The caller answers `200` the moment this returns, and a server killed
     /// the instant after has nothing to hand the next one but the journal. A
     /// message that starts a resident is in the record it is born with (see
-    /// [`InjectionRegistry::start_resident`]). One posted to a resident that is
+    /// [`ClaudeCodeRuns::start_resident`]). One posted to a resident that is
     /// already running is the driver's to write down, so this waits until it
     /// has — the same wait the queue routes and the codex send already make.
     /// Posting and returning, as this once did, answered `200` while the message
@@ -1116,7 +1349,7 @@ impl InjectionRegistry {
         }
     }
 
-    /// [`InjectionRegistry::recheck_holds`] for a quota reading with headroom,
+    /// [`ClaudeCodeRuns::recheck_holds`] for a quota reading with headroom,
     /// which arrives once per turn per session: at most once every
     /// [`READING_RECHECK_EVERY`], because the watchdog's tick is the net under
     /// it anyway.
@@ -1227,7 +1460,7 @@ impl InjectionRegistry {
     /// the oldest, when it is somehow holding more than one.
     ///
     /// Read off the mirror, so it answers what was true a moment ago. Every
-    /// caller goes on to [`InjectionRegistry::answer_question`], which asks the
+    /// caller goes on to [`ClaudeCodeRuns::answer_question`], which asks the
     /// driver and is told the truth.
     pub fn open_question(&self, id: &str) -> Option<String> {
         self.residents.lock().expect("residents poisoned").get(id)?.state().question
@@ -1287,10 +1520,10 @@ impl Selector {
     }
 }
 
-impl InjectionRegistry {
+impl ClaudeCodeRuns {
     /// Take over a resident this server did not start.
     ///
-    /// The other half of [`InjectionRegistry::start_resident`], for a boot that
+    /// The other half of [`ClaudeCodeRuns::start_resident`], for a boot that
     /// found a live `claude` in the journal. Everything the driver needs is
     /// rebuilt from what survived: the link from the shim socket, the settings
     /// from the record, the session's state from the replay the attach triggers.
@@ -1347,7 +1580,7 @@ impl InjectionRegistry {
         // turn in flight has nothing running. What the replay says is a round
         // trip to a shim away, and the composer would be open for all of it. So
         // the pessimistic half goes in now and the driver corrects it — the same
-        // bargain [`InjectionRegistry::start_resident`] makes for a cold CLI.
+        // bargain [`ClaudeCodeRuns::start_resident`] makes for a cold CLI.
         if record.turn_at.is_some() || outstanding > 0 {
             self.runs
                 .lock()
@@ -1771,7 +2004,7 @@ impl BackgroundTasks {
 
 /// The one task that owns a resident: its link, its queue and its state.
 struct Driver {
-    registry: Arc<InjectionRegistry>,
+    registry: Arc<ClaudeCodeRuns>,
     /// The session id the transcript is under, which `system:init` may correct.
     id: String,
     sidecars: Sidecars,
@@ -1850,7 +2083,7 @@ struct Driver {
     heard: Instant,
     /// Whether what the link is handing out is still the session's history.
     ///
-    /// True only for a driver built by [`InjectionRegistry::attached`], and only
+    /// True only for a driver built by [`ClaudeCodeRuns::attached`], and only
     /// until the replay reaches the offset the shim reported. Nothing may act
     /// while it holds — see [`Driver::replay`].
     replaying: bool,
@@ -1865,7 +2098,7 @@ struct Driver {
     replay_marked: bool,
     /// The stdout offset the journal says a turn was written in at.
     ///
-    /// Only ever set by [`InjectionRegistry::attached`], and only until the
+    /// Only ever set by [`ClaudeCodeRuns::attached`], and only until the
     /// replay walks past it. It is the half of the session's state that claude's
     /// stdout cannot carry — see [`runs::RunRecord::turn_at`] — and it is
     /// consumed exactly like a line of the replay, in its place in the stream,
@@ -3497,7 +3730,7 @@ impl Driver {
     /// Every watchdog tick, and whenever something that could change the answer
     /// happens elsewhere — an account's rest cleared, an account added or
     /// re-authorized, a quota reading with headroom
-    /// ([`InjectionRegistry::recheck_holds`]). An answer of "still nowhere"
+    /// ([`ClaudeCodeRuns::recheck_holds`]). An answer of "still nowhere"
     /// decides nothing: no row, no notification — the first decision already
     /// said so.
     async fn recheck_hold(&mut self) {
@@ -4785,7 +5018,7 @@ impl Driver {
     /// covers the other. A background **Agent** streams a transcript into the
     /// session's `subagents/` directory; a background **Bash** writes no
     /// transcript at all, only its `<task-id>.output` under
-    /// [`InjectionRegistry::task_root`]. A replayed set of the second kind has
+    /// [`ClaudeCodeRuns::task_root`]. A replayed set of the second kind has
     /// no witness in the first place, so both are read and the newest wins.
     async fn subagents_recently_active(&self) -> bool {
         let Some(file) = crate::sessions::claude::find_claude_session_file(&self.registry.paths, &self.id).await else {
@@ -4937,7 +5170,7 @@ impl Driver {
     /// in the queue is held there — which is exactly what happened to a live
     /// session and is why this function no longer simply asserts a turn exists.
     ///
-    /// So it opens one and gives it [`InjectionRegistry::steer_settle`] to
+    /// So it opens one and gives it [`ClaudeCodeRuns::steer_settle`] to
     /// prove itself. The journal mark is the one piece of bookkeeping that
     /// waits for that proof: a mark is what the next boot reconstructs a turn
     /// in flight from, and a mark for a turn that was folded into a previous
@@ -5773,7 +6006,7 @@ impl Driver {
 
     /// The run to fail when a launch is stopped before it ever started a turn.
     ///
-    /// [`InjectionRegistry::start_resident`] put one there the moment the send
+    /// [`ClaudeCodeRuns::start_resident`] put one there the moment the send
     /// was accepted, so that a session waiting on a cold CLI does not read as
     /// idle. That is the run whoever pressed Stop is looking at, so it is the
     /// one that has to be closed — opening a second would leave the first
@@ -5912,7 +6145,7 @@ impl Driver {
     /// Whether a parked settings change has waited past the point of politeness.
     ///
     /// The park has no other way out. A parked driver sits at `Phase::Idle`, so
-    /// [`InjectionRegistry::interrupt_resident`] refuses it — there is no turn
+    /// [`ClaudeCodeRuns::interrupt_resident`] refuses it — there is no turn
     /// to stop — and the message at the head of the queue is neither delivered
     /// nor failed. Every release depends on the background set emptying, and
     /// the whole reason [`Driver::settle_background`] exists is that the set
@@ -6122,7 +6355,7 @@ impl StdinLine<'_> {
 ///
 /// Built here rather than in [`Driver::open_turn`] because the send path needs
 /// the same thing before there is a driver to ask: see
-/// [`InjectionRegistry::start_resident`].
+/// [`ClaudeCodeRuns::start_resident`].
 fn running_turn(id: &str) -> Arc<RunEntry> {
     let (finished, _) = tokio::sync::watch::channel(false);
     Arc::new(RunEntry {
@@ -7108,7 +7341,10 @@ mod tests {
     /// A driver, the fake claude it is driving, and the files both write.
     struct Harness {
         _home: tempfile::TempDir,
-        registry: Arc<InjectionRegistry>,
+        /// Claude Code's runs, which the driver under test is one of.
+        registry: Arc<ClaudeCodeRuns>,
+        /// The injection registry over them, as a server's `Drive` holds it.
+        injections: Arc<InjectionRegistry>,
         /// Every provider over `registry`, as the routes and the feeds ask
         /// them, and the spawn gate they lend.
         providers: Arc<crate::inject::ProviderRegistry>,
@@ -7175,8 +7411,7 @@ mod tests {
             gate: Mutex::new(std::sync::Weak::new()),
             paths: paths.clone(),
         });
-        Arc::new(InjectionRegistry {
-            codex: crate::inject::app_server::CodexRuns::new(host.clone()),
+        let claude = Arc::new(ClaudeCodeRuns {
             residents: Mutex::new(HashMap::new()),
             stall_after: stall,
             resident_idle: None,
@@ -7199,9 +7434,14 @@ mod tests {
             recorders: crate::record::Recorders::new_at(dirs.session_logs(), None, paths.clone()),
             decoration: crate::drive::NotifyDecoration::new(paths.clone(), dirs),
             reading_recheck: Mutex::new(None),
+            host: host.clone(),
+        })
+        .listed();
+        Arc::new(InjectionRegistry {
+            codex: crate::inject::app_server::CodexRuns::new(host.clone()),
+            claude,
             host,
         })
-        .listed()
     }
 
     /// The bounded wait every fake CLI in here uses to sit on `$GO`, prepended
@@ -7437,7 +7677,7 @@ done
     ///
     /// One argument rather than three because [`Harness::build`] already takes
     /// as many as anything should, and because the three only ever vary
-    /// together: they are the whole of what [`InjectionRegistry::attached`]
+    /// together: they are the whole of what [`ClaudeCodeRuns::attached`]
     /// reconstructs from a journal record.
     /// What a replayed background task has left on disk to be believed by.
     ///
@@ -7579,7 +7819,7 @@ done
         /// The shim is started, the fake claude writes `history` and touches a
         /// marker, and only then does the driver connect — so `link.total()` is
         /// non-zero and the driver walks the history through
-        /// [`Driver::replay`] exactly as [`InjectionRegistry::attached`] makes
+        /// [`Driver::replay`] exactly as [`ClaudeCodeRuns::attached`] makes
         /// it. Waiting on the marker rather than on a sleep is what keeps the
         /// arrangement from being a race.
         ///
@@ -7603,7 +7843,7 @@ done
         }
 
         /// A driver that took over a resident whose record says `live`, holding
-        /// `queued`, exactly as [`InjectionRegistry::attached`] builds one.
+        /// `queued`, exactly as [`ClaudeCodeRuns::attached`] builds one.
         ///
         /// The production scenario in one call: `None` is the record written
         /// before the journal carried a fingerprint at all.
@@ -7668,8 +7908,9 @@ done
                 transcript: tail,
                 absorb_poll,
             } = adoption;
-            let registry = registry(home.path(), stall, tick, step, settle, absorb_poll);
-            let providers = crate::inject::ProviderRegistry::new(registry.clone(), crate::app::register_providers);
+            let injections = registry(home.path(), stall, tick, step, settle, absorb_poll);
+            let providers = crate::inject::ProviderRegistry::new(injections.clone(), crate::app::register_providers);
+            let registry = injections.claude.clone();
             let log = home.path().join("stdin.log");
             let go = home.path().join("go");
             let bin = home.path().join("bin");
@@ -7731,7 +7972,7 @@ done
                 until("the history to be written", || marked.exists()).await;
             }
             let link = shim::connect_in_process(sidecars.socket()).await.expect("the shim answers");
-            // Exactly what `InjectionRegistry::attached` computes: a shim that
+            // Exactly what `ClaudeCodeRuns::attached` computes: a shim that
             // has buffered bytes has history, and history has to be replayed
             // before anything in it may be acted on. A fresh spawn never
             // replays, however fast its CLI got going.
@@ -7844,6 +8085,7 @@ done
             Harness {
                 _home: home,
                 registry,
+                injections,
                 providers,
                 tx,
                 shared,
@@ -7928,7 +8170,7 @@ done
         /// Put a message in the driver's inbox and walk away, without waiting
         /// for it to be written down: these tests poll for what they expect.
         /// [`a_message_sent_behind_a_turn_is_on_disk_before_its_send_is_answered`]
-        /// is the one that goes through [`InjectionRegistry::deliver`] instead.
+        /// is the one that goes through [`ClaudeCodeRuns::deliver`] instead.
         fn post(&self, pending: Pending) {
             let (recorded, _) = tokio::sync::oneshot::channel();
             self.tx
@@ -8104,7 +8346,7 @@ done
     /// A message sent behind a running turn is in the journal by the time its
     /// send is answered.
     ///
-    /// The send route says `200` the moment [`InjectionRegistry::deliver`]
+    /// The send route says `200` the moment [`ClaudeCodeRuns::deliver`]
     /// returns, and a server killed the instant after hands the next one
     /// nothing but the journal. So the journal is read here straight after the
     /// call returns, without polling: polling would wait for the driver and
@@ -11044,7 +11286,7 @@ dir=$(dirname "$GO")
     }
 
     /// Rest `account` under `scope` until `until_ms`, as phase 1 would have.
-    fn rest_on(registry: &InjectionRegistry, account: &str, class: LimitClass, scope: &str, until_ms: i64) {
+    fn rest_on(registry: &RunHost, account: &str, class: LimitClass, scope: &str, until_ms: i64) {
         registry
             .accounts
             .limit_log()
@@ -11468,7 +11710,7 @@ done
 
     /// File a fresh reading of `account` with the five-hour window at `five`
     /// and the week at `week`, both fractions, as a session on it would.
-    fn read_account(registry: &InjectionRegistry, account: &str, five: f64, week: f64) {
+    fn read_account(registry: &RunHost, account: &str, five: f64, week: f64) {
         let resets = rest::now_ms() / 1000 + 3600;
         let info = serde_json::json!({
             "unifiedWindows": {
@@ -12519,7 +12761,7 @@ done
         let drive = Arc::new(crate::drive::Drive {
             auth: droppen_auth::Auth::new(&paths, &instance, &droppen_http::config::AuthSettings::default(), false, std::sync::Arc::new(crate::app::NotifyTokens)),
             wizards: crate::accounts::setup_token::Captures::new(),
-            injections: harness.registry.clone(),
+            injections: harness.injections.clone(),
             accounts: Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins())),
             quota: Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins())),
             composer: crate::drive::composer_prefs::ComposerPrefsStore::new(paths.clone()),

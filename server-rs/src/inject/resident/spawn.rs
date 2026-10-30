@@ -6,7 +6,7 @@ use std::sync::Arc;
 use crate::accounts::store::AccountProvider;
 use crate::claude_roots;
 use crate::inject::common::{new_uuid, session_workdir, CHAT_SYSTEM_PROMPT};
-use crate::inject::{claude_prompt, require_provider, resident, AccountChoice, InjectError, InjectionRegistry, SendOptions, SendTo, Sent, SpawnGate, StartAt};
+use crate::inject::{claude_prompt, require_provider, resident, AccountChoice, InjectError, SendOptions, SendTo, Sent, SpawnGate, StartAt};
 use crate::sessions::claude;
 use droppen_sessions::Source;
 use droppen_base::process_env::{claude_env, claude_env_bare, clean_env_bare, Env};
@@ -129,7 +129,7 @@ pub(super) struct ClaudeLogin {
 
 // ------------------------------------------------------------ account resolution
 
-impl InjectionRegistry {
+impl super::ClaudeCodeRuns {
     /// The environment a spawn against this instance's own Claude root runs with.
     ///
     /// Two independent pieces:
@@ -179,7 +179,7 @@ impl InjectionRegistry {
 /// environment would have supplied one of those names had no account set it,
 /// that value comes back (`inherited`, which never answers for the harness
 /// variables [`claude_env`] strips). Then `new`'s go in on top — the same
-/// "account last" order [`InjectionRegistry::owned_claude_env`] builds in.
+/// "account last" order [`super::ClaudeCodeRuns::owned_claude_env`] builds in.
 ///
 /// Known limitation: `old` is the old account's block as stored *now*. A key
 /// deleted from that block after the process started (say `ANTHROPIC_BASE_URL`)
@@ -204,7 +204,7 @@ fn inherited_var(key: &str) -> Option<String> {
     clean_env_bare().remove(key)
 }
 
-impl InjectionRegistry {
+impl super::ClaudeCodeRuns {
     /// Which login a resume runs under.
     ///
     /// A session is this server's own when its transcript sits in the root this
@@ -256,7 +256,7 @@ impl InjectionRegistry {
     }
 }
 
-impl InjectionRegistry {
+impl super::ClaudeCodeRuns {
     /// Give a claude spawn the means to notify its user, when there is a channel.
     ///
     /// Claude only, for now, and the reason is the skill rather than the program:
@@ -273,7 +273,7 @@ impl InjectionRegistry {
     }
 }
 
-impl InjectionRegistry {
+impl super::ClaudeCodeRuns {
     /// Hand a message to claude for an existing session.
     pub(super) async fn claude_send(self: &Arc<Self>, gate: &SpawnGate, to: SendTo<'_>) -> Result<Sent, InjectError> {
         let SendTo { id, cwd, text, options } = to;
@@ -340,7 +340,7 @@ impl InjectionRegistry {
     }
 }
 
-impl InjectionRegistry {
+impl super::ClaudeCodeRuns {
     /// `recipe`, rebuilt to bill `to` instead of `from`.
     ///
     /// The command line and the working directory are the session's and stay as
@@ -407,7 +407,7 @@ impl InjectionRegistry {
 
     /// That account, plus a name for the credential it holds right now.
     ///
-    /// Read here rather than carried out of [`InjectionRegistry::owned_claude_env`] because it is
+    /// Read here rather than carried out of [`super::ClaudeCodeRuns::owned_claude_env`] because it is
     /// wanted on the path that does not build an environment at all — a local-login
     /// send — and because the store is the only thing that may answer it.
     async fn login_of(&self, account: Option<String>) -> ClaudeLogin {
