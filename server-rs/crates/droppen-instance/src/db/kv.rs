@@ -53,7 +53,8 @@ pub mod scope {
     /// `chat-provider.json` — base URL, key and model for the BYO-API chat.
     pub const CHAT_PROVIDER: &str = "chat-provider";
     /// The configured ACP agents, one row per agent id: its name, command
-    /// line and extra environment, as JSON (the server's `acp_agent`).
+    /// line and extra environment, as JSON (`droppen_provider_acp::agents`,
+    /// which alone names this scope).
     pub const ACP_AGENTS: &str = "acp-agents";
     /// `notify.json` — the Bark channel's settings and its HMAC secret.
     pub const NOTIFY: &str = "notify";

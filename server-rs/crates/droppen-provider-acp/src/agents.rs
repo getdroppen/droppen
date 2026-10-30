@@ -178,7 +178,10 @@ impl AcpAgent {
     /// Keep `check` as this agent's last, unless its command line or
     /// environment changed while it ran: then it describes nothing that is
     /// configured, and is dropped. `false` when it was not kept.
-    pub fn record_check(&self, agents: &AcpAgentRegistry, check: &AcpCheck) -> bool {
+    ///
+    /// The crate's own: the check route records the check it ran. A server's
+    /// test records one with [`crate::testing::record_check`].
+    pub(crate) fn record_check(&self, agents: &AcpAgentRegistry, check: &AcpCheck) -> bool {
         let _writing = WRITES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let db = droppen_instance::db::at(&agents.0);
         let Some(mut stored) = db.kv_get(scope::ACP_AGENTS, &self.id).and_then(|raw| serde_json::from_str::<Stored>(&raw).ok()) else {
@@ -663,7 +666,8 @@ pub struct AcpAgentUpdate {
 /// What the ACP-agent routes use of the server's state.
 #[derive(Clone)]
 pub struct AcpAgentState {
-    /// Where the agents' configuration lives.
+    /// Where the agents' configuration lives: the runs' own, so the routes
+    /// read the configuration the gated writes change.
     paths: Arc<droppen_instance::paths::Paths>,
     /// The live runs, which check an agent and stop its sessions when it goes:
     /// the ACP provider's own, in `providers`.
@@ -674,11 +678,12 @@ pub struct AcpAgentState {
 droppen_http::substate!(AcpAgentState);
 
 impl AcpAgentState {
-    /// The routes' state over `paths`, with the runs of the ACP provider
-    /// `providers` holds: the runs and the spawn gate the registry lends them
-    /// are one provider's. `None` when it holds no ACP provider.
-    pub fn new(paths: Arc<droppen_instance::paths::Paths>, providers: Arc<droppen_provider::ProviderRegistry>) -> Option<Self> {
+    /// The routes' state over the ACP provider `providers` holds: its runs,
+    /// the spawn gate the registry lends them, and the paths they run on, so
+    /// all three are one provider's. `None` when it holds no ACP provider.
+    pub fn new(providers: Arc<droppen_provider::ProviderRegistry>) -> Option<Self> {
         let acp = providers.provider::<crate::Acp>()?.runs().clone();
+        let paths = acp.host.paths.clone();
         Some(Self { paths, acp, providers })
     }
 }
@@ -818,6 +823,45 @@ pub fn describe(reg: &mut ExtraResponses) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The agents' kv scope is named here, and where it is declared, and
+    /// nowhere else: a raw write to it would change an agent without the
+    /// spawn gate, without renewing its processes and without forgetting what
+    /// it offered (`AcpRuns::reconfigure_acp_agent`, `remove_acp_agent`). By
+    /// its constant or by its string, in every crate of the server, tests
+    /// included: a test seeds an agent through [`crate::testing`].
+    #[test]
+    fn only_the_registry_names_the_agents_kv_scope() {
+        fn walk(dir: &std::path::Path, found: &mut Vec<PathBuf>) {
+            for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    if path.file_name().is_some_and(|name| name != "target") {
+                        walk(&path, found);
+                    }
+                } else if path.extension().is_some_and(|ext| ext == "rs") {
+                    found.push(path);
+                }
+            }
+        }
+        let server = std::fs::canonicalize(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")).expect("server-rs");
+        let mut files = Vec::new();
+        for dir in ["src", "tests", "crates"] {
+            walk(&server.join(dir), &mut files);
+        }
+        assert!(files.len() > 100, "the scan reads the server's sources: {} files", files.len());
+        let naming: Vec<String> = files
+            .iter()
+            .filter(|path| {
+                let text = std::fs::read_to_string(path).expect("source");
+                text.contains("ACP_AGENTS") || text.contains(&format!("\"{}\"", scope::ACP_AGENTS))
+            })
+            .map(|path| path.strip_prefix(&server).expect("under server-rs").display().to_string())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        assert_eq!(naming, ["crates/droppen-instance/src/db/kv.rs", "crates/droppen-provider-acp/src/agents.rs"]);
+    }
 
     fn paths() -> (tempfile::TempDir, Paths) {
         let home = tempfile::tempdir().expect("tempdir");
