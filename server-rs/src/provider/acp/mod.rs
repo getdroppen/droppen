@@ -336,7 +336,7 @@ pub(crate) struct AcpRuns {
 }
 
 impl AcpRuns {
-    /// None yet, on `host`, and in its session list from now on.
+    /// None yet, on `host`.
     fn new(host: Arc<RunHost>) -> Arc<Self> {
         let runs = Arc::new(Self {
             host,
@@ -344,8 +344,6 @@ impl AcpRuns {
             acp_options: Mutex::new(HashMap::new()),
             acp_probes: Mutex::new(HashMap::new()),
         });
-        let listed: Arc<dyn ProviderRuns> = runs.clone();
-        runs.host.list(Source::Acp, Arc::downgrade(&listed));
         runs
     }
 }
@@ -364,6 +362,10 @@ impl std::ops::Deref for AcpRuns {
 /// An ACP agent's process is never journalled, so no run of one is adopted:
 /// it dies with the server that started it.
 impl ProviderRuns for AcpRuns {
+    fn host(&self) -> &Arc<RunHost> {
+        &self.host
+    }
+
     fn add_to(&self, states: &mut DriverStatesBuilder) {
         self.acp_driver_states(states);
     }
@@ -404,6 +406,10 @@ impl Provider for Acp {
 
     fn run(&self) -> &dyn Run {
         self
+    }
+
+    fn runs(&self) -> Arc<dyn ProviderRuns> {
+        self.runs.clone()
     }
 
     fn models(&self) -> &dyn crate::models::Models {
@@ -490,7 +496,7 @@ impl Run for Acp {
 }
 
 impl AcpRuns {
-    /// ACP's part of [`super::RunHost::driver_states`]: the agent processes
+    /// ACP's part of the session list's snapshot ([`ProviderRuns::add_to`]): the agent processes
     /// the list is to show, and the state of every one's run.
     pub(super) fn acp_driver_states(&self, states: &mut DriverStatesBuilder) {
         // Already keyed `key_of`, so the keys go in as they are.
@@ -1330,14 +1336,14 @@ mod tests {
         text.lines().map(unstamped).collect()
     }
 
-    /// A session's agent process is in the snapshot the injection registry
-    /// takes itself, which a turn's alert carries, as well as in the one the
-    /// session list asks the providers for.
+    /// A session's agent process is in the snapshot its driver hands a turn's
+    /// alert ([`RunHost::driver_states_of`]), as well as in the one the session
+    /// list asks the providers for.
     #[tokio::test]
-    async fn an_acp_session_is_in_the_registrys_own_snapshot() {
+    async fn an_acp_session_is_in_its_turn_alert_s_snapshot() {
         let home = tempfile::tempdir().expect("tempdir");
         let (state, id, _) = one_turn(home.path(), "", "hi", &SendOptions::default()).await;
-        let own = state.drive.injections.host.driver_states().resident(Source::Acp, &id).expect("in the registry's snapshot");
+        let own = state.drive.injections.host.driver_states_of(&*acp_of(&state.drive)).resident(Source::Acp, &id).expect("in the alert's snapshot");
         assert_eq!(own.phase, droppen_sessions::ResidentPhase::Idle);
         let listed = state.drive.providers.driver_states().resident(Source::Acp, &id).expect("in the providers' snapshot");
         assert_eq!(listed.phase, droppen_sessions::ResidentPhase::Idle);

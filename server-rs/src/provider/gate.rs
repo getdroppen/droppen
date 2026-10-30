@@ -158,7 +158,7 @@ impl SpawnPermit<'_> {
 /// What a driver holds for its process's life: the session's claim, or none
 /// (a renamed session whose new id could not be claimed).
 #[derive(Debug)]
-pub(crate) struct SessionLease {
+pub struct SessionLease {
     claim: Option<SessionClaim>,
     claims: Arc<Claims>,
 }

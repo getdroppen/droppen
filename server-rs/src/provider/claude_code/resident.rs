@@ -779,10 +779,9 @@ pub(crate) struct ClaudeCodeRuns {
 }
 
 impl ClaudeCodeRuns {
-    /// None yet, on `host`, timed as the environment asks, and in its session
-    /// list from now on. `instance` says where the flight recordings go;
-    /// `decoration` is what a claude spawn's environment gains before it
-    /// starts.
+    /// None yet, on `host`, timed as the environment asks. `instance` says
+    /// where the flight recordings go; `decoration` is what a claude spawn's
+    /// environment gains before it starts.
     pub(in crate::provider) fn new(host: Arc<RunHost>, instance: &droppen_instance::instance::InstanceDirs, decoration: Arc<dyn crate::provider::SpawnDecoration>) -> Arc<Self> {
         let recorders = crate::provider::claude_code::record::Recorders::new(host.paths.clone(), instance);
         Arc::new(Self {
@@ -823,11 +822,14 @@ impl ClaudeCodeRuns {
             decoration,
             reading_recheck: Mutex::new(None),
         })
-        .listed()
     }
 }
 
 impl ProviderRuns for ClaudeCodeRuns {
+    fn host(&self) -> &Arc<RunHost> {
+        &self.host
+    }
+
     fn add_to(&self, states: &mut DriverStatesBuilder) {
         self.claude_driver_states(states);
     }
@@ -1092,6 +1094,10 @@ impl Provider for ClaudeCode {
         self
     }
 
+    fn runs(&self) -> Arc<dyn ProviderRuns> {
+        self.runs.clone()
+    }
+
     fn models(&self) -> &dyn crate::models::Models {
         &self.models
     }
@@ -1176,7 +1182,7 @@ impl Run for ClaudeCode {
         if self.holds(id) {
             return self.runs.interrupt_resident(id);
         }
-        self.runs.host.interrupt_legacy(Source::Claude, id)
+        self.runs.host.interrupt_legacy(&*self.runs, Source::Claude, id)
     }
 
     fn stop_background_task(&self, id: &str, task_id: &str) -> StopTaskOutcome {
@@ -1213,14 +1219,6 @@ impl ClaudeCode {
 }
 
 impl ClaudeCodeRuns {
-    /// Itself, listed with its host as Claude Code's runs
-    /// ([`crate::provider::RunHost::driver_states`]).
-    fn listed(self: Arc<Self>) -> Arc<Self> {
-        let runs: Arc<dyn crate::provider::ProviderRuns> = self.clone();
-        self.host.list(Source::Claude, Arc::downgrade(&runs));
-        self
-    }
-
     /// The channel claude session `id`'s draft is published on.
     ///
     /// Its driver's [`crate::provider::drafts::DraftWriter`] is the only thing that writes to it
@@ -1288,7 +1286,7 @@ impl ClaudeCodeRuns {
         id
     }
 
-    /// Claude's part of [`crate::provider::RunHost::driver_states`]: every resident.
+    /// Claude's part of the session list's snapshot ([`ProviderRuns::add_to`]): every resident.
     pub(in crate::provider) fn claude_driver_states(&self, states: &mut DriverStatesBuilder) {
         for (id, handle) in self.residents.lock().expect("residents poisoned").iter() {
             states.resident(self.host.key_of(Source::Claude, id), handle.info());
@@ -6323,7 +6321,7 @@ impl Driver {
         // Taken here rather than inside the spawned task. `on_result` pumps the
         // next queued message the moment this returns, so a snapshot read
         // asynchronously would be a coin toss between this turn and the next.
-        let driver = self.runs.host.driver_states();
+        let driver = self.runs.host.driver_states_of(&*self.runs);
         // Once per turn, where the old model could only manage once per process.
         // A resident answering ten messages now sends ten notifications, and the
         // throttle in [`droppen_notify::push`] is what keeps that from being ten lines in
@@ -7638,7 +7636,6 @@ mod tests {
             accounts: Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), crate::app::logins())),
             quota: Arc::new(droppen_accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins())),
             server: droppen_instance::identity::ServerId::local(&paths),
-            listed: Mutex::new(std::collections::BTreeMap::new()),
             runs: Mutex::new(HashMap::new()),
             shim_dir: dirs.session_shims(),
             idle_timeout: Duration::from_secs(600),
@@ -7676,14 +7673,55 @@ mod tests {
             decoration: crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone()),
             reading_recheck: Mutex::new(None),
             host: host.clone(),
-        })
-        .listed();
+        });
         let injections = Arc::new(InjectionRegistry {
             host,
             decoration: crate::drive::NotifyDecoration::new(paths, dirs.clone()),
             instance: dirs,
         });
         (injections, claude)
+    }
+
+    /// The provider registry reads Claude Code's runs for the session list
+    /// and the boot pass: a resident is in the list's snapshot and in the one
+    /// its turn's alert carries, and the question it is blocked on outlives
+    /// the boot pass, while one of a session whose process did not come back
+    /// expires.
+    #[tokio::test]
+    async fn the_registry_reads_claude_code_s_runs_for_the_list_and_the_boot_pass() {
+        const HELD: &str = "held-session";
+        const GONE: &str = "gone-session";
+        let home = tempfile::tempdir().expect("tempdir");
+        let minute = Duration::from_secs(60);
+        let (injections, claude) = registry(home.path(), minute, minute, minute, minute, minute);
+        let providers = crate::provider::ProviderRegistry::new(injections.clone(), |providers, injections| {
+            providers.register(Arc::new(ClaudeCode::on(claude.clone(), injections)));
+        });
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let shared = Arc::new(Mutex::new(ResidentState {
+            phase: Phase::Idle,
+            stalled: false,
+            queued: 0,
+            queued_messages: Vec::new(),
+            background: 0,
+            tasks: Vec::new(),
+            awaiting_background: false,
+            turn_started_at: None,
+            question: None,
+        }));
+        claude.residents.lock().expect("residents").insert(HELD.to_string(), Handle { tx, shared });
+
+        assert!(providers.driver_states().resident(Source::Claude, HELD).is_some(), "in the list's snapshot");
+        assert!(injections.host.driver_states_of(&*claude).resident(Source::Claude, HELD).is_some(), "in the alert's");
+
+        let asked = serde_json::json!([{"question": "Which one?", "options": [{"label": "this"}]}]);
+        for (request, session) in [("request-held", HELD), ("request-gone", GONE)] {
+            assert!(injections.host.questions.open(request, session, None, &asked, questions::now_ms()));
+        }
+        providers.adopt_all().await;
+        let state = |session| injections.host.questions.for_session(session, questions::now_ms())[0].state;
+        assert_eq!(state(HELD), droppen_sessions::delivery::QuestionState::Pending, "its process is still there");
+        assert_eq!(state(GONE), droppen_sessions::delivery::QuestionState::Expired);
     }
 
     /// The bounded wait every fake CLI in here uses to sit on `$GO`, prepended
