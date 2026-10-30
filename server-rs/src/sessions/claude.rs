@@ -12,6 +12,7 @@ use std::sync::{LazyLock, Mutex};
 use futures_util::future::BoxFuture;
 use serde_json::Value;
 
+use droppen_sessions::context::ContextUsage;
 use droppen_sessions::sources::{TokenUsage, UsageFile, UsageFold};
 use super::transcript::{content_blocks, user_title_candidate};
 use droppen_sessions::util::{self, read_head_lines, read_tail_lines, title_line, try_parse, FileCache};
@@ -22,7 +23,9 @@ use droppen_instance::paths::{ClaudeRoot, Paths};
 use droppen_base::time::{iso8601, mtime_ms};
 
 pub mod adoption_leftovers;
+pub mod archive;
 pub mod continuation;
+pub mod tool_display;
 
 const HEAD_BYTES: usize = 128 * 1024;
 const TAIL_BYTES: u64 = 64 * 1024;
@@ -481,7 +484,7 @@ pub async fn claude_activity(file_path: &Path) -> ClaudeActivity {
 
 /// Ids the user archived out of the list.
 pub async fn archived_ids(paths: &Paths) -> HashSet<String> {
-    droppen_sessions::archive::archived_ids(paths)
+    archive::archived_ids(paths)
 }
 
 /// Every `<uuid>.jsonl` under one root's projects directory.
@@ -806,7 +809,7 @@ impl droppen_sessions::Transcripts for ClaudeCodeSessions {
     }
 
     fn context<'a>(&'a self, file_path: &'a Path) -> BoxFuture<'a, Option<droppen_sessions::context::ContextUsage>> {
-        Box::pin(droppen_sessions::context::read_claude_context(file_path))
+        Box::pin(read_claude_context(file_path))
     }
 
     // Each non-empty `text` block of a main-chain `assistant` entry.
@@ -911,10 +914,39 @@ pub async fn read_cli_choice(file_path: &Path) -> Option<droppen_sessions::CliCh
     .await
 }
 
+/// Claude's occupancy: the last main-chain assistant entry that carries a usage.
+///
+/// Everything the request carried *in* counts — fresh input, what was replayed
+/// out of the cache, and what was written into it — because all three occupy the
+/// window. Sidechain entries are a subagent's own context, not this session's.
+async fn read_claude_context(file_path: &Path) -> Option<ContextUsage> {
+    let lines = read_tail_lines(file_path, droppen_sessions::context::TAIL_BYTES).await.ok()?;
+    for line in lines.iter().rev() {
+        let Some(entry) = try_parse(line) else { continue };
+        if entry.get("type").and_then(Value::as_str) != Some("assistant") || entry.get("isSidechain") == Some(&Value::Bool(true)) {
+            continue;
+        }
+        let Some(message) = entry.get("message").and_then(Value::as_object) else {
+            continue;
+        };
+        let Some(usage) = message.get("usage").and_then(Value::as_object) else {
+            continue;
+        };
+        let field = |key: &str| usage.get(key).and_then(Value::as_u64).unwrap_or(0);
+        let tokens = field("input_tokens") + field("cache_read_input_tokens") + field("cache_creation_input_tokens");
+        if tokens > 0 {
+            let model = message.get("model").and_then(Value::as_str).map(str::to_owned);
+            return Some(ContextUsage { tokens, window: None, model });
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::io::Write;
+    use droppen_sessions::context::{context_window, resolve_window, DEFAULT_CONTEXT_WINDOW, LARGE_CONTEXT_WINDOW};
 
     /// A claude id is recorded *before* its spawn, so a launch that failed
     /// leaves an entry for a session that never existed — and a transcript the
@@ -1404,8 +1436,8 @@ mod tests {
     async fn discovery_reads_the_archive_s_table() {
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = Paths::new(dir.path().to_path_buf());
-        droppen_sessions::archive::archive_claude_session(&paths, "one").await.expect("archive");
-        droppen_sessions::archive::archive_claude_session(&paths, "two").await.expect("archive");
+        archive::archive_claude_session(&paths, "one").await.expect("archive");
+        archive::archive_claude_session(&paths, "two").await.expect("archive");
         assert_eq!(
             archived_ids(&paths).await,
             ["one".to_string(), "two".to_string()].into_iter().collect(),
@@ -1776,5 +1808,130 @@ mod tests {
             ]));
             assert_eq!(folded[0].as_ref().map(|usage| usage.model.as_str()), Some("unknown"));
         }
+    }
+
+    /// Everything the request carried in occupies the window, not just the
+    /// uncached part — a session running almost entirely on cache reads is still
+    /// nearly full, and summing only `input_tokens` would read as empty.
+    #[tokio::test]
+    async fn claude_sums_fresh_cached_and_written_input() {
+        let (_dir, path) = session(&[
+            r#"{"type":"assistant","message":{"model":"claude-fable-5","usage":{"input_tokens":2,"cache_read_input_tokens":878645,"cache_creation_input_tokens":259,"output_tokens":40}}}"#,
+        ]);
+        let usage = read_claude_context(&path).await.expect("a reading");
+        assert_eq!(usage.tokens, 878_906);
+        assert_eq!(usage.window, None, "claude never states its own window");
+        assert_eq!(
+            usage.model.as_deref(),
+            Some("claude-fable-5"),
+            "the model on the entry comes back with the reading"
+        );
+    }
+
+    /// Taken verbatim from a live session that reported 512,720 tokens against a
+    /// 200k window — 256% full, which no request could have been.
+    ///
+    /// Claude Code writes `message.model` with the `[1m]` marker stripped, so
+    /// the id says `claude-opus-4-8` whether the session runs the 200k window or
+    /// the 1M one, and the id rule alone can only ever guess the short one. The
+    /// reading settles it: the API accepted this prompt, so the window held it.
+    #[tokio::test]
+    async fn a_reading_the_standard_window_could_not_have_held_proves_the_long_one() {
+        let (_dir, path) = session(&[
+            r#"{"type":"assistant","message":{"model":"claude-opus-4-8","usage":{"input_tokens":2,"cache_creation_input_tokens":1634,"cache_read_input_tokens":511084,"output_tokens":644}}}"#,
+        ]);
+        let usage = read_claude_context(&path).await.expect("a reading");
+        assert_eq!(usage.tokens, 512_720);
+        assert_eq!(
+            context_window(usage.model.as_deref()),
+            DEFAULT_CONTEXT_WINDOW,
+            "the id alone still reads as an ordinary model"
+        );
+        assert_eq!(resolve_window(Some(&usage), Some("claude-opus-4-8")), LARGE_CONTEXT_WINDOW);
+        assert_eq!(
+            usage.tokens, 512_720,
+            "the occupancy is reported as recorded; it is the window that was wrong"
+        );
+    }
+
+    /// The reading and the session's current choice can disagree — a session
+    /// switched models between turns — and only the model that was in force for
+    /// the measured request says anything about the window it was measured
+    /// against.
+    #[tokio::test]
+    async fn the_window_follows_the_model_on_the_entry_the_reading_came_from() {
+        let (_dir, path) = session(&[
+            r#"{"type":"assistant","message":{"model":"claude-fable-5","usage":{"input_tokens":10,"cache_read_input_tokens":40000,"cache_creation_input_tokens":0}}}"#,
+        ]);
+        let usage = read_claude_context(&path).await.expect("a reading");
+        assert_eq!(
+            resolve_window(Some(&usage), Some("claude-opus-4-8")),
+            LARGE_CONTEXT_WINDOW,
+            "the entry outranks the current choice"
+        );
+
+        let entryless = ContextUsage {
+            tokens: 40_010,
+            window: None,
+            model: None,
+        };
+        assert_eq!(
+            resolve_window(Some(&entryless), Some("claude-fable-5")),
+            LARGE_CONTEXT_WINDOW,
+            "an entry naming no model falls back"
+        );
+    }
+
+    /// After a compact the window empties, and the entries above the compaction
+    /// point describe a context that no longer exists. Reading the *last* entry
+    /// rather than the largest is what keeps the ring falling back down — and
+    /// keeps a stale 512k reading from widening the window of a session that is
+    /// now a tenth as full.
+    #[tokio::test]
+    async fn a_compacted_session_is_measured_by_its_newest_turn_not_its_biggest() {
+        let (_dir, path) = session(&[
+            r#"{"type":"assistant","message":{"model":"claude-opus-4-8","usage":{"input_tokens":2,"cache_read_input_tokens":511084,"cache_creation_input_tokens":1634}}}"#,
+            r#"{"type":"user","isCompactSummary":true,"message":{"content":[{"type":"text","text":"summary"}]}}"#,
+            r#"{"type":"assistant","message":{"model":"claude-opus-4-8","usage":{"input_tokens":3,"cache_read_input_tokens":0,"cache_creation_input_tokens":29997}}}"#,
+        ]);
+        let usage = read_claude_context(&path).await.expect("a reading");
+        assert_eq!(usage.tokens, 30_000, "the turn after the compact, not the one before it");
+        assert_eq!(
+            resolve_window(Some(&usage), Some("claude-opus-4-8")),
+            DEFAULT_CONTEXT_WINDOW,
+            "a reading that fits is not evidence of a wider window"
+        );
+    }
+
+    #[tokio::test]
+    async fn claude_reads_the_newest_main_chain_entry() {
+        let (_dir, path) = session(&[
+            r#"{"type":"assistant","message":{"usage":{"input_tokens":100,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}"#,
+            r#"{"type":"assistant","message":{"usage":{"input_tokens":500,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}"#,
+            r#"{"type":"assistant","isSidechain":true,"message":{"usage":{"input_tokens":9999,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}"#,
+            r#"{"type":"user","message":{"content":[{"type":"text","text":"next"}]}}"#,
+        ]);
+        let usage = read_claude_context(&path).await.expect("a reading");
+        assert_eq!(usage.tokens, 500, "a subagent's context is not this session's");
+    }
+
+    #[tokio::test]
+    async fn a_transcript_with_no_usage_has_no_reading() {
+        let (_dir, path) = session(&[r#"{"type":"user","message":{"content":[{"type":"text","text":"hi"}]}}"#]);
+        assert_eq!(read_claude_context(&path).await, None);
+    }
+
+    /// The reading is looked for as far back as the context budget
+    /// (`droppen_sessions::context::TAIL_BYTES`), further than this reader's own
+    /// tail for discovery.
+    #[tokio::test]
+    async fn the_context_reading_is_found_further_back_than_the_discovery_tail() {
+        let reading = r#"{"type":"assistant","message":{"usage":{"input_tokens":500,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}"#;
+        let filler = format!(r#"{{"type":"user","message":{{"content":[{{"type":"text","text":"{}"}}]}}}}"#, "x".repeat(1000));
+        let lines: Vec<&str> = std::iter::once(reading).chain(std::iter::repeat_n(filler.as_str(), 90)).collect();
+        let (_dir, path) = session(&lines);
+        let behind = std::fs::metadata(&path).expect("size").len() - reading.len() as u64;
+        assert!(TAIL_BYTES < behind && behind < droppen_sessions::context::TAIL_BYTES, "{behind}");
+        assert_eq!(read_claude_context(&path).await.map(|usage| usage.tokens), Some(500));
     }
 }

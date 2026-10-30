@@ -957,7 +957,7 @@ impl Run for ClaudeCode {
     // No gate: putting the transcript away starts no CLI.
     fn archive<'a>(&'a self, _gate: &'a SpawnGate, id: &'a str) -> BoxFuture<'a, Result<(), String>> {
         Box::pin(async move {
-            droppen_sessions::archive::archive_claude_session(&self.runs.paths, id)
+            crate::sessions::claude::archive::archive_claude_session(&self.runs.paths, id)
                 .await
                 .map_err(|_| "archive failed".to_string())
         })

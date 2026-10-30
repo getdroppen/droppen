@@ -13,7 +13,8 @@ use futures_util::future::BoxFuture;
 use serde_json::{Map, Value};
 
 use droppen_sessions::sidecars::{AgentEntry, SubagentMeta, Subagents};
-use droppen_sessions::tool_display::{display_claude_tool_result, display_claude_tool_use, extract_questions, shorten_tool_name};
+use super::claude::tool_display::{display_claude_tool_result, display_claude_tool_use};
+use droppen_sessions::tool_display::{extract_questions, shorten_tool_name};
 use droppen_sessions::util::{
     clip, is_renderable_image, make_item, make_tool_item, try_parse, ItemKind, LossyLines, PatchHunk, Role, ToolDisplay, TranscriptItem, DETAIL_LIMIT,
 };
@@ -775,7 +776,7 @@ fn result_images(
     home: &Path,
     cwd: Option<&str>,
 ) -> Option<Vec<String>> {
-    if droppen_sessions::tool_display::result_image_count(content) == 0 {
+    if super::claude::tool_display::result_image_count(content) == 0 {
         return None;
     }
     let named = tool_paths.get(tool_use_id?)?;
