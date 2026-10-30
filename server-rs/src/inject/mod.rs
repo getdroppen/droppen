@@ -1802,4 +1802,102 @@ mod tests {
         let _ = live.kill();
         let _ = live.wait();
     }
+
+    /// The providers over a fresh instance in `home`, as the server builds
+    /// them, and the injection registry under them.
+    fn adopting(home: &std::path::Path) -> (Arc<Paths>, Arc<InjectionRegistry>, Arc<ProviderRegistry>) {
+        let paths = Arc::new(Paths::new(home.to_path_buf()));
+        let dirs = InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
+        dirs.create().expect("instance dirs");
+        let decoration = crate::drive::NotifyDecoration::new(paths.clone(), dirs.clone());
+        let registry = InjectionRegistry::new(
+            paths.clone(),
+            &dirs,
+            Arc::new(crate::accounts::store::AccountsStore::new(paths.clone(), crate::app::logins())),
+            Arc::new(crate::accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins())),
+            decoration,
+        );
+        let providers = ProviderRegistry::new(registry.clone(), crate::app::register_providers);
+        (paths, registry, providers)
+    }
+
+    /// The pid of a process that has come and gone.
+    fn gone() -> u32 {
+        let mut child = std::process::Command::new("/bin/sh")
+            .args(["-c", "exit 0"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn a stand-in");
+        child.wait().expect("it exits");
+        child.id()
+    }
+
+    /// Each run the previous server left is handed to the provider of the CLI
+    /// that ran it: a Codex app server's to Codex, which keeps its queue and
+    /// lists it with no process behind it, and a Claude Code run's to Claude
+    /// Code, whose own transcript says the turn was finished.
+    #[tokio::test]
+    async fn adoption_hands_each_run_to_its_own_cli() {
+        const CODEX: &str = "0199c1a1-9999-4999-8999-999999999999";
+        const CLAUDE: &str = "aaaaaaaa-9999-4999-8999-aaaaaaaaaaaa";
+        let home = tempfile::tempdir().expect("tempdir");
+        let (paths, registry, providers) = adopting(home.path());
+
+        let codex = serde_json::json!({
+            "run_id": "run-codex", "source": "codex", "session_id": CODEX, "cwd": "/work", "cli_pid": gone(),
+            "started_at": "2026-01-01T00:00:00.000Z", "pid_token": null, "resident": false, "shim": "shim-codex",
+            "fingerprint": null, "turn_at": null, "queued": [],
+            "codex": {"active": "turn-1", "queue": [{"id": "m-1", "text": "next", "params": {}, "request": null}]},
+        });
+        registry.journal.insert_raw("run-codex", CODEX, &codex.to_string());
+        let claude = serde_json::json!({
+            "run_id": "run-claude", "source": "claude", "session_id": CLAUDE, "cwd": "/work", "cli_pid": gone(),
+            "started_at": "2026-01-01T00:00:00.000Z",
+        });
+        registry.journal.insert_raw("run-claude", CLAUDE, &claude.to_string());
+        let transcript = crate::claude_roots::ClaudeRoots::of(&paths).managed_projects().join("-work").join(format!("{CLAUDE}.jsonl"));
+        std::fs::create_dir_all(transcript.parent().expect("parent")).expect("project");
+        let lines = [
+            serde_json::json!({"type": "user", "cwd": "/work", "timestamp": "2026-01-01T00:00:00.000Z", "message": {"content": [{"type": "text", "text": "do the thing"}]}}),
+            serde_json::json!({"type": "assistant", "timestamp": "2026-01-01T00:00:05.000Z", "message": {"content": [{"type": "text", "text": "all done"}]}}),
+        ];
+        std::fs::write(&transcript, lines.map(|line| format!("{line}\n")).concat()).expect("transcript");
+
+        let adopted = providers.adopt_all().await;
+        assert_eq!((adopted.recovered, adopted.finished), (0, 2), "{adopted:?}");
+        assert!(providers.has_resident(Source::Codex, CODEX), "Codex keeps the app server's queue, listed with no process behind it");
+        let kept: Vec<String> = registry.journal.read().into_iter().map(|run| run.run_id).collect();
+        assert_eq!(kept, ["run-codex"], "Codex keeps its row; Claude Code's finished run leaves none");
+        assert!(providers.injection_for(Source::Claude, CLAUDE).is_none(), "Claude Code's transcript says the turn was finished");
+    }
+
+    /// A row whose source this version does not know, or that names none, is
+    /// adopted by no one: nothing claims its session or buries it, and it
+    /// stays where it is.
+    #[tokio::test]
+    async fn a_row_with_an_unknown_source_or_none_is_left_where_it_is() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let (_paths, registry, providers) = adopting(home.path());
+        for (run, session, source) in [
+            ("run-unknown", "bbbbbbbb-9999-4999-8999-bbbbbbbbbbbb", Some("gemini")),
+            ("run-nameless", "cccccccc-9999-4999-8999-cccccccccccc", None),
+        ] {
+            let mut row = serde_json::json!({
+                "run_id": run, "session_id": session, "cwd": "/work", "cli_pid": gone(),
+                "started_at": "2026-01-01T00:00:00.000Z", "pid_token": null, "resident": false, "shim": null,
+                "fingerprint": null, "turn_at": null, "queued": [],
+            });
+            if let Some(source) = source {
+                row["source"] = serde_json::json!(source);
+            }
+            registry.journal.insert_raw(run, session, &row.to_string());
+        }
+
+        let adopted = providers.adopt_all().await;
+        assert!(adopted.is_empty(), "{adopted:?}");
+        assert!(registry.steps().is_empty(), "nothing was claimed or buried: {:?}", registry.steps());
+        assert_eq!(registry.journal.raw().len(), 2, "both rows stay as they were");
+    }
 }
