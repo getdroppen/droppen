@@ -1,6 +1,7 @@
 //! Droppen's server: the entry. Every subsystem is a crate of its own under
-//! `server-rs/crates`, in the layers `server-rs/layers.json` gives it; this
-//! crate builds them into one program and serves them.
+//! `server-rs/crates`, in the layers `server-rs/layers.json` gives it
+//! (`scripts/check-layers.mjs` holds them there); this crate builds them into
+//! one program and serves them.
 //!
 //! * [`app`] — the application: its configuration and the state every route
 //!   reads ([`api::AppState`]), the CLIs it drives
