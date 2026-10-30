@@ -303,12 +303,15 @@ pub trait CliTextExt {
     /// that is over its limit is a *working* account.
     fn is_rate_limited(&self) -> bool;
 
-    /// Whether this text, lowercased, contains `code` as a standalone HTTP status code: bounded by
-    /// non-digits, so a longer number cannot match. With `near`, the code also has
-    /// to sit within that many bytes of one of the given markers — the narrow rule
-    /// for `429`, where a coincidental number in prose must not back an account
-    /// off, and the plain rule for `401`/`403`, where the status is evidence by
-    /// itself.
+    /// Whether this text contains `code` as a standalone HTTP status code:
+    /// bounded by non-digits, so a longer number cannot match. With `near`, the
+    /// code also has to sit within that many bytes of one of the given markers —
+    /// the narrow rule for `429`, where a coincidental number in prose must not
+    /// back an account off, and the plain rule for `401`/`403`, where the status
+    /// is evidence by itself.
+    ///
+    /// Call it on text that is already lowercased: it lowercases nothing, and
+    /// the markers are matched as they are written, case-sensitively.
     fn mentions_status(&self, code: &str, near: Option<(&[&str], usize)>) -> bool;
 }
 
