@@ -98,13 +98,13 @@ impl Handle {
         self.starting.load(std::sync::atomic::Ordering::SeqCst)
     }
 
-    /// Hand `message` to the driver, and the reply it will answer with.
-    fn deliver(&self, message: Message) -> Result<oneshot::Receiver<Result<Sent, InjectError>>, InjectError> {
+    /// Hand `message` to the driver: what it will answer is the [`Delivery`].
+    fn deliver(&self, message: Message) -> Result<Delivery, InjectError> {
         let (reply, rx) = oneshot::channel();
         self.tx
             .send(Cmd::Deliver(message, reply))
             .map_err(|_| InjectError::message("Codex App Server disconnected"))?;
-        Ok(rx)
+        Ok(Delivery(rx))
     }
 
     /// Whether this process is already running under the account a send wants.
@@ -815,6 +815,13 @@ impl CodexRuns {
         let Some(handle) = self.codex_handle(id) else {
             return QueueOutcome::NoResident;
         };
+        // Refused at once rather than waited for: its driver takes nothing off
+        // the queue until the app server has answered.
+        if handle.starting() {
+            return QueueOutcome::Refused {
+                reason: "Codex is still starting this session; try again once it has answered".into(),
+            };
+        }
         if handle.alive() {
             return handle.queue_action(qid, steer).await;
         }
@@ -934,7 +941,7 @@ impl CodexRuns {
             let mut permit = gate.permit().await;
             permit.ungate();
             let (id, handle) = self.codex_spawn(&mut permit, None, cwd, options, account, None).await?;
-            let sent = taken(handle.deliver(message)?).await?;
+            let sent = handle.deliver(message)?.taken().await?;
             return Ok((id, sent));
         };
         // The gate is held to decide where the message goes and to reserve the
@@ -955,9 +962,9 @@ impl CodexRuns {
         // Into the session's own app server, running or still starting: its
         // channel keeps the order, so the gate goes before the wait.
         if let Some(handle) = existing.as_ref().filter(|handle| handle.runs_as(wanted)) {
-            let reply = handle.deliver(message)?;
+            let delivery = handle.deliver(message)?;
             permit.ungate();
-            return Ok((id.to_owned(), taken(reply).await?));
+            return Ok((id.to_owned(), delivery.taken().await?));
         }
         // A live app-server holds the credential it was started with, so a
         // message for another account cannot go into it. From idle the process
@@ -967,16 +974,20 @@ impl CodexRuns {
         if existing.as_ref().is_some_and(Handle::busy) {
             return Err(InjectError::message("a message is already running for this session"));
         }
+        // Also excludes a legacy codex exec inherited during this upgrade.
+        if self.codex_injection(id).is_some_and(|injection| injection.state == InjectionRunState::Running) {
+            return Err(InjectError::message("a message is already running for this session"));
+        }
         // Reserved, with the message on its way: a send for this session from
         // here on queues behind it instead of starting a second app server.
         let starting = self.codex_starting(id, wanted.map(str::to_owned));
-        let reply = starting.handle.deliver(message)?;
+        let delivery = starting.handle.deliver(message)?;
         permit.ungate();
         if let Some(existing) = existing {
             retire(&existing).await?;
         }
         self.codex_spawn(&mut permit, Some(id), cwd, options, account, Some(starting)).await?;
-        let sent = taken(reply).await?;
+        let sent = delivery.taken().await?;
         Ok((id.to_owned(), sent))
     }
 
@@ -1015,10 +1026,6 @@ impl CodexRuns {
         account: Option<CodexAccount>,
         starting: Option<Starting>,
     ) -> Result<(String, Handle), InjectError> {
-        // Also excludes a legacy codex exec inherited during this upgrade.
-        if id.is_some_and(|id| self.codex_injection(id).is_some_and(|i| i.state == InjectionRunState::Running)) {
-            return Err(InjectError::message("a message is already running for this session"));
-        }
         if let Some(id) = id {
             permit.claim(Source::Codex, id).map_err(claim_refusal)?;
         }
@@ -1245,9 +1252,16 @@ impl Drop for Starting {
     }
 }
 
-/// What the driver answers a delivery with.
-async fn taken(reply: oneshot::Receiver<Result<Sent, InjectError>>) -> Result<Sent, InjectError> {
-    reply.await.map_err(|_| InjectError::message("Codex App Server disconnected"))?
+/// A message handed to a driver ([`Handle::deliver`]), and the answer it will
+/// give: awaited after the gate has gone, as the driver can be slow to give it.
+#[must_use]
+struct Delivery(oneshot::Receiver<Result<Sent, InjectError>>);
+
+impl Delivery {
+    /// What the driver answers: the message taken, or why not.
+    async fn taken(self) -> Result<Sent, InjectError> {
+        self.0.await.map_err(|_| InjectError::message("Codex App Server disconnected"))?
+    }
 }
 
 /// End a live app-server so the session can be resumed under another account.
@@ -3201,6 +3215,72 @@ mod tests {
         after.await.expect("joined").expect("delivered into the same app server");
         assert_eq!(registry.host.steps().iter().filter(|step| step.what == "codex started").count(), 2, "the first and the switched one");
         retire_all(&runs, &[&id]).await;
+    }
+
+    /// Dropping or steering a queued message of a session whose app server is
+    /// still starting is refused at once: its driver takes nothing off the
+    /// queue until codex has answered, and waiting for it would leave the
+    /// request hanging for the whole start.
+    #[tokio::test]
+    async fn queue_actions_on_a_starting_codex_session_are_refused_at_once() {
+        const RESUMED: &str = "0199c1a1-0000-4000-8000-000000000009";
+        let (_home, _path, registry, providers, work) = unheld("codex-unheld-queue");
+        std::fs::write(work.join("init-hold"), "").expect("hold");
+        let runs = codex(&providers).clone();
+        let start = {
+            let (runs, providers, work) = (runs.clone(), providers.clone(), work.to_string_lossy().into_owned());
+            tokio::spawn(async move { runs.codex_deliver(providers.gate(), Some(RESUMED), Some(&work), "hello", &SendOptions::default(), None).await })
+        };
+        wait_for_step(&registry, "codex started", 1).await;
+        for steer in [false, true] {
+            let outcome = tokio::time::timeout(Duration::from_secs(1), runs.codex_queue_action(RESUMED, "q-1", steer))
+                .await
+                .expect("refused at once");
+            assert!(
+                matches!(&outcome, QueueOutcome::Refused { reason } if reason.contains("still starting")),
+                "steer {steer}: {outcome:?}"
+            );
+        }
+        std::fs::remove_file(work.join("init-hold")).expect("release");
+        start.await.expect("joined").expect("delivered");
+        retire_all(&runs, &[RESUMED]).await;
+    }
+
+    /// A message for another account while a session's app server starts is
+    /// refused at once, as one would be while it runs a turn: the start is the
+    /// account the session is moving to.
+    #[tokio::test]
+    async fn a_send_for_another_account_during_a_start_is_refused() {
+        const RESUMED: &str = "0199c1a1-0000-4000-8000-00000000000a";
+        let (_home, _path, registry, providers, work) = unheld("codex-unheld-other");
+        std::fs::write(work.join("init-hold"), "").expect("hold");
+        let runs = codex(&providers).clone();
+        let work_ = work.to_string_lossy().into_owned();
+        let start = {
+            let (runs, providers, work) = (runs.clone(), providers.clone(), work_.clone());
+            tokio::spawn(async move { runs.codex_deliver(providers.gate(), Some(RESUMED), Some(&work), "hello", &SendOptions::default(), None).await })
+        };
+        wait_for_step(&registry, "codex started", 1).await;
+        let other = CodexAccount {
+            id: "another".to_string(),
+            launch: droppen_accounts::store::AccountLaunch {
+                provider: AccountProvider::Codex,
+                env: vec![],
+                codex_args: vec![],
+            },
+        };
+        let refused = tokio::time::timeout(
+            Duration::from_secs(1),
+            runs.codex_deliver(providers.gate(), Some(RESUMED), Some(&work_), "elsewhere", &SendOptions::default(), Some(other)),
+        )
+        .await
+        .expect("refused at once")
+        .expect_err("refused");
+        assert_eq!(refused.to_string(), "a message is already running for this session");
+        std::fs::remove_file(work.join("init-hold")).expect("release");
+        start.await.expect("joined").expect("delivered");
+        assert_eq!(registry.host.steps().iter().filter(|step| step.what == "codex started").count(), 1, "nothing else was started");
+        retire_all(&runs, &[RESUMED]).await;
     }
 
     /// A session's app server is in the snapshot its driver hands a turn's
