@@ -371,14 +371,15 @@ mod guide {
 
     /// The guide the entry builds asks codex's app server through codex's own
     /// login: one real conversation with the stand-in app server
-    /// (`tests/support/fake_codex.py`), which answers every request with `{}`.
+    /// (droppen-provider-codex's `tests/support/fake_codex.py`), which answers
+    /// every request with `{}`.
     #[tokio::test]
     async fn the_guide_asks_codex_s_app_server_through_codex_s_login() {
         let home = tempfile::tempdir().expect("tempdir");
         // The stand-in app server runs only under a test root.
         std::fs::write(home.path().join(".rh-test-root"), b"").expect("test root");
         let codex = home.path().join("codex");
-        let fake = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/support/fake_codex.py");
+        let fake = concat!(env!("CARGO_MANIFEST_DIR"), "/crates/droppen-provider-codex/tests/support/fake_codex.py");
         std::fs::write(&codex, format!("#!/bin/sh\nexec python3 {fake} \"$@\"\n")).expect("codex");
         std::fs::set_permissions(&codex, std::fs::Permissions::from_mode(0o755)).expect("chmod");
         let setup = Setup::new(Arc::new(Paths::new(home.path().to_path_buf())), &crate::app::logins());

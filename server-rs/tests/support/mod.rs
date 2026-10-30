@@ -204,8 +204,9 @@ done
 exit 0
 "#;
 
-/// The fake Codex implements the bidirectional App Server protocol.
-const FAKE_CODEX: &str = include_str!("fake_codex.py");
+/// The fake Codex implements the bidirectional App Server protocol: Codex's
+/// provider's, which its own tests run.
+const FAKE_CODEX: &str = include_str!("../../crates/droppen-provider-codex/tests/support/fake_codex.py");
 
 /// The one directory a binary got, and the arguments it was built for.
 static FAKE_BIN: OnceLock<(String, Vec<(String, String)>, PathBuf)> = OnceLock::new();

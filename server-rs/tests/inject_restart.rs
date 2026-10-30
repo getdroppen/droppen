@@ -661,7 +661,8 @@ async fn a_run_survives_its_server_being_sigkilled_and_is_adopted_by_the_next_on
 
 // ------------------------------------------------------------ Codex's app server
 
-/// The thread `tests/support/fake_codex.py` answers for.
+/// The thread the fake app server answers for (droppen-provider-codex's
+/// `tests/support/fake_codex.py`).
 const CODEX_SESSION: &str = "0199c1a1-2b3c-4d5e-8f60-112233445566";
 
 /// A Codex thread of this instance's, working in `cwd`: its rollout, and the

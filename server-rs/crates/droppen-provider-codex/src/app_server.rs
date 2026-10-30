@@ -2897,7 +2897,7 @@ mod tests {
         let bin = home.join("bin");
         std::fs::create_dir_all(&bin).expect("bin");
         let codex = bin.join("codex");
-        let fake = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/support/fake_codex.py");
+        let fake = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/support/fake_codex.py");
         std::fs::write(&codex, format!("#!/bin/sh\nexec python3 {fake} \"$@\"\n")).expect("codex");
         {
             use std::os::unix::fs::PermissionsExt;
