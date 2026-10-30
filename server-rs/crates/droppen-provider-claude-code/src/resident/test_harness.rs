@@ -136,10 +136,14 @@ pub(super) fn registry(home: &Path, stall: Duration, tick: Duration, step: Durat
 ///   [`Drop`] cannot — a test binary killed outright never unwinds, so the
 ///   directory survives and the anchor above never fires.
 ///
-/// Thirty seconds rather than the eight the stepped `await` helpers use
-/// because `$GO` gates a whole turn while those only wait on a nudge a test
-/// is about to make: [`until`] gives up at ten seconds, and a cap near it
-/// would race the assertion for which failure gets reported. Giving up
+/// `await_file` waits the same way, bounded the same way, on a file the test
+/// drops in that directory ([`Harness::nudge`]).
+///
+/// Thirty seconds for both: `$GO` gates a whole turn, and a fake that
+/// watches for a nudge from the background starts with the process, so it
+/// waits through every step the test takes before the nudge. [`until`]
+/// allows each of those ten seconds, which a loaded machine uses, and a cap
+/// near them would race them for which failure gets reported. Giving up
 /// *exits* rather than falling through, and with a code no test expects, so
 /// a genuine hang still fails loudly instead of passing quietly.
 pub(super) const WAIT_GUARD: &str = r#"
@@ -147,6 +151,15 @@ GO_DIR=$(dirname "$GO")
 await_go() {
   n=0
   while [ ! -f "$GO" ]; do
+[ -d "$GO_DIR" ] || exit 97
+[ "$n" -lt 1500 ] || exit 97
+sleep 0.02
+n=$((n + 1))
+  done
+}
+await_file() {
+  n=0
+  while [ ! -f "$GO_DIR/$1" ]; do
 [ -d "$GO_DIR" ] || exit 97
 [ "$n" -lt 1500 ] || exit 97
 sleep 0.02
