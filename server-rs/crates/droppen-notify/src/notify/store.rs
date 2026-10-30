@@ -11,7 +11,7 @@
 //! origin-bound: the endpoint names the user's phone, which is the same phone
 //! whichever instance an agent happens to be running under. Configuring it once
 //! and having every instance find it is the behaviour the user expects, so it
-//! sits in the machine-wide database beside [`crate::chats::provider`]'s rows.
+//! sits in the machine-wide database beside the server's `chats::provider` rows.
 //! That also ends the race the two servers had over the file, which no mutex in
 //! either process could have arbitrated.
 //!
@@ -26,7 +26,7 @@
 //! Two of the three configured fields are secrets, which is why the one copy
 //! that is left — the database — is `0600` (see [`droppen_instance::db::Db`]), the same
 //! rule and the same reasoning as [`crate::push::store`] and
-//! [`crate::accounts::store`]. They are secrets for different reasons:
+//! the server's `accounts::store`. They are secrets for different reasons:
 //!
 //! * **`endpoint`** ends in a Bark device key. Whoever holds it can put a
 //!   notification on the user's lock screen, and that is the whole of the
@@ -126,7 +126,7 @@ fn store(paths: &Paths) -> Arc<Db> {
 ///
 /// Anything unusable reads as "nothing configured" rather than as an error — the
 /// settings panel has to stay usable so the user can fix whatever went wrong,
-/// exactly as [`crate::chats::provider::read_provider`] argues. Per-field
+/// exactly as the server's `chats::provider::read_provider` argues. Per-field
 /// coercion for the same reason: a number where a string belongs degrades to an
 /// empty field rather than throwing the other three away.
 fn from_value(raw: &Value) -> StoredNotify {

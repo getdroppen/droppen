@@ -673,7 +673,7 @@ pub fn logins() -> Logins {
     }
 }
 
-/// The drivers' alerts, sent by [`crate::push`]: Web Push to every subscribed
+/// The drivers' alerts, sent by [`droppen_notify::push`]: Web Push to every subscribed
 /// browser, and the Bark endpoint too for a question or a rotation. Each push
 /// function spawns its sending and returns, as [`crate::inject::Alerts`] asks.
 struct PushAlerts {
@@ -683,19 +683,19 @@ struct PushAlerts {
 
 impl crate::inject::Alerts for PushAlerts {
     fn turn(&self, paths: Arc<Paths>, source: Source, id: String, outcome: InjectionRunState, error: Option<String>, driver: DriverStates) {
-        crate::push::notify_turn(paths, self.transcripts.clone(), source, id, outcome, error, driver);
+        droppen_notify::push::notify_turn(paths, self.transcripts.clone(), source, id, outcome, error, driver);
     }
 
     fn question(&self, paths: Arc<Paths>, source: Source, id: String, question: String) {
-        crate::push::notify_question(paths, self.transcripts.clone(), source, id, question);
+        droppen_notify::push::notify_question(paths, self.transcripts.clone(), source, id, question);
     }
 
     fn rotation(&self, paths: Arc<Paths>, source: Source, id: String, outcome: RotationOutcome, trigger: RotationTrigger, text: String) {
-        crate::push::notify_rotation(paths, self.transcripts.clone(), source, id, outcome, trigger, text);
+        droppen_notify::push::notify_rotation(paths, self.transcripts.clone(), source, id, outcome, trigger, text);
     }
 }
 
-/// The link's push channels, as [`crate::push`] runs them: the VAPID renewal
+/// The link's push channels, as [`droppen_notify::push`] runs them: the VAPID renewal
 /// in the instance's state database, and the account alerts to Web Push and
 /// Bark. `notify_account_change` spawns its sending and returns, as
 /// [`droppen_agent::link::LinkHost::account_change`] asks.
@@ -703,11 +703,11 @@ pub(crate) struct PushLinkHost;
 
 impl droppen_agent::link::LinkHost for PushLinkHost {
     fn renew_push_keys<'a>(&'a self, paths: &'a Paths) -> futures_util::future::BoxFuture<'a, std::io::Result<usize>> {
-        Box::pin(crate::push::store::renew_vapid(paths))
+        Box::pin(droppen_notify::push::store::renew_vapid(paths))
     }
 
     fn account_change(&self, paths: Arc<Paths>, title: String, body: String) {
-        crate::push::notify_account_change(paths, title, body);
+        droppen_notify::push::notify_account_change(paths, title, body);
     }
 }
 
@@ -721,15 +721,15 @@ impl crate::feed::global::PluginStatuses for PluginHost {
     }
 }
 
-/// `POST /api/notify`'s capability as [`crate::notify`] checks it: the token
+/// `POST /api/notify`'s capability as [`droppen_notify::notify`] checks it: the token
 /// it mints per session, verified against its stored secret, and the
-/// [`crate::notify::NotifyCaller`] the notify handler reads back out of the
+/// [`droppen_notify::notify::NotifyCaller`] the notify handler reads back out of the
 /// request's [`droppen_http::identity::NotifyGrant`].
 pub(crate) struct NotifyTokens;
 
 impl droppen_auth::NotifyCredential for NotifyTokens {
     fn is_notify_request(&self, method: &gotcha::axum::http::Method, path: &str) -> bool {
-        crate::notify::is_notify_request(method, path)
+        droppen_notify::notify::is_notify_request(method, path)
     }
 
     fn caller<'a>(
@@ -738,7 +738,7 @@ impl droppen_auth::NotifyCredential for NotifyTokens {
         instance: &'a str,
         headers: &'a gotcha::axum::http::HeaderMap,
     ) -> futures_util::future::BoxFuture<'a, Option<droppen_http::identity::NotifyGrant>> {
-        Box::pin(async move { crate::notify::caller(paths, instance, headers).await.map(droppen_http::identity::NotifyGrant::new) })
+        Box::pin(async move { droppen_notify::notify::caller(paths, instance, headers).await.map(droppen_http::identity::NotifyGrant::new) })
     }
 }
 
@@ -790,15 +790,15 @@ mod tests {
         use droppen_agent::link::LinkHost;
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths::for_instance(dir.path().to_path_buf(), "agentlink");
-        let old = crate::push::store::vapid_public(&paths).await.unwrap();
+        let old = droppen_notify::push::store::vapid_public(&paths).await.unwrap();
         let db = droppen_instance::db::at(paths.instance_db());
         db.write(|tx| tx.execute_batch("CREATE TRIGGER refuse_push BEFORE UPDATE ON kv WHEN NEW.scope = 'push' BEGIN SELECT RAISE(ABORT, 'refused (test)'); END;"))
             .unwrap();
         assert!(PushLinkHost.renew_push_keys(&paths).await.is_err(), "refused");
-        assert_eq!(crate::push::store::vapid_public(&paths).await.unwrap(), old);
+        assert_eq!(droppen_notify::push::store::vapid_public(&paths).await.unwrap(), old);
         db.write(|tx| tx.execute_batch("DROP TRIGGER refuse_push")).unwrap();
         PushLinkHost.renew_push_keys(&paths).await.expect("renewed");
-        assert_ne!(crate::push::store::vapid_public(&paths).await.unwrap(), old, "a new push key");
+        assert_ne!(droppen_notify::push::store::vapid_public(&paths).await.unwrap(), old, "a new push key");
     }
 
     /// Each CLI is registered twice, for its transcripts and for its runs, in

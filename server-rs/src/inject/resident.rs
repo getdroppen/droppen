@@ -5839,7 +5839,7 @@ impl Driver {
         }
         let _ = turn.run.finished.send(true);
         // The phase goes back to idle *before* the notification, and the order is
-        // the whole point: [`crate::push`] now reads the driver's own account of
+        // the whole point: [`droppen_notify::push`] now reads the driver's own account of
         // the session, and a snapshot taken a line earlier would still say
         // `Working` — it would report the turn that just ended as still in
         // flight. After this line what is left in the snapshot is only what is
@@ -5852,7 +5852,7 @@ impl Driver {
         let driver = self.registry.driver_states();
         // Once per turn, where the old model could only manage once per process.
         // A resident answering ten messages now sends ten notifications, and the
-        // throttle in [`crate::push`] is what keeps that from being ten lines in
+        // throttle in [`droppen_notify::push`] is what keeps that from being ten lines in
         // the notification shade.
         if let Some(alerts) = self.registry.alerts.get() {
             alerts.turn(self.registry.paths.clone(), Source::Claude, self.id.clone(), outcome, error, driver);

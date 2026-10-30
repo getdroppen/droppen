@@ -51,7 +51,7 @@ use tokio::time::MissedTickBehavior;
 
 use super::{cron, ScheduleState, ScheduledTask, TaskStatus};
 use crate::inject::SendOptions;
-use crate::notify::{self, Level, Nudge};
+use droppen_notify::notify::{self, Level, Nudge};
 use droppen_http::openapi_ext::Nullable;
 use droppen_instance::paths::Paths;
 use droppen_base::time::{iso8601, parse_iso};
@@ -330,12 +330,12 @@ fn still_busy(state: &ScheduleState, task: &ScheduledTask) -> Option<&'static st
 ///
 /// Only *this* kind of failure: the run never started, so no turn exists and
 /// nothing downstream will ever report it. A session that starts and then goes
-/// wrong is already covered — [`crate::push::notify_turn`] fires when its turn
+/// wrong is already covered — [`droppen_notify::push::notify_turn`] fires when its turn
 /// ends, exactly as it would for a session started by hand, and for both CLIs.
 ///
 /// The two go out over different channels, and that is worth naming rather than
 /// hiding: the turn notification is Web Push to a subscribed browser, while this
-/// one is Bark to the phone [`crate::notify`] was configured with. They are not
+/// one is Bark to the phone [`droppen_notify::notify`] was configured with. They are not
 /// interchangeable, and a user who has set up only one will only hear about the
 /// half it covers. Sending this over Web Push instead would be worse: it is
 /// addressed to a *session*, and there is no session to address.
@@ -367,7 +367,7 @@ async fn record(paths: &Paths, id: &str, patch: impl FnOnce(&mut ScheduledTask))
 
 /// Nudge the phone about a run that never started.
 ///
-/// Gated on [`crate::notify::store::StoredNotify::is_live`], so a user who has
+/// Gated on [`droppen_notify::notify::store::StoredNotify::is_live`], so a user who has
 /// not configured Bark — or has silenced it — is never the reason a task's
 /// failure turns into an HTTP request.
 async fn alert(paths: &Paths, task_name: &str, reason: &str) {

@@ -44,8 +44,8 @@ pub enum Command {
     /// Join, run, inspect or leave the cloud agent.
     Agent(agent::AgentArgs),
     /// Send a push notification from a session.
-    #[command(hide = true, override_usage = crate::notify::cli::USAGE_LINE)]
-    Notify(crate::notify::cli::NotifyArgs),
+    #[command(hide = true, override_usage = droppen_notify::notify::cli::USAGE_LINE)]
+    Notify(droppen_notify::notify::cli::NotifyArgs),
     /// Rebuild a recorded session's transcript files under a scratch home.
     Replay(crate::record::replay::ReplayArgs),
     /// Write the served OpenAPI spec to a file.
@@ -586,6 +586,10 @@ pub(crate) mod tests {
     /// The `agent` command line as this binary parses and runs it
     /// (`cli::agent`).
     mod agent;
+
+    /// The `notify` command line as this binary parses it
+    /// (`droppen_notify::notify::cli`).
+    mod notify;
 
     /// The `pty-shim` command line as this binary parses it.
     mod pty_shim {

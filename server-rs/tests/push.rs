@@ -20,7 +20,7 @@ use std::time::Duration;
 
 use p256::elliptic_curve::sec1::ToEncodedPoint;
 use droppen_instance::db::scope;
-use remote_hand_server::push::ece;
+use droppen_notify::push::ece;
 use serde_json::{json, Value};
 use support::{common, plan_dying_cli, Probe};
 
@@ -545,17 +545,17 @@ async fn a_push_endpoint_redirect_is_never_followed_to_a_loopback_canary() {
 async fn a_bark_nudge_goes_out_as_remote_hand_and_the_servers_version() {
     // Plain-http loopback, as the push tests have it; nothing in this binary
     // relies on Bark refusing it.
-    std::env::set_var(remote_hand_server::notify::bark::ALLOW_INSECURE_ENDPOINT_ENV, "1");
+    std::env::set_var(droppen_notify::notify::bark::ALLOW_INSECURE_ENDPOINT_ENV, "1");
     let endpoint = FakeEndpoint::start(200).await;
-    let nudge = remote_hand_server::notify::Nudge {
+    let nudge = droppen_notify::notify::Nudge {
         title: "Blocked".into(),
         body: "Postgres or SQLite?".into(),
         subtitle: None,
         group: None,
         url: None,
-        level: remote_hand_server::notify::Level::Active,
+        level: droppen_notify::notify::Level::Active,
     };
-    remote_hand_server::notify::bark::send(&endpoint.url, &nudge).await.expect("sent");
+    droppen_notify::notify::bark::send(&endpoint.url, &nudge).await.expect("sent");
     let captured = endpoint.take();
     assert_eq!(captured.len(), 1, "one nudge, one request");
     let agent = format!("remote-hand/{}", env!("CARGO_PKG_VERSION"));

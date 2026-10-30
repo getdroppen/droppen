@@ -1299,8 +1299,8 @@ async fn a_token_is_a_claim_on_one_instance() {
 #[tokio::test]
 async fn the_notify_capability_opens_its_one_route_and_no_other() {
     let server = common::TestServer::start_guarded().await;
-    let secret = remote_hand_server::notify::store::secret(&server.paths).await.expect("mint the token secret");
-    let mint = |instance: &str, key: &str| remote_hand_server::notify::token::mint(&secret, instance, key);
+    let secret = droppen_notify::notify::store::secret(&server.paths).await.expect("mint the token secret");
+    let mint = |instance: &str, key: &str| droppen_notify::notify::token::mint(&secret, instance, key);
     let nudge = json!({ "title": "done" });
 
     let (status, body) = json_as(&server, "POST", "/api/notify", &mint(DEFAULT_INSTANCE, "claude/abc"), &nudge).await;

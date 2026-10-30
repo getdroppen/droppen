@@ -113,7 +113,7 @@ impl Drive {
 
 /// The notify channel, as a claude spawn's environment gains it: the
 /// `droppen-notify` program on its `PATH`, this server's address and a token
-/// for the session, when the channel is on (see [`crate::notify::inject`]).
+/// for the session, when the channel is on (see [`droppen_notify::notify::inject`]).
 pub(crate) struct NotifyDecoration {
     /// Where the channel's settings and secret are stored.
     paths: Arc<Paths>,
@@ -130,6 +130,6 @@ impl NotifyDecoration {
 
 impl SpawnDecoration for NotifyDecoration {
     fn decorate<'a>(&'a self, source: Source, id: &'a str, env: &'a mut Env) -> BoxFuture<'a, ()> {
-        Box::pin(crate::notify::inject::decorate(&self.paths, &self.instance, source, id, env))
+        Box::pin(droppen_notify::notify::inject::decorate(&self.paths, &self.instance, source, id, env))
     }
 }

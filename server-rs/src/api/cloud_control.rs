@@ -248,13 +248,13 @@ async fn a_restart_runs_the_link_with_the_renewed_key_and_leaves_the_server_alon
     let new = MachineIdentity::from_seed(&[9; 32]);
     // The promotion noted that the push keys follow; a
     // device subscribed against the old VAPID key.
-    let old_vapid = crate::push::store::vapid_public(&paths).await.unwrap();
+    let old_vapid = droppen_notify::push::store::vapid_public(&paths).await.unwrap();
     let point = {
         use p256::elliptic_curve::sec1::ToEncodedPoint as _;
         let device = p256::SecretKey::random(&mut rand::rngs::OsRng);
-        crate::push::ece::b64url(device.public_key().to_encoded_point(false).as_bytes())
+        droppen_notify::push::ece::b64url(device.public_key().to_encoded_point(false).as_bytes())
     };
-    crate::push::store::upsert(&paths, "https://push.example/a".into(), point, crate::push::ece::b64url(&[9; 16]), None)
+    droppen_notify::push::store::upsert(&paths, "https://push.example/a".into(), point, droppen_notify::push::ece::b64url(&[9; 16]), None)
         .await
         .unwrap();
     control.running_link().as_ref().unwrap().ask_push_renew();
@@ -269,8 +269,8 @@ async fn a_restart_runs_the_link_with_the_renewed_key_and_leaves_the_server_alon
         assert!(std::time::Instant::now() < deadline, "the restarted link renews the push keys");
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    assert!(crate::push::store::subscriptions(&paths).await.is_empty(), "every push subscription forgotten");
-    assert_ne!(crate::push::store::vapid_public(&paths).await.unwrap(), old_vapid, "a new VAPID keypair");
+    assert!(droppen_notify::push::store::subscriptions(&paths).await.is_empty(), "every push subscription forgotten");
+    assert_ne!(droppen_notify::push::store::vapid_public(&paths).await.unwrap(), old_vapid, "a new VAPID keypair");
     assert!(control.status().running);
     assert!(!server.is_cancelled() && !session.is_cancelled(), "the server and what runs under it go on");
     control.restart().await.unwrap();

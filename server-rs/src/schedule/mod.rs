@@ -105,7 +105,7 @@ const MAX_NAME: usize = 100;
 const MAX_TASKS: usize = 50;
 
 /// Serializes read-modify-write across every caller in the process, for the
-/// reason [`crate::notify::store`]'s does, and it outlived the file it was
+/// reason [`droppen_notify::notify::store`]'s does, and it outlived the file it was
 /// introduced for: [`update`] reads the whole list, hands it to a closure and
 /// writes it all back, so the read and the write are in different transactions.
 /// The runner advances `nextRunAt` on its own task while a route is editing the
@@ -310,7 +310,7 @@ fn optional_at(entry: &Value, key: &str) -> Nullable<String> {
 /// One task, rebuilt field by field from whatever the store handed back.
 ///
 /// Per-field coercion rather than one `serde_json::from_str`, for the reason
-/// [`crate::notify::store::read`] gives: a row that has been damaged — by an
+/// [`droppen_notify::notify::store::read`] gives: a row that has been damaged — by an
 /// older build, or by hand — with a number where a string belongs should cost
 /// that field and not the whole list. The `payload` column *is* the JSON a
 /// [`ScheduledTask`] serialises to, which is the shape the entries have always
