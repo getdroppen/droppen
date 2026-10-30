@@ -476,6 +476,13 @@ impl std::fmt::Debug for Setup {
 }
 
 impl Setup {
+    /// The runner this guide asks its questions through, for the server's tests
+    /// of the guide on its own logins.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn runner(&self) -> &Arc<dyn Runner> {
+        &self.runner
+    }
+
     /// The guide for a server: real programs, the live environment, and the
     /// desktop app's report from `DROPPEN_DESKTOP_SHELL_READ`. `logins` are
     /// the CLIs' own code, which only the entry names.
@@ -543,7 +550,7 @@ impl Setup {
     /// Put the adopted directories on the children's `PATH` — at boot, by the
     /// instance's owner only, since the `PATH` is the whole process's.
     ///
-    /// Behind the instance lock in [`crate::app::RemoteHandApp::prepare`]: a
+    /// Behind the instance lock in `app::RemoteHandApp::prepare`: a
     /// throwaway in-process server (`export-openapi`) must not rewrite the
     /// `PATH` of a process it does not own the instance for.
     ///
@@ -1007,179 +1014,10 @@ pub fn describe(reg: &mut ExtraResponses) {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use droppen_http::identity::AuthIdentity;
-    use gotcha::axum::http::StatusCode;
-    use std::net::SocketAddr;
-    use droppen_base::process_env::Env;
     use runner::fixture::Fixture;
     use runner::RunOutput;
     use std::os::unix::fs::PermissionsExt;
-
-    /// A login that answers for no CLI in particular: what the guide's tests
-    /// run on when they do not care which CLI's login answers. It names no
-    /// plan, holds no conversation, reads nothing and moves no session; an
-    /// account's launch is its block as given. What each CLI's own login
-    /// answers is pinned by the tests on `crate::app::logins()`.
-    pub(crate) struct StandInLogin(pub(crate) droppen_accounts::store::AccountProvider);
-
-    impl Login for StandInLogin {
-        fn spawn_env(
-            &self,
-            _kind: droppen_accounts::store::AccountKind,
-            _secret: &str,
-            env: &[droppen_base::env_block::EnvVar],
-        ) -> Result<droppen_accounts::store::AccountLaunch, droppen_accounts::store::AccountError> {
-            Ok(droppen_accounts::store::AccountLaunch {
-                provider: self.0,
-                env: env.iter().map(|var| (var.key.clone(), var.value.clone())).collect(),
-                codex_args: Vec::new(),
-            })
-        }
-
-        fn verify<'a>(
-            &'a self,
-            _paths: &'a Paths,
-            _launch: &'a droppen_accounts::store::AccountLaunch,
-            _secrets: &'a [&'a str],
-        ) -> futures_util::future::BoxFuture<'a, droppen_accounts::verify::Verdict> {
-            unreachable!("the guide verifies no account")
-        }
-
-        fn local_state(
-            &self,
-            _refused_at: Option<i64>,
-            _local_reading: &droppen_accounts::quota::readings::SharedReading,
-        ) -> droppen_accounts::local_login::LocalLoginState {
-            droppen_accounts::local_login::LocalLoginState::Unknown
-        }
-
-        fn probe<'a>(
-            &'a self,
-            _roots: &'a droppen_accounts::quota::ProbeRoots,
-            _config_dir: Option<&'a std::path::Path>,
-        ) -> Option<futures_util::future::BoxFuture<'a, droppen_accounts::quota::UsageProbe>> {
-            None
-        }
-
-        fn local_plan<'a>(&'a self, _paths: &'a Paths) -> Option<futures_util::future::BoxFuture<'a, droppen_accounts::login::LocalPlan>> {
-            None
-        }
-
-        fn plan_label(&self, _subscription: Option<&str>, _tier: Option<&str>) -> Option<String> {
-            None
-        }
-
-        fn local_quota<'a>(
-            &'a self,
-            _roots: &'a droppen_accounts::quota::ProbeRoots,
-        ) -> Option<futures_util::future::BoxFuture<'a, Option<droppen_accounts::quota::CodexQuota>>> {
-            None
-        }
-
-        fn app_server_call<'a>(
-            &'a self,
-            _program: &'a std::path::Path,
-            _cwd: &'a std::path::Path,
-            _env: &'a Env,
-            _method: &'a str,
-            _timeout: Duration,
-        ) -> Option<futures_util::future::BoxFuture<'a, Option<serde_json::Value>>> {
-            None
-        }
-
-        fn rotates(&self) -> bool {
-            false
-        }
-
-        fn model_family(&self, _model: Option<&str>) -> Option<&'static str> {
-            None
-        }
-
-        fn reads_per_login(&self) -> bool {
-            false
-        }
-    }
-
-    /// A stand-in login for each CLI ([`StandInLogin`]).
-    pub(crate) fn stand_in_logins() -> Logins {
-        Logins {
-            claude: Arc::new(StandInLogin(droppen_accounts::store::AccountProvider::Claude)),
-            codex: Arc::new(StandInLogin(droppen_accounts::store::AccountProvider::Codex)),
-        }
-    }
-
-    /// The guide's state on a scratch home, built the way a server builds it
-    /// minus the server: its terminals (their folder made, as the instance's
-    /// owner does at boot), the stored accounts on the stand-in logins, no
-    /// transcripts, and the desktop app's window unopened (no port, not run by
-    /// the app).
-    pub(crate) fn setup_state(home: &std::path::Path, setup: Arc<Setup>) -> SetupState {
-        let paths = Arc::new(Paths::new(home.to_path_buf()));
-        let instance = Arc::new(droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), "unittest").expect("valid name"));
-        std::fs::create_dir_all(instance.pty_shims()).expect("the shims' folder");
-        SetupState {
-            setup,
-            terminals: droppen_workbench::terminals::Registry::new(paths.clone(), instance),
-            accounts: Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), stand_in_logins())),
-            paths,
-            transcripts: droppen_sessions::TranscriptSources::default(),
-            desktop_app: false,
-            app_window: AppWindow::new(
-                droppen_http::app_window::ListenPort::new(Arc::new(std::sync::OnceLock::new())),
-                false,
-            ),
-        }
-    }
-
-    /// A guide on a scratch home whose detection only ever looks there, on the
-    /// stand-in logins.
-    pub(crate) fn guide(home: &std::path::Path, fixture: Arc<Fixture>, app_read: Option<PathRead>) -> Arc<Setup> {
-        guide_in_shell(home, fixture, app_read, "/bin/zsh")
-    }
-
-    /// [`guide`], with `shell` as the user's login shell — what an install's
-    /// terminal runs.
-    pub(crate) fn guide_in_shell(home: &std::path::Path, fixture: Arc<Fixture>, app_read: Option<PathRead>, shell: &str) -> Arc<Setup> {
-        guide_on(home, fixture, app_read, shell, &stand_in_logins())
-    }
-
-    /// [`guide`], on `logins`: for a test that pins which CLI's login answers.
-    pub(crate) fn guide_with_logins(home: &std::path::Path, fixture: Arc<Fixture>, app_read: Option<PathRead>, logins: &Logins) -> Arc<Setup> {
-        guide_on(home, fixture, app_read, "/bin/zsh", logins)
-    }
-
-    fn guide_on(home: &std::path::Path, fixture: Arc<Fixture>, app_read: Option<PathRead>, shell: &str, logins: &Logins) -> Arc<Setup> {
-        let scratch = home.to_path_buf();
-        let probe: ProbeFn = Arc::new(move |_paths: &Paths, overlay| {
-            let bin = scratch.join("bin");
-            let path = std::iter::once(bin.to_string_lossy().into_owned())
-                .chain(overlay.iter().map(|dir: &PathBuf| dir.to_string_lossy().into_owned()))
-                .collect::<Vec<_>>()
-                .join(":");
-            let env: Env = [("PATH".to_string(), path)].into_iter().collect();
-            Probe {
-                home: scratch.clone(),
-                env: env.clone(),
-                claude_env: env,
-                inherited_path: bin.to_string_lossy().into_owned(),
-                overlay,
-                system_dirs: Vec::new(),
-                macos: true,
-            }
-        });
-        Setup::with(Arc::new(Paths::new(home.to_path_buf())), fixture, logins, probe, shell.to_string(), app_read)
-    }
-
-    pub(crate) fn marker(path: &std::path::Path) {
-        std::fs::create_dir_all(path.parent().expect("parent")).expect("dir");
-        std::fs::write(path, "not a program; never executed\n").expect("write");
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
-    }
-
-    /// What a login shell prints, fenced.
-    pub(crate) fn shell_answer(body: &str) -> RunOutput {
-        RunOutput::exited(0, format!("hello from .zshrc\n{}\n{body}\n{}\n", shell::BEGIN, shell::END), "")
-    }
+    use crate::testing::*;
 
     /// The scratch folder a trust test works in, as the top of the walk
     /// (`tasks::TRUST_ROOT`): the folders above it are the machine's, not the
@@ -1372,232 +1210,184 @@ pub(crate) mod tests {
         assert_eq!(after, format!("{before}:{}", picked.display()));
         assert_eq!(setup.overlay(), [picked]);
     }
+}
 
-    /// What the app's own window sends: from loopback, signed in, to and from
-    /// `127.0.0.1:<port>`.
-    fn window(port: u16) -> Caller {
-        Caller {
-            peer: Some("127.0.0.1:50123".parse().expect("address")),
-            identity: Some(AuthIdentity {
-                username: "ada".to_string(),
-                token_sha256: None,
-            }),
-            origin: Some(format!("http://127.0.0.1:{port}")),
-            host: Some(format!("127.0.0.1:{port}")),
-        }
-    }
+/// The guide's test helpers: a stand-in login for each CLI, the guide's state
+/// without a server, and a guide on a scratch home. For the crate's tests and,
+/// with `test-support`, the server's tests of the guide on its own logins.
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing {
+    use super::*;
+    use droppen_base::process_env::Env;
+    use runner::fixture::Fixture;
+    use runner::RunOutput;
+    use std::os::unix::fs::PermissionsExt;
 
-    #[tokio::test]
-    async fn only_the_app_s_own_window_counts_as_the_app() {
-        let home = tempfile::tempdir().expect("tempdir");
-        let mut state = crate::api::test_support::state(home.path()).await;
-        let port = 58123;
-        assert!(state.window().app_caller(&window(port)).is_err(), "not run by the desktop app");
-        state.desktop_app = true;
-        assert!(state.window().app_caller(&window(port)).is_err(), "before the server listens, nothing is its window");
-        let _ = state.listen_port.set(port);
+    /// A login that answers for no CLI in particular: what the guide's tests
+    /// run on when they do not care which CLI's login answers. It names no
+    /// plan, holds no conversation, reads nothing and moves no session; an
+    /// account's launch is its block as given. What each CLI's own login
+    /// answers is pinned by the tests on `crate::app::logins()`.
+    pub struct StandInLogin(pub droppen_accounts::store::AccountProvider);
 
-        assert!(state.window().app_caller(&window(port)).is_ok());
-        for peer in ["[::1]:50123", "[::ffff:127.0.0.1]:50123"] {
-            let caller = Caller {
-                peer: Some(peer.parse().expect("address")),
-                ..window(port)
-            };
-            assert!(state.window().app_caller(&caller).is_ok(), "{peer}");
-        }
-
-        let refused = |caller: Caller, why: &str| {
-            let error = state.window().app_caller(&caller).expect_err(why);
-            assert_eq!(error.status(), StatusCode::FORBIDDEN, "{why}");
-            assert_eq!(error.body()["error"], "app_only", "{why}");
-        };
-        refused(
-            Caller {
-                peer: Some("192.168.1.20:50123".parse().unwrap()),
-                ..window(port)
-            },
-            "a browser on the LAN",
-        );
-        refused(Caller { peer: None, ..window(port) }, "no peer is not a local peer");
-        refused(Caller { identity: None, ..window(port) }, "the app's window is always signed in");
-        refused(
-            Caller {
-                identity: Some(AuthIdentity {
-                    username: "cloud:d-abc".to_string(),
-                    token_sha256: None,
-                }),
-                ..window(port)
-            },
-            "a linked device's request arrives over loopback and is still not this device",
-        );
-        refused(
-            Caller {
-                origin: Some("http://evil.example:58123".into()),
-                host: Some("evil.example:58123".into()),
-                ..window(port)
-            },
-            "DNS rebinding: a page elsewhere whose name now points at 127.0.0.1",
-        );
-        refused(
-            Caller {
-                origin: Some("http://127.0.0.1:9000".into()),
-                host: Some("127.0.0.1:9000".into()),
-                ..window(port)
-            },
-            "a browser through `ssh -R 9000:127.0.0.1:58123`, arriving over loopback",
-        );
-        refused(
-            Caller {
-                origin: Some("https://mac.tail1234.ts.net".into()),
-                host: Some("mac.tail1234.ts.net".into()),
-                ..window(port)
-            },
-            "a browser through `tailscale serve`",
-        );
-        refused(
-            Caller {
-                origin: Some("http://localhost:58123".into()),
-                ..window(port)
-            },
-            "made by a page somewhere else",
-        );
-        refused(Caller { origin: None, ..window(port) }, "an action without its Origin");
-
-        // The report's `canInstall`: a page's own GET says no Origin, and
-        // needs none; everything else still holds.
-        assert!(state.window().local_app_request(&Caller { origin: None, ..window(port) }));
-        assert!(!state.window().local_app_request(
-            &Caller {
-                origin: None,
-                host: Some("evil.example:58123".into()),
-                ..window(port)
-            }
-        ));
-        assert!(!state.window().local_app_request(&Caller { identity: None, ..window(port) }));
-    }
-
-    /// Through the real router and its guard, from a real loopback socket.
-    /// Nothing here reaches a command: every request is refused before one.
-    #[tokio::test]
-    async fn the_install_routes_refuse_everything_but_the_app_and_the_whitelist() {
-        let client = reqwest::Client::new();
-        // `token`: the bearer the app's window holds; the window's page sends
-        // its own address as `Origin`, and reqwest sends `Host` from the URL.
-        let send = |addr: SocketAddr, path: &'static str, body: serde_json::Value, token: Option<String>, origin: bool| {
-            let client = client.clone();
-            async move {
-                let mut request = client.post(format!("http://{addr}{path}")).json(&body);
-                if let Some(token) = token {
-                    request = request.bearer_auth(token);
-                }
-                if origin {
-                    request = request.header("Origin", format!("http://{addr}"));
-                }
-                let response = request.send().await.expect("answered");
-                let status = response.status().as_u16();
-                (status, response.json::<serde_json::Value>().await.unwrap_or_default())
-            }
-        };
-        let routes = [
-            ("/api/setup/tools/claude/install", serde_json::json!({"method": "native"})),
-            ("/api/setup/tools/codex/update", serde_json::json!({"method": "npm"})),
-            (
-                "/api/setup/tools/codex/login",
-                serde_json::json!({"mode": "apikey", "apiKey": "sk-proj-never-used-0123456789"}),
-            ),
-            ("/api/setup/tools/claude/use", serde_json::json!({"path": "/usr/bin/true"})),
-            ("/api/setup/git/install", serde_json::json!({})),
-            ("/api/setup/tools/rescan", serde_json::json!({"patient": true})),
-        ];
-
-        let ordinary = tempfile::tempdir().expect("tempdir");
-        let (state, addr) = crate::api::test_support::served(ordinary.path()).await;
-        state.drive.auth.users.add("ada", "correct horse battery staple").await.expect("user");
-        let token = state.drive.auth.sessions.issue("ada", None).await.expect("session").token;
-        for (path, body) in routes.clone() {
-            let (status, body) = send(addr, path, body, Some(token.clone()), true).await;
-            assert_eq!(status, 403, "{path}: a server the app does not run installs nothing, nor rewrites its PATH");
-            assert_eq!(body["error"], "app_only", "{path}");
-        }
-
-        let app = tempfile::tempdir().expect("tempdir");
-        let (state, addr) = crate::api::test_support::served_with(app.path(), |state| state.desktop_app = true).await;
-        state.drive.auth.users.add("ada", "correct horse battery staple").await.expect("user");
-        let token = state.drive.auth.sessions.issue("ada", None).await.expect("session").token;
-        for (path, body) in routes {
-            let (status, answer) = send(addr, path, body, Some(token.clone()), false).await;
-            assert_eq!(
-                (status, answer["error"].as_str()),
-                (403, Some("app_only")),
-                "{path}: an action has to say the app's page made it"
-            );
-        }
-        let post = |addr: SocketAddr, path: &'static str, body: serde_json::Value| send(addr, path, body, Some(token.clone()), true);
-        let (status, body) = post(
-            addr,
-            "/api/setup/tools/claude/install",
-            serde_json::json!({"method": "curl https://example.com/x.sh | sh"}),
-        )
-        .await;
-        assert_eq!((status, body["error"].as_str()), (400, Some("unknown_method")), "only the whitelist runs");
-        let (status, body) = post(addr, "/api/setup/tools/claude/update", serde_json::json!({"method": "apple"})).await;
-        assert_eq!((status, body["error"].as_str()), (400, Some("unknown_method")));
-        let (status, body) = post(addr, "/api/setup/tools/gemini/install", serde_json::json!({"method": "native"})).await;
-        assert_eq!((status, body["error"].as_str()), (400, Some("unknown_tool")));
-        let (status, body) = post(addr, "/api/setup/tools/codex/login", serde_json::json!({"mode": "password"})).await;
-        assert_eq!((status, body["error"].as_str()), (400, Some("unknown_method")));
-        let (status, body) = post(addr, "/api/setup/tools/codex/login", serde_json::json!({"mode": "apikey"})).await;
-        assert_eq!((status, body["error"].as_str()), (400, Some("api_key_required")));
-    }
-
-    /// Claude's plan is named by Claude Code's own login, whether the guide
-    /// looks or a sign-in in progress is polled.
-    #[tokio::test]
-    async fn the_guide_names_claude_s_plan_through_claude_s_login() {
-        let home = tempfile::tempdir().expect("tempdir");
-        marker(&home.path().join("bin/claude"));
-        let fixture = Fixture::new();
-        fixture.answer("claude --version", RunOutput::exited(0, "2.1.300 (Claude Code)\n", "")).answer(
-            "claude auth status --json",
-            RunOutput::exited(
-                0,
-                r#"{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":"max","rateLimitTier":"default_claude_max_20x"}"#,
-                "",
-            ),
-        );
-        let setup = guide_with_logins(home.path(), fixture, None, &crate::app::logins());
-
-        let detection = setup.detection(true).await;
-        assert_eq!(detection.tools[0].login.plan.0.as_deref(), Some("Max 20x"));
-        assert_eq!(setup.poll_login(ToolId::Claude).await.plan.0.as_deref(), Some("Max 20x"));
-    }
-
-    /// The guide the entry builds asks codex's app server through codex's own
-    /// login: one real conversation with the stand-in app server
-    /// (`tests/support/fake_codex.py`), which answers every request with `{}`.
-    #[tokio::test]
-    async fn the_guide_asks_codex_s_app_server_through_codex_s_login() {
-        let home = tempfile::tempdir().expect("tempdir");
-        // The stand-in app server runs only under a test root.
-        std::fs::write(home.path().join(".rh-test-root"), b"").expect("test root");
-        let codex = home.path().join("codex");
-        let fake = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/support/fake_codex.py");
-        std::fs::write(&codex, format!("#!/bin/sh\nexec python3 {fake} \"$@\"\n")).expect("codex");
-        std::fs::set_permissions(&codex, std::fs::Permissions::from_mode(0o755)).expect("chmod");
-        let setup = Setup::new(Arc::new(Paths::new(home.path().to_path_buf())), &crate::app::logins());
-
-        let answer = setup
-            .runner
-            .rpc(runner::RpcCall {
-                program: codex,
-                cwd: home.path().to_path_buf(),
-                env: droppen_base::process_env::clean_env_bare(),
-                method: "account/read",
-                timeout: std::time::Duration::from_secs(10),
+    impl Login for StandInLogin {
+        fn spawn_env(
+            &self,
+            _kind: droppen_accounts::store::AccountKind,
+            _secret: &str,
+            env: &[droppen_base::env_block::EnvVar],
+        ) -> Result<droppen_accounts::store::AccountLaunch, droppen_accounts::store::AccountError> {
+            Ok(droppen_accounts::store::AccountLaunch {
+                provider: self.0,
+                env: env.iter().map(|var| (var.key.clone(), var.value.clone())).collect(),
+                codex_args: Vec::new(),
             })
-            .await;
-        assert_eq!(answer, Some(serde_json::json!({})), "the app server's answer");
-        let asked = std::fs::read_to_string(home.path().join("codex-stdin.jsonl")).expect("the app server was started");
-        assert!(asked.contains("\"method\":\"account/read\""), "{asked}");
+        }
+
+        fn verify<'a>(
+            &'a self,
+            _paths: &'a Paths,
+            _launch: &'a droppen_accounts::store::AccountLaunch,
+            _secrets: &'a [&'a str],
+        ) -> futures_util::future::BoxFuture<'a, droppen_accounts::verify::Verdict> {
+            unreachable!("the guide verifies no account")
+        }
+
+        fn local_state(
+            &self,
+            _refused_at: Option<i64>,
+            _local_reading: &droppen_accounts::quota::readings::SharedReading,
+        ) -> droppen_accounts::local_login::LocalLoginState {
+            droppen_accounts::local_login::LocalLoginState::Unknown
+        }
+
+        fn probe<'a>(
+            &'a self,
+            _roots: &'a droppen_accounts::quota::ProbeRoots,
+            _config_dir: Option<&'a std::path::Path>,
+        ) -> Option<futures_util::future::BoxFuture<'a, droppen_accounts::quota::UsageProbe>> {
+            None
+        }
+
+        fn local_plan<'a>(&'a self, _paths: &'a Paths) -> Option<futures_util::future::BoxFuture<'a, droppen_accounts::login::LocalPlan>> {
+            None
+        }
+
+        fn plan_label(&self, _subscription: Option<&str>, _tier: Option<&str>) -> Option<String> {
+            None
+        }
+
+        fn local_quota<'a>(
+            &'a self,
+            _roots: &'a droppen_accounts::quota::ProbeRoots,
+        ) -> Option<futures_util::future::BoxFuture<'a, Option<droppen_accounts::quota::CodexQuota>>> {
+            None
+        }
+
+        fn app_server_call<'a>(
+            &'a self,
+            _program: &'a std::path::Path,
+            _cwd: &'a std::path::Path,
+            _env: &'a Env,
+            _method: &'a str,
+            _timeout: Duration,
+        ) -> Option<futures_util::future::BoxFuture<'a, Option<serde_json::Value>>> {
+            None
+        }
+
+        fn rotates(&self) -> bool {
+            false
+        }
+
+        fn model_family(&self, _model: Option<&str>) -> Option<&'static str> {
+            None
+        }
+
+        fn reads_per_login(&self) -> bool {
+            false
+        }
+    }
+
+    /// A stand-in login for each CLI ([`StandInLogin`]).
+    pub fn stand_in_logins() -> Logins {
+        Logins {
+            claude: Arc::new(StandInLogin(droppen_accounts::store::AccountProvider::Claude)),
+            codex: Arc::new(StandInLogin(droppen_accounts::store::AccountProvider::Codex)),
+        }
+    }
+
+    /// The guide's state on a scratch home, built the way a server builds it
+    /// minus the server: its terminals (their folder made, as the instance's
+    /// owner does at boot), the stored accounts on the stand-in logins, no
+    /// transcripts, and the desktop app's window unopened (no port, not run by
+    /// the app).
+    pub fn setup_state(home: &std::path::Path, setup: Arc<Setup>) -> SetupState {
+        let paths = Arc::new(Paths::new(home.to_path_buf()));
+        let instance = Arc::new(droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), "unittest").expect("valid name"));
+        std::fs::create_dir_all(instance.pty_shims()).expect("the shims' folder");
+        SetupState {
+            setup,
+            terminals: droppen_workbench::terminals::Registry::new(paths.clone(), instance),
+            accounts: Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), stand_in_logins())),
+            paths,
+            transcripts: droppen_sessions::TranscriptSources::default(),
+            desktop_app: false,
+            app_window: AppWindow::new(
+                droppen_http::app_window::ListenPort::new(Arc::new(std::sync::OnceLock::new())),
+                false,
+            ),
+        }
+    }
+
+    /// A guide on a scratch home whose detection only ever looks there, on the
+    /// stand-in logins.
+    pub fn guide(home: &std::path::Path, fixture: Arc<Fixture>, app_read: Option<PathRead>) -> Arc<Setup> {
+        guide_in_shell(home, fixture, app_read, "/bin/zsh")
+    }
+
+    /// [`guide`], with `shell` as the user's login shell — what an install's
+    /// terminal runs.
+    pub fn guide_in_shell(home: &std::path::Path, fixture: Arc<Fixture>, app_read: Option<PathRead>, shell: &str) -> Arc<Setup> {
+        guide_on(home, fixture, app_read, shell, &stand_in_logins())
+    }
+
+    /// [`guide`], on `logins`: for a test that pins which CLI's login answers.
+    pub fn guide_with_logins(home: &std::path::Path, fixture: Arc<Fixture>, app_read: Option<PathRead>, logins: &Logins) -> Arc<Setup> {
+        guide_on(home, fixture, app_read, "/bin/zsh", logins)
+    }
+
+    fn guide_on(home: &std::path::Path, fixture: Arc<Fixture>, app_read: Option<PathRead>, shell: &str, logins: &Logins) -> Arc<Setup> {
+        let scratch = home.to_path_buf();
+        let probe: ProbeFn = Arc::new(move |_paths: &Paths, overlay| {
+            let bin = scratch.join("bin");
+            let path = std::iter::once(bin.to_string_lossy().into_owned())
+                .chain(overlay.iter().map(|dir: &PathBuf| dir.to_string_lossy().into_owned()))
+                .collect::<Vec<_>>()
+                .join(":");
+            let env: Env = [("PATH".to_string(), path)].into_iter().collect();
+            Probe {
+                home: scratch.clone(),
+                env: env.clone(),
+                claude_env: env,
+                inherited_path: bin.to_string_lossy().into_owned(),
+                overlay,
+                system_dirs: Vec::new(),
+                macos: true,
+            }
+        });
+        Setup::with(Arc::new(Paths::new(home.to_path_buf())), fixture, logins, probe, shell.to_string(), app_read)
+    }
+
+    /// An executable file at `path` that is not a program: a CLI for detection
+    /// to find, never to run.
+    pub fn marker(path: &std::path::Path) {
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("dir");
+        std::fs::write(path, "not a program; never executed\n").expect("write");
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    }
+
+    /// What a login shell prints, fenced.
+    pub fn shell_answer(body: &str) -> RunOutput {
+        RunOutput::exited(0, format!("hello from .zshrc\n{}\n{body}\n{}\n", shell::BEGIN, shell::END), "")
     }
 }

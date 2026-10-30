@@ -314,8 +314,8 @@ fn keep(buffer: &mut Vec<u8>, chunk: &[u8]) {
 }
 
 /// A runner that answers from canned text and records every question.
-#[cfg(test)]
-pub(crate) mod fixture {
+#[cfg(any(test, feature = "test-support"))]
+pub mod fixture {
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
 
@@ -323,7 +323,7 @@ pub(crate) mod fixture {
 
     /// One recorded question: what was asked, with what, and what was piped in.
     #[derive(Debug, Clone)]
-    pub(crate) struct Asked {
+    pub struct Asked {
         /// The program's file name.
         pub name: String,
         /// The program as given (a path, usually).
@@ -348,7 +348,7 @@ pub(crate) mod fixture {
 
     /// Canned answers keyed by `name arg arg…`; anything unknown fails to start.
     #[derive(Default)]
-    pub(crate) struct Fixture {
+    pub struct Fixture {
         answers: Mutex<HashMap<String, RunOutput>>,
         rpc: Mutex<HashMap<String, serde_json::Value>>,
         asked: Mutex<Vec<Asked>>,
@@ -356,6 +356,7 @@ pub(crate) mod fixture {
     }
 
     impl Fixture {
+        /// A fixture with no answers yet: every program fails to start.
         pub fn new() -> Arc<Self> {
             Arc::new(Self::default())
         }

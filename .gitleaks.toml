@@ -34,7 +34,7 @@ regexes = ['''^dGhlIHNhbXBsZSBub25jZQ==$''']
 description = "a made-up OpenAI API key in the setup tests"
 condition = "AND"
 targetRules = ["generic-api-key"]
-paths = ['''^server-rs/src/setup/tasks\.rs$''', '''^server-rs/crates/droppen-setup/src/tasks\.rs$''']
+paths = ['''^server-rs/crates/droppen-setup/src/tasks\.rs$''']
 regexTarget = "secret"
 regexes = ['''^sk-proj-TESTKEY0123456789abcdefghijklmnop$''']
 

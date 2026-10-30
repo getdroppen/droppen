@@ -32,7 +32,7 @@ use droppen_notify::push::PushState;
 use crate::schedule::ScheduleState;
 use droppen_workbench::screens::ScreensState;
 use droppen_supervisor::selfupdate::SelfUpdateState;
-use crate::setup::SetupState;
+use droppen_setup::SetupState;
 use droppen_sessions::stats::StatsState;
 use droppen_workbench::terminals::TerminalsState;
 

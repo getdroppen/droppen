@@ -230,7 +230,7 @@ pub fn list(detection: &Detection) -> SetupCommandList {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::setup::{SetupHelpers, SetupOs};
+    use crate::{SetupHelpers, SetupOs};
 
     fn detection(macos: Option<&str>, brew: bool, node: bool, git: GitState) -> Detection {
         Detection {
@@ -250,16 +250,16 @@ mod tests {
 
     /// `detection` with a codex found, installed by `method`.
     fn with_codex(mut detection: Detection, method: InstallMethod, version: &str) -> Detection {
-        detection.tools.push(crate::setup::detect::ToolProbe {
+        detection.tools.push(crate::detect::ToolProbe {
             id: ToolId::Codex,
-            found: Some(crate::setup::ToolFound {
+            found: Some(crate::ToolFound {
                 path: "/Users/ada/.local/bin/codex".to_string(),
-                via: crate::setup::FoundVia::Path,
+                via: crate::FoundVia::Path,
                 method,
             }),
             version: Some(version.to_string()),
             supported: true,
-            login: crate::setup::detect::unknown_login(),
+            login: crate::detect::unknown_login(),
         });
         detection
     }
@@ -477,7 +477,7 @@ mod tests {
                 let csh = csh.as_str();
                 let _ = std::fs::remove_file(&mark);
                 let line = with_download(CLAUDE_INSTALLER, "echo \"$t\" > \"$MARK\" && echo \"exit 0\" > \"$t\"");
-                assert_eq!(crate::setup::tasks::shell_args(csh, &line), ["-c", line.as_str()], "{csh}");
+                assert_eq!(crate::tasks::shell_args(csh, &line), ["-c", line.as_str()], "{csh}");
                 let with_login = std::process::Command::new(csh).args(["-l", "-c", "true"]).output().expect("ran");
                 assert!(!with_login.status.success(), "{csh} refuses -l beside -c, which is why it gets -c alone");
                 let (status, left) = run_line(csh, &["-c"], &line, &mark);

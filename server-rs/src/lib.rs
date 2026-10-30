@@ -85,7 +85,8 @@ pub mod provider;
 pub mod models;
 pub mod schedule;
 pub mod sessions;
-pub mod setup;
 pub mod shutdown;
+#[cfg(test)]
+mod setup_tests;
 pub mod static_files;
 pub mod stream_source;

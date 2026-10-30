@@ -157,7 +157,7 @@ impl GotchaApp for RemoteHandApp {
                 wizards: crate::provider::claude_code::setup_token::Captures::new(),
                 terminals: droppen_workbench::terminals::Registry::new(paths.clone(), instance.clone()),
                 apps: droppen_workbench::apps::Registry::new(paths.clone(), instance.clone()),
-                setup: crate::setup::Setup::new(paths.clone(), &logins),
+                setup: droppen_setup::Setup::new(paths.clone(), &logins),
                 listen_port: Arc::new(std::sync::OnceLock::new()),
                 paths,
                 instance,
@@ -1108,7 +1108,7 @@ mod tests {
         fn no_source_the_module_runs_names_a_credential_path() {
             let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
             let mut checked = 0;
-            for entry in std::fs::read_dir(src.join("setup")).expect("src/setup") {
+            for entry in std::fs::read_dir(src.join("../crates/droppen-setup/src")).expect("crates/droppen-setup/src") {
                 let path = entry.expect("entry").path();
                 if path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
                     continue;

@@ -366,7 +366,7 @@ pub const ROUTES: &[(&str, &str, RouteClass)] = {
         // than the session list, the preferences and a terminal give. The
         // progress is a record nothing acts on: should a choice in it
         // (`where.lan`, `wrap.startAtLogin`) ever be applied, its `PUT`
-        // becomes `Posture` first (`setup::progress`).
+        // becomes `Posture` first (`droppen_setup::progress`).
         ("GET", "/api/setup/progress", Use),
         ("PUT", "/api/setup/progress", Use),
         ("GET", "/api/setup/projects/recent", Use),

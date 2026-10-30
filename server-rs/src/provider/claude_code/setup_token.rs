@@ -442,7 +442,7 @@ async fn stub_browser_openers(dir: &Path) -> std::io::Result<Vec<(String, String
         }
     }
     // The children's PATH, not the inherited one: a CLI the guide found off
-    // the PATH ([`crate::setup`]) must still be found behind the stubs.
+    // the PATH ([`droppen_setup`]) must still be found behind the stubs.
     let inherited = droppen_base::process_env::child_path();
     Ok(vec![
         ("PATH".to_string(), format!("{}:{inherited}", dir.display())),

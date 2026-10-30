@@ -14,11 +14,11 @@
 //! fallback for what the shell did not say (or when it would not answer).
 //! The shell first, so the server runs the `node` and `claude` the user's
 //! terminal runs: nvm's, say, rather than Homebrew's. The server appends the
-//! folders adopted in Settings after all of it (`server-rs/src/setup`).
+//! folders adopted in Settings after all of it (`server-rs/crates/droppen-setup`).
 //!
 //! The rule itself ([`base_dirs`], [`build`]) lives in the dependency-free
 //! `droppen-search-path` crate, shared with the server
-//! (`server-rs/src/setup/locate.rs`), so the two cannot drift apart.
+//! (`server-rs/crates/droppen-setup/src/locate.rs`), so the two cannot drift apart.
 
 use std::io::Read;
 use std::os::unix::fs::PermissionsExt;
@@ -27,7 +27,7 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 
 // The PATH rule itself lives in `droppen-search-path`, shared with the
-// server's setup guide (`server-rs/src/setup/locate.rs`).
+// server's setup guide (`server-rs/crates/droppen-setup/src/locate.rs`).
 pub use droppen_search_path::{base_dirs, build};
 
 /// What `$SHELL -ilc` says `PATH` is, or `None` if it would not say in time.
