@@ -33,20 +33,34 @@ import { APP_PATH, publicLink, PRICING_PATH, PRIVACY_PATH, SECURITY_PATH, SIGN_I
 export const landingPrimary = cn(primary, "h-auto min-h-9 py-1.5 text-sm");
 export const landingSecondary = cn(secondary, "h-auto min-h-9 py-1.5 text-sm");
 
-/** The two marks where a section's top line meets the frame. */
-export function Seam() {
+/** The two marks where a section's top line meets the frame; `side` keeps one where the other edge is a column divider. */
+export function Seam({ side = "both" }: { side?: "both" | "left" | "right" }) {
   return (
     <>
-      <RegMark className="-top-[5px] -left-[5px]" />
-      <RegMark className="-top-[5px] -right-[5px]" />
+      {side !== "right" && <RegMark className="-top-[5px] -left-[5px]" />}
+      {side !== "left" && <RegMark className="-top-[5px] -right-[5px]" />}
     </>
   );
 }
 
-export function Section({ id, children, className }: { id?: string; children: ReactNode; className?: string }) {
+export function Section({
+  id,
+  children,
+  className,
+  seam = "both",
+  rule = true,
+}: {
+  id?: string;
+  children: ReactNode;
+  className?: string;
+  /** `right` for a section inside a framed content column: its left edge is a column divider, not the page frame. */
+  seam?: "both" | "left" | "right" | false;
+  /** The top rule; off for a first section whose parent already draws it across the frame. */
+  rule?: boolean;
+}) {
   return (
-    <section id={id} className={cn("relative scroll-mt-14 border-t border-border", className)}>
-      <Seam />
+    <section id={id} className={cn("relative scroll-mt-14", rule && "border-t border-border", className)}>
+      {seam !== false && <Seam side={seam} />}
       {children}
     </section>
   );

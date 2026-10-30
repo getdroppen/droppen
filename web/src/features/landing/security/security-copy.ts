@@ -38,6 +38,12 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "私たちの主張を検証したい方のための技術資料です。どの鍵を誰が持つのか、あなたのデバイスがアカウントに属するデバイスについてどのように合意するのか、私たちのサーバーに何が見え何が見えないのか、そしてサーバーが悪意を持った場合や強制された場合に、それぞれ何ができるのかを扱います。記載しているのは Droppen の現在の実装です。まだ有効になっていない部分やテスト中の部分は、その旨を明記しています。",
   ],
   [
+    "Terms",
+    "术语",
+    "術語",
+    "用語",
+  ],
+  [
     "Overview",
     "概览",
     "概覽",
@@ -161,7 +167,7 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "copies frames, keeps nothing",
     "只转发帧，不留存任何内容",
     "只轉送幀，不留存任何內容",
-    "フレームを中継するだけ、何も残さない",
+    "中継するだけ、何も残さない",
   ],
   [
     "none of your keys",
@@ -191,7 +197,7 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "device chain · mail · encrypted copies",
     "设备链 · 信箱 · 加密副本",
     "裝置鏈 · 信箱 · 加密副本",
-    "デバイスチェーン · 鍵メール · 暗号化コピー",
+    "チェーン・鍵メール・暗号化コピー",
   ],
   [
     "Noise ciphertext",
@@ -581,7 +587,7 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "Each browser or phone:\n- made by WebCrypto\n- used as a non-extractable key\n- stored sealed under a key of this browser",
     "每个浏览器、每部手机各一把：\n- 由 WebCrypto 生成\n- 使用时是不可导出的钥匙\n- 存储时用这个浏览器的一把钥匙加密",
     "每個瀏覽器、每支手機各一把：\n- 由 WebCrypto 產生\n- 使用時是不可匯出的金鑰\n- 儲存時以這個瀏覽器的一把金鑰加密",
-    "ブラウザやスマホごとに 1 つ：\n- WebCrypto で生成\n- エクスポート不可の鍵として使用\n- このブラウザの鍵で暗号化して保存",
+    "ブラウザやスマホごとに 1\u00A0つ：\n- WebCrypto で生成\n- エクスポート不可の鍵として使用\n- このブラウザの鍵で暗号化して保存",
   ],
   [
     "The device's identity:\n- signs chain entries, attestations and sign-ins\n- its Noise static key\n- receives sealed keys",
@@ -605,7 +611,7 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "Ed25519 + X25519 from one random 32-byte seed",
     "由一个 32 字节随机种子派生的 Ed25519 + X25519",
     "由一個 32 位元組隨機種子衍生的 Ed25519 + X25519",
-    "32 バイトのランダムなシード 1 つから導く Ed25519 + X25519",
+    "32 バイトのランダムなシード 1\u00A0つから導く Ed25519 + X25519",
   ],
   [
     "That device only, in a file only its user can read",

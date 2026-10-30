@@ -56,14 +56,14 @@ export const RENEWAL_PARTS = ["renewal-why", "renewal-entry", "renewal-staging",
  * the column. What is not prose (formulas, quoted labels and paths, the algorithm table, paired
  * lists) takes the topic's whole width, so it is not wrapped short beside empty space.
  */
-const prose = "max-w-[46em] text-base text-muted";
+const prose = "max-w-[46em] text-base text-pretty text-muted [word-break:auto-phrase]";
 
 /** Below xl the 44px contents bar sits under the 56px header; an anchor stops below both. */
 const sectionScroll = "max-xl:scroll-mt-[6.5rem]";
 
 /** A section's head, with this page's 16px reading size for its lead (the shared head's is 14px). */
 function Head(props: ComponentProps<typeof SectionHead>) {
-  return <SectionHead {...props} className={cn("[&>p]:text-base", props.className)} />;
+  return <SectionHead {...props} className={cn("[&>p]:text-base [&>p]:text-pretty [&>p]:[word-break:auto-phrase]", props.className)} />;
 }
 
 /** A word joined by hyphens (`end-to-end`) stays whole: a line never ends on its hyphen. */
@@ -208,7 +208,7 @@ function List({ items }: { items: ReactNode[] }) {
   return (
     <ul className="flex max-w-[46em] flex-col gap-2">
       {items.map((item, i) => (
-        <li key={i} className="flex gap-2.5 text-base text-muted">
+        <li key={i} className="flex gap-2.5 text-base text-pretty text-muted [word-break:auto-phrase]">
           <span className="mt-[9px] size-1.5 shrink-0 bg-fg" />
           <div className="min-w-0">{linked(item)}</div>
         </li>
@@ -226,15 +226,31 @@ function Line({ children }: { children: ReactNode }) {
   return <code className="block">{children}</code>;
 }
 
-/** A small caps chip: what is still in testing. */
+/** A small filled chip: what is still in testing, as the pricing page marks what it recommends. */
 function Chip({ children }: { children: ReactNode }) {
-  return <span className="inline-flex shrink-0 items-center border border-fg px-1.5 text-xs leading-4 font-semibold tracking-wider text-fg uppercase">{children}</span>;
+  return <span className={cn("inline-flex shrink-0 items-center bg-fg px-1.5 py-0.5 text-xs leading-4 font-semibold tracking-wider text-bg uppercase", cjkTracking)}>{children}</span>;
 }
 
-/** One mechanism: its number and name on the left (above, when narrow), what it does on the right; `#t2-6` and the like unless it has an id of its own. */
-function Topic({ id, n, title, children }: { id?: string; n: string; title: string; children: ReactNode }) {
+/**
+ * One mechanism: its number and name on the left, what it does on the right;
+ * `wide` puts the title above the content instead, for a topic whose content
+ * is a two-column comparison (the overview's "what the Hub sees").
+ */
+function Topic({ id, n, title, children, wide = false }: { id?: string; n: string; title: string; children: ReactNode; wide?: boolean }) {
+  const anchor = id ?? `t${n.replace(".", "-")}`;
+  if (wide) {
+    return (
+      <div id={anchor} className={cn("scroll-mt-14 border-t border-border", sectionScroll)}>
+        <div className="flex gap-3 px-6 pt-6 pb-4 max-md:px-4 max-md:pt-5">
+          <span className="w-7 shrink-0 text-xs font-semibold leading-5 text-faint tabular-nums">{n}</span>
+          <h3 className="text-base leading-6 font-semibold text-balance text-fg">{withConcepts(title)}</h3>
+        </div>
+        <div className="flex min-w-0 flex-col gap-4 px-6 pb-6 max-md:px-4 max-md:pb-5">{children}</div>
+      </div>
+    );
+  }
   return (
-    <div id={id ?? `t${n.replace(".", "-")}`} className={cn("grid scroll-mt-14 border-t border-border lg:grid-cols-[minmax(0,1fr)_minmax(0,2.4fr)]", sectionScroll)}>
+    <div id={anchor} className={cn("grid scroll-mt-14 border-t border-border lg:grid-cols-[minmax(0,1fr)_minmax(0,2.4fr)]", sectionScroll)}>
       <div className="flex gap-3 px-6 pt-6 max-md:px-4 max-md:pt-5 lg:pb-6">
         <span className="w-7 shrink-0 text-xs font-semibold leading-5 text-faint tabular-nums">{n}</span>
         <h3 className="text-base leading-6 font-semibold text-balance text-fg">{withConcepts(title)}</h3>
@@ -253,6 +269,41 @@ function Pair({ left, right }: { left: { title: string; items: string[] }; right
           <span className="text-base leading-6 font-semibold text-fg">{withConcepts(side.title)}</span>
           <List items={side.items} />
         </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The overview's two groups as the download page's definition list: a
+ * full-width heading cell for each group, then its items in a ruled
+ * two-column grid. The items alternate columns, so no column is left with a
+ * long blank tail under a shorter list.
+ */
+function Comparison({ left, right }: { left: { title: string; items: string[] }; right: { title: string; items: string[] } }) {
+  return (
+    <div className="grid border-t border-border md:grid-cols-2">
+      {[left, right].map((side) => (
+        <Fragment key={side.title}>
+          <div className="border-b border-border px-6 py-3.5 md:col-span-2 max-md:px-4">
+            <span className="text-base leading-6 font-semibold text-fg">{withConcepts(side.title)}</span>
+          </div>
+          {side.items.map((item, i) => {
+            const alone = side.items.length % 2 === 1 && i === side.items.length - 1;
+            return (
+              <div
+                key={i}
+                className={cn(
+                  "border-b border-border px-6 py-4 max-md:px-4",
+                  i % 2 === 0 && "md:border-r md:border-border",
+                  alone && "md:col-span-2 md:border-r-0",
+                )}
+              >
+                <div className="text-base leading-6 text-pretty text-muted [word-break:auto-phrase]">{linked(item)}</div>
+              </div>
+            );
+          })}
+        </Fragment>
       ))}
     </div>
   );
@@ -283,7 +334,7 @@ function Table({ label, heads, rows }: { label: string; heads: string[]; rows: s
               key={i}
               role={i === 0 ? "rowheader" : "cell"}
               className={cn(
-                "min-w-0 px-6 text-sm leading-6",
+                "min-w-0 px-6 text-sm leading-6 text-pretty [word-break:auto-phrase]",
                 wide ? "max-lg:px-4" : "max-md:px-4",
                 i === 0
                   ? cn("pt-3.5 font-semibold text-fg", wide ? "lg:pb-3.5" : "md:pb-3.5")
@@ -311,7 +362,7 @@ function Note({ children }: { children: ReactNode }) {
   return (
     <div className="flex items-start gap-3 border-t border-border px-6 py-4 max-md:px-4">
       <Info className="mt-0.5 size-4 shrink-0 text-muted" />
-      <Block className="max-w-[60em] text-base text-muted">{linked(children, true)}</Block>
+      <Block className="max-w-[60em] text-base text-pretty text-muted [word-break:auto-phrase]">{linked(children, true)}</Block>
     </div>
   );
 }
@@ -323,7 +374,7 @@ function Hero() {
       <h1 className="max-w-[18em] text-5xl leading-display font-normal tracking-tight text-balance text-fg [word-break:auto-phrase] md:[&:lang(zh)]:[word-break:keep-all] max-md:text-3xl">
         {titleWords(t("How Droppen's end-to-end encryption works."))}
       </h1>
-      <p className="max-w-[44em] text-base leading-6 text-muted">
+      <p className="max-w-[44em] text-base leading-6 text-pretty text-muted [word-break:auto-phrase]">
         {t("A technical description for anyone who wants to verify our claims: who holds which key, how your devices agree on which devices belong to your account, what our servers can and cannot see, and what each of them could still do if it were malicious or compelled. It describes what Droppen does today; the parts that are not live yet, or still in testing, are marked as such.")}
       </p>
       <p className="text-xs text-faint">{t("Last updated {{date}}", { date: SECURITY_UPDATED })}</p>
@@ -364,16 +415,62 @@ function Definitions() {
       ],
     },
   ];
+  const terms = cards[0]!.rows.map(([label]) => label!);
+  const rowAt = ["lg:row-start-2", "lg:row-start-3", "lg:row-start-4"];
+  const colAt = ["lg:col-start-2", "lg:col-start-3"];
   return (
-    <div role="group" aria-label={t("Two words this page uses")} data-testid="security-terms" className="grid border-t border-border lg:grid-cols-2">
+    <div
+      role="group"
+      aria-label={t("Two words this page uses")}
+      data-testid="security-terms"
+      className="grid border-t border-border lg:grid-cols-[20rem_minmax(0,1fr)_minmax(0,1fr)] lg:grid-rows-[auto_repeat(3,auto)]"
+    >
+      {/* Below lg the terms sit in each card; from lg they are the rail beside the two descriptions. */}
+      <div className="border-b border-border px-6 py-3.5 lg:hidden max-md:px-4">
+        <span className="text-base leading-6 font-semibold text-fg">{t("Terms")}</span>
+      </div>
+      <div className="hidden lg:contents">
+        <div className="lg:col-start-1 lg:row-start-1 lg:border-r lg:border-b lg:border-border lg:py-3.5 lg:pr-6 lg:pl-[2.375rem]">
+          <span className="text-base leading-6 font-semibold text-fg">{t("Terms")}</span>
+        </div>
+        {terms.map((label, i) => (
+          <div key={label} className={cn("lg:col-start-1 lg:border-r lg:border-b lg:border-border lg:py-4 lg:pr-6 lg:pl-[2.375rem]", rowAt[i]!)}>
+            <span className="text-base leading-6 text-faint">{label}</span>
+          </div>
+        ))}
+      </div>
       {cards.map((card, i) => (
-        <div key={card.id} data-concept-def={card.id} className={cn("flex flex-col gap-2.5 border-border px-6 py-5 max-md:px-4", i > 0 && "max-lg:border-t lg:border-l")}>
-          <dfn className="text-base leading-6 font-semibold text-fg not-italic">{card.name}</dfn>
-          <dl className="flex flex-col gap-3 sm:gap-2">
-            {card.rows.map(([label, text]) => (
-              <div key={label} className="grid gap-1 sm:grid-cols-[7.5rem_minmax(0,1fr)] sm:gap-x-4 sm:gap-y-0">
-                <dt className={cn("uppercase tracking-label text-xs leading-4 text-faint sm:pt-[3px]", cjkTracking)}>{label}</dt>
-                <dd className="text-base text-muted">{withConcepts(text!)}</dd>
+        <div
+          key={card.id}
+          data-concept-def={card.id}
+          className={cn(
+            "flex min-w-0 flex-col gap-2.5 border-border px-6 py-5 max-md:px-4 lg:contents",
+            i > 0 && "max-lg:border-t",
+          )}
+        >
+          <dfn
+            className={cn(
+              "text-base leading-6 font-semibold text-fg not-italic lg:row-start-1 lg:border-b lg:border-border lg:px-6 lg:py-3.5",
+              colAt[i]!,
+              i === 0 && "lg:border-r",
+            )}
+          >
+            {card.name}
+          </dfn>
+          <dl className="flex flex-col gap-3 sm:gap-2 lg:contents">
+            {card.rows.map(([label, text], j) => (
+              <div key={label} className="grid gap-1 sm:grid-cols-[7.5rem_minmax(0,1fr)] sm:gap-x-4 sm:gap-y-0 lg:contents">
+                <dt className="text-base leading-6 text-faint lg:hidden">{label}</dt>
+                <dd
+                  className={cn(
+                    "text-base text-pretty text-muted [word-break:auto-phrase] lg:border-b lg:border-border lg:px-6 lg:py-4",
+                    colAt[i]!,
+                    rowAt[j]!,
+                    i === 0 && "lg:border-r",
+                  )}
+                >
+                  {withConcepts(text!)}
+                </dd>
               </div>
             ))}
           </dl>
@@ -462,7 +559,7 @@ function TocSidebar({ scroller }: { scroller: RefObject<HTMLDivElement | null> }
         <div aria-hidden="true" className="mt-3 h-px bg-border">
           <div className="h-px bg-fg" style={{ width: `${percent}%` }} />
         </div>
-        <nav aria-label={t("On this page")} data-testid="security-contents" className="mt-4">
+        <nav aria-label={t("On this page")} data-testid="security-contents" className="mt-0">
           <ol className="flex flex-col">
             {entries.map((e, i) => (
               <li key={e.id}>
@@ -470,12 +567,12 @@ function TocSidebar({ scroller }: { scroller: RefObject<HTMLDivElement | null> }
                   href={`#${e.id}`}
                   aria-current={active === e.id ? "location" : undefined}
                   className={cn(
-                    "flex gap-3 border-l-2 py-2 pr-2 pl-3 text-sm leading-5 transition-colors",
+                    "flex gap-3 border-l-2 py-2 pr-2 pl-3 text-base leading-6 transition-colors",
                     active === e.id ? "border-fg text-fg" : "border-transparent text-muted hover:text-fg",
                   )}
                 >
-                  <span className="w-5 shrink-0 font-mono text-xs leading-5 tabular-nums text-faint">{String(i + 1).padStart(2, "0")}</span>
-                  <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
+                  <span className="w-5 shrink-0 text-base leading-6 font-semibold tabular-nums text-faint">{String(i + 1).padStart(2, "0")}</span>
+                  <span className="flex min-w-0 flex-1 flex-nowrap items-center gap-2">
                     <span className="min-w-0">{e.title}</span>
                     {e.chip && <Chip>{e.chip}</Chip>}
                   </span>
@@ -525,10 +622,10 @@ function TocSheet({ active, open, onClose }: { active: (typeof SECURITY_SECTIONS
                     active === e.id ? "border-fg bg-raised" : "border-transparent hover:bg-hover",
                   )}
                 >
-                  <span className="w-5 shrink-0 font-mono text-xs leading-5 tabular-nums text-faint">{String(i + 1).padStart(2, "0")}</span>
+                  <span className="w-5 shrink-0 text-base leading-6 font-semibold tabular-nums text-faint">{String(i + 1).padStart(2, "0")}</span>
                   <span className="min-w-0 flex-1">
-                    <span className="flex flex-wrap items-center gap-2 text-sm leading-5 font-medium text-fg">
-                      {e.title}
+                    <span className="flex flex-nowrap items-center gap-2 text-base leading-6 font-medium text-fg">
+                      <span className="min-w-0">{e.title}</span>
                       {e.chip && <Chip>{e.chip}</Chip>}
                     </span>
                     <span className="mt-0.5 block text-xs leading-5 text-muted">{e.line}</span>
@@ -561,8 +658,8 @@ function TocBar({ scroller }: { scroller: RefObject<HTMLDivElement | null> }) {
           <CapsLabel face="sans" className={cn(cjkTracking, "shrink-0 text-xs font-semibold")}>
             {t("On this page")}
           </CapsLabel>
-          <span className="flex min-w-0 flex-1 items-center gap-2 text-sm text-fg">
-            <span className="font-mono text-xs tabular-nums text-faint">{String(index + 1).padStart(2, "0")}</span>
+          <span className="flex min-w-0 flex-1 items-center gap-2 text-base text-fg">
+            <span className="text-base font-semibold tabular-nums text-faint">{String(index + 1).padStart(2, "0")}</span>
             <span className="truncate">{current.title}</span>
           </span>
           <ChevronDown className="size-4 shrink-0 text-muted" />
@@ -600,7 +697,7 @@ function Overview() {
   );
   return (
     <div className="border-t border-border" data-diagram="security-overview">
-      <svg viewBox="0 0 1040 304" role="img" aria-label={label} className="block w-full max-lg:hidden">
+      <svg viewBox="0 0 1040 304" role="img" aria-label={label} className="mx-auto block w-full max-w-[1040px] max-lg:hidden">
         {/* The end-to-end span over the three. */}
         <path d="M140.5 34v8M900.5 34v8M140.5 34.5H900.5" className="stroke-muted" strokeWidth={1} fill="none" />
         <text x={520} y={26} textAnchor="middle" className="fill-fg text-sm">
@@ -616,7 +713,7 @@ function Overview() {
         </text>
         {/* The copy: dashed, 1.5px, an L each way. */}
         <path d="M900 136V242.75H660M380 242.75H140V136" className="stroke-fg" strokeWidth={1.5} strokeDasharray="5 4" fill="none" />
-        <text x={768} y={232} textAnchor="middle" className="fill-muted text-sm">
+        <text x={780} y={232} textAnchor="middle" className="fill-muted text-sm">
           {sealed}
         </text>
         <text x={272} y={232} textAnchor="middle" className="fill-muted text-sm">
@@ -636,9 +733,9 @@ function Overview() {
         ].map(({ c, next }, i) => (
           <li key={c.title} className="flex flex-col">
             <div className="flex flex-col gap-1 border border-border-strong px-3 py-2.5">
-              <span className="text-base leading-6 font-semibold text-fg">{withConcepts(c.title)}</span>
+              <span className="text-sm leading-5 font-semibold text-fg">{withConcepts(c.title)}</span>
               {c.lines.map((line) => (
-                <span key={line} className="text-xs font-semibold leading-4 text-muted">
+                <span key={line} className="text-sm leading-5 text-muted">
                   {line}
                 </span>
               ))}
@@ -658,7 +755,7 @@ function Overview() {
 function OverviewSection() {
   const { t } = useTranslation();
   return (
-    <Section id="overview" className={sectionScroll}>
+    <Section id="overview" seam={false} rule={false} className={sectionScroll}>
       <MentionScope>
         <Head
           label={`01 · ${t("Overview")}`}
@@ -666,8 +763,8 @@ function OverviewSection() {
           lead={withConcepts(t("Droppen runs Claude Code and Codex on your devices that run AI (in the protocol, hosts), and your browsers and phones control them over channels encrypted end to end. Droppen Hub, at droppen.app, keeps your account, the device chain and the encrypted copies, and serves the web app at my.droppen.app. Droppen relays pass a channel's ciphertext on; Droppen Hub carries no channel (Hub). Neither holds a key that can decrypt anything. Droppen Hub is not open source: lines that rest on its own behaviour or policy are marked (Hub)."))}
         />
         <Overview />
-        <Topic n="1.1" title={t("What Droppen Hub sees, and what it never sees")}>
-          <Pair
+        <Topic n="1.1" wide title={t("What Droppen Hub sees, and what it never sees")}>
+          <Comparison
             left={{
               title: t("What it sees"),
               items: [
@@ -678,8 +775,8 @@ function OverviewSection() {
                 t("Each device's **random id and public keys**, when it joined and was last seen, when a device that runs AI went online or offline, which relays it is on and its round trip to each (a rough location), and the version and protocol features it declares (Hub)."),
                 t("**The device chain**: which devices belong to the account, which of them run AI, and which device added which."),
                 t("Which device that runs AI is the account's **main device**."),
-                t("For **what it stores encrypted** (session streams and their pages, sealed key mail, keyring entries):\n- how many\n- how large\n- when written\n- which device wrote each\n- which device each piece of mail is for\n- which device reads which stream, and when"),
                 t("From the relays' metering reports, **how many bytes** each account's channels carried in each minute. The **sizes and timing** of a single channel's traffic, which is not padded (when you work, how much output there is, the rhythm of typing in a terminal), are seen by the relay that carries it ([[section 07|threats]])."),
+                t("For **what it stores encrypted** (session streams and their pages, sealed key mail, keyring entries):\n- how many\n- how large\n- when written\n- which device wrote each\n- which device each piece of mail is for\n- which device reads which stream, and when"),
               ],
             }}
             right={{
@@ -742,7 +839,7 @@ function ChainFigure() {
 function ChainSection() {
   const { t } = useTranslation();
   return (
-    <Section id="chain" className={sectionScroll}>
+    <Section id="chain" seam="right" className={sectionScroll}>
       <MentionScope>
         <Head
           label={`02 · ${t("The device chain")}`}
@@ -804,7 +901,7 @@ function KeysSection() {
     [t("Recovery key RK"), t("128 random bits, shown as 12 words"), t("You only: no device stores it"), t("Derives the recovery signing key, whose X25519 twin opens the user keys sealed to it"), t("When you make new words")],
   ];
   return (
-    <Section id="keys" className={sectionScroll}>
+    <Section id="keys" seam="right" className={sectionScroll}>
       <MentionScope>
         <Head
           label={`03 · ${t("Keys")}`}
@@ -855,7 +952,7 @@ function KeysSection() {
 function ChannelsSection() {
   const { t } = useTranslation();
   return (
-    <Section id="channels" className={sectionScroll}>
+    <Section id="channels" seam="right" className={sectionScroll}>
       <MentionScope>
         <Head
           label={`04 · ${t("Channels and relays")}`}
@@ -888,7 +985,7 @@ function ChannelsSection() {
 function OfflineSection() {
   const { t } = useTranslation();
   return (
-    <Section id="offline" className={sectionScroll}>
+    <Section id="offline" seam="right" className={sectionScroll}>
       <MentionScope>
         <Head
           label={`05 · ${t("Offline copies")}`}
@@ -918,7 +1015,7 @@ function OfflineSection() {
 function RenewalSection() {
   const { t } = useTranslation();
   return (
-    <Section id="renewal" className={sectionScroll}>
+    <Section id="renewal" seam="right" className={sectionScroll}>
       <MentionScope>
         <Head
           label={`06 · ${t("Identity renewal")}`}
@@ -1041,7 +1138,7 @@ function ThreatsSection() {
     ],
   ];
   return (
-    <Section id="threats" className={sectionScroll}>
+    <Section id="threats" seam="right" className={sectionScroll}>
       <MentionScope>
         <Head
           label={`07 · ${t("Threat model")}`}
@@ -1094,7 +1191,7 @@ function VerifySection() {
     [t("Recovery words"), t("BIP-39 encoding, 12 words")],
   ];
   return (
-    <Section id="verify" className={sectionScroll}>
+    <Section id="verify" seam="right" className={sectionScroll}>
       <MentionScope>
         <Head
           label={`08 · ${t("Verify it yourself")}`}
@@ -1188,7 +1285,7 @@ export default function SecurityPage({ signedIn = false }: { signedIn?: boolean 
           <FormulaProvider>
             <Hero />
             <Definitions />
-            <div className="xl:grid xl:grid-cols-[13.5rem_minmax(0,1fr)]">
+            <Section className="xl:grid xl:grid-cols-[20rem_minmax(0,1fr)]">
               <TocSidebar scroller={scrollRef} />
               <div className="min-w-0">
                 <OverviewSection />
@@ -1200,7 +1297,7 @@ export default function SecurityPage({ signedIn = false }: { signedIn?: boolean 
                 <ThreatsSection />
                 <VerifySection />
               </div>
-            </div>
+            </Section>
           </FormulaProvider>
           <FooterLine />
         </main>
