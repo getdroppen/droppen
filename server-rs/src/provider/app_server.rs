@@ -420,18 +420,17 @@ async fn rpc(registry: &CodexRuns, link: &mut shim::Link, method: &str, params: 
 /// ([`runs::RunRecord<CodexRun>`]): written after those fields, in this order.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub(super) struct CodexRun {
-    /// Three keys every row has carried since one record served both CLIs,
-    /// which only a Claude Code resident reads: a Codex run's are `null`,
-    /// `null` and `[]`. Kept as they were read, so a Codex row is written as it
-    /// always was.
+    /// Three keys every row carries and only a Claude Code resident reads: a
+    /// Codex run's are `null`, `null` and `[]`, kept as they were read so a
+    /// Codex row is written back unchanged.
     #[serde(default)]
     fingerprint: Option<Value>,
     #[serde(default)]
     turn_at: Option<Value>,
     #[serde(default)]
     queued: Vec<Value>,
-    /// Codex App Server delivery state and replay checkpoint. Absent for legacy
-    /// exec runs and Claude residents.
+    /// Codex App Server delivery state and replay checkpoint. Absent for a
+    /// legacy exec run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) codex: Option<State>,
     /// The stored account a codex app-server was started under.
@@ -456,7 +455,7 @@ pub(crate) struct Codex {
 impl Codex {
     /// Codex, its runs on `registry`'s host.
     pub(crate) fn new(registry: Arc<InjectionRegistry>) -> Self {
-        let models = crate::models::codex::CodexModels::new(registry.paths.clone());
+        let models = crate::models::codex::CodexModels::new(registry.host.paths.clone());
         Self {
             runs: CodexRuns::new(registry.host.clone()),
             models,
@@ -2723,15 +2722,15 @@ mod tests {
 
         let (id, _) = codex(&providers).codex_deliver(gate, None, Some(&work), "hello", &plain, None).await.expect("a new thread");
         assert_eq!(
-            registry.steps(),
+            registry.host.steps(),
             [
                 step("codex started", true, None),
                 step("codex thread", true, Some(true)),
                 step("codex mapped", true, Some(true)),
             ]
         );
-        assert!(!registry.gate_held());
-        assert!(registry.claim_held(Source::Codex, &id), "the driver holds the claim");
+        assert!(!registry.host.gate_held());
+        assert!(registry.host.claim_held(Source::Codex, &id), "the driver holds the claim");
 
         for _ in 0..500 {
             if codex(&providers).codex_handle(&id).is_some_and(|handle| !handle.busy()) {
@@ -2751,7 +2750,7 @@ mod tests {
             .await
             .expect("resumed under the other account");
         assert_eq!(
-            registry.steps()[3..],
+            registry.host.steps()[3..],
             [
                 step("codex retired", true, Some(false)),
                 step("codex started", true, Some(true)),
@@ -2762,7 +2761,7 @@ mod tests {
 
         codex(&providers).codex_deliver(gate, Some(RESUMED), Some(&work), "resume", &plain, None).await.expect("resumed");
         assert_eq!(
-            registry.steps()[7..],
+            registry.host.steps()[7..],
             [
                 step("codex started", true, Some(true)),
                 step("codex thread", true, Some(true)),
@@ -2771,9 +2770,9 @@ mod tests {
         );
 
         codex(&providers).archive_codex(gate, UNLOADED).await.expect("archived");
-        assert_eq!(registry.steps()[10..], [step("codex archive", true, Some(true))]);
-        assert!(!registry.gate_held());
-        assert!(!registry.claim_held(Source::Codex, UNLOADED), "the claim went with the archive");
+        assert_eq!(registry.host.steps()[10..], [step("codex archive", true, Some(true))]);
+        assert!(!registry.host.gate_held());
+        assert!(!registry.host.claim_held(Source::Codex, UNLOADED), "the claim went with the archive");
 
         let elsewhere = home.path().join("elsewhere");
         std::fs::create_dir_all(&elsewhere).expect("elsewhere");
@@ -2784,14 +2783,14 @@ mod tests {
             .expect_err("another thread is refused");
         assert_eq!(refused.to_string(), "Codex resumed a different thread");
         assert_eq!(
-            registry.steps()[11..],
+            registry.host.steps()[11..],
             [
                 step("codex started", true, Some(true)),
                 step("codex setup failed", true, Some(false)),
             ]
         );
-        assert!(!registry.gate_held());
-        assert!(!registry.claim_held(Source::Codex, MISMATCHED));
+        assert!(!registry.host.gate_held());
+        assert!(!registry.host.claim_held(Source::Codex, MISMATCHED));
 
         for thread in [id.as_str(), RESUMED] {
             if let Some(handle) = codex(&providers).codex_handle(thread) {
@@ -2821,7 +2820,7 @@ mod tests {
             .codex_deliver(providers.gate(), None, Some(&work), "hello", &SendOptions::default(), None)
             .await
             .expect("a new thread");
-        assert!(registry.driver_states().resident(Source::Codex, &id).is_some(), "in the registry's snapshot");
+        assert!(registry.host.driver_states().resident(Source::Codex, &id).is_some(), "in the registry's snapshot");
         assert!(providers.driver_states().resident(Source::Codex, &id).is_some(), "in the providers' snapshot");
         let handle = codex(&providers).codex_handle(&id).expect("its app server");
         for _ in 0..500 {
@@ -2929,8 +2928,8 @@ mod tests {
             .await
             .expect_err("refused");
         assert_eq!(refused.to_string(), "the session's working directory is not valid UTF-8");
-        assert!(registry.steps().is_empty(), "codex was started: {:?}", registry.steps());
-        assert!(!registry.gate_held());
-        assert!(!registry.claim_held(Source::Codex, THREAD));
+        assert!(registry.host.steps().is_empty(), "codex was started: {:?}", registry.host.steps());
+        assert!(!registry.host.gate_held());
+        assert!(!registry.host.claim_held(Source::Codex, THREAD));
     }
 }

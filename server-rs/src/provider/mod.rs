@@ -666,12 +666,9 @@ impl InjectionRegistry {
             decoration,
         })
     }
-}
 
-impl std::ops::Deref for InjectionRegistry {
-    type Target = RunHost;
-
-    fn deref(&self) -> &RunHost {
+    /// What its runs share with every provider's.
+    pub fn host(&self) -> &RunHost {
         &self.host
     }
 }
@@ -1079,14 +1076,20 @@ impl InjectionRegistry {
             tracing::warn!("adoption runs once per server; not adopting again");
             return report;
         };
-        for record in self.journal.read() {
+        for record in self.host.journal.read() {
             // Each run is its own CLI's provider's to take back. One whose part
             // that provider cannot read is one this version cannot read, and is
-            // left where it is.
-            let Some(runs) = self.runs_of(record.source).filter(|runs| runs.readable(&record)) else {
-                tracing::warn!(session = %record.session_id, source = %record.source, "a run record cannot be read; that run will not be adopted");
+            // left where it is. One of a source no runs are listed for has no
+            // provider to take it back at all: this server was put together
+            // without it.
+            let Some(runs) = self.host.runs_of(record.source) else {
+                tracing::error!(session = %record.session_id, source = %record.source, "no runs are listed for this run's source; that run will not be adopted");
                 continue;
             };
+            if !runs.readable(&record) {
+                tracing::warn!(session = %record.session_id, source = %record.source, "a run record cannot be read; that run will not be adopted");
+                continue;
+            }
             if !procs::is_same_process(record.cli_pid, record.pid_token.as_deref()) {
                 if runs.holds_state(&record) {
                     runs.dead(record);
@@ -1123,7 +1126,7 @@ impl InjectionRegistry {
                 }
             };
             #[cfg(test)]
-            self.step("adoption claimed", record.source, Some(&record.session_id));
+            self.host.step("adoption claimed", record.source, Some(&record.session_id));
             // A resident is *re-attached to*, not watched: the shim held the
             // process' stdio open across the restart, so this server gets the
             // conversation back rather than just the knowledge that a pid
@@ -1147,9 +1150,9 @@ impl InjectionRegistry {
         // never take the answer. Those are expired here, once every survivor is
         // in the map, and stay answerable as an ordinary message. A survivor's
         // own questions are its driver's to settle when its replay ends.
-        let listed: Vec<Arc<dyn ProviderRuns>> = self.listed.lock().expect("listed runs").values().filter_map(Weak::upgrade).collect();
+        let listed: Vec<Arc<dyn ProviderRuns>> = self.host.listed.lock().expect("listed runs").values().filter_map(Weak::upgrade).collect();
         let held: std::collections::HashSet<String> = listed.iter().flat_map(|runs| runs.question_holders()).collect();
-        let expired = self.questions.expire_unheld(&held, questions::now_ms());
+        let expired = self.host.questions.expire_unheld(&held, questions::now_ms());
         if expired > 0 {
             tracing::info!(
                 expired,
@@ -1180,7 +1183,7 @@ impl InjectionRegistry {
             tracing::warn!(session = %record.session_id, "a resident record names no shim; watching its pid instead");
             return Reattached::Watching(claim);
         };
-        let sidecars = shim::Sidecars::new(self.shim_dir.clone(), shim_id);
+        let sidecars = shim::Sidecars::new(self.host.shim_dir.clone(), shim_id);
         match shim::attach(&sidecars).await {
             Ok(link) => {
                 runs.clone().attach(record.clone(), sidecars, link, claim);
@@ -1274,10 +1277,10 @@ impl InjectionRegistry {
             }),
             finished: finished_tx,
         });
-        self.runs
+        self.host.runs
             .lock()
             .expect("injections poisoned")
-            .insert(self.key_of(record.source, &record.session_id), run.clone());
+            .insert(self.host.key_of(record.source, &record.session_id), run.clone());
         tracing::info!(
             session = %record.session_id,
             source = %record.source,
@@ -1296,20 +1299,20 @@ impl InjectionRegistry {
     /// when it says the turn was cut short does anything surface, because a
     /// spurious failure on every restart would be worse than silence.
     async fn bury(&self, runs: &dyn ProviderRuns, record: &runs::RunRecord, boot: &gate::Boot<'_>) {
-        self.journal.remove(&record.run_id);
+        self.host.journal.remove(&record.run_id);
         // Taken and immediately dropped: a lock file whose run is over is
         // debris, and leaving it would keep the session claimed by nobody.
         boot.sweep(record.source, &record.session_id);
         #[cfg(test)]
-        self.step("buried", record.source, Some(&record.session_id));
+        self.host.step("buried", record.source, Some(&record.session_id));
         if !runs.was_cut_short(record).await {
             tracing::info!(session = %record.session_id, "a run finished while the server was down");
             return;
         }
 
-        let key = self.key_of(record.source, &record.session_id);
+        let key = self.host.key_of(record.source, &record.session_id);
         {
-            let runs = self.runs.lock().expect("injections poisoned");
+            let runs = self.host.runs.lock().expect("injections poisoned");
             // A run started since boot outranks a note about a dead one.
             if runs.contains_key(&key) {
                 return;
@@ -1335,7 +1338,7 @@ impl InjectionRegistry {
             }),
             finished: finished_tx,
         });
-        self.runs.lock().expect("injections poisoned").insert(key, run);
+        self.host.runs.lock().expect("injections poisoned").insert(key, run);
         tracing::info!(session = %record.session_id, source = %record.source, "a run was cut short by a restart");
     }
 }
@@ -1361,9 +1364,9 @@ async fn watch_adopted(run: Arc<RunEntry>, record: runs::RunRecord, registry: Ar
         if !procs::is_same_process(record.cli_pid, record.pid_token.as_deref()) {
             break;
         }
-        if !(record.resident || runs.holds_state(&record)) && since_watchdog.elapsed() >= registry.watchdog_interval {
+        if !(record.resident || runs.holds_state(&record)) && since_watchdog.elapsed() >= registry.host.watchdog_interval {
             since_watchdog = Instant::now();
-            if let Some(pid) = check_idle(&run, &*runs, registry.idle_timeout).await {
+            if let Some(pid) = check_idle(&run, &*runs, registry.host.idle_timeout).await {
                 // Checked again rather than relying on the check at the top of
                 // the loop: `check_idle` reads the transcript's mtime, and a pid
                 // can stop being this run across that await.
@@ -1381,12 +1384,12 @@ async fn watch_adopted(run: Arc<RunEntry>, record: runs::RunRecord, registry: Ar
     }
 
     let mut state = run.state.lock().expect("run state poisoned");
-    vanished(&mut state, runs.cli_name(), registry.idle_timeout);
+    vanished(&mut state, runs.cli_name(), registry.host.idle_timeout);
     let holds_state = runs.holds_state(&record);
     let claim = if holds_state {
         state.lock.take()
     } else {
-        release(&registry, &mut state)
+        release(&registry.host, &mut state)
     };
     drop(state);
     drop(claim);
@@ -1624,7 +1627,7 @@ mod tests {
         for (source, session) in [(Source::Claude, CLAUDE), (Source::Codex, CODEX)] {
             let claim = providers.gate().lease(source, session).expect("a free session must be claimable");
             registry.clone().resume(
-                registry.runs_of(source).expect("the source's runs"),
+                registry.host.runs_of(source).expect("the source's runs"),
                 runs::RunRecord {
                     run_id: format!("run-{session}"),
                     source,
@@ -1643,7 +1646,7 @@ mod tests {
                 claim,
             );
             assert!(
-                registry.run_injection(source, session).is_some_and(|run| run.state == InjectionRunState::Running),
+                registry.host.run_injection(source, session).is_some_and(|run| run.state == InjectionRunState::Running),
                 "{source}: the run is in flight before Stop"
             );
 
@@ -1663,7 +1666,7 @@ mod tests {
         // And the user is not left with a run that says it is still going and a
         // Stop button that will never end it.
         for (source, session) in [(Source::Claude, CLAUDE), (Source::Codex, CODEX)] {
-            let seen = registry.run_injection(source, session).expect("the run is still reported");
+            let seen = registry.host.run_injection(source, session).expect("the run is still reported");
             assert_eq!(seen.state, InjectionRunState::Ok, "{source}: a run whose pid is gone has ended, not failed");
             assert!(!seen.interrupted, "{source}: nothing was interrupted, so nothing may claim to have been");
             assert!(seen.finished_at.0.is_some(), "{source}: and it has an end time");
@@ -1729,12 +1732,12 @@ mod tests {
         assert!(handle.visible() && !handle.alive(), "listed, with no process behind it");
 
         let claim = providers.gate().lease(Source::Codex, SESSION).expect("a free session must be claimable");
-        registry.clone().resume(registry.runs_of(Source::Codex).expect("Codex's runs"), adopted, claim);
+        registry.clone().resume(registry.host.runs_of(Source::Codex).expect("Codex's runs"), adopted, claim);
 
         assert!(!providers.interrupt(Source::Codex, SESSION), "nothing is left to stop");
         tokio::time::sleep(Duration::from_millis(300)).await;
         assert!(live.try_wait().expect("try_wait").is_none(), "Stop got past the handle and signalled the adopted run");
-        let seen = registry.run_injection(Source::Codex, SESSION).expect("the adopted run");
+        let seen = registry.host.run_injection(Source::Codex, SESSION).expect("the adopted run");
         assert_eq!(seen.state, InjectionRunState::Running);
         assert!(!seen.interrupted);
 
@@ -1792,15 +1795,15 @@ mod tests {
             shim: None,
             payload: runs::Payload::new(),
         };
-        registry.journal.add(record(LIVE, live.id()));
-        registry.journal.add(record(DEAD, dead.id()));
+        registry.host.journal.add(record(LIVE, live.id()));
+        registry.host.journal.add(record(DEAD, dead.id()));
 
         let adopted = providers.adopt_all().await;
         assert_eq!((adopted.recovered, adopted.finished), (1, 1), "{adopted:?}");
         let step = |what, claim| Step { what, gate: false, claim: Some(claim) };
-        assert_eq!(registry.steps(), [step("adoption claimed", true), step("buried", false)]);
+        assert_eq!(registry.host.steps(), [step("adoption claimed", true), step("buried", false)]);
         assert!(!debris.exists(), "the sweep took the dead run's lock file");
-        assert!(registry.claim_held(Source::Claude, LIVE), "the watcher holds the claim");
+        assert!(registry.host.claim_held(Source::Claude, LIVE), "the watcher holds the claim");
 
         let _ = live.kill();
         let _ = live.wait();
@@ -1854,12 +1857,12 @@ mod tests {
             "fingerprint": null, "turn_at": null, "queued": [],
             "codex": {"active": "turn-1", "queue": [{"id": "m-1", "text": "next", "params": {}, "request": null}]},
         });
-        registry.journal.insert_raw("run-codex", CODEX, &codex.to_string());
+        registry.host.journal.insert_raw("run-codex", CODEX, &codex.to_string());
         let claude = serde_json::json!({
             "run_id": "run-claude", "source": "claude", "session_id": CLAUDE, "cwd": "/work", "cli_pid": gone(),
             "started_at": "2026-01-01T00:00:00.000Z",
         });
-        registry.journal.insert_raw("run-claude", CLAUDE, &claude.to_string());
+        registry.host.journal.insert_raw("run-claude", CLAUDE, &claude.to_string());
         let transcript = crate::provider::claude_code::claude_roots::ClaudeRoots::of(&paths).managed_projects().join("-work").join(format!("{CLAUDE}.jsonl"));
         std::fs::create_dir_all(transcript.parent().expect("parent")).expect("project");
         let lines = [
@@ -1871,7 +1874,7 @@ mod tests {
         let adopted = providers.adopt_all().await;
         assert_eq!((adopted.recovered, adopted.finished), (0, 2), "{adopted:?}");
         assert!(providers.has_resident(Source::Codex, CODEX), "Codex keeps the app server's queue, listed with no process behind it");
-        let kept: Vec<String> = registry.journal.read().into_iter().map(|run| run.run_id).collect();
+        let kept: Vec<String> = registry.host.journal.read().into_iter().map(|run| run.run_id).collect();
         assert_eq!(kept, ["run-codex"], "Codex keeps its row; Claude Code's finished run leaves none");
         assert!(providers.injection_for(Source::Claude, CLAUDE).is_none(), "Claude Code's transcript says the turn was finished");
     }
@@ -1895,12 +1898,12 @@ mod tests {
             if let Some(source) = source {
                 row["source"] = serde_json::json!(source);
             }
-            registry.journal.insert_raw(run, session, &row.to_string());
+            registry.host.journal.insert_raw(run, session, &row.to_string());
         }
 
         let adopted = providers.adopt_all().await;
         assert!(adopted.is_empty(), "{adopted:?}");
-        assert!(registry.steps().is_empty(), "nothing was claimed or buried: {:?}", registry.steps());
-        assert_eq!(registry.journal.raw().len(), 2, "both rows stay as they were");
+        assert!(registry.host.steps().is_empty(), "nothing was claimed or buried: {:?}", registry.host.steps());
+        assert_eq!(registry.host.journal.raw().len(), 2, "both rows stay as they were");
     }
 }

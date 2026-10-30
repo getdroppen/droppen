@@ -28,7 +28,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 | --- | --- |
 | `api/` | HTTP + websocket 表面：`AppState`、扁平的路由注册、错误体、`Created`、返回 JSON 400 的抽取器 |
 | `app.rs` | 应用装配：config / state / routes / bind，以及取代 `GotchaApp::run` 的可停机 serve loop |
-| `sessions/` | 每个 CLI 自己的会话读取器：Claude Code、Codex、ACP 的 transcript、发现与归属，实现 `droppen-sessions` 的 `Transcripts` 端口；随各自的 provider 迁出 |
+| `sessions/` | 每个 CLI 自己的会话读取器：Codex、ACP 的 transcript、发现与归属，实现 `droppen-sessions` 的 `Transcripts` 端口；随各自的 provider 迁出 |
 | `feed/` | 单会话 websocket feed；`feed/global.rs` 是 `GET /api/events` 背后的会话列表 feed |
 | `drive/` | 驱动会话的路由，以及所有进程类子系统挂靠的 `Drive` 状态 |
 | `provider/` | 驱动本机 CLI，每个会话一次运行 |

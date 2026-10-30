@@ -183,9 +183,9 @@ impl ProviderRegistry {
     /// `register` is the entry's `crate::app::register_providers`, the one
     /// place that names every provider; a test passes the same function.
     pub fn new(injections: Arc<InjectionRegistry>, register: impl FnOnce(&mut ProviderRegistry, &Arc<InjectionRegistry>)) -> Arc<Self> {
-        let gate = Arc::new(SpawnGate::new(injections.paths.data_dir().join("inject-locks")));
+        let gate = Arc::new(SpawnGate::new(injections.host.paths.data_dir().join("inject-locks")));
         #[cfg(test)]
-        injections.watch_gate(&gate);
+        injections.host.watch_gate(&gate);
         let mut registry = Self {
             providers: BTreeMap::new(),
             injections: injections.clone(),
@@ -195,9 +195,14 @@ impl ProviderRegistry {
         Arc::new(registry)
     }
 
-    /// Add `provider` under its own source, in place of any provider there.
+    /// Add `provider` under its own source, which its runs are listed under
+    /// on the host. A host lists one provider's runs per source
+    /// ([`RunHost::list`](super::RunHost::list)), so a second provider for a
+    /// source is refused when its runs are made, before it gets here.
     pub fn register(&mut self, provider: Arc<dyn Provider>) {
-        self.providers.insert(provider.source(), provider);
+        let source = provider.source();
+        assert!(self.injections.host.runs_of(source).is_some(), "the {source} provider's runs are not listed under {source}");
+        self.providers.insert(source, provider);
     }
 
     /// The spawn gate, for a provider's own route that starts or stops its
@@ -284,7 +289,7 @@ impl ProviderRegistry {
     /// Everything the session list needs from the runs, in one pass; see
     /// [`super::RunHost::driver_states`].
     pub fn driver_states(&self) -> DriverStates {
-        self.injections.driver_states()
+        self.injections.host.driver_states()
     }
 
     /// See [`Run::draft_watch`]; `None` for a source with no provider.
@@ -476,6 +481,16 @@ mod tests {
         providers.register(Arc::new(crate::provider::claude_code::resident::ClaudeCode::new(registry.clone())));
     }
 
+    /// Codex alone.
+    fn codex_only(providers: &mut ProviderRegistry, registry: &Arc<InjectionRegistry>) {
+        providers.register(Arc::new(crate::provider::app_server::Codex::new(registry.clone())));
+    }
+
+    /// The ACP agents alone.
+    fn acp_only(providers: &mut ProviderRegistry, registry: &Arc<InjectionRegistry>) {
+        providers.register(Arc::new(crate::provider::acp::Acp::new(registry.clone())));
+    }
+
     /// A session row of `source` that ran on the ACP agent `agent`, if any.
     fn row(source: &str, agent: Option<&str>) -> SessionSummary {
         serde_json::from_value(serde_json::json!({
@@ -494,7 +509,7 @@ mod tests {
     fn each_provider_runs_on_the_runs_its_host_adopts_into() {
         let home = tempfile::tempdir().expect("tempdir");
         let providers = providers(home.path());
-        let listed = |source| providers.injections.runs_of(source).expect("listed");
+        let listed = |source| providers.injections.host.runs_of(source).expect("listed");
         let codex = providers.provider::<crate::provider::app_server::Codex>().expect("Codex");
         assert!(std::ptr::addr_eq(Arc::as_ptr(codex.runs()), Arc::as_ptr(&listed(Source::Codex))), "Codex's");
         let claude = providers.provider::<crate::provider::claude_code::resident::ClaudeCode>().expect("Claude Code");
@@ -503,16 +518,20 @@ mod tests {
 
     /// One provider's runs per source on a host: a second provider registry
     /// over the same injection registry is refused while the first's runs
-    /// last, and builds once they have gone.
+    /// last, whichever provider it starts with, and builds once they have gone.
     #[test]
     fn a_second_live_provider_registry_on_one_host_is_refused() {
         let home = tempfile::tempdir().expect("tempdir");
         let first = providers(home.path());
         let injections = first.injections.clone();
-        let second = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| ProviderRegistry::new(injections.clone(), crate::app::register_providers)));
-        let refused = second.err().expect("refused while the first lasts");
-        let why = refused.downcast_ref::<String>().map(String::as_str).unwrap_or_default();
-        assert!(why.contains("runs are listed on this host already"), "{why}");
+        let register: [(Source, fn(&mut ProviderRegistry, &Arc<InjectionRegistry>)); 4] =
+            [(Source::Claude, crate::app::register_providers), (Source::Claude, claude_only), (Source::Codex, codex_only), (Source::Acp, acp_only)];
+        for (source, register) in register {
+            let second = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| ProviderRegistry::new(injections.clone(), register)));
+            let refused = second.err().unwrap_or_else(|| panic!("a second {source} provider refused while the first lasts"));
+            let why = refused.downcast_ref::<String>().map(String::as_str).unwrap_or_default();
+            assert!(why.contains(&format!("{source} runs are listed on this host already")), "{why}");
+        }
         drop(first);
         let again = ProviderRegistry::new(injections, crate::app::register_providers);
         assert!(again.provider::<crate::provider::acp::Acp>().is_some());

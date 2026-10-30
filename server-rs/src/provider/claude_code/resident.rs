@@ -666,7 +666,7 @@ pub(crate) struct ClaudeCode {
 impl ClaudeCode {
     /// Claude Code, its runs on `registry`'s host.
     pub(crate) fn new(registry: Arc<InjectionRegistry>) -> Self {
-        let models = crate::provider::claude_code::models::ClaudeModels::new(registry.paths.clone(), registry.accounts.clone());
+        let models = crate::provider::claude_code::models::ClaudeModels::new(registry.host.paths.clone(), registry.host.accounts.clone());
         Self {
             runs: ClaudeCodeRuns::new(registry.host.clone(), &registry.instance, registry.decoration.clone()),
             models,
@@ -683,7 +683,7 @@ impl ClaudeCode {
     /// Claude Code on runs a test made, timed as it needs.
     #[cfg(test)]
     pub(crate) fn on(runs: Arc<ClaudeCodeRuns>, registry: &InjectionRegistry) -> Self {
-        let models = crate::provider::claude_code::models::ClaudeModels::new(registry.paths.clone(), registry.accounts.clone());
+        let models = crate::provider::claude_code::models::ClaudeModels::new(registry.host.paths.clone(), registry.host.accounts.clone());
         Self { runs, models }
     }
 }
@@ -827,17 +827,6 @@ impl ClaudeCodeRuns {
     }
 }
 
-/// The host's shared parts — its paths, journal, feeds and keys — read as if
-/// they were the runs' own, so a method here reaches them as plainly as one of
-/// the host's does.
-impl std::ops::Deref for ClaudeCodeRuns {
-    type Target = RunHost;
-
-    fn deref(&self) -> &RunHost {
-        &self.host
-    }
-}
-
 impl ProviderRuns for ClaudeCodeRuns {
     fn add_to(&self, states: &mut DriverStatesBuilder) {
         self.claude_driver_states(states);
@@ -861,7 +850,7 @@ impl ProviderRuns for ClaudeCodeRuns {
 
     fn was_cut_short<'a>(&'a self, record: &'a runs::RunRecord) -> BoxFuture<'a, bool> {
         Box::pin(async move {
-            match crate::provider::claude_code::sessions::claude::find_claude_session_file(&self.paths, &record.session_id).await {
+            match crate::provider::claude_code::sessions::claude::find_claude_session_file(&self.host.paths, &record.session_id).await {
                 // No transcript at all: the CLI died before writing a line of
                 // the turn it was given.
                 None => true,
@@ -871,7 +860,7 @@ impl ProviderRuns for ClaudeCodeRuns {
     }
 
     fn last_write<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Option<Instant>> {
-        Box::pin(async move { crate::provider::claude_code::sessions::claude::find_claude_session_file(&self.paths, id).await?.written_at().await })
+        Box::pin(async move { crate::provider::claude_code::sessions::claude::find_claude_session_file(&self.host.paths, id).await?.written_at().await })
     }
 
     fn question_holders(&self) -> Vec<String> {
@@ -1124,7 +1113,7 @@ impl Run for ClaudeCode {
     /// A resident publishes each turn in the runs map, so that is where a
     /// claude session's run is.
     fn injection(&self, id: &str) -> Option<Injection> {
-        self.runs.run_injection(Source::Claude, id)
+        self.runs.host.run_injection(Source::Claude, id)
     }
 
     fn resident(&self, id: &str) -> Option<ResidentState> {
@@ -1149,7 +1138,7 @@ impl Run for ClaudeCode {
     /// session long before anything is sent to it, and has to be holding the
     /// channel the driver will write into when something is.
     fn draft_watch(&self, id: &str) -> Option<tokio::sync::watch::Receiver<Draft>> {
-        Some(self.runs.drafts.subscribe(&self.runs.key_of(Source::Claude, id)))
+        Some(self.runs.host.drafts.subscribe(&self.runs.host.key_of(Source::Claude, id)))
     }
 
     /// Its resident looks for steered messages claude folded into the turn in
@@ -1180,7 +1169,7 @@ impl Run for ClaudeCode {
         if self.holds(id) {
             return self.runs.interrupt_resident(id);
         }
-        self.runs.interrupt_legacy(Source::Claude, id)
+        self.runs.host.interrupt_legacy(Source::Claude, id)
     }
 
     fn stop_background_task(&self, id: &str, task_id: &str) -> StopTaskOutcome {
@@ -1202,7 +1191,7 @@ impl Run for ClaudeCode {
     // No gate: putting the transcript away starts no CLI.
     fn archive<'a>(&'a self, _gate: &'a SpawnGate, id: &'a str) -> BoxFuture<'a, Result<(), String>> {
         Box::pin(async move {
-            crate::provider::claude_code::sessions::claude::archive::archive_claude_session(&self.runs.paths, id)
+            crate::provider::claude_code::sessions::claude::archive::archive_claude_session(&self.runs.host.paths, id)
                 .await
                 .map_err(|_| "archive failed".to_string())
         })
@@ -1230,7 +1219,7 @@ impl ClaudeCodeRuns {
     /// Its driver's [`crate::provider::drafts::DraftWriter`] is the only thing that writes to it
     /// in a running server; a test of the feed stands in for that driver here.
     pub(crate) fn draft_channel(&self, id: &str) -> Arc<tokio::sync::watch::Sender<crate::provider::drafts::Draft>> {
-        self.drafts.channel(&self.key_of(Source::Claude, id))
+        self.host.drafts.channel(&self.host.key_of(Source::Claude, id))
     }
 
     /// The writer a driver for session `id` publishes its draft through.
@@ -1245,7 +1234,7 @@ impl ClaudeCodeRuns {
     /// a switch, nowhere to go, the cap — is logged the same way. Returns the
     /// record's id, for a switch that learns later how much it interrupted.
     fn record_rotation(&self, decision: &droppen_accounts::rotation::Decision, notice: &str) -> Option<i64> {
-        let id = match self.accounts.rotation_log().record(decision) {
+        let id = match self.host.accounts.rotation_log().record(decision) {
             Ok(id) => Some(id),
             Err(error) => {
                 tracing::warn!(session = %decision.session_id, %error, "cannot record an account rotation");
@@ -1277,9 +1266,9 @@ impl ClaudeCodeRuns {
         let ahead_burst = decision.trigger == droppen_sessions::account::RotationTrigger::Ahead
             && !crate::provider::first_ahead_push(&decision.from.id, &decision.to.id, std::time::Instant::now());
         if !ahead_burst {
-            if let Some(alerts) = self.alerts.get() {
+            if let Some(alerts) = self.host.alerts.get() {
                 alerts.rotation(
-                    self.paths.clone(),
+                    self.host.paths.clone(),
                     Source::Claude,
                     decision.session_id.clone(),
                     decision.outcome,
@@ -1288,14 +1277,14 @@ impl ClaudeCodeRuns {
                 );
             }
         }
-        self.announce(Source::Claude, &decision.session_id);
+        self.host.announce(Source::Claude, &decision.session_id);
         id
     }
 
     /// Claude's part of [`crate::provider::RunHost::driver_states`]: every resident.
     pub(in crate::provider) fn claude_driver_states(&self, states: &mut DriverStatesBuilder) {
         for (id, handle) in self.residents.lock().expect("residents poisoned").iter() {
-            states.resident(self.key_of(Source::Claude, id), handle.info());
+            states.resident(self.host.key_of(Source::Claude, id), handle.info());
         }
     }
 
@@ -1319,7 +1308,7 @@ impl ClaudeCodeRuns {
     /// Posting and returning, as this once did, answered `200` while the message
     /// was still sitting in the driver's inbox, and a `SIGKILL` in that window
     /// lost a message the user had been told was accepted.
-    pub(in crate::provider) async fn deliver(self: &Arc<Self>, gate: &SpawnGate, id: &str, text: &str, recipe: Recipe, qid: Option<String>) -> Result<Delivery, InjectError> {
+    async fn deliver(self: &Arc<Self>, gate: &SpawnGate, id: &str, text: &str, recipe: Recipe, qid: Option<String>) -> Result<Delivery, InjectError> {
         let qid = qid.unwrap_or_else(new_uuid);
         // Twice at most: the second pass is only for a driver that ended with
         // this message still in its inbox, and by the time that is known its
@@ -1341,7 +1330,7 @@ impl ClaudeCodeRuns {
             // session's sends behind one driver that is busy recovering.
             drop(permit);
             #[cfg(test)]
-            self.step("posted to the resident", Source::Claude, Some(id));
+            self.host.step("posted to the resident", Source::Claude, Some(id));
             if wait_recorded(id, queued, recorded).await.is_ok() {
                 return Ok(Delivery { queued });
             }
@@ -1388,7 +1377,7 @@ impl ClaudeCodeRuns {
         // A session that already has a transcript is resumed; one that does not
         // is being created, and `--session-id` is what makes the id the client
         // was already told about the one claude writes under.
-        let selector = match crate::provider::claude_code::sessions::claude::find_claude_session_file(&self.paths, id).await {
+        let selector = match crate::provider::claude_code::sessions::claude::find_claude_session_file(&self.host.paths, id).await {
             Some(_) => Selector::Resume,
             None => Selector::Fresh,
         };
@@ -1427,7 +1416,7 @@ impl ClaudeCodeRuns {
             },
         );
         #[cfg(test)]
-        self.step("resident mapped", Source::Claude, Some(id));
+        self.host.step("resident mapped", Source::Claude, Some(id));
         // The turn is visible from the moment the caller is told it was
         // accepted, and not from the moment claude gets around to saying it is
         // listening. Nothing may be written to a process before `system:init`,
@@ -1436,13 +1425,13 @@ impl ClaudeCodeRuns {
         // that, as far as the phone can tell, vanished. Replaced by the driver's
         // own entry as soon as there is one, and by the failure if the process
         // dies before there is.
-        self.runs
+        self.host.runs
             .lock()
             .expect("injections poisoned")
-            .insert(self.key_of(Source::Claude, id), running_turn(id));
+            .insert(self.host.key_of(Source::Claude, id), running_turn(id));
 
         let driver = Driver {
-            registry: self.clone(),
+            runs: self.clone(),
             id: id.to_string(),
             sidecars: spawned.sidecars,
             link: spawned.link,
@@ -1506,7 +1495,7 @@ impl ClaudeCodeRuns {
         // On a fresh install no attachment has created this directory yet.
         // Do not claim the capability in the journal if preparing it failed.
         if recipe.fingerprint.uploads {
-            tokio::fs::create_dir_all(self.paths.uploads_dir())
+            tokio::fs::create_dir_all(self.host.paths.uploads_dir())
                 .await
                 .map_err(|error| InjectError::message(format!("cannot prepare the uploads directory: {error}")))?;
         }
@@ -1514,7 +1503,7 @@ impl ClaudeCodeRuns {
         // unlinks its socket path on its way out and only checks that the path
         // still names *a* socket, so a replacement that bound the same path
         // would have it unlinked from under it.
-        let sidecars = Sidecars::new(self.shim_dir.clone(), new_uuid());
+        let sidecars = Sidecars::new(self.host.shim_dir.clone(), new_uuid());
         let mut args: Vec<String> = STREAM_FLAGS.iter().map(|flag| (*flag).to_string()).collect();
         match selector {
             Selector::Fresh => args.extend(["--session-id".to_string(), id.to_string()]),
@@ -1539,15 +1528,15 @@ impl ClaudeCodeRuns {
         .await
         .map_err(|error| InjectError::Message(format!("failed to launch claude: {error}")))?;
         #[cfg(test)]
-        self.step("claude started", Source::Claude, Some(id));
+        self.host.step("claude started", Source::Claude, Some(id));
 
         let record = new_uuid();
         // The outgoing record goes only once the incoming process exists, so a
         // crash in between leaves something to clean up rather than nothing.
         if let Some(retiring) = retiring {
-            self.journal.remove(retiring);
+            self.host.journal.remove(retiring);
         }
-        self.journal.add(runs::RunRecord {
+        self.host.journal.add(runs::RunRecord {
             run_id: record.clone(),
             source: Source::Claude,
             session_id: id.to_string(),
@@ -1791,7 +1780,7 @@ impl ClaudeCodeRuns {
         // The ones that did not survive are the tail past the kept prefix: a
         // client that named one is told it failed rather than left waiting.
         for lost in record.payload.queued.iter().skip(outstanding) {
-            self.note_receipt(Source::Claude, &record.session_id, &lost.id, ReceiptStatus::Failed);
+            self.host.note_receipt(Source::Claude, &record.session_id, &lost.id, ReceiptStatus::Failed);
         }
         let shared = Arc::new(Mutex::new(ResidentState {
             // Not `Working`, whatever the replay is about to say: nothing may be
@@ -1827,10 +1816,10 @@ impl ClaudeCodeRuns {
         // the pessimistic half goes in now and the driver corrects it — the same
         // bargain [`ClaudeCodeRuns::start_resident`] makes for a cold CLI.
         if record.payload.turn_at.is_some() || outstanding > 0 {
-            self.runs
+            self.host.runs
                 .lock()
                 .expect("injections poisoned")
-                .insert(self.key_of(Source::Claude, &record.session_id), running_turn(&record.session_id));
+                .insert(self.host.key_of(Source::Claude, &record.session_id), running_turn(&record.session_id));
         }
         // A shim that has written nothing has nothing to replay, which is the
         // everyday shape of a resident spawned and restarted-past before it said
@@ -1842,7 +1831,7 @@ impl ClaudeCodeRuns {
         let recorder = self.recorders.open(&record.session_id);
         recorder.attached(record.cli_pid, record.shim.as_deref(), record.payload.turn_at, outstanding, link.total());
         let driver = Driver {
-            registry: self.clone(),
+            runs: self.clone(),
             id: record.session_id.clone(),
             sidecars,
             link,
@@ -2249,7 +2238,7 @@ impl BackgroundTasks {
 
 /// The one task that owns a resident: its link, its queue and its state.
 struct Driver {
-    registry: Arc<ClaudeCodeRuns>,
+    runs: Arc<ClaudeCodeRuns>,
     /// The session id the transcript is under, which `system:init` may correct.
     id: String,
     sidecars: Sidecars,
@@ -2599,7 +2588,7 @@ enum Choice {
 
 impl Driver {
     async fn run(mut self) {
-        let mut watchdog = tokio::time::interval(self.registry.watchdog_interval);
+        let mut watchdog = tokio::time::interval(self.runs.host.watchdog_interval);
         watchdog.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         watchdog.tick().await; // the first tick is immediate
 
@@ -2949,8 +2938,8 @@ impl Driver {
     /// whatever the history after the gap did show.
     fn recall_questions_lost_in_a_gap(&mut self) {
         let mut recalled: Vec<OpenQuestion> = self
-            .registry
-            .questions
+            .runs
+            .host.questions
             .pending_for(&self.id)
             .into_iter()
             .filter(|stored| !self.replay_asked.iter().any(|question| question.request_id == stored.request_id))
@@ -3019,7 +3008,7 @@ impl Driver {
         }
         let mut stop_again = false;
         let waiting = std::mem::take(&mut self.replay_asked);
-        let store = self.registry.questions.clone();
+        let store = self.runs.host.questions.clone();
         let now = questions::now_ms();
         for stale in store.pending_for(&self.id) {
             if !waiting.iter().any(|question| question.request_id == stale.request_id) {
@@ -3110,7 +3099,7 @@ impl Driver {
     /// * **a scan that runs out of budget**, which `claude_activity_status`
     ///   already reports as `Running` for the same reason.
     async fn transcript_is_between_turns(&self) -> bool {
-        let Some(path) = crate::provider::claude_code::sessions::claude::find_claude_session_file(&self.registry.paths, &self.id).await else {
+        let Some(path) = crate::provider::claude_code::sessions::claude::find_claude_session_file(&self.runs.host.paths, &self.id).await else {
             return false;
         };
         let settled = tokio::fs::metadata(&path)
@@ -3406,23 +3395,23 @@ impl Driver {
             }
         };
         {
-            let mut residents = self.registry.residents.lock().expect("residents poisoned");
+            let mut residents = self.runs.residents.lock().expect("residents poisoned");
             if let Some(handle) = residents.remove(&self.id) {
                 residents.insert(id.to_string(), handle);
             }
         }
         {
-            let mut runs = self.registry.runs.lock().expect("injections poisoned");
-            if let Some(run) = runs.remove(&self.registry.key_of(Source::Claude, &self.id)) {
+            let mut runs = self.runs.host.runs.lock().expect("injections poisoned");
+            if let Some(run) = runs.remove(&self.runs.host.key_of(Source::Claude, &self.id)) {
                 run.state.lock().expect("run state poisoned").current_id = id.to_string();
-                runs.insert(self.registry.key_of(Source::Claude, id), run);
+                runs.insert(self.runs.host.key_of(Source::Claude, id), run);
             }
         }
-        self.registry.journal.repoint(&self.record, id);
+        self.runs.host.journal.repoint(&self.record, id);
         // The page following the old id would otherwise show a think in
         // flight for ever; the one following the new id sees the rest of it.
-        self.draft.retarget(self.registry.draft_channel(id));
-        if let Err(error) = crate::provider::claude_code::sessions::claude::ClaudeCodeSessions.record_owned(&self.registry.paths, id).await {
+        self.draft.retarget(self.runs.draft_channel(id));
+        if let Err(error) = crate::provider::claude_code::sessions::claude::ClaudeCodeSessions.record_owned(&self.runs.host.paths, id).await {
             tracing::error!(session = %id, %error, "cannot record the adopted claude session as ours; it will list as external");
         }
         #[cfg(test)]
@@ -3431,8 +3420,8 @@ impl Driver {
         self.lease.replace(claim);
         #[cfg(test)]
         {
-            self.registry.step("adopted: the new id", Source::Claude, Some(id));
-            self.registry.step("adopted: the old id", Source::Claude, Some(&old));
+            self.runs.host.step("adopted: the new id", Source::Claude, Some(id));
+            self.runs.host.step("adopted: the old id", Source::Claude, Some(&old));
         }
     }
 
@@ -3454,7 +3443,7 @@ impl Driver {
         let (account, model) = match &self.live {
             Some(live) => (live.account.clone(), live.resolved.clone().or_else(|| live.model.clone())),
             None => (
-                self.registry.accounts.session_account_id_for(&self.id, AccountProvider::Claude).await,
+                self.runs.host.accounts.session_account_id_for(&self.id, AccountProvider::Claude).await,
                 None,
             ),
         };
@@ -3463,7 +3452,7 @@ impl Driver {
         let root = match (&account, &self.recipe) {
             (Some(_), _) => None,
             (None, Some(recipe)) => Some(recipe_root(&recipe.env)),
-            (None, None) => crate::provider::claude_code::sessions::claude::find_claude_session(&self.registry.paths, &self.id)
+            (None, None) => crate::provider::claude_code::sessions::claude::find_claude_session(&self.runs.host.paths, &self.id)
                 .await
                 .map(|found| found.root),
         };
@@ -3507,7 +3496,7 @@ impl Driver {
             Some(status) => format!("{text}\n[api_error_status {status}]"),
             None => text.to_string(),
         };
-        self.registry.record_limit(Observation {
+        self.runs.host.record_limit(Observation {
             account_id,
             session_id: Some(self.id.clone()),
             source: "claude:result",
@@ -3538,16 +3527,16 @@ impl Driver {
         if let droppen_accounts::quota::UsageLogin::Account(id) = &login {
             // Only for an account that still exists: a reading must not
             // recreate the directory of one deleted under a running session.
-            if self.registry.accounts.get(id).await.is_none() {
+            if self.runs.host.accounts.get(id).await.is_none() {
                 return;
             }
         }
         // A reading with room in every window may be the account a held
         // session is waiting for.
         let headroom = windows.iter().all(|window| window.used_percent < rotation::EXHAUSTED_PERCENT);
-        self.registry.quota.ingest_session(login, windows);
+        self.runs.host.quota.ingest_session(login, windows);
         if headroom {
-            self.registry.recheck_holds_after_reading();
+            self.runs.recheck_holds_after_reading();
         }
     }
 
@@ -3563,12 +3552,12 @@ impl Driver {
     async fn usage_login(&self) -> Option<droppen_accounts::quota::UsageLogin> {
         let account = match &self.live {
             Some(live) => live.account.clone(),
-            None => self.registry.accounts.session_account_id_for(&self.id, AccountProvider::Claude).await,
+            None => self.runs.host.accounts.session_account_id_for(&self.id, AccountProvider::Claude).await,
         };
         let root = match (&account, &self.recipe) {
             (Some(_), _) => None,
             (None, Some(recipe)) => Some(recipe_root(&recipe.env)),
-            (None, None) => crate::provider::claude_code::sessions::claude::find_claude_session(&self.registry.paths, &self.id)
+            (None, None) => crate::provider::claude_code::sessions::claude::find_claude_session(&self.runs.host.paths, &self.id)
                 .await
                 .map(|found| found.root),
         };
@@ -3589,7 +3578,7 @@ impl Driver {
             self.limit_hint.hold(hint, Instant::now());
         }
         let Some((account_id, model)) = self.limit_subject().await else { return };
-        self.registry.record_limit(Observation {
+        self.runs.host.record_limit(Observation {
             account_id,
             session_id: Some(self.id.clone()),
             source: "claude:rate_limit_event",
@@ -3618,7 +3607,7 @@ impl Driver {
             return;
         }
         let Some((account_id, model)) = self.limit_subject().await else { return };
-        self.registry.record_limit(Observation {
+        self.runs.host.record_limit(Observation {
             account_id,
             session_id: Some(self.id.clone()),
             source: "claude:exit",
@@ -3675,7 +3664,7 @@ impl Driver {
             let message = if detail.is_empty() {
                 format!("claude ended the turn with {subtype}")
             } else {
-                format!("claude ended the turn with {subtype}\n{}", self.registry.redact(detail))
+                format!("claude ended the turn with {subtype}\n{}", self.runs.host.redact(detail))
             };
             (InjectionRunState::Failed, Some(message))
         } else {
@@ -3741,7 +3730,7 @@ impl Driver {
         {
             return false;
         }
-        let accounts = self.registry.accounts.clone();
+        let accounts = self.runs.host.accounts.clone();
         let from = accounts.get(&from_id).await;
         let bound = accounts.session_account_id_for(&self.id, AccountProvider::Claude).await;
         let rebound = bound.as_deref().is_some_and(|bound| bound != from_id);
@@ -3791,9 +3780,9 @@ impl Driver {
     /// the process is running — the name `system:init` gave it first, the one
     /// the spawn asked for second, and unknown after that.
     async fn decide(&self, live: &Fingerprint, from: &str, switches: u8) -> Choice {
-        let accounts = &self.registry.accounts;
+        let accounts = &self.runs.host.accounts;
         let bound = accounts.session_account_id_for(&self.id, AccountProvider::Claude).await;
-        let pool = rotation::pool_of(accounts, &self.registry.quota, AccountProvider::Claude).await;
+        let pool = rotation::pool_of(accounts, &self.runs.host.quota, AccountProvider::Claude).await;
         let family = ClaudeCodeLogin.model_family(live.resolved.as_deref().or(live.model.as_deref()));
         match rotation::choose(&pool, from, bound.as_deref(), family, switches, rest::now_ms()) {
             Plan::Switch(id) => Choice::Switch(
@@ -3831,14 +3820,14 @@ impl Driver {
         switches: u8,
     ) -> Result<(), InjectError> {
         let recipe = match self.recipe.clone() {
-            Some(base) => self.registry.retarget_recipe(&self.id, &base, &from.id, &to.id).await?,
+            Some(base) => self.runs.retarget_recipe(&self.id, &base, &from.id, &to.id).await?,
             None => {
                 let cwd = self.journalled_cwd();
-                self.registry.recipe_from_settings(&self.id, live, cwd.as_deref(), &to.id).await?
+                self.runs.recipe_from_settings(&self.id, live, cwd.as_deref(), &to.id).await?
             }
         };
-        self.registry
-            .accounts
+        self.runs
+            .host.accounts
             .bind_session_account(&self.id, Some(&to.id), AccountProvider::Claude)
             .await?;
         self.retarget_queue(&from.id, &recipe);
@@ -3869,7 +3858,7 @@ impl Driver {
             used_percent: None,
         };
         let notice = rotation::notice(RotationOutcome::Switched, &from.label, &to.label, &hit.reason, hit.until.as_deref());
-        note.record = self.registry.record_rotation(&decision, &notice);
+        note.record = self.runs.record_rotation(&decision, &notice);
         self.recorder.lifecycle(
             Stage::Rotate,
             Some(&format!(
@@ -3942,7 +3931,7 @@ impl Driver {
             trigger: RotationTrigger::Limit,
             used_percent: None,
         };
-        self.registry.record_rotation(&decision, &notice);
+        self.runs.record_rotation(&decision, &notice);
         self.recorder.lifecycle(
             Stage::Rotate,
             Some(&format!(
@@ -3994,7 +3983,7 @@ impl Driver {
         }
         let now = rest::now_ms();
         let lapsed = hold.until_ms.is_some_and(|until| now >= until);
-        let resting = self.registry.accounts.limit_log().rest_until(&hold.account, &hold.scope, now).is_some();
+        let resting = self.runs.host.accounts.limit_log().rest_until(&hold.account, &hold.scope, now).is_some();
         if lapsed || !resting {
             self.lift_hold(hold).await;
             return;
@@ -4061,14 +4050,14 @@ impl Driver {
     /// Change the hold, and the journal's copy of it.
     fn set_hold(&mut self, hold: Option<Hold>) {
         self.hold = hold;
-        self.registry.journal.mark_hold(&self.record, self.hold.clone());
+        self.runs.host.journal.mark_hold(&self.record, self.hold.clone());
     }
 
     /// Take the hold out, if there is one, clearing the journal's copy too.
     fn take_hold(&mut self) -> Option<Hold> {
         let hold = self.hold.take();
         if hold.is_some() {
-            self.registry.journal.mark_hold(&self.record, None);
+            self.runs.host.journal.mark_hold(&self.record, None);
         }
         hold
     }
@@ -4089,7 +4078,7 @@ impl Driver {
     /// `--resume`s the conversation under it. No continuation prompt — nothing
     /// failed, so there is nothing to carry on from. `true` when it moved.
     async fn rotate_ahead(&mut self) -> bool {
-        let Some(threshold) = self.registry.rotate_ahead else { return false };
+        let Some(threshold) = self.runs.rotate_ahead else { return false };
         if self.turn.is_some()
             || self.replaying
             || self.hold.is_some()
@@ -4112,8 +4101,8 @@ impl Driver {
         // reading. The binding, the log, the background work on disk and the
         // whole pool only when it is near.
         let own: Vec<rotation::Window> = self
-            .registry
-            .quota
+            .runs
+            .host.quota
             .cached(&droppen_accounts::quota::UsageLogin::Account(from_id.clone()))
             .windows
             .iter()
@@ -4122,7 +4111,7 @@ impl Driver {
         if rotation::near_window(&own, family, threshold, now).is_none() {
             return false;
         }
-        let accounts = self.registry.accounts.clone();
+        let accounts = self.runs.host.accounts.clone();
         // A binding that names another account already is where the next
         // message goes; there is nothing to decide.
         let bound = accounts.session_account_id_for(&self.id, AccountProvider::Claude).await;
@@ -4135,7 +4124,7 @@ impl Driver {
             last_ahead_ms: log.last_ahead_ms(&self.id),
             bound_by_hand_ms: log.bound_by_hand_ms(&self.id),
         };
-        let pool = rotation::pool_of(&accounts, &self.registry.quota, AccountProvider::Claude).await;
+        let pool = rotation::pool_of(&accounts, &self.runs.host.quota, AccountProvider::Claude).await;
         match rotation::plan_ahead(&pool, &from_id, family, threshold, guards, now) {
             AheadPlan::Stay => false,
             AheadPlan::Defer(near, why) => {
@@ -4201,14 +4190,14 @@ impl Driver {
     /// failure leaves the session bound where it was.
     async fn switch_ahead(&mut self, live: &Fingerprint, from: &AccountRef, to: &AccountRef, near: &rotation::Near) -> Result<(), InjectError> {
         let recipe = match self.recipe.clone() {
-            Some(base) => self.registry.retarget_recipe(&self.id, &base, &from.id, &to.id).await?,
+            Some(base) => self.runs.retarget_recipe(&self.id, &base, &from.id, &to.id).await?,
             None => {
                 let cwd = self.journalled_cwd();
-                self.registry.recipe_from_settings(&self.id, live, cwd.as_deref(), &to.id).await?
+                self.runs.recipe_from_settings(&self.id, live, cwd.as_deref(), &to.id).await?
             }
         };
-        self.registry
-            .accounts
+        self.runs
+            .host.accounts
             .bind_session_account(&self.id, Some(&to.id), AccountProvider::Claude)
             .await?;
         self.retarget_queue(&from.id, &recipe);
@@ -4227,7 +4216,7 @@ impl Driver {
             used_percent: Some(near.used_percent),
         };
         let notice = rotation::ahead_notice(&from.label, &to.label, near, until.as_deref());
-        self.registry.record_rotation(&decision, &notice);
+        self.runs.record_rotation(&decision, &notice);
         self.ahead_noted = None;
         self.recorder.lifecycle(
             Stage::Rotate,
@@ -4247,8 +4236,8 @@ impl Driver {
     /// Where the journal says this process was started, for a recipe built
     /// from nothing.
     fn journalled_cwd(&self) -> Option<String> {
-        self.registry
-            .journal
+        self.runs
+            .host.journal
             .read()
             .into_iter()
             .find(|record| record.run_id == self.record)
@@ -4270,15 +4259,15 @@ impl Driver {
         if !next.fingerprint.fits_but_for_login(live) {
             return None;
         }
-        let bound = self.registry.accounts.session_account_id_for(&self.id, AccountProvider::Claude).await?;
+        let bound = self.runs.host.accounts.session_account_id_for(&self.id, AccountProvider::Claude).await?;
         if bound != account {
             return None;
         }
         let built = match (&self.recipe, live.account.as_deref()) {
-            (Some(base), Some(from)) => self.registry.retarget_recipe(&self.id, base, from, account).await,
+            (Some(base), Some(from)) => self.runs.retarget_recipe(&self.id, base, from, account).await,
             _ => {
                 let cwd = self.journalled_cwd();
-                self.registry
+                self.runs
                     .recipe_from_settings(&self.id, &next.fingerprint, cwd.as_deref(), account)
                     .await
             }
@@ -4367,10 +4356,10 @@ impl Driver {
         next.text = rotation::continuation_prompt(&note.from, &note.to, &note.reason, note.until.as_deref(), &interrupted);
         if let Some(record) = note.record {
             let count = u32::try_from(interrupted.len()).unwrap_or(u32::MAX);
-            if let Err(error) = self.registry.accounts.rotation_log().set_interrupted(record, count) {
+            if let Err(error) = self.runs.host.accounts.rotation_log().set_interrupted(record, count) {
                 tracing::warn!(session = %self.id, %error, "cannot record what an account switch interrupted");
             }
-            self.registry.announce(Source::Claude, &self.id);
+            self.runs.host.announce(Source::Claude, &self.id);
         }
         next
     }
@@ -4499,7 +4488,7 @@ impl Driver {
     /// hears of it — on the phone. A question this driver inherited across a
     /// restart is already on record, which is what keeps the phone quiet.
     fn hold_question(&mut self, question: OpenQuestion) {
-        let fresh = self.registry.questions.open(
+        let fresh = self.runs.host.questions.open(
             &question.request_id,
             &self.id,
             question.tool_use_id.as_deref(),
@@ -4510,8 +4499,8 @@ impl Driver {
         self.recorder
             .lifecycle(Stage::Question, Some(&format!("{} asked: {headline}", question.request_id)));
         if fresh {
-            if let Some(alerts) = self.registry.alerts.get() {
-                alerts.question(self.registry.paths.clone(), Source::Claude, self.id.clone(), headline);
+            if let Some(alerts) = self.runs.host.alerts.get() {
+                alerts.question(self.runs.host.paths.clone(), Source::Claude, self.id.clone(), headline);
             }
         }
         if !self.asked.iter().any(|open| open.request_id == question.request_id) {
@@ -4530,7 +4519,7 @@ impl Driver {
         self.asked.remove(at);
         // Only out of `pending`: an answer this driver wrote has already moved
         // the record, and claude echoing it back must not rewrite it.
-        if self.registry.questions.close(request_id, to, questions::now_ms()) {
+        if self.runs.host.questions.close(request_id, to, questions::now_ms()) {
             tracing::info!(session = %self.id, request = %request_id, state = to.as_str(), why, "a question closed without an answer");
             self.recorder
                 .lifecycle(Stage::Question, Some(&format!("{request_id} {}: {why}", to.as_str())));
@@ -4615,7 +4604,7 @@ impl Driver {
             }
             Reply::Dismiss => (QuestionState::Dismissed, None, questions::deny(questions::DISMISSED)),
         };
-        let store = self.registry.questions.clone();
+        let store = self.runs.host.questions.clone();
         let now = questions::now_ms();
         let stored = match store.resolve(
             request_id,
@@ -4671,7 +4660,7 @@ impl Driver {
     /// Tell the session's screens and the list that something no file shows
     /// has changed: a question opened or closed.
     fn announce(&self) {
-        self.registry.announce(Source::Claude, &self.id);
+        self.runs.host.announce(Source::Claude, &self.id);
     }
 
     // ------------------------------------------------------------ commands
@@ -5036,7 +5025,7 @@ impl Driver {
     /// Schedule the next rung, without holding the driver up for it.
     fn arm(&self, turn: u64, rung: u8) {
         let tx = self.tx.clone();
-        let step = self.registry.interrupt_step;
+        let step = self.runs.host.interrupt_step;
         tokio::spawn(async move {
             tokio::time::sleep(step).await;
             let _ = tx.send(Cmd::Escalate { turn, rung });
@@ -5104,7 +5093,7 @@ impl Driver {
         // reading another session made since may have taken this account to the
         // edge; a move now retargets this message too, and sends it down the
         // respawn path below instead of into the account that is running out.
-        if self.registry.rotate_ahead.is_some() && next.fingerprint.accepted_by(self.live.as_ref()) {
+        if self.runs.rotate_ahead.is_some() && next.fingerprint.accepted_by(self.live.as_ref()) {
             self.queue.push_front(next);
             self.rotate_ahead().await;
             let Some(again) = self.queue.pop_front() else { return };
@@ -5266,7 +5255,7 @@ impl Driver {
     /// [`ClaudeCodeRuns::task_root`]. A replayed set of the second kind has
     /// no witness in the first place, so both are read and the newest wins.
     async fn subagents_recently_active(&self) -> bool {
-        let Some(file) = crate::provider::claude_code::sessions::claude::find_claude_session_file(&self.registry.paths, &self.id).await else {
+        let Some(file) = crate::provider::claude_code::sessions::claude::find_claude_session_file(&self.runs.host.paths, &self.id).await else {
             return false;
         };
         let mut newest = newest_write(&crate::provider::claude_code::sessions::transcript::subagent_dir(&file)).await;
@@ -5294,7 +5283,7 @@ impl Driver {
     /// on the rare paths — a replay boundary, a parked settings change, an idle
     /// sweep — never per line.
     async fn task_output_dir(&self) -> Option<PathBuf> {
-        let mut entries = tokio::fs::read_dir(&self.registry.task_root).await.ok()?;
+        let mut entries = tokio::fs::read_dir(&self.runs.task_root).await.ok()?;
         while let Ok(Some(entry)) = entries.next_entry().await {
             let candidate = entry.path().join(&self.id).join("tasks");
             if tokio::fs::metadata(&candidate).await.is_ok() {
@@ -5440,7 +5429,7 @@ impl Driver {
         self.set_phase(Phase::Working);
         let seq = turn.seq;
         self.turn = Some(turn);
-        self.arm_settle(seq, self.registry.steer_settle);
+        self.arm_settle(seq, self.runs.steer_settle);
     }
 
     /// Schedule the moment a provisional turn is judged, without waiting for it.
@@ -5482,7 +5471,7 @@ impl Driver {
         let Some(turn) = self.turn.as_ref().filter(|turn| turn.seq == seq && turn.provisional) else {
             return; // ended, replaced, or claude said `init` and proved it real
         };
-        let window = self.registry.steer_settle;
+        let window = self.runs.steer_settle;
         let quiet = self.heard.elapsed();
         if quiet < window {
             // claude is talking; ask again once the silence would be long
@@ -5566,7 +5555,7 @@ impl Driver {
         let anchor = self.absorb.anchor.as_mut().expect("checked just above");
         if anchor.file.is_none() {
             // There was no transcript when the watch began, so all of it is newer.
-            anchor.file = crate::provider::claude_code::sessions::claude::find_claude_session_file(&self.registry.paths, &self.id).await;
+            anchor.file = crate::provider::claude_code::sessions::claude::find_claude_session_file(&self.runs.host.paths, &self.id).await;
         }
         let Some(path) = anchor.file.clone() else { return false };
         let (lines, offset) = appended_lines(&path, anchor.offset, b"\"queued_command\"").await;
@@ -5597,7 +5586,7 @@ impl Driver {
         self.absorb.unannounced = true;
         self.publish();
         // The list's `+1` and queued chips count it too.
-        self.registry.refresh_list();
+        self.runs.host.refresh_list();
         // Out of the journal too, or the next server inherits a steered message
         // that is already in the conversation and opens a turn for it.
         self.note_progress(self.turn.as_ref().filter(|turn| !turn.provisional).map(|turn| turn.at));
@@ -5616,7 +5605,7 @@ impl Driver {
     /// of a line claude is still writing; that fragment fails to parse and is
     /// stepped over, and it cannot be the fold of a message not yet written.
     async fn anchor_absorb(&mut self) {
-        let file = crate::provider::claude_code::sessions::claude::find_claude_session_file(&self.registry.paths, &self.id).await;
+        let file = crate::provider::claude_code::sessions::claude::find_claude_session_file(&self.runs.host.paths, &self.id).await;
         let offset = match &file {
             Some(path) => tokio::fs::metadata(path).await.map(|meta| meta.len()).unwrap_or(0),
             None => 0,
@@ -5643,7 +5632,7 @@ impl Driver {
         }
         self.absorb().await;
         if nudged && std::mem::take(&mut self.absorb.unannounced) {
-            self.registry.poke_feed(Source::Claude, &self.id);
+            self.runs.host.poke_feed(Source::Claude, &self.id);
         }
         self.arm_absorb();
     }
@@ -5655,7 +5644,7 @@ impl Driver {
         }
         self.absorb.armed = true;
         let tx = self.tx.clone();
-        let after = self.registry.absorb_poll;
+        let after = self.runs.absorb_poll;
         tokio::spawn(async move {
             tokio::time::sleep(after).await;
             let _ = tx.send(Cmd::Absorb { nudged: false });
@@ -5753,7 +5742,7 @@ impl Driver {
         // whichever record survives rather than to neither.
         let queued = self.backlog(Pending::recorded);
         let spawned = self
-            .registry
+            .runs
             .spawn_link(&self.lease.respawn_permit(), &self.id, recipe, selector, Some(&self.record), &queued, &self.recorder)
             .await?;
         let _ = std::fs::remove_file(self.sidecars.exit());
@@ -5772,7 +5761,7 @@ impl Driver {
             self.hold = None;
         }
         if self.hold.is_some() {
-            self.registry.journal.mark_hold(&self.record, self.hold.clone());
+            self.runs.host.journal.mark_hold(&self.record, self.hold.clone());
         }
         // Known again, whatever it was before: this driver started the process
         // itself, and the record it just wrote says the same thing.
@@ -5855,17 +5844,17 @@ impl Driver {
             return;
         }
         self.idle_since = None;
-        if self.heard.elapsed() < self.registry.stall_after {
+        if self.heard.elapsed() < self.runs.stall_after {
             return;
         }
         // The transcript is the other half of "quiet": a turn writing tool
         // results is making progress even while the stream-json side is silent.
-        if let Some(progress) = self.registry.last_write(&self.id).await {
+        if let Some(progress) = self.runs.last_write(&self.id).await {
             if progress > self.heard {
                 self.heard = progress;
             }
         }
-        if self.heard.elapsed() < self.registry.stall_after {
+        if self.heard.elapsed() < self.runs.stall_after {
             return;
         }
         // Quiet on both channels for long enough to be worth a second opinion,
@@ -5912,7 +5901,7 @@ impl Driver {
     /// do is end a process that is minding background work, which is the same
     /// guard the settings respawn takes.
     async fn idle_shutdown(&mut self) {
-        let Some(after) = self.registry.resident_idle else { return };
+        let Some(after) = self.runs.resident_idle else { return };
         // A steered message is outstanding work even though no turn is open for
         // it: ending the process would take it with it. So is a held queue's
         // promise to continue the failed message.
@@ -6028,7 +6017,7 @@ impl Driver {
         if !self.ready {
             self.rung = self.rung.saturating_add(1);
         }
-        let ladder = &self.registry.recovery_backoff;
+        let ladder = &self.runs.recovery_backoff;
         let backoff = ladder[(self.deaths.len() - 1).min(ladder.len() - 1)];
         tracing::warn!(
             session = %self.id,
@@ -6109,7 +6098,7 @@ impl Driver {
         let tail = self
             .sidecars
             .read_stderr()
-            .map(|stderr| self.registry.redact(&last_lines(&stderr, STDERR_TAIL_LINES)))
+            .map(|stderr| self.runs.host.redact(&last_lines(&stderr, STDERR_TAIL_LINES)))
             .unwrap_or_default();
         if tail.is_empty() {
             reason
@@ -6220,17 +6209,17 @@ impl Driver {
         // Its own entry, and only if it is still its own: `adopt` may have moved
         // the key, and a racing send may already have put a replacement there.
         {
-            let mut residents = self.registry.residents.lock().expect("residents poisoned");
+            let mut residents = self.runs.residents.lock().expect("residents poisoned");
             if residents.get(&self.id).is_some_and(|handle| handle.tx.same_channel(&self.tx)) {
                 residents.remove(&self.id);
             }
         }
-        self.registry.journal.remove(&self.record);
+        self.runs.host.journal.remove(&self.record);
         // The claim goes last, and outside every other lock: dropping it
         // unlinks a file, and until it is gone this session is still ours.
         self.lease.release();
         #[cfg(test)]
-        self.registry.step("resident ended", Source::Claude, Some(&self.id));
+        self.runs.host.step("resident ended", Source::Claude, Some(&self.id));
         let _ = std::fs::remove_file(self.sidecars.exit());
         let _ = std::fs::remove_file(self.sidecars.stderr());
     }
@@ -6241,11 +6230,11 @@ impl Driver {
     fn open_turn(&mut self) -> Arc<RunEntry> {
         self.seq += 1;
         let run = running_turn(&self.id);
-        self.registry
-            .runs
+        self.runs
+            .host.runs
             .lock()
             .expect("injections poisoned")
-            .insert(self.registry.key_of(Source::Claude, &self.id), run.clone());
+            .insert(self.runs.host.key_of(Source::Claude, &self.id), run.clone());
         run
     }
 
@@ -6273,8 +6262,8 @@ impl Driver {
     /// either the one the send path published while the CLI was starting, or the
     /// one adoption published while the replay was still arriving.
     fn published_run(&self) -> Option<Arc<RunEntry>> {
-        let runs = self.registry.runs.lock().expect("injections poisoned");
-        runs.get(&self.registry.key_of(Source::Claude, &self.id))
+        let runs = self.runs.host.runs.lock().expect("injections poisoned");
+        runs.get(&self.runs.host.key_of(Source::Claude, &self.id))
             .filter(|run| run.state.lock().expect("run state poisoned").state == InjectionRunState::Running)
             .cloned()
     }
@@ -6285,11 +6274,11 @@ impl Driver {
     /// needs no explanation, and a failure reported on every restart would be
     /// noise about something that went fine.
     fn withdraw_published_run(&self) {
-        self.registry
-            .runs
+        self.runs
+            .host.runs
             .lock()
             .expect("injections poisoned")
-            .remove(&self.registry.key_of(Source::Claude, &self.id));
+            .remove(&self.runs.host.key_of(Source::Claude, &self.id));
     }
 
     /// Write a turn's outcome, tell the phone, and go back to idle.
@@ -6327,13 +6316,13 @@ impl Driver {
         // Taken here rather than inside the spawned task. `on_result` pumps the
         // next queued message the moment this returns, so a snapshot read
         // asynchronously would be a coin toss between this turn and the next.
-        let driver = self.registry.driver_states();
+        let driver = self.runs.host.driver_states();
         // Once per turn, where the old model could only manage once per process.
         // A resident answering ten messages now sends ten notifications, and the
         // throttle in [`droppen_notify::push`] is what keeps that from being ten lines in
         // the notification shade.
-        if let Some(alerts) = self.registry.alerts.get() {
-            alerts.turn(self.registry.paths.clone(), Source::Claude, self.id.clone(), outcome, error, driver);
+        if let Some(alerts) = self.runs.host.alerts.get() {
+            alerts.turn(self.runs.host.paths.clone(), Source::Claude, self.id.clone(), outcome, error, driver);
         }
     }
 
@@ -6374,7 +6363,7 @@ impl Driver {
         // frame that settles is the whole of the change rather than half of it.
         if moved {
             self.phase_moved.store(true, std::sync::atomic::Ordering::Relaxed);
-            self.registry.poke_feed(Source::Claude, &self.id);
+            self.runs.host.poke_feed(Source::Claude, &self.id);
         }
     }
 
@@ -6403,7 +6392,7 @@ impl Driver {
     /// (`awaitingBackground`) for the whole wait, and `DROPPEN_AWAIT_BACKGROUND_MS=0`
     /// removes it for an installation that would rather wait for ever.
     fn waited_long_enough(&mut self) -> bool {
-        let Some(limit) = self.registry.await_background else { return false };
+        let Some(limit) = self.runs.await_background else { return false };
         let since = *self.awaiting_since.get_or_insert_with(Instant::now);
         if since.elapsed() < limit {
             return false;
@@ -6438,7 +6427,7 @@ impl Driver {
         // Only after a phase change: see `set_phase`. Everything else published
         // here waits for the feed's own poll, as it always has.
         if self.phase_moved.swap(false, std::sync::atomic::Ordering::Relaxed) {
-            self.registry.poke_feed(Source::Claude, &self.id);
+            self.runs.host.poke_feed(Source::Claude, &self.id);
         }
     }
 
@@ -6465,8 +6454,8 @@ impl Driver {
     /// — the record is small, and a rule of "always both" cannot leave one of
     /// them stale.
     fn note_progress(&self, turn_at: Option<u64>) {
-        self.registry
-            .journal
+        self.runs
+            .host.journal
             .mark_progress(&self.record, turn_at, &self.backlog(Pending::recorded));
     }
 
@@ -6479,13 +6468,13 @@ impl Driver {
     /// default, which is the whole distinction this change turns on.
     fn note_fingerprint(&self) {
         let Some(live) = self.live.as_ref() else { return };
-        self.registry.journal.mark_fingerprint(&self.record, live);
+        self.runs.host.journal.mark_fingerprint(&self.record, live);
     }
 
     /// Tell the receipt store what became of a message — a no-op for one no
     /// client named. See [`crate::provider::receipts`].
     fn receipt(&self, pending: &Pending, status: ReceiptStatus) {
-        self.registry.note_receipt(Source::Claude, &self.id, &pending.id, status);
+        self.runs.host.note_receipt(Source::Claude, &self.id, &pending.id, status);
     }
 
     /// Report a message that will never be delivered, as its own failed turn.
@@ -7619,7 +7608,7 @@ mod tests {
             // against a `tempdir` that is about to go, so the journal is read
             // for what to end. claude leads a process group of its own, and the
             // shim follows its child out.
-            for record in self.registry.journal.read() {
+            for record in self.registry.host.journal.read() {
                 // SAFETY: `kill` delivers a signal to a process group and cannot
                 // corrupt this process' own state.
                 unsafe { libc::kill(-(record.cli_pid as libc::pid_t), libc::SIGKILL) };
@@ -8207,7 +8196,7 @@ done
                 body
             );
 
-            let sidecars = Sidecars::new(registry.shim_dir.clone(), "resident-under-test");
+            let sidecars = Sidecars::new(registry.host.shim_dir.clone(), "resident-under-test");
             sidecars.prepare().expect("sidecars");
             let shim = tokio::spawn(shim::Args {
                 socket: sidecars.socket().to_path_buf(),
@@ -8233,7 +8222,7 @@ done
             // has one — a driver whose record names nothing writes its progress
             // into the void, and two of the things worth asserting about a
             // restart are what it wrote down.
-            registry.journal.add(runs::RunRecord {
+            registry.host.journal.add(runs::RunRecord {
                 run_id: "record-under-test".to_string(),
                 source: Source::Claude,
                 session_id: SESSION.to_string(),
@@ -8280,7 +8269,7 @@ done
             let recorder = registry.recorders.open(SESSION);
             let driver = tokio::spawn(
                 Driver {
-                    registry: registry.clone(),
+                    runs: registry.clone(),
                     id: SESSION.to_string(),
                     sidecars: sidecars.clone(),
                     link,
@@ -8317,7 +8306,7 @@ done
                     // Read back out of the journal, the way an attach reads it,
                     // so a held queue is restored by the same round trip.
                     hold: registry
-                        .journal
+                        .host.journal
                         .read()
                         .into_iter()
                         .find(|record| record.run_id == "record-under-test")
@@ -8397,7 +8386,7 @@ done
         /// the record that replaced the one the harness started with.
         fn recorded_fingerprint(&self) -> Option<Fingerprint> {
             self.registry
-                .journal
+                .host.journal
                 .read()
                 .into_iter()
                 .find(|record| record.session_id == SESSION)
@@ -8437,7 +8426,7 @@ done
         /// the id claimed and answered first, the message delivered under the
         /// queue id the claim chose. Returns that queue id.
         fn named(&self, text: &str) -> String {
-            let receipts = self.registry.receipts();
+            let receipts = self.registry.host.receipts();
             let client = uuid::Uuid::new_v4().to_string();
             let now = crate::provider::receipts::now_ms();
             let qid = match receipts
@@ -8455,7 +8444,7 @@ done
         /// The receipt of the named message travelling as `qid`.
         fn receipt(&self, qid: &str) -> Option<ReceiptStatus> {
             self.registry
-                .receipts()
+                .host.receipts()
                 .for_session(Source::Claude, SESSION, crate::provider::receipts::now_ms())
                 .into_iter()
                 .find(|receipt| receipt.qid.0.as_deref() == Some(qid))
@@ -8476,7 +8465,7 @@ done
         /// This driver's journal record, as the next server would read it.
         fn record(&self) -> runs::RunRecord<ClaudeRun> {
             self.registry
-                .journal
+                .host.journal
                 .read()
                 .into_iter()
                 .find(|record| record.run_id == "record-under-test")
@@ -8512,11 +8501,11 @@ done
         }
 
         fn injection(&self) -> Option<droppen_sessions::Injection> {
-            self.registry.run_injection(Source::Claude, SESSION)
+            self.registry.host.run_injection(Source::Claude, SESSION)
         }
 
         fn injection_for(&self, id: &str) -> Option<droppen_sessions::Injection> {
-            self.registry.run_injection(Source::Claude, id)
+            self.registry.host.run_injection(Source::Claude, id)
         }
 
         /// Every provider over this harness's registry, as the routes and the
@@ -8939,10 +8928,10 @@ done
         let harness = Harness::ordinary_with(&reports_its_windows()).await;
         until("the init to land", || harness.state().phase == Phase::Idle).await;
         harness.send("first");
-        let file = harness.registry.paths.data_dir().join("local-usage.json");
+        let file = harness.registry.host.paths.data_dir().join("local-usage.json");
         until("the reading to be filed", || file.is_file()).await;
 
-        let reading = harness.registry.quota.cached(&droppen_accounts::quota::UsageLogin::Local);
+        let reading = harness.registry.host.quota.cached(&droppen_accounts::quota::UsageLogin::Local);
         let windows: Vec<(&str, f64)> = reading.windows.iter().map(|w| (w.label.as_str(), w.used_percent)).collect();
         assert_eq!(windows, [("5h", 19.0), ("weekly", 46.0)]);
         assert_eq!(reading.source, Some(droppen_accounts::quota::QuotaReadingSource::Session));
@@ -8988,7 +8977,7 @@ done
     #[tokio::test]
     async fn uploads_directory_failure_prevents_spawning_a_misconfigured_process() {
         let harness = Harness::ordinary().await;
-        let paths = &harness.registry.paths;
+        let paths = &harness.registry.host.paths;
         std::fs::write(paths.uploads_dir(), b"not a directory").unwrap();
         let recipe = super::spawn::claude_recipe(paths, harness.bin.to_str(), &Default::default(), Env::new(), Default::default());
         let recorder = harness.registry.recorders.open(SESSION);
@@ -9002,7 +8991,7 @@ done
     async fn text_then_attachments_keep_the_upload_enabled_resident() {
         let harness = Harness::ordinary().await;
         until("the original init", || harness.state().phase == Phase::Idle).await;
-        assert!(!harness.registry.paths.uploads_dir().exists());
+        assert!(!harness.registry.host.paths.uploads_dir().exists());
         // A real spawn through the production recipe, leaving background work
         // alive between turns so a spurious settings change would park or kill it.
         let script = replacement_claude(SESSION, FORKED).replace(
@@ -9012,7 +9001,7 @@ done
         harness.plan_claude(&script);
         let make_recipe = |options: &crate::provider::SendOptions| {
             super::spawn::claude_recipe(
-                &harness.registry.paths,
+                &harness.registry.host.paths,
                 harness.bin.to_str(),
                 options,
                 harness.recipe(Fingerprint::default()).env,
@@ -9024,9 +9013,9 @@ done
             harness.after().len() == 1 && harness.state().phase == Phase::Idle
         })
         .await;
-        assert!(harness.registry.paths.uploads_dir().is_dir());
+        assert!(harness.registry.host.paths.uploads_dir().is_dir());
         assert!(harness.recorded_fingerprint().unwrap().uploads);
-        let first = harness.registry.journal.read().into_iter().find(|r| r.session_id == SESSION).unwrap();
+        let first = harness.registry.host.journal.read().into_iter().find(|r| r.session_id == SESSION).unwrap();
         assert_eq!(harness.spawns().len(), 1);
         assert!(harness.spawns()[0].contains("--add-dir"));
         for (i, options) in [
@@ -9049,7 +9038,7 @@ done
                 harness.after().len() == i + 2 && harness.state().phase == Phase::Idle
             })
             .await;
-            let current = harness.registry.journal.read().into_iter().find(|r| r.session_id == SESSION).unwrap();
+            let current = harness.registry.host.journal.read().into_iter().find(|r| r.session_id == SESSION).unwrap();
             assert_eq!(current.cli_pid, first.cli_pid);
             assert_eq!(current.run_id, first.run_id);
             assert_eq!(harness.spawns().len(), 1);
@@ -10802,7 +10791,7 @@ done
 
         // One record, for the process that is actually running, pointing at the
         // shim a later boot would have to re-attach through.
-        let records = harness.registry.journal.read();
+        let records = harness.registry.host.journal.read();
         assert_eq!(records.len(), 1, "{records:?}");
         assert!(records[0].resident);
         assert!(records[0].shim.is_some(), "a resident record names its shim");
@@ -11250,7 +11239,7 @@ done
         }
 
         fn latest_rotation(&self) -> Option<droppen_sessions::account::SessionRotation> {
-            self.registry.accounts.rotation_log().latest(SESSION)
+            self.registry.host.accounts.rotation_log().latest(SESSION)
         }
     }
 
@@ -11304,7 +11293,7 @@ done
         );
         assert_eq!(harness.tokens(), vec![fake_token("b@team")], "under the new account's token");
         assert_eq!(
-            harness.registry.accounts.session_account_id(SESSION).await.as_deref(),
+            harness.registry.host.accounts.session_account_id(SESSION).await.as_deref(),
             Some(b.id.as_str()),
             "the binding moved with it"
         );
@@ -11403,7 +11392,7 @@ done
         })
         .await;
 
-        let history = harness.registry.accounts.rotation_log().history(SESSION, 10);
+        let history = harness.registry.host.accounts.rotation_log().history(SESSION, 10);
         let steps: Vec<(RotationOutcome, &str, &str)> = history
             .iter()
             .rev()
@@ -11424,7 +11413,7 @@ done
         assert_eq!(harness.after().len(), 3, "one continuation each: {:?}", harness.after());
         assert_eq!(harness.injection().map(|run| run.state), Some(InjectionRunState::Failed));
         assert_eq!(
-            harness.registry.accounts.session_account_id(SESSION).await.as_deref(),
+            harness.registry.host.accounts.session_account_id(SESSION).await.as_deref(),
             Some(accounts[3].id.as_str())
         );
     }
@@ -11522,7 +11511,7 @@ dir=$(dirname "$GO")
         let b = accounts[1].clone();
         let resets = rest::now_ms() / 1000 + 7200;
         let harness = Harness::rotating(home, &refused_once("five_hour", resets, SESSION_LIMIT, ""), live.clone()).await;
-        rest_on(&harness.registry, &b.id, LimitClass::Weekly, "opus", rest::now_ms() + 3 * 86_400_000);
+        rest_on(&harness.registry.host, &b.id, LimitClass::Weekly, "opus", rest::now_ms() + 3 * 86_400_000);
         harness.plan_claude(&rotated_claude(TURN_OK));
         until("the init", || harness.state().phase == Phase::Idle).await;
 
@@ -11619,7 +11608,7 @@ dir=$(dirname "$GO")
         }
 
         fn rotations(&self) -> Vec<droppen_sessions::account::SessionRotation> {
-            self.registry.accounts.rotation_log().history(SESSION, 20)
+            self.registry.host.accounts.rotation_log().history(SESSION, 20)
         }
     }
 
@@ -11653,7 +11642,7 @@ dir=$(dirname "$GO")
             Some(hold.clone()),
         )
         .await;
-        rest_on(&harness.registry, &a.id, LimitClass::Session, "all", lifts);
+        rest_on(&harness.registry.host, &a.id, LimitClass::Session, "all", lifts);
         until("the init", || harness.state().phase == Phase::Idle).await;
 
         tokio::time::sleep(Duration::from_millis(400)).await;
@@ -11831,7 +11820,7 @@ dir=$(dirname "$GO")
             None,
         )
         .await;
-        rest_on(&harness.registry, &b.id, LimitClass::Session, "all", resets * 1000);
+        rest_on(&harness.registry.host, &b.id, LimitClass::Session, "all", resets * 1000);
         harness.plan_claude(&rotated_claude(TURN_OK));
         until("the init", || harness.state().phase == Phase::Idle).await;
         harness.send_with("first", harness.recipe(live.clone()));
@@ -11843,7 +11832,7 @@ dir=$(dirname "$GO")
         tokio::time::sleep(Duration::from_millis(200)).await;
         assert!(harness.spawns().is_empty(), "and a re-check with nothing new to say moves nothing");
 
-        harness.registry.accounts.limit_log().clear(&b.id, None).expect("clear");
+        harness.registry.host.accounts.limit_log().clear(&b.id, None).expect("clear");
         until("the continuation and the held message to reach b", || harness.after().len() == 2).await;
         let after = harness.after();
         assert!(after[0].contains("自动切换到 b@team"), "{}", after[0]);
@@ -11917,7 +11906,7 @@ dir=$(dirname "$GO")
         until("the first turn", || harness.state().phase == Phase::Working).await;
         harness
             .registry
-            .accounts
+            .host.accounts
             .bind_session_account(SESSION, Some(&c.id), AccountProvider::Claude)
             .await
             .expect("bind by hand");
@@ -11990,7 +11979,7 @@ done
         let (a, b) = (accounts[0].clone(), accounts[1].clone());
         let resets = rest::now_ms() / 1000 + 5400;
         let harness = Harness::rotating(home, &warns_every_turn(0.96, resets, ""), live.clone()).await;
-        read_account(&harness.registry, &b.id, 0.10, 0.20);
+        read_account(&harness.registry.host, &b.id, 0.10, 0.20);
         harness.plan_claude(&rotated_claude(TURN_OK));
         until("the init", || harness.state().phase == Phase::Idle).await;
 
@@ -12022,7 +12011,7 @@ done
         );
         assert_eq!(harness.tokens(), vec![fake_token("b@team")], "under the new account's token");
         assert_eq!(
-            harness.registry.accounts.session_account_id(SESSION).await.as_deref(),
+            harness.registry.host.accounts.session_account_id(SESSION).await.as_deref(),
             Some(b.id.as_str()),
             "the binding moved with it"
         );
@@ -12048,7 +12037,7 @@ done
         // next message is built for the binding, as the send route builds it.
         let under_b = Fingerprint {
             account: Some(b.id.clone()),
-            credential: harness.registry.accounts.credential_hash(&b.id).await,
+            credential: harness.registry.host.accounts.credential_hash(&b.id).await,
             ..live.clone()
         };
         harness.send_with("third", harness.recipe(under_b));
@@ -12067,8 +12056,8 @@ done
         let b = accounts[1].clone();
         let resets = rest::now_ms() / 1000 + 5400;
         let harness = Harness::rotating(home, &warns_every_turn(0.96, resets, ""), live.clone()).await;
-        read_account(&harness.registry, &b.id, 0.10, 0.20);
-        rest_on(&harness.registry, &b.id, LimitClass::Weekly, "opus", rest::now_ms() + 3 * 86_400_000);
+        read_account(&harness.registry.host, &b.id, 0.10, 0.20);
+        rest_on(&harness.registry.host, &b.id, LimitClass::Weekly, "opus", rest::now_ms() + 3 * 86_400_000);
         harness.plan_claude(&rotated_claude(TURN_OK));
         until("the init", || harness.state().phase == Phase::Idle).await;
 
@@ -12111,7 +12100,7 @@ dir=$(dirname "$GO")
             warns_every_turn(0.97, resets, &one_background_task("bt1", "Review the diff"))
         );
         let harness = Harness::rotating(home, &body, live.clone()).await;
-        read_account(&harness.registry, &b.id, 0.05, 0.05);
+        read_account(&harness.registry.host, &b.id, 0.05, 0.05);
         harness.plan_claude(&rotated_claude(TURN_OK));
         until("the init", || harness.state().phase == Phase::Idle).await;
 
@@ -12157,7 +12146,7 @@ dir=$(dirname "$GO")
         let resets = rest::now_ms() / 1000 + 5400;
         let harness = Harness::rotating(home, &warns_every_turn(0.99, resets, ""), live.clone()).await;
         // b is close to its own line: 88 % is not under 95 − 10.
-        read_account(&harness.registry, &b.id, 0.88, 0.10);
+        read_account(&harness.registry.host, &b.id, 0.88, 0.10);
         until("the init", || harness.state().phase == Phase::Idle).await;
 
         harness.send_with("first", harness.recipe(live.clone()));
@@ -12277,7 +12266,7 @@ done
         let info: droppen_sessions::ResidentInfo = harness.state().into();
         assert!(info.asking, "and the row says it is asking, while working");
         assert_eq!(harness.registry.open_question(SESSION).as_deref(), Some("req-q1"));
-        let stored = harness.registry.questions().get("req-q1").expect("on record");
+        let stored = harness.registry.host.questions().get("req-q1").expect("on record");
         assert_eq!((stored.state, stored.tool_use_id.as_deref()), (QuestionState::Pending, Some("toolu_q1")));
         assert_eq!(stored.questions, colours_and_toppings());
 
@@ -12326,7 +12315,7 @@ done
                 .await,
             AnswerOutcome::Unknown
         ));
-        let stored = harness.registry.questions().get("req-q1").expect("on record");
+        let stored = harness.registry.host.questions().get("req-q1").expect("on record");
         assert_eq!((stored.state, stored.answered_by.as_deref()), (QuestionState::Answered, Some("phone")));
         assert_eq!(
             harness.seen().iter().filter(|line| line.contains("control_response")).count(),
@@ -12479,7 +12468,7 @@ done
             "{message}"
         );
         assert!(
-            harness.registry.questions().get("req-w1").is_none(),
+            harness.registry.host.questions().get("req-w1").is_none(),
             "a permission prompt is not a question"
         );
         assert_eq!(harness.injection().map(|run| run.state), Some(InjectionRunState::Ok));
@@ -12584,7 +12573,7 @@ done
         until("the turn to end", || harness.state().phase == Phase::Idle).await;
         assert_eq!(harness.state().question, None);
         assert_eq!(
-            harness.registry.questions().get("req-q1").map(|stored| stored.state),
+            harness.registry.host.questions().get("req-q1").map(|stored| stored.state),
             Some(QuestionState::Cancelled)
         );
         assert!(harness.injection().is_some_and(|run| run.interrupted));
@@ -12621,7 +12610,7 @@ done
         harness.release();
 
         until("the question to expire", || {
-            harness.registry.questions().get("req-q1").map(|stored| stored.state) == Some(QuestionState::Expired)
+            harness.registry.host.questions().get("req-q1").map(|stored| stored.state) == Some(QuestionState::Expired)
         })
         .await;
         until("the resume", || harness.spawns().len() == 1).await;
@@ -12662,7 +12651,7 @@ done
         until("the question to be held again", || harness.state().question.is_some()).await;
         assert_eq!(harness.state().phase, Phase::Working, "the turn it blocks is in flight");
         assert_eq!(
-            harness.registry.questions().get("req-q1").map(|stored| stored.state),
+            harness.registry.host.questions().get("req-q1").map(|stored| stored.state),
             Some(QuestionState::Pending)
         );
         let outcome = harness
@@ -12738,11 +12727,11 @@ done
         until("the turn to end", || harness.state().phase == Phase::Idle).await;
         assert_eq!(harness.state().question, None, "nothing is left open");
         assert_eq!(
-            harness.registry.questions().get("req-q1").map(|stored| stored.state),
+            harness.registry.host.questions().get("req-q1").map(|stored| stored.state),
             Some(QuestionState::Answered)
         );
         assert_eq!(
-            harness.registry.questions().get("req-gone").map(|stored| stored.state),
+            harness.registry.host.questions().get("req-gone").map(|stored| stored.state),
             Some(QuestionState::Expired)
         );
     }
@@ -12818,7 +12807,7 @@ done
         .await;
         assert_eq!(harness.state().phase, Phase::Working, "the turn the question blocks is open");
         assert_eq!(
-            harness.registry.questions().get("req-q1").map(|stored| stored.state),
+            harness.registry.host.questions().get("req-q1").map(|stored| stored.state),
             Some(QuestionState::Pending)
         );
 
@@ -12906,7 +12895,7 @@ done
         );
         assert_eq!(harness.state().question, None);
         assert_eq!(
-            harness.registry.questions().get("req-q1").map(|stored| stored.state),
+            harness.registry.host.questions().get("req-q1").map(|stored| stored.state),
             Some(QuestionState::Cancelled)
         );
     }
@@ -13025,7 +13014,7 @@ done
             providers: harness.providers(),
         });
         let feeds = crate::feed::FeedRegistry::new();
-        harness.registry.attach_listeners(feeds.clone(), droppen_http::refresh::Refresh::new(crate::feed::global::GlobalFeed::new()));
+        harness.registry.host.attach_listeners(feeds.clone(), droppen_http::refresh::Refresh::new(crate::feed::global::GlobalFeed::new()));
         until("the init", || harness.state().phase == Phase::Idle).await;
         let mut attached = crate::feed::attach_session_feed(&feeds, &drive, Source::Claude, SESSION, None)
             .await
@@ -13112,18 +13101,18 @@ done
             .await
             .expect("a resident starts");
         assert_eq!(
-            registry.steps(),
+            registry.host.steps(),
             [step("claude started", true, Some(true)), step("resident mapped", true, Some(true))]
         );
-        assert!(!registry.gate_held(), "the send that started it let the gate go");
-        assert!(registry.claim_held(Source::Claude, OTHER), "the driver holds the claim");
+        assert!(!registry.host.gate_held(), "the send that started it let the gate go");
+        assert!(registry.host.claim_held(Source::Claude, OTHER), "the driver holds the claim");
 
         registry
             .deliver(gate, OTHER, "second", harness.recipe(Fingerprint::default()), None)
             .await
             .expect("the resident takes it");
-        assert_eq!(registry.steps()[2..], [step("posted to the resident", false, Some(true))]);
-        assert!(!registry.gate_held());
+        assert_eq!(registry.host.steps()[2..], [step("posted to the resident", false, Some(true))]);
+        assert!(!registry.host.gate_held());
     }
 
     /// A resident's respawn takes no gate: its entry in the map already keeps a
@@ -13149,7 +13138,7 @@ done
         };
         registry.deliver(gate, OTHER, "second", harness.recipe(other_model), None).await.expect("taken");
         until("the replacement to answer", || harness.after().iter().any(|line| line.contains("second"))).await;
-        assert_eq!(registry.steps()[3..], [step("claude started", false, Some(true))]);
+        assert_eq!(registry.host.steps()[3..], [step("claude started", false, Some(true))]);
 
         // The process goes while idle, so the driver ends.
         until("the replacement to go idle", || {
@@ -13162,15 +13151,15 @@ done
         })
         .await;
         let pid = registry
-            .journal
+            .host.journal
             .read()
             .into_iter()
             .find(|record| record.session_id == OTHER)
             .expect("its record")
             .cli_pid;
         crate::provider::signal(pid, libc::SIGKILL);
-        until("the driver to end", || registry.steps().len() == 5).await;
-        assert_eq!(registry.steps()[4..], [step("resident ended", false, Some(false))]);
+        until("the driver to end", || registry.host.steps().len() == 5).await;
+        assert_eq!(registry.host.steps()[4..], [step("resident ended", false, Some(false))]);
         assert!(!registry.residents.lock().expect("residents").contains_key(OTHER));
     }
 
@@ -13190,9 +13179,9 @@ done
             .deliver(gate, OTHER, "first", harness.recipe(Fingerprint::default()), None)
             .await
             .expect("a resident starts");
-        until("the rename", || registry.steps().len() == 4).await;
+        until("the rename", || registry.host.steps().len() == 4).await;
         assert_eq!(
-            registry.steps()[2..],
+            registry.host.steps()[2..],
             [step("adopted: the new id", false, Some(true)), step("adopted: the old id", false, Some(false))]
         );
     }

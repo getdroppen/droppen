@@ -133,8 +133,8 @@ impl GotchaApp for RemoteHandApp {
             // account rotation above all — and has to be able to say so to the
             // two feeds that would otherwise only notice on their next poll.
             let refresh = droppen_http::refresh::Refresh::new(global.clone());
-            drive.injections.attach_listeners(feeds.clone(), refresh.clone());
-            drive.injections.attach_alerts(Arc::new(PushAlerts {
+            drive.injections.host().attach_listeners(feeds.clone(), refresh.clone());
+            drive.injections.host().attach_alerts(Arc::new(PushAlerts {
                 transcripts: drive.transcripts.clone(),
             }));
             // Found once, here: an entry that registers no ACP provider fails

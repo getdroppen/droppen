@@ -357,9 +357,9 @@ pub async fn load_session_state(drive: &Arc<Drive>, source: Source, id: &str) ->
         Source::Claude => drive.accounts.rotation_log().latest(id),
         Source::Codex | Source::Acp => None,
     };
-    let receipts = drive.injections.receipts().for_session(source, id, crate::provider::receipts::now_ms());
+    let receipts = drive.injections.host().receipts().for_session(source, id, crate::provider::receipts::now_ms());
     let questions = if drive.providers.capabilities(source).questions {
-        drive.injections.questions().for_session(id, crate::provider::questions::now_ms())
+        drive.injections.host().questions().for_session(id, crate::provider::questions::now_ms())
     } else {
         Vec::new()
     };
@@ -1453,7 +1453,7 @@ mod tests {
         let auth = droppen_auth::Auth::new(&paths, &instance, &droppen_http::config::AuthSettings::default(), false, std::sync::Arc::new(crate::app::NotifyTokens));
         let drive = Drive::new(paths.clone(), &instance, auth, crate::app::transcript_sources(), crate::app::register_providers, crate::app::logins());
         let feeds = FeedRegistry::new();
-        drive.injections.attach_listeners(feeds.clone(), droppen_http::refresh::Refresh::new(global::GlobalFeed::new()));
+        drive.injections.host().attach_listeners(feeds.clone(), droppen_http::refresh::Refresh::new(global::GlobalFeed::new()));
 
         let id = "33333333-3333-4333-8333-333333333333";
         let project = crate::provider::claude_code::claude_roots::ClaudeRoots::of(&paths).managed_projects().join("-w-repo");
@@ -1490,7 +1490,7 @@ mod tests {
                 used_percent: None,
             })
             .expect("record");
-        drive.injections.announce(Source::Claude, id);
+        drive.injections.host().announce(Source::Claude, id);
 
         let frame = tokio::time::timeout(std::time::Duration::from_millis(1500), attached.attachment.next_frame())
             .await
