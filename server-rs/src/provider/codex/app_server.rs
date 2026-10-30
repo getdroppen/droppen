@@ -3535,4 +3535,144 @@ mod tests {
         let _ = live.kill();
         let _ = live.wait();
     }
+
+    /// A Codex row of the run journal, `run_id` and `payload` aside: session
+    /// `id`, on this process, nothing else known.
+    fn gone_run(run_id: &str, id: &str, payload: runs::Payload) -> runs::RunRecord {
+        runs::RunRecord {
+            run_id: run_id.to_string(),
+            source: Source::Codex,
+            session_id: id.to_string(),
+            cwd: None,
+            cli_pid: std::process::id(),
+            started_at: "2026-01-01T00:00:00.000Z".to_string(),
+            pid_token: None,
+            resident: false,
+            shim: None,
+            payload,
+        }
+    }
+
+    /// What the base asks Codex's runs of a row: whether they can read it,
+    /// whether it holds state a dead run must keep (an app server's queue and
+    /// checkpoint; a `codex exec` run's row holds none), and which CLI to name
+    /// when it reports on one.
+    #[tokio::test]
+    async fn the_runs_say_which_rows_hold_state_and_name_their_cli() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let registry = droppen_provider::testing::injection_registry(home.path());
+        let codex_runs = CodexRuns::new(registry.host.clone());
+        let exec = gone_run("run-exec", "0199c1a1-9999-7999-8999-dddddddddddd", runs::Payload::new());
+        let app_server = gone_run(
+            "run-app-server",
+            "0199c1a1-9999-7999-8999-dddddddddddd",
+            serde_json::from_value(json!({"codex": {"queue": []}})).expect("a codex state"),
+        );
+        assert!(codex_runs.readable(&exec) && codex_runs.readable(&app_server), "both are Codex's rows");
+        assert!(!codex_runs.holds_state(&exec), "a `codex exec` run keeps nothing");
+        assert!(codex_runs.holds_state(&app_server), "an app server keeps its queue and checkpoint");
+        assert_eq!(codex_runs.cli_name(), "codex");
+    }
+
+    /// What the boot pass asks Codex's runs of a run whose CLI is gone: whether
+    /// its thread was cut short mid-turn, and when the thread was last
+    /// written. A thread nothing can find counts as cut short, and so does one
+    /// whose rollout ends with the user's message; one that ends with Codex's
+    /// answer does not.
+    #[tokio::test]
+    async fn a_gone_runs_thread_says_whether_it_was_cut_short_and_when_it_was_written() {
+        const ASKED: &str = "aaaaaaaa-2222-4222-8222-aaaaaaaaaaaa";
+        const ANSWERED: &str = "aaaaaaaa-3333-4333-8333-aaaaaaaaaaaa";
+        const MISSING: &str = "aaaaaaaa-4444-4444-8444-aaaaaaaaaaaa";
+        let _guard = droppen_sessions::index::exclusive().await;
+        let home = tempfile::tempdir().expect("tempdir");
+        let registry = droppen_provider::testing::injection_registry(home.path());
+        let codex_runs = CodexRuns::new(registry.host.clone());
+        let day = registry.host.paths.codex_sessions().join("2026").join("09").join("21");
+        std::fs::create_dir_all(&day).expect("rollout dir");
+        for (id, last) in [(ASKED, "user_message"), (ANSWERED, "task_complete")] {
+            let meta = json!({"type": "session_meta", "payload": {"cwd": "/w", "id": id}});
+            let event = json!({"type": "event_msg", "payload": {"type": last}});
+            std::fs::write(day.join(format!("rollout-2026-09-21T10-00-00-{id}.jsonl")), format!("{meta}\n{event}\n")).expect("rollout");
+        }
+        let gone = |id: &str| gone_run("run-gone", id, runs::Payload::new());
+        assert!(codex_runs.was_cut_short(&gone(ASKED)).await, "the user's message was the last thing written");
+        assert!(!codex_runs.was_cut_short(&gone(ANSWERED)).await, "Codex had answered");
+        assert!(codex_runs.was_cut_short(&gone(MISSING)).await, "a thread that cannot be found is not known to be done");
+        assert!(codex_runs.last_write(ASKED).await.is_some(), "its rollout was written");
+        assert!(codex_runs.last_write(MISSING).await.is_none());
+    }
+
+    /// An app server that is gone is the session's resident only while it
+    /// holds messages: with its queue empty there is nothing to show or to
+    /// decide.
+    #[tokio::test]
+    async fn a_gone_app_server_is_a_resident_only_while_it_holds_messages() {
+        const KEPT: &str = "0199c1a1-7777-7777-8777-dddddddddddd";
+        const EMPTY: &str = "0199c1a1-8888-7888-8888-dddddddddddd";
+        let home = tempfile::tempdir().expect("tempdir");
+        let registry = droppen_provider::testing::injection_registry(home.path());
+        let providers = codex_only(&registry);
+        let codex = providers.provider::<Codex>().expect("Codex");
+        let dead = |run_id: &str, id: &str, queue: Value| {
+            let payload = serde_json::from_value(json!({"codex": {"queue": queue}})).expect("a codex state");
+            gone_run(run_id, id, payload).decode().expect("a Codex record")
+        };
+        codex.runs().codex_dead(dead("run-kept", KEPT, json!([{"id": "q1", "text": "next", "params": {}, "request": null}])));
+        codex.runs().codex_dead(dead("run-empty", EMPTY, json!([])));
+        assert!(codex.run().resident(KEPT).is_some_and(|state| state.queued == 1), "its message is still there to decide on");
+        assert!(codex.run().resident(EMPTY).is_none(), "nothing is left to show");
+    }
+
+    /// A schedule waits for a Codex session's turn: while one runs, the
+    /// session is busy for it, and once it is over it is not.
+    #[tokio::test]
+    async fn a_schedule_waits_while_a_codex_turn_runs() {
+        let mut h = Harness::new().await;
+        let (handle, _rx) = h.handle();
+        h.driver.runs.codex_servers.lock().unwrap().insert("test-thread".into(), handle);
+        let providers = h.providers.clone();
+        let busy = || providers.provider::<Codex>().expect("Codex").run().schedule_busy("test-thread");
+        assert_eq!(busy(), None, "nothing has run yet");
+        h.start().await;
+        assert_eq!(busy(), Some("the previous run has not finished"));
+        h.complete("completed").await;
+        assert_eq!(busy(), None, "the turn is over");
+    }
+
+    /// A thread started under a stored account is bound to it as a Codex
+    /// account, so the next message finds the login this one ran under.
+    #[tokio::test]
+    async fn a_thread_started_under_an_account_is_bound_to_it() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let (_path, registry) = fake_codex_registry(home.path(), "codex-bound");
+        let providers = codex_only(&registry);
+        let account = registry
+            .host
+            .accounts
+            .create(
+                "Relay",
+                AccountProvider::Codex,
+                droppen_accounts::store::Credential::Env(vec![droppen_base::env_block::EnvVar {
+                    key: "OPENAI_API_KEY".into(),
+                    value: "not-a-real-key".into(),
+                }]),
+            )
+            .await
+            .expect("a Codex account");
+        let work = home.path().join("work");
+        std::fs::create_dir_all(&work).expect("work");
+        let options = SendOptions {
+            account: AccountChoice::Account(account.id.clone()),
+            ..SendOptions::default()
+        };
+        let codex = providers.provider::<Codex>().expect("Codex");
+        let at = StartAt {
+            cwd: &work.to_string_lossy(),
+            text: "hello",
+            options: &options,
+        };
+        let id = codex.run().start(providers.gate(), at).await.expect("a new thread");
+        assert_eq!(registry.host.accounts.session_account_id(&id).await, Some(account.id));
+    }
 }
