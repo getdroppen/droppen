@@ -1240,7 +1240,6 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "droppen-aggregator",
- "droppen-auth",
  "droppen-base",
  "droppen-http",
  "droppen-instance",
