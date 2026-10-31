@@ -1699,6 +1699,70 @@ mod tests {
         assert_eq!(resident.phase, droppen_sessions::ResidentPhase::Idle, "and then the session is idle");
     }
 
+    /// A message whose `session/prompt` cannot reach the agent once its model
+    /// was switched fails, and says so, as one whose switch the agent never
+    /// answers does: an error in the transcript, its receipt failed, and the
+    /// session's last turn failed. Here the agent stops reading once it has
+    /// switched, and the message is longer than a pipe holds, so its prompt is
+    /// never written.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_message_whose_prompt_cannot_be_written_after_its_switch_fails() {
+        use droppen_provider::receipts::{now_ms, Claim, Kind};
+        let home = tempfile::tempdir().expect("tempdir");
+        let (state, id, _dir) = one_turn(
+            home.path(),
+            "FAKE_AGENT_DEAF=session/set_config_option=600",
+            "hello",
+            &SendOptions::default(),
+        )
+        .await;
+        let injections = acp_of(&state);
+        let receipts = injections.host.receipts().clone();
+        let Claim::Owned { qid } = receipts
+            .claim("client-1", Kind::Message, Source::Acp, Some(&id), now_ms())
+            .expect("claimed")
+        else {
+            panic!("a new claim");
+        };
+        receipts.complete("client-1", "{}", None, now_ms());
+        let options = SendOptions {
+            model: Some("openrouter:vendor/big".into()),
+            message_id: Some(qid),
+            ..SendOptions::default()
+        };
+        injections
+            .acp_send(state.providers.gate(), &id, &"x".repeat(1 << 20), &options)
+            .await
+            .expect("taken");
+        until("the agent process to go", || {
+            injections.acp_handle(&id).is_some_and(|handle| !handle.alive())
+        })
+        .await;
+
+        let receipt = receipts
+            .for_session(Source::Acp, &id, now_ms())
+            .into_iter()
+            .find(|receipt| receipt.client_message_id == "client-1")
+            .expect("its receipt");
+        assert_eq!(receipt.status, droppen_sessions::delivery::ReceiptStatus::Failed, "the message failed");
+        let lines = transcript_lines(&state.paths, &id).await;
+        let last = lines.last().expect("a transcript");
+        assert!(
+            last.contains(r#""type":"error""#),
+            "the transcript says why: {}",
+            &last[..last.len().min(200)]
+        );
+        let injection = injections
+            .acp_handle(&id)
+            .and_then(|handle| handle.injection())
+            .expect("the session's last turn");
+        assert_eq!(
+            injection.state,
+            droppen_sessions::InjectionRunState::Failed,
+            "and so does the session's row"
+        );
+    }
+
     /// Start a session on the stand-in, configured with `env`, with one
     /// message, and wait for its turn to end; its id and working directory.
     async fn one_turn(home: &Path, env: &str, text: &str, options: &SendOptions) -> (AcpAlone, String, PathBuf) {

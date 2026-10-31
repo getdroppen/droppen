@@ -694,7 +694,16 @@ impl Driver {
             };
         }
         self.record_choice().await;
-        self.conn.prompt(&self.agent_session, message.prompt).await?;
+        if let Err(error) = self.conn.prompt(&self.agent_session, message.prompt).await {
+            // The prompt did not reach the agent, so the turn never started:
+            // the message failed, and `died`, which this ends in, says so
+            // once, as for a switch it never answered.
+            self.runs
+                .host
+                .note_receipt(Source::Acp, &self.id, &message.id, droppen_sessions::delivery::ReceiptStatus::Failed);
+            self.start_turn();
+            return Err(error);
+        }
         self.runs
             .host.note_receipt(Source::Acp, &self.id, &message.id, droppen_sessions::delivery::ReceiptStatus::Sent);
         self.start_turn();
