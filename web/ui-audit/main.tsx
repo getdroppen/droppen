@@ -142,9 +142,10 @@ const device = (over: Partial<DeviceRowView>): DeviceRowView => ({
   accept: null,
   ...over,
 });
+// Two cards carry two badges each: this device and a host, and a host that is the main device.
 const devicesFixture: DeviceRowView[] = [
   device({ id: "m-1", name: "kilerd's Mac mini", self: true, kind: "computer", host: true, presence: "online", path: { relay: "sin-1", rttMs: 32 } }),
-  device({ id: "m-2", name: "studio", kind: "computer", host: true, presence: "online", path: { relay: "sin-2", rttMs: 74 } }),
+  device({ id: "m-2", name: "MacBook Pro", kind: "computer", host: true, main: true, presence: "online", path: { relay: "sin-2", rttMs: 74 } }),
   device({ id: "m-3", name: "macbook-air", kind: "computer", host: true, presence: "offline", copyAsOf: Date.now() - 3_600_000 }),
   device({ id: "d-1", name: "iPhone · Safari", presence: "online" }),
   device({ id: "d-2", status: "pending" }),

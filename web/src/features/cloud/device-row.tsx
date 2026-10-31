@@ -797,8 +797,10 @@ export function DeviceRow({
         「⋯」), rows, badges folded away. From 44rem: a card in the list's
         auto-fill grid, two lines inside a 1px frame (name/state left, action
         and 「⋯」 right); everything a careful look needs is in the disclosure
-        below. Hover darkens the card's frame and underlines the name — never
-        a full-width fill.
+        below. Badges take their own line under the name when they do not fit
+        beside it, so a narrow card cuts neither the name nor a badge. Hover
+        darkens the card's frame and underlines the name — never a full-width
+        fill.
       */}
       <details data-testid={`details-${id}`} open={openWarnings || undefined} className="group/details min-w-0">
         <summary
@@ -810,7 +812,7 @@ export function DeviceRow({
           )}
         >
           <Icon aria-hidden="true" className={cn("col-start-1 row-span-2 row-start-1 size-4 shrink-0 self-center @min-[44rem]/devices:row-span-1", view.presence === "offline" ? "text-faint" : "text-muted")} />
-          <span className="col-start-2 row-start-1 flex min-w-0 items-center gap-1.5 overflow-hidden">
+          <span className="col-start-2 row-start-1 flex min-w-0 flex-wrap items-center gap-1.5 overflow-hidden">
             <span
               data-testid={`name-${id}`}
               title={id}
@@ -819,7 +821,7 @@ export function DeviceRow({
               {name}
             </span>
             <ChevronRight aria-hidden="true" className="size-3 shrink-0 text-faint transition-transform group-open/details:rotate-90" />
-            <span className="hidden min-w-0 shrink items-center gap-1.5 overflow-hidden @min-[44rem]/devices:inline-flex">
+            <span data-testid="row-badges" className="hidden min-w-0 shrink flex-wrap items-center gap-1.5 overflow-hidden @min-[44rem]/devices:inline-flex">
               <RowBadges view={view} />
               {openWarnings && (
                 <span data-signal="warn" className="inline-flex h-3.5 shrink-0 items-center bg-warn px-1 font-mono text-[10px] leading-none font-semibold text-on-signal">
