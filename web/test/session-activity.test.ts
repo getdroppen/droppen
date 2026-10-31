@@ -19,6 +19,7 @@ import {
   subagentOutcome,
   turnProgress,
   willQueueSend,
+  workingProgress,
   type ActivityRow,
   type BackgroundTask,
   type ResidentInfo,
@@ -562,6 +563,40 @@ test("nothing to date the turn by is answered with nothing, not with a guess", (
 test("an unparseable injection clock falls back rather than printing NaN", () => {
   const items = [item({ kind: "text", role: "user", text: "go", timestamp: "2026-08-30T04:00:00Z" })];
   assert.equal(turnProgress(items, "not-a-date")?.startedAt, "2026-08-30T04:00:00Z");
+});
+
+/* ── which clock the working bar reads ──────────────────────────────────── */
+
+// A session two hours on from its last turn, whose agent is starting again for
+// a message sent a second ago: nothing of the new turn is in the transcript yet.
+const before = [
+  item({ kind: "text", role: "user", text: "old", timestamp: "2026-10-31T01:00:00Z" }),
+  item({ kind: "text", role: "assistant", text: "old answer", timestamp: "2026-10-31T01:01:00Z" }),
+];
+
+test("a restart is not timed by the turn before it", () => {
+  // The process starting for the message keeps the last turn's injection on
+  // view, ended; timing the bar from it read "last activity 2h ago · 2h 1m".
+  const ended = { state: "ok" as const, startedAt: "2026-10-31T01:00:00Z" };
+  assert.equal(workingProgress(before, ended, resident({ phase: "starting" })), null);
+  // After an idle exit there is no injection at all, and the transcript's last
+  // user message is the turn before's just the same.
+  assert.equal(workingProgress(before, null, resident({ phase: "starting" })), null);
+});
+
+test("a running turn is timed by its own injection", () => {
+  const running = { state: "running" as const, startedAt: "2026-10-31T03:00:00Z" };
+  assert.deepEqual(
+    workingProgress(before, running, resident({ phase: "working" })),
+    turnProgress(before, "2026-10-31T03:00:00Z"),
+  );
+});
+
+test("with no process of this server's at it, the transcript dates the turn", () => {
+  // A turn this instance did not start: the boundary a reader would use.
+  const ended = { state: "ok" as const, startedAt: "2026-10-30T00:00:00Z" };
+  assert.deepEqual(workingProgress(before, ended, null), turnProgress(before, null));
+  assert.deepEqual(workingProgress(before, undefined, null), turnProgress(before, null));
 });
 
 /* ── launch receipts, in words ──────────────────────────────────────────── */
