@@ -1646,6 +1646,59 @@ mod tests {
         until("the second turn's cancel", || was_sent(&dir, "session/cancel")).await;
     }
 
+    /// A message whose model the agent is switched to first reads as starting
+    /// while the switch runs: the driver has taken it off the queue, so it is
+    /// neither queued nor idle, and the session stays busy. A Stop meanwhile is
+    /// taken, not refused, and stops the turn the message starts. Held here at
+    /// `session/set_config_option`, for a message the stand-in holds open until
+    /// it is cancelled.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_message_reads_as_starting_while_its_model_is_switched() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let (state, id, dir) = one_turn(
+            home.path(),
+            "FAKE_AGENT_SLOW=session/set_config_option=3",
+            "hello",
+            &SendOptions::default(),
+        )
+        .await;
+        let injections = acp_of(&state);
+        let switch = SendOptions {
+            model: Some("openrouter:vendor/big".into()),
+            ..SendOptions::default()
+        };
+        injections
+            .acp_send(state.providers.gate(), &id, "wait for me", &switch)
+            .await
+            .expect("taken");
+        until("the switch", || was_sent(&dir, "session/set_config_option")).await;
+
+        let resident = state.providers.resident_info(Source::Acp, &id).expect("its agent process");
+        assert_eq!(resident.phase, droppen_sessions::ResidentPhase::Starting);
+        assert_eq!(
+            resident.activity(),
+            droppen_sessions::SessionActivity::Working,
+            "at work on the message, not idle"
+        );
+        assert_eq!(resident.queued, 0, "the message is off the queue");
+        assert!(injections.acp_handle(&id).expect("its handle").busy(), "the session is busy");
+        assert!(
+            state.providers.interrupt(Source::Acp, &id),
+            "a Stop during the switch is taken, not refused"
+        );
+
+        until("the turn's cancel", || was_sent(&dir, "session/cancel")).await;
+        let ended = || {
+            state
+                .providers
+                .injection_for(Source::Acp, &id)
+                .filter(|injection| injection.state != droppen_sessions::InjectionRunState::Running && injection.interrupted)
+        };
+        until("the turn to end as stopped", || ended().is_some()).await;
+        let resident = state.providers.resident_info(Source::Acp, &id).expect("its agent process");
+        assert_eq!(resident.phase, droppen_sessions::ResidentPhase::Idle, "and then the session is idle");
+    }
+
     /// Start a session on the stand-in, configured with `env`, with one
     /// message, and wait for its turn to end; its id and working directory.
     async fn one_turn(home: &Path, env: &str, text: &str, options: &SendOptions) -> (AcpAlone, String, PathBuf) {
