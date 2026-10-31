@@ -379,15 +379,72 @@ pub async fn load_session_state(drive: &Arc<Drive>, source: Source, id: &str) ->
     })
 }
 
+/// How many times [`StateAndTranscript::read`] reads a session whose
+/// transcript keeps moving before it serves the last read as it is.
+const STATE_READS: usize = 3;
+
+/// A session's state and transcript, of one transcript signature.
+struct StateAndTranscript {
+    state: SessionState,
+    file_path: PathBuf,
+    sig: String,
+    transcript: Arc<Transcript>,
+}
+
+impl StateAndTranscript {
+    /// Read a session's state and its transcript while the transcript
+    /// stands still, or `None` when the session no longer exists.
+    ///
+    /// The state is read off the transcript too (the row, `cliChoice`, the
+    /// context), so a turn written between the two reads would pair its items
+    /// with the state of the turn before. The signature is taken before the
+    /// state and again after the transcript; while it moved, both are read
+    /// again, [`STATE_READS`] times at most. A state that names another file
+    /// than the one signed (the session moved in between) has the file
+    /// looked up and read again too; the last read takes the file its state
+    /// names. A transcript gone by the second signature is served as read.
+    async fn read(drive: &Arc<Drive>, source: Source, id: &str) -> Option<Self> {
+        let mut file_path = drive.transcripts.find_file(&drive.paths, source, id).await?;
+        let mut sig = file_signature(&file_path).await?;
+        let mut reads = 0;
+        loop {
+            reads += 1;
+            let last = reads == STATE_READS;
+            let state = load_session_state(drive, source, id).await?;
+            if Path::new(&state.summary.file_path) != file_path {
+                file_path = if last {
+                    PathBuf::from(&state.summary.file_path)
+                } else {
+                    drive.transcripts.find_file(&drive.paths, source, id).await?
+                };
+                sig = file_signature(&file_path).await?;
+                if !last {
+                    continue;
+                }
+            }
+            let transcript = drive.transcripts.load(&drive.paths, source, &file_path, &sig).await;
+            match file_signature(&file_path).await {
+                Some(now) if now != sig && !last => sig = now,
+                _ => {
+                    return Some(Self {
+                        state,
+                        file_path,
+                        sig,
+                        transcript,
+                    })
+                }
+            }
+        }
+    }
+}
+
 /// Load a session's state plus a full first page of its transcript.
 pub async fn load_session_detail(drive: &Arc<Drive>, source: Source, id: &str) -> Option<SessionDetail> {
-    let state = load_session_state(drive, source, id).await?;
-    let file_path = PathBuf::from(&state.summary.file_path);
-    let sig = file_signature(&file_path).await?;
-    let items = drive.transcripts.load_items(&drive.paths, source, &file_path, &sig).await;
+    let StateAndTranscript { state, sig, transcript, .. } = StateAndTranscript::read(drive, source, id).await?;
+    let items = &transcript.items;
     // A changed signature may have rewritten an existing normalized item, so
     // only a snapshot is safe.
-    let page = transcript_page(&items, items.len());
+    let page = transcript_page(items, items.len());
     Some(SessionDetail {
         summary: state.summary,
         injection: droppen_http::openapi_ext::Nullable(state.injection),
@@ -610,10 +667,12 @@ pub async fn attach_session_feed_with(
     page_size: usize,
 ) -> Option<Attached> {
     let page_size = page_size.clamp(1, SESSION_PAGE_SIZE);
-    let state = load_session_state(drive, source, id).await?;
-    let file_path = PathBuf::from(&state.summary.file_path);
-    let sig = file_signature(&file_path).await?;
-    let transcript = drive.transcripts.load(&drive.paths, source, &file_path, &sig).await;
+    let StateAndTranscript {
+        state,
+        file_path,
+        sig,
+        transcript,
+    } = StateAndTranscript::read(drive, source, id).await?;
     let chain = transcript.chain().clone();
 
     // A resumed client is sent what it is missing and nothing else; its state
@@ -1551,4 +1610,30 @@ mod tests {
         assert_eq!(delta["prefixFp"], transcript.prefix_fp());
     }
 
+    /// A turn written while a session's state is read is not served beside
+    /// the state of the turn before: the detail and the feed's opening
+    /// snapshot each read one transcript's state and items.
+    #[tokio::test]
+    async fn the_state_and_the_items_are_of_one_transcript() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let id = "66666666-6666-4666-8666-666666666666";
+        let (paths, drive) = crate::fake::drive(dir.path());
+        crate::fake::session(&paths, id, "the first turn\n");
+        crate::fake::writes_next(&paths, id, "the second turn\n");
+        let detail = load_session_detail(&drive, crate::fake::SOURCE, id).await.expect("detail");
+        let model = detail.cli_choice.0.and_then(|choice| choice.model.0);
+        assert_eq!((model.as_deref(), detail.items.len()), (Some("the second turn"), 2), "the detail");
+
+        crate::fake::writes_next(&paths, id, "the third turn\n");
+        let registry = FeedRegistry::new();
+        let attached = attach_session_feed_with(&registry, &drive, crate::fake::SOURCE, id, None, SESSION_PAGE_SIZE)
+            .await
+            .expect("attached");
+        let snapshot: Value = serde_json::from_str(&attached.opening[0]).expect("json");
+        assert_eq!(
+            (snapshot["cliChoice"]["model"].as_str(), snapshot["items"].as_array().map(Vec::len)),
+            (Some("the third turn"), Some(3)),
+            "the snapshot"
+        );
+    }
 }

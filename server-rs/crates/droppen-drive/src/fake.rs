@@ -6,7 +6,8 @@
 //!
 //! A fake session is a file under the data directory's `fake-sessions`, one
 //! line per transcript item: each line is read back as a user's text
-//! ([`TranscriptItem::user_text`]).
+//! ([`TranscriptItem::user_text`]), and the last one names the model, as a
+//! CLI's newest entry names what it runs.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -15,6 +16,7 @@ use std::sync::Arc;
 use droppen_accounts::login::Logins;
 use droppen_auth::NotifyCredential;
 use droppen_http::identity::NotifyGrant;
+use droppen_http::openapi_ext::Nullable;
 use droppen_instance::instance::InstanceDirs;
 use droppen_instance::paths::{ClaudeRoot, Paths};
 use droppen_provider::models::{ModelList, Models, ModelsQuery};
@@ -65,6 +67,22 @@ pub(crate) fn session(paths: &Paths, id: &str, lines: &str) -> PathBuf {
     std::fs::create_dir_all(file.parent().expect("a parent")).expect("fake sessions dir");
     std::fs::write(&file, lines).expect("fake transcript");
     file
+}
+
+/// Have fake session `id`'s CLI write `lines` while the session's state is
+/// read: they are appended to its transcript, once, right after its model
+/// is next read. A turn that starts between two reads.
+pub(crate) fn writes_next(paths: &Paths, id: &str, lines: &str) {
+    let file = pending_write(&session_file(paths, id));
+    std::fs::create_dir_all(file.parent().expect("a parent")).expect("fake writes dir");
+    std::fs::write(&file, lines).expect("a fake write");
+}
+
+/// Where the lines a fake session's CLI writes next wait: beside
+/// `fake-sessions`, so that no listing takes them for a session.
+fn pending_write(transcript: &Path) -> PathBuf {
+    let sessions = transcript.parent().expect("fake-sessions");
+    sessions.with_file_name("fake-writes").join(transcript.file_name().expect("a file name"))
 }
 
 /// Turns `from..from + turns` of a fake session: four items each, the
@@ -152,8 +170,23 @@ impl Transcripts for FakeReader {
         })
     }
 
-    fn cli_choice<'a>(&'a self, _file_path: &'a Path) -> BoxFuture<'a, Option<CliChoice>> {
-        Box::pin(std::future::ready(None))
+    // The last line names the model; then a write made pending lands
+    // ([`writes_next`]).
+    fn cli_choice<'a>(&'a self, file_path: &'a Path) -> BoxFuture<'a, Option<CliChoice>> {
+        Box::pin(async move {
+            let model = tokio::fs::read_to_string(file_path).await.ok()?.lines().last()?.to_string();
+            let pending = pending_write(file_path);
+            if let Ok(lines) = std::fs::read_to_string(&pending) {
+                std::fs::remove_file(&pending).expect("a fake write lands once");
+                let mut transcript = std::fs::OpenOptions::new().append(true).open(file_path).expect("a fake transcript");
+                std::io::Write::write_all(&mut transcript, lines.as_bytes()).expect("a fake write");
+            }
+            Some(CliChoice {
+                model: Nullable(Some(model)),
+                effort: Nullable(None),
+                at: Nullable(None),
+            })
+        })
     }
 
     fn context<'a>(&'a self, _file_path: &'a Path) -> BoxFuture<'a, Option<ContextUsage>> {
