@@ -103,5 +103,6 @@ composer 的附加文件/拍照与 ghost 选项为 24px，主发送按钮为 26p
 | V10 | 主操作按钮为 `bg-fg text-bg`；页面内同时可见的 primary 不超过 1 个（弹窗内 1 个） | 扫描 `[data-variant=primary]` | 分屏的每个窗格各算一页 |
 | V11 | 分区标题为 sans 16px/24、600（可配 10px mono 编号），不与 badge / meta 同字号；标题下只有一条 1px 线，分组之间用留白 | `[data-section-head] h2` 的 computed 字号 / 行高 / 字重；页内 `border-b` 计线 | 折叠的「更多设置」「已移除的设备」是 13px muted 的补充标题，不算分区标题 |
 | V12 | 「我的设备」每行首行固定 56px（`h-14`），状态最多一行、详情在 `<details>`；离线 / 待批准 / 已移除不改变行高，待批准与已移除用独立紧凑行 | `[data-testid^=device-]` 首行高度与 `[data-status]` 结构 | — |
+| V13 | 「我的设备」卡片头部：名称不被截断，徽章完整可见；名称与徽章放不下时，徽章换到名称下一行，名称和徽章都不裁切 | 卡片名称的 `scrollWidth` ≤ `clientWidth`；`[data-testid=row-badges]` 内每个可见徽章位于该行框内 | 容器 < 44rem 的行式布局不显示徽章 |
 
 字号阶梯另由 `web/test/ui-type-scale.test.ts` 守住：`features/landing` 源码里不得出现固定的 `text-[Npx]` 或应用的 `text-2xs`；应用页现有的 13/10/9px 是历史值，不在此检查内。

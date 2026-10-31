@@ -481,6 +481,26 @@ async function auditDevices(theme, view) {
           : null,
         summary: summary ? { rect: rect(summary), bg: cs(summary).backgroundColor } : null,
         name: name ? { decoration: cs(name).textDecorationLine } : null,
+        heads: [...document.querySelectorAll('li[data-testid^="device-"]')]
+          .filter((c) => c.dataset.status === "active")
+          .map((c) => {
+            const headName = c.querySelector('[data-testid^="name-"]');
+            const group = c.querySelector('[data-testid="row-badges"]');
+            const box = group?.getBoundingClientRect() ?? null;
+            return {
+              name: (headName?.textContent ?? "").trim(),
+              nameWidth: headName?.clientWidth ?? 0,
+              nameFull: headName ? headName.scrollWidth <= headName.clientWidth + 1 : true,
+              badges: group
+                ? [...group.children]
+                    .filter((b) => b.getBoundingClientRect().width > 0)
+                    .map((b) => {
+                      const r = b.getBoundingClientRect();
+                      return { text: (b.textContent ?? "").trim(), width: +r.width.toFixed(1), whole: box ? r.left >= box.left - 0.5 && r.right <= box.right + 0.5 && r.top >= box.top - 0.5 && r.bottom <= box.bottom + 0.5 : true };
+                    })
+                : [],
+            };
+          }),
         cards: [...document.querySelectorAll('li[data-testid^="device-"]')].map((c) => rect(c)),
         overflow: {
           doc: document.documentElement.scrollWidth,
@@ -523,6 +543,10 @@ async function auditDevices(theme, view) {
     if (before.card?.border === hover.card?.border) fail("devices.hover-frame", hover.card?.border, "a border change on hover");
     if (hover.summary?.bg !== before.summary?.bg) fail("devices.hover-fill", hover.summary?.bg, "no row-wide fill on hover");
     if (hover.name?.decoration !== "underline") fail("devices.hover-name", hover.name?.decoration, "an underlined name on hover");
+    for (const head of before.heads) {
+      if (!head.nameFull) fail("devices.head-name", { name: head.name, width: head.nameWidth }, "the name fits its head, not truncated");
+      for (const badge of head.badges) if (!badge.whole) fail("devices.head-badge", badge, "the badge is drawn whole inside the head");
+    }
   }
   if (before.overflow.doc > before.overflow.win + 1 || before.overflow.listScroll > before.overflow.listClient + 1) {
     fail("devices.overflow", before.overflow, "no horizontal overflow");

@@ -49,9 +49,8 @@ live dots hold still) and animations stopped.
   heading and device grid, `PairingAttempt`'s offer body and footer. Keep
   them in step when those pages change.
 - Left out: the plan usage and 「这台设备」 sections between the heading and the
-  list (they would push the ledger below the fold), the account notices
-  (none apply), and the main-device badge (next to "can run AI" it cuts an
-  English name short in a 1280px card).
+  list (they would push the ledger below the fold), and the account notices
+  (none apply).
 
 `web/src/index.css` excludes `web/tour` from Tailwind's scan
 (`@source not "../tour"`), so the fixture cannot change the production

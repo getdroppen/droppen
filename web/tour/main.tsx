@@ -146,12 +146,13 @@ const host = (id: MachineKey, over: Partial<DeviceRowView>): DeviceRowView => {
 };
 
 // `DevicesPanel`'s order: this device, then the devices that run AI, then the other browsers and phones.
-// None is marked the main device: next to "can run AI" its badge cuts an English name short in a 1280px card.
+// The MacBook Pro is the account's main device: two badges share its head, the tightest head the list
+// draws (its action button leaves the name less room than the browser's head gets).
 const browser = view({ id: BROWSER, name: "Mac · Chrome", self: viewer === "browser", kind: viewer === "browser" ? "browser" : "browserOrPhone", full: true, presence: viewer === "browser" ? "online" : null });
 const phone = view({ id: PHONE, name: "iPhone · Safari", self: viewer === "phone", kind: viewer === "phone" ? "phone" : "browserOrPhone", full: true, presence: viewer === "phone" ? "online" : null });
 const devices: DeviceRowView[] = [
   viewer === "phone" ? phone : browser,
-  host(MACBOOK, { presence: "online", path: { relay: "fra-1", rttMs: 18 } }),
+  host(MACBOOK, { presence: "online", path: { relay: "fra-1", rttMs: 18 }, main: true }),
   host(SERVER, { presence: "online", path: { relay: "fra-1", rttMs: 24 } }),
   host(MINI, { presence: "offline", copyAsOf: now - 26 * 3_600_000, lastSeenMs: now - 26 * 3_600_000 }),
   viewer === "phone" ? browser : phone,
