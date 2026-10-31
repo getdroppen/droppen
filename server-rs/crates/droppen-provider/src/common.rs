@@ -133,10 +133,10 @@ pub struct ResidentState {
     /// The model the process runs, as its CLI named it (Claude Code's
     /// `system:init`), else as it was asked for; `None` when unknown.
     ///
-    /// The feed's one record of a long-context ask: Claude Code runs
-    /// `<model>[1m]` against the 1M window and writes `<model>` in the
-    /// transcript, so only the process' own name says which window a reading
-    /// was taken against (`droppen_sessions::context::ContextUsage::run_by`).
+    /// The feed's record of a long-context ask while the process runs: Claude
+    /// Code runs `<model>[1m]` against the 1M window and writes `<model>` in
+    /// the transcript, so the process' own name is what says which window a
+    /// reading was taken against (`droppen_sessions::context::ContextUsage::run_by`).
     /// Not on the wire.
     pub model: Option<String>,
 }

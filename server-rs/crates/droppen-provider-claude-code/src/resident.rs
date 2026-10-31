@@ -10076,10 +10076,9 @@ done
     }
 
     /// `init` opens every turn with the model in force for it, so a `/model`
-    /// sent as a message is heard at the next turn (claude 2.1.312). A switch
-    /// *back* to the name the process was spawned with is heard too: it used
-    /// to leave the answer before it in place, and the process went on being
-    /// described by a model it had stopped running.
+    /// sent as a message is followed at the next turn (claude 2.1.312). A
+    /// switch back to the name the process was spawned with is followed too,
+    /// or the process would be described by a model it no longer runs.
     #[tokio::test]
     async fn a_model_switched_inside_the_process_is_followed_there_and_back() {
         let body = format!(

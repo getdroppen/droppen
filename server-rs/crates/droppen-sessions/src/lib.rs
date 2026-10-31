@@ -762,14 +762,14 @@ impl CliChoice {
         None
     }
 
-    /// The choice with its model named as the session's live process runs it
-    /// (`running`): the long-context marker the transcript leaves out goes back
-    /// on when the two name the same model, as on the reading
-    /// ([`context::ContextUsage::run_by`]). Without it a composer that follows
-    /// the transcript offers the bare id, and the next message asks for the
-    /// 200k variant.
-    pub fn run_by(mut self, running: Option<&str>) -> Self {
-        if let Some(named) = self.model.0.as_deref().zip(running).and_then(|(model, running)| model.long_context_as(running)) {
+    /// The choice with its model named as the session's process runs it or the
+    /// next message asks for it (`asked`): the long-context marker the
+    /// transcript leaves out goes back on when the two name the same model, as
+    /// on the reading ([`context::ContextUsage::run_by`]). Without it a
+    /// composer that follows the transcript offers the bare id, and the next
+    /// message asks for the 200k variant.
+    pub fn run_by(mut self, asked: Option<&str>) -> Self {
+        if let Some(named) = self.model.0.as_deref().zip(asked).and_then(|(model, asked)| model.long_context_as(asked)) {
             self.model = Nullable(Some(named));
         }
         self

@@ -71,15 +71,16 @@ pub trait ModelIdExt {
     /// the CLI sends to the API and records.
     fn without_long_context_marker(&self) -> &str;
 
-    /// `running`, when it is this recorded id asked for with the marker.
+    /// `asked`, when it is this recorded id asked for with the marker.
     ///
     /// Claude Code takes the long-context variant of a model as `<model>[1m]`,
     /// runs it against the 1M window, and writes `<model>` on every transcript
-    /// entry. The process' own name for its model (its `system:init`) keeps the
-    /// marker, so a recorded id that is that name less the marker was run with
-    /// the marker. `None` when `running` names another model or no variant, and
+    /// entry. What the CLI is asked for keeps the marker (the process' own
+    /// name for its model in its `system:init`, or what the next message asks
+    /// for), so a recorded id that is that name less the marker was run with
+    /// the marker. `None` when `asked` names another model or no variant, and
     /// when the recorded id already says which variant it is.
-    fn long_context_as(&self, running: &str) -> Option<String>;
+    fn long_context_as(&self, asked: &str) -> Option<String>;
 }
 
 impl ModelIdExt for str {
@@ -96,11 +97,11 @@ impl ModelIdExt for str {
         id
     }
 
-    fn long_context_as(&self, running: &str) -> Option<String> {
-        let model = running.without_long_context_marker();
-        let marked = model.len() < running.len();
+    fn long_context_as(&self, asked: &str) -> Option<String> {
+        let model = asked.without_long_context_marker();
+        let marked = model.len() < asked.len();
         let unmarked = self.without_long_context_marker().len() == self.len();
-        (marked && unmarked && model.eq_ignore_ascii_case(self)).then(|| running.to_string())
+        (marked && unmarked && model.eq_ignore_ascii_case(self)).then(|| asked.to_string())
     }
 }
 
@@ -121,17 +122,18 @@ pub struct ContextUsage {
 }
 
 impl ContextUsage {
-    /// The reading with its model named as the session's live process runs it
-    /// (`running`): the long-context marker the transcript leaves out is put
-    /// back when the two name the same model ([`ModelIdExt::long_context_as`]).
+    /// The reading with its model named as the session's process runs it or
+    /// the next message asks for it (`asked`): the long-context marker the
+    /// transcript leaves out is put back when the two name the same model
+    /// ([`ModelIdExt::long_context_as`]).
     ///
     /// A session asked for `deepseek-v4.1-flash[1m]` records
     /// `deepseek-v4.1-flash`, which [`context_window`] reads as a 200k model.
-    /// The ask is only on the process, so the process' name is what restores
-    /// it. A reading of another model, taken before the session was switched,
-    /// keeps its own name and its own window.
-    pub fn run_by(mut self, running: Option<&str>) -> Self {
-        if let Some(named) = self.model.as_deref().zip(running).and_then(|(model, running)| model.long_context_as(running)) {
+    /// The marker is only in what the CLI is asked for, so that is what
+    /// restores it. A reading of another model, taken before the session was
+    /// switched, keeps its own name and its own window.
+    pub fn run_by(mut self, asked: Option<&str>) -> Self {
+        if let Some(named) = self.model.as_deref().zip(asked).and_then(|(model, asked)| model.long_context_as(asked)) {
             self.model = Some(named);
         }
         self
