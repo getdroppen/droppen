@@ -5,7 +5,7 @@ import { Terminal } from "@xterm/xterm";
 import { useTranslation } from "react-i18next";
 import { LiveDot } from "@/components/live-dot";
 import { useShowingCopy } from "@/features/machines/copy-mode";
-import { isTerminalGoneFrame, RECONNECT_STABLE_MS, reconnectDelay } from "@/features/terminals/reconnect";
+import { isTerminalGoneFrame, RECONNECT_STABLE_MS, reconnectDelay, terminalInput } from "@/features/terminals/reconnect";
 import { useEnsureLive, useMachineRuntime } from "@/lib/machines/context";
 import type { SocketLike } from "@/lib/transport";
 import { noteWsFailure } from "@/lib/ws-url";
@@ -85,6 +85,7 @@ export function XtermPane({ id, visible }: { id: string; visible: boolean }) {
     const send = (message: unknown) => {
       if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
     };
+    const input = terminalInput(term, (data) => send({ type: "input", data }));
 
     const connect = () => {
       // A login-protected server wants a one-shot ticket in the URL, which is a
@@ -136,6 +137,7 @@ export function XtermPane({ id, visible }: { id: string; visible: boolean }) {
       };
       ws.onmessage = (e) => {
         if (typeof e.data !== "string") return;
+        const replay = firstFrame;
         if (firstFrame) {
           firstFrame = false;
           if (isTerminalGoneFrame(e.data)) {
@@ -151,7 +153,8 @@ export function XtermPane({ id, visible }: { id: string; visible: boolean }) {
           pendingReset = false;
           term.reset();
         }
-        term.write(e.data);
+        if (replay) input.writeReplay(e.data);
+        else term.write(e.data);
       };
       ws.onclose = () => {
         if (disposed || socket !== ws) return;
@@ -169,7 +172,6 @@ export function XtermPane({ id, visible }: { id: string; visible: boolean }) {
     };
     connect();
 
-    const dataSub = term.onData((data) => send({ type: "input", data }));
     const resizeSub = term.onResize(({ cols, rows }) => send({ type: "resize", cols, rows }));
 
     // Coalesce refit into one per frame; split-drag fires the observer rapidly.
@@ -187,7 +189,7 @@ export function XtermPane({ id, visible }: { id: string; visible: boolean }) {
       clearTimeout(timer);
       observer.disconnect();
       cancelAnimationFrame(raf);
-      dataSub.dispose();
+      input.dispose();
       resizeSub.dispose();
       socket?.close();
       unhold();

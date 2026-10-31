@@ -8,6 +8,7 @@ import { devTools } from "./build/dev-tools";
 import { hubPagesSet, localBoot } from "./build/local-boot";
 import { pluginShared } from "./build/plugin-shared";
 import { fillServiceWorker, type LanguageFiles } from "./build/service-worker";
+import { BUILD_TARGET } from "./build/target";
 import { thirdPartyNotices } from "./build/third-party-notices.mjs";
 import { guardBootChunks, vendorChunk } from "./build/vendor-chunks";
 import { viewPrefetch } from "./build/view-prefetch";
@@ -211,6 +212,7 @@ function languageChunks(bundle: Rollup.OutputBundle, boot: ReadonlySet<string>):
 
 export default defineConfig({
   build: {
+    target: BUILD_TARGET,
     rollupOptions: {
       output: { manualChunks: vendorChunk },
     },
