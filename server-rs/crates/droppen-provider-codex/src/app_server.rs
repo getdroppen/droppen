@@ -1627,6 +1627,22 @@ impl Driver {
                 let _ = reply.send(Ok(()));
             }
             Cmd::Interrupt => {
+                // A Stop with nothing to stop is dropped, not kept: no turn
+                // running, none being started, and none about to start, the
+                // queue being empty or paused behind a message the process
+                // before this one left unanswered. Kept, `interrupt_requested`
+                // would stop whichever turn the user starts next, however much
+                // later, and a restart would read it back from the journal.
+                // The route has answered already that the Stop was taken: one
+                // is taken while the app server starts ([`Handle::interrupt`]),
+                // before anybody can tell whether the queue will be paused.
+                // The message it was sent for waits in the paused queue.
+                let stoppable = self.state.active.is_some()
+                    || self.state.queue.iter().any(|q| q.request.is_some())
+                    || (!self.state.paused && !self.state.queue.is_empty());
+                if !stoppable {
+                    return Ok(());
+                }
                 self.state.interrupt_requested = true;
                 self.checkpoint();
                 self.send_interrupt().await?;
@@ -2715,6 +2731,62 @@ mod tests {
         h.event(json!({"method":"turn/started","params":{"threadId":"test-thread","turn":{"id":"turn-1"}}}))
             .await;
         assert_eq!(h.request().await["method"], "turn/interrupt");
+    }
+
+    /// A Stop that reaches the driver with nothing to stop is dropped, not
+    /// kept for a later turn. Here a respawn's queue is paused behind a
+    /// message the dead app server may have taken, with the message sent while
+    /// the new one started behind it. The user then withdraws the stale
+    /// message and sends the other now: that turn runs, and nothing stops it.
+    #[tokio::test]
+    async fn a_stop_with_nothing_to_stop_is_not_kept_for_a_later_turn() {
+        let mut h = Harness::new().await;
+        // As a respawn reads its state back: the message the old app server
+        // may have taken, uncertain, and the queue paused behind it.
+        let stale = h.enqueue("possibly delivered").await;
+        h.driver.state.queue[0].uncertain = true;
+        h.driver.state.paused = true;
+        let sent = h.enqueue("sent while the app server started").await;
+        h.driver.command(Cmd::Interrupt).await.unwrap();
+        assert!(!h.driver.state.interrupt_requested, "nothing runs, so no Stop is kept");
+
+        let (reply, dropped) = oneshot::channel();
+        h.driver
+            .command(Cmd::Queue {
+                id: stale,
+                steer: false,
+                reply,
+            })
+            .await
+            .unwrap();
+        assert_eq!(dropped.await.unwrap(), QueueOutcome::Done);
+        let (reply, _sent_now) = oneshot::channel();
+        h.driver
+            .command(Cmd::Queue {
+                id: sent,
+                steer: true,
+                reply,
+            })
+            .await
+            .unwrap();
+        assert_eq!(h.request().await["method"], "turn/start");
+        h.event(json!({"method":"turn/started","params":{"threadId":"test-thread","turn":{"id":"turn-9","status":"inProgress"}}}))
+            .await;
+        let mut line = String::new();
+        let written = tokio::time::timeout(Duration::from_millis(300), h.input.read_line(&mut line)).await;
+        assert!(written.is_err(), "nothing interrupts the turn: {line}");
+        assert!(h.driver.state.active.is_some(), "the turn runs");
+    }
+
+    /// A Stop the driver reads after the turn it meant has ended, with nothing
+    /// queued, is dropped too: kept, it would stop the next turn.
+    #[tokio::test]
+    async fn a_stop_read_after_its_turn_ended_is_not_kept() {
+        let mut h = Harness::new().await;
+        h.start().await;
+        h.complete("completed").await;
+        h.driver.command(Cmd::Interrupt).await.unwrap();
+        assert!(!h.driver.state.interrupt_requested, "nothing runs, so no Stop is kept");
     }
 
     #[tokio::test]
