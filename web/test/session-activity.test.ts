@@ -576,7 +576,7 @@ const before = [
 
 test("a restart is not timed by the turn before it", () => {
   // The process starting for the message keeps the last turn's injection on
-  // view, ended; timing the bar from it read "last activity 2h ago · 2h 1m".
+  // view, ended; timed from it, the bar would read "last activity 2h ago · 2h 1m".
   const ended = { state: "ok" as const, startedAt: "2026-10-31T01:00:00Z" };
   assert.equal(workingProgress(before, ended, resident({ phase: "starting" })), null);
   // After an idle exit there is no injection at all, and the transcript's last

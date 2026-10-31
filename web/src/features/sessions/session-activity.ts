@@ -369,7 +369,7 @@ export function turnProgress(
  *
  * Only a running injection dates it. One that has ended is the turn before,
  * which a process starting again for the next message keeps on view so the
- * row still says how that turn went; dating the bar from it read
+ * row still says how that turn went; dated from it, the bar would read
  * "last activity 2h ago · 2h 1m" for a message sent a second ago. While this
  * server's process is at work with no turn running — starting for the
  * message — nothing dates the turn yet, and the bar says only that the agent
