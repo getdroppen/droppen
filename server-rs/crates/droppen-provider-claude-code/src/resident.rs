@@ -11669,7 +11669,13 @@ done
     /// whatever comes next.
     #[tokio::test]
     async fn a_stop_cancels_the_question_it_was_blocked_on() {
-        let harness = Harness::ordinary_with(&asks_a_question()).await;
+        // No rung in the test's lifetime: the stop under test is the
+        // request claude answers. A rung that fired first, on a slow
+        // machine, would signal claude before it had read the request —
+        // and the process that asked the question would die, taking its
+        // resident with it, so the answer afterwards would be `NoResident`
+        // rather than the `Unknown` a cancelled question deserves.
+        let harness = Harness::start(&asks_a_question(), NEVER_SETTLES, NEVER_SETTLES, NEVER_SETTLES).await;
         until("the init", || harness.state().phase == Phase::Idle).await;
         harness.send("pick for me");
         until("the question", || harness.state().question.is_some()).await;
