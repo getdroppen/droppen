@@ -315,6 +315,8 @@ struct HubSeen {
     no_replay: bool,
     /// Every message the relay sent, in order.
     messages: Vec<Value>,
+    /// The code of each Close the relay sent (`None`: a Close without one).
+    closes: Vec<Option<u16>>,
     /// Answer a `login` with `unknown_relay` until the relay registers.
     unknown: bool,
 }
@@ -348,7 +350,14 @@ async fn hub_conn(socket: WebSocket, seen: Arc<Mutex<HubSeen>>, origin: String, 
     loop {
         tokio::select! {
             m = stream.next() => {
-                let Some(Ok(AxMessage::Text(t))) = m else { break };
+                let t = match m {
+                    Some(Ok(AxMessage::Text(t))) => t,
+                    Some(Ok(AxMessage::Close(frame))) => {
+                        seen.lock().unwrap().closes.push(frame.map(|f| f.code));
+                        break;
+                    }
+                    _ => break,
+                };
                 let v: Value = serde_json::from_str(t.as_str()).unwrap();
                 let unknown = {
                     let mut s = seen.lock().unwrap();
@@ -968,6 +977,30 @@ async fn a_renewed_ticket_keeps_a_connection_and_shutting_down_says_goaway_first
     assert_eq!(goaway["t"], "goaway", "{goaway}");
     assert_eq!(dev.closed_within(SECS).await, Some(1012));
     assert!(r.done.await.unwrap().is_ok());
+}
+
+/// A relay stopped with its control link up tells the Hub until when it is
+/// draining on that link, and the Hub has read it by the time the relay has
+/// stopped; the link then closes as going away (1001) (#319).
+#[tokio::test]
+async fn a_stopping_relay_tells_the_hub_it_is_draining_before_its_link_closes() {
+    let seen = Arc::new(Mutex::new(HubSeen::default()));
+    let hub = FakeHub::start_on(None, seen.clone()).await;
+    let mut r = relay("sin-1", Some(&hub.origin), Timing::default(), |_| {}).await;
+    // The first health goes out once the link is up.
+    let health = |v: &Value| v["t"] == "health";
+    assert!(eventually(SECS, || seen.lock().unwrap().messages.iter().any(health)).await, "the link is up");
+    let stopped_ms = now_ms();
+    r.stop.take().unwrap().send(()).unwrap();
+    assert!(r.done.await.unwrap().is_ok());
+    let messages = seen.lock().unwrap().messages.clone();
+    let draining = messages.iter().find(|v| v["t"] == "draining").cloned();
+    let draining = draining.unwrap_or_else(|| panic!("no draining for the Hub: {messages:?}"));
+    let until_ms = draining["until_ms"].as_u64().unwrap();
+    assert!((stopped_ms + 300..=now_ms() + 300).contains(&until_ms), "{until_ms} is the drain's end");
+    assert_eq!(blank(draining, &["until_ms"]), json!({"t": "draining", "until_ms": 0}));
+    assert_eq!(seen.lock().unwrap().closes, vec![Some(1001)], "the link's close says why");
+    hub.stop.cancel();
 }
 
 // ---------------------------------------------------------------- review regressions

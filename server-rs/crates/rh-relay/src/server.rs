@@ -114,6 +114,9 @@ pub struct Server {
     next_conn: AtomicU64,
     pub meter: Meter,
     pub shutdown: CancellationToken,
+    /// Stops the control link to the Hub: once a stopping relay has told the
+    /// Hub it is draining, and with `shutdown`.
+    pub(crate) hub_link: CancellationToken,
     pub tasks: TaskTracker,
     draining: AtomicBool,
     /// Since when the Hub's control link has been down (`None`: up).
@@ -130,12 +133,14 @@ impl Server {
     pub fn new(config: Config) -> Arc<Self> {
         let keys = config.pinned_keys.clone().unwrap_or_default();
         let keep = (config.timing.usage_keep.as_secs_f64() / config.timing.usage_every.as_secs_f64().max(0.001)).ceil() as usize;
+        let shutdown = CancellationToken::new();
         Arc::new(Self {
             keys: RwLock::new(keys),
             inner: Mutex::new(Inner::default()),
             next_conn: AtomicU64::new(1),
             meter: Meter::new(now_ms(), keep.max(1)),
-            shutdown: CancellationToken::new(),
+            hub_link: shutdown.child_token(),
+            shutdown,
             tasks: TaskTracker::new(),
             draining: AtomicBool::new(false),
             link_down_since: Mutex::new(Some(Instant::now())),

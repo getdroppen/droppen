@@ -29,6 +29,8 @@ use rh_proto::ticket::TicketRole;
 use rh_proto::wire::relay::RelayToHub;
 use serde_json::Value;
 use tokio::net::TcpStream;
+use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
+use tokio_tungstenite::tungstenite::protocol::CloseFrame;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
@@ -46,6 +48,9 @@ const STEP: Duration = Duration::from_secs(20);
 /// sends a scoped revocation only to a relay that names it.
 pub const FEATURE_REVOKE_ROLE: &str = "revoke-role/1";
 const BACKOFF_MIN: Duration = Duration::from_millis(500);
+/// How long a stopping relay's control link waits to send what is queued
+/// for the Hub and for the Hub's close.
+const CLOSE_WAIT: Duration = Duration::from_secs(2);
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Why the link ended.
@@ -57,15 +62,15 @@ pub enum Ended {
     Fatal(String),
 }
 
-/// Keep the control link up until a fatal refusal (the reason) or `stop`.
+/// Keep the control link up until a fatal refusal (the reason) or until it
+/// is stopped: a link that is up then sends what is queued for the Hub (a
+/// stopping relay's `draining`) and closes, waiting for the Hub's close at
+/// most [`CLOSE_WAIT`].
 pub async fn run(server: Arc<Server>) -> String {
     let mut backoff = BACKOFF_MIN;
     loop {
         let started = Instant::now();
-        let ended = tokio::select! {
-            e = session(&server) => e,
-            () = server.shutdown.cancelled() => return "shutting down".into(),
-        };
+        let ended = session(&server).await;
         server.set_link(None);
         match ended {
             Ended::Fatal(reason) => return reason,
@@ -78,7 +83,7 @@ pub async fn run(server: Arc<Server>) -> String {
         backoff = (backoff * 2).min(server.config.timing.uplink_backoff_max.max(BACKOFF_MIN));
         tokio::select! {
             () = tokio::time::sleep(wait) => {}
-            () = server.shutdown.cancelled() => return "shutting down".into(),
+            () = server.hub_link.cancelled() => return "shutting down".into(),
         }
     }
 }
@@ -101,11 +106,28 @@ async fn next_json(source: &mut Source) -> Result<Value, Ended> {
     }
 }
 
-async fn send(sink: &mut Sink, message: &RelayToHub) -> Result<(), Ended> {
-    let text = serde_json::to_string(message).expect("relay messages serialize");
-    sink.send(Message::Text(crate::traffic::sent(text).into()))
-        .await
-        .map_err(|e| Ended::Retry(e.to_string()))
+/// Sending on the control link.
+trait LinkSinkExt {
+    /// Send `text` to the Hub. A Hub that has not taken it within [`STEP`]
+    /// stopped reading: the link ends as a closed one does, rather than hold
+    /// up all else it does, a stop among them.
+    async fn send_text(&mut self, text: String) -> Result<(), Ended>;
+
+    /// Send `message`, as [`LinkSinkExt::send_text`] does.
+    async fn send_message(&mut self, message: &RelayToHub) -> Result<(), Ended>;
+}
+
+impl LinkSinkExt for Sink {
+    async fn send_text(&mut self, text: String) -> Result<(), Ended> {
+        match tokio::time::timeout(STEP, self.send(Message::Text(crate::traffic::sent(text).into()))).await {
+            Ok(sent) => sent.map_err(|e| Ended::Retry(e.to_string())),
+            Err(_) => Err(Ended::Retry("the Hub did not take a message in time".into())),
+        }
+    }
+
+    async fn send_message(&mut self, message: &RelayToHub) -> Result<(), Ended> {
+        self.send_text(serde_json::to_string(message).expect("relay messages serialize")).await
+    }
 }
 
 /// The signature of a relay sign-in: `HubLogin {role: Relay, account: "",
@@ -162,16 +184,13 @@ pub async fn dial(config: &Config) -> Result<(Sink, Source, [u8; 32]), Ended> {
 pub async fn sign_in(config: &Config, sink: &mut Sink, source: &mut Source, nonce: [u8; 32]) -> Result<Vec<(u8, [u8; 32])>, Ended> {
     let hub = config.hub.clone().unwrap_or_default();
     let time_ms = now_ms();
-    send(
-        sink,
-        &RelayToHub::Login {
-            id: config.id.clone(),
-            time_ms,
-            sig: login_sig(&config.key, &config.id, &hub, nonce, time_ms),
-            version: VERSION.into(),
-            features: vec![FEATURE_REVOKE_ROLE.into()],
-        },
-    )
+    sink.send_message(&RelayToHub::Login {
+        id: config.id.clone(),
+        time_ms,
+        sig: login_sig(&config.key, &config.id, &hub, nonce, time_ms),
+        version: VERSION.into(),
+        features: vec![FEATURE_REVOKE_ROLE.into()],
+    })
     .await?;
     let mut answer = next_json(source).await?;
     if answer["t"] == "error" && answer["code"] == "unknown_relay" {
@@ -183,18 +202,15 @@ pub async fn sign_in(config: &Config, sink: &mut Sink, source: &mut Source, nonc
         };
         let time_ms = now_ms();
         tracing::info!(id = %config.id, origin = %config.origin, "registering with the Hub");
-        send(
-            sink,
-            &RelayToHub::Register {
-                token: token.clone(),
-                sign_key: hex(&config.key.verifying_key().to_bytes()),
-                origin: config.origin.clone(),
-                version: VERSION.into(),
-                time_ms,
-                sig: login_sig(&config.key, &config.id, &hub, nonce, time_ms),
-                features: vec![FEATURE_REVOKE_ROLE.into()],
-            },
-        )
+        sink.send_message(&RelayToHub::Register {
+            token: token.clone(),
+            sign_key: hex(&config.key.verifying_key().to_bytes()),
+            origin: config.origin.clone(),
+            version: VERSION.into(),
+            time_ms,
+            sig: login_sig(&config.key, &config.id, &hub, nonce, time_ms),
+            features: vec![FEATURE_REVOKE_ROLE.into()],
+        })
         .await?;
         answer = next_json(source).await?;
     }
@@ -235,13 +251,17 @@ fn keys_of(v: &Value) -> Vec<(u8, [u8; 32])> {
 }
 
 async fn session(server: &Arc<Server>) -> Ended {
-    let (mut sink, mut source, nonce) = match dial(&server.config).await {
-        Ok(d) => d,
-        Err(e) => return e,
+    let signed_in = async {
+        let (mut sink, mut source, nonce) = dial(&server.config).await?;
+        let keys = sign_in(&server.config, &mut sink, &mut source, nonce).await?;
+        Ok((sink, source, keys))
     };
-    let keys = match sign_in(&server.config, &mut sink, &mut source, nonce).await {
-        Ok(k) => k,
-        Err(e) => return e,
+    let (mut sink, mut source, keys) = tokio::select! {
+        signed_in = signed_in => match signed_in {
+            Ok(s) => s,
+            Err(e) => return e,
+        },
+        () = server.hub_link.cancelled() => return Ended::Fatal("shutting down".into()),
     };
     server.set_keys(keys);
     tracing::info!(id = %server.config.id, hub = ?server.config.hub, "signed in on the Hub");
@@ -268,8 +288,8 @@ async fn session(server: &Arc<Server>) -> Ended {
                 }
             }
             Some(text) = rx.recv() => {
-                if sink.send(Message::Text(crate::traffic::sent(text).into())).await.is_err() {
-                    return Ended::Retry("the link closed".into());
+                if let Err(end) = sink.send_text(text).await {
+                    return end;
                 }
             }
             _ = health.tick() => {
@@ -287,18 +307,44 @@ async fn session(server: &Arc<Server>) -> Ended {
                     load: f64::from(server.load()),
                     version: VERSION.into(),
                 };
-                if send(&mut sink, &message).await.is_err() {
-                    return Ended::Retry("the link closed".into());
+                if let Err(end) = sink.send_message(&message).await {
+                    return end;
                 }
             }
             _ = usage.tick() => {
                 for report in server.meter.pending() {
-                    if send(&mut sink, &RelayToHub::Usage(report)).await.is_err() {
-                        return Ended::Retry("the link closed".into());
+                    if let Err(end) = sink.send_message(&RelayToHub::Usage(report)).await {
+                        return end;
                     }
                 }
             }
-            () = server.shutdown.cancelled() => return Ended::Fatal("shutting down".into()),
+            () = server.hub_link.cancelled() => {
+                // What is queued goes out, then the close; reading on to the
+                // Hub's close means it has read all of it before the socket
+                // goes.
+                let closing = async {
+                    while let Ok(text) = rx.try_recv() {
+                        sink.send(Message::Text(crate::traffic::sent(text).into())).await?;
+                    }
+                    let goodbye = CloseFrame {
+                        code: CloseCode::Away,
+                        reason: "the relay is stopping".into(),
+                    };
+                    sink.send(Message::Close(Some(goodbye))).await?;
+                    while let Some(m) = source.next().await {
+                        if m?.is_close() {
+                            break;
+                        }
+                    }
+                    Ok::<(), tokio_tungstenite::tungstenite::Error>(())
+                };
+                match tokio::time::timeout(CLOSE_WAIT, closing).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(error)) => tracing::warn!(%error, "the Hub's control link failed while closing"),
+                    Err(_) => tracing::warn!("the Hub did not answer the control link's close in time"),
+                }
+                return Ended::Fatal("shutting down".into());
+            }
         }
     }
 }
@@ -361,7 +407,7 @@ fn on_message(server: &Server, v: &Value) -> Option<Ended> {
 pub async fn deregister(config: &Config, reason: &str) -> Result<(), String> {
     let (mut sink, mut source, nonce) = dial(config).await.map_err(describe)?;
     sign_in(config, &mut sink, &mut source, nonce).await.map_err(describe)?;
-    send(&mut sink, &RelayToHub::Deregister { reason: reason.into() }).await.map_err(describe)?;
+    sink.send_message(&RelayToHub::Deregister { reason: reason.into() }).await.map_err(describe)?;
     loop {
         let v = next_json(&mut source).await.map_err(describe)?;
         if v["t"] == "deregistered" {
@@ -377,14 +423,11 @@ pub async fn rotate(config: &Config, new: &ed25519_dalek::SigningKey) -> Result<
     sign_in(config, &mut sink, &mut source, nonce).await.map_err(describe)?;
     let time_ms = now_ms();
     let hub = config.hub.clone().unwrap_or_default();
-    send(
-        &mut sink,
-        &RelayToHub::Rotate {
-            new_key: hex(&new.verifying_key().to_bytes()),
-            time_ms,
-            sig_new: login_sig(new, &config.id, &hub, nonce, time_ms),
-        },
-    )
+    sink.send_message(&RelayToHub::Rotate {
+        new_key: hex(&new.verifying_key().to_bytes()),
+        time_ms,
+        sig_new: login_sig(new, &config.id, &hub, nonce, time_ms),
+    })
     .await
     .map_err(describe)?;
     loop {
