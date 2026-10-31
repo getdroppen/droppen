@@ -318,6 +318,11 @@ impl Models for FakeProvider {
     fn permission_is_known(&self, _permission: &str) -> bool {
         false
     }
+
+    // No fake session is bound to an account that names a model.
+    fn account_model<'a>(&'a self, _account_id: &'a str) -> BoxFuture<'a, Option<String>> {
+        Box::pin(std::future::ready(None))
+    }
 }
 
 /// The fake provider's runs, on the registry's host: there are never any.

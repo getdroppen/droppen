@@ -138,6 +138,11 @@ impl Models for CodexModels {
         })
     }
 
+    // A codex account is a key and an endpoint: the model is the thread's own setting.
+    fn account_model<'a>(&'a self, _account_id: &'a str) -> BoxFuture<'a, Option<String>> {
+        Box::pin(std::future::ready(None))
+    }
+
     // The CLI's own modes, asked of [`crate::app_server::codex_permission_flags`] so
     // the two cannot drift: that function is what turns the value into `argv`,
     // and it already refuses what it does not know.

@@ -44,8 +44,10 @@ fn long_context_family(model: &str) -> bool {
 /// This rule alone is not enough for Claude, and deliberately so: Claude Code
 /// writes `message.model` as the bare id, with the `[1m]` marker stripped, so a
 /// session running the 1M window is recorded as plain `claude-opus-4-8` and
-/// reads here as an ordinary 200k one. [`resolve_window`] is what corrects
-/// that, using the reading itself as evidence.
+/// reads here as an ordinary 200k one. Two things correct that:
+/// [`ContextUsage::run_by`], which puts the marker back from the name of the
+/// process the session runs in, and [`resolve_window`], which uses the reading
+/// itself as evidence when no such process is there to ask.
 pub fn context_window(model: Option<&str>) -> u64 {
     let Some(model) = model else {
         return DEFAULT_CONTEXT_WINDOW;
@@ -55,6 +57,51 @@ pub fn context_window(model: Option<&str>) -> u64 {
         LARGE_CONTEXT_WINDOW
     } else {
         DEFAULT_CONTEXT_WINDOW
+    }
+}
+
+/// The suffix that asks Claude Code for a model's long-context variant
+/// (`claude-opus-4-8[1m]`), in any case, as the CLI reads it.
+const LONG_CONTEXT_MARKER: &str = "[1m]";
+
+/// What the window rules read off a model id.
+pub trait ModelIdExt {
+    /// The id without the long-context marker at its end, in whatever case it
+    /// is written: `deepseek-v4.1-flash[1M]` is `deepseek-v4.1-flash`, the name
+    /// the CLI sends to the API and records.
+    fn without_long_context_marker(&self) -> &str;
+
+    /// `asked`, when it is this recorded id asked for with the marker.
+    ///
+    /// Claude Code takes the long-context variant of a model as `<model>[1m]`,
+    /// runs it against the 1M window, and writes `<model>` on every transcript
+    /// entry. What the CLI is asked for keeps the marker (the process' own
+    /// name for its model in its `system:init`, or what the next message asks
+    /// for), so a recorded id that is that name less the marker was run with
+    /// the marker. `None` when `asked` names another model or no variant, and
+    /// when the recorded id already says which variant it is.
+    fn long_context_as(&self, asked: &str) -> Option<String>;
+}
+
+impl ModelIdExt for str {
+    fn without_long_context_marker(&self) -> &str {
+        let mut id = self;
+        while let Some(head) = id
+            .len()
+            .checked_sub(LONG_CONTEXT_MARKER.len())
+            .filter(|&at| id.get(at..).is_some_and(|tail| tail.eq_ignore_ascii_case(LONG_CONTEXT_MARKER)))
+            .map(|at| &id[..at])
+        {
+            id = head;
+        }
+        id
+    }
+
+    fn long_context_as(&self, asked: &str) -> Option<String> {
+        let model = asked.without_long_context_marker();
+        let marked = model.len() < asked.len();
+        let unmarked = self.without_long_context_marker().len() == self.len();
+        (marked && unmarked && model.eq_ignore_ascii_case(self)).then(|| asked.to_string())
     }
 }
 
@@ -72,6 +119,25 @@ pub struct ContextUsage {
     /// turns, and only the model that was in force for *this* request says
     /// anything about the window it was measured against.
     pub model: Option<String>,
+}
+
+impl ContextUsage {
+    /// The reading with its model named as the session's process runs it or
+    /// the next message asks for it (`asked`): the long-context marker the
+    /// transcript leaves out is put back when the two name the same model
+    /// ([`ModelIdExt::long_context_as`]).
+    ///
+    /// A session asked for `deepseek-v4.1-flash[1m]` records
+    /// `deepseek-v4.1-flash`, which [`context_window`] reads as a 200k model.
+    /// The marker is only in what the CLI is asked for, so that is what
+    /// restores it. A reading of another model, taken before the session was
+    /// switched, keeps its own name and its own window.
+    pub fn run_by(mut self, asked: Option<&str>) -> Self {
+        if let Some(named) = self.model.as_deref().zip(asked).and_then(|(model, asked)| model.long_context_as(asked)) {
+            self.model = Some(named);
+        }
+        self
+    }
 }
 
 /// The window a reading was taken against.
@@ -159,6 +225,72 @@ mod tests {
             model: None,
         };
         assert_eq!(resolve_window(Some(&stated), Some("claude-fable-5")), 258_400);
+    }
+
+    /// #446: a third-party model asked for with `[1m]`. Claude Code records
+    /// `deepseek-v4.1-flash` on the entry (claude 2.1.312, `--model` or
+    /// `ANTHROPIC_MODEL` alike), so the reading alone says 200k; the process'
+    /// own name for its model says 1M.
+    #[test]
+    fn a_reading_of_a_long_context_ask_is_measured_against_the_long_window() {
+        let recorded = ContextUsage {
+            tokens: 30_000,
+            window: None,
+            model: Some("deepseek-v4.1-flash".to_string()),
+        };
+        assert_eq!(resolve_window(Some(&recorded), None), DEFAULT_CONTEXT_WINDOW, "the transcript alone cannot tell");
+        let run = recorded.clone().run_by(Some("deepseek-v4.1-flash[1m]"));
+        assert_eq!(run.model.as_deref(), Some("deepseek-v4.1-flash[1m]"));
+        assert_eq!(resolve_window(Some(&run), None), LARGE_CONTEXT_WINDOW);
+        assert_eq!(run.tokens, 30_000, "the occupancy is the reading's");
+
+        for running in ["deepseek-v4.1-flash[1M]", "DeepSeek-V4.1-Flash[1m]"] {
+            assert_eq!(
+                resolve_window(Some(&recorded.clone().run_by(Some(running))), None),
+                LARGE_CONTEXT_WINDOW,
+                "{running}: the marker and the id in any case, as the CLI reads them"
+            );
+        }
+    }
+
+    /// Only the marker comes from the process, and only for its own model: a
+    /// reading taken before a switch, or by a process asked for no variant,
+    /// keeps the window its own name gives it.
+    #[test]
+    fn the_marker_is_restored_only_on_the_model_that_was_asked_for_with_it() {
+        let reading = |model: &str| ContextUsage {
+            tokens: 30_000,
+            window: None,
+            model: Some(model.to_string()),
+        };
+        for (recorded, running) in [
+            ("glm-5", Some("deepseek-v4.1-flash[1m]")),
+            ("deepseek-v4.1", Some("deepseek-v4.1-flash[1m]")),
+            ("deepseek-v4.1-flash", Some("deepseek-v4.1-flash")),
+            ("deepseek-v4.1-flash", None),
+        ] {
+            let run = reading(recorded).run_by(running);
+            assert_eq!(run.model.as_deref(), Some(recorded), "{recorded} run by {running:?}");
+            assert_eq!(resolve_window(Some(&run), None), DEFAULT_CONTEXT_WINDOW, "{recorded} run by {running:?}");
+        }
+        let marked = reading("claude-opus-4-8[1M]").run_by(Some("claude-opus-4-8[1m]"));
+        assert_eq!(marked.model.as_deref(), Some("claude-opus-4-8[1M]"), "an id that says its variant is left as it says it");
+        let unnamed = ContextUsage {
+            tokens: 30_000,
+            window: None,
+            model: None,
+        };
+        assert_eq!(unnamed.clone().run_by(Some("deepseek-v4.1-flash[1m]")), unnamed);
+    }
+
+    #[test]
+    fn the_marker_comes_off_the_end_in_any_case() {
+        assert_eq!("deepseek-v4.1-flash[1m]".without_long_context_marker(), "deepseek-v4.1-flash");
+        assert_eq!("claude-opus-4-8[1M]".without_long_context_marker(), "claude-opus-4-8");
+        assert_eq!("opus[1m][1m]".without_long_context_marker(), "opus", "as the CLI strips a repeated one");
+        assert_eq!("claude-opus-4-8".without_long_context_marker(), "claude-opus-4-8");
+        assert_eq!("[1m]x".without_long_context_marker(), "[1m]x", "the end only");
+        assert_eq!("éabc".without_long_context_marker(), "éabc", "a cut inside a character is no panic");
     }
 
     /// A session that has not made a request yet has nothing to correct with, so

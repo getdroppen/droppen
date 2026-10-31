@@ -282,6 +282,14 @@ pub(crate) struct Fingerprint {
 }
 
 impl Fingerprint {
+    /// The name the process runs its model under: the one the CLI answered
+    /// with, else the one it was asked for. `deepseek-v4.1-flash[1m]` either
+    /// way, which is the point: the transcript names that process' model
+    /// without the marker.
+    pub(crate) fn running_name(&self) -> Option<&str> {
+        self.resolved.as_deref().or(self.model.as_deref())
+    }
+
     /// Whether a message wanting `self` can go to a resident started with `live`.
     ///
     /// Every field is an equality test except the uploads directory, which is
@@ -1435,6 +1443,7 @@ impl ClaudeCodeRuns {
             awaiting_background: false,
             turn_started_at: Some(iso8601(SystemTime::now())),
             question: None,
+            model: recipe.fingerprint.running_name().map(str::to_owned),
         }));
         let (tx, rx) = mpsc::unbounded_channel();
         self.residents.lock().expect("residents poisoned").insert(
@@ -1827,6 +1836,7 @@ impl ClaudeCodeRuns {
             awaiting_background: false,
             turn_started_at: Some(iso8601(SystemTime::now())),
             question: None,
+            model: live.as_ref().and_then(Fingerprint::running_name).map(str::to_owned),
         }));
         let (tx, rx) = mpsc::unbounded_channel();
         self.residents.lock().expect("residents poisoned").insert(
@@ -3324,7 +3334,14 @@ impl Driver {
     ///
     /// Written back to the journal as well as held here, so the next server
     /// starts out knowing both names rather than re-learning the second one at
-    /// the cost of a restart. One rewrite, once per process.
+    /// the cost of a restart. One rewrite, once per process — unless the model
+    /// is switched inside the process.
+    ///
+    /// `init` opens every turn and names the model in force for it (claude
+    /// 2.1.312), so a `/model` sent as a message is answered here at the next
+    /// turn. That includes a switch back to the name the spawn asked for: the
+    /// answer replaces the one before, or the process would go on being
+    /// described by a model it no longer runs.
     ///
     /// A model name is not on its own a fingerprint, so an *unknown* live is
     /// left unknown: filling in the one field this line carries and defaulting
@@ -3333,11 +3350,15 @@ impl Driver {
     fn canonicalize_model(&mut self, model: Option<String>) {
         let Some(model) = model else { return };
         let Some(live) = self.live.as_mut() else { return };
-        if live.model.as_deref() == Some(model.as_str()) || live.resolved.as_deref() == Some(model.as_str()) {
+        if live.running_name() == Some(model.as_str()) {
             return;
         }
         tracing::debug!(session = %self.id, asked = ?live.model, answered = %model, "claude named the model it is running");
         live.resolved = Some(model);
+        // On the mirror too, and now: a process asked for no model (an
+        // account's `ANTHROPIC_MODEL` chose it) is named here and nowhere
+        // else, and the feed reads the session's window off this name.
+        self.publish();
         self.note_fingerprint();
     }
 
@@ -6431,6 +6452,7 @@ impl Driver {
             shared.background = self.background.len();
             shared.tasks = self.background.wire();
             shared.question = self.asked.first().map(|question| question.request_id.clone());
+            shared.model = self.live.as_ref().and_then(Fingerprint::running_name).map(str::to_owned);
         }
         // Only after a phase change: see `set_phase`. Everything else published
         // here waits for the feed's own poll, as it always has.
@@ -7578,6 +7600,7 @@ mod tests {
             awaiting_background: false,
             turn_started_at: None,
             question: None,
+            model: None,
         }));
         claude.residents.lock().expect("residents").insert(HELD.to_string(), Handle { tx, shared });
 
@@ -10029,6 +10052,78 @@ done
             !harness.seen().iter().any(|line| line.contains("and now under another model")),
             "and the process it did not fit never sees it"
         );
+    }
+
+    /// #446, set by an account: `ANTHROPIC_MODEL=deepseek-v4.1-flash[1m]` and
+    /// no `--model`, so nothing but the process' `system:init` names its
+    /// model, marker and all (claude 2.1.312). That name is what the feed reads
+    /// the session's window off, so the mirror carries it.
+    #[tokio::test]
+    async fn the_mirror_names_the_model_as_the_cli_answers_for_it() {
+        let history = format!(r#"printf '%s\n' '{{"type":"system","subtype":"init","session_id":"{SESSION}","model":"deepseek-v4.1-flash[1m]"}}'"#);
+        let harness = Harness::start_attached(
+            &history,
+            hold_until_released(),
+            Duration::from_secs(3600),
+            Duration::from_secs(3600),
+            Duration::from_millis(120),
+            Witness::None,
+        )
+        .await;
+        let running = |id: &str| harness.providers().resident_state(Source::Claude, id).and_then(|state| state.model);
+        until("claude's name for its model to reach the mirror", || running(SESSION).as_deref() == Some("deepseek-v4.1-flash[1m]")).await;
+        assert_eq!(running("no-such-session"), None, "a session with no process here has no model to tell");
+    }
+
+    /// `init` opens every turn with the model in force for it, so a `/model`
+    /// sent as a message is followed at the next turn (claude 2.1.312). A
+    /// switch back to the name the process was spawned with is followed too,
+    /// or the process would be described by a model it no longer runs.
+    #[tokio::test]
+    async fn a_model_switched_inside_the_process_is_followed_there_and_back() {
+        let body = format!(
+            r#"
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG"
+  case "$line" in
+    *glm-5*) printf '%s\n' '{{"type":"system","subtype":"init","session_id":"{SESSION}","model":"glm-5"}}' ;;
+    *) printf '%s\n' '{{"type":"system","subtype":"init","session_id":"{SESSION}","model":"deepseek-v4.1-flash[1m]"}}' ;;
+  esac
+  printf '%s\n' '{{"type":"result","subtype":"success","is_error":false}}'
+done
+"#
+        );
+        let asked = Fingerprint {
+            model: Some("deepseek-v4.1-flash[1m]".into()),
+            ..Default::default()
+        };
+        let harness = Harness::build(
+            &preamble(),
+            &body,
+            Duration::from_secs(3600),
+            Duration::from_secs(3600),
+            Duration::from_millis(120),
+            NEVER_SETTLES,
+            Adoption {
+                live: Some(asked),
+                ..Adoption::default()
+            },
+        )
+        .await;
+        let running = || harness.state().model;
+        until("the init", || harness.state().phase == Phase::Idle).await;
+        for (message, model) in [
+            ("first", "deepseek-v4.1-flash[1m]"),
+            ("/model glm-5", "glm-5"),
+            ("/model deepseek-v4.1-flash[1m]", "deepseek-v4.1-flash[1m]"),
+        ] {
+            let read = harness.seen().len();
+            harness.send(message);
+            until("the turn to be read and answered", || {
+                harness.seen().len() > read && harness.state().phase == Phase::Idle && running().as_deref() == Some(model)
+            })
+            .await;
+        }
     }
 
     /// A resident answers to both of its model names, and writes the second

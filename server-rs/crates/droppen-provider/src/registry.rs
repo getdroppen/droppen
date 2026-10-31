@@ -351,6 +351,13 @@ impl ProviderRegistry {
         self.run(source)?.resident(id).map(Into::into)
     }
 
+    /// This server's resident for one session, whole: for a reader that needs
+    /// what the API does not carry, its model ([`ResidentState::model`]), as
+    /// well as what it does.
+    pub fn resident_state(&self, source: Source, id: &str) -> Option<ResidentState> {
+        self.run(source)?.resident(id)
+    }
+
     /// Whether this server's driver for a session still holds `qid` in its
     /// queue: the evidence a claim stranded by a crash was enqueued after all.
     pub fn holds_queued(&self, source: Source, id: &str, qid: &str) -> bool {

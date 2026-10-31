@@ -644,6 +644,7 @@ impl Harness {
             awaiting_background: false,
             turn_started_at: Some(iso8601(SystemTime::now())),
             question: None,
+            model: live.as_ref().and_then(Fingerprint::running_name).map(str::to_owned),
         }));
         let (tx, rx) = mpsc::unbounded_channel();
         registry.residents.lock().expect("residents").insert(

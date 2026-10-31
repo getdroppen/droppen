@@ -114,4 +114,21 @@ impl Drive {
             transcripts,
         })
     }
+
+    /// What a session's CLI is asked for when this server runs no process for
+    /// it: the composer's pick for the session, else the model the account it
+    /// is bound to (`account_id`) names itself.
+    ///
+    /// Once the process is gone this is the best word on what the session
+    /// runs: the composer's pick goes with its next message, and an account's
+    /// own model is what a spawn with no `--model` runs. A long-context ask's
+    /// `[1m]` is here and nowhere in the transcript. It is only a word, so its
+    /// readers take the marker from it and nothing else, and only for the
+    /// model the transcript names (`droppen_sessions::context::ContextUsage::run_by`).
+    pub async fn asked_model(&self, source: droppen_sessions::Source, id: &str, account_id: Option<&str>) -> Option<String> {
+        if let Some(model) = self.composer.session(source, id).and_then(|choice| choice.model.0) {
+            return Some(model);
+        }
+        self.providers.models(source)?.account_model(account_id?).await
+    }
 }
