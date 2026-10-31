@@ -130,6 +130,15 @@ pub struct ResidentState {
     /// and *while the turn is still in flight*, and the send route, which turns
     /// a message typed while a question is open into its answer.
     pub question: Option<String>,
+    /// The model the process runs, as its CLI named it (Claude Code's
+    /// `system:init`), else as it was asked for; `None` when unknown.
+    ///
+    /// The feed's one record of a long-context ask: Claude Code runs
+    /// `<model>[1m]` against the 1M window and writes `<model>` in the
+    /// transcript, so only the process' own name says which window a reading
+    /// was taken against (`droppen_sessions::context::ContextUsage::run_by`).
+    /// Not on the wire.
+    pub model: Option<String>,
 }
 
 impl ResidentState {

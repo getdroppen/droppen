@@ -172,6 +172,8 @@ impl Handle {
             // Approvals are off, and every interactive request the app server
             // makes is refused: codex never stops to ask.
             question: None,
+            // Codex states each turn's window itself.
+            model: None,
         }
     }
     pub(crate) fn info(&self) -> droppen_sessions::ResidentInfo {

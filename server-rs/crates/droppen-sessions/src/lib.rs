@@ -47,6 +47,7 @@ use droppen_base::time::mtime_ms;
 pub use reference::SessionRef;
 pub use sources::{TranscriptSources, Transcripts};
 use account::AccountRef;
+use context::ModelIdExt;
 use util::TranscriptItem;
 
 /// Which CLI a session belongs to.
@@ -760,6 +761,19 @@ impl CliChoice {
         }
         None
     }
+
+    /// The choice with its model named as the session's live process runs it
+    /// (`running`): the long-context marker the transcript leaves out goes back
+    /// on when the two name the same model, as on the reading
+    /// ([`context::ContextUsage::run_by`]). Without it a composer that follows
+    /// the transcript offers the bare id, and the next message asks for the
+    /// 200k variant.
+    pub fn run_by(mut self, running: Option<&str>) -> Self {
+        if let Some(named) = self.model.0.as_deref().zip(running).and_then(|(model, running)| model.long_context_as(running)) {
+            self.model = Nullable(Some(named));
+        }
+        self
+    }
 }
 
 /// Session state plus a page of its transcript.
@@ -1069,6 +1083,31 @@ pub async fn file_signature(path: &Path) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #446: the transcript says `deepseek-v4.1-flash`, the process was asked
+    /// for `deepseek-v4.1-flash[1m]`, and the composer has to show (and send)
+    /// the second or the next process is started on the 200k variant.
+    #[test]
+    fn the_choice_names_the_long_context_variant_its_process_runs() {
+        let recorded = CliChoice {
+            model: Nullable(Some("deepseek-v4.1-flash".into())),
+            effort: Nullable(Some("high".into())),
+            at: Nullable(Some("2026-10-31T00:00:00.000Z".into())),
+        };
+        let run = recorded.clone().run_by(Some("deepseek-v4.1-flash[1m]"));
+        assert_eq!(run.model.0.as_deref(), Some("deepseek-v4.1-flash[1m]"));
+        assert_eq!(
+            (run.effort.0.as_deref(), run.at.0.as_deref()),
+            (Some("high"), Some("2026-10-31T00:00:00.000Z")),
+            "the rest is the transcript's"
+        );
+        assert_eq!(
+            recorded.clone().run_by(Some("glm-5[1m]")).model.0.as_deref(),
+            Some("deepseek-v4.1-flash"),
+            "a process of another model says nothing about this one"
+        );
+        assert_eq!(recorded.run_by(None).model.0.as_deref(), Some("deepseek-v4.1-flash"));
+    }
 
     /// A row with nothing driving it, so the transcript heuristic is all there is.
     fn row(status: SessionStatus) -> SessionSummary {

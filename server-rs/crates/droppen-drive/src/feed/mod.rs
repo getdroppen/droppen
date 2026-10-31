@@ -329,12 +329,28 @@ pub async fn load_session_state(drive: &Arc<Drive>, source: Source, id: &str) ->
         Some(reason) => (false, Some(reason)),
         None => drive.transcripts.sendability(source, summary.scope, summary.status, running, resident.is_some()),
     };
-    let cli_choice = drive.transcripts.cli_choice(source, Path::new(&summary.file_path)).await;
-    let context = drive.transcripts.context(source, Path::new(&summary.file_path)).await;
+    // The transcript names the model without the `[1m]` a long-context ask
+    // carries, and only the process this server runs for the session knows it
+    // was asked: both readings of the model are named as that process runs it.
+    let running = drive.providers.running_model(source, id);
+    let cli_choice = drive
+        .transcripts
+        .cli_choice(source, Path::new(&summary.file_path))
+        .await
+        .map(|choice| choice.run_by(running.as_deref()));
+    let context = drive
+        .transcripts
+        .context(source, Path::new(&summary.file_path))
+        .await
+        .map(|usage| usage.run_by(running.as_deref()));
     // The CLI's own figure wins, then the model on the entry the reading came
-    // from, then the reading itself; see `context::resolve_window`.
-    let context_window =
-        droppen_sessions::context::resolve_window(context.as_ref(), cli_choice.as_ref().and_then(|c| c.model.as_ref()).map(String::as_str));
+    // from, then the reading itself; see `context::resolve_window`. With no
+    // reading, or one that names no model, the process' model is the
+    // session's choice.
+    let context_window = droppen_sessions::context::resolve_window(
+        context.as_ref(),
+        running.as_deref().or(cli_choice.as_ref().and_then(|c| c.model.as_ref()).map(String::as_str)),
+    );
     let context_tokens = context.as_ref().map(|usage| usage.tokens);
     // One binding table, both CLIs: a codex thread started under a stored key
     // is pinned exactly as a claude session is, and the payload says so in the

@@ -282,6 +282,14 @@ pub(crate) struct Fingerprint {
 }
 
 impl Fingerprint {
+    /// The name the process runs its model under: the one the CLI answered
+    /// with, else the one it was asked for. `deepseek-v4.1-flash[1m]` either
+    /// way, which is the point: the transcript names that process' model
+    /// without the marker.
+    pub(crate) fn running_name(&self) -> Option<&str> {
+        self.resolved.as_deref().or(self.model.as_deref())
+    }
+
     /// Whether a message wanting `self` can go to a resident started with `live`.
     ///
     /// Every field is an equality test except the uploads directory, which is
@@ -1435,6 +1443,7 @@ impl ClaudeCodeRuns {
             awaiting_background: false,
             turn_started_at: Some(iso8601(SystemTime::now())),
             question: None,
+            model: recipe.fingerprint.running_name().map(str::to_owned),
         }));
         let (tx, rx) = mpsc::unbounded_channel();
         self.residents.lock().expect("residents poisoned").insert(
@@ -1827,6 +1836,7 @@ impl ClaudeCodeRuns {
             awaiting_background: false,
             turn_started_at: Some(iso8601(SystemTime::now())),
             question: None,
+            model: live.as_ref().and_then(Fingerprint::running_name).map(str::to_owned),
         }));
         let (tx, rx) = mpsc::unbounded_channel();
         self.residents.lock().expect("residents poisoned").insert(
@@ -3338,6 +3348,10 @@ impl Driver {
         }
         tracing::debug!(session = %self.id, asked = ?live.model, answered = %model, "claude named the model it is running");
         live.resolved = Some(model);
+        // On the mirror too, and now: a process asked for no model (an
+        // account's `ANTHROPIC_MODEL` chose it) is named here and nowhere
+        // else, and the feed reads the session's window off this name.
+        self.publish();
         self.note_fingerprint();
     }
 
@@ -6431,6 +6445,7 @@ impl Driver {
             shared.background = self.background.len();
             shared.tasks = self.background.wire();
             shared.question = self.asked.first().map(|question| question.request_id.clone());
+            shared.model = self.live.as_ref().and_then(Fingerprint::running_name).map(str::to_owned);
         }
         // Only after a phase change: see `set_phase`. Everything else published
         // here waits for the feed's own poll, as it always has.
@@ -7578,6 +7593,7 @@ mod tests {
             awaiting_background: false,
             turn_started_at: None,
             question: None,
+            model: None,
         }));
         claude.residents.lock().expect("residents").insert(HELD.to_string(), Handle { tx, shared });
 
@@ -10028,6 +10044,34 @@ done
         assert!(
             !harness.seen().iter().any(|line| line.contains("and now under another model")),
             "and the process it did not fit never sees it"
+        );
+    }
+
+    /// #446, set by an account: `ANTHROPIC_MODEL=deepseek-v4.1-flash[1m]` and
+    /// no `--model`, so nothing but the process' `system:init` names its
+    /// model, marker and all (claude 2.1.312). That name is what the feed reads
+    /// the session's window off, so the mirror carries it.
+    #[tokio::test]
+    async fn the_mirror_names_the_model_as_the_cli_answers_for_it() {
+        let history = format!(r#"printf '%s\n' '{{"type":"system","subtype":"init","session_id":"{SESSION}","model":"deepseek-v4.1-flash[1m]"}}'"#);
+        let harness = Harness::start_attached(
+            &history,
+            hold_until_released(),
+            Duration::from_secs(3600),
+            Duration::from_secs(3600),
+            Duration::from_millis(120),
+            Witness::None,
+        )
+        .await;
+        until("claude's name for its model to reach the mirror", || {
+            harness.providers().running_model(Source::Claude, SESSION).as_deref() == Some("deepseek-v4.1-flash[1m]")
+        })
+        .await;
+        assert_eq!(harness.state().model.as_deref(), Some("deepseek-v4.1-flash[1m]"));
+        assert_eq!(
+            harness.providers().running_model(Source::Claude, "no-such-session"),
+            None,
+            "a session with no process here has no model to tell"
         );
     }
 

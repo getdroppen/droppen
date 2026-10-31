@@ -594,6 +594,58 @@ async fn the_detail_reports_context_occupancy_against_the_models_own_window() {
     probe.stop().await;
 }
 
+/// #446: a model asked for with `[1m]` runs against the 1M window, and
+/// Claude Code records it without the marker (claude 2.1.312:
+/// `--model deepseek-v4.1-flash[1m]` writes `"model":"deepseek-v4.1-flash"` on
+/// the entry). The transcript alone reads as 200k; the process this server
+/// started says 1M, and the composer is told the model it runs, marker and all.
+#[tokio::test]
+async fn a_session_run_with_a_long_context_ask_is_measured_against_the_long_window() {
+    let probe = Probe::start().await;
+    let workspace = probe.workspace();
+    let path = probe.seed_session(&probe.managed_root(), SESSION_ID, &workspace);
+    let turn = json!({
+        "type": "assistant",
+        "timestamp": "2026-10-31T07:00:00.000Z",
+        "message": {
+            "role": "assistant",
+            "model": "deepseek-v4.1-flash",
+            "content": [{"type": "text", "text": "done"}],
+            "usage": {"input_tokens": 12, "cache_read_input_tokens": 29_988, "cache_creation_input_tokens": 0, "output_tokens": 3},
+        },
+    });
+    support::append_line(&path, &turn.to_string());
+
+    let detail = probe.get_json(&format!("/api/sessions/claude/{SESSION_ID}")).await;
+    assert_eq!(
+        (detail["contextWindow"].as_u64(), detail["cliChoice"]["model"].as_str()),
+        (Some(200_000), Some("deepseek-v4.1-flash")),
+        "with nothing running, the transcript is all there is"
+    );
+
+    let (status, body) = probe
+        .send(
+            "POST",
+            &format!("/api/sessions/claude/{SESSION_ID}/message"),
+            json!({"text": "carry on", "model": "deepseek-v4.1-flash[1m]"}),
+        )
+        .await;
+    assert_eq!(status, 200, "{body}");
+    let spawn = probe.wait_for_spawn(&workspace).await;
+    assert_eq!(spawn.flag("--model"), Some("deepseek-v4.1-flash[1m]"));
+    probe.wait_for_injection("claude", SESSION_ID).await;
+
+    let detail = probe.get_json(&format!("/api/sessions/claude/{SESSION_ID}")).await;
+    assert_eq!(detail["contextTokens"], 30_000, "the reading is the transcript's");
+    assert_eq!(detail["contextWindow"], 1_000_000, "measured against the window the process runs: {detail}");
+    assert_eq!(
+        detail["cliChoice"]["model"], "deepseek-v4.1-flash[1m]",
+        "so the composer offers, and sends, the model that is running"
+    );
+
+    probe.stop().await;
+}
+
 #[tokio::test]
 async fn a_session_that_has_never_run_has_no_context_reading() {
     let probe = Probe::start().await;

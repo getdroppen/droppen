@@ -351,6 +351,12 @@ impl ProviderRegistry {
         self.run(source)?.resident(id).map(Into::into)
     }
 
+    /// The model this server's resident for one session runs, as its CLI
+    /// named it ([`ResidentState::model`]).
+    pub fn running_model(&self, source: Source, id: &str) -> Option<String> {
+        self.run(source)?.resident(id)?.model
+    }
+
     /// Whether this server's driver for a session still holds `qid` in its
     /// queue: the evidence a claim stranded by a crash was enqueued after all.
     pub fn holds_queued(&self, source: Source, id: &str, qid: &str) -> bool {

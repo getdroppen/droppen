@@ -248,6 +248,8 @@ impl Handle {
             turn_started_at: state.turn_started_at.clone(),
             // Every permission request the agent makes is answered by the client.
             question: None,
+            // The agent states each reading's window itself.
+            model: None,
         }
     }
 
