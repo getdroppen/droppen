@@ -646,6 +646,93 @@ async fn a_session_run_with_a_long_context_ask_is_measured_against_the_long_wind
     probe.stop().await;
 }
 
+/// A session whose last turn says `deepseek-v4.1-flash`, as Claude Code
+/// records a `deepseek-v4.1-flash[1m]` turn, and that nothing on this server
+/// runs: its process ended, or it never had one here.
+fn seed_a_long_context_turn(probe: &Probe) {
+    let path = probe.seed_session(&probe.managed_root(), SESSION_ID, &probe.workspace());
+    let turn = json!({
+        "type": "assistant",
+        "timestamp": "2026-10-31T07:00:00.000Z",
+        "message": {
+            "role": "assistant",
+            "model": "deepseek-v4.1-flash",
+            "content": [{"type": "text", "text": "done"}],
+            "usage": {"input_tokens": 12, "cache_read_input_tokens": 29_988, "cache_creation_input_tokens": 0, "output_tokens": 3},
+        },
+    });
+    support::append_line(&path, &turn.to_string());
+}
+
+/// With no process, what the next message asks for is the word on the model:
+/// the composer's pick for the session. The marker comes from it, so the
+/// window stays 1M, and the composer, which follows the transcript's model
+/// after a turn, is handed the marked id to send rather than the bare one.
+#[tokio::test]
+async fn with_no_process_the_session_s_own_pick_names_the_long_context_variant() {
+    let probe = Probe::start().await;
+    seed_a_long_context_turn(&probe);
+    probe
+        .send_ok(
+            "PUT",
+            &format!("/api/composer-prefs/claude/{SESSION_ID}"),
+            json!({"model": "deepseek-v4.1-flash[1m]"}),
+            200,
+        )
+        .await;
+
+    let detail = probe.get_json(&format!("/api/sessions/claude/{SESSION_ID}")).await;
+    assert_eq!(detail["resident"], Value::Null, "nothing runs it here: {detail}");
+    assert_eq!(detail["contextTokens"], 30_000);
+    assert_eq!(detail["contextWindow"], 1_000_000, "{detail}");
+    assert_eq!(detail["cliChoice"]["model"], "deepseek-v4.1-flash[1m]");
+
+    // A pick of another model says nothing about this turn's window.
+    probe
+        .send_ok("PUT", &format!("/api/composer-prefs/claude/{SESSION_ID}"), json!({"model": "glm-5[1m]"}), 200)
+        .await;
+    let detail = probe.get_json(&format!("/api/sessions/claude/{SESSION_ID}")).await;
+    assert_eq!(
+        (detail["contextWindow"].as_u64(), detail["cliChoice"]["model"].as_str()),
+        (Some(200_000), Some("deepseek-v4.1-flash"))
+    );
+
+    probe.stop().await;
+}
+
+/// With no process and no pick, a session bound to an env account runs the
+/// model the account's block names (`ANTHROPIC_MODEL`), and that is where the
+/// marker comes from.
+#[tokio::test]
+async fn with_no_process_and_no_pick_the_account_s_own_model_names_the_variant() {
+    let probe = Probe::start().await;
+    seed_a_long_context_turn(&probe);
+    let created = probe
+        .send_ok(
+            "POST",
+            "/api/accounts",
+            json!({
+                "label": "Gateway",
+                "kind": "env",
+                "env": "ANTHROPIC_AUTH_TOKEN=gateway-token-446\nANTHROPIC_BASE_URL=https://gateway.example.com\nANTHROPIC_MODEL=deepseek-v4.1-flash[1m]",
+            }),
+            201,
+        )
+        .await;
+    let account = created["id"].as_str().expect("account id");
+    let detail = probe.get_json(&format!("/api/sessions/claude/{SESSION_ID}")).await;
+    assert_eq!(detail["contextWindow"], 200_000, "an account the session is not bound to says nothing about it");
+
+    probe
+        .send_ok("PUT", &format!("/api/sessions/claude/{SESSION_ID}/account"), json!({"accountId": account}), 200)
+        .await;
+    let detail = probe.get_json(&format!("/api/sessions/claude/{SESSION_ID}")).await;
+    assert_eq!(detail["contextWindow"], 1_000_000, "{detail}");
+    assert_eq!(detail["cliChoice"]["model"], "deepseek-v4.1-flash[1m]");
+
+    probe.stop().await;
+}
+
 #[tokio::test]
 async fn a_session_that_has_never_run_has_no_context_reading() {
     let probe = Probe::start().await;

@@ -314,7 +314,11 @@ pub async fn load_session_state(drive: &Arc<Drive>, source: Source, id: &str) ->
                 .flatten()
         })
         .filter(|_| drive.transcripts.settles_reaped_runs(source));
-    let resident = drive.providers.resident_info(source, id);
+    // The mirror whole, once: the API's half of it, and the model its process
+    // runs, which the API does not carry.
+    let resident_state = drive.providers.resident_state(source, id);
+    let running_model = resident_state.as_ref().and_then(|state| state.model.clone());
+    let resident: Option<droppen_sessions::ResidentInfo> = resident_state.map(Into::into);
     // Before `sendability`, and before `attention::apply` further down, for the
     // same reason the list applies it before both: `status` is what they read,
     // and the driver's answer is the one that is not a guess. Sendability is
@@ -329,33 +333,37 @@ pub async fn load_session_state(drive: &Arc<Drive>, source: Source, id: &str) ->
         Some(reason) => (false, Some(reason)),
         None => drive.transcripts.sendability(source, summary.scope, summary.status, running, resident.is_some()),
     };
+    // One binding table, both CLIs: a codex thread started under a stored key
+    // is pinned exactly as a claude session is, and the payload says so in the
+    // same field.
+    let account = drive.accounts.session_account_ref(id).await;
     // The transcript names the model without the `[1m]` a long-context ask
-    // carries, and only the process this server runs for the session knows it
-    // was asked: both readings of the model are named as that process runs it.
-    let running = drive.providers.running_model(source, id);
+    // carries. What was asked is the process this server runs for the session
+    // or, with none, what the next message will ask for (`Drive::asked_model`):
+    // both readings of the model are named as that.
+    let asked_model = match running_model.clone() {
+        Some(model) => Some(model),
+        None => drive.asked_model(source, id, account.as_ref().map(|a| a.id.as_str())).await,
+    };
     let cli_choice = drive
         .transcripts
         .cli_choice(source, Path::new(&summary.file_path))
         .await
-        .map(|choice| choice.run_by(running.as_deref()));
+        .map(|choice| choice.run_by(asked_model.as_deref()));
     let context = drive
         .transcripts
         .context(source, Path::new(&summary.file_path))
         .await
-        .map(|usage| usage.run_by(running.as_deref()));
+        .map(|usage| usage.run_by(asked_model.as_deref()));
     // The CLI's own figure wins, then the model on the entry the reading came
     // from, then the reading itself; see `context::resolve_window`. With no
     // reading, or one that names no model, the process' model is the
     // session's choice.
     let context_window = droppen_sessions::context::resolve_window(
         context.as_ref(),
-        running.as_deref().or(cli_choice.as_ref().and_then(|c| c.model.as_ref()).map(String::as_str)),
+        running_model.as_deref().or(cli_choice.as_ref().and_then(|c| c.model.as_ref()).map(String::as_str)),
     );
     let context_tokens = context.as_ref().map(|usage| usage.tokens);
-    // One binding table, both CLIs: a codex thread started under a stored key
-    // is pinned exactly as a claude session is, and the payload says so in the
-    // same field.
-    let account = drive.accounts.session_account_ref(id).await;
     // The list route reports the binding on the summary too; keep both payloads
     // shaped the same so a client can read it from either.
     summary.account_id = account.as_ref().map(|a| a.id.clone());

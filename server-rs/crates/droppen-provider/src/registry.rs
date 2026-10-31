@@ -351,10 +351,11 @@ impl ProviderRegistry {
         self.run(source)?.resident(id).map(Into::into)
     }
 
-    /// The model this server's resident for one session runs, as its CLI
-    /// named it ([`ResidentState::model`]).
-    pub fn running_model(&self, source: Source, id: &str) -> Option<String> {
-        self.run(source)?.resident(id)?.model
+    /// This server's resident for one session, whole: for a reader that needs
+    /// what the API does not carry, its model ([`ResidentState::model`]), as
+    /// well as what it does.
+    pub fn resident_state(&self, source: Source, id: &str) -> Option<ResidentState> {
+        self.run(source)?.resident(id)
     }
 
     /// Whether this server's driver for a session still holds `qid` in its

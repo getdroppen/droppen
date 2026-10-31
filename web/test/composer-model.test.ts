@@ -68,6 +68,27 @@ test("a concrete id falls back to a tier alias even when the alias carries a var
   assert.equal(resolveModel(publishedModels, "claude-opus-4-8", "claude").active.id, "opus[1m]");
 });
 
+/**
+ * An env account's list, as the server serves it when the account's block sets
+ * `ANTHROPIC_MODEL=deepseek-v4.1-flash[1m]`: the named model first, the tier
+ * aliases after it.
+ */
+const envModels: ModelInfo[] = [
+  model("deepseek-v4.1-flash[1m]", { label: "deepseek-v4.1-flash[1m]" }),
+  ...claudeModels,
+];
+
+test("the long-context variant a session runs is the listed one, and is what goes with the next message", () => {
+  // #446: the server names the transcript's model as the session runs it, with
+  // the `[1m]` the transcript leaves out, so it is the account's own entry.
+  const { active, custom } = resolveModel(envModels, "deepseek-v4.1-flash[1m]", "claude");
+  assert.equal(active.id, "deepseek-v4.1-flash[1m]");
+  assert.equal(custom, false);
+  // The bare id is not that entry: offered as itself, it would ask the CLI for
+  // the 200k variant. This is why the server restores the marker.
+  assert.equal(resolveModel(envModels, "deepseek-v4.1-flash", "claude").active.id, "deepseek-v4.1-flash");
+});
+
 test("mythos ids fall back to the mythos alias, not to the head of the list", () => {
   const withMythos = [...claudeModels, model("mythos")];
   assert.equal(resolveModel(withMythos, "claude-mythos-1-20260115", "claude").active.id, "mythos");

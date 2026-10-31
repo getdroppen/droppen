@@ -283,6 +283,15 @@ impl Models for ClaudeModels {
     fn permission_is_known(&self, permission: &str) -> bool {
         CLAUDE_PERMISSIONS.contains(&permission)
     }
+
+    // An env account's `ANTHROPIC_MODEL`, the one [`claude_env_models`] puts
+    // first: the CLI runs it whenever no `--model` says otherwise.
+    fn account_model<'a>(&'a self, account_id: &'a str) -> BoxFuture<'a, Option<String>> {
+        Box::pin(async move {
+            let vars = self.accounts.env_values(account_id, &[CLAUDE_MODEL_VAR]).await;
+            vars.get(CLAUDE_MODEL_VAR).map(|model| model.trim()).filter(|model| !model.is_empty()).map(str::to_owned)
+        })
+    }
 }
 
 #[cfg(test)]

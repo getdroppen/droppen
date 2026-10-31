@@ -200,6 +200,13 @@ impl ComposerPrefsStore {
         self.read_stored().await.to_public()
     }
 
+    /// One session's remembered choice, read as its one row rather than with
+    /// every other: for a reader that asks on every look at a session.
+    pub fn session(&self, source: Source, session_id: &str) -> Option<ComposerChoice> {
+        let encoded = self.db().kv_get(scope::COMPOSER, &local_key(source, session_id))?;
+        choice_from_value(&serde_json::from_str(&encoded).ok()?)
+    }
+
     /// Merge a choice into the source default and, when named, the session entry.
     ///
     /// The validation happens before anything is opened or written, so a value
@@ -365,6 +372,23 @@ mod tests {
             "an unbalanced bracket is not a variant tag"
         );
         assert!(store.update(Source::Claude, ModelRule::NAMED, None, &choice(Some("opus[$(id)]"), None)).await.is_err());
+    }
+
+    /// One session's row reads as the whole document has it, and a session
+    /// nobody picked for has none: the source default is not its choice.
+    #[tokio::test]
+    async fn one_session_s_choice_reads_as_the_document_has_it() {
+        let (_dir, store) = store();
+        store
+            .update(Source::Claude, ModelRule::NAMED, Some("abc"), &choice(Some("deepseek-v4.1-flash[1m]"), Some("high")))
+            .await
+            .expect("update");
+        let prefs = store.read().await;
+        let row = store.session(Source::Claude, "abc").expect("the row");
+        assert_eq!(row, prefs.sessions["claude/abc"]);
+        assert_eq!(row.model.as_deref(), Some("deepseek-v4.1-flash[1m]"));
+        assert_eq!(store.session(Source::Claude, "nobody-picked"), None, "the default is not a session's choice");
+        assert_eq!(store.session(Source::Codex, "abc"), None, "nor is another CLI's session of the same id");
     }
 
     #[tokio::test]
