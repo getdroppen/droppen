@@ -2,7 +2,7 @@
 //!
 //! - `vectors/rust.json` is generated here, deterministically, and checked in.
 //!   [`rust_vectors_are_current`] fails when the code and the file disagree;
-//!   `RH_PROTO_WRITE_VECTORS=1 cargo test -p rh-proto --lib vectors` rewrites
+//!   `DROPPEN_PROTO_WRITE_VECTORS=1 cargo test -p droppen-proto --lib vectors` rewrites
 //!   it. The TypeScript tests replay it: they must produce the same bytes where
 //!   the operation is deterministic (frames, the Noise handshake with fixed
 //!   ephemerals, transport messages, chain signatures) and must open what Rust
@@ -3153,7 +3153,7 @@ pub(crate) fn rust_vectors() -> Value {
 fn rust_vectors_are_current() {
     let path = dir().join("rust.json");
     let generated = serde_json::to_string_pretty(&rust_vectors()).unwrap() + "\n";
-    if std::env::var("RH_PROTO_WRITE_VECTORS").as_deref() == Ok("1") {
+    if std::env::var("DROPPEN_PROTO_WRITE_VECTORS").as_deref() == Ok("1") {
         std::fs::create_dir_all(dir()).unwrap();
         std::fs::write(&path, &generated).unwrap();
         return;
@@ -3161,7 +3161,7 @@ fn rust_vectors_are_current() {
     let committed = std::fs::read_to_string(&path).unwrap_or_default();
     assert!(
         committed == generated,
-        "{} is out of date; regenerate it with RH_PROTO_WRITE_VECTORS=1 cargo test -p rh-proto --lib vectors, then re-run the web tests",
+        "{} is out of date; regenerate it with DROPPEN_PROTO_WRITE_VECTORS=1 cargo test -p droppen-proto --lib vectors, then re-run the web tests",
         path.display()
     );
 }

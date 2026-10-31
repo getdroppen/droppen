@@ -28,7 +28,7 @@ rand = "0.8"
 # features are the server's, so it builds one reqwest.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "http2", "charset", "json"] }
 # The link driver and the direct (WebRTC) path.
-rh-proto = { path = "../rh-proto", features = ["runtime", "rtc"] }
+droppen-proto = { path = "../droppen-proto", features = ["runtime", "rtc"] }
 # The streams' local index. `bundled` compiles SQLite itself rather than
 # linking the platform's.
 rusqlite = { version = "0.32", features = ["bundled"] }

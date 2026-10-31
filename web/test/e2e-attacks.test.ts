@@ -18,7 +18,7 @@ import {
 } from "../src/lib/e2e/index.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const V: any = JSON.parse(readFileSync(new URL("../../server-rs/crates/rh-proto/vectors/rust.json", import.meta.url), "utf8"));
+const V: any = JSON.parse(readFileSync(new URL("../../server-rs/crates/droppen-proto/vectors/rust.json", import.meta.url), "utf8"));
 
 async function dev(id: string, full = true) {
   const k = await generateDeviceKeys();

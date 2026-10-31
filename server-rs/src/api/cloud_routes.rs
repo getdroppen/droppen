@@ -390,7 +390,7 @@ fn dead_hub() -> String {
 }
 
 fn valid_code() -> String {
-    rh_proto::identity::EnrollCode {
+    droppen_proto::identity::EnrollCode {
         account_fingerprint: [3; 16],
         secret: [4; 16],
     }
@@ -566,8 +566,8 @@ async fn opened_from_a_page_with(home: &std::path::Path, hub: Option<String>, en
 /// Pretend this device is in an account and runs AI in it (`linked`): a
 /// verified chain that adds it, saved as the link would.
 fn linked(state: &AppState) {
-    use rh_proto::chain::{genesis_draft, Action, ChainClock, ChainState, DeviceInfo, Signer};
-    use rh_proto::identity::{fingerprint, MachineIdentity};
+    use droppen_proto::chain::{genesis_draft, Action, ChainClock, ChainState, DeviceInfo, Signer};
+    use droppen_proto::identity::{fingerprint, MachineIdentity};
     let ak = MachineIdentity::from_seed(&[1; 32]);
     let device = MachineIdentity::from_seed(&[2; 32]);
     let machine = MachineIdentity::from_seed(&[3; 32]);

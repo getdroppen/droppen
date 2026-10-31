@@ -2,7 +2,7 @@
 //! and print from, this instance's agent files, which only this module names.
 //! The command line itself is the server's `cli::agent`.
 
-use rh_proto::identity::{display_fingerprint, fingerprint_text, EnrollCode, MachineIdentity};
+use droppen_proto::identity::{display_fingerprint, fingerprint_text, EnrollCode, MachineIdentity};
 
 use super::seed::{load_or_create, FileSeedStore};
 use super::{enroll, fingerprint, rotation, state, status, AgentFiles};

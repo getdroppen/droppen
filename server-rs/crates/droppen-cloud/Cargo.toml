@@ -28,7 +28,7 @@ rand = "0.8"
 # `default-tls` (native-tls/OpenSSL) so the binary keeps linking nothing but
 # rustls; the features are the server's, so it builds one reqwest.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "http2", "charset", "json"] }
-rh-proto = { path = "../rh-proto" }
+droppen-proto = { path = "../droppen-proto" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { workspace = true }
 # Constant-time comparison of the attempt's nonce.

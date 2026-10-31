@@ -31,7 +31,7 @@
 
 ## 1. 密钥模型
 
-> 2026-10-15 按安全评审（C1/C2/H1/M1–M5）修订；实现见 `server-rs/crates/rh-proto` 与 `web/src/lib/e2e`。
+> 2026-10-15 按安全评审（C1/C2/H1/M1–M5）修订；实现见 `server-rs/crates/droppen-proto` 与 `web/src/lib/e2e`。
 
 | 密钥 | 类型 | 谁持有 | 用途 | 轮换 |
 |---|---|---|---|---|
@@ -272,7 +272,7 @@
 
 - 会话流在轮换后 6 小时内的一个随机时刻才迁（`naming::migrate_at`），时间上不紧贴轮换；重加密时立刻迁，不等。
 - 同一批流打乱顺序重建（`migrate_round`），新名字出现的先后对不上旧名字停写的先后。
-- 记录和页都填充到固定的大小档位（`rh-proto/src/record.rs`），大小只能对到档位。
+- 记录和页都填充到固定的大小档位（`droppen-proto/src/record.rs`），大小只能对到档位。
 
 所以结果是一个匿名集，不是消除：hub 能把一批新流和一批旧流对上，批内只能凭档位和之后的活跃程度猜哪条对哪条。一台机器的流越少、各流落在的档位越分散，这个集合就越小，只有一条会话流时等于没有。这和第 2 节的流量分析一样，是元数据层面的剩余风险，不影响内容的机密性。
 
@@ -288,7 +288,7 @@
 
 | 期 | 交付 | 验收 |
 |---|---|---|
-| M0 本地 | `rh-proto` crate：帧格式、Noise IK、设备链条目、记录 AEAD；前端用 WebCrypto 原生实现同一套原语（不用 wasm），双向互通向量；agent 子命令骨架；前端传输适配层 | 本机两个进程之间完成端到端握手 |
+| M0 本地 | `droppen-proto` crate：帧格式、Noise IK、设备链条目、记录 AEAD；前端用 WebCrypto 原生实现同一套原语（不用 wasm），双向互通向量；agent 子命令骨架；前端传输适配层 | 本机两个进程之间完成端到端握手 |
 | **M1 云端测试** | **hub**：邀请码注册加密码登录；首台设备生成 `AK`（签完创世即销毁）和 `UK`（恢复钥可选）；机器注册码与设备秘密证明（第 6 节）；链证明与分叉告警；两个 WSS 入口；单副本，页还不进对象存储。**agent**：注册、出站连接、Noise 响应方、回环桥接。**前端**：机器列表；会话列表和会话实时视图走 E2E 的 mux；终端走 E2E | ① 注册成功 ② 在 Mac 上用独立测试实例（`APP_INSTANCE=cloudtest`）注册机器 ③ 列表和会话实时更新 ④ 终端可用，记录按键回显延迟的 p50/p95 ⑤ 往会话和终端里输入一个金丝雀字符串，然后在 Hub 的数据库导出和日志里检索，命中为 0 |
 | M2 离线历史 | 加密流（索引流、会话流、机器状态流）；快照页；IndexedDB 缓存；手机扫码/口令配对；恢复钥（M2 另外提前做了：吊销与轮换、重加密、加密机器名、blob RPC、离线搜索；正文移出数据库） | 合上电脑仍能浏览历史；新手机扫码后即可读 |
 | M3 SaaS 基线 | 推送；~~吊销与轮换~~、~~文件 blob~~、~~图片 RPC~~（M2 已做）；待办和布局上云。**中继的设计见 `docs/relay-and-plans.md` 第 2 节**；M3a 公开注册门槛——套餐与权益（保留期、存储、设备/机器数、中继数、流量）与管理工具、各路由限流与长度上限、公开注册 + 邮箱验证 + Turnstile、设备数上限、信箱/钥环清理、每轮密钥一套流名；M3b 中继——`droppen-relay` 二进制、中继自注册、默认自动且可手动切换的中继选择、Hub 不再转发通道（纯控制面）、默认中继（新加坡）与东京中继、流量计量 | 吊销后读不到新记录；限流生效 |
@@ -300,8 +300,8 @@
 
 > 2026-10-15。浏览器界面与浏览器侧 hub 传输是第二部分。
 
-- **crate**：hub（`rh-hub`，闭源，不在本仓库）；`crates/rh-devkit`（无头设备与回显 agent，测试与本地端到端用）；`rh-proto` 新增 `bridge`（回环桥接的线格式）、`flow`（hub 层信用窗口）、`driver`（feature `runtime`，tokio 上跑一条通道，agent 与无头设备共用）。
-- **两种 WebSocket 消息**：二进制消息恰好是一个 `rh_proto::frame` 帧（数据面）；文本消息是一个以 `t` 标记的 JSON 控制消息（登录挑战、注册、在线态、信箱、错误），见 `docs/hub-api/websocket.md`。登录签名的 `hub` 字段用**签名方自己拨号的源**，hub 用自己配置的源校验。
+- **crate**：hub（`rh-hub`，闭源，不在本仓库）；`crates/rh-devkit`（无头设备与回显 agent，测试与本地端到端用）；`droppen-proto` 新增 `bridge`（回环桥接的线格式）、`flow`（hub 层信用窗口）、`driver`（feature `runtime`，tokio 上跑一条通道，agent 与无头设备共用）。
+- **两种 WebSocket 消息**：二进制消息恰好是一个 `droppen_proto::frame` 帧（数据面）；文本消息是一个以 `t` 标记的 JSON 控制消息（登录挑战、注册、在线态、信箱、错误），见 `docs/hub-api/websocket.md`。登录签名的 `hub` 字段用**签名方自己拨号的源**，hub 用自己配置的源校验。
 - **HTTP**：`/v1/signup|login|logout|me|devices|chain|enrollments|mailbox`、`/healthz`（见 `docs/hub-api/http.md`）；运营方的路由（`/v1/admin/*`）与 Hub 一起记录，不在公开仓库。二进制字段一律小写 hex。
 - **通道**：设备的 `ch` 单调递增、永不复用；hub 为 agent 一侧另行分配，同样永不复用。每个方向一个 512 KiB 信用窗口（`flow::INITIAL_CREDIT`），超发或超额授信即以 4408 关闭该通道。关闭码：4404 机器离线、4403 不在设备链里、4400 协议错误、4409 通道过多、4410 对端断开；连接级 1012 表示 hub 重启。
 - **新鲜度门槛**：每条通道都要求有完整设备在 `FRESHNESS_MAX_AGE_MS`（12 小时）内为 agent 的链头签过证明；没有则回复新状态 `Stale`。设备连上后先发 `ATTEST` 帧（hub 存最新一条并转给 agent），再握手。只剩一台完整设备时它自己的证明有效（M3 复审）。
@@ -322,7 +322,7 @@
 
 > 2026-10-15。配对、`MK` 走通道并用 `UK` 包裹、恢复词、机器名加密、blob RPC 是第二部分。
 
-**流的布局**（`rh-proto/src/stream.rs`）
+**流的布局**（`droppen-proto/src/stream.rs`）
 
 | 流 | 名字 `(source, id)` | 记录格式 | 一条记录的正文（JSON） |
 |---|---|---|---|
@@ -384,7 +384,7 @@
 
 > 2026-10-15。
 
-**M0 复审的必修项**（`rh-proto/src/chain.rs`、`handshake.rs`；浏览器 `lib/e2e/` 同步）
+**M0 复审的必修项**（`droppen-proto/src/chain.rs`、`handshake.rs`；浏览器 `lib/e2e/` 同步）
 
 - **移除设备清掉它设的恢复钥**：链状态记下 `recovery_set_by`（谁签的 `SetRecoveryKey`；创世里的算创世设备）。`RemoveDevice` 移除的若是它、或是经恢复加入的设备，`RSK` 一并作废——偷到 `RK` 再自己换上的恢复钥，不会在移除后继续有效。
 - **握手回复带链后缀**：agent 的 `ReplyBody` 末尾附上发起方序号之后、自己链上的条目（至多 16 条）；设备在判定 `Stale`/`Open` 之前先并入（分叉即报错）。被 hub 扣住的移除条目因此一握手就能到达设备。
@@ -417,7 +417,7 @@
   - 来历：M2 验收中抓到最初流名用的是最新 epoch，轮换后 agent 开了一套新流、旧密文原封不动，于是先固定成第一个 epoch；按 epoch 改名、连同迁移和删旧流，是 M3a 补上的（下文「M5」）。
 - **链变化即断开**：每次并入新条目后，agent 关掉不再是当前设备的通道（4403）；握手本来就只放行当前设备。
 - **机器显示名**：默认主机名，可经 `/rh/display-name` 修改（≤64 字符、无控制字符，空 = 回到主机名），存 `state.json`，写在加密的状态流里（`displayName`）。hub 上仍只有 id。
-- **blob 通道**：桥接的 `blob` 类只接 `/api/fs/download`、`/api/fs/upload`、`/api/media/github` 三个路由；与 rpc 同样的桥接格式，但在通道内多路复用（`rh-proto/src/mux.rs`，两端都按 control > term > rpc/mux > blob 排）里优先级最低、分小块发送，不挤占终端和 mux。
+- **blob 通道**：桥接的 `blob` 类只接 `/api/fs/download`、`/api/fs/upload`、`/api/media/github` 三个路由；与 rpc 同样的桥接格式，但在通道内多路复用（`droppen-proto/src/mux.rs`，两端都按 control > term > rpc/mux > blob 排）里优先级最低、分小块发送，不挤占终端和 mux。
 
 **浏览器**（`web/src/lib/hub/`、`features/cloud/`）
 
@@ -440,7 +440,7 @@
 
 ### M2 安全复审修复
 
-> 2026-10-16。复审的概念验证（removed device 塞钥、hub 伪造链、傀儡设备、页面重载跳过等待、agent epoch 推到顶、明文 fmt、令牌桶活锁）都改写成了回归测试，现在全部攻击失败：`rh-proto/src/attack_regressions.rs` 的 `m2` 模块、`web/test/e2e-m2-review.test.ts`、`web/test/cloud-m2-review.test.ts`，以及 Hub 自己的测试。
+> 2026-10-16。复审的概念验证（removed device 塞钥、hub 伪造链、傀儡设备、页面重载跳过等待、agent epoch 推到顶、明文 fmt、令牌桶活锁）都改写成了回归测试，现在全部攻击失败：`droppen-proto/src/attack_regressions.rs` 的 `m2` 模块、`web/test/e2e-m2-review.test.ts`、`web/test/cloud-m2-review.test.ts`，以及 Hub 自己的测试。
 
 - **C1 被移除设备撤销轮换**：
   - 链条目版本 2，新增 `KeyEpochs`：每个新 `UK` epoch、每台机器每个新 `MK` epoch 都先在链上提交哈希，epoch 只能是上一个 +1（不可能跳到 u32::MAX）；agent（信箱或通道）、浏览器（配对投递、用途 1 信件、恢复包、钥环里的 `MK`）收到任何钥都对照提交，钥环里同一 epoch 的多个 blob 只取能验过的那个。epoch 号只从链上算，不再从钥环名字解析。
@@ -460,7 +460,7 @@
 
 ### M2 复审二轮修复
 
-> 2026-10-17。复核的概念验证（PoC A/B/B2/C 等）都改写成了回归测试，修复前失败、修复后通过：`rh-proto/src/attack_regressions.rs` 的 `m2_verify` 模块、`agent/state.rs`/`link.rs`/`streams` 的单元测试、`web/test/cloud-m2-verify.test.ts`，以及 Hub 自己的测试。
+> 2026-10-17。复核的概念验证（PoC A/B/B2/C 等）都改写成了回归测试，修复前失败、修复后通过：`droppen-proto/src/attack_regressions.rs` 的 `m2_verify` 模块、`agent/state.rs`/`link.rs`/`streams` 的单元测试、`web/test/cloud-m2-verify.test.ts`，以及 Hub 自己的测试。
 
 **账号变更提醒和恢复否决**
 
@@ -510,7 +510,7 @@
 
 ### 直连通道（已实现）
 
-> 2026-10-16（由测量探针而来）。代码：`rh-proto/src/{path,channel,driver,rtc,direct}.rs`、`server-rs/crates/droppen-agent/src/direct.rs`、`web/src/lib/{e2e/path.ts,e2e/driver.ts,transport/p2p.ts}`。
+> 2026-10-16（由测量探针而来）。代码：`droppen-proto/src/{path,channel,driver,rtc,direct}.rs`、`server-rs/crates/droppen-agent/src/direct.rs`、`web/src/lib/{e2e/path.ts,e2e/driver.ts,transport/p2p.ts}`。
 
 **为什么做**：经 hub 中转、离 hub 较远时，按键回显 p50 ≈ 176–190 ms；两端能直接互通时（同一台机器、同一个局域网、两边都有 IPv6，或 NAT 打得通）可以降到局域网或公网直线的时延。探针在真实网络里测过（见下方「测量记录」），值得做。**hub 永远是兜底**：每条通道都先经 hub 建好，直连只是同一条通道的第二条路，不另设 TURN。
 

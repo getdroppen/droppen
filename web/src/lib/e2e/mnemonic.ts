@@ -1,5 +1,5 @@
 /*
- * The recovery key as words (`rh-proto/src/mnemonic.rs`): BIP-39's encoding of
+ * The recovery key as words (`droppen-proto/src/mnemonic.rs`): BIP-39's encoding of
  * `RK` itself — its bytes then the first `bits / 32` bits of their SHA-256,
  * in 11-bit indices into the English list. No PBKDF2: the words are `RK`.
  */

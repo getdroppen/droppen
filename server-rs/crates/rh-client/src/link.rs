@@ -14,11 +14,11 @@ use std::time::Duration;
 
 use ed25519_dalek::SigningKey;
 use futures_util::{SinkExt, StreamExt};
-use rh_proto::chain::Attestation;
-use rh_proto::frame::{Frame, CLIENT_PATH};
-use rh_proto::sig::{HubLogin, LoginRole};
-use rh_proto::wire::client::DeviceToHub;
-use rh_proto::wire::connect::PeerToRelay;
+use droppen_proto::chain::Attestation;
+use droppen_proto::frame::{Frame, CLIENT_PATH};
+use droppen_proto::sig::{HubLogin, LoginRole};
+use droppen_proto::wire::client::DeviceToHub;
+use droppen_proto::wire::connect::PeerToRelay;
 use serde_json::Value;
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;

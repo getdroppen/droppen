@@ -1,16 +1,16 @@
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use rh_proto::bridge::{RequestHead, ResponseHead};
-use rh_proto::chain::{Attestation, ChainError, Entry};
-use rh_proto::channel::{PathOptions, Session};
-use rh_proto::direct::{Admission, Admit, AgentDirect};
-use rh_proto::driver::{Channel, Incoming};
-use rh_proto::frame::Frame;
-use rh_proto::handshake::{self, Accepted, AgentSide, HandshakeError, FRESHNESS_MAX_AGE_MS};
-use rh_proto::mux::{Role, StreamClass};
-use rh_proto::noise::{Binding, RekeyPolicy};
-use rh_proto::path::{self, DirectBinding};
+use droppen_proto::bridge::{RequestHead, ResponseHead};
+use droppen_proto::chain::{Attestation, ChainError, Entry};
+use droppen_proto::channel::{PathOptions, Session};
+use droppen_proto::direct::{Admission, Admit, AgentDirect};
+use droppen_proto::driver::{Channel, Incoming};
+use droppen_proto::frame::Frame;
+use droppen_proto::handshake::{self, Accepted, AgentSide, HandshakeError, FRESHNESS_MAX_AGE_MS};
+use droppen_proto::mux::{Role, StreamClass};
+use droppen_proto::noise::{Binding, RekeyPolicy};
+use droppen_proto::path::{self, DirectBinding};
 use tokio::sync::mpsc;
 
 use super::alerts::{alert_account_changes, raise_alarm};
@@ -232,10 +232,10 @@ pub(crate) async fn refuse_signaling(incoming: Incoming) {
     if let Ok(bytes) = head.encode() {
         let _ = incoming
             .stream
-            .send(&rh_proto::bridge::message(rh_proto::bridge::Kind::Head, &bytes))
+            .send(&droppen_proto::bridge::message(droppen_proto::bridge::Kind::Head, &bytes))
             .await;
     }
-    incoming.stream.close(rh_proto::bridge::CLOSE_FORBIDDEN);
+    incoming.stream.close(droppen_proto::bridge::CLOSE_FORBIDDEN);
 }
 
 /// The chain advanced by `entries` on a connection (from the hub, or a
@@ -511,7 +511,7 @@ pub(crate) fn accept(
             let paths = path::client_wants_paths(&hello.client);
             // A device that reads streams named per key epoch: from now on
             // (remembered) the agent names them so.
-            if rh_proto::stream::reads_epoch_names(&hello.client) {
+            if droppen_proto::stream::reads_epoch_names(&hello.client) {
                 shared.sync.send(super::streams::Event::ReadsEpochNames);
             }
             let relay_hash = transport.handshake_hash();
@@ -614,7 +614,7 @@ pub(crate) fn accept(
                         match &direct {
                             Some(ctx) => {
                                 tracing::info!(%device, ch, "a device asks for a direct path");
-                                tokio::spawn(rh_proto::direct::serve(stream.stream, channel.clone(), ctx.clone()));
+                                tokio::spawn(droppen_proto::direct::serve(stream.stream, channel.clone(), ctx.clone()));
                             }
                             None => {
                                 tokio::spawn(refuse_signaling(stream));

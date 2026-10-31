@@ -28,9 +28,9 @@ use std::time::{Duration, Instant};
 use axum::extract::ws::{Message, WebSocket};
 use futures_util::StreamExt;
 use rand::RngCore;
-use rh_proto::frame::{Frame, FrameType, RawFrame, IGNORABLE_TYPES};
-use rh_proto::ticket::TicketRole;
-use rh_proto::wire::connect::{PeerToRelay, RelayToPeer};
+use droppen_proto::frame::{Frame, FrameType, RawFrame, IGNORABLE_TYPES};
+use droppen_proto::ticket::TicketRole;
+use droppen_proto::wire::connect::{PeerToRelay, RelayToPeer};
 
 use crate::config::hex;
 use crate::conn::Outbound;

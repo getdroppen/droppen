@@ -45,13 +45,13 @@
 
 | 方面 | 现状 | 位置 | 对本设计的影响 |
 |---|---|---|---|
-| 身份从哪来 | 一颗 32 字节种子，经 HKDF（salt `rh/v1 machine`）展开成 Ed25519 与 X25519 | `C/rh-proto/src/identity.rs` `MachineIdentity::from_seed` | 换钥就是换种子；两把钥一起换 |
+| 身份从哪来 | 一颗 32 字节种子，经 HKDF（salt `rh/v1 machine`）展开成 Ed25519 与 X25519 | `C/droppen-proto/src/identity.rs` `MachineIdentity::from_seed` | 换钥就是换种子；两把钥一起换 |
 | 种子存哪 | `agent/machine-key.json`，0600，绑定实例 uuid。`SeedStore::create` 拒绝覆盖已有种子 | `S/agent/mod.rs` `FileSeedStore`、`load_or_create_in` | 要加「暂存、提升」两步，原地覆盖不安全 |
-| 链怎么记它 | `DeviceRecord.info{sign_key, dh_key}` 在加入时定下。没有任何动作能改一台设备的钥；`check_new` 只管新 id | `C/rh-proto/src/chain.rs` `apply`、`check_new` | 要一个新动作 |
+| 链怎么记它 | `DeviceRecord.info{sign_key, dh_key}` 在加入时定下。没有任何动作能改一台设备的钥；`check_new` 只管新 id | `C/droppen-proto/src/chain.rs` `apply`、`check_new` | 要一个新动作 |
 | Hub 怎么认它 | Hub 按这台 host 登记的签名钥验 agent 登录的 `HubLogin`；流的写入按登录时缓存的同一把钥验；设备角色按它作为设备登记的那把钥验，这一份登记建立之后从不替换 | Hub 一侧，见 `docs/hub-api/` | 提交时两处都要换，旧钥要进历史 |
-| 中继怎么认它 | 票据里写着 `sign_key`，中继要求持票人用这把钥签 `HubLogin` | `C/rh-proto/src/ticket.rs` | 提交时吊销旧票 |
-| 设备怎么连它 | Noise IK 的响应方静态钥取 `chain.machine(m).info.dh_key` | `C/rh-proto/src/handshake.rs` `start` | 链一换，旧钥就接不了握手 |
-| 它怎么连别人 | 别的 agent 用 `authorize_device(id, dh)` 按链准入，控制权看 `authorize_control` | `C/rh-proto/src/chain.rs`、`C/rh-proto/src/handshake.rs` | 同上 |
+| 中继怎么认它 | 票据里写着 `sign_key`，中继要求持票人用这把钥签 `HubLogin` | `C/droppen-proto/src/ticket.rs` | 提交时吊销旧票 |
+| 设备怎么连它 | Noise IK 的响应方静态钥取 `chain.machine(m).info.dh_key` | `C/droppen-proto/src/handshake.rs` `start` | 链一换，旧钥就接不了握手 |
+| 它怎么连别人 | 别的 agent 用 `authorize_device(id, dh)` 按链准入，控制权看 `authorize_control` | `C/droppen-proto/src/chain.rs`、`C/droppen-proto/src/handshake.rs` | 同上 |
 | 运行中的身份 | `Shared.identity: Arc<MachineIdentity>` 一次运行内不变；S1-1 已能在进程内停、起链接 | `S/agent/link.rs`、`S/cloud/control.rs` | 换钥 = 进程内重启链接与控制端 |
 | 一个 id 只留一条连接 | 同一 id 后登录的顶掉先登录的（4001）。中继也一样。agent 不特别对待 4001 | Hub 一侧（`docs/hub-api/`）、`C/rh-relay/src/server.rs` | 窗口规则建在它上面（§3.3）；4001 可当克隆信号 |
 | 今天的提示 | `reEnrollCulprits` 只看**直接**能控制的设备，提示「先移除，再重新添加」。再用 host 自己记的 `controllers` 收窄（聚合器文档 D3） | `W/lib/hub/account.ts`、`W/features/cloud/devices.tsx` | 换成自动换钥；补上传递（§4.1） |
@@ -438,7 +438,7 @@ v2 没有这个动作。还在 v2 的账户照旧提示重新注册，先升级�
 - **为什么不用登录当证据**：
   - 两个墙上时钟定不了先后。「登录时间晚于退役那一条加 5 分钟」挡不住时钟不一致时重放换钥之前的登录。
   - 它还会漏掉真 H：A 在 H 离线时赢了，H 五分钟内回来，它唯一那次退役钥登录过不了时间规则；同时 Hub 按「几秒之内只记录」也不隔离；之后再也不会有新证据。
-- **争议声明**（`rh-proto`，Rust 与 TS 逐字节相同，进互通向量）：
+- **争议声明**（`droppen-proto`，Rust 与 TS 逐字节相同，进互通向量）：
   - 标签 `rh/v1 rotate-dispute\0`；
   - 证明体 `str16 account | str16 host | u64 seq | entry_hash 32 | new_sign 32`；
   - `seq` 是被争议的那条 `RotateHostKey`，`entry_hash` 是它的链哈希，`new_sign` 是它装上的新签名钥；
@@ -747,7 +747,7 @@ v2 没有这个动作。还在 v2 的账户照旧提示重新注册，先升级�
 
 **发版顺序**
 
-1. 先发**能读**的 Hub、`rh-proto`、agent（含 `rh-client`）与网页。
+1. 先发**能读**的 Hub、`droppen-proto`、agent（含 `rh-client`）与网页。
 2. 门槛要等每台 host 都升上来才会满足。
 3. 再发**会写**的网页（R4）。
 
@@ -759,9 +759,9 @@ v2 没有这个动作。还在 v2 的账户照旧提示重新注册，先升级�
 
 ### 5.7 两份链验证者与互通向量
 
-Rust 在 `C/rh-proto/src/chain.rs`，TS 在 `W/lib/e2e/chain.ts`，必须逐字节、逐规则一致。
+Rust 在 `C/droppen-proto/src/chain.rs`，TS 在 `W/lib/e2e/chain.ts`，必须逐字节、逐规则一致。
 
-**新增的互通向量**（`C/rh-proto/vectors/rust.json` 与 `ts.json`，两边都要读对方产的）
+**新增的互通向量**（`C/droppen-proto/vectors/rust.json` 与 `ts.json`，两边都要读对方产的）
 
 - 20 号条目的编码与解码，`assurance` 取 0 和 1，以及非法值；
 - 证明体的字节、`rotate-confirm` 的 MAC、`rotate-sas` 的代码、`rotate-ack` 的签名；

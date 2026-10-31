@@ -1,6 +1,6 @@
 // Two paths under one channel (`lib/e2e/path.ts` `Lanes`, `channel.ts`
 // `Session.withPaths`, `driver.ts` in paths mode): the ports of
-// `rh-proto/src/path.rs`, `channel.rs` and `driver.rs`'s tests.
+// `droppen-proto/src/path.rs`, `channel.rs` and `driver.rs`'s tests.
 //
 // What these pin: sequencing hands every frame up exactly once and in order
 // across switches and a direct path that dies with frames in flight (a

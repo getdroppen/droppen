@@ -5,14 +5,14 @@
 //! device chain from where it left off (refusing rollbacks and forks), keeps
 //! the attestations the hub relays, opens machine keys left in its mailbox,
 //! and answers `OPEN`s from devices as the Noise responder
-//! ([`rh_proto::handshake::accept`] with its own live clock, the freshness
+//! ([`droppen_proto::handshake::accept`] with its own live clock, the freshness
 //! gate and the replay guard). Each accepted channel runs on
-//! [`rh_proto::driver`], and every stream a device opens on it is bridged to
+//! [`droppen_proto::driver`], and every stream a device opens on it is bridged to
 //! this server's loopback API ([`super::bridge`]).
 //!
-//! A device that offers sequenced frames ([`rh_proto::path::CLIENT_FEATURE`]
+//! A device that offers sequenced frames ([`droppen_proto::path::CLIENT_FEATURE`]
 //! in its hello) gets a two-path channel, and may ask on its signaling
-//! stream for a direct path ([`super::direct`], [`rh_proto::direct::serve`]):
+//! stream for a direct path ([`super::direct`], [`droppen_proto::direct::serve`]):
 //! the direct hello is admitted by [`admit::LinkAdmit`] under exactly the
 //! rules above, and the direct path lives and dies with its channel — a
 //! removal that closes the channel ([`drop_removed`]) closes the direct path
@@ -35,9 +35,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use rh_proto::frame::Frame;
-use rh_proto::identity::MachineIdentity;
-use rh_proto::noise::ReplayGuard;
+use droppen_proto::frame::Frame;
+use droppen_proto::identity::MachineIdentity;
+use droppen_proto::noise::ReplayGuard;
 use serde_json::Value;
 use tokio::sync::{mpsc, Semaphore};
 use tokio_util::sync::CancellationToken;
@@ -197,16 +197,16 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use futures_util::{SinkExt, StreamExt};
-    use rh_proto::bridge::{RequestHead, ResponseHead};
-    use rh_proto::chain::{Action, Attestation, ChainError, Entry, Signer};
-    use rh_proto::channel::Session;
-    use rh_proto::direct::{Admission, Admit};
-    use rh_proto::driver::Channel;
-    use rh_proto::frame::Frame;
-    use rh_proto::handshake;
-    use rh_proto::mux::{Role, StreamClass};
-    use rh_proto::noise::{Binding, RekeyPolicy};
-    use rh_proto::path::DirectBinding;
+    use droppen_proto::bridge::{RequestHead, ResponseHead};
+    use droppen_proto::chain::{Action, Attestation, ChainError, Entry, Signer};
+    use droppen_proto::channel::Session;
+    use droppen_proto::direct::{Admission, Admit};
+    use droppen_proto::driver::Channel;
+    use droppen_proto::frame::Frame;
+    use droppen_proto::handshake;
+    use droppen_proto::mux::{Role, StreamClass};
+    use droppen_proto::noise::{Binding, RekeyPolicy};
+    use droppen_proto::path::DirectBinding;
     use serde_json::{json, Value};
     use tokio::sync::mpsc;
     use tokio_tungstenite::tungstenite::Message;
@@ -220,8 +220,8 @@ mod tests {
     use super::mail::*;
     use super::*;
     use super::admit::ChainErrorExt;
-    use rh_proto::chain::{genesis_draft, recovery_keys, ChainClock, ChainState, DeviceInfo, RecoveryKey, RecoveryKeys};
-    use rh_proto::identity::{fingerprint, MachineIdentity};
+    use droppen_proto::chain::{genesis_draft, recovery_keys, ChainClock, ChainState, DeviceInfo, RecoveryKey, RecoveryKeys};
+    use droppen_proto::identity::{fingerprint, MachineIdentity};
 
     /// An account — genesis (d-1, recovery words) → add d-2 → add m-1 — the
     /// hub's view of it, and this machine enrolled in it.
@@ -458,7 +458,7 @@ mod tests {
             device: device.into(),
             machine: "m-1".into(),
         };
-        let mut initiator = rh_proto::noise::Initiator::new(key.dh(), &a.shared.identity.dh_public(), &binding).unwrap();
+        let mut initiator = droppen_proto::noise::Initiator::new(key.dh(), &a.shared.identity.dh_public(), &binding).unwrap();
         let (chain_seq, chain_head) = {
             let st = a.shared.state.lock().unwrap();
             let chain = st.chain.as_ref().unwrap();
@@ -521,8 +521,8 @@ mod tests {
 
     /// [`rpc`], its body and `End` held back for `hold` after the stream opened.
     async fn rpc_held(channel: &Channel, method: &str, path: &str, body: &[u8], hold: Duration) -> Option<(u16, Value)> {
-        use rh_proto::bridge::{message, Kind, MessageReader};
-        use rh_proto::driver::StreamEvent;
+        use droppen_proto::bridge::{message, Kind, MessageReader};
+        use droppen_proto::driver::StreamEvent;
         let head = RequestHead {
             method: method.into(),
             path: path.into(),
@@ -602,13 +602,13 @@ mod tests {
         let key = [7u8; 32];
         take(
             &mut a,
-            vec![Action::KeyEpochs(rh_proto::chain::KeyCommits {
+            vec![Action::KeyEpochs(droppen_proto::chain::KeyCommits {
                 user: None,
                 machines: vec![(
                     "m-1".into(),
-                    rh_proto::chain::KeyCommit {
+                    droppen_proto::chain::KeyCommit {
                         epoch: 0,
-                        hash: rh_proto::chain::machine_key_commit("a-1", "m-1", 0, &key),
+                        hash: droppen_proto::chain::machine_key_commit("a-1", "m-1", 0, &key),
                     },
                 )],
             })],
@@ -706,7 +706,7 @@ mod tests {
             &mut a,
             vec![Action::SetAccept {
                 host: "m-1".into(),
-                from: rh_proto::chain::Accept::All,
+                from: droppen_proto::chain::Accept::All,
             }],
         );
         attest(&a, "d-2", &d2(), 13 * 60 * 60 * 1000);
@@ -967,7 +967,7 @@ mod tests {
             device: device.into(),
             machine: "m-1".into(),
         };
-        let mut initiator = rh_proto::noise::Initiator::new(key.dh(), &a.shared.identity.dh_public(), &binding).unwrap();
+        let mut initiator = droppen_proto::noise::Initiator::new(key.dh(), &a.shared.identity.dh_public(), &binding).unwrap();
         let (chain_seq, chain_head) = {
             let st = a.shared.state.lock().unwrap();
             let chain = st.chain.as_ref().unwrap();
@@ -1098,7 +1098,7 @@ mod tests {
             agent_fp: [4; 32],
         };
         let machine_dh = a.shared.identity.dh_public();
-        let mut initiator = rh_proto::noise::Initiator::with_prologue(key.dh(), &machine_dh, &bind.prologue().unwrap()).unwrap();
+        let mut initiator = droppen_proto::noise::Initiator::with_prologue(key.dh(), &machine_dh, &bind.prologue().unwrap()).unwrap();
         let (chain_seq, chain_head) = {
             let st = a.shared.state.lock().unwrap();
             let chain = st.chain.as_ref().unwrap();
@@ -1248,11 +1248,11 @@ mod tests {
     /// removes m-1←d-3 is open, d-3's open channel is closed (and its next
     /// stream not served), and a new one is refused on the hub's path and on
     /// a relay's alike; once it is completed — or another one cancelled — d-3
-    /// is let in again. Every check is rh-proto's `may_control` (and the
+    /// is let in again. Every check is droppen-proto's `may_control` (and the
     /// handshake's), so the overlay holds everywhere at once.
     #[tokio::test]
     async fn a_renewal_pause_closes_and_refuses_a_paused_controller_until_it_ends() {
-        use rh_proto::chain::{Accept, PausePhase};
+        use droppen_proto::chain::{Accept, PausePhase};
         let mut a = policy_account();
         take(
             &mut a,
@@ -1318,7 +1318,7 @@ mod tests {
 
     // ---- control lapses on open channels too ----------------------------
 
-    const SEVEN_DAYS: u64 = rh_proto::chain::CONTROL_FRESHNESS_MS;
+    const SEVEN_DAYS: u64 = droppen_proto::chain::CONTROL_FRESHNESS_MS;
 
     async fn served(channel: &Channel) -> Option<u16> {
         rpc(channel, "GET", "/rh/info", b"").await.map(|(status, _)| status)
@@ -1527,7 +1527,7 @@ mod tests {
         // The link's clock runs ahead of the wall's by more than an
         // attestation's skew: the renewal, dated by it, counts only as that
         // clock judges it ([`take_attestation`]).
-        tokio::time::advance(Duration::from_millis(2 * rh_proto::chain::ATTESTATION_SKEW_MS)).await;
+        tokio::time::advance(Duration::from_millis(2 * droppen_proto::chain::ATTESTATION_SKEW_MS)).await;
         take(
             &mut a,
             vec![Action::SetAdmin {
@@ -1669,7 +1669,7 @@ mod tests {
     #[tokio::test]
     async fn a_direct_hello_is_admitted_by_the_links_clock() {
         let (a, offset) = manual_account();
-        offset.store(2 * rh_proto::chain::ATTESTATION_SKEW_MS, std::sync::atomic::Ordering::SeqCst);
+        offset.store(2 * droppen_proto::chain::ATTESTATION_SKEW_MS, std::sync::atomic::Ordering::SeqCst);
         attest(&a, "d-1", &a.d1, 0);
         let admit = LinkAdmit { shared: a.shared.clone() };
         let (bind, hello) = direct_hello(&a, &d2(), "d-2");
@@ -1796,7 +1796,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_management_request_is_judged_again_when_it_is_dispatched() {
         let a = clocked_account();
-        attest(&a, "d-1", &a.d1, rh_proto::chain::MANAGE_FRESHNESS_MS - 1_500);
+        attest(&a, "d-1", &a.d1, droppen_proto::chain::MANAGE_FRESHNESS_MS - 1_500);
         let mut routes = Routes::new();
         let channel = connect(&a, &d2(), "d-2", 4, &mut routes).await.expect("fresh");
         let held = rpc_held(&channel, "POST", "/rh/display-name", br#"{"name":"held"}"#, Duration::from_millis(2_500)).await;
@@ -1891,13 +1891,13 @@ mod tests {
                 id: "m-1".into(),
                 host: true,
             },
-            Action::KeyEpochs(rh_proto::chain::KeyCommits {
+            Action::KeyEpochs(droppen_proto::chain::KeyCommits {
                 user: None,
                 machines: vec![(
                     "m-1".into(),
-                    rh_proto::chain::KeyCommit {
+                    droppen_proto::chain::KeyCommit {
                         epoch: 0,
-                        hash: rh_proto::chain::machine_key_commit("a-1", "m-1", 0, &key),
+                        hash: droppen_proto::chain::machine_key_commit("a-1", "m-1", 0, &key),
                     },
                 )],
             }),
@@ -1953,7 +1953,7 @@ mod tests {
             device: "d-1".into(),
             machine: "m-1".into(),
         };
-        let mut initiator = rh_proto::noise::Initiator::new(a.d1.dh(), &machine_dh, &binding).unwrap();
+        let mut initiator = droppen_proto::noise::Initiator::new(a.d1.dh(), &machine_dh, &binding).unwrap();
         let body = handshake::HelloBody {
             chain_seq: a.hub.seq(),
             chain_head: a.hub.head(),
@@ -2004,9 +2004,9 @@ mod tests {
         // Key epochs on their own are said (N2); as part of a removal's rotation, the removal says it.
         let keys = entry(
             Signer::Device("d-1".into()),
-            Action::KeyEpochs(rh_proto::chain::KeyCommits {
+            Action::KeyEpochs(droppen_proto::chain::KeyCommits {
                 user: None,
-                machines: vec![("m-1".into(), rh_proto::chain::KeyCommit { epoch: 7, hash: [0; 32] })],
+                machines: vec![("m-1".into(), droppen_proto::chain::KeyCommit { epoch: 7, hash: [0; 32] })],
             }),
         );
         assert_eq!(
@@ -2030,7 +2030,7 @@ mod tests {
     /// its addition.
     #[test]
     fn every_v3_change_to_who_is_in_the_account_or_who_controls_it_is_an_alert() {
-        use rh_proto::chain::{Accept, DeviceV3, Flags, KeyCommit, KeyCommits};
+        use droppen_proto::chain::{Accept, DeviceV3, Flags, KeyCommit, KeyCommits};
         let ak = MachineIdentity::from_seed(&[1; 32]);
         let dev = MachineIdentity::from_seed(&[2; 32]);
         let genesis = genesis_draft("a-1", ak.sign_public(), info("d-1", &dev), None, 1_000).sign(ak.signing_key());
@@ -2131,7 +2131,7 @@ mod tests {
     /// follow is part of it — and this agent applies the entry like any other.
     #[test]
     fn a_host_renewing_its_identity_key_is_a_note_with_the_new_fingerprint() {
-        use rh_proto::chain::{Assurance, DeviceV3, Flags, HostRotation, KeyCommit, KeyCommits};
+        use droppen_proto::chain::{Assurance, DeviceV3, Flags, HostRotation, KeyCommit, KeyCommits};
         let ak = MachineIdentity::from_seed(&[1; 32]);
         let dev = MachineIdentity::from_seed(&[2; 32]);
         let genesis = genesis_draft("a-1", ak.sign_public(), info("d-1", &dev), None, 1_000).sign(ak.signing_key());
@@ -2168,11 +2168,11 @@ mod tests {
             new_sig: [0; 64],
         };
         let body = r.body("a-1", &old.sign_public(), &old.dh_public());
-        r.old_sig = rh_proto::sig::sign(old.signing_key(), rh_proto::sig::HOST_ROTATE, &body);
-        r.new_sig = rh_proto::sig::sign(new.signing_key(), rh_proto::sig::HOST_ROTATE, &body);
+        r.old_sig = droppen_proto::sig::sign(old.signing_key(), droppen_proto::sig::HOST_ROTATE, &body);
+        r.new_sig = droppen_proto::sig::sign(new.signing_key(), droppen_proto::sig::HOST_ROTATE, &body);
         let rotate = push(&mut state, Action::RotateHostKey(r.clone()));
         let keys = push(&mut state, key(1));
-        let fp = rh_proto::identity::device_fingerprint_text(&new.sign_public(), &new.dh_public());
+        let fp = droppen_proto::identity::device_fingerprint_text(&new.sign_public(), &new.dh_public());
         assert_eq!(
             account_change(&rotate, None),
             Some(format!("device h-2 renewed its identity key (new fingerprint {fp}, written by d-1)"))
@@ -2205,7 +2205,7 @@ mod tests {
         );
         // A renewal pause (kind 22): its start names the control it pauses;
         // an end names the start's, from this agent's chain.
-        let marker = |phase: rh_proto::chain::PausePhase, removals: &[(&str, &[&str])]| {
+        let marker = |phase: droppen_proto::chain::PausePhase, removals: &[(&str, &[&str])]| {
             state
                 .draft(
                     Signer::Device("d-1".into()),
@@ -2218,7 +2218,7 @@ mod tests {
                 )
                 .sign(dev.signing_key())
         };
-        use rh_proto::chain::PausePhase::{Cancelled, Completed, Start};
+        use droppen_proto::chain::PausePhase::{Cancelled, Completed, Start};
         assert_eq!(
             account_change(&marker(Start, &[("h-2", &["m-1", "d-2"][..]), ("m-1", &["h-2"][..])]), None).as_deref(),
             Some("control by m-1, d-2 over h-2; h-2 over m-1 is paused while identity keys are renewed (by d-1)")
@@ -2249,9 +2249,9 @@ mod tests {
         };
         let accept = |ids: &[&str]| Action::SetAccept {
             host: "h-2".into(),
-            from: rh_proto::chain::Accept::Devices(ids.iter().map(|i| i.to_string()).collect()),
+            from: droppen_proto::chain::Accept::Devices(ids.iter().map(|i| i.to_string()).collect()),
         };
-        let pause = |op: u8, phase: rh_proto::chain::PausePhase, ids: &[&str]| Action::RenewalPause {
+        let pause = |op: u8, phase: droppen_proto::chain::PausePhase, ids: &[&str]| Action::RenewalPause {
             op: [op; 16],
             phase,
             removals: if ids.is_empty() { vec![] } else { vec![("h-2".into(), ids.iter().map(|i| i.to_string()).collect())] },
@@ -2554,7 +2554,7 @@ mod tests {
     /// after key epochs are each their own alert.
     #[test]
     fn only_a_new_hosts_own_key_or_a_removals_rotation_rides_on_its_alert() {
-        use rh_proto::chain::{DeviceV3, Flags, KeyCommit, KeyCommits};
+        use droppen_proto::chain::{DeviceV3, Flags, KeyCommit, KeyCommits};
         let ak = MachineIdentity::from_seed(&[1; 32]);
         let dev = MachineIdentity::from_seed(&[2; 32]);
         let genesis = genesis_draft("a-1", ak.sign_public(), info("d-1", &dev), None, 1_000).sign(ak.signing_key());
@@ -2639,7 +2639,7 @@ mod tests {
             agent_fp: [4; 32],
         };
         let machine_dh = a.shared.identity.dh_public();
-        let mut initiator = rh_proto::noise::Initiator::with_prologue(a.d1.dh(), &machine_dh, &bind.prologue().unwrap()).unwrap();
+        let mut initiator = droppen_proto::noise::Initiator::with_prologue(a.d1.dh(), &machine_dh, &bind.prologue().unwrap()).unwrap();
         let body = handshake::HelloBody {
             chain_seq: a.hub.seq(),
             chain_head: a.hub.head(),
@@ -2717,13 +2717,13 @@ mod tests {
 
     /// [`hello`], with the device's end of the handshake, which reads the
     /// agent's reply.
-    fn hello_from(a: &Account, key: &MachineIdentity, device: &str, entries: Vec<Entry>) -> (rh_proto::noise::Initiator, Vec<u8>) {
+    fn hello_from(a: &Account, key: &MachineIdentity, device: &str, entries: Vec<Entry>) -> (droppen_proto::noise::Initiator, Vec<u8>) {
         let binding = Binding {
             account: "a-1".into(),
             device: device.into(),
             machine: "m-1".into(),
         };
-        let mut initiator = rh_proto::noise::Initiator::new(key.dh(), &a.shared.identity.dh_public(), &binding).unwrap();
+        let mut initiator = droppen_proto::noise::Initiator::new(key.dh(), &a.shared.identity.dh_public(), &binding).unwrap();
         let body = handshake::HelloBody {
             chain_seq: a.hub.seq(),
             chain_head: a.hub.head(),
@@ -2822,7 +2822,7 @@ mod tests {
                     agent_fp: [4; 32],
                 };
                 let machine_dh = a.shared.identity.dh_public();
-                let mut initiator = rh_proto::noise::Initiator::with_prologue(a.d1.dh(), &machine_dh, &bind.prologue().unwrap()).unwrap();
+                let mut initiator = droppen_proto::noise::Initiator::with_prologue(a.d1.dh(), &machine_dh, &bind.prologue().unwrap()).unwrap();
                 let body = handshake::HelloBody {
                     chain_seq: a.hub.seq(),
                     chain_head: a.hub.head(),

@@ -1,7 +1,7 @@
 //! Where this instance stands with its hub link, as the local API and
 //! `agent status` say it: read from the agent's state and files.
 
-use rh_proto::identity::display_fingerprint;
+use droppen_proto::identity::display_fingerprint;
 use serde::Serialize;
 
 use super::state::{AgentState, Alarm};

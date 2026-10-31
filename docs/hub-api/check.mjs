@@ -52,7 +52,7 @@ const ROOTS = [
   "server-rs/crates/rh-client/src",
   "server-rs/crates/rh-devkit/src",
   "server-rs/crates/rh-hub-tools/src",
-  "server-rs/crates/rh-proto/src/wire",
+  "server-rs/crates/droppen-proto/src/wire",
 ];
 
 /**
@@ -115,7 +115,7 @@ const IGNORE = [
 ];
 
 /**
- * The typed messages: rh-proto's `wire` modules, one per channel. Both ends
+ * The typed messages: droppen-proto's `wire` modules, one per channel. Both ends
  * of a channel use these types, so what a type derives says nothing about
  * who sends it; its name does. A module may hold an enum tagged `t` under
  * its two names only, and each variant must be in index.json under that
@@ -124,7 +124,7 @@ const IGNORE = [
  * the file must speak the channel (SPEAKS), and is listed as sending or
  * receiving it from its end.
  */
-const WIRE_ROOT = "server-rs/crates/rh-proto/src/wire/";
+const WIRE_ROOT = "server-rs/crates/droppen-proto/src/wire/";
 const WIRE = [
   { file: `${WIRE_ROOT}connect.rs`, channel: "/v1/connect", c2s: "PeerToRelay", s2c: "RelayToPeer" },
   { file: `${WIRE_ROOT}relay.rs`, channel: "/v1/relay", c2s: "RelayToHub", s2c: "HubToRelay" },
@@ -652,7 +652,7 @@ function extract(src, lang, test = false, wire = undefined) {
           }
         }
       }
-      // RelayToPeer::Welcome: a typed message (WIRE) named outside rh-proto
+      // RelayToPeer::Welcome: a typed message (WIRE) named outside droppen-proto
       if (wire === undefined && tok.k === "id" && WIRE_TYPES.has(tok.v)) {
         const w = WIRE_TYPES.get(tok.v);
         const next = toks[j + 2];
@@ -674,7 +674,7 @@ function extract(src, lang, test = false, wire = undefined) {
     const dir = wire && e.name === wire.c2s ? "c2s" : wire && e.name === wire.s2c ? "s2c" : null;
     if (!dir) {
       const names = wire ? `${wire.c2s} or ${wire.s2c}` : "no type for this file (add it to WIRE)";
-      problems.push({ line: toks[e.at].line, why: `enum ${e.name} is tagged "t" in rh-proto's wire, where WIRE names ${names}` });
+      problems.push({ line: toks[e.at].line, why: `enum ${e.name} is tagged "t" in droppen-proto's wire, where WIRE names ${names}` });
       continue;
     }
     for (const v of e.variants) t(v.t, dir, v.at, { typed: true });
@@ -730,7 +730,7 @@ for (const root of ROOTS) {
     if (full.endsWith(".rs")) for (const t of testModules(full, lex(readFileSync(full, "utf8"), "rs"))) testFiles.add(t);
   }
 }
-// The typed messages, from rh-proto's wire modules first (the files naming
+// The typed messages, from droppen-proto's wire modules first (the files naming
 // them come before those in the walk): type name -> `{channel, dir,
 // variants: Map(variant -> t)}`.
 const WIRE_TYPES = new Map();
@@ -788,7 +788,7 @@ for (const root of ROOTS) {
         continue;
       }
       if (wire !== undefined && !use.typed && use.dir !== "any") {
-        fail(`control message t="${use.t}" at ${where}: rh-proto's wire holds message types only; build this one from them`);
+        fail(`control message t="${use.t}" at ${where}: droppen-proto's wire holds message types only; build this one from them`);
         continue;
       }
       if (onlyLocal) continue;

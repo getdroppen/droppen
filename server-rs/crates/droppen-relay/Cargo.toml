@@ -28,7 +28,7 @@ rand = "0.8"
 # `tests/relay.rs` drives `droppen-relay` as a child process and the library
 # in-process against a fake Hub; the outage test and the fake Hub need tokio's
 # process and io helpers. `tests/env_names.rs` runs the binary only.
-rh-proto = { path = "../rh-proto" }
+droppen-proto = { path = "../droppen-proto" }
 axum = { version = "0.8", features = ["ws"] }
 tokio = { version = "1", features = ["sync", "time", "process", "io-util", "test-util"] }
 tokio-util = { version = "0.7", features = ["rt"] }

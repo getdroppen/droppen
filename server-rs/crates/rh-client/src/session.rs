@@ -5,8 +5,8 @@
 //! is its device key too (`docs/local-aggregator.md` §4.2).
 
 use ed25519_dalek::SigningKey;
-use rh_proto::sig::{HubLogin, LoginRole};
-use rh_proto::wire::client::{SessionChallengeRequest, SessionRequest};
+use droppen_proto::sig::{HubLogin, LoginRole};
+use droppen_proto::wire::client::{SessionChallengeRequest, SessionRequest};
 use serde_json::Value;
 use zeroize::Zeroizing;
 

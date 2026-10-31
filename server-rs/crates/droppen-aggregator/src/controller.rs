@@ -18,7 +18,7 @@
 //! 1. a device session, minted with the machine key when there is none or it
 //!    expires soon ([`super::hub::DeviceClient::sign_in`]);
 //! 2. the mailbox: each host key (purpose 5) is opened with
-//!    [`rh_proto::wrap::open_host_key`] — sealed by a current admin, to this
+//!    [`droppen_proto::wrap::open_host_key`] — sealed by a current admin, to this
 //!    device, exactly the key the chain committed for that host and epoch —
 //!    and kept only for a host that accepts this device's control (review
 //!    D2); a key the chain has not caught up with yet (its epoch, or its
@@ -39,9 +39,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use gotcha::Schematic;
-use rh_proto::chain::{ChainError, ChainState};
-use rh_proto::identity::MachineIdentity;
-use rh_proto::wrap::{self, HostKeyContext, WrapError};
+use droppen_proto::chain::{ChainError, ChainState};
+use droppen_proto::identity::MachineIdentity;
+use droppen_proto::wrap::{self, HostKeyContext, WrapError};
 use serde::{Deserialize, Serialize};
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
@@ -217,7 +217,7 @@ impl std::fmt::Debug for Verdict {
 /// from a current admin, to `me`, of a host that accepts `me`'s control,
 /// exactly as the chain committed it — else dropped, or left for later when
 /// the chain may simply be behind it.
-pub fn judge(chain: &ChainState, account: &str, me: &str, recipient: &rh_proto::keys::DhKeypair, mail: &Mail) -> Verdict {
+pub fn judge(chain: &ChainState, account: &str, me: &str, recipient: &droppen_proto::keys::DhKeypair, mail: &Mail) -> Verdict {
     if mail.purpose != wrap::MAIL_HOST_KEY {
         return Verdict::Drop("not a host key: this device manages nothing");
     }
@@ -771,9 +771,9 @@ impl Controller {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rh_proto::chain::{Accept, Action, ChainClock, Flags, KeyCommit, KeyCommits, Signer};
-    use rh_proto::keys::DhKeypair;
-    use rh_proto::wrap::{encode_host_key_mail, seal_host_key};
+    use droppen_proto::chain::{Accept, Action, ChainClock, Flags, KeyCommit, KeyCommits, Signer};
+    use droppen_proto::keys::DhKeypair;
+    use droppen_proto::wrap::{encode_host_key_mail, seal_host_key};
 
     /// An account: admin `d-a`; hosts `m-me` (this computer, not an admin),
     /// `m-2` (its key epoch 0 committed as `[0x22; 32]`) and `m-3` (epoch 0
@@ -795,7 +795,7 @@ mod tests {
                 host.into(),
                 KeyCommit {
                     epoch,
-                    hash: rh_proto::chain::machine_key_commit("a-1", host, epoch, key),
+                    hash: droppen_proto::chain::machine_key_commit("a-1", host, epoch, key),
                 },
             )],
         })
@@ -804,13 +804,13 @@ mod tests {
     fn account() -> Account {
         let ak = sk(1);
         let admin = (sk(2), DhKeypair::from_secret([3; 32]));
-        let device = |id: &str, sign: &ed25519_dalek::SigningKey, dh: [u8; 32], host: bool, admin: bool| rh_proto::chain::DeviceV3 {
+        let device = |id: &str, sign: &ed25519_dalek::SigningKey, dh: [u8; 32], host: bool, admin: bool| droppen_proto::chain::DeviceV3 {
             id: id.into(),
             sign_key: sign.verifying_key().to_bytes(),
             dh_key: dh,
             flags: Flags { host, admin },
         };
-        let genesis = rh_proto::chain::genesis3_draft(
+        let genesis = droppen_proto::chain::genesis3_draft(
             "a-1",
             ak.verifying_key().to_bytes(),
             device("d-a", &admin.0, admin.1.public(), false, true),

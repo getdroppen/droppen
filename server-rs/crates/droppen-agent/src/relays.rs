@@ -10,7 +10,7 @@
 //! own routes — so a channel is known by (relay, `ch`).
 //!
 //! - **Where it dials.** A relay names its own origin and is not trusted
-//!   with the networks behind this machine (`rh_proto::netpolicy`). Taken
+//!   with the networks behind this machine (`droppen_proto::netpolicy`). Taken
 //!   from `relay_set`: ids `[a-z][a-z0-9-]{0,31}`, origins `wss://host[:port]`
 //!   of at most 256 characters, written as a URL parser writes them back, at
 //!   a public name or address (no loopback, private, link-local, metadata,
@@ -47,11 +47,11 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt, StreamExt};
-use rh_proto::frame::Frame;
-use rh_proto::netpolicy;
-use rh_proto::sig::{HubLogin, LoginRole};
-use rh_proto::wire::agent::AgentToHub;
-use rh_proto::wire::connect::PeerToRelay;
+use droppen_proto::frame::Frame;
+use droppen_proto::netpolicy;
+use droppen_proto::sig::{HubLogin, LoginRole};
+use droppen_proto::wire::agent::AgentToHub;
+use droppen_proto::wire::connect::PeerToRelay;
 use serde_json::Value;
 use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::tungstenite::Message;
@@ -303,7 +303,7 @@ fn fake_ok(name: &str) -> bool {
 /// connects it to, TLS verifies the relay's name, so it cannot steer this
 /// agent to a plaintext service inside the network. An address literal in
 /// that range, or a name that resolves to it and to anything refused, is
-/// still refused (`rh_proto::netpolicy` itself, which the hub vets relay
+/// still refused (`droppen_proto::netpolicy` itself, which the hub vets relay
 /// origins with, keeps refusing the range).
 fn vet(addrs: Vec<SocketAddr>, allow_loopback: bool, name: Option<&str>) -> Result<Vec<SocketAddr>, String> {
     if addrs.is_empty() {
@@ -1181,7 +1181,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let paths = droppen_instance::paths::Paths::for_instance(dir.path().to_path_buf(), "relays");
         let st = super::super::state::AgentState::enrolling("http://hub.invalid", "a-1", "m-1", [0; 16], now_ms_u64());
-        let identity = rh_proto::identity::MachineIdentity::from_seed(&[5; 32]);
+        let identity = droppen_proto::identity::MachineIdentity::from_seed(&[5; 32]);
         let shared = super::super::link::test_shared(
             &paths,
             st,
@@ -1267,7 +1267,7 @@ mod tests {
         let shared = super::super::link::test_shared(
             &paths,
             st,
-            rh_proto::identity::MachineIdentity::from_seed(&[5; 32]),
+            droppen_proto::identity::MachineIdentity::from_seed(&[5; 32]),
             super::super::streams::Handle::detached(),
             super::super::rotation::no_restart(),
         );
@@ -1319,7 +1319,7 @@ mod tests {
         let shared = super::super::link::test_shared(
             &paths,
             st,
-            rh_proto::identity::MachineIdentity::from_seed(&[5; 32]),
+            droppen_proto::identity::MachineIdentity::from_seed(&[5; 32]),
             super::super::streams::Handle::detached(),
             super::super::rotation::no_restart(),
         );
@@ -1355,7 +1355,7 @@ mod tests {
         let shared = super::super::link::test_shared(
             &paths,
             st,
-            rh_proto::identity::MachineIdentity::from_seed(&[5; 32]),
+            droppen_proto::identity::MachineIdentity::from_seed(&[5; 32]),
             super::super::streams::Handle::detached(),
             super::super::rotation::no_restart(),
         );

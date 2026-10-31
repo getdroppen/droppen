@@ -10,14 +10,14 @@ use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt, StreamExt};
 use rand::RngCore;
-use rh_proto::chain::{
+use droppen_proto::chain::{
     genesis_draft, Action, Assurance, Attestation, ChainClock, ChainState, DeviceInfo, DeviceV3, Entry, Flags, HostRotation, KeyCommit,
     KeyCommits, Signer,
 };
-use rh_proto::frame::Frame;
-use rh_proto::identity::{fingerprint, MachineIdentity};
-use rh_proto::keys::DhKeypair;
-use rh_proto::sig::{HubLogin, LoginRole};
+use droppen_proto::frame::Frame;
+use droppen_proto::identity::{fingerprint, MachineIdentity};
+use droppen_proto::keys::DhKeypair;
+use droppen_proto::sig::{HubLogin, LoginRole};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tokio::sync::mpsc;
@@ -191,8 +191,8 @@ impl Account {
             new_sig: [0; 64],
         };
         let body = r.body("a-1", &old.sign_public(), &old.dh_public());
-        r.old_sig = rh_proto::sig::sign(old.signing_key(), rh_proto::sig::HOST_ROTATE, &body);
-        r.new_sig = rh_proto::sig::sign(to.signing_key(), rh_proto::sig::HOST_ROTATE, &body);
+        r.old_sig = droppen_proto::sig::sign(old.signing_key(), droppen_proto::sig::HOST_ROTATE, &body);
+        r.new_sig = droppen_proto::sig::sign(to.signing_key(), droppen_proto::sig::HOST_ROTATE, &body);
         vec![self.push(Action::RotateHostKey(r)), self.push(key_epoch("m-1", 1))]
     }
 
@@ -221,7 +221,7 @@ impl Account {
 
     /// [`Account::staged_answer`] of m-1 running with `old`.
     fn staged_answer_from(&self, old: &MachineIdentity, new: &MachineIdentity, nonce: [u8; 16]) -> Value {
-        let body = rh_proto::chain::host_rotate_body(
+        let body = droppen_proto::chain::host_rotate_body(
             "a-1",
             "m-1",
             self.hub.seq(),
@@ -238,8 +238,8 @@ impl Account {
             "dhKey": hex(&new.dh_public()),
             "stagedSeq": self.hub.seq(),
             "stagedHead": hex(&self.hub.head()),
-            "oldSig": hex(&rh_proto::sig::sign(old.signing_key(), rh_proto::sig::HOST_ROTATE, &body)),
-            "newSig": hex(&rh_proto::sig::sign(new.signing_key(), rh_proto::sig::HOST_ROTATE, &body)),
+            "oldSig": hex(&droppen_proto::sig::sign(old.signing_key(), droppen_proto::sig::HOST_ROTATE, &body)),
+            "newSig": hex(&droppen_proto::sig::sign(new.signing_key(), droppen_proto::sig::HOST_ROTATE, &body)),
         })
     }
 
@@ -653,7 +653,7 @@ async fn a_renewal_request_stages_a_new_seed_and_proves_it() {
     assert!(r.verify("a-1", &old.sign_public(), &old.dh_public()));
     let body = r.body("a-1", &old.sign_public(), &old.dh_public());
     let mac = unhex32(answer["mac"].as_str().unwrap()).unwrap();
-    assert!(rh_proto::chain::check_rotate_confirm(&eph, &new_dh, &body, &mac));
+    assert!(droppen_proto::chain::check_rotate_confirm(&eph, &new_dh, &body, &mac));
     // Staged beside the seed in use, 0600; the seed in use untouched.
     let staged = a.staged().expect("staged");
     assert_eq!(staged.identity().sign_public(), new_sign);
@@ -747,7 +747,7 @@ async fn a_renewal_request_is_checked_and_a_high_assurance_one_shows_its_code() 
     a.push(key_epoch("h-2", 0));
     a.push(Action::SetAccept {
         host: "m-1".into(),
-        from: rh_proto::chain::Accept::Devices(vec!["h-2".into()]),
+        from: droppen_proto::chain::Accept::Devices(vec!["h-2".into()]),
     });
     let hub = FakeHub::start(Script::rotating(vec![machine().sign_public()]), a.entries.clone()).await;
     let shared = a.shared(&hub.url, &Arc::default());
@@ -790,7 +790,7 @@ async fn a_renewal_request_is_checked_and_a_high_assurance_one_shows_its_code() 
     let (status, answer) = rotate(&shared, &a.request([7; 16], &eph, 1)).await;
     assert_eq!(status, 200, "{answer}");
     let old = machine();
-    let body = rh_proto::chain::host_rotate_body(
+    let body = droppen_proto::chain::host_rotate_body(
         "a-1",
         "m-1",
         a.hub.seq(),
@@ -805,7 +805,7 @@ async fn a_renewal_request_is_checked_and_a_high_assurance_one_shows_its_code() 
     let st = AgentState::load(&a.files).unwrap().unwrap();
     let shown = a.files.rotation_status(Some(&st), now_ms_u64());
     assert_eq!(shown.state, "staged");
-    assert_eq!(shown.code.as_deref(), Some(rh_proto::chain::rotate_sas(&body).as_str()));
+    assert_eq!(shown.code.as_deref(), Some(droppen_proto::chain::rotate_sas(&body).as_str()));
     assert!(shown.code_expires_ms.is_some_and(|t| t <= now_ms_u64() + rotation::CODE_FOR_MS));
     let later = a.files.rotation_status(Some(&st), now_ms_u64() + rotation::CODE_FOR_MS + 1);
     assert_eq!((later.state.as_str(), later.code), ("staged", None), "ten minutes, then no code");
@@ -860,7 +860,7 @@ async fn a_hub_that_does_not_offer_rotate_gets_no_staging() {
 
 /// §3.3: a sign-in with the old key during the window is asked to confirm
 /// the staging; this agent answers with the NEW key's R1 rotate-ack over
-/// THIS connection's challenge nonce (verified here with rh-proto), and
+/// THIS connection's challenge nonce (verified here with droppen-proto), and
 /// `rotation_unknown` for a key it does not hold.
 #[tokio::test]
 async fn rotation_pending_is_confirmed_with_the_new_key_over_this_connections_nonce() {
@@ -889,7 +889,7 @@ async fn rotation_pending_is_confirmed_with_the_new_key_over_this_connections_no
     assert_eq!(ack.clone().blank(&["sig"]), json!({"t": "rotation_ack", "sign_key": answer["signKey"], "sig": ""}));
     let login = hub.logins().last().cloned().unwrap();
     let old = machine();
-    let body = rh_proto::chain::host_rotate_body(
+    let body = droppen_proto::chain::host_rotate_body(
         "a-1",
         "m-1",
         a.hub.seq(),
@@ -902,8 +902,8 @@ async fn rotation_pending_is_confirmed_with_the_new_key_over_this_connections_no
         Assurance::Auto,
     );
     let sig = unhex64(ack["sig"].as_str().unwrap());
-    assert!(rh_proto::chain::verify_rotate_ack(&new_sign, "a-1", "m-1", &body, &login.nonce, &sig), "over this connection's nonce");
-    assert!(!rh_proto::chain::verify_rotate_ack(&new_sign, "a-1", "m-1", &body, &[0; 32], &sig));
+    assert!(droppen_proto::chain::verify_rotate_ack(&new_sign, "a-1", "m-1", &body, &login.nonce, &sig), "over this connection's nonce");
+    assert!(!droppen_proto::chain::verify_rotate_ack(&new_sign, "a-1", "m-1", &body, &[0; 32], &sig));
     // A key it does not hold.
     let mut other = pending;
     other["sign_key"] = json!(hex(&thief().sign_public()));
@@ -1544,7 +1544,7 @@ async fn a_renewal_to_keys_this_device_does_not_hold_is_alarmed_and_stops_the_li
     assert_eq!(body["seq"].as_u64(), Some(seq));
     assert_eq!(body["entry_hash"].as_str(), Some(hex(&a.hub.hash_at(seq).unwrap()).as_str()));
     let sig = unhex64(body["sig"].as_str().unwrap());
-    assert!(a.hub.verify_rotate_dispute("m-1", seq, &sig), "it verifies with rh-proto on the chain");
+    assert!(a.hub.verify_rotate_dispute("m-1", seq, &sig), "it verifies with droppen-proto on the chain");
     until("the hub's 200 noted", || {
         AgentState::load(&a.files).unwrap().unwrap().rotation.evidence_ms.is_some()
     })
@@ -1558,7 +1558,7 @@ async fn a_renewal_to_keys_this_device_does_not_hold_is_alarmed_and_stops_the_li
         rotation::verdict(&st, &old, &[], false),
         Verdict::Foreign {
             seq: entries[0].seq(),
-            fingerprint: rh_proto::identity::device_fingerprint_text(&thief().sign_public(), &thief().dh_public()),
+            fingerprint: droppen_proto::identity::device_fingerprint_text(&thief().sign_public(), &thief().dh_public()),
         }
     );
     // Started again, it does not connect, and the statement the hub took is
@@ -1720,7 +1720,7 @@ async fn a_channel_opened_with_a_renewed_key_is_closed() {
     a.push(key_epoch("h-2", 0));
     a.push(Action::SetAccept {
         host: "m-1".into(),
-        from: rh_proto::chain::Accept::Devices(vec!["h-2".into()]),
+        from: droppen_proto::chain::Accept::Devices(vec!["h-2".into()]),
     });
     let shared = a.shared("ws://127.0.0.1:9", &Arc::default());
     let (tx, rx) = mpsc::unbounded_channel();
@@ -1741,8 +1741,8 @@ async fn a_channel_opened_with_a_renewed_key_is_closed() {
         new_sig: [0; 64],
     };
     let body = r.body("a-1", &h2_old.sign_public(), &h2_old.dh_public());
-    r.old_sig = rh_proto::sig::sign(h2_old.signing_key(), rh_proto::sig::HOST_ROTATE, &body);
-    r.new_sig = rh_proto::sig::sign(h2_new.signing_key(), rh_proto::sig::HOST_ROTATE, &body);
+    r.old_sig = droppen_proto::sig::sign(h2_old.signing_key(), droppen_proto::sig::HOST_ROTATE, &body);
+    r.new_sig = droppen_proto::sig::sign(h2_new.signing_key(), droppen_proto::sig::HOST_ROTATE, &body);
     let entries = vec![a.push(Action::RotateHostKey(r)), a.push(key_epoch("h-2", 1))];
     assert!(shared.state.lock().unwrap().absorb(&entries, now_ms_u64()).error.is_none());
     link::drop_removed(&shared, &mut routes, &out);

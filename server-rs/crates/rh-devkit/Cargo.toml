@@ -16,13 +16,13 @@ required-features = ["p2p-probe"]
 
 [features]
 p2p-probe = ["dep:str0m"]
-# The headless device's direct-path client (str0m through `rh-proto/rtc`),
+# The headless device's direct-path client (str0m through `droppen-proto/rtc`),
 # for an end-to-end run's direct leg. Off by default so the hub's tests, which
 # link this crate, never build a WebRTC stack.
-direct = ["rh-proto/rtc"]
+direct = ["droppen-proto/rtc"]
 
 [dependencies]
-rh-proto = { path = "../rh-proto", features = ["runtime"] }
+droppen-proto = { path = "../droppen-proto", features = ["runtime"] }
 # What a device does at a hub, shared with the local install: sign-in, the
 # /v1/client link, reading streams. Re-exported under its old names here.
 rh-client = { path = "../rh-client" }

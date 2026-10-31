@@ -25,7 +25,7 @@ use crate::state::{Alarm, Controllers};
 use crate::system::Os;
 
 /// The most a body may be: under a record's and a page's largest body
-/// (`rh_proto::stream::MAX_PAGE_BODY`, a few hundred bytes more), with room for
+/// (`droppen_proto::stream::MAX_PAGE_BODY`, a few hundred bytes more), with room for
 /// the envelope around the items.
 pub(crate) const BODY_BUDGET: usize = 60_000;
 /// How many fingerprints behind its end a session cursor keeps: how far back

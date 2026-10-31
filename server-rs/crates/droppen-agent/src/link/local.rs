@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use rh_proto::chain::ChainError;
+use droppen_proto::chain::ChainError;
 use serde_json::Value;
 
 use super::bridge;
@@ -61,8 +61,8 @@ pub(crate) fn standing_with(shared: &Shared, device: &str, controls: bool) -> br
             controls: false,
         };
     };
-    use rh_proto::chain::Freshness;
-    let view = match chain.freshness(device, &st.attestation_list(), shared.clock.now_ms(), rh_proto::chain::MANAGE_FRESHNESS_MS) {
+    use droppen_proto::chain::Freshness;
+    let view = match chain.freshness(device, &st.attestation_list(), shared.clock.now_ms(), droppen_proto::chain::MANAGE_FRESHNESS_MS) {
         Ok(Freshness::Fresh) => bridge::View::Fresh,
         Ok(Freshness::Stale { .. }) => bridge::View::Stale,
         Ok(Freshness::Behind { .. }) => bridge::View::Behind,

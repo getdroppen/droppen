@@ -1,6 +1,6 @@
 // The direct path's owner on the device (`lib/transport/p2p.ts`), against a
 // fake WebRTC and a TypeScript stand-in for the agent's half
-// (`rh-proto/src/direct.rs`): two channel drivers with paths, wired through a
+// (`droppen-proto/src/direct.rs`): two channel drivers with paths, wired through a
 // "hub", the agent answering the signaling stream the way the real one does.
 //
 // What these pin: signaling rides the channel's own `GET /rh/direct` stream;

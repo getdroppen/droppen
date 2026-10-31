@@ -1,5 +1,5 @@
 /*
- * Adding a second device (`rh-proto/src/pairing.rs` has the why):
+ * Adding a second device (`droppen-proto/src/pairing.rs` has the why):
  *
  * - QR / pasted text: the new device's {@link Offer} — account, its id, its
  *   two public keys and a one-time secret `s` — as `RHP1-<base32>` (`DRP1-`

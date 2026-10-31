@@ -10,7 +10,7 @@ import type { FetchOptions, SocketLike, Transport } from "./types";
  * handlers see an ordinary request or upgrade
  * (`docs/cross-machine-architecture.md` §5, "MVP 的 agent 侧桥接"). What a
  * pipe carries is `lib/e2e/bridge.ts`, byte for byte the agent's
- * (`rh-proto/src/bridge.rs`); a {@link Pipe} here sees it already framed:
+ * (`droppen-proto/src/bridge.rs`); a {@link Pipe} here sees it already framed:
  *
  * - A pipe opens with its request head ({@link PipeMeta}): an `rpc` pipe's
  *   method, route and headers; a socket pipe's route alone.

@@ -1,4 +1,4 @@
-// Chain v3's attack regressions (`server-rs/crates/rh-proto/src/v3_regressions.rs`),
+// Chain v3's attack regressions (`server-rs/crates/droppen-proto/src/v3_regressions.rs`),
 // a few of them replayed against the browser's verifier with entries signed
 // here in WebCrypto: no self-grants and the last admin stays (item 4), a
 // passkey adds only a plain pending device (item 17), no v2 entry after the
@@ -35,7 +35,7 @@ import {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Json = any;
-const V: Json = JSON.parse(readFileSync(new URL("../../server-rs/crates/rh-proto/vectors/rust.json", import.meta.url), "utf8"));
+const V: Json = JSON.parse(readFileSync(new URL("../../server-rs/crates/droppen-proto/vectors/rust.json", import.meta.url), "utf8"));
 const h = (s: string) => fromHex(s);
 const hist = () => ChainClock.history();
 const kind = (want: string) => (e: unknown) => {

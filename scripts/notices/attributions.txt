@@ -1,7 +1,7 @@
 Other third-party material
 
 BIP-39 English word list
-  server-rs/crates/rh-proto/src/data/bip39-english.txt and
+  server-rs/crates/droppen-proto/src/data/bip39-english.txt and
   web/src/lib/e2e/wordlist.ts carry the English word list of BIP-39,
   "Mnemonic code for generating deterministic keys", by Marek Palatinus,
   Pavol Rusnak, Aaron Voisine and Sean Bowe

@@ -217,7 +217,7 @@ pub fn write_private(path: &std::path::Path, text: &str) -> Result<(), String> {
 /// or the same with `DRR1-`; either prefix exactly as written).
 pub fn token_relay_id(token: &str) -> Option<String> {
     let token = token.trim();
-    let raw = rh_proto::codec::base32::decode(token.strip_prefix("RHR1-").or_else(|| token.strip_prefix("DRR1-"))?)?;
+    let raw = droppen_proto::codec::base32::decode(token.strip_prefix("RHR1-").or_else(|| token.strip_prefix("DRR1-"))?)?;
     let len = usize::from(*raw.first()?);
     let id = std::str::from_utf8(raw.get(1..1 + len)?).ok()?;
     (raw.len() == 1 + len + 20).then(|| id.to_string())
@@ -304,7 +304,7 @@ mod tests {
         let mut raw = vec![5];
         raw.extend_from_slice(b"sin-1");
         raw.extend_from_slice(&[9; 20]);
-        let body = rh_proto::codec::base32::encode(&raw);
+        let body = droppen_proto::codec::base32::encode(&raw);
         for prefix in ["RHR1-", "DRR1-"] {
             assert_eq!(token_relay_id(&format!(" {prefix}{body}\n")).as_deref(), Some("sin-1"), "{prefix}");
             assert_eq!(

@@ -313,7 +313,7 @@ pub(super) fn take_attempt(slot: &mut Option<Attempt>, id: &str, nonce: &str, us
 }
 
 /// The popup's code (`RH1-…`, or `DR1-…` from a newer popup), or `400 bad_code`.
-pub(super) fn finish_code(text: &str) -> Result<rh_proto::identity::EnrollCode, ApiError> {
+pub(super) fn finish_code(text: &str) -> Result<droppen_proto::identity::EnrollCode, ApiError> {
     text.parse().map_err(|e: &str| refusal(StatusCode::BAD_REQUEST, "bad_code", e))
 }
 
@@ -419,7 +419,7 @@ pub async fn post_return(
 pub(super) async fn complete_sign_in(
     state: &CloudState,
     attempt: Attempt,
-    code: &rh_proto::identity::EnrollCode,
+    code: &droppen_proto::identity::EnrollCode,
     email: Option<String>,
 ) -> Result<Accepted<FinishResult>, ApiError> {
     let cloud = &state.cloud;

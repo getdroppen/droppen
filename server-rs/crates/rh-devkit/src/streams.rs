@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use rh_proto::record::StreamId;
+use droppen_proto::record::StreamId;
 
 pub use rh_client::streams::{FeedCopy, IndexCopy, StreamCopy, CONTROL_FRAME};
 

@@ -120,7 +120,7 @@ local server works out (`server-rs/src/api/hub_web.rs`) and gives in
 origin only; the hand-off address is `<hubWeb>/link#droppen-link=…`. The
 hand-off's answer goes back to the page's own origin
 (`<cb>/link/return#droppen-return=…`) and is sealed to the attempt, not to the
-host the consent page was on (`rh_proto::link_return`): it works from any of
+host the consent page was on (`droppen_proto::link_return`): it works from any of
 the hub's hosts.
 
 ### Installed versions and an app on another host

@@ -8,7 +8,7 @@
 //! compute the ids written after it, even with the hub's help.
 //!
 //! - **Who reads it.** Only once a device said it reads such names
-//!   ([`rh_proto::stream::STREAMS_FEATURE`] in its channel hello, remembered in
+//!   ([`droppen_proto::stream::STREAMS_FEATURE`] in its channel hello, remembered in
 //!   `streams.db`) does the agent name streams this way; until then every
 //!   name is the first epoch's, and a rotation's re-encryption is a
 //!   same-name rebase.
@@ -42,7 +42,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::Duration;
 
-use rh_proto::record::StreamId;
+use droppen_proto::record::StreamId;
 use serde_json::Value;
 
 use super::store::{Kind, Row};
@@ -237,7 +237,7 @@ pub(crate) fn strays(
         for (epoch, mk) in keys.iter().filter(|(e, _)| *e < newer) {
             let readers_elsewhere = entry.is_none_or(|e| se_of(e).is_some_and(|se| se > *epoch));
             if readers_elsewhere {
-                if let Ok(stream) = rh_proto::record::stream_id(mk, &row.source, &row.id) {
+                if let Ok(stream) = droppen_proto::record::stream_id(mk, &row.source, &row.id) {
                     older.insert(stream);
                 }
             }
@@ -399,7 +399,7 @@ mod tests {
     /// A row under its real name: `id` of `kind` named under `mk`.
     fn named(mk: &[u8; 32], kind: Kind, id: &str, name_epoch: Option<u32>, next_seq: u64) -> Row {
         let mut r = row(0, kind, id, name_epoch, next_seq);
-        r.stream = rh_proto::record::stream_id(mk, &r.source, id).unwrap();
+        r.stream = droppen_proto::record::stream_id(mk, &r.source, id).unwrap();
         r
     }
 

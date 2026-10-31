@@ -2,7 +2,7 @@
 //! loopback listener (`docs/cross-machine-architecture.md` §5, "MVP 的 agent 侧桥接"), so no handler
 //! changes: `rpc` becomes one HTTP request to `/api/*`, `mux` the feed socket
 //! (`/api/events`), `term` a terminal's socket (`/api/terminals/{id}/ws`). The
-//! wire format inside a stream is `rh_proto::bridge`.
+//! wire format inside a stream is `droppen_proto::bridge`.
 //!
 //! Each request carries the per-boot internal credential (`x-rh-agent`) that
 //! `auth::guard` accepts only from a loopback peer, and the device id the
@@ -14,9 +14,9 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use futures_util::{SinkExt, StreamExt};
-use rh_proto::bridge::{self, Kind, MessageReader, RequestHead, ResponseHead, CLOSE_BAD_REQUEST, CLOSE_DONE, CLOSE_FORBIDDEN, CLOSE_UPSTREAM};
-use rh_proto::driver::{Incoming, Stream, StreamEvent, StreamWriter};
-use rh_proto::mux::StreamClass;
+use droppen_proto::bridge::{self, Kind, MessageReader, RequestHead, ResponseHead, CLOSE_BAD_REQUEST, CLOSE_DONE, CLOSE_FORBIDDEN, CLOSE_UPSTREAM};
+use droppen_proto::driver::{Incoming, Stream, StreamEvent, StreamWriter};
+use droppen_proto::mux::StreamClass;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
 
@@ -114,7 +114,7 @@ pub struct Standing {
     pub admin: bool,
     /// How this agent's view of the account stands for a management
     /// request, which needs an admin to have vouched for its chain head
-    /// within twelve hours ([`rh_proto::chain::MANAGE_FRESHNESS_MS`]) on top
+    /// within twelve hours ([`droppen_proto::chain::MANAGE_FRESHNESS_MS`]) on top
     /// of the channel's seven days.
     pub view: View,
     /// It may still control this machine: the chain lets it, and its control
@@ -125,7 +125,7 @@ pub struct Standing {
 }
 
 /// This agent's view of the account, for a management request
-/// ([`rh_proto::chain::ChainState::freshness`] over twelve hours).
+/// ([`droppen_proto::chain::ChainState::freshness`] over twelve hours).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum View {
     /// An admin vouched for exactly this head within twelve hours.

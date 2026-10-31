@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://droppen.app/hub-api/v1/ws.schema.json",
   "title": "Droppen hub API v1: control messages",
-  "description": "The JSON text messages on the WebSockets (and the Turnstile page's postMessage), each an object tagged by `t`. Look up a channel and direction as $defs[\"<channel> c2s\"] or $defs[\"<channel> s2c\"] (c2s: client to server — device, agent, relay or app to the hub, a relay or the Turnstile page); one message type as $defs[\"<short>.<dir>.<t>\"], short being client, agent, relay, connect or turnstile. Unknown fields are allowed everywhere: /v1/ only grows. Binary fields are lower-case hex. Binary WebSocket messages are rh-proto frames (websocket.md) and are not described here.",
+  "description": "The JSON text messages on the WebSockets (and the Turnstile page's postMessage), each an object tagged by `t`. Look up a channel and direction as $defs[\"<channel> c2s\"] or $defs[\"<channel> s2c\"] (c2s: client to server — device, agent, relay or app to the hub, a relay or the Turnstile page); one message type as $defs[\"<short>.<dir>.<t>\"], short being client, agent, relay, connect or turnstile. Unknown fields are allowed everywhere: /v1/ only grows. Binary fields are lower-case hex. Binary WebSocket messages are droppen-proto frames (websocket.md) and are not described here.",
   "$defs": {
     "hex": { "type": "string", "pattern": "^[0-9a-f]*$" },
     "hex16": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
@@ -370,7 +370,7 @@
     },
     "agent.c2s.rotation_stage": {
       "type": "object",
-      "description": "Only where welcome offered rotate/1: the host's proof for an admin's renewal attempt (rh_proto::chain::HostRotation), staged by its own agent connection.",
+      "description": "Only where welcome offered rotate/1: the host's proof for an admin's renewal attempt (droppen_proto::chain::HostRotation), staged by its own agent connection.",
       "required": ["t", "nonce", "staged_seq", "staged_head", "sign_key", "dh_key", "assurance", "old_sig", "new_sig"],
       "properties": {
         "t": { "const": "rotation_stage" },

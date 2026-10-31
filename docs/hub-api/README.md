@@ -2,7 +2,7 @@
 
 This is the contract between the **open** clients — the local server and its
 agent (`server-rs`), the web app (`web/`, which droppen.app also serves, at `my.droppen.app`),
-`droppen-relay` (`server-rs/crates/rh-relay`), `rh-proto`, `rh-client` (the
+`droppen-relay` (`server-rs/crates/rh-relay`), `droppen-proto`, `rh-client` (the
 device side, in Rust) and `rh-devkit` —
 and the **closed** Droppen Hub (a separate, private repository). Open code may rely
 on what is written here and on nothing else of the hub: not its source, its
@@ -142,7 +142,7 @@ token:
 1. `POST /v1/session/challenge {account, device}` → `{nonce}` (32 bytes).
    Stateless and issued for any well-formed ids, so it says nothing about
    which ids exist; a nonce is good for 2 minutes and answers once.
-2. Sign `rh_proto::sig::HubLogin {role: DeviceSession, account, id: device,
+2. Sign `droppen_proto::sig::HubLogin {role: DeviceSession, account, id: device,
    hub: <the origin dialled>, nonce, time_ms}` with the device's Ed25519 key.
 3. `POST /v1/session {account, device, time_ms, nonce, signature}` →
    `{account, device, token, expires_ms}`. `time_ms` must be within 5
@@ -301,7 +301,7 @@ tickets. WebSocket limits are in websocket.md.
 ## Versioning
 
 - **The path is the version.** Everything here is `/v1/`; the frame
-  envelope is versioned by the same paths (`rh_proto::frame::CLIENT_PATH`,
+  envelope is versioned by the same paths (`droppen_proto::frame::CLIENT_PATH`,
   `AGENT_PATH`).
 - **Within `/v1/` the API only grows**: new routes, new optional request
   fields, new response fields, new control message types, new error codes,
@@ -336,7 +336,7 @@ tickets. WebSocket limits are in websocket.md.
   `read` stops new v3 accounts and new hosts on v3 accounts; it does not undo
   a v3 entry, and an account already on v3 carries on (`off` also stops
   hosts acting as devices)
-  (`rh_proto::chain` module docs; the test
+  (`droppen_proto::chain` module docs; the test
   `c16_once_a_v3_entry_lands_readers_cannot_go_back_below_v3`). Likewise a
   host's identity key renewal (`RotateHostKey`, kind 20), the account's
   renewal policy (`SetRenewalPolicy`, kind 21) and the pause of control over
@@ -361,14 +361,14 @@ node docs/hub-api/check.mjs --traffic /tmp/traffic.jsonl
 
 It scans the open clients (`web/src/lib/hub`, `web/src/lib/e2e`,
 `web/src/features/cloud`, `server-rs/crates/droppen-agent`, `server-rs/crates/droppen-aggregator`,
-`rh-relay`, `rh-client`, `rh-devkit`, `rh-proto`'s `wire`) for
+`rh-relay`, `rh-client`, `rh-devkit`, `droppen-proto`'s `wire`) for
 `/v1/…` paths in string literals (format strings and template literals
 included, their placeholders read as path parameters) and for control
 message types — `{t: "x"}` and `json!({"t": "x"})` sent, `.t === "x"`,
 `switch (m.t) { case "x" }`, `v["t"] == "x"`, `match v["t"].as_str() {
 Some("x") }` and `#[serde(tag = "t")]` enums matched — and fails when one is
 missing from `index.json` on a channel that file speaks, in the right
-direction. The typed messages in `rh-proto`'s `wire` modules, one module per
+direction. The typed messages in `droppen-proto`'s `wire` modules, one module per
 channel, are named after who sends them (`RelayToHub`, `PeerToRelay`,
 `RelayToPeer`, …): their direction comes from that name, whatever they
 derive, and a file that names one (`RelayToPeer::Welcome`) must speak its

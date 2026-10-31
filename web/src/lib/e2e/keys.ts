@@ -13,7 +13,7 @@
  *   through PKCS#8, the only private format WebCrypto accepts besides JWK.
  *
  * Two checks keep this side agreeing with the Rust side about what a valid key
- * is (`rh-proto/src/keys.rs`): a low-order X25519 key is refused (WebCrypto
+ * is (`droppen-proto/src/keys.rs`): a low-order X25519 key is refused (WebCrypto
  * already throws when one yields the all-zero secret), and Ed25519 verification
  * is strict — canonical `S`, and neither the key nor `R` one of the small-order
  * encodings `verify_strict` refuses — in front of WebCrypto's own `verify`,

@@ -45,8 +45,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use rh_devkit::{rpc, Device, HubUrl, Link};
-use rh_proto::pairing::Offer;
-use rh_proto::stream::status_stream;
+use droppen_proto::pairing::Offer;
+use droppen_proto::stream::status_stream;
 use serde_json::json;
 
 type Result<T> = std::result::Result<T, String>;
@@ -257,27 +257,27 @@ impl Session {
                 let (id, sign_key, dh_key) = (
                     "d-hubforged0000000".to_string(),
                     ed25519_dalek::SigningKey::from_bytes(&rh_devkit::random_key()).verifying_key().to_bytes(),
-                    rh_proto::keys::DhKeypair::from_secret(rh_devkit::random_key()).public(),
+                    droppen_proto::keys::DhKeypair::from_secret(rh_devkit::random_key()).public(),
                 );
                 // The genesis in the account's own version: a v3 one names the
                 // hub's device the first admin, a v2 one a full device.
                 let draft = match &chain.entries()[0].draft.action {
-                    rh_proto::chain::Action::Genesis3 { recovery_key, .. } => rh_proto::chain::genesis3_draft(
+                    droppen_proto::chain::Action::Genesis3 { recovery_key, .. } => droppen_proto::chain::genesis3_draft(
                         chain.account(),
                         hub_ak.verifying_key().to_bytes(),
-                        rh_proto::chain::DeviceV3 {
+                        droppen_proto::chain::DeviceV3 {
                             id,
                             sign_key,
                             dh_key,
-                            flags: rh_proto::chain::Flags { host: false, admin: true },
+                            flags: droppen_proto::chain::Flags { host: false, admin: true },
                         },
                         *recovery_key,
                         rh_devkit::now_ms(),
                     ),
-                    rh_proto::chain::Action::Genesis { recovery_key, .. } => rh_proto::chain::genesis_draft(
+                    droppen_proto::chain::Action::Genesis { recovery_key, .. } => droppen_proto::chain::genesis_draft(
                         chain.account(),
                         hub_ak.verifying_key().to_bytes(),
-                        rh_proto::chain::DeviceInfo {
+                        droppen_proto::chain::DeviceInfo {
                             id,
                             sign_key,
                             dh_key,
@@ -316,7 +316,7 @@ impl Session {
     /// [`Device::enroll_host3`], tried again for a minute when the hub
     /// answers 409 `chain_v3_not_ready` (the agent that just proved the code
     /// has not declared `chain/3` on its link yet), as the web does.
-    async fn enroll_v3(&mut self, code: &rh_proto::identity::EnrollCode, mk: &[u8; 32]) -> Result<rh_devkit::keys::Enrolled3> {
+    async fn enroll_v3(&mut self, code: &droppen_proto::identity::EnrollCode, mk: &[u8; 32]) -> Result<rh_devkit::keys::Enrolled3> {
         let mut deadline = None;
         let mut timeout = Duration::from_secs(600);
         loop {

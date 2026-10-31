@@ -1,5 +1,5 @@
 /*
- * Enrollment codes, device side (`rh-proto/src/identity.rs` — read that for
+ * Enrollment codes, device side (`droppen-proto/src/identity.rs` — read that for
  * the why). `RH1-<account fingerprint>-<secret>` (`DR1-` is read too, in any
  * case; `RH1-` is what is written): the device generates the 128-bit secret
  * and shows the code; the hub only ever learns

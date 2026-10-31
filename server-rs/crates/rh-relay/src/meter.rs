@@ -12,7 +12,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
 
-use rh_proto::wire::relay::{UsageLine, UsageReport};
+use droppen_proto::wire::relay::{UsageLine, UsageReport};
 
 /// The most accounts in one report; more go in further reports.
 pub const MAX_ACCOUNTS_PER_REPORT: usize = 500;

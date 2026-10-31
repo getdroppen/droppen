@@ -1,10 +1,10 @@
 [package]
-name = "rh-proto"
+name = "droppen-proto"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 publish = false
-description = "remote-hand's cloud wire protocol: hub frames, the Noise end-to-end channel, the device chain and encrypted log records"
+description = "Droppen's cloud wire protocol: hub frames, the Noise end-to-end channel, the device chain and encrypted log records"
 
 [dependencies]
 # Noise. `default-features = false` because snow's `std` feature switches on its

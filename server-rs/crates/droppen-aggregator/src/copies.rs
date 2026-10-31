@@ -42,10 +42,10 @@ use rh_client::http::HttpError;
 use rh_client::link::{ConnectError, Link};
 use rh_client::streams::{json_body, FeedCopy, IndexCopy, Pages};
 use rh_client::HubUrl;
-use rh_proto::frame::Frame;
-use rh_proto::identity::MachineIdentity;
-use rh_proto::record::{SignedHead, StreamId, FMT_FEED_V1, FMT_INDEX_V1, FMT_STATUS_V1};
-use rh_proto::wire::client::DeviceToHub;
+use droppen_proto::frame::Frame;
+use droppen_proto::identity::MachineIdentity;
+use droppen_proto::record::{SignedHead, StreamId, FMT_FEED_V1, FMT_INDEX_V1, FMT_STATUS_V1};
+use droppen_proto::wire::client::DeviceToHub;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::{mpsc, watch, Notify};
@@ -1813,10 +1813,10 @@ mod tests {
 
     /// A connection's state for tests: a store under `paths`, following `hosts`.
     fn live(paths: &Paths, hosts: &[&str]) -> (Copies, Live) {
-        use rh_proto::chain::{ChainState, DeviceV3, Flags};
+        use droppen_proto::chain::{ChainState, DeviceV3, Flags};
         let ak = ed25519_dalek::SigningKey::from_bytes(&[1; 32]);
         let admin = ed25519_dalek::SigningKey::from_bytes(&[2; 32]);
-        let genesis = rh_proto::chain::genesis3_draft(
+        let genesis = droppen_proto::chain::genesis3_draft(
             "a-1",
             ak.verifying_key().to_bytes(),
             DeviceV3 {
@@ -1940,7 +1940,7 @@ mod tests {
         let (old, new) = (ed25519_dalek::SigningKey::from_bytes(&[7; 32]), ed25519_dalek::SigningKey::from_bytes(&[8; 32]));
         let (old_key, new_key) = (old.verifying_key().to_bytes(), new.verifying_key().to_bytes());
         let want = want("m-2", "s");
-        let head = rh_proto::record::StreamHead {
+        let head = droppen_proto::record::StreamHead {
             stream: want.stream,
             next_seq: 4,
             epoch: 0,
@@ -2005,7 +2005,7 @@ mod tests {
         // later retired key signed is refused — read again from the start.
         let twice = host(new_key, vec![old_key, later_key]);
         assert_eq!(resume_key(&twice, None), old_key);
-        let by_later = rh_proto::record::StreamHead {
+        let by_later = droppen_proto::record::StreamHead {
             stream: want.stream,
             next_seq: 6,
             epoch: 0,
@@ -2047,7 +2047,7 @@ mod tests {
                 stop: CancellationToken::new(),
             },
         );
-        let head = rh_proto::record::StreamHead {
+        let head = droppen_proto::record::StreamHead {
             stream: w.stream,
             next_seq: 4,
             epoch: 0,
@@ -2110,10 +2110,10 @@ mod tests {
     /// it. Ending the pause gives it back.
     #[test]
     fn a_pause_of_this_computers_control_stops_its_device_role_until_it_ends() {
-        use rh_proto::chain::{Accept, Action, ChainClock, ChainState, DeviceV3, Flags, KeyCommit, KeyCommits, PausePhase, Signer};
+        use droppen_proto::chain::{Accept, Action, ChainClock, ChainState, DeviceV3, Flags, KeyCommit, KeyCommits, PausePhase, Signer};
         let ak = ed25519_dalek::SigningKey::from_bytes(&[1; 32]);
         let admin = MachineIdentity::from_seed(&[2; 32]);
-        let genesis = rh_proto::chain::genesis3_draft(
+        let genesis = droppen_proto::chain::genesis3_draft(
             "a-1",
             ak.verifying_key().to_bytes(),
             DeviceV3 {
@@ -2199,10 +2199,10 @@ mod tests {
     /// the entry that added it), whatever it renewed to since.
     #[test]
     fn a_followed_host_carries_the_key_it_joined_with() {
-        use rh_proto::chain::{Action, ChainClock, ChainState, DeviceV3, Flags, HostRotation, KeyCommit, KeyCommits, Signer};
+        use droppen_proto::chain::{Action, ChainClock, ChainState, DeviceV3, Flags, HostRotation, KeyCommit, KeyCommits, Signer};
         let ak = ed25519_dalek::SigningKey::from_bytes(&[1; 32]);
         let admin = MachineIdentity::from_seed(&[2; 32]);
-        let genesis = rh_proto::chain::genesis3_draft(
+        let genesis = droppen_proto::chain::genesis3_draft(
             "a-1",
             ak.verifying_key().to_bytes(),
             DeviceV3 {
@@ -2258,13 +2258,13 @@ mod tests {
                 staged_seq: chain.seq(),
                 staged_head: chain.head(),
                 nonce: [e as u8; 16],
-                assurance: rh_proto::chain::Assurance::Auto,
+                assurance: droppen_proto::chain::Assurance::Auto,
                 old_sig: [0; 64],
                 new_sig: [0; 64],
             };
             let body = r.body("a-1", &from.sign_public(), &from.dh_public());
-            r.old_sig = rh_proto::sig::sign(from.signing_key(), rh_proto::sig::HOST_ROTATE, &body);
-            r.new_sig = rh_proto::sig::sign(to.signing_key(), rh_proto::sig::HOST_ROTATE, &body);
+            r.old_sig = droppen_proto::sig::sign(from.signing_key(), droppen_proto::sig::HOST_ROTATE, &body);
+            r.new_sig = droppen_proto::sig::sign(to.signing_key(), droppen_proto::sig::HOST_ROTATE, &body);
             push(chain, Action::RotateHostKey(r));
             push(chain, epoch(e));
         };
@@ -2275,7 +2275,7 @@ mod tests {
             &mut chain,
             Action::SetAccept {
                 host: "m-2".into(),
-                from: rh_proto::chain::Accept::Devices(vec!["m-me".into()]),
+                from: droppen_proto::chain::Accept::Devices(vec!["m-me".into()]),
             },
         );
         let view = View {
@@ -2321,7 +2321,7 @@ mod tests {
             },
         );
         let machine = ed25519_dalek::SigningKey::from_bytes(&[7; 32]);
-        let head = rh_proto::record::StreamHead {
+        let head = droppen_proto::record::StreamHead {
             stream: w.stream,
             next_seq: 3,
             epoch: 0,
@@ -2369,7 +2369,7 @@ mod tests {
             kind: Kind::Session,
             name: name.into(),
             epoch: 0,
-            stream: rh_proto::record::stream_id(&[8; 32], "claude", name).unwrap(),
+            stream: droppen_proto::record::stream_id(&[8; 32], "claude", name).unwrap(),
         }
     }
 
@@ -2487,7 +2487,7 @@ mod tests {
             kind: Kind::Status,
             name: String::new(),
             epoch: 0,
-            stream: rh_proto::stream::status_stream(&[8; 32]),
+            stream: droppen_proto::stream::status_stream(&[8; 32]),
         };
         live.subs.insert(
             w.stream,
@@ -2498,7 +2498,7 @@ mod tests {
         );
         let machine = ed25519_dalek::SigningKey::from_bytes(&[4; 32]);
         let head_at = |time_ms| {
-            rh_proto::record::StreamHead {
+            droppen_proto::record::StreamHead {
                 stream: w.stream,
                 next_seq: 3,
                 epoch: 0,
@@ -2556,7 +2556,7 @@ mod tests {
         let (mut c, mut live) = live(&paths, &["m-2"]);
         let machine = ed25519_dalek::SigningKey::from_bytes(&[7; 32]);
         let head = |stream: StreamId, seq: u64, time_ms: u64| {
-            rh_proto::record::StreamHead {
+            droppen_proto::record::StreamHead {
                 stream,
                 next_seq: seq,
                 epoch: 0,
@@ -2573,7 +2573,7 @@ mod tests {
                 json!({"source": "claude", "id": format!("s{i}"), "updatedAt": format!("2026-10-19T0{i}:00:00.000Z"), "asking": i == 6}),
             );
         }
-        let index_stream = rh_proto::stream::index_stream(&[8; 32]);
+        let index_stream = droppen_proto::stream::index_stream(&[8; 32]);
         c.store
             .as_mut()
             .unwrap()

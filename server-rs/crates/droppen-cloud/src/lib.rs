@@ -1065,7 +1065,7 @@ mod tests {
 
     #[test]
     fn the_popup_s_code_is_read_with_either_prefix_and_anything_else_is_a_bad_code() {
-        let code = rh_proto::identity::EnrollCode {
+        let code = droppen_proto::identity::EnrollCode {
             account_fingerprint: [3; 16],
             secret: [4; 16],
         };
@@ -1172,7 +1172,7 @@ mod tests {
     }
 
     fn valid_code() -> String {
-        rh_proto::identity::EnrollCode {
+        droppen_proto::identity::EnrollCode {
             account_fingerprint: [3; 16],
             secret: [4; 16],
         }

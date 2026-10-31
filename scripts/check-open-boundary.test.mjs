@@ -153,7 +153,7 @@ describe("manifests", () => {
   test("a dependency or a member that names the hub's side", () => {
     const toml = [
       "# the hub (crates/rh-hub) is closed", // a comment
-      'members = [".", "crates/rh-proto", "crates/rh-hub"]',
+      'members = [".", "crates/droppen-proto", "crates/rh-hub"]',
       "[[bin]]",
       'name = "rh-hub-stress"', // a binary (once the devkit's), not a package
       'path = "src/bin/rh-hub-stress.rs"',
@@ -175,7 +175,7 @@ describe("manifests", () => {
     assert.ok(isHub("rh-hub") && isHub("droppen-hub") && isHub("rh_hub"));
     assert.ok(isHub("rh-hub-tools") && isHub("droppen-hub-tools") && isHub("rh_hub_tools"));
     assert.ok(isTheHub("rh-hub") && isTheHub("droppen_hub") && !isTheHub("rh-hub-tools"));
-    assert.ok(!isHub("rh-proto") && !isHub("rh-hubble") && !isHub("my-rh-hub"));
+    assert.ok(!isHub("droppen-proto") && !isHub("rh-hubble") && !isHub("my-rh-hub"));
   });
 });
 
@@ -189,10 +189,10 @@ describe("cargo metadata", () => {
   test("an open tree passes", () => {
     const meta = {
       packages: [
-        pkg("remote-hand-server", ["server-rs"], [dep("rh-proto", { path: at("server-rs", "crates", "rh-proto") }), dep("serde", { source: "registry+https://github.com/rust-lang/crates.io-index" })]),
-        pkg("rh-proto", ["server-rs", "crates", "rh-proto"], []),
+        pkg("remote-hand-server", ["server-rs"], [dep("droppen-proto", { path: at("server-rs", "crates", "droppen-proto") }), dep("serde", { source: "registry+https://github.com/rust-lang/crates.io-index" })]),
+        pkg("droppen-proto", ["server-rs", "crates", "droppen-proto"], []),
         // the hub may depend on the open crates, and on itself
-        pkg("rh-hub", ["server-rs", "crates", "rh-hub"], [dep("rh-proto", { path: at("server-rs", "crates", "rh-proto") }), dep("rh-hub", { kind: "dev", path: at("server-rs", "crates", "rh-hub") })]),
+        pkg("rh-hub", ["server-rs", "crates", "rh-hub"], [dep("droppen-proto", { path: at("server-rs", "crates", "droppen-proto") }), dep("rh-hub", { kind: "dev", path: at("server-rs", "crates", "rh-hub") })]),
       ],
     };
     assert.deepEqual(metadataProblems(meta, root), []);
@@ -264,8 +264,8 @@ describe("the whole check, over a made-up tree", () => {
   const open = {
     "server-rs/Cargo.toml": `${crate("remote-hand-server")}[workspace]\n`,
     "server-rs/src/main.rs": 'fn main() { let _ = std::env::var("DROPPEN_HUB_DEFAULT"); }\n',
-    "server-rs/crates/rh-proto/Cargo.toml": crate("rh-proto"),
-    "server-rs/crates/rh-proto/src/lib.rs": "pub fn f() {}\n",
+    "server-rs/crates/droppen-proto/Cargo.toml": crate("droppen-proto"),
+    "server-rs/crates/droppen-proto/src/lib.rs": "pub fn f() {}\n",
   };
   // the hub's side may name the hub's environment: it is not scanned
   const tools = {
@@ -305,7 +305,7 @@ describe("the whole check, over a made-up tree", () => {
       ...hub,
       ...tools,
       "server-rs/crates/rh-hub-tools/scripts/e2e.sh": "DROPPEN_HUB_BIND=127.0.0.1 ../rh-hub/run\n",
-      "server-rs/crates/rh-proto/scripts/dev.sh": "DROPPEN_HUB_BIND=127.0.0.1 cargo run # DROPPEN_HUB_NOT\n",
+      "server-rs/crates/droppen-proto/scripts/dev.sh": "DROPPEN_HUB_BIND=127.0.0.1 cargo run # DROPPEN_HUB_NOT\n",
       "web/test/plans.test.ts": 'const crate = new URL("../../server-rs/crates/rh-hub/", import.meta.url);\n',
       "packages/plugin-sdk/src/index.ts": 'export const hub = "DROPPEN_HUB_ORIGIN";\n',
       ".github/workflows/ci.yml": "env:\n  RH_HUB_TEST_REDIS_URL: redis://127.0.0.1\n",
@@ -313,7 +313,7 @@ describe("the whole check, over a made-up tree", () => {
     });
     const { problems, notes } = checkOpenBoundary(root, { metadata });
     assert.deepEqual(problems.map((p) => p.replace(/ — .*/, "")), [
-      "server-rs/crates/rh-proto/scripts/dev.sh:1: `DROPPEN_HUB_BIND`",
+      "server-rs/crates/droppen-proto/scripts/dev.sh:1: `DROPPEN_HUB_BIND`",
       "web/test/plans.test.ts:1: `rh-hub/`",
       "packages/plugin-sdk/src/index.ts:1: `DROPPEN_HUB_ORIGIN`",
       // ci.yml may name it (ALLOWED); another workflow may not
@@ -325,9 +325,9 @@ describe("the whole check, over a made-up tree", () => {
   });
 
   test("a hub variable in an open crate", () => {
-    const { root, metadata } = tree({ ...open, ...hub, "server-rs/crates/rh-proto/src/lib.rs": 'pub const K: &str = "DROPPEN_HUB_ORIGIN";\n' });
+    const { root, metadata } = tree({ ...open, ...hub, "server-rs/crates/droppen-proto/src/lib.rs": 'pub const K: &str = "DROPPEN_HUB_ORIGIN";\n' });
     const { problems } = checkOpenBoundary(root, { metadata });
     assert.equal(problems.length, 1, problems.join("\n"));
-    assert.match(problems[0], /^server-rs\/crates\/rh-proto\/src\/lib\.rs:1: `DROPPEN_HUB_ORIGIN`/);
+    assert.match(problems[0], /^server-rs\/crates\/droppen-proto\/src\/lib\.rs:1: `DROPPEN_HUB_ORIGIN`/);
   });
 });

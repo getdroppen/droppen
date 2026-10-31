@@ -1,6 +1,6 @@
 # Droppen 云 M3/M4：拆出中继器、套餐与权益
 
-> 设计稿，2026-10-17。只写设计，不改代码。前提与协议见 `docs/cross-machine-architecture.md`（下称「架构文档」）；代码依据当时的 `main`：Hub、`rh-proto/src/frame.rs`、`server-rs/src/agent/link.rs`、`web/src/lib/{hub,e2e,transport}/`。
+> 设计稿，2026-10-17。只写设计，不改代码。前提与协议见 `docs/cross-machine-architecture.md`（下称「架构文档」）；代码依据当时的 `main`：Hub、`droppen-proto/src/frame.rs`、`server-rs/src/agent/link.rs`、`web/src/lib/{hub,e2e,transport}/`。
 
 > **公开版。** 本文在公开仓库里只保留中继（§2，除 §2.13 的部署选择与成本）和每轮密钥一套流名（§5）。套餐、定价与计费、注册、Hub 的内部实现与运维在 Hub 的私有仓库里；那些节只留标题和一行说明，编号不变，代码注释照旧按「relay-and-plans §n」引用。
 >
@@ -54,10 +54,10 @@
   | `main.rs` | 配置、`keygen`/`deregister` 子命令、优雅停机 |
 
 - **Hub**：不再转发通道（`OPEN/DATA/CREDIT/CLOSE`）。新增注册令牌、中继注册与目录、控制链路 `/v1/relay`、票据签发、设备的中继选择、计量入库。
-- **`rh-proto`**：新增 `ticket`（编码、签名、验签，带互通向量）。`sig::LoginRole` 新增 `RelayDevice = 4`、`RelayAgent = 5`、`Relay = 6`。浏览器只签 `RelayDevice`，`web/src/lib/e2e/sig.ts` 同步加上；票据对浏览器是不透明的字节。
+- **`droppen-proto`**：新增 `ticket`（编码、签名、验签，带互通向量）。`sig::LoginRole` 新增 `RelayDevice = 4`、`RelayAgent = 5`、`Relay = 6`。浏览器只签 `RelayDevice`，`web/src/lib/e2e/sig.ts` 同步加上；票据对浏览器是不透明的字节。
 - **agent**：
   - 到 Hub 的连接（`link.rs`）不再收 `OPEN`，只做控制和流；
-  - 新增 `agent/relays.rs`，管理到各中继的连接，通道的接受与驱动沿用 `link.rs` 的 `accept` 和 `rh_proto::driver`；
+  - 新增 `agent/relays.rs`，管理到各中继的连接，通道的接受与驱动沿用 `link.rs` 的 `accept` 和 `droppen_proto::driver`；
   - 路由表按（中继, `ch`）索引。
 - **浏览器**：
   - `lib/hub/relays.ts`：目录、测延迟、选择、领票；
@@ -67,7 +67,7 @@
 ### 2.3 中继票据
 
 ```
-RelayTicket v1（固定二进制，用 rh-proto 的 codec：大端整数、带长度前缀的字符串）
+RelayTicket v1（固定二进制，用 droppen-proto 的 codec：大端整数、带长度前缀的字符串）
   kid          u8        Hub 票据签名钥的编号（轮换用）
   relay        str ≤32   中继 id，例如 "sin-1"
   account      str ≤64
@@ -114,7 +114,7 @@ RelayTicket v1（固定二进制，用 rh-proto 的 codec：大端整数、带�
   - `GET /v1/ping`：204，`Access-Control-Allow-Origin: *`、`Timing-Allow-Origin: *`，按地址限速，测延迟用；
   - `GET /v1/relay-id?nonce=…`：域名归属证明，§2.5；
   - `GET /v1/connect`：WebSocket，角色由票据决定。
-- **格式**与 Hub 相同：二进制消息是一个 `rh_proto::frame` 帧（≤64 KiB），文本消息是以 `t` 标记的 JSON。
+- **格式**与 Hub 相同：二进制消息是一个 `droppen_proto::frame` 帧（≤64 KiB），文本消息是以 `t` 标记的 JSON。
 
 | 方向 | 消息 |
 |---|---|

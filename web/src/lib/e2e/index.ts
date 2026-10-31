@@ -1,6 +1,6 @@
 /*
  * The browser's half of remote-hand's end-to-end protocol, on WebCrypto: the
- * primitives and their interop with the Rust crate `server-rs/crates/rh-proto`,
+ * primitives and their interop with the Rust crate `server-rs/crates/droppen-proto`,
  * which the app's cloud mode runs on — the hub transports under `lib/hub` and
  * `lib/transport`, the device key stores, and the chain the account is.
  */

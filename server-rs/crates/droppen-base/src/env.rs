@@ -160,9 +160,7 @@ mod tests {
     #[test]
     fn nothing_reads_an_old_name() {
         // A name no code reads: a terminal test's stand-in for "any variable".
-        // And rh-proto's switch that rewrites its test vectors: the protocol
-        // crate the hub and the relays build too keeps its own name for it.
-        const ALLOWED: &[&str] = &["RH_TERMINAL_KEEP", "RH_PROTO_WRITE_VECTORS"];
+        const ALLOWED: &[&str] = &["RH_TERMINAL_KEEP"];
         let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).canonicalize().expect("this crate");
         let src = manifest.join("src");
         let mut found = Vec::new();

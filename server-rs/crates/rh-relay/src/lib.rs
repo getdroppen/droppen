@@ -32,7 +32,7 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use rh_proto::wire::relay::RelayToHub;
+use droppen_proto::wire::relay::RelayToHub;
 
 pub use config::Config;
 pub use server::Server;

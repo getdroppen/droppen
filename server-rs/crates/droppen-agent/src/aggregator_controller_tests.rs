@@ -8,11 +8,11 @@ use std::time::Duration;
 use droppen_aggregator::controller::*;
 use droppen_aggregator::hub::{HubError, Mail};
 use droppen_instance::paths::Paths;
-use rh_proto::chain::{Accept, Action, ChainClock, ChainState, Flags, KeyCommit, KeyCommits, Signer};
-use rh_proto::identity::MachineIdentity;
-use rh_proto::keys::DhKeypair;
-use rh_proto::sig::{HubLogin, LoginRole};
-use rh_proto::wrap::{self, encode_host_key_mail, seal_host_key, HostKeyContext};
+use droppen_proto::chain::{Accept, Action, ChainClock, ChainState, Flags, KeyCommit, KeyCommits, Signer};
+use droppen_proto::identity::MachineIdentity;
+use droppen_proto::keys::DhKeypair;
+use droppen_proto::sig::{HubLogin, LoginRole};
+use droppen_proto::wrap::{self, encode_host_key_mail, seal_host_key, HostKeyContext};
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
@@ -25,7 +25,7 @@ struct Account {
     admin: (ed25519_dalek::SigningKey, DhKeypair),
     me: MachineIdentity,
     /// Every entry, for an agent state to absorb.
-    entries: Vec<rh_proto::chain::Entry>,
+    entries: Vec<droppen_proto::chain::Entry>,
     /// The account key's fingerprint (what the agent pins).
     pin: [u8; 16],
 }
@@ -41,7 +41,7 @@ fn commit(host: &str, epoch: u32, key: &[u8; 32]) -> Action {
             host.into(),
             KeyCommit {
                 epoch,
-                hash: rh_proto::chain::machine_key_commit("a-1", host, epoch, key),
+                hash: droppen_proto::chain::machine_key_commit("a-1", host, epoch, key),
             },
         )],
     })
@@ -50,13 +50,13 @@ fn commit(host: &str, epoch: u32, key: &[u8; 32]) -> Action {
 fn account() -> Account {
     let ak = sk(1);
     let admin = (sk(2), DhKeypair::from_secret([3; 32]));
-    let device = |id: &str, sign: &ed25519_dalek::SigningKey, dh: [u8; 32], host: bool, admin: bool| rh_proto::chain::DeviceV3 {
+    let device = |id: &str, sign: &ed25519_dalek::SigningKey, dh: [u8; 32], host: bool, admin: bool| droppen_proto::chain::DeviceV3 {
         id: id.into(),
         sign_key: sign.verifying_key().to_bytes(),
         dh_key: dh,
         flags: Flags { host, admin },
     };
-    let genesis = rh_proto::chain::genesis3_draft(
+    let genesis = droppen_proto::chain::genesis3_draft(
         "a-1",
         ak.verifying_key().to_bytes(),
         device("d-a", &admin.0, admin.1.public(), false, true),
@@ -86,7 +86,7 @@ fn account() -> Account {
             from: Accept::All,
         },
     );
-    let pin = rh_proto::identity::fingerprint(&ak.verifying_key().to_bytes());
+    let pin = droppen_proto::identity::fingerprint(&ak.verifying_key().to_bytes());
     Account { admin, me, entries, pin }
 }
 

@@ -2,9 +2,9 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use rh_proto::chain::{Attestation, ChainClock, ChainError, ChainState};
-use rh_proto::driver::Channel;
-use rh_proto::frame::Frame;
+use droppen_proto::chain::{Attestation, ChainClock, ChainError, ChainState};
+use droppen_proto::driver::Channel;
+use droppen_proto::frame::Frame;
 use tokio::sync::mpsc;
 
 use super::admit::refuse;
@@ -44,7 +44,7 @@ pub(crate) fn on_removed(shared: &Arc<Shared>, why: &str) {
 /// control from — an admin demoted while the policy is admins only, a device
 /// an admin took off this host's accept list — and every channel at all once
 /// this machine stops running AI (`SetHost false`): "who may control me" holds
-/// for open channels, not only new ones ([`rh_proto::chain::ChainState::may_control`]).
+/// for open channels, not only new ones ([`droppen_proto::chain::ChainState::may_control`]).
 ///
 /// Host identity renewal (`docs/host-identity-rotation.md` §3.5, §8 item 8):
 /// also every channel whose device's static key is not the one the chain
@@ -114,7 +114,7 @@ pub(crate) enum Word {
 
 /// What `att` says for `device`'s control of this machine on a channel
 /// already open (local-aggregator §3.4). It counts — as
-/// [`rh_proto::chain::ChainState::freshness`] counts words for admission,
+/// [`droppen_proto::chain::ChainState::freshness`] counts words for admission,
 /// but for a head before this view's too — when all of these hold:
 /// - it is by a current admin other than `device`, or by `device` itself
 ///   while it is the sole admin — or was, as of the head it vouched for (a
@@ -136,7 +136,7 @@ pub(crate) fn word_of(st: &AgentState, chain: &ChainState, att: &Attestation, de
         Err(ChainError::Fork { .. }) => return Word::Fork,
         Err(_) => return Word::No,
     }
-    let skew = rh_proto::chain::ATTESTATION_SKEW_MS;
+    let skew = droppen_proto::chain::ATTESTATION_SKEW_MS;
     if att.time_ms > now_ms.saturating_add(skew) {
         return Word::No;
     }
@@ -230,7 +230,7 @@ impl Clock {
 }
 
 /// When an open channel's control lapses (local-aggregator §3.4):
-/// [`rh_proto::chain::CONTROL_FRESHNESS_MS`] after the newest word that
+/// [`droppen_proto::chain::CONTROL_FRESHNESS_MS`] after the newest word that
 /// counts for its device ([`word_of`]), kept per admin. A channel is
 /// admitted only on a word about exactly this view's head
 /// ([`super::admit::accept`]); once open, the head moving on before an admin
@@ -261,7 +261,7 @@ impl ChannelLapse {
 
     /// When control lapses, as last worked out (`None`: nothing counts).
     pub(crate) fn at(&self) -> Option<u64> {
-        self.words.values().max().map(|t| t.saturating_add(rh_proto::chain::CONTROL_FRESHNESS_MS))
+        self.words.values().max().map(|t| t.saturating_add(droppen_proto::chain::CONTROL_FRESHNESS_MS))
     }
 
     /// Work it out again on `st` at `now`.
@@ -309,7 +309,7 @@ impl ChannelLapse {
 }
 
 /// Whether the device of `lapse` may still control this machine at `now`:
-/// the chain lets it ([`rh_proto::chain::ChainState::may_control`]) and its
+/// the chain lets it ([`droppen_proto::chain::ChainState::may_control`]) and its
 /// control has not lapsed.
 pub(crate) fn still_controls(shared: &Shared, lapse: &Mutex<ChannelLapse>, now: u64) -> bool {
     let st = shared.state.lock().expect("agent state");

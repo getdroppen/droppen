@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use rand::RngCore;
-use rh_proto::identity::MachineIdentity;
+use droppen_proto::identity::MachineIdentity;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
@@ -69,7 +69,7 @@ pub(crate) struct StagedSeed {
     /// …whose hash is this.
     pub chain_head: [u8; 32],
     /// How the renewal is confirmed.
-    pub assurance: rh_proto::chain::Assurance,
+    pub assurance: droppen_proto::chain::Assurance,
     /// When it was staged (this agent's clock).
     pub created_ms: u64,
     /// When the hub said it staged it, if it did.
@@ -214,7 +214,7 @@ impl FileSeedStore {
             .and_then(|n| <[u8; 16]>::try_from(n).ok())
             .ok_or_else(|| bad("the nonce is not 16 bytes of hex"))?;
         let chain_head = droppen_base::text::unhex32(&file.chain_head).ok_or_else(|| bad("the chain head is not 32 bytes of hex"))?;
-        let assurance = rh_proto::chain::Assurance::from_byte(file.assurance).map_err(|_| bad("an unknown assurance"))?;
+        let assurance = droppen_proto::chain::Assurance::from_byte(file.assurance).map_err(|_| bad("an unknown assurance"))?;
         Ok(StagedSeed {
             uuid: file.uuid,
             seed: Zeroizing::new(seed),

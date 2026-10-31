@@ -1,7 +1,7 @@
 /*
  * The rest of an encrypted stream, browser side: stream names, snapshot pages,
  * the signed manifests that name them, and drafts that are relayed but never
- * stored. `server-rs/crates/rh-proto/src/stream.rs` has the why; this is the
+ * stored. `server-rs/crates/droppen-proto/src/stream.rs` has the why; this is the
  * same bytes.
  *
  * - index stream `("rh.index", "")`, status stream `("rh.status", "")`, a

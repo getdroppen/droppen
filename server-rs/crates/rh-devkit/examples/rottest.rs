@@ -47,11 +47,11 @@ use ed25519_dalek::SigningKey;
 use futures_util::{SinkExt, StreamExt};
 use rand::RngCore;
 use rh_devkit::{hex, now_ms, rpc, unhex, Device, HubUrl, Link, OpenedChannel};
-use rh_proto::chain::{Accept, Action, Assurance, ChainState, Entry, HostRotation, KeyCommit, KeyCommits, PausePhase};
-use rh_proto::frame::{Frame, AGENT_PATH};
-use rh_proto::identity::MachineIdentity;
-use rh_proto::keys::DhKeypair;
-use rh_proto::sig::{HubLogin, LoginRole};
+use droppen_proto::chain::{Accept, Action, Assurance, ChainState, Entry, HostRotation, KeyCommit, KeyCommits, PausePhase};
+use droppen_proto::frame::{Frame, AGENT_PATH};
+use droppen_proto::identity::MachineIdentity;
+use droppen_proto::keys::DhKeypair;
+use droppen_proto::sig::{HubLogin, LoginRole};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tokio_tungstenite::tungstenite::Message;
@@ -261,7 +261,7 @@ async fn ticket_for(base: &str, token: &str, who: &str, want: Option<&str>) -> O
         return None;
     }
     let text = tk["ticket"].as_str()?.to_string();
-    match rh_proto::ticket::SignedTicket::parse(&text) {
+    match droppen_proto::ticket::SignedTicket::parse(&text) {
         Ok(p) => log!(
             "{who}: ticket for relay {pick} → {s}: role {:?} id {} sign_key {} peers {:?} issued {} expires {}",
             p.ticket.role,
@@ -654,7 +654,7 @@ async fn rotate(args: &[String]) -> R<()> {
     let checks = [
         ("staged view is the one asked", answer["stagedSeq"].as_u64() == Some(view.0) && get("stagedHead") == hex(&view.1)),
         ("old and new keys signed the proof", rot.verify(&st.account, &old.sign_key, &old.dh_key)),
-        ("MAC proves the new DH key", rh_proto::chain::check_rotate_confirm(&eph, &rot.dh_key, &body, &mac)),
+        ("MAC proves the new DH key", droppen_proto::chain::check_rotate_confirm(&eph, &rot.dh_key, &body, &mac)),
         ("new keys never named by the chain", !chain.ever_named(&rot.sign_key) && !chain.ever_named(&rot.dh_key)),
     ];
     for (what, ok) in checks {
@@ -666,7 +666,7 @@ async fn rotate(args: &[String]) -> R<()> {
     }
     log!("new sign {} dh {} readyMs {}", fp(&rot.sign_key), fp(&rot.dh_key), answer["readyMs"]);
     if assurance == Assurance::OnDevice {
-        let want = rh_proto::chain::rotate_sas(&body).replace('-', "");
+        let want = droppen_proto::chain::rotate_sas(&body).replace('-', "");
         let path = sas_file.ok_or("assurance 1 needs a sas-file")?;
         log!("waiting for the code shown on {label} to be typed into {path}");
         let deadline = now_ms() + 600_000;
@@ -739,7 +739,7 @@ async fn rotate(args: &[String]) -> R<()> {
             Action::RotateHostKey(rot.clone()),
             Action::KeyEpochs(KeyCommits {
                 user: None,
-                machines: vec![(host.clone(), KeyCommit { epoch, hash: rh_proto::chain::machine_key_commit(&st.account, &host, epoch, &mk) })],
+                machines: vec![(host.clone(), KeyCommit { epoch, hash: droppen_proto::chain::machine_key_commit(&st.account, &host, epoch, &mk) })],
             }),
         ]
     };
@@ -904,7 +904,7 @@ fn old_ticket(minted: Option<OldTicket>) -> Option<OldTicket> {
     };
     match read() {
         Ok(t) => {
-            if let Ok(p) = rh_proto::ticket::SignedTicket::parse(&t.text) {
+            if let Ok(p) = droppen_proto::ticket::SignedTicket::parse(&t.text) {
                 log!("device-role ticket from {file}: relay {} role {:?} id {} issued {} expires {}", t.relay, p.ticket.role, p.ticket.id, p.ticket.issued_ms, p.ticket.expires_ms);
             }
             Some(t)

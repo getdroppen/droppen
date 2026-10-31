@@ -39,12 +39,12 @@
 
 | 方面 | 现状 | 位置 | 对本设计的影响 |
 |---|---|---|---|
-| 链的格式 | 条目版本字节为 2。动作有 `Genesis`、`AddDevice`、`RemoveDevice`、`AddMachine`、`RemoveMachine`、`RecoveryJoin`、`ApproveDevice`、`ActivateRecovered`、`SetRecoveryKey`、`KeyEpochs`。签名者是 `AK`（只签创世）、当前完整设备、`RSK`（只签两种恢复条目） | `C/rh-proto/src/chain.rs:63-65,184-226` | 链 v3 在此之上加条目（§3.2） |
+| 链的格式 | 条目版本字节为 2。动作有 `Genesis`、`AddDevice`、`RemoveDevice`、`AddMachine`、`RemoveMachine`、`RecoveryJoin`、`ApproveDevice`、`ActivateRecovered`、`SetRecoveryKey`、`KeyEpochs`。签名者是 `AK`（只签创世）、当前完整设备、`RSK`（只签两种恢复条目） | `C/droppen-proto/src/chain.rs:63-65,184-226` | 链 v3 在此之上加条目（§3.2） |
 | 设备与机器 | 两套身份：设备 `DeviceInfo{id, sign_key, dh_key, full}`、机器 `MachineInfo{id, sign_key, dh_key}`，id 在两者之间不重复。完整设备持 `UK`、能签条目、能作证；受限设备都不能，产品里从没用过 | `chain.rs:165-181,1084,1231,1394-1409` | v3 合成一种「设备」 |
-| 机器能做什么 | 只能被连：agent 登录、写流、签流头；中继拒绝 agent 发的 `OPEN`；agent 票据的 `peers` 为空；agent 不能订阅流 | `C/rh-relay/src/route.rs:179-181`、`C/rh-proto/src/ticket.rs:8-9`、Hub | 能运行 AI 的设备也要能发起控制 |
-| 新鲜度 | 开任何通道都要求「另一台完整设备」12 小时内为 agent 的当前链头作证；只有唯一的完整设备自证才算数 | `chain.rs:1421-1463`、`C/rh-proto/src/handshake.rs:70` | 常开的设备自己不能作证，§3.4 |
+| 机器能做什么 | 只能被连：agent 登录、写流、签流头；中继拒绝 agent 发的 `OPEN`；agent 票据的 `peers` 为空；agent 不能订阅流 | `C/rh-relay/src/route.rs:179-181`、`C/droppen-proto/src/ticket.rs:8-9`、Hub | 能运行 AI 的设备也要能发起控制 |
+| 新鲜度 | 开任何通道都要求「另一台完整设备」12 小时内为 agent 的当前链头作证；只有唯一的完整设备自证才算数 | `chain.rs:1421-1463`、`C/droppen-proto/src/handshake.rs:70` | 常开的设备自己不能作证，§3.4 |
 | 套餐上限 | `devices.max` 只数当前完整设备；`machines.max` 数当前机器加未完成的注册 | Hub | 合并为「设备数 + 可运行 AI 的设备数」，§3.8 |
-| 注册 | 独立进程 `agent enroll <RH1> --hub <wss>`。码是 `RH1-<账户指纹>-<秘密>`，`token = HMAC(秘密)[..16]`；证明是 HMAC，绑定账户、id、两把公钥与 token | `S/agent/enroll.rs:35-145`、`C/rh-proto/src/identity.rs:123-207` | 协议原样复用，只换「码怎么到机器上」 |
+| 注册 | 独立进程 `agent enroll <RH1> --hub <wss>`。码是 `RH1-<账户指纹>-<秘密>`，`token = HMAC(秘密)[..16]`；证明是 HMAC，绑定账户、id、两把公钥与 token | `S/agent/enroll.rs:35-145`、`C/droppen-proto/src/identity.rs:123-207` | 协议原样复用，只换「码怎么到机器上」 |
 | 设备侧确认 | droppen.app「添加机器」：`POST /v1/enrollments` → 显示命令 → 轮询 → 验证明 → 链上写 `[AddMachine, KeyEpochs]` → 写钥环、交 `MK`。需要完整设备的设备会话 | `W/lib/hub/account.ts:1259-1300`、`W/features/cloud/cloud-app.tsx:974-1028`、Hub | 必须有一台可管理账号的设备在场 |
 | 链接何时起 | 只在 server 启动时 `spawn_if_enrolled`；注册后要重启 | `S/app.rs:333-345`、`S/agent/link.rs:114-182` | 要能在运行中启停（S1-1） |
 | 解除 | 没有 `unenroll` 或 `status`；agent 不理会自己被移除；Hub 在 agent 登录时不查它是否仍在链上；`AddMachine` 不告警 | `S/agent/enroll.rs:36-46`、Hub、`S/agent/link.rs:516` | S1-1 补上 |
@@ -76,7 +76,7 @@
 2. 本机的请求从不等云端。云任务都在后台，有超时；Hub 或中继挂了，只影响「其它设备」那部分。
 3. 本机聚合时，浏览器（包括局域网手机）**不持任何钥**；钥只在 `droppen` 进程里。
 4. droppen.app 上的浏览器照旧直接连每台运行 AI 的设备，不经过别的设备转发。本机网关也不替远端设备转发：`cloud:*` 身份一律不能用网关（§4.5）。
-5. 开源代码只通过 `rh-proto` 和公开的 Hub API 与 Hub 打交道（§2.1）。
+5. 开源代码只通过 `droppen-proto` 和公开的 Hub API 与 Hub 打交道（§2.1）。
 
 ### 2.1 开源边界与契约
 
@@ -87,7 +87,7 @@
 | `droppen`：执行器、agent、本机控制端与本机网关、本机登录 | 开源 | 本机上跑的一切。用户能看到本机到底做了什么：准入、钥怎么存、什么发给云端 |
 | `web/`：本机 React 前端，**也包括**云模式（`features/cloud`、`lib/hub`、`lib/e2e`）和 `/link` | 开源 | 只有一份 SPA；droppen.app 上跑的是它的构建产物，由 Hub 托管 |
 | `droppen-relay` | 开源 | 用户能核实中继只转发密文 |
-| `rh-proto`：帧、Noise、设备链（含 v3）、记录、票据、互通向量 | 开源 | 两边共同的协议 |
+| `droppen-proto`：帧、Noise、设备链（含 v3）、记录、票据、互通向量 | 开源 | 两边共同的协议 |
 | `rh-client`（新，由 `rh-devkit` 抽出）、`rh-devkit` | 开源 | 设备端库与测试工具 |
 | Droppen Hub：账号、计费、存储、票据签发、管理工具 | **闭源** | 威胁模型里本来就不被信任的那一方 |
 
@@ -107,14 +107,14 @@
 - **规则**：开源 crate 与 `web/` 不得引用 `rh-hub` 的代码、表结构、环境变量或未写进文档的行为。开源工作区由 CI 拒绝任何 `rh-hub` 路径依赖。
 - **Hub API 文档**放在开源仓库的 `docs/hub-api/`，内容如下：
   - HTTP：`/v1/*` 每条路由的请求与响应、鉴权、限流与长度上限、错误形状 `{error, key?, limit?, used?, message}`；
-  - WebSocket：`/v1/client`、`/v1/agent`、中继 `/v1/connect` 的 JSON 控制消息；二进制帧的格式引用 `rh-proto`；
+  - WebSocket：`/v1/client`、`/v1/agent`、中继 `/v1/connect` 的 JSON 控制消息；二进制帧的格式引用 `droppen-proto`；
   - 版本规则：`/v1/` 内只做加法；功能靠协商（`agent_info.features`、`/v1/me`）；Hub 兼容开源客户端的前 N−2 个版本；
   - 今天 Hub 的路由表就是初稿。
 - **变更规则**：每个改动 Hub API 的变更，都在同一轮里更新 `docs/hub-api/`。闭源 PR 负责实现，开源 PR 负责文档与客户端，两边以同一份 JSON Schema 为准。
 - **测试不需要 Hub 源码**：
   - 契约测试：两边用同一份 Schema；
   - 端到端：拉一个固定版本、只含二进制的 Hub 镜像。
-- **仓库拆分**：Hub（`rh-hub`）移到私有仓库，照常依赖开源的 `rh-proto` 与 `rh-relay`（闭源依赖开源，方向正确）。
+- **仓库拆分**：Hub（`rh-hub`）移到私有仓库，照常依赖开源的 `droppen-proto` 与 `rh-relay`（闭源依赖开源，方向正确）。
 
 ## 3. 一切都是设备（链 v3）
 
@@ -329,7 +329,7 @@ DeviceV3   = id str16 | sign_key [32] | dh_key [32] | flags u8      // bit0 = ho
 
 **发版顺序**（N = 能读 v3，N+1 = 开始写 v3）
 
-1. **N（读）**：`rh-proto` 的 Rust 与 TS 实现、Hub、SPA、agent 都能读、验、映射 v3，但都不写。agent 在 `agent_info.features` 里声明 `chain/3`。
+1. **N（读）**：`droppen-proto` 的 Rust 与 TS 实现、Hub、SPA、agent 都能读、验、映射 v3，但都不写。agent 在 `agent_info.features` 里声明 `chain/3`。
 2. **门槛**：账户里每台当前 host 最近一次签入时都声明过 `chain/3`，Hub 才接受这个账户的 v3 条目，否则回 409 `chain_v3_not_ready` 并列出卡住的 host。客户端从 `/v1/me` 的 `chain_v3`（`mode`、`writable`、`waiting`、`in_use`）读出账户此刻能不能写 v3（`docs/hub-api/http.md`）。
 3. **控制先于写入**：门槛一过，host 就可以发起控制（不需要任何新条目）。
 4. **N+1（写）**：SPA 在门槛满足时写 v3 条目（添加设备、`SetAdmin`、`SetHost`）；不满足时，仍能用 v2 表达的操作照旧写 v2（加完整或受限设备、`AddMachine`）。
@@ -687,7 +687,7 @@ W 轮询到 `proved` 后检查两件事：证明成立；**并且**证明里的�
 **3. 交回**
 
 - 点「加入这台设备」时，**在这次点击里**先开一个空白标签页（弹窗拦截器只放行点击里同步打开的窗口），再申请注册码。
-- 码用 `rh_proto::link_return`（TS 侧 `lib/e2e/link-return.ts`，两边有逐字节相同的测试向量）封装：`w ‖ nonce ‖ AES-256-GCM`，`kek = HKDF-SHA256(salt = "droppen/v1 link-return", ikm = X25519(w, E) ‖ state, info = w ‖ E ‖ context)`，`context` 与 AAD = attempt id、页面的源、设备两把公钥。明文是 `{code, email}`。
+- 码用 `droppen_proto::link_return`（TS 侧 `lib/e2e/link-return.ts`，两边有逐字节相同的测试向量）封装：`w ‖ nonce ‖ AES-256-GCM`，`kek = HKDF-SHA256(salt = "droppen/v1 link-return", ikm = X25519(w, E) ‖ state, info = w ‖ E ‖ context)`，`context` 与 AAD = attempt id、页面的源、设备两把公钥。明文是 `{code, email}`。
 - 空白页去掉 opener 后跳到 `<cb>/link/return#droppen-return=<attempt>.<密文>`；没开成就显示一个链接让用户点。droppen.app 这个标签页留着，照常等证明、上链、交钥（§4.3 第 7 步），完成后说「回到那台设备上的 Droppen」。码封好之前的任何出口（套餐上限、链 v3 还写不了、出错、取消）都把空白页关掉；连点两次只发一个码。
 - 设备拒收（已取消、已在账户里、连不上 Hub、发起人不再管理）只在它自己的标签页里说，droppen.app 听不到：等证明时同意页留着「取消」，并提示「设备的标签页说没收下就在这里取消，回设备上重来」。让 droppen.app 直接知道，留作后续。
 
@@ -885,7 +885,7 @@ interface AppShell {
 **连接**
 
 - 每页一条 WebSocket，用今天的 WS ticket 鉴权；调用者必须是有远端权限的本机账号；`cloud:*` 拒绝。
-- 文本帧是 JSON（`t` 标记类型）；二进制帧是 `[管道号 u32][桥接消息]`，桥接消息与 E2E 通道里的相同（`W/lib/e2e/bridge.ts`、`C/rh-proto/src/bridge.rs`）。
+- 文本帧是 JSON（`t` 标记类型）；二进制帧是 `[管道号 u32][桥接消息]`，桥接消息与 E2E 通道里的相同（`W/lib/e2e/bridge.ts`、`C/droppen-proto/src/bridge.rs`）。
 
 | 方向 | 消息 |
 |---|---|
@@ -965,7 +965,7 @@ interface AppShell {
 
 | 模块 | 今天 | 改成 |
 |---|---|---|
-| `C/rh-proto/src/chain.rs`、`handshake.rs`、互通向量 | v2；只有一个新鲜度窗口 | v3 的条目、映射、签名规则、`host`/`admin` 检查；按操作的新鲜度 |
+| `C/droppen-proto/src/chain.rs`、`handshake.rs`、互通向量 | v2；只有一个新鲜度窗口 | v3 的条目、映射、签名规则、`host`/`admin` 检查；按操作的新鲜度 |
 | `S/api/cloud/`（新） | — | §4.5 |
 | `S/agent/{enroll,link,mod}.rs` | 独立进程注册；启动时起链接；只当响应方 | 注册改为库函数；运行中启停；对移除做出反应；`status`、`unenroll`；声明 `chain/3`、`policy/1` |
 | `S/agent/bridge.rs` | 所有设备都能用全部 API | 非 admin 的拒绝清单 |
@@ -1209,7 +1209,7 @@ droppen.app 网页适合随手打开；要高保障的人用本机界面或 Taur
 
 ### SC 链 v3：一切都是设备（S1-4 之前）
 
-- SC-1：`rh-proto` 与 TS 读 v3 条目（§3.2）、按操作的新鲜度（§3.4）、互通向量；只读，不写。
+- SC-1：`droppen-proto` 与 TS 读 v3 条目（§3.2）、按操作的新鲜度（§3.4）、互通向量；只读，不写。
 - SC-2：Hub 应用 v3；按 `devices.max`、`hosts.max` 计数（§3.8）；`chain/3` 门槛（§3.5）。
 - SC-3：agent 与 SPA 验 v3；每台设备都能控制；非 admin 的拒绝清单（§5.4）。
 - SC-4：「我的设备」（§3.7）与 v3 写入。
@@ -1260,7 +1260,7 @@ droppen.app 网页适合随手打开；要高保障的人用本机界面或 Taur
 **S1-5 实现计划**（跟随每台设备的副本；先写计划再实现）
 
 - **先把 `rh-client` 从 `rh-devkit` 里抽出来**（只搬家，不改行为），再在它之上跟随副本。
-- **`C/rh-client` 的边界**（开源，只依赖 `rh-proto`，不依赖 `rh-hub`）：
+- **`C/rh-client` 的边界**（开源，只依赖 `droppen-proto`，不依赖 `rh-hub`）：
   - 搬进去：`HubUrl`；设备会话（挑战 + `POST /v1/session`）；信箱的 HTTP（读、确认、发索钥）；取页（`GET /v1/streams/{stream}/pages/{hash}`）；`/v1/client` 的 `Link`（签入，按 `ch` 分发帧，把带 `ch` 的 `stream_synced`/`stream_refused` 送到对应订阅，其余控制消息给调用者，连接关闭的通知）；流读者：`SUB` → `GONE`/`CHECKPOINT`（页经 HTTP 取，按 manifest 校验）→ `RECS` → `HEAD` 才放行 → `stream_synced`。读者有两种：一次读完的，和常驻的、能从游标续订的跟随器。三种 fold（索引、状态、会话）也搬进去。HTTP 与 WebSocket 流量捕获留一个钩子，devkit 和 agent 各挂各的。
   - 留在 devkit：注册、配对、恢复、开通道、e2e 与压力测试。devkit 改为依赖 rh-client，并把搬走的名字原样再导出，对外 API 不变。
   - agent 的 `aggregator/hub.rs` 变薄，改调 rh-client。
@@ -1310,7 +1310,7 @@ droppen.app 网页适合随手打开；要高保障的人用本机界面或 Taur
   - agent 回滚到 v0.2.121（S1-4）：`copies.db` 留在盘上没人读；断开或被移除时，那个版本照旧整目录删。只有「收窄」不会删回滚期间那台 host 的旧副本；重新升级后的第一轮就删。
   - 发版：只发 agent，与网页、Hub 无先后。
 - **验收与测试**：
-  - rh-client：fold 的单测随代码搬家。跟随器用 `rh-proto` 的写方造记录与签名头，覆盖四种情形：只放行签名头、`GONE` + `CHECKPOINT` 重建、从游标续订、坏记录重建。
+  - rh-client：fold 的单测随代码搬家。跟随器用 `droppen-proto` 的写方造记录与签名头，覆盖四种情形：只放行签名头、`GONE` + `CHECKPOINT` 重建、从游标续订、坏记录重建。
   - agent：
     - `copies.db` 的权限、绑定、按 host 清除、续订；
     - 跟随计划：最新 5 个会话、轮次名字的取舍、订阅预算；

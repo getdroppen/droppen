@@ -20,8 +20,8 @@ use std::time::Duration;
 
 use rh_client::http::HttpError;
 use rh_client::HubUrl;
-use rh_proto::identity::MachineIdentity;
-use rh_proto::wire::client::MailboxPost;
+use droppen_proto::identity::MachineIdentity;
+use droppen_proto::wire::client::MailboxPost;
 use serde_json::Value;
 
 /// How long one request may take.
@@ -75,7 +75,7 @@ pub struct Mail {
     pub id: i64,
     /// The device that sent it.
     pub sender: String,
-    /// What it is (`rh_proto::wrap::MAIL_*`).
+    /// What it is (`droppen_proto::wrap::MAIL_*`).
     pub purpose: u8,
     /// The key epoch it names.
     pub epoch: u32,
@@ -244,7 +244,7 @@ impl DeviceClient {
         let body = MailboxPost {
             recipient: admin.into(),
             sender: self.device.clone(),
-            purpose: rh_proto::wrap::MAIL_KEY_REQUEST,
+            purpose: droppen_proto::wrap::MAIL_KEY_REQUEST,
             epoch: 0,
             sealed: String::new(),
         };

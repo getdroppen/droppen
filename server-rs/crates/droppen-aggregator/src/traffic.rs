@@ -22,7 +22,7 @@ use std::sync::{Mutex, OnceLock};
 use serde_json::Value;
 
 /// The hub's agent socket.
-pub const AGENT: &str = rh_proto::frame::AGENT_PATH;
+pub const AGENT: &str = droppen_proto::frame::AGENT_PATH;
 /// A relay's socket.
 pub const CONNECT: &str = "/v1/connect";
 

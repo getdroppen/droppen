@@ -3,7 +3,7 @@
 //! In the cloud design (`docs/cross-machine-architecture.md`) the agent *is*
 //! this server plus one outbound connection to a hub: it keeps the
 //! transcripts, credentials, terminals and files, and the hub only ever
-//! forwards ciphertext ([`rh_proto`]).
+//! forwards ciphertext ([`droppen_proto`]).
 //!
 //! - [`enroll`] — `agent enroll`: join an account with a code a device issued.
 //! - [`link`] — the connection an enrolled server keeps to its hub, answering
@@ -29,7 +29,7 @@
 //! # The identity seed
 //!
 //! One random 32-byte seed; the Ed25519 and X25519 keys are expanded from it
-//! ([`rh_proto::identity::MachineIdentity`]). It is kept by [`FileSeedStore`],
+//! ([`droppen_proto::identity::MachineIdentity`]). It is kept by [`FileSeedStore`],
 //! `<instance dir>/agent/machine-key.json`, mode 0600
 //! in a 0700 directory, next to the instance identity uuid ([`droppen_instance::identity`])
 //! it belongs to. A key file that names another instance, or that anyone but
@@ -178,7 +178,7 @@ mod tests {
     use super::seed::*;
     use super::rotation;
     use droppen_instance::paths::Paths;
-    use rh_proto::identity::MachineIdentity;
+    use droppen_proto::identity::MachineIdentity;
     use zeroize::Zeroizing;
     use super::*;
 
@@ -248,7 +248,7 @@ mod tests {
             nonce: [nonce; 16],
             chain_seq: 4,
             chain_head: [5; 32],
-            assurance: rh_proto::chain::Assurance::Auto,
+            assurance: droppen_proto::chain::Assurance::Auto,
             created_ms: u64::from(nonce),
             accepted_ms: Some(1),
         };
@@ -293,7 +293,7 @@ mod tests {
             nonce: [nonce; 16],
             chain_seq: 4,
             chain_head: [5; 32],
-            assurance: rh_proto::chain::Assurance::OnDevice,
+            assurance: droppen_proto::chain::Assurance::OnDevice,
             created_ms,
             accepted_ms: None,
         };
@@ -302,7 +302,7 @@ mod tests {
         assert_eq!(load_or_create(&paths).unwrap().0.sign_public(), old.sign_public());
         let read = store.staged().unwrap().unwrap();
         assert_eq!((read.nonce, read.chain_seq, read.chain_head, read.created_ms, read.accepted_ms), ([1; 16], 4, [5; 32], 6, None));
-        assert_eq!(read.assurance, rh_proto::chain::Assurance::OnDevice);
+        assert_eq!(read.assurance, droppen_proto::chain::Assurance::OnDevice);
         assert_eq!(read.identity().sign_public(), MachineIdentity::from_seed(&[7; 32]).sign_public());
         let file: serde_json::Value = serde_json::from_slice(&std::fs::read(store.staging_path(&[1; 16])).unwrap()).unwrap();
         for field in ["version", "uuid", "seed", "nonce", "chainSeq", "chainHead", "assurance", "createdMs"] {

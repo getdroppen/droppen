@@ -36,9 +36,9 @@
 //!   stands. A stream the machine deleted and wrote again from 0 has newer
 //!   heads, so it is still read.
 
-use rh_proto::frame::Frame;
-use rh_proto::record::{LogReader, SignedHead, StreamHead, StreamId};
-use rh_proto::stream::{open_page, page_hash, reader_from_manifest, Manifest, SealedPage};
+use droppen_proto::frame::Frame;
+use droppen_proto::record::{LogReader, SignedHead, StreamHead, StreamId};
+use droppen_proto::stream::{open_page, page_hash, reader_from_manifest, Manifest, SealedPage};
 use serde_json::Value;
 use zeroize::Zeroizing;
 
@@ -402,7 +402,7 @@ impl Follower {
                             bodies: released.into_iter().map(|o| (o.fmt, o.body)).collect(),
                         })
                     }
-                    Err(rh_proto::record::RecordError::Incomplete { .. }) => Err(broken("the hub's head covers records it did not send")),
+                    Err(droppen_proto::record::RecordError::Incomplete { .. }) => Err(broken("the hub's head covers records it did not send")),
                     Err(e) => Err(broken(format!("a head the records do not match: {e}"))),
                 }
             }
@@ -435,7 +435,7 @@ impl Follower {
                 .find(|(e, _)| *e == page.epoch)
                 .map(|(_, k)| k)
                 .ok_or_else(|| broken(format!("no key for epoch {}", page.epoch)))?;
-            let key = rh_proto::record::stream_key(mk, &self.stream);
+            let key = droppen_proto::record::stream_key(mk, &self.stream);
             let opened = open_page(&key, &self.stream, &page).map_err(broken)?;
             bodies.push((opened.fmt, opened.body));
         }
@@ -453,8 +453,8 @@ impl Follower {
 mod tests {
     use super::*;
     use rand::rngs::OsRng;
-    use rh_proto::record::{Compression, LogWriter, SealedRecord, FMT_INDEX_V1};
-    use rh_proto::stream::seal_page;
+    use droppen_proto::record::{Compression, LogWriter, SealedRecord, FMT_INDEX_V1};
+    use droppen_proto::stream::seal_page;
     use serde_json::json;
 
     const MK: [u8; 32] = [0x11; 32];
@@ -464,7 +464,7 @@ mod tests {
     }
 
     fn stream() -> StreamId {
-        rh_proto::stream::index_stream(&MK)
+        droppen_proto::stream::index_stream(&MK)
     }
 
     fn body(i: u64) -> Vec<u8> {
@@ -584,7 +584,7 @@ mod tests {
         let mut bad = cursor.clone();
         bad.signature[3] ^= 1;
         assert!(Follower::resume(stream(), key, &[(0, MK)], bad).is_err());
-        let other = rh_proto::stream::status_stream(&MK);
+        let other = droppen_proto::stream::status_stream(&MK);
         assert!(Follower::resume(other, key, &[(0, MK)], cursor).is_err());
     }
 
@@ -657,7 +657,7 @@ mod tests {
         // The machine compacts 0..4 into one page; the hub trims the tail.
         m.write(2);
         let state = serde_json::to_vec(&json!({"reset": true, "upserts": [], "removed": [], "asOf": 40})).unwrap();
-        let stream_key = rh_proto::record::stream_key(&MK, &stream());
+        let stream_key = droppen_proto::record::stream_key(&MK, &stream());
         let page = seal_page(&stream_key, &stream(), 0, FMT_INDEX_V1, &state, Compression::None, &mut OsRng)
             .unwrap()
             .encode();
@@ -764,7 +764,7 @@ mod tests {
     fn a_hub_cannot_roll_a_copy_back() {
         let key = machine().verifying_key().to_bytes();
         let sealed = |b: &[u8]| {
-            let sk = rh_proto::record::stream_key(&MK, &stream());
+            let sk = droppen_proto::record::stream_key(&MK, &stream());
             seal_page(&sk, &stream(), 0, FMT_INDEX_V1, b, Compression::None, &mut OsRng)
                 .unwrap()
                 .encode()

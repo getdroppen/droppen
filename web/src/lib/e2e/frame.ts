@@ -1,7 +1,7 @@
 /*
  * The frames the hub can see: `[type u8][ch u32][len u16][payload]`.
  *
- * The browser's half of `server-rs/crates/rh-proto/src/frame.rs`; see there for
+ * The browser's half of `server-rs/crates/droppen-proto/src/frame.rs`; see there for
  * what each type means. The hub routes on the envelope and copies `DATA`
  * payloads (Noise messages) without reading them. Types at or above 0x80 are
  * optional extensions a peer may skip; an unknown type below that is fatal.
@@ -18,7 +18,7 @@ export const MAX_CLOSE_REASON_LEN = 123;
 export const MAX_SUBSCRIPTION_ID_LEN = 128;
 export const IGNORABLE_TYPES = 0x80;
 /**
- * Hub-level flow control (`rh-proto/src/flow.rs`): a sender may have this many
+ * Hub-level flow control (`droppen-proto/src/flow.rs`): a sender may have this many
  * `data` payload bytes outstanding per channel and direction; the receiver
  * returns them with `credit` frames (half a window at a time) once it has read
  * them, and the hub closes a channel whose sender overruns its window.

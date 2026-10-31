@@ -1,4 +1,4 @@
-//! remote-hand's cloud protocol, shared by the agent (today's server, plus one
+//! Droppen's cloud protocol, shared by the agent (today's server, plus one
 //! outbound connection) and, from M1, the hub.
 //!
 //! The design is `docs/cross-machine-architecture.md`. Its one hard rule: the

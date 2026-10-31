@@ -458,7 +458,7 @@ async fn cli_beside(server: &common::TestServer, args: &[&str]) -> std::process:
 #[tokio::test]
 async fn enrolling_without_a_user_account_is_refused() {
     let home = tempfile::tempdir().expect("tempdir");
-    let code = rh_proto::identity::EnrollCode {
+    let code = droppen_proto::identity::EnrollCode {
         account_fingerprint: [9; 16],
         secret: [7; 16],
     }

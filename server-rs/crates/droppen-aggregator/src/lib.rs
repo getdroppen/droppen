@@ -76,7 +76,7 @@ pub struct View {
     /// This computer's id.
     pub me: String,
     /// The verified chain.
-    pub chain: rh_proto::chain::ChainState,
+    pub chain: droppen_proto::chain::ChainState,
 }
 
 /// The enrollment the device role runs under, as the link it runs in holds it.
@@ -135,7 +135,7 @@ impl Switch for TestSwitch {
 /// still runs with the old key until its link restarts with the new one —
 /// and a sign-in with a retired key is kept by the hub as evidence against
 /// this very computer (`docs/host-identity-rotation.md` §3.8).
-pub(crate) fn holds_named_keys(chain: &rh_proto::chain::ChainState, me: &str, identity: &rh_proto::identity::MachineIdentity) -> bool {
+pub(crate) fn holds_named_keys(chain: &droppen_proto::chain::ChainState, me: &str, identity: &droppen_proto::identity::MachineIdentity) -> bool {
     chain
         .device_record(me)
         .is_some_and(|d| d.info.sign_key == identity.sign_public() && d.info.dh_key == identity.dh_public())
@@ -355,7 +355,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths::for_instance(dir.path().to_path_buf(), "scrubtest");
         let mut copies = store::CopyStore::open(&paths, "a-1", "m-me", Box::new(|| true)).unwrap();
-        let stream = rh_proto::record::stream_id(&[1; 32], "claude", "s").unwrap();
+        let stream = droppen_proto::record::stream_id(&[1; 32], "claude", "s").unwrap();
         copies
             .put(&store::Row {
                 host: "m-2".into(),

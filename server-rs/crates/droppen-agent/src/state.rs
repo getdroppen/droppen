@@ -19,8 +19,8 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use rh_proto::chain::{Attestation, ChainClock, ChainState, Entry, TrustRoot};
-use rh_proto::noise::ReplayGuard;
+use droppen_proto::chain::{Attestation, ChainClock, ChainState, Entry, TrustRoot};
+use droppen_proto::noise::ReplayGuard;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
@@ -142,7 +142,7 @@ pub struct Absorbed {
     /// Never the first batch, which is the history that let this machine in.
     pub news: Vec<Entry>,
     /// Why it stopped short of the batch's end; what it took before stays.
-    pub error: Option<rh_proto::chain::ChainError>,
+    pub error: Option<droppen_proto::chain::ChainError>,
 }
 
 /// The most alarms kept (the newest).
@@ -341,7 +341,7 @@ impl AgentState {
         self.chain
             .as_ref()
             .and_then(|c| c.device_record(&self.machine))
-            .is_some_and(|d| d.status == rh_proto::chain::DeviceStatus::Removed)
+            .is_some_and(|d| d.status == droppen_proto::chain::DeviceStatus::Removed)
     }
 
     /// Whether this machine is in its chain but no longer runs AI (chain v3
@@ -521,7 +521,7 @@ impl AgentState {
                     Err(error) => return refused(error),
                 };
                 if chain.account() != self.account {
-                    return refused(rh_proto::chain::ChainError::WrongAccount { seq: 0 });
+                    return refused(droppen_proto::chain::ChainError::WrongAccount { seq: 0 });
                 }
                 self.clock = clock;
                 self.live_from = live_from;
@@ -575,7 +575,7 @@ impl AgentState {
     pub fn attest(&mut self, att: Attestation) -> bool {
         let Some(chain) = &self.chain else { return false };
         match chain.check_attestation(&att) {
-            Ok(()) | Err(rh_proto::chain::ChainError::Behind { .. }) => {}
+            Ok(()) | Err(droppen_proto::chain::ChainError::Behind { .. }) => {}
             Err(_) => return false,
         }
         let newer = self.attestations.get(&att.device).is_none_or(|old| old.time_ms <= att.time_ms);
@@ -600,9 +600,9 @@ impl AgentState {
             return ReplayGuard::after_restart(now_ms);
         }
         let mut guard = ReplayGuard::new(
-            rh_proto::noise::DEFAULT_PAST_WINDOW_MS,
-            rh_proto::noise::DEFAULT_FUTURE_WINDOW_MS,
-            rh_proto::noise::DEFAULT_PER_DEVICE,
+            droppen_proto::noise::DEFAULT_PAST_WINDOW_MS,
+            droppen_proto::noise::DEFAULT_FUTURE_WINDOW_MS,
+            droppen_proto::noise::DEFAULT_PER_DEVICE,
             0,
         );
         guard.restore(self.replay.iter().cloned());
@@ -889,8 +889,8 @@ impl droppen_aggregator::Enrollment for LinkEnrollment {
 mod tests {
     use super::*;
     use droppen_instance::paths::Paths;
-    use rh_proto::chain::{genesis_draft, Action, DeviceInfo, Signer};
-    use rh_proto::identity::{fingerprint, MachineIdentity};
+    use droppen_proto::chain::{genesis_draft, Action, DeviceInfo, Signer};
+    use droppen_proto::identity::{fingerprint, MachineIdentity};
 
     /// genesis (AK, device) → add machine; and the machine's identity.
     fn chain() -> (Vec<Entry>, [u8; 16], MachineIdentity) {
@@ -979,7 +979,7 @@ mod tests {
     /// nothing.
     #[test]
     fn a_batch_that_stops_short_still_reports_and_keeps_what_took_effect() {
-        use rh_proto::chain::{recovery_keys, RecoveryKey};
+        use droppen_proto::chain::{recovery_keys, RecoveryKey};
         let dir = tempfile::tempdir().unwrap();
         let files = AgentFiles::of(&Paths::for_instance(dir.path().to_path_buf(), "agentpartial"));
         let ak = MachineIdentity::from_seed(&[1; 32]);
@@ -1020,7 +1020,7 @@ mod tests {
         let absorbed = st.absorb(&[join.clone(), bogus], 9_000);
         assert_eq!(absorbed.applied, 1);
         assert_eq!(absorbed.news, vec![join], "the join is news to act on");
-        assert!(matches!(absorbed.error, Some(rh_proto::chain::ChainError::BadSignature { seq: 3 })));
+        assert!(matches!(absorbed.error, Some(droppen_proto::chain::ChainError::BadSignature { seq: 3 })));
         st.save(&files).unwrap();
         let loaded = AgentState::load(&files).unwrap().unwrap();
         assert!(loaded.chain.as_ref().unwrap().device_record("d-thief").is_some(), "kept");
@@ -1035,7 +1035,7 @@ mod tests {
     /// nobody else; and the state is verified again on load.
     #[test]
     fn a_host_of_an_account_made_on_chain_v3_follows_it_and_admits_its_devices() {
-        use rh_proto::chain::{genesis3_draft, machine_key_commit, user_key_commit, Accept, DeviceV3, Flags, KeyCommit, KeyCommits};
+        use droppen_proto::chain::{genesis3_draft, machine_key_commit, user_key_commit, Accept, DeviceV3, Flags, KeyCommit, KeyCommits};
         let dir = tempfile::tempdir().unwrap();
         let files = AgentFiles::of(&Paths::for_instance(dir.path().to_path_buf(), "agentv3genesis"));
         let ak = MachineIdentity::from_seed(&[1; 32]);

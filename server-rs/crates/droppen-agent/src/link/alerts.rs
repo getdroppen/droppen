@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use rh_proto::chain::{Action, ChainState, Entry, Signer};
-use rh_proto::wire::agent::AgentToHub;
+use droppen_proto::chain::{Action, ChainState, Entry, Signer};
+use droppen_proto::wire::agent::AgentToHub;
 use tokio::sync::mpsc;
 
 use super::hub::WireText;
@@ -39,7 +39,7 @@ pub(crate) fn account_change_in(entry: &Entry, prev: Option<&Entry>, paused: Opt
         Signer::Account => "the account key".into(),
         Signer::Passkey(slot) => format!("passkey slot {slot}"),
     };
-    let flags = |f: rh_proto::chain::Flags| match (f.host, f.admin) {
+    let flags = |f: droppen_proto::chain::Flags| match (f.host, f.admin) {
         (true, true) => "runs AI, can manage the account",
         (true, false) => "runs AI",
         (false, true) => "can manage the account",
@@ -62,21 +62,21 @@ pub(crate) fn account_change_in(entry: &Entry, prev: Option<&Entry>, paused: Opt
         Action::PasskeyActivate(id) => format!("device {id} activated itself with its passkey"),
         Action::SetAccept { host, from } => {
             let whom = match from {
-                rh_proto::chain::Accept::Admins => "admin devices only".to_string(),
-                rh_proto::chain::Accept::All => "every device of the account".to_string(),
-                rh_proto::chain::Accept::Devices(ids) => format!("admin devices and {}", ids.join(", ")),
+                droppen_proto::chain::Accept::Admins => "admin devices only".to_string(),
+                droppen_proto::chain::Accept::All => "every device of the account".to_string(),
+                droppen_proto::chain::Accept::Devices(ids) => format!("admin devices and {}", ids.join(", ")),
             };
             format!("{host} now accepts control from {whom} (set by {signer})")
         }
         Action::RotateHostKey(r) => format!(
             "device {} renewed its identity key{} (new fingerprint {}, written by {signer})",
             r.host,
-            if r.assurance == rh_proto::chain::Assurance::OnDevice {
+            if r.assurance == droppen_proto::chain::Assurance::OnDevice {
                 ", confirmed on the device"
             } else {
                 ""
             },
-            rh_proto::identity::device_fingerprint_text(&r.sign_key, &r.dh_key)
+            droppen_proto::identity::device_fingerprint_text(&r.sign_key, &r.dh_key)
         ),
         Action::SetRenewalPolicy { always_assured: true } => {
             format!("identity key renewals must now be confirmed on the device (set by {signer})")
@@ -96,14 +96,14 @@ pub(crate) fn account_change_in(entry: &Entry, prev: Option<&Entry>, paused: Opt
                 }
             };
             match phase {
-                rh_proto::chain::PausePhase::Start => {
+                droppen_proto::chain::PausePhase::Start => {
                     format!("control by {} is paused while identity keys are renewed (by {signer})", edges(removals))
                 }
-                rh_proto::chain::PausePhase::Completed if paused.is_some_and(|p| p.is_empty()) => {
+                droppen_proto::chain::PausePhase::Completed if paused.is_some_and(|p| p.is_empty()) => {
                     format!("a renewal pause was completed; none of the control it paused comes back (by {signer})")
                 }
-                rh_proto::chain::PausePhase::Completed => format!("control by {} resumes (by {signer})", edges(paused.unwrap_or(&[]))),
-                rh_proto::chain::PausePhase::Cancelled => {
+                droppen_proto::chain::PausePhase::Completed => format!("control by {} resumes (by {signer})", edges(paused.unwrap_or(&[]))),
+                droppen_proto::chain::PausePhase::Cancelled => {
                     format!("the pause of control by {} was ended (by {signer})", edges(paused.unwrap_or(&[])))
                 }
             }
@@ -168,7 +168,7 @@ pub(crate) fn pause_notice_edges(chain: &ChainState, entry: &Entry) -> Option<Ve
         return None;
     };
     let removals = chain.pause(op)?.removals.clone();
-    if *phase != rh_proto::chain::PausePhase::Completed {
+    if *phase != droppen_proto::chain::PausePhase::Completed {
         return Some(removals);
     }
     Some(

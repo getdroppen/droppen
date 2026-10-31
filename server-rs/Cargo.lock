@@ -1243,13 +1243,13 @@ dependencies = [
  "droppen-base",
  "droppen-http",
  "droppen-instance",
+ "droppen-proto",
  "ed25519-dalek",
  "futures-util",
  "rand 0.8.7",
  "regex",
  "reqwest",
  "rh-client",
- "rh-proto",
  "rusqlite",
  "serde",
  "serde_json",
@@ -1270,6 +1270,7 @@ dependencies = [
  "axum",
  "droppen-base",
  "droppen-instance",
+ "droppen-proto",
  "ed25519-dalek",
  "futures-util",
  "gotcha",
@@ -1278,7 +1279,6 @@ dependencies = [
  "rand 0.8.7",
  "reqwest",
  "rh-client",
- "rh-proto",
  "rusqlite",
  "serde",
  "serde_json",
@@ -1346,13 +1346,13 @@ dependencies = [
  "droppen-base",
  "droppen-http",
  "droppen-instance",
+ "droppen-proto",
  "futures-util",
  "gotcha",
  "gotcha_core",
  "rand 0.8.7",
  "reqwest",
  "rh-client",
- "rh-proto",
  "serde",
  "serde_json",
  "subtle",
@@ -1520,6 +1520,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "droppen-proto"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm",
+ "curve25519-dalek",
+ "ed25519-dalek",
+ "flate2",
+ "hex",
+ "hkdf",
+ "hmac",
+ "num-bigint",
+ "rand_core 0.6.4",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "snow",
+ "str0m",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "x25519-dalek",
+ "zeroize",
+]
+
+[[package]]
 name = "droppen-provider"
 version = "0.1.0"
 dependencies = [
@@ -1639,10 +1664,10 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "clap",
+ "droppen-proto",
  "ed25519-dalek",
  "futures-util",
  "rand 0.8.7",
- "rh-proto",
  "rh-relay",
  "serde_json",
  "tokio",
@@ -3509,6 +3534,7 @@ dependencies = [
  "droppen-notify",
  "droppen-plugin-sdk",
  "droppen-plugins",
+ "droppen-proto",
  "droppen-provider",
  "droppen-provider-acp",
  "droppen-provider-claude-code",
@@ -3531,7 +3557,6 @@ dependencies = [
  "regex",
  "reqwest",
  "rh-client",
- "rh-proto",
  "rusqlite",
  "rust-embed",
  "serde",
@@ -3614,12 +3639,12 @@ dependencies = [
 name = "rh-client"
 version = "0.1.0"
 dependencies = [
+ "droppen-proto",
  "ed25519-dalek",
  "futures-util",
  "hex",
  "rand 0.8.7",
  "reqwest",
- "rh-proto",
  "serde",
  "serde_json",
  "tokio",
@@ -3633,12 +3658,12 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
+ "droppen-proto",
  "ed25519-dalek",
  "futures-util",
  "rand 0.8.7",
  "reqwest",
  "rh-client",
- "rh-proto",
  "ring",
  "serde",
  "serde_json",
@@ -3650,40 +3675,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "rh-proto"
-version = "0.1.0"
-dependencies = [
- "aes-gcm",
- "curve25519-dalek",
- "ed25519-dalek",
- "flate2",
- "hex",
- "hkdf",
- "hmac",
- "num-bigint",
- "rand_core 0.6.4",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "snow",
- "str0m",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
- "x25519-dalek",
- "zeroize",
-]
-
-[[package]]
 name = "rh-relay"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "droppen-proto",
  "ed25519-dalek",
  "futures-util",
  "hex",
  "rand 0.8.7",
- "rh-proto",
  "rustls",
  "serde",
  "serde_json",

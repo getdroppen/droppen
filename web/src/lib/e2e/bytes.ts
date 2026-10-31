@@ -1,6 +1,6 @@
 /*
  * Byte plumbing for the end-to-end layer: the same big-endian, length-prefixed
- * encoding the Rust crate uses (`server-rs/crates/rh-proto/src/codec.rs`), a
+ * encoding the Rust crate uses (`server-rs/crates/droppen-proto/src/codec.rs`), a
  * bounds-checked reader, and the conversions WebCrypto needs.
  *
  * `Bytes` is pinned to `ArrayBuffer` (not `SharedArrayBuffer`) because that is

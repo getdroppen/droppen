@@ -2,8 +2,8 @@
 
 | path | served by | who connects | carries |
 |---|---|---|---|
-| `/v1/client` | the hub | a device (the web app, `rh-client`: the test device and the local install's device role) | control text, rh-proto frames |
-| `/v1/agent` | the hub | a machine's agent | control text, rh-proto frames |
+| `/v1/client` | the hub | a device (the web app, `rh-client`: the test device and the local install's device role) | control text, droppen-proto frames |
+| `/v1/agent` | the hub | a machine's agent | control text, droppen-proto frames |
 | `/v1/relay` | the hub | a relay (`droppen-relay`) | control text only |
 | `/v1/connect` | a relay | a device or an agent, with a ticket | control text, a subset of the frames |
 
@@ -11,7 +11,7 @@ Every **text** message is one JSON object tagged by `t`
 ([`schema/ws.schema.json`](schema/ws.schema.json): `$defs["<path> c2s"]`,
 `$defs["<path> s2c"]`, and one `$defs["<short>.<dir>.<t>"]` per message,
 `short` being `client`, `agent`, `relay` or `connect`). Every **binary**
-message is exactly one `rh_proto::frame` frame. `c2s` is client to server
+message is exactly one `droppen_proto::frame` frame. `c2s` is client to server
 (device, agent or relay to the hub; device or agent to a relay). Ignore
 unknown `t` values and unknown fields; the server answers an unknown `t` it
 was sent with `error` and a close (see the close codes below), so a client
@@ -20,7 +20,7 @@ sends a new message type only after negotiating it.
 ## Sign-in
 
 Every socket opens with a `challenge` from the server, and the client answers
-with a signature over `rh_proto::sig::HubLogin {role, account, id, hub,
+with a signature over `droppen_proto::sig::HubLogin {role, account, id, hub,
 nonce, time_ms}` (label `rh/v1 hub-login`):
 
 | role | socket | `account` | `id` | `hub` | signed with |
@@ -132,7 +132,7 @@ hub   → rotation_staged {nonce_hash, ready_ms}   or rotation_refused {nonce_ha
 The hub checks that `SHA-256(nonce)` is an open attempt's (with the same
 `assurance`), that `staged_seq`/`staged_head` is an entry of its chain, that
 the host's current key and the new key both signed the proof (`rh/v1
-host-rotate`, `rh_proto::chain::HostRotation`) and that neither new key was
+host-rotate`, `droppen_proto::chain::HostRotation`) and that neither new key was
 ever named by the chain. `reason`: `no_attempt`, `not_on_chain`, `bad_proof`,
 `key_reused` (both end the attempt: `failure: refused`), `conflict` (another
 staging for a staged host: it is void, `not_acked`'s twin), `disabled`. Never
@@ -154,7 +154,7 @@ committed meanwhile) is `error {code: "rotated"}` and 4401.
 staged_seq, staged_head, nonce_hash, assurance, body_hash}` (`body_hash`:
 SHA-256 of the proof body) and answers `rotation_ack {sign_key, sig}` — the
 new key's `rh/v1 rotate-ack` signature over this connection's challenge
-`nonce` (`rh_proto::chain::sign_rotate_ack`) — or `rotation_unknown
+`nonce` (`droppen_proto::chain::sign_rotate_ack`) — or `rotation_unknown
 {sign_key}` if it does not hold that key. Any sign-in in the window that
 does not confirm voids the staging, graded:
 
@@ -358,7 +358,7 @@ just started waits up to 5 s for the hub's replay of revocations before
 answering. A ticket that runs out and is not renewed closes the connection
 (4419). A relay takes a ticket (at sign-in or as a renewal) only if it runs
 no longer than the hub issues them for, `expires_ms − issued_ms` at most 15
-minutes (`rh_proto::ticket::MAX_TICKET_LIFETIME_MS`), and its `issued_ms` is
+minutes (`droppen_proto::ticket::MAX_TICKET_LIFETIME_MS`), and its `issued_ms` is
 at most 5 minutes ahead of the relay's clock (`TICKET_CLOCK_SKEW_MS`).
 Anything else is refused as any bad ticket is: at sign-in, `error denied`
 and a close (4401); as a renewal, `error bad_ticket` with the connection left
@@ -383,7 +383,7 @@ the connection (4400). The relay copies `DATA` without parsing it.
 ## Binary frames
 
 `[type u8][ch u32][len u16][payload]`, at most 64 KiB with the header; the
-codec and payloads are `rh_proto::frame` (and `web/src/lib/e2e/frame.ts`).
+codec and payloads are `droppen_proto::frame` (and `web/src/lib/e2e/frame.ts`).
 Types `≥ 0x80` are optional and skipped when unknown; an unknown type below
 that closes the connection (4400).
 

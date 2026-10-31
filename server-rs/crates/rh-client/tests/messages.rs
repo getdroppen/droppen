@@ -10,7 +10,7 @@ use futures_util::{SinkExt, StreamExt};
 use rh_client::link::Link;
 use rh_client::streams::Pages;
 use rh_client::{hex, HubUrl};
-use rh_proto::record::StreamId;
+use droppen_proto::record::StreamId;
 use serde_json::{json, Value};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;

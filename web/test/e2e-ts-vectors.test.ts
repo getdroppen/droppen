@@ -1,4 +1,4 @@
-// TypeScript → Rust interop: the committed `server-rs/crates/rh-proto/vectors/ts.json`
+// TypeScript → Rust interop: the committed `server-rs/crates/droppen-proto/vectors/ts.json`
 // is what `web/scripts/e2e-vectors.ts` produces today.
 //
 // The Rust test `vectors::ts_vectors_verify_in_rust` replays that file (a
@@ -27,7 +27,7 @@ test("ts.json is what the TypeScript implementation produces now", async () => {
     records: { ...v.records, head: undefined, records: v.records.records.map(({ wire: _, ...rest }: { wire: string }) => rest) },
     pairing: { ...v.pairing, delivery: { ...v.pairing.delivery, hex: undefined }, recovery: { ...v.pairing.recovery, sealed: undefined } },
   });
-  assert.deepEqual(withoutWire(fresh), withoutWire(committed), "regenerate with: npx tsx web/scripts/e2e-vectors.ts (then run the rh-proto tests)");
+  assert.deepEqual(withoutWire(fresh), withoutWire(committed), "regenerate with: npx tsx web/scripts/e2e-vectors.ts (then run the droppen-proto tests)");
 
   const r = committed.records;
   const mk = await importMachineKey(fromHex(r.mk));

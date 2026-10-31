@@ -7,7 +7,7 @@
 //! order it against the renewal, and the hub only records such a sign-in).
 //! The evidence is a statement the retired key signs over the hash of the
 //! disputed `RotateHostKey` — signable only once that entry was seen
-//! ([`rh_proto::chain::sign_rotate_dispute`]):
+//! ([`droppen_proto::chain::sign_rotate_dispute`]):
 //!
 //! - **Made** from the chain: the entry that retired the key this device
 //!   holds, its hash and the sign key it installed, signed with that key
@@ -29,9 +29,9 @@ use std::path::PathBuf;
 use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
-use rh_proto::chain;
-use rh_proto::identity::MachineIdentity;
-use rh_proto::wire::agent::DisputePost;
+use droppen_proto::chain;
+use droppen_proto::identity::MachineIdentity;
+use droppen_proto::wire::agent::DisputePost;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -426,7 +426,7 @@ mod tests {
     use std::sync::Arc;
     use std::time::Instant;
 
-    use rh_proto::chain::{Action, Assurance, ChainClock, ChainState, DeviceInfo, DeviceV3, Flags, HostRotation, KeyCommit, KeyCommits, Signer};
+    use droppen_proto::chain::{Action, Assurance, ChainClock, ChainState, DeviceInfo, DeviceV3, Flags, HostRotation, KeyCommit, KeyCommits, Signer};
 
     use super::*;
     use droppen_instance::paths::Paths;
@@ -493,12 +493,12 @@ mod tests {
                 new_sig: [0; 64],
             };
             let body = r.body(account, &from.sign_public(), &from.dh_public());
-            r.old_sig = rh_proto::sig::sign(from.signing_key(), rh_proto::sig::HOST_ROTATE, &body);
-            r.new_sig = rh_proto::sig::sign(to.signing_key(), rh_proto::sig::HOST_ROTATE, &body);
+            r.old_sig = droppen_proto::sig::sign(from.signing_key(), droppen_proto::sig::HOST_ROTATE, &body);
+            r.new_sig = droppen_proto::sig::sign(to.signing_key(), droppen_proto::sig::HOST_ROTATE, &body);
             push(&mut chain, Action::RotateHostKey(r));
             push(&mut chain, epoch(n as u32 + 1));
         }
-        let mut st = AgentState::enrolling(hub, account, "m-1", rh_proto::identity::fingerprint(&ak.sign_public()), 5);
+        let mut st = AgentState::enrolling(hub, account, "m-1", droppen_proto::identity::fingerprint(&ak.sign_public()), 5);
         assert!(st.absorb(&entries, now_ms_u64()).error.is_none());
         st.rotation.foreign_ms = Some(6);
         st
@@ -581,7 +581,7 @@ mod tests {
     }
 
     /// The statement disputes the renewal that retired the key held — however
-    /// many came after — and verifies with rh-proto on the chain; none for a
+    /// many came after — and verifies with droppen-proto on the chain; none for a
     /// key the chain did not retire.
     #[test]
     fn the_statement_disputes_the_renewal_that_retired_the_key_held() {
@@ -595,7 +595,7 @@ mod tests {
         assert_eq!(s.entry_hash, hex(&chain.hash_at(first).unwrap()));
         assert_eq!(s.new_sign, hex(&k1.sign_public()), "the key that renewal installed, not the latest");
         let sig: [u8; 64] = droppen_base::text::unhex(&s.sig).unwrap().try_into().unwrap();
-        assert!(chain.verify_rotate_dispute("m-1", first, &sig), "it verifies with rh-proto on the chain");
+        assert!(chain.verify_rotate_dispute("m-1", first, &sig), "it verifies with droppen-proto on the chain");
         assert!(!chain.verify_rotate_dispute("m-1", later, &sig));
         // The holder of K1 disputes the second renewal.
         let second = statement(&st, &k1, 77).unwrap();
