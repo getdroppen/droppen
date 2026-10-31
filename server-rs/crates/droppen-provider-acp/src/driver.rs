@@ -35,6 +35,10 @@ const CONFIG_TIMEOUT: Duration = if cfg!(test) { Duration::from_secs(5) } else {
 pub(super) struct State {
     /// A `session/prompt` is in flight.
     active: bool,
+    /// The driver has taken a message off the queue and is preparing its
+    /// turn: setting the model and effort it asks for, which can take as long
+    /// as `CONFIG_TIMEOUT`. The session reads as starting meanwhile.
+    preparing: bool,
     /// How many turns this driver has started: the one in flight, when
     /// `active`, is the last of them. What a Stop names ([`Cmd::Interrupt`]).
     turns: u64,
@@ -140,10 +144,10 @@ impl Handle {
     }
 
     /// A turn is running, or a message is waiting for one — in the driver's
-    /// queue, or on its way there.
+    /// queue, on its way there, or being prepared.
     pub(super) fn busy(&self) -> bool {
         let state = self.shared.lock().unwrap();
-        self.alive() && (self.in_flight.load(Ordering::Acquire) > 0 || state.active || !state.queue.is_empty())
+        self.alive() && (self.in_flight.load(Ordering::Acquire) > 0 || state.active || state.preparing || !state.queue.is_empty())
     }
 
     pub(super) fn shared(&self) -> Arc<Mutex<State>> {
@@ -213,12 +217,13 @@ impl Handle {
         self.shared.lock().unwrap().injection.clone()
     }
 
-    /// A message on its way that no driver has taken, with no turn running
-    /// and none waiting: the agent is starting for it (its process, then the
-    /// session's opening), which can take as long as `START_TIMEOUT`. A
-    /// driver that is running takes one at once.
+    /// No turn running, and the next one on its way: the driver is preparing
+    /// it ([`State::preparing`]), or a message is on its way that no driver
+    /// has taken, with none waiting, and the agent is starting for it (its
+    /// process, then the session's opening), which can take as long as
+    /// `START_TIMEOUT`. A driver that is running takes one at once.
     fn starting(&self, state: &State) -> bool {
-        !state.active && state.queue.is_empty() && self.in_flight.load(Ordering::Acquire) > 0
+        !state.active && (state.preparing || (state.queue.is_empty() && self.in_flight.load(Ordering::Acquire) > 0))
     }
 
     pub(crate) fn state(&self) -> ResidentState {
@@ -553,6 +558,11 @@ impl Driver {
             }
             if !self.state.active {
                 if let Some(message) = self.state.queue.pop_front() {
+                    // Off the queue and not yet a turn: published as starting,
+                    // so the session is not idle while the message's model or
+                    // effort is set, and a Stop is for the turn it starts.
+                    self.state.preparing = true;
+                    self.publish();
                     if let Err(error) = self.submit(message).await {
                         self.died(&error.to_string()).await;
                         return;
@@ -696,6 +706,7 @@ impl Driver {
         let now = iso8601(SystemTime::now());
         self.interrupted = false;
         self.state.active = true;
+        self.state.preparing = false;
         self.state.turns += 1;
         self.state.turn_started_at = Some(now.clone());
         self.state.injection = Some(Injection {
@@ -748,9 +759,8 @@ impl Driver {
                 self.options_changed(options);
             }
         }
-        // Published with the turn's start or its failure, not here: the message
-        // is off the queue and the turn not started, and the session must not
-        // look idle in between — the agent could be removed under it.
+        // Published with the turn's start or its failure, not here: the session
+        // reads as starting in between ([`State::preparing`]).
         Ok(())
     }
 
