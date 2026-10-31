@@ -38,7 +38,11 @@ use super::{absolute, InjectError, Replay};
 use crate::protocol::{config_options, ConfigOption, PromptResponse, SessionNotification};
 
 /// How long a write to the agent's stdin may block.
-const WRITE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+const WRITE_TIMEOUT: std::time::Duration = if cfg!(test) {
+    std::time::Duration::from_secs(5)
+} else {
+    std::time::Duration::from_secs(30)
+};
 
 /// Something the agent said, in the order it said it.
 pub(super) enum Event {
