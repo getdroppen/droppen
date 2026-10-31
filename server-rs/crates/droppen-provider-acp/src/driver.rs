@@ -47,8 +47,14 @@ pub(super) struct State {
 }
 
 impl State {
-    pub(super) fn with_options(options: Vec<ConfigOption>) -> Self {
-        Self { options, ..Self::default() }
+    /// A driver's state as its session opens: the options the agent reports,
+    /// and the last turn as its handle kept it on view ([`Handle::new`]).
+    pub(super) fn opened(options: Vec<ConfigOption>, injection: Option<Injection>) -> Self {
+        Self {
+            options,
+            injection,
+            ..Self::default()
+        }
     }
 }
 
@@ -109,10 +115,16 @@ impl Delivery {
 }
 
 impl Handle {
-    pub(super) fn new(tx: mpsc::UnboundedSender<Cmd>, agent: &str) -> Self {
+    /// The handle of a process about to start, in place of `before`: how the
+    /// last turn ended stays on view until this process runs the next one, as
+    /// it was while no process ran.
+    pub(super) fn new(tx: mpsc::UnboundedSender<Cmd>, agent: &str, before: Option<&Handle>) -> Self {
         Self {
             tx,
-            shared: Arc::default(),
+            shared: Arc::new(Mutex::new(State {
+                injection: before.and_then(Handle::injection),
+                ..State::default()
+            })),
             agent: agent.into(),
             in_flight: Arc::default(),
             retire: Arc::default(),
@@ -201,7 +213,17 @@ impl Handle {
     pub(crate) fn state(&self) -> ResidentState {
         let state = self.shared.lock().unwrap();
         ResidentState {
-            phase: if state.active { Phase::Working } else { Phase::Idle },
+            phase: if state.active {
+                Phase::Working
+            } else if state.queue.is_empty() && self.in_flight.load(Ordering::Acquire) > 0 {
+                // A message on its way that no driver has taken: the agent is
+                // starting for it (its process, then the session's opening),
+                // which can take as long as `START_TIMEOUT`. A driver that is
+                // running takes one at once.
+                Phase::Starting
+            } else {
+                Phase::Idle
+            },
             stalled: false,
             queued: state.queue.len(),
             queued_messages: state

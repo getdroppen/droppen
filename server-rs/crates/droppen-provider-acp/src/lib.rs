@@ -804,13 +804,17 @@ impl AcpRuns {
     }
 
     /// Put the handle of the session `id`, whose agent is about to start, in
-    /// the map, with `message` on its way to it. Under the spawn gate.
+    /// the map, with `message` on its way to it: the session reads as starting
+    /// meanwhile, with its last turn as the handle it replaces left it. Under
+    /// the spawn gate.
     fn acp_starting(&self, agent: &AcpAgent, id: &str, message: Message) -> (Starting<'_>, Delivery) {
         let (tx, rx) = mpsc::unbounded_channel();
-        let handle = Handle::new(tx, &agent.id);
-        let delivery = handle.deliver(message);
         let key = self.host.key_of(Source::Acp, id);
-        let replaced = self.acp_servers.lock().unwrap().insert(key.clone(), handle.clone());
+        let mut servers = self.acp_servers.lock().unwrap();
+        let handle = Handle::new(tx, &agent.id, servers.get(&key));
+        let delivery = handle.deliver(message);
+        let replaced = servers.insert(key.clone(), handle.clone());
+        drop(servers);
         let starting = Starting {
             runs: self,
             key,
@@ -967,7 +971,7 @@ impl AcpRuns {
             stderr,
             transcript,
             translator: Translator::default(),
-            state: State::with_options(options),
+            state: State::opened(options, starting.handle.injection()),
             shared: starting.handle.shared(),
             rx,
             in_flight,
@@ -1173,7 +1177,7 @@ mod tests {
     #[test]
     fn a_message_on_its_way_to_the_driver_keeps_the_session_busy() {
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let handle = Handle::new(tx, "a");
+        let handle = Handle::new(tx, "a", None);
         assert!(!handle.busy());
         let delivery = handle.deliver(message("hi", &SendOptions::default()));
         assert!(handle.busy(), "sent, not taken yet");
@@ -1384,6 +1388,107 @@ mod tests {
         assert_eq!(resident.map(|resident| resident.phase), Some(droppen_sessions::ResidentPhase::Idle), "its agent process, as the turn left it");
         let listed = providers.driver_states().resident(Source::Acp, &id).expect("in the providers' snapshot");
         assert_eq!(listed.phase, droppen_sessions::ResidentPhase::Idle);
+    }
+
+    /// A session whose agent process is gone reads as working while the agent
+    /// starts again for its next message: the process, then `session/load`,
+    /// held here. Meanwhile the session still says how its last turn ended,
+    /// as it did before the message was sent; a start given up on puts that
+    /// back as it was.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_session_reads_as_working_while_its_agent_restarts_for_a_message() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let (state, id, dir) = one_turn(home.path(), "", "hello", &SendOptions::default()).await;
+        let injections = acp_of(&state);
+        let gate = state.providers.gate();
+        let shown = |injection: Option<Injection>| injection.map(|injection| (injection.state, injection.started_at, injection.finished_at.0));
+        let last = shown(state.providers.injection_for(Source::Acp, &id));
+        assert_eq!(
+            last.as_ref().map(|last| last.0),
+            Some(droppen_sessions::InjectionRunState::Ok),
+            "the first turn ended"
+        );
+
+        // A changed environment ends the idle process, so the next message
+        // starts the agent again: one that holds `session/load`.
+        let slow = crate::agents::AcpAgentUpdate {
+            name: None.into(),
+            command: None.into(),
+            args: None.into(),
+            env: Some("FAKE_AGENT_SLOW=session/load=600".to_string()).into(),
+        };
+        injections.reconfigure_acp_agent(gate, "fake", &slow).await.expect("reconfigured");
+        until("the process to go", || injections.acp_handle(&id).is_some_and(|handle| !handle.alive())).await;
+        let sending = tokio::spawn({
+            let (injections, providers, id) = (injections.clone(), state.providers.clone(), id.clone());
+            async move { injections.acp_send(providers.gate(), &id, "again", &SendOptions::default()).await }
+        });
+        until("session/load", || was_sent(&dir, "session/load")).await;
+
+        let resident = state.providers.resident_info(Source::Acp, &id).expect("the starting agent is on view");
+        assert_eq!(resident.phase, droppen_sessions::ResidentPhase::Starting);
+        assert_eq!(
+            resident.activity(),
+            droppen_sessions::SessionActivity::Working,
+            "at work on the message, not idle"
+        );
+        assert_eq!(
+            shown(state.providers.injection_for(Source::Acp, &id)),
+            last,
+            "the last turn stays on view"
+        );
+        let listed = state
+            .providers
+            .driver_states()
+            .resident(Source::Acp, &id)
+            .expect("in the providers' snapshot");
+        assert_eq!(listed.phase, droppen_sessions::ResidentPhase::Starting);
+        assert!(!sending.is_finished(), "the message waits for the agent");
+
+        sending.abort();
+        let _ = sending.await;
+        assert!(state.providers.resident_info(Source::Acp, &id).is_none(), "no agent process is left");
+        assert_eq!(
+            shown(state.providers.injection_for(Source::Acp, &id)),
+            last,
+            "the session is as the start found it"
+        );
+    }
+
+    /// The last turn stays on view until the next one starts, on an agent
+    /// started again for the message as on one that was running: the driver
+    /// opens with what its handle showed. Held here at the switch to the model
+    /// the message asks for, after the driver took it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_restarted_agent_keeps_the_last_turn_on_view_until_it_runs_the_next() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let (state, id, dir) = one_turn(home.path(), "", "hello", &SendOptions::default()).await;
+        let injections = acp_of(&state);
+        let gate = state.providers.gate();
+        let shown = |injection: Option<Injection>| injection.map(|injection| (injection.state, injection.started_at, injection.finished_at.0));
+        let last = shown(state.providers.injection_for(Source::Acp, &id));
+        assert!(last.is_some(), "the first turn ended");
+
+        let slow = crate::agents::AcpAgentUpdate {
+            name: None.into(),
+            command: None.into(),
+            args: None.into(),
+            env: Some("FAKE_AGENT_SLOW=session/set_config_option=600".to_string()).into(),
+        };
+        injections.reconfigure_acp_agent(gate, "fake", &slow).await.expect("reconfigured");
+        until("the process to go", || injections.acp_handle(&id).is_some_and(|handle| !handle.alive())).await;
+        let switch = SendOptions {
+            model: Some("openrouter:vendor/big".into()),
+            ..SendOptions::default()
+        };
+        injections.acp_send(gate, &id, "again", &switch).await.expect("taken");
+        until("the switch", || was_sent(&dir, "session/set_config_option")).await;
+
+        assert_eq!(
+            shown(state.providers.injection_for(Source::Acp, &id)),
+            last,
+            "the last turn stays on view"
+        );
     }
 
     /// Start a session on the stand-in, configured with `env`, with one
