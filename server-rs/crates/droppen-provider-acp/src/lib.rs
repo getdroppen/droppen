@@ -1892,8 +1892,26 @@ mod tests {
         let state = acp_alone(home.path());
         let record = tempfile::tempdir().expect("tempdir");
         let agent = deaf_agent(record.path());
-        let cancelled = tokio::time::timeout(Duration::from_secs(2), acp_of(&state).check_acp_agent(&agent)).await;
-        assert!(cancelled.is_err(), "still waiting for initialize when dropped");
+        // The stand-in never answers, so the check cannot come back on its
+        // own; wait until it has started and recorded itself, and drop it
+        // there — the cancellation under test, made while it waits for
+        // `initialize`. A wall-clock deadline cancels a request the machine
+        // has not begun, and what the test then reads is a record that does
+        // not exist yet. The wait is bounded, and ends as soon as the
+        // stand-in is up.
+        let runs = acp_of(&state);
+        let check = runs.check_acp_agent(&agent);
+        tokio::select! {
+            answered = check => panic!("the check ended without being cancelled: {answered:?}"),
+            _ = until("the stand-in to record where it runs and its helper", || {
+                // Written, not merely created: the drop below would end a
+                // shell between the two if only the file's existence counted.
+                std::fs::read_to_string(record.path().join("cwd"))
+                    .is_ok_and(|cwd| cwd.contains("droppen-acp-check-"))
+                    && std::fs::read_to_string(record.path().join("helper"))
+                        .is_ok_and(|helper| helper.trim().parse::<u32>().is_ok())
+            }) => {}
+        }
         let (scratch, helper) = recorded(record.path());
         assert!(!scratch.exists(), "{} is left behind", scratch.display());
         gone(helper).await;
