@@ -122,6 +122,11 @@ impl Models for AcpModels {
         false
     }
 
+    // An ACP agent has no accounts: its model is the agent's to name.
+    fn account_model<'a>(&'a self, _account_id: &'a str) -> BoxFuture<'a, Option<String>> {
+        Box::pin(std::future::ready(None))
+    }
+
     fn model_rule(&self) -> ModelRule {
         ModelRule::new(ACP_MODEL_PATTERN, 200)
     }

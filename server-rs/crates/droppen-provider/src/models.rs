@@ -178,9 +178,7 @@ pub trait Models: Send + Sync {
     /// The model a stored account's own configuration names: what a session
     /// under it runs when nothing asks for another. `None` when the account
     /// names none, and for a CLI whose accounts cannot.
-    fn account_model<'a>(&'a self, _account_id: &'a str) -> BoxFuture<'a, Option<String>> {
-        Box::pin(std::future::ready(None))
-    }
+    fn account_model<'a>(&'a self, account_id: &'a str) -> BoxFuture<'a, Option<String>>;
 
     /// How this CLI's model ids are spelled.
     fn model_rule(&self) -> ModelRule {
