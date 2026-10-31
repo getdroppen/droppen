@@ -1093,13 +1093,15 @@ impl CodexRuns {
     /// for `message`: its handle in the map, marked starting for that message,
     /// in place of whatever was there (what a dead process left stays on view
     /// meanwhile), with the message on its way ([`Handle::starting_for`]).
-    /// Under the spawn gate.
+    /// The session's feed and the list are told at once, not left to their
+    /// next poll. Under the spawn gate.
     fn codex_starting(self: &Arc<Self>, id: &str, account: Option<String>, message: Message) -> Result<(Starting, Delivery), InjectError> {
         let mut servers = self.codex_servers.lock().unwrap();
         let state = servers.get(id).map(|before| before.shared.lock().unwrap().clone()).unwrap_or_default();
         let (handle, rx, delivery) = Handle::starting_for(state, account, message)?;
         let before = servers.insert(id.to_owned(), handle.clone());
         drop(servers);
+        self.host.announce(Source::Codex, id);
         #[cfg(test)]
         self.host.step("codex reserved", Source::Codex, Some(id));
         let starting = Starting {
@@ -1346,6 +1348,9 @@ impl Drop for Starting {
                 Some(before) => servers.insert(self.id.clone(), before),
                 None => servers.remove(&self.id),
             };
+            // Let go before the announcement: readers of it take this lock.
+            drop(servers);
+            self.runs.host.announce(Source::Codex, &self.id);
         }
     }
 }
@@ -2270,6 +2275,33 @@ mod tests {
                 ..CodexRun::default()
             },
         }
+    }
+
+    /// What the sessions' feeds and the session list were told, in order: a
+    /// feed's poke by its key, and a list's refresh by the session it names.
+    #[derive(Default)]
+    struct Told(Mutex<Vec<String>>);
+
+    impl Told {
+        /// Everything told since the last call.
+        fn take(&self) -> Vec<String> {
+            std::mem::take(&mut self.0.lock().unwrap())
+        }
+    }
+
+    impl droppen_provider::SessionFeeds for Told {
+        fn poke(&self, key: &str) {
+            self.0.lock().unwrap().push(format!("feed {key}"));
+        }
+    }
+
+    impl droppen_http::refresh::RefreshSink for Told {
+        fn request_refresh(&self, expected: Option<(&dyn std::fmt::Display, &str)>) {
+            let named = expected.map(|(source, id)| format!(" {source}/{id}")).unwrap_or_default();
+            self.0.lock().unwrap().push(format!("list{named}"));
+        }
+
+        fn publish(&self, _frame: String) {}
     }
 
     impl Harness {
@@ -3301,6 +3333,97 @@ mod tests {
         let interrupt = socket.request().await;
         assert_eq!(interrupt["method"], "turn/interrupt");
         assert_eq!(interrupt["params"]["turnId"], "turn-1");
+    }
+
+    /// An app server lost while its session still reads as starting is not
+    /// left starting: the driver clears the handle's [`Handle::starting`] when
+    /// it loses the link, and Stop then answers as it does when nothing runs.
+    ///
+    /// The link has to fail before the driver takes the start's message, which
+    /// with that message queued is a race `select!` may settle either way. So
+    /// the message is taken out of the reserved channel first: the driver is
+    /// attached to the same placeholder with no command pending, which is what
+    /// its first poll sees when the link fails ahead of the message it would
+    /// otherwise read.
+    #[tokio::test]
+    async fn an_app_server_lost_before_the_start_is_taken_is_no_longer_starting() {
+        let home = tempfile::tempdir().unwrap();
+        let (providers, link, socket) = mock_app_server(home.path()).await;
+        let runs = codex(&providers).clone();
+        let first = message("first", &SendOptions::default()).unwrap();
+        let (mut starting, _delivery) = runs.codex_starting("test-thread", None, first).unwrap();
+        let handle = starting.handle.clone();
+        assert!(
+            matches!(starting.rx.as_mut().unwrap().try_recv(), Ok(Cmd::Deliver(..))),
+            "the start's message is in its channel"
+        );
+        // The app server goes before the driver can take it.
+        drop(socket);
+        let lease = providers.gate().lease(Source::Codex, "test-thread").unwrap();
+        runs.codex_attached(mock_record(), link, lease, Some(starting));
+
+        for _ in 0..500 {
+            if handle.state().stalled {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(handle.state().stalled, "the driver saw its app server go");
+        assert!(!handle.starting(), "the lost start is not left starting");
+        assert_eq!(handle.state().phase, Phase::Idle, "the session reads as nothing running");
+        assert!(!handle.interrupt(), "a Stop has nothing to stop");
+        assert!(!providers.interrupt(Source::Codex, "test-thread"), "as the route answers it");
+    }
+
+    /// The placeholder a start puts in the map is announced when it goes in:
+    /// the session's feed and the list learn at once that the session is
+    /// starting, rather than at their next poll.
+    #[tokio::test]
+    async fn a_codex_start_announces_its_placeholder() {
+        let home = tempfile::tempdir().unwrap();
+        let (providers, _link, _socket) = mock_app_server(home.path()).await;
+        let runs = codex(&providers).clone();
+        let told = Arc::new(Told::default());
+        runs.host
+            .attach_listeners(told.clone(), droppen_http::refresh::Refresh::new(told.clone()));
+        let announced = [
+            format!("feed {}", runs.host.key_of(Source::Codex, "test-thread")),
+            format!("list {}/test-thread", Source::Codex),
+        ];
+        let first = message("first", &SendOptions::default()).unwrap();
+        let (starting, _delivery) = runs.codex_starting("test-thread", None, first).unwrap();
+        assert_eq!(told.take(), announced, "the starting app server is announced");
+        assert_eq!(
+            runs.codex_handle("test-thread").expect("reserved").state().phase,
+            Phase::Starting,
+            "the session is on view as starting"
+        );
+        drop(starting);
+    }
+
+    /// A start given up on is announced too: the handle it puts back — or the
+    /// session it leaves without one — reaches the feed and the list at once,
+    /// so a client stops reading the session as starting without a poll.
+    #[tokio::test]
+    async fn a_codex_start_given_up_on_announces_the_placeholder_going() {
+        let home = tempfile::tempdir().unwrap();
+        let (providers, _link, _socket) = mock_app_server(home.path()).await;
+        let runs = codex(&providers).clone();
+        let told = Arc::new(Told::default());
+        runs.host
+            .attach_listeners(told.clone(), droppen_http::refresh::Refresh::new(told.clone()));
+        let announced = [
+            format!("feed {}", runs.host.key_of(Source::Codex, "test-thread")),
+            format!("list {}/test-thread", Source::Codex),
+        ];
+        let first = message("first", &SendOptions::default()).unwrap();
+        let (starting, delivery) = runs.codex_starting("test-thread", None, first).unwrap();
+        told.take();
+
+        drop(starting);
+        assert!(runs.codex_handle("test-thread").is_none(), "the reservation is given back");
+        assert_eq!(told.take(), announced, "so is the start given up on");
+        assert!(delivery.taken().await.is_err(), "the message on its way is answered");
     }
 
     #[tokio::test]
