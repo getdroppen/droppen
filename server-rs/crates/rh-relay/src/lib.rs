@@ -38,7 +38,8 @@ pub use config::Config;
 pub use server::Server;
 
 /// Serve on `listener` until `stop` resolves or the Hub refuses this relay
-/// for good; then `goaway` everyone, wait out the drain and close (1012).
+/// for good; then `goaway` everyone, tell the Hub until when this relay
+/// drains and close the control link, wait out the drain and close (1012).
 /// `Err` carries a fatal refusal's reason.
 pub async fn run(server: Arc<Server>, listener: tokio::net::TcpListener, stop: impl Future<Output = ()> + Send + 'static) -> Result<(), String> {
     server.load_saved_keys();
@@ -79,11 +80,13 @@ pub async fn run(server: Arc<Server>, listener: tokio::net::TcpListener, stop: i
             }
         }
     });
-    let fatal = async {
-        if server.config.hub.is_some() {
-            uplink::run(server.clone()).await
-        } else {
-            std::future::pending().await
+    // The control link is a task of its own, so that a `stop` leaves it up
+    // for `drain` to tell the Hub on.
+    let uplink = server.config.hub.is_some().then(|| server.tasks.spawn(uplink::run(server.clone())));
+    let fatal = async move {
+        match uplink {
+            Some(link) => link.await.unwrap_or_else(|e| std::panic::resume_unwind(e.into_panic())),
+            None => std::future::pending().await,
         }
     };
     let result = tokio::select! {
@@ -101,7 +104,8 @@ pub async fn run(server: Arc<Server>, listener: tokio::net::TcpListener, stop: i
     result
 }
 
-/// `goaway`, then wait (at most the drain time) for clients to move on.
+/// `goaway`, tell the Hub and close its control link, then wait (at most the
+/// drain time) for clients to move on.
 async fn drain(server: &Arc<Server>, why: &Result<(), String>) {
     let drain = server.config.drain;
     let reason = match why {
@@ -113,6 +117,8 @@ async fn drain(server: &Arc<Server>, why: &Result<(), String>) {
     server.tell_hub(&RelayToHub::Draining {
         until_ms: server::now_ms() + drain.as_millis() as u64,
     });
+    // The link sends that before it closes.
+    server.hub_link.cancel();
     let until = Instant::now() + drain;
     while Instant::now() < until && server.counts().0 > 0 {
         tokio::time::sleep(Duration::from_millis(200)).await;

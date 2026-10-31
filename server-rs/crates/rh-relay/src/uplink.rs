@@ -46,6 +46,9 @@ const STEP: Duration = Duration::from_secs(20);
 /// sends a scoped revocation only to a relay that names it.
 pub const FEATURE_REVOKE_ROLE: &str = "revoke-role/1";
 const BACKOFF_MIN: Duration = Duration::from_millis(500);
+/// How long a stopping relay's control link waits to send what is queued
+/// for the Hub and for the Hub's close.
+const CLOSE_WAIT: Duration = Duration::from_secs(2);
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Why the link ended.
@@ -57,15 +60,15 @@ pub enum Ended {
     Fatal(String),
 }
 
-/// Keep the control link up until a fatal refusal (the reason) or `stop`.
+/// Keep the control link up until a fatal refusal (the reason) or until it
+/// is stopped: a link that is up then sends what is queued for the Hub (a
+/// stopping relay's `draining`) and closes, waiting for the Hub's close at
+/// most [`CLOSE_WAIT`].
 pub async fn run(server: Arc<Server>) -> String {
     let mut backoff = BACKOFF_MIN;
     loop {
         let started = Instant::now();
-        let ended = tokio::select! {
-            e = session(&server) => e,
-            () = server.shutdown.cancelled() => return "shutting down".into(),
-        };
+        let ended = session(&server).await;
         server.set_link(None);
         match ended {
             Ended::Fatal(reason) => return reason,
@@ -78,7 +81,7 @@ pub async fn run(server: Arc<Server>) -> String {
         backoff = (backoff * 2).min(server.config.timing.uplink_backoff_max.max(BACKOFF_MIN));
         tokio::select! {
             () = tokio::time::sleep(wait) => {}
-            () = server.shutdown.cancelled() => return "shutting down".into(),
+            () = server.hub_link.cancelled() => return "shutting down".into(),
         }
     }
 }
@@ -235,13 +238,17 @@ fn keys_of(v: &Value) -> Vec<(u8, [u8; 32])> {
 }
 
 async fn session(server: &Arc<Server>) -> Ended {
-    let (mut sink, mut source, nonce) = match dial(&server.config).await {
-        Ok(d) => d,
-        Err(e) => return e,
+    let signed_in = async {
+        let (mut sink, mut source, nonce) = dial(&server.config).await?;
+        let keys = sign_in(&server.config, &mut sink, &mut source, nonce).await?;
+        Ok((sink, source, keys))
     };
-    let keys = match sign_in(&server.config, &mut sink, &mut source, nonce).await {
-        Ok(k) => k,
-        Err(e) => return e,
+    let (mut sink, mut source, keys) = tokio::select! {
+        signed_in = signed_in => match signed_in {
+            Ok(s) => s,
+            Err(e) => return e,
+        },
+        () = server.hub_link.cancelled() => return Ended::Fatal("shutting down".into()),
     };
     server.set_keys(keys);
     tracing::info!(id = %server.config.id, hub = ?server.config.hub, "signed in on the Hub");
@@ -298,7 +305,29 @@ async fn session(server: &Arc<Server>) -> Ended {
                     }
                 }
             }
-            () = server.shutdown.cancelled() => return Ended::Fatal("shutting down".into()),
+            () = server.hub_link.cancelled() => {
+                // What is queued goes out, then the close; reading on to the
+                // Hub's close means it has read all of it before the socket
+                // goes.
+                let closing = async {
+                    while let Ok(text) = rx.try_recv() {
+                        sink.send(Message::Text(crate::traffic::sent(text).into())).await?;
+                    }
+                    sink.close().await?;
+                    while let Some(m) = source.next().await {
+                        if m?.is_close() {
+                            break;
+                        }
+                    }
+                    Ok::<(), tokio_tungstenite::tungstenite::Error>(())
+                };
+                match tokio::time::timeout(CLOSE_WAIT, closing).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(error)) => tracing::warn!(%error, "the Hub's control link failed while closing"),
+                    Err(_) => tracing::warn!("the Hub did not answer the control link's close in time"),
+                }
+                return Ended::Fatal("shutting down".into());
+            }
         }
     }
 }
