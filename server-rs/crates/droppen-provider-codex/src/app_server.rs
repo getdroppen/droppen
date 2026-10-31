@@ -207,22 +207,25 @@ impl Handle {
     pub(crate) fn info(&self) -> droppen_sessions::ResidentInfo {
         self.state().into()
     }
-    /// Stop the turn running, the one a request in flight is starting, or
-    /// the one about to start, by name ([`Stop`]): the message a starting app
-    /// server starts for, or else the head of a queue that is not paused. The
-    /// driver stops that turn and no other, so a Stop it reads after that turn
-    /// is over stops nothing. Sent while the message is on its way, the Stop
+    /// Stop a turn by name ([`Stop`]): while the app server starts, the turn
+    /// of the message it starts for; otherwise the turn running, the one a
+    /// request in flight is starting, or the one the head of a queue that is
+    /// not paused starts. The driver stops that turn and no other, so a Stop
+    /// it reads after that turn is over stops nothing. Sent while the message is on its way, the Stop
     /// waits behind it in the channel, and the driver interrupts the turn once
     /// codex says it started (`interrupt_requested`).
     pub(crate) fn interrupt(&self) -> bool {
         let starting_for = self.starting.lock().unwrap().clone();
         let state = self.shared.lock().unwrap();
-        let stop = if let Some(turn) = &state.active {
+        // The start's message first: until the driver has taken it, what the
+        // attach copied in (a turn the resume reports in progress, messages
+        // left queued) is not what the start is for.
+        let stop = if let Some(message) = starting_for {
+            Stop::Message(message)
+        } else if let Some(turn) = &state.active {
             Stop::Turn(turn.clone())
         } else if let Some(message) = state.queue.iter().find(|q| q.request.is_some()) {
             Stop::Message(message.id.clone())
-        } else if let Some(message) = starting_for {
-            Stop::Message(message)
         } else if let Some(message) = state.queue.first().filter(|_| !state.paused) {
             Stop::Message(message.id.clone())
         } else {
@@ -2180,25 +2183,52 @@ mod tests {
 
     struct Harness {
         driver: Driver,
-        input: BufReader<OwnedReadHalf>,
-        output: OwnedWriteHalf,
+        /// The mock app server's end of the driver's link.
+        socket: MockSocket,
         /// The providers over the driver's registry, for their spawn gate.
         providers: Arc<droppen_provider::ProviderRegistry>,
         _home: tempfile::TempDir,
     }
 
+    /// A mock app server's end of a driver's link: what the driver writes is
+    /// read from it, and what is sent on it the driver reads as the app
+    /// server's.
+    struct MockSocket {
+        input: BufReader<OwnedReadHalf>,
+        output: OwnedWriteHalf,
+    }
+
+    impl MockSocket {
+        /// The next line the driver wrote, byte for byte, newline included.
+        async fn raw(&mut self) -> String {
+            let mut line = String::new();
+            tokio::time::timeout(Duration::from_secs(2), self.input.read_line(&mut line))
+                .await
+                .unwrap()
+                .unwrap();
+            line
+        }
+        /// The next request the driver wrote.
+        async fn request(&mut self) -> Value {
+            serde_json::from_str(&self.raw().await).unwrap()
+        }
+        /// Nothing more is written for this long after the last line: a
+        /// request the driver writes is on the socket before its command
+        /// returns.
+        async fn writes_nothing(&mut self) {
+            let mut line = String::new();
+            let written = tokio::time::timeout(Duration::from_millis(300), self.input.read_line(&mut line)).await;
+            assert!(written.is_err(), "nothing is written: {line}");
+        }
+        /// `value` as the app server's next line.
+        async fn send(&mut self, value: Value) {
+            self.output.write_all(format!("{value}\n").as_bytes()).await.unwrap();
+        }
+    }
+
     /// The Codex providers over a fresh registry at `home`, and a link to a
-    /// mock app server on a socket there: what a driver writes on the link is
-    /// read from the reader, and what is written to the writer it reads as the
-    /// app server's.
-    async fn mock_app_server(
-        home: &std::path::Path,
-    ) -> (
-        Arc<droppen_provider::ProviderRegistry>,
-        shim::Link,
-        BufReader<OwnedReadHalf>,
-        OwnedWriteHalf,
-    ) {
+    /// mock app server on a socket there, with the app server's end of it.
+    async fn mock_app_server(home: &std::path::Path) -> (Arc<droppen_provider::ProviderRegistry>, shim::Link, MockSocket) {
         let paths = Arc::new(Paths::new(home.into()));
         let dirs = InstanceDirs::new(&paths.data_dir(), "codex-test").unwrap();
         dirs.create().unwrap();
@@ -2220,7 +2250,7 @@ mod tests {
             .await
             .unwrap();
         let link = connector.await.unwrap();
-        (providers, link, input, output)
+        (providers, link, MockSocket { input, output })
     }
 
     /// The run record of the mock app server's session, `test-thread`.
@@ -2242,20 +2272,10 @@ mod tests {
         }
     }
 
-    /// The next request the driver wrote to `input`.
-    async fn next_request(input: &mut BufReader<OwnedReadHalf>) -> Value {
-        let mut line = String::new();
-        tokio::time::timeout(Duration::from_secs(2), input.read_line(&mut line))
-            .await
-            .unwrap()
-            .unwrap();
-        serde_json::from_str(&line).unwrap()
-    }
-
     impl Harness {
         async fn new() -> Self {
             let home = tempfile::tempdir().unwrap();
-            let (providers, link, input, output) = mock_app_server(home.path()).await;
+            let (providers, link, socket) = mock_app_server(home.path()).await;
             let (_tx, rx) = mpsc::unbounded_channel();
             let driver = Driver {
                 lease: providers.gate().lease(Source::Codex, "test-thread").unwrap(),
@@ -2280,8 +2300,7 @@ mod tests {
             };
             Self {
                 driver,
-                input,
-                output,
+                socket,
                 providers,
                 _home: home,
             }
@@ -2302,21 +2321,17 @@ mod tests {
             )
         }
         async fn event(&mut self, value: Value) {
-            self.output.write_all(format!("{value}\n").as_bytes()).await.unwrap();
+            self.socket.send(value).await;
             let output = self.driver.link.recv().await.unwrap();
             self.driver.output(output).await.unwrap();
         }
-        /// The next line the driver wrote, byte for byte, newline included.
+        /// The next line the driver wrote ([`MockSocket::raw`]).
         async fn raw(&mut self) -> String {
-            let mut line = String::new();
-            tokio::time::timeout(Duration::from_secs(2), self.input.read_line(&mut line))
-                .await
-                .unwrap()
-                .unwrap();
-            line
+            self.socket.raw().await
         }
+        /// The next request the driver wrote ([`MockSocket::request`]).
         async fn request(&mut self) -> Value {
-            serde_json::from_str(&self.raw().await).unwrap()
+            self.socket.request().await
         }
         async fn enqueue(&mut self, text: &str) -> String {
             self.enqueue_with(text, &SendOptions::default()).await
@@ -2341,13 +2356,9 @@ mod tests {
                 .await;
             request
         }
-        /// Nothing more is written for this long after the last line: a
-        /// request the driver writes is on the socket before its command
-        /// returns.
+        /// Nothing more is written for a while ([`MockSocket::writes_nothing`]).
         async fn writes_nothing(&mut self) {
-            let mut line = String::new();
-            let written = tokio::time::timeout(Duration::from_millis(300), self.input.read_line(&mut line)).await;
-            assert!(written.is_err(), "nothing is written: {line}");
+            self.socket.writes_nothing().await;
         }
         async fn complete(&mut self, status: &str) {
             self.event(json!({"method":"turn/completed","params":{"threadId":"test-thread","turn":{"id":"turn-1","status":status,"error":{"message":"test failure"}}}})).await;
@@ -2788,12 +2799,7 @@ mod tests {
         let driver = tokio::spawn(h.driver.run());
         let (archiver, providers) = (registry.clone(), h.providers.clone());
         let archive = tokio::spawn(async move { archiver.archive_codex(providers.gate(), "test-thread").await });
-        let mut line = String::new();
-        tokio::time::timeout(Duration::from_secs(2), h.input.read_line(&mut line))
-            .await
-            .unwrap()
-            .unwrap();
-        let request: Value = serde_json::from_str(&line).unwrap();
+        let request = h.socket.request().await;
         assert_eq!(request["method"], "thread/archive");
         let (sender, providers) = (registry.clone(), h.providers.clone());
         let send = tokio::spawn(async move {
@@ -2801,10 +2807,7 @@ mod tests {
                 .codex_deliver(providers.gate(), Some("test-thread"), None, "stale send", &SendOptions::default(), None)
                 .await
         });
-        h.output
-            .write_all(format!("{}\n", json!({"id":request["id"],"result":{}})).as_bytes())
-            .await
-            .unwrap();
+        h.socket.send(json!({"id":request["id"],"result":{}})).await;
         archive.await.unwrap().unwrap();
         assert!(send.await.unwrap().unwrap_err().to_string().contains("archived"));
         driver.await.unwrap();
@@ -2942,9 +2945,7 @@ mod tests {
         assert_eq!(h.request().await["method"], "turn/start");
         h.event(json!({"method":"turn/started","params":{"threadId":"test-thread","turn":{"id":"turn-9","status":"inProgress"}}}))
             .await;
-        let mut line = String::new();
-        let written = tokio::time::timeout(Duration::from_millis(300), h.input.read_line(&mut line)).await;
-        assert!(written.is_err(), "nothing interrupts the turn: {line}");
+        h.writes_nothing().await;
         assert!(h.driver.state.active.is_some(), "the turn runs");
     }
 
@@ -3227,19 +3228,19 @@ mod tests {
 
     /// A start of the mock app server's session for one message, through
     /// `codex_starting` and `codex_attached`, with a Stop sent through the
-    /// session's handle: the moment the reserved handle is in the map
-    /// (`before_attach`), or once the driver is attached but before it has
-    /// taken the message. The turn the message starts is interrupted, and the
-    /// session reads as working on it.
+    /// session's handle: through the reserved handle, once `codex_starting`
+    /// has put it in the map (`before_attach`), or once the driver is attached
+    /// but before it has taken the message. The turn the message starts is
+    /// interrupted, and the session reads as working on it.
     async fn a_start_stopped(before_attach: bool) {
         let home = tempfile::tempdir().unwrap();
-        let (providers, link, mut input, mut output) = mock_app_server(home.path()).await;
+        let (providers, link, mut socket) = mock_app_server(home.path()).await;
         let runs = codex(&providers).clone();
         let first = message("first", &SendOptions::default()).unwrap();
         let (starting, delivery) = runs.codex_starting("test-thread", None, first).unwrap();
         if before_attach {
             let handle = runs.codex_handle("test-thread").expect("reserved");
-            assert!(handle.interrupt(), "a Stop the moment the handle is in the map is taken");
+            assert!(handle.interrupt(), "a Stop through the reserved handle is taken");
         }
         let lease = providers.gate().lease(Source::Codex, "test-thread").unwrap();
         let handle = runs.codex_attached(mock_record(), link, lease, Some(starting));
@@ -3250,27 +3251,56 @@ mod tests {
         }
         delivery.taken().await.expect("the message is taken");
 
-        assert_eq!(next_request(&mut input).await["method"], "turn/start");
-        output
-            .write_all(
-                b"{\"method\":\"turn/started\",\"params\":{\"threadId\":\"test-thread\",\"turn\":{\"id\":\"turn-1\",\"status\":\"inProgress\"}}}\n",
-            )
-            .await
-            .unwrap();
-        let interrupt = next_request(&mut input).await;
+        assert_eq!(socket.request().await["method"], "turn/start");
+        socket
+            .send(json!({"method":"turn/started","params":{"threadId":"test-thread","turn":{"id":"turn-1","status":"inProgress"}}}))
+            .await;
+        let interrupt = socket.request().await;
         assert_eq!(interrupt["method"], "turn/interrupt");
         assert_eq!(interrupt["params"]["turnId"], "turn-1");
         assert_eq!(handle.state().phase, Phase::Working, "and no longer starting");
     }
 
     #[tokio::test]
-    async fn a_stop_the_moment_the_reserved_handle_is_in_the_map_stops_the_turn() {
+    async fn a_stop_through_the_reserved_handle_before_the_attach_stops_the_turn() {
         a_start_stopped(true).await;
     }
 
     #[tokio::test]
     async fn a_stop_before_the_attached_driver_takes_the_message_stops_the_turn() {
         a_start_stopped(false).await;
+    }
+
+    /// A Stop in the gap between the attach and the driver taking the
+    /// message names the message, as it does a moment before the attach, and
+    /// not what the attach copied in: here a turn the resume reports in
+    /// progress, which runs on. The message's turn, after it, is interrupted.
+    #[tokio::test]
+    async fn a_stop_before_the_attached_driver_takes_the_message_names_it_not_the_resumed_turn() {
+        let home = tempfile::tempdir().unwrap();
+        let (providers, link, mut socket) = mock_app_server(home.path()).await;
+        let runs = codex(&providers).clone();
+        let first = message("first", &SendOptions::default()).unwrap();
+        let (starting, delivery) = runs.codex_starting("test-thread", None, first).unwrap();
+        let lease = providers.gate().lease(Source::Codex, "test-thread").unwrap();
+        let mut record = mock_record();
+        record.payload.codex.as_mut().expect("its state").active = Some("turn-0".into());
+        let handle = runs.codex_attached(record, link, lease, Some(starting));
+        // One task at a time here: the driver has not taken the message yet.
+        assert!(handle.interrupt(), "a Stop in the gap is taken");
+        delivery.taken().await.expect("the message is taken");
+        socket.writes_nothing().await;
+
+        socket
+            .send(json!({"method":"turn/completed","params":{"threadId":"test-thread","turn":{"id":"turn-0","status":"completed"}}}))
+            .await;
+        assert_eq!(socket.request().await["method"], "turn/start");
+        socket
+            .send(json!({"method":"turn/started","params":{"threadId":"test-thread","turn":{"id":"turn-1","status":"inProgress"}}}))
+            .await;
+        let interrupt = socket.request().await;
+        assert_eq!(interrupt["method"], "turn/interrupt");
+        assert_eq!(interrupt["params"]["turnId"], "turn-1");
     }
 
     #[tokio::test]
