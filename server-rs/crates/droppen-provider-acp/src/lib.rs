@@ -1583,6 +1583,69 @@ mod tests {
         assert!(was_sent(&dir, "session/cancel"), "the agent was told to cancel it");
     }
 
+    /// A Stop names the turn it means, and stops no other. Two messages are
+    /// sent while the agent starts, then a Stop, then a third. The first turn
+    /// is over before the driver reads the Stop: the agent has no model by
+    /// the name it asks for, so it ends at once. The Stop then leaves the
+    /// second turn running. The third message is taken only once the driver
+    /// has read the Stop. A Stop sent now names the second turn, and stops it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_stop_does_not_cancel_the_turn_after_the_one_it_meant() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let (state, id, dir) = one_turn(home.path(), "", "hello", &SendOptions::default()).await;
+        let injections = acp_of(&state);
+        let gate = state.providers.gate();
+        let slow = crate::agents::AcpAgentUpdate {
+            name: None.into(),
+            command: None.into(),
+            args: None.into(),
+            env: Some("FAKE_AGENT_SLOW=session/load=3".to_string()).into(),
+        };
+        injections.reconfigure_acp_agent(gate, "fake", &slow).await.expect("reconfigured");
+        until("the process to go", || injections.acp_handle(&id).is_some_and(|handle| !handle.alive())).await;
+        let send = |text: &'static str, model: Option<&'static str>| {
+            let (injections, providers, id) = (injections.clone(), state.providers.clone(), id.clone());
+            tokio::spawn(async move {
+                let options = SendOptions {
+                    model: model.map(str::to_owned),
+                    ..SendOptions::default()
+                };
+                injections.acp_send(providers.gate(), &id, text, &options).await
+            })
+        };
+        let refused = send("first", Some("no-such-model"));
+        until("session/load", || was_sent(&dir, "session/load")).await;
+        let held = send("wait for me", None);
+        let on_their_way = || {
+            injections
+                .acp_handle(&id)
+                .map_or(0, |handle| handle.counters().0.load(std::sync::atomic::Ordering::Acquire))
+        };
+        until("the second message on its way", || on_their_way() == 2).await;
+        let resident = state.providers.resident_info(Source::Acp, &id).expect("the starting agent is on view");
+        assert_eq!(resident.phase, droppen_sessions::ResidentPhase::Starting);
+        assert!(state.providers.interrupt(Source::Acp, &id), "a Stop during the start is taken");
+        let after = send("after the stop", None);
+
+        refused.await.expect("joined").expect("taken");
+        held.await.expect("joined").expect("taken");
+        assert!(after.await.expect("joined").expect("taken").queued, "behind the second turn");
+        let second = state.providers.injection_for(Source::Acp, &id).expect("the second turn's");
+        assert_eq!(second.state, droppen_sessions::InjectionRunState::Running, "the second turn runs");
+        // A cancel the driver sent is in the agent's call log within a
+        // moment; a second is far longer than that.
+        let quiet = std::time::Instant::now() + Duration::from_secs(1);
+        while std::time::Instant::now() < quiet {
+            assert!(!was_sent(&dir, "session/cancel"), "the Stop meant the first turn, not the second");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let still = state.providers.injection_for(Source::Acp, &id).expect("the second turn's");
+        assert_eq!((still.state, still.started_at), (second.state, second.started_at), "it runs on");
+
+        assert!(state.providers.interrupt(Source::Acp, &id), "a Stop now names the second turn");
+        until("the second turn's cancel", || was_sent(&dir, "session/cancel")).await;
+    }
+
     /// Start a session on the stand-in, configured with `env`, with one
     /// message, and wait for its turn to end; its id and working directory.
     async fn one_turn(home: &Path, env: &str, text: &str, options: &SendOptions) -> (AcpAlone, String, PathBuf) {

@@ -35,6 +35,9 @@ const CONFIG_TIMEOUT: Duration = if cfg!(test) { Duration::from_secs(5) } else {
 pub(super) struct State {
     /// A `session/prompt` is in flight.
     active: bool,
+    /// How many turns this driver has started: the one in flight, when
+    /// `active`, is the last of them. What a Stop names ([`Cmd::Interrupt`]).
+    turns: u64,
     /// When it was sent.
     turn_started_at: Option<String>,
     /// Messages waiting for the turn in flight to end, in order.
@@ -255,9 +258,18 @@ impl Handle {
     /// Stop the turn running, or the one a starting agent is about to run:
     /// sent while the message is on its way, the interrupt waits behind it in
     /// the channel, and the driver cancels the turn as soon as it starts it.
+    /// Either way it names that turn, so it stops no other: not the next one,
+    /// if the turn it meant ends before the driver reads it.
     pub(crate) fn interrupt(&self) -> bool {
         let state = self.shared.lock().unwrap();
-        (state.active || self.starting(&state)) && self.tx.send(Cmd::Interrupt).is_ok()
+        let turn = if state.active {
+            state.turns
+        } else if self.starting(&state) {
+            state.turns + 1
+        } else {
+            return false;
+        };
+        self.tx.send(Cmd::Interrupt(turn)).is_ok()
     }
 
     pub(super) async fn queue_action(&self, id: &str, steer: bool) -> QueueOutcome {
@@ -273,7 +285,10 @@ pub(crate) enum Cmd {
     /// A message, the reply its sender waits for, and its count in
     /// [`Handle::in_flight`].
     Deliver(Message, oneshot::Sender<Sent>, InFlight),
-    Interrupt,
+    /// Stop the driver's turn by this number ([`State::turns`]) if it is the
+    /// one in flight; a turn that is over is not stopped, and neither is one
+    /// after it.
+    Interrupt(u64),
     Queue {
         id: String,
         steer: bool,
@@ -608,8 +623,8 @@ impl Driver {
                 drop(counted);
                 let _ = reply.send(Sent { queued });
             }
-            Cmd::Interrupt => {
-                if self.state.active && !self.interrupted {
+            Cmd::Interrupt(turn) => {
+                if self.state.active && self.state.turns == turn && !self.interrupted {
                     self.interrupted = true;
                     self.conn.cancel(&self.agent_session).await?;
                 }
@@ -679,6 +694,7 @@ impl Driver {
         let now = iso8601(SystemTime::now());
         self.interrupted = false;
         self.state.active = true;
+        self.state.turns += 1;
         self.state.turn_started_at = Some(now.clone());
         self.state.injection = Some(Injection {
             state: InjectionRunState::Running,
