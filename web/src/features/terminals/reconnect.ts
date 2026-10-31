@@ -8,6 +8,7 @@
  * is the `[terminal not found]` note the attach route sends for an unknown id
  * (`server-rs/src/terminals/routes.rs`).
  */
+import type { Terminal } from "@xterm/xterm";
 
 /** First retry lands inside a second; a server restart is usually done by then. */
 export const RECONNECT_BASE_MS = 1_000;
@@ -42,4 +43,38 @@ const TERMINAL_GONE_NOTE = "[terminal not found]";
  */
 export function isTerminalGoneFrame(text: string): boolean {
   return text.trim() === TERMINAL_GONE_NOTE;
+}
+
+/** What the pane sends the pty ({@link terminalInput}). */
+export interface TerminalInput {
+  /** Write the attach replay into the terminal; what it says while parsing it is not sent. */
+  writeReplay(text: string): void;
+  dispose(): void;
+}
+
+/**
+ * Send what the terminal produces, keys and its answers to queries alike,
+ * except its answers to the attach replay.
+ *
+ * The replay is output the screen already showed. The programs that asked for
+ * the cursor position, the device attributes or the colours in it got their
+ * answers when it was new; parsing it again, the terminal answers them all a
+ * second time, and that would reach whatever runs now as typed text (zsh:
+ * `command not found: 2RR0`). Keys pressed while the replay is still being
+ * parsed are dropped with them, as keys are while the socket is down.
+ */
+export function terminalInput(term: Pick<Terminal, "onData" | "write">, send: (data: string) => void): TerminalInput {
+  let replays = 0;
+  const data = term.onData((text) => {
+    if (replays === 0) send(text);
+  });
+  return {
+    writeReplay(text) {
+      replays += 1;
+      term.write(text, () => {
+        replays -= 1;
+      });
+    },
+    dispose: () => data.dispose(),
+  };
 }
