@@ -66,13 +66,17 @@ enum Unsent {
     Unencodable,
     /// The input is closed, or the write failed.
     Closed,
+    /// The write did not finish within [`WRITE_TIMEOUT`]: the agent is there,
+    /// and has stopped reading.
+    Unread,
 }
 
 impl From<Unsent> for InjectError {
     fn from(unsent: Unsent) -> InjectError {
         InjectError::message(match unsent {
-            Unsent::Unencodable => "a message to the agent would not encode",
-            Unsent::Closed => "the agent closed its input",
+            Unsent::Unencodable => "a message to the agent would not encode".to_string(),
+            Unsent::Closed => "the agent closed its input".to_string(),
+            Unsent::Unread => format!("the agent did not read its input within {}s", WRITE_TIMEOUT.as_secs()),
         })
     }
 }
@@ -87,7 +91,8 @@ impl Writer {
         let written = tokio::time::timeout(WRITE_TIMEOUT, async { pipe.write_all(line.as_bytes()).await.and(pipe.flush().await) }).await;
         match written {
             Ok(Ok(())) => Ok(()),
-            _ => Err(Unsent::Closed),
+            Ok(Err(_)) => Err(Unsent::Closed),
+            Err(_) => Err(Unsent::Unread),
         }
     }
 
@@ -442,5 +447,25 @@ mod tests {
         let mut lines = Lines::new(output, 8);
         assert_eq!(lines.next().await.as_deref(), Some("12345678"), "at the bound: kept");
         assert_eq!(lines.next().await, None, "past it: the end");
+    }
+
+    /// A write to an agent that has exited, or whose input this side closed,
+    /// says the input is closed: not that the agent stopped reading, which is
+    /// what a write that runs out of time says.
+    #[tokio::test]
+    async fn a_write_to_an_agent_that_is_gone_says_its_input_is_closed() {
+        let mut child = tokio::process::Command::new("/bin/sh")
+            .args(["-c", "exit 0"])
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn");
+        let stdin = child.stdin.take().expect("its input");
+        child.wait().await.expect("exited");
+        let writer = Writer(Arc::new(tokio::sync::Mutex::new(Some(stdin))));
+        let said = |unsent: Unsent| InjectError::from(unsent).to_string();
+        let closed = Err("the agent closed its input".to_string());
+        assert_eq!(writer.send(&"hello").await.map_err(said), closed, "nobody reads the pipe");
+        writer.close().await;
+        assert_eq!(writer.send(&"hello").await.map_err(said), closed, "this side closed it");
     }
 }
