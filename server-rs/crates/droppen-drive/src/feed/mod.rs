@@ -379,7 +379,7 @@ pub async fn load_session_state(drive: &Arc<Drive>, source: Source, id: &str) ->
     })
 }
 
-/// How many times [`load_state_and_transcript`] reads a session whose
+/// How many times [`StateAndTranscript::read`] reads a session whose
 /// transcript keeps moving before it serves the last read as it is.
 const STATE_READS: usize = 3;
 
@@ -391,38 +391,56 @@ struct StateAndTranscript {
     transcript: Arc<Transcript>,
 }
 
-/// Read a session's state and its transcript while the transcript stands
-/// still, or `None` when the session no longer exists.
-///
-/// The state is read off the transcript too (the row, `cliChoice`, the
-/// context), so a turn written between the two reads would pair its items
-/// with the state of the turn before. The signature is taken before the
-/// state and again after the transcript; while it moved, both are read
-/// again, [`STATE_READS`] times at most.
-async fn load_state_and_transcript(drive: &Arc<Drive>, source: Source, id: &str) -> Option<StateAndTranscript> {
-    let file_path = drive.transcripts.find_file(&drive.paths, source, id).await?;
-    let mut sig = file_signature(&file_path).await?;
-    let mut reads = 0;
-    loop {
-        let state = load_session_state(drive, source, id).await?;
-        let transcript = drive.transcripts.load(&drive.paths, source, &file_path, &sig).await;
-        reads += 1;
-        let now = file_signature(&file_path).await?;
-        if now == sig || reads == STATE_READS {
-            return Some(StateAndTranscript {
-                state,
-                file_path,
-                sig,
-                transcript,
-            });
+impl StateAndTranscript {
+    /// Read a session's state and its transcript while the transcript
+    /// stands still, or `None` when the session no longer exists.
+    ///
+    /// The state is read off the transcript too (the row, `cliChoice`, the
+    /// context), so a turn written between the two reads would pair its items
+    /// with the state of the turn before. The signature is taken before the
+    /// state and again after the transcript; while it moved, both are read
+    /// again, [`STATE_READS`] times at most. A state that names another file
+    /// than the one signed (the session moved in between) has the file
+    /// looked up and read again too; the last read takes the file its state
+    /// names. A transcript gone by the second signature is served as read.
+    async fn read(drive: &Arc<Drive>, source: Source, id: &str) -> Option<Self> {
+        let mut file_path = drive.transcripts.find_file(&drive.paths, source, id).await?;
+        let mut sig = file_signature(&file_path).await?;
+        let mut reads = 0;
+        loop {
+            reads += 1;
+            let last = reads == STATE_READS;
+            let state = load_session_state(drive, source, id).await?;
+            if Path::new(&state.summary.file_path) != file_path {
+                file_path = if last {
+                    PathBuf::from(&state.summary.file_path)
+                } else {
+                    drive.transcripts.find_file(&drive.paths, source, id).await?
+                };
+                sig = file_signature(&file_path).await?;
+                if !last {
+                    continue;
+                }
+            }
+            let transcript = drive.transcripts.load(&drive.paths, source, &file_path, &sig).await;
+            match file_signature(&file_path).await {
+                Some(now) if now != sig && !last => sig = now,
+                _ => {
+                    return Some(Self {
+                        state,
+                        file_path,
+                        sig,
+                        transcript,
+                    })
+                }
+            }
         }
-        sig = now;
     }
 }
 
 /// Load a session's state plus a full first page of its transcript.
 pub async fn load_session_detail(drive: &Arc<Drive>, source: Source, id: &str) -> Option<SessionDetail> {
-    let StateAndTranscript { state, sig, transcript, .. } = load_state_and_transcript(drive, source, id).await?;
+    let StateAndTranscript { state, sig, transcript, .. } = StateAndTranscript::read(drive, source, id).await?;
     let items = &transcript.items;
     // A changed signature may have rewritten an existing normalized item, so
     // only a snapshot is safe.
@@ -654,7 +672,7 @@ pub async fn attach_session_feed_with(
         file_path,
         sig,
         transcript,
-    } = load_state_and_transcript(drive, source, id).await?;
+    } = StateAndTranscript::read(drive, source, id).await?;
     let chain = transcript.chain().clone();
 
     // A resumed client is sent what it is missing and nothing else; its state
