@@ -1704,7 +1704,7 @@ mod tests {
     /// answers does: an error in the transcript, its receipt failed, and the
     /// session's last turn failed. Here the agent stops reading once it has
     /// switched, and the message is longer than a pipe holds, so its prompt is
-    /// never written.
+    /// never written, and the error says the agent stopped reading.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_message_whose_prompt_cannot_be_written_after_its_switch_fails() {
         use droppen_provider::receipts::{now_ms, Claim, Kind};
@@ -1746,11 +1746,10 @@ mod tests {
             .expect("its receipt");
         assert_eq!(receipt.status, droppen_sessions::delivery::ReceiptStatus::Failed, "the message failed");
         let lines = transcript_lines(&state.paths, &id).await;
-        let last = lines.last().expect("a transcript");
-        assert!(
-            last.contains(r#""type":"error""#),
-            "the transcript says why: {}",
-            &last[..last.len().min(200)]
+        assert_eq!(
+            lines.last().map(String::as_str),
+            Some(r#"{"message":"the agent did not read its input within 5s","type":"error","timestamp":"<timestamp>"}"#),
+            "the transcript says why: the agent is there, and stopped reading"
         );
         let injection = injections
             .acp_handle(&id)
