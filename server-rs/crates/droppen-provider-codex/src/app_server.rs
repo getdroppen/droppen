@@ -63,9 +63,9 @@ pub(crate) struct State {
     active: Option<String>,
     completed_turn: Option<String>,
     /// The message whose `turn/start` started the turn running, when this
-    /// driver sent it: what a Stop that names that message stops. Not in the
-    /// journal, whose rows stay as they were: a Stop dies with the process it
-    /// was sent to, so no process after a restart has one to match.
+    /// driver sent it: what a Stop that names that message stops. Kept out of
+    /// the journal: a Stop dies with the process it was sent to, so a process
+    /// after a restart never has one to match.
     #[serde(skip)]
     active_message: Option<String>,
     queue: Vec<Message>,
@@ -108,13 +108,35 @@ pub(crate) struct Handle {
     /// Set while the app server is still starting, to the message it is
     /// starting for: the session is reserved and messages queue in the
     /// channel for the driver to take, but nothing has been asked of codex
-    /// yet ([`Starting`]). Cleared when the driver takes over.
+    /// yet ([`Starting`]). Cleared by the driver once it has that message in
+    /// its queue, where a Stop finds it from then on.
     starting: Arc<Mutex<Option<String>>>,
 }
 
 impl Handle {
     pub(crate) fn alive(&self) -> bool {
         !self.tx.is_closed()
+    }
+
+    /// The handle of an app server about to start under `account` for
+    /// `message`, with `state` on view meanwhile, and the receiver its driver
+    /// takes: marked starting for the message, which is in the channel before
+    /// anybody can hold the handle, so a Stop sent through it always finds the
+    /// message ahead of it.
+    fn starting_for(
+        state: State,
+        account: Option<String>,
+        message: Message,
+    ) -> Result<(Handle, mpsc::UnboundedReceiver<Cmd>, Delivery), InjectError> {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let handle = Handle {
+            tx,
+            shared: Arc::new(Mutex::new(state)),
+            account,
+            starting: Arc::new(Mutex::new(Some(message.id.clone()))),
+        };
+        let delivery = handle.deliver(message)?;
+        Ok((handle, rx, delivery))
     }
 
     /// Whether this session's app server is still starting.
@@ -186,7 +208,8 @@ impl Handle {
         self.state().into()
     }
     /// Stop the turn running, the one a request in flight is starting, or
-    /// the one a starting app server is about to run, by name ([`Stop`]): the
+    /// the one about to start, by name ([`Stop`]): the message a starting app
+    /// server starts for, or else the head of a queue that is not paused. The
     /// driver stops that turn and no other, so a Stop it reads after that turn
     /// is over stops nothing. Sent while the message is on its way, the Stop
     /// waits behind it in the channel, and the driver interrupts the turn once
@@ -200,6 +223,8 @@ impl Handle {
             Stop::Message(message.id.clone())
         } else if let Some(message) = starting_for {
             Stop::Message(message)
+        } else if let Some(message) = state.queue.first().filter(|_| !state.paused) {
+            Stop::Message(message.id.clone())
         } else {
             return false;
         };
@@ -234,7 +259,8 @@ enum Stop {
     /// The codex turn by this id, running when the Stop was sent.
     Turn(String),
     /// The turn this message starts: its `turn/start` was in flight when the
-    /// Stop was sent, or the app server was starting for it.
+    /// Stop was sent, the app server was starting for it, or it was next to
+    /// start.
     Message(String),
 }
 
@@ -1063,20 +1089,12 @@ impl CodexRuns {
     /// Reserve session `id` for an app server about to start under `account`
     /// for `message`: its handle in the map, marked starting for that message,
     /// in place of whatever was there (what a dead process left stays on view
-    /// meanwhile), with the message on its way. Delivered before the handle is
-    /// in the map, so a Stop that finds the handle finds its message ahead of
-    /// it in the channel. Under the spawn gate.
+    /// meanwhile), with the message on its way ([`Handle::starting_for`]).
+    /// Under the spawn gate.
     fn codex_starting(self: &Arc<Self>, id: &str, account: Option<String>, message: Message) -> Result<(Starting, Delivery), InjectError> {
-        let (tx, rx) = mpsc::unbounded_channel();
         let mut servers = self.codex_servers.lock().unwrap();
         let state = servers.get(id).map(|before| before.shared.lock().unwrap().clone()).unwrap_or_default();
-        let handle = Handle {
-            tx,
-            shared: Arc::new(Mutex::new(state)),
-            account,
-            starting: Arc::new(Mutex::new(Some(message.id.clone()))),
-        };
-        let delivery = handle.deliver(message)?;
+        let (handle, rx, delivery) = Handle::starting_for(state, account, message)?;
         let before = servers.insert(id.to_owned(), handle.clone());
         drop(servers);
         #[cfg(test)]
@@ -1272,7 +1290,6 @@ impl CodexRuns {
             }
         };
         self.codex_servers.lock().unwrap().insert(record.session_id.clone(), handle.clone());
-        *handle.starting.lock().unwrap() = None;
         #[cfg(test)]
         self.host.step("codex mapped", Source::Codex, Some(&record.session_id));
         let driver = Driver {
@@ -1287,6 +1304,7 @@ impl CodexRuns {
             pending_since: Instant::now(),
             interrupt: None,
             stop_next: None,
+            starting: handle.starting.clone(),
             archive_reply: None,
             archive_since: Instant::now(),
             retiring: false,
@@ -1410,9 +1428,14 @@ struct Driver {
     pending_since: Instant,
     // Target turn (unknown until turn/started), time sent, escalation rung.
     interrupt: Option<(Option<String>, Instant, u8)>,
-    /// A Stop for the message this driver starts next by itself, read before
-    /// its `turn/start` went out: that start, and no later one, is stopped.
+    /// A Stop for a message that waits to start by itself, read before its
+    /// `turn/start` went out: kept for that message's own start, whatever
+    /// starts before it, and let go once the message no longer waits to start
+    /// ([`Driver::waits_to_start`]).
     stop_next: Option<String>,
+    /// Its handle's [`Handle::starting`], which this driver clears once the
+    /// message the start was for is in its queue.
+    starting: Arc<Mutex<Option<String>>>,
     archive_reply: Option<oneshot::Sender<Result<(), InjectError>>>,
     archive_since: Instant,
     /// Set by [`Cmd::Retire`]: leave the loop without reporting a death.
@@ -1424,6 +1447,13 @@ struct Driver {
 
 impl Driver {
     fn checkpoint(&mut self) {
+        // Every change to the state passes here, so a kept Stop is let go
+        // here, once its message no longer waits to start by itself: it left
+        // the queue, or the queue paused and it starts only when the user
+        // says so.
+        if self.stop_next.as_deref().is_some_and(|message| !self.waits_to_start(message)) {
+            self.stop_next = None;
+        }
         // The cursor only advances with the state it describes, in one DB row.
         self.state.cursor = self.link.at().max(self.state.cursor);
         self.record.payload.codex = Some(self.state.clone());
@@ -1465,9 +1495,10 @@ impl Driver {
         let id = format!("{}:{}", if steer { "steer" } else { "start" }, self.state.queue[index].id);
         if !steer {
             self.running();
-            // A Stop kept for the message started next is for this start
-            // only: taken by it whichever message this is.
-            if self.stop_next.take().as_deref() == Some(self.state.queue[index].id.as_str()) {
+            // A Stop kept for a message is for that message's start: taken
+            // when it starts, and left for it when another starts first.
+            if self.stop_next.as_deref() == Some(self.state.queue[index].id.as_str()) {
+                self.stop_next = None;
                 self.state.interrupt_requested = true;
             }
         }
@@ -1518,6 +1549,10 @@ impl Driver {
                 _ = tick.tick() => self.tick().await,
             };
             if let Err(error) = outcome {
+                // Its app server gone, this driver takes no more messages, the
+                // one a start was for included: that is answered as lost below,
+                // and the session no longer reads as starting.
+                *self.starting.lock().unwrap() = None;
                 if let Some(reply) = self.archive_reply.take() {
                     let _ = reply.send(Err(InjectError::message(self.runs.host.redact(&error.to_string()))));
                 }
@@ -1602,17 +1637,24 @@ impl Driver {
                 write(&mut self.link, &request).await?;
             }
             Cmd::Deliver(message, reply) => {
+                let id = message.id.clone();
                 if self.state.archived || self.state.archive_request.is_some() {
                     let _ = reply.send(Err(InjectError::message("Codex session is archived or awaiting archive confirmation")));
-                    return Ok(());
+                } else {
+                    let queued = self.state.active.is_some() || !self.state.queue.is_empty();
+                    self.state.queue.push(message);
+                    if self.state.queue.iter().all(|q| q.request.is_none() && !q.uncertain) {
+                        self.state.paused = false;
+                    }
+                    self.checkpoint();
+                    let _ = reply.send(Ok(Sent { queued }));
                 }
-                let queued = self.state.active.is_some() || !self.state.queue.is_empty();
-                self.state.queue.push(message);
-                if self.state.queue.iter().all(|q| q.request.is_none() && !q.uncertain) {
-                    self.state.paused = false;
+                // The message the start was for is in the queue, on view, or
+                // refused: a Stop finds it there from now on, not by the start.
+                let mut starting = self.starting.lock().unwrap();
+                if starting.as_deref() == Some(id.as_str()) {
+                    *starting = None;
                 }
-                self.checkpoint();
-                let _ = reply.send(Ok(Sent { queued }));
             }
             Cmd::Retire(reply) => {
                 if self.state.active.is_some() || !self.state.queue.is_empty() || self.state.archive_request.is_some() {
@@ -1672,17 +1714,26 @@ impl Driver {
                 let _ = reply.send(Ok(()));
             }
             Cmd::Interrupt(stop) => {
-                // A Stop stops the turn it names and no other. One for a turn
-                // that is over, or for a message that will not start by itself
-                // (the queue paused behind one the process before this one
-                // left unanswered, say), is dropped. Kept, `interrupt_requested`
+                // A Stop stops the turn it names and no other. One for a
+                // message that waits to start by itself is kept for that
+                // message's own start, whatever runs before it: the turn a
+                // resume reports in progress, say, or messages the process
+                // before this one left queued. Anything else names a turn that
+                // is over, or a message that will not start by itself (the
+                // queue paused behind one the process before this one left
+                // unanswered, say), and is dropped. Kept, `interrupt_requested`
                 // would stop whichever turn the user starts next, however much
                 // later, and a restart would read it back from the journal.
                 // The route has answered already that the Stop was taken: one
                 // is taken while the app server starts ([`Handle::interrupt`]),
                 // before anybody can tell whether the queue will be paused.
                 // The message it was sent for waits in the paused queue.
-                if !self.stops_now(&stop) {
+                if !self.stops_running(&stop) {
+                    if let Stop::Message(message) = &stop {
+                        if self.waits_to_start(message) {
+                            self.stop_next = Some(message.clone());
+                        }
+                    }
                     return Ok(());
                 }
                 self.state.interrupt_requested = true;
@@ -2017,35 +2068,23 @@ impl Driver {
         }
     }
 
-    /// Whether `stop` names the turn running or the one being started. One
-    /// for the message this driver starts next by itself is kept for that
-    /// start ([`Driver::stop_next`]); anything else names a turn that is over,
-    /// or none that will run without the user.
-    fn stops_now(&mut self, stop: &Stop) -> bool {
+    /// Whether `stop` names the turn running, or the one being started: the
+    /// turn by its id, or the turn a message's start started or is starting.
+    fn stops_running(&self, stop: &Stop) -> bool {
         match stop {
             Stop::Turn(turn) => self.state.active.as_deref() == Some(turn.as_str()),
             Stop::Message(message) => {
                 let its_start =
                     |queued: &Message| &queued.id == message && queued.request.as_deref().is_some_and(|request| request.starts_with("start:"));
-                if (self.state.active.is_some() && self.state.active_message.as_ref() == Some(message)) || self.state.queue.iter().any(its_start) {
-                    return true;
-                }
-                if self.next_to_start() == Some(message.as_str()) {
-                    self.stop_next = Some(message.clone());
-                }
-                false
+                (self.state.active.is_some() && self.state.active_message.as_ref() == Some(message)) || self.state.queue.iter().any(its_start)
             }
         }
     }
 
-    /// The message this driver starts next by itself: the head of a queue
-    /// that is not paused, with no turn running and none being started.
-    fn next_to_start(&self) -> Option<&str> {
-        let free = self.state.active.is_none()
-            && !self.state.paused
-            && self.state.archive_request.is_none()
-            && self.state.queue.iter().all(|queued| queued.request.is_none());
-        self.state.queue.first().filter(|_| free).map(|queued| queued.id.as_str())
+    /// Whether `message` waits to start by itself: it is queued, and the queue
+    /// is not paused, so this driver starts it in its turn.
+    fn waits_to_start(&self, message: &str) -> bool {
+        !self.state.paused && self.state.queue.iter().any(|queued| queued.id == message)
     }
 
     async fn send_interrupt(&mut self) -> Result<(), InjectError> {
@@ -2148,50 +2187,80 @@ mod tests {
         _home: tempfile::TempDir,
     }
 
+    /// The Codex providers over a fresh registry at `home`, and a link to a
+    /// mock app server on a socket there: what a driver writes on the link is
+    /// read from the reader, and what is written to the writer it reads as the
+    /// app server's.
+    async fn mock_app_server(
+        home: &std::path::Path,
+    ) -> (
+        Arc<droppen_provider::ProviderRegistry>,
+        shim::Link,
+        BufReader<OwnedReadHalf>,
+        OwnedWriteHalf,
+    ) {
+        let paths = Arc::new(Paths::new(home.into()));
+        let dirs = InstanceDirs::new(&paths.data_dir(), "codex-test").unwrap();
+        dirs.create().unwrap();
+        let accounts = Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), logins()));
+        let quota = Arc::new(droppen_accounts::quota::QuotaCache::new(paths.clone(), logins()));
+        let decoration = droppen_provider::testing::no_decoration();
+        let registry = InjectionRegistry::new(paths, &dirs, accounts, quota, decoration);
+        let providers = codex_only(&registry);
+        let socket = home.join("mock.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let connector = tokio::spawn(async move { shim::connect_in_process(&socket).await.unwrap() });
+        let (stream, _) = listener.accept().await.unwrap();
+        let (read, mut output) = stream.into_split();
+        let mut input = BufReader::new(read);
+        let mut hello = String::new();
+        input.read_line(&mut hello).await.unwrap();
+        output
+            .write_all(format!("{{\"shim_hello\":{{\"claude_pid\":{},\"total\":0}}}}\n", std::process::id()).as_bytes())
+            .await
+            .unwrap();
+        let link = connector.await.unwrap();
+        (providers, link, input, output)
+    }
+
+    /// The run record of the mock app server's session, `test-thread`.
+    fn mock_record() -> runs::RunRecord<CodexRun> {
+        runs::RunRecord {
+            run_id: new_uuid(),
+            source: Source::Codex,
+            session_id: "test-thread".into(),
+            cwd: None,
+            cli_pid: std::process::id(),
+            started_at: iso8601(SystemTime::now()),
+            pid_token: procs::start_token(std::process::id()),
+            resident: true,
+            shim: None,
+            payload: CodexRun {
+                codex: Some(State::default()),
+                ..CodexRun::default()
+            },
+        }
+    }
+
+    /// The next request the driver wrote to `input`.
+    async fn next_request(input: &mut BufReader<OwnedReadHalf>) -> Value {
+        let mut line = String::new();
+        tokio::time::timeout(Duration::from_secs(2), input.read_line(&mut line))
+            .await
+            .unwrap()
+            .unwrap();
+        serde_json::from_str(&line).unwrap()
+    }
+
     impl Harness {
         async fn new() -> Self {
             let home = tempfile::tempdir().unwrap();
-            let paths = Arc::new(Paths::new(home.path().into()));
-            let dirs = InstanceDirs::new(&paths.data_dir(), "codex-test").unwrap();
-            dirs.create().unwrap();
-            let accounts = Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), logins()));
-            let quota = Arc::new(droppen_accounts::quota::QuotaCache::new(paths.clone(), logins()));
-            let decoration = droppen_provider::testing::no_decoration();
-            let registry = InjectionRegistry::new(paths, &dirs, accounts, quota, decoration);
-            let providers = codex_only(&registry);
-            let socket = home.path().join("mock.sock");
-            let listener = UnixListener::bind(&socket).unwrap();
-            let connector = tokio::spawn(async move { shim::connect_in_process(&socket).await.unwrap() });
-            let (stream, _) = listener.accept().await.unwrap();
-            let (read, mut output) = stream.into_split();
-            let mut input = BufReader::new(read);
-            let mut hello = String::new();
-            input.read_line(&mut hello).await.unwrap();
-            output
-                .write_all(format!("{{\"shim_hello\":{{\"claude_pid\":{},\"total\":0}}}}\n", std::process::id()).as_bytes())
-                .await
-                .unwrap();
-            let link = connector.await.unwrap();
-            let record = runs::RunRecord {
-                run_id: new_uuid(),
-                source: Source::Codex,
-                session_id: "test-thread".into(),
-                cwd: None,
-                cli_pid: std::process::id(),
-                started_at: iso8601(SystemTime::now()),
-                pid_token: procs::start_token(std::process::id()),
-                resident: true,
-                shim: None,
-                payload: CodexRun {
-                    codex: Some(State::default()),
-                    ..CodexRun::default()
-                },
-            };
+            let (providers, link, input, output) = mock_app_server(home.path()).await;
             let (_tx, rx) = mpsc::unbounded_channel();
             let driver = Driver {
                 lease: providers.gate().lease(Source::Codex, "test-thread").unwrap(),
                 runs: codex(&providers).clone(),
-                record,
+                record: mock_record(),
                 link,
                 state: State::default(),
                 shared: Arc::new(Mutex::new(State::default())),
@@ -2200,6 +2269,7 @@ mod tests {
                 pending_since: Instant::now(),
                 interrupt: None,
                 stop_next: None,
+                starting: Default::default(),
                 archive_reply: None,
                 archive_since: Instant::now(),
                 retiring: false,
@@ -2226,7 +2296,7 @@ mod tests {
                     tx,
                     shared: self.driver.shared.clone(),
                     account: None,
-                    starting: Default::default(),
+                    starting: self.driver.starting.clone(),
                 },
                 rx,
             )
@@ -2249,7 +2319,12 @@ mod tests {
             serde_json::from_str(&self.raw().await).unwrap()
         }
         async fn enqueue(&mut self, text: &str) -> String {
-            let message = message(text, &SendOptions::default()).unwrap();
+            self.enqueue_with(text, &SendOptions::default()).await
+        }
+        /// [`Harness::enqueue`] with `options`: a message its client named,
+        /// say.
+        async fn enqueue_with(&mut self, text: &str, options: &SendOptions) -> String {
+            let message = message(text, options).unwrap();
             let id = message.id.clone();
             let (tx, rx) = oneshot::channel();
             self.driver.command(Cmd::Deliver(message, tx)).await.unwrap();
@@ -2265,6 +2340,14 @@ mod tests {
             self.event(json!({"id":request["id"],"result":{"turn":{"id":"turn-1","status":"inProgress"}}}))
                 .await;
             request
+        }
+        /// Nothing more is written for this long after the last line: a
+        /// request the driver writes is on the socket before its command
+        /// returns.
+        async fn writes_nothing(&mut self) {
+            let mut line = String::new();
+            let written = tokio::time::timeout(Duration::from_millis(300), self.input.read_line(&mut line)).await;
+            assert!(written.is_err(), "nothing is written: {line}");
         }
         async fn complete(&mut self, status: &str) {
             self.event(json!({"method":"turn/completed","params":{"threadId":"test-thread","turn":{"id":"turn-1","status":status,"error":{"message":"test failure"}}}})).await;
@@ -2876,14 +2959,6 @@ mod tests {
         assert!(!h.driver.state.interrupt_requested, "nothing runs, so no Stop is kept");
     }
 
-    /// Nothing more is written for this long after `h`'s last line: a request
-    /// the driver writes is on the socket before its command returns.
-    async fn writes_nothing(h: &mut Harness) {
-        let mut line = String::new();
-        let written = tokio::time::timeout(Duration::from_millis(300), h.input.read_line(&mut line)).await;
-        assert!(written.is_err(), "nothing is written: {line}");
-    }
-
     /// A Stop names the turn running, and stops no other. Read after that
     /// turn completed and the message queued behind it started the next, it
     /// stops nothing: the next turn runs.
@@ -2911,13 +2986,15 @@ mod tests {
 
         h.driver.command(stop).await.unwrap();
         assert!(!h.driver.state.interrupt_requested, "the Stop's turn is over");
-        writes_nothing(&mut h).await;
+        h.writes_nothing().await;
         assert_eq!(h.driver.state.active.as_deref(), Some("turn-2"), "the next turn runs");
     }
 
     /// A Stop sent while a message's `turn/start` is in flight names that
     /// message. Read after the turn it started has completed and the next
-    /// message's turn has started, it stops nothing.
+    /// message's turn has started, it stops nothing: here before codex has
+    /// answered the next message's start, so nothing but the first turn's end
+    /// says the first message's turn is over.
     #[tokio::test]
     async fn a_stop_for_a_started_message_does_not_stop_the_next() {
         let mut h = Harness::new().await;
@@ -2938,12 +3015,13 @@ mod tests {
         let start = h.request().await;
         h.event(json!({"method":"turn/started","params":{"threadId":"test-thread","turn":{"id":"turn-2","status":"inProgress"}}}))
             .await;
-        h.event(json!({"id":start["id"],"result":{"turn":{"id":"turn-2","status":"inProgress"}}}))
-            .await;
 
         h.driver.command(stop).await.unwrap();
         assert!(!h.driver.state.interrupt_requested, "the Stop's turn is over");
-        writes_nothing(&mut h).await;
+        h.writes_nothing().await;
+        h.event(json!({"id":start["id"],"result":{"turn":{"id":"turn-2","status":"inProgress"}}}))
+            .await;
+        h.writes_nothing().await;
     }
 
     /// A Stop that names a message stops the turn it started, when that turn
@@ -2986,17 +3064,25 @@ mod tests {
         assert_eq!(h.request().await["method"], "turn/start");
         h.event(json!({"method":"turn/started","params":{"threadId":"test-thread","turn":{"id":"turn-1","status":"inProgress"}}}))
             .await;
-        writes_nothing(&mut h).await;
+        h.writes_nothing().await;
     }
 
-    /// A Stop for the message the driver starts next, read before its
-    /// `turn/start` went out (as a starting app server's can be), is kept for
-    /// that start: its turn is interrupted once it starts.
+    /// A Stop sent while the head of a queue that is not paused is about to
+    /// start, with nothing running, names that message; read before its
+    /// `turn/start` went out, it is kept for that start, and its turn is
+    /// interrupted once it starts.
     #[tokio::test]
     async fn a_stop_for_the_message_about_to_start_stops_its_turn() {
         let mut h = Harness::new().await;
         let first = h.enqueue("first").await;
-        h.driver.command(Cmd::Interrupt(Stop::Message(first))).await.unwrap();
+        let (handle, mut stops) = h.handle();
+        assert!(handle.interrupt(), "a Stop for the message about to start is taken");
+        let stop = stops.try_recv().expect("the Stop");
+        assert!(
+            matches!(&stop, Cmd::Interrupt(Stop::Message(message)) if *message == first),
+            "it names the message"
+        );
+        h.driver.command(stop).await.unwrap();
         assert!(!h.driver.state.interrupt_requested, "nothing runs yet");
 
         h.driver.submit(0, false).await.unwrap();
@@ -3006,6 +3092,185 @@ mod tests {
         let interrupt = h.request().await;
         assert_eq!(interrupt["method"], "turn/interrupt");
         assert_eq!(interrupt["params"]["turnId"], "turn-1");
+    }
+
+    /// A Stop sent while an app server starts names the message it starts for,
+    /// and is kept for that message's own start when other work runs first.
+    /// Here the resume reports a turn in progress: that turn runs on, and the
+    /// message's turn, after it, is interrupted.
+    #[tokio::test]
+    async fn a_stop_during_a_start_is_kept_for_its_message_behind_a_resumed_turn() {
+        let mut h = Harness::new().await;
+        // As the resume leaves the driver: the turn in progress, started by no
+        // message of this driver's.
+        h.driver.state.active = Some("turn-0".into());
+        let sent = h.enqueue("sent while the app server started").await;
+        h.driver.command(Cmd::Interrupt(Stop::Message(sent))).await.unwrap();
+        assert!(!h.driver.state.interrupt_requested, "the resumed turn is not the message's");
+        h.writes_nothing().await;
+
+        h.event(json!({"method":"turn/completed","params":{"threadId":"test-thread","turn":{"id":"turn-0","status":"completed"}}}))
+            .await;
+        h.driver.submit(0, false).await.unwrap();
+        assert_eq!(h.request().await["method"], "turn/start");
+        h.event(json!({"method":"turn/started","params":{"threadId":"test-thread","turn":{"id":"turn-1","status":"inProgress"}}}))
+            .await;
+        let interrupt = h.request().await;
+        assert_eq!(interrupt["method"], "turn/interrupt");
+        assert_eq!(interrupt["params"]["turnId"], "turn-1");
+    }
+
+    /// The same, behind a message the process before this one left queued
+    /// and never sent, which the respawn starts first: that turn runs, and the
+    /// message's turn, after it, is interrupted.
+    #[tokio::test]
+    async fn a_stop_during_a_start_is_kept_for_its_message_behind_one_left_queued() {
+        let mut h = Harness::new().await;
+        // As the respawn leaves the driver: the message left queued, unsent,
+        // and the queue not paused.
+        h.enqueue("left by the process before").await;
+        let sent = h.enqueue("sent while the app server started").await;
+        h.driver.command(Cmd::Interrupt(Stop::Message(sent))).await.unwrap();
+
+        h.driver.submit(0, false).await.unwrap();
+        let start = h.request().await;
+        assert_eq!(start["method"], "turn/start");
+        h.event(json!({"method":"turn/started","params":{"threadId":"test-thread","turn":{"id":"turn-1","status":"inProgress"}}}))
+            .await;
+        h.writes_nothing().await;
+        h.event(json!({"id":start["id"],"result":{"turn":{"id":"turn-1","status":"inProgress"}}}))
+            .await;
+        h.complete("completed").await;
+
+        h.driver.submit(0, false).await.unwrap();
+        assert_eq!(h.request().await["method"], "turn/start");
+        h.event(json!({"method":"turn/started","params":{"threadId":"test-thread","turn":{"id":"turn-2","status":"inProgress"}}}))
+            .await;
+        let interrupt = h.request().await;
+        assert_eq!(interrupt["method"], "turn/interrupt");
+        assert_eq!(interrupt["params"]["turnId"], "turn-2");
+    }
+
+    /// A Stop kept for a message goes when the queue pauses: the message then
+    /// starts only when the user says so, and a start they ask for later runs.
+    #[tokio::test]
+    async fn a_stop_kept_for_a_message_goes_when_the_queue_pauses() {
+        let mut h = Harness::new().await;
+        h.start().await;
+        let sent = h.enqueue("second").await;
+        h.driver.command(Cmd::Interrupt(Stop::Message(sent.clone()))).await.unwrap();
+        h.complete("failed").await;
+        assert!(h.driver.state.paused, "a failed turn pauses the queue");
+
+        // The user sends the message now.
+        let (reply, _sent_now) = oneshot::channel();
+        h.driver
+            .command(Cmd::Queue {
+                id: sent,
+                steer: true,
+                reply,
+            })
+            .await
+            .unwrap();
+        assert_eq!(h.request().await["method"], "turn/start");
+        h.event(json!({"method":"turn/started","params":{"threadId":"test-thread","turn":{"id":"turn-2","status":"inProgress"}}}))
+            .await;
+        h.writes_nothing().await;
+    }
+
+    /// A Stop kept for a message goes when the message leaves the queue: one
+    /// its client sends again by the same name later runs.
+    #[tokio::test]
+    async fn a_stop_kept_for_a_message_goes_when_the_message_leaves_the_queue() {
+        let mut h = Harness::new().await;
+        h.start().await;
+        let named = SendOptions {
+            message_id: Some("named-by-its-client".into()),
+            ..SendOptions::default()
+        };
+        let sent = h.enqueue_with("second", &named).await;
+        h.driver.command(Cmd::Interrupt(Stop::Message(sent.clone()))).await.unwrap();
+        let (reply, dropped) = oneshot::channel();
+        h.driver
+            .command(Cmd::Queue {
+                id: sent,
+                steer: false,
+                reply,
+            })
+            .await
+            .unwrap();
+        assert_eq!(dropped.await.unwrap(), QueueOutcome::Done);
+
+        h.enqueue_with("second, again", &named).await;
+        h.complete("completed").await;
+        h.driver.submit(0, false).await.unwrap();
+        assert_eq!(h.request().await["method"], "turn/start");
+        h.event(json!({"method":"turn/started","params":{"threadId":"test-thread","turn":{"id":"turn-2","status":"inProgress"}}}))
+            .await;
+        h.writes_nothing().await;
+    }
+
+    /// A Stop on a session with nothing running and its queue paused is
+    /// refused, as on one with nothing queued: no message there starts by
+    /// itself, so there is nothing for it to stop.
+    #[tokio::test]
+    async fn a_stop_with_nothing_running_and_the_queue_paused_is_refused() {
+        let mut h = Harness::new().await;
+        h.start().await;
+        h.enqueue("second").await;
+        h.complete("failed").await;
+        assert!(h.driver.state.paused, "a failed turn pauses the queue");
+        let (handle, mut stops) = h.handle();
+        assert!(!handle.interrupt(), "nothing to stop");
+        assert!(stops.try_recv().is_err(), "and nothing is sent");
+    }
+
+    /// A start of the mock app server's session for one message, through
+    /// `codex_starting` and `codex_attached`, with a Stop sent through the
+    /// session's handle: the moment the reserved handle is in the map
+    /// (`before_attach`), or once the driver is attached but before it has
+    /// taken the message. The turn the message starts is interrupted, and the
+    /// session reads as working on it.
+    async fn a_start_stopped(before_attach: bool) {
+        let home = tempfile::tempdir().unwrap();
+        let (providers, link, mut input, mut output) = mock_app_server(home.path()).await;
+        let runs = codex(&providers).clone();
+        let first = message("first", &SendOptions::default()).unwrap();
+        let (starting, delivery) = runs.codex_starting("test-thread", None, first).unwrap();
+        if before_attach {
+            let handle = runs.codex_handle("test-thread").expect("reserved");
+            assert!(handle.interrupt(), "a Stop the moment the handle is in the map is taken");
+        }
+        let lease = providers.gate().lease(Source::Codex, "test-thread").unwrap();
+        let handle = runs.codex_attached(mock_record(), link, lease, Some(starting));
+        if !before_attach {
+            // One task at a time here: the driver has not run yet, and the
+            // message is still in its channel.
+            assert!(handle.interrupt(), "a Stop before the driver took the message is taken");
+        }
+        delivery.taken().await.expect("the message is taken");
+
+        assert_eq!(next_request(&mut input).await["method"], "turn/start");
+        output
+            .write_all(
+                b"{\"method\":\"turn/started\",\"params\":{\"threadId\":\"test-thread\",\"turn\":{\"id\":\"turn-1\",\"status\":\"inProgress\"}}}\n",
+            )
+            .await
+            .unwrap();
+        let interrupt = next_request(&mut input).await;
+        assert_eq!(interrupt["method"], "turn/interrupt");
+        assert_eq!(interrupt["params"]["turnId"], "turn-1");
+        assert_eq!(handle.state().phase, Phase::Working, "and no longer starting");
+    }
+
+    #[tokio::test]
+    async fn a_stop_the_moment_the_reserved_handle_is_in_the_map_stops_the_turn() {
+        a_start_stopped(true).await;
+    }
+
+    #[tokio::test]
+    async fn a_stop_before_the_attached_driver_takes_the_message_stops_the_turn() {
+        a_start_stopped(false).await;
     }
 
     #[tokio::test]
