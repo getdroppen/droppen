@@ -210,16 +210,20 @@ impl Handle {
         self.shared.lock().unwrap().injection.clone()
     }
 
+    /// A message on its way that no driver has taken, with no turn running
+    /// and none waiting: the agent is starting for it (its process, then the
+    /// session's opening), which can take as long as `START_TIMEOUT`. A
+    /// driver that is running takes one at once.
+    fn starting(&self, state: &State) -> bool {
+        !state.active && state.queue.is_empty() && self.in_flight.load(Ordering::Acquire) > 0
+    }
+
     pub(crate) fn state(&self) -> ResidentState {
         let state = self.shared.lock().unwrap();
         ResidentState {
             phase: if state.active {
                 Phase::Working
-            } else if state.queue.is_empty() && self.in_flight.load(Ordering::Acquire) > 0 {
-                // A message on its way that no driver has taken: the agent is
-                // starting for it (its process, then the session's opening),
-                // which can take as long as `START_TIMEOUT`. A driver that is
-                // running takes one at once.
+            } else if self.starting(&state) {
                 Phase::Starting
             } else {
                 Phase::Idle
@@ -248,8 +252,12 @@ impl Handle {
         self.state().into()
     }
 
+    /// Stop the turn running, or the one a starting agent is about to run:
+    /// sent while the message is on its way, the interrupt waits behind it in
+    /// the channel, and the driver cancels the turn as soon as it starts it.
     pub(crate) fn interrupt(&self) -> bool {
-        self.shared.lock().unwrap().active && self.tx.send(Cmd::Interrupt).is_ok()
+        let state = self.shared.lock().unwrap();
+        (state.active || self.starting(&state)) && self.tx.send(Cmd::Interrupt).is_ok()
     }
 
     pub(super) async fn queue_action(&self, id: &str, steer: bool) -> QueueOutcome {

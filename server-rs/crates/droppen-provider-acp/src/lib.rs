@@ -1537,6 +1537,52 @@ mod tests {
         );
     }
 
+    /// A Stop while a session's agent starts again for a message is taken,
+    /// not refused: it waits behind the message, and the driver cancels the
+    /// turn the message starts as soon as it starts it. The message is one
+    /// the stand-in holds open until it is cancelled.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_stop_while_the_agent_restarts_ends_the_turn_it_starts() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let (state, id, dir) = one_turn(home.path(), "", "hello", &SendOptions::default()).await;
+        let injections = acp_of(&state);
+        let gate = state.providers.gate();
+        let first = state.providers.injection_for(Source::Acp, &id).expect("the first turn's").started_at;
+
+        // Held at `session/load` long enough to be stopped meanwhile.
+        let slow = crate::agents::AcpAgentUpdate {
+            name: None.into(),
+            command: None.into(),
+            args: None.into(),
+            env: Some("FAKE_AGENT_SLOW=session/load=3".to_string()).into(),
+        };
+        injections.reconfigure_acp_agent(gate, "fake", &slow).await.expect("reconfigured");
+        until("the process to go", || injections.acp_handle(&id).is_some_and(|handle| !handle.alive())).await;
+        let sending = tokio::spawn({
+            let (injections, providers, id) = (injections.clone(), state.providers.clone(), id.clone());
+            async move { injections.acp_send(providers.gate(), &id, "wait for me", &SendOptions::default()).await }
+        });
+        until("session/load", || was_sent(&dir, "session/load")).await;
+        let resident = state.providers.resident_info(Source::Acp, &id).expect("the starting agent is on view");
+        assert_eq!(resident.phase, droppen_sessions::ResidentPhase::Starting);
+        assert!(
+            state.providers.interrupt(Source::Acp, &id),
+            "a Stop during the start is taken, not refused"
+        );
+
+        sending.await.expect("joined").expect("the message is taken");
+        let ended = || {
+            state
+                .providers
+                .injection_for(Source::Acp, &id)
+                .filter(|injection| injection.started_at != first && injection.state != droppen_sessions::InjectionRunState::Running)
+        };
+        until("the turn to end", || ended().is_some()).await;
+        let ended = ended().expect("ended");
+        assert!(ended.interrupted, "the turn ends as stopped: {ended:?}");
+        assert!(was_sent(&dir, "session/cancel"), "the agent was told to cancel it");
+    }
+
     /// Start a session on the stand-in, configured with `env`, with one
     /// message, and wait for its turn to end; its id and working directory.
     async fn one_turn(home: &Path, env: &str, text: &str, options: &SendOptions) -> (AcpAlone, String, PathBuf) {
