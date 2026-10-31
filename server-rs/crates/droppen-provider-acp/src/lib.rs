@@ -252,11 +252,13 @@ impl Started {
 ///
 /// Dropped before [`AcpRuns::acp_attach`] took it — the start
 /// failed, or its request was given up on — it takes its handle out again and
-/// puts back the one it replaced; the messages on their way are dropped, and
-/// their senders told the agent exited before it took them.
+/// puts back the one it replaced, and says so to the session's feed and the
+/// list; the messages on their way are dropped, and their senders told the
+/// agent exited before it took them.
 struct Starting<'a> {
     runs: &'a AcpRuns,
-    key: String,
+    /// The session's id.
+    id: String,
     handle: Handle,
     rx: Option<mpsc::UnboundedReceiver<Cmd>>,
     replaced: Option<Handle>,
@@ -267,12 +269,15 @@ impl Drop for Starting<'_> {
         if self.rx.is_none() {
             return;
         }
+        let key = self.runs.host.key_of(Source::Acp, &self.id);
         let mut servers = self.runs.acp_servers.lock().unwrap();
-        if servers.get(&self.key).is_some_and(|handle| handle.shares(&self.handle.shared())) {
+        if servers.get(&key).is_some_and(|handle| handle.shares(&self.handle.shared())) {
             match self.replaced.take() {
-                Some(replaced) => servers.insert(self.key.clone(), replaced),
-                None => servers.remove(&self.key),
+                Some(replaced) => servers.insert(key, replaced),
+                None => servers.remove(&key),
             };
+            drop(servers);
+            self.runs.host.announce(Source::Acp, &self.id);
         }
     }
 }
@@ -804,16 +809,22 @@ impl AcpRuns {
     }
 
     /// Put the handle of the session `id`, whose agent is about to start, in
-    /// the map, with `message` on its way to it. Under the spawn gate.
+    /// the map, with `message` on its way to it: the session reads as starting
+    /// meanwhile, with its last turn as the handle it replaces left it, and
+    /// its feed and the list are told at once rather than at their next poll.
+    /// Under the spawn gate.
     fn acp_starting(&self, agent: &AcpAgent, id: &str, message: Message) -> (Starting<'_>, Delivery) {
         let (tx, rx) = mpsc::unbounded_channel();
-        let handle = Handle::new(tx, &agent.id);
-        let delivery = handle.deliver(message);
         let key = self.host.key_of(Source::Acp, id);
-        let replaced = self.acp_servers.lock().unwrap().insert(key.clone(), handle.clone());
+        let mut servers = self.acp_servers.lock().unwrap();
+        let handle = Handle::new(tx, &agent.id, servers.get(&key));
+        let delivery = handle.deliver(message);
+        let replaced = servers.insert(key, handle.clone());
+        drop(servers);
+        self.host.announce(Source::Acp, id);
         let starting = Starting {
             runs: self,
-            key,
+            id: id.to_string(),
             handle,
             rx: Some(rx),
             replaced,
@@ -967,7 +978,7 @@ impl AcpRuns {
             stderr,
             transcript,
             translator: Translator::default(),
-            state: State::with_options(options),
+            state: State::opened(options, starting.handle.injection()),
             shared: starting.handle.shared(),
             rx,
             in_flight,
@@ -1173,7 +1184,7 @@ mod tests {
     #[test]
     fn a_message_on_its_way_to_the_driver_keeps_the_session_busy() {
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let handle = Handle::new(tx, "a");
+        let handle = Handle::new(tx, "a", None);
         assert!(!handle.busy());
         let delivery = handle.deliver(message("hi", &SendOptions::default()));
         assert!(handle.busy(), "sent, not taken yet");
@@ -1384,6 +1395,255 @@ mod tests {
         assert_eq!(resident.map(|resident| resident.phase), Some(droppen_sessions::ResidentPhase::Idle), "its agent process, as the turn left it");
         let listed = providers.driver_states().resident(Source::Acp, &id).expect("in the providers' snapshot");
         assert_eq!(listed.phase, droppen_sessions::ResidentPhase::Idle);
+    }
+
+    /// What the sessions' feeds and the session list were told, in order: a
+    /// feed's poke by its key, and a list's refresh by the session it names.
+    #[derive(Default)]
+    struct Told(Mutex<Vec<String>>);
+
+    impl Told {
+        /// Everything told since the last call.
+        fn take(&self) -> Vec<String> {
+            std::mem::take(&mut self.0.lock().unwrap())
+        }
+    }
+
+    impl droppen_provider::SessionFeeds for Told {
+        fn poke(&self, key: &str) {
+            self.0.lock().unwrap().push(format!("feed {key}"));
+        }
+    }
+
+    impl droppen_http::refresh::RefreshSink for Told {
+        fn request_refresh(&self, expected: Option<(&dyn std::fmt::Display, &str)>) {
+            let named = expected.map(|(source, id)| format!(" {source}/{id}")).unwrap_or_default();
+            self.0.lock().unwrap().push(format!("list{named}"));
+        }
+
+        fn publish(&self, _frame: String) {}
+    }
+
+    /// A session whose agent process is gone reads as working while the agent
+    /// starts again for its next message: the process, then `session/load`,
+    /// held here. Its feed and the list are told at once, not at their next
+    /// poll. Meanwhile the session still says how its last turn ended, as it
+    /// did before the message was sent; a start given up on puts that back as
+    /// it was, and says so too.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_session_reads_as_working_while_its_agent_restarts_for_a_message() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let (state, id, dir) = one_turn(home.path(), "", "hello", &SendOptions::default()).await;
+        let injections = acp_of(&state);
+        let gate = state.providers.gate();
+        let told = Arc::new(Told::default());
+        injections
+            .host
+            .attach_listeners(told.clone(), droppen_http::refresh::Refresh::new(told.clone()));
+        let announced = [
+            format!("feed {}", injections.host.key_of(Source::Acp, &id)),
+            format!("list {}/{id}", Source::Acp),
+        ];
+        let shown = |injection: Option<Injection>| injection.map(|injection| (injection.state, injection.started_at, injection.finished_at.0));
+        let last = shown(state.providers.injection_for(Source::Acp, &id));
+        assert_eq!(
+            last.as_ref().map(|last| last.0),
+            Some(droppen_sessions::InjectionRunState::Ok),
+            "the first turn ended"
+        );
+
+        // A changed environment ends the idle process, so the next message
+        // starts the agent again: one that holds `session/load`.
+        let slow = crate::agents::AcpAgentUpdate {
+            name: None.into(),
+            command: None.into(),
+            args: None.into(),
+            env: Some("FAKE_AGENT_SLOW=session/load=600".to_string()).into(),
+        };
+        injections.reconfigure_acp_agent(gate, "fake", &slow).await.expect("reconfigured");
+        until("the process to go", || injections.acp_handle(&id).is_some_and(|handle| !handle.alive())).await;
+        told.take();
+        let sending = tokio::spawn({
+            let (injections, providers, id) = (injections.clone(), state.providers.clone(), id.clone());
+            async move { injections.acp_send(providers.gate(), &id, "again", &SendOptions::default()).await }
+        });
+        until("session/load", || was_sent(&dir, "session/load")).await;
+        assert_eq!(told.take(), announced, "the starting agent is announced");
+
+        let resident = state.providers.resident_info(Source::Acp, &id).expect("the starting agent is on view");
+        assert_eq!(resident.phase, droppen_sessions::ResidentPhase::Starting);
+        assert_eq!(
+            resident.activity(),
+            droppen_sessions::SessionActivity::Working,
+            "at work on the message, not idle"
+        );
+        assert_eq!(
+            shown(state.providers.injection_for(Source::Acp, &id)),
+            last,
+            "the last turn stays on view"
+        );
+        let listed = state
+            .providers
+            .driver_states()
+            .resident(Source::Acp, &id)
+            .expect("in the providers' snapshot");
+        assert_eq!(listed.phase, droppen_sessions::ResidentPhase::Starting);
+        assert!(!sending.is_finished(), "the message waits for the agent");
+
+        sending.abort();
+        let _ = sending.await;
+        assert_eq!(told.take(), announced, "so is the start given up on");
+        assert!(state.providers.resident_info(Source::Acp, &id).is_none(), "no agent process is left");
+        assert_eq!(
+            shown(state.providers.injection_for(Source::Acp, &id)),
+            last,
+            "the session is as the start found it"
+        );
+    }
+
+    /// The last turn stays on view until the next one starts, on an agent
+    /// started again for the message as on one that was running: the driver
+    /// opens with what its handle showed. Held here at the switch to the model
+    /// the message asks for, after the driver took it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_restarted_agent_keeps_the_last_turn_on_view_until_it_runs_the_next() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let (state, id, dir) = one_turn(home.path(), "", "hello", &SendOptions::default()).await;
+        let injections = acp_of(&state);
+        let gate = state.providers.gate();
+        let shown = |injection: Option<Injection>| injection.map(|injection| (injection.state, injection.started_at, injection.finished_at.0));
+        let last = shown(state.providers.injection_for(Source::Acp, &id));
+        assert!(last.is_some(), "the first turn ended");
+
+        let slow = crate::agents::AcpAgentUpdate {
+            name: None.into(),
+            command: None.into(),
+            args: None.into(),
+            env: Some("FAKE_AGENT_SLOW=session/set_config_option=600".to_string()).into(),
+        };
+        injections.reconfigure_acp_agent(gate, "fake", &slow).await.expect("reconfigured");
+        until("the process to go", || injections.acp_handle(&id).is_some_and(|handle| !handle.alive())).await;
+        let switch = SendOptions {
+            model: Some("openrouter:vendor/big".into()),
+            ..SendOptions::default()
+        };
+        injections.acp_send(gate, &id, "again", &switch).await.expect("taken");
+        until("the switch", || was_sent(&dir, "session/set_config_option")).await;
+
+        assert_eq!(
+            shown(state.providers.injection_for(Source::Acp, &id)),
+            last,
+            "the last turn stays on view"
+        );
+    }
+
+    /// A Stop while a session's agent starts again for a message is taken,
+    /// not refused: it waits behind the message, and the driver cancels the
+    /// turn the message starts as soon as it starts it. The message is one
+    /// the stand-in holds open until it is cancelled.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_stop_while_the_agent_restarts_ends_the_turn_it_starts() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let (state, id, dir) = one_turn(home.path(), "", "hello", &SendOptions::default()).await;
+        let injections = acp_of(&state);
+        let gate = state.providers.gate();
+        let first = state.providers.injection_for(Source::Acp, &id).expect("the first turn's").started_at;
+
+        // Held at `session/load` long enough to be stopped meanwhile.
+        let slow = crate::agents::AcpAgentUpdate {
+            name: None.into(),
+            command: None.into(),
+            args: None.into(),
+            env: Some("FAKE_AGENT_SLOW=session/load=3".to_string()).into(),
+        };
+        injections.reconfigure_acp_agent(gate, "fake", &slow).await.expect("reconfigured");
+        until("the process to go", || injections.acp_handle(&id).is_some_and(|handle| !handle.alive())).await;
+        let sending = tokio::spawn({
+            let (injections, providers, id) = (injections.clone(), state.providers.clone(), id.clone());
+            async move { injections.acp_send(providers.gate(), &id, "wait for me", &SendOptions::default()).await }
+        });
+        until("session/load", || was_sent(&dir, "session/load")).await;
+        let resident = state.providers.resident_info(Source::Acp, &id).expect("the starting agent is on view");
+        assert_eq!(resident.phase, droppen_sessions::ResidentPhase::Starting);
+        assert!(
+            state.providers.interrupt(Source::Acp, &id),
+            "a Stop during the start is taken, not refused"
+        );
+
+        sending.await.expect("joined").expect("the message is taken");
+        let ended = || {
+            state
+                .providers
+                .injection_for(Source::Acp, &id)
+                .filter(|injection| injection.started_at != first && injection.state != droppen_sessions::InjectionRunState::Running)
+        };
+        until("the turn to end", || ended().is_some()).await;
+        let ended = ended().expect("ended");
+        assert!(ended.interrupted, "the turn ends as stopped: {ended:?}");
+        assert!(was_sent(&dir, "session/cancel"), "the agent was told to cancel it");
+    }
+
+    /// A Stop names the turn it means, and stops no other. Two messages are
+    /// sent while the agent starts, then a Stop, then a third. The first turn
+    /// is over before the driver reads the Stop: the agent has no model by
+    /// the name it asks for, so it ends at once. The Stop then leaves the
+    /// second turn running. The third message is taken only once the driver
+    /// has read the Stop. A Stop sent now names the second turn, and stops it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_stop_does_not_cancel_the_turn_after_the_one_it_meant() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let (state, id, dir) = one_turn(home.path(), "", "hello", &SendOptions::default()).await;
+        let injections = acp_of(&state);
+        let gate = state.providers.gate();
+        let slow = crate::agents::AcpAgentUpdate {
+            name: None.into(),
+            command: None.into(),
+            args: None.into(),
+            env: Some("FAKE_AGENT_SLOW=session/load=3".to_string()).into(),
+        };
+        injections.reconfigure_acp_agent(gate, "fake", &slow).await.expect("reconfigured");
+        until("the process to go", || injections.acp_handle(&id).is_some_and(|handle| !handle.alive())).await;
+        let send = |text: &'static str, model: Option<&'static str>| {
+            let (injections, providers, id) = (injections.clone(), state.providers.clone(), id.clone());
+            tokio::spawn(async move {
+                let options = SendOptions {
+                    model: model.map(str::to_owned),
+                    ..SendOptions::default()
+                };
+                injections.acp_send(providers.gate(), &id, text, &options).await
+            })
+        };
+        let refused = send("first", Some("no-such-model"));
+        until("session/load", || was_sent(&dir, "session/load")).await;
+        let held = send("wait for me", None);
+        let on_their_way = || {
+            injections
+                .acp_handle(&id)
+                .map_or(0, |handle| handle.counters().0.load(std::sync::atomic::Ordering::Acquire))
+        };
+        until("the second message on its way", || on_their_way() == 2).await;
+        let resident = state.providers.resident_info(Source::Acp, &id).expect("the starting agent is on view");
+        assert_eq!(resident.phase, droppen_sessions::ResidentPhase::Starting);
+        assert!(state.providers.interrupt(Source::Acp, &id), "a Stop during the start is taken");
+        let after = send("after the stop", None);
+
+        refused.await.expect("joined").expect("taken");
+        held.await.expect("joined").expect("taken");
+        assert!(after.await.expect("joined").expect("taken").queued, "behind the second turn");
+        let second = state.providers.injection_for(Source::Acp, &id).expect("the second turn's");
+        assert_eq!(second.state, droppen_sessions::InjectionRunState::Running, "the second turn runs");
+        // A cancel the driver sent is in the agent's call log within a
+        // moment; a second is far longer than that.
+        let quiet = std::time::Instant::now() + Duration::from_secs(1);
+        while std::time::Instant::now() < quiet {
+            assert!(!was_sent(&dir, "session/cancel"), "the Stop meant the first turn, not the second");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let still = state.providers.injection_for(Source::Acp, &id).expect("the second turn's");
+        assert_eq!((still.state, still.started_at), (second.state, second.started_at), "it runs on");
+
+        assert!(state.providers.interrupt(Source::Acp, &id), "a Stop now names the second turn");
+        until("the second turn's cancel", || was_sent(&dir, "session/cancel")).await;
     }
 
     /// Start a session on the stand-in, configured with `env`, with one

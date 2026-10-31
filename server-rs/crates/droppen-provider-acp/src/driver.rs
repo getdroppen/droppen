@@ -35,6 +35,9 @@ const CONFIG_TIMEOUT: Duration = if cfg!(test) { Duration::from_secs(5) } else {
 pub(super) struct State {
     /// A `session/prompt` is in flight.
     active: bool,
+    /// How many turns this driver has started: the one in flight, when
+    /// `active`, is the last of them. What a Stop names ([`Cmd::Interrupt`]).
+    turns: u64,
     /// When it was sent.
     turn_started_at: Option<String>,
     /// Messages waiting for the turn in flight to end, in order.
@@ -47,8 +50,14 @@ pub(super) struct State {
 }
 
 impl State {
-    pub(super) fn with_options(options: Vec<ConfigOption>) -> Self {
-        Self { options, ..Self::default() }
+    /// A driver's state as its session opens: the options the agent reports,
+    /// and the last turn as its handle kept it on view ([`Handle::new`]).
+    pub(super) fn opened(options: Vec<ConfigOption>, injection: Option<Injection>) -> Self {
+        Self {
+            options,
+            injection,
+            ..Self::default()
+        }
     }
 }
 
@@ -109,10 +118,16 @@ impl Delivery {
 }
 
 impl Handle {
-    pub(super) fn new(tx: mpsc::UnboundedSender<Cmd>, agent: &str) -> Self {
+    /// The handle of a process about to start, in place of `before`: how the
+    /// last turn ended stays on view until this process runs the next one, as
+    /// it was while no process ran.
+    pub(super) fn new(tx: mpsc::UnboundedSender<Cmd>, agent: &str, before: Option<&Handle>) -> Self {
         Self {
             tx,
-            shared: Arc::default(),
+            shared: Arc::new(Mutex::new(State {
+                injection: before.and_then(Handle::injection),
+                ..State::default()
+            })),
             agent: agent.into(),
             in_flight: Arc::default(),
             retire: Arc::default(),
@@ -198,10 +213,24 @@ impl Handle {
         self.shared.lock().unwrap().injection.clone()
     }
 
+    /// A message on its way that no driver has taken, with no turn running
+    /// and none waiting: the agent is starting for it (its process, then the
+    /// session's opening), which can take as long as `START_TIMEOUT`. A
+    /// driver that is running takes one at once.
+    fn starting(&self, state: &State) -> bool {
+        !state.active && state.queue.is_empty() && self.in_flight.load(Ordering::Acquire) > 0
+    }
+
     pub(crate) fn state(&self) -> ResidentState {
         let state = self.shared.lock().unwrap();
         ResidentState {
-            phase: if state.active { Phase::Working } else { Phase::Idle },
+            phase: if state.active {
+                Phase::Working
+            } else if self.starting(&state) {
+                Phase::Starting
+            } else {
+                Phase::Idle
+            },
             stalled: false,
             queued: state.queue.len(),
             queued_messages: state
@@ -226,8 +255,21 @@ impl Handle {
         self.state().into()
     }
 
+    /// Stop the turn running, or the one a starting agent is about to run:
+    /// sent while the message is on its way, the interrupt waits behind it in
+    /// the channel, and the driver cancels the turn as soon as it starts it.
+    /// Either way it names that turn, so it stops no other: not the next one,
+    /// if the turn it meant ends before the driver reads it.
     pub(crate) fn interrupt(&self) -> bool {
-        self.shared.lock().unwrap().active && self.tx.send(Cmd::Interrupt).is_ok()
+        let state = self.shared.lock().unwrap();
+        let turn = if state.active {
+            state.turns
+        } else if self.starting(&state) {
+            state.turns + 1
+        } else {
+            return false;
+        };
+        self.tx.send(Cmd::Interrupt(turn)).is_ok()
     }
 
     pub(super) async fn queue_action(&self, id: &str, steer: bool) -> QueueOutcome {
@@ -243,7 +285,10 @@ pub(crate) enum Cmd {
     /// A message, the reply its sender waits for, and its count in
     /// [`Handle::in_flight`].
     Deliver(Message, oneshot::Sender<Sent>, InFlight),
-    Interrupt,
+    /// Stop the driver's turn by this number ([`State::turns`]) if it is the
+    /// one in flight; a turn that is over is not stopped, and neither is one
+    /// after it.
+    Interrupt(u64),
     Queue {
         id: String,
         steer: bool,
@@ -578,8 +623,8 @@ impl Driver {
                 drop(counted);
                 let _ = reply.send(Sent { queued });
             }
-            Cmd::Interrupt => {
-                if self.state.active && !self.interrupted {
+            Cmd::Interrupt(turn) => {
+                if self.state.active && self.state.turns == turn && !self.interrupted {
                     self.interrupted = true;
                     self.conn.cancel(&self.agent_session).await?;
                 }
@@ -649,6 +694,7 @@ impl Driver {
         let now = iso8601(SystemTime::now());
         self.interrupted = false;
         self.state.active = true;
+        self.state.turns += 1;
         self.state.turn_started_at = Some(now.clone());
         self.state.injection = Some(Injection {
             state: InjectionRunState::Running,

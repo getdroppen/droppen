@@ -17,8 +17,8 @@ import {
   backgroundPanel,
   bannerCanStop,
   residentOf,
-  turnProgress,
   willQueueSend,
+  workingProgress,
   type LiveSubtask,
 } from "@/features/sessions/session-activity";
 import { injectionFailurePausesQueue, localQueueHeadAction, shouldDrainQueue } from "@/features/sessions/queue-drain";
@@ -422,11 +422,13 @@ export function Composer({
   const subtask = banner && !panel ? (subtasks.at(-1) ?? null) : null;
   // `injection.startedAt` has been on the wire since injections existed and
   // nothing had ever read it; it is the only clock that knows when the *user's
-  // message* went in rather than when the transcript happened to gain a line.
-  const injectionStartedAt = detail.injection?.startedAt;
+  // message* went in rather than when the transcript happened to gain a line —
+  // while that injection is running. See `workingProgress` for the rest.
+  const injection = detail.injection;
+  const resident = residentOf(detail.summary);
   const progress = useMemo(
-    () => turnProgress(detail.items, injectionStartedAt),
-    [detail.items, injectionStartedAt],
+    () => workingProgress(detail.items, injection, resident),
+    [detail.items, injection, resident],
   );
 
   // Guards the window between `mutate` being called and `isPending` becoming

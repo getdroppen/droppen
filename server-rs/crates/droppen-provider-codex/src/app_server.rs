@@ -177,9 +177,13 @@ impl Handle {
     pub(crate) fn info(&self) -> droppen_sessions::ResidentInfo {
         self.state().into()
     }
+    /// Stop the turn running or being started, or the one a starting app
+    /// server is about to run: sent while the message is on its way, the
+    /// interrupt waits behind it in the channel, and the driver interrupts
+    /// the turn once codex says it started (`interrupt_requested`).
     pub(crate) fn interrupt(&self) -> bool {
         let state = self.shared.lock().unwrap();
-        (state.active.is_some() || state.queue.iter().any(|q| q.request.is_some())) && self.tx.send(Cmd::Interrupt).is_ok()
+        (self.starting() || state.active.is_some() || state.queue.iter().any(|q| q.request.is_some())) && self.tx.send(Cmd::Interrupt).is_ok()
     }
     pub(crate) async fn queue_action(&self, id: &str, steer: bool) -> QueueOutcome {
         let (reply, rx) = oneshot::channel();
@@ -1623,6 +1627,22 @@ impl Driver {
                 let _ = reply.send(Ok(()));
             }
             Cmd::Interrupt => {
+                // A Stop with nothing to stop is dropped, not kept: no turn
+                // running, none being started, and none about to start, the
+                // queue being empty or paused behind a message the process
+                // before this one left unanswered. Kept, `interrupt_requested`
+                // would stop whichever turn the user starts next, however much
+                // later, and a restart would read it back from the journal.
+                // The route has answered already that the Stop was taken: one
+                // is taken while the app server starts ([`Handle::interrupt`]),
+                // before anybody can tell whether the queue will be paused.
+                // The message it was sent for waits in the paused queue.
+                let stoppable = self.state.active.is_some()
+                    || self.state.queue.iter().any(|q| q.request.is_some())
+                    || (!self.state.paused && !self.state.queue.is_empty());
+                if !stoppable {
+                    return Ok(());
+                }
                 self.state.interrupt_requested = true;
                 self.checkpoint();
                 self.send_interrupt().await?;
@@ -2713,6 +2733,62 @@ mod tests {
         assert_eq!(h.request().await["method"], "turn/interrupt");
     }
 
+    /// A Stop that reaches the driver with nothing to stop is dropped, not
+    /// kept for a later turn. Here a respawn's queue is paused behind a
+    /// message the dead app server may have taken, with the message sent while
+    /// the new one started behind it. The user then withdraws the stale
+    /// message and sends the other now: that turn runs, and nothing stops it.
+    #[tokio::test]
+    async fn a_stop_with_nothing_to_stop_is_not_kept_for_a_later_turn() {
+        let mut h = Harness::new().await;
+        // As a respawn reads its state back: the message the old app server
+        // may have taken, uncertain, and the queue paused behind it.
+        let stale = h.enqueue("possibly delivered").await;
+        h.driver.state.queue[0].uncertain = true;
+        h.driver.state.paused = true;
+        let sent = h.enqueue("sent while the app server started").await;
+        h.driver.command(Cmd::Interrupt).await.unwrap();
+        assert!(!h.driver.state.interrupt_requested, "nothing runs, so no Stop is kept");
+
+        let (reply, dropped) = oneshot::channel();
+        h.driver
+            .command(Cmd::Queue {
+                id: stale,
+                steer: false,
+                reply,
+            })
+            .await
+            .unwrap();
+        assert_eq!(dropped.await.unwrap(), QueueOutcome::Done);
+        let (reply, _sent_now) = oneshot::channel();
+        h.driver
+            .command(Cmd::Queue {
+                id: sent,
+                steer: true,
+                reply,
+            })
+            .await
+            .unwrap();
+        assert_eq!(h.request().await["method"], "turn/start");
+        h.event(json!({"method":"turn/started","params":{"threadId":"test-thread","turn":{"id":"turn-9","status":"inProgress"}}}))
+            .await;
+        let mut line = String::new();
+        let written = tokio::time::timeout(Duration::from_millis(300), h.input.read_line(&mut line)).await;
+        assert!(written.is_err(), "nothing interrupts the turn: {line}");
+        assert!(h.driver.state.active.is_some(), "the turn runs");
+    }
+
+    /// A Stop the driver reads after the turn it meant has ended, with nothing
+    /// queued, is dropped too: kept, it would stop the next turn.
+    #[tokio::test]
+    async fn a_stop_read_after_its_turn_ended_is_not_kept() {
+        let mut h = Harness::new().await;
+        h.start().await;
+        h.complete("completed").await;
+        h.driver.command(Cmd::Interrupt).await.unwrap();
+        assert!(!h.driver.state.interrupt_requested, "nothing runs, so no Stop is kept");
+    }
+
     #[tokio::test]
     async fn late_start_response_does_not_resurrect_a_completed_turn() {
         let mut h = Harness::new().await;
@@ -3400,6 +3476,51 @@ mod tests {
         std::fs::remove_file(work.join("init-hold")).expect("release");
         start.await.expect("joined").expect("delivered");
         assert_eq!(registry.host.steps().iter().filter(|step| step.what == "codex started").count(), 1, "nothing else was started");
+        retire_all(&runs, &[RESUMED]).await;
+    }
+
+    /// A Stop while a session's app server starts is taken, not refused: it
+    /// waits behind the message, and the turn the message starts is
+    /// interrupted as soon as codex says it started. The turn is one the
+    /// stand-in runs until it is interrupted.
+    #[tokio::test]
+    async fn a_stop_while_a_codex_app_server_starts_ends_the_turn_it_starts() {
+        const RESUMED: &str = "0199c1a1-0000-4000-8000-00000000000b";
+        let (_home, _path, registry, providers, work) = unheld("codex-unheld-stop");
+        std::fs::write(work.join("init-hold"), "").expect("hold");
+        std::fs::write(work.join("sleep.txt"), "600").expect("a turn that runs until it is stopped");
+        let runs = codex(&providers).clone();
+        let start = {
+            let (runs, providers, work) = (runs.clone(), providers.clone(), work.to_string_lossy().into_owned());
+            tokio::spawn(async move {
+                runs.codex_deliver(providers.gate(), Some(RESUMED), Some(&work), "hello", &SendOptions::default(), None)
+                    .await
+            })
+        };
+        wait_for_step(&registry, "codex started", 1).await;
+        assert_eq!(runs.codex_handle(RESUMED).expect("reserved").state().phase, Phase::Starting);
+        assert!(
+            providers.interrupt(Source::Codex, RESUMED),
+            "a Stop during the start is taken, not refused"
+        );
+
+        std::fs::remove_file(work.join("init-hold")).expect("release");
+        start.await.expect("joined").expect("delivered");
+        let ended = || {
+            providers
+                .injection_for(Source::Codex, RESUMED)
+                .filter(|injection| injection.state != InjectionRunState::Running)
+        };
+        for _ in 0..500 {
+            if ended().is_some() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let ended = ended().expect("the turn ended");
+        assert!(ended.interrupted, "the turn ends as stopped: {ended:?}");
+        let asked = std::fs::read_to_string(work.join("codex-stdin.jsonl")).unwrap_or_default();
+        assert!(asked.contains(r#""method":"turn/interrupt""#), "codex was asked to interrupt it");
         retire_all(&runs, &[RESUMED]).await;
     }
 

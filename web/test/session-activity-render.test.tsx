@@ -19,12 +19,14 @@ import { StatusBadge } from "../src/features/sessions/sessions-layout.js";
 import { ActivityBar, AwaitingBackgroundNotice } from "../src/features/sessions/activity-bar.js";
 import { BackgroundTaskPanel } from "../src/features/sessions/background-panel.js";
 import { createDraftStore, thinkingOf } from "../src/features/sessions/stream-draft.js";
-import type {
-  ActivityRow,
-  LiveSubtask,
-  ResidentInfo,
+import {
+  activityBanner,
+  workingProgress,
+  type ActivityRow,
+  type LiveSubtask,
+  type ResidentInfo,
 } from "../src/features/sessions/session-activity.js";
-import { resident } from "./session-fixtures.js";
+import { resident, transcriptItem as item } from "./session-fixtures.js";
 import { makeI18n, pageDraw } from "./render.js";
 
 // English keys are the source strings, so an empty resource bundle renders the
@@ -194,6 +196,25 @@ test("a working turn says how much it has written, when, and for how long", () =
   assert.match(html, /37m/);
   assert.doesNotMatch(html, /agent is working on your message/);
   assert.doesNotMatch(html, /<progress|role="progressbar"/);
+});
+
+test("an agent starting again for a message says it is working, not how long the turn before took", () => {
+  // The row an ACP session reads during its agent's restart: starting, with
+  // the last turn's injection kept on view, ended two hours ago.
+  const twoHoursAgo = new Date(Date.now() - 2 * 3_600_000).toISOString();
+  const row: ActivityRow = { status: "idle", activity: "working", resident: resident({ phase: "starting" }) };
+  const items = [item({ kind: "text", role: "user", text: "old", timestamp: twoHoursAgo })];
+  const html = draw(
+    <ActivityBar
+      banner={activityBanner(row, false)}
+      subtask={null}
+      progress={workingProgress(items, { state: "ok", startedAt: twoHoursAgo }, row.resident as ResidentInfo)}
+      stopping={false}
+      onStop={() => {}}
+    />,
+  );
+  assert.match(html, /agent is working on your message/);
+  assert.doesNotMatch(html, /2h|last activity/);
 });
 
 test("a think in flight is said in the bar, in place of the last activity, on the one line", () => {

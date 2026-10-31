@@ -363,6 +363,30 @@ export function turnProgress(
   return { messages: items.length - from, startedAt: resolvedStart, lastActivityAt };
 }
 
+/**
+ * What the working bar measures: [`turnProgress`], dated by the clock that
+ * belongs to the turn in flight, or nothing.
+ *
+ * Only a running injection dates it. One that has ended is the turn before,
+ * which a process starting again for the next message keeps on view so the
+ * row still says how that turn went; dated from it, the bar would read
+ * "last activity 2h ago · 2h 1m" for a message sent a second ago. While this
+ * server's process is at work with no turn running — starting for the
+ * message — nothing dates the turn yet, and the bar says only that the agent
+ * is working: the transcript's last user message is the turn before's too.
+ * The transcript dates the turn only when no process of this server's is at
+ * it: a turn this instance did not start, or an older server's.
+ */
+export function workingProgress(
+  items: readonly TranscriptItem[],
+  injection: Pick<NonNullable<components["schemas"]["Injection"]>, "state" | "startedAt"> | null | undefined,
+  resident: ResidentInfo | null,
+): TurnProgress | null {
+  if (injection?.state === "running") return turnProgress(items, injection.startedAt);
+  if (residentBusy(resident)) return null;
+  return turnProgress(items, null);
+}
+
 /** A child of this session that has not reported back yet. */
 export interface LiveSubtask {
   /**
