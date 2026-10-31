@@ -3282,6 +3282,61 @@ mod tests {
         retire_all(&runs, &[&id]).await;
     }
 
+    /// A session whose app server restarts for a new message, here under
+    /// another account, reads as working while the new one starts, and still
+    /// says how its last turn ended: the reserved handle takes that from the
+    /// one it replaces, until the new app server runs the next turn.
+    #[tokio::test]
+    async fn the_last_turn_stays_on_view_while_a_codex_app_server_restarts_for_a_message() {
+        let (_home, _path, registry, providers, work) = unheld("codex-unheld-last-turn");
+        let work_ = work.to_string_lossy().into_owned();
+        let runs = codex(&providers).clone();
+        let (id, _) = runs
+            .codex_deliver(providers.gate(), None, Some(&work_), "hello", &SendOptions::default(), None)
+            .await
+            .expect("a new thread");
+        for _ in 0..500 {
+            if runs.codex_handle(&id).is_some_and(|handle| !handle.busy()) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let shown = |injection: Option<Injection>| injection.map(|injection| (injection.state, injection.started_at, injection.finished_at.0));
+        let last = shown(providers.injection_for(Source::Codex, &id));
+        assert_eq!(last.as_ref().map(|last| last.0), Some(InjectionRunState::Ok), "the first turn ended");
+
+        std::fs::write(work.join("init-hold"), "").expect("hold");
+        let other = CodexAccount {
+            id: "another".to_string(),
+            launch: droppen_accounts::store::AccountLaunch {
+                provider: AccountProvider::Codex,
+                env: vec![],
+                codex_args: vec![],
+            },
+        };
+        let switched = {
+            let (runs, providers, work, id) = (runs.clone(), providers.clone(), work_.clone(), id.clone());
+            tokio::spawn(async move {
+                runs.codex_deliver(providers.gate(), Some(&id), Some(&work), "again", &SendOptions::default(), Some(other))
+                    .await
+            })
+        };
+        wait_for_step(&registry, "codex started", 2).await;
+
+        let resident = providers.resident_info(Source::Codex, &id).expect("the starting app server is on view");
+        assert_eq!(resident.phase, droppen_sessions::ResidentPhase::Starting);
+        assert_eq!(
+            resident.activity(),
+            droppen_sessions::SessionActivity::Working,
+            "at work on the message, not idle"
+        );
+        assert_eq!(shown(providers.injection_for(Source::Codex, &id)), last, "the last turn stays on view");
+
+        std::fs::remove_file(work.join("init-hold")).expect("release");
+        switched.await.expect("joined").expect("delivered under the other account");
+        retire_all(&runs, &[&id]).await;
+    }
+
     /// Dropping or steering a queued message of a session whose app server is
     /// still starting is refused at once: its driver takes nothing off the
     /// queue until codex has answered, and waiting for it would leave the
