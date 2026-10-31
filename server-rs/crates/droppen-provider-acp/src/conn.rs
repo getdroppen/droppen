@@ -460,12 +460,66 @@ mod tests {
             .spawn()
             .expect("spawn");
         let stdin = child.stdin.take().expect("its input");
+        let write_end = {
+            use std::os::fd::AsRawFd;
+            stdin.as_raw_fd()
+        };
         child.wait().await.expect("exited");
+        read_end_gone(write_end).await;
         let writer = Writer(Arc::new(tokio::sync::Mutex::new(Some(stdin))));
         let said = |unsent: Unsent| InjectError::from(unsent).to_string();
         let closed = Err("the agent closed its input".to_string());
         assert_eq!(writer.send(&"hello").await.map_err(said), closed, "nobody reads the pipe");
         writer.close().await;
         assert_eq!(writer.send(&"hello").await.map_err(said), closed, "this side closed it");
+    }
+
+    /// Wait until the pipe whose write end is `fd` has no holder but this
+    /// side's.
+    ///
+    /// `child.wait()` says the agent is gone, and with it the read end its
+    /// stdin was — but not that every copy of that read end is gone. A child
+    /// forked by another test of this binary while this one spawns inherits
+    /// this process's descriptors, and a close-on-exec descriptor survives the
+    /// fork until that child execs. While such a copy lives the pipe still
+    /// has a reader, and a write lands in its buffer and says it was sent.
+    /// The copies are visible in `/proc`; on a platform without it they are
+    /// not, and the write is taken as it comes.
+    async fn read_end_gone(fd: std::os::fd::RawFd) {
+        #[cfg(target_os = "linux")]
+        {
+            let pipe = std::fs::read_link(format!("/proc/self/fd/{fd}")).expect("the write end's pipe");
+            let me = std::process::id();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            while let Some((pid, comm)) = holder_of(&pipe, me, fd) {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "timed out waiting for the agent's input to have no reader: {pid} (`{comm}`) holds it"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = fd;
+    }
+
+    /// A process other than this one, or a descriptor other than `own`, that
+    /// holds a copy of the pipe `pipe`: its pid and the name it runs under.
+    #[cfg(target_os = "linux")]
+    fn holder_of(pipe: &Path, me: u32, own: std::os::fd::RawFd) -> Option<(u32, String)> {
+        for entry in std::fs::read_dir("/proc").ok()?.flatten() {
+            let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() else { continue };
+            let Ok(fds) = std::fs::read_dir(entry.path().join("fd")) else { continue };
+            for fd in fds.flatten() {
+                if pid == me && fd.file_name().to_string_lossy().parse::<std::os::fd::RawFd>() == Ok(own) {
+                    continue;
+                }
+                if std::fs::read_link(fd.path()).is_ok_and(|target| target == pipe) {
+                    let comm = std::fs::read_to_string(entry.path().join("comm")).unwrap_or_default();
+                    return Some((pid, comm.trim().to_owned()));
+                }
+            }
+        }
+        None
     }
 }
