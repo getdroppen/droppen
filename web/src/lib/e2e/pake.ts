@@ -1,5 +1,5 @@
 /*
- * CPace over X25519 for pairing by numeric code (`rh-proto/src/pake.rs` has the
+ * CPace over X25519 for pairing by numeric code (`droppen-proto/src/pake.rs` has the
  * construction and why). X25519 with an arbitrary point is WebCrypto's own
  * `deriveBits`; only Elligator 2 is written out (`field.ts`).
  */

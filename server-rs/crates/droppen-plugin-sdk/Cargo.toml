@@ -9,7 +9,7 @@ publish = false
 
 # Deliberately tiny. This crate is the open contract between Droppen and its
 # plugins, so it may not depend on the host (gotcha, axum, tokio) or on anything
-# that belongs to the hosted service (rh-hub, rh-proto). CI checks the
+# that belongs to the hosted service (rh-hub, droppen-proto). CI checks the
 # dependency tree: see `scripts/check-sdk-crate-deps.sh`.
 [dependencies]
 serde = { version = "1", features = ["derive"] }

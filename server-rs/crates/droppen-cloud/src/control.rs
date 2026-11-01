@@ -16,7 +16,7 @@
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
-use rh_proto::identity::{EnrollCode, MachineIdentity};
+use droppen_proto::identity::{EnrollCode, MachineIdentity};
 
 use droppen_agent::enroll::BeginError;
 use droppen_agent::link::{Health, LinkEnv, Running};

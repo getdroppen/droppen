@@ -20,7 +20,7 @@
 #    crates/droppen-aggregator/src and rh-{relay,client,devkit}/src, and its
 #    plugin-sdk test reads
 #    server-rs/crates/droppen-plugin-sdk/src/lib.rs (the SDK version);
-#  - the web tests read rh-proto's committed vectors and src/sig.rs, the two
+#  - the web tests read droppen-proto's committed vectors and src/sig.rs, the two
 #    lint scripts they import, SECURITY.md, and the repository paths the
 #    security page cites (rh-relay, rh-client, droppen-relay, docs);
 #  - the server's tests read openapi/openapi.json, droppen-plugin-sdk does
@@ -113,12 +113,12 @@ while IFS= read -r path; do
       web=1; matched=1 ;;
   esac
 
-  # The web tests also read rh-proto's vectors and sources (the interop and the
+  # The web tests also read droppen-proto's vectors and sources (the interop and the
   # security page's code references), the crates and repository paths that page
   # links to (it stats them), SECURITY.md, the distribution manifest, and the
   # two lint scripts they import.
   case "$path" in
-    web/*|packages/*|package.json|pnpm-lock.yaml|pnpm-workspace.yaml|.nvmrc|e2e/package.json|distribution.json|SECURITY.md|docs/web-integrity.md|scripts/check-machine-keys.mjs|scripts/check-plugin-boundary.mjs|scripts/install.sh|scripts/verify-web.mjs|server-rs/crates/rh-proto/*|server-rs/crates/rh-relay/*|server-rs/crates/rh-client/*|server-rs/crates/droppen-relay/*|server-rs/crates/droppen-provider/src/drafts.rs)
+    web/*|packages/*|package.json|pnpm-lock.yaml|pnpm-workspace.yaml|.nvmrc|e2e/package.json|distribution.json|SECURITY.md|docs/web-integrity.md|scripts/check-machine-keys.mjs|scripts/check-plugin-boundary.mjs|scripts/install.sh|scripts/verify-web.mjs|server-rs/crates/droppen-proto/*|server-rs/crates/rh-relay/*|server-rs/crates/rh-client/*|server-rs/crates/droppen-relay/*|server-rs/crates/droppen-provider/src/drafts.rs)
       web_tests=1; matched=1 ;;
   esac
 

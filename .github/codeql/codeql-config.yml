@@ -27,10 +27,10 @@ paths-ignore:
   - "**/tests.rs"
   - "**/*_tests.rs"
   - "**/*_test.rs"
-  - server-rs/crates/rh-proto/src/attack_regressions.rs
-  - server-rs/crates/rh-proto/src/testing.rs
-  - server-rs/crates/rh-proto/src/v3_regressions.rs
-  - server-rs/crates/rh-proto/src/vectors.rs
+  - server-rs/crates/droppen-proto/src/attack_regressions.rs
+  - server-rs/crates/droppen-proto/src/testing.rs
+  - server-rs/crates/droppen-proto/src/v3_regressions.rs
+  - server-rs/crates/droppen-proto/src/vectors.rs
   # The identity-renewal end-to-end run, by hand against a throwaway account
   # (never built for a release, never run by CI).
   - server-rs/crates/rh-devkit/examples

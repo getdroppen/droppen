@@ -26,7 +26,7 @@
 
 use std::path::{Path, PathBuf};
 
-use rh_proto::record::{SignedHead, StreamId};
+use droppen_proto::record::{SignedHead, StreamId};
 use rusqlite::{params, Connection, OptionalExtension};
 
 use super::keys::Guard;
@@ -492,8 +492,8 @@ mod tests {
 
     fn row(host: &str, kind: Kind, name: &str, state: &str) -> Row {
         let machine = ed25519_dalek::SigningKey::from_bytes(&[4; 32]);
-        let stream = rh_proto::record::stream_id(&[1; 32], "claude", name).unwrap();
-        let head = rh_proto::record::StreamHead {
+        let stream = droppen_proto::record::stream_id(&[1; 32], "claude", name).unwrap();
+        let head = droppen_proto::record::StreamHead {
             stream,
             next_seq: 3,
             epoch: 0,
@@ -634,7 +634,7 @@ mod tests {
         store.put(&at10).unwrap();
         let machine = ed25519_dalek::SigningKey::from_bytes(&[4; 32]);
         let head = |next_seq, time_ms| {
-            rh_proto::record::StreamHead {
+            droppen_proto::record::StreamHead {
                 stream: at10.stream,
                 next_seq,
                 epoch: 0,
@@ -651,7 +651,7 @@ mod tests {
         assert!(store.touch("m-2", Kind::Status, "", &at10.stream, &head(3, 9_000), &[4; 32], 5).unwrap());
         assert_eq!((stored_head(&store).next_seq, stored_head(&store).time_ms), (3, 9_000));
         // Another stream's heartbeat: nothing.
-        let other = rh_proto::stream::index_stream(&[9; 32]);
+        let other = droppen_proto::stream::index_stream(&[9; 32]);
         assert!(!store.touch("m-2", Kind::Status, "", &other, &head(3, 10_000), &[4; 32], 5).unwrap());
     }
 

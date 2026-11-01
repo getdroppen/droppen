@@ -53,10 +53,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use ed25519_dalek::SigningKey;
-use rh_proto::frame::Frame;
-use rh_proto::record::{self, stream_key, StreamId, FMT_FEED_V1, FMT_INDEX_V1, FMT_STATUS_V1};
-use rh_proto::stream::{seal_ephemeral, INDEX_SOURCE, STATUS_SOURCE};
-use rh_proto::wire::agent::AgentToHub;
+use droppen_proto::frame::Frame;
+use droppen_proto::record::{self, stream_key, StreamId, FMT_FEED_V1, FMT_INDEX_V1, FMT_STATUS_V1};
+use droppen_proto::stream::{seal_ephemeral, INDEX_SOURCE, STATUS_SOURCE};
+use droppen_proto::wire::agent::AgentToHub;
 use serde_json::Value;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;

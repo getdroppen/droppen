@@ -226,11 +226,11 @@ pub(crate) mod tests {
         let recipient = DhKeypair::from_secret(v.recipient_secret);
         let ephemeral = DhKeypair::from_secret(v.ephemeral_secret);
         let sealed = seal_with(&ephemeral, v.nonce, &recipient.public(), &v.state, &ctx(v), v.plaintext.as_bytes()).unwrap();
-        if std::env::var_os("RH_PROTO_WRITE_VECTORS").is_some() {
+        if std::env::var_os("DROPPEN_PROTO_WRITE_VECTORS").is_some() {
             let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("vectors/link-return.hex");
             std::fs::write(path, hex::encode(&sealed)).unwrap();
         } else {
-            assert_eq!(hex::encode(&sealed), SEALED_HEX.trim(), "RH_PROTO_WRITE_VECTORS=1 rewrites it");
+            assert_eq!(hex::encode(&sealed), SEALED_HEX.trim(), "DROPPEN_PROTO_WRITE_VECTORS=1 rewrites it");
         }
         let opened = open(&recipient, &v.state, &ctx(v), &sealed).unwrap();
         assert_eq!(opened.as_slice(), v.plaintext.as_bytes());

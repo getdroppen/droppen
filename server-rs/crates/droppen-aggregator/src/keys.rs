@@ -7,7 +7,7 @@
 //! is such a device — with the one identity it runs AI with — and keeps what
 //! it opened here, by host and epoch, for reading those hosts' encrypted
 //! copies (S1-5). Every key in it was checked against the chain's commitment
-//! before it was stored ([`rh_proto::wrap::open_host_key`]).
+//! before it was stored ([`droppen_proto::wrap::open_host_key`]).
 //!
 //! The file is secret: 0600 in a 0700 directory, written whole and
 //! atomically ([`droppen_base::fsutil::write_private_reporting_path`]), refused when others can read

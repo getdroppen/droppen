@@ -8,7 +8,7 @@
 | Web app | `web/` | Vite + React: the local UI, and the cloud mode droppen.app serves (`web/src/features/cloud`, `web/src/lib/hub`, `web/src/lib/e2e`). |
 | Desktop app | `desktop/` | Droppen for macOS (Tauri). It carries the local program and runs it for you. Its own Cargo workspace; see [desktop/README.md](../desktop/README.md). |
 | Relay | `server-rs/crates/droppen-relay` (the program), `server-rs/crates/rh-relay` (the library) | `droppen-relay` pairs a device's channel with a computer's on tickets the Hub signs and copies the ciphertext between them. It stores nothing and holds no keys. See [Running a relay](relay.md). |
-| Protocol | `server-rs/crates/rh-proto` | Hub frames, the Noise end-to-end channel, the device chain, encrypted log records and interoperability vectors. |
+| Protocol | `server-rs/crates/droppen-proto` | Hub frames, the Noise end-to-end channel, the device chain, encrypted log records and interoperability vectors. |
 | Client libraries | `server-rs/crates/rh-client`, `server-rs/crates/rh-devkit` | The device side of the Hub API in Rust; a headless device for tests. |
 | Plugin SDKs | `packages/plugin-sdk` (`@droppen/plugin-sdk`), `server-rs/crates/droppen-plugin-sdk` | For writing plugins. Droppen ships none: a plugin is installed into an instance at runtime and served by that instance's server; see [plugins/runtime.md](plugins/runtime.md). |
 | Hub API | [`docs/hub-api/`](hub-api/README.md) | The contract between this code and the Hub. |

@@ -2,7 +2,7 @@
 //! §6.3, S1-5). Pure, for tests.
 //!
 //! Only hosts that accept this computer's control (review D2:
-//! [`rh_proto::chain::ChainState::hosts_admitting`]) and whose keys it holds
+//! [`droppen_proto::chain::ChainState::hosts_admitting`]) and whose keys it holds
 //! — never itself. Of each:
 //!
 //! - **the index and the status**, each under the newest few machine-key
@@ -25,7 +25,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use rh_client::streams::IndexCopy;
-use rh_proto::record::StreamId;
+use droppen_proto::record::StreamId;
 
 use super::store::Kind;
 
@@ -66,8 +66,8 @@ pub struct Host<'a> {
 /// to exist (`exists`).
 pub fn epoch_names(host: &Host<'_>, kind: Kind, exists: &HashMap<StreamId, bool>) -> Vec<Want> {
     let name = |mk: &[u8; 32]| match kind {
-        Kind::Status => rh_proto::stream::status_stream(mk),
-        _ => rh_proto::stream::index_stream(mk),
+        Kind::Status => droppen_proto::stream::status_stream(mk),
+        _ => droppen_proto::stream::index_stream(mk),
     };
     let mut newest: Vec<&(u32, [u8; 32])> = host.keys.iter().collect();
     newest.sort_by_key(|(e, _)| std::cmp::Reverse(*e));
@@ -196,13 +196,13 @@ mod tests {
         // Nothing known: the newest three.
         assert_eq!(epochs(epoch_names(&host, Kind::Index, &exists)), vec![3, 2, 1]);
         // Epoch 2's exists, 3's not yet: 3 stays (the move), 1 goes.
-        exists.insert(rh_proto::stream::index_stream(&[3; 32]), true);
-        exists.insert(rh_proto::stream::index_stream(&[4; 32]), false);
+        exists.insert(droppen_proto::stream::index_stream(&[3; 32]), true);
+        exists.insert(droppen_proto::stream::index_stream(&[4; 32]), false);
         assert_eq!(epochs(epoch_names(&host, Kind::Index, &exists)), vec![3, 2]);
         // The status has names of its own.
         assert_eq!(epochs(epoch_names(&host, Kind::Status, &exists)), vec![3, 2, 1]);
         let w = &epoch_names(&host, Kind::Status, &exists)[0];
-        assert_eq!(w.stream, rh_proto::stream::status_stream(&[4; 32]));
+        assert_eq!(w.stream, droppen_proto::stream::status_stream(&[4; 32]));
     }
 
     #[test]
@@ -223,7 +223,7 @@ mod tests {
         // f has no key (epoch 9): skipped; the newest five of the rest.
         assert_eq!(names, vec!["claude/e", "claude/d", "claude/c", "claude/b", "claude/a"]);
         let b = &got.iter().find(|(_, w)| w.name == "claude/b").unwrap().1;
-        assert_eq!((b.epoch, b.stream), (1, rh_proto::record::stream_id(&[2; 32], "claude", "b").unwrap()));
+        assert_eq!((b.epoch, b.stream), (1, droppen_proto::record::stream_id(&[2; 32], "claude", "b").unwrap()));
         let a = &got.iter().find(|(_, w)| w.name == "claude/a").unwrap().1;
         assert_eq!(a.epoch, 0, "no se: the first epoch");
     }

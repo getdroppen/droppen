@@ -21,11 +21,11 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
-use rh_proto::frame::Frame;
-use rh_proto::sig::HubLogin;
-use rh_proto::ticket::{RelayTicket, SignedTicket, TicketError, TicketRole};
-use rh_proto::wire::connect::{MachinePresence, PresenceState, RelayToPeer};
-use rh_proto::wire::relay::RelayToHub;
+use droppen_proto::frame::Frame;
+use droppen_proto::sig::HubLogin;
+use droppen_proto::ticket::{RelayTicket, SignedTicket, TicketError, TicketRole};
+use droppen_proto::wire::connect::{MachinePresence, PresenceState, RelayToPeer};
+use droppen_proto::wire::relay::RelayToHub;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
@@ -53,7 +53,7 @@ pub const CLOSE_DENIED: u16 = 4401;
 pub const SYNC_WAIT: Duration = Duration::from_secs(5);
 
 pub fn now_ms() -> u64 {
-    rh_proto::clock::now_ms()
+    droppen_proto::clock::now_ms()
 }
 
 /// Who is on a connection, by the ticket it signed in with.
@@ -541,7 +541,7 @@ impl Server {
     pub fn revoke_role(&self, account: &str, id: Option<&str>, role: Option<TicketRole>, at_ms: u64) {
         let outs: Vec<Outbound> = {
             let mut inner = self.lock();
-            let horizon = now_ms() + rh_proto::ticket::TICKET_TTL_MS + self.config.timing.renew_grace_ms;
+            let horizon = now_ms() + droppen_proto::ticket::TICKET_TTL_MS + self.config.timing.renew_grace_ms;
             let known = inner
                 .revoked
                 .iter_mut()

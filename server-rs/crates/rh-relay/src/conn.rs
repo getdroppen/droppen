@@ -19,7 +19,7 @@ use std::sync::Arc;
 use axum::extract::ws::{CloseFrame, Message, WebSocket};
 use futures_util::stream::SplitSink;
 use futures_util::SinkExt;
-use rh_proto::frame::Frame;
+use droppen_proto::frame::Frame;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 

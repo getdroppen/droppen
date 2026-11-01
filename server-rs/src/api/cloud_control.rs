@@ -4,7 +4,7 @@
 
 use std::time::Duration;
 
-use rh_proto::identity::{EnrollCode, MachineIdentity};
+use droppen_proto::identity::{EnrollCode, MachineIdentity};
 
 use droppen_agent::enroll::BeginError;
 use droppen_agent::link::LinkEnv;
@@ -163,7 +163,7 @@ async fn a_sign_in_that_cannot_begin_leaves_the_link_as_it_was() {
 /// `state.json`.
 #[tokio::test]
 async fn a_member_that_stopped_running_ai_keeps_its_state() {
-    use rh_proto::chain::{genesis_draft, Action, ChainClock, ChainState, DeviceInfo, Signer};
+    use droppen_proto::chain::{genesis_draft, Action, ChainClock, ChainState, DeviceInfo, Signer};
     let dir = tempfile::tempdir().unwrap();
     let paths = Paths::for_instance(dir.path().to_path_buf(), "ctlhost");
     let control = Control::new(paths.clone());
@@ -192,7 +192,7 @@ async fn a_member_that_stopped_running_ai_keeps_its_state() {
         "wss://hub.example",
         "a-1",
         "m-1",
-        rh_proto::identity::fingerprint(&ak.sign_public()),
+        droppen_proto::identity::fingerprint(&ak.sign_public()),
         5_000,
     );
     assert!(st.absorb(&entries, 5_000).error.is_none());
@@ -239,7 +239,7 @@ async fn a_restart_runs_the_link_with_the_renewed_key_and_leaves_the_server_alon
             nonce: [1; 16],
             chain_seq: 0,
             chain_head: [0; 32],
-            assurance: rh_proto::chain::Assurance::Auto,
+            assurance: droppen_proto::chain::Assurance::Auto,
             created_ms: 1,
             accepted_ms: Some(2),
         })
@@ -321,7 +321,7 @@ async fn cancelling_an_enrollment_keeps_the_machine_key() {
 /// m-1's state with a v3 chain that added it with `current`'s keys, then
 /// renewed it to `to`'s (as the agent's rotation tests build one).
 fn renewed_to(current: &MachineIdentity, to: &MachineIdentity) -> AgentState {
-    use rh_proto::{chain, sig};
+    use droppen_proto::{chain, sig};
     let ak = MachineIdentity::from_seed(&[1; 32]);
     let d1 = MachineIdentity::from_seed(&[2; 32]);
     let genesis = chain::genesis_draft(
@@ -376,7 +376,7 @@ fn renewed_to(current: &MachineIdentity, to: &MachineIdentity) -> AgentState {
     r.new_sig = sig::sign(to.signing_key(), sig::HOST_ROTATE, &body);
     push(&mut hub, chain::Action::RotateHostKey(r));
     push(&mut hub, epoch(1));
-    let mut st = AgentState::enrolling("wss://hub.example", "a-1", "m-1", rh_proto::identity::fingerprint(&ak.sign_public()), 5);
+    let mut st = AgentState::enrolling("wss://hub.example", "a-1", "m-1", droppen_proto::identity::fingerprint(&ak.sign_public()), 5);
     assert!(st.absorb(&entries, droppen_base::time::now_ms_u64()).error.is_none());
     st
 }
@@ -403,7 +403,7 @@ async fn the_sign_in_renews_only_a_retired_seed() {
             nonce: [3; 16],
             chain_seq: 2,
             chain_head: [4; 32],
-            assurance: rh_proto::chain::Assurance::Auto,
+            assurance: droppen_proto::chain::Assurance::Auto,
             created_ms: 5,
             accepted_ms: Some(5),
         })

@@ -22,9 +22,9 @@ use std::collections::{BTreeMap, HashMap};
 use ed25519_dalek::SigningKey;
 use rand::rngs::OsRng;
 use rand::RngCore;
-use rh_proto::frame::{Frame, MAX_PAYLOAD_LEN};
-use rh_proto::record::{stream_key, Compression, LogWriter, SealedRecord, StreamId};
-use rh_proto::stream::{seal_page, Manifest};
+use droppen_proto::frame::{Frame, MAX_PAYLOAD_LEN};
+use droppen_proto::record::{stream_key, Compression, LogWriter, SealedRecord, StreamId};
+use droppen_proto::stream::{seal_page, Manifest};
 use zeroize::Zeroizing;
 
 use super::store::{IndexDiff, PageRef, Pending, Row, Store};
@@ -475,8 +475,8 @@ impl Writer {
 mod tests {
     use super::super::store::Kind;
     use super::*;
-    use rh_proto::record::{self, LogReader, SignedHead};
-    use rh_proto::stream::{open_page, reader_from_manifest, SealedPage};
+    use droppen_proto::record::{self, LogReader, SignedHead};
+    use droppen_proto::stream::{open_page, reader_from_manifest, SealedPage};
 
     const MK: [u8; 32] = [0x5a; 32];
 
@@ -527,7 +527,7 @@ mod tests {
                     }
                 }
                 Frame::Page { hash, data, .. } => {
-                    assert_eq!(rh_proto::stream::page_hash(&data), hash);
+                    assert_eq!(droppen_proto::stream::page_hash(&data), hash);
                     self.pages.insert(hash, data);
                     None
                 }

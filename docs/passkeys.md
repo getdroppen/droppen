@@ -14,7 +14,7 @@
 >
 > **本文改动一条既有原则。** 架构文档 §1「为什么不算托管」和 §10 写着「不做 passkey PRF 解锁：那等于把钥匙托管给 Apple/Google 的同步账号」。这个判断本身没错，所以本文把它改成一个**默认关闭、按把开启、开启时明说代价**的例外（§4.1、§6.3），扫码配对和恢复词仍是默认和最后的退路。
 >
-> **开源边界**（聚合器文档 §2.1）：客户端的一切密码学（PRF 派生、`PAK`、封装、链上的通行密钥条目）都在开源的 `web/` 与 `rh-proto` 里；闭源 Hub 只校验 WebAuthn 断言、存公钥和打不开的密文。每个新接口都写进 `docs/hub-api/`。
+> **开源边界**（聚合器文档 §2.1）：客户端的一切密码学（PRF 派生、`PAK`、封装、链上的通行密钥条目）都在开源的 `web/` 与 `droppen-proto` 里；闭源 Hub 只校验 WebAuthn 断言、存公钥和打不开的密文。每个新接口都写进 `docs/hub-api/`。
 >
 > 路径缩写：`S/` = `server-rs/src/`，`C/` = `server-rs/crates/`，`W/` = `web/src/`。方括号里的数字是 §12 的资料来源。
 
@@ -87,7 +87,7 @@
 | 防滥用 | 登录按（账户, 地址前缀）锁定，5 次锁 5 分钟；账户 1 小时失败 3 次或地址失败 10 次后要 Turnstile；注册总要 Turnstile 与邮箱验证 | Hub | 通行密钥登录没有可猜的东西，不需要锁定和 Turnstile |
 | Turnstile 的源 | 组件页在 `verify.droppen.app`（同一服务按 Host 分流），只在那里加载 Cloudflare 的脚本 | Hub、中继文档 §4.2 | 它是 **droppen.app 的子域**，能以 RP ID `droppen.app` 调 WebAuthn，见 §3.8 |
 | 唯一的源 | 其它主机名一律 308 到 Hub 的源 | Hub | WebAuthn 的合法 origin 只有一个 |
-| 恢复钥 | `RK` → HKDF → `RSK`（Ed25519）+ X25519 孪生钥；每轮 `UK` 封给孪生钥，钥环名 `rk/<UK 轮>/<发送者>/<标签>/<写入者>`；链上的 `RecoveryKey` 带 `RSK` 对（账户, `AK`）的证明；`RSK` 只签 `RecoveryJoin`、`ActivateRecovered`；移除设过或用过恢复钥的设备，恢复钥随之清掉 | `C/rh-proto/src/chain.rs:530-575,961-1080`、`W/lib/e2e/wrap.ts`（`sealForRecovery`）、`W/lib/hub/account.ts:1056-1095`（`ensureRecoveryPackages`）、Hub | 第二层照搬这一整套，只换派生来源和封装的内容 |
+| 恢复钥 | `RK` → HKDF → `RSK`（Ed25519）+ X25519 孪生钥；每轮 `UK` 封给孪生钥，钥环名 `rk/<UK 轮>/<发送者>/<标签>/<写入者>`；链上的 `RecoveryKey` 带 `RSK` 对（账户, `AK`）的证明；`RSK` 只签 `RecoveryJoin`、`ActivateRecovered`；移除设过或用过恢复钥的设备，恢复钥随之清掉 | `C/droppen-proto/src/chain.rs:530-575,961-1080`、`W/lib/e2e/wrap.ts`（`sealForRecovery`）、`W/lib/hub/account.ts:1056-1095`（`ensureRecoveryPackages`）、Hub | 第二层照搬这一整套，只换派生来源和封装的内容 |
 | 待定设备 | `ChainState::device()` 只返回活跃设备：agent 不与待定设备握手，Hub 不让它 `SUB` 流、不给页；但钥环对任何已登记、未移除的设备可读 | `chain.rs:1349`、Hub | 待定期间读不到历史；通行密钥包要另加一道门（§4.6） |
 | 链版本 | 条目版本 2；v3 由聚合器文档定义，通行密钥条目在同一版本里 | `chain.rs:58`、聚合器文档 §3.2、§3.5 | 共用 `chain/3` 门槛与 Hub 的 v3 开关 |
 | 告警 | 加删设备、恢复加入、自行激活、批准、换恢复词：所有设备的告警条，所有机器的日志与推送（Web Push + Bark） | 架构文档 §9「账号变更提醒和恢复否决」、聚合器文档 §3.2「告警」 | 通行密钥条目已列进 v3 的告警表 |
@@ -298,7 +298,7 @@ prf_input = "rh/v1 passkey-unlock\0" ‖ salt_nonce          （浏览器再自�
 - 每个槽一个随机 salt（Yubico 的建议也是每把凭据一个随机 salt [17]），所以同一把通行密钥在作废后可以换 salt 重开（§4.7），不必重建通行密钥。
 - 新设备**从链上的 `PasskeySlotSet` 取 salt**，不另信 Hub 给的字段。Hub 给错链或错 salt，派生出的 `PAK` 就对不上链上的公钥，新设备拒绝（§4.6 第 3 步）。
 
-**派生**（Rust 在 `rh_proto::chain`、TS 在 `W/lib/e2e/passkey-unlock.ts`，双向互通向量）：
+**派生**（Rust 在 `droppen_proto::chain`、TS 在 `W/lib/e2e/passkey-unlock.ts`，双向互通向量）：
 
 ```
 prf  = PRF(credential, prf_input)                                       32 字节，只在内存

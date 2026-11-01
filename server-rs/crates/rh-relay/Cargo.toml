@@ -15,7 +15,7 @@ path = "src/lib.rs"
 
 [dependencies]
 # No `runtime` feature: a relay never runs a channel, it only copies frames.
-rh-proto = { path = "../rh-proto" }
+droppen-proto = { path = "../droppen-proto" }
 axum = { version = "0.8", features = ["ws"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time"] }
 tokio-util = { version = "0.7", features = ["rt"] }

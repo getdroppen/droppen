@@ -4,9 +4,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt, StreamExt};
-use rh_proto::frame::Frame;
-use rh_proto::identity::MachineIdentity;
-use rh_proto::wire::agent::AgentToHub;
+use droppen_proto::frame::Frame;
+use droppen_proto::identity::MachineIdentity;
+use droppen_proto::wire::agent::AgentToHub;
 use serde_json::Value;
 use tokio::sync::{mpsc, Semaphore};
 use tokio_tungstenite::tungstenite::Message;

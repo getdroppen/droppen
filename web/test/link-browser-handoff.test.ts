@@ -25,8 +25,8 @@ import { formatLeft } from "../src/features/link/browser-sign-in.js";
 
 const fill = (n: number, b: number) => new Uint8Array(n).fill(b);
 
-test("the sealed answer is the bytes Rust seals (rh-proto vectors/link-return.hex)", async () => {
-  const expected = readFileSync(new URL("../../server-rs/crates/rh-proto/vectors/link-return.hex", import.meta.url), "utf8").trim();
+test("the sealed answer is the bytes Rust seals (droppen-proto vectors/link-return.hex)", async () => {
+  const expected = readFileSync(new URL("../../server-rs/crates/droppen-proto/vectors/link-return.hex", import.meta.url), "utf8").trim();
   const recipient = await publicFromSecret("X25519", fill(32, 0x11));
   const ephemeral = await keyPairFromSecret(fill(32, 0x22));
   const sealed = await sealLinkReturn(

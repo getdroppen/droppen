@@ -55,7 +55,7 @@ const STORED: readonly Party[] = ["me", "other", "hub"];
 const ME: readonly Party[] = ["me"];
 const OTHER: readonly Party[] = ["other"];
 
-const P = "server-rs/crates/rh-proto/src";
+const P = "server-rs/crates/droppen-proto/src";
 
 export const TERMS: Record<string, Term> = {
   // ---- functions

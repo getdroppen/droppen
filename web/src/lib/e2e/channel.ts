@@ -1,6 +1,6 @@
 /*
  * An established end-to-end channel on one hub `ch`: Noise transport and
- * sub-stream mux glued together (`rh-proto/src/channel.rs`). Without paths,
+ * sub-stream mux glued together (`droppen-proto/src/channel.rs`). Without paths,
  * every mux frame is one transport message and one hub `DATA` frame.
  *
  * Two paths: a channel whose ends negotiated `CLIENT_FEATURE` is made with

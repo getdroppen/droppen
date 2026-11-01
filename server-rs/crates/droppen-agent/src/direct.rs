@@ -2,14 +2,14 @@
 //! §9, "直连通道"): a device that reached this machine through the hub may
 //! ask, inside that end-to-end channel, for a WebRTC DataChannel straight to
 //! it; when one comes up, the channel's frames move onto it and fall back to
-//! the hub when it fails ([`rh_proto::path`], [`rh_proto::direct`]).
+//! the hub when it fails ([`droppen_proto::path`], [`droppen_proto::direct`]).
 //!
 //! - **Off switch**: `DROPPEN_AGENT_DIRECT=0` turns direct paths off for this
 //!   instance: the agent then answers the signaling stream with 403, binds no
 //!   UDP socket and offers no `direct/1` feature. Channels still negotiate
 //!   sequenced frames (`paths/1`), which costs nothing and gives the
 //!   device's path indicator the hub's round-trip time.
-//! - **Sockets**: bound per attempt by [`rh_proto::rtc`] — on the IPv4 and
+//! - **Sockets**: bound per attempt by [`droppen_proto::rtc`] — on the IPv4 and
 //!   IPv6 default-route addresses, never loopback or link-local — and closed
 //!   when the attempt fails or the direct path ends. Only an enrolled
 //!   instance runs the link, so an instance that was never enrolled binds
@@ -24,7 +24,7 @@
 
 use std::time::Duration;
 
-use rh_proto::rtc::{RtcOptions, DEFAULT_STUN};
+use droppen_proto::rtc::{RtcOptions, DEFAULT_STUN};
 
 /// Peers (each with its own sockets) at once, across every channel.
 pub const MAX_PEERS: usize = 16;
@@ -57,7 +57,7 @@ fn stun_from(value: Option<&str>) -> Vec<String> {
 }
 
 /// How long an attempt may take from offer to attached.
-pub const ATTEMPT_TIMEOUT: Duration = rh_proto::direct::ATTEMPT_TIMEOUT;
+pub const ATTEMPT_TIMEOUT: Duration = droppen_proto::direct::ATTEMPT_TIMEOUT;
 
 /// The features this agent offers devices in its handshake reply.
 pub fn features(direct: bool) -> Vec<&'static str> {
@@ -67,8 +67,8 @@ pub fn features(direct: bool) -> Vec<&'static str> {
         "term",
         "blob",
         "local",
-        rh_proto::path::CLIENT_FEATURE,
-        rh_proto::stream::STREAMS_FEATURE,
+        droppen_proto::path::CLIENT_FEATURE,
+        droppen_proto::stream::STREAMS_FEATURE,
         super::CHAIN_V3_FEATURE,
         super::POLICY_FEATURE,
     ];

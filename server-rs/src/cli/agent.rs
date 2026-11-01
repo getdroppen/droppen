@@ -6,7 +6,7 @@
 //! status report work on the agent's own files, so they are
 //! [`droppen_agent::cli`]'s.
 
-use rh_proto::identity::EnrollCode;
+use droppen_proto::identity::EnrollCode;
 
 use clap::{Args, Subcommand};
 

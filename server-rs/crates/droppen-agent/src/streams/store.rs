@@ -20,7 +20,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use rh_proto::record::{SealedRecord, StreamId};
+use droppen_proto::record::{SealedRecord, StreamId};
 use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
@@ -560,7 +560,7 @@ impl Store {
 mod tests {
     use super::*;
     use rand::rngs::OsRng;
-    use rh_proto::record::{self, Compression, LogWriter};
+    use droppen_proto::record::{self, Compression, LogWriter};
 
     #[test]
     fn a_pending_append_survives_a_restart_and_commits_with_its_cursor_and_rows_at_once() {

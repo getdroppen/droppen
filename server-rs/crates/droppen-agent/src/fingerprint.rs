@@ -1,7 +1,7 @@
 //! The fingerprint of this machine's keys, which the local settings, the
 //! droppen.app consent page and a renewal's notes show.
 
-use rh_proto::identity::MachineIdentity;
+use droppen_proto::identity::MachineIdentity;
 
 /// The label [`machine_fingerprint`] hashes under (the web's
 /// `machineFingerprint` in `web/src/features/link/handoff.ts` uses the same).

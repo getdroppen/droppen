@@ -22,10 +22,10 @@
 use std::time::Duration;
 
 use futures_util::StreamExt;
-use rh_proto::chain::{Attestation, Entry};
-use rh_proto::frame::Frame;
-use rh_proto::identity::{display_fingerprint, EnrollCode, MachineIdentity};
-use rh_proto::wire::agent::AgentToHub;
+use droppen_proto::chain::{Attestation, Entry};
+use droppen_proto::frame::Frame;
+use droppen_proto::identity::{display_fingerprint, EnrollCode, MachineIdentity};
+use droppen_proto::wire::agent::AgentToHub;
 use tokio_tungstenite::tungstenite::Message;
 
 use super::hub;
@@ -257,7 +257,7 @@ impl AgentFiles {
                     match absorbed.error {
                         // A recovered device's self-activation, too early by this
                         // agent's clock: it waits here, the rest goes on.
-                        None | Some(rh_proto::chain::ChainError::TooEarly { .. }) => {}
+                        None | Some(droppen_proto::chain::ChainError::TooEarly { .. }) => {}
                         Some(e) => return Err(format!("the account's chain does not verify against the code's fingerprint: {e}").into()),
                     }
                     if state.enrolled() {

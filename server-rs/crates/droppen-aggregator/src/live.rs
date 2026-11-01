@@ -1000,7 +1000,7 @@ mod tests {
     }
 
     fn body(v: Value) -> (u16, Vec<u8>) {
-        (rh_proto::record::FMT_INDEX_V1, serde_json::to_vec(&v).unwrap())
+        (droppen_proto::record::FMT_INDEX_V1, serde_json::to_vec(&v).unwrap())
     }
 
     #[tokio::test]
@@ -1198,7 +1198,7 @@ mod tests {
                 &mine,
                 &held,
                 false,
-                &[(rh_proto::record::FMT_FEED_V1, br#"{"fromIndex":1,"items":[{"text":"LATE"}],"endIndex":2}"#.to_vec())],
+                &[(droppen_proto::record::FMT_FEED_V1, br#"{"fromIndex":1,"items":[{"text":"LATE"}],"endIndex":2}"#.to_vec())],
             );
         }
         assert!(!live.publish(&key, 0, &Arc::new(Mutex::new(Published::new(feed("STALE"), 2, 6).signed_by(old)))));
@@ -1243,7 +1243,7 @@ mod tests {
                 &slot,
                 &held,
                 false,
-                &[(rh_proto::record::FMT_FEED_V1, br#"{"fromIndex":1,"items":[],"endIndex":1}"#.to_vec())],
+                &[(droppen_proto::record::FMT_FEED_V1, br#"{"fromIndex":1,"items":[],"endIndex":1}"#.to_vec())],
             );
             let _ = n;
         }

@@ -29,7 +29,7 @@ use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
-use rh_proto::wire::relay::RelayIdAnswer;
+use droppen_proto::wire::relay::RelayIdAnswer;
 use serde::{Deserialize, Serialize};
 
 use crate::config::{hex, unhex, TrustProxy};
@@ -159,7 +159,7 @@ async fn relay_id(
         };
         return (StatusCode::BAD_REQUEST, Json(body)).into_response();
     };
-    let Ok(sig) = rh_proto::ticket::sign_origin_proof(&server.config.key, &server.config.origin, &nonce) else {
+    let Ok(sig) = droppen_proto::ticket::sign_origin_proof(&server.config.key, &server.config.origin, &nonce) else {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     };
     Json(RelayIdAnswer {
@@ -181,8 +181,8 @@ async fn connect(
     if let Err(wait) = server.unauth.upgrades.allow(&ip, Instant::now()) {
         return too_many(wait);
     }
-    ws.max_message_size(rh_proto::frame::MAX_FRAME_LEN)
-        .max_frame_size(rh_proto::frame::MAX_FRAME_LEN)
+    ws.max_message_size(droppen_proto::frame::MAX_FRAME_LEN)
+        .max_frame_size(droppen_proto::frame::MAX_FRAME_LEN)
         .on_upgrade(move |socket| {
             let tasks = server.tasks.clone();
             tasks.track_future(crate::client::connection(server, socket))

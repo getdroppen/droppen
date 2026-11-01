@@ -12,7 +12,7 @@
 //! fragment never reaches a server, and the page on droppen.app takes it out
 //! of the address at once.
 //!
-//! droppen.app seals the enrollment code to the key (`rh_proto::link_return`)
+//! droppen.app seals the enrollment code to the key (`droppen_proto::link_return`)
 //! and sends the browser to `<origin>/link/return#droppen-return=<attempt>.<sealed>`;
 //! that page (the web app's, standalone) posts it to `POST
 //! /api/cloud/link/return` ([`super::post_return`]), which opens it and
@@ -26,8 +26,8 @@ use base64::Engine as _;
 use gotcha::axum::extract::FromRequestParts;
 use gotcha::axum::http::header;
 use gotcha::axum::http::request::Parts;
-use rh_proto::keys::DhKeypair;
-use rh_proto::link_return::{self, LinkReturnError, ReturnContext, STATE_LEN};
+use droppen_proto::keys::DhKeypair;
+use droppen_proto::link_return::{self, LinkReturnError, ReturnContext, STATE_LEN};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 

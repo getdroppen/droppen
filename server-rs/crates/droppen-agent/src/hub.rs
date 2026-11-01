@@ -1,5 +1,5 @@
 //! The agent's side of the hub's `/v1/agent` socket: dialling out, the
-//! challenge, and the signed answers to it (`rh_proto::sig::HubLogin`). The
+//! challenge, and the signed answers to it (`droppen_proto::sig::HubLogin`). The
 //! messages are in `docs/hub-api/websocket.md` (`/v1/agent`).
 
 use std::time::Duration;
@@ -7,11 +7,11 @@ use std::time::Duration;
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
 use rand::Rng;
-use rh_proto::frame::Frame;
-use rh_proto::identity::MachineIdentity;
-use rh_proto::sig::{HubLogin, LoginRole};
-use rh_proto::wire::agent::AgentToHub;
-use rh_proto::wire::connect::PeerToRelay;
+use droppen_proto::frame::Frame;
+use droppen_proto::identity::MachineIdentity;
+use droppen_proto::sig::{HubLogin, LoginRole};
+use droppen_proto::wire::agent::AgentToHub;
+use droppen_proto::wire::connect::PeerToRelay;
 use serde_json::Value;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
@@ -74,7 +74,7 @@ pub fn origin(url: &str) -> Result<String, String> {
 
 /// Connect to `origin`'s agent socket (Nagle off: terminals) and read the challenge nonce.
 pub async fn dial(origin: &str) -> Result<(Sink, Source, [u8; 32]), String> {
-    let url = format!("{origin}{}", rh_proto::frame::AGENT_PATH);
+    let url = format!("{origin}{}", droppen_proto::frame::AGENT_PATH);
     let (socket, _) = tokio::time::timeout(STEP, tokio_tungstenite::connect_async_with_config(url.as_str(), None, true))
         .await
         .map_err(|_| format!("{url}: timed out"))?

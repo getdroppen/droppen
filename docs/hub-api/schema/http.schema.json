@@ -714,7 +714,7 @@
     },
     "rotationDispute": {
       "type": "object",
-      "description": "Evidence that someone else holds a host's key. A `disputed` statement (the only kind that isolates) carries {seq, entry_hash, sig}: the retired key's rh/v1 rotate-dispute signature over the renewal at seq, which a device checks with ChainState::verify_rotate_dispute on its own chain. A retired_login carries the signed login as it came: rh_proto::sig::HubLogin {role, account, id, hub, nonce, time_ms}, checked with sig against the chain's keys_at(host, retired_seq - 1).",
+      "description": "Evidence that someone else holds a host's key. A `disputed` statement (the only kind that isolates) carries {seq, entry_hash, sig}: the retired key's rh/v1 rotate-dispute signature over the renewal at seq, which a device checks with ChainState::verify_rotate_dispute on its own chain. A retired_login carries the signed login as it came: droppen_proto::sig::HubLogin {role, account, id, hub, nonce, time_ms}, checked with sig against the chain's keys_at(host, retired_seq - 1).",
       "required": [
         "host",
         "kind",

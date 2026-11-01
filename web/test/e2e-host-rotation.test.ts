@@ -81,7 +81,7 @@ import { deviceFingerprint } from "../src/lib/hub/account.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Json = any;
-const V: Json = JSON.parse(readFileSync(new URL("../../server-rs/crates/rh-proto/vectors/rust.json", import.meta.url), "utf8"));
+const V: Json = JSON.parse(readFileSync(new URL("../../server-rs/crates/droppen-proto/vectors/rust.json", import.meta.url), "utf8"));
 const R: Json = V.hostRotation;
 const h = (s: string) => fromHex(s);
 const hist = () => ChainClock.history();

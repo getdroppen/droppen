@@ -14,7 +14,7 @@
           "about": "The PATH rule shared with the desktop app."
         },
         {
-          "name": "rh-proto",
+          "name": "droppen-proto",
           "about": "The cloud protocol, shared with the hub, the relays and the test device."
         },
         {

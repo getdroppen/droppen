@@ -10,7 +10,7 @@
 //!   asks again). A new seed is staged beside the one in use
 //!   (`machine-key.next-<nonce>.json`, [`super::FileSeedStore::stage`]); the seed
 //!   in use is never touched. The answer: both keys' signatures over the
-//!   proof ([`rh_proto::chain::host_rotate_body`]) and the DH confirmation
+//!   proof ([`droppen_proto::chain::host_rotate_body`]) and the DH confirmation
 //!   MAC. The same nonce gets the same answer. A new nonce adds a staging:
 //!   every staging the hub took is kept until it expires (at most
 //!   [`MAX_STAGINGS`]) — a page whose answer was lost asks again, and the hub
@@ -64,7 +64,7 @@
 //!   evidence of it: the agent reads the chain the hub then serves, and
 //!   without a verified renewal it only waits and retries (`refused`).
 //! - **High assurance** — a renewal with `assurance: 1` shows its code
-//!   ([`rh_proto::chain::rotate_sas`]) on this device for [`CODE_FOR_MS`]:
+//!   ([`droppen_proto::chain::rotate_sas`]) on this device for [`CODE_FOR_MS`]:
 //!   the local settings (`GET /api/cloud` `link.rotation`) and
 //!   `droppen agent status` ([`AgentFiles::rotation_status`]).
 
@@ -73,10 +73,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use rand::RngCore;
-use rh_proto::chain::{self, Assurance};
-use rh_proto::identity::MachineIdentity;
-use rh_proto::sig;
-use rh_proto::wire::agent::AgentToHub;
+use droppen_proto::chain::{self, Assurance};
+use droppen_proto::identity::MachineIdentity;
+use droppen_proto::sig;
+use droppen_proto::wire::agent::AgentToHub;
 use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -362,7 +362,7 @@ pub fn verdict(st: &AgentState, current: &MachineIdentity, staged: &[MachineIden
         Some(_) if unreadable => Verdict::Unreadable,
         Some(seq) => Verdict::Foreign {
             seq,
-            fingerprint: rh_proto::identity::device_fingerprint_text(&named.0, &named.1),
+            fingerprint: droppen_proto::identity::device_fingerprint_text(&named.0, &named.1),
         },
         None => Verdict::Unchanged,
     }
@@ -1638,7 +1638,7 @@ mod tests {
         r.new_sig = sig::sign(to.signing_key(), sig::HOST_ROTATE, &body);
         push(&mut hub, chain::Action::RotateHostKey(r));
         push(&mut hub, epoch(1));
-        let mut st = AgentState::enrolling("wss://hub.example", "a-1", "m-1", rh_proto::identity::fingerprint(&ak.sign_public()), 5);
+        let mut st = AgentState::enrolling("wss://hub.example", "a-1", "m-1", droppen_proto::identity::fingerprint(&ak.sign_public()), 5);
         assert!(st.absorb(&entries, now_ms_u64()).error.is_none());
         st
     }

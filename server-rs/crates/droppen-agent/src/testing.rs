@@ -8,7 +8,7 @@
 
 use std::path::PathBuf;
 
-use rh_proto::identity::MachineIdentity;
+use droppen_proto::identity::MachineIdentity;
 use zeroize::Zeroizing;
 
 use crate::link::Running;
@@ -29,7 +29,7 @@ pub struct TestSeed {
     /// …and its hash.
     pub chain_head: [u8; 32],
     /// How the renewal is confirmed.
-    pub assurance: rh_proto::chain::Assurance,
+    pub assurance: droppen_proto::chain::Assurance,
     /// When it was made.
     pub created_ms: u64,
     /// When the hub took it.

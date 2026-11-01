@@ -2,7 +2,7 @@
 //! refusals, the bodies of its own routes (`/rh/*`) and the handshake's
 //! `server_info`. Device pages of any version read them. The hub never
 //! sees them (they travel inside the channel), so they are this crate's
-//! types, not `rh_proto::wire`'s. A route still returns `(status, Value)`:
+//! types, not `droppen_proto::wire`'s. A route still returns `(status, Value)`:
 //! [`AnswerBody::body`] makes the `Value`.
 
 use serde::Serialize;

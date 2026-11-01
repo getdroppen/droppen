@@ -18,7 +18,7 @@ ignore = [
     "RUSTSEC-2026-0235",
     # crypto-bigint 0.5.5, through elliptic-curve 0.13 (p256, p384, ecdsa and
     # primeorder; used by Web Push in `crate::push` and by str0m's DTLS in
-    # `rh-proto/rtc`): branches on secret values in operations meant to be
+    # `droppen-proto/rtc`): branches on secret values in operations meant to be
     # constant-time, fixed in 0.7.6. None of the fixed code runs on a secret
     # here. `borrowing_sub`'s branch came with crypto-bigint#1029 (December
     # 2025; 0.5.5's `sbb` subtracts in a double-width word, branch-free), and

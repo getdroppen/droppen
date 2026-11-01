@@ -1,5 +1,5 @@
 /*
- * An established channel, running: the browser's `rh-proto/src/driver.rs`.
+ * An established channel, running: the browser's `droppen-proto/src/driver.rs`.
  *
  * A `ChannelDriver` owns a `Session` (Noise transport and sub-stream
  * multiplexer) for one hub `ch`. The connection that carries it hands it

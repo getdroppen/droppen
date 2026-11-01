@@ -2,7 +2,7 @@
 //! against this instance's agent files (`droppen_agent`).
 
 use droppen_instance::paths::Paths;
-use rh_proto::identity::EnrollCode;
+use droppen_proto::identity::EnrollCode;
 
 use super::super::agent::tests::parse;
 use super::super::agent::*;

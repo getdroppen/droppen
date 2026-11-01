@@ -22,15 +22,15 @@
 //!
 //! # Credit
 //!
-//! Each direction of each channel has a [`SendWindow`] (`rh_proto::flow`): a
+//! Each direction of each channel has a [`SendWindow`] (`droppen_proto::flow`): a
 //! sender that sends past it, or a receiver that grants more than it was sent,
 //! has its channel closed with [`CLOSE_FLOW`]. What one channel can make the
 //! relay hold is therefore bounded by the window, whatever either end does.
 
 use std::collections::HashMap;
 
-use rh_proto::flow::SendWindow;
-use rh_proto::frame::Frame;
+use droppen_proto::flow::SendWindow;
+use droppen_proto::frame::Frame;
 
 pub type ConnId = u64;
 
@@ -300,7 +300,7 @@ impl Relay {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rh_proto::flow::INITIAL_CREDIT;
+    use droppen_proto::flow::INITIAL_CREDIT;
 
     const DEV: ConnId = 1;
     const AGENT: ConnId = 2;

@@ -1,5 +1,5 @@
 /*
- * Every Ed25519 signature's label (`server-rs/crates/rh-proto/src/sig.rs`):
+ * Every Ed25519 signature's label (`server-rs/crates/droppen-proto/src/sig.rs`):
  * each signature covers a fixed NUL-terminated label and then a fixed binary
  * structure, so no key ever signs bytes the hub chose and no signed structure
  * can be read as another.

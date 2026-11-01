@@ -6,7 +6,7 @@
 //! their copies (S1-5).
 //!
 //! It speaks only the documented hub API (`docs/hub-api/`) and the protocol
-//! in [`rh_proto`]; it never links the hub. Nothing here decides what a
+//! in [`droppen_proto`]; it never links the hub. Nothing here decides what a
 //! device may do: the chain does, in the caller.
 //!
 //! - [`http`]: JSON requests to the hub's HTTP routes, with the hub's error
@@ -35,7 +35,7 @@ pub fn err<E: std::fmt::Display>(context: &'static str) -> impl FnOnce(E) -> Str
 
 /// Milliseconds since the Unix epoch.
 pub fn now_ms() -> u64 {
-    rh_proto::clock::now_ms()
+    droppen_proto::clock::now_ms()
 }
 
 /// Lower-case hex.

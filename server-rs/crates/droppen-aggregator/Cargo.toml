@@ -24,7 +24,7 @@ rand = "0.8"
 # features are the server's, so it builds one reqwest.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "http2", "charset", "json"] }
 rh-client = { path = "../rh-client" }
-rh-proto = { path = "../rh-proto" }
+droppen-proto = { path = "../droppen-proto" }
 # The verified copies' store. `bundled` compiles SQLite itself rather than
 # linking the platform's.
 rusqlite = { version = "0.32", features = ["bundled"] }

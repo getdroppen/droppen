@@ -525,7 +525,7 @@ login session. Any other value is no hint.
 
 ### `GET /v1/chain?from=N`
 → `{entries: [hex], seq}`: the account's chain entries from index `N`
-(default 0), each an encoded `rh_proto::chain::Entry`; `seq` is the head,
+(default 0), each an encoded `droppen_proto::chain::Entry`; `seq` is the head,
 `null` before genesis. Verify them yourself.
 
 ### `POST /v1/email/resend`
@@ -629,7 +629,7 @@ machine key, for its agent; `3` a pairing's delivery; `4` a request for keys
 (no secret: from an admin, for user key epochs; from **any other current
 device, to an active admin device only**, for machine keys — answered with
 purpose 5, never with a user key); `5` another host's machine key epoch
-(`str16 host | sealed`, `rh_proto::wrap::encode_host_key_mail`) for a
+(`str16 host | sealed`, `droppen_proto::wrap::encode_host_key_mail`) for a
 current device that is **not an admin and that the named host's accept
 policy admits** (machine keys follow the accept policy); the hub stores any
 purpose 0–255. Who may send what to whom is judged under the account's
@@ -751,7 +751,7 @@ the account's agents get `relay_set`. Errors: `403 not_in_chain`.
 
 ### `POST /v1/relays/tickets` — requires a current device
 `{relays: [id]}` (1–8) → `{tickets: [{relay, origin, ticket, expires_ms, emergency?, throttled?}], errors: [{relay, error, key?, limit?, account_set?}]}`.
-A ticket (`rh_proto::ticket::RelayTicket`, signed by the hub, 15 minutes)
+A ticket (`droppen_proto::ticket::RelayTicket`, signed by the hub, 15 minutes)
 signs this device in on that relay (websocket.md `/v1/connect`). Asking for a
 relay outside the account's set adds it, replaces a member idle for a week
 (or one the hub added that no device used, `last_used_ms` 0), or is refused
@@ -971,7 +971,7 @@ given, a malformed or unknown field, or a body that is not an object).
 `{seq, entry_hash, sig}` → `{ok: true}`. A host whose identity key was
 renewed elsewhere (its agent found a `RotateHostKey` for its id with keys
 that are neither its seed nor its staged one) disputes that renewal with the
-key it retired: `sig` is `rh/v1 rotate-dispute` (`rh_proto::chain::sign_rotate_dispute`)
+key it retired: `sig` is `rh/v1 rotate-dispute` (`droppen_proto::chain::sign_rotate_dispute`)
 over `str16 account | str16 host | u64 seq | entry_hash 32 | new_sign 32` —
 `seq` the disputed entry, `entry_hash` its chain hash, `new_sign` the key it
 put in — by `keys_at(host, seq - 1)`'s sign key. No session: the signature is
@@ -1210,5 +1210,5 @@ with `Retry-After`.
 |---|---|
 | `GET /healthz` | `200 ok` |
 | `GET /v1/ping` | `204`, `Access-Control-Allow-Origin: *`, `Timing-Allow-Origin: *`, `Cache-Control: no-store`: what clients time to choose a relay (four requests, the first dropped). 120/minute per address |
-| `GET /v1/relay-id?nonce=<64 hex>` | `{relay_id, sign_key, origin, sig}`: `sig` signs the relay's origin and the nonce (`rh_proto::ticket::sign_origin_proof`); the hub asks it at registration and when a relay moves. `400 bad_request` for a bad nonce. 120/minute per address |
+| `GET /v1/relay-id?nonce=<64 hex>` | `{relay_id, sign_key, origin, sig}`: `sig` signs the relay's origin and the nonce (`droppen_proto::ticket::sign_origin_proof`); the hub asks it at registration and when a relay moves. `400 bad_request` for a bad nonce. 120/minute per address |
 | `GET /v1/connect` | the WebSocket devices and agents sign in on ([websocket.md](websocket.md#v1connect-device-or-agent--relay)). 60/minute and 20 per 20 s per address |

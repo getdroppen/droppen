@@ -7,7 +7,7 @@
 //! first machine key epoch ([`Device::enroll_host3`]), mail it that
 //! key, vouch for its chain head, and open end-to-end channels to the machine
 //! over the hub's `/v1/client` socket — rpc, mux and term streams through the
-//! agent's loopback bridge ([`rh_proto::bridge`]).
+//! agent's loopback bridge ([`droppen_proto::bridge`]).
 //!
 //! The chain v2 flows ([`Device::create_genesis`], [`Device::complete_enrollment`],
 //! [`Device::add_and_deliver`], [`Device::remove_and_rotate`] and
@@ -20,17 +20,17 @@ use std::time::Duration;
 use ed25519_dalek::SigningKey;
 use rand::rngs::OsRng;
 use rand::RngCore;
-use rh_proto::bridge::{self, Kind, MessageReader, RequestHead, ResponseHead};
-use rh_proto::chain::{genesis_draft, Action, Attestation, ChainClock, ChainState, DeviceInfo, Entry, MachineInfo, Signer};
-use rh_proto::channel::Session;
-use rh_proto::driver::{Channel, Stream, StreamEvent};
-use rh_proto::frame::Frame;
-use rh_proto::handshake;
-use rh_proto::identity::{fingerprint, EnrollCode};
-use rh_proto::keys::DhKeypair;
-use rh_proto::mux::{Role, StreamClass};
-use rh_proto::noise::RekeyPolicy;
-use rh_proto::wrap::{self, Purpose, SealContext};
+use droppen_proto::bridge::{self, Kind, MessageReader, RequestHead, ResponseHead};
+use droppen_proto::chain::{genesis_draft, Action, Attestation, ChainClock, ChainState, DeviceInfo, Entry, MachineInfo, Signer};
+use droppen_proto::channel::Session;
+use droppen_proto::driver::{Channel, Stream, StreamEvent};
+use droppen_proto::frame::Frame;
+use droppen_proto::handshake;
+use droppen_proto::identity::{fingerprint, EnrollCode};
+use droppen_proto::keys::DhKeypair;
+use droppen_proto::mux::{Role, StreamClass};
+use droppen_proto::noise::RekeyPolicy;
+use droppen_proto::wrap::{self, Purpose, SealContext};
 use serde_json::{json, Value};
 
 pub mod agent;
@@ -170,12 +170,12 @@ impl Device {
     }
 
     /// This device's keys in a v3 entry, with `flags`.
-    pub fn device_v3(&self, host: bool, admin: bool) -> rh_proto::chain::DeviceV3 {
-        rh_proto::chain::DeviceV3 {
+    pub fn device_v3(&self, host: bool, admin: bool) -> droppen_proto::chain::DeviceV3 {
+        droppen_proto::chain::DeviceV3 {
             id: self.id.clone(),
             sign_key: self.sign.verifying_key().to_bytes(),
             dh_key: self.dh.public(),
-            flags: rh_proto::chain::Flags { host, admin },
+            flags: droppen_proto::chain::Flags { host, admin },
         }
     }
 
@@ -323,19 +323,19 @@ impl Device {
     /// or done around it ([`Device::enroll_host3`] is what the web does).
     pub async fn complete_enrollment_v3(&mut self, code: &EnrollCode, admin: bool, mk: &[u8; 32], timeout: Duration) -> Result<MachineInfo> {
         let machine = self.await_proof(code, timeout).await?;
-        let device = rh_proto::chain::DeviceV3 {
+        let device = droppen_proto::chain::DeviceV3 {
             id: machine.id.clone(),
             sign_key: machine.sign_key,
             dh_key: machine.dh_key,
-            flags: rh_proto::chain::Flags { host: true, admin },
+            flags: droppen_proto::chain::Flags { host: true, admin },
         };
-        let commit = rh_proto::chain::KeyCommits {
+        let commit = droppen_proto::chain::KeyCommits {
             user: None,
             machines: vec![(
                 machine.id.clone(),
-                rh_proto::chain::KeyCommit {
+                droppen_proto::chain::KeyCommit {
                     epoch: 0,
-                    hash: rh_proto::chain::machine_key_commit(&self.account, &machine.id, 0, mk),
+                    hash: droppen_proto::chain::machine_key_commit(&self.account, &machine.id, 0, mk),
                 },
             )],
         };
@@ -473,7 +473,7 @@ impl Device {
                     .map(|a| a.iter().filter_map(|f| f.as_str().map(String::from)).collect())
             })
             .unwrap_or_default();
-        let paths = features.iter().any(|f| f == rh_proto::path::CLIENT_FEATURE);
+        let paths = features.iter().any(|f| f == droppen_proto::path::CLIENT_FEATURE);
         let direct = paths && features.iter().any(|f| f == "direct/1");
         let relay_hash = transport.handshake_hash();
         let session = if paths {
@@ -482,7 +482,7 @@ impl Device {
                 ch,
                 transport,
                 Role::Initiator,
-                rh_proto::channel::PathOptions { probe_relay: true },
+                droppen_proto::channel::PathOptions { probe_relay: true },
                 now_us,
             )
         } else {
@@ -505,22 +505,22 @@ impl Device {
     pub async fn direct(
         &mut self,
         opened: &OpenedChannel,
-        signaling: &mut rh_proto::direct::Signaling,
+        signaling: &mut droppen_proto::direct::Signaling,
         id: u32,
-        opts: rh_proto::rtc::RtcOptions,
+        opts: droppen_proto::rtc::RtcOptions,
         timeout: Duration,
-    ) -> Result<rh_proto::direct::Attached> {
+    ) -> Result<droppen_proto::direct::Attached> {
         let chain = self.chain.as_ref().ok_or("no chain yet")?.clone();
         let client = client_info();
-        rh_proto::direct::attempt(
+        droppen_proto::direct::attempt(
             signaling,
             id,
             &opened.channel,
-            rh_proto::direct::DeviceDirect {
+            droppen_proto::direct::DeviceDirect {
                 chain: &chain,
                 clock: &mut self.clock,
                 key: &self.dh,
-                binding: rh_proto::noise::Binding {
+                binding: droppen_proto::noise::Binding {
                     account: self.account.clone(),
                     device: self.id.clone(),
                     machine: opened.machine.clone(),
@@ -692,5 +692,5 @@ pub fn random_key() -> [u8; 32] {
 /// What the headless device's hello says it speaks: sequenced frames, and
 /// streams named per key epoch (so an agent it talks to names them so).
 fn client_info() -> String {
-    format!("rh-devkit {} {}", rh_proto::path::CLIENT_FEATURE, rh_proto::stream::STREAMS_FEATURE)
+    format!("rh-devkit {} {}", droppen_proto::path::CLIENT_FEATURE, droppen_proto::stream::STREAMS_FEATURE)
 }

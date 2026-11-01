@@ -1,5 +1,5 @@
 /*
- * Hub-level flow control on a channel (`rh-proto/src/flow.rs`): a sender may
+ * Hub-level flow control on a channel (`droppen-proto/src/flow.rs`): a sender may
  * have `INITIAL_CREDIT` bytes of `data` payload outstanding per direction; the
  * receiver hands credit back, half a window at a time, as soon as it has read
  * what arrived; the hub enforces both and closes a channel that cheats.

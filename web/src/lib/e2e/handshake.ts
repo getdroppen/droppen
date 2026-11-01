@@ -1,5 +1,5 @@
 /*
- * What the two Noise handshake payloads carry (`rh-proto/src/handshake.rs` —
+ * What the two Noise handshake payloads carry (`droppen-proto/src/handshake.rs` —
  * read that for the agent's order of checks).
  *
  * - Hello (device → agent): the device's chain view `(seq, head)`, its last
@@ -21,7 +21,7 @@ export const MAX_HELLO_ENTRIES = 16;
 export const MAX_INFO = 1024;
 /**
  * How recently an admin device must have vouched for an agent's head for the
- * agent to open a channel at all (`rh-proto` `FRESHNESS_MAX_AGE_MS`): control's
+ * agent to open a channel at all (`droppen-proto` `FRESHNESS_MAX_AGE_MS`): control's
  * window, seven days. Management inside a channel is held to
  * `MANAGE_FRESHNESS_MS` (`chain.ts`) by the agent.
  */

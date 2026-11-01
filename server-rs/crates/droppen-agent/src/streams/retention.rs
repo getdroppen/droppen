@@ -29,7 +29,7 @@
 //!   [`first_kept`]) and starts the copy with a window-start page
 //!   ([`super::content::window_body`]).
 
-use rh_proto::record::StreamId;
+use droppen_proto::record::StreamId;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

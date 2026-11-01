@@ -2,7 +2,7 @@
  * Sub-streams inside one end-to-end channel: `rpc`, `mux`, `term` and `blob`,
  * each with a credit window, drained by priority — control > term > rpc/mux >
  * blob — and round-robin within one. The browser's half of
- * `server-rs/crates/rh-proto/src/mux.rs`, frame for frame; the shared vectors
+ * `server-rs/crates/droppen-proto/src/mux.rs`, frame for frame; the shared vectors
  * hold both to the same encoding *and* the same scheduling order.
  *
  * Stream ids: odd for streams the device (initiator) opens, even for the

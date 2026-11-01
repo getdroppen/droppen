@@ -14,9 +14,9 @@ use axum::routing::get;
 use ed25519_dalek::SigningKey;
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
-use rh_proto::frame::Frame;
-use rh_proto::sig::{HubLogin, LoginRole};
-use rh_proto::ticket::{RelayTicket, TicketLimits, TicketRole, TICKET_TTL_MS};
+use droppen_proto::frame::Frame;
+use droppen_proto::sig::{HubLogin, LoginRole};
+use droppen_proto::ticket::{RelayTicket, TicketLimits, TicketRole, TICKET_TTL_MS};
 use rh_relay::config::{hex, Config, Timing, TrustProxy};
 use rh_relay::server::now_ms;
 use serde_json::{json, Value};
@@ -877,7 +877,7 @@ async fn limits_hold_for_accounts_channels_frames_sign_ins_and_addresses() {
     let json: Value = serde_json::from_str(body.split("\r\n\r\n").nth(1).unwrap()).unwrap();
     let key: [u8; 32] = rh_relay::config::unhex(json["sign_key"].as_str().unwrap()).unwrap().try_into().unwrap();
     let sig: [u8; 64] = rh_relay::config::unhex(json["sig"].as_str().unwrap()).unwrap().try_into().unwrap();
-    assert!(rh_proto::ticket::verify_origin_proof(&key, o, &nonce, &sig));
+    assert!(droppen_proto::ticket::verify_origin_proof(&key, o, &nonce, &sig));
     assert_eq!(json["relay_id"], "sin-1");
 }
 

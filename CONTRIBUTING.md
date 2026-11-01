@@ -42,7 +42,7 @@ of the repository it changes.
 | Part | Licence |
 |---|---|
 | The local program (the root crate in `server-rs/`), the desktop app (`desktop/`), the web app (`web/`) and the relay program (`droppen-relay`) | AGPL-3.0-only ([LICENSE](LICENSE)) |
-| `rh-proto`, `rh-relay` (the library), `rh-client`, `rh-devkit`, and the plugin SDKs (`packages/plugin-sdk`, `server-rs/crates/droppen-plugin-sdk`) | MIT OR Apache-2.0 (`LICENSE-MIT` and `LICENSE-APACHE` in each) |
+| `droppen-proto`, `rh-relay` (the library), `rh-client`, `rh-devkit`, and the plugin SDKs (`packages/plugin-sdk`, `server-rs/crates/droppen-plugin-sdk`) | MIT OR Apache-2.0 (`LICENSE-MIT` and `LICENSE-APACHE` in each) |
 
 A change that spans both is contributed under each part's licence for the
 files in that part. Do not move code from an AGPL-3.0-only part into an
@@ -98,7 +98,7 @@ The local program and the crates, in `server-rs/`, as CI runs them, with
 ```sh
 cd server-rs
 DROPPEN_ALLOW_MISSING_WEB_DIST=1 cargo nextest run                # the local program
-DROPPEN_ALLOW_MISSING_WEB_DIST=1 cargo nextest run -p rh-proto    # and each crate you changed
+DROPPEN_ALLOW_MISSING_WEB_DIST=1 cargo nextest run -p droppen-proto    # and each crate you changed
 ```
 
 `DROPPEN_ALLOW_MISSING_WEB_DIST=1` lets the server build without a built web app.

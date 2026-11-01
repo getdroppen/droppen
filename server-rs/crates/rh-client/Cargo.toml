@@ -6,13 +6,13 @@ license = "MIT OR Apache-2.0"
 publish = false
 description = "The device side of the Droppen hub API in Rust: device sessions, the /v1/client link, and reading a machine's encrypted streams"
 
-# Open source, like rh-proto: it speaks only the documented hub API
+# Open source, like droppen-proto: it speaks only the documented hub API
 # (`docs/hub-api/`) and never links rh-hub. Its users are the headless test
 # device (rh-devkit) and the local install's aggregator (`remote-hand-server`'s
 # `aggregator`); later the desktop app's Rust side.
 
 [dependencies]
-rh-proto = { path = "../rh-proto" }
+droppen-proto = { path = "../droppen-proto" }
 tokio = { version = "1", features = ["rt", "macros", "net", "sync", "time"] }
 tokio-tungstenite = { version = "0.29", features = ["rustls-tls-webpki-roots"] }
 futures-util = "0.3"

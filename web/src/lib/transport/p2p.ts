@@ -1,7 +1,7 @@
 /*
  * The direct path, device side: a WebRTC DataChannel to the machine next to
  * the hub, carrying the same end-to-end channel faster when the two can reach
- * each other (`lib/e2e/path.ts`; `rh-proto/src/path.rs` for the why). Not to
+ * each other (`lib/e2e/path.ts`; `droppen-proto/src/path.rs` for the why). Not to
  * be confused with `direct.ts`, which is the same-origin server.
  *
  * One `DirectPaths` per channel whose agent offered `direct/1`:

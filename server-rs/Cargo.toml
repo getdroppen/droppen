@@ -10,13 +10,13 @@ license = "AGPL-3.0-only"
 [lints]
 workspace = true
 
-# A workspace so the cloud protocol crate (`crates/rh-proto`), the device side
+# A workspace so the cloud protocol crate (`crates/droppen-proto`), the device side
 # of the hub API (`crates/rh-client`) and the headless test device
 # (`crates/rh-devkit`) share this lockfile and target directory. The root
 # package stays the default member, so a bare `cargo build`/`cargo test` here
 # still means the server and nothing else.
 [workspace]
-members = [".", "crates/rh-proto", "crates/rh-relay", "crates/droppen-relay", "crates/rh-client", "crates/rh-devkit", "crates/droppen-plugin-sdk", "crates/droppen-search-path", "crates/droppen-base", "crates/droppen-instance", "crates/droppen-http", "crates/droppen-pty", "crates/droppen-supervisor", "crates/droppen-auth", "crates/droppen-files", "crates/droppen-workbench", "crates/droppen-plugins", "crates/droppen-aggregator", "crates/droppen-sessions", "crates/droppen-agent", "crates/droppen-cloud", "crates/droppen-notify", "crates/droppen-accounts", "crates/droppen-setup", "crates/droppen-provider", "crates/droppen-provider-acp", "crates/droppen-drive", "crates/droppen-provider-codex", "crates/droppen-provider-claude-code"]
+members = [".", "crates/droppen-proto", "crates/rh-relay", "crates/droppen-relay", "crates/rh-client", "crates/rh-devkit", "crates/droppen-plugin-sdk", "crates/droppen-search-path", "crates/droppen-base", "crates/droppen-instance", "crates/droppen-http", "crates/droppen-pty", "crates/droppen-supervisor", "crates/droppen-auth", "crates/droppen-files", "crates/droppen-workbench", "crates/droppen-plugins", "crates/droppen-aggregator", "crates/droppen-sessions", "crates/droppen-agent", "crates/droppen-cloud", "crates/droppen-notify", "crates/droppen-accounts", "crates/droppen-setup", "crates/droppen-provider", "crates/droppen-provider-acp", "crates/droppen-drive", "crates/droppen-provider-codex", "crates/droppen-provider-claude-code"]
 
 # Every member takes serde_json from here, so `preserve_order` is on in every
 # build: a `Value` writes its keys in insertion order rather than sorted. Cargo
@@ -46,13 +46,13 @@ embed = ["dep:rust-embed", "dep:mime_guess"]
 
 [dependencies]
 # The cloud protocol (frames, the Noise channel, the device chain, records),
-# shared with the hub; see `crates/rh-proto`. Only `agent` uses it: the link to
+# shared with the hub; see `crates/droppen-proto`. Only `agent` uses it: the link to
 # a hub, which an instance runs only once it has been enrolled. `runtime` is the
 # channel driver (tokio glue) the agent shares with the test device.
 # `rtc` is the direct path's WebRTC peer (str0m, sans-IO ICE/DTLS/SCTP on
 # pure-Rust crypto): UDP sockets bound per attempt, and only by an enrolled
 # agent's link (`agent::direct`; `DROPPEN_AGENT_DIRECT=0` turns it off).
-rh-proto = { path = "crates/rh-proto", features = ["runtime", "rtc"] }
+droppen-proto = { path = "crates/droppen-proto", features = ["runtime", "rtc"] }
 # The plugin contract (manifest, ids, document-store wire format). The host
 # links it; it links nothing of the host's — see the crate's own manifest.
 droppen-plugin-sdk = { path = "crates/droppen-plugin-sdk" }

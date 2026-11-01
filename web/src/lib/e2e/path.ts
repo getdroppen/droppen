@@ -1,7 +1,7 @@
 /*
  * The direct path: a WebRTC DataChannel between this device and its machine,
  * next to the hub, carrying the same channel faster when the two can reach
- * each other. The browser's half of `server-rs/crates/rh-proto/src/path.rs`,
+ * each other. The browser's half of `server-rs/crates/droppen-proto/src/path.rs`,
  * byte for byte (read that for the why); everything here is sans-IO.
  *
  * - `Signal`: offer, answer, ICE candidates and goodbyes, as binary messages

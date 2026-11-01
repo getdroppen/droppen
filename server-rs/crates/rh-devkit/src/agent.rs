@@ -1,7 +1,7 @@
 //! A stand-in agent for testing a hub without a remote-hand server: it
 //! enrolls with a code, follows the chain from its pinned root, takes
 //! attestations, accepts handshakes exactly as the real agent does
-//! ([`rh_proto::handshake::accept`] with a live clock) and echoes every
+//! ([`droppen_proto::handshake::accept`] with a live clock) and echoes every
 //! stream back to its opener.
 
 use std::collections::HashMap;
@@ -11,15 +11,15 @@ use std::time::Duration;
 use futures_util::{SinkExt, StreamExt};
 use rand::rngs::OsRng;
 use rand::RngCore;
-use rh_proto::chain::{Attestation, ChainClock, ChainState, Entry, TrustRoot};
-use rh_proto::channel::Session;
-use rh_proto::driver::{Channel, StreamEvent};
-use rh_proto::frame::{Frame, AGENT_PATH};
-use rh_proto::handshake::{self, Accepted, AgentSide, FRESHNESS_MAX_AGE_MS};
-use rh_proto::identity::{EnrollCode, MachineIdentity};
-use rh_proto::mux::Role;
-use rh_proto::noise::{RekeyPolicy, ReplayGuard};
-use rh_proto::sig::{HubLogin, LoginRole};
+use droppen_proto::chain::{Attestation, ChainClock, ChainState, Entry, TrustRoot};
+use droppen_proto::channel::Session;
+use droppen_proto::driver::{Channel, StreamEvent};
+use droppen_proto::frame::{Frame, AGENT_PATH};
+use droppen_proto::handshake::{self, Accepted, AgentSide, FRESHNESS_MAX_AGE_MS};
+use droppen_proto::identity::{EnrollCode, MachineIdentity};
+use droppen_proto::mux::Role;
+use droppen_proto::noise::{RekeyPolicy, ReplayGuard};
+use droppen_proto::sig::{HubLogin, LoginRole};
 use serde_json::json;
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
@@ -198,10 +198,10 @@ impl EchoAgent {
 
     /// This agent's one identity as a device's keys (chain v3: a host
     /// controls other hosts as a device, with the same keys).
-    pub fn device_keys(&self) -> (ed25519_dalek::SigningKey, rh_proto::keys::DhKeypair) {
+    pub fn device_keys(&self) -> (ed25519_dalek::SigningKey, droppen_proto::keys::DhKeypair) {
         (
             self.identity.signing_key().clone(),
-            rh_proto::keys::DhKeypair::from_secret(*self.identity.dh().secret()),
+            droppen_proto::keys::DhKeypair::from_secret(*self.identity.dh().secret()),
         )
     }
 

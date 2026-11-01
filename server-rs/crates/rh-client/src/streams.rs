@@ -6,10 +6,10 @@
 
 use std::time::Duration;
 
-use rh_proto::frame::Frame;
-use rh_proto::record::StreamId;
-use rh_proto::stream::MAX_PAGE_LEN;
-use rh_proto::wire::client::DeviceToHub;
+use droppen_proto::frame::Frame;
+use droppen_proto::record::StreamId;
+use droppen_proto::stream::MAX_PAGE_LEN;
+use droppen_proto::wire::client::DeviceToHub;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -326,7 +326,7 @@ impl IndexCopy {
             None => keys.iter().map(|(e, _)| *e).min()?,
         };
         let mk = keys.iter().find(|(e, _)| *e == epoch)?.1;
-        rh_proto::record::stream_id(&mk, source, id).ok()
+        droppen_proto::record::stream_id(&mk, source, id).ok()
     }
 }
 
@@ -408,7 +408,7 @@ pub async fn read_index(
     newest_first.sort_by_key(|k| std::cmp::Reverse(k.0));
     let mut last = StreamCopy::default();
     for (epoch, mk) in &newest_first {
-        let copy = read_stream(link, pages, machine_key, keys, rh_proto::stream::index_stream(mk), timeout).await?;
+        let copy = read_stream(link, pages, machine_key, keys, droppen_proto::stream::index_stream(mk), timeout).await?;
         if copy.exists {
             return Ok((Some(*epoch), copy));
         }
@@ -426,7 +426,7 @@ impl StreamCopy {
     /// Fold an index stream.
     pub fn index(&self) -> Result<IndexCopy> {
         let mut copy = IndexCopy::default();
-        for body in self.json_bodies(rh_proto::record::FMT_INDEX_V1)? {
+        for body in self.json_bodies(droppen_proto::record::FMT_INDEX_V1)? {
             copy.apply(&body);
         }
         Ok(copy)
@@ -435,7 +435,7 @@ impl StreamCopy {
     /// Fold a session stream ([`FeedCopy::apply`]).
     pub fn feed(&self) -> Result<FeedCopy> {
         let mut copy = FeedCopy::default();
-        for body in self.json_bodies(rh_proto::record::FMT_FEED_V1)? {
+        for body in self.json_bodies(droppen_proto::record::FMT_FEED_V1)? {
             copy.apply(&body)?;
         }
         Ok(copy)
@@ -508,7 +508,7 @@ mod tests {
         .await;
         assert!(get(endless).await.unwrap_err().contains("larger than"));
     }
-    use rh_proto::record::{FMT_FEED_V1, FMT_INDEX_V1};
+    use droppen_proto::record::{FMT_FEED_V1, FMT_INDEX_V1};
 
     fn copy(fmt: u16, bodies: &[Value]) -> StreamCopy {
         StreamCopy {
@@ -551,7 +551,7 @@ mod tests {
         )
         .index()
         .unwrap();
-        let id = |mk: &[u8; 32], name: &str| rh_proto::record::stream_id(mk, "claude", name).unwrap();
+        let id = |mk: &[u8; 32], name: &str| droppen_proto::record::stream_id(mk, "claude", name).unwrap();
         assert_eq!(index.session_stream(&keys, "claude", "old"), Some(id(&[1; 32], "old")));
         assert_eq!(index.session_stream(&keys, "claude", "moved"), Some(id(&[2; 32], "moved")));
         assert_eq!(index.session_stream(&keys, "claude", "lost"), None, "no key for epoch 7");

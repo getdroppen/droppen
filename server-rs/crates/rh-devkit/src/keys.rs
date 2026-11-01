@@ -9,12 +9,12 @@ use std::time::Duration;
 use ed25519_dalek::SigningKey;
 use rand::rngs::OsRng;
 use rand::RngCore;
-use rh_proto::chain::{recovery_keys, Action, ChainClock, ChainState, Entry, Signer};
-use rh_proto::identity::fingerprint;
-use rh_proto::keys::DhKeypair;
-use rh_proto::pairing::{channel_id, Answer, Delivery, Hello, Offer};
-use rh_proto::pake::{Cpace, Role};
-use rh_proto::wrap::{self, context, Purpose, SealContext, SealedKey, WrappedKey};
+use droppen_proto::chain::{recovery_keys, Action, ChainClock, ChainState, Entry, Signer};
+use droppen_proto::identity::fingerprint;
+use droppen_proto::keys::DhKeypair;
+use droppen_proto::pairing::{channel_id, Answer, Delivery, Hello, Offer};
+use droppen_proto::pake::{Cpace, Role};
+use droppen_proto::wrap::{self, context, Purpose, SealContext, SealedKey, WrappedKey};
 use serde_json::{json, Value};
 use zeroize::Zeroizing;
 
@@ -86,7 +86,7 @@ impl Device {
     /// chain's last, never one picked from anywhere else. The user key is
     /// kept. Returns the epochs: `(user, [(machine, epoch)])`.
     pub async fn commit_keys(&mut self, user: Option<[u8; 32]>, machines: &[(String, [u8; 32])]) -> Result<(Option<u32>, Vec<(String, u32)>)> {
-        use rh_proto::chain::{machine_key_commit, user_key_commit, KeyCommit, KeyCommits};
+        use droppen_proto::chain::{machine_key_commit, user_key_commit, KeyCommit, KeyCommits};
         self.sync_chain().await?;
         let chain = self.chain.as_ref().ok_or("no chain")?;
         let user_epoch = user.map(|_| chain.user_key_epochs());
@@ -141,8 +141,8 @@ impl Device {
     /// (chain v3 review, D2), the host's next machine key epoch goes in the
     /// same batch and is wrapped into the keyring: `Some((epoch, key))` for
     /// the caller to hand to the agent; `None` when nothing narrowed.
-    pub async fn set_accept(&mut self, host: &str, from: rh_proto::chain::Accept) -> Result<Option<(u32, [u8; 32])>> {
-        use rh_proto::chain::{machine_key_commit, KeyCommit, KeyCommits};
+    pub async fn set_accept(&mut self, host: &str, from: droppen_proto::chain::Accept) -> Result<Option<(u32, [u8; 32])>> {
+        use droppen_proto::chain::{machine_key_commit, KeyCommit, KeyCommits};
         self.sync_chain().await?;
         let chain = self.chain.as_ref().ok_or("no chain")?;
         let action = Action::SetAccept { host: host.into(), from };
@@ -270,8 +270,8 @@ impl Device {
         let keys = recovery_keys(&rk);
         let ak = SigningKey::generate(&mut OsRng);
         let ak_pub = ak.verifying_key().to_bytes();
-        let recovery = rh_proto::chain::RecoveryKey::new(&keys.signing, &self.account, &ak_pub);
-        let entry = rh_proto::chain::genesis_draft(&self.account, ak_pub, self.info(), Some(recovery), now_ms()).sign(&ak);
+        let recovery = droppen_proto::chain::RecoveryKey::new(&keys.signing, &self.account, &ak_pub);
+        let entry = droppen_proto::chain::genesis_draft(&self.account, ak_pub, self.info(), Some(recovery), now_ms()).sign(&ak);
         drop(ak);
         self.push_entries(std::slice::from_ref(&entry)).await?;
         self.clock.set_now(now_ms());
@@ -289,7 +289,7 @@ impl Device {
     /// [`Device::create_genesis`] and [`Device::create_genesis_with_recovery`]
     /// stand for an account made before chain v3.
     pub async fn create_genesis3(&mut self, with_recovery: bool) -> Result<Option<[u8; 16]>> {
-        use rh_proto::chain::{genesis3_draft, user_key_commit, KeyCommit, KeyCommits, RecoveryKey};
+        use droppen_proto::chain::{genesis3_draft, user_key_commit, KeyCommit, KeyCommits, RecoveryKey};
         let rk = with_recovery.then(|| {
             let mut rk = [0u8; 16];
             OsRng.fill_bytes(&mut rk);
@@ -397,7 +397,7 @@ impl Device {
     #[deprecated(note = "chain v2's AddDevice: on a chain v3 account use Device::add_and_deliver3; this stands only for an account made before chain v3")]
     pub async fn add_and_deliver(&mut self, device: &str, sign_key: [u8; 32], dh_key: [u8; 32], secret: &[u8; 32]) -> Result<()> {
         self.sync_chain().await?;
-        self.append(Action::AddDevice(rh_proto::chain::DeviceInfo {
+        self.append(Action::AddDevice(droppen_proto::chain::DeviceInfo {
             id: device.into(),
             sign_key,
             dh_key,
@@ -433,11 +433,11 @@ impl Device {
         if !self.chain.as_ref().ok_or("no chain")?.is_v3() {
             return Err("the chain holds no v3 entry: a v3 device is added only to an account on chain v3".into());
         }
-        self.append(Action::AddDevice3(rh_proto::chain::DeviceV3 {
+        self.append(Action::AddDevice3(droppen_proto::chain::DeviceV3 {
             id: device.into(),
             sign_key,
             dh_key,
-            flags: rh_proto::chain::Flags { host: false, admin },
+            flags: droppen_proto::chain::Flags { host: false, admin },
         }))
         .await?;
         let chain = self.chain.as_ref().ok_or("no chain")?;
@@ -769,7 +769,7 @@ impl Device {
     /// after the commit undoes it:
     /// what did not go is logged and said in [`Rotation3::failed`].
     async fn rotate3(&mut self, prefix: Vec<Action>, user_key: bool) -> Result<Rotation3> {
-        use rh_proto::chain::{machine_key_commit, user_key_commit, KeyCommit};
+        use droppen_proto::chain::{machine_key_commit, user_key_commit, KeyCommit};
         self.sync_chain().await?;
         let chain = self.chain.clone().ok_or("no chain")?;
         if !chain.is_v3() {
@@ -872,8 +872,8 @@ impl Device {
     /// the host is in the chain either way. The caller hands `mk` to the
     /// agent ([`Device::mail_machine_key`], or a channel).
     /// [`Device::complete_enrollment_v3`] is the bare batch.
-    pub async fn enroll_host3(&mut self, code: &rh_proto::identity::EnrollCode, mk: &[u8; 32], timeout: Duration) -> Result<Enrolled3> {
-        use rh_proto::chain::{machine_key_commit, user_key_commit, DeviceV3, Flags, KeyCommit};
+    pub async fn enroll_host3(&mut self, code: &droppen_proto::identity::EnrollCode, mk: &[u8; 32], timeout: Duration) -> Result<Enrolled3> {
+        use droppen_proto::chain::{machine_key_commit, user_key_commit, DeviceV3, Flags, KeyCommit};
         self.sync_chain().await?;
         if !self.chain.as_ref().ok_or("no chain")?.is_v3() {
             return Err("the chain holds no v3 entry: a host joins this way only on an account on chain v3".into());
@@ -1077,7 +1077,7 @@ pub struct Rotation3 {
 #[derive(Debug, Clone)]
 pub struct Enrolled3 {
     /// The host, with exactly the keys its proof covers.
-    pub machine: rh_proto::chain::MachineInfo,
+    pub machine: droppen_proto::chain::MachineInfo,
     /// The epoch its first machine key was committed as.
     pub mk_epoch: u32,
     /// A new user key epoch the batch carried (the newest was stale).
@@ -1097,10 +1097,10 @@ pub struct HostKeyMail {
 }
 
 /// `KeyEpochs` entries for `user` and `machines` (as the web's `rotate`):
-/// the user key with the first [`rh_proto::chain::MAX_KEY_COMMITS`] machine
+/// the user key with the first [`droppen_proto::chain::MAX_KEY_COMMITS`] machine
 /// keys, the rest in entries of their own; none when there is nothing.
-pub(crate) fn key_epochs(user: Option<rh_proto::chain::KeyCommit>, machines: Vec<(String, rh_proto::chain::KeyCommit)>) -> Vec<Action> {
-    use rh_proto::chain::{KeyCommits, MAX_KEY_COMMITS};
+pub(crate) fn key_epochs(user: Option<droppen_proto::chain::KeyCommit>, machines: Vec<(String, droppen_proto::chain::KeyCommit)>) -> Vec<Action> {
+    use droppen_proto::chain::{KeyCommits, MAX_KEY_COMMITS};
     if user.is_none() && machines.is_empty() {
         return Vec::new();
     }
@@ -1206,7 +1206,7 @@ pub fn open_machine_copies(
 /// a package sealed by an admin no longer current can be the only way back
 /// in for its epoch (the hub keeps one per sender and epoch for that), so it
 /// must open — as [`wrap::open_from_recovery`], which this parses the name for.
-pub fn open_recovery_package(keys: &rh_proto::chain::RecoveryKeys, chain: &ChainState, name: &str, blob: &[u8]) -> Option<(u32, Zeroizing<Vec<u8>>)> {
+pub fn open_recovery_package(keys: &droppen_proto::chain::RecoveryKeys, chain: &ChainState, name: &str, blob: &[u8]) -> Option<(u32, Zeroizing<Vec<u8>>)> {
     let parts: Vec<&str> = name.split('/').collect();
     let (epoch, sender) = match parts.as_slice() {
         ["rk", epoch, sender] | ["rk", epoch, sender, _] | ["rk", epoch, sender, _, _] => (*epoch, *sender),
@@ -1228,11 +1228,11 @@ pub fn open_recovery_package(keys: &rh_proto::chain::RecoveryKeys, chain: &Chain
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rh_proto::chain::{
+    use droppen_proto::chain::{
         genesis3_draft, genesis_draft, machine_key_commit, user_key_commit, DeviceInfo, DeviceV3, Flags, KeyCommit, KeyCommits, RecoveryKey,
         RecoveryKeys,
     };
-    use rh_proto::identity::MachineIdentity;
+    use droppen_proto::identity::MachineIdentity;
 
     const ACCOUNT: &str = "a-1";
     const UK0: [u8; 32] = [0x10; 32];
@@ -1422,7 +1422,7 @@ mod tests {
 
     #[test]
     fn key_epochs_split_past_the_entrys_limit_as_the_web_does() {
-        use rh_proto::chain::MAX_KEY_COMMITS;
+        use droppen_proto::chain::MAX_KEY_COMMITS;
         let user = || {
             Some(KeyCommit {
                 epoch: 3,

@@ -607,7 +607,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     for (const p of problems) console.error(`  - ${p}`);
     console.error(
       "\nThe open crates and web/ may not reach into the hub: no dependency on it, no path outside this repository, " +
-        "none of its code, schema or environment (docs/local-aggregator.md §2.1). Talk to it through rh-proto and the " +
+        "none of its code, schema or environment (docs/local-aggregator.md §2.1). Talk to it through droppen-proto and the " +
         "documented hub API (docs/hub-api/); a hub variable the open side really reads goes in OPEN_ENV, with a reason.",
     );
     process.exit(1);
