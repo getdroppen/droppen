@@ -2,7 +2,7 @@ import type { Plugin, Rollup } from "vite";
 import { staticSet } from "./local-boot";
 
 /** What the app's code says in place of the list (`src/app/view-prefetch.ts`). */
-export const VIEW_FILES = "__RH_VIEW_FILES__";
+export const VIEW_FILES = "__DROPPEN_VIEW_FILES__";
 
 /** A module that calls this loads routes' views: every module it loads with `import()` is one. */
 const ROUTE_VIEWS = /\blazyRouteComponent\s*\(/;
