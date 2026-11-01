@@ -42,7 +42,7 @@ node "$REPO/scripts/notices/web-notices.mjs" "$SRC/web" "$WORK/notices-web.txt" 
   || die "an npm package bundled into the web app fails the licence check (see above)"
 rule=$(printf '=%.0s' $(seq 1 80))
 {
-  printf 'THIRD_PARTY_NOTICES for Droppen %s (remote-hand-server %s+g%s)\n\n' "$VERSION" "$CRATE_VERSION" "$REV"
+  printf 'THIRD_PARTY_NOTICES for Droppen %s (droppen-server %s+g%s)\n\n' "$VERSION" "$CRATE_VERSION" "$REV"
   printf 'Droppen is licensed under the GNU Affero General Public License, version 3\n'
   printf 'only (AGPL-3.0-only); see LICENSE.\nCopyright (C) 2026 Kilerd\n\n'
   printf 'The server binary also contains the third-party software below, used under\n'

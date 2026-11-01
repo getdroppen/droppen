@@ -1741,6 +1741,63 @@ name = "droppen-search-path"
 version = "0.1.0"
 
 [[package]]
+name = "droppen-server"
+version = "0.2.136"
+dependencies = [
+ "axum",
+ "clap",
+ "droppen-accounts",
+ "droppen-agent",
+ "droppen-aggregator",
+ "droppen-auth",
+ "droppen-base",
+ "droppen-client",
+ "droppen-cloud",
+ "droppen-drive",
+ "droppen-files",
+ "droppen-http",
+ "droppen-instance",
+ "droppen-notify",
+ "droppen-plugin-sdk",
+ "droppen-plugins",
+ "droppen-proto",
+ "droppen-provider",
+ "droppen-provider-acp",
+ "droppen-provider-claude-code",
+ "droppen-provider-codex",
+ "droppen-pty",
+ "droppen-sessions",
+ "droppen-setup",
+ "droppen-supervisor",
+ "droppen-workbench",
+ "flate2",
+ "futures-util",
+ "gotcha",
+ "gotcha_core",
+ "libc",
+ "mime_guess",
+ "p256",
+ "proc-macro2",
+ "quote",
+ "rand 0.8.7",
+ "regex",
+ "reqwest",
+ "rusqlite",
+ "rust-embed",
+ "serde",
+ "serde_json",
+ "syn 2.0.119",
+ "tempfile",
+ "tokio",
+ "tokio-tungstenite",
+ "tokio-util",
+ "toml",
+ "tower-http",
+ "tower-service",
+ "tracing",
+]
+
+[[package]]
 name = "droppen-sessions"
 version = "0.1.0"
 dependencies = [
@@ -3573,63 +3630,6 @@ name = "regex-syntax"
 version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
-
-[[package]]
-name = "remote-hand-server"
-version = "0.2.136"
-dependencies = [
- "axum",
- "clap",
- "droppen-accounts",
- "droppen-agent",
- "droppen-aggregator",
- "droppen-auth",
- "droppen-base",
- "droppen-client",
- "droppen-cloud",
- "droppen-drive",
- "droppen-files",
- "droppen-http",
- "droppen-instance",
- "droppen-notify",
- "droppen-plugin-sdk",
- "droppen-plugins",
- "droppen-proto",
- "droppen-provider",
- "droppen-provider-acp",
- "droppen-provider-claude-code",
- "droppen-provider-codex",
- "droppen-pty",
- "droppen-sessions",
- "droppen-setup",
- "droppen-supervisor",
- "droppen-workbench",
- "flate2",
- "futures-util",
- "gotcha",
- "gotcha_core",
- "libc",
- "mime_guess",
- "p256",
- "proc-macro2",
- "quote",
- "rand 0.8.7",
- "regex",
- "reqwest",
- "rusqlite",
- "rust-embed",
- "serde",
- "serde_json",
- "syn 2.0.119",
- "tempfile",
- "tokio",
- "tokio-tungstenite",
- "tokio-util",
- "toml",
- "tower-http",
- "tower-service",
- "tracing",
-]
 
 [[package]]
 name = "rend"

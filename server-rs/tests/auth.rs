@@ -425,7 +425,7 @@ async fn remote_hand_server_open_signs_the_page_in_as_the_owner() {
 
 /// The server binary as a command, on a test's home directory.
 fn cli(home: &Path, args: &[&str]) -> std::process::Output {
-    std::process::Command::new(env!("CARGO_BIN_EXE_remote-hand-server"))
+    std::process::Command::new(env!("CARGO_BIN_EXE_droppen-server"))
         .args(args)
         .env("APP_HOME_DIR", home)
         .env("HOME", home)

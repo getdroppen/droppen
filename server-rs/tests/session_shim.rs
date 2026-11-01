@@ -24,7 +24,7 @@ mod common;
 fn use_the_real_binary() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
-        std::env::set_var("DROPPEN_SHIM_BIN", env!("CARGO_BIN_EXE_remote-hand-server"));
+        std::env::set_var("DROPPEN_SHIM_BIN", env!("CARGO_BIN_EXE_droppen-server"));
     });
 }
 

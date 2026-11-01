@@ -8,7 +8,7 @@ description = "The device side of the Droppen hub API in Rust: device sessions, 
 
 # Open source, like droppen-proto: it speaks only the documented hub API
 # (`docs/hub-api/`) and never links rh-hub. Its users are the headless test
-# device (droppen-devkit) and the local install's aggregator (`remote-hand-server`'s
+# device (droppen-devkit) and the local install's aggregator (`droppen-server`'s
 # `aggregator`); later the desktop app's Rust side.
 
 [dependencies]

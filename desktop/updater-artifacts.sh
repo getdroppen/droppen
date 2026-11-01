@@ -205,7 +205,7 @@ if [ "$TEST" = 0 ]; then
   xcrun stapler validate "$APP" >/dev/null || die "$APP has no stapled notarisation ticket: desktop/notarise.sh notarises and staples it (desktop/SIGNING.md)"
   spctl --assess --type execute "$APP" || die "Gatekeeper does not accept $APP"
   # One archive serves both of the updater's macOS targets.
-  for bin in "$APP/Contents/MacOS/Droppen" "$APP/Contents/MacOS/remote-hand-server"; do
+  for bin in "$APP/Contents/MacOS/Droppen" "$APP/Contents/MacOS/droppen-server"; do
     lipo "$bin" -verify_arch arm64 x86_64 || die "$bin is not universal: the one archive is offered to both Apple silicon and Intel Macs"
   done
   # What installs from the update ships its licence and notices too, and

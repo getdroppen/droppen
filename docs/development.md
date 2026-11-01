@@ -45,10 +45,10 @@ pnpm build:web                                               # first: the web ap
 cargo build --release --manifest-path server-rs/Cargo.toml   # the same as pnpm build:server
 ```
 
-The program is `server-rs/target/release/remote-hand-server`.
-`remote-hand-server serve` runs it in the foreground on
-`http://127.0.0.1:8700`; with no account yet, `remote-hand-server open` opens
-the page as this computer's owner, and `remote-hand-server user add <name>`
+The program is `server-rs/target/release/droppen-server`.
+`droppen-server serve` runs it in the foreground on
+`http://127.0.0.1:8700`; with no account yet, `droppen-server open` opens
+the page as this computer's owner, and `droppen-server user add <name>`
 creates an account. Without `web/dist` the build stops on purpose, rather than
 produce a binary that shows only a placeholder page; set
 `DROPPEN_ALLOW_MISSING_WEB_DIST=1` when you do not need the web app (the `pnpm`

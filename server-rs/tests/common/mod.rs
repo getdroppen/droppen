@@ -26,13 +26,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use remote_hand_server::app::RemoteHandApp;
+use droppen_server::app::RemoteHandApp;
 use droppen_workbench::apps::Registry;
 use droppen_drive::feed::global::GlobalFeed;
 use droppen_drive::feed::FeedRegistry;
 use droppen_instance::instance::InstanceDirs;
 use droppen_instance::paths::Paths;
-use remote_hand_server::shutdown::Cleanups;
+use droppen_server::shutdown::Cleanups;
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
@@ -578,7 +578,7 @@ pub async fn spawn_server(home: &Path, instance: &str, extra_env: &[(&str, &str)
     // So a stale port from a previous server is never mistaken for this one's.
     let _ = std::fs::remove_file(&port_file);
 
-    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_remote-hand-server"));
+    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_droppen-server"));
     command
         .arg("serve")
         .env("APP_HOME_DIR", home)
@@ -878,8 +878,8 @@ fn same_start(read: &str, listed: &str) -> bool {
     !listed.is_empty() && words(read) == words(listed)
 }
 
-/// Every process of the server binary (its program's file name is
-/// `remote-hand-server`) whose command line names a path under `home`: the
+/// Every process of the server binary (its build output is `droppen-server`; the
+/// installed file is `remote-hand-server`) whose command line names a path under `home`: the
 /// `session-shim`s (their stderr file lives under it), the `pty-shim`s (their
 /// socket does) and a server run from a copy installed there. Matched on
 /// `<home>/` at the start of an argument or of an `--option=` value, read
@@ -911,7 +911,9 @@ pub fn server_processes_under(home: &Path) -> Vec<ServerProcess> {
         let names_home = args
             .iter()
             .any(|arg| arg.starts_with(&under) || arg.split_once('=').is_some_and(|(_, value)| value.starts_with(&under)));
-        if program != Some(std::ffi::OsStr::new("remote-hand-server")) || !names_home {
+        let server_name = program == Some(std::ffi::OsStr::new("droppen-server"))
+            || program == Some(std::ffi::OsStr::new("remote-hand-server"));
+        if !server_name || !names_home {
             continue;
         }
         found.push(ServerProcess { pid, started: started.join(" "), args });

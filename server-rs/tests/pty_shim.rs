@@ -16,13 +16,13 @@ use std::path::Path;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
-use remote_hand_server::app::RemoteHandApp;
+use droppen_server::app::RemoteHandApp;
 use droppen_base::procs::alive;
 use droppen_instance::instance::{InstanceDirs, InstanceLock, DEFAULT_INSTANCE};
 use droppen_instance::paths::Paths;
 use droppen_pty::proto::{self, Frame, Hello2, Meta};
 use droppen_pty::sidecar::Sidecars;
-use remote_hand_server::shutdown::Cleanups;
+use droppen_server::shutdown::Cleanups;
 use droppen_workbench::terminals::{Chunk, Registry};
 use serde_json::Value;
 use tokio_tungstenite::tungstenite::Message;

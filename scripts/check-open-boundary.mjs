@@ -554,7 +554,7 @@ export function checkOpenBoundary(root, { metadata = cargoMetadata } = {}) {
     if (!side.length && !unlisted.length) notes.push("the hub is not in this tree (the public repository's shape)");
   } else {
     problems.push(`cargo metadata cannot load server-rs/Cargo.toml:\n      ${error.split("\n").join("\n      ")}`);
-    open = [{ name: "remote-hand-server", dir: join(root, "server-rs") }];
+    open = [{ name: "droppen-server", dir: join(root, "server-rs") }];
     for (const name of existsSync(crates) ? readdirSync(crates).sort() : []) {
       if (!isHub(name) && existsSync(join(crates, name, "Cargo.toml"))) open.push({ name, dir: join(crates, name) });
     }

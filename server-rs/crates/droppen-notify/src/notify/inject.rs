@@ -81,7 +81,21 @@ pub fn program_text(binary: &Path) -> String {
     // POSIX single quotes take everything literally except a single quote,
     // which is escaped by ending the string, adding an escaped quote, and
     // starting a new one.
-    let quoted = binary.to_string_lossy().replace('\'', r"'\''");
+    let quote = |path: &Path| path.to_string_lossy().replace('\'', r"'\''");
+    // The binary this session started with, then the two sidecar names beside
+    // it: an app update replaces `remote-hand-server` with `droppen-server`
+    // (or changes the other way), and a run that outlives it must still find
+    // the one now installed without waiting for the next spawn to rewrite this.
+    let mut candidates = vec![binary.to_path_buf()];
+    if let Some(parent) = binary.parent() {
+        for name in [droppen_base::program::DROPPEN_SERVER, droppen_base::program::LEGACY_COMMAND] {
+            let candidate = parent.join(name);
+            if candidate != binary && !candidates.contains(&candidate) {
+                candidates.push(candidate);
+            }
+        }
+    }
+    let candidates = candidates.iter().map(|path| format!("'{}'", quote(path))).collect::<Vec<_>>().join(" ");
     let name = cli::NAME;
     format!(
         "#!/bin/sh\n\
@@ -90,7 +104,8 @@ pub fn program_text(binary: &Path) -> String {
          # edits are overwritten on the next spawn.\n\
          #\n\
          # usage: {name} <title> [body] [--level passive|active|time-sensitive]\n\
-         exec '{quoted}' notify \"$@\"\n"
+         for p in {candidates}; do [ -x \"$p\" ] && exec \"$p\" notify \"$@\"; done\n\
+         exit 127\n"
     )
 }
 
@@ -242,17 +257,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_program_is_one_line_of_shell_and_quotes_its_binary() {
+    fn the_program_quotes_its_binary_and_passes_the_arguments_through() {
         let text = program_text(Path::new("/usr/local/bin/remote-hand-server"));
         assert!(text.starts_with("#!/bin/sh\n"));
         assert!(text.contains("# usage: droppen-notify <title>"), "{text}");
-        assert!(text.ends_with("exec '/usr/local/bin/remote-hand-server' notify \"$@\"\n"), "{text}");
+        assert!(text.contains("for p in '/usr/local/bin/remote-hand-server'"), "{text}");
+        assert!(text.contains("exec \"$p\" notify \"$@\""), "{text}");
 
         // A home directory with a quote in it is a home directory.
         let text = program_text(Path::new("/Users/o'brien/bin/remote-hand-server"));
-        assert!(text.contains(r"exec '/Users/o'\''brien/bin/remote-hand-server' notify"), "{text}");
+        assert!(text.contains(r"'/Users/o'\''brien/bin/remote-hand-server'"), "{text}");
         // Whatever the path, the arguments are passed through untouched.
         assert!(text.contains("\"$@\""), "re-splitting the arguments is the bug this exists to avoid");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn the_script_falls_back_to_the_sidecar_name_beside_a_replaced_binary() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let old = dir.path().join("remote-hand-server");
+        let new = dir.path().join(droppen_base::program::DROPPEN_SERVER);
+        std::fs::write(&new, "#!/bin/sh\nprintf '%s|%s\\n' \"$1\" \"$2\"\n").expect("fake");
+        std::fs::set_permissions(&new, std::os::unix::fs::PermissionsExt::from_mode(0o755)).expect("chmod");
+        let script = dir.path().join(cli::NAME);
+        write_executable(&script, program_text(&old).as_bytes()).await.expect("write");
+        let out = std::process::Command::new("/bin/sh")
+            .arg(&script)
+            .arg("after an update")
+            .output()
+            .expect("run");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "notify|after an update\n");
     }
 
     #[cfg(unix)]

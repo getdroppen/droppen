@@ -1,6 +1,6 @@
 //! Entry point: `serve` (the default), `up`, and the tooling subcommands.
 
-use remote_hand_server::cli::{Cli, Command};
+use droppen_server::cli::{Cli, Command};
 use droppen_base::program::Name;
 
 fn main() -> std::process::ExitCode {

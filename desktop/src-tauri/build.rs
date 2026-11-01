@@ -6,13 +6,13 @@ fn main() {
     // there is the error it should be.
     if std::env::var("PROFILE").as_deref() == Ok("debug") {
         let target = std::env::var("TARGET").expect("TARGET");
-        let path = std::path::Path::new("binaries").join(format!("remote-hand-server-{target}"));
+        let path = std::path::Path::new("binaries").join(format!("droppen-server-{target}"));
         if !path.exists() {
             use std::os::unix::fs::PermissionsExt;
             std::fs::create_dir_all("binaries").expect("binaries/");
             std::fs::write(
                 &path,
-                "#!/bin/sh\necho 'placeholder: run desktop/build.sh, or put the server here as binaries/remote-hand-server-<target>' >&2\nexit 1\n",
+                "#!/bin/sh\necho 'placeholder: run desktop/build.sh, or put the server here as binaries/droppen-server-<target>' >&2\nexit 1\n",
             )
             .expect("placeholder sidecar");
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("chmod");

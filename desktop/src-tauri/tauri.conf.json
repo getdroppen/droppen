@@ -21,7 +21,7 @@
     "longDescription": "Droppen runs Claude Code and Codex sessions on this device and is where you use them.",
     "copyright": "Copyright (C) 2026 Kilerd",
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.png"],
-    "externalBin": ["binaries/remote-hand-server"],
+    "externalBin": ["binaries/droppen-server"],
     "macOS": {
       "minimumSystemVersion": "13.0",
       "dmg": {

@@ -6,7 +6,7 @@
 #
 #   <src-dir>  a source tree with web/dist already built (the web app is
 #              embedded at compile time), e.g. release-public.sh's export
-#   <out-dir>  receives x86_64/remote-hand-server, aarch64/remote-hand-server
+#   <out-dir>  receives x86_64/droppen-server, aarch64/droppen-server
 #              and build.log
 #   <rev>      the short commit, passed to the build as DROPPEN_BUILD_REV (and
 #              as RH_BUILD_REV, for a commit from before the rename to Droppen)
@@ -108,5 +108,5 @@ echo "build-linux: source uploaded; building"
 x env DROPPEN_BUILD_REV="$REV" bash -s <"$INSIDE" 2>&1 | tee "$OUT/build.log"
 
 x tar -C /work/out -cf - x86_64 aarch64 | tar -x -C "$OUT"
-ls -l "$OUT"/x86_64/remote-hand-server "$OUT"/aarch64/remote-hand-server
+ls -l "$OUT"/x86_64/droppen-server "$OUT"/aarch64/droppen-server
 echo "build-linux: done"

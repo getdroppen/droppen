@@ -4,7 +4,7 @@
 # the web app has the update entry):
 #
 #   desktop/build.sh --ref HEAD --e2e --version 0.0.1-test --arch aarch64 --out /tmp/droppen-e2e-old [--sidecar …]
-#   desktop/build.sh --ref HEAD --e2e --version 0.0.2-test --arch aarch64 --out /tmp/droppen-e2e-new --sidecar "/tmp/droppen-e2e-old/Droppen E2E.app/Contents/MacOS/remote-hand-server"
+#   desktop/build.sh --ref HEAD --e2e --version 0.0.2-test --arch aarch64 --out /tmp/droppen-e2e-new --sidecar "/tmp/droppen-e2e-old/Droppen E2E.app/Contents/MacOS/droppen-server"
 #   desktop/e2e-updater-macos.sh "/tmp/droppen-e2e-old/Droppen E2E.app" "/tmp/droppen-e2e-new/Droppen E2E.app" [<screenshot dir>]
 #
 # A throwaway updater key is made for the run (never the release key), the new
@@ -356,7 +356,7 @@ started "$BEFORE"
 STATE=$(state)
 NEW_SERVER=$(jget "$STATE" serverPid)
 check "the next launch is $NEW_V with its own server" \
-  '[ "$(jget "$STATE" version)" = "$NEW_V" ] && [ "$(ps -o comm= -p "$NEW_SERVER")" = "$INSTALLED/Contents/MacOS/remote-hand-server" ]'
+  '[ "$(jget "$STATE" version)" = "$NEW_V" ] && [ "$(ps -o comm= -p "$NEW_SERVER")" = "$INSTALLED/Contents/MacOS/droppen-server" ]'
 PORT_APP=$(jget "$STATE" port)
 TOKEN=$(api_login "$PORT_APP")
 LIVE=$(terminals "$PORT_APP" "$TOKEN" || true)

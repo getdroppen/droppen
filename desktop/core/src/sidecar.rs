@@ -560,7 +560,10 @@ pub fn stop_leftover(pid_file: &Path, instance_dir: &Path, grace: Duration) -> L
 /// Whether the process `pid`, running `exe`, is a Droppen app's server: see
 /// [`stop_leftover`]. `lock_holder` is the pid the instance's held lock names.
 pub fn is_leftover_server(exe: &Path, pid: u32, lock_holder: Option<u32>) -> bool {
-    exe.file_name().is_some_and(|name| name == crate::SIDECAR_NAME) && (lock_holder == Some(pid) || in_app_bundle(exe))
+    let named = exe.file_name().is_some_and(|name| {
+        name == crate::SIDECAR_NAME || name == crate::LEGACY_SIDECAR_NAME
+    });
+    named && (lock_holder == Some(pid) || in_app_bundle(exe))
 }
 
 /// Whether `exe` sits in `<X>.app/Contents/MacOS/` of an app whose
@@ -879,7 +882,7 @@ mod tests {
         // test binary named like the server, running the sleeping stand-in
         // below. (A copy of a system binary would not do: macOS kills a
         // relocated platform binary on sight.)
-        let program = dir.path().join("remote-hand-server");
+        let program = dir.path().join(crate::SIDECAR_NAME);
         std::fs::copy(std::env::current_exe().expect("test binary"), &program).expect("copy");
         let mut leftover = Command::new(&program)
             .args(["--ignored", "--exact", "sidecar::tests::stand_in_server", "--test-threads=1", "-q"])
@@ -895,7 +898,7 @@ mod tests {
         });
         let record = PidRecord {
             pid,
-            exe: PathBuf::from("/Applications/Somewhere/Else.app/Contents/MacOS/remote-hand-server"),
+            exe: PathBuf::from(format!("/Applications/Somewhere/Else.app/Contents/MacOS/{}", crate::SIDECAR_NAME)),
             port: 50_000,
         };
         record.save(&pid_file).expect("record");
@@ -955,7 +958,7 @@ mod tests {
                 format!("<?xml version=\"1.0\"?>\n<plist><dict>\n<key>CFBundleName</key>\n<string>{name}</string>\n<key>CFBundleIdentifier</key>\n  <string>{id}</string>\n</dict></plist>"),
             )
             .expect("plist");
-            contents.join("MacOS/remote-hand-server")
+            contents.join("MacOS").join(crate::SIDECAR_NAME)
         };
         let moved = bundle("Droppen copy", crate::BUNDLE_ID);
         let other = bundle("Other", "com.example.other");
@@ -974,6 +977,14 @@ mod tests {
             !is_leftover_server(&moved.with_file_name("Droppen"), 10, Some(10)),
             "only the server binary"
         );
+        // An app killed while an older build ran the old sidecar name left
+        // that process behind.
+        let before_rename = moved.with_file_name(crate::LEGACY_SIDECAR_NAME);
+        assert!(is_leftover_server(&before_rename, 10, None), "the old sidecar name, in our bundle");
+        assert!(
+            is_leftover_server(&Path::new("/tmp").join(crate::LEGACY_SIDECAR_NAME), 10, Some(10)),
+            "the old sidecar name, holding our instance"
+        );
         assert!(!is_leftover_server(Path::new("/bin/sleep"), 10, Some(10)));
         assert_eq!(
             plist_bundle_id("<key>CFBundleIdentifier</key><string>a.b</string>").as_deref(),
@@ -988,7 +999,7 @@ mod tests {
         let path = dir.path().join("server.pid");
         let record = PidRecord {
             pid: 4242,
-            exe: PathBuf::from("/Applications/Droppen.app/Contents/MacOS/remote-hand-server"),
+            exe: PathBuf::from(format!("/Applications/Droppen.app/Contents/MacOS/{}", crate::SIDECAR_NAME)),
             port: 51_000,
         };
         record.save(&path).expect("save");

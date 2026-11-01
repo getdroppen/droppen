@@ -434,7 +434,7 @@ jobs:
             DROPPEN_BUILD_REV="$REV" RH_BUILD_REV="$REV" \
             RUSTFLAGS="--remap-path-prefix=$src=/droppen --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo" \
             cargo build --release --locked --target "$TARGET" --manifest-path "$src/server-rs/Cargo.toml"
-          cp "$RUNNER_TEMP/target/$TARGET/release/remote-hand-server" "$RUNNER_TEMP/out/$TARGET/"
+          cp "$RUNNER_TEMP/target/$TARGET/release/droppen-server" "$RUNNER_TEMP/out/$TARGET/"
           COPYFILE_DISABLE=1 tar -cf "$RUNNER_TEMP/server-$TARGET.tar" -C "$RUNNER_TEMP/out" "$TARGET"
           echo "sha_$KEY=$(shasum -a 256 "$RUNNER_TEMP/server-$TARGET.tar" | cut -d' ' -f1)" | tee -a "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -484,7 +484,7 @@ jobs:
           mv "$RUNNER_TEMP/a/web/dist" "$work/src/web/dist"
           docker run --rm -v "$work:/work" -e DROPPEN_BUILD_REV="$REV" -e ARCHES="$ARCH" \
             "$image" bash /work/src/scripts/build-linux-in-container.sh
-          tar -cf "$RUNNER_TEMP/server-linux-$ARCH.tar" -C "$work/out" "$ARCH/remote-hand-server"
+          tar -cf "$RUNNER_TEMP/server-linux-$ARCH.tar" -C "$work/out" "$ARCH/droppen-server"
           echo "sha_$ARCH=$(shasum -a 256 "$RUNNER_TEMP/server-linux-$ARCH.tar" | cut -d' ' -f1)" | tee -a "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -553,16 +553,16 @@ jobs:
           unpack=.github/scripts/unpack-artifact.sh
           $unpack "$dl/web-dist/web-dist.tar" "$WEB_SHA" "$a/web" "$ALLOW_WEB"
           $unpack "$dl/notices/notices.tar" "$NOTICES_SHA" "$a/notices" "$ALLOW_NOTICES"
-          $unpack "$dl/server-aarch64-apple-darwin/server-aarch64-apple-darwin.tar" "$MAC_AARCH64_SHA" "$a/mac-aarch64" '^aarch64-apple-darwin(/remote-hand-server)?$'
-          $unpack "$dl/server-x86_64-apple-darwin/server-x86_64-apple-darwin.tar" "$MAC_X86_64_SHA" "$a/mac-x86_64" '^x86_64-apple-darwin(/remote-hand-server)?$'
-          $unpack "$dl/server-linux-x86_64/server-linux-x86_64.tar" "$LINUX_X86_64_SHA" "$a/linux-x86_64" '^x86_64(/remote-hand-server)?$'
-          $unpack "$dl/server-linux-aarch64/server-linux-aarch64.tar" "$LINUX_AARCH64_SHA" "$a/linux-aarch64" '^aarch64(/remote-hand-server)?$'
+          $unpack "$dl/server-aarch64-apple-darwin/server-aarch64-apple-darwin.tar" "$MAC_AARCH64_SHA" "$a/mac-aarch64" '^aarch64-apple-darwin(/droppen-server)?$'
+          $unpack "$dl/server-x86_64-apple-darwin/server-x86_64-apple-darwin.tar" "$MAC_X86_64_SHA" "$a/mac-x86_64" '^x86_64-apple-darwin(/droppen-server)?$'
+          $unpack "$dl/server-linux-x86_64/server-linux-x86_64.tar" "$LINUX_X86_64_SHA" "$a/linux-x86_64" '^x86_64(/droppen-server)?$'
+          $unpack "$dl/server-linux-aarch64/server-linux-aarch64.tar" "$LINUX_AARCH64_SHA" "$a/linux-aarch64" '^aarch64(/droppen-server)?$'
           # release-public.sh's --prebuilt layout.
           prebuilt=$RUNNER_TEMP/prebuilt
           mkdir -p "$prebuilt/linux"
           mv "$a/mac-aarch64/aarch64-apple-darwin" "$a/mac-x86_64/x86_64-apple-darwin" "$prebuilt/"
           mv "$a/linux-x86_64/x86_64" "$a/linux-aarch64/aarch64" "$prebuilt/linux/"
-          chmod 755 "$prebuilt"/*/remote-hand-server "$prebuilt"/linux/*/remote-hand-server
+          chmod 755 "$prebuilt"/*/droppen-server "$prebuilt"/linux/*/droppen-server
       - name: Rosetta, to smoke-test the x86_64 slice
         run: /usr/bin/arch -x86_64 /usr/bin/true 2>/dev/null || sudo softwareupdate --install-rosetta --agree-to-license
       - name: Stage the release (scripts/release-public.sh --prebuilt)
@@ -696,11 +696,11 @@ jobs:
           a=$RUNNER_TEMP/a
           .github/scripts/unpack-artifact.sh "$RUNNER_TEMP/dl/tools/tools.tar" "$TOOLS_SHA" "$a/tools" "$ALLOW_TOOLS"
           .github/scripts/unpack-artifact.sh "$RUNNER_TEMP/dl/notices/notices.tar" "$NOTICES_SHA" "$a/notices" "$ALLOW_NOTICES"
-          .github/scripts/unpack-artifact.sh "$RUNNER_TEMP/dl/server/server-$TARGET.tar" "$SERVER_SHA" "$a/server" "^$TARGET(/remote-hand-server)?\$"
-          chmod 755 "$a/server/$TARGET/remote-hand-server"
+          .github/scripts/unpack-artifact.sh "$RUNNER_TEMP/dl/server/server-$TARGET.tar" "$SERVER_SHA" "$a/server" "^$TARGET(/droppen-server)?\$"
+          chmod 755 "$a/server/$TARGET/droppen-server"
           export DROPPEN_TOOLS_DIR=$a/tools PATH="$a/tools/bin:$PATH"
           DROPPEN_BUILD_JOBS=$(sysctl -n hw.ncpu); export DROPPEN_BUILD_JOBS
-          desktop/build.sh --ref "$SHA" --arch "$KEY" --sidecar "$a/server/$TARGET/remote-hand-server" \
+          desktop/build.sh --ref "$SHA" --arch "$KEY" --sidecar "$a/server/$TARGET/droppen-server" \
             --notices "$a/notices/desktop/THIRD_PARTY_NOTICES" --no-dmg --out "$RUNNER_TEMP/desktop"
           COPYFILE_DISABLE=1 tar -cf "$RUNNER_TEMP/desktop-app-$KEY.tar" -C "$RUNNER_TEMP/desktop" Droppen.app
           echo "sha_$KEY=$(shasum -a 256 "$RUNNER_TEMP/desktop-app-$KEY.tar" | cut -d' ' -f1)" | tee -a "$GITHUB_OUTPUT"
