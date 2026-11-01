@@ -396,7 +396,7 @@ fn on_frame(
                 key: identity.dh(),
                 machine,
                 policy: RekeyPolicy::default(),
-                server_info: b"rh-devkit echo agent",
+                server_info: b"droppen-devkit echo agent",
                 attestations: &attestations,
                 freshness_max_age_ms: FRESHNESS_MAX_AGE_MS,
             };

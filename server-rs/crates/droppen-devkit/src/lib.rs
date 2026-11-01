@@ -40,11 +40,11 @@ pub mod relays;
 pub mod streams;
 pub mod traffic;
 
-// What a device does at a hub lives in `rh-client`, shared with the local
+// What a device does at a hub lives in `droppen-client`, shared with the local
 // install; these are its names as the tests and the e2e harness know them.
-pub use rh_client::link::{next_json, Link, CONNECT_PATH};
-pub(crate) use rh_client::{err, key32};
-pub use rh_client::{follow, hex, now_ms, unhex, HubUrl, Result};
+pub use droppen_client::link::{next_json, Link, CONNECT_PATH};
+pub(crate) use droppen_client::{err, key32};
+pub use droppen_client::{follow, hex, now_ms, unhex, HubUrl, Result};
 
 /// A signed-in device with its keys and its verified view of the chain.
 pub struct Device {
@@ -87,7 +87,7 @@ pub(crate) async fn register_device(
 /// device's key (`HubLogin` of role device-session). No bearer: the
 /// signature is what signs it in.
 pub async fn device_session(http: &reqwest::Client, hub: &HubUrl, account: &str, device: &str, sign: &SigningKey) -> Result<String> {
-    let minted = rh_client::session::mint(http, hub, account, device, sign, now_ms()).await?;
+    let minted = droppen_client::session::mint(http, hub, account, device, sign, now_ms()).await?;
     Ok(minted.token.to_string())
 }
 
@@ -373,8 +373,8 @@ impl Device {
     }
 
     /// Where this device fetches a stream's snapshot pages.
-    pub fn pages(&self) -> rh_client::streams::Pages<'_> {
-        rh_client::streams::Pages {
+    pub fn pages(&self) -> droppen_client::streams::Pages<'_> {
+        droppen_client::streams::Pages {
             http: &self.http,
             hub: &self.hub,
             token: &self.token,
@@ -415,7 +415,7 @@ impl Device {
     /// `PATCH /v1/relays/prefs {standby}`: whether the account keeps a standby
     /// relay (「备用中继」) → `{standby}`.
     pub async fn set_relay_standby(&self, on: bool) -> Result<Value> {
-        Ok(rh_client::http::send(
+        Ok(droppen_client::http::send(
             &self.http,
             reqwest::Method::PATCH,
             &format!("{}/v1/relays/prefs", self.hub.http),
@@ -427,14 +427,14 @@ impl Device {
 
     /// Sign in on `/v1/client`.
     pub async fn connect(&self) -> Result<Link> {
-        rh_client::link::connect(&self.hub, &self.account, &self.id, &self.sign, &self.token).await
+        droppen_client::link::connect(&self.hub, &self.account, &self.id, &self.sign, &self.token).await
     }
 
     /// Sign in on a relay (`origin`, e.g. `wss://sin-1.relay.example`) with a
     /// ticket from [`Device::relay_tickets`]: a link channels open on like the
     /// Hub's. The relay's `welcome` and `presence` come first.
     pub async fn connect_relay(&self, origin: &str, ticket: &str) -> Result<Link> {
-        rh_client::link::connect_relay(origin, &self.account, &self.id, &self.sign, ticket).await
+        droppen_client::link::connect_relay(origin, &self.account, &self.id, &self.sign, ticket).await
     }
 
     /// Open an end-to-end channel to `machine` over `link`.
@@ -549,11 +549,11 @@ pub struct OpenedChannel {
 }
 
 pub(crate) async fn post(http: &reqwest::Client, url: &str, token: Option<&str>, body: &Value) -> Result<Value> {
-    Ok(rh_client::http::post(http, url, token, body).await?)
+    Ok(droppen_client::http::post(http, url, token, body).await?)
 }
 
 pub(crate) async fn get(http: &reqwest::Client, url: &str, token: &str) -> Result<Value> {
-    Ok(rh_client::http::get(http, url, token).await?)
+    Ok(droppen_client::http::get(http, url, token).await?)
 }
 
 /// An rpc answer.
@@ -692,5 +692,5 @@ pub fn random_key() -> [u8; 32] {
 /// What the headless device's hello says it speaks: sequenced frames, and
 /// streams named per key epoch (so an agent it talks to names them so).
 fn client_info() -> String {
-    format!("rh-devkit {} {}", droppen_proto::path::CLIENT_FEATURE, droppen_proto::stream::STREAMS_FEATURE)
+    format!("droppen-devkit {} {}", droppen_proto::path::CLIENT_FEATURE, droppen_proto::stream::STREAMS_FEATURE)
 }

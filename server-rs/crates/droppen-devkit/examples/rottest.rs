@@ -17,14 +17,14 @@
 //!
 //! ```text
 //! export ROTTEST_STATE=$PWD/rottest-state.json
-//! cargo run -p rh-devkit --example rottest -- signup https://<hub> <email> <invite.json> <password-file>
-//! cargo run -p rh-devkit --example rottest -- enroll A        # prints CODE …; run `agent enroll <code> --hub …` on the host
-//! cargo run -p rh-devkit --example rottest -- handover A      # its first machine key, over a channel
-//! cargo run -p rh-devkit --example rottest -- policy          # SetRenewalPolicy(false): renewals may start
-//! cargo run -p rh-devkit --example rottest -- rotate A 0      # an automatic renewal, end to end
-//! cargo run -p rh-devkit --example rottest -- rotate A 1 <code-file>   # confirmed on the device: the code it shows, typed into <code-file>
-//! cargo run -p rh-devkit --example rottest -- status | oldkey | asdevice | accept | pause | control | hostkeys | put | redispute | watch …
-//! cargo run -p rh-devkit --example rottest -- remove A B      # at the end: the hosts leave the account (it is kept)
+//! cargo run -p droppen-devkit --example rottest -- signup https://<hub> <email> <invite.json> <password-file>
+//! cargo run -p droppen-devkit --example rottest -- enroll A        # prints CODE …; run `agent enroll <code> --hub …` on the host
+//! cargo run -p droppen-devkit --example rottest -- handover A      # its first machine key, over a channel
+//! cargo run -p droppen-devkit --example rottest -- policy          # SetRenewalPolicy(false): renewals may start
+//! cargo run -p droppen-devkit --example rottest -- rotate A 0      # an automatic renewal, end to end
+//! cargo run -p droppen-devkit --example rottest -- rotate A 1 <code-file>   # confirmed on the device: the code it shows, typed into <code-file>
+//! cargo run -p droppen-devkit --example rottest -- status | oldkey | asdevice | accept | pause | control | hostkeys | put | redispute | watch …
+//! cargo run -p droppen-devkit --example rottest -- remove A B      # at the end: the hosts leave the account (it is kept)
 //! ```
 //!
 //! `rotate` with `ROTTEST_DEVICE_SEED=<the host's machine-key.json>` also signs
@@ -46,7 +46,7 @@ use std::time::Duration;
 use ed25519_dalek::SigningKey;
 use futures_util::{SinkExt, StreamExt};
 use rand::RngCore;
-use rh_devkit::{hex, now_ms, rpc, unhex, Device, HubUrl, Link, OpenedChannel};
+use droppen_devkit::{hex, now_ms, rpc, unhex, Device, HubUrl, Link, OpenedChannel};
 use droppen_proto::chain::{Accept, Action, Assurance, ChainState, Entry, HostRotation, KeyCommit, KeyCommits, PausePhase};
 use droppen_proto::frame::{Frame, AGENT_PATH};
 use droppen_proto::identity::MachineIdentity;
@@ -416,7 +416,7 @@ async fn enroll(args: &[String]) -> R<()> {
     let code = d.new_enrollment().await?;
     println!("CODE {code}");
     log!("enrollment code issued for {label}; waiting for the agent's proof");
-    let mk = rh_devkit::random_key();
+    let mk = droppen_devkit::random_key();
     let mut tries = 0;
     let machine = loop {
         match d.complete_enrollment_v3(&code, false, &mk, Duration::from_secs(600)).await {
@@ -732,7 +732,7 @@ async fn rotate(args: &[String]) -> R<()> {
             Err(e) => log!("AGENT CHECK (staged): no channel to {label} over a relay: {e}"),
         }
     }
-    let mk = rh_devkit::random_key();
+    let mk = droppen_devkit::random_key();
     let epoch = chain.machine_key_epochs(&host);
     let batch = |rot: &HostRotation| {
         vec![
@@ -1025,7 +1025,7 @@ async fn relay_signin(origin: &str, ticket: &str, account: &str, id: &str, key: 
 /// until the relay closes it, which is noted in `hold`) instead of closed.
 #[allow(clippy::too_many_arguments)]
 async fn relay_signin_hold(origin: &str, ticket: &str, account: &str, id: &str, key: &SigningKey, role: LoginRole, what: &str, hold: Option<Held>) -> RelayIn {
-    let ws = match tokio_tungstenite::connect_async(format!("{origin}{}", rh_devkit::CONNECT_PATH)).await {
+    let ws = match tokio_tungstenite::connect_async(format!("{origin}{}", droppen_devkit::CONNECT_PATH)).await {
         Ok((ws, _)) => ws,
         Err(e) => {
             log!("{what}: dial {origin}: {e}");

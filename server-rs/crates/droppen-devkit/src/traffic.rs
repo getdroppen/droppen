@@ -5,8 +5,8 @@
 //! Off unless `DROPPEN_HUB_API_TRAFFIC=<path>` is set. Then every JSON body this
 //! crate sends to or gets from the hub's HTTP routes itself, and every JSON
 //! control message on the echo agent's `/v1/agent` and `/v1/connect`, is
-//! appended to that file as one line (what goes through `rh-client` — its
-//! HTTP helpers, `/v1/client`, a device's `/v1/connect` — `rh_client::tap`
+//! appended to that file as one line (what goes through `droppen-client` — its
+//! HTTP helpers, `/v1/client`, a device's `/v1/connect` — `droppen_client::tap`
 //! writes to the same file, as `"src": "client"`): `{"src": "devkit", "kind": "http"|"ws",
 //! "socket"?, "dir": "in"|"out", "method"?, "path"?, "status"?, "body"}`.
 //! Binary frames and binary bodies never are. What is written already
@@ -17,9 +17,9 @@ use serde_json::Value;
 
 fn ws(socket: &str, dir: &str, text: &str) {
     if let Ok(body) = serde_json::from_str::<Value>(text) {
-        rh_client::tap::record(
+        droppen_client::tap::record(
             "devkit",
-            rh_client::tap::Event::Ws {
+            droppen_client::tap::Event::Ws {
                 socket,
                 dir,
                 body: &body,
@@ -42,9 +42,9 @@ pub fn got<'a>(socket: &str, text: &'a str) -> &'a str {
 
 /// A JSON request body, before it is sent to `url`.
 pub fn http_out(method: &str, url: &str, body: &Value) {
-    rh_client::tap::record(
+    droppen_client::tap::record(
         "devkit",
-        rh_client::tap::Event::Http {
+        droppen_client::tap::Event::Http {
             dir: "out",
             method,
             url,
@@ -56,9 +56,9 @@ pub fn http_out(method: &str, url: &str, body: &Value) {
 
 /// A response from `url` (`body`: its JSON, or `null` when it had none).
 pub fn http_in(method: &str, url: &str, status: u16, body: &Value) {
-    rh_client::tap::record(
+    droppen_client::tap::record(
         "devkit",
-        rh_client::tap::Event::Http {
+        droppen_client::tap::Event::Http {
             dir: "in",
             method,
             url,

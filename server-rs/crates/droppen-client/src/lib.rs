@@ -1,7 +1,7 @@
 //! The device side of the Droppen hub API, in Rust (`docs/local-aggregator.md`
 //! §8, S1-5): what a device does at a hub — sign in with its own key, keep a
 //! `/v1/client` link, and read a machine's encrypted streams — shared by the
-//! headless test device (`rh-devkit`) and the local install, which controls
+//! headless test device (`droppen-devkit`) and the local install, which controls
 //! the account's other devices with its one identity (S1-4) and follows
 //! their copies (S1-5).
 //!

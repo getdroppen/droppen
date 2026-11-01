@@ -37,11 +37,11 @@ use std::time::Duration;
 
 use gotcha::Schematic;
 use rand::Rng;
-use rh_client::follow::{check_page, Floor, FollowError, Follower, Step};
-use rh_client::http::HttpError;
-use rh_client::link::{ConnectError, Link};
-use rh_client::streams::{json_body, FeedCopy, IndexCopy, Pages};
-use rh_client::HubUrl;
+use droppen_client::follow::{check_page, Floor, FollowError, Follower, Step};
+use droppen_client::http::HttpError;
+use droppen_client::link::{ConnectError, Link};
+use droppen_client::streams::{json_body, FeedCopy, IndexCopy, Pages};
+use droppen_client::HubUrl;
 use droppen_proto::frame::Frame;
 use droppen_proto::identity::MachineIdentity;
 use droppen_proto::record::{SignedHead, StreamId, FMT_FEED_V1, FMT_INDEX_V1, FMT_STATUS_V1};
@@ -312,7 +312,7 @@ impl Fold {
     /// text (the web's folds take them as the agent's own): the gateway's
     /// snapshot (S1-7). A status is its last body; nothing for none yet.
     pub(super) fn snapshot_bodies(&self) -> String {
-        use rh_client::streams::Snapshot;
+        use droppen_client::streams::Snapshot;
         match self {
             Fold::Index(copy) => copy.snapshot_bodies(),
             Fold::Status(Value::Null) => "[]".into(),
@@ -965,7 +965,7 @@ impl Copies {
             Err(wait) => return wait,
         };
         let session = Zeroizing::new(token.read().expect("token").to_string());
-        let link = match rh_client::link::connect_device(&hub, &view.account, &view.me, self.env.identity.signing_key(), &session).await {
+        let link = match droppen_client::link::connect_device(&hub, &view.account, &view.me, self.env.identity.signing_key(), &session).await {
             Ok(link) => Arc::new(link),
             Err(ConnectError::Refused { code, .. }) => return self.refused(&view, &code),
             Err(ConnectError::Failed(error)) => return self.failed(error),
@@ -1069,7 +1069,7 @@ impl Copies {
                 return Ok(token.clone());
             }
         }
-        match rh_client::session::mint(http, hub, &view.account, &view.me, self.env.identity.signing_key(), now).await {
+        match droppen_client::session::mint(http, hub, &view.account, &view.me, self.env.identity.signing_key(), now).await {
             Ok(minted) => {
                 let expires = minted.expires_ms.unwrap_or(now + 60 * 60 * 1000);
                 let token = match self.session.take() {

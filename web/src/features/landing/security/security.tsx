@@ -1235,13 +1235,13 @@ function VerifySection() {
           <P>{t("Renewal adds one more, {{label}} ([[section 06|renewal]]).", { label: "rh/v1 rotate-dispute" })}</P>
         </Topic>
         <Topic n="8.3" title={t("The code")}>
-          <P>{t("The protocol is written twice, in Rust and in TypeScript, and each must read the other's test vectors (the one exception is in [[8.4|t8-4]]). The app, the local program, the desktop app and the relay program (droppen-relay) are licensed under the **AGPL-3.0**, and the protocol and client libraries ({{crates}}) under **MIT or Apache-2.0**; their source code is at [[github.com/getdroppen/droppen|/]]. Droppen Hub is not open source.", { crates: "droppen-proto, rh-relay, rh-client" })}</P>
+          <P>{t("The protocol is written twice, in Rust and in TypeScript, and each must read the other's test vectors (the one exception is in [[8.4|t8-4]]). The app, the local program, the desktop app and the relay program (droppen-relay) are licensed under the **AGPL-3.0**, and the protocol and client libraries ({{crates}}) under **MIT or Apache-2.0**; their source code is at [[github.com/getdroppen/droppen|/]]. Droppen Hub is not open source.", { crates: "droppen-proto, rh-relay, droppen-client" })}</P>
           <Spec>
             <Line>
               <RepoLink path="server-rs/crates/droppen-proto" /> (Rust) · <RepoLink path="web/src/lib/e2e" /> (TypeScript)
             </Line>
             <Line>
-              <RepoLink path="server-rs/crates/rh-relay" /> · <RepoLink path="server-rs/crates/droppen-relay" /> · <RepoLink path="server-rs/crates/rh-client" />
+              <RepoLink path="server-rs/crates/rh-relay" /> · <RepoLink path="server-rs/crates/droppen-relay" /> · <RepoLink path="server-rs/crates/droppen-client" />
             </Line>
           </Spec>
         </Topic>

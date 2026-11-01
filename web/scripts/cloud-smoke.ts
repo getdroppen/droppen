@@ -1,5 +1,5 @@
 // The browser's cloud client, run headless under node against a local stack
-// from `server-rs/crates/rh-devkit/scripts/cloud-dev.sh up`:
+// from `server-rs/crates/droppen-devkit/scripts/cloud-dev.sh up`:
 //
 //   npx tsx scripts/cloud-smoke.ts <hub http url> <invite> <path to cloud-dev.sh>
 //

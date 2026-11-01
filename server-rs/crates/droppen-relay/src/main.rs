@@ -192,7 +192,7 @@ mod tests {
 
     /// The argv other programs start the relay with, and what each must mean:
     /// the image's `CMD` and `cloud-dev.sh` (`serve`), the tests and
-    /// `rh-devkit` (no arguments), and the README and `docs/relay-and-plans.md`.
+    /// `droppen-devkit` (no arguments), and the README and `docs/relay-and-plans.md`.
     #[test]
     fn the_callers_argv() {
         assert_eq!(parse(&[]).unwrap(), RelayCommand::Serve(ServeArgs::default()));

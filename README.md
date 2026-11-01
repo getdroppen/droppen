@@ -103,7 +103,7 @@ Copyright (C) 2026 Kilerd.
   crate in `server-rs/`), the desktop app (`desktop/`), the web app (`web/`) and
   the relay program (`droppen-relay`).
 - **The protocol and library crates**, `droppen-proto`, `rh-relay` (the library),
-  `rh-client` and `rh-devkit`, and the plugin SDKs (`packages/plugin-sdk`,
+  `droppen-client` and `droppen-devkit`, and the plugin SDKs (`packages/plugin-sdk`,
   `server-rs/crates/droppen-plugin-sdk`) are licensed under `MIT OR
   Apache-2.0`, at your option; each has `LICENSE-MIT` and `LICENSE-APACHE` in
   its directory. These are the only parts of this repository the closed Hub

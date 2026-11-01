@@ -1,11 +1,11 @@
 //! Reading a machine's encrypted streams from the hub, as a device does
-//! (`rh_client::streams`, with this device's session for the pages).
+//! (`droppen_client::streams`, with this device's session for the pages).
 
 use std::time::Duration;
 
 use droppen_proto::record::StreamId;
 
-pub use rh_client::streams::{FeedCopy, IndexCopy, StreamCopy, CONTROL_FRAME};
+pub use droppen_client::streams::{FeedCopy, IndexCopy, StreamCopy, CONTROL_FRAME};
 
 use crate::{Device, Link, Result};
 
@@ -33,11 +33,11 @@ impl Device {
         stream: StreamId,
         timeout: Duration,
     ) -> Result<StreamCopy> {
-        rh_client::streams::read_stream(link, self.pages(), machine_key, keys, stream, timeout).await
+        droppen_client::streams::read_stream(link, self.pages(), machine_key, keys, stream, timeout).await
     }
 
     /// A machine's index as a device reading epoch names finds it
-    /// ([`rh_client::streams::read_index`]).
+    /// ([`droppen_client::streams::read_index`]).
     pub async fn read_index(
         &self,
         link: &Link,
@@ -45,7 +45,7 @@ impl Device {
         keys: &[(u32, [u8; 32])],
         timeout: Duration,
     ) -> Result<(Option<u32>, StreamCopy)> {
-        rh_client::streams::read_index(link, self.pages(), machine_key, keys, timeout).await
+        droppen_client::streams::read_index(link, self.pages(), machine_key, keys, timeout).await
     }
 }
 

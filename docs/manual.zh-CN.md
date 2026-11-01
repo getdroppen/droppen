@@ -588,7 +588,7 @@ Copyright (C) 2026 Kilerd。
 - **应用**以 [GNU Affero General Public License v3.0 only](../LICENSE)（AGPL-3.0-only）授权：
   本机程序（`server-rs/` 的根 crate `remote-hand-server`，即 `droppen`，含 agent 和本机网关）、
   桌面 App（`desktop/`）、网页（`web/`）和中继程序 `droppen-relay`。
-- **协议与库 crate**——`droppen-proto`、`rh-relay`（库）、`rh-client`、`rh-devkit`——以及插件 SDK
+- **协议与库 crate**——`droppen-proto`、`rh-relay`（库）、`droppen-client`、`droppen-devkit`——以及插件 SDK
   （`packages/plugin-sdk`、`server-rs/crates/droppen-plugin-sdk`）以 `MIT OR Apache-2.0` 授权，
   二选一；许可证全文在各自目录的 `LICENSE-MIT` 和 `LICENSE-APACHE` 里。闭源的 Droppen Hub
   只链接这一类 crate。

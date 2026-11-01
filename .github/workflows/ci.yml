@@ -278,7 +278,7 @@ jobs:
       # either can wait on itself forever (the class behind the updater
       # deadlock). The rest of clippy stays advisory while the product is
       # young; `-A warnings` keeps this step's log to the denied lints.
-      - run: cargo clippy --locked --workspace --all-targets --features rh-devkit/p2p-probe -- -A warnings
+      - run: cargo clippy --locked --workspace --all-targets --features droppen-devkit/p2p-probe -- -A warnings
         timeout-minutes: 20
       # The tests run under cargo-nextest, which runs every test in its own
       # process (settings: server-rs/.config/nextest.toml, profile `ci`).
@@ -295,11 +295,11 @@ jobs:
       #
       # One run over the whole workspace: cargo resolves features and compiles
       # each crate once, where a run per crate recompiled the shared graph
-      # again for every feature set. `rh-devkit`'s direct-path probe is a
+      # again for every feature set. `droppen-devkit`'s direct-path probe is a
       # feature the default build leaves out, named per package so the other
       # crates still build without it. The timeout keeps any future wedge to
       # minutes, not the 6-hour cap.
-      - run: cargo nextest run --profile ci --workspace --features rh-devkit/p2p-probe
+      - run: cargo nextest run --profile ci --workspace --features droppen-devkit/p2p-probe
         timeout-minutes: 20
       - run: ../scripts/check-sdk-crate-deps.sh
       # serde_json's `preserve_order` on for every member that reaches it

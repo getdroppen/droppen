@@ -50,7 +50,7 @@ test-support = []
 # A copy's slot made as the device role makes one (`live::index_slot`), for
 # the gateway's tests.
 droppen-aggregator = { path = "../droppen-aggregator", features = ["test-support"] }
-rh-client = { path = "../rh-client" }
+droppen-client = { path = "../droppen-client" }
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "test-util"] }
 

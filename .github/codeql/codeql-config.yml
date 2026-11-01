@@ -33,4 +33,4 @@ paths-ignore:
   - server-rs/crates/droppen-proto/src/vectors.rs
   # The identity-renewal end-to-end run, by hand against a throwaway account
   # (never built for a release, never run by CI).
-  - server-rs/crates/rh-devkit/examples
+  - server-rs/crates/droppen-devkit/examples
