@@ -140,13 +140,14 @@ export function unnamedCloudCode(bundle: OutputBundle): string[] {
  * The shell's inline script that, on a page a hub serves (the marker as
  * `lib/hub/config.ts` reads it), starts fetching `files`, the cloud chunks
  * (CSS among them is left to the import, which fetches it too). It never
- * spells the marker out (`name="rh-hub"`): a shell with that in it is one a
- * hub has marked already (`build/cloud-mode.ts` `markShell`).
+ * spells the marker out (`name="droppen-hub"`, nor its old `name="rh-hub"`):
+ * a shell with that in it is one a hub has marked already
+ * (`build/cloud-mode.ts` `markShell`).
  */
 export function cloudPreloadScript(files: readonly string[]): string {
   const scripts = files.filter((f) => f.endsWith(".js"));
   return (
-    `(function(){var hub=document.querySelector("meta[name=rh-hub]");` +
+    `(function(){var hub=document.querySelector("meta[name=droppen-hub],meta[name=rh-hub]");` +
     `if(!hub||!/^wss?:\\/\\/[^/]+$/.test(hub.getAttribute("content")||""))return;` +
     `${JSON.stringify(scripts)}.forEach(function(href){var link=document.createElement("link");link.rel="modulepreload";link.crossOrigin="";link.href=href;document.head.appendChild(link)})})()`
   );

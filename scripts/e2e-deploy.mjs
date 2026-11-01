@@ -94,12 +94,12 @@ export function isCloudflareAddress(ip) {
   return inCidrs(ip, ip.includes(":") ? CLOUDFLARE_V6 : CLOUDFLARE_V4);
 }
 
-/** The origin a shell's `rh-hub` marker names, or `null`. */
+/** The origin a shell's `droppen-hub` marker names (or an `rh-hub` one from before the rename), or `null`. */
 export function markerOrigin(html) {
   const tags = String(html).match(/<meta\b[^>]*>/gi) ?? [];
   for (const tag of tags) {
     const name = /\bname\s*=\s*["']([^"']*)["']/i.exec(tag)?.[1];
-    if (name?.toLowerCase() !== "rh-hub") continue;
+    if (name?.toLowerCase() !== "droppen-hub" && name?.toLowerCase() !== "rh-hub") continue;
     const content = /\bcontent\s*=\s*["']([^"']*)["']/i.exec(tag)?.[1] ?? "";
     return /^wss?:\/\/[^/]+$/.test(content) ? content : null;
   }
@@ -463,7 +463,7 @@ export async function checkDeployment(env) {
       `static.${host.label}.marker`,
       host.markers.includes(marker),
       host.markers.map((m) => (m === null ? "no marker" : m)).join(" or "),
-      marker === null ? "no rh-hub marker" : `marker ${marker}`,
+      marker === null ? "no droppen-hub marker" : `marker ${marker}`,
       host.note ?? "",
     );
 
@@ -653,7 +653,7 @@ function selfTestFakeStatic({ marker, policy, origins, connect = "api", swRetiri
         "permissions-policy": policy,
         "content-security-policy": `default-src 'self'; connect-src ${connectSrc}`,
       });
-      return res.end(`<!doctype html><html><head>${markerText ? `<meta name="rh-hub" content="${markerText}" />` : ""}</head><body>x</body></html>`);
+      return res.end(`<!doctype html><html><head>${markerText ? `<meta name="droppen-hub" content="${markerText}" />` : ""}</head><body>x</body></html>`);
     }
     if (req.url === "/sw.js") {
       res.writeHead(200, { "content-type": "text/javascript" });
@@ -682,7 +682,8 @@ export async function runSelfTest() {
   expect("cidr v4 railway", !isCloudflareAddress("69.46.46.10"));
   expect("cidr v6 cloudflare", isCloudflareAddress("2606:4700:3033::6815:1e9d"));
   expect("cidr v6 railway", !isCloudflareAddress("2600:1f18::1"));
-  expect("marker", markerOrigin('<meta content="wss://api.droppen.test" name="rh-hub">') === "wss://api.droppen.test");
+  expect("marker", markerOrigin('<meta content="wss://api.droppen.test" name="droppen-hub">') === "wss://api.droppen.test");
+  expect("marker from before the rename", markerOrigin('<meta content="wss://api.droppen.test" name="rh-hub">') === "wss://api.droppen.test");
   expect("marker absent", markerOrigin("<html></html>") === null);
   expect("permissions self", allowsSelfOnly(permissionsPolicyValue("publickey-credentials-get=(self)", "publickey-credentials-get")));
   expect("permissions none", allowsNobody(permissionsPolicyValue("a=(self), publickey-credentials-get=()", "publickey-credentials-get")));

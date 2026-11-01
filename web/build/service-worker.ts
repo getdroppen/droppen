@@ -13,7 +13,7 @@ import { join } from "node:path";
  * - `INTEGRITY`: every file under `assets/` → the sha256 (hex) of its bytes on
  *   disk, sorted by path;
  * - `SHELL_SHA256`: the sha256 of `index.html` as built, before a hub writes
- *   its `rh-hub` marker into it;
+ *   its `droppen-hub` marker into it;
  * - `SHELL_SCRIPTS`: the CSP sources (`'sha256-…'`) of the shell's inline
  *   scripts, found as a hub finds them, for the policy the worker serves the
  *   offline shell with;

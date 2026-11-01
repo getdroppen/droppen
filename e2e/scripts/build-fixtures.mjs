@@ -77,11 +77,11 @@ function appFromCloud(dest, mutation) {
   cpSync(join(BUILDS, "app"), dest, { recursive: true });
   const index = join(dest, "index.html");
   const html = readFileSync(index, "utf8");
-  if (!/<meta\b[^>]*\bname\s*=\s*["']rh-hub["']/i.test(html)) {
-    throw new Error(`${index} carries no rh-hub marker: is DROPPEN_WEB_MODE=cloud set for the app build?`);
+  if (!/<meta\b[^>]*\bname\s*=\s*["'](?:droppen-hub|rh-hub)["']/i.test(html)) {
+    throw new Error(`${index} carries no droppen-hub marker: is DROPPEN_WEB_MODE=cloud set for the app build?`);
   }
   if (mutation === "marker") {
-    writeFileSync(index, html.replace(/(<meta\b[^>]*\bname\s*=\s*["']rh-hub["'][^>]*\bcontent\s*=\s*["'])[^"']*(["'])/i, "$1wss://api.droppen.invalid$2"));
+    writeFileSync(index, html.replace(/(<meta\b[^>]*\bname\s*=\s*["'](?:droppen-hub|rh-hub)["'][^>]*\bcontent\s*=\s*["'])[^"']*(["'])/i, "$1wss://api.droppen.invalid$2"));
   } else if (mutation === "api-base") {
     // The marker is the API base's one source (`hubHttpOrigin()`); break the
     // ws→http rewrite in the bundle, so the marker stays right and the calls
@@ -182,7 +182,7 @@ function appFallback(dest, mutation) {
   cpSync(dist, dest, { recursive: true });
   const index = join(dest, "index.html");
   let html = readFileSync(index, "utf8");
-  const hasMarker = /<meta\b[^>]*\bname\s*=\s*["']rh-hub["']/i.test(html);
+  const hasMarker = /<meta\b[^>]*\bname\s*=\s*["'](?:droppen-hub|rh-hub)["']/i.test(html);
   const breaksMarker = mutation === "marker" || (mutation === "api-base" && hasMarker);
   const marker = breaksMarker ? "wss://api.droppen.invalid" : APP_MARKER;
 
@@ -193,10 +193,10 @@ function appFallback(dest, mutation) {
     const shim = `(() => { const f = window.fetch.bind(window); const api = ${JSON.stringify(apiBase)}; window.fetch = (input, init) => f(typeof input === "string" && input.startsWith("/v1/") ? api + input : input, init); })();`;
     const head = html.indexOf("<head>");
     const tag = `<script>${shim}</script>`;
-    const markerTag = `<meta name="rh-hub" content="${marker}" />`;
+    const markerTag = `<meta name="droppen-hub" content="${marker}" />`;
     html = head < 0 ? markerTag + tag + html : html.slice(0, head + 6) + markerTag + tag + html.slice(head + 6);
   } else if (breaksMarker) {
-    html = html.replace(/(<meta\b[^>]*\bname\s*=\s*["']rh-hub["'][^>]*\bcontent\s*=\s*["'])[^"']*(["'])/i, `$1${marker}$2`);
+    html = html.replace(/(<meta\b[^>]*\bname\s*=\s*["'](?:droppen-hub|rh-hub)["'][^>]*\bcontent\s*=\s*["'])[^"']*(["'])/i, `$1${marker}$2`);
   }
   writeFileSync(index, html);
   writeFileSync(join(dest, "_headers"), appHeaders(html));

@@ -26,7 +26,7 @@ const INLINE = "window.boot=1";
 const INLINE_HASH = `'sha256-${createHash("sha256").update(INLINE).digest("base64")}'`;
 /** The policy the hub serves the web app with (docs/hub-api/http.md). */
 const HUB_CSP = `default-src 'self'; script-src 'self' ${INLINE_HASH}; style-src 'self' 'unsafe-inline'; connect-src 'self' wss://hub.example; frame-ancestors 'none'; object-src 'none'`;
-/** rh-hub's whole policy, as its golden tests have it. */
+/** The hub's whole policy, as its golden tests have it. */
 const HUB_CSP_FULL = `default-src 'self'; script-src 'self' ${INLINE_HASH}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' wss://hub.example; worker-src 'self' blob:; manifest-src 'self'; frame-src https://verify.example; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'`;
 /** The hub's documented hosts route (docs/hub-api/http.md). */
 const HOSTS_PATH = "/.well-known/droppen-hub";
@@ -35,17 +35,24 @@ const CLOUD_APP_CSP = `default-src 'self'; script-src 'self' ${INLINE_HASH}; sty
 
 // ------------------------------------------------------------------ units
 
-describe("the rh-hub marker", () => {
+describe("the droppen-hub marker", () => {
   test("a site's own hub origin is wss:// on https and ws:// on http", () => {
     assert.equal(siteHubOrigin("https://droppen.app"), "wss://droppen.app");
     assert.equal(siteHubOrigin("http://127.0.0.1:8080"), "ws://127.0.0.1:8080");
   });
 
+  test("the marker, and its rh-hub predecessor, are removed from the shell", () => {
+    for (const name of ["droppen-hub", "rh-hub"]) {
+      const shell = Buffer.from(`<html><head><meta name="${name}" content="wss://evil.example" /><title>x</title></head></html>`);
+      const { body, origin, marker } = unmark(shell);
+      assert.equal(body.toString(), "<html><head><title>x</title></head></html>");
+      assert.equal(origin, "wss://evil.example");
+      assert.equal(marker, name);
+    }
+  });
+
   test("only the site's own origin, its canonical API origin, or one passed explicitly, is accepted", () => {
-    const shell = Buffer.from('<html><head><meta name="rh-hub" content="wss://evil.example" /><title>x</title></head></html>');
-    const { body, origin } = unmark(shell);
-    assert.equal(body.toString(), "<html><head><title>x</title></head></html>");
-    assert.equal(origin, "wss://evil.example");
+    const { origin } = unmark(Buffer.from('<html><head><meta name="droppen-hub" content="wss://evil.example" /><title>x</title></head></html>'));
     assert.match(markerProblem(origin, ["wss://droppen.app"]), /pointed at the hub wss:\/\/evil\.example/);
     assert.equal(markerProblem(origin, ["wss://droppen.app", "wss://evil.example"]), null);
     assert.equal(markerProblem("wss://DROPPEN.app", ["wss://droppen.app"]), null);
@@ -250,15 +257,16 @@ const build = makeBuild("dist");
 const { dist, files, manifest, manifestFile } = build;
 
 /**
- * A hub that serves a build (`dist` by default) the way rh-hub does.
+ * A hub that serves a build (`dist` by default) the way a hub serving the app does.
  * `marker`: the origin written into the shell (`self` for the site's own);
+ * `markerName`: the marker's name (default `droppen-hub`; `rh-hub` reads as one from a hub not yet updated);
  * `csp(path)`: the policy header (`null`: none; a list: one header line each;
  * `{reportOnly}`: only a Content-Security-Policy-Report-Only header);
  * `redirect(path)`: a `308` there instead (`null`: none); `worker(req)`:
  * another `/sw.js` (`null`: the build's); `buildInfo`: the body of
  * `/.well-known/droppen-build` (`null`: a 404; default: the build it serves).
  */
-function fakeHub({ marker = "self", csp = () => HUB_CSP, serves = build, redirect = () => null, worker = () => null, buildInfo } = {}) {
+function fakeHub({ marker = "self", markerName = "droppen-hub", csp = () => HUB_CSP, serves = build, redirect = () => null, worker = () => null, buildInfo } = {}) {
   const server = createServer((req, res) => {
     const path = new URL(req.url, "http://x").pathname.slice(1);
     const sw = path === "sw.js" ? worker(req) : null;
@@ -289,7 +297,7 @@ function fakeHub({ marker = "self", csp = () => HUB_CSP, serves = build, redirec
       return res.end("not found");
     }
     const origin = marker === "self" ? `ws://${req.headers.host}` : marker;
-    res.end(SHELL.replace("<head>", `<head><meta name="rh-hub" content="${origin}" />`));
+    res.end(SHELL.replace("<head>", `<head><meta name="${markerName}" content="${origin}" />`));
   });
   return listen(server);
 }
@@ -424,7 +432,7 @@ describe("verify-web.mjs against a hub", () => {
     // fall back to the manifest it was given.
     const cloudDist = join(root, "cloud-dist");
     cpSync(dist, cloudDist, { recursive: true });
-    writeFileSync(join(cloudDist, "index.html"), SHELL.replace("<head>", '<head><meta name="rh-hub" content="wss://api.droppen.app" />'));
+    writeFileSync(join(cloudDist, "index.html"), SHELL.replace("<head>", '<head><meta name="droppen-hub" content="wss://api.droppen.app" />'));
     writeFileSync(join(cloudDist, "_headers"), "/*\n  Content-Security-Policy: default-src 'self'\n");
     mkdirSync(join(cloudDist, ".well-known"), { recursive: true });
     writeFileSync(
@@ -435,8 +443,15 @@ describe("verify-web.mjs against a hub", () => {
     const r = await verify(["--site", site, "--manifest", manifestFile, "--hub-origin", "wss://api.droppen.app"]);
     assert.equal(r.code, 0, r.out);
     assert.match(r.out, /PASS/);
-    assert.match(r.out, /marker: +rh-hub wss:\/\/api\.droppen\.app/);
+    assert.match(r.out, /marker: +droppen-hub wss:\/\/api\.droppen\.app/);
     assert.match(r.out, /files: +\d+ of \d+ match/, "every attested file, and the shell at every route");
+  });
+
+  test("a shell still carrying the rh-hub marker is accepted for one release", async () => {
+    const site = await hub({ markerName: "rh-hub" });
+    const r = await verify(["--site", site, "--manifest", manifestFile]);
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /marker: +rh-hub ws:\/\/127\.0\.0\.1:\d+/);
   });
 
   test("the attested build with its own marker passes", async () => {
@@ -579,7 +594,7 @@ describe("verify-web.mjs against a hub", () => {
       const r = await verify([...sites(urls), "--manifest", manifestFile]);
       assert.equal(r.code, 0, r.out);
       assert.equal(r.out.match(/^PASS: /gm)?.length, 3, r.out);
-      for (const u of urls) assert.match(r.out, new RegExp(`marker: +rh-hub ${escapeRegExp(siteHubOrigin(u))}$`, "m"));
+      for (const u of urls) assert.match(r.out, new RegExp(`marker: +droppen-hub ${escapeRegExp(siteHubOrigin(u))}$`, "m"));
       assert.match(r.out, new RegExp(`files: +\\d+ of \\d+ match, 4 redirect to ${escapeRegExp(hosts.my)}, checked there`));
       assert.match(r.out, /\/sw\.js is the retiring worker/);
       assert.match(r.out, /summary:\n +PASS +http:\/\/127\.0\.0\.1:\d+\n +PASS/);

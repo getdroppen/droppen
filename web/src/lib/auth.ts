@@ -79,7 +79,9 @@ export type TicketScope = components["schemas"]["TicketScope"];
 
 /**
  * Where the token lives. No instance name in the key: `localStorage` is already
- * scoped to the origin, and one origin serves exactly one instance.
+ * scoped to the origin, and one origin serves exactly one instance. The name is
+ * browser state an older build, a rollback and the desktop app's `init.js` (the
+ * token) read, so it keeps its name.
  */
 export const TOKEN_KEY = "rh.auth.token";
 

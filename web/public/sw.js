@@ -21,7 +21,8 @@
  *   this build does not list (a newer release's, while this worker is the
  *   older one) passes through from the network and is never cached. The
  *   offline shell is kept and served only when it is this build's with no
- *   `rh-hub` marker, or with this origin's own hub's alone — or, in a cloud
+ *   `droppen-hub` marker (or its `rh-hub` predecessor), or with this origin's
+ *   own hub's alone — or, in a cloud
  *   build, the canonical machine origin its marker names (as
  *   scripts/verify-web.mjs accepts it) — a shell pointed at another hub would
  *   sign in there and send it everything — and it is served with headers this
@@ -47,7 +48,10 @@
  *   handed to the module loader for good.
  */
 
-const CACHE = "rh-sw-v1";
+const CACHE = "droppen-sw-v1";
+/* The cache before that name: activate carries this build's assets from it,
+ * then deletes it, so an update does not cost the chunks a page already had. */
+const OLD_CACHE = "rh-sw-v1";
 
 /* Filled in by the build; empty under `vite dev`, which never registers this. */
 const PRECACHE = [];
@@ -121,17 +125,22 @@ function latin1(bytes) {
  * or with this origin's hub's marker, the exact tag a hub writes right after
  * the first `<head>` — else null. A marker naming any other hub (or ws:// on
  * https, or a second one, or one anywhere else) is part of the bytes, which
- * then are not the shell's. */
+ * then are not the shell's. The tag was named `rh-hub` before the rename: a
+ * host not updated yet, or an older release's shell, still writes it. */
 async function shellCheck(bytes) {
   if (!SHELL_SHA256) return null;
-  const marker = `<meta name="rh-hub" content="${shellHub()}" />`;
+  const markers = [`<meta name="droppen-hub" content="${shellHub()}" />`, `<meta name="rh-hub" content="${shellHub()}" />`];
   const head = latin1(bytes).indexOf("<head>");
   const at = head + "<head>".length;
   let built = bytes;
-  if (head >= 0 && latin1(bytes.subarray(at, at + marker.length)) === marker) {
-    built = new Uint8Array(bytes.length - marker.length);
-    built.set(bytes.subarray(0, at));
-    built.set(bytes.subarray(at + marker.length), at);
+  if (head >= 0) {
+    for (const marker of markers) {
+      if (latin1(bytes.subarray(at, at + marker.length)) !== marker) continue;
+      built = new Uint8Array(bytes.length - marker.length);
+      built.set(bytes.subarray(0, at));
+      built.set(bytes.subarray(at + marker.length), at);
+      break;
+    }
   }
   return (await sha256Hex(built)) === SHELL_SHA256 ? { marked: built !== bytes } : null;
 }
@@ -157,8 +166,8 @@ async function keepShell(res) {
 
 /* The offline shell as the page gets it: its checked bytes, and the headers
  * the server that marked it sends with it — never the cached response's,
- * which a page may have written. A hub's (marked): its policy (rh-hub
- * `web.rs`), the shell's own inline scripts allowed by hash and nothing
+ * which a page may have written. A hub's (marked): the host's policy, the
+ * shell's own inline scripts allowed by hash and nothing
  * inline besides. One thing differs: the relays' origins, which the hub lists
  * per response and an offline worker cannot know; `https:` and `wss:` stand
  * for them in connect-src alone, so a page that comes back online still has
@@ -276,7 +285,7 @@ async function servedByHub(cache) {
     if (res === undefined) return httpCached(PRECACHE_CLOUD[0]);
     const text = await res.text();
     const head = text.indexOf("<head>");
-    return head >= 0 && text.startsWith('<meta name="rh-hub"', head + "<head>".length);
+    return head >= 0 && (text.startsWith('<meta name="droppen-hub"', head + "<head>".length) || text.startsWith('<meta name="rh-hub"', head + "<head>".length));
   } catch {
     return false;
   }
@@ -314,15 +323,36 @@ self.addEventListener("install", (e) => {
   );
 });
 
+/* Copy the assets this build lists — and whose bytes still match — from the
+ * cache before this one, so a worker activated by a foreground update keeps
+ * what the page already had (a language it showed, the cloud chunks) even if
+ * it goes offline before its next online load. The old shell is not copied:
+ * it is another build's. Never throws. */
+async function carryOldCache(cache) {
+  try {
+    const old = await caches.open(OLD_CACHE);
+    for (const req of await old.keys()) {
+      const path = new URL(req.url).pathname;
+      if (path === SHELL || !(path in INTEGRITY)) continue;
+      if ((await cache.match(path)) !== undefined) continue;
+      const res = await old.match(req);
+      if (res !== undefined && (await assetMatches(path, res))) await cache.put(path, res);
+    }
+  } catch {
+    /* no old cache, or not readable */
+  }
+}
+
 self.addEventListener("activate", (e) => {
   e.waitUntil(
     (async () => {
+      const cache = await caches.open(CACHE);
+      await carryOldCache(cache);
       for (const k of await caches.keys()) if (k !== CACHE) await caches.delete(k);
       // Only what this build lists, with the bytes it lists: an asset it no
       // longer has, a copy that is not the asset, an older shell, and
       // anything else (an older worker's records) go.
       try {
-        const cache = await caches.open(CACHE);
         for (const req of await cache.keys()) {
           const path = new URL(req.url).pathname;
           const res = await cache.match(req);

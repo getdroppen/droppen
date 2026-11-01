@@ -48,6 +48,10 @@ export interface KeyValueStorage {
   removeItem(key: string): void;
 }
 
+/**
+ * The prefix of a machine's browser state: an older build and a rollback read
+ * it, so the keys keep their names.
+ */
 const LEGACY = "rh.";
 
 /** The `localStorage`/`sessionStorage` key of `name` on `machine`: `rh.<name>` locally, `rh.m/<machine>/<name>` otherwise. */

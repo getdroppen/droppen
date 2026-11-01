@@ -25,7 +25,9 @@ const SHELL = `<!doctype html><html><head><title>Droppen</title></head><body><sc
 /** A built shell with an inline boot script, as the real one has. */
 const BOOT = "document.documentElement.dataset.boot = '1'";
 const BUILT = SHELL.replace("<title>Droppen</title>", `<title>Droppen</title><script>${BOOT}</script>`);
-const marked = (origin = "wss://droppen.test") => SHELL.replace("<head>", `<head><meta name="rh-hub" content="${origin}" />`);
+const marked = (origin = "wss://droppen.test") => SHELL.replace("<head>", `<head><meta name="droppen-hub" content="${origin}" />`);
+/** The marker as a host that has not been updated yet writes it: still read for one release. */
+const legacyMarked = (origin = "wss://droppen.test") => SHELL.replace("<head>", `<head><meta name="rh-hub" content="${origin}" />`);
 const JS = { "content-type": "text/javascript; charset=utf-8" };
 const HTML = { "content-type": "text/html; charset=utf-8" };
 
@@ -357,6 +359,25 @@ test("activate drops other caches, unlisted and tampered assets, a foreign shell
   assert.equal(await cache.text("/"), marked(), "the shell seeded from the network, this build's");
 });
 
+test("activate carries this build's assets from the old cache before dropping it", async () => {
+  const LANG = "console.log('ja')";
+  const sw = worker({ table: { "/assets/app-1.js": sha(APP), "/assets/lang-ja-1.js": sha(LANG) } });
+  const old = new FakeCache();
+  await old.put("/assets/app-1.js", new Response(APP, { headers: JS }));
+  await old.put("/assets/lang-ja-1.js", new Response(LANG, { headers: JS }));
+  await old.put("/assets/gone-1.js", new Response("an older build's", { headers: JS }));
+  await old.put("/", new Response(legacyMarked(), { headers: HTML }));
+  sw.stores.set("rh-sw-v1", old);
+
+  await sw.activate();
+  const cache = await sw.cache();
+  assert.equal(await cache.text("/assets/app-1.js"), APP, "a boot asset is carried over");
+  assert.equal(await cache.text("/assets/lang-ja-1.js"), LANG, "and a language chunk the page had");
+  assert.equal(await cache.match("/assets/gone-1.js"), undefined, "not a path this build lists");
+  assert.equal(await cache.match("/"), undefined, "the old shell is not this build's");
+  assert.equal(sw.stores.has("rh-sw-v1"), false, "the old cache is gone");
+});
+
 test("the offline shell: kept and served only when it is this build's, this origin's hub's marker aside", async () => {
   // Online: served as it came, and kept only if it is this build's.
   const sw = worker({ network: { "/sessions": [marked(), HTML] } });
@@ -371,7 +392,7 @@ test("the offline shell: kept and served only when it is this build's, this orig
   assert.equal(await (await newer.cache()).match("/"), undefined);
 
   // A marker that is not exactly the hub's, or not where it writes it, is part of the shell.
-  for (const odd of [SHELL.replace("<head>", '<head><meta name="rh-hub" content="javascript:x" />'), SHELL.replace("</head>", '<meta name="rh-hub" content="wss://x" /></head>')]) {
+  for (const odd of [SHELL.replace("<head>", '<head><meta name="droppen-hub" content="javascript:x" />'), SHELL.replace("</head>", '<meta name="droppen-hub" content="wss://x" /></head>')]) {
     const sw2 = worker({ network: { "/": [odd, HTML] } });
     await sw2.navigate("/");
     assert.equal(await (await sw2.cache()).match("/"), undefined, odd);
@@ -384,13 +405,19 @@ test("the offline shell: kept and served only when it is this build's, this orig
   assert.equal(await (await offline.cache()).match("/"), undefined);
 });
 
+test("the old marker's name is read for one release: the shell is still this build's", async () => {
+  const sw = worker({ network: { "/sessions": [legacyMarked(), HTML] } });
+  assert.equal(await (await sw.navigate("/sessions"))!.text(), legacyMarked());
+  assert.equal(await (await sw.cache()).text("/"), legacyMarked(), "kept as this build's with the old marker");
+});
+
 test("a shell pointed at any hub but this origin's own is never kept, served or left in the cache", async () => {
-  const own = '<meta name="rh-hub" content="wss://droppen.test" />';
+  const own = '<meta name="droppen-hub" content="wss://droppen.test" />';
   const foreign = [
     ["another hub", marked("wss://evil.example")],
     ["ws:// on an https origin", marked("ws://droppen.test")],
     ["another port", marked("wss://droppen.test:8443")],
-    ["a second marker", SHELL.replace("<head>", `<head>${own}<meta name="rh-hub" content="wss://evil.example" />`)],
+    ["a second marker", SHELL.replace("<head>", `<head>${own}<meta name="droppen-hub" content="wss://evil.example" />`)],
     ["the marker twice", SHELL.replace("<head>", `<head>${own}${own}`)],
     ["the marker elsewhere", SHELL.replace("</head>", `${own}</head>`)],
   ];

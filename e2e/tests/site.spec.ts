@@ -11,7 +11,7 @@ test.describe("site on www.", () => {
   test("is site mode: the hub marker, and only the HTTP API in connect-src", async ({ page }) => {
     const response = await page.goto(`${SITE}/`);
     expect(response?.status()).toBe(200);
-    await expect(page.locator('meta[name="rh-hub"]')).toHaveAttribute("content", HUB_WS);
+    await expect(page.locator('meta[name="droppen-hub"]')).toHaveAttribute("content", HUB_WS);
     // The site host's own answer settles the host mode to `site`.
     await expect(page.locator('[data-testid="landing"]')).toBeVisible();
 
