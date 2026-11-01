@@ -15,7 +15,7 @@ use crate::{GotchaError, GotchaResult};
 
 /// The top-level command line. No command means `serve`.
 #[derive(Debug, PartialEq, Parser)]
-#[command(name = "remote-hand-server", version = droppen_http::SERVER_VERSION, disable_help_subcommand = true)]
+#[command(name = "droppen-server", version = droppen_http::SERVER_VERSION, disable_help_subcommand = true)]
 pub struct Cli {
     /// The command to run.
     #[command(subcommand)]
@@ -99,9 +99,9 @@ impl Cli {
     /// each command's long prose after the options clap lists.
     pub fn command_as(name: Name) -> clap::Command {
         let mut prose = name.rewrite(USAGE).into_owned();
-        if name == Name::Droppen {
+        if name != Name::Legacy {
             // The continuation lines line up under the old name's arguments.
-            let shift = Name::Legacy.command().len() - Name::Droppen.command().len();
+            let shift = Name::Legacy.command().len() - name.command().len();
             let (wide, narrow) = (format!("\n{:30}", ""), format!("\n{:1$}", "", 30 - shift));
             prose = prose.replace(&wide, &narrow);
         }
@@ -109,8 +109,9 @@ impl Cli {
         Self::command()
             .bin_name(name.command())
             .about(match name {
-                Name::Droppen => "Droppen server: `droppen` (`remote-hand-server` is the same program under its old name).",
-                Name::Legacy => "Droppen server: `remote-hand-server` (the same program as `droppen`).",
+                Name::Droppen => "Droppen server: `droppen` (the installed service runs it as `remote-hand-server`).",
+                Name::Server => "Droppen server: `droppen-server` (the build output; an install runs `remote-hand-server`).",
+                Name::Legacy => "Droppen server: `remote-hand-server` (`droppen` is the command to type).",
             })
             .after_long_help(prose)
             .mut_subcommand("user", |command| command.after_long_help(long(droppen_auth::cli::USAGE)))

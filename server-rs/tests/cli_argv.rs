@@ -26,7 +26,7 @@ impl Invocation {
     }
 
     fn run_with_stdin(&self, argv: &[&str], stdin: &[u8]) -> Output {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_remote-hand-server"))
+        let mut child = Command::new(env!("CARGO_BIN_EXE_droppen-server"))
             .args(argv)
             .env("HOME", self.home.path())
             .env("DROPPEN_DATA_DIR", self.home.path().join("data"))
@@ -76,7 +76,7 @@ fn help_is_stdout_and_success() {
         assert!(stderr(&output).is_empty(), "{argv:?}");
         let text = stdout(&output);
         assert!(text.contains("Usage:"), "{argv:?} prints help: {text}");
-        assert!(text.contains("remote-hand-server"), "{argv:?} names the binary it was run as: {text}");
+        assert!(text.contains("droppen-server"), "{argv:?} names the binary it was run as: {text}");
     }
 }
 

@@ -23,7 +23,7 @@ mod common;
 /// The server binary with nothing in its environment but a scratch home, a
 /// `PATH` and `env`.
 fn server(home: &Path, args: &[&str], env: &[(&str, &str)]) -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_remote-hand-server"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_droppen-server"));
     command
         .args(args)
         .env_clear()

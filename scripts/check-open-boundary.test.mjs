@@ -189,7 +189,7 @@ describe("cargo metadata", () => {
   test("an open tree passes", () => {
     const meta = {
       packages: [
-        pkg("remote-hand-server", ["server-rs"], [dep("droppen-proto", { path: at("server-rs", "crates", "droppen-proto") }), dep("serde", { source: "registry+https://github.com/rust-lang/crates.io-index" })]),
+        pkg("droppen-server", ["server-rs"], [dep("droppen-proto", { path: at("server-rs", "crates", "droppen-proto") }), dep("serde", { source: "registry+https://github.com/rust-lang/crates.io-index" })]),
         pkg("droppen-proto", ["server-rs", "crates", "droppen-proto"], []),
         // the hub may depend on the open crates, and on itself
         pkg("rh-hub", ["server-rs", "crates", "rh-hub"], [dep("droppen-proto", { path: at("server-rs", "crates", "droppen-proto") }), dep("rh-hub", { kind: "dev", path: at("server-rs", "crates", "rh-hub") })]),
@@ -262,7 +262,7 @@ describe("the whole check, over a made-up tree", () => {
   }
   const crate = (name) => `[package]\nname = "${name}"\n`;
   const open = {
-    "server-rs/Cargo.toml": `${crate("remote-hand-server")}[workspace]\n`,
+    "server-rs/Cargo.toml": `${crate("droppen-server")}[workspace]\n`,
     "server-rs/src/main.rs": 'fn main() { let _ = std::env::var("DROPPEN_HUB_DEFAULT"); }\n',
     "server-rs/crates/droppen-proto/Cargo.toml": crate("droppen-proto"),
     "server-rs/crates/droppen-proto/src/lib.rs": "pub fn f() {}\n",

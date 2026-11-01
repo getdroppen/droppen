@@ -221,7 +221,7 @@
       "about": "The binary: the router, AppState, the wiring, the command line. It may use every crate below it.",
       "crates": [
         {
-          "name": "remote-hand-server",
+          "name": "droppen-server",
           "about": "The router, the app, the web files, the desktop app's settings, shutdown, export and the binary.",
           "mayUse": "*"
         }

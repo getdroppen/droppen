@@ -2,7 +2,7 @@
 //! (*Open in Browser* asks the running server with that account's login:
 //! [`crate::server::local_open_grant`].)
 //!
-//! No new server code and no new trust: `remote-hand-server user add|passwd`
+//! No new server code and no new trust: `droppen-server user add|passwd`
 //! is how every install creates its first login, and it is trusted because
 //! whoever can run the binary already owns the operating-system account the
 //! server runs as. The app runs it against its own instance (`--instance
@@ -490,7 +490,7 @@ mod tests {
     /// means nothing to `passwd`, `rm` or `mark-app`. It hangs while
     /// `server-hangs` exists.
     fn fake_server(dir: &Path) -> PathBuf {
-        let path = dir.join("remote-hand-server");
+        let path = dir.join("droppen-server");
         let body = r#"#!/bin/sh
 db="$PWD/users.txt"
 cmd="$1"
@@ -505,7 +505,7 @@ for arg in "$@"; do
   case "$arg" in --app) app=yes ;; --yes) yes=yes ;; esac
 done
 touch "$db"
-usage() { echo "USAGE: remote-hand-server user …" >&2; exit 2; }
+usage() { echo "USAGE: droppen-server user …" >&2; exit 2; }
 has() { awk -F '\t' -v n="$1" '$1 == n { found = 1 } END { exit !found }' "$db"; }
 kind_of() { awk -F '\t' -v n="$1" '$1 == n { print $2 }' "$db"; }
 user_count() { awk -F '\t' '$2 == "user"' "$db" | wc -l | tr -d ' '; }

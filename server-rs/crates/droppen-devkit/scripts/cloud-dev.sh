@@ -296,9 +296,9 @@ ENV
   load
   fixtures
   if image_mode; then
-    (cd "$root" && cargo build -q -p droppen-relay -p remote-hand-server)
+    (cd "$root" && cargo build -q -p droppen-relay -p droppen-server)
   else
-    (cd "$root" && cargo build -q -p rh-hub -p droppen-relay -p remote-hand-server)
+    (cd "$root" && cargo build -q -p rh-hub -p droppen-relay -p droppen-server)
   fi
   start_hub
   echo "hub:    http://$(hub_host):$HUB_PORT"
@@ -315,7 +315,7 @@ AGENT_PORT=$(free_port)
 ENV
   load
   fixtures
-  (cd "$root" && cargo build -q -p remote-hand-server)
+  (cd "$root" && cargo build -q -p droppen-server)
   echo "agent instance ready for $HUB_URL"
   ;;
 enroll)
@@ -323,10 +323,10 @@ enroll)
   # `agent enroll` wants a local account on the instance first (a linked
   # device's page reaches the others): a throwaway one, made once.
   if [ ! -f "$state/local-account" ]; then
-    printf '%s\n' "cloud-dev throwaway" | agent_env "$root/target/debug/remote-hand-server" user add dev --instance cloudtest >/dev/null &&
+    printf '%s\n' "cloud-dev throwaway" | agent_env "$root/target/debug/droppen-server" user add dev --instance cloudtest >/dev/null &&
       echo "local account: dev / cloud-dev throwaway" >"$state/local-account"
   fi
-  agent_env "$root/target/debug/remote-hand-server" agent enroll "$2" --hub "${HUB_URL:-http://$(hub_host):$HUB_PORT}"
+  agent_env "$root/target/debug/droppen-server" agent enroll "$2" --hub "${HUB_URL:-http://$(hub_host):$HUB_PORT}"
   ;;
 agent)
   load
@@ -334,7 +334,7 @@ agent)
     APP_SERVER__PORT="$AGENT_PORT" APP_SERVER__HOST=127.0.0.1 \
     DROPPEN_CONFIG_DIR="$state/config" DROPPEN_DATA_DIR="$state/data" SHELL=/bin/sh RUST_LOG=info \
     DROPPEN_AGENT_RELAY_INSECURE=1 \
-    "$root/target/debug/remote-hand-server" agent run >>"$state/agent.log" 2>&1 </dev/null) &
+    "$root/target/debug/droppen-server" agent run >>"$state/agent.log" 2>&1 </dev/null) &
   echo $! >"$state/agent.pid"
   echo "agent started (log: $state/agent.log)"
   ;;

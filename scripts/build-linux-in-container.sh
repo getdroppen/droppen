@@ -9,7 +9,7 @@
 #   /work/src     the source tree, with web/dist built (the web app is
 #                 embedded at compile time)
 #   /work/target  cargo's target directory
-#   /work/out     receives <arch>/remote-hand-server
+#   /work/out     receives <arch>/droppen-server
 #
 # Environment:
 #   DROPPEN_BUILD_REV  the short commit (required; passed on as RH_BUILD_REV
@@ -41,8 +41,8 @@ cd /work/src/server-rs
 for arch in $ARCHES; do
   echo "== ${arch}-unknown-linux-gnu.${GLIBC}"
   RUSTFLAGS="--remap-path-prefix=/work/src=/droppen --remap-path-prefix=${CARGO_HOME:-/usr/local/cargo}=/cargo" \
-    cargo zigbuild --release --locked --target "${arch}-unknown-linux-gnu.${GLIBC}" -p remote-hand-server
+    cargo zigbuild --release --locked --target "${arch}-unknown-linux-gnu.${GLIBC}" -p droppen-server
   mkdir -p "/work/out/${arch}"
-  cp "/work/target/${arch}-unknown-linux-gnu/release/remote-hand-server" "/work/out/${arch}/"
+  cp "/work/target/${arch}-unknown-linux-gnu/release/droppen-server" "/work/out/${arch}/"
 done
 ls -l /work/out/*

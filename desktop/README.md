@@ -16,8 +16,8 @@ app's first-run guide offers, does not run on anything older.
 
 ## What it does
 
-- **On launch** it starts `remote-hand-server serve` (bundled as a Tauri
-  sidecar, `Contents/MacOS/remote-hand-server`) on `127.0.0.1` and a free port,
+- **On launch** it starts `droppen-server serve` (bundled as a Tauri
+  sidecar, `Contents/MacOS/droppen-server`) on `127.0.0.1` and a free port,
   as instance **`droppen-app`**, waits for it, logs in, and loads
   `http://127.0.0.1:<port>/` in the window.
 - **Closing the window** leaves Droppen running in the menu bar. The menu-bar
@@ -94,7 +94,7 @@ app's first-run guide offers, does not run on anything older.
 
 ```
 Droppen (Tauri, the app)                     ~/Library/Logs/Droppen/desktop.log
- └─ remote-hand-server serve                 ~/Library/Logs/Droppen/server.log
+ └─ droppen-server serve                     ~/Library/Logs/Droppen/server.log
       APP_INSTANCE=droppen-app  APP_SERVER__HOST=127.0.0.1  APP_SERVER__PORT=<port>  DROPPEN_DESKTOP_APP=1
       PATH=<login shell's PATH>:~/.local/bin:~/.npm-global/bin:…:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
       ├─ claude / codex sessions, pty and session shims (the server's own)
@@ -131,8 +131,9 @@ Droppen (Tauri, the app)                     ~/Library/Logs/Droppen/desktop.log
   healthy minute), stops it with `SIGTERM` then `SIGKILL` after 5 s, by pid
   only, and writes its pid to `server.pid` so a launch after an app crash can
   stop a server the crashed app left behind — only if that pid still runs a
-  `remote-hand-server` that either sits in an app bundle with this bundle id
-  (wherever the app was moved) or holds the instance's lock. A server that
+  `droppen-server` (or the old `remote-hand-server`) that either sits in an
+  app bundle with this bundle id (wherever the app was moved) or holds the
+  instance's lock. A server that
   exits with 75 (instance held elsewhere) is reported as such.
 - **PATH.** An app opened from the Finder gets launchd's bare PATH. The server
   gets whatever `$SHELL -ilc` says `PATH` is, read once per start with a 5 s
@@ -242,12 +243,12 @@ password it made up.
 
 1. **The app's account is `droppen-app`**, app-internal — never a person's
    login. First launch: a random 43-character password, and the server's own
-   `remote-hand-server user add droppen-app --app --instance droppen-app`,
+   `droppen-server user add droppen-app --app --instance droppen-app`,
    password on stdin, **before the server first starts**. `--app` makes it
    the desktop app's own: it signs the window in, `user list` leaves it out,
    and it does not end the setup state, so the macOS login name stays free
    for the person's own user account (`user add <name> --instance
-   droppen-app`, or the setup page). Check with `remote-hand-server user list
+   droppen-app`, or the setup page). Check with `droppen-server user list
    --app --instance droppen-app`.
    **Earlier installs** named the app's account after the macOS login name
    (app-internal, or a user account in the first review builds). The next
@@ -354,12 +355,12 @@ worker's cache) under the account's real home —
 desktop/build.sh                       # universal Droppen.app + Droppen-<version>.dmg of HEAD
 desktop/build.sh --ref v0.2.119        # a release
 desktop/build.sh --worktree --arch aarch64   # this checkout as it is, Apple silicon only
-desktop/build.sh --sidecar /path/to/remote-hand-server   # reuse a built server
+desktop/build.sh --sidecar /path/to/droppen-server   # reuse a built server
 desktop/build.sh --e2e --arch aarch64 --sidecar …        # an end-to-end test build (below)
 ```
 
 It builds the public-distribution server exactly as `scripts/release-public.sh`
-does, places it as `src-tauri/binaries/remote-hand-server-<target-triple>`,
+does, places it as `src-tauri/binaries/droppen-server-<target-triple>`,
 installs the pinned `tauri-cli` (`cargo install --locked`, under
 `~/.cache/droppen-desktop/tools`) and runs `cargo tauri build`. Output in
 `/tmp/droppen-desktop-release/`; the scratch directory is deleted at the end.
@@ -387,7 +388,7 @@ Run the unit tests with `cargo test --workspace` here (`core/` holds everything
 testable without a window: port, PATH, the sidecar's lifecycle, instance
 ownership and the listener proof, the credential stores, the login calls, the
 web contract, one app per user). A debug build makes a placeholder
-`src-tauri/binaries/remote-hand-server-<target>` if there is none (Tauri
+`src-tauri/binaries/droppen-server-<target>` if there is none (Tauri
 insists the sidecar exists; the placeholder only says to run `build.sh`); a
 release build never does.
 
@@ -440,7 +441,7 @@ a throwaway home with the keychain off:
 ```sh
 desktop/build.sh --ref HEAD --out /tmp/droppen-release           # the release
 desktop/build.sh --ref HEAD --e2e --arch aarch64 --out /tmp/droppen-e2e \
-  --sidecar /tmp/droppen-release/Droppen.app/Contents/MacOS/remote-hand-server
+  --sidecar /tmp/droppen-release/Droppen.app/Contents/MacOS/droppen-server
 desktop/e2e-macos.sh "/tmp/droppen-e2e/Droppen E2E.app" /tmp/desktop-review
 ```
 
@@ -453,7 +454,7 @@ versions (`--version`, test builds only) and a throwaway signing key:
 ```sh
 desktop/build.sh --ref HEAD --e2e --version 0.0.1-test --arch aarch64 --out /tmp/droppen-e2e-old
 desktop/build.sh --ref HEAD --e2e --version 0.0.2-test --arch aarch64 --out /tmp/droppen-e2e-new \
-  --sidecar "/tmp/droppen-e2e-old/Droppen E2E.app/Contents/MacOS/remote-hand-server"
+  --sidecar "/tmp/droppen-e2e-old/Droppen E2E.app/Contents/MacOS/droppen-server"
 desktop/e2e-updater-macos.sh "/tmp/droppen-e2e-old/Droppen E2E.app" "/tmp/droppen-e2e-new/Droppen E2E.app" /tmp/desktop-updater-review
 ```
 

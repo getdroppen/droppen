@@ -6,7 +6,7 @@
 # upload command for a human to review and run.
 #
 #   desktop/build.sh [--ref <git-ref> | --worktree] [--arch universal|aarch64|x86_64]
-#                    [--out <dir>] [--sidecar <prebuilt remote-hand-server>]
+#                    [--out <dir>] [--sidecar <prebuilt droppen-server>]
 #                    [--e2e [--version <v>]] [--keep-work]
 #                    [--notices <file>] [--no-dmg] [--from-apps <aarch64 app> <x86_64 app>]
 #
@@ -47,7 +47,7 @@
 # The server is built exactly as scripts/release-public.sh builds the public
 # release (the web app as the public distribution, the builder's paths
 # remapped out, the same binary checks), then placed where Tauri wants a
-# sidecar: src-tauri/binaries/remote-hand-server-<target-triple>.
+# sidecar: src-tauri/binaries/droppen-server-<target-triple>.
 #
 # Every build but an --e2e one ships the app's licence and third-party
 # notices, in Droppen.app/Contents/Resources and beside the app in the DMG:
@@ -137,7 +137,7 @@ fi
 
 TAURI_CLI_VERSION=2.12.3
 ABOUT_VERSION=0.9.2
-BIN_NAME=remote-hand-server
+BIN_NAME=droppen-server
 PUBLIC_REPO=${DROPPEN_RELEASE_REPO:-getdroppen/droppen}
 MIN_FREE_GB=${DROPPEN_MIN_FREE_GB:-25}
 WORK=${DROPPEN_DESKTOP_WORK:-/tmp/droppen-desktop-build/work}
@@ -341,8 +341,8 @@ if [ "$E2E" = 0 ]; then
   if [ -n "$NOTICES_FROM" ]; then
     # Written elsewhere by desktop/third-party-notices.sh, for this very app.
     cp "$NOTICES_FROM" "$LEGAL/THIRD_PARTY_NOTICES"
-    [ "$(head -n 1 "$LEGAL/THIRD_PARTY_NOTICES")" = "THIRD_PARTY_NOTICES for Droppen $VERSION for macOS (with remote-hand-server $SERVER_VERSION+g$REV)" ] \
-      || die "--notices: $NOTICES_FROM is not the THIRD_PARTY_NOTICES of Droppen $VERSION (remote-hand-server $SERVER_VERSION+g$REV)"
+    [ "$(head -n 1 "$LEGAL/THIRD_PARTY_NOTICES")" = "THIRD_PARTY_NOTICES for Droppen $VERSION for macOS (with droppen-server $SERVER_VERSION+g$REV)" ] \
+      || die "--notices: $NOTICES_FROM is not the THIRD_PARTY_NOTICES of Droppen $VERSION (droppen-server $SERVER_VERSION+g$REV)"
   else
     run_watched "${web_env[@]}" "$REPO/desktop/third-party-notices.sh" "$SRC" "$LEGAL/THIRD_PARTY_NOTICES" "$VERSION" "$SERVER_VERSION" "$REV" \
       || die "THIRD_PARTY_NOTICES failed (see above)"

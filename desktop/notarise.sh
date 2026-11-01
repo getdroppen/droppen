@@ -169,7 +169,7 @@ VERSION=${2#v}
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "a release version is x.y.z, not $VERSION"
 APP=$DIR/Droppen.app
 DMG=$DIR/Droppen-$VERSION.dmg
-SERVER_BIN=$APP/Contents/MacOS/remote-hand-server
+SERVER_BIN=$APP/Contents/MacOS/droppen-server
 case "$DIR" in *" "*) die "no spaces in the path, please" ;; esac
 [ -d "$APP" ] && [ -f "$APP/Contents/Info.plist" ] || die "no Droppen.app in $DIR (desktop/build.sh --out $DIR)"
 [ ! -e "$DIR/E2E-TEST-BUILD.txt" ] || die "$DIR is an end-to-end test build: never signed for release"
@@ -214,7 +214,10 @@ say "sign: $APP"
 # hardened runtime notarisation requires, --timestamp a secure timestamp. No
 # entitlements: the app is not sandboxed, and WKWebView's JIT runs in
 # WebKit's own processes.
-codesign --force --options runtime --timestamp --sign "$IDENTITY" "$SERVER_BIN"
+#
+# Keep the signing identifier earlier builds had. It is not a path or a
+# visible name; without -i it would follow the new sidecar file name.
+codesign --force --options runtime --timestamp --identifier remote-hand-server --sign "$IDENTITY" "$SERVER_BIN"
 codesign --force --options runtime --timestamp --sign "$IDENTITY" "$APP"
 codesign --verify --deep --strict --verbose=2 "$APP"
 

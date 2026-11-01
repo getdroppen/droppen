@@ -1,21 +1,25 @@
-//! The two names this binary answers to: `droppen`, and `remote-hand-server`.
+//! The names this binary answers to: `droppen`, `droppen-server` (the build
+//! output), and `remote-hand-server` (the name it is installed under).
 //!
-//! One binary, one behaviour. A release ships it under both names (the
-//! tarball's `droppen` and `remote-hand-server` are one file), and the
-//! installer adds `<data>/bin/droppen` beside the `<data>/bin/remote-hand-server`
-//! it manages. Nothing here changes what a command *does*: `argv[0]` only picks
-//! the words a person reads — the usage, the commands an error suggests, and
-//! the prefix on stderr.
+//! One binary, one behaviour. A release ships it as `droppen` and
+//! `remote-hand-server` in the tarball (one file), the installer puts it at
+//! `<data>/bin/remote-hand-server` and adds `<data>/bin/droppen` beside it, and
+//! the build output is `droppen-server`. Nothing here changes what a command
+//! *does*: `argv[0]` only picks the words a person reads — the usage, the
+//! commands an error suggests, and the prefix on stderr.
 //!
 //! * Run as `droppen` (any path whose last part is `droppen`): the usage and the
 //!   suggested commands say `droppen`, and errors start with `droppen:`.
-//! * Run under any other name — `remote-hand-server`, the supervisor's child,
-//!   a test binary: the usage says `remote-hand-server`, and errors start with
-//!   `remote-hand:`, which scripts that grep for it keep relying on.
+//! * Run as `droppen-server`: the usage and suggestions say `droppen-server`,
+//!   and errors still start with `droppen:`.
+//! * Run under the old name — `remote-hand-server`, the supervisor's child of
+//!   an old unit, a test binary: the usage says `remote-hand-server`, and
+//!   errors start with `remote-hand:`, which scripts that grep for it keep
+//!   relying on.
 //!
-//! The managed binary is not renamed: the `up` supervisor, self-upgrade and the
-//! `.prev`/`.bad` rollback ladder all stay on `<data>/bin/remote-hand-server`
-//! (the server's `selfupdate::store`); `droppen` there is only a link to it.
+//! The managed binary stays `<data>/bin/remote-hand-server`; the launchd jobs,
+//! systemd units, the `up` supervisor, self-upgrade and the `.prev`/`.bad`
+//! rollback ladder all keep that name. `droppen` there is only a link to it.
 //!
 //! [`droppen_path`] is the other half: the path a person on this device types
 //! to run this server, which the web app shows in the commands it asks people
@@ -28,7 +32,9 @@ use std::sync::OnceLock;
 
 /// The new name, and the one file name that selects it.
 pub const DROPPEN: &str = "droppen";
-/// The old name, which the managed binary keeps.
+/// The build output's name.
+pub const DROPPEN_SERVER: &str = "droppen-server";
+/// The name the installer and supervisor manage.
 pub const LEGACY_COMMAND: &str = "remote-hand-server";
 
 /// Which name this process was started under.
@@ -36,6 +42,8 @@ pub const LEGACY_COMMAND: &str = "remote-hand-server";
 pub enum Name {
     /// `droppen`.
     Droppen,
+    /// `droppen-server`.
+    Server,
     /// `remote-hand-server`, or anything else.
     Legacy,
 }
@@ -48,6 +56,7 @@ impl Name {
         let base = argv0.and_then(|arg| Path::new(arg).file_name()).and_then(OsStr::to_str);
         match base {
             Some(base) if base.eq_ignore_ascii_case(DROPPEN) => Self::Droppen,
+            Some(base) if base.eq_ignore_ascii_case(DROPPEN_SERVER) => Self::Server,
             _ => Self::Legacy,
         }
     }
@@ -62,6 +71,7 @@ impl Name {
     pub fn command(self) -> &'static str {
         match self {
             Self::Droppen => DROPPEN,
+            Self::Server => DROPPEN_SERVER,
             Self::Legacy => LEGACY_COMMAND,
         }
     }
@@ -70,7 +80,7 @@ impl Name {
     /// old name, which scripts grep for.
     pub fn error_prefix(self) -> &'static str {
         match self {
-            Self::Droppen => DROPPEN,
+            Self::Droppen | Self::Server => DROPPEN,
             Self::Legacy => "remote-hand",
         }
     }
@@ -79,10 +89,10 @@ impl Name {
     ///
     /// Only the command word is rewritten, not a path or a file that contains
     /// it: `remote-hand-server user add` and `` `remote-hand-server up` ``
-    /// become `droppen …`, while `<data>/bin/remote-hand-server`,
-    /// `remote-hand-server.prev` and `remote-hand-server-x` stay as they are —
-    /// those name files on disk, which keep the old name. Under the old name
-    /// `text` comes back untouched.
+    /// become `droppen …` (or `droppen-server …`), while
+    /// `<data>/bin/remote-hand-server`, `remote-hand-server.prev` and
+    /// `remote-hand-server-x` stay as they are — those name files on disk.
+    /// Under the old name `text` comes back untouched.
     pub fn rewrite(self, text: &str) -> Cow<'_, str> {
         if self == Self::Legacy || !text.contains(LEGACY_COMMAND) {
             return Cow::Borrowed(text);
@@ -102,7 +112,7 @@ impl Name {
                 Some(c) => !is_name_char(c),
             };
             out.push_str(before);
-            out.push_str(if starts_a_word && ends_a_word { DROPPEN } else { LEGACY_COMMAND });
+            out.push_str(if starts_a_word && ends_a_word { self.command() } else { LEGACY_COMMAND });
             rest = after;
         }
         out.push_str(rest);
@@ -124,7 +134,7 @@ fn is_name_char(c: char) -> bool {
 /// "create an account" hint), hence `~` rather than a path with the account's
 /// name in it.
 pub fn droppen_path() -> String {
-    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from(LEGACY_COMMAND));
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from(DROPPEN_SERVER));
     let home = std::env::var_os("HOME").filter(|home| !home.is_empty()).map(PathBuf::from);
     droppen_path_for(&exe, home.as_deref())
 }
@@ -202,14 +212,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn argv0_droppen_selects_the_new_name_and_anything_else_the_old() {
+    fn argv0_selects_the_name_the_binary_was_run_as() {
         for argv0 in ["droppen", "/Users/a/.local/share/remote-hand/bin/droppen", "./droppen", "Droppen"] {
             assert_eq!(Name::from_argv0(Some(OsStr::new(argv0))), Name::Droppen, "{argv0}");
+        }
+        for argv0 in ["droppen-server", "/w/target/debug/droppen-server", "Droppen-Server"] {
+            assert_eq!(Name::from_argv0(Some(OsStr::new(argv0))), Name::Server, "{argv0}");
         }
         for argv0 in [
             "remote-hand-server",
             "/Users/a/.local/share/remote-hand/bin/remote-hand-server",
-            "/w/target/debug/deps/remote_hand_server-1a2b",
+            "/w/target/debug/deps/droppen_server-1a2b",
             "droppen-relay",
             "/opt/droppen/bin/server",
             "",
@@ -223,6 +236,8 @@ mod tests {
     fn each_name_has_its_command_and_error_prefix() {
         assert_eq!(Name::Droppen.command(), "droppen");
         assert_eq!(Name::Droppen.error_prefix(), "droppen");
+        assert_eq!(Name::Server.command(), "droppen-server");
+        assert_eq!(Name::Server.error_prefix(), "droppen");
         assert_eq!(Name::Legacy.command(), "remote-hand-server");
         assert_eq!(Name::Legacy.error_prefix(), "remote-hand", "scripts grep for `remote-hand:`");
     }
@@ -255,6 +270,22 @@ mod tests {
             "droppen up runs <data>/bin/remote-hand-server"
         );
         assert!(matches!(d.rewrite("nothing to change"), Cow::Borrowed(_)));
+
+        let s = Name::Server;
+        assert_eq!(s.rewrite("    remote-hand-server user add <name>"), "    droppen-server user add <name>");
+        assert_eq!(
+            s.rewrite("run `remote-hand-server agent unenroll` first"),
+            "run `droppen-server agent unenroll` first"
+        );
+        for kept in [
+            "~/.local/share/remote-hand/bin/remote-hand-server",
+            "<data>/bin/remote-hand-server.prev",
+            "remote-hand-server.bad",
+            "remote-hand-server-aarch64",
+            "my-remote-hand-server",
+        ] {
+            assert_eq!(s.rewrite(kept), kept);
+        }
     }
 
     #[test]

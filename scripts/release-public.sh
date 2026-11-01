@@ -23,8 +23,8 @@
 #               Kubernetes pod); a release always has them
 #   --keep-work keep the build directory (sources, node_modules, cargo output)
 #   --prebuilt  take the server binaries from <dir> instead of building them:
-#               <dir>/<target>/remote-hand-server for each macOS target and
-#               <dir>/linux/<arch>/remote-hand-server for each Linux one, built
+#               <dir>/<target>/droppen-server for each macOS target and
+#               <dir>/linux/<arch>/droppen-server for each Linux one, built
 #               from the same ref as below (with web/dist of the same build
 #               embedded). .github/workflows/release.yml builds them in jobs of
 #               their own; everything else here is the same.
@@ -169,8 +169,11 @@ TARGETS=(aarch64-apple-darwin x86_64-apple-darwin)
 LINUX_ARCHES=(x86_64 aarch64)
 # The oldest glibc the Linux binaries may need (build-linux.sh links against it).
 GLIBC_MAX=2.28
-BIN_NAME=remote-hand-server
-# The same program's new name: the command people type.
+# The build output's name. The installed file keeps the old name below.
+SERVER_NAME=droppen-server
+LEGACY_NAME=remote-hand-server
+# The command people type, and the real file in the tarball: installers at or
+# above the upgrade floor take `droppen` from it, and run it.
 NEW_NAME=droppen
 # The old tarball names stay on every release until at least this date (three
 # months after the first release that also had the new ones).
@@ -310,15 +313,15 @@ if [ -n "$PREBUILT" ]; then
   # Where the builds below would have left them, so that everything after
   # treats them alike.
   for target in "${TARGETS[@]}"; do
-    [ -x "$PREBUILT/$target/$BIN_NAME" ] || die "--prebuilt: no executable $PREBUILT/$target/$BIN_NAME"
+    [ -x "$PREBUILT/$target/$SERVER_NAME" ] || die "--prebuilt: no executable $PREBUILT/$target/$SERVER_NAME"
     mkdir -p "$WORK/target/$target/release"
-    cp "$PREBUILT/$target/$BIN_NAME" "$WORK/target/$target/release/"
+    cp "$PREBUILT/$target/$SERVER_NAME" "$WORK/target/$target/release/"
   done
   if [ "$LINUX" = 1 ]; then
     for arch in "${LINUX_ARCHES[@]}"; do
-      [ -x "$PREBUILT/linux/$arch/$BIN_NAME" ] || die "--prebuilt: no executable $PREBUILT/linux/$arch/$BIN_NAME"
+      [ -x "$PREBUILT/linux/$arch/$SERVER_NAME" ] || die "--prebuilt: no executable $PREBUILT/linux/$arch/$SERVER_NAME"
       mkdir -p "$WORK/linux/$arch"
-      cp "$PREBUILT/linux/$arch/$BIN_NAME" "$WORK/linux/$arch/"
+      cp "$PREBUILT/linux/$arch/$SERVER_NAME" "$WORK/linux/$arch/"
     done
   fi
   TARGETS_TO_BUILD=()
@@ -353,7 +356,7 @@ fi
 
 # The checks of every binary (check_binary) are made on the programs of
 # every tarball, below ("tarball checks"): byte for byte these.
-bin_of() { echo "$WORK/target/$1/release/$BIN_NAME"; }
+bin_of() { echo "$WORK/target/$1/release/$SERVER_NAME"; }
 check_binary() { # path
   local bin=$1 kind
   if LC_ALL=C grep -aqF "$HOME/" "$bin"; then
@@ -393,8 +396,8 @@ NOTICES=$WORK/THIRD_PARTY_NOTICES
 if [ -n "$NOTICES_FROM" ]; then
   # Written elsewhere by scripts/third-party-notices.sh, for this very version.
   cp "$NOTICES_FROM" "$NOTICES"
-  [ "$(head -n 1 "$NOTICES")" = "THIRD_PARTY_NOTICES for Droppen $VERSION (remote-hand-server $CRATE_VERSION+g$REV)" ] \
-    || die "--notices: $NOTICES_FROM is not the THIRD_PARTY_NOTICES of $VERSION (remote-hand-server $CRATE_VERSION+g$REV)"
+  [ "$(head -n 1 "$NOTICES")" = "THIRD_PARTY_NOTICES for Droppen $VERSION (droppen-server $CRATE_VERSION+g$REV)" ] \
+    || die "--notices: $NOTICES_FROM is not the THIRD_PARTY_NOTICES of $VERSION (droppen-server $CRATE_VERSION+g$REV)"
   if LC_ALL=C grep -qF "$HOME/" "$NOTICES"; then die "THIRD_PARTY_NOTICES names paths under $HOME"; fi
 else
   # The licence and notices tooling from this checkout, like INSTALL.txt
@@ -405,10 +408,10 @@ fi
 echo "ok: THIRD_PARTY_NOTICES $(wc -l < "$NOTICES" | tr -d ' ') lines; LICENSE from ${LICENSE_FILE#"$WORK/"}"
 
 mkdir -p "$WORK/dist/universal" "$WORK/dist/aarch64" "$WORK/dist/x86_64"
-lipo -create -output "$WORK/dist/universal/$BIN_NAME" "$(bin_of aarch64-apple-darwin)" "$(bin_of x86_64-apple-darwin)"
+lipo -create -output "$WORK/dist/universal/$SERVER_NAME" "$(bin_of aarch64-apple-darwin)" "$(bin_of x86_64-apple-darwin)"
 cp "$(bin_of aarch64-apple-darwin)" "$WORK/dist/aarch64/"
 cp "$(bin_of x86_64-apple-darwin)" "$WORK/dist/x86_64/"
-lipo -info "$WORK/dist/universal/$BIN_NAME"
+lipo -info "$WORK/dist/universal/$SERVER_NAME"
 
 say "smoke tests"
 can_run() { # arch
@@ -420,7 +423,7 @@ can_run() { # arch
   esac
 }
 for arch in universal aarch64 x86_64; do
-  bin="$WORK/dist/$arch/$BIN_NAME"
+  bin="$WORK/dist/$arch/$SERVER_NAME"
   if ! can_run "$arch"; then echo "skip: this Mac cannot run the $arch slice"; continue; fi
   version=$("$bin" --version)
   case "$version" in *"+g$REV"*) ;; *) die "$arch --version says '$version', not the commit $REV" ;; esac
@@ -431,7 +434,7 @@ for arch in universal aarch64 x86_64; do
 done
 if [ "$LINUX" = 1 ] && [ "$LINUX_SMOKE" = 1 ]; then
   for arch in "${LINUX_ARCHES[@]}"; do
-    EXPECT_VERSION="+g$REV" bash "$REPO/.github/scripts/smoke-linux.sh" "$WORK/linux/$arch/$BIN_NAME" "$arch" \
+    EXPECT_VERSION="+g$REV" bash "$REPO/.github/scripts/smoke-linux.sh" "$WORK/linux/$arch/$SERVER_NAME" "$arch" \
       || die "the Linux $arch binary failed its smoke test"
   done
 elif [ "$LINUX" = 1 ]; then
@@ -456,9 +459,9 @@ package() {
   cp "$bin" "$new/$NEW_NAME"
   chmod 755 "$new/$NEW_NAME"
   # A hard link: the tarball stores the second name as a link to the first.
-  ln "$new/$NEW_NAME" "$new/$BIN_NAME"
-  cp "$bin" "$old/$BIN_NAME"
-  chmod 755 "$old/$BIN_NAME"
+  ln "$new/$NEW_NAME" "$new/$LEGACY_NAME"
+  cp "$bin" "$old/$LEGACY_NAME"
+  chmod 755 "$old/$LEGACY_NAME"
   # The templates from this checkout, not from the ref: they point at the
   # public repository, which an older tag's copy predates.
   sed -e "s/@ARCH@/${arch}/" -e "s/@CONTENTS@/${CONTENTS_NEW}/" "$template" > "$new/INSTALL.txt"
@@ -468,19 +471,19 @@ package() {
     cp "$NOTICES" "$dir/THIRD_PARTY_NOTICES"
   done
   COPYFILE_DISABLE=1 tar --no-xattrs --no-mac-metadata --uid 0 --gid 0 --uname root --gname "$group" \
-    -czf "$STAGE/$NEW_NAME-${VERSION}-${os}-${arch}.tar.gz" -C "$new" "$NEW_NAME" "$BIN_NAME" INSTALL.txt LICENSE THIRD_PARTY_NOTICES
+    -czf "$STAGE/$NEW_NAME-${VERSION}-${os}-${arch}.tar.gz" -C "$new" "$NEW_NAME" "$LEGACY_NAME" INSTALL.txt LICENSE THIRD_PARTY_NOTICES
   COPYFILE_DISABLE=1 tar --no-xattrs --no-mac-metadata --uid 0 --gid 0 --uname root --gname "$group" \
-    -czf "$STAGE/remote-hand-${VERSION}-${os}-${arch}.tar.gz" -C "$old" "$BIN_NAME" INSTALL.txt LICENSE THIRD_PARTY_NOTICES
+    -czf "$STAGE/remote-hand-${VERSION}-${os}-${arch}.tar.gz" -C "$old" "$LEGACY_NAME" INSTALL.txt LICENSE THIRD_PARTY_NOTICES
 }
 for template in INSTALL.txt.in INSTALL-linux.txt.in; do
   grep -q '@CONTENTS@' "$REPO/.github/scripts/$template" || die "$template has no @CONTENTS@ line"
 done
 for arch in universal aarch64 x86_64; do
-  package "$WORK/dist/$arch/$BIN_NAME" macos "$arch" wheel "$REPO/.github/scripts/INSTALL.txt.in"
+  package "$WORK/dist/$arch/$SERVER_NAME" macos "$arch" wheel "$REPO/.github/scripts/INSTALL.txt.in"
 done
 if [ "$LINUX" = 1 ]; then
   for arch in "${LINUX_ARCHES[@]}"; do
-    package "$WORK/linux/$arch/$BIN_NAME" linux "$arch" root "$REPO/.github/scripts/INSTALL-linux.txt.in"
+    package "$WORK/linux/$arch/$SERVER_NAME" linux "$arch" root "$REPO/.github/scripts/INSTALL-linux.txt.in"
   done
 fi
 
@@ -498,7 +501,7 @@ verify_tarball() { # tarball, the binary it was made from, its members
   listing=$(tar -tzf "$tarball")
   [ "$listing" = "$(printf '%s\n' "$@")" ] || die "$(basename "$tarball") holds [$(printf '%s ' "$listing" | tr '\n' ' ')], not [$*]"
   tar -xzf "$tarball" -C "$dir"
-  for member in "$NEW_NAME" "$BIN_NAME"; do
+  for member in "$NEW_NAME" "$LEGACY_NAME"; do
     [ -e "$dir/$member" ] || continue
     [ -x "$dir/$member" ] || die "$(basename "$tarball"): $member is not executable"
     cmp -s "$dir/$member" "$bin" || die "$(basename "$tarball"): $member is not the binary that was smoke-tested"
@@ -516,16 +519,16 @@ CHECK_NAMES=()
 for tarball in "$STAGE"/*.tar.gz; do
   name=$(basename "$tarball" .tar.gz)
   case "$name" in
-    "$NEW_NAME-$VERSION-"*) family=$NEW_NAME; members=("$NEW_NAME" "$BIN_NAME") ;;
-    "remote-hand-$VERSION-"*) family=remote-hand; members=("$BIN_NAME") ;;
+    "$NEW_NAME-$VERSION-"*) family=$NEW_NAME; members=("$NEW_NAME" "$LEGACY_NAME") ;;
+    "remote-hand-$VERSION-"*) family=remote-hand; members=("$LEGACY_NAME") ;;
     *) die "an unexpected tarball: $name" ;;
   esac
   platform=${name#"$family-$VERSION-"}
   os=${platform%%-*}
   arch=${platform#*-}
   case "$os" in
-    macos) bin=$WORK/dist/$arch/$BIN_NAME ;;
-    linux) bin=$WORK/linux/$arch/$BIN_NAME ;;
+    macos) bin=$WORK/dist/$arch/$SERVER_NAME ;;
+    linux) bin=$WORK/linux/$arch/$SERVER_NAME ;;
     *) die "an unexpected platform in $name" ;;
   esac
   (

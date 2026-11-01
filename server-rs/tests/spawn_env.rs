@@ -65,7 +65,7 @@ const INHERITED_OPENAI_KEY: (&str, &str) = ("OPENAI_API_KEY", "planted-openai-ke
 const INTERPRETER_OWN: [&str; 9] = ["PWD", "OLDPWD", "SHLVL", "_", "LC_CTYPE", "CPATH", "LIBRARY_PATH", "MANPATH", "SDKROOT"];
 
 /// Whether `sh` can pass this name on at all: it drops a variable whose name
-/// is not an identifier (cargo's `CARGO_BIN_EXE_remote-hand-server`).
+/// is not an identifier (cargo's `CARGO_BIN_EXE_droppen-server`).
 fn is_shell_name(key: &str) -> bool {
     let mut chars = key.chars();
     chars.next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_') && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')

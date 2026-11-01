@@ -3,7 +3,7 @@
 //! sidecar or opening a window.
 //!
 //! The app is a thin shell around the ordinary Droppen server binary
-//! (`remote-hand-server`), bundled as a sidecar. Everything the shell has to
+//! (`droppen-server`), bundled as a sidecar. Everything the shell has to
 //! decide before it can show the server's own web app lives here:
 //!
 //! * [`dirs`] — where the app keeps its state, its logs and the server's pid;
@@ -70,5 +70,10 @@ pub const INSTANCE: &str = identity::THIS.instance;
 pub const BUNDLE_ID: &str = identity::THIS.bundle_id;
 
 /// The server binary's name, as Tauri bundles it beside the app's own
-/// executable (`Contents/MacOS/remote-hand-server`).
-pub const SIDECAR_NAME: &str = "remote-hand-server";
+/// executable (`Contents/MacOS/droppen-server`).
+pub const SIDECAR_NAME: &str = "droppen-server";
+
+/// What the sidecar was called before the rename. An app killed while an older
+/// build ran it leaves that process behind; [`sidecar::stop_leftover`] must
+/// still recognise it. Never bundled.
+pub const LEGACY_SIDECAR_NAME: &str = "remote-hand-server";

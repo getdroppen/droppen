@@ -73,7 +73,7 @@ pub fn gap_note(lost: u64) -> String {
 /// server itself.
 pub fn shim_program() -> PathBuf {
     let override_path = droppen_base::env::var("DROPPEN_SHIM_BIN").map(PathBuf::from);
-    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("remote-hand-server"));
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from(droppen_base::program::DROPPEN_SERVER));
     resolve_shim_program(override_path, exe, |path| path.is_file())
 }
 
@@ -87,7 +87,7 @@ fn resolve_shim_program(override_path: Option<PathBuf>, exe: PathBuf, exists: im
     }
     if exe.parent().and_then(|dir| dir.file_name()) == Some(std::ffi::OsStr::new("deps")) {
         if let Some(target) = exe.parent().and_then(|deps| deps.parent()) {
-            let candidate = target.join("remote-hand-server");
+            let candidate = target.join(droppen_base::program::DROPPEN_SERVER);
             if exists(&candidate) {
                 return candidate;
             }
@@ -122,7 +122,7 @@ mod tests {
         let test_binary = PathBuf::from("/w/target/debug/deps/pty_shim-1a2b3c");
         assert_eq!(
             resolve_shim_program(None, test_binary.clone(), |_| true),
-            PathBuf::from("/w/target/debug/remote-hand-server")
+            PathBuf::from("/w/target/debug/droppen-server")
         );
         assert_eq!(
             resolve_shim_program(None, test_binary, |_| false),

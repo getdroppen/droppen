@@ -72,7 +72,7 @@ SHOTS=${2:-/tmp/desktop-review}
 e2e_check_app "$APP"
 APP=$(cd "$APP" && pwd -P)
 BIN="$APP/Contents/MacOS/Droppen"
-SERVER="$APP/Contents/MacOS/remote-hand-server"
+SERVER="$APP/Contents/MacOS/droppen-server"
 [ -x "$BIN" ] && [ -x "$SERVER" ] || { echo "not a Droppen app: $APP" >&2; exit 2; }
 e2e_check_scratch "$SHOTS" "the screenshot folder"
 

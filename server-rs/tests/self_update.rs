@@ -2,7 +2,7 @@
 //!
 //! Everything else in the restart-survival phases proves one subsystem survives
 //! one restart. This proves the thing they were all for. A real
-//! `remote-hand-server up` supervises a real server; a web terminal is running a
+//! `droppen-server up` supervises a real server; a web terminal is running a
 //! loop that prints a numbered line every fifth of a second; an injected CLI run
 //! is in flight. The server is then handed a copy of its own binary over
 //! `POST /api/server/self-upgrade`, and the assertions are the promises the
@@ -108,7 +108,7 @@ async fn the_server_replaces_its_own_binary_without_dropping_a_terminal_or_a_run
 
     // ---- the upgrade -------------------------------------------------------
 
-    let binary = PathBuf::from(env!("CARGO_BIN_EXE_remote-hand-server"));
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_droppen-server"));
     let bytes = std::fs::read(&binary).expect("read this test's own server binary");
     let digest = droppen_base::text::sha256_hex(&bytes);
     let (status, answer) = up.upload_binary(&bytes, Some(&digest)).await;
@@ -208,7 +208,7 @@ async fn the_server_replaces_its_own_binary_without_dropping_a_terminal_or_a_run
 
 // ------------------------------------------------------------------ harness
 
-/// A real `remote-hand-server up`, and the server it is supervising.
+/// A real `droppen-server up`, and the server it is supervising.
 struct Supervisor {
     /// The supervisor's own pid; also its process group, so a stray test can be
     /// cleaned up in one signal.
@@ -253,7 +253,7 @@ impl Supervisor {
     async fn start(home: &Path) -> Supervisor {
         common::test_home(home);
         forget_port(home);
-        let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_remote-hand-server"));
+        let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_droppen-server"));
         command
             .args(["up", "--", "serve"])
             .env("APP_HOME_DIR", home)
@@ -263,7 +263,7 @@ impl Supervisor {
             .env("APP_SERVER__HOST", "127.0.0.1")
             // The server and every `droppen_*` crate it is made of: a
             // directive's target matches by prefix.
-            .env("RUST_LOG", "remote_hand_server=debug,droppen=debug")
+            .env("RUST_LOG", "droppen_server=debug,droppen=debug")
             // The fake `claude` lives on this process's `PATH`; the supervisor
             // hands it down to the server, which hands it down to the CLI.
             .env("PATH", std::env::var("PATH").unwrap_or_default())
@@ -366,7 +366,7 @@ impl Supervisor {
         let mut body = Vec::new();
         body.extend_from_slice(
             format!(
-                "--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"binary\"; filename=\"remote-hand-server\"\r\n\
+                "--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"binary\"; filename=\"droppen-server\"\r\n\
                  Content-Type: application/octet-stream\r\n\r\n"
             )
             .as_bytes(),
@@ -640,7 +640,7 @@ impl Drop for Unsupervised {
 impl Unsupervised {
     /// Start from the test's own build, which is not under `<data>/bin`.
     async fn start(home: &Path) -> Unsupervised {
-        Self::start_from(home, Path::new(env!("CARGO_BIN_EXE_remote-hand-server"))).await
+        Self::start_from(home, Path::new(env!("CARGO_BIN_EXE_droppen-server"))).await
     }
 
     /// Start the *installed* binary by hand, which is what an operator does when
@@ -650,7 +650,7 @@ impl Unsupervised {
         let bin = home.join(".local/share/remote-hand/bin");
         std::fs::create_dir_all(&bin).expect("bin dir");
         let installed = bin.join("remote-hand-server");
-        std::fs::copy(env!("CARGO_BIN_EXE_remote-hand-server"), &installed).expect("install");
+        std::fs::copy(env!("CARGO_BIN_EXE_droppen-server"), &installed).expect("install");
         std::fs::set_permissions(&installed, std::fs::Permissions::from_mode(0o755)).expect("chmod");
         Self::start_from(home, &installed).await
     }
@@ -738,7 +738,7 @@ fn multipart(boundary: &str, bytes: &[u8], sha256: Option<&str>) -> Vec<u8> {
     let mut body = Vec::new();
     body.extend_from_slice(
         format!(
-            "--{boundary}\r\nContent-Disposition: form-data; name=\"binary\"; filename=\"remote-hand-server\"\r\n\
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"binary\"; filename=\"droppen-server\"\r\n\
              Content-Type: application/octet-stream\r\n\r\n"
         )
         .as_bytes(),
@@ -908,7 +908,7 @@ async fn an_unsupervised_server_installs_the_binary_and_stays_up() {
     // would pass against the bug.
     let home = tempfile::tempdir().expect("tempdir");
     let server = Unsupervised::start_installed(home.path()).await;
-    let bytes = std::fs::read(env!("CARGO_BIN_EXE_remote-hand-server")).expect("read this test's own binary");
+    let bytes = std::fs::read(env!("CARGO_BIN_EXE_droppen-server")).expect("read this test's own binary");
 
     let (status, answer) = post_upgrade(server.addr, &bytes, Some(&droppen_base::text::sha256_hex(&bytes))).await;
     assert_eq!(status, 200, "{answer}");

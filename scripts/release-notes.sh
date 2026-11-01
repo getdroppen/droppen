@@ -71,8 +71,9 @@ Install or upgrade it, and add the device to your account with a one-time code
 
 Or download the tarball for your device, check it against \`SHA256SUMS\`
 (\`shasum -a 256 -c --ignore-missing SHA256SUMS\`, or \`sha256sum -c --ignore-missing SHA256SUMS\`),
-and follow \`INSTALL.txt\`. The server is \`droppen\`; \`remote-hand-server\` is the
-same program under its old name, which the installed service keeps.
+and follow \`INSTALL.txt\`. The server is \`droppen\`; the installed service runs it as
+\`remote-hand-server\`, and \`droppen-server\` is only the
+build output, not a file an install has.
 
 | file | for |
 |---|---|

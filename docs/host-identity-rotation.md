@@ -698,7 +698,7 @@ v2 没有这个动作。还在 v2 的账户照旧提示重新注册，先升级�
 
 ### 5.5 桌面 App
 
-- App 跑的是同一个 `remote-hand-server`（实例 `droppen-app`），种子同样在文件里。换钥全在 sidecar 里完成，App 不用改协议。
+- App 跑的是同一个 `droppen-server`（实例 `droppen-app`），种子同样在文件里。换钥全在 sidecar 里完成，App 不用改协议。
 - App 要做的只是显示：
   - 高保障代码与 `foreign_rotation` 发成系统通知，点开就是本机设置的「Droppen」一节；
   - 菜单栏图标在「需要确认」时带标记。
