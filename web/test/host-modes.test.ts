@@ -243,13 +243,25 @@ test("the app's host name for the page's words, and the hub address a device tha
   assert.equal(codeInstallCommand("RH1-X", "https://my.droppen.app"), codeInstallCommand("RH1-X"));
 });
 
-test("`/link` refuses every name of the hub as a device's page: its origin, the app and site hosts, anything under its origin", () => {
+test("`/link` refuses every name of the hub as a device's page: its origin, the app and site hosts, anything at or under its name root", () => {
   const app = "https://my.droppen.app";
-  for (const cb of ["https://droppen.app", "https://my.droppen.app", "https://www.droppen.app", "http://www.droppen.app:8080", "https://verify.droppen.app", "https://a.b.droppen.app"]) {
-    assert.equal(callbackTier(cb, app, hosts), "refuse", cb);
+  // Both shapes of the answer: the origin on the apex, and the origin on
+  // `api.`. With the second, a rule keyed to the origin's own host instead
+  // of its root calls droppen.app, its relays and its Turnstile page
+  // "public"; the refused set must not shrink when the origin is the API's.
+  const apiHosts = parseHubHosts(CANONICAL, MY)!;
+  for (const hub of [hosts, apiHosts]) {
+    for (const cb of ["https://droppen.app", "https://sin-1.relay.droppen.app", "https://verify.droppen.app", "https://my.droppen.app", "https://www.droppen.app", "http://www.droppen.app:8080", "https://a.b.droppen.app"]) {
+      assert.equal(callbackTier(cb, app, hub), "refuse", `${hub.origin}: ${cb}`);
+    }
   }
+  // The API host is no page host, and the apex after the move is the notice:
+  // `parseHubHosts`/`hostModeFor` read the same answer as before.
+  assert.equal(hostModeFor(apiHosts, "https://api.droppen.app"), "single");
+  assert.equal(hostModeFor(hosts, "https://droppen.app"), "legacy");
   assert.equal(callbackTier("https://droppen.app.example", app, hosts), "public", "not under the hub's name");
   assert.equal(callbackTier("https://evildroppen.app", app, hosts), "public");
+  assert.equal(callbackTier("https://evildroppen.app", app, apiHosts), "public", "not under the hub's root either");
   assert.equal(callbackTier("http://127.0.0.1:8700", app, hosts), "local");
   assert.equal(callbackTier("http://192.168.1.5:8700", app, hosts), "warn");
   // Without the hub's answer: only the page's own host, as before.

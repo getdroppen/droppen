@@ -75,10 +75,13 @@ the app host, the site host), as is `/.well-known/security.txt`.
 
 ### `GET /.well-known/droppen-hub` — which hosts this hub serves
 → `{origin: "wss://<host>", app: "https://<host>", site?: "https://<host>" | null, apex_mode?: "app" | "move" | "redirect"}`.
-`origin` is the canonical machine hub as agents, relays and the pages' own
-sign-in dial it (`wss://api.droppen.app`; on a hub that serves everything on
-one host, that host: `wss://droppen.app`), and its `https://` form
-(`https://api.droppen.app`) is the HTTP API's base. It does not move. `app` is
+`origin` is the hub as agents, relays and the pages' own sign-in dial it on
+the host this answer came from: the origin that host binds — the hub's
+canonical origin, or the alias whose host was dialled while a move keeps both.
+On a hub that serves everything on one host, that host.
+Its `https://` form is the HTTP API's base for the client that read it
+(`https://api.droppen.app` on the API's own host, for example).
+`app` is
 where a browser signs in, pairs and uses the account
 (`https://my.droppen.app`), `site` where the landing, download and policy
 pages are (`https://www.droppen.app`). A hub that
@@ -90,7 +93,9 @@ app's pages while `app` is another host: it still serves the app there
 its place (`move`: a browser that keeps a device there is offered to move it
 to `app`, remove it, or go on without it; any other is sent on to `app` with
 its path, query and fragment), or redirects them to `app` (`redirect`). The
-same answer on every host the hub serves.
+answer is the same on every host the hub serves but for `origin`, which names
+the origin that host binds: a client takes `app` only when `origin` is the hub
+it dialled.
 
 The web app reads it before anything else of a hub's page starts
 (`web/src/lib/hub/hosts.ts`, README "Hosts"): on `app` it is the app (`/`

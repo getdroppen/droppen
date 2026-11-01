@@ -1077,7 +1077,7 @@
             "origin": {
               "type": "string",
               "pattern": "^wss?://[^/?#@]+$",
-              "description": "the hub as agents, relays and the agent's sign-in dial it (`wss://droppen.app`); it does not move"
+              "description": "the origin agents, relays and the agent's sign-in bind when they dial this host: the hub's canonical origin, or the alias whose host was dialled"
             },
             "app": {
               "type": "string",
