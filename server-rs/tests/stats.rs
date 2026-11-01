@@ -165,6 +165,45 @@ async fn an_empty_home_reports_an_empty_window() {
     server.stop().await;
 }
 
+/// A million fresh input tokens, and the price table as releases before the
+/// move read it: `~/.remote-hand/model-prices.json` at $2/M, where the
+/// built-in fable rate is $10/M.
+fn seed_old_price_table(home: &Path) {
+    let at = format!("{}T10:00:00.000Z", today());
+    write_jsonl(
+        &home.join(".claude/projects/proj/11111111-2222-3333-4444-555555555555.jsonl"),
+        &[serde_json::json!({
+            "type": "assistant",
+            "timestamp": at,
+            "message": { "model": "claude-fable-5", "usage": { "input_tokens": 1_000_000 } }
+        })],
+    );
+    let legacy = home.join(".remote-hand");
+    std::fs::create_dir_all(&legacy).expect("legacy folder");
+    std::fs::write(legacy.join("model-prices.json"), r#"{"claude-fable-5":{"input":2.0}}"#).expect("old table");
+}
+
+/// The point of the move: a user's custom table is read from the config folder
+/// from this release on, and the file they wrote at the old path follows it
+/// there at boot instead of being silently ignored.
+#[tokio::test]
+async fn the_old_model_price_table_is_moved_and_applied_at_boot() {
+    let server = TestServer::start_with(seed_old_price_table).await;
+    let body = server.get_json("/api/stats/usage").await;
+
+    assert_eq!(number(&body["totals"]["input"]), 1_000_000.0);
+    assert!(
+        (number(&body["totals"]["costUSD"]) - 2.0).abs() < 1e-9,
+        "the old table's $2/M rate is applied, not the built-in $10/M: {body}"
+    );
+    let moved = server.home.join(".config/remote-hand/model-prices.json");
+    assert!(moved.is_file(), "the table is in the config folder");
+    assert!(!server.home.join(".remote-hand").exists(), "the empty old folder was removed");
+    assert_eq!(body["pricing"]["overridePath"], moved.to_string_lossy().as_ref());
+
+    server.stop().await;
+}
+
 #[tokio::test]
 async fn codex_models_fall_back_when_no_cache_exists() {
     let server = TestServer::start().await;

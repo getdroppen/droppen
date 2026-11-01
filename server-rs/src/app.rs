@@ -234,6 +234,17 @@ impl RemoteHandApp {
         // registry rooted in it either way.
         dirs.create().map_err(GotchaError::message)?;
 
+        // The model price table moved from `~/.remote-hand/model-prices.json`
+        // to the config folder, which is the root a second install may point
+        // elsewhere. The move belongs here and nowhere else: under the
+        // instance lock, because two servers booting together must not race
+        // the same rename, and after the `skip_lock` check, because the
+        // throwaway server behind `pnpm gen:api` must not move a user's file.
+        if lock.is_some() {
+            let prices = droppen_sessions::stats::usage::PriceOverride::of(&paths);
+            prices.migrate_legacy().await;
+        }
+
         let state = self.state(&config).await?;
         if let Some(lock) = &lock {
             // The handler that replaces the binary needs to ask whether this

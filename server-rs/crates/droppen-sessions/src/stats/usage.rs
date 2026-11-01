@@ -275,8 +275,8 @@ impl ModelPrice {
 /// per Anthropic's pricing. OpenAI/Codex models are intentionally absent — the
 /// user runs those on a flat subscription and we have no authoritative
 /// per-token rate, so they stay unpriced rather than guessed. Override or
-/// extend any of this by writing `~/.remote-hand/model-prices.json` (same shape,
-/// keyed by model id).
+/// extend any of this by writing `<config>/model-prices.json` (same shape,
+/// keyed by model id; `DROPPEN_CONFIG_DIR` moves the folder it lives in).
 const DEFAULT_PRICES: [(&str, ModelPrice); 10] = [
     (
         "claude-fable-5",
@@ -372,23 +372,199 @@ const DEFAULT_PRICES: [(&str, ModelPrice); 10] = [
     ),
 ];
 
-/// `~/.remote-hand/model-prices.json`: the optional per-model price table that
+/// Where the config folder keeps the optional per-model price table that
 /// overrides the built-in rates.
 ///
-/// Its own type rather than a method of [`Paths`]: only the usage stats read it.
+/// Its own type rather than a method of [`Paths`]: only the usage stats read
+/// it. The old `~/.remote-hand` spelling is looked at only by
+/// [`PriceOverride::migrate_legacy`], which the server runs once at boot.
 #[derive(Debug, Clone)]
-pub struct PriceOverride(PathBuf);
+pub struct PriceOverride {
+    /// `<config>/model-prices.json`, the file every reader reads.
+    path: PathBuf,
+    /// `~/.remote-hand/model-prices.json`, as releases before the move wrote
+    /// and read it. Kept spelled once, here, because boot is the one place
+    /// that still has to know it.
+    legacy: PathBuf,
+}
 
 impl PriceOverride {
-    /// The override of the home `paths` names.
+    /// The override in the config folder `paths` names.
+    ///
+    /// In the config root rather than the user's home directly so a second
+    /// install with its own `DROPPEN_CONFIG_DIR` has its own price table, and
+    /// so backup advice names the same folder as everything else the server
+    /// keeps.
     pub fn of(paths: &Paths) -> Self {
-        Self(paths.home.join(".remote-hand").join("model-prices.json"))
+        Self {
+            path: paths.config_dir().join("model-prices.json"),
+            legacy: paths.home.join(".remote-hand").join("model-prices.json"),
+        }
     }
 
     /// The file, which may not exist.
     pub fn path(&self) -> PathBuf {
-        self.0.clone()
+        self.path.clone()
     }
+
+    /// Move a `~/.remote-hand/model-prices.json` left by an earlier release
+    /// into the config folder, and remove the old folder if that leaves it
+    /// empty.
+    ///
+    /// Only `serve` calls this, only after it holds the instance lock: the
+    /// reader reads [`PriceOverride::path`] and nothing else, so a command
+    /// that does not serve must not move a user's file, and two instances
+    /// booting together must not race the same rename (the loser finds the
+    /// file gone and does nothing).
+    ///
+    /// If both files exist the new one wins and the old one is left alone —
+    /// this cannot tell which one the user edited last, and deleting either
+    /// is worse than keeping a file the reader ignores. The exception is a
+    /// rename that crosses file systems: there the bytes are copied to a
+    /// temporary name, fsynced and put in place, and the old file is removed
+    /// only once the new one is whole.
+    ///
+    /// The step stays until the upgrade floor passes the release that moved
+    /// the file: an install at v0.2.125 can jump straight to a later one, and
+    /// its table would otherwise be ignored from then on.
+    pub async fn migrate_legacy(&self) -> PriceMigration {
+        // An override that points the config folder at the old folder itself
+        // names the same file twice; there is nothing to move.
+        if self.path == self.legacy {
+            return PriceMigration::Nothing;
+        }
+        let Ok(metadata) = tokio::fs::metadata(&self.legacy).await else {
+            return PriceMigration::Nothing;
+        };
+        // A directory or a dangling link is not a table a user wrote; leaving
+        // it alone is the only reading that cannot destroy something.
+        if !metadata.is_file() {
+            return PriceMigration::Nothing;
+        }
+        if tokio::fs::metadata(&self.path).await.is_ok() {
+            tracing::warn!(
+                legacy = %self.legacy.display(),
+                path = %self.path.display(),
+                "both model-price tables exist; using the one in the config folder and leaving the old one where it is"
+            );
+            return PriceMigration::BothPresent;
+        }
+        if let Some(parent) = self.path.parent() {
+            if let Err(error) = tokio::fs::create_dir_all(parent).await {
+                tracing::error!(path = %parent.display(), %error, "cannot create the config folder for the model price table");
+                return PriceMigration::Failed;
+            }
+        }
+        match tokio::fs::rename(&self.legacy, &self.path).await {
+            Ok(()) => {
+                self.remove_legacy_dir().await;
+                tracing::info!(
+                    from = %self.legacy.display(),
+                    to = %self.path.display(),
+                    "moved the model price table into the config folder"
+                );
+                PriceMigration::Moved
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::CrossesDevices => self.copy_across().await,
+            Err(error) => {
+                tracing::error!(
+                    from = %self.legacy.display(),
+                    to = %self.path.display(),
+                    %error,
+                    "cannot move the model price table; custom prices are ignored until it is moved by hand"
+                );
+                PriceMigration::Failed
+            }
+        }
+    }
+
+    /// [`PriceOverride::migrate_legacy`] when `rename` cannot cross file
+    /// systems: copy, fsync, put in place, then remove the old file.
+    ///
+    /// The copy lands under a temporary name first. A crash halfway through a
+    /// copy straight onto [`PriceOverride::path`] would leave a truncated table
+    /// that the next boot's "the new file exists" rule would then prefer over
+    /// the intact old one.
+    async fn copy_across(&self) -> PriceMigration {
+        use tokio::io::AsyncWriteExt;
+
+        let bytes = match tokio::fs::read(&self.legacy).await {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                tracing::error!(from = %self.legacy.display(), %error, "cannot read the model price table to move it");
+                return PriceMigration::Failed;
+            }
+        };
+        let Some(parent) = self.path.parent() else {
+            return PriceMigration::Failed;
+        };
+        let temporary = parent.join(format!(".model-prices.json.{}.migrating", std::process::id()));
+        let copied = async {
+            let mut file = tokio::fs::File::create(&temporary).await?;
+            file.write_all(&bytes).await?;
+            file.sync_all().await?;
+            drop(file);
+            tokio::fs::rename(&temporary, &self.path).await
+        }
+        .await;
+        if let Err(error) = copied {
+            let _ = tokio::fs::remove_file(&temporary).await;
+            tracing::error!(to = %self.path.display(), %error, "cannot copy the model price table into the config folder");
+            return PriceMigration::Failed;
+        }
+        match tokio::fs::remove_file(&self.legacy).await {
+            Ok(()) => {
+                self.remove_legacy_dir().await;
+                tracing::info!(
+                    from = %self.legacy.display(),
+                    to = %self.path.display(),
+                    "copied the model price table into the config folder; the old folder was on another file system"
+                );
+                PriceMigration::Moved
+            }
+            Err(error) => {
+                tracing::warn!(
+                    from = %self.legacy.display(),
+                    %error,
+                    "copied the model price table into the config folder but could not remove the old one; the new one wins"
+                );
+                PriceMigration::BothPresent
+            }
+        }
+    }
+
+    /// `~/.remote-hand` itself, when the move left it empty. A `remove_dir`
+    /// fails on anything but an empty directory, which is the guard this
+    /// needs: a folder holding anything else is not ours to delete.
+    async fn remove_legacy_dir(&self) {
+        let Some(dir) = self.legacy.parent() else { return };
+        match tokio::fs::remove_dir(dir).await {
+            Ok(()) => tracing::info!(path = %dir.display(), "removed the now-empty old model price folder"),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            // Not empty: the user keeps something else there, or the copy
+            // path's old file is still present. Silence would look like a
+            // deletion that happened.
+            Err(error) if error.kind() != std::io::ErrorKind::DirectoryNotEmpty => {
+                tracing::warn!(path = %dir.display(), %error, "could not remove the old model price folder");
+            }
+            Err(_) => {}
+        }
+    }
+}
+
+/// What [`PriceOverride::migrate_legacy`] did, so boot can be asserted rather
+/// than inferred from a directory listing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PriceMigration {
+    /// There was no `~/.remote-hand/model-prices.json`.
+    Nothing,
+    /// The old file is now the config folder's.
+    Moved,
+    /// Both files exist; the config folder's wins and the old one is left
+    /// where it is.
+    BothPresent,
+    /// The move failed; the built-in rates are what the server prices with.
+    Failed,
 }
 
 /// The built-in rates merged with the user's optional override file.
@@ -404,7 +580,8 @@ impl PriceTable {
         PriceTable(DEFAULT_PRICES.iter().map(|(id, price)| ((*id).to_string(), *price)).collect())
     }
 
-    /// The built-in table with `~/.remote-hand/model-prices.json` merged over it.
+    /// The built-in table with the config folder's `model-prices.json` merged
+    /// over it.
     ///
     /// Re-read per request rather than memoised as the TypeScript does: the file
     /// is tiny, and a process-wide cache could not answer for the two different
@@ -610,7 +787,7 @@ impl TranscriptSources {
 
         // Price each model's tokens at published API rates; unpriced models (Codex/
         // OpenAI, or anything without a table entry) contribute nothing and are named.
-        let prices = PriceTable::load(&PriceOverride::of(&paths).path()).await;
+        let prices = PriceTable::load(&PriceOverride::of(paths).path()).await;
         let mut unpriced_models = Vec::new();
         let mut cost_usd = 0.0;
         let mut by_model = acc.models;
@@ -827,5 +1004,120 @@ mod tests {
         };
         let price = PriceTable::defaults().get("claude-sonnet-5").expect("priced");
         assert_eq!(cost_of(bucket, price), 3.0);
+    }
+
+    /// A table no default rate uses, so applying it is unmistakable.
+    const CUSTOM_TABLE: &str = r#"{"claude-fable-5":{"input":123.0}}"#;
+
+    /// The rate [`PriceTable::load`] would price `model` at, for the config
+    /// folder `paths` names.
+    async fn loaded_input(paths: &Paths, model: &str) -> f64 {
+        PriceTable::load(&PriceOverride::of(paths).path())
+            .await
+            .get(model)
+            .expect("the model is priced")
+            .input
+    }
+
+    /// A file in `~/.remote-hand`, as releases before the move wrote it.
+    fn legacy_price_file(home: &Path, contents: &str) -> PathBuf {
+        let dir = home.join(".remote-hand");
+        std::fs::create_dir_all(&dir).expect("legacy folder");
+        let path = dir.join("model-prices.json");
+        std::fs::write(&path, contents).expect("legacy table");
+        path
+    }
+
+    #[tokio::test]
+    async fn the_old_price_table_is_moved_into_the_config_folder_and_applied() {
+        let home = tempfile::tempdir().expect("tempdir");
+        legacy_price_file(home.path(), CUSTOM_TABLE);
+        let paths = Paths::new(home.path().to_path_buf());
+
+        let prices = PriceOverride::of(&paths);
+        assert_eq!(prices.path(), home.path().join(".config/remote-hand/model-prices.json"));
+        assert_eq!(prices.migrate_legacy().await, PriceMigration::Moved);
+
+        assert!(prices.path().is_file(), "the table is now in the config folder");
+        assert!(!home.path().join(".remote-hand").exists(), "the empty old folder went with it");
+        assert_eq!(loaded_input(&paths, "claude-fable-5").await, 123.0, "the reader applies the moved table");
+    }
+
+    #[tokio::test]
+    async fn the_config_folders_table_wins_and_the_old_one_is_left_alone() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let old = legacy_price_file(home.path(), CUSTOM_TABLE);
+        let paths = Paths::new(home.path().to_path_buf());
+        let new = PriceOverride::of(&paths).path();
+        std::fs::create_dir_all(new.parent().expect("config dir")).expect("config dir");
+        std::fs::write(&new, r#"{"claude-fable-5":{"input":7.0}}"#).expect("new table");
+
+        assert_eq!(PriceOverride::of(&paths).migrate_legacy().await, PriceMigration::BothPresent);
+
+        assert_eq!(loaded_input(&paths, "claude-fable-5").await, 7.0, "the new file wins");
+        assert!(old.is_file(), "the old file is left exactly where it was");
+        assert_eq!(std::fs::read_to_string(&old).expect("old table"), CUSTOM_TABLE);
+    }
+
+    #[tokio::test]
+    async fn no_table_at_all_leaves_the_built_in_rates() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let paths = Paths::new(home.path().to_path_buf());
+
+        assert_eq!(PriceOverride::of(&paths).migrate_legacy().await, PriceMigration::Nothing);
+        assert_eq!(loaded_input(&paths, "claude-fable-5").await, 10.0);
+        assert!(!home.path().join(".config").exists(), "a boot with nothing to move creates nothing");
+    }
+
+    /// `DROPPEN_CONFIG_DIR` moves the folder the table belongs in; the move
+    /// follows it, or a second install would keep pricing from the first one's
+    /// config folder.
+    #[tokio::test]
+    async fn a_config_dir_override_is_where_the_moved_table_lands() {
+        static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+        let home = tempfile::tempdir().expect("tempdir");
+        let config = tempfile::tempdir().expect("tempdir");
+        legacy_price_file(home.path(), CUSTOM_TABLE);
+        // The guard is scoped to the environment read: held across the await
+        // below it would make this test's future non-`Send`.
+        let paths = {
+            let _guard = ENV_LOCK.lock().expect("env lock");
+            let previous = std::env::var_os("DROPPEN_CONFIG_DIR");
+            std::env::set_var("DROPPEN_CONFIG_DIR", config.path());
+            let paths = Paths::new(home.path().to_path_buf());
+            match previous {
+                Some(value) => std::env::set_var("DROPPEN_CONFIG_DIR", value),
+                None => std::env::remove_var("DROPPEN_CONFIG_DIR"),
+            }
+            paths
+        };
+
+        let prices = PriceOverride::of(&paths);
+        assert_eq!(prices.path(), config.path().join("model-prices.json"));
+        assert_eq!(prices.migrate_legacy().await, PriceMigration::Moved);
+        assert!(prices.path().is_file(), "the override folder is where it went");
+        assert_eq!(loaded_input(&paths, "claude-fable-5").await, 123.0);
+    }
+
+    /// The reader treats a table it cannot read as no table: a broken file
+    /// must not fail the usage route, and must not be silently priced at zero.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_unreadable_price_table_falls_back_to_the_built_in_rates() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        let paths = Paths::new(home.path().to_path_buf());
+        let path = PriceOverride::of(&paths).path();
+        std::fs::create_dir_all(path.parent().expect("config dir")).expect("config dir");
+        std::fs::write(&path, CUSTOM_TABLE).expect("table");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).expect("unreadable");
+
+        let price = PriceTable::load(&path).await.get("claude-fable-5").expect("priced");
+        assert_eq!(price.input, 10.0);
+
+        // Let the tempdir go without leaving an unreadable file behind.
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).expect("readable again");
     }
 }
