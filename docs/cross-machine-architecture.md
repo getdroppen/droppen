@@ -311,7 +311,7 @@
 
 ### M1 第二部分（浏览器）实现说明
 
-- **云模式判定**：hub 提供同一份 web 构建，缓存规则与 server 相同（带哈希的资源 immutable，壳 no-cache + ETag），并在壳的 `<head>` 写入 `<meta name="rh-hub" content="<源>">`、加 CSP（壳里的内联脚本按哈希放行）。页面据此进入云模式；由 server 提供的页面没有这个标签，行为与原来完全相同。
+- **云模式判定**：hub 提供同一份 web 构建，缓存规则与 server 相同（带哈希的资源 immutable，壳 no-cache + ETag），并在壳的 `<head>` 写入 `<meta name="droppen-hub" content="<源>">`（还没切换的 Hub 写 `rh-hub`，这一版两个都认）、加 CSP（壳里的内联脚本按哈希放行）。页面据此进入云模式；由 server 提供的页面没有这个标签，行为与原来完全相同。
 - **`web/src/lib/hub/`**：`api.ts`（hub HTTP 与会话）、`account.ts`（设备钥封存在 IndexedDB、注册、链同步并钉住创世哈希、首台设备创建创世（新账户一律是链 v3 的 `Genesis3`，Hub 不收 v3 条目时不建账户）并可选生成只显示一次的恢复钥、加机器前校验 agent 的证明、经信箱下发密封的 `MK`、链证明）、`link.ts`（`/v1/client` 的 HubLogin 登录、在线态、按 `ch` 分发帧、带抖动的重连，能扛 1012）、`machine.ts`（先 ATTEST 再 Noise 握手，`Stale`/`NeedEntries` 时同步后重试，按需重建通道）。`lib/e2e/driver.ts` 是 `driver.rs` 的浏览器版。
 - **传输**：`lib/transport/tunnel.ts` 改用 `lib/e2e/bridge.ts` 的消息格式；选中机器后整个应用的 `fetch`、`/api/events?v=2&z=1` 与终端 socket 都经这条端到端通道，现有界面不改。
 - **界面**（`features/cloud/`）：登录/邀请码注册、设备设置与恢复钥、机器列表（在线态）、添加机器（显示 `agent enroll` 命令、等待并校验证明）、应用上方的机器条，机器离线时遮罩应用。中/繁/日文案齐。

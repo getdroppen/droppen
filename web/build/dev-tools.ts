@@ -26,8 +26,8 @@ export function devTools(dir: string): Plugin {
     name: "rh-dev-tools",
     apply: "serve",
     transformIndexHtml(html) {
-      if (landingMode && !html.includes('name="rh-hub"')) {
-        return html.replace("<head>", '<head>\n    <meta name="rh-hub" content="wss://api.droppen.app" />');
+      if (landingMode && !html.includes('name="droppen-hub"') && !html.includes('name="rh-hub"')) {
+        return html.replace("<head>", '<head>\n    <meta name="droppen-hub" content="wss://api.droppen.app" />');
       }
       return html;
     },

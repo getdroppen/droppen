@@ -61,10 +61,12 @@ abuse control, not security.
 
 The machine origin and the page hosts may be different names of the same hub
 (`api.`, `my.`, `www.` under one domain): the web app is served on the app and
-site hosts, and its shell's `rh-hub` marker names the machine origin whose
+site hosts, and its shell's `droppen-hub` marker (an `rh-hub` marker from a hub not yet updated is read too) names the machine origin whose
 cross-origin HTTP API the page calls (`wss://api.droppen.app` →
-`https://api.droppen.app`). A hub that serves everything on one host answers
-with that host as its origin, as it always has.
+`https://api.droppen.app`). A hub serving a build from before this release
+must keep writing `rh-hub`: that build reads only `rh-hub` and would otherwise
+run in local mode. A hub that serves everything on one host answers with
+that host as its origin, as it always has.
 
 **Cross-origin (CORS).** A page on the app or site host calls the API on
 another origin: `https://my.droppen.app` → `https://api.droppen.app/v1/*`, and

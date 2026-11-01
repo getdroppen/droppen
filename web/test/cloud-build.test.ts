@@ -68,10 +68,10 @@ test("only `DROPPEN_WEB_MODE=cloud` turns the cloud output on, with droppen.app'
 
 test("the marker goes right after `<head>`, exactly as a hub and the verifier write and remove it", () => {
   const marked = markShell(SHELL, "wss://api.droppen.app");
-  assert.ok(marked.startsWith('<!doctype html><html><head><meta name="rh-hub" content="wss://api.droppen.app" /><meta charset="UTF-8" />'));
-  assert.equal(marked.split("rh-hub").length - 1, 1);
+  assert.ok(marked.startsWith('<!doctype html><html><head><meta name="droppen-hub" content="wss://api.droppen.app" /><meta charset="UTF-8" />'));
+  assert.equal(marked.split("droppen-hub").length - 1, 1);
   assert.throws(() => markShell(marked, "wss://api.droppen.app"), /already carries/);
-  assert.equal(markShell("<p>x</p>", "wss://hub.example"), '<meta name="rh-hub" content="wss://hub.example" /><p>x</p>', "a shell with no head");
+  assert.equal(markShell("<p>x</p>", "wss://hub.example"), '<meta name="droppen-hub" content="wss://hub.example" /><p>x</p>', "a shell with no head");
 });
 
 test("the hosts document is the hub's own answer, naming the API, app and site origins", () => {
@@ -89,7 +89,7 @@ test("the CSP is the hub's policy with the cross-origin API and relays, and the 
   assert.ok(csp.includes("frame-src https://verify.droppen.app;"));
   assert.ok(csp.includes("frame-ancestors 'none';"));
   assert.ok(csp.includes("object-src 'none'"));
-  assert.ok(!csp.includes("rh-hub"), "the marker is not script");
+  assert.ok(!csp.includes("droppen-hub") && !csp.includes("rh-hub"), "the marker is not script");
 });
 
 test("`_headers` carries CSP, Permissions-Policy, Referrer-Policy and HSTS for every file", () => {
@@ -124,7 +124,7 @@ test("a cloud build writes the marker, the hosts document and `_headers` — and
   try {
     writeDir(dir);
     writeCloudBuild(dir, config!);
-    assert.ok(readFileSync(join(dir, "index.html"), "utf8").includes('<meta name="rh-hub" content="wss://api.droppen.app" />'));
+    assert.ok(readFileSync(join(dir, "index.html"), "utf8").includes('<meta name="droppen-hub" content="wss://api.droppen.app" />'));
     assert.equal(JSON.parse(readFileSync(join(dir, HOSTS_PATH), "utf8")).origin, "wss://api.droppen.app");
     assert.ok(readFileSync(join(dir, "_headers"), "utf8").includes("Content-Security-Policy:"));
     // The hub owns `/.well-known/droppen-build`; a static host must not answer it,

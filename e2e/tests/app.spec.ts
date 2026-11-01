@@ -14,7 +14,7 @@ test.describe("app on my.", () => {
     expect(response?.status()).toBe(200);
 
     // The marker is the one source of truth for cloud mode and the API origin.
-    await expect(page.locator('meta[name="rh-hub"]')).toHaveAttribute("content", HUB_WS);
+    await expect(page.locator('meta[name="droppen-hub"]')).toHaveAttribute("content", HUB_WS);
 
     // The page must reach the hub at the marker's origin with an answer CORS
     // lets it read. What the boot asks by itself depends on the browser (one

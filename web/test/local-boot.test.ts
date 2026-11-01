@@ -90,7 +90,9 @@ function preloadIn(script: string, marker: string | null) {
   const links: Record<string, string>[] = [];
   const document = {
     querySelector: (selector: string) =>
-      selector === "meta[name=rh-hub]" && marker !== null ? { getAttribute: (name: string) => (name === "content" ? marker : null) } : null,
+      (selector.includes("name=droppen-hub") || selector.includes("name=rh-hub")) && marker !== null
+        ? { getAttribute: (name: string) => (name === "content" ? marker : null) }
+        : null,
     createElement: () => ({}) as Record<string, string>,
     head: { appendChild: (link: Record<string, string>) => void links.push({ ...link }) },
   };

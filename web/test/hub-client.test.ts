@@ -1327,6 +1327,17 @@ test("cloud mode is the hub's marker in the shell, and nothing else", async () =
   assert.equal(hubOrigin(doc(null)), null, "a server's shell: local mode, as always");
   assert.equal(hubOrigin(doc("javascript:alert(1)")), null);
   assert.equal(hubOrigin(undefined), null);
+  // The marker before the rename is still read: a host not yet updated, or a
+  // shell the browser cached, must still enter cloud mode.
+  const bySelector = (entries: Record<string, string>) => ({
+    querySelector: (selector: string) => (selector in entries ? { getAttribute: () => entries[selector] } : null),
+  }) as unknown as Pick<Document, "querySelector">;
+  assert.equal(hubOrigin(bySelector({ 'meta[name="rh-hub"]': "wss://old.example" })), "wss://old.example");
+  assert.equal(
+    hubOrigin(bySelector({ 'meta[name="droppen-hub"]': "wss://new.example", 'meta[name="rh-hub"]': "wss://old.example" })),
+    "wss://new.example",
+    "the new marker is read first",
+  );
   // The HTTP API is the same origin in its https form, whether that is the
   // canonical machine hub or a self-hosted one's own name.
   assert.equal(hubHttpOrigin(doc("wss://api.droppen.app")), "https://api.droppen.app");

@@ -53,7 +53,8 @@
 //      sends the browser to the same path on another site this run checks,
 //      where that is checked in turn (droppen.app's `/` goes to www, www's
 //      `/link` to my). The shell is compared after removing the one
-//      thing the hub adds, `<meta name="rh-hub" content="<origin>" />` right
+//      thing the hub adds, `<meta name="droppen-hub" content="<origin>" />`
+//      (or its `rh-hub` predecessor for one release) right
 //      after `<head>`, whose origin — where the page signs in and sends all
 //      hub traffic — must be that host's own or the site's canonical API
 //      origin (`wss://api.droppen.app` for droppen.app's hosts; this is what
@@ -370,9 +371,9 @@ function attest(opts, manifestBytes, bundleBytes, tag) {
  */
 export function unmark(html) {
   const text = html.toString("latin1");
-  const m = /^([\s\S]*?<head>)<meta name="rh-hub" content="(wss?:\/\/[A-Za-z0-9.:[\]-]+)" \/>/.exec(text);
-  if (!m || m[1].indexOf("<head>") !== m[1].length - "<head>".length) return { body: html, origin: null };
-  return { body: Buffer.concat([html.subarray(0, m[1].length), html.subarray(m[0].length)]), origin: m[2] };
+  const m = /^([\s\S]*?<head>)<meta name="(droppen-hub|rh-hub)" content="(wss?:\/\/[A-Za-z0-9.:[\]-]+)" \/>/.exec(text);
+  if (!m || m[1].indexOf("<head>") !== m[1].length - "<head>".length) return { body: html, origin: null, marker: null };
+  return { body: Buffer.concat([html.subarray(0, m[1].length), html.subarray(m[0].length)]), origin: m[3], marker: m[2] };
 }
 
 /**
@@ -753,6 +754,7 @@ async function checkSite(opts, site, memo) {
   const attestedPages = [];
   const markerFailures = [];
   const origins = new Set();
+  const markerNames = new Map();
   const redirects = new Map();
   let matched = 0;
   const workers = new Set();
@@ -785,7 +787,10 @@ async function checkSite(opts, site, memo) {
     if (c.isShell) {
       const unmarked = unmark(body);
       body = unmarked.body;
-      if (unmarked.origin) origins.add(unmarked.origin);
+      if (unmarked.origin) {
+        origins.add(unmarked.origin);
+        if (unmarked.marker) markerNames.set(unmarked.origin, unmarked.marker);
+      }
       wrongHub = markerProblem(unmarked.origin, accepted);
     }
     const hash = sha256(body);
@@ -804,7 +809,7 @@ async function checkSite(opts, site, memo) {
       return null;
     }
     if (same) matched++;
-    return same ? null : `${label}: sha256 ${hash}, attested ${c.want.sha256}${c.isShell ? " (after removing the rh-hub marker)" : ""}`;
+    return same ? null : `${label}: sha256 ${hash}, attested ${c.want.sha256}${c.isShell ? " (after removing the hub marker)" : ""}`;
   });
   const differing = results.filter(Boolean);
   failures.push(...differing, ...markerFailures.sort());
@@ -813,7 +818,14 @@ async function checkSite(opts, site, memo) {
   console.log(
     `  files:       ${matched} of ${checks.length} match${elsewhere ? `, ${elsewhere}` : ""} (${manifest.files.length} files, the worker as a browser updates it, ${SHELL_ROUTES.length} shell routes)`,
   );
-  if (origins.size) console.log(`  marker:      rh-hub ${[...origins].join(", ")}`);
+  if (origins.size) {
+    const found = new Map();
+    for (const origin of origins) {
+      const name = markerNames.get(origin);
+      found.set(name, [...(found.get(name) ?? []), origin]);
+    }
+    console.log(`  marker:      ${[...found].map(([name, list]) => `${name} ${list.join(", ")}`).join("; ")}`);
+  }
 
   // The worker's integrity table: what it lets out of the browser's cache.
   if (worker) {

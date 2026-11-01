@@ -61,7 +61,7 @@ built from (`null` when the hub does not know it; `repo` names the repository
 whenever `commit` is set, and a reader trusts a commit only with it) and the
 digest of the files as built — one
 `<sha256>  <path>\n` line per file, sorted by path bytewise, hashed; the shell
-before the hub adds its `rh-hub` marker. A release's `web-manifest.json` has
+before the hub adds its marker (`droppen-hub`, or `rh-hub` from a hub not yet updated). A release's `web-manifest.json` has
 the same `digest`; `scripts/verify-web.mjs` compares it with the latest
 release's manifest (naming the earlier release that has it, if one does) and
 then checks the served bytes themselves ([web-integrity](../web-integrity.md)).
@@ -160,7 +160,7 @@ limited like `/healthz` (the static routes' share per address).
 `download_path`, on a hub that counts downloads, is `/dl/<platform>` for
 the file's own platform: the hub's `GET /dl/{platform}` below. It is a path
 on the hub that answered, and a page links it there: on the origin it asked
-(the `https://` form of its `rh-hub` marker, else its own), since a static
+(the `https://` form of its `droppen-hub` marker, or of the `rh-hub` one a hub not yet updated writes, else its own), since a static
 host that serves the page has no `/dl/*`. The hub serves `/dl/*` on every
 host it serves. Hubs before it name none.
 

@@ -13,7 +13,7 @@ import { inlineScriptSources } from "./service-worker";
  * What the cloud build adds, after vite has written every file (and after
  * `fillServiceWorker` has hashed `index.html` as built):
  *
- * - the `rh-hub` marker in the shell's `<head>`, naming the canonical machine
+ * - the `droppen-hub` marker in the shell's `<head>`, naming the canonical machine
  *   hub (`wss://api.droppen.app` by default) — the one source of truth for
  *   cloud mode, whose `https://` form is the HTTP API's base
  *   (`web/src/lib/hub/config.ts`);
@@ -42,7 +42,7 @@ import { inlineScriptSources } from "./service-worker";
 export const CLOUD_MODE_ENV = "DROPPEN_WEB_MODE";
 
 export interface CloudConfig {
-  /** The canonical machine hub, as the `rh-hub` marker names it (`wss://…`). */
+  /** The canonical machine hub, as the `droppen-hub` marker names it (`wss://…`). */
   hubOrigin: string;
   /** The app's origin (`https://my.droppen.app`). */
   appOrigin: string;
@@ -135,8 +135,8 @@ export function httpOf(origin: string): string {
  * as a hub writes it (and as `scripts/verify-web.mjs` removes it again).
  */
 export function markShell(html: string, origin: string): string {
-  if (html.includes('name="rh-hub"')) throw new Error("index.html already carries an rh-hub marker");
-  const tag = `<meta name="rh-hub" content="${origin}" />`;
+  if (html.includes('name="droppen-hub"') || html.includes('name="rh-hub"')) throw new Error("index.html already carries a hub marker");
+  const tag = `<meta name="droppen-hub" content="${origin}" />`;
   const head = html.indexOf("<head>");
   return head < 0 ? tag + html : html.slice(0, head + "<head>".length) + tag + html.slice(head + "<head>".length);
 }
