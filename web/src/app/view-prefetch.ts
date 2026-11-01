@@ -26,7 +26,7 @@
  * Not defined outside a build (`vite dev`, the tests), where nothing is
  * fetched.
  */
-declare const __RH_VIEW_FILES__: readonly (readonly string[])[] | undefined;
+declare const __DROPPEN_VIEW_FILES__: readonly (readonly string[])[] | undefined;
 
 let started = false;
 
@@ -39,7 +39,7 @@ let started = false;
 export function prefetchViews(): void {
   if (started) return;
   started = true;
-  const views = typeof __RH_VIEW_FILES__ === "undefined" ? [] : __RH_VIEW_FILES__;
+  const views = typeof __DROPPEN_VIEW_FILES__ === "undefined" ? [] : __DROPPEN_VIEW_FILES__;
   if (views.length === 0 || savesData()) return;
   // The router renders before the browser paints: the next frame is that
   // paint, and the first view waits for idle time after it, so none of this
