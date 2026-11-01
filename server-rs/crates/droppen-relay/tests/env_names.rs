@@ -4,7 +4,7 @@
 //! environment but what each case sets; every case stops on a missing or bad
 //! value before listening.
 
-use rh_relay::config::hex;
+use droppen_relay_core::config::hex;
 
 /// `droppen-relay <args>` with only `env`: whether it succeeded, its stdout
 /// and everything it said.

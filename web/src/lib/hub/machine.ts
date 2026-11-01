@@ -114,9 +114,9 @@ export const AGENT_UNSAVED = 4507;
  */
 export const AGENT_HANDSHAKE_REFUSED = 4401;
 
-/** A relay's close for a refused `OPEN`: not a machine this ticket names (`rh-relay/src/route.rs`). */
+/** A relay's close for a refused `OPEN`: not a machine this ticket names (`droppen-relay-core/src/route.rs`). */
 const RELAY_FORBIDDEN = 4403;
-/** The hub's closes for a refused `OPEN` (`rh-relay/src/route.rs`, as the hub runs it). */
+/** The hub's closes for a refused `OPEN` (`droppen-relay-core/src/route.rs`, as the hub runs it). */
 const HUB_OFFLINE = 4404;
 const HUB_FORBIDDEN = 4403;
 const ATTEMPTS = 4;

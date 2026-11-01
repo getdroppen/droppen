@@ -74,7 +74,7 @@ mod tests {
     /// opened once per process, from the variable set here.
     #[test]
     fn a_captured_line_is_the_message_and_its_direction() {
-        let path = std::env::temp_dir().join(format!("rh-relay-traffic-{}.jsonl", std::process::id()));
+        let path = std::env::temp_dir().join(format!("droppen-relay-core-traffic-{}.jsonl", std::process::id()));
         let _ = std::fs::remove_file(&path);
         std::env::set_var("DROPPEN_HUB_API_TRAFFIC", &path);
         assert_eq!(super::sent(r#"{"t":"health","conns":1}"#.into()), r#"{"t":"health","conns":1}"#);

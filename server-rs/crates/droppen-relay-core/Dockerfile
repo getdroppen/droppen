@@ -1,7 +1,7 @@
 # droppen-relay, for Railway, Fly.io or anything that runs a container.
 #
 # Build context: the repository root —
-#   docker build -f server-rs/crates/rh-relay/Dockerfile .
+#   docker build -f server-rs/crates/droppen-relay-core/Dockerfile .
 # The relay needs no database, no web app and no files: one static process.
 # Give it ≥ 35 s after SIGTERM so `goaway` can drain its clients
 # (DROPPEN_RELAY_DRAIN_SECS, default 30).

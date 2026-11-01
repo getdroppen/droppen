@@ -41,7 +41,7 @@
 |---|---|---|---|
 | 链的格式 | 条目版本字节为 2。动作有 `Genesis`、`AddDevice`、`RemoveDevice`、`AddMachine`、`RemoveMachine`、`RecoveryJoin`、`ApproveDevice`、`ActivateRecovered`、`SetRecoveryKey`、`KeyEpochs`。签名者是 `AK`（只签创世）、当前完整设备、`RSK`（只签两种恢复条目） | `C/droppen-proto/src/chain.rs:63-65,184-226` | 链 v3 在此之上加条目（§3.2） |
 | 设备与机器 | 两套身份：设备 `DeviceInfo{id, sign_key, dh_key, full}`、机器 `MachineInfo{id, sign_key, dh_key}`，id 在两者之间不重复。完整设备持 `UK`、能签条目、能作证；受限设备都不能，产品里从没用过 | `chain.rs:165-181,1084,1231,1394-1409` | v3 合成一种「设备」 |
-| 机器能做什么 | 只能被连：agent 登录、写流、签流头；中继拒绝 agent 发的 `OPEN`；agent 票据的 `peers` 为空；agent 不能订阅流 | `C/rh-relay/src/route.rs:179-181`、`C/droppen-proto/src/ticket.rs:8-9`、Hub | 能运行 AI 的设备也要能发起控制 |
+| 机器能做什么 | 只能被连：agent 登录、写流、签流头；中继拒绝 agent 发的 `OPEN`；agent 票据的 `peers` 为空；agent 不能订阅流 | `C/droppen-relay-core/src/route.rs:179-181`、`C/droppen-proto/src/ticket.rs:8-9`、Hub | 能运行 AI 的设备也要能发起控制 |
 | 新鲜度 | 开任何通道都要求「另一台完整设备」12 小时内为 agent 的当前链头作证；只有唯一的完整设备自证才算数 | `chain.rs:1421-1463`、`C/droppen-proto/src/handshake.rs:70` | 常开的设备自己不能作证，§3.4 |
 | 套餐上限 | `devices.max` 只数当前完整设备；`machines.max` 数当前机器加未完成的注册 | Hub | 合并为「设备数 + 可运行 AI 的设备数」，§3.8 |
 | 注册 | 独立进程 `agent enroll <RH1> --hub <wss>`。码是 `RH1-<账户指纹>-<秘密>`，`token = HMAC(秘密)[..16]`；证明是 HMAC，绑定账户、id、两把公钥与 token | `S/agent/enroll.rs:35-145`、`C/droppen-proto/src/identity.rs:123-207` | 协议原样复用，只换「码怎么到机器上」 |
@@ -114,7 +114,7 @@
 - **测试不需要 Hub 源码**：
   - 契约测试：两边用同一份 Schema；
   - 端到端：拉一个固定版本、只含二进制的 Hub 镜像。
-- **仓库拆分**：Hub（`rh-hub`）移到私有仓库，照常依赖开源的 `droppen-proto` 与 `rh-relay`（闭源依赖开源，方向正确）。
+- **仓库拆分**：Hub（`rh-hub`）移到私有仓库，照常依赖开源的 `droppen-proto` 与 `droppen-relay-core`（闭源依赖开源，方向正确）。
 
 ## 3. 一切都是设备（链 v3）
 
@@ -303,7 +303,7 @@ DeviceV3   = id str16 | sign_key [32] | dh_key [32] | flags u8      // bit0 = ho
 - 这正是下文「把账号升级到 v3」给已有账户写下的第一条 v3 条目（一轮新的用户钥），所以新账户的链从 0 号就是 v3（`v3From = 0`），「我的设备」里没有升级这一步，`upgradePlan()` 为空。
 - 只在 Hub 收 v3 条目时建：`/v1/me` 的 `chain_v3.writable`（建账户前没有 host，门槛只看 `DROPPEN_HUB_CHAIN_V3=write`，2026-10-21 起这是 Hub 的默认值，`read`、`off` 只作显式拨下的总闸）。不收时注册停在创世这一步，页面说明是 Hub 这边的原因、请稍后再试；追加时 Hub 才回 409 `chain_v3_not_ready` 的，也一样。**不退回 v2**：新账户只有 v3 一种设计。
 - 之后的一切（注册可运行 AI 的设备、配对、恢复词、移除与轮换）都写 v3，只读 v2 的 agent 一开始就加不进来（门槛按名字拒绝它）。
-- 开发工具也一样：无头设备 `droppen-devkit` 建账户用 `Device::create_genesis3`，`rh-device --sign-up` 与 `web/scripts/cloud-smoke.ts` 都从创世起建在 v3 上；之后的配对（`add_and_deliver3`，口令配对按链的版本写）、注册可运行 AI 的设备（`enroll_host3`，第一轮机器钥同批）、移除与轮换（`remove_and_rotate3`：`[RemoveDevice3, KeyEpochs]` 一批；用户钥只在被移除的设备曾持有它、或最新一轮已过时时才换，同网页）都写 v3。`droppen-devkit` 的 v2 流程（`create_genesis`、`create_genesis_with_recovery`、`add_and_deliver`、`complete_enrollment`、`remove_and_rotate`）标为弃用，只留给代表此前账户的测试。
+- 开发工具也一样：无头设备 `droppen-devkit` 建账户用 `Device::create_genesis3`，`droppen-device --sign-up` 与 `web/scripts/cloud-smoke.ts` 都从创世起建在 v3 上；之后的配对（`add_and_deliver3`，口令配对按链的版本写）、注册可运行 AI 的设备（`enroll_host3`，第一轮机器钥同批）、移除与轮换（`remove_and_rotate3`：`[RemoveDevice3, KeyEpochs]` 一批；用户钥只在被移除的设备曾持有它、或最新一轮已过时时才换，同网页）都写 v3。`droppen-devkit` 的 v2 流程（`create_genesis`、`create_genesis_with_recovery`、`add_and_deliver`、`complete_enrollment`、`remove_and_rotate`）标为弃用，只留给代表此前账户的测试。
 - **Hub 不再收新的 v2 创世**（每种 `DROPPEN_HUB_CHAIN_V3` 模式都一样，所以 `read`、`off` 下不建任何新账户）：`POST /v1/chain` 回 422 `chain_v2_genesis`，`CHAIN` 帧的 `chain_result` 也带这个码；它先于邮箱验证判断，v3 之前的旧页面因此能说清原因。此前用 v2 创世建的账户照旧：签入、追加 v2 条目、升级到 v3 都不受影响，本节其余部分只关乎那些账户。
 
 **已有的账户**

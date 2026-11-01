@@ -53,7 +53,7 @@
 | 设备怎么连它 | Noise IK 的响应方静态钥取 `chain.machine(m).info.dh_key` | `C/droppen-proto/src/handshake.rs` `start` | 链一换，旧钥就接不了握手 |
 | 它怎么连别人 | 别的 agent 用 `authorize_device(id, dh)` 按链准入，控制权看 `authorize_control` | `C/droppen-proto/src/chain.rs`、`C/droppen-proto/src/handshake.rs` | 同上 |
 | 运行中的身份 | `Shared.identity: Arc<MachineIdentity>` 一次运行内不变；S1-1 已能在进程内停、起链接 | `S/agent/link.rs`、`S/cloud/control.rs` | 换钥 = 进程内重启链接与控制端 |
-| 一个 id 只留一条连接 | 同一 id 后登录的顶掉先登录的（4001）。中继也一样。agent 不特别对待 4001 | Hub 一侧（`docs/hub-api/`）、`C/rh-relay/src/server.rs` | 窗口规则建在它上面（§3.3）；4001 可当克隆信号 |
+| 一个 id 只留一条连接 | 同一 id 后登录的顶掉先登录的（4001）。中继也一样。agent 不特别对待 4001 | Hub 一侧（`docs/hub-api/`）、`C/droppen-relay-core/src/server.rs` | 窗口规则建在它上面（§3.3）；4001 可当克隆信号 |
 | 今天的提示 | `reEnrollCulprits` 只看**直接**能控制的设备，提示「先移除，再重新添加」。再用 host 自己记的 `controllers` 收窄（聚合器文档 D3） | `W/lib/hub/account.ts`、`W/features/cloud/devices.tsx` | 换成自动换钥；补上传递（§4.1） |
 | 移除时的 `MK` 轮换 | `removeDevice` → `rotate(…, {userKey: false})`。新 `MK` 封给 host **当前**的 DH 钥，持旧种子的人照样打得开（D3） | `W/lib/hub/account.ts`、`W/lib/hub/deliver.ts` | 换钥那一批再给一轮、只封给新钥 |
 | 按纪元命名的流 | 一次轮换立刻给索引与状态改名，会话按新名字重建（带重加密时立即），旧名字确认被取代后才删 | `S/agent/streams/naming.rs` | 换钥沿用它，新流头只用新钥签 |
