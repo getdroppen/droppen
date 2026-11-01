@@ -31,6 +31,11 @@ pub const MARKER: &str = "droppen-app.json";
 /// `<home>/.local/share/remote-hand/instances/<instance>`: the directory the
 /// server resolves for this instance when nothing overrides its data directory
 /// (the app removes every override from the server's environment).
+///
+/// The segment is `remote-hand` because that is what every server, autostart
+/// unit and older app on the machine resolves, and the app claims this
+/// directory *before* it starts its server: a spelling of its own would make
+/// the claim land on an empty instance beside the real one.
 pub fn dir_under(home: &Path, instance: &str) -> PathBuf {
     home.join(".local").join("share").join("remote-hand").join("instances").join(instance)
 }

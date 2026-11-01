@@ -4,7 +4,7 @@
 
 Droppen —— 远程浏览与管理本机的 Claude Code / Codex 会话。
 
-> Droppen 原名 remote-hand。产品改了名，有些内部名字没改：可执行文件 `remote-hand-server`（`droppen` 是同一个程序的另一个名字）、数据目录 `~/.local/share/remote-hand` 与 `~/.config/remote-hand`、`APP_*` 环境变量都照旧，下文的命令请原样输入。服务端自己的环境变量已改叫 `DROPPEN_*`；原来的 `RH_*` / `REMOTE_HAND_*` **从 v0.2.135 起不再生效**：请改用同值的 `DROPPEN_*` 名字。
+> Droppen 原名 remote-hand。产品改了名，有些内部名字没改：可执行文件 `remote-hand-server`（`droppen` 是同一个程序的另一个名字）、数据目录 `~/.local/share/remote-hand` 与 `~/.config/remote-hand`、`APP_*` 环境变量都照旧，下文的命令请原样输入。这两个目录名是兼容面：每套安装、launchd job / systemd 服务单元和更早的版本都按这些绝对路径找数据，改名会把同一台机器上的数据分成两份。服务端自己的环境变量已改叫 `DROPPEN_*`；原来的 `RH_*` / `REMOTE_HAND_*` **从 v0.2.135 起不再生效**：请改用同值的 `DROPPEN_*` 名字。
 
 ## 功能
 

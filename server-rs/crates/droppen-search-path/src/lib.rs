@@ -56,7 +56,9 @@ pub fn base_dirs(home: &Path) -> Vec<PathBuf> {
 /// A session's own bin directory (`…/remote-hand/instances/<name>/session-bin`)
 /// is dropped wherever it came from: it belongs to one server and names that
 /// server's binary, and a `PATH` copied from a shell running inside a session
-/// would otherwise hand it to this one.
+/// would otherwise hand it to this one. The data root's name is fixed on every
+/// install — autostart units, older supervisors and rollback binaries hold it —
+/// so the filter matches that text rather than a value computed at runtime.
 pub fn build(home: &Path, shell: Option<&str>) -> String {
     let mut seen = HashSet::new();
     let mut out: Vec<String> = Vec::new();

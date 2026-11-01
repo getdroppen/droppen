@@ -68,8 +68,10 @@
 #
 # The command is `droppen` (<data>/bin/droppen, also on the release as
 # droppen-<version>-<os>-<arch>.tar.gz). The binary the service runs, its data
-# and its log directories keep the remote-hand name, so an existing install,
-# its launchd job or systemd unit and its self-updates carry on unchanged.
+# and its log directories keep the remote-hand name: the plist or unit this
+# script writes, one written by an earlier install, a running `up` and its
+# `.prev` rollback binary all name those paths as absolute text, so a new
+# spelling would start a second install beside the one that is already running.
 
 set -eu
 

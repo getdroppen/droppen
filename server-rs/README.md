@@ -8,6 +8,10 @@ TypeScript 服务端一起退休了。
 构建产物是**一个可执行文件**：`web/dist` 在编译期由 rust-embed 打进二进制，运行时不需要
 Node、不需要静态资源目录。
 
+数据目录 `~/.local/share/remote-hand` 与配置目录 `~/.config/remote-hand` 沿用 Droppen
+改名前的名字:每套安装、launchd job / systemd 服务单元和更早的版本都按这些绝对路径找数据,
+改名会把同一台机器上的数据分成两份。这两个目录名和它们下面的路径是兼容面,不是遗留。
+
 ```bash
 cargo run -- serve                                   # 127.0.0.1:8700
 cargo run -- export-openapi --out ../openapi/openapi.json
