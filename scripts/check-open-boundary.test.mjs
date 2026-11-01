@@ -144,7 +144,7 @@ describe("sources", () => {
     assert.equal(sourceProblems('DROPPEN_HUB_NOT_DOCUMENTED=1 "$hub" serve', "sh", "server-rs/crates/droppen-devkit/scripts/cloud-dev.sh").length, 1);
     // the devkit's e2e harness went to the hub's side (rh-hub-tools), and the relay's config names no hub
     // variable: no allowance is left for either
-    assert.equal(sourceProblems('env("DROPPEN_HUB_ORIGIN")', "rs", "server-rs/crates/rh-relay/src/config.rs").length, 1);
+    assert.equal(sourceProblems('env("DROPPEN_HUB_ORIGIN")', "rs", "server-rs/crates/droppen-relay-core/src/config.rs").length, 1);
     assert.equal(sourceProblems('("DROPPEN_HUB_BIND", "127.0.0.1")', "rs", "server-rs/crates/droppen-devkit/src/bin/rh-cloud-e2e.rs").length, 1);
   });
 });
@@ -202,14 +202,14 @@ describe("cargo metadata", () => {
     const meta = {
       packages: [
         pkg("droppen-devkit", ["server-rs", "crates", "droppen-devkit"], [dep("rh-hub", { kind: "dev", path: at("server-rs", "crates", "rh-hub") })]),
-        pkg("rh-relay", ["server-rs", "crates", "rh-relay"], [dep("droppen-hub", { kind: "build", source: "git+https://example.invalid/hub" })]),
+        pkg("droppen-relay-core", ["server-rs", "crates", "droppen-relay-core"], [dep("droppen-hub", { kind: "build", source: "git+https://example.invalid/hub" })]),
         pkg("droppen-client", ["server-rs", "crates", "droppen-client"], [dep("rh-hub", { rename: "hub" })]),
       ],
     };
     const found = metadataProblems(meta, root);
     assert.equal(found.length, 3);
     assert.match(found[0], /^server-rs\/crates\/droppen-devkit\/Cargo\.toml: droppen-devkit has a dev dependency rh-hub/);
-    assert.match(found[1], /rh-relay has a build dependency droppen-hub/);
+    assert.match(found[1], /droppen-relay-core has a build dependency droppen-hub/);
     assert.match(found[2], /droppen-client has a normal dependency hub \(rh-hub\)/);
   });
 

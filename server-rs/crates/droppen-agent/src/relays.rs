@@ -104,7 +104,7 @@ pub enum Event {
 }
 
 /// What a relay closes a connection with when the hub revoked the ticket's
-/// holder (`rh_relay::server::CLOSE_REVOKED`).
+/// holder (`droppen_relay_core::server::CLOSE_REVOKED`).
 const CLOSE_REVOKED: u16 = 4403;
 /// The relay refused this ticket as revoked ([`session`]'s error).
 const REVOKED: &str = "the relay refused the ticket as revoked";

@@ -67,6 +67,6 @@ Droppen 目前是测试版：加密设计经过内部安全评审，尚未进行
 Copyright (C) 2026 Kilerd。
 
 - **应用**以 [GNU Affero General Public License v3.0 only](LICENSE)（AGPL-3.0-only）授权：本机程序（`server-rs/` 的根 crate）、桌面 App（`desktop/`）、网页（`web/`）和中继程序 `droppen-relay`。
-- **协议与库 crate**——`droppen-proto`、`rh-relay`（库）、`droppen-client`、`droppen-devkit`——以及插件 SDK（`packages/plugin-sdk`、`server-rs/crates/droppen-plugin-sdk`）以 `MIT OR Apache-2.0` 授权，二选一；许可证全文在各自目录的 `LICENSE-MIT` 和 `LICENSE-APACHE` 里。闭源的 Droppen Hub 只链接这一类 crate。
+- **协议与库 crate**——`droppen-proto`、`droppen-relay-core`（库）、`droppen-client`、`droppen-devkit`——以及插件 SDK（`packages/plugin-sdk`、`server-rs/crates/droppen-plugin-sdk`）以 `MIT OR Apache-2.0` 授权，二选一；许可证全文在各自目录的 `LICENSE-MIT` 和 `LICENSE-APACHE` 里。闭源的 Droppen Hub 只链接这一类 crate。
 
 公开发布包附带 `LICENSE` 和 `THIRD_PARTY_NOTICES`，列出编译进去的每个依赖的许可证。网页的每次构建都在 `/THIRD_PARTY_NOTICES.txt` 提供其中 npm 包的许可证（droppen.app 上也是），公开页面的页脚有链接。

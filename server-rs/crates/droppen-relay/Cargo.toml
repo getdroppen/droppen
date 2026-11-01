@@ -4,19 +4,19 @@ version = "0.1.0"
 edition = "2021"
 license = "AGPL-3.0-only"
 publish = false
-description = "droppen-relay, Droppen's relay server: the command line and process around the rh-relay library"
+description = "droppen-relay, Droppen's relay server: the command line and process around the droppen-relay-core library"
 
-# Its own package rather than a `[[bin]]` of rh-relay because a package has one
+# Its own package rather than a `[[bin]]` of droppen-relay-core because a package has one
 # licence: this binary is AGPL-3.0-only, while the library it runs, which the
 # Hub links too, is permissively licensed. Everything the relay does lives in
-# rh-relay; this crate reads the command line, sets up logging and starts it.
+# droppen-relay-core; this crate reads the command line, sets up logging and starts it.
 [[bin]]
 name = "droppen-relay"
 path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4.5", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
-rh-relay = { path = "../rh-relay" }
+droppen-relay-core = { path = "../droppen-relay-core" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }

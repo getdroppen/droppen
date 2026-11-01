@@ -249,7 +249,7 @@
   "outside": {
     "about": "Workspace members that are not the server's crates: the relay, as a library and as its binary, and the developer kit. Each uses the crates of the open layers and the others outside, and no crate of the layers depends on one of them.",
     "crates": [
-      "rh-relay",
+      "droppen-relay-core",
       "droppen-relay",
       "droppen-devkit"
     ]
@@ -322,7 +322,7 @@
       "wrappers": [
         "droppen-client",
         "droppen-agent",
-        "rh-relay",
+        "droppen-relay-core",
         "droppen-devkit"
       ]
     }

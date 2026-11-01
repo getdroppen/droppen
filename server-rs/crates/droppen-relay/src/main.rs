@@ -7,7 +7,7 @@ use clap::{Args, Parser, Subcommand};
 /// What the relay reads instead of options, shown under its help.
 const CONFIGURATION: &str = "\
 Configuration is environment only: DROPPEN_RELAY_HUB, DROPPEN_RELAY_ORIGIN, DROPPEN_RELAY_KEY,
-DROPPEN_RELAY_REGISTRATION_TOKEN, PORT, … (see rh_relay::config). The names from before the
+DROPPEN_RELAY_REGISTRATION_TOKEN, PORT, … (see droppen_relay_core::config). The names from before the
 rename, RH_RELAY_*, are not read.";
 
 /// The reason `deregister` gives the Hub when the operator names none.
@@ -27,7 +27,7 @@ fn main() -> ExitCode {
         .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stdout()))
         .with_writer(std::io::stderr)
         .init();
-    rh_relay::uplink::tls_provider();
+    droppen_relay_core::uplink::tls_provider();
     let runtime = match tokio::runtime::Runtime::new() {
         Ok(r) => r,
         Err(e) => {
@@ -88,13 +88,13 @@ struct ServeArgs {}
 
 impl ServeArgs {
     async fn run(self) -> Result<(), String> {
-        let config = rh_relay::Config::from_env()?;
+        let config = droppen_relay_core::Config::from_env()?;
         let listener = tokio::net::TcpListener::bind(config.bind)
             .await
             .map_err(|e| format!("bind {}: {e}", config.bind))?;
         tracing::info!(id = %config.id, origin = %config.origin, hub = ?config.hub, addr = %config.bind, "droppen-relay listening");
-        let server = rh_relay::Server::new(config);
-        rh_relay::run(server, listener, signal()).await
+        let server = droppen_relay_core::Server::new(config);
+        droppen_relay_core::run(server, listener, signal()).await
     }
 }
 
@@ -106,9 +106,9 @@ impl KeygenArgs {
         let key = ed25519_dalek::SigningKey::generate(&mut rand::rngs::OsRng);
         eprintln!(
             "public key {} — keep DROPPEN_RELAY_KEY secret (a secret env var, or DROPPEN_RELAY_STATE_DIR on a volume)",
-            rh_relay::config::hex(&key.verifying_key().to_bytes())
+            droppen_relay_core::config::hex(&key.verifying_key().to_bytes())
         );
-        println!("DROPPEN_RELAY_KEY={}", rh_relay::config::hex(key.as_bytes()));
+        println!("DROPPEN_RELAY_KEY={}", droppen_relay_core::config::hex(key.as_bytes()));
         Ok(())
     }
 }
@@ -132,8 +132,8 @@ struct DeregisterArgs {
 
 impl DeregisterArgs {
     async fn run(self) -> Result<(), String> {
-        let config = rh_relay::Config::from_env()?;
-        rh_relay::uplink::deregister(&config, &self.reason).await?;
+        let config = droppen_relay_core::Config::from_env()?;
+        droppen_relay_core::uplink::deregister(&config, &self.reason).await?;
         eprintln!(
             "relay {} is retired: it leaves the directory and every account's set; a running process drains and stops",
             config.id
@@ -147,18 +147,18 @@ struct RotateKeyArgs {}
 
 impl RotateKeyArgs {
     async fn run(self) -> Result<(), String> {
-        let config = rh_relay::Config::from_env()?;
+        let config = droppen_relay_core::Config::from_env()?;
         let new = ed25519_dalek::SigningKey::generate(&mut rand::rngs::OsRng);
-        rh_relay::uplink::rotate(&config, &new).await?;
-        if rh_relay::config::env("DROPPEN_RELAY_KEY").is_none() {
+        droppen_relay_core::uplink::rotate(&config, &new).await?;
+        if droppen_relay_core::config::env("DROPPEN_RELAY_KEY").is_none() {
             if let Some(dir) = &config.state_dir {
-                rh_relay::config::write_private(&dir.join("relay.key"), &rh_relay::config::hex(new.as_bytes()))?;
+                droppen_relay_core::config::write_private(&dir.join("relay.key"), &droppen_relay_core::config::hex(new.as_bytes()))?;
                 eprintln!("the Hub pinned the new key; {} has it", dir.join("relay.key").display());
                 return Ok(());
             }
         }
         eprintln!("the Hub pinned the new key: set DROPPEN_RELAY_KEY to it and restart the relay");
-        println!("DROPPEN_RELAY_KEY={}", rh_relay::config::hex(new.as_bytes()));
+        println!("DROPPEN_RELAY_KEY={}", droppen_relay_core::config::hex(new.as_bytes()));
         Ok(())
     }
 }

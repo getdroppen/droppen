@@ -1,5 +1,5 @@
 [package]
-name = "rh-relay"
+name = "droppen-relay-core"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
@@ -10,7 +10,7 @@ description = "Droppen's relay, the library (the binary is the droppen-relay cra
 # (`crates/droppen-relay`), with its own licence, and so are the tests that
 # drive that binary.
 [lib]
-name = "rh_relay"
+name = "droppen_relay_core"
 path = "src/lib.rs"
 
 [dependencies]

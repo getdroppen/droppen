@@ -48,7 +48,7 @@ const ROOTS = [
   "server-rs/crates/droppen-agent/src",
   "server-rs/crates/droppen-aggregator/src",
   "server-rs/src/cloud",
-  "server-rs/crates/rh-relay/src",
+  "server-rs/crates/droppen-relay-core/src",
   "server-rs/crates/droppen-client/src",
   "server-rs/crates/droppen-devkit/src",
   "server-rs/crates/rh-hub-tools/src",
@@ -71,11 +71,11 @@ const SPEAKS = [
   ["server-rs/src/cloud/gateway.rs", [["/api/agg/ws", "server"]]],
   ["server-rs/crates/droppen-aggregator/src/live.rs", [["/api/agg/ws", "server"]]],
   ["server-rs/crates/droppen-aggregator/src/", [["/v1/client", "client"]]],
-  ["server-rs/crates/rh-relay/src/uplink.rs", [["/v1/relay", "client"]]],
-  ["server-rs/crates/rh-relay/src/meter.rs", [["/v1/relay", "client"]]],
-  ["server-rs/crates/rh-relay/src/traffic.rs", [["/v1/relay", "client"]]],
-  ["server-rs/crates/rh-relay/src/lib.rs", [["/v1/relay", "client"]]],
-  ["server-rs/crates/rh-relay/src/", [["/v1/connect", "server"]]],
+  ["server-rs/crates/droppen-relay-core/src/uplink.rs", [["/v1/relay", "client"]]],
+  ["server-rs/crates/droppen-relay-core/src/meter.rs", [["/v1/relay", "client"]]],
+  ["server-rs/crates/droppen-relay-core/src/traffic.rs", [["/v1/relay", "client"]]],
+  ["server-rs/crates/droppen-relay-core/src/lib.rs", [["/v1/relay", "client"]]],
+  ["server-rs/crates/droppen-relay-core/src/", [["/v1/connect", "server"]]],
   ["server-rs/crates/droppen-client/src/", [["/v1/client", "client"], ["/v1/connect", "client"]]],
   ["server-rs/crates/droppen-devkit/src/agent.rs", [["/v1/agent", "client"], ["/v1/connect", "client"]]],
   ["server-rs/crates/droppen-devkit/src/", [["/v1/client", "client"], ["/v1/agent", "client"], ["/v1/connect", "client"]]],
@@ -111,7 +111,7 @@ const IGNORE = [
   // messages are the probe's, not the hub's.
   { file: "server-rs/crates/droppen-devkit/src/bin/droppen-p2p-probe.rs", t: true },
   // A unit test's placeholder message for the relay's connection writer.
-  { file: "server-rs/crates/rh-relay/src/conn.rs", t: ["x"] },
+  { file: "server-rs/crates/droppen-relay-core/src/conn.rs", t: ["x"] },
 ];
 
 /**

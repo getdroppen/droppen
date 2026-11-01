@@ -22,7 +22,7 @@
 #    server-rs/crates/droppen-plugin-sdk/src/lib.rs (the SDK version);
 #  - the web tests read droppen-proto's committed vectors and src/sig.rs, the two
 #    lint scripts they import, SECURITY.md, and the repository paths the
-#    security page cites (rh-relay, droppen-client, droppen-relay, docs);
+#    security page cites (droppen-relay-core, droppen-client, droppen-relay, docs);
 #  - the server's tests read openapi/openapi.json, droppen-plugin-sdk does
 #    include_str! of packages/plugin-sdk/test/engine-vectors.json, two tests
 #    read scripts/install.sh, and two steps run repository scripts;
@@ -109,7 +109,7 @@ while IFS= read -r path; do
   matched=0
 
   case "$path" in
-    web/*|packages/*|package.json|pnpm-lock.yaml|pnpm-workspace.yaml|.nvmrc|e2e/package.json|distribution.json|openapi/*|docs/hub-api/*|scripts/check-plugin-boundary.mjs|scripts/check-machine-keys.mjs|scripts/check-open-boundary.mjs|scripts/check-open-boundary.test.mjs|server-rs/crates/droppen-agent/src/*|server-rs/crates/droppen-aggregator/src/*|server-rs/crates/rh-relay/src/*|server-rs/crates/droppen-client/src/*|server-rs/crates/droppen-devkit/src/*|server-rs/crates/droppen-plugin-sdk/*)
+    web/*|packages/*|package.json|pnpm-lock.yaml|pnpm-workspace.yaml|.nvmrc|e2e/package.json|distribution.json|openapi/*|docs/hub-api/*|scripts/check-plugin-boundary.mjs|scripts/check-machine-keys.mjs|scripts/check-open-boundary.mjs|scripts/check-open-boundary.test.mjs|server-rs/crates/droppen-agent/src/*|server-rs/crates/droppen-aggregator/src/*|server-rs/crates/droppen-relay-core/src/*|server-rs/crates/droppen-client/src/*|server-rs/crates/droppen-devkit/src/*|server-rs/crates/droppen-plugin-sdk/*)
       web=1; matched=1 ;;
   esac
 
@@ -118,7 +118,7 @@ while IFS= read -r path; do
   # links to (it stats them), SECURITY.md, the distribution manifest, and the
   # two lint scripts they import.
   case "$path" in
-    web/*|packages/*|package.json|pnpm-lock.yaml|pnpm-workspace.yaml|.nvmrc|e2e/package.json|distribution.json|SECURITY.md|docs/web-integrity.md|scripts/check-machine-keys.mjs|scripts/check-plugin-boundary.mjs|scripts/install.sh|scripts/verify-web.mjs|server-rs/crates/droppen-proto/*|server-rs/crates/rh-relay/*|server-rs/crates/droppen-client/*|server-rs/crates/droppen-relay/*|server-rs/crates/droppen-provider/src/drafts.rs)
+    web/*|packages/*|package.json|pnpm-lock.yaml|pnpm-workspace.yaml|.nvmrc|e2e/package.json|distribution.json|SECURITY.md|docs/web-integrity.md|scripts/check-machine-keys.mjs|scripts/check-plugin-boundary.mjs|scripts/install.sh|scripts/verify-web.mjs|server-rs/crates/droppen-proto/*|server-rs/crates/droppen-relay-core/*|server-rs/crates/droppen-client/*|server-rs/crates/droppen-relay/*|server-rs/crates/droppen-provider/src/drafts.rs)
       web_tests=1; matched=1 ;;
   esac
 

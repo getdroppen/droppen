@@ -4,7 +4,7 @@
 //! device and then does what it is told.
 //!
 //! ```text
-//! rh-device --hub http://127.0.0.1:<port> --email <e> --password-file <f> [--sign-up <invite>]
+//! droppen-device --hub http://127.0.0.1:<port> --email <e> --password-file <f> [--sign-up <invite>]
 //! ```
 //!
 //! With `--sign-up`, it makes the account first (with an invite from the
@@ -365,7 +365,7 @@ async fn main() {
     let args: Vec<String> = std::env::args().collect();
     let arg = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
     let (Some(hub), Some(email), Some(password_file)) = (arg("--hub"), arg("--email"), arg("--password-file")) else {
-        eprintln!("usage: rh-device --hub <url> --email <email> --password-file <file> [--sign-up <invite>]");
+        eprintln!("usage: droppen-device --hub <url> --email <email> --password-file <file> [--sign-up <invite>]");
         std::process::exit(2);
     };
     let password = match std::fs::read_to_string(&password_file) {

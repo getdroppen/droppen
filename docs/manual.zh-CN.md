@@ -539,7 +539,7 @@ curl -sS -X POST http://127.0.0.1:8700/api/server/self-upgrade \
 在仓库根目录构建镜像、生成钥，放在终结 TLS 的反向代理后面运行：
 
 ```sh
-docker build -f server-rs/crates/rh-relay/Dockerfile -t droppen-relay .
+docker build -f server-rs/crates/droppen-relay-core/Dockerfile -t droppen-relay .
 docker run --rm droppen-relay droppen-relay keygen   # 打印 DROPPEN_RELAY_KEY=…（保密）
 docker run -p 8080:8080 \
   -e DROPPEN_RELAY_HUB=https://<Hub 的源> \
@@ -557,7 +557,7 @@ docker run -p 8080:8080 \
 **覆盖** `X-Real-IP`（不能把客户端自己带来的值传进来）；在 Fly.io 上设 `fly`（`Fly-Client-IP`）。不设时中继用连接的地址，
 放在代理后面就是代理的地址，所有客户端共用一个。
 
-所有变量见 [`server-rs/crates/rh-relay/src/config.rs`](../server-rs/crates/rh-relay/src/config.rs)，中继与 Hub 之间的协议见
+所有变量见 [`server-rs/crates/droppen-relay-core/src/config.rs`](../server-rs/crates/droppen-relay-core/src/config.rs)，中继与 Hub 之间的协议见
 [`docs/relay-and-plans.md`](relay-and-plans.md)。中继只按自己的 Hub 签发的票配对通道，所以它只服务注册它的那个 Hub
 的账户。droppen.app 只列出它自己运行的中继，暂不接入别人运行的中继。
 
@@ -588,7 +588,7 @@ Copyright (C) 2026 Kilerd。
 - **应用**以 [GNU Affero General Public License v3.0 only](../LICENSE)（AGPL-3.0-only）授权：
   本机程序（`server-rs/` 的根 crate `remote-hand-server`，即 `droppen`，含 agent 和本机网关）、
   桌面 App（`desktop/`）、网页（`web/`）和中继程序 `droppen-relay`。
-- **协议与库 crate**——`droppen-proto`、`rh-relay`（库）、`droppen-client`、`droppen-devkit`——以及插件 SDK
+- **协议与库 crate**——`droppen-proto`、`droppen-relay-core`（库）、`droppen-client`、`droppen-devkit`——以及插件 SDK
   （`packages/plugin-sdk`、`server-rs/crates/droppen-plugin-sdk`）以 `MIT OR Apache-2.0` 授权，
   二选一；许可证全文在各自目录的 `LICENSE-MIT` 和 `LICENSE-APACHE` 里。闭源的 Droppen Hub
   只链接这一类 crate。

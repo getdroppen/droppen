@@ -17,8 +17,8 @@ use futures_util::{SinkExt, StreamExt};
 use droppen_proto::frame::Frame;
 use droppen_proto::sig::{HubLogin, LoginRole};
 use droppen_proto::ticket::{RelayTicket, TicketLimits, TicketRole, TICKET_TTL_MS};
-use rh_relay::config::{hex, Config, Timing, TrustProxy};
-use rh_relay::server::now_ms;
+use droppen_relay_core::config::{hex, Config, Timing, TrustProxy};
+use droppen_relay_core::server::now_ms;
 use serde_json::{json, Value};
 use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::Message;
@@ -98,7 +98,7 @@ impl Client {
             other => panic!("{other:?}"),
         };
         assert_eq!(challenge["t"], "challenge");
-        let nonce = rh_relay::config::unhex(challenge["nonce"].as_str().unwrap()).unwrap().try_into().unwrap();
+        let nonce = droppen_relay_core::config::unhex(challenge["nonce"].as_str().unwrap()).unwrap().try_into().unwrap();
         Client {
             sink,
             stream,
@@ -204,7 +204,7 @@ impl Client {
 /// A relay in this process.
 struct TestRelay {
     origin: String,
-    server: Arc<rh_relay::Server>,
+    server: Arc<droppen_relay_core::Server>,
     stop: Option<tokio::sync::oneshot::Sender<()>>,
     done: tokio::task::JoinHandle<Result<(), String>>,
 }
@@ -227,9 +227,9 @@ async fn relay(id: &str, hub: Option<&str>, timing: Timing, tweak: impl FnOnce(&
         timing,
     };
     tweak(&mut config);
-    let server = rh_relay::Server::new(config);
+    let server = droppen_relay_core::Server::new(config);
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
-    let done = tokio::spawn(rh_relay::run(server.clone(), listener, async move {
+    let done = tokio::spawn(droppen_relay_core::run(server.clone(), listener, async move {
         let _ = stopped.await;
     }));
     TestRelay {
@@ -875,8 +875,8 @@ async fn limits_hold_for_accounts_channels_frames_sign_ins_and_addresses() {
     let nonce = [9u8; 32];
     let body = reqwest_lite(&format!("{http}/v1/relay-id?nonce={}", hex(&nonce))).await;
     let json: Value = serde_json::from_str(body.split("\r\n\r\n").nth(1).unwrap()).unwrap();
-    let key: [u8; 32] = rh_relay::config::unhex(json["sign_key"].as_str().unwrap()).unwrap().try_into().unwrap();
-    let sig: [u8; 64] = rh_relay::config::unhex(json["sig"].as_str().unwrap()).unwrap().try_into().unwrap();
+    let key: [u8; 32] = droppen_relay_core::config::unhex(json["sign_key"].as_str().unwrap()).unwrap().try_into().unwrap();
+    let sig: [u8; 64] = droppen_relay_core::config::unhex(json["sig"].as_str().unwrap()).unwrap().try_into().unwrap();
     assert!(droppen_proto::ticket::verify_origin_proof(&key, o, &nonce, &sig));
     assert_eq!(json["relay_id"], "sin-1");
 }
@@ -1148,7 +1148,7 @@ async fn sign_ins_wait_for_the_hubs_replay_after_a_start() {
     let mut c = Client::dial(o).await;
     assert!(!r.server.synced());
     assert!(
-        started.elapsed() >= rh_relay::server::SYNC_WAIT - Duration::from_millis(100),
+        started.elapsed() >= droppen_relay_core::server::SYNC_WAIT - Duration::from_millis(100),
         "it waited for the replay"
     );
     // Still no replay: a ticket issued before it could be revoked unheard —
@@ -1184,7 +1184,7 @@ async fn a_host_is_an_agent_and_a_device_on_two_connections_and_never_reaches_it
     // Not itself.
     as_device.send(Frame::Open { ch: 2, peer: "h-1".into() }).await;
     match as_device.next_frame(SECS).await {
-        Some(Frame::Close { ch: 2, code, .. }) => assert_eq!(code, rh_relay::route::CLOSE_FORBIDDEN),
+        Some(Frame::Close { ch: 2, code, .. }) => assert_eq!(code, droppen_relay_core::route::CLOSE_FORBIDDEN),
         f => panic!("an OPEN to itself: {f:?}"),
     }
     assert!(
@@ -1194,7 +1194,7 @@ async fn a_host_is_an_agent_and_a_device_on_two_connections_and_never_reaches_it
     // The agent role still opens nothing.
     as_agent.send(Frame::Open { ch: 1, peer: "h-2".into() }).await;
     match as_agent.next_frame(SECS).await {
-        Some(Frame::Close { ch: 1, code, .. }) => assert_eq!(code, rh_relay::route::CLOSE_PROTOCOL),
+        Some(Frame::Close { ch: 1, code, .. }) => assert_eq!(code, droppen_relay_core::route::CLOSE_PROTOCOL),
         f => panic!("an agent's OPEN: {f:?}"),
     }
 }
@@ -1392,7 +1392,7 @@ async fn the_relays_messages_to_the_hub_keep_their_shape() {
         .await,
         "health with the pair, and usage"
     );
-    let version = rh_relay::uplink::VERSION;
+    let version = droppen_relay_core::uplink::VERSION;
     let sign_key = hex(&SigningKey::from_bytes(&[7; 32]).verifying_key().to_bytes());
     let messages = seen.lock().unwrap().messages.clone();
     assert_eq!(
@@ -1425,9 +1425,9 @@ async fn the_relays_messages_to_the_hub_keep_their_shape() {
     );
 
     // The operator's commands, each on a sign-in of its own.
-    rh_relay::uplink::deregister(&r.server.config, "moved").await.unwrap();
+    droppen_relay_core::uplink::deregister(&r.server.config, "moved").await.unwrap();
     let new = SigningKey::from_bytes(&[8; 32]);
-    rh_relay::uplink::rotate(&r.server.config, &new).await.unwrap();
+    droppen_relay_core::uplink::rotate(&r.server.config, &new).await.unwrap();
     let messages = seen.lock().unwrap().messages.clone();
     let deregister = messages.iter().find(|v| v["t"] == "deregister").unwrap();
     assert_eq!(deregister, &json!({"t": "deregister", "reason": "moved"}));
