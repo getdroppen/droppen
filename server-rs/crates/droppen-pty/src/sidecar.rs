@@ -74,20 +74,82 @@ pub fn socket_path(dir: &Path, id: &str) -> PathBuf {
     if beside.as_os_str().len() <= SUN_PATH_MAX {
         return beside;
     }
-    runtime_dir(dir).join(format!("{stem}.sock"))
+    runtime_dirs(dir)[0].join(format!("{stem}.sock"))
 }
 
-/// The `/tmp` fallback directory for one instance.
+/// Every socket path a shim of `id` may have bound, the current spelling first.
+///
+/// Adoption asks for this rather than [`socket_path`]: a shim started before
+/// the `/tmp` fallback folder was renamed keeps running across the upgrade —
+/// a terminal's shell lives as long as its tab — and the old folder's socket
+/// is the only way to reach it.
+///
+/// The second entry stays until the upgrade floor passes the release that
+/// introduced `droppen-…`: an install at v0.2.125 must still upgrade without
+/// stranding a terminal whose socket took the fallback.
+pub fn socket_candidates(dir: &Path, id: &str) -> [PathBuf; 2] {
+    let stem = socket_stem(id);
+    let beside = dir.join(format!("{stem}.sock"));
+    if beside.as_os_str().len() <= SUN_PATH_MAX {
+        return [beside.clone(), beside];
+    }
+    let [current, legacy] = runtime_dirs(dir);
+    [current.join(format!("{stem}.sock")), legacy.join(format!("{stem}.sock"))]
+}
+
+/// The candidate adoption should dial: the first spelling whose socket exists
+/// inside a folder this process may use.
+///
+/// `None` covers both "no shim at all" and "a socket in a folder that is not
+/// ours" — [`socket_candidate_is_trusted`] refuses the latter. A caller that
+/// has to tell those apart asks about the candidates themselves, which is why
+/// only the path is returned here.
+pub fn adopted_socket(dir: &Path, id: &str) -> Option<PathBuf> {
+    socket_candidates(dir, id)
+        .into_iter()
+        .find(|socket| socket.exists() && socket_candidate_is_trusted(socket, dir))
+}
+
+/// Whether a socket adoption found may be dialled.
+///
+/// A socket beside the sidecars lives in the instance directory, which this
+/// server made for itself. A socket under `/tmp` lives under a name any local
+/// user can create first, and the connect that follows cannot tell whose shim
+/// is listening from the socket alone — so its folder has to pass the same
+/// three checks as one a new shim would reuse: a real directory rather than a
+/// symlink, this uid's, and `0o700` exactly. A refused socket is skipped, never
+/// repaired.
+pub fn socket_candidate_is_trusted(socket: &Path, dir: &Path) -> bool {
+    let Some(parent) = socket.parent() else { return false };
+    if parent == dir {
+        return true;
+    }
+    match claim_existing_socket_dir(parent) {
+        Ok(()) => true,
+        Err(error) => {
+            tracing::warn!(socket = %socket.display(), %error, "refusing a shim socket in a folder that is not ours");
+            false
+        }
+    }
+}
+
+/// The `/tmp` fallback directories for one instance, current spelling first.
 ///
 /// Named after the *instance directory*, not the instance, so two servers with
 /// the same instance name under different data directories — which is every pair
 /// of integration tests — never share one.
-fn runtime_dir(dir: &Path) -> PathBuf {
+fn runtime_dirs(dir: &Path) -> [PathBuf; 2] {
     use std::os::unix::ffi::OsStrExt;
     // SAFETY: `getuid` reads a process property and cannot fail.
     let uid = unsafe { libc::getuid() };
     let tag = hex_digest(dir.as_os_str().as_bytes(), 12);
-    PathBuf::from("/tmp").join(format!("remote-hand-{uid}-{tag}"))
+    let tmp = PathBuf::from("/tmp");
+    [
+        tmp.join(format!("droppen-{uid}-{tag}")),
+        // A shim of an earlier release bound here, and its socket is the only
+        // way back to a live shell. See [`socket_candidates`].
+        tmp.join(format!("remote-hand-{uid}-{tag}")),
+    ]
 }
 
 /// Create whatever directory `socket` needs, if it is not `beside` — the
@@ -197,7 +259,12 @@ const META: &str = "meta.json";
 pub struct Sidecars {
     dir: PathBuf,
     id: String,
+    /// The socket a shim this server starts binds.
     socket: PathBuf,
+    /// The socket adoption found, when the shim bound under the pre-rename
+    /// fallback folder. Every later connect and cleanup must use the same
+    /// file, so the choice is remembered rather than recomputed.
+    adopted: Option<PathBuf>,
 }
 
 impl Sidecars {
@@ -206,7 +273,12 @@ impl Sidecars {
         let dir = dir.into();
         let id = id.into();
         let socket = socket_path(&dir, &id);
-        Self { dir, id, socket }
+        Self {
+            dir,
+            id,
+            socket,
+            adopted: None,
+        }
     }
 
     /// The terminal id.
@@ -217,7 +289,34 @@ impl Sidecars {
     /// The unix socket the shim binds. See the module docs for why its name and
     /// sometimes its directory differ from the other three.
     pub fn socket(&self) -> PathBuf {
-        self.socket.clone()
+        self.adopted.clone().unwrap_or_else(|| self.socket.clone())
+    }
+
+    /// Every socket this terminal's shim may have bound, current spelling
+    /// first.
+    pub fn socket_candidates(&self) -> [PathBuf; 2] {
+        socket_candidates(&self.dir, &self.id)
+    }
+
+    /// The socket of a shim that survived a restart, looked for under the
+    /// current folder name and then the pre-rename one.
+    ///
+    /// `None` means no shim at all — or a socket in a folder that is not this
+    /// user's, which [`socket_candidate_is_trusted`] refuses — and the caller
+    /// reports it as "went away without leaving an exit file". The found path
+    /// is remembered, so the reconnecting link and the final cleanup keep
+    /// addressing the file the shim actually bound.
+    pub fn adopt_socket(&mut self) -> Option<PathBuf> {
+        let found = adopted_socket(&self.dir, &self.id)?;
+        if found != self.socket {
+            tracing::info!(
+                id = %self.id,
+                socket = %found.display(),
+                "adopting a shim bound before the socket fallback folder was renamed"
+            );
+        }
+        self.adopted = Some(found.clone());
+        Some(found)
     }
 
     /// Create whatever directory the socket needs, if it is not the one the
@@ -332,9 +431,12 @@ impl Sidecars {
             let _ = std::fs::remove_file(path);
         }
         // If the socket lived in the `/tmp` fallback, take the directory with
-        // the last socket in it. `remove_dir` refuses a directory that still has
-        // contents, which is exactly the check wanted here.
-        if let Some(parent) = self.socket.parent().filter(|parent| *parent != self.dir) {
+        // the last socket in it. The adopted spelling is what was removed
+        // above, so it is also the one whose folder may now be empty.
+        // `remove_dir` refuses a directory that still has contents, which is
+        // exactly the check wanted here.
+        let socket = self.socket();
+        if let Some(parent) = socket.parent().filter(|parent| *parent != self.dir) {
             let _ = std::fs::remove_dir(parent);
         }
     }
@@ -466,10 +568,147 @@ mod tests {
     /// same place for a reason that has nothing to do with the code.
     fn a_fallback_case(tag: &str) -> (PathBuf, PathBuf) {
         let instance = PathBuf::from(format!("/tmp/{}/{tag}", "d".repeat(90)));
-        let fallback = runtime_dir(&instance);
-        let _ = std::fs::remove_dir_all(&fallback);
-        let _ = std::fs::remove_file(&fallback);
+        let [fallback, legacy] = runtime_dirs(&instance);
+        // Both spellings: a case that leaves a socket or a symlink under the
+        // old one would poison every later run of the same case, and some of
+        // these cases deliberately put one there.
+        for path in [&fallback, &legacy] {
+            let _ = std::fs::remove_dir_all(path);
+            let _ = std::fs::remove_file(path);
+        }
         (instance, fallback)
+    }
+
+    /// A real socket at `path`, in a `0700` folder of its own, kept bound for
+    /// as long as the listener lives — which is the shape adoption is allowed
+    /// to trust.
+    fn bind_in_private_folder(path: &Path) -> std::os::unix::net::UnixListener {
+        use std::os::unix::fs::DirBuilderExt;
+        let parent = path.parent().expect("a fallback folder");
+        let _ = std::fs::remove_dir_all(parent);
+        let _ = std::fs::remove_file(parent);
+        std::fs::DirBuilder::new().mode(0o700).create(parent).expect("the fallback folder");
+        std::os::unix::net::UnixListener::bind(path).expect("a real socket")
+    }
+
+    /// The compatibility surface: a shim spawned by an earlier release bound
+    /// under `/tmp/remote-hand-…`, and adoption has to look there.
+    #[test]
+    fn a_fallback_socket_is_probed_under_the_new_folder_then_the_old_one() {
+        let id = "3f2504e04f8911d39a0c0305e82c3301";
+        let (instance, _) = a_fallback_case("candidates");
+        let [current, legacy] = socket_candidates(&instance, id);
+        assert!(current.to_string_lossy().starts_with("/tmp/droppen-"), "{}", current.display());
+        assert!(legacy.to_string_lossy().starts_with("/tmp/remote-hand-"), "{}", legacy.display());
+        assert_eq!(current.file_name(), legacy.file_name(), "the socket's name did not move, only its folder");
+
+        // A directory with room beside the sidecars has one spelling, not two.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let [current, legacy] = socket_candidates(dir.path(), id);
+        assert_eq!(current, legacy);
+        assert_eq!(current, socket_path(dir.path(), id));
+    }
+
+    /// A shim adopted from the old folder keeps being addressed there: every
+    /// later connect and the final cleanup must not switch to the new one.
+    #[test]
+    fn adoption_finds_a_socket_left_under_the_old_folder_and_remembers_it() {
+        let id = "3f2504e04f8911d39a0c0305e82c3301";
+        let (instance, _) = a_fallback_case("adopted");
+        let [_, legacy] = socket_candidates(&instance, id);
+        let listener = bind_in_private_folder(&legacy);
+
+        let mut sidecars = Sidecars::new(&instance, id);
+        assert_eq!(sidecars.adopt_socket(), Some(legacy.clone()));
+        assert_eq!(sidecars.socket(), legacy, "the adopted path is the one every caller gets");
+
+        let folder = legacy.parent().expect("old fallback folder").to_path_buf();
+        sidecars.remove_all();
+        assert!(!legacy.exists(), "cleanup takes the socket it adopted");
+        assert!(!folder.exists(), "and the folder with its last socket");
+        drop(listener);
+    }
+
+    /// A folder another local user could have made first is not a place to
+    /// send a shell's keystrokes. Widened or symlinked, it is refused — and
+    /// the socket *in* it, however real, is never adopted.
+    #[test]
+    fn a_socket_in_a_folder_that_is_not_ours_is_not_adopted() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let id = "3f2504e04f8911d39a0c0305e82c3301";
+
+        let (squatted, _) = a_fallback_case("squatted-adoption");
+        let [_, legacy] = socket_candidates(&squatted, id);
+        let folder = legacy.parent().expect("old fallback folder").to_path_buf();
+        std::fs::create_dir(&folder).expect("pre-create the old folder");
+        std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o777)).expect("widen it");
+        let listener = std::os::unix::net::UnixListener::bind(&legacy).expect("a real socket in it");
+        let mut sidecars = Sidecars::new(&squatted, id);
+        assert_eq!(sidecars.adopt_socket(), None, "a world-writable folder is not trusted");
+        drop(listener);
+        std::fs::remove_dir_all(&folder).expect("clean up");
+
+        let elsewhere = tempfile::tempdir().expect("tempdir");
+        let (symlinked, _) = a_fallback_case("symlinked-adoption");
+        let [_, legacy] = socket_candidates(&symlinked, id);
+        let folder = legacy.parent().expect("old fallback folder").to_path_buf();
+        let target = elsewhere.path().join(legacy.file_name().expect("socket name"));
+        let listener = std::os::unix::net::UnixListener::bind(&target).expect("a real socket behind it");
+        std::os::unix::fs::symlink(elsewhere.path(), &folder).expect("symlink the folder");
+        let mut sidecars = Sidecars::new(&symlinked, id);
+        assert_eq!(sidecars.adopt_socket(), None, "a symlinked folder is not trusted");
+        drop(listener);
+        std::fs::remove_file(&folder).expect("clean up the symlink");
+    }
+
+    /// The current spelling wins when both exist, so an upgrade does not keep
+    /// dialling an old shim while a new one is already there for the same id.
+    #[test]
+    fn the_current_folder_wins_when_both_spellings_have_a_socket() {
+        let id = "3f2504e04f8911d39a0c0305e82c3301";
+        let (instance, _) = a_fallback_case("both");
+        let [current, legacy] = socket_candidates(&instance, id);
+        let current_listener = bind_in_private_folder(&current);
+        let legacy_listener = bind_in_private_folder(&legacy);
+
+        let mut sidecars = Sidecars::new(&instance, id);
+        assert_eq!(sidecars.adopt_socket(), Some(current.clone()), "the current spelling is tried first");
+        assert_eq!(sidecars.socket(), current);
+
+        let legacy_folder = legacy.parent().expect("old folder").to_path_buf();
+        sidecars.remove_all();
+        assert!(!current.exists(), "cleanup takes the socket it adopted");
+        assert!(legacy.exists(), "the other spelling belongs to the shim that bound it");
+        drop(current_listener);
+        drop(legacy_listener);
+        std::fs::remove_dir_all(&legacy_folder).expect("clean up the old folder");
+    }
+
+    /// A squatted *current* folder must not shadow a trustworthy socket left
+    /// under the old name: the checks apply to both candidates, not only the
+    /// legacy one.
+    #[test]
+    fn a_squatted_current_folder_does_not_shadow_a_trustworthy_old_socket() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let id = "3f2504e04f8911d39a0c0305e82c3301";
+        let (instance, current_dir) = a_fallback_case("mixed");
+        let [current, legacy] = socket_candidates(&instance, id);
+        std::fs::create_dir(&current_dir).expect("pre-create the current folder");
+        std::fs::set_permissions(&current_dir, std::fs::Permissions::from_mode(0o777)).expect("widen it");
+        let squatted = std::os::unix::net::UnixListener::bind(&current).expect("a real socket in it");
+        let legacy_listener = bind_in_private_folder(&legacy);
+
+        let mut sidecars = Sidecars::new(&instance, id);
+        assert_eq!(sidecars.adopt_socket(), Some(legacy.clone()), "the trustworthy spelling is used");
+
+        sidecars.remove_all();
+        assert!(!legacy.exists(), "cleanup takes the socket it adopted");
+        assert!(current.exists(), "the squatted socket is not touched");
+        drop(squatted);
+        drop(legacy_listener);
+        std::fs::remove_dir_all(&current_dir).expect("clean up the squatted folder");
     }
 
     /// The `/tmp` fallback is the one sidecar that leaves the instance

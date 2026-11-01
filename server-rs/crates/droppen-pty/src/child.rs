@@ -967,14 +967,35 @@ pub fn unlink_if_ours(path: &Path, identity: Option<(u64, u64, i64, i64)>) {
     }
     let _ = std::fs::remove_file(path);
     // The `/tmp` fallback directory goes with the last socket in it. Recognised
-    // by its prefix rather than by being told, so the shim can never be talked
-    // into removing the instance directory: `remove_dir` also refuses anything
-    // that is not empty.
+    // by its exact name rather than by being told, so the shim can never be
+    // talked into removing the instance directory: `remove_dir` also refuses
+    // anything that is not empty.
     if let Some(parent) = path.parent() {
-        if parent.to_string_lossy().starts_with("/tmp/remote-hand-") {
+        if is_fallback_socket_dir(parent) {
             let _ = std::fs::remove_dir(parent);
         }
     }
+}
+
+/// Whether `path` is one of the per-instance fallback folders a shim binds in,
+/// in either spelling: `/tmp/(droppen|remote-hand)-<uid>-<12 hex>`.
+///
+/// The exact shape matters. A prefix test also takes every scratch directory
+/// that merely starts the same way — `/tmp/droppen-e2e.*` is a real example —
+/// and this function's answer is what allows the removal to go ahead.
+fn is_fallback_socket_dir(path: &Path) -> bool {
+    if path.parent() != Some(Path::new("/tmp")) {
+        return false;
+    }
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else { return false };
+    let Some(rest) = name.strip_prefix("droppen-").or_else(|| name.strip_prefix("remote-hand-")) else {
+        return false;
+    };
+    let Some((uid, tag)) = rest.split_once('-') else { return false };
+    !uid.is_empty()
+        && uid.bytes().all(|byte| byte.is_ascii_digit())
+        && tag.len() == 12
+        && tag.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 /// Write keystrokes to the master fd, in order, off the runtime.
@@ -1215,6 +1236,29 @@ mod tests {
         std::fs::write(&path, b"someone else's").expect("write");
         unlink_if_ours(&path, None);
         assert!(path.exists());
+    }
+
+    /// Only the exact fallback folder name is taken with the last socket. A
+    /// scratch directory that merely starts with the prefix belongs to
+    /// somebody else, and removing it from here would be the shim reaching
+    /// outside its own business.
+    #[test]
+    fn only_the_exact_fallback_folder_name_is_taken_with_the_socket() {
+        for (path, ours) in [
+            ("/tmp/droppen-501-0123456789ab", true),
+            ("/tmp/remote-hand-501-0123456789ab", true),
+            ("/tmp/droppen-e2e.abc", false),
+            ("/tmp/droppen-e2e-501-0123456789ab", false),
+            ("/tmp/droppen-501-0123456789AB", false),
+            ("/tmp/droppen-501-0123456789a", false),
+            ("/tmp/droppen-501-0123456789abc", false),
+            ("/tmp/droppen--0123456789ab", false),
+            ("/tmp/other-501-0123456789ab", false),
+            ("/var/tmp/droppen-501-0123456789ab", false),
+            ("/tmp/droppen-501-0123456789ab/extra", false),
+        ] {
+            assert_eq!(is_fallback_socket_dir(Path::new(path)), ours, "{path}");
+        }
     }
 
     /// A repaint of a large enough window does not fit in one frame, and a frame

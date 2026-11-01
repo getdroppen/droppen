@@ -764,7 +764,7 @@ impl Registry {
     ///
     /// The identity ([`identify`]) is read before any of this, so what arrives
     /// here is already known to be a terminal rather than debris.
-    async fn readopt_one(self: &Arc<Self>, meta: Meta, sidecars: Sidecars) -> bool {
+    async fn readopt_one(self: &Arc<Self>, meta: Meta, mut sidecars: Sidecars) -> bool {
         let id = meta.id.clone();
         if let Some(tombstone) = sidecars.read_tombstone().await {
             tracing::info!(%id, exit_code = tombstone.exit_code, at = %tombstone.at, "a surviving terminal had already exited");
@@ -776,14 +776,16 @@ impl Registry {
             sidecars.remove_all();
             return false;
         }
-        if !sidecars.socket().exists() {
+        // The current fallback folder, then the pre-rename one: a shim started
+        // before the rename is still serving its shell and must be adoptable.
+        let Some(socket) = sidecars.adopt_socket() else {
             tracing::warn!(%id, "a pty shim went away without leaving an exit file");
             sidecars.remove_all();
             return false;
-        }
+        };
 
         let cursor = sidecars.read_cursor().await;
-        let link = match client::connect(&sidecars.socket(), cursor).await {
+        let link = match client::connect(&socket, cursor).await {
             Ok(link) => link,
             Err(error) => {
                 tracing::warn!(%id, %error, "a pty shim would not answer; sweeping it");
