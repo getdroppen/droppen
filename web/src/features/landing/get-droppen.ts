@@ -109,13 +109,12 @@ export function codeInstallCommand(code: string, hub?: string): string {
 /**
  * Where a server keeps the binary it runs (its data directory's `bin`): the installer puts it on no `PATH`.
  *
- * Still the old name, on purpose. This command goes to a server of unknown
- * version (it is not in the account yet, so nothing has reported one), and only
- * servers from the release that ships `droppen` have `<data>/bin/droppen`
- * beside it; every server ever installed answers to this path.
- * TODO(droppen-name): say `~/.local/share/remote-hand/bin/droppen` once the
- * oldest agent version the hub reports for accounts has reached that release
- * (docs/local-aggregator.md §7.2, S5-1).
+ * The old name, on purpose, for good. This command goes to a server of unknown
+ * version and history (it is not in the account yet, so nothing has reported
+ * one). `<data>/bin/droppen` is made only by the installer, from 0.2.125 on: a
+ * server installed earlier that has only ever updated itself has no such
+ * link, whatever version it runs now. This path is the one every install has,
+ * and the data folder keeps its name.
  */
 export const SERVER_BIN_PATH = "~/.local/share/remote-hand/bin/remote-hand-server";
 
