@@ -67,11 +67,13 @@
 #                              (default app.droppen.server / droppen)
 #
 # The command is `droppen` (<data>/bin/droppen, also on the release as
-# droppen-<version>-<os>-<arch>.tar.gz). The binary the service runs, its data
-# and its log directories keep the remote-hand name: the plist or unit this
-# script writes, one written by an earlier install, a running `up` and its
-# `.prev` rollback binary all name those paths as absolute text, so a new
-# spelling would start a second install beside the one that is already running.
+# droppen-<version>-<os>-<arch>.tar.gz). The binary the service runs and its
+# data directory keep the remote-hand name: the plist or unit this script
+# writes, one written by an earlier install, a running `up` and its `.prev`
+# rollback binary all name those paths as absolute text, so a new spelling
+# would start a second install beside the one that is already running. Logs
+# live under Droppen's own folder, with the old folder's logs copied over and
+# kept for an uninstall from this release.
 
 set -eu
 
@@ -145,6 +147,31 @@ EOF
 
 # ---------------------------------------------------------------- places
 
+# The service's logs live under Droppen's own folder. Older installers wrote
+# them under `remote-hand`; their files are carried over once, without moving
+# the old ones (a service from before the update may still be writing them).
+log_dirs() {
+  case "$OS" in
+    macos)
+      LOG_DIR=$HOME/Library/Logs/Droppen/server
+      OLD_LOG_DIR=$HOME/Library/Logs/remote-hand
+      ;;
+    *)
+      LOG_DIR=${XDG_STATE_HOME:-$HOME/.local/state}/droppen
+      OLD_LOG_DIR=${XDG_STATE_HOME:-$HOME/.local/state}/remote-hand
+      ;;
+  esac
+}
+
+# The log paths an uninstall keeps, for its closing note: the new folder, and
+# the old one while it is still there.
+log_paths_note() {
+  printf '%s' "$LOG_DIR"
+  if [ -n "$OLD_LOG_DIR" ] && [ "$OLD_LOG_DIR" != "$LOG_DIR" ] && [ -d "$OLD_LOG_DIR" ]; then
+    printf '\n    %s (logs from before this release)' "$OLD_LOG_DIR"
+  fi
+}
+
 set_paths() {
   case "${HOME:-}" in
     /*) ;;
@@ -167,17 +194,16 @@ set_paths() {
       LABEL=${DROPPEN_LABEL:-app.droppen.server}
       SERVICE=launchd
       PLIST=$HOME/Library/LaunchAgents/$LABEL.plist
-      LOG_DIR=$HOME/Library/Logs/remote-hand
       DOMAIN=gui/$(id -u)
       ;;
     Linux)
       OS=linux
       LABEL=${DROPPEN_LABEL:-droppen}
       USER_UNIT_DIR=${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user
-      LOG_DIR=${XDG_STATE_HOME:-$HOME/.local/state}/remote-hand
       ;;
     *) OS=other ;;
   esac
+  log_dirs
   # A launchd label and a systemd unit name: no spaces, slashes or quotes.
   printf '%s\n' "${LABEL:-x}" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9:_.@-]*$' || die "DROPPEN_LABEL may hold only letters, digits and : _ . @ -"
 }
@@ -735,10 +761,27 @@ EOF
 
 launchd_loaded() { launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; }
 
+# Bring this instance's logs over from the folder older installers used. Copy,
+# never move: the old service may still be writing them until it restarts
+# below, and an uninstall from this release still names that folder. Nothing
+# here overwrites a log this install already has.
+migrate_logs() {
+  [ -n "$OLD_LOG_DIR" ] && [ -d "$OLD_LOG_DIR" ] || return 0
+  mkdir -p "$LOG_DIR"
+  chmod 700 "$LOG_DIR" 2>/dev/null || true
+  for name in "$INSTANCE.log" "$INSTANCE.err.log"; do
+    [ -f "$OLD_LOG_DIR/$name" ] || continue
+    [ -e "$LOG_DIR/$name" ] && continue
+    (umask 077 && cp -p "$OLD_LOG_DIR/$name" "$LOG_DIR/$name") 2>/dev/null || true
+    chmod 600 "$LOG_DIR/$name" 2>/dev/null || true
+  done
+}
+
 # The server's logs, readable by this user alone: they say where the setup
 # code is and what the server did, which is nobody else's business on a shared
 # device. Made before anything writes them, so they never exist wider.
 private_logs() {
+  migrate_logs
   mkdir -p "$LOG_DIR"
   chmod 700 "$LOG_DIR" 2>/dev/null || true
   for log in "$@"; do
@@ -1288,16 +1331,17 @@ do_uninstall() {
     write_marker
   fi
   report_others
+  logs_note=$(log_paths_note)
   cat <<EOF
 
 Droppen is uninstalled. Your data was kept, so installing again picks it up:
 Droppen 已卸载；数据已保留，重新安装即可继续使用：
     $DATA_DIR
     $CONFIG_DIR
-    $LOG_DIR
+    $logs_note
 If this device joined a Droppen account, remove it on my.droppen.app too (my devices).
 To delete the data as well (sessions, accounts, settings, this device's key), run:
-    rm -rf "$DATA_DIR" "$CONFIG_DIR" "$LOG_DIR"
+    rm -rf "$DATA_DIR" "$CONFIG_DIR" "$LOG_DIR" "$OLD_LOG_DIR"
 EOF
 }
 

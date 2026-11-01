@@ -58,6 +58,37 @@ function download(lib, env = {}) {
 /** The staged binary download_and_verify leaves, if any. */
 const staged = () => join(root, "home", ".local/share/remote-hand/bin/.installer-new");
 
+test("service logs live under Droppen's folder, and an old install's logs are copied over, never moved", async () => {
+  const lib = library("");
+  const home = join(root, "logs-home");
+  const oldDir = join(home, "Library/Logs/remote-hand");
+  const logDir = join(home, "Library/Logs/Droppen/server");
+  const script = `. "$1"; INSTANCE=default; OS=macos; log_dirs; printf 'dirs %s|%s\\n' "$LOG_DIR" "$OLD_LOG_DIR"; mkdir -p "$OLD_LOG_DIR"; printf 'old\\n' >"$OLD_LOG_DIR/default.log"; printf 'olderr\\n' >"$OLD_LOG_DIR/default.err.log"; private_logs "$LOG_DIR/default.log" "$LOG_DIR/default.err.log"; printf 'new '; cat "$LOG_DIR/default.log"; printf 'err '; cat "$LOG_DIR/default.err.log"; printf 'old '; cat "$OLD_LOG_DIR/default.log"; printf 'note '; log_paths_note | tr '\\n' '~'; printf '\\n'; XDG_STATE_HOME="$HOME/xdg"; OS=linux; log_dirs; printf 'linux %s|%s\\n' "$LOG_DIR" "$OLD_LOG_DIR"`;
+  const { code, stdout, stderr } = await new Promise((resolve) => {
+    execFile("sh", ["-c", script, "sh", lib], { env: { PATH: process.env.PATH, HOME: home } }, (error, out, err) =>
+      resolve({ code: error ? error.code : 0, stdout: out, stderr: err }),
+    );
+  });
+  assert.equal(code, 0, stderr);
+  const lines = stdout.trim().split("\n");
+  assert.equal(lines[0], `dirs ${logDir}|${oldDir}`, "macOS: a server folder inside the desktop app's log folder");
+  assert.equal(lines[1], "new old", "the old log is copied over");
+  assert.equal(lines[2], "err olderr", "and its error log too");
+  assert.equal(lines[3], "old old", "the old file stays where an older service may still write it");
+  assert.equal(lines[4], `note ${logDir}~    ${oldDir} (logs from before this release)`, "uninstall names both folders");
+  assert.equal(lines[5], `linux ${join(home, "xdg/droppen")}|${join(home, "xdg/remote-hand")}`, "Linux: under XDG_STATE_HOME");
+
+  // A log this release already made is never overwritten by the old one.
+  const freshHome = join(root, "logs-fresh-home");
+  const keepScript = `. "$1"; INSTANCE=default; OS=macos; log_dirs; mkdir -p "$LOG_DIR" "$OLD_LOG_DIR"; printf 'new\\n' >"$LOG_DIR/default.log"; printf 'old\\n' >"$OLD_LOG_DIR/default.log"; private_logs "$LOG_DIR/default.log"; cat "$LOG_DIR/default.log"`;
+  const kept = await new Promise((resolve) => {
+    execFile("sh", ["-c", keepScript, "sh", lib], { env: { PATH: process.env.PATH, HOME: freshHome } }, (error, out, err) =>
+      resolve({ code: error ? error.code : 0, stdout: out, stderr: err }),
+    );
+  });
+  assert.equal(kept.code, 0, kept.stderr);
+  assert.equal(kept.stdout, "new\n");
+});
 /** The release's files, served at /download/<version>/<name>. */
 function publish(name, content) {
   writeFileSync(join(release, name), content);

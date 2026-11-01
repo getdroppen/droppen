@@ -482,13 +482,15 @@ ln -sf remote-hand-server ~/.local/share/remote-hand/bin/droppen
 （`~/Library/LaunchAgents/app.droppen.server.plist`）：登录时启动，退出了由 launchd 重新拉起；
 跑的是 `~/.local/share/remote-hand/bin/remote-hand-server up -- serve`，实例 `default`，只监听
 `127.0.0.1`，端口从 8700 起找第一个空闲的（`DROPPEN_PORT` 可改起点，升级时沿用上次的端口）。
-日志在 `~/Library/Logs/remote-hand/default.log` 和 `default.err.log`（目录 0700、文件 0600，
-只有你自己能读：里面会写设置码在哪个文件）。
+日志在 `~/Library/Logs/Droppen/server/default.log` 和 `default.err.log`（目录 0700、文件 0600，
+只有你自己能读：里面会写设置码在哪个文件）。旧位置 `~/Library/Logs/remote-hand/` 的日志会
+复制过来，旧目录保留到这次卸载。只做自更新（不重跑安装脚本）时，服务单元和日志路径不会变，
+仍写旧目录；重跑安装脚本后才切到新目录。
 
 ```bash
 launchctl print gui/$(id -u)/app.droppen.server          # 状态
 launchctl kickstart -k gui/$(id -u)/app.droppen.server   # 重启
-tail -f ~/Library/Logs/remote-hand/default.log           # 日志
+tail -f ~/Library/Logs/Droppen/server/default.log        # 日志
 launchctl bootout gui/$(id -u)/app.droppen.server        # 停掉（下次登录还会启动）
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/app.droppen.server.plist  # 再启动
 curl -fsSL https://droppen.app/install.sh | sh -s -- --uninstall   # 停掉并卸载，数据保留
