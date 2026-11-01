@@ -332,18 +332,24 @@ export function notInstallable(doc: Pick<Document, "querySelectorAll"> | undefin
 }
 
 /**
- * The two ends of the browser key move — the hub's origin, where a browser's
- * device was set up before the app moved, and the app host — whenever the hub
- * names an app host of its own and this page is on one of the two, whatever
- * the origin does with the app's pages (`apex_mode`): the origin's `/move`
- * page (the sending side of a move the app host asks for) works while the
- * origin still serves the app, so the move can be tried before the cutover.
- * `null` otherwise.
+ * The two ends of the browser key move — the hub's own name root, where a
+ * browser's device was set up before the app moved, and the app host —
+ * whenever the hub names an app host of its own and this page is on one of
+ * the two, whatever the origin does with the app's pages (`apex_mode`): the
+ * root's `/move` page (the sending side of a move the app host asks for)
+ * works while the root still serves the app, so the move can be tried before
+ * the cutover. `null` otherwise.
  */
 export function moveOrigins(pageOrigin: string = globalThis.location?.origin ?? ""): { legacy: string; app: string } | null {
   const hosts = state.hosts;
   if (!hosts?.app) return null;
-  const legacy = webOf(hosts.origin);
+  // The legacy side is the hub's name root, not its machine origin: the API
+  // may answer on `api.` while the browsers' devices wait at `droppen.app`.
+  // A root that is the origin's own host keeps its authority (a loopback
+  // test hub's port).
+  const own = webOf(hosts.origin);
+  const root = hubRoot(hosts);
+  const legacy = new URL(own).hostname === root ? own : webOf(`wss://${root}`);
   if (hosts.app === legacy) return null;
   const page = pageOrigin.toLowerCase();
   return page === legacy || page === hosts.app ? { legacy, app: hosts.app } : null;

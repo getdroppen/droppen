@@ -136,9 +136,10 @@ function pageStorage(): MoveStorage {
 }
 
 /**
- * The hub's own origin and its app host as `/.well-known/droppen-hub` said
- * them, held to the apex this page came from (`lib/hub/hosts.ts`
- * `moveOrigins`): `null` on any other page, or when the hub names no app host.
+ * The hub's own name root (the legacy host) and its app host as
+ * `/.well-known/droppen-hub` said them, held to the apex this page came from
+ * (`lib/hub/hosts.ts` `moveOrigins`): `null` on any other page, or when the
+ * hub names no app host.
  */
 export function pinnedOrigins(): MoveOrigins | null {
   return moveOrigins();
