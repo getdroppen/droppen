@@ -7,7 +7,7 @@
 //! It joins a signaling room on the hub (`/v1/probe/rooms/{room}`, only
 //! there when the hub runs with `DROPPEN_HUB_P2P_PROBE=1`) and prints the page to
 //! open, `<page>/p2p-probe.html#<room>`. The page is no part of a web build:
-//! the web dev server serves it (`web/dev/`; `RH_DEV_HUB=<hub> pnpm dev:web`,
+//! the web dev server serves it (`web/dev/`; `DROPPEN_DEV_HUB=<hub> pnpm dev:web`,
 //! which proxies the room to the hub), at `--page`. For every page load it answers the
 //! page's WebRTC offer with a DataChannel peer (str0m, sans-IO): host
 //! candidates on this machine's default-route addresses, server-reflexive ones

@@ -159,8 +159,9 @@ mod tests {
     /// through this module.
     #[test]
     fn nothing_reads_an_old_name() {
-        // A name no code reads: a terminal test's stand-in for "any variable".
-        const ALLOWED: &[&str] = &["RH_TERMINAL_KEEP"];
+        // No name is allowed: every environment name the server reads is one
+        // of its own DROPPEN_* names.
+        const ALLOWED: &[&str] = &[];
         let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).canonicalize().expect("this crate");
         let src = manifest.join("src");
         let mut found = Vec::new();

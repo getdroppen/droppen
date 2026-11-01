@@ -74,7 +74,7 @@ await fs.mkdir(out, { recursive: true });
 let server = null;
 let base = liveUrl;
 if (!liveUrl) {
-  process.env.RH_DEV_PROXY ??= "http://127.0.0.1:9";
+  process.env.DROPPEN_DEV_PROXY ??= "http://127.0.0.1:9";
   const { createServer } = await import(requireFromWeb.resolve("vite"));
   server = await createServer({
     configFile: path.join(web, "vite.config.ts"),

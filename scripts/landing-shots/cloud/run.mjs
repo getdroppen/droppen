@@ -63,7 +63,7 @@ const channel = flag("channel", process.env.LANDING_SHOTS_CHANNEL ?? "");
 await fs.mkdir(out, { recursive: true });
 
 // The app's own Vite server; nothing is proxied anywhere (the fixture makes no request).
-process.env.RH_DEV_PROXY ??= "http://127.0.0.1:9";
+process.env.DROPPEN_DEV_PROXY ??= "http://127.0.0.1:9";
 const { createServer } = await import(requireFromWeb.resolve("vite"));
 const server = await createServer({
   configFile: path.join(web, "vite.config.ts"),

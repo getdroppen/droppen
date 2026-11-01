@@ -9,7 +9,7 @@ import type { Plugin } from "vite";
  * in `public/` and so shipped in every build, droppen.app's included: a page
  * of the app's origin that is not the app. Here it is reached at
  * `<dev server>/p2p-probe.html#<room>`, its signaling room proxied to the hub
- * named by `RH_DEV_HUB` (vite.config.ts).
+ * named by `DROPPEN_DEV_HUB` (vite.config.ts).
  */
 const FILES: Record<string, string> = {
   "/p2p-probe.html": "text/html; charset=utf-8",

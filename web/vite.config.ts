@@ -16,18 +16,18 @@ import { viewPrefetch } from "./build/view-prefetch";
 /**
  * Which server `pnpm dev` talks to.
  *
- * The default is the one a developer normally has running. `RH_DEV_PROXY`
+ * The default is the one a developer normally has running. `DROPPEN_DEV_PROXY`
  * points it somewhere else — most usefully at a `remote-hand-server replay`
  * rebuilt from a flight log on its own port, which is how a UI change gets
  * tried against real transcripts without going near a live instance.
  */
-const proxyTarget = process.env.RH_DEV_PROXY ?? "http://127.0.0.1:8700";
+const proxyTarget = process.env.DROPPEN_DEV_PROXY ?? "http://127.0.0.1:8700";
 
 /**
  * The hub the dev server's probe page (`build/dev-tools.ts`) signals through:
  * its `/v1/probe/rooms/…` is proxied there. Unset, the page has no room.
  */
-const probeHub = process.env.RH_DEV_HUB;
+const probeHub = process.env.DROPPEN_DEV_HUB;
 
 /**
  * `DROPPEN_WEB_MODE=cloud`: also write the static-hosting output (the shell's
@@ -249,7 +249,7 @@ export default defineConfig({
     ],
   },
   server: {
-    port: Number(process.env.RH_DEV_PORT ?? 5180),
+    port: Number(process.env.DROPPEN_DEV_PORT ?? 5180),
     proxy: {
       "/api": { target: proxyTarget, ws: true },
       "/embed": { target: proxyTarget, ws: true },
