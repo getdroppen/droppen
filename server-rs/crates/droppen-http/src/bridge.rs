@@ -6,6 +6,9 @@
 //! loopback peer with this boot's credential, and strips them from every
 //! request either way. They sit here, below both, so the guard does not depend
 //! on the agent that writes them.
+//!
+//! The header names are protocol identifiers, not product names: the bridge
+//! writes them and the auth guard keys on them, so they stay as they are.
 
 /// The header carrying the internal credential.
 pub const CREDENTIAL_HEADER: &str = "x-rh-agent";

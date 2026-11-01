@@ -85,6 +85,9 @@ pub fn reads_epoch_names(info: &[u8]) -> bool {
     std::str::from_utf8(info).is_ok_and(|s| s.split_whitespace().any(|t| t == STREAMS_FEATURE))
 }
 
+// Both sources are hashed into the stream ids (`record::stream_id`): every
+// version must spell them the same, or it looks for an existing stream under
+// another id.
 /// The `source` of a machine's session-index stream (its `id` is empty).
 pub const INDEX_SOURCE: &str = "rh.index";
 /// The `source` of a machine's status stream (its `id` is empty).

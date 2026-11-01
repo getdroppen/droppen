@@ -8,6 +8,9 @@
  * waiting for another can never hold the move up for good. A renewal of a
  * host's identity key running in another tab (its lock is per host) makes the
  * move wait, then say it is busy.
+ *
+ * The names are wire between tabs and versions: an older tab and a newer one
+ * must take the same lock, or both could write the keystore at once.
  */
 import type { MoveLocks } from "./env";
 
