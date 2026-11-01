@@ -5,7 +5,7 @@
 //! Off unless `DROPPEN_HUB_API_TRAFFIC=<path>` is set. Then every JSON control
 //! message on the hub's `/v1/agent` and on a relay's `/v1/connect` is
 //! appended to that file as one line, `{"src": "agent", "kind": "ws",
-//! "socket", "dir": "in"|"out", "body"}` — and, through `rh-client`'s tap
+//! "socket", "dir": "in"|"out", "body"}` — and, through `droppen-client`'s tap
 //! ([`install_client_tap`]), every JSON request and answer of its device
 //! role over HTTP as `{"src": "agent", "kind": "http", "dir",
 //! "method", "path", "query"?, "status"?, "body"}` and its `/v1/client`
@@ -14,7 +14,7 @@
 //! and signatures among it), so the file is created `0600`; delete it after.
 //!
 //! It sits with the device role, below the link, so that both the link's
-//! sockets and the device role's `rh-client` calls can write to it.
+//! sockets and the device role's `droppen-client` calls can write to it.
 
 use std::io::Write;
 use std::sync::{Mutex, OnceLock};
@@ -45,7 +45,7 @@ fn file() -> Option<&'static Mutex<std::fs::File>> {
     .as_ref()
 }
 
-/// Append one capture record (`rh_client::tap::line`'s) as a line, under the
+/// Append one capture record (`droppen_client::tap::line`'s) as a line, under the
 /// file's lock.
 fn write(record: Value) {
     let Some(file) = file() else { return };
@@ -57,9 +57,9 @@ fn write(record: Value) {
 }
 
 fn record(socket: &str, dir: &str, body: &Value) {
-    write(rh_client::tap::line(
+    write(droppen_client::tap::line(
         "agent",
-        rh_client::tap::Event::Ws {
+        droppen_client::tap::Event::Ws {
             socket,
             dir,
             body,
@@ -115,9 +115,9 @@ pub fn relay_value(value: Value) -> Value {
 }
 
 fn http(dir: &str, method: &str, url: &str, status: Option<u16>, body: &Value) {
-    write(rh_client::tap::line(
+    write(droppen_client::tap::line(
         "agent",
-        rh_client::tap::Event::Http {
+        droppen_client::tap::Event::Http {
             dir,
             method,
             url,
@@ -160,36 +160,36 @@ fn redact(value: &Value, in_email: bool) -> Value {
     }
 }
 
-/// What `rh-client` sends and gets for this computer's device role, captured
+/// What `droppen-client` sends and gets for this computer's device role, captured
 /// as the agent's own: `"src": "agent"`, tokens redacted.
 struct DeviceRole;
 
-impl rh_client::tap::Tap for DeviceRole {
-    fn record(&self, event: rh_client::tap::Event<'_>) {
+impl droppen_client::tap::Tap for DeviceRole {
+    fn record(&self, event: droppen_client::tap::Event<'_>) {
         if file().is_none() {
             return;
         }
         match event {
-            rh_client::tap::Event::Http {
+            droppen_client::tap::Event::Http {
                 dir,
                 method,
                 url,
                 status,
                 body,
             } => http(dir, method, url, status, &redacted(body)),
-            rh_client::tap::Event::Ws { socket, dir, body } => record(socket, dir, &redacted(body)),
+            droppen_client::tap::Event::Ws { socket, dir, body } => record(socket, dir, &redacted(body)),
         }
     }
 }
 
-/// Route `rh-client`'s capture here (once per process; again is a no-op).
+/// Route `droppen-client`'s capture here (once per process; again is a no-op).
 /// Called before this computer's device role first reaches the hub, so a
-/// device session never lands in the capture file under `rh-client`'s own
+/// device session never lands in the capture file under `droppen-client`'s own
 /// default.
 pub fn install_client_tap() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
-        rh_client::tap::set(Box::new(DeviceRole));
+        droppen_client::tap::set(Box::new(DeviceRole));
     });
 }
 

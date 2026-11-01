@@ -42,7 +42,7 @@ of the repository it changes.
 | Part | Licence |
 |---|---|
 | The local program (the root crate in `server-rs/`), the desktop app (`desktop/`), the web app (`web/`) and the relay program (`droppen-relay`) | AGPL-3.0-only ([LICENSE](LICENSE)) |
-| `droppen-proto`, `rh-relay` (the library), `rh-client`, `rh-devkit`, and the plugin SDKs (`packages/plugin-sdk`, `server-rs/crates/droppen-plugin-sdk`) | MIT OR Apache-2.0 (`LICENSE-MIT` and `LICENSE-APACHE` in each) |
+| `droppen-proto`, `rh-relay` (the library), `droppen-client`, `droppen-devkit`, and the plugin SDKs (`packages/plugin-sdk`, `server-rs/crates/droppen-plugin-sdk`) | MIT OR Apache-2.0 (`LICENSE-MIT` and `LICENSE-APACHE` in each) |
 
 A change that spans both is contributed under each part's licence for the
 files in that part. Do not move code from an AGPL-3.0-only part into an

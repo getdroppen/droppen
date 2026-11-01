@@ -2,7 +2,7 @@
 //! feature): how often can a browser reach this machine directly (WebRTC,
 //! ICE hole punching, no TURN), and how much faster is that than the hub?
 //!
-//!   rh-p2p-probe [--hub https://api.droppen.app] [--page http://localhost:5180] [--room <32 hex>] [--new-room] [--results <file>]
+//!   droppen-p2p-probe [--hub https://api.droppen.app] [--page http://localhost:5180] [--room <32 hex>] [--new-room] [--results <file>]
 //!
 //! It joins a signaling room on the hub (`/v1/probe/rooms/{room}`, only
 //! there when the hub runs with `DROPPEN_HUB_P2P_PROBE=1`) and prints the page to
@@ -63,7 +63,7 @@ fn main() {
     let args = match Args::parse() {
         Ok(a) => a,
         Err(e) => {
-            eprintln!("rh-p2p-probe: {e}");
+            eprintln!("droppen-p2p-probe: {e}");
             std::process::exit(2);
         }
     };
@@ -102,7 +102,7 @@ impl Args {
                 "--new-room" => args.new_room = true,
                 "--results" => args.results = Some(it.next().ok_or("--results takes a file")?.into()),
                 "-h" | "--help" => {
-                    println!("rh-p2p-probe [--hub https://api.droppen.app] [--page http://localhost:5180] [--room <32 hex>] [--new-room] [--results <file>]");
+                    println!("droppen-p2p-probe [--hub https://api.droppen.app] [--page http://localhost:5180] [--room <32 hex>] [--new-room] [--results <file>]");
                     std::process::exit(0);
                 }
                 other => return Err(format!("unknown argument {other:?}")),
@@ -136,7 +136,7 @@ fn state_dir() -> Result<PathBuf, String> {
 fn random_hex(bytes: usize) -> String {
     let mut b = vec![0u8; bytes];
     rand::rngs::OsRng.fill_bytes(&mut b);
-    rh_devkit::hex(&b)
+    droppen_devkit::hex(&b)
 }
 
 /// The room: `--room`, else the one kept in the state directory, else a new one.
@@ -201,7 +201,7 @@ async fn run(args: Args) -> Result<(), String> {
         "{}/v1/probe/rooms/{room}?role=probe",
         args.hub.replacen("https://", "wss://", 1).replacen("http://", "ws://", 1)
     );
-    log!("rh-p2p-probe {} (pid {})", env!("CARGO_PKG_VERSION"), std::process::id());
+    log!("droppen-p2p-probe {} (pid {})", env!("CARGO_PKG_VERSION"), std::process::id());
     log!("results: {}", results.path.display());
     log!("open this page: {page}");
     println!("{page}");

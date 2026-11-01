@@ -463,7 +463,7 @@ impl Device {
         // `pairDevice`): the device asks for what it lacks (purpose 4).
         if !admin {
             if let Err(e) = self.send_host_keys(device).await {
-                eprintln!("rh-devkit: could not send {device} the hosts' keys (it asks again): {e}");
+                eprintln!("droppen-devkit: could not send {device} the hosts' keys (it asks again): {e}");
             }
         }
         Ok(())
@@ -834,7 +834,7 @@ impl Device {
             failed.extend(mail.failed.into_iter().map(|(to, why)| format!("{host}'s key epoch {epoch} to {to}: {why}")));
         }
         for why in &failed {
-            eprintln!("rh-devkit: after the rotation: {why}");
+            eprintln!("droppen-devkit: after the rotation: {why}");
         }
         Ok(Rotation3 {
             uk_epoch: fresh.map(|_| uk_epoch),
@@ -916,7 +916,7 @@ impl Device {
         let mail = self.mail_host_key(&machine.id, mk_epoch, mk).await?;
         failed.extend(mail.failed.into_iter().map(|(to, why)| format!("{}'s key epoch {mk_epoch} to {to}: {why}", machine.id)));
         for why in &failed {
-            eprintln!("rh-devkit: after adding {}: {why}", machine.id);
+            eprintln!("droppen-devkit: after adding {}: {why}", machine.id);
         }
         Ok(Enrolled3 {
             machine,
@@ -946,7 +946,7 @@ impl Device {
                 // The hub's refusal for a host's device role that never signed in (docs/hub-api/http.md, `POST /v1/mailbox`).
                 Err(e) if d.host && e.contains("gets it once it signs in as a device") => out.waiting.push(id.clone()),
                 Err(e) => {
-                    eprintln!("rh-devkit: could not mail {host}'s key epoch {epoch} to {id}: {e}");
+                    eprintln!("droppen-devkit: could not mail {host}'s key epoch {epoch} to {id}: {e}");
                     out.failed.push((id.clone(), e));
                 }
             }

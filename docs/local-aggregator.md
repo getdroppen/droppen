@@ -54,11 +54,11 @@
 | 设备会话与信箱 | 设备签挑战即可换 30 天的设备会话，不需要 bearer；`POST /v1/devices` 接受任何会话；只有完整设备能发信 | Hub | 本机不需要密码；索钥请求要放开给非管理设备 |
 | 索钥 | 完整设备只回应完整设备的索钥请求（用途 4），回的是 `UK` | `W/lib/hub/account.ts:1426-1431` | 加一个只回 `MK` 的分支 |
 | Hub 的源 | 没有 CORS；WebSocket 不查 Origin；Turnstile 只能在应用源完成；没有设 COOP | Hub | 登录只能在 droppen.app 上 |
-| 无头设备 | `rh-devkit` 已经是一个完整的 Rust 设备端：注册、设备会话、在 Hub 与中继签入、开通道、rpc、读流。钥只在内存里 | `C/rh-devkit/src/lib.rs:103-484,758-870` | 抽成库，给本机发起控制用 |
+| 无头设备 | `droppen-devkit` 已经是一个完整的 Rust 设备端：注册、设备会话、在 Hub 与中继签入、开通道、rpc、读流。钥只在内存里 | `C/droppen-devkit/src/lib.rs:103-484,758-870` | 抽成库，给本机发起控制用 |
 | SPA 的单机假设 | 全局唯一 `transport()`；`api` 单例；`feedHub`、`GlobalFeedStore` 是单例，行键 `source/id`；查询键、路由、`PaneContent` 都不含机器；换机器靠 `location.reload()` | `W/lib/transport/index.ts:18-34`、`W/api/client.ts:31`、`W/app/global-feed.tsx:25-191`、`W/app/pane-tree.ts:7-33`、`W/features/cloud/context.ts:48-72` | §6 的改造面 |
 | 已按机器取址的 | 云端副本的 IndexedDB 键 `stream/<账户>/<机器>/…`；`StatusReaders` 同时读所有机器；`MachineChannel` 可以同时开多条 | `W/lib/hub/mirror.ts:167-169`、`W/features/cloud/machine-name.tsx:215-303`、`W/lib/hub/machine.ts:246-275` | 可以直接复用 |
 | 打包 | 资产 `remote-hand-<版本>-macos-aarch64.tar.gz`；自升级是推送式上传；托管副本写死 `<数据>/bin/remote-hand-server`；示例 launchd 标签带个人前缀（`com.<名字>.remote-hand`） | `.github/workflows/release.yml`、`C/droppen-supervisor/src/selfupdate/store.rs:39`、`C/droppen-supervisor/src/selfupdate/mod.rs:183-200` | §7 |
-| 仓库与依赖方向 | 一个工作区含 `rh-hub`；没有任何开源 crate 依赖 `rh-hub`；但本地端到端脚本从源码构建 Hub；Hub 的路由表只在它的文档注释里 | `server-rs/Cargo.toml` 的工作区成员、`C/rh-devkit/scripts/` 里的本地端到端脚本 | §2.1 |
+| 仓库与依赖方向 | 一个工作区含 `rh-hub`；没有任何开源 crate 依赖 `rh-hub`；但本地端到端脚本从源码构建 Hub；Hub 的路由表只在它的文档注释里 | `server-rs/Cargo.toml` 的工作区成员、`C/droppen-devkit/scripts/` 里的本地端到端脚本 | §2.1 |
 
 ## 2. 三个程序
 
@@ -88,7 +88,7 @@
 | `web/`：本机 React 前端，**也包括**云模式（`features/cloud`、`lib/hub`、`lib/e2e`）和 `/link` | 开源 | 只有一份 SPA；droppen.app 上跑的是它的构建产物，由 Hub 托管 |
 | `droppen-relay` | 开源 | 用户能核实中继只转发密文 |
 | `droppen-proto`：帧、Noise、设备链（含 v3）、记录、票据、互通向量 | 开源 | 两边共同的协议 |
-| `rh-client`（新，由 `rh-devkit` 抽出）、`rh-devkit` | 开源 | 设备端库与测试工具 |
+| `droppen-client`（新，由 `droppen-devkit` 抽出）、`droppen-devkit` | 开源 | 设备端库与测试工具 |
 | Droppen Hub：账号、计费、存储、票据签发、管理工具 | **闭源** | 威胁模型里本来就不被信任的那一方 |
 
 **为什么闭源 Hub 不削弱保证**
@@ -303,7 +303,7 @@ DeviceV3   = id str16 | sign_key [32] | dh_key [32] | flags u8      // bit0 = ho
 - 这正是下文「把账号升级到 v3」给已有账户写下的第一条 v3 条目（一轮新的用户钥），所以新账户的链从 0 号就是 v3（`v3From = 0`），「我的设备」里没有升级这一步，`upgradePlan()` 为空。
 - 只在 Hub 收 v3 条目时建：`/v1/me` 的 `chain_v3.writable`（建账户前没有 host，门槛只看 `DROPPEN_HUB_CHAIN_V3=write`，2026-10-21 起这是 Hub 的默认值，`read`、`off` 只作显式拨下的总闸）。不收时注册停在创世这一步，页面说明是 Hub 这边的原因、请稍后再试；追加时 Hub 才回 409 `chain_v3_not_ready` 的，也一样。**不退回 v2**：新账户只有 v3 一种设计。
 - 之后的一切（注册可运行 AI 的设备、配对、恢复词、移除与轮换）都写 v3，只读 v2 的 agent 一开始就加不进来（门槛按名字拒绝它）。
-- 开发工具也一样：无头设备 `rh-devkit` 建账户用 `Device::create_genesis3`，`rh-device --sign-up` 与 `web/scripts/cloud-smoke.ts` 都从创世起建在 v3 上；之后的配对（`add_and_deliver3`，口令配对按链的版本写）、注册可运行 AI 的设备（`enroll_host3`，第一轮机器钥同批）、移除与轮换（`remove_and_rotate3`：`[RemoveDevice3, KeyEpochs]` 一批；用户钥只在被移除的设备曾持有它、或最新一轮已过时时才换，同网页）都写 v3。`rh-devkit` 的 v2 流程（`create_genesis`、`create_genesis_with_recovery`、`add_and_deliver`、`complete_enrollment`、`remove_and_rotate`）标为弃用，只留给代表此前账户的测试。
+- 开发工具也一样：无头设备 `droppen-devkit` 建账户用 `Device::create_genesis3`，`rh-device --sign-up` 与 `web/scripts/cloud-smoke.ts` 都从创世起建在 v3 上；之后的配对（`add_and_deliver3`，口令配对按链的版本写）、注册可运行 AI 的设备（`enroll_host3`，第一轮机器钥同批）、移除与轮换（`remove_and_rotate3`：`[RemoveDevice3, KeyEpochs]` 一批；用户钥只在被移除的设备曾持有它、或最新一轮已过时时才换，同网页）都写 v3。`droppen-devkit` 的 v2 流程（`create_genesis`、`create_genesis_with_recovery`、`add_and_deliver`、`complete_enrollment`、`remove_and_rotate`）标为弃用，只留给代表此前账户的测试。
 - **Hub 不再收新的 v2 创世**（每种 `DROPPEN_HUB_CHAIN_V3` 模式都一样，所以 `read`、`off` 下不建任何新账户）：`POST /v1/chain` 回 422 `chain_v2_genesis`，`CHAIN` 帧的 `chain_result` 也带这个码；它先于邮箱验证判断，v3 之前的旧页面因此能说清原因。此前用 v2 创世建的账户照旧：签入、追加 v2 条目、升级到 v3 都不受影响，本节其余部分只关乎那些账户。
 
 **已有的账户**
@@ -732,7 +732,7 @@ W 轮询到 `proved` 后检查两件事：证明成立；**并且**证明里的�
 | 后台 | 常驻：副本常温，「需要你」随时算好 | 只有页面开着时才有 |
 | 新鲜度 | 控制类 7 天（§3.4） | 同左；若是 admin，管理类 12 小时 |
 | Hub 改动 | 小 | 要开 CORS；Turnstile 在 localhost 上做不了；CSP 要放行所有中继 |
-| 代码复用 | 浏览器复用 `tunnelTransport`、`offlineTransport`、fold；Rust 复用 `rh-devkit` 的设备端 | 整套云模式搬到本机源上跑 |
+| 代码复用 | 浏览器复用 `tunnelTransport`、`offlineTransport`、fold；Rust 复用 `droppen-devkit` 的设备端 | 整套云模式搬到本机源上跑 |
 | 前端投递（`docs/web-integrity.md`） | 浏览器里没有钥；SPA 由本机二进制提供 | SPA 由本机提供 |
 | 主机被攻破 | 拿到设备钥：在被移除前能控制其它 host；不是 admin 就签不了链、拿不到 `UK` | 同一台主机上的浏览器被控：多半是 admin，能读全部历史、签链 |
 
@@ -970,10 +970,10 @@ interface AppShell {
 | `S/agent/{enroll,link,mod}.rs` | 独立进程注册；启动时起链接；只当响应方 | 注册改为库函数；运行中启停；对移除做出反应；`status`、`unenroll`；声明 `chain/3`、`policy/1` |
 | `S/agent/bridge.rs` | 所有设备都能用全部 API | 非 admin 的拒绝清单 |
 | `S/aggregator/*`（新） | — | 用同一身份做控制：`hub.rs`（设备会话、`/v1/client`、信箱）、`keys.rs`、`copies.rs`、`channels.rs`（票据、中继、Noise 发起、直连）、`gateway.rs`、`access.rs` |
-| `C/rh-client`（新） | 设备端在 `rh-devkit` 里 | 抽出来，`rh-devkit` 与本机共用 |
+| `C/droppen-client`（新） | 设备端在 `droppen-devkit` 里 | 抽出来，`droppen-devkit` 与本机共用 |
 | Hub（闭源） | 设备与机器分开；`devices.max` 只数完整设备 | 应用 v3；`devices.max`、`hosts.max`；`chain/3` 门槛；host 设备可同时以设备身份登录、领设备票据；用途 4 放开给非 admin；`retire`；拒绝已移除设备的 agent 登录（对外的部分见 `docs/hub-api/`） |
 | `docs/hub-api/`（新，开源） | 只在 Hub 的注释里 | 完整的公开 API，附 JSON Schema |
-| `C/rh-devkit/scripts/` 里的本地端到端脚本与 `cloud-dev.sh` | 从源码构建 Hub | 拉固定版本的 Hub 镜像 |
+| `C/droppen-devkit/scripts/` 里的本地端到端脚本与 `cloud-dev.sh` | 从源码构建 Hub | 拉固定版本的 Hub 镜像 |
 
 ### 6.7 渐进迁移，不破坏单机本地模式
 
@@ -1218,7 +1218,7 @@ droppen.app 网页适合随手打开；要高保障的人用本机界面或 Taur
 ### S1-4 到 S1-7 本机里的统一会话列表（SC-3 之后）
 
 - S1-4：本机安装用自己的身份控制其它设备。
-- S1-5：本机跟随每台设备的副本（`C/rh-client`、`S/aggregator/`、`copies.db`）。
+- S1-5：本机跟随每台设备的副本（`C/droppen-client`、`S/aggregator/`、`copies.db`）。
 - S1-6：web 按机器区分传输、查询、行与存储（§6.7 的 M-0、M-1）。
 - S1-7：本机列表里出现其它设备的会话（本机网关）。
 
@@ -1259,12 +1259,12 @@ droppen.app 网页适合随手打开；要高保障的人用本机界面或 Taur
 
 **S1-5 实现计划**（跟随每台设备的副本；先写计划再实现）
 
-- **先把 `rh-client` 从 `rh-devkit` 里抽出来**（只搬家，不改行为），再在它之上跟随副本。
-- **`C/rh-client` 的边界**（开源，只依赖 `droppen-proto`，不依赖 `rh-hub`）：
+- **先把 `droppen-client` 从 `droppen-devkit` 里抽出来**（只搬家，不改行为），再在它之上跟随副本。
+- **`C/droppen-client` 的边界**（开源，只依赖 `droppen-proto`，不依赖 `rh-hub`）：
   - 搬进去：`HubUrl`；设备会话（挑战 + `POST /v1/session`）；信箱的 HTTP（读、确认、发索钥）；取页（`GET /v1/streams/{stream}/pages/{hash}`）；`/v1/client` 的 `Link`（签入，按 `ch` 分发帧，把带 `ch` 的 `stream_synced`/`stream_refused` 送到对应订阅，其余控制消息给调用者，连接关闭的通知）；流读者：`SUB` → `GONE`/`CHECKPOINT`（页经 HTTP 取，按 manifest 校验）→ `RECS` → `HEAD` 才放行 → `stream_synced`。读者有两种：一次读完的，和常驻的、能从游标续订的跟随器。三种 fold（索引、状态、会话）也搬进去。HTTP 与 WebSocket 流量捕获留一个钩子，devkit 和 agent 各挂各的。
-  - 留在 devkit：注册、配对、恢复、开通道、e2e 与压力测试。devkit 改为依赖 rh-client，并把搬走的名字原样再导出，对外 API 不变。
-  - agent 的 `aggregator/hub.rs` 变薄，改调 rh-client。
-  - 以后：S2-1 把开通道（Noise 发起方、中继票据）也搬进来；桌面应用的 Rust 一侧直接用 rh-client。网页仍用 TS 版（`W/lib/hub/streams.ts`），两边以 `docs/hub-api/` 和互通向量为准。
+  - 留在 devkit：注册、配对、恢复、开通道、e2e 与压力测试。devkit 改为依赖 droppen-client，并把搬走的名字原样再导出，对外 API 不变。
+  - agent 的 `aggregator/hub.rs` 变薄，改调 droppen-client。
+  - 以后：S2-1 把开通道（Noise 发起方、中继票据）也搬进来；桌面应用的 Rust 一侧直接用 droppen-client。网页仍用 TS 版（`W/lib/hub/streams.ts`），两边以 `docs/hub-api/` 和互通向量为准。
 - **跟随谁（`S/aggregator/access.rs`）**：
   - 只跟随「接受本机控制、且本机持有其钥」的 host，也就是控制端保留下来的钥（D2：`hosts_admitting`；收窄或移除时钥先被删）。不跟随自己。
   - 每台 host 跟随三样：
@@ -1310,7 +1310,7 @@ droppen.app 网页适合随手打开；要高保障的人用本机界面或 Taur
   - agent 回滚到 v0.2.121（S1-4）：`copies.db` 留在盘上没人读；断开或被移除时，那个版本照旧整目录删。只有「收窄」不会删回滚期间那台 host 的旧副本；重新升级后的第一轮就删。
   - 发版：只发 agent，与网页、Hub 无先后。
 - **验收与测试**：
-  - rh-client：fold 的单测随代码搬家。跟随器用 `droppen-proto` 的写方造记录与签名头，覆盖四种情形：只放行签名头、`GONE` + `CHECKPOINT` 重建、从游标续订、坏记录重建。
+  - droppen-client：fold 的单测随代码搬家。跟随器用 `droppen-proto` 的写方造记录与签名头，覆盖四种情形：只放行签名头、`GONE` + `CHECKPOINT` 重建、从游标续订、坏记录重建。
   - agent：
     - `copies.db` 的权限、绑定、按 host 清除、续订；
     - 跟随计划：最新 5 个会话、轮次名字的取舍、订阅预算；
@@ -1325,8 +1325,8 @@ droppen.app 网页适合随手打开；要高保障的人用本机界面或 Taur
 - **实现时补上的**：
   - **收窄与移除时在文件层面尽力抹掉明文**：`copies.db` 开 `secure_delete`，删掉的行就地清零；删一台 host 的行之后再 `wal_checkpoint(TRUNCATE)`，WAL 里残留的旧页也一并清空。关闭聚合、断开、本机被移除时，在目录锁下把整个 `aggregator/` 改名移走（从这一刻起谁也找不到它，写入守卫一律拒绝），再在单独的线程里把每个文件（`copies.db` 及其 `-wal`、`-shm`，`keys.json`）逐个写零、同步、立即删除；服务正常停止时等它最多 5 秒；没做完的（进程中途停了，比如关闭后紧接着自升级重启）在下次启动时补做——不论聚合开着与否——每次删除之前、打开副本库时也会补做（安全评审 F7、复核 N4、M1）。SQLite 连接设了「关闭时不回写日志」，仍开着的连接不会把明文写回正在清零的文件；日志在 checkpoint 后缩回 1 MiB 以内，副本库关闭时（不在删除中）截断为空，旧帧不会跨重启留着（M2）。单测在文件字节里找被删 host 的金丝雀，去掉这几步就失败；e2e 收窄一台 host 后同样在 `copies.db` 及其 `-wal`、`-shm` 里找。**这只在文件层面成立**：碰不到 APFS 本地快照、Time Machine 与其它备份、固态盘的磨损均衡；`aggregator/` 因此打上 Time Machine 排除标记（它本就是可以从 Hub 重读的缓存），§5.5 的威胁表如实写明。以后的做法是加密擦除：每个安装一把放在钥匙串里的静态钥、每台 host 一把数据钥，删钥即抹；不在 S1-5。
   - **控制端每轮先删钥**：不再接受本机的 host，在本轮任何 Hub 请求之前就从 `keys.json` 删掉（Hub 连不上时也删），再把钥交给副本任务；副本任务自己也盯着链，收窄当场删行、停订阅。
-  - **rh-client 的接口**：`follow::Follower`（无 IO，副本任务与 Hub 的库测都用它）；`link::connect_device` 区分 Hub 的拒绝码（`denied`、`removed`、`host_devices_off`）与网络失败；`Link::silent_ms` 判断 60 秒没回音；fold 改成逐条 `apply`。
-  - **流量捕获**：本机设备角色经 rh-client 的请求与 `/v1/client` 控制消息都记成 `"src": "agent"`，设备会话 token（应答的 `token`、签入的 `session`）抹掉。
+  - **droppen-client 的接口**：`follow::Follower`（无 IO，副本任务与 Hub 的库测都用它）；`link::connect_device` 区分 Hub 的拒绝码（`denied`、`removed`、`host_devices_off`）与网络失败；`Link::silent_ms` 判断 60 秒没回音；fold 改成逐条 `apply`。
+  - **流量捕获**：本机设备角色经 droppen-client 的请求与 `/v1/client` 控制消息都记成 `"src": "agent"`，设备会话 token（应答的 `token`、签入的 `session`）抹掉。
   - **状态流**：Linux 的 `os` 另带 `distro`（`os-release` 的 `ID`）。网页当时不读新字段，仍用 `settings.platform`、`settings.serverVersion`；后来 droppen.app 也读了（#108）：`StatusState` 带 `os`、`agentVersion`，设备详情的「系统」与 agent 版本与本机页面的目录同样写法（`macOS 15.3.1 aarch64`、`ubuntu 24.04 x86_64`，`W/features/machines/device-facts.ts` 的 `systemLabel`），旧 agent 没有这两项时仍退回 `settings.platform`、`settings.serverVersion`。
 - **安全评审之后（S1-5，2026-10-19）**：
   - **F1 恶意 Hub 撑爆内存**：`CHECKPOINT` 一到就验 manifest 的机器签名，验不过不取任何一页；每页取到就对 manifest 验哈希，不等全部取完；取页的应答体超过 `MAX_PAGE_LEN` 即拒（先看 `Content-Length`，再边读边数）；会话副本取页累计超过 8 MiB 即记为「太大」。单测：伪造的 checkpoint、超长的页（有长度与无长度两种）。

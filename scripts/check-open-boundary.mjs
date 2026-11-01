@@ -83,7 +83,7 @@ export const ALLOWED = [
   // documented run interface (docs/hub-api/running-the-hub-image.md),
   // under the names before the rename too.
   {
-    file: "server-rs/crates/rh-devkit/scripts/cloud-dev.sh",
+    file: "server-rs/crates/droppen-devkit/scripts/cloud-dev.sh",
     allow: [
       "DROPPEN_HUB_REDIS_URL", "DROPPEN_HUB_BUCKET_DIR", "DROPPEN_HUB_BIND", "DROPPEN_HUB_ORIGIN", "DROPPEN_HUB_SESSION_KEY",
       "DROPPEN_HUB_WEB_DIR", "DROPPEN_HUB_CHAIN_V3", "RH_HUB_CHAIN_V3", "DROPPEN_HUB_SIGNUP", "DROPPEN_HUB_DEV_OPEN_SIGNUP",

@@ -24,7 +24,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use rh_client::streams::IndexCopy;
+use droppen_client::streams::IndexCopy;
 use droppen_proto::record::StreamId;
 
 use super::store::Kind;

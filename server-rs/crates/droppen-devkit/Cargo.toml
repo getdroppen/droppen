@@ -1,17 +1,17 @@
 [package]
-name = "rh-devkit"
+name = "droppen-devkit"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 publish = false
-description = "A headless remote-hand device for tests: signs up at a hub, keeps a device chain, enrolls machines and opens end-to-end channels"
+description = "A headless Droppen device for tests: signs up at a hub, keeps a device chain, enrolls machines and opens end-to-end channels"
 
-# The direct-path measurement probe (`src/bin/rh-p2p-probe.rs`): a WebRTC
+# The direct-path measurement probe (`src/bin/droppen-p2p-probe.rs`): a WebRTC
 # DataChannel peer for `web/dev/p2p-probe.html`. Behind a feature so the
 # hub's tests, which link this crate, never build a WebRTC stack.
 [[bin]]
-name = "rh-p2p-probe"
-path = "src/bin/rh-p2p-probe.rs"
+name = "droppen-p2p-probe"
+path = "src/bin/droppen-p2p-probe.rs"
 required-features = ["p2p-probe"]
 
 [features]
@@ -25,7 +25,7 @@ direct = ["droppen-proto/rtc"]
 droppen-proto = { path = "../droppen-proto", features = ["runtime"] }
 # What a device does at a hub, shared with the local install: sign-in, the
 # /v1/client link, reading streams. Re-exported under its old names here.
-rh-client = { path = "../rh-client" }
+droppen-client = { path = "../droppen-client" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time", "process", "io-util", "fs", "signal"] }
 tokio-tungstenite = { version = "0.29", features = ["rustls-tls-webpki-roots"] }
 futures-util = "0.3"

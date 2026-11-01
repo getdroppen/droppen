@@ -11,9 +11,9 @@ description = "The Droppen server's base helpers: the clock, text codecs, privat
 [dependencies]
 chrono = "0.4"
 # `text::hex`: lower-case, the spelling of every binary field in the hub's
-# control messages. A test in the server holds it to `rh_client::hex`, so
+# control messages. A test in the server holds it to `droppen_client::hex`, so
 # the server and the wire keep spelling hex the same; this crate does not
-# depend on rh-client, a crate of the layer above.
+# depend on droppen-client, a crate of the layer above.
 hex = "0.4"
 libc = "0.2"
 # `watch`: the platform's filesystem events (FSEvents, inotify), debounced.

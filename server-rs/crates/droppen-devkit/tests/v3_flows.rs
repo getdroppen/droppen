@@ -16,7 +16,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use rh_devkit::{hex, unhex, Device, HubUrl};
+use droppen_devkit::{hex, unhex, Device, HubUrl};
 use droppen_proto::chain::{Accept, Action, ChainClock, ChainState, Entry, VERSION, VERSION_3};
 use droppen_proto::identity::{EnrollCode, MachineIdentity};
 use droppen_proto::keys::DhKeypair;
@@ -371,7 +371,7 @@ async fn a_v3_account_pairs_enrolls_and_removes_as_the_web_does() {
     let agent = MachineIdentity::from_seed(&[4; 32]);
     let code = a.new_enrollment().await.unwrap();
     prove(&hub, &code, &a.account, "m-1", &agent);
-    let mk0 = rh_devkit::random_key();
+    let mk0 = droppen_devkit::random_key();
     a.complete_enrollment_v3(&code, false, &mk0, SECS).await.unwrap();
     a.wrap_machine_key("m-1", 0, &mk0).await.unwrap();
     a.mail_machine_key("m-1", 0, &mk0).await.unwrap();
@@ -539,7 +539,7 @@ async fn pair(url: &HubUrl, a: &mut Device, admin: bool) -> Device {
 }
 
 /// Enroll host `id` as the web does, with its first key `mk`.
-async fn enroll(hub: &Shared, a: &mut Device, id: &str, seed: u8, mk: &[u8; 32]) -> rh_devkit::keys::Enrolled3 {
+async fn enroll(hub: &Shared, a: &mut Device, id: &str, seed: u8, mk: &[u8; 32]) -> droppen_devkit::keys::Enrolled3 {
     let code = a.new_enrollment().await.unwrap();
     prove(hub, &code, &a.account, id, &MachineIdentity::from_seed(&[seed; 32]));
     let enrolled = a.enroll_host3(&code, mk, SECS).await.unwrap();
@@ -563,7 +563,7 @@ async fn removals_and_enrollments_turn_over_what_the_web_turns_over() {
     let (url, hub) = start_hub("a-turns").await;
     let mut a = Device::sign_up(&url, "invite", EMAIL, PASSWORD).await.unwrap();
     a.create_genesis3(false).await.unwrap();
-    let mks: Vec<[u8; 32]> = (0..3).map(|_| rh_devkit::random_key()).collect();
+    let mks: Vec<[u8; 32]> = (0..3).map(|_| droppen_devkit::random_key()).collect();
     enroll(&hub, &mut a, "m-1", 11, &mks[0]).await;
     assert_eq!(last_batch(&hub), ["AddDevice3", "KeyEpochs"]);
     assert_eq!(last_commits(&hub), (None, vec![("m-1".into(), 0)]));
@@ -611,7 +611,7 @@ async fn removals_and_enrollments_turn_over_what_the_web_turns_over() {
     })
     .await
     .unwrap();
-    assert!(rh_devkit::keys::user_key_stale(a.chain().unwrap()));
+    assert!(droppen_devkit::keys::user_key_stale(a.chain().unwrap()));
     assert_eq!(a.usable_user_key().unwrap(), None);
     // It held the user key: it is not removed with the hosts' keys alone.
     assert!(a.remove3_and_rotate_hosts(&d.id).await.is_err());
@@ -622,7 +622,7 @@ async fn removals_and_enrollments_turn_over_what_the_web_turns_over() {
     assert_eq!(last_batch(&hub), ["RemoveDevice3", "KeyEpochs"]);
     assert_eq!(last_commits(&hub), (Some(2), vec![("m-1".into(), 4)]));
     assert_eq!(r.uk_epoch, Some(2));
-    assert!(!rh_devkit::keys::user_key_stale(a.chain().unwrap()));
+    assert!(!droppen_devkit::keys::user_key_stale(a.chain().unwrap()));
     assert!(mail_for(&hub, &d.id, wrap::MAIL_USER_KEY).is_empty(), "the demoted device gets no new user key");
 
     // Another admin demoted: a host enrolled now carries a new user key in
@@ -638,7 +638,7 @@ async fn removals_and_enrollments_turn_over_what_the_web_turns_over() {
     assert_eq!(last_batch(&hub), ["AddDevice3", "KeyEpochs"]);
     assert_eq!(last_commits(&hub), (Some(3), vec![("m-3".into(), 0)]));
     assert_eq!(enrolled.uk_epoch, Some(3));
-    assert!(!rh_devkit::keys::user_key_stale(a.chain().unwrap()));
+    assert!(!droppen_devkit::keys::user_key_stale(a.chain().unwrap()));
     assert_eq!(a.usable_user_key().unwrap(), Some(3));
 
     // A limited device removed with the hosts' keys: every current host,

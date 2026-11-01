@@ -458,7 +458,7 @@ Only when the hub runs the direct-path measurement probe; otherwise 404.
 60 upgrades a minute per address, like the other sockets. Text
 messages ≤ 8 KiB from a page go to the room's probe, the probe's to every
 page; on each join or leave every member gets `{"hub": "peers", "probes": n,
-"pages": m}`. The messages themselves are the probe's own (`rh-p2p-probe`),
+"pages": m}`. The messages themselves are the probe's own (`droppen-p2p-probe`),
 relayed unread; they are not part of this API.
 
 ## Signed in: `session` (a login or a device session)

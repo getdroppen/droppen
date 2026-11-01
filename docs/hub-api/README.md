@@ -2,8 +2,8 @@
 
 This is the contract between the **open** clients — the local server and its
 agent (`server-rs`), the web app (`web/`, which droppen.app also serves, at `my.droppen.app`),
-`droppen-relay` (`server-rs/crates/rh-relay`), `droppen-proto`, `rh-client` (the
-device side, in Rust) and `rh-devkit` —
+`droppen-relay` (`server-rs/crates/rh-relay`), `droppen-proto`, `droppen-client` (the
+device side, in Rust) and `droppen-devkit` —
 and the **closed** Droppen Hub (a separate, private repository). Open code may rely
 on what is written here and on nothing else of the hub: not its source, its
 tables, its environment or behaviour this folder does not describe
@@ -361,7 +361,7 @@ node docs/hub-api/check.mjs --traffic /tmp/traffic.jsonl
 
 It scans the open clients (`web/src/lib/hub`, `web/src/lib/e2e`,
 `web/src/features/cloud`, `server-rs/crates/droppen-agent`, `server-rs/crates/droppen-aggregator`,
-`rh-relay`, `rh-client`, `rh-devkit`, `droppen-proto`'s `wire`) for
+`rh-relay`, `droppen-client`, `droppen-devkit`, `droppen-proto`'s `wire`) for
 `/v1/…` paths in string literals (format strings and template literals
 included, their placeholders read as path parameters) and for control
 message types — `{t: "x"}` and `json!({"t": "x"})` sent, `.t === "x"`,
@@ -377,10 +377,10 @@ routes and messages, and that the schemas only use the keywords its small
 validator implements. A short, commented ignore list in the script holds the
 few things that look like hub API and are not.
 
-**Traffic.** With `DROPPEN_HUB_API_TRAFFIC=<file>` set, `rh-client` (its HTTP
+**Traffic.** With `DROPPEN_HUB_API_TRAFFIC=<file>` set, `droppen-client` (its HTTP
 helpers and `/v1/client` / `/v1/connect` sockets, `"src": "client"`),
-`rh-devkit` (the echo agent), the agent (`/v1/agent`, its relay connections,
-and its device role through `rh-client`, with device session tokens
+`droppen-devkit` (the echo agent), the agent (`/v1/agent`, its relay connections,
+and its device role through `droppen-client`, with device session tokens
 redacted) and `droppen-relay` (its link to the hub) append every JSON body
 they exchange with the hub or a relay to that file, one line each:
 

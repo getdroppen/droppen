@@ -11,15 +11,15 @@
 //!   agent's own machine key, purpose 2), `DELETE /v1/mailbox/{id}`, and a
 //!   key request (purpose 4, no secret) to an admin.
 //!
-//! The wire is `rh-client`'s, shared with the test device; this module says
+//! The wire is `droppen-client`'s, shared with the test device; this module says
 //! what its answers mean to the controller ([`HubError`]).
 //!
 //! Nothing secret is logged: not the session token, not a sealed key.
 
 use std::time::Duration;
 
-use rh_client::http::HttpError;
-use rh_client::HubUrl;
+use droppen_client::http::HttpError;
+use droppen_client::HubUrl;
 use droppen_proto::identity::MachineIdentity;
 use droppen_proto::wire::client::MailboxPost;
 use serde_json::Value;
@@ -160,7 +160,7 @@ impl DeviceClient {
 
     async fn send(&self, method: reqwest::Method, path: &str, token: Option<&str>, body: Option<&Value>) -> Result<(u16, Value), HubError> {
         let url = format!("{}{path}", self.hub.http);
-        let (status, value) = rh_client::http::request(&self.http, method, &url, token, body)
+        let (status, value) = droppen_client::http::request(&self.http, method, &url, token, body)
             .await
             .map_err(unreachable)?;
         Ok((status.as_u16(), value))
@@ -185,7 +185,7 @@ impl DeviceClient {
     /// Mint a device session: the hub's challenge, signed by the machine key
     /// as a device session (`HubLogin {role: DeviceSession}`).
     pub async fn sign_in(&mut self, identity: &MachineIdentity, now_ms: u64) -> Result<(), HubError> {
-        let minted = rh_client::session::mint(&self.http, &self.hub, &self.account, &self.device, identity.signing_key(), now_ms)
+        let minted = droppen_client::session::mint(&self.http, &self.hub, &self.account, &self.device, identity.signing_key(), now_ms)
             .await
             .map_err(|e| match e {
                 HttpError::Status { status, body, .. } => Self::judge(status.as_u16(), &body)
@@ -225,7 +225,7 @@ impl DeviceClient {
                     sender: m["sender"].as_str()?.to_string(),
                     purpose: u8::try_from(m["purpose"].as_u64()?).ok()?,
                     epoch: u32::try_from(m["epoch"].as_u64()?).ok()?,
-                    sealed: rh_client::unhex(m["sealed"].as_str()?).ok()?,
+                    sealed: droppen_client::unhex(m["sealed"].as_str()?).ok()?,
                 })
             })
             .collect())

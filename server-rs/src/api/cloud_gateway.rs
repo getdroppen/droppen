@@ -99,7 +99,7 @@ async fn the_gateway_serves_only_the_local_accounts_that_may_see_other_devices()
     live.set_hosts(&["m-2".into()]);
     let dir = next(&mut a).await;
     assert_eq!(dir["machines"][0]["id"], "m-2");
-    let mut index = rh_client::streams::IndexCopy::default();
+    let mut index = droppen_client::streams::IndexCopy::default();
     index
         .rows
         .insert("claude/q".into(), json!({"source": "claude", "id": "q", "asking": true}));

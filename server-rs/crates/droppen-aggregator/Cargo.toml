@@ -23,7 +23,7 @@ rand = "0.8"
 # (native-tls/OpenSSL) so the binary keeps linking nothing but rustls; the
 # features are the server's, so it builds one reqwest.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "http2", "charset", "json"] }
-rh-client = { path = "../rh-client" }
+droppen-client = { path = "../droppen-client" }
 droppen-proto = { path = "../droppen-proto" }
 # The verified copies' store. `bundled` compiles SQLite itself rather than
 # linking the platform's.

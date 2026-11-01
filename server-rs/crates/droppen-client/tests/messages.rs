@@ -7,9 +7,9 @@ use std::time::Duration;
 
 use ed25519_dalek::SigningKey;
 use futures_util::{SinkExt, StreamExt};
-use rh_client::link::Link;
-use rh_client::streams::Pages;
-use rh_client::{hex, HubUrl};
+use droppen_client::link::Link;
+use droppen_client::streams::Pages;
+use droppen_client::{hex, HubUrl};
 use droppen_proto::record::StreamId;
 use serde_json::{json, Value};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -61,7 +61,7 @@ async fn a_device_signs_in_on_the_hub_in_the_documented_shape() {
     let (origin, served) = sign_in_server().await;
     let hub = HubUrl::parse(&origin).unwrap();
     let key = SigningKey::from_bytes(&[3; 32]);
-    let link = rh_client::link::connect_device(&hub, "a-1", "d-1", &key, "sess-1").await.unwrap();
+    let link = droppen_client::link::connect_device(&hub, "a-1", "d-1", &key, "sess-1").await.unwrap();
     drop(link);
     let login = tokio::time::timeout(Duration::from_secs(5), served).await.unwrap().unwrap();
     assert_eq!(
@@ -74,7 +74,7 @@ async fn a_device_signs_in_on_the_hub_in_the_documented_shape() {
 async fn a_device_signs_in_on_a_relay_in_the_documented_shape() {
     let (origin, served) = sign_in_server().await;
     let key = SigningKey::from_bytes(&[3; 32]);
-    let link = rh_client::link::connect_relay(&origin, "a-1", "d-1", &key, "ticket-1").await.unwrap();
+    let link = droppen_client::link::connect_relay(&origin, "a-1", "d-1", &key, "ticket-1").await.unwrap();
     drop(link);
     let login = tokio::time::timeout(Duration::from_secs(5), served).await.unwrap().unwrap();
     assert_eq!(
@@ -98,7 +98,7 @@ async fn a_stream_read_ends_with_stream_unsub() {
         hub: &hub,
         token: "tok",
     };
-    let read = rh_client::streams::read_stream(&link, pages, [7; 32], &[], StreamId([9; 32]), Duration::from_millis(50)).await;
+    let read = droppen_client::streams::read_stream(&link, pages, [7; 32], &[], StreamId([9; 32]), Duration::from_millis(50)).await;
     assert!(read.is_err(), "nothing came");
     let unsub = loop {
         match tokio::time::timeout(Duration::from_secs(5), texts.recv()).await.unwrap().unwrap() {
@@ -151,7 +151,7 @@ async fn a_device_session_is_asked_for_in_the_documented_shape() {
     let (origin, served) = http_server(vec![json!({"nonce": hex(&NONCE)}), json!({"token": "tok", "expires_ms": 9})]).await;
     let hub = HubUrl::parse(&origin).unwrap();
     let key = SigningKey::from_bytes(&[3; 32]);
-    let minted = rh_client::session::mint(&reqwest::Client::new(), &hub, "a-1", "d-1", &key, 1_000).await.unwrap();
+    let minted = droppen_client::session::mint(&reqwest::Client::new(), &hub, "a-1", "d-1", &key, 1_000).await.unwrap();
     assert_eq!(minted.expires_ms, Some(9));
     let got = served.await.unwrap();
     assert_eq!(got[0], ("POST /v1/session/challenge".to_string(), json!({"account": "a-1", "device": "d-1"})));

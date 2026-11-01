@@ -49,7 +49,7 @@ impl RelayProc {
             .into_iter()
             // The hub-API capture (`docs/hub-api/check.mjs --traffic`), when this harness has it on.
             .chain(
-                rh_client::tap::traffic_path().map(|path| ("DROPPEN_HUB_API_TRAFFIC".to_string(), path.display().to_string())),
+                droppen_client::tap::traffic_path().map(|path| ("DROPPEN_HUB_API_TRAFFIC".to_string(), path.display().to_string())),
             )
             .collect(),
             proc: None,

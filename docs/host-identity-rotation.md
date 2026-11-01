@@ -681,7 +681,7 @@ v2 没有这个动作。还在 v2 的账户照旧提示重新注册，先升级�
   - 流头：心跳在几分钟内补上新钥签的（`HEARTBEAT_EVERY`）。
   - manifest：提升之后，agent 给它们各重签一遍，只重发 manifest，页不变（`CHECKPOINT`）。否则新读者读不出这些流。
 
-**读的一方**（TS 的 `HubCopySource`、`MachineMirror`、`LogReader`；Rust 的 `rh-client` `follow::Follower`）
+**读的一方**（TS 的 `HubCopySource`、`MachineMirror`、`LogReader`；Rust 的 `droppen-client` `follow::Follower`）
 
 - **从网络上来的**流头与 manifest，只按读者自己的链上这台 host **当前**的签名钥验。
   - 验不过时先同步一次链再试：对方可能已经先换了钥。
@@ -747,7 +747,7 @@ v2 没有这个动作。还在 v2 的账户照旧提示重新注册，先升级�
 
 **发版顺序**
 
-1. 先发**能读**的 Hub、`droppen-proto`、agent（含 `rh-client`）与网页。
+1. 先发**能读**的 Hub、`droppen-proto`、agent（含 `droppen-client`）与网页。
 2. 门槛要等每台 host 都升上来才会满足。
 3. 再发**会写**的网页（R4）。
 

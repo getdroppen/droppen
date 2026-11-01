@@ -1241,6 +1241,7 @@ dependencies = [
  "base64 0.22.1",
  "droppen-aggregator",
  "droppen-base",
+ "droppen-client",
  "droppen-http",
  "droppen-instance",
  "droppen-proto",
@@ -1249,7 +1250,6 @@ dependencies = [
  "rand 0.8.7",
  "regex",
  "reqwest",
- "rh-client",
  "rusqlite",
  "serde",
  "serde_json",
@@ -1269,6 +1269,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "droppen-base",
+ "droppen-client",
  "droppen-instance",
  "droppen-proto",
  "ed25519-dalek",
@@ -1278,7 +1279,6 @@ dependencies = [
  "libc",
  "rand 0.8.7",
  "reqwest",
- "rh-client",
  "rusqlite",
  "serde",
  "serde_json",
@@ -1336,6 +1336,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "droppen-client"
+version = "0.1.0"
+dependencies = [
+ "droppen-proto",
+ "ed25519-dalek",
+ "futures-util",
+ "hex",
+ "rand 0.8.7",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-tungstenite",
+ "zeroize",
+]
+
+[[package]]
 name = "droppen-cloud"
 version = "0.1.0"
 dependencies = [
@@ -1344,6 +1361,7 @@ dependencies = [
  "droppen-aggregator",
  "droppen-auth",
  "droppen-base",
+ "droppen-client",
  "droppen-http",
  "droppen-instance",
  "droppen-proto",
@@ -1352,7 +1370,6 @@ dependencies = [
  "gotcha_core",
  "rand 0.8.7",
  "reqwest",
- "rh-client",
  "serde",
  "serde_json",
  "subtle",
@@ -1360,6 +1377,28 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "zeroize",
+]
+
+[[package]]
+name = "droppen-devkit"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "base64 0.22.1",
+ "droppen-client",
+ "droppen-proto",
+ "ed25519-dalek",
+ "futures-util",
+ "rand 0.8.7",
+ "reqwest",
+ "ring",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "str0m",
+ "tokio",
+ "tokio-tungstenite",
  "zeroize",
 ]
 
@@ -3526,6 +3565,7 @@ dependencies = [
  "droppen-aggregator",
  "droppen-auth",
  "droppen-base",
+ "droppen-client",
  "droppen-cloud",
  "droppen-drive",
  "droppen-files",
@@ -3556,7 +3596,6 @@ dependencies = [
  "rand 0.8.7",
  "regex",
  "reqwest",
- "rh-client",
  "rusqlite",
  "rust-embed",
  "serde",
@@ -3633,45 +3672,6 @@ checksum = "f8dd2a808d456c4a54e300a23e9f5a67e122c3024119acbfd73e3bf664491cb2"
 dependencies = [
  "hmac",
  "subtle",
-]
-
-[[package]]
-name = "rh-client"
-version = "0.1.0"
-dependencies = [
- "droppen-proto",
- "ed25519-dalek",
- "futures-util",
- "hex",
- "rand 0.8.7",
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
- "tokio-tungstenite",
- "zeroize",
-]
-
-[[package]]
-name = "rh-devkit"
-version = "0.1.0"
-dependencies = [
- "axum",
- "base64 0.22.1",
- "droppen-proto",
- "ed25519-dalek",
- "futures-util",
- "rand 0.8.7",
- "reqwest",
- "rh-client",
- "ring",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "str0m",
- "tokio",
- "tokio-tungstenite",
- "zeroize",
 ]
 
 [[package]]

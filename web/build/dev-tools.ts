@@ -5,7 +5,7 @@ import type { Plugin } from "vite";
 /**
  * Developer tools that `vite dev` serves and no build ever contains: the
  * direct-path measurement page (`web/dev/p2p-probe.html` and its script), the
- * browser end of `rh-p2p-probe` (server-rs/crates/rh-devkit). It used to sit
+ * browser end of `droppen-p2p-probe` (server-rs/crates/droppen-devkit). It used to sit
  * in `public/` and so shipped in every build, droppen.app's included: a page
  * of the app's origin that is not the app. Here it is reached at
  * `<dev server>/p2p-probe.html#<room>`, its signaling room proxied to the hub

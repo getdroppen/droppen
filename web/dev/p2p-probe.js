@@ -1,7 +1,7 @@
 /* 直连探测页的脚本（p2p-probe.html）。测量工具，不是产品功能。
  *
  * 流程：从网址 # 取房间号 → 连 hub 的信令房间（/v1/probe/rooms/<room>?role=page，
- * 只在 hub 开了 DROPPEN_HUB_P2P_PROBE=1 时存在）→ 和电脑上的 rh-p2p-probe 交换
+ * 只在 hub 开了 DROPPEN_HUB_P2P_PROBE=1 时存在）→ 和电脑上的 droppen-p2p-probe 交换
  * offer/answer/候选（trickle ICE，STUN 用 Cloudflare 和 Google，不用 TURN）→
  * 直连 DataChannel 和 hub 路径各 ping 200 次（交替进行，网络起伏对两边公平）→
  * 把结果发回探针（优先走 DataChannel，不通就走房间），探针写进 results.jsonl。
@@ -393,12 +393,12 @@
     if (!room.probes) {
       status("电脑上的探针不在线，等 10 秒…");
       for (var i = 0; i < 100 && !room.probes; i++) await sleep(100);
-      if (!room.probes) throw new Error("电脑上的探针不在线（rh-p2p-probe 没在跑？）");
+      if (!room.probes) throw new Error("电脑上的探针不在线（droppen-p2p-probe 没在跑？）");
     }
     room.send({ t: "hello", label: label });
     var hello = await room.waitFor("hello", 5000);
     if (!hello) throw new Error("探针没有回应");
-    set("v-probe", "在线（rh-p2p-probe " + hello.probe + "）");
+    set("v-probe", "在线（droppen-p2p-probe " + hello.probe + "）");
 
     /* ICE: trickle both ways. */
     status("建立直连…");
@@ -630,7 +630,7 @@
   });
 
   if (!roomId) {
-    status("网址里缺少房间号：请打开 rh-p2p-probe 打印的完整链接（# 后面 32 位）");
+    status("网址里缺少房间号：请打开 droppen-p2p-probe 打印的完整链接（# 后面 32 位）");
   } else {
     set("room-tag", "房间 " + roomId.slice(0, 6) + "…");
   }

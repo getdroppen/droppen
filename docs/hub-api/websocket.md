@@ -2,7 +2,7 @@
 
 | path | served by | who connects | carries |
 |---|---|---|---|
-| `/v1/client` | the hub | a device (the web app, `rh-client`: the test device and the local install's device role) | control text, droppen-proto frames |
+| `/v1/client` | the hub | a device (the web app, `droppen-client`: the test device and the local install's device role) | control text, droppen-proto frames |
 | `/v1/agent` | the hub | a machine's agent | control text, droppen-proto frames |
 | `/v1/relay` | the hub | a relay (`droppen-relay`) | control text only |
 | `/v1/connect` | a relay | a device or an agent, with a ticket | control text, a subset of the frames |

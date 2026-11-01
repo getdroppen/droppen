@@ -552,7 +552,7 @@ mod tests {
             key: DhKeypair::from_secret(*f.machine.1.secret()),
         });
         // The hub channel's handshake, as `link` does it.
-        let (initiator, hello) = handshake::start(&chain, &f.devices[0].1, "dev-0", "m-1", now_ms(), b"rh-devkit paths/1").unwrap();
+        let (initiator, hello) = handshake::start(&chain, &f.devices[0].1, "dev-0", "m-1", now_ms(), b"droppen-devkit paths/1").unwrap();
         let (reply, agent_t) = {
             let mut st = admit.state.lock().unwrap();
             let (c, clock, guard, attestations) = &mut *st;
@@ -663,7 +663,7 @@ mod tests {
                 key: &key,
                 binding: binding(&w.chain),
                 relay_hash: w.relay_hash,
-                client: b"rh-devkit paths/1",
+                client: b"droppen-devkit paths/1",
                 opts,
                 timeout,
             },

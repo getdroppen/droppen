@@ -57,7 +57,7 @@
           ]
         },
         {
-          "name": "rh-client",
+          "name": "droppen-client",
           "about": "A device's side of the hub API.",
           "mayUse": []
         }
@@ -251,7 +251,7 @@
     "crates": [
       "rh-relay",
       "droppen-relay",
-      "rh-devkit"
+      "droppen-devkit"
     ]
   },
   "forbidden": [
@@ -320,10 +320,10 @@
       "crate": "tokio-tungstenite",
       "why": "A websocket outside the routes axum serves is the link's: the hub and relay client, the agent's sockets to the hub, the relays and this server, the relay itself and the developer kit. Tests use it as a client as they like.",
       "wrappers": [
-        "rh-client",
+        "droppen-client",
         "droppen-agent",
         "rh-relay",
-        "rh-devkit"
+        "droppen-devkit"
       ]
     }
   ]

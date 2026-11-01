@@ -610,7 +610,7 @@ mod tests {
     async fn a_session_the_index_does_not_name_is_missing_and_not_followed() {
         let live = LiveCopies::new();
         live.set_hosts(&["m-2".into()]);
-        let mut index = rh_client::streams::IndexCopy::default();
+        let mut index = droppen_client::streams::IndexCopy::default();
         index.rows.insert("claude/q".into(), json!({"source": "claude", "id": "q"}));
         let slot = droppen_aggregator::live::index_slot(index, 1, 1);
         live.publish(&Key::new("m-2", Kind::Index, ""), 0, &slot);

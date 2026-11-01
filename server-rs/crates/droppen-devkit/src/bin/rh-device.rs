@@ -44,7 +44,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use rh_devkit::{rpc, Device, HubUrl, Link};
+use droppen_devkit::{rpc, Device, HubUrl, Link};
 use droppen_proto::pairing::Offer;
 use droppen_proto::stream::status_stream;
 use serde_json::json;
@@ -99,7 +99,7 @@ impl Session {
             ["code"] => {
                 let code = format!(
                     "{:08}",
-                    u32::from_le_bytes(rh_devkit::random_key()[..4].try_into().expect("4")) % 100_000_000
+                    u32::from_le_bytes(droppen_devkit::random_key()[..4].try_into().expect("4")) % 100_000_000
                 );
                 println!("CODE {code} DEVICE {}", self.device.id);
                 let n = self.device.pair_by_code(&code, Duration::from_secs(600)).await?;
@@ -151,7 +151,7 @@ impl Session {
                 // admin (review D1); the key goes into the keyring (`enroll_host3`)
                 // and to the agent's mailbox, as the web's "add a computer"
                 // hands it over when the agent is not reachable in a channel yet.
-                let mk = rh_devkit::random_key();
+                let mk = droppen_devkit::random_key();
                 let enrolled = self.enroll_v3(&code, &mk).await?;
                 let (id, epoch) = (enrolled.machine.id.clone(), enrolled.mk_epoch);
                 self.device.mail_machine_key(&id, epoch, &mk).await?;
@@ -185,7 +185,7 @@ impl Session {
                                 &channel,
                                 "POST",
                                 "/rh/machine-key",
-                                Some(&json!({"epoch": epoch, "key": rh_devkit::hex(&mk), "reencrypt": true})),
+                                Some(&json!({"epoch": epoch, "key": droppen_devkit::hex(&mk), "reencrypt": true})),
                             )
                             .await?;
                             delivered.push(format!("{machine}: MK epoch {epoch} in a channel ({})", r.status));
@@ -253,11 +253,11 @@ impl Session {
                 // `GET /v1/chain` returns, for a test proxy to serve.
                 self.device.sync_chain().await?;
                 let chain = self.device.chain().ok_or("no chain")?;
-                let hub_ak = ed25519_dalek::SigningKey::from_bytes(&rh_devkit::random_key());
+                let hub_ak = ed25519_dalek::SigningKey::from_bytes(&droppen_devkit::random_key());
                 let (id, sign_key, dh_key) = (
                     "d-hubforged0000000".to_string(),
-                    ed25519_dalek::SigningKey::from_bytes(&rh_devkit::random_key()).verifying_key().to_bytes(),
-                    droppen_proto::keys::DhKeypair::from_secret(rh_devkit::random_key()).public(),
+                    ed25519_dalek::SigningKey::from_bytes(&droppen_devkit::random_key()).verifying_key().to_bytes(),
+                    droppen_proto::keys::DhKeypair::from_secret(droppen_devkit::random_key()).public(),
                 );
                 // The genesis in the account's own version: a v3 one names the
                 // hub's device the first admin, a v2 one a full device.
@@ -272,7 +272,7 @@ impl Session {
                             flags: droppen_proto::chain::Flags { host: false, admin: true },
                         },
                         *recovery_key,
-                        rh_devkit::now_ms(),
+                        droppen_devkit::now_ms(),
                     ),
                     droppen_proto::chain::Action::Genesis { recovery_key, .. } => droppen_proto::chain::genesis_draft(
                         chain.account(),
@@ -284,12 +284,12 @@ impl Session {
                             full: true,
                         },
                         *recovery_key,
-                        rh_devkit::now_ms(),
+                        droppen_devkit::now_ms(),
                     ),
                     _ => return Err("no genesis".into()),
                 };
                 let genesis = draft.sign(&hub_ak);
-                println!("FORGED {}", json!({"entries": [rh_devkit::hex(&genesis.encode())], "seq": 0}));
+                println!("FORGED {}", json!({"entries": [droppen_devkit::hex(&genesis.encode())], "seq": 0}));
                 Ok("a forged chain (it does not verify: the copied proof is over the real root)".into())
             }
             ["status"] => {
@@ -316,7 +316,7 @@ impl Session {
     /// [`Device::enroll_host3`], tried again for a minute when the hub
     /// answers 409 `chain_v3_not_ready` (the agent that just proved the code
     /// has not declared `chain/3` on its link yet), as the web does.
-    async fn enroll_v3(&mut self, code: &droppen_proto::identity::EnrollCode, mk: &[u8; 32]) -> Result<rh_devkit::keys::Enrolled3> {
+    async fn enroll_v3(&mut self, code: &droppen_proto::identity::EnrollCode, mk: &[u8; 32]) -> Result<droppen_devkit::keys::Enrolled3> {
         let mut deadline = None;
         let mut timeout = Duration::from_secs(600);
         loop {

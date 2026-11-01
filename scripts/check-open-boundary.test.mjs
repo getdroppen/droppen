@@ -75,7 +75,7 @@ describe("sources", () => {
       'let mut p = PathBuf::from(root); p.push("rh-hub-tools");',
     ];
     for (const src of forms) {
-      const found = sourceProblems(src, "rs", "server-rs/crates/rh-devkit/src/a.rs");
+      const found = sourceProblems(src, "rs", "server-rs/crates/droppen-devkit/src/a.rs");
       assert.equal(found.length, 1, src);
       assert.match(found[0], /a path into the hub's source/, src);
     }
@@ -86,7 +86,7 @@ describe("sources", () => {
     }
     // a file or a binary named after it is not a path into it
     for (const src of ['let bin = "target/debug/rh-hub-stress";', '#[path = "bin/rh-hub-stress.rs"]\nmod stress;', 'let s = "rh-hub-web";']) {
-      assert.deepEqual(sourceProblems(src, "rs", "server-rs/crates/rh-devkit/src/a.rs"), [], src);
+      assert.deepEqual(sourceProblems(src, "rs", "server-rs/crates/droppen-devkit/src/a.rs"), [], src);
     }
     // nor is the documented route of which hosts a hub serves
     assert.deepEqual(sourceProblems('pub const DISCOVERY_PATH: &str = "/.well-known/droppen-hub";', "rs", "server-rs/src/a.rs"), []);
@@ -101,7 +101,7 @@ describe("sources", () => {
       "n=${#items[@]} DROPPEN_HUB_ORIGIN=x # DROPPEN_HUB_AFTER_A_COMMENT",
       "cat ../rh-hub/Cargo.toml",
     ].join("\n");
-    const found = sourceProblems(sh, "sh", "server-rs/crates/rh-devkit/scripts/a.sh").map((p) => /`([^`]+)`/.exec(p)[1]);
+    const found = sourceProblems(sh, "sh", "server-rs/crates/droppen-devkit/scripts/a.sh").map((p) => /`([^`]+)`/.exec(p)[1]);
     assert.deepEqual(found, ["rh-hub/", "DROPPEN_HUB_BIND", "DROPPEN_HUB_ORIGIN"]);
     // a here-document is what a command reads: its `#` lines are not comments
     const heredoc = [
@@ -140,12 +140,12 @@ describe("sources", () => {
   });
 
   test("an allowed file names only what it is allowed to", () => {
-    assert.deepEqual(sourceProblems('DROPPEN_HUB_BIND=127.0.0.1 "$hub" serve', "sh", "server-rs/crates/rh-devkit/scripts/cloud-dev.sh"), []);
-    assert.equal(sourceProblems('DROPPEN_HUB_NOT_DOCUMENTED=1 "$hub" serve', "sh", "server-rs/crates/rh-devkit/scripts/cloud-dev.sh").length, 1);
+    assert.deepEqual(sourceProblems('DROPPEN_HUB_BIND=127.0.0.1 "$hub" serve', "sh", "server-rs/crates/droppen-devkit/scripts/cloud-dev.sh"), []);
+    assert.equal(sourceProblems('DROPPEN_HUB_NOT_DOCUMENTED=1 "$hub" serve', "sh", "server-rs/crates/droppen-devkit/scripts/cloud-dev.sh").length, 1);
     // the devkit's e2e harness went to the hub's side (rh-hub-tools), and the relay's config names no hub
     // variable: no allowance is left for either
     assert.equal(sourceProblems('env("DROPPEN_HUB_ORIGIN")', "rs", "server-rs/crates/rh-relay/src/config.rs").length, 1);
-    assert.equal(sourceProblems('("DROPPEN_HUB_BIND", "127.0.0.1")', "rs", "server-rs/crates/rh-devkit/src/bin/rh-cloud-e2e.rs").length, 1);
+    assert.equal(sourceProblems('("DROPPEN_HUB_BIND", "127.0.0.1")', "rs", "server-rs/crates/droppen-devkit/src/bin/rh-cloud-e2e.rs").length, 1);
   });
 });
 
@@ -201,23 +201,23 @@ describe("cargo metadata", () => {
   test("a dependency of any kind on the hub, from any source", () => {
     const meta = {
       packages: [
-        pkg("rh-devkit", ["server-rs", "crates", "rh-devkit"], [dep("rh-hub", { kind: "dev", path: at("server-rs", "crates", "rh-hub") })]),
+        pkg("droppen-devkit", ["server-rs", "crates", "droppen-devkit"], [dep("rh-hub", { kind: "dev", path: at("server-rs", "crates", "rh-hub") })]),
         pkg("rh-relay", ["server-rs", "crates", "rh-relay"], [dep("droppen-hub", { kind: "build", source: "git+https://example.invalid/hub" })]),
-        pkg("rh-client", ["server-rs", "crates", "rh-client"], [dep("rh-hub", { rename: "hub" })]),
+        pkg("droppen-client", ["server-rs", "crates", "droppen-client"], [dep("rh-hub", { rename: "hub" })]),
       ],
     };
     const found = metadataProblems(meta, root);
     assert.equal(found.length, 3);
-    assert.match(found[0], /^server-rs\/crates\/rh-devkit\/Cargo\.toml: rh-devkit has a dev dependency rh-hub/);
+    assert.match(found[0], /^server-rs\/crates\/droppen-devkit\/Cargo\.toml: droppen-devkit has a dev dependency rh-hub/);
     assert.match(found[1], /rh-relay has a build dependency droppen-hub/);
-    assert.match(found[2], /rh-client has a normal dependency hub \(rh-hub\)/);
+    assert.match(found[2], /droppen-client has a normal dependency hub \(rh-hub\)/);
   });
 
   test("a path outside the repository", () => {
     const outside = join(root, "..", "elsewhere", "foo");
     const meta = {
       packages: [
-        pkg("rh-devkit", ["server-rs", "crates", "rh-devkit"], [dep("foo", { path: outside })]),
+        pkg("droppen-devkit", ["server-rs", "crates", "droppen-devkit"], [dep("foo", { path: outside })]),
         { name: "stray", source: null, manifest_path: join(outside, "Cargo.toml"), dependencies: [] },
         // the hub is not held to it
         pkg("rh-hub", ["server-rs", "crates", "rh-hub"], [dep("foo", { path: outside })]),
@@ -225,7 +225,7 @@ describe("cargo metadata", () => {
     };
     const found = metadataProblems(meta, root);
     assert.equal(found.length, 2);
-    assert.match(found[0], /rh-devkit's normal dependency foo is a path outside this repository/);
+    assert.match(found[0], /droppen-devkit's normal dependency foo is a path outside this repository/);
     assert.match(found[1], /stray is outside this repository/);
   });
 
@@ -233,13 +233,13 @@ describe("cargo metadata", () => {
     const meta = {
       packages: [
         pkg("rh-hub", ["server-rs", "crates", "rh-hub"], [dep("rh-hub-tools", { kind: "dev", path: at("server-rs", "crates", "rh-hub-tools") })]),
-        pkg("rh-hub-tools", ["server-rs", "crates", "rh-hub-tools"], [dep("rh-hub", { path: at("server-rs", "crates", "rh-hub") }), dep("rh-devkit", { path: at("server-rs", "crates", "rh-devkit") })]),
-        pkg("rh-devkit", ["server-rs", "crates", "rh-devkit"], [dep("rh-hub-tools", { kind: "dev", path: at("server-rs", "crates", "rh-hub-tools") })]),
+        pkg("rh-hub-tools", ["server-rs", "crates", "rh-hub-tools"], [dep("rh-hub", { path: at("server-rs", "crates", "rh-hub") }), dep("droppen-devkit", { path: at("server-rs", "crates", "droppen-devkit") })]),
+        pkg("droppen-devkit", ["server-rs", "crates", "droppen-devkit"], [dep("rh-hub-tools", { kind: "dev", path: at("server-rs", "crates", "rh-hub-tools") })]),
       ],
     };
     const found = metadataProblems(meta, root);
     assert.equal(found.length, 1);
-    assert.match(found[0], /rh-devkit has a dev dependency rh-hub-tools/);
+    assert.match(found[0], /droppen-devkit has a dev dependency rh-hub-tools/);
   });
 });
 
@@ -321,7 +321,7 @@ describe("the whole check, over a made-up tree", () => {
     ]);
     // what ALLOWED lets ci.yml name and it does not, and the files it lists that are not here
     assert.ok(notes.some((n) => n.startsWith("ALLOWED lets .github/workflows/ci.yml name rh-hub/, RH_HUB_TEST_DATABASE_URL, RH_HUB_TEST_REQUIRE_DB,")), notes.join("\n"));
-    assert.ok(notes.some((n) => n.startsWith("ALLOWED lists server-rs/crates/rh-devkit/scripts/cloud-dev.sh, which is no longer here")), notes.join("\n"));
+    assert.ok(notes.some((n) => n.startsWith("ALLOWED lists server-rs/crates/droppen-devkit/scripts/cloud-dev.sh, which is no longer here")), notes.join("\n"));
   });
 
   test("a hub variable in an open crate", () => {
