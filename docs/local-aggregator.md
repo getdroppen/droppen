@@ -1126,7 +1126,7 @@ crate 名不改。本机包名暂不改，只把 `[[bin]]` 改名为 `droppen`�
 | 协议标识 | 不改：`rh/v1 …` 标签、`x-rh-*` 头、`"agent":"remote-hand"`、`rh-*` 存储名。三种码读的时候已经同时认 `DR1-`/`DRP1-`/`DRR1-`（和 `RH1-`/`RHP1-`/`RHR1-` 是同一个版本，大小写规则照旧），写出来的仍是 `RH1-`/`RHP1-`/`RHR1-`；什么时候改写新前缀见下面的切换顺序 |
 | 「添加能运行 AI 的电脑」的命令 | `droppen agent enroll …`，作为备用路径 |
 | Hub | 改名在 Hub 一侧完成，开源程序不受影响 |
-| 默认 Hub | 内置 `https://droppen.app`，用 `DROPPEN_HUB_DEFAULT` 可以改 |
+| 默认 Hub | 内置 `https://api.droppen.app`（v0.2.133 起；更早的版本是 `https://droppen.app`），用 `DROPPEN_HUB_DEFAULT` 可以改 |
 
 **码前缀的切换顺序**
 
@@ -1187,7 +1187,7 @@ droppen.app 网页适合随手打开；要高保障的人用本机界面或 Taur
 - **发版**（`scripts/release-public.sh`）：每个平台两个包。新包 `droppen-…` 里 `droppen` 是实体、`remote-hand-server` 是它的硬链接（tar 里只存一份数据；单独解出任何一个都是完整文件，符号链接单独解出来是悬空的）；旧包 `remote-hand-…` 和以前一样只有 `remote-hand-server`。`SHA256SUMS` 列全部。每个包都解开再查一遍：成员不多不少、每个程序与前面检查和冒烟过的二进制逐字节相同、标记/glibc/`$HOME` 路径等检查再跑一遍；新包里的 `droppen` 再冒烟一次（以新名字运行）。旧名资产至少发到 2027-01-31（`OLD_ASSETS_UNTIL`）。
 - **安装脚本**：先读 `SHA256SUMS`，列了新包就下新包（取 `droppen` 成员），否则（或下载失败）下旧包（取 `remote-hand-server`）。装出来的仍是 `<数据>/bin/remote-hand-server`，与以前完全相同；plist、systemd unit、数据目录一律不动。旁边建 `droppen -> remote-hand-server`（相对链接，自升级换文件后照样指向新的；已有一个不是链接的 `droppen` 就不动它，并提示）。打印给人敲的命令（改密码、最后的 `Command:`）用 `droppen`；手动启动的 `up -- serve` 命令仍用旧路径，脚本靠这个路径认出手动启动的监督进程。卸载时连这个链接一起删。只认旧资产名的旧版脚本照常能装，所以旧资产要继续发。
 - **网页里让人敲的命令**：`GET /api/auth/status` 加 `droppenPath`——运行中二进制旁边的 `droppen`（是同一个文件才算），否则二进制本身；家目录写成 `~`，因为这个接口不登录也能读，不把账户名放出去。登录页的提示与「设置 → 访问」里的 `user add` 用它（需要时加引号）；旧服务器没有这个字段，网页说 `remote-hand-server`。
-- **droppen.app「已经用别的方式装了」的 stdin 命令**：对面服务器的版本未知（还没进账户），所以仍是 `~/.local/share/remote-hand/bin/remote-hand-server`；等 Hub 报告的账户内 agent 最低版本到了这一版再换成 `droppen`（`web/src/features/landing/get-droppen.ts` 里有 TODO）。
+- **droppen.app「已经用别的方式装了」的 stdin 命令**：一直是 `~/.local/share/remote-hand/bin/remote-hand-server`。对面服务器的版本和来历都未知（还没进账户）；`<数据>/bin/droppen` 只由 0.2.125 起的安装脚本建，更早安装、之后只靠自升级的服务器没有它，不论现在是什么版本。这条路径每个安装都有，数据目录也不改名（`web/src/features/landing/get-droppen.ts`）。
 - **会话里的通知命令**：`PATH` 上只有 `droppen-notify`；脚本 `exec` 本服务器的 `notify` 子命令，技能写在 `$CLAUDE_CONFIG_DIR/skills/droppen-notify`。0.2.125 写下的旧 `rh-notify` 脚本按绝对路径调用同一个子命令，仍然可用，只是下次启动会话时不再重写。
 - **没做**：桌面应用的 sidecar 改名；设置页的 `setup-code`、`open` 也改用 `droppenPath`；`[[bin]]` 改名、数据目录、`DROPPEN_*` 环境变量别名、`droppen service install` 留给以后。
 
