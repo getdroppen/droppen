@@ -145,6 +145,19 @@ mod tests {
     }
 
     #[test]
+    fn rolling_the_desktop_log_leaves_the_installed_servers_subfolder_alone() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let logs = root.path().join("Logs/Droppen");
+        let server = logs.join("server");
+        std::fs::create_dir_all(&server).expect("dir");
+        std::fs::write(server.join("default.log"), "keep\n").expect("write");
+        let path = logs.join("desktop.log");
+        std::fs::write(&path, vec![b'x'; (MAX_LOG_BYTES + 1) as usize]).expect("write");
+        open_append(&path).expect("open");
+        assert_eq!(std::fs::read_to_string(server.join("default.log")).expect("read"), "keep\n", "the server's folder is not a desktop log");
+    }
+
+    #[test]
     fn a_log_is_this_users_alone() {
         let mode = |path: &Path| std::fs::metadata(path).expect("metadata").permissions().mode() & 0o777;
         let root = tempfile::tempdir().expect("tempdir");
