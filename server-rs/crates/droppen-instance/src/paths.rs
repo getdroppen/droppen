@@ -119,6 +119,13 @@ impl Paths {
     /// these coexist in one test process, and neither may change under a handler
     /// because something else moved.
     pub fn for_instance(home: PathBuf, instance: &str) -> Self {
+        // Both roots are spelled `remote-hand`, and that is a compatibility
+        // surface rather than a leftover: launchd plists, systemd units, a
+        // running `up` from any earlier release and its `.prev` rollback
+        // binary hold these paths as absolute text, and the transcripts the
+        // CLIs write record the chat and upload folders under them. A new
+        // spelling would leave all of those pointing at a folder nothing
+        // writes, while this server started a second, empty one beside it.
         let config_dir = env_dir("DROPPEN_CONFIG_DIR").unwrap_or_else(|| home.join(".config").join("remote-hand"));
         let data_dir = env_dir("DROPPEN_DATA_DIR").unwrap_or_else(|| home.join(".local").join("share").join("remote-hand"));
         let claude_local = env_dir(LOCAL_ROOT_ENV).unwrap_or_else(|| home.join(".claude"));

@@ -45,6 +45,11 @@ its sha256 is `install_sh` in `https://droppen.app/.well-known/droppen-build`),
 never a redirect; the source is [`scripts/install.sh`](../scripts/install.sh),
 which lists every option in its header.
 
+The data folder, `~/.local/share/remote-hand` (its name from before Droppen was
+called Droppen; every install, service and older version finds its data there),
+and the config folder, `~/.config/remote-hand`, keep those names, so an upgrade
+and a rollback both see the same files.
+
 To join the computer to your Droppen account in the same step, pass the
 one-time code droppen.app shows under
 *my devices → add a device that runs AI → show a one-time code*:

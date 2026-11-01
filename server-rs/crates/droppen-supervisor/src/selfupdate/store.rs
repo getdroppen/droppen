@@ -36,6 +36,11 @@ use std::path::{Path, PathBuf};
 use droppen_instance::paths::Paths;
 
 /// The installed binary's name, which is also the process name in `ps`.
+///
+/// Under the `remote-hand` data root and spelled `remote-hand-server`, because
+/// the plist or unit that starts it, a running `up` from any earlier release
+/// and its `.prev` rollback ladder resolve that exact path: a self-update has
+/// to replace the binary those name.
 const NAME: &str = "remote-hand-server";
 
 /// Mode for anything this module puts on disk meaning to run it.

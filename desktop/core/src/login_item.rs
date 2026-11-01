@@ -333,22 +333,18 @@ pub fn default_at_launch(
 }
 
 /// Where an earlier install's server kept the app's instance: under today's
-/// data directory, and under the one it takes once that is named after
-/// Droppen (`~/.local/share/droppen`).
-pub fn instance_dirs(home: &Path) -> [PathBuf; 2] {
-    [
-        crate::instance::dir_under(home, crate::INSTANCE),
-        home.join(".local").join("share").join("droppen").join("instances").join(crate::INSTANCE),
-    ]
+/// data directory, which is the only spelling any release ever used.
+pub fn instance_dir(home: &Path) -> PathBuf {
+    crate::instance::dir_under(home, crate::INSTANCE)
 }
 
 /// Whether the app ran here before, whatever `state.json` says: its server's
-/// instance directory ([`instance_dirs`]) or its credential file is there, or
+/// instance directory ([`instance_dir`]) or its credential file is there, or
 /// `store` (the keychain item, then the file) has its login. The keychain is
 /// asked last, only when nothing on disk answers; one that cannot be read is
 /// logged and reads as nothing there.
 pub fn ran_here_before(home: &Path, credential_file: &Path, store: &crate::credentials::LayeredStore) -> bool {
-    instance_dirs(home).iter().any(|dir| dir.exists()) || credential_file.exists() || store.load().0.is_some()
+    instance_dir(home).exists() || credential_file.exists() || store.load().0.is_some()
 }
 
 /// The status to show: `service`'s, except that an old launch agent still
@@ -922,13 +918,11 @@ mod tests {
         assert!(ran_here_before(home, &file, &store(None)), "a credential file, readable or not");
         std::fs::remove_file(&file).expect("remove");
 
-        for dir in instance_dirs(home) {
-            std::fs::create_dir_all(&dir).expect("instance");
-            assert!(ran_here_before(home, &file, &store(None)), "{}", dir.display());
-            std::fs::remove_dir(&dir).expect("remove");
-        }
-        assert_eq!(instance_dirs(home)[0], home.join(".local/share/remote-hand/instances").join(crate::INSTANCE));
-        assert_eq!(instance_dirs(home)[1], home.join(".local/share/droppen/instances").join(crate::INSTANCE));
+        let dir = instance_dir(home);
+        std::fs::create_dir_all(&dir).expect("instance");
+        assert!(ran_here_before(home, &file, &store(None)), "{}", dir.display());
+        std::fs::remove_dir(&dir).expect("remove");
+        assert_eq!(dir, home.join(".local/share/remote-hand/instances").join(crate::INSTANCE));
         assert!(!ran_here_before(home, &file, &store(None)));
     }
 

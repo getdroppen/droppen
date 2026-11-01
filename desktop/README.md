@@ -159,8 +159,10 @@ Droppen (Tauri, the app)                     ~/Library/Logs/Droppen/desktop.log
   `~/.config/remote-hand/` (`state.db` — session titles, the seen and archived
   lists, UI preferences — plus the AI accounts in `accounts.json` and the
   phone-notification settings in `notify.json`) and `~/.local/share/remote-hand/`
-  outside `instances/` (uploads, `bin/`). Its sessions, terminals, logins and
-  local accounts are its own.
+  outside `instances/` (uploads, `bin/`). Both folders keep the name
+  `remote-hand`, from before Droppen was called Droppen: every install,
+  launchd job or systemd unit and older version finds its data there. Its
+  sessions, terminals, logins and local accounts are its own.
 - **What survives a quit** is what survives any server restart: the server
   starts terminals and resident sessions under shims that outlive it, so that a
   restart does not kill them. A terminal or a running session left open at quit
