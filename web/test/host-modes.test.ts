@@ -288,6 +288,23 @@ test("the move's two ends exist whenever the hub names an app host of its own, w
   assert.equal(moveOrigins("https://droppen.app"), null, "no answer");
 });
 
+test("the move's legacy side is the hub's name root, not its machine origin", () => {
+  // The document served on the API host names it as `origin`; a browser's
+  // device from before the move waits at the apex, and the API host holds
+  // none. `moveOrigins` is what "Bring it over" and `/move` both pin.
+  const api = parseHubHosts(CANONICAL, MY)!;
+  setHostMode(api, "single");
+  assert.deepEqual(moveOrigins(MY), { legacy: "https://droppen.app", app: MY });
+  assert.deepEqual(moveOrigins("https://droppen.app"), { legacy: "https://droppen.app", app: MY });
+  assert.equal(moveOrigins("https://api.droppen.app"), null, "the API host holds no device to move");
+  assert.equal(moveOrigins("https://www.droppen.app"), null);
+  // The apex's own document leaves the pair where it was.
+  setHostMode(hosts, "single");
+  assert.deepEqual(moveOrigins(MY), { legacy: "https://droppen.app", app: MY });
+  assert.deepEqual(moveOrigins("https://droppen.app"), { legacy: "https://droppen.app", app: MY });
+  setHostMode(null);
+});
+
 test("the address the page loaded with is passed on whole: path, query and fragment", () => {
   assert.equal(bootPath({ pathname: "/link", search: "", hash: "#droppen-link=eyJ9" }), "/link#droppen-link=eyJ9");
   assert.equal(bootPath({ pathname: "/verify", search: "?x=1", hash: "#t=abc" }), "/verify?x=1#t=abc");
