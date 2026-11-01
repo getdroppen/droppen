@@ -62,12 +62,39 @@ impl std::fmt::Debug for Link {
     }
 }
 
+/// The kernel's answer to "who is on the other end?" for a shim socket.
+///
+/// A unix socket has no access control of its own: the folder's mode keeps
+/// other users out, and a folder can be squatted before this process looks at
+/// it. The peer's uid is the one fact about the connection that whoever bound
+/// the socket cannot arrange.
+pub trait PeerUserExt {
+    /// Whether the process at the other end runs as this user.
+    fn is_same_user(&self) -> bool;
+}
+
+impl PeerUserExt for UnixStream {
+    fn is_same_user(&self) -> bool {
+        // SAFETY: `getuid` reads a process property and cannot fail.
+        let me = unsafe { libc::getuid() };
+        self.peer_cred().is_ok_and(|cred| cred.uid() == me)
+    }
+}
+
 /// Connect to a shim and resume at `cursor`.
 pub async fn connect(socket: &Path, cursor: u64) -> Result<Link, LinkError> {
     let stream = tokio::time::timeout(HANDSHAKE_TIMEOUT, UnixStream::connect(socket))
         .await
         .map_err(|_| LinkError::Connect(std::io::ErrorKind::TimedOut.into()))?
         .map_err(LinkError::Connect)?;
+    // Before a byte — the hello included, which names the shell pid the caller
+    // will guard on — is read from or written to whoever answered.
+    if !stream.is_same_user() {
+        return Err(LinkError::Connect(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            format!("refusing the pty shim socket {}: it is served by another user", socket.display()),
+        )));
+    }
     let (mut reader, mut writer) = stream.into_split();
 
     let handshake = async {
@@ -166,6 +193,22 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let error = connect(&dir.path().join("absent.sock"), 0).await.expect_err("no socket");
         assert!(matches!(error, LinkError::Connect(_)));
+    }
+
+    /// A socket this process made answers "same user". The other answer — a
+    /// different uid on the other end — needs a second account to bind a
+    /// socket, which an unprivileged test cannot conjure, so the refusal is
+    /// documented rather than faked; what is tested here is that the check
+    /// comes from the kernel's credential and not from a stub.
+    #[tokio::test]
+    async fn a_socket_this_process_made_belongs_to_this_user() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("ours.sock");
+        let listener = tokio::net::UnixListener::bind(&path).expect("bind");
+        let client = UnixStream::connect(&path).await.expect("connect");
+        assert!(client.is_same_user());
+        let (accepted, _) = listener.accept().await.expect("accept");
+        assert!(accepted.is_same_user());
     }
 
     /// A socket that accepts and then says nothing must not hold a boot up.

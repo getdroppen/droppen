@@ -300,6 +300,69 @@ async fn a_terminal_is_adopted_across_a_restart_with_the_same_shell() {
     common::wait_for("the shell to be killed with the test", Duration::from_secs(10), || !alive(shell_pid)).await;
 }
 
+/// A shim bound under the pre-rename `/tmp/remote-hand-…` fallback folder is
+/// still adopted after a restart.
+///
+/// The fallback only exists for instance directories too long for a
+/// `sun_path`, and a 32-character instance name is the longest a name may be —
+/// which puts every platform over the budget. Renaming the folder under the
+/// running shim leaves its socket at the old spelling and nothing at the new
+/// one, which is exactly the state an upgrade finds: a live shell reachable
+/// only through the name an earlier release used.
+#[tokio::test]
+async fn a_shim_in_the_old_tmp_folder_is_adopted_after_a_restart() {
+    let instance = "x".repeat(32);
+    let home = tempfile::tempdir().expect("tempdir");
+    let shims = shim_dir(home.path(), &instance);
+
+    let first = Boot::start(home.path(), &instance).await;
+    let info = first
+        .terminals
+        .create_terminal_with(sh(
+            "echo before-the-rename; while :; do read line || sleep 1; echo \"echoed:$line\"; done",
+        ))
+        .await
+        .expect("create terminal");
+    let mut watcher = Watcher::attach(&first.terminals, &info.id);
+    watcher.read_until(&["before-the-rename"], "the first line of output").await;
+    drop(watcher);
+    let shell_pid = peek_shell_pid(&shims, &info.id).await;
+
+    let socket = Sidecars::new(&shims, &info.id).socket();
+    let new_dir = socket.parent().expect("the fallback folder").to_path_buf();
+    assert!(
+        new_dir.to_string_lossy().starts_with("/tmp/droppen-"),
+        "this case needs the /tmp fallback: {}",
+        socket.display()
+    );
+    let old_dir = std::path::PathBuf::from(new_dir.to_string_lossy().replacen("/tmp/droppen-", "/tmp/remote-hand-", 1));
+    std::fs::rename(&new_dir, &old_dir).expect("rename the fallback folder to its old spelling");
+    let old_socket = old_dir.join(socket.file_name().expect("socket file name"));
+
+    first.halt().await;
+
+    let second = Boot::start(home.path(), &instance).await;
+    let listed = second.get_json("/api/terminals").await;
+    let terminals = listed["terminals"].as_array().expect("array");
+    assert_eq!(terminals.len(), 1, "the shim under the old folder is adopted: {listed}");
+    assert_eq!(terminals[0]["id"], info.id.as_str());
+
+    // And it is the same shell, reachable through the path it actually bound.
+    let link = droppen_pty::client::connect(&old_socket, u64::MAX)
+        .await
+        .expect("connect to the adopted shim");
+    assert_eq!(link.shell_pid, shell_pid, "adoption must not restart the shell");
+    drop(link);
+    let mut socket = second.attach_ws(&info.id).await;
+    socket.send(r#"{"type":"input","data":"still-here\r"}"#).await;
+    socket.read_until(&["echoed:still-here"], "the adopted shell to answer").await;
+
+    second.halt_and_kill().await;
+    common::wait_for("the shell to be killed with the test", Duration::from_secs(10), || !alive(shell_pid)).await;
+    let _ = std::fs::remove_dir_all(&old_dir);
+    let _ = std::fs::remove_dir_all(&new_dir);
+}
+
 /// The golden test: a terminal that is producing output the whole time a
 /// server is replaced must not lose any of it.
 #[tokio::test]
@@ -766,7 +829,10 @@ async fn a_shim_survives_its_server_being_sigkilled_and_is_adopted_by_the_next_o
     // point; the socket is outside the tempdir, so the test removes it.
     let socket = Sidecars::new(&shims, &id).socket();
     let _ = std::fs::remove_file(&socket);
-    if let Some(parent) = socket.parent().filter(|parent| parent.starts_with("/tmp/remote-hand-")) {
+    if let Some(parent) = socket.parent().filter(|parent| {
+        let spelled = parent.to_string_lossy();
+        spelled.starts_with("/tmp/droppen-") || spelled.starts_with("/tmp/remote-hand-")
+    }) {
         let _ = std::fs::remove_dir(parent);
     }
 }

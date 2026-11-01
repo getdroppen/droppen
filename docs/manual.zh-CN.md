@@ -245,7 +245,8 @@ remote-hand-server open --instance alice             # 没有账号时:以这台
 那里用设置码,或者在设备上 `user add`。监听 `127.0.0.1`、`::1` 或全部地址(`0.0.0.0` / `::`)都可以用。
 
 ⚠️ 控制 socket 对**同一系统用户的任何进程**都可达——包括 AI CLI 自己,除非它的沙箱不让它连任意
-unix socket。给 AI CLI 配沙箱时,请拒绝访问 `instances/<实例>/control/` 和 `/tmp/remote-hand-<uid>-*/`。
+unix socket。给 AI CLI 配沙箱时,请拒绝访问 `instances/<实例>/control/` 和 `/tmp/droppen-<uid>-*/`
+(以及较早版本的服务端可能仍在使用的 `/tmp/remote-hand-<uid>-*/`)。
 设置码文件 `instances/<实例>/setup-code` 同理。所以**桌面 App 的实例**(它永远处在设置状态:唯一的
 账号 `droppen-app` 是应用内部账号)两样都不给:服务端不生成设置码,控制 socket 只回一句拒绝、不发
 令牌。App 的「在浏览器中打开」改用它自己的登录经 HTTP 要一次性令牌

@@ -85,6 +85,7 @@ use tokio::sync::{mpsc, watch, Mutex as AsyncMutex};
 
 use droppen_base::process_env::Env;
 use droppen_base::procs;
+use droppen_pty::client::PeerUserExt;
 
 // ------------------------------------------------------------------ protocol
 
@@ -209,6 +210,17 @@ impl Sidecars {
     /// The unix socket the shim binds.
     pub fn socket(&self) -> &Path {
         &self.socket
+    }
+
+    /// Every socket a shim of this session may have bound, current spelling
+    /// first.
+    ///
+    /// [`attach`] asks for this rather than [`Sidecars::socket`]: a resident
+    /// started before the `/tmp` fallback folder was renamed keeps running
+    /// across the upgrade, and the old folder's socket is the only way back to
+    /// it.
+    pub fn socket_candidates(&self) -> [PathBuf; 2] {
+        droppen_pty::sidecar::socket_candidates(&self.dir, &self.id)
     }
 
     /// Where claude's last words go if it dies.
@@ -1128,7 +1140,39 @@ pub async fn attach(sidecars: &Sidecars) -> Result<Link, LinkError> {
     if sidecars.tombstoned() {
         return Err(corpse("it has already written a tombstone"));
     }
-    let link = connect(sidecars.socket(), ATTACH_PATIENCE).await?;
+    // The current fallback folder, then the pre-rename one: a resident
+    // started before the rename is still running and its socket is the only
+    // way to reach it. A candidate is dialled only from a folder this process
+    // may use — the `/tmp` name can be squatted, and the kernel's peer check
+    // inside `connect` is the second line of that defence, not the first.
+    let candidates = sidecars.socket_candidates();
+    let socket = match droppen_pty::sidecar::adopted_socket(&sidecars.dir, &sidecars.id) {
+        Some(socket) => socket,
+        None => {
+            // No socket to use. If one exists anyway, its folder failed the
+            // check: say so rather than dial it. With none at all, dial the
+            // current spelling so the error names the path this release
+            // would have used.
+            if let Some(squatted) = candidates.iter().find(|socket| socket.exists()) {
+                return Err(LinkError::Connect(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    format!(
+                        "refusing the session shim socket {}: its /tmp folder is not this user's 0700 directory",
+                        squatted.display()
+                    ),
+                )));
+            }
+            candidates[0].clone()
+        }
+    };
+    if socket != candidates[0] {
+        tracing::info!(
+            session = %sidecars.id(),
+            socket = %socket.display(),
+            "re-attaching to a shim bound before the socket fallback folder was renamed"
+        );
+    }
+    let link = connect(&socket, ATTACH_PATIENCE).await?;
     if sidecars.tombstoned() {
         return Err(corpse("it wrote a tombstone while we were connecting"));
     }
@@ -1160,7 +1204,18 @@ async fn connect(socket: &Path, patience: Duration) -> Result<Link, LinkError> {
     let deadline = tokio::time::Instant::now() + patience;
     let stream = loop {
         match UnixStream::connect(socket).await {
-            Ok(stream) => break stream,
+            Ok(stream) => {
+                // Retrying would only ask the same attacker again: a socket
+                // served by another user is refused outright, before the
+                // hello — whose claude pid the corpse guard trusts — arrives.
+                if !stream.is_same_user() {
+                    return Err(LinkError::Connect(std::io::Error::new(
+                        std::io::ErrorKind::PermissionDenied,
+                        format!("refusing the session shim socket {}: it is served by another user", socket.display()),
+                    )));
+                }
+                break stream;
+            }
             Err(error) if tokio::time::Instant::now() >= deadline => return Err(LinkError::Connect(error)),
             Err(_) => tokio::time::sleep(DIAL_RETRY).await,
         }
@@ -1297,6 +1352,40 @@ mod tests {
                 tokio::time::sleep(Duration::from_millis(25)).await;
             }
             panic!("no tombstone after 5 seconds");
+        }
+    }
+
+    /// A `session-shims` path long enough to force the `/tmp` fallback, with
+    /// both spellings of the folder swept before and after the test — whether
+    /// it passes, fails or panics on an early assertion.
+    struct FallbackCase {
+        dir: PathBuf,
+        sockets: [PathBuf; 2],
+    }
+
+    impl FallbackCase {
+        fn new(tag: &str) -> FallbackCase {
+            let dir = PathBuf::from(format!("/tmp/{}/{tag}", "d".repeat(90)));
+            let sockets = Sidecars::new(&dir, "9f8e7d6c5b4a39281706").socket_candidates();
+            for socket in &sockets {
+                if let Some(folder) = socket.parent() {
+                    let _ = std::fs::remove_dir_all(folder);
+                    let _ = std::fs::remove_file(folder);
+                }
+            }
+            let _ = std::fs::remove_dir_all(&dir);
+            FallbackCase { dir, sockets }
+        }
+    }
+
+    impl Drop for FallbackCase {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.dir);
+            for socket in &self.sockets {
+                if let Some(folder) = socket.parent() {
+                    let _ = std::fs::remove_dir_all(folder);
+                }
+            }
         }
     }
 
@@ -1622,6 +1711,69 @@ mod tests {
         assert!(matches!(error, LinkError::Connect(_)), "{error:?}");
     }
 
+    /// A resident started before the fallback folder was renamed keeps its
+    /// socket under the old spelling; attach has to reach that shim, not give
+    /// up because the new folder is empty.
+    #[tokio::test]
+    async fn attaching_finds_a_shim_that_bound_under_the_old_tmp_folder() {
+        let case = FallbackCase::new("attached-old");
+        let sidecars = Sidecars::new(&case.dir, "9f8e7d6c5b4a39281706");
+        sidecars.prepare().expect("prepare");
+        let [current, legacy] = sidecars.socket_candidates();
+        assert!(current.to_string_lossy().starts_with("/tmp/droppen-"), "this case needs the fallback");
+
+        let shim = tokio::spawn(
+            Args {
+                socket: current.clone(),
+                stderr_file: sidecars.stderr(),
+                exit_file: sidecars.exit(),
+                buffer_bytes: DEFAULT_BUFFER_BYTES,
+                command: "/bin/sh".to_string(),
+                args: vec!["-c".to_string(), "exec /bin/cat".to_string()],
+            }
+            .run(),
+        );
+        for _ in 0..200 {
+            if current.exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        assert!(current.exists(), "the shim binds under the current spelling");
+        std::fs::rename(current.parent().expect("current folder"), legacy.parent().expect("old folder"))
+            .expect("move the shim's folder to its old spelling");
+
+        let mut link = attach(&sidecars).await.expect("attach through the old folder");
+        link.send_line("still here").await.expect("send");
+        assert_eq!(next(&mut link).await, Output::Line("still here".into()));
+        assert!(legacy.exists(), "it really is the old folder's socket that answered");
+        drop(link);
+        shim.abort();
+    }
+
+    /// A `/tmp` folder another user could have made first is not dialled, even
+    /// when a socket in it answers: the refusal comes back instead of another
+    /// process receiving claude's stdin.
+    #[tokio::test]
+    async fn attaching_does_not_dial_a_socket_in_a_squatted_old_folder() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let case = FallbackCase::new("attached-squatted");
+        let sidecars = Sidecars::new(&case.dir, "9f8e7d6c5b4a39281706");
+        let [_, legacy] = sidecars.socket_candidates();
+        let folder = legacy.parent().expect("old folder").to_path_buf();
+        std::fs::create_dir(&folder).expect("pre-create the old folder");
+        std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o777)).expect("widen it");
+        let listener = std::os::unix::net::UnixListener::bind(&legacy).expect("a socket in it");
+
+        let error = attach(&sidecars).await.expect_err("a squatted folder is not dialled");
+        assert!(
+            matches!(error, LinkError::Connect(ref error) if error.kind() == std::io::ErrorKind::PermissionDenied),
+            "{error:?}"
+        );
+        drop(listener);
+    }
+
     #[tokio::test]
     async fn a_stale_tombstone_is_cleared_before_a_new_shim_can_be_condemned_by_it() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -1656,9 +1808,15 @@ mod tests {
         let deep = PathBuf::from("/Users/somebody/.local/share/remote-hand/instances/production-instance/session-shims");
         let moved = Sidecars::new(&deep, "9f8e7d6c5b4a39281706");
         assert!(
-            moved.socket().to_string_lossy().starts_with("/tmp/remote-hand-"),
+            moved.socket().to_string_lossy().starts_with("/tmp/droppen-"),
             "the address does not fit beside the other files: {}",
             moved.socket().display()
+        );
+        let [current, legacy] = moved.socket_candidates();
+        assert!(current.to_string_lossy().starts_with("/tmp/droppen-"), "a new shim binds under the new name");
+        assert!(
+            legacy.to_string_lossy().starts_with("/tmp/remote-hand-"),
+            "a shim that survived the rename is still looked for under the old one"
         );
         assert!(moved.exit().starts_with(&deep), "the files that say what a session is never move");
     }

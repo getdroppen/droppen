@@ -132,12 +132,17 @@ e2e_check_socket_room() { # the support directory
 
 # The folders under /tmp the server falls back to for its sockets when an
 # instance's own path is too long for one (`server-rs/crates/droppen-pty/src/sidecar.rs`,
-# `runtime_dir`): named after a hash of the socket's folder, so those of the
+# `runtime_dirs`): named after a hash of the socket's folder, so those of the
 # run's own instance are the run's alone. The server leaves them, emptied.
+# Both spellings are named: the current one, and the `remote-hand-` one a shim
+# started before the rename may still be using.
 e2e_runtime_dirs() { # the run's instance directory
-  local dir
+  local dir prefix tag
   for dir in control pty-shims session-shims; do
-    printf '/tmp/remote-hand-%s-%s\n' "$(id -u)" "$(printf '%s' "$1/$dir" | shasum -a 256 | cut -c1-12)"
+    tag=$(printf '%s' "$1/$dir" | shasum -a 256 | cut -c1-12)
+    for prefix in droppen remote-hand; do
+      printf '/tmp/%s-%s-%s\n' "$prefix" "$(id -u)" "$tag"
+    done
   done
 }
 
@@ -145,7 +150,7 @@ e2e_clean_runtime_dirs() { # the run's instance directory
   local dir
   e2e_within "$1" /tmp || e2e_within "$1" /private/tmp || e2e_die "not a run's instance: $1"
   while IFS= read -r dir; do
-    [[ "$dir" =~ ^/tmp/remote-hand-[0-9]+-[0-9a-f]{12}$ ]] || e2e_die "not a runtime folder: $dir"
+    [[ "$dir" =~ ^/tmp/(droppen|remote-hand)-[0-9]+-[0-9a-f]{12}$ ]] || e2e_die "not a runtime folder: $dir"
     rm -rf "$dir"
   done < <(e2e_runtime_dirs "$1")
 }

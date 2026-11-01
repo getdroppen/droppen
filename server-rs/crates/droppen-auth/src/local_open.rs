@@ -41,7 +41,9 @@
 //! What the socket does not stop: **any process of the same operating-system
 //! user** can ask it — the AI CLIs this server runs included, unless their
 //! sandbox keeps them from arbitrary unix sockets. A sandbox for them should
-//! deny `<instance>/control/` and `/tmp/remote-hand-<uid>-*/`.
+//! deny `<instance>/control/` and `/tmp/droppen-<uid>-*/` (and the
+//! `/tmp/remote-hand-<uid>-*/` folders a server of an earlier release may still
+//! be using).
 //!
 //! **Not on the desktop app's instance.** That instance never leaves its setup
 //! state — its only account, the app's own (`droppen-app`), is app-internal —
