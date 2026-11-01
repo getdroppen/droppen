@@ -10,7 +10,7 @@
 #   desktop/third-party-notices.sh <src-dir> <out-file> <app version> <server version> <rev>
 #
 # <src-dir> is a source tree of the commit with
-# `pnpm install --frozen-lockfile --filter "@remote-hand/web..."` done. Needs
+# `pnpm install --frozen-lockfile --filter "@droppen/web..."` done. Needs
 # cargo-about ABOUT_VERSION (scripts/release-public.sh's) on PATH.
 set -euo pipefail
 

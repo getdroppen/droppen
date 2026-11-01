@@ -3,7 +3,7 @@ import type { paths } from "./hub-schema";
 
 /**
  * A typed client for the hub's public API, generated from
- * `openapi/hub.json` (`pnpm --filter @remote-hand/web gen:api:hub`).
+ * `openapi/hub.json` (`pnpm --filter @droppen/web gen:api:hub`).
  *
  * The page's own fetch is kept underneath: it may be a transport (a machine's
  * tunnel) or a test's in-process hub, and it has always taken a URL string and

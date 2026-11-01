@@ -26,7 +26,7 @@ phones override form text to 16px.
    `select-open-…`, `select-empty-…`) in both themes at 390 and 1440. Equal
    numbers can still read wrong.
 6. Run the web tests and typecheck:
-   `pnpm --filter @remote-hand/web typecheck && pnpm --filter @remote-hand/web test`.
+   `pnpm --filter @droppen/web typecheck && pnpm --filter @droppen/web test`.
 7. Report the evidence: the command, the pass/fail line, and which screenshots
    you compared. Do not call a change verified from source reading alone.
 

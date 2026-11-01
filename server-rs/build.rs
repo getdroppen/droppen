@@ -3,7 +3,7 @@ use std::path::Path;
 /// The `embed` feature is default-on so a release build always ships the SPA.
 /// `rust-embed`'s derive, however, fails the build outright when its folder is
 /// missing — which would make `cargo check` impossible on a fresh clone that has
-/// not run `pnpm --filter @remote-hand/web build` yet. So the presence of
+/// not run `pnpm --filter @droppen/web build` yet. So the presence of
 /// `web/dist` is decided here and handed to the crate as a cfg: present means a
 /// real embed, absent means a stub service that explains what to run.
 ///
@@ -33,7 +33,7 @@ fn main() {
     println!("cargo::rustc-cfg=web_dist_missing");
     println!(
         "cargo::warning=web/dist not found; the SPA will not be embedded. \
-         Run `pnpm --filter @remote-hand/web build` and rebuild."
+         Run `pnpm --filter @droppen/web build` and rebuild."
     );
 }
 

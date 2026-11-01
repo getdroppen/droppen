@@ -88,8 +88,8 @@ The web app:
 
 ```sh
 pnpm install --frozen-lockfile
-pnpm --filter @remote-hand/web typecheck
-pnpm --filter @remote-hand/web test
+pnpm --filter @droppen/web typecheck
+pnpm --filter @droppen/web test
 ```
 
 The local program and the crates, in `server-rs/`, as CI runs them, with

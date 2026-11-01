@@ -48,7 +48,7 @@ function buildWeb(role) {
         }
       : {}),
   };
-  pnpm(["--filter", "@remote-hand/web", "build"], env);
+  pnpm(["--filter", "@droppen/web", "build"], env);
 }
 
 function copyRoleBuild(name) {

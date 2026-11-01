@@ -177,7 +177,7 @@ function copyAsset(from, to) {
 function appFallback(dest, mutation) {
   const dist = join(REPO_ROOT, "web", "dist");
   if (!existsSync(join(dist, "index.html"))) {
-    throw new Error(`no built web app at ${dist}: run \`pnpm --filter @remote-hand/web build\` first (scripts/prepare.mjs does)`);
+    throw new Error(`no built web app at ${dist}: run \`pnpm --filter @droppen/web build\` first (scripts/prepare.mjs does)`);
   }
   cpSync(dist, dest, { recursive: true });
   const index = join(dest, "index.html");

@@ -14,7 +14,7 @@ node scripts/landing-shots/cloud/run.mjs --channel chrome
 ```
 
 `--channel chrome` uses an installed Chrome; without it the e2e workspace's
-Chromium is used (`pnpm --filter @remote-hand/e2e exec playwright install chromium`
+Chromium is used (`pnpm --filter @droppen/e2e exec playwright install chromium`
 once). The pages use the system fonts (`--font-sans`, `--font-mono` in
 `web/src/index.css`), so the shots look like the machine they are taken on:
 take them on a Mac for SF and PingFang.

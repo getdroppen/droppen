@@ -326,7 +326,7 @@ fi
 if [ -z "$SIDECAR" ] || { [ "$E2E" = 0 ] && [ -z "$NOTICES_FROM" ]; }; then
   say "web app"
   pnpm_web_env "$SRC"
-  run_watched "${web_env[@]}" pnpm -C "$SRC" install --frozen-lockfile --filter "@remote-hand/web..."
+  run_watched "${web_env[@]}" pnpm -C "$SRC" install --frozen-lockfile --filter "@droppen/web..."
 fi
 if [ "$E2E" = 0 ]; then
   say "licence and third-party notices"
@@ -358,7 +358,7 @@ $hits"
   echo "ok: LICENSE (AGPL-3.0), THIRD_PARTY_NOTICES $(wc -l < "$LEGAL/THIRD_PARTY_NOTICES" | tr -d ' ') lines; both pass the release text check"
 fi
 if [ -z "$SIDECAR" ]; then
-  run_watched "${web_env[@]}" pnpm -C "$SRC" --filter @remote-hand/web build
+  run_watched "${web_env[@]}" pnpm -C "$SRC" --filter @droppen/web build
 
   say "server: ${TARGETS[*]}"
   # The commit goes in under both names: REF may be from before the rename to

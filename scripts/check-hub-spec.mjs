@@ -67,5 +67,5 @@ report("paths", ...section("paths"));
 const [a, b] = section("components");
 report("schemas", a?.schemas ?? {}, b?.schemas ?? {});
 if (canon(snapshot.info) !== canon(live.info)) console.error("  info changed");
-console.error("  refresh: curl -fsS " + url + " > openapi/hub.json && pnpm --filter @remote-hand/web gen:api:hub");
+console.error("  refresh: curl -fsS " + url + " > openapi/hub.json && pnpm --filter @droppen/web gen:api:hub");
 process.exit(1);
