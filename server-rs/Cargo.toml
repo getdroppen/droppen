@@ -1,6 +1,6 @@
 [package]
 name = "droppen-server"
-version = "0.2.136"
+version = "0.2.137"
 edition = "2021"
 publish = false
 description = "Droppen local server"
