@@ -204,8 +204,8 @@ jobs:
           set -euo pipefail
           npm install -g "pnpm@$PNPM_VERSION"
           SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"; export SOURCE_DATE_EPOCH
-          pnpm install --frozen-lockfile --filter "@remote-hand/web..."
-          pnpm --filter @remote-hand/web build
+          pnpm install --frozen-lockfile --filter "@droppen/web..."
+          pnpm --filter @droppen/web build
           # Refuses anything but the public distribution.
           node scripts/web-manifest.mjs web/dist --commit "$GITHUB_SHA" --out "$RUNNER_TEMP/web-manifest.json"
           tar -cf "$RUNNER_TEMP/web-dist.tar" -C web dist
@@ -347,7 +347,7 @@ jobs:
           rustup default "$RUST_TOOLCHAIN"
           npm install -g "pnpm@$PNPM_VERSION"
           SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"; export SOURCE_DATE_EPOCH
-          pnpm install --frozen-lockfile --filter "@remote-hand/web..."
+          pnpm install --frozen-lockfile --filter "@droppen/web..."
           crate=$(sed -n 's/^version = "\(.*\)"$/\1/p' server-rs/Cargo.toml | head -n 1)
           mkdir -p "$RUNNER_TEMP/out"
           scripts/third-party-notices.sh "$GITHUB_WORKSPACE" "$RUNNER_TEMP/out/THIRD_PARTY_NOTICES" "$VERSION" "$crate" "$REV"
@@ -371,7 +371,7 @@ jobs:
           set -euo pipefail
           .github/scripts/unpack-artifact.sh "$RUNNER_TEMP/dl/web-dist/web-dist.tar" "$WEB_SHA" "$RUNNER_TEMP/a/web" "$ALLOW_WEB"
           SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"; export SOURCE_DATE_EPOCH
-          pnpm --filter @remote-hand/web build
+          pnpm --filter @droppen/web build
           diff -r "$RUNNER_TEMP/a/web/dist" web/dist
           echo "ok: the macOS build of the web app is web-dist ($(find web/dist -type f | wc -l | tr -d ' ') files)"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

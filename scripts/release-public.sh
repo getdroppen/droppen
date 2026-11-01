@@ -284,10 +284,10 @@ if [ -n "$WEB_DIST" ]; then
   cp -R "$WEB_DIST" "$SRC/web/dist"
   echo "web app: $WEB_DIST (--web-dist), not built again"
   # The notices build it once more, to see what it bundles.
-  [ -n "$NOTICES_FROM" ] || run_watched "${web_env[@]}" pnpm -C "$SRC" install --frozen-lockfile --filter "@remote-hand/web..."
+  [ -n "$NOTICES_FROM" ] || run_watched "${web_env[@]}" pnpm -C "$SRC" install --frozen-lockfile --filter "@droppen/web..."
 else
-  run_watched "${web_env[@]}" pnpm -C "$SRC" install --frozen-lockfile --filter "@remote-hand/web..."
-  run_watched "${web_env[@]}" pnpm -C "$SRC" --filter @remote-hand/web build
+  run_watched "${web_env[@]}" pnpm -C "$SRC" install --frozen-lockfile --filter "@droppen/web..."
+  run_watched "${web_env[@]}" pnpm -C "$SRC" --filter @droppen/web build
 fi
 # No fact only the owner can supply left unfilled on droppen.app's pages: the
 # placeholders show marked there and main's tests pass with them, but a

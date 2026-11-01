@@ -10,7 +10,7 @@
 #   scripts/third-party-notices.sh <src-dir> <out-file> <version> <server version> <rev>
 #
 # <src-dir> is a source tree of the release's commit with
-# `pnpm install --frozen-lockfile --filter "@remote-hand/web..."` done
+# `pnpm install --frozen-lockfile --filter "@droppen/web..."` done
 # (web-notices.mjs builds the web app once more, to see what it bundles).
 # Needs cargo-about ABOUT_VERSION (scripts/release-public.sh's) on PATH.
 set -euo pipefail

@@ -16,7 +16,7 @@ the checked-in copy is the contract of the **deployed** hub:
 
 ```sh
 curl -fsS https://api.droppen.app/openapi.json > openapi/hub.json
-pnpm --filter @remote-hand/web gen:api:hub
+pnpm --filter @droppen/web gen:api:hub
 ```
 
 Do this after a hub release that changes the public API (a new route, a changed
@@ -47,5 +47,5 @@ changed. When it fails, refresh:
 
 ```sh
 curl -fsS https://api.droppen.app/openapi.json > openapi/hub.json
-pnpm --filter @remote-hand/web gen:api:hub
+pnpm --filter @droppen/web gen:api:hub
 ```

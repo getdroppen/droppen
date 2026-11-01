@@ -314,7 +314,7 @@ mod assets {
         let mut response = Response::new(Body::from(
             "<!doctype html><meta charset=utf-8><title>Droppen</title>\
              <p>The web app was not embedded in this binary. \
-             Run <code>pnpm --filter @remote-hand/web build</code> and rebuild.",
+             Run <code>pnpm --filter @droppen/web build</code> and rebuild.",
         ));
         *response.status_mut() = StatusCode::SERVICE_UNAVAILABLE;
         response

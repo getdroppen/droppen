@@ -65,20 +65,20 @@ jobs:
       # web/src/api/schema.d.ts is generated from openapi/openapi.json, the
       # second half of `pnpm gen:api` (the server's tests check the first:
       # that the committed openapi.json is the spec the server serves).
-      - run: pnpm --filter @remote-hand/web gen:api && git diff --exit-code -- web/src/api/schema.d.ts
+      - run: pnpm --filter @droppen/web gen:api && git diff --exit-code -- web/src/api/schema.d.ts
       # web/src/api/hub-schema.d.ts is generated from openapi/hub.json, the
       # hub's deployed public API (refresh it with gen:hub-api after a hub
       # release; this check makes the generated types follow the spec).
-      - run: pnpm --filter @remote-hand/web gen:api:hub && git diff --exit-code -- web/src/api/hub-schema.d.ts
+      - run: pnpm --filter @droppen/web gen:api:hub && git diff --exit-code -- web/src/api/hub-schema.d.ts
       # The open-source boundary check's own tests (the check itself runs in
       # the server job, which has cargo).
       - run: pnpm test:boundary
       - run: pnpm typecheck
       - run: pnpm --filter @droppen/plugin-sdk test
       # The web app's own tests run in the three `web-tests` shards below.
-      - run: pnpm --filter @remote-hand/web build
+      - run: pnpm --filter @droppen/web build
 
-  # The web app's tests (`pnpm --filter @remote-hand/web test`), split by test
+  # The web app's tests (`pnpm --filter @droppen/web test`), split by test
   # file into three shards that run side by side: Node's `--test-shard=i/3`
   # (via the `test:shard` script) hands each shard every third file of the same
   # sorted list, so each file runs in exactly one shard. The small runner has
@@ -110,9 +110,9 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm install --frozen-lockfile --filter "@remote-hand/web..."
+      - run: pnpm install --frozen-lockfile --filter "@droppen/web..."
         if: needs.changes.result != 'success' || needs.changes.outputs.web_tests == 'true'
-      - run: pnpm --filter @remote-hand/web test:shard
+      - run: pnpm --filter @droppen/web test:shard
         if: needs.changes.result != 'success' || needs.changes.outputs.web_tests == 'true'
 
 
@@ -132,7 +132,7 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @remote-hand/e2e exec playwright install --with-deps chromium
+      - run: pnpm --filter @droppen/e2e exec playwright install --with-deps chromium
       - run: pnpm ui-audit --check
 
   # The public web build (what droppen.app serves) is reproducible: two fresh
@@ -169,16 +169,16 @@ jobs:
           TZ: UTC
         run: |
           SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"; export SOURCE_DATE_EPOCH
-          pnpm install --frozen-lockfile --filter "@remote-hand/web..."
-          pnpm --filter @remote-hand/web build
+          pnpm install --frozen-lockfile --filter "@droppen/web..."
+          pnpm --filter @droppen/web build
       - name: Build in the second checkout
         working-directory: second-checkout
         env:
           TZ: Pacific/Kiritimati
         run: |
           SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"; export SOURCE_DATE_EPOCH
-          pnpm install --frozen-lockfile --filter "@remote-hand/web..."
-          pnpm --filter @remote-hand/web build
+          pnpm install --frozen-lockfile --filter "@droppen/web..."
+          pnpm --filter @droppen/web build
       - name: The two builds are identical
         run: diff -r first/web/dist second-checkout/web/dist
       - name: The manifest a release would publish
@@ -209,8 +209,8 @@ jobs:
       - name: Build
         run: |
           SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"; export SOURCE_DATE_EPOCH
-          pnpm install --frozen-lockfile --filter "@remote-hand/web..."
-          pnpm --filter @remote-hand/web build
+          pnpm install --frozen-lockfile --filter "@droppen/web..."
+          pnpm --filter @droppen/web build
       - uses: actions/download-artifact@v4
         with:
           name: web-manifest-linux

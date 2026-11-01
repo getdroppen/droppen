@@ -14,7 +14,7 @@ override form text to 16px). Every claim below is a computed value or a
 
 ```sh
 pnpm install --frozen-lockfile
-pnpm --filter @remote-hand/e2e exec playwright install chromium   # once
+pnpm --filter @droppen/e2e exec playwright install chromium   # once
 pnpm ui-audit                     # report + screenshots (both fixtures)
 pnpm ui-audit --check             # fail on a spec violation (the gate)
 pnpm ui-audit --fixture devices   # only the devices page

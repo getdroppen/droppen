@@ -146,7 +146,7 @@ export function manifestOf(dist, { commit = null, ref = null } = {}) {
     commit,
     ref,
     build: {
-      command: 'pnpm install --frozen-lockfile --filter "@remote-hand/web..." && pnpm --filter @remote-hand/web build',
+      command: 'pnpm install --frozen-lockfile --filter "@droppen/web..." && pnpm --filter @droppen/web build',
       node: process.version,
       packageManager: rootPackage.packageManager ?? null,
       source_date_epoch: process.env.SOURCE_DATE_EPOCH ?? null,
