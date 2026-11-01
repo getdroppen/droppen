@@ -431,14 +431,14 @@ async fn a_failing_launch_is_a_409_that_says_why() {
 #[test]
 #[ignore = "spawned as a fake code-server; not a test"]
 fn fake_code_server() {
-    let Ok(addr) = std::env::var("RH_FAKE_ADDR") else {
-        panic!("RH_FAKE_ADDR must name the address to bind");
+    let Ok(addr) = std::env::var("DROPPEN_FAKE_ADDR") else {
+        panic!("DROPPEN_FAKE_ADDR must name the address to bind");
     };
     // It ends with the test process that wrote its script. It is detached by
     // construction, so a test process that was killed before its guards ran
     // would otherwise leave it serving for good; its shell is in its group
     // and goes with it.
-    if let Some(test) = std::env::var("RH_FAKE_TEST").ok().and_then(|pid| pid.parse::<libc::pid_t>().ok()) {
+    if let Some(test) = std::env::var("DROPPEN_FAKE_TEST").ok().and_then(|pid| pid.parse::<libc::pid_t>().ok()) {
         std::thread::spawn(move || {
             // SAFETY: signal 0 only asks whether the test process is there.
             while unsafe { libc::kill(test, 0) } == 0 {
@@ -513,7 +513,7 @@ while [ "$#" -gt 0 ]; do
     *) shift ;;
   esac
 done
-RH_FAKE_ADDR="$addr" RH_FAKE_TEST="{test}" "{binary}" fake_code_server --exact --ignored --nocapture
+DROPPEN_FAKE_ADDR="$addr" DROPPEN_FAKE_TEST="{test}" "{binary}" fake_code_server --exact --ignored --nocapture
 "#,
         binary = binary.display(),
         test = std::process::id()

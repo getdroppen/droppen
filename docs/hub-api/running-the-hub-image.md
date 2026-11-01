@@ -57,7 +57,7 @@ Optional, as `cloud-dev.sh` sets them:
 | `DROPPEN_HUB_CHANNEL_RELAY` | `on` (the default): the hub still carries channels itself; `off`: channels go through relays only |
 | `RUST_LOG` | the log filter |
 
-For a browser run with open sign-up (`RH_CLOUD_DEV_OPEN=1`):
+For a browser run with open sign-up (`DROPPEN_CLOUD_DEV_OPEN=1`):
 
 | variable | value |
 |---|---|

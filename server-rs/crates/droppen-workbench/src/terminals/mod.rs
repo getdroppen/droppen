@@ -1698,13 +1698,13 @@ mod tests {
         std::env::set_var("CLAUDECODE", "1");
         std::env::set_var("CLAUDE_CONFIG_DIR", "/nope");
         std::env::set_var("ANTHROPIC_API_KEY", "sk-ant-nope");
-        std::env::set_var("RH_TERMINAL_KEEP", "kept");
+        std::env::set_var("DROPPEN_TERMINAL_KEEP", "kept");
 
         let env = terminal_env();
         assert!(!env.contains_key("CLAUDECODE"));
         assert!(!env.contains_key("CLAUDE_CONFIG_DIR"));
         assert!(!env.contains_key("ANTHROPIC_API_KEY"));
-        assert_eq!(env.get("RH_TERMINAL_KEEP").map(String::as_str), Some("kept"));
+        assert_eq!(env.get("DROPPEN_TERMINAL_KEEP").map(String::as_str), Some("kept"));
         assert_eq!(env.get("TERM").map(String::as_str), Some(TERM));
     }
 

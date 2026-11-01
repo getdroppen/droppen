@@ -10,14 +10,14 @@
 #                                (DROPPEN_HUB_CHAIN_V3: `write` by default — the web app makes every
 #                                new account on chain v3, so it signs up only there; `read` or `off`
 #                                to try a rollback)
-#                                (RH_CLOUD_DEV_OPEN=1: open sign-up, verification links in the
+#                                (DROPPEN_CLOUD_DEV_OPEN=1: open sign-up, verification links in the
 #                                hub log, and Turnstile with Cloudflare's always-pass testing keys
 #                                on http://verify.localhost:<port>;
-#                                RH_CLOUD_DEV_TURNSTILE=off: open sign-up without Turnstile, by
+#                                DROPPEN_CLOUD_DEV_TURNSTILE=off: open sign-up without Turnstile, by
 #                                choice, as droppen.app may run;
-#                                RH_CLOUD_DEV_EMAIL_LOG=1: verification links in the hub log
+#                                DROPPEN_CLOUD_DEV_EMAIL_LOG=1: verification links in the hub log
 #                                with sign-up by invite too;
-#                                RH_CLOUD_DEV_HOST=localhost: the hub's origin on localhost, not
+#                                DROPPEN_CLOUD_DEV_HOST=localhost: the hub's origin on localhost, not
 #                                127.0.0.1 — passkeys need a domain: no browser takes an IP
 #                                address as a relying party)
 #   cloud-dev.sh remote <url>    no local hub: only the throwaway agent, for a deployed hub
@@ -67,7 +67,7 @@ set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/../../.." && pwd)" # server-rs
-state="${RH_CLOUD_DEV_DIR:-/tmp/rh-cloud-dev}"
+state="${DROPPEN_CLOUD_DEV_DIR:-/tmp/rh-cloud-dev}"
 export DOCKER_HOST="${DOCKER_HOST:-unix://$HOME/.orbstack/run/docker.sock}"
 mkdir -p "$state"
 # Absolute: the hub image mounts it at the same path.
@@ -75,9 +75,9 @@ state="$(cd "$state" && pwd)"
 export DOCKER_CONFIG="$state/docker"
 mkdir -p "$DOCKER_CONFIG"
 [ -f "$DOCKER_CONFIG/config.json" ] || echo '{}' >"$DOCKER_CONFIG/config.json"
-# Containers by name (RH_CLOUD_DEV_NAME, with RH_CLOUD_DEV_DIR for a second
+# Containers by name (DROPPEN_CLOUD_DEV_NAME, with DROPPEN_CLOUD_DEV_DIR for a second
 # stack beside another's: `up` and `down` remove containers of these names).
-name="${RH_CLOUD_DEV_NAME:-rh-cloud-dev}"
+name="${DROPPEN_CLOUD_DEV_NAME:-rh-cloud-dev}"
 container=$name-pg
 redis=$name-redis
 toxi=$name-toxi
@@ -93,7 +93,7 @@ project_dir() { echo "$state/data/instances/cloudtest/claude/projects/-tmp-cloud
 
 load() { [ -f "$state/env" ] && . "$state/env"; }
 
-# The hub's host as clients dial it: 127.0.0.1, or localhost (RH_CLOUD_DEV_HOST).
+# The hub's host as clients dial it: 127.0.0.1, or localhost (DROPPEN_CLOUD_DEV_HOST).
 hub_host() { echo "${HUB_HOST:-127.0.0.1}"; }
 
 # Whether this stack's hub is the image (`up` chose, and recorded HUB=image).
@@ -153,7 +153,7 @@ agent_env() {
     DROPPEN_AGENT_RELAY_INSECURE=1 "$@"
 }
 
-# Open sign-up for a browser run (RH_CLOUD_DEV_OPEN=1 at `up`): verification
+# Open sign-up for a browser run (DROPPEN_CLOUD_DEV_OPEN=1 at `up`): verification
 # links go to the hub's log, and Turnstile uses Cloudflare's testing keys on
 # its own origin (verify.localhost resolves to the loopback in browsers). The
 # hub refuses open sign-up without real Turnstile and mail, but for a loopback
@@ -285,10 +285,10 @@ REDIS_URL=redis://127.0.0.1:$redis_port
 HUB_PORT=$(free_port)
 AGENT_PORT=$(free_port)
 SESSION_KEY=$(openssl rand -hex 32)
-OPEN=${RH_CLOUD_DEV_OPEN:-0}
-TURNSTILE=${RH_CLOUD_DEV_TURNSTILE:-on}
-EMAIL_LOG=${RH_CLOUD_DEV_EMAIL_LOG:-0}
-HUB_HOST=${RH_CLOUD_DEV_HOST:-127.0.0.1}
+OPEN=${DROPPEN_CLOUD_DEV_OPEN:-0}
+TURNSTILE=${DROPPEN_CLOUD_DEV_TURNSTILE:-on}
+EMAIL_LOG=${DROPPEN_CLOUD_DEV_EMAIL_LOG:-0}
+HUB_HOST=${DROPPEN_CLOUD_DEV_HOST:-127.0.0.1}
 CHAIN_V3=${DROPPEN_HUB_CHAIN_V3:-${RH_HUB_CHAIN_V3:-write}}
 HUB=$hub
 HUB_IMAGE=$hub_image
