@@ -82,8 +82,10 @@ page origins (its app host, site host and apex) and never `*`; a preflight
 CORS headers and the browser refuses the answer.
 
 A hub with an app host says which of its names does what at
-`GET /.well-known/droppen-hub` (http.md), the same answer on every host:
-`{origin, app, site?, apex_mode?}`. The web app reads it before anything else
+`GET /.well-known/droppen-hub` (http.md), the same answer on every host but
+for `origin`, which names the origin that host binds (the canonical one, or
+the alias whose host was dialled): `{origin, app, site?, apex_mode?}`. The web
+app reads it before anything else
 and runs as the app on the app host, as the public pages alone (no key store,
 no service worker) on the site host, and, on the hub's own name (the apex),
 as before (`apex_mode: app`), as the move notice (`move`: a browser that keeps

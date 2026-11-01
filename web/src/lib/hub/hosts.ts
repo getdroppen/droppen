@@ -7,8 +7,10 @@
  * `https://www.droppen.app`), and keep its origin (`droppen.app`) for what
  * devices that run AI and relays dial. It says so at
  * `GET /.well-known/droppen-hub` ({@link HubHosts}), the same answer on every
- * host it serves. The page reads it once, before anything else of cloud mode
- * starts, and runs in one of four modes ({@link HostMode}):
+ * host it serves but for `origin`, which names the origin that host binds
+ * (the canonical one, or the alias whose host was dialled). The page reads it
+ * once, before anything else of cloud mode starts, and runs in one of four
+ * modes ({@link HostMode}):
  *
  * - `single`: the hub serves everything on one host, as it always did — the
  *   hub does not answer (an older hub, a self-hosted one), names no app host,
@@ -37,7 +39,10 @@ export type ApexMode = "app" | "move" | "redirect";
 
 /** `GET /.well-known/droppen-hub`. */
 export interface HubHosts {
-  /** The hub's origin as devices that run AI dial it (`wss://droppen.app`). */
+  /**
+   * The origin a device that runs AI binds when it dials this page's host:
+   * the hub's canonical origin, or the alias whose host was dialled.
+   */
   origin: string;
   /** The web app's origin (`https://my.droppen.app`); `null`: the hub's own. */
   app: string | null;
@@ -110,8 +115,12 @@ function parentDomain(host: string): string | null {
   return parent.slice(lastDot + 1).length > 2 ? parent : null;
 }
 
-/** The name root the page, `app` and `site` must live under: the origin's parent when it has one, else itself. */
-function rootOf(host: string): string {
+/**
+ * The name root the page, `app` and `site` must live under: the origin's
+ * parent when it has one, else itself. The link popup holds the hub's names
+ * to it too (`features/link/handoff.ts` `hubName`).
+ */
+export function rootOf(host: string): string {
   return parentDomain(host) ?? host;
 }
 

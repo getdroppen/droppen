@@ -20,6 +20,7 @@
 
 import { fromHex, hex, utf8 } from "@/lib/e2e/bytes";
 import { sha256 } from "@/lib/e2e/keys";
+import { rootOf } from "@/lib/hub/hosts";
 
 export const LINK_VERSION = 1;
 /** The popup's path on the hub. */
@@ -155,9 +156,11 @@ export function machineFingerprintHex(signKey: string, dhKey: string): Promise<s
  *   itself) — unless that host is loopback, where a test hub and the
  *   computer share it. Where the hub names its hosts (`hosts`, from
  *   `/.well-known/droppen-hub`: `lib/hub/hosts.ts`), any of them too — its
- *   origin, the app host, the site host — and any name under its origin's
- *   (`*.droppen.app`: relays, the Turnstile page): none of them is a
- *   device's own page.
+ *   origin, the app host, the site host — and any name at or under its
+ *   origin's root (`droppen.app`, `*.droppen.app`: relays, the Turnstile
+ *   page): none of them is a device's own page. The root, not the origin's
+ *   own host: a hub whose API is on `api.droppen.app` still owns the names of
+ *   `droppen.app` beside it.
  *
  * Known and accepted for now (docs/local-aggregator.md §3.4): another program
  * on this computer's loopback, on another port, is "local" too.
@@ -194,7 +197,7 @@ export function privateHost(host: string): boolean {
   return !name.includes(".") || PRIVATE_SUFFIXES.some((suffix) => name.endsWith(suffix));
 }
 
-/** Whether `host` (lower-case) is one of the hub's names, or a name under its origin's ({@link callbackTier}). */
+/** Whether `host` (lower-case) is one of the hub's names, or at or under its origin's name root ({@link callbackTier}). */
 function hubName(host: string, hosts: HubHostNames): boolean {
   const name = (origin: string) => {
     try {
@@ -203,9 +206,13 @@ function hubName(host: string, hosts: HubHostNames): boolean {
       return null;
     }
   };
-  const apex = name(hosts.origin);
+  const origin = name(hosts.origin);
+  // The root, not the origin's own host: a hub may keep its API on `api.` of
+  // the domain (the doc then names `api.` as `origin`, while its app, site,
+  // relays and Turnstile page are siblings under `droppen.app`).
+  const root = origin === null ? null : rootOf(origin);
   const names = [hosts.origin, hosts.app, hosts.site].map((o) => (o ? name(o) : null));
-  return names.includes(host) || (apex !== null && host.endsWith(`.${apex}`));
+  return names.includes(host) || (root !== null && (host === root || host.endsWith(`.${root}`)));
 }
 
 /** The hub's names `callbackTier` refuses besides the page's own (`HubHosts` of `lib/hub/hosts.ts`). */
