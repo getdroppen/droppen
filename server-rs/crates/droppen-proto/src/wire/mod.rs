@@ -17,6 +17,9 @@
 //! A message is `{"t": "<its variant in snake_case>", …fields}`. Nothing
 //! here is signed as JSON: a signature a message carries is the hex of one
 //! over an droppen-proto binary encoding ([`crate::sig`]).
+//!
+//! The `t` names are wire between the two ends, which can be different
+//! versions: they keep their spelling.
 
 pub mod agent;
 pub mod client;

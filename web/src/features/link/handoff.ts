@@ -43,6 +43,8 @@ export interface LinkAggregator {
   dhKey: string;
 }
 
+/** The names are wire between the hub's popup and the app's opener: the two
+ * can be different versions, so the `rh-link/*` spelling stays. */
 export type LinkMessage =
   | { t: "rh-link/ready"; v: 1 }
   | { t: "rh-link/request"; v: 1; nonce: string; machine: LinkMachine; aggregator: LinkAggregator | null; aggregate: boolean }

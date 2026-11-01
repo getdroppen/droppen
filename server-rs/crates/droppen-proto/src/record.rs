@@ -109,6 +109,9 @@ pub(crate) const TAG_LEN: usize = 16;
 const HEADER: usize = 1 + 2 + 32 + 4;
 pub(crate) const FLAG_DEFLATE: u8 = 0x01;
 
+/// The `rh/v1` labels this module feeds to HKDF and HMAC or binds into the
+/// AAD: every version must use these exact bytes to derive the same ids and
+/// keys and to open what older versions wrote.
 const STREAM_ID_SALT: &[u8] = b"rh/v1 stream-id";
 const STREAM_KEY_SALT: &[u8] = b"rh/v1 stream-key";
 const AAD_LABEL: &[u8] = b"rh/v1 record\0";

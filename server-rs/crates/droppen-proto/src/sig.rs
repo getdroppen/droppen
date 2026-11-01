@@ -24,6 +24,9 @@
 //!
 //! Every label ends in NUL and has none before it, so no label is a prefix of
 //! another and no structure can be mistaken for a different label's.
+//!
+//! The bytes are the wire, not the product's name: every version signs and
+//! checks them as they are, so the `rh/v1` spelling stays.
 
 use ed25519_dalek::{Signer as _, SigningKey};
 
