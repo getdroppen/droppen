@@ -70,8 +70,8 @@ export const pricingZhCN: Bundle = {
 
   // Compare
   "Compare": "对比",
-  "What each plan includes": "各方案包含的内容",
   "included": "包含",
+  "None": "无",
   "Price": "价格",
   "In US dollars": "以美元计",
   "Free forever, no account": "永久免费，无需账号",
@@ -111,7 +111,6 @@ export const pricingZhCN: Bundle = {
   "Plan": "方案",
   "${{price}} / month": "${{price}} / 月",
   "E-mail address": "邮箱地址",
-  "No confirmation mail and no newsletter: we use your address only to send what you asked for.": "不发送确认邮件，也不发送营销邮件：你的邮箱仅用于发送你所登记的通知。",
   "That does not look like an e-mail address. Check it and try again.": "这看起来不像邮箱地址，检查一下再试。",
   "Use an address you keep: throwaway mail providers are not accepted.": "请用你长期使用的邮箱：不接受一次性邮箱。",
   "Too many tries from your network. Try again in {{n}} min.": "你所在的网络尝试次数太多，请 {{n}} 分钟后再试。",
@@ -123,6 +122,7 @@ export const pricingZhCN: Bundle = {
   "Add another address": "再添加一个邮箱",
 
   // Questions
+  "FAQ": "常见问题",
   "Questions": "常见问题",
   "Before you choose": "选择方案之前",
   "What happens when I use up a month's transfer?": "每月流量额度用完后会怎样？",
@@ -284,8 +284,8 @@ export const pricingZhTW: Bundle = {
   "{{n}} GB a month through our servers, then billed by use, at full speed": "每月經我們的伺服器轉送 {{n}} GB，超出部分不限速，按用量計費",
 
   "Compare": "比較",
-  "What each plan includes": "各方案包含的內容",
   "included": "包含",
+  "None": "無",
   "Price": "價格",
   "In US dollars": "以美元計",
   "Free forever, no account": "永久免費，不需要帳號",
@@ -324,7 +324,6 @@ export const pricingZhTW: Bundle = {
   "Plan": "方案",
   "${{price}} / month": "${{price}} / 月",
   "E-mail address": "電子郵件地址",
-  "No confirmation mail and no newsletter: we use your address only to send what you asked for.": "不寄送確認信，也不寄送行銷郵件：你的信箱僅用於寄送你所登記的通知。",
   "That does not look like an e-mail address. Check it and try again.": "這看起來不像電子郵件地址，檢查一下再試。",
   "Use an address you keep: throwaway mail providers are not accepted.": "請用你長期使用的信箱：不接受拋棄式信箱。",
   "Too many tries from your network. Try again in {{n}} min.": "你所在的網路嘗試次數太多，請 {{n}} 分鐘後再試。",
@@ -335,6 +334,7 @@ export const pricingZhTW: Bundle = {
   "We'll send nothing else. To be taken off the list, write to {{email}}.": "除此之外，我們不會寄送任何郵件。如需退出名單，請寄信至 {{email}}。",
   "Add another address": "再新增一個信箱",
 
+  "FAQ": "常見問題",
   "Questions": "常見問題",
   "Before you choose": "選擇方案之前",
   "What happens when I use up a month's transfer?": "每月流量額度用完後會怎樣？",
@@ -496,8 +496,8 @@ export const pricingJa: Bundle = {
   "{{n}} GB a month through our servers, then billed by use, at full speed": "私たちのサーバー経由の転送は月 {{n}} GB。超えた分も速度はそのままで、従量課金",
 
   "Compare": "比較",
-  "What each plan includes": "各プランの内容",
   "included": "含まれる",
+  "None": "なし",
   "Price": "料金",
   "In US dollars": "米ドル建て",
   "Free forever, no account": "ずっと無料、アカウント不要",
@@ -536,7 +536,6 @@ export const pricingJa: Bundle = {
   "Plan": "プラン",
   "${{price}} / month": "${{price}} / 月",
   "E-mail address": "メールアドレス",
-  "No confirmation mail and no newsletter: we use your address only to send what you asked for.": "確認メールもマーケティングメールも送りません。アドレスは、登録いただいたお知らせを送るためだけに使います。",
   "That does not look like an e-mail address. Check it and try again.": "メールアドレスの形式ではないようです。確認してもう一度お試しください。",
   "Use an address you keep: throwaway mail providers are not accepted.": "普段お使いのアドレスを入力してください。使い捨てメールは受け付けていません。",
   "Too many tries from your network. Try again in {{n}} min.": "このネットワークからの試行が多すぎます。{{n}} 分後にもう一度お試しください。",
@@ -547,6 +546,7 @@ export const pricingJa: Bundle = {
   "We'll send nothing else. To be taken off the list, write to {{email}}.": "それ以外のメールは送りません。リストから外れたい場合は {{email}} までご連絡ください。",
   "Add another address": "別のアドレスを登録",
 
+  "FAQ": "よくある質問",
   "Questions": "よくある質問",
   "Before you choose": "プランを選ぶ前に",
   "What happens when I use up a month's transfer?": "月間の転送量を使い切ったら？",

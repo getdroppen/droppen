@@ -5,7 +5,6 @@ import { CapsLabel } from "@/components/ui/caps-label";
 import { type HubApi, HubApiError, type SignupMode, type WaitlistPlan } from "@/lib/hub/api";
 import { cn } from "@/lib/cn";
 import { PRO_PRICE } from "./pricing-plans";
-import { publicLink, PRIVACY_PATH } from "./route";
 import { cjkTracking, landingPrimary } from "./page-kit";
 
 /*
@@ -143,9 +142,8 @@ const emailField =
   "h-9 w-full border border-border bg-bg px-2.5 text-sm text-fg placeholder:text-faint focus:border-fg max-md:h-10 max-md:text-base";
 
 /**
- * The form. `plan` is the page's (the plan cards choose it too); with
- * `onPlan` the form offers both plans to choose from, without it only `plan`
- * is joined. `signup` is the hub's sign-up mode (`signup-mode.ts`), for what
+ * The form. `plan` is the page's (from `?plan=`); with `onPlan` the form
+ * offers both plans to choose from, without it only `plan` is joined. `signup` is the hub's sign-up mode (`signup-mode.ts`), for what
  * joining Free brings. `state` stands in for the form's own (tests, previews).
  */
 export function WaitlistForm({
@@ -203,18 +201,10 @@ export function WaitlistForm({
           {problemText(refused, t)}
         </p>
       )}
-      <div className="flex flex-col gap-3">
-        <button type="submit" data-variant="primary" data-testid="waitlist-submit" disabled={sending} className={cn(landingPrimary, "w-full sm:w-fit max-md:h-10")}>
-          {sending && <Loader2 aria-hidden="true" className="size-3.5 animate-spin" />}
-          {t("Join the waitlist")}
-        </button>
-        <p className="text-sm leading-6 text-muted">
-          {t("No confirmation mail and no newsletter: we use your address only to send what you asked for.")}{" "}
-          <a {...publicLink(PRIVACY_PATH)} data-testid="waitlist-privacy" className="whitespace-nowrap text-fg underline underline-offset-4 hover:no-underline">
-            {t("Privacy notice")}
-          </a>
-        </p>
-      </div>
+      <button type="submit" data-variant="primary" data-testid="waitlist-submit" disabled={sending} className={cn(landingPrimary, "w-full self-center sm:w-fit max-md:h-10")}>
+        {sending && <Loader2 aria-hidden="true" className="size-3.5 animate-spin" />}
+        {t("Join the waitlist")}
+      </button>
     </form>
   );
 }
