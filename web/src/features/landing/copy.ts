@@ -10,14 +10,13 @@
  * 读不了), and every action says what it does and to what (免费注册, 回答 AI 的
  * 提问, 打开电脑上的终端). Every headline says what the reader gets (their
  * computer's AI on their phone, every computer in one list, the agent's
- * question answered from anywhere). The layout does the
- * explaining: no caps line over a headline, no caption for what a screenshot
- * or a diagram already shows, and a line under a headline only for what the
- * layout cannot show (how to get it, the numbers, what is encrypted), one
- * sentence or two. Droppen Hub, relays, ciphertext and p50s come after the
- * benefit, as its support, never as the opening; the hero names none of
- * them. End-to-end encryption is said in one section near the end, and the
- * rest of it is /security's. "We" / "our servers" are Droppen Hub and the
+ * question answered from anywhere). The composition is the product page's:
+ * a small caps line names each section, the headline says what the reader
+ * gets, one sentence of support follows, and every product screenshot gets a
+ * one-line caption for the thing on it the words are about. Droppen Hub,
+ * relays, ciphertext and p50s come after the benefit, as its support, never as
+ * the opening; the hero names none of them. End-to-end encryption is said in
+ * one section near the end, and the rest of it is /security's. "We" / "our servers" are Droppen Hub and the
  * Droppen relays. A device is a 设备 / 裝置 / デバイス; the copy says 你的电脑
  * only for the reader's own physical computer, and never 机器.
  *
@@ -50,29 +49,11 @@ type Bundle = Record<string, string>;
 
 const zhCN: Bundle = {
   // Diagram cards: every row says something about the product.
-  "your computer": "你的电脑",
-  "your phone": "你的手机",
-  "browser": "浏览器",
-  "offline since {{time}}": "{{time}} 起离线",
-  "Droppen can't read it": "Droppen 无法读取",
-  "done, tests pass": "改好了，测试通过",
   "Droppen relay": "Droppen 中继",
   "relay": "中继",
   "encrypted copy": "加密副本",
-  "read-only": "只读",
-  "darken the sign-in button": "把登录按钮改成深色",
-  "passes it on, sealed": "密封转交给手机",
-  "encrypted locally": "本地加密",
-  "decrypted locally": "本地解密",
 
-  // The hero's figure: two computers' sessions, and your phone (hero-agents.tsx). The words a session's state shows are the app's own.
   "Linux server": "Linux 服务器",
-  "working": "工作中",
-  "asking you": "在问你",
-  "done": "完成",
-  "waiting for your answer": "等你回答",
-  "not now": "以后再说",
-  "send": "发送",
 
   // Page
   "Droppen — your computer's AI, on your phone": "Droppen — 电脑上的 AI，手机上接着用",
@@ -86,7 +67,6 @@ const zhCN: Bundle = {
   "How it works": "工作原理",
   "Open app": "打开应用",
   "Sign in": "登录",
-  "Get started": "开始使用",
 
   // Hero
   "Your computer's AI, from your phone.": "电脑上的 AI，手机上接着用",
@@ -100,33 +80,12 @@ const zhCN: Bundle = {
   "Linux and other platforms": "Linux 及其他平台",
   "Invite-only for now: sign-up needs an invite code.": "目前邀请制，注册需要邀请码。",
   "Sign-up is closed for now.": "目前暂停注册。",
-  "What Droppen looks like": "Droppen 的产品界面",
-  "Sessions": "会话",
   "Droppen on a Mac: a list of Claude Code and Codex sessions, and a session waiting for an answer":
     "Mac 上的 Droppen：Claude Code 和 Codex 的会话列表，以及一个等你回答的会话",
-  "Side by side": "分屏",
   "Droppen with three panes: two sessions and a terminal": "Mac 上的 Droppen 分成三栏：两个会话和一个终端",
-  "Terminal": "终端",
-  "A terminal in Droppen": "Droppen 里的终端",
-  "My devices": "我的设备",
-  "my.droppen.app in a browser: three computers and the list of what needs you": "浏览器里的 my.droppen.app：三台电脑，以及「需要你」清单",
   "Phone": "移动端",
   "Droppen on a phone: what needs you, and a session's question": "手机上的 Droppen：「需要你」清单，以及一个会话的提问",
-  "Add a device": "添加设备",
-  "A new device shows a QR code, and a device you already have approves it": "新设备显示二维码，由你已有的设备扫码批准",
-  "Three steps to set up, then carry on away from your desk.": "三步完成设置，离开电脑也能继续",
-  "Install Droppen where Claude Code or Codex runs": "在电脑端安装客户端",
-  "Sign in on that computer": "登录并关联设备",
-
-  // How it works: three steps, each true of the build (first-host.tsx, add-computer.tsx, pairing-screen.tsx)
-  "Install it where your AI runs": "在运行 AI 的电脑上安装",
-  "The Mac app, or one install command on Linux. Sessions already on that computer appear in Droppen, with nothing to migrate.":
-    "Mac 上安装应用，Linux 上执行一条安装命令。电脑上已有的会话会直接出现在 Droppen 中，无需迁移。",
-  "Sign in from the Mac app. On a Linux server, run the command with a one-time code from a device that is already signed in. Add your other computers the same way.":
-    "在 Mac 应用中点击登录；在 Linux 服务器上，运行由已登录设备生成、附带一次性注册码的命令。其他电脑以同样方式加入同一账户。",
-  "Continue on your phone": "手机扫码即刻使用",
-  "Open {{app}} in your phone's browser, then scan the QR code it shows with a device that is already signed in.":
-    "在手机浏览器中打开 {{app}}，再用一台已登录的设备扫描手机上显示的二维码，确认加入。",
+  "Full install instructions": "完整安装说明",
 
   // Your code, for your eyes only (the one section on encryption, near the end)
   "End-to-end encrypted": "端到端加密",
@@ -143,35 +102,32 @@ const zhCN: Bundle = {
   "Read the source": "查看源代码",
 
   // Typing from your phone stays snappy (the direct path)
-  "Typing from your phone stays responsive.": "直连快速响应，断连自动接管，手机输入不丢键",
-  "When your phone can reach your computer directly, keystrokes go straight there; when it can't, a Droppen relay forwards them automatically. If the direct path drops, the relay takes over within 1.5 s and resends unconfirmed keystrokes in order, so none are lost.":
-    "手机能直接连到你的电脑时，按键经直连送达；连不上时，自动改由 Droppen 中继转发。直连中断后，中继在 1.5 秒内接管，并按原顺序重发尚未确认的按键，不会丢失。",
-  "browser on the same computer": "同一台电脑上的浏览器",
-  "phone on 4G": "手机 · 4G 网络",
-  "measured on": "实测场景",
-  "measured median round trip · direct {{d}} · via a Droppen relay {{h}}": "实测往返延迟中位数 · 直连 {{d}} · 经 Droppen 中继 {{h}}",
+  "Keystrokes go straight to your computer when your phone can reach it, and through a Droppen relay when it can't; if the direct path drops, the relay takes over within 1.5 s and resends unconfirmed keystrokes in order, so none are lost.":
+    "手机能直接连到你的电脑时，按键经直连送达；连不上时由 Droppen 中继转发。直连中断后，中继在 1.5 秒内接管，并按原顺序重发尚未确认的按键，不会丢失。",
   "direct": "直连",
-  "lost": "断开",
-  "direct path up": "直连中",
-  "direct path lost: switched to the Droppen relay, resending unconfirmed keys in order": "直连中断：已切换到 Droppen 中继，按原顺序重发未确认的按键",
-  "network back: direct again": "网络恢复：重新直连",
-  "keys {{sent}} · delivered {{delivered}} · in flight {{flight}} · lost 0": "按键 {{sent}} · 送达 {{delivered}} · 在途 {{flight}} · 丢失 0",
 
-  // Lid closed? (the offline copy)
-  "Your sessions stay readable while your computer is offline.": "电脑合盖或离线，会话依然随时查阅",
-  "While your computer is online, an encrypted copy of its sessions is kept on Droppen Hub in the cloud, and only your devices can decrypt it. When the computer is shut down, asleep or offline, your phone can still open the sessions updated in the last {{free}} days ({{pro}} on Pro); sending messages and using the terminal wait until that computer is back online.":
-    "电脑在线时，会话的加密副本会保存到云端的 Droppen Hub，只有你的设备能解密。电脑关机、休眠或断网后，手机仍可查看最近 {{free}} 天内更新的会话（Pro 方案为 {{pro}} 天）；发送消息和使用终端，需等这台电脑重新上线。",
+  // The network diagram
+  "The direct and relay paths between your phone and your computer": "手机与电脑之间的直连和中继路径",
+  "Your phone reaches your computer directly when it can; when it cannot, it goes through a Droppen relay. The relay takes over within 1.5 s and unconfirmed keys are resent in order.":
+    "手机能直连电脑时直连；连不上时经 Droppen 中继。中继在断线 1.5 秒内接管，未确认的按键按原顺序重发。",
+  "Connection path · direct first": "连接路径 · 直连优先",
+  "P2P / direct first": "P2P / 直连优先",
+  "direct first": "直连优先",
+  "Any network": "任意网络",
+  "Fallback · ciphertext only": "连不上才用 · 只转发密文",
+  "The session runs here": "会话在这台电脑上运行",
+  "Direct · {{ms}}": "直连 · {{ms}}",
+  "Relay · {{ms}}": "中继 · {{ms}}",
+  "Switches within 1.5 s": "断线 1.5 秒内切换",
+  "Unconfirmed keys resend in order": "未确认的按键按原顺序重发",
 
   // What you get
-  "Away from your computer, handle all of this from your phone.": "不在电脑前，这些事也能在手机上处理",
   "Every computer, one list": "所有电脑，一个列表",
   "Home and work computers on one account, with every session that is waiting for an answer, has unread messages or is running in one list.":
     "多台电脑绑定同一账户。所有正在运行、等待回复或有未读更新的会话，汇总在同一个列表中一览无余。",
   "Answer and steer": "回答提问，中途干预",
   "Answer the AI's questions, add a message while it works, or stop the current run if it goes the wrong way.":
     "回答 AI 的提问；在它生成中随时追加补充指令，若发现偏离预期可立即中止。",
-  "Notified when a session needs you": "需要你时，收到通知",
-  "A notification when the AI asks a question, finishes a reply you haven't read, or fails.": "AI 向你提问、回复完成但你尚未查看，或运行失败时，都会通知你。",
   "Start a session from your phone": "在手机上新建会话",
   "Choose Claude Code or Codex, a computer and a folder, optionally attach a screenshot, and send.": "选择 Claude Code 或 Codex、电脑和文件夹，可附上截图，然后发送。",
   "Browse your files": "浏览项目文件",
@@ -186,32 +142,127 @@ const zhCN: Bundle = {
 
   // Footer
   "Your AI keeps working on your computer. When it needs you, answer from your phone.": "AI 在你的电脑上继续工作，需要你时，在手机上即可回应",
+
+  // The product page's composition: the proof line, the product as one
+  // ensemble, the three screens, the network, the questions, the plans.
+  "Free to start": "免费开始",
+  "No credit card": "无需信用卡",
+  "Product facts": "产品信息",
+  "Product interface": "产品界面",
+  "What it actually looks like.": "它到底长什么样。",
+  "No new workflow to learn. The sessions, terminal and projects you know, carried on from another screen.":
+    "不用学新的工作流。你熟悉的会话、终端和项目，换一块屏幕继续。",
+  "Queue": "队列",
+  "Every computer, one queue.": "每台电脑，都在同一个队列里。",
+  "Your home Mac, the Linux machine at work and the server in the rack, on one account. Open it and see which one needs you, instead of signing in to each.":
+    "家里的 Mac、公司的 Linux 电脑、机架上的服务器，都在同一个账户里。打开就能看到哪一台需要你，不用逐台登录。",
+  "Amber is “waiting for you”; green is “working”.": "琥珀色是「等你回答」，绿色是「工作中」。",
+  "Unread, running and waiting for an answer, sorted by state.": "未读、运行中、等你回答，按状态排序。",
+  "Every device's state in one column; an amber row left alone stops the AI there.":
+    "每台设备的状态排成一列；琥珀色的一行没人处理，那台电脑上的 AI 就会停下来等你。",
+  "Waiting for you / working": "等你回答 / 工作中",
+  "Split": "分屏",
+  "Code on the left, terminal on the right.": "左边代码，右边终端。",
+  "When you need to watch two tasks, put a session and a terminal side by side. Changes, test output and errors in one window, with nothing copied and pasted.":
+    "需要同时盯两件事时，把一个会话和终端并排。改动、测试输出和报错都在同一个窗口里，不用来回复制粘贴。",
+  "Two independent sessions that do not interrupt each other.": "两个独立的会话，互不打断。",
+  "The terminal is a full session, not a read-only log.": "终端是完整的会话，不是只读日志。",
+  "The terminal, diffs and test results stay in one view; the mouse does not fly between windows.":
+    "终端、diff 和测试结果都在同一视图里，鼠标不用在窗口间飞来飞去。",
+  "The terminal is right there": "终端就在旁边",
+  "Leave the computer, take over on your phone.": "离开电脑，在手机上接手。",
+  "Open {{app}} in your phone's browser and the same sessions are there. The amber “needs you” row comes first; open it and answer.":
+    "在手机浏览器里打开 {{app}}，还是那些会话。琥珀色的「需要你」排在最前，点开就能回答。",
+  "Answer questions, add instructions, stop a run.": "回答问题，补充指令，中止运行。",
+  "With the computer off, the last {{free}} days stay readable ({{pro}} on Pro).": "电脑关机后，最近 {{free}} 天的内容仍可查看（Pro 为 {{pro}} 天）。",
+  "Only what needs you": "只处理需要你的",
+  "The phone is not a shrunken desktop: the conclusion first, the detail after.": "手机不是缩小的桌面：结论先行，细节随后。",
+  "Why Droppen": "为什么选 Droppen",
+  "Leaving your computer is not leaving the work.": "离开电脑，不是离开工作。",
+  "The AI keeps running on your computer; you only step in for the few seconds that need you.":
+    "AI 继续在你的电脑上运行，你只需在需要你的那几秒里介入。",
+  "Readable with the lid closed": "合上盖子也能读",
+  "While the computer is online, an encrypted copy is synced. Shut down, asleep or offline, your phone can still read the last {{free}} days ({{pro}} on Pro).":
+    "电脑在线时同步加密副本。关机、休眠或断网后，手机仍可查看最近 {{free}} 天（Pro 为 {{pro}} 天）的内容。",
+  "Built for real networks": "为真实网络而做",
+  "A weak network does not stop the work.": "网络不稳，工作不断。",
+  "Direct median round trip": "直连往返中位数",
+  "Through a Droppen relay": "经 Droppen 中继",
+  "Keys lost": "丢失按键",
+  "Resent in order after a drop": "断线后按原顺序重发",
+  "The key boundary of end-to-end encryption": "端到端加密的密钥边界",
+  "Your computer and your phone each hold a key. Droppen Hub stores only encrypted copies, and relays forward only ciphertext; neither has the key.":
+    "你的电脑和手机各持一把密钥。Droppen Hub 只保存加密副本，中继只转发加密数据，两者都没有密钥。",
+  "Key boundary · end-to-end encryption": "密钥边界 · 端到端加密",
+  "Your computer": "你的电脑",
+  "Your phone": "你的手机",
+  "Encrypted here": "在此加密",
+  "Decrypted here": "在此解密",
+  "Only encrypted copies": "只有加密副本",
+  "Only ciphertext": "只有加密数据",
+  "End-to-end encrypted · ciphertext": "端到端加密 · 加密数据",
+  "The key stays on this device": "密钥留在这台设备上",
+  "No key": "没有密钥",
+  "Keys are negotiated between your devices and never pass through Droppen Hub or a relay.":
+    "密钥只在你的设备之间协商，从不经过 Droppen Hub 或中继。",
+  "The key is made on your computer and never leaves your devices. Everything Droppen keeps or passes on is already sealed.":
+    "密钥在你的电脑上生成，从不离开你的设备。Droppen 保存或转发的所有内容，都已经密封。",
+  "Beta · the encryption design has had internal review.": "测试版 · 加密设计经过内部评审。",
+  "Start free.": "免费开始。",
+  "Using it locally needs no account. To go across devices, free is enough to start.":
+    "在本地使用无需账户。要跨设备使用，免费方案就够开始。",
+  "Local only": "仅本地",
+  "On your own computer, with no account.": "在你自己的电脑上使用，无需账户。",
+  "1 device that runs AI": "1 台运行 AI 的设备",
+  "No cross-device access": "无法跨设备访问",
+  "No cloud copy": "没有云端副本",
+  "Where cross-device starts.": "跨设备使用的起点。",
+  "{{n}} devices that run AI": "{{n}} 台运行 AI 的设备",
+  "{{devices}} devices, phones and browsers included": "共 {{devices}} 台设备（含手机和浏览器）",
+  "{{free}} days of offline copy · {{gb}} GB relay": "{{free}} 天离线副本 · {{gb}} GB 中继流量",
+  "{{pro}} devices that run AI · {{devices}} devices": "{{pro}} 台运行 AI 的设备 · 共 {{devices}} 台设备",
+  "{{pro}} days of offline copy · {{gb}} GB relay": "{{pro}} 天离线副本 · {{gb}} GB 中继流量",
+  "Compare all plans": "比较所有方案",
+  "Recommended": "推荐",
+  "USD / month": "美元 / 月",
+  "For people who move between devices every day.": "给每天在多台设备间切换的人。",
+  "Billed by use beyond that": "超出后按用量计费",
+  "Choose Pro": "选择 Pro",
+  "${{yearly}} a year, about {{saving}}% off · prices in US dollars": "年付 ${{yearly}}，约省 {{saving}}% · 价格以美元计",
+  "Questions and answers": "常见问题",
+  "Before you start.": "开始之前。",
+  "Do I have to keep my computer on?": "电脑需要一直开着吗？",
+  "No. The AI runs on your computer, but you can leave it. While it is offline, your phone can still read the last {{free}} days ({{pro}} on Pro) of synced sessions; sending messages and using the terminal wait until it is back online.":
+    "不用。AI 在你的电脑上运行，但你可以离开。它离线时，手机仍可查看最近 {{free}} 天内同步过的会话（Pro 为 {{pro}} 天）；发送消息和使用终端，要等它重新上线。",
+  "Is there a Windows client?": "有 Windows 客户端吗？",
+  "Droppen's web app opens in a Windows browser, but the AI has to run on a Mac or Linux computer. A Windows client has not been released.":
+    "Droppen 的网页应用可以在 Windows 浏览器中打开，但 AI 必须在 Mac 或 Linux 电脑上运行。Windows 客户端尚未发布。",
+  "Will my code be uploaded?": "我的代码会上传吗？",
+  "Session content is encrypted on your computer before it leaves. Droppen Hub keeps encrypted copies, and relays forward only ciphertext; neither has the key. In a browser, you trust the page code as it was loaded that time.":
+    "会话内容在离开你的电脑前就已加密。Droppen Hub 保存加密副本，中继只转发加密数据，两者都没有密钥。在浏览器里，你需要信任当次加载的页面代码。",
+  "Is the free plan enough?": "免费方案够用吗？",
+  "If you have up to {{hosts}} computers that run AI and need {{free}} days of offline reading, free is enough. Choose Pro for more devices, {{pro}} days offline or more relay transfer.":
+    "如果你最多有 {{hosts}} 台运行 AI 的电脑，且只需要 {{free}} 天的离线阅读，免费方案就够。需要更多设备、{{pro}} 天离线或更多中继流量，就选 Pro。",
+  "Product": "产品",
+  "Resources": "资源",
+  "Legal": "法律",
+  "Interface": "界面",
+  "Encryption design": "加密设计",
+  "Back to top": "回到顶部",
+  "Free to start. Install once, then carry on from any of your devices.": "免费开始。安装一次，之后在哪台设备上都能继续。",
+  "Your AI, from your phone. End-to-end encrypted, open-source client.": "你的 AI，手机上接着用。端到端加密，客户端开源。",
+  "macOS 13 or later · Linux · Windows in the browser · iOS and Android": "macOS 13 或更高 · Linux · Windows 用浏览器 · iOS 和 Android",
+  "macOS and Linux run Droppen natively · Windows, iPad, iPhone and Android in the browser · one account, and your sessions follow":
+    "macOS 和 Linux 原生运行 Droppen · Windows、iPad、iPhone 和 Android 用浏览器 · 一个账户，会话跟着你走",
 };
 
 const zhTW: Bundle = {
   // Diagram cards: every row says something about the product.
-  "your computer": "你的電腦",
-  "your phone": "你的手機",
-  "browser": "瀏覽器",
-  "offline since {{time}}": "{{time}} 起離線",
-  "Droppen can't read it": "Droppen 無法讀取",
-  "done, tests pass": "改好了，測試通過",
   "Droppen relay": "Droppen 中繼",
   "relay": "中繼",
   "encrypted copy": "加密副本",
-  "read-only": "唯讀",
-  "darken the sign-in button": "把登入按鈕改成深色",
-  "passes it on, sealed": "密封轉交給手機",
-  "encrypted locally": "本機加密",
-  "decrypted locally": "本機解密",
 
   "Linux server": "Linux 伺服器",
-  "working": "工作中",
-  "asking you": "在問你",
-  "done": "完成",
-  "waiting for your answer": "等你回答",
-  "not now": "以後再說",
-  "send": "傳送",
 
   "Droppen — your computer's AI, on your phone": "Droppen — 電腦上的 AI，手機上接著用",
   "Claude Code and Codex keep running on your own Macs and Linux machines. From your phone or a browser, see every session across them, answer their questions, steer them and open a terminal. End-to-end encrypted, with an open-source client.":
@@ -224,7 +275,6 @@ const zhTW: Bundle = {
   "How it works": "運作方式",
   "Open app": "打開應用",
   "Sign in": "登入",
-  "Get started": "開始使用",
 
   "Your computer's AI, from your phone.": "電腦上的 AI，手機上接著用",
   "Claude Code and Codex keep running on your own computers. From a browser on your phone or another device, answer their questions, steer them and open a terminal on the computer.":
@@ -237,32 +287,12 @@ const zhTW: Bundle = {
   "Linux and other platforms": "Linux 及其他平台",
   "Invite-only for now: sign-up needs an invite code.": "目前採邀請制，註冊需要邀請碼。",
   "Sign-up is closed for now.": "目前暫停註冊。",
-  "What Droppen looks like": "Droppen 的產品介面",
-  "Sessions": "工作階段",
   "Droppen on a Mac: a list of Claude Code and Codex sessions, and a session waiting for an answer":
     "Mac 上的 Droppen：Claude Code 和 Codex 的工作階段清單，以及一個等你回答的工作階段",
-  "Side by side": "多欄",
   "Droppen with three panes: two sessions and a terminal": "Mac 上的 Droppen 分成三欄：兩個工作階段和一個終端機",
-  "Terminal": "終端機",
-  "A terminal in Droppen": "Droppen 裡的終端機",
-  "My devices": "我的裝置",
-  "my.droppen.app in a browser: three computers and the list of what needs you": "瀏覽器裡的 my.droppen.app：三台電腦，以及「需要你」清單",
   "Phone": "手機",
   "Droppen on a phone: what needs you, and a session's question": "手機上的 Droppen：「需要你」清單，以及一個工作階段的提問",
-  "Add a device": "新增裝置",
-  "A new device shows a QR code, and a device you already have approves it": "新裝置顯示 QR 碼，由你已有的裝置掃碼核准",
-  "Three steps to set up, then carry on away from your desk.": "三步完成設定，離開電腦也能繼續",
-  "Install Droppen where Claude Code or Codex runs": "在電腦上安裝 Droppen",
-  "Sign in on that computer": "在那台電腦上登入",
-
-  "Install it where your AI runs": "裝在跑 AI 的電腦上",
-  "The Mac app, or one install command on Linux. Sessions already on that computer appear in Droppen, with nothing to migrate.":
-    "Mac 上安裝應用程式，Linux 上執行一行安裝指令。電腦上既有的工作階段會直接出現在 Droppen 中，無需遷移。",
-  "Sign in from the Mac app. On a Linux server, run the command with a one-time code from a device that is already signed in. Add your other computers the same way.":
-    "在 Mac 應用程式中點擊登入；在 Linux 伺服器上，執行由已登入裝置產生、附一次性代碼的指令。其他電腦以同樣方式加入同一帳戶。",
-  "Continue on your phone": "在手機上接著用",
-  "Open {{app}} in your phone's browser, then scan the QR code it shows with a device that is already signed in.":
-    "在手機瀏覽器中打開 {{app}}，再用一台已登入的裝置掃描手機上顯示的 QR 碼，確認加入。",
+  "Full install instructions": "完整安裝說明",
 
   "End-to-end encrypted": "端對端加密",
   "Droppen can't read your code.": "你的程式碼，Droppen 無法讀取",
@@ -277,32 +307,30 @@ const zhTW: Bundle = {
     "droppen 命令列程式、Mac 應用程式和網頁應用程式均以 AGPL-3.0 授權開源。Droppen Hub 不開源。",
   "Read the source": "查看原始碼",
 
-  "Typing from your phone stays responsive.": "在手機上輸入，回應及時",
-  "When your phone can reach your computer directly, keystrokes go straight there; when it can't, a Droppen relay forwards them automatically. If the direct path drops, the relay takes over within 1.5 s and resends unconfirmed keystrokes in order, so none are lost.":
-    "手機能直接連到你的電腦時，按鍵經直連送達；連不上時，自動改由 Droppen 中繼轉送。直連中斷後，中繼在 1.5 秒內接手，並按原順序重送尚未確認的按鍵，不會遺失。",
-  "browser on the same computer": "同一台電腦上的瀏覽器",
-  "phone on 4G": "手機 · 4G 網路",
-  "measured on": "實測情境",
-  "measured median round trip · direct {{d}} · via a Droppen relay {{h}}": "實測往返延遲中位數 · 直連 {{d}} · 經 Droppen 中繼 {{h}}",
+  "Keystrokes go straight to your computer when your phone can reach it, and through a Droppen relay when it can't; if the direct path drops, the relay takes over within 1.5 s and resends unconfirmed keystrokes in order, so none are lost.":
+    "手機能直接連到你的電腦時，按鍵經直連送達；連不上時由 Droppen 中繼轉送。直連中斷後，中繼在 1.5 秒內接手，並按原順序重送尚未確認的按鍵，不會遺失。",
   "direct": "直連",
-  "lost": "斷開",
-  "direct path up": "直連中",
-  "direct path lost: switched to the Droppen relay, resending unconfirmed keys in order": "直連中斷：已切換到 Droppen 中繼，按原順序重送未確認的按鍵",
-  "network back: direct again": "網路恢復：重新直連",
-  "keys {{sent}} · delivered {{delivered}} · in flight {{flight}} · lost 0": "按鍵 {{sent}} · 送達 {{delivered}} · 傳送中 {{flight}} · 遺失 0",
 
-  "Your sessions stay readable while your computer is offline.": "電腦離線時，工作階段仍可查看",
-  "While your computer is online, an encrypted copy of its sessions is kept on Droppen Hub in the cloud, and only your devices can decrypt it. When the computer is shut down, asleep or offline, your phone can still open the sessions updated in the last {{free}} days ({{pro}} on Pro); sending messages and using the terminal wait until that computer is back online.":
-    "電腦在線時，工作階段的加密副本會儲存到雲端的 Droppen Hub，只有你的裝置能解密。電腦關機、休眠或斷網後，手機仍可查看最近 {{free}} 天內更新的工作階段（Pro 方案為 {{pro}} 天）；傳送訊息和使用終端機，需等這台電腦重新上線。",
+  // The network diagram
+  "The direct and relay paths between your phone and your computer": "手機與電腦之間的直連和中繼路徑",
+  "Your phone reaches your computer directly when it can; when it cannot, it goes through a Droppen relay. The relay takes over within 1.5 s and unconfirmed keys are resent in order.":
+    "手機能直連電腦時直連；連不上時經 Droppen 中繼。中繼在斷線 1.5 秒內接手，未確認的按鍵按原順序重送。",
+  "Connection path · direct first": "連線路徑 · 直連優先",
+  "P2P / direct first": "P2P / 直連優先",
+  "direct first": "直連優先",
+  "Any network": "任意網路",
+  "Fallback · ciphertext only": "連不上才用 · 只轉發密文",
+  "The session runs here": "工作階段在這台電腦上執行",
+  "Direct · {{ms}}": "直連 · {{ms}}",
+  "Relay · {{ms}}": "中繼 · {{ms}}",
+  "Switches within 1.5 s": "斷線 1.5 秒內切換",
+  "Unconfirmed keys resend in order": "未確認的按鍵按原順序重送",
 
-  "Away from your computer, handle all of this from your phone.": "不在電腦前，這些事也能在手機上處理",
   "Every computer, one list": "所有電腦，一個清單",
   "Home and work computers on one account, with every session that is waiting for an answer, has unread messages or is running in one list.":
     "家裡和公司的電腦登入同一個帳戶，等你回答、有未讀訊息和正在執行的工作階段匯整在同一個清單中。",
   "Answer and steer": "回答提問，中途介入",
   "Answer the AI's questions, add a message while it works, or stop the current run if it goes the wrong way.": "回答 AI 的提問，在它執行時追加訊息，方向不對時可以停止目前的執行。",
-  "Notified when a session needs you": "需要你時，收到通知",
-  "A notification when the AI asks a question, finishes a reply you haven't read, or fails.": "AI 向你提問、回覆完成但你尚未查看，或執行失敗時，都會通知你。",
   "Start a session from your phone": "在手機上新增工作階段",
   "Choose Claude Code or Codex, a computer and a folder, optionally attach a screenshot, and send.": "選擇 Claude Code 或 Codex、電腦和資料夾，可附上截圖，然後送出。",
   "Browse your files": "瀏覽專案檔案",
@@ -316,32 +344,125 @@ const zhTW: Bundle = {
     "Droppen 目前是測試版。加密設計經過內部安全審查，還沒有做過外部稽核。在瀏覽器裡使用時，你需要信任當次載入的頁面程式碼：這份程式碼能使用你的私密金鑰，也能把它們複製出去。",
 
   "Your AI keeps working on your computer. When it needs you, answer from your phone.": "AI 在你的電腦上繼續工作，需要你時，在手機上即可回應",
+
+  "Free to start": "免費開始",
+  "No credit card": "無需信用卡",
+  "Product facts": "產品資訊",
+  "Product interface": "產品介面",
+  "What it actually looks like.": "它實際長什麼樣。",
+  "No new workflow to learn. The sessions, terminal and projects you know, carried on from another screen.":
+    "不用學新的工作流程。你熟悉的工作階段、終端機和專案，換一塊螢幕繼續。",
+  "Queue": "佇列",
+  "Every computer, one queue.": "每台電腦，都在同一個佇列裡。",
+  "Your home Mac, the Linux machine at work and the server in the rack, on one account. Open it and see which one needs you, instead of signing in to each.":
+    "家裡的 Mac、公司的 Linux 電腦、機架上的伺服器，都在同一個帳戶裡。打開就能看到哪一台需要你，不用逐台登入。",
+  "Amber is “waiting for you”; green is “working”.": "琥珀色是「等你回答」，綠色是「工作中」。",
+  "Unread, running and waiting for an answer, sorted by state.": "未讀、執行中、等你回答，依狀態排序。",
+  "Every device's state in one column; an amber row left alone stops the AI there.":
+    "每台裝置的狀態排成一欄；琥珀色的一列沒人處理，那台電腦上的 AI 就會停下來等你。",
+  "Waiting for you / working": "等你回答 / 工作中",
+  "Split": "分割畫面",
+  "Code on the left, terminal on the right.": "左邊程式碼，右邊終端機。",
+  "When you need to watch two tasks, put a session and a terminal side by side. Changes, test output and errors in one window, with nothing copied and pasted.":
+    "需要同時盯兩件事時，把一個工作階段和終端機並排。變更、測試輸出和錯誤都在同一個視窗裡，不用來回複製貼上。",
+  "Two independent sessions that do not interrupt each other.": "兩個獨立的工作階段，互不干擾。",
+  "The terminal is a full session, not a read-only log.": "終端機是完整的工作階段，不是唯讀日誌。",
+  "The terminal, diffs and test results stay in one view; the mouse does not fly between windows.":
+    "終端機、diff 和測試結果都在同一個檢視裡，滑鼠不用在視窗間飛來飛去。",
+  "The terminal is right there": "終端機就在旁邊",
+  "Leave the computer, take over on your phone.": "離開電腦，在手機上接手。",
+  "Open {{app}} in your phone's browser and the same sessions are there. The amber “needs you” row comes first; open it and answer.":
+    "在手機瀏覽器裡打開 {{app}}，還是那些工作階段。琥珀色的「需要你」排在最前，點開就能回答。",
+  "Answer questions, add instructions, stop a run.": "回答問題，補充指令，中止執行。",
+  "With the computer off, the last {{free}} days stay readable ({{pro}} on Pro).": "電腦關機後，最近 {{free}} 天的內容仍可查看（Pro 為 {{pro}} 天）。",
+  "Only what needs you": "只處理需要你的",
+  "The phone is not a shrunken desktop: the conclusion first, the detail after.": "手機不是縮小的桌面：結論先行，細節隨後。",
+  "Why Droppen": "為什麼選 Droppen",
+  "Leaving your computer is not leaving the work.": "離開電腦，不是離開工作。",
+  "The AI keeps running on your computer; you only step in for the few seconds that need you.":
+    "AI 繼續在你的電腦上執行，你只需在需要你的那幾秒裡介入。",
+  "Readable with the lid closed": "闔上蓋子也能讀",
+  "While the computer is online, an encrypted copy is synced. Shut down, asleep or offline, your phone can still read the last {{free}} days ({{pro}} on Pro).":
+    "電腦在線時同步加密副本。關機、休眠或斷網後，手機仍可查看最近 {{free}} 天（Pro 為 {{pro}} 天）的內容。",
+  "Built for real networks": "為真實網路而做",
+  "A weak network does not stop the work.": "網路不穩，工作不斷。",
+  "Direct median round trip": "直連往返中位數",
+  "Through a Droppen relay": "經 Droppen 中繼",
+  "Keys lost": "遺失按鍵",
+  "Resent in order after a drop": "斷線後按原順序重送",
+  "The key boundary of end-to-end encryption": "端對端加密的金鑰邊界",
+  "Your computer and your phone each hold a key. Droppen Hub stores only encrypted copies, and relays forward only ciphertext; neither has the key.":
+    "你的電腦和手機各持一把金鑰。Droppen Hub 只儲存加密副本，中繼只轉送加密資料，兩者都沒有金鑰。",
+  "Key boundary · end-to-end encryption": "金鑰邊界 · 端對端加密",
+  "Your computer": "你的電腦",
+  "Your phone": "你的手機",
+  "Encrypted here": "在此加密",
+  "Decrypted here": "在此解密",
+  "Only encrypted copies": "只有加密副本",
+  "Only ciphertext": "只有加密資料",
+  "End-to-end encrypted · ciphertext": "端對端加密 · 加密資料",
+  "The key stays on this device": "金鑰留在這台裝置上",
+  "No key": "沒有金鑰",
+  "Keys are negotiated between your devices and never pass through Droppen Hub or a relay.":
+    "金鑰只在你的裝置之間協商，從不經過 Droppen Hub 或中繼。",
+  "The key is made on your computer and never leaves your devices. Everything Droppen keeps or passes on is already sealed.":
+    "金鑰在你的電腦上產生，從不離開你的裝置。Droppen 儲存或轉送的所有內容，都已經密封。",
+  "Beta · the encryption design has had internal review.": "測試版 · 加密設計經過內部審查。",
+  "Start free.": "免費開始。",
+  "Using it locally needs no account. To go across devices, free is enough to start.":
+    "在本地使用無需帳戶。要跨裝置使用，免費方案就夠開始。",
+  "Local only": "僅本地",
+  "On your own computer, with no account.": "在你自己的電腦上使用，無需帳戶。",
+  "1 device that runs AI": "1 台執行 AI 的裝置",
+  "No cross-device access": "無法跨裝置存取",
+  "No cloud copy": "沒有雲端副本",
+  "Where cross-device starts.": "跨裝置使用的起點。",
+  "{{n}} devices that run AI": "{{n}} 台執行 AI 的裝置",
+  "{{devices}} devices, phones and browsers included": "共 {{devices}} 台裝置（含手機和瀏覽器）",
+  "{{free}} days of offline copy · {{gb}} GB relay": "{{free}} 天離線副本 · {{gb}} GB 中繼流量",
+  "{{pro}} devices that run AI · {{devices}} devices": "{{pro}} 台執行 AI 的裝置 · 共 {{devices}} 台裝置",
+  "{{pro}} days of offline copy · {{gb}} GB relay": "{{pro}} 天離線副本 · {{gb}} GB 中繼流量",
+  "Compare all plans": "比較所有方案",
+  "Recommended": "推薦",
+  "USD / month": "美元 / 月",
+  "For people who move between devices every day.": "給每天在多台裝置間切換的人。",
+  "Billed by use beyond that": "超出後依用量計費",
+  "Choose Pro": "選擇 Pro",
+  "${{yearly}} a year, about {{saving}}% off · prices in US dollars": "年付 ${{yearly}}，約省 {{saving}}% · 價格以美元計",
+  "Questions and answers": "常見問題",
+  "Before you start.": "開始之前。",
+  "Do I have to keep my computer on?": "電腦需要一直開著嗎？",
+  "No. The AI runs on your computer, but you can leave it. While it is offline, your phone can still read the last {{free}} days ({{pro}} on Pro) of synced sessions; sending messages and using the terminal wait until it is back online.":
+    "不用。AI 在你的電腦上執行，但你可以離開。它離線時，手機仍可查看最近 {{free}} 天內同步過的工作階段（Pro 為 {{pro}} 天）；傳送訊息和使用終端機，要等它重新上線。",
+  "Is there a Windows client?": "有 Windows 客戶端嗎？",
+  "Droppen's web app opens in a Windows browser, but the AI has to run on a Mac or Linux computer. A Windows client has not been released.":
+    "Droppen 的網頁應用程式可以在 Windows 瀏覽器中開啟，但 AI 必須在 Mac 或 Linux 電腦上執行。Windows 客戶端尚未發布。",
+  "Will my code be uploaded?": "我的程式碼會上傳嗎？",
+  "Session content is encrypted on your computer before it leaves. Droppen Hub keeps encrypted copies, and relays forward only ciphertext; neither has the key. In a browser, you trust the page code as it was loaded that time.":
+    "工作階段內容在離開你的電腦前就已加密。Droppen Hub 儲存加密副本，中繼只轉送加密資料，兩者都沒有金鑰。在瀏覽器裡，你需要信任當次載入的頁面程式碼。",
+  "Is the free plan enough?": "免費方案夠用嗎？",
+  "If you have up to {{hosts}} computers that run AI and need {{free}} days of offline reading, free is enough. Choose Pro for more devices, {{pro}} days offline or more relay transfer.":
+    "如果你最多有 {{hosts}} 台執行 AI 的電腦，且只需要 {{free}} 天的離線閱讀，免費方案就夠。需要更多裝置、{{pro}} 天離線或更多中繼流量，就選 Pro。",
+  "Product": "產品",
+  "Resources": "資源",
+  "Legal": "法律",
+  "Interface": "介面",
+  "Encryption design": "加密設計",
+  "Back to top": "回到頂部",
+  "Free to start. Install once, then carry on from any of your devices.": "免費開始。安裝一次，之後在哪台裝置上都能繼續。",
+  "Your AI, from your phone. End-to-end encrypted, open-source client.": "你的 AI，手機上接著用。端對端加密，客戶端開源。",
+  "macOS 13 or later · Linux · Windows in the browser · iOS and Android": "macOS 13 或以上 · Linux · Windows 用瀏覽器 · iOS 和 Android",
+  "macOS and Linux run Droppen natively · Windows, iPad, iPhone and Android in the browser · one account, and your sessions follow":
+    "macOS 和 Linux 原生執行 Droppen · Windows、iPad、iPhone 和 Android 用瀏覽器 · 一個帳戶，工作階段跟著你走",
 };
 
 const ja: Bundle = {
   // Diagram cards: every row says something about the product.
-  "your computer": "あなたのコンピュータ",
-  "your phone": "あなたのスマホ",
-  "browser": "ブラウザ",
-  "offline since {{time}}": "{{time}} からオフライン",
-  "Droppen can't read it": "Droppen は読めない",
-  "done, tests pass": "完了、テスト通過",
   "Droppen relay": "Droppen 中継",
   "relay": "中継",
   "encrypted copy": "暗号化コピー",
-  "read-only": "読み取り専用",
-  "darken the sign-in button": "ログインボタンを濃い色にして",
-  "passes it on, sealed": "密封したまま転送",
-  "encrypted locally": "ローカルで暗号化",
-  "decrypted locally": "ローカルで復号",
 
   "Linux server": "Linux サーバー",
-  "working": "作業中",
-  "asking you": "質問中",
-  "done": "完了",
-  "waiting for your answer": "回答待ち",
-  "not now": "あとで",
-  "send": "送信",
 
   "Droppen — your computer's AI, on your phone": "Droppen — コンピュータの AI を、スマホで続きから",
   "Claude Code and Codex keep running on your own Macs and Linux machines. From your phone or a browser, see every session across them, answer their questions, steer them and open a terminal. End-to-end encrypted, with an open-source client.":
@@ -354,7 +475,6 @@ const ja: Bundle = {
   "How it works": "しくみ",
   "Open app": "アプリを開く",
   "Sign in": "ログイン",
-  "Get started": "はじめる",
 
   "Your computer's AI, from your phone.": "コンピュータの AI を、スマホで続きから。",
   "Claude Code and Codex keep running on your own computers. From a browser on your phone or another device, answer their questions, steer them and open a terminal on the computer.":
@@ -367,32 +487,12 @@ const ja: Bundle = {
   "Linux and other platforms": "Linux とほかのプラットフォーム",
   "Invite-only for now: sign-up needs an invite code.": "いまは招待制です。登録には招待コードが必要です。",
   "Sign-up is closed for now.": "現在、新規登録を停止しています。",
-  "What Droppen looks like": "Droppen の画面",
-  "Sessions": "セッション",
   "Droppen on a Mac: a list of Claude Code and Codex sessions, and a session waiting for an answer":
     "Mac の Droppen：Claude Code と Codex のセッション一覧と、回答を待つセッション",
-  "Side by side": "並べて表示",
   "Droppen with three panes: two sessions and a terminal": "Mac の Droppen を 3 ペインに：2 つのセッションとターミナル",
-  "Terminal": "ターミナル",
-  "A terminal in Droppen": "Droppen のターミナル",
-  "My devices": "マイデバイス",
-  "my.droppen.app in a browser: three computers and the list of what needs you": "ブラウザの my.droppen.app：3 台のコンピュータと「対応待ち」リスト",
   "Phone": "スマホ",
   "Droppen on a phone: what needs you, and a session's question": "スマホの Droppen：「対応待ち」リストとセッションの質問",
-  "Add a device": "デバイスを追加",
-  "A new device shows a QR code, and a device you already have approves it": "新しいデバイスが QR コードを表示し、手持ちのデバイスが承認する",
-  "Three steps to set up, then carry on away from your desk.": "3 ステップで設定完了。席を離れても続けられます。",
-  "Install Droppen where Claude Code or Codex runs": "Claude Code か Codex が動くコンピュータに Droppen をインストール",
-  "Sign in on that computer": "そのコンピュータでログイン",
-
-  "Install it where your AI runs": "AI が動くコンピュータに入れる",
-  "The Mac app, or one install command on Linux. Sessions already on that computer appear in Droppen, with nothing to migrate.":
-    "Mac はアプリ、Linux はインストールコマンドを 1 行。そのコンピュータにあるセッションがそのまま Droppen に表示され、移行は不要です。",
-  "Sign in from the Mac app. On a Linux server, run the command with a one-time code from a device that is already signed in. Add your other computers the same way.":
-    "Mac アプリならログインをクリック。Linux サーバーでは、ログイン済みのデバイスで発行したワンタイムコード付きのコマンドを実行します。ほかのコンピュータも同じ手順で同じアカウントに追加できます。",
-  "Continue on your phone": "スマホで続きから",
-  "Open {{app}} in your phone's browser, then scan the QR code it shows with a device that is already signed in.":
-    "スマホのブラウザで {{app}} を開き、表示された QR コードをログイン済みのデバイスで読み取ります。",
+  "Full install instructions": "インストール手順をすべて見る",
 
   "End-to-end encrypted": "エンドツーエンド暗号化",
   "Droppen can't read your code.": "あなたのコードを、Droppen は読めません。",
@@ -407,32 +507,30 @@ const ja: Bundle = {
     "droppen コマンドラインプログラム、Mac アプリ、Web アプリは AGPL-3.0 のオープンソースです。Droppen Hub はオープンソースではありません。",
   "Read the source": "ソースを見る",
 
-  "Typing from your phone stays responsive.": "スマホからの入力も、すぐに反映。",
-  "When your phone can reach your computer directly, keystrokes go straight there; when it can't, a Droppen relay forwards them automatically. If the direct path drops, the relay takes over within 1.5 s and resends unconfirmed keystrokes in order, so none are lost.":
-    "スマホからコンピュータに直結できればキー入力は直接届き、できなければ Droppen 中継が自動で転送します。直結が切れても 1.5 秒以内に中継が引き継ぎ、未確認のキー入力を順番どおりに再送するので、失われません。",
-  "browser on the same computer": "同じコンピュータのブラウザ",
-  "phone on 4G": "スマホ · 4G",
-  "measured on": "計測した環境",
-  "measured median round trip · direct {{d}} · via a Droppen relay {{h}}": "実測の往復遅延（中央値）· 直結 {{d}} · Droppen 中継経由 {{h}}",
+  "Keystrokes go straight to your computer when your phone can reach it, and through a Droppen relay when it can't; if the direct path drops, the relay takes over within 1.5 s and resends unconfirmed keystrokes in order, so none are lost.":
+    "スマホからコンピュータに直結できればキー入力は直接届き、できなければ Droppen 中継が転送します。直結が切れても 1.5 秒以内に中継が引き継ぎ、未確認のキー入力を順番どおりに再送するので、失われません。",
   "direct": "直結",
-  "lost": "切断",
-  "direct path up": "直結中",
-  "direct path lost: switched to the Droppen relay, resending unconfirmed keys in order": "直結が切断：Droppen 中継に切り替え、未確認のキーを順番どおりに再送",
-  "network back: direct again": "ネットワーク復帰：再び直結",
-  "keys {{sent}} · delivered {{delivered}} · in flight {{flight}} · lost 0": "キー {{sent}} · 到着 {{delivered}} · 送信中 {{flight}} · 消失 0",
 
-  "Your sessions stay readable while your computer is offline.": "コンピュータがオフラインでも、セッションは読めます。",
-  "While your computer is online, an encrypted copy of its sessions is kept on Droppen Hub in the cloud, and only your devices can decrypt it. When the computer is shut down, asleep or offline, your phone can still open the sessions updated in the last {{free}} days ({{pro}} on Pro); sending messages and using the terminal wait until that computer is back online.":
-    "コンピュータがオンラインの間、セッションの暗号化コピーがクラウドの Droppen Hub に保存され、復号できるのはあなたのデバイスだけです。電源オフ、スリープ、オフラインのときも、スマホで直近 {{free}} 日間（Pro は {{pro}} 日間）に更新されたセッションを開けます。送信とターミナルは、そのコンピュータがオンラインに戻るまで待ちます。",
+  // The network diagram
+  "The direct and relay paths between your phone and your computer": "スマホとコンピュータの直結・中継経路",
+  "Your phone reaches your computer directly when it can; when it cannot, it goes through a Droppen relay. The relay takes over within 1.5 s and unconfirmed keys are resent in order.":
+    "スマホは直結できるときはコンピュータへ直接つながり、できないときは Droppen 中継を経由します。中継は切断から 1.5 秒以内に切り替わり、未確認のキーは順番どおりに再送されます。",
+  "Connection path · direct first": "接続経路 · 直結優先",
+  "P2P / direct first": "P2P / 直結優先",
+  "direct first": "直結優先",
+  "Any network": "任意のネットワーク",
+  "Fallback · ciphertext only": "直結できない時だけ · 暗号文だけを転送",
+  "The session runs here": "セッションはこのコンピュータで動きます",
+  "Direct · {{ms}}": "直結 · {{ms}}",
+  "Relay · {{ms}}": "中継 · {{ms}}",
+  "Switches within 1.5 s": "切断から 1.5 秒以内に切り替え",
+  "Unconfirmed keys resend in order": "未確認のキーは順番どおりに再送",
 
-  "Away from your computer, handle all of this from your phone.": "コンピュータの前にいなくても、これらはスマホで対応できます。",
   "Every computer, one list": "すべてのコンピュータを、ひとつのリストで",
   "Home and work computers on one account, with every session that is waiting for an answer, has unread messages or is running in one list.":
     "自宅と職場のコンピュータをひとつのアカウントに。回答待ち、未読あり、実行中のセッションがひとつのリストにまとまります。",
   "Answer and steer": "回答と軌道修正",
   "Answer the AI's questions, add a message while it works, or stop the current run if it goes the wrong way.": "AI の質問に答える、作業中にメッセージを追加する、方向が違えば実行を止める。",
-  "Notified when a session needs you": "呼ばれたら、通知が届く",
-  "A notification when the AI asks a question, finishes a reply you haven't read, or fails.": "AI が質問したとき、まだ読んでいない返信が終わったとき、失敗したときに通知します。",
   "Start a session from your phone": "スマホからセッションを開始",
   "Choose Claude Code or Codex, a computer and a folder, optionally attach a screenshot, and send.":
     "Claude Code か Codex、コンピュータとフォルダを選び、必要ならスクリーンショットを添えて送信。",
@@ -447,6 +545,116 @@ const ja: Bundle = {
     "Droppen はベータ版です。暗号設計は社内のセキュリティレビューを受けていますが、外部監査はまだです。ブラウザで使う場合は、そのとき読み込んだページのコードを信頼することになります。そのコードは秘密鍵を使えるうえ、持ち出すこともできます。",
 
   "Your AI keeps working on your computer. When it needs you, answer from your phone.": "AI はコンピュータで作業を続け、呼ばれたらスマホで応えられます。",
+
+  "Free to start": "無料で始められる",
+  "No credit card": "クレジットカード不要",
+  "Product facts": "製品情報",
+  "Product interface": "製品画面",
+  "What it actually looks like.": "実際の画面はこうなっています。",
+  "No new workflow to learn. The sessions, terminal and projects you know, carried on from another screen.":
+    "新しいワークフローを覚える必要はありません。使い慣れたセッション、ターミナル、プロジェクトを、別の画面からそのまま続けられます。",
+  "Queue": "キュー",
+  "Every computer, one queue.": "すべてのコンピュータが、ひとつのキューに。",
+  "Your home Mac, the Linux machine at work and the server in the rack, on one account. Open it and see which one needs you, instead of signing in to each.":
+    "自宅の Mac、職場の Linux、ラックのサーバーをひとつのアカウントに。開けば、どれがあなたを待っているかが一度に分かり、1 台ずつログインする必要はありません。",
+  "Amber is “waiting for you”; green is “working”.": "琥珀色が「あなた待ち」、緑が「作業中」。",
+  "Unread, running and waiting for an answer, sorted by state.": "未読、実行中、回答待ちを状態ごとに並べます。",
+  "Every device's state in one column; an amber row left alone stops the AI there.":
+    "すべてのデバイスの状態が一列に。琥珀色の行を放置すると、そのコンピュータの AI はあなたを待って止まります。",
+  "Waiting for you / working": "回答待ち / 作業中",
+  "Split": "分割",
+  "Code on the left, terminal on the right.": "左にコード、右にターミナル。",
+  "When you need to watch two tasks, put a session and a terminal side by side. Changes, test output and errors in one window, with nothing copied and pasted.":
+    "2 つの作業を見たいときは、セッションとターミナルを並べます。変更、テスト出力、エラーが 1 つのウィンドウに収まり、コピー＆ペーストの往復は要りません。",
+  "Two independent sessions that do not interrupt each other.": "互いに邪魔をしない、独立した 2 つのセッション。",
+  "The terminal is a full session, not a read-only log.": "ターミナルは読み取り専用のログではなく、完全なセッションです。",
+  "The terminal, diffs and test results stay in one view; the mouse does not fly between windows.":
+    "ターミナル、diff、テスト結果が 1 つの画面に。ウィンドウ間でマウスを行き来させません。",
+  "The terminal is right there": "ターミナルはすぐ隣",
+  "Leave the computer, take over on your phone.": "コンピュータを離れて、スマホで引き継ぐ。",
+  "Open {{app}} in your phone's browser and the same sessions are there. The amber “needs you” row comes first; open it and answer.":
+    "スマホのブラウザで {{app}} を開けば、同じセッションがそこに。「対応待ち」の琥珀色の行が先頭にあり、開いて答えられます。",
+  "Answer questions, add instructions, stop a run.": "質問に答える、指示を足す、実行を止める。",
+  "With the computer off, the last {{free}} days stay readable ({{pro}} on Pro).": "コンピュータの電源が切れていても、直近 {{free}} 日分は読めます（Pro は {{pro}} 日）。",
+  "Only what needs you": "あなたが必要なものだけ",
+  "The phone is not a shrunken desktop: the conclusion first, the detail after.": "スマホは縮小したデスクトップではありません。まず結論、次に詳細。",
+  "Why Droppen": "Droppen を選ぶ理由",
+  "Leaving your computer is not leaving the work.": "コンピュータを離れても、仕事を離れることにはなりません。",
+  "The AI keeps running on your computer; you only step in for the few seconds that need you.":
+    "AI はコンピュータで動き続け、あなたは必要な数秒だけ手を貸します。",
+  "Readable with the lid closed": "フタを閉じても読める",
+  "While the computer is online, an encrypted copy is synced. Shut down, asleep or offline, your phone can still read the last {{free}} days ({{pro}} on Pro).":
+    "コンピュータがオンラインの間に暗号化コピーを同期。電源オフ、スリープ、オフラインでも、直近 {{free}} 日分（Pro は {{pro}} 日）をスマホで読めます。",
+  "Built for real networks": "現実のネットワークのために",
+  "A weak network does not stop the work.": "ネットワークが不安定でも、仕事は止まりません。",
+  "Direct median round trip": "直結の往復中央値",
+  "Through a Droppen relay": "Droppen 中継経由",
+  "Keys lost": "失われたキー",
+  "Resent in order after a drop": "切断後も順番どおりに再送",
+  "The key boundary of end-to-end encryption": "エンドツーエンド暗号化の鍵の境界",
+  "Your computer and your phone each hold a key. Droppen Hub stores only encrypted copies, and relays forward only ciphertext; neither has the key.":
+    "あなたのコンピュータとスマホがそれぞれ鍵を持ちます。Droppen Hub は暗号化コピーだけを保存し、中継は暗号文だけを転送します。どちらも鍵を持ちません。",
+  "Key boundary · end-to-end encryption": "鍵の境界 · エンドツーエンド暗号化",
+  "Your computer": "あなたのコンピュータ",
+  "Your phone": "あなたのスマホ",
+  "Encrypted here": "ここで暗号化",
+  "Decrypted here": "ここで復号",
+  "Only encrypted copies": "暗号化コピーだけ",
+  "Only ciphertext": "暗号文だけ",
+  "End-to-end encrypted · ciphertext": "エンドツーエンド暗号化 · 暗号文",
+  "The key stays on this device": "鍵はこのデバイスにとどまります",
+  "No key": "鍵なし",
+  "Keys are negotiated between your devices and never pass through Droppen Hub or a relay.":
+    "鍵はあなたのデバイス間で交換され、Droppen Hub や中継を経由しません。",
+  "The key is made on your computer and never leaves your devices. Everything Droppen keeps or passes on is already sealed.":
+    "鍵はあなたのコンピュータで作られ、デバイスの外に出ません。Droppen が保存・転送するものは、すべて密封済みです。",
+  "Beta · the encryption design has had internal review.": "ベータ版 · 暗号設計は社内レビュー済み。",
+  "Start free.": "無料で始めましょう。",
+  "Using it locally needs no account. To go across devices, free is enough to start.":
+    "ローカルで使うならアカウント不要。デバイスをまたぐなら、無料プランから始められます。",
+  "Local only": "ローカルのみ",
+  "On your own computer, with no account.": "自分のコンピュータだけで、アカウント不要。",
+  "1 device that runs AI": "AI を動かすデバイス 1 台",
+  "No cross-device access": "デバイス間のアクセスなし",
+  "No cloud copy": "クラウドコピーなし",
+  "Where cross-device starts.": "デバイスをまたぐのはここから。",
+  "{{n}} devices that run AI": "AI を動かすデバイス {{n}} 台",
+  "{{devices}} devices, phones and browsers included": "デバイス {{devices}} 台（スマホ・ブラウザを含む）",
+  "{{free}} days of offline copy · {{gb}} GB relay": "オフラインコピー {{free}} 日 · 中継 {{gb}} GB",
+  "{{pro}} devices that run AI · {{devices}} devices": "AI を動かすデバイス {{pro}} 台 · デバイス {{devices}} 台",
+  "{{pro}} days of offline copy · {{gb}} GB relay": "オフラインコピー {{pro}} 日 · 中継 {{gb}} GB",
+  "Compare all plans": "すべてのプランを比較",
+  "Recommended": "おすすめ",
+  "USD / month": "米ドル / 月",
+  "For people who move between devices every day.": "毎日デバイスをまたいで動く人に。",
+  "Billed by use beyond that": "超過分は従量課金",
+  "Choose Pro": "Pro を選ぶ",
+  "${{yearly}} a year, about {{saving}}% off · prices in US dollars": "年額 ${{yearly}}、約 {{saving}}% お得 · 料金は米ドル",
+  "Questions and answers": "よくある質問",
+  "Before you start.": "始める前に。",
+  "Do I have to keep my computer on?": "コンピュータはつけっぱなしにする必要がありますか？",
+  "No. The AI runs on your computer, but you can leave it. While it is offline, your phone can still read the last {{free}} days ({{pro}} on Pro) of synced sessions; sending messages and using the terminal wait until it is back online.":
+    "いいえ。AI はあなたのコンピュータで動きますが、離れていても大丈夫です。オフラインの間も、スマホで直近 {{free}} 日分（Pro は {{pro}} 日）の同期済みセッションを読めます。送信とターミナルは、オンラインに戻るまで待ちます。",
+  "Is there a Windows client?": "Windows クライアントはありますか？",
+  "Droppen's web app opens in a Windows browser, but the AI has to run on a Mac or Linux computer. A Windows client has not been released.":
+    "Droppen の Web アプリは Windows のブラウザで開けますが、AI は Mac か Linux のコンピュータで動かす必要があります。Windows クライアントは未リリースです。",
+  "Will my code be uploaded?": "コードはアップロードされますか？",
+  "Session content is encrypted on your computer before it leaves. Droppen Hub keeps encrypted copies, and relays forward only ciphertext; neither has the key. In a browser, you trust the page code as it was loaded that time.":
+    "セッションの内容は、コンピュータを出る前に暗号化されます。Droppen Hub は暗号化コピーを保存し、中継は暗号文だけを転送します。どちらも鍵を持ちません。ブラウザでは、そのとき読み込まれたページのコードを信頼することになります。",
+  "Is the free plan enough?": "無料プランで足りますか？",
+  "If you have up to {{hosts}} computers that run AI and need {{free}} days of offline reading, free is enough. Choose Pro for more devices, {{pro}} days offline or more relay transfer.":
+    "AI を動かすコンピュータが {{hosts}} 台までで、オフライン閲覧が {{free}} 日分あれば無料プランで足ります。デバイスを増やす、{{pro}} 日分にする、中継の転送量を増やすなら Pro を。",
+  "Product": "製品",
+  "Resources": "リソース",
+  "Legal": "法務",
+  "Interface": "画面",
+  "Encryption design": "暗号設計",
+  "Back to top": "ページ上部へ",
+  "Free to start. Install once, then carry on from any of your devices.": "無料で始められます。一度インストールすれば、どのデバイスからでも続けられます。",
+  "Your AI, from your phone. End-to-end encrypted, open-source client.": "あなたの AI を、スマホで続きから。エンドツーエンド暗号化、クライアントはオープンソース。",
+  "macOS 13 or later · Linux · Windows in the browser · iOS and Android": "macOS 13 以降 · Linux · Windows はブラウザ · iOS と Android",
+  "macOS and Linux run Droppen natively · Windows, iPad, iPhone and Android in the browser · one account, and your sessions follow":
+    "macOS と Linux はネイティブ、Windows・iPad・iPhone・Android はブラウザで。ひとつのアカウントで、セッションがついてきます。",
 };
 
 /** The landing page's tables, by i18next language. */

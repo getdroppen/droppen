@@ -3,13 +3,12 @@
 //
 // What these pin: the page says what it is, in zh-CN first and in en, zh-TW
 // and ja, with every string on it translated and in its own words (never an
-// app translation of the same key); it shows the product first (the tour of
-// screenshots) and says end-to-end encryption once, near the end; it calls
-// only the client open source; it carries exactly one primary action, and
-// its links go to /signup and /signin; its numbers are the measured ones and
-// it makes no absolute claims; only the bare root is the landing page; and
-// the diagrams' moving parts keep their promises (a sealed line keeps its
-// width, the direct path's demo delivers every key in order).
+// app translation of the same key); it shows the product first (the screens,
+// in their frames), the network diagram, and says end-to-end encryption once,
+// near the end; it calls only the client open source; it carries exactly one
+// primary action, and its links go to /signup and /signin; its numbers are the
+// measured ones and it makes no absolute claims; and only the bare root is the
+// landing page.
 //
 // `react-dom/server` with no DOM, like the other render tests.
 import * as React from "react";
@@ -20,13 +19,9 @@ import i18next from "i18next";
 import { I18nextProvider, initReactI18next } from "react-i18next";
 import { renderToStaticMarkup } from "react-dom/server";
 import { landingBundles } from "../src/features/landing/copy.js";
-import { MEASURED, schedule } from "../src/features/landing/direct-path.js";
-import { MOBILE_TOUR_TABS, TOUR_SHOTS, TOUR_TABS, tourLanguage, tourShot } from "../src/features/landing/product-tour.js";
-import { DIRECT_HUB, directLayout, directWires } from "../src/features/landing/direct-path.js";
-import { offlineLayout, offlineWires } from "../src/features/landing/offline-copy.js";
+import { TOUR_SHOTS, TOUR_TABS, tourLanguage, tourShot } from "../src/features/landing/product-tour.js";
 import LandingPage from "../src/features/landing/landing.js";
 import { PLAN_NUMBERS } from "../src/features/landing/pricing-plans.js";
-import { cipherOf, corners, pointAt, type Pt, seal, wide } from "../src/features/landing/motion.js";
 import { APP_PATH, bootRoute, isAuthPath, isLandingPath, publicPage } from "../src/features/landing/route.js";
 import type { SignupMode } from "../src/lib/hub/api.js";
 import { cloudDevicesJa, cloudDevicesZhCN, cloudDevicesZhTW } from "../src/i18n/cloud-devices.js";
@@ -68,13 +63,10 @@ test("the landing page leads with what you get, in zh-CN first", () => {
     // The selling points: your computer's AI on your phone, every session in one list, code only you can read.
     "电脑上的 AI，手机上接着用",
     "Claude Code 和 Codex 仍在你自己的电脑上运行。",
-    "三步完成设置，离开电脑也能继续",
-    "不在电脑前，这些事也能在手机上处理",
     "所有电脑，一个列表",
     "你的代码，Droppen 无法读取",
     // The deep sections, each headed by what it gets you.
-    "直连快速响应，断连自动接管，手机输入不丢键",
-    "电脑合盖或离线，会话依然随时查阅",
+    "网络不稳，工作不断。",
     "免费注册",
     "登录",
   ]) {
@@ -82,7 +74,7 @@ test("the landing page leads with what you get, in zh-CN first", () => {
   }
   // The sections the header links to, in the page's order: the product first, encryption last.
   const at = (id: string) => html.indexOf(`id="${id}"`);
-  const order = ["tour", "how", "features", "direct", "offline", "security"];
+  const order = ["tour", "features", "direct", "security"];
   for (const id of order) assert.ok(at(id) > 0, id);
   assert.deepEqual([...order].sort((a, b) => at(a) - at(b)), order);
   for (const id of order) assert.match(html, new RegExp(`<a href="#${id}"|id="${id}"`));
@@ -109,7 +101,7 @@ test("privacy is said once: not in the header, not in the hero's numbers, one se
     const hero = text(html.slice(html.indexOf("<main"), html.indexOf('id="tour"')));
     assert.doesNotMatch(hero, /recovery words|keys on our servers|恢复词|復原詞|リカバリーワード|密文|ciphertext|暗号文/, lng);
     // The one section on it comes after everything the product does, and links to the whole account of it.
-    assert.ok(html.indexOf('id="security"') > html.indexOf('id="offline"'), lng);
+    assert.ok(html.indexOf('id="security"') > html.indexOf('id="direct"'), lng);
     assert.match(html.slice(html.indexOf('id="security"')), /<a href="\/security"[^>]*data-testid="landing-security"/, lng);
   }
   // No line-by-line ledger of what we can and cannot see: that is /security's.
@@ -125,7 +117,7 @@ test("one primary action, and the calls to action go to sign-up and sign-in", ()
   assert.match(html, /aria-label="Sign in"/, "sign-in in the header user menu");
   assert.equal((html.match(/<a href="\/signin"/g) ?? []).length, 0, "no sign-in link on the page");
   // The page ends on the same call to action, as a secondary.
-  assert.match(html, /<a href="\/signup"[^>]*>[\s\S]*Sign up on the web[\s\S]*<\/a>/, "sign-up at the end");
+  assert.match(html, /<a href="\/signup"[^>]*>[\s\S]*Create a free account[\s\S]*<\/a>/, "sign-up at the end");
 });
 
 test("signed in, the landing page is still the landing page, with a way back into the app instead of sign-in and sign-up", () => {
@@ -143,11 +135,11 @@ test("signed in, the landing page is still the landing page, with a way back int
     assert.equal((html.match(new RegExp(`<a href="${APP_PATH}"`, "g")) ?? []).length, 1, lng);
     assert.match(html, app(open, true), `${lng}: the hero's primary opens the app`);
     assert.equal((html.match(/data-variant="primary"/g) ?? []).length, 1, `${lng}: one primary`);
-    assert.match(html, new RegExp(`<a href="#how"[^>]*>${how}</a>`), `${lng}: the secondary reads on through the page`);
+    assert.match(html, new RegExp(`<a href="#tour"[^>]*>${how}</a>`), `${lng}: the secondary reads on through the page`);
     // Nothing asks someone signed in to sign in or sign up.
     assert.doesNotMatch(html, /href="\/sign(in|up)"/, lng);
     // The page itself is all there.
-    for (const id of ["tour", "how", "features", "direct", "offline", "security"]) assert.match(html, new RegExp(`id="${id}"`), lng);
+    for (const id of ["tour", "features", "direct", "security"]) assert.match(html, new RegExp(`id="${id}"`), lng);
   }
   const words = text(draw("zh-CN", { signedIn: true }));
   for (const gone of ["台运行 AI 的电脑免费", "免费注册", "AI 在你的电脑上继续工作"]) assert.ok(!words.includes(gone), `still there: ${gone}`);
@@ -195,7 +187,6 @@ test("the numbers are the measured ones, and nothing claims more than the build 
   for (const claim of [/unhackable/i, /zero risk/i, /\baudited\b/i, /military[- ]grade/i, /100% secure/i]) {
     assert.doesNotMatch(words, claim);
   }
-  assert.deepEqual(MEASURED, { same: { direct: [1, 2], hub: [170, 215] }, phone: { direct: [63, 73], hub: [215, 227] } });
 });
 
 test("the hero is the first thing on the page: the beta's caveat is /security's, not a note above it", () => {
@@ -357,47 +348,6 @@ test("the service worker gives the sign-in pages and 「我的设备」 the offl
   assert.ok(!route.test("/p2p-probe.html") && !route.test("/signin.js") && !route.test("/media/x"));
 });
 
-test("a line seals into ciphertext of the same shape, and opens back", () => {
-  for (const line of ["All tests pass. Ready to merge.", "测试全部通过，可以合并了。", "テストはすべて通りました。"]) {
-    const cipher = cipherOf(line, 7);
-    assert.match(cipher, /^[0-9a-f ]+$/);
-    // Two hex digits under a wide character, one under anything else.
-    const width = [...line].reduce((n, ch) => n + (/[　-鿿＀-￯]/.test(ch) ? 2 : 1), 0);
-    assert.equal(cipher.length, width);
-    assert.equal(seal(line, 0, 7), line);
-    assert.equal(seal(line, 1, 7), cipher);
-    assert.equal(seal(line, 0.5, 7, 3), seal(line, 0.5, 7, 3), "deterministic");
-  }
-});
-
-test("a wide character is one a monospace box gives two columns", () => {
-  const at = (code: number) => String.fromCharCode(code);
-  // Each range's two ends, the CJK punctuation and the ideographic space among them.
-  for (const code of [0x1100, 0x115f, 0x2e80, 0x3000, 0x3001, 0x303f, 0x4e2d, 0xa4cf, 0xac00, 0xd7a3, 0xf900, 0xfaff, 0xfe30, 0xfe4f, 0xff00, 0xff60, 0xffe0, 0xffe6])
-    assert.ok(wide(at(code)), `U+${code.toString(16)} is wide`);
-  for (const code of [0x20, 0x41, 0xe9, 0x10ff, 0x1160, 0x2e7f, 0xa4d0, 0xabff, 0xd7a4, 0xfb00, 0xfe2f, 0xfe50, 0xff61, 0xffdf, 0xffe7])
-    assert.ok(!wide(at(code)), `U+${code.toString(16)} is narrow`);
-  assert.deepEqual([..."测试、テスト。한글　ok"].map(wide), [true, true, true, true, true, true, true, true, true, true, false, false]);
-});
-
-test("packets follow their wires", () => {
-  const wire = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }];
-  assert.deepEqual(pointAt(wire, 0.5), { x: 10, y: 0 });
-  assert.deepEqual(pointAt(wire, 0.75), { x: 10, y: 5 });
-  assert.deepEqual(pointAt(wire, 2), { x: 10, y: 10 });
-});
-
-test("the direct-path demo loses no keystroke: every key lands, in order, and the unconfirmed ones go again through the relay", () => {
-  for (const scenario of ["same", "phone"] as const) {
-    const keys = schedule(scenario);
-    for (let i = 1; i < keys.length; i++) assert.ok(keys[i]!.arrive > keys[i - 1]!.arrive, `${scenario}: key ${i} lands after key ${i - 1}`);
-    const resent = keys.filter((k) => k.lostAt !== undefined);
-    assert.ok(resent.length >= 1, `${scenario}: a key in flight when the path drops is sent again`);
-    assert.ok(resent.every((k) => k.route === "hub"));
-    assert.ok(keys.some((k) => k.route === "direct") && keys.some((k) => k.route === "hub"));
-  }
-});
-
 test("sign-up has its own page: /signup opens the form on its sign-up tab, with a way back to the landing page", async () => {
   const { AuthScreen } = await import("../src/features/cloud/cloud-app.js");
   void i18n.changeLanguage("en");
@@ -431,100 +381,25 @@ test("a shared link shows the hero: the share image is committed at 2400×1260 a
   assert.match(html, /<meta name="twitter:card" content="summary_large_image" \/>/);
 });
 
-// --- Geometry: right angles, one bend at most, and no line through a word ---
-
-interface Rect {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-}
-const around = (at: Pt, size: { w: number; h: number }): Rect => ({ x: at.x - size.w / 2, y: at.y - size.h / 2, w: size.w, h: size.h });
-const inside = (p: Pt, r: Rect) => p.x >= r.x - 0.5 && p.x <= r.x + r.w + 0.5 && p.y >= r.y - 0.5 && p.y <= r.y + r.h + 0.5;
-
-/** Whether an axis-aligned segment runs through the inside of `r` (touching an edge is not crossing). */
-function crosses(a: Pt, b: Pt, r: Rect): boolean {
-  const [x0, x1] = [Math.min(a.x, b.x), Math.max(a.x, b.x)];
-  const [y0, y1] = [Math.min(a.y, b.y), Math.max(a.y, b.y)];
-  const ix = Math.min(x1, r.x + r.w - 1) - Math.max(x0, r.x + 1);
-  const iy = Math.min(y1, r.y + r.h - 1) - Math.max(y0, r.y + 1);
-  return ix >= 0 && iy >= 0;
-}
-
-/**
- * Every wire is straight or one L, axis-aligned, and crosses no box except
- * the ones it starts or ends in (a wire ends at, or under, its own nodes).
- */
-function checkWires(name: string, wires: Pt[][], boxes: Rect[]) {
-  for (const [i, wire] of wires.entries()) {
-    assert.ok(wire.length >= 2, `${name}: wire ${i} has two ends`);
-    assert.ok(corners(wire) <= 1, `${name}: wire ${i} bends ${corners(wire)} times`);
-    for (let k = 1; k < wire.length; k++) {
-      const a = wire[k - 1]!;
-      const b = wire[k]!;
-      assert.ok(a.x === b.x || a.y === b.y, `${name}: wire ${i} runs at an angle`);
-    }
-    const ends = [wire[0]!, wire[wire.length - 1]!];
-    for (const [j, box] of boxes.entries()) {
-      if (ends.some((p) => inside(p, box))) continue;
-      for (let k = 1; k < wire.length; k++) {
-        assert.ok(!crosses(wire[k - 1]!, wire[k]!, box), `${name}: wire ${i} runs through box ${j}`);
-      }
-    }
-  }
-}
-
-test("every diagram is right-angled: each wire straight or a single L, through no card or label", () => {
-  for (const w of [288, 358, 379, 498, 597, 610, 645, 704, 1100, 1150]) {
-    const D = directLayout(w);
-    checkWires(`direct ${w}`, directWires(D), [D.device, D.machine, around(D.hub, DIRECT_HUB), ...D.labels]);
-
-    const O = offlineLayout(w);
-    checkWires(`offline ${w}`, offlineWires(O), [O.machine, O.device, O.hub, O.store]);
-  }
-});
-
-test("every diagram's cards stay inside it, at every width a pane can have, and the phone's rows have room", () => {
-  // The panes run from a 288px phone to about 830px beside the text in the 1360px column.
-  for (let w = 288; w <= 900; w += 2) {
-    const D = directLayout(w);
-    const O = offlineLayout(w);
-    for (const [name, r] of [
-      ["direct device", D.device],
-      ["direct computer", D.machine],
-      ["direct relay", around(D.hub, DIRECT_HUB)],
-      ["offline computer", O.machine],
-      ["offline hub", O.hub],
-      ["offline store", O.store],
-      ["offline phone", O.device],
-    ] as const) {
-      assert.ok(r.x >= 0 && r.x + r.w <= w, `${name} at ${w}: ${r.x}..${r.x + r.w}`);
-    }
-    // The longest message row (English, "darken the sign-in button") needs 254px.
-    assert.ok(O.device.w >= 254, `offline phone at ${w}: ${O.device.w}px`);
-  }
-});
-
-test("the tour shows the product: six tabs of real screenshots, each in its frame, in the page's language (Chinese or English) and both themes", () => {
+test("the product showcase shows the product: three screens in their frames, in the page's language (Chinese or English) and both themes", () => {
   const html = draw("zh-CN");
-  const tour = html.slice(html.indexOf('data-testid="product-tour"'), html.indexOf('id="how"'));
-  // The tabs, the first one shown; not a carousel: nothing in the tour moves by itself.
-  assert.equal((tour.match(/role="tab"/g) ?? []).length, TOUR_TABS.length);
-  assert.doesNotMatch(tour, /animate-/);
-  assert.match(tour, /role="tab"[^>]*aria-selected="true"[^>]*data-tab="sessions"/);
-  for (const label of ["会话", "分屏", "终端", "我的设备", "移动端", "添加设备"]) assert.ok(text(tour).includes(label), label);
-  // Its picture in both themes, each described when it is the one shown.
+  const tour = html.slice(html.indexOf('id="tour"'), html.indexOf('id="features"'));
+  // Three rows, each one screen: the queue, the split view, the phone. Not a
+  // carousel: nothing in the showcase moves by itself.
+  for (const heading of ["每台电脑，都在同一个队列里。", "左边代码，右边终端。", "离开电脑，在手机上接手。"]) assert.ok(text(tour).includes(heading), heading);
+  assert.doesNotMatch(tour, /role="tab"|animate-/);
+  // Its pictures, in both themes: the Mac app, its split view and the phone.
+  for (const shot of ["app-session", "app-split", "phone-needs-you"]) {
+    assert.match(tour, new RegExp(`<img src="/tour/${shot}-zh-CN-light\\.webp"`), shot);
+    assert.match(tour, new RegExp(`<img src="/tour/${shot}-zh-CN-dark\\.webp"`), shot);
+  }
   assert.match(tour, /<img src="\/tour\/app-session-zh-CN-light\.webp" alt="Mac 上的 Droppen[^"]*"/);
-  assert.match(tour, /<img src="\/tour\/app-session-zh-CN-dark\.webp" alt="Mac 上的 Droppen[^"]*"/);
   assert.doesNotMatch(tour, /<img src="\/tour\/app-session-zh-CN-dark\.webp"[^>]*aria-hidden/);
+  // The three things each row calls out.
+  for (const label of ["等你回答 / 工作中", "终端就在旁边", "只处理需要你的"]) assert.ok(text(tour).includes(label), label);
   // Chinese pages show the app in Chinese, every other page in English.
   assert.deepEqual(["zh-CN", "zh-TW", "ja", "en"].map(tourLanguage), ["zh-CN", "zh-CN", "en", "en"]);
   assert.match(draw("en"), /<img src="\/tour\/app-session-en-light\.webp" alt="Droppen on a Mac[^"]*"/);
-  // A phone gets the same six tabs in an order whose first is the phone's own
-  // screens; desktop keeps the product's order. The DOM order is the visual
-  // one, so the arrow keys follow it too.
-  assert.equal(MOBILE_TOUR_TABS[0], "phone");
-  assert.deepEqual([...MOBILE_TOUR_TABS].sort(), [...TOUR_TABS].sort());
 });
 
 test("every screenshot the tour can show is in the build, in both languages and both themes, and nothing it cannot", () => {
@@ -535,18 +410,19 @@ test("every screenshot the tour can show is in the build, in both languages and 
   assert.deepEqual(files, [...new Set(shown)].sort());
 });
 
-test("the diagrams that carry content mark what is encrypted where: a padlock on every wire leaving the sender", () => {
-  const html = draw("zh-CN");
-  for (const name of ["direct", "offline"]) {
-    const from = html.indexOf(`data-diagram="${name}"`);
-    assert.ok(from > 0, name);
-    assert.ok(html.slice(from, from + 20000).includes("data-wire-lock"), `${name}: a padlock on the wire leaving the sender`);
+test("the network section draws the path: direct first, the relay as the fallback, with the measured times", () => {
+  const html = draw("en");
+  const network = html.slice(html.indexOf('id="direct"'), html.indexOf('id="security"'));
+  const words = text(network);
+  assert.equal((network.match(/role="img"/g) ?? []).length, 2, "desktop and phone diagrams");
+  for (const line of ["Direct · 63–73 ms", "Relay · 215–227 ms", "Switches within 1.5 s", "Unconfirmed keys resend in order", "Droppen relay", "Only ciphertext"]) {
+    assert.ok(words.includes(line), `missing: ${line}`);
   }
-  // The offline copy shows the session, not ciphertext: no hex groups anywhere on the page.
+  assert.doesNotMatch(network, /data-wire-lock|aria-pressed/);
+  // Every diagram has a real viewBox.
+  for (const [, box] of network.matchAll(/viewBox="([^"]+)"/g)) assert.match(box!, /^0 0 \d+ \d+$/, box);
+  // The diagram is about the path, not the payload: no ciphertext hex groups anywhere.
   assert.doesNotMatch(text(html), /\b[0-9a-f]{4} [0-9a-f]{4} [0-9a-f]{4}\b/);
-  // The speed figure opens on the phone on 4G, the case its headline is about.
-  const direct = html.slice(html.indexOf('data-diagram="direct"') - 3000, html.indexOf('data-diagram="direct"'));
-  assert.match(direct, /aria-pressed="true"[^>]*>手机 · 4G 网络</);
 });
 
 test("no region is named anywhere on the page: the relay is Droppen's, wherever it runs", () => {
@@ -569,7 +445,7 @@ test("no region is named anywhere on the page: the relay is Droppen's, wherever 
   assert.ok(text(draw("en")).includes("Droppen Hub stores only encrypted copies and Droppen relays forward only ciphertext"));
 });
 
-test("the diagrams show product properties, not implementation trivia, and call the relay a Droppen relay", () => {
+test("the network diagram shows product properties, not implementation trivia, and calls the relay a Droppen relay", () => {
   for (const lng of ["en", "zh-CN", "zh-TW", "ja"]) {
     const html = draw(lng);
     const words = text(html);
@@ -592,8 +468,8 @@ test("whatever is about the path names a Droppen relay, never Droppen Hub: the h
       assert.ok(start > 0, `${lng}: ${from}`);
       return text(html.slice(start, html.indexOf(to, start)));
     };
-    // The whole direct-path section, its prose, readouts and status: a relay, never the hub.
-    const direct = between('id="direct"', 'data-diagram="offline"');
+    // The whole network section, its prose, readouts and diagram: a relay, never the hub.
+    const direct = between('id="direct"', 'id="security"');
     assert.doesNotMatch(direct, /Hub/, `${lng}: the path goes through a relay`);
     assert.ok(direct.includes(relay[lng]), `${lng}: the relay's card`);
     // The hero names neither: it is about your sessions, not the path.

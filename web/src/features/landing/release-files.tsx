@@ -4,21 +4,10 @@ import { fetchLatestRelease, formatSize, type LatestRelease, type ReleaseFile } 
 import { LINUX_CPUS } from "./detect";
 import { RELEASES_URL } from "./get-droppen";
 
-/*
- * The download buttons' files (`lib/hub/releases.ts`): the latest release as
- * this page's hub names it, read once per page load. A button with its file
- * is a plain link to it, which downloads in place, with the version and the
- * size beside it — through the hub's counted `/dl/<platform>` when the hub
- * names one (`ReleaseFile.href`), else straight to GitHub; without it (no
- * answer yet, or none: a hub without the route, a 503, a network failure)
- * it is a link to the release page, in a new tab. Shared by the home page's
- * hero (`hero-get.tsx`), the download page (`download.tsx`) and the
- * add-device guide.
- */
+/* The latest release, read once per page load, and the links and facts its buttons show. */
 
 let asked: Promise<LatestRelease | null> | null = null;
 
-/** The latest release, asked of the hub once per page load (asked again on the next use after a failure). */
 export function loadLatestRelease(): Promise<LatestRelease | null> {
   if (!asked) {
     asked = fetchLatestRelease().then((release) => {
@@ -29,11 +18,7 @@ export function loadLatestRelease(): Promise<LatestRelease | null> {
   return asked;
 }
 
-/**
- * The latest release: `undefined` while it is asked for, `null` when there
- * is none to be had. `given` (tests, previews) stands in for the hub: then
- * nothing is asked.
- */
+/** `undefined` while asked for, `null` when there is none; `given` skips the hub. */
 export function useLatestRelease(given?: LatestRelease | null): LatestRelease | null | undefined {
   const [release, setRelease] = useState<LatestRelease | null | undefined>(undefined);
   useEffect(() => {
@@ -47,32 +32,20 @@ export function useLatestRelease(given?: LatestRelease | null): LatestRelease | 
   return given !== undefined ? given : release;
 }
 
-/** Whether a file's link is the hub's counted `/dl/<platform>`, not the file on GitHub. */
 export function countedLink(file: ReleaseFile): boolean {
   return file.href !== file.url;
 }
 
-/**
- * A download button's link: the file itself (in place; through the hub's
- * `/dl/` when it counts, `nofollow` so that crawlers leave the count alone,
- * as `/robots.txt` asks too), else the release page (a new tab).
- */
+/** The file itself, or the release page when there is none; counted links are `nofollow`. */
 export function fileLink(file: ReleaseFile | undefined): { href: string; target?: string; rel?: string } {
   if (!file) return { href: RELEASES_URL, target: "_blank", rel: "noopener noreferrer" };
   return countedLink(file) ? { href: file.href, rel: "nofollow" } : { href: file.href };
 }
 
-/** `v0.2.129 · 48 MB`: the version and size of the file a button downloads. */
 export function fileFacts(release: LatestRelease, file: ReleaseFile): string {
   return `v${release.version} · ${formatSize(file.size)}`;
 }
 
-/**
- * The Linux tarballs, after the install command: the one for this
- * processor when it is known and built for, else both (with a word when the
- * processor has no build). Nothing until the hub names them: the release
- * page is linked beside the command already.
- */
 export function LinuxTarballs({
   release,
   cpu,

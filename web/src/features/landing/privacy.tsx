@@ -1,11 +1,11 @@
-import { Fragment, type ReactNode, useEffect } from "react";
+import { Fragment, type ReactNode } from "react";
 import i18n from "i18next";
 import { useTranslation } from "react-i18next";
 import { CapsLabel } from "@/components/ui/caps-label";
 import { SIGNUP_CONFIG } from "@/lib/hub/api";
 import { PLAN_TABLE } from "@/lib/hub/plan";
 import { landingBundles } from "./copy";
-import { cjkTracking, FooterLine, Points, PublicHeader, Section, SectionHead } from "./page-kit";
+import { cjkTracking, Points, PublicLayout, Section, SectionHead, usePageMeta } from "./page-kit";
 import { publicLink, SECURITY_PATH } from "./route";
 import { PRIVACY_EMAIL } from "./waitlist";
 import { cn } from "@/lib/cn";
@@ -70,33 +70,17 @@ function Block({ title, items }: { title: string; items: string[] }) {
   );
 }
 
-function useDocumentMeta() {
-  const { t, i18n: active } = useTranslation();
-  useEffect(() => {
-    const before = document.title;
-    document.title = t("Privacy notice — Droppen");
-    document.documentElement.lang = active.language;
-    return () => {
-      document.title = before;
-    };
-  }, [t, active.language]);
-}
-
-/** droppen.app/privacy, signed in or not. */
 export default function PrivacyPage({ signedIn = false }: { signedIn?: boolean }) {
   const { t } = useTranslation();
-  useDocumentMeta();
+  usePageMeta(t("Privacy notice — Droppen"));
   const mail = (
     <a href={`mailto:${PRIVACY_EMAIL}`} data-testid="privacy-email" className="text-fg underline underline-offset-4 hover:no-underline">
       {PRIVACY_EMAIL}
     </a>
   );
   return (
-    <div data-testid="privacy" className="h-full w-full overflow-y-auto bg-bg text-base [scrollbar-gutter:stable]">
-      <PublicHeader signedIn={signedIn} />
-      <div className="md:px-8">
-        <main className="mx-auto max-w-[1360px] md:border-x md:border-border">
-          <div className="flex flex-col gap-5 px-10 pt-16 pb-10 max-lg:pt-12 max-md:px-4 max-md:pt-10 max-md:pb-8">
+    <PublicLayout testId="privacy" signedIn={signedIn}>
+      <div className="flex flex-col gap-5 px-10 pt-16 pb-10 max-lg:pt-12 max-md:px-4 max-md:pt-10 max-md:pb-8">
             <CapsLabel face="sans" className={cn(cjkTracking, "text-xs font-semibold")}>{t("Privacy notice")}</CapsLabel>
             <h1 className="max-w-[18em] text-5xl leading-display font-normal tracking-tight text-balance text-fg cjk-wrap md:cjk-keep max-md:text-3xl">
               {t("What we keep, and what we can't see.")}
@@ -247,9 +231,6 @@ export default function PrivacyPage({ signedIn = false }: { signedIn?: boolean }
               </p>
             </div>
           </Section>
-          <FooterLine />
-        </main>
-      </div>
-    </div>
+    </PublicLayout>
   );
 }

@@ -32,6 +32,7 @@
     "katex": "^0.19.1",
     "lucide-react": "^0.475.0",
     "mermaid": "12.2.0",
+    "motion": "^14.9.0",
     "openapi-fetch": "^0.13.4",
     "qrcode-generator": "^2.0.4",
     "react": "^19.0.0",
@@ -40,7 +41,8 @@
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
-    "tailwind-merge": "^3.0.0"
+    "tailwind-merge": "^3.0.0",
+    "usehooks-ts": "^3.1.1"
   },
   "devDependencies": {
     "@resvg/resvg-js": "^2.6.2",

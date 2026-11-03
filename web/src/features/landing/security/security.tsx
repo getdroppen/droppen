@@ -6,7 +6,7 @@ import { ChevronDown, Info, X } from "lucide-react";
 import { CapsLabel } from "@/components/ui/caps-label";
 import { cn } from "@/lib/cn";
 import { landingBundles } from "../copy";
-import { cjkTracking, FooterLine, PublicHeader, Section, SectionHead, SECURITY_EMAIL } from "../page-kit";
+import { cjkTracking, PublicLayout, Section, SectionHead, SECURITY_EMAIL, usePageMeta } from "../page-kit";
 import { Formula, FormulaProvider, MentionScope, withConcepts } from "./formula";
 import { RepoLink } from "./repo-link";
 import { securityBundles } from "./security-copy";
@@ -1262,25 +1262,12 @@ function VerifySection() {
   );
 }
 
-function useDocumentMeta() {
-  const { t, i18n: active } = useTranslation();
-  useEffect(() => {
-    const before = document.title;
-    document.title = t("How Droppen's encryption works — Droppen");
-    document.documentElement.lang = active.language;
-    const meta = document.querySelector('meta[name="description"]');
-    const description = meta?.getAttribute("content") ?? null;
-    meta?.setAttribute("content", t("The keys, the signed device chain, the channels, the offline copies and the threat model of Droppen's end-to-end encryption, and how to check them."));
-    return () => {
-      document.title = before;
-      if (meta && description !== null) meta.setAttribute("content", description);
-    };
-  }, [t, active.language]);
-}
-
-/** droppen.app/security, signed in or not. */
 export default function SecurityPage({ signedIn = false }: { signedIn?: boolean }) {
-  useDocumentMeta();
+  const { t } = useTranslation();
+  usePageMeta(
+    t("How Droppen's encryption works — Droppen"),
+    t("The keys, the signed device chain, the channels, the offline copies and the threat model of Droppen's end-to-end encryption, and how to check them."),
+  );
   const scrollRef = useRef<HTMLDivElement>(null);
   // Arrived at a part of the page (`/security#renewal`): the page was not there to scroll to yet.
   // Fonts swap in after that first scroll, so ask again once they have settled.
@@ -1312,31 +1299,25 @@ export default function SecurityPage({ signedIn = false }: { signedIn?: boolean 
     };
   }, []);
   return (
-    <div ref={scrollRef} data-testid="security" className="h-full w-full overflow-y-auto bg-bg text-base [scrollbar-gutter:stable]">
-      <PublicHeader signedIn={signedIn} />
-      <div className="md:px-8">
-        <main className="mx-auto max-w-[1360px] md:border-x md:border-border">
-          <TocBar scroller={scrollRef} />
-          <FormulaProvider>
-            <Hero />
-            <Definitions />
-            <Section className="xl:grid xl:grid-cols-[20rem_minmax(0,1fr)]">
-              <TocSidebar scroller={scrollRef} />
-              <div className="min-w-0">
-                <OverviewSection />
-                <ChainSection />
-                <KeysSection />
-                <ChannelsSection />
-                <OfflineSection />
-                <RenewalSection />
-                <ThreatsSection />
-                <VerifySection />
-              </div>
-            </Section>
-          </FormulaProvider>
-          <FooterLine />
-        </main>
-      </div>
-    </div>
+    <PublicLayout testId="security" signedIn={signedIn} scrollerRef={scrollRef}>
+      <TocBar scroller={scrollRef} />
+      <FormulaProvider>
+        <Hero />
+        <Definitions />
+        <Section className="xl:grid xl:grid-cols-[20rem_minmax(0,1fr)]">
+          <TocSidebar scroller={scrollRef} />
+          <div className="min-w-0">
+            <OverviewSection />
+            <ChainSection />
+            <KeysSection />
+            <ChannelsSection />
+            <OfflineSection />
+            <RenewalSection />
+            <ThreatsSection />
+            <VerifySection />
+          </div>
+        </Section>
+      </FormulaProvider>
+    </PublicLayout>
   );
 }

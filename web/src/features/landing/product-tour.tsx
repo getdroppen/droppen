@@ -1,39 +1,16 @@
-import { type KeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
+import { type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Lock } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useDarkTheme } from "@/lib/theme";
-import { useReducedMotion } from "./motion";
 
-/*
- * The product, shown: real screenshots of Droppen behind a row of tabs —
- * sessions, split screen, terminal, the cloud's every-device page, the phone,
- * letting a device in. Each picture sits in the frame it is seen in (the Mac
- * app's window, a browser at my.droppen.app, a phone), drawn here in HTML so
- * the frames follow the theme; the pictures themselves are per language and
- * theme (`tourShot`): Chinese pages show the app in Chinese, every other page
- * in English.
- *
- * The screenshots are made from the real app on a demo home with made-up
- * sessions (`scripts/landing-shots/`), never from anyone's account.
- *
- * Not a carousel: a tab changes only when the reader picks it.
- */
+/* Real screenshots in HTML-drawn frames; each is per language and theme. */
 
 export const TOUR_TABS = ["sessions", "split", "terminal", "cloud", "phone", "security"] as const;
 export type TourTab = (typeof TOUR_TABS)[number];
 
-/**
- * The order a phone gets: the phone's own screens first, because the desktop
- * app's window is too small to read at that width; the rest follow. The
- * rendered order is the DOM order, so the keyboard moves in the same order
- * the reader sees. Desktop keeps {@link TOUR_TABS}.
- */
-export const MOBILE_TOUR_TABS: readonly TourTab[] = ["phone", "sessions", "split", "terminal", "cloud", "security"];
-
 type FrameKind = "app" | "browser" | "phone";
 
-/** Which screenshots each tab shows, and in what frame. */
 export const TOUR_SHOTS: Record<TourTab, { frame: FrameKind; shots: string[] }> = {
   sessions: { frame: "app", shots: ["app-session"] },
   split: { frame: "app", shots: ["app-split"] },
@@ -43,17 +20,14 @@ export const TOUR_SHOTS: Record<TourTab, { frame: FrameKind; shots: string[] }> 
   security: { frame: "phone", shots: ["security-pair"] },
 };
 
-/** The screenshots' languages: Chinese pages get the Chinese ones, every other the English. */
 export function tourLanguage(language: string): "zh-CN" | "en" {
   return language.startsWith("zh") ? "zh-CN" : "en";
 }
 
-/** Where a screenshot is, for a language and a theme. */
 export function tourShot(shot: string, language: string, theme: "light" | "dark"): string {
   return `/tour/${shot}-${tourLanguage(language)}-${theme}.webp`;
 }
 
-/** One screenshot in both themes: the page's theme (the `dark` class) shows one of them. */
 export function ProductShot({
   shot,
   alt,
@@ -71,10 +45,7 @@ export function ProductShot({
 }) {
   const { i18n } = useTranslation();
   const dark = useDarkTheme();
-  // The theme on show is fetched now (eager on the first tab); the other waits
-  // as a lazy, hidden image and is fetched when it is first shown, so the page
-  // does not pay for two 2560px screenshots at first load. The intrinsic size
-  // holds the frame's height while either one is on its way.
+  // Only the theme on screen is fetched eagerly; the other waits, hidden, so the page does not pay for two 2560px images at first load.
   const loading = (shown: boolean) => (eager && shown ? "eager" : "lazy");
   return (
     <>
@@ -100,7 +71,6 @@ export function ProductShot({
   );
 }
 
-/** The Mac app's window: a title bar with its three buttons, and the app. */
 export function AppWindow({ children }: { children: ReactNode }) {
   return (
     <div className="overflow-hidden rounded-[10px] border border-border-strong bg-bg shadow-[0_24px_60px_-28px_rgb(0_0_0/0.35)]">
@@ -115,7 +85,6 @@ export function AppWindow({ children }: { children: ReactNode }) {
   );
 }
 
-/** A browser at my.droppen.app: the address bar, and the page. */
 export function BrowserWindow({ children }: { children: ReactNode }) {
   return (
     <div className="overflow-hidden rounded-[10px] border border-border-strong bg-bg shadow-[0_24px_60px_-28px_rgb(0_0_0/0.35)]">
@@ -136,7 +105,6 @@ export function BrowserWindow({ children }: { children: ReactNode }) {
   );
 }
 
-/** A phone: the bezel, the status bar with its island, and the screen under it. */
 export function Phone({ children }: { children: ReactNode }) {
   return (
     <div className="w-full max-w-[340px] rounded-[44px] border border-border-strong bg-raised p-[9px] shadow-[0_24px_60px_-28px_rgb(0_0_0/0.35)]">
@@ -157,128 +125,6 @@ export function Phone({ children }: { children: ReactNode }) {
           </span>
         </div>
         {children}
-      </div>
-    </div>
-  );
-}
-
-function Framed({ tab, alt, eager }: { tab: TourTab; alt: string; eager?: boolean }) {
-  const { frame, shots } = TOUR_SHOTS[tab];
-  const size = frame === "phone" ? { width: 640, height: 1386 } : { width: 2560, height: 1600 };
-  if (frame === "phone") {
-    return (
-      <div className="flex items-start justify-center gap-10 max-sm:gap-4">
-        {shots.map((shot, i) => (
-          <div key={shot} className={cn("flex flex-1 justify-center", i > 0 && "max-sm:hidden")}>
-            <Phone>
-              <ProductShot shot={shot} alt={i === 0 ? alt : ""} eager={eager} {...size} />
-            </Phone>
-          </div>
-        ))}
-      </div>
-    );
-  }
-  const Window = frame === "app" ? AppWindow : BrowserWindow;
-  return (
-    <Window>
-      <ProductShot shot={shots[0]!} alt={alt} eager={eager} {...size} />
-    </Window>
-  );
-}
-
-/**
- * The tab order for this page: {@link MOBILE_TOUR_TABS} on a phone, else
- * {@link TOUR_TABS}. Read once, so a reader's tab does not move under them
- * when the window changes size.
- */
-function tourOrder(): readonly TourTab[] {
-  const narrow = typeof window !== "undefined" && window.matchMedia?.("(max-width: 767px)")?.matches === true;
-  return narrow ? MOBILE_TOUR_TABS : TOUR_TABS;
-}
-
-export function ProductTour() {
-  const { t } = useTranslation();
-  const id = useId();
-  const reduced = useReducedMotion();
-  const [order] = useState<readonly TourTab[]>(tourOrder);
-  const [active, setActive] = useState<TourTab>(order[0]!);
-  const tabs = useRef<Partial<Record<TourTab, HTMLButtonElement | null>>>({});
-  const firstScroll = useRef(true);
-
-  // A tab is its name: the picture under it says the rest (and its alt text, to a screen reader).
-  const copy: Record<TourTab, { label: string; alt: string }> = {
-    sessions: { label: t("Sessions"), alt: t("Droppen on a Mac: a list of Claude Code and Codex sessions, and a session waiting for an answer") },
-    split: { label: t("Side by side"), alt: t("Droppen with three panes: two sessions and a terminal") },
-    terminal: { label: t("Terminal"), alt: t("A terminal in Droppen") },
-    cloud: { label: t("My devices"), alt: t("my.droppen.app in a browser: three computers and the list of what needs you") },
-    phone: { label: t("Phone"), alt: t("Droppen on a phone: what needs you, and a session's question") },
-    security: { label: t("Add a device"), alt: t("A new device shows a QR code, and a device you already have approves it") },
-  };
-
-  // On a phone the tabs scroll sideways: keep the active one in view, moving only the tab list, never the page.
-  useEffect(() => {
-    const tab = tabs.current[active];
-    const list = tab?.parentElement;
-    if (!tab || !list || list.scrollWidth <= list.clientWidth) return;
-    list.scrollTo({ left: tab.offsetLeft - (list.clientWidth - tab.offsetWidth) / 2, behavior: firstScroll.current || reduced ? "auto" : "smooth" });
-    firstScroll.current = false;
-  }, [active, reduced]);
-
-  const pick = (tab: TourTab, focus = false) => {
-    setActive(tab);
-    if (focus) tabs.current[tab]?.focus();
-  };
-  // The tab list's keys: left and right move between tabs, Home and End to the ends.
-  const onKey = (e: KeyboardEvent) => {
-    const at = order.indexOf(active);
-    const to = e.key === "ArrowRight" ? at + 1 : e.key === "ArrowLeft" ? at - 1 : e.key === "Home" ? 0 : e.key === "End" ? order.length - 1 : null;
-    if (to === null) return;
-    e.preventDefault();
-    pick(order[(to + order.length) % order.length]!, true);
-  };
-
-  const now = copy[active];
-  return (
-    <div data-testid="product-tour">
-      <div role="tablist" aria-label={t("What Droppen looks like")} onKeyDown={onKey} className="relative grid grid-cols-6 border-b border-border max-lg:flex max-lg:overflow-x-auto max-lg:[scrollbar-width:none]">
-        {order.map((tab, i) => {
-          const on = tab === active;
-          return (
-            <button
-              key={tab}
-              ref={(el) => void (tabs.current[tab] = el)}
-              type="button"
-              role="tab"
-              id={`${id}-tab-${tab}`}
-              aria-selected={on}
-              aria-controls={`${id}-panel`}
-              tabIndex={on ? 0 : -1}
-              data-tab={tab}
-              onClick={() => pick(tab)}
-              className={cn(
-                "relative flex h-12 items-center justify-center px-4 text-base whitespace-nowrap transition-colors max-lg:shrink-0",
-                i > 0 && "border-l border-border",
-                on ? "bg-raised font-semibold text-fg" : "text-muted hover:text-fg",
-              )}
-            >
-              {copy[tab].label}
-              {/* The active tab's rule. */}
-              {on && <span className="absolute inset-x-0 -bottom-px h-0.5 bg-fg" />}
-            </button>
-          );
-        })}
-      </div>
-      <div role="tabpanel" id={`${id}-panel`} aria-labelledby={`${id}-tab-${active}`} className="flex flex-col">
-        <div
-          className="px-10 pt-8 pb-12 max-md:px-4 max-md:pt-5 max-md:pb-8"
-          style={{
-            backgroundImage: "linear-gradient(var(--color-border) 1px, transparent 1px), linear-gradient(90deg, var(--color-border) 1px, transparent 1px)",
-            backgroundSize: "22px 22px",
-            backgroundPosition: "-1px -1px",
-          }}
-        >
-          <Framed key={active} tab={active} alt={now.alt} eager={active === order[0]} />
-        </div>
       </div>
     </div>
   );

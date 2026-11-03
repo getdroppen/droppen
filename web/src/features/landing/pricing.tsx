@@ -1,12 +1,11 @@
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import i18n from "i18next";
 import { useTranslation } from "react-i18next";
-import { Accordion } from "@base-ui-components/react/accordion";
-import { Check, Plus } from "lucide-react";
+import { Check } from "lucide-react";
 import { HubApi, type SignupMode, type WaitlistPlan } from "@/lib/hub/api";
 import { cn } from "@/lib/cn";
 import { landingBundles } from "./copy";
-import { cjkTracking, FooterLine, PublicHeader, Section, SectionHead } from "./page-kit";
+import { cjkTracking, FaqAccordion, PublicLayout, Section, SectionHead, usePageMeta } from "./page-kit";
 import { gb, PLAN_NUMBERS, PRO_PRICE, THROTTLED_KB_PER_SEC, yearlySaving } from "./pricing-plans";
 import { type WaitlistState, WaitlistForm } from "./waitlist";
 
@@ -231,53 +230,17 @@ function Faq() {
   return (
     <Section id="faq" className="pb-10 max-md:pb-8">
       <SectionHead title={t("FAQ")} className="items-center text-center [&>h2]:font-semibold" />
-      {/* Kept mounted while closed: the answers stay in the page for search and for a reader whose browser does not run the page's script. */}
-      <Accordion.Root data-testid="faq" multiple={false} keepMounted className="border-t border-border">
-        {items.map((item) => (
-          <Accordion.Item key={item.q} value={item.q} data-testid="faq-item" className="group border-b border-border">
-            <Accordion.Header className="m-0">
-              <Accordion.Trigger className="flex w-full cursor-pointer items-start justify-between gap-6 bg-transparent px-6 py-5 text-left transition-colors hover:bg-hover max-md:px-4">
-                <span className="text-base leading-6 font-semibold text-fg">{item.q}</span>
-                <Plus aria-hidden="true" className="mt-1 size-4 shrink-0 text-muted transition-transform duration-150 group-data-[open]:rotate-45 motion-reduce:transition-none" />
-              </Accordion.Trigger>
-            </Accordion.Header>
-            <Accordion.Panel className="px-6 pb-6 max-md:px-4">
-              <p className="max-w-prose text-base leading-6 text-muted">{item.a}</p>
-            </Accordion.Panel>
-          </Accordion.Item>
-        ))}
-      </Accordion.Root>
+      <FaqAccordion
+        testId="faq"
+        items={items}
+        className="border-t border-border"
+        triggerClassName="px-6 py-5 max-md:px-4"
+        panelClassName="px-6 pb-6 max-md:px-4"
+      />
     </Section>
   );
 }
 
-/** The page's title and description in the reader's language (`invite`: sign-up is by invite here). */
-function useDocumentMeta(invite: boolean) {
-  const { t, i18n: active } = useTranslation();
-  useEffect(() => {
-    const before = document.title;
-    document.title = t("Droppen pricing — start free, Pro for ${{price}} a month", { price: PRO_PRICE.monthly });
-    document.documentElement.lang = active.language;
-    const meta = document.querySelector('meta[name="description"]');
-    const description = meta?.getAttribute("content") ?? null;
-    meta?.setAttribute(
-      "content",
-      invite
-        ? t("Use Droppen on one device with no account, free with an invite, or Pro for more devices and longer offline reading. Every plan is end-to-end encrypted.")
-        : t("Use Droppen on one device with no account, free with an account, or Pro for more devices and longer offline reading. Every plan is end-to-end encrypted."),
-    );
-    return () => {
-      document.title = before;
-      if (meta && description !== null) meta.setAttribute("content", description);
-    };
-  }, [t, active.language, invite]);
-}
-
-/**
- * droppen.app/pricing, signed in or not. `api` is the hub's (the page's own
- * origin by default); `waitlist` stands in for the form's state (tests,
- * previews); `signup` is the hub's sign-up mode (`signup-mode.ts`).
- */
 export default function PricingPage({
   signedIn = false,
   api,
@@ -291,7 +254,12 @@ export default function PricingPage({
 }) {
   const { t } = useTranslation();
   const open = signup === "open";
-  useDocumentMeta(signup === "invite");
+  usePageMeta(
+    t("Droppen pricing — start free, Pro for ${{price}} a month", { price: PRO_PRICE.monthly }),
+    signup === "invite"
+      ? t("Use Droppen on one device with no account, free with an invite, or Pro for more devices and longer offline reading. Every plan is end-to-end encrypted.")
+      : t("Use Droppen on one device with no account, free with an account, or Pro for more devices and longer offline reading. Every plan is end-to-end encrypted."),
+  );
   const hub = useMemo(() => api ?? new HubApi(), [api]);
   // Arrived at a part of the page (`/pricing#waitlist` from the landing page): the page was not there to scroll to yet.
   useEffect(() => {
@@ -302,27 +270,21 @@ export default function PricingPage({
   // Open sign-up: Free needs no waitlist, so the form is Pro's.
   const plan = open ? "pro" : chosen;
   return (
-    <div data-testid="pricing" className="h-full w-full overflow-y-auto bg-bg text-base [scrollbar-gutter:stable]">
-      <PublicHeader signedIn={signedIn} />
-      <div className="md:px-8">
-        <main className="mx-auto max-w-[1360px] md:border-x md:border-border xl:hatch-45">
-          <div className="mx-auto max-w-[68rem] bg-bg xl:border-x xl:border-border">
-            <div className="mx-auto flex max-w-[44rem] flex-col items-center gap-4 px-6 pt-16 pb-14 text-center max-md:px-4 max-md:pt-10 max-md:pb-10">
-              <h1 className="text-5xl leading-display font-semibold tracking-tighter text-balance text-fg cjk-wrap md:cjk-keep max-md:text-4xl">
-                {t("Start free. Go Pro when you need more.")}
-              </h1>
-              <p className="max-w-[32em] text-base leading-6 text-muted">
-                {t("End-to-end encrypted: we can't read your sessions, code or terminals")}
-              </p>
-              <p className="text-sm leading-5 text-faint">{t("Prices in US dollars. Pro is not on sale yet, and nothing is charged before you choose to pay.")}</p>
-            </div>
-            <Plans signup={signup} />
-            <Waitlist api={hub} plan={plan} onPlan={open ? undefined : setPlan} state={waitlist} signup={signup} />
-            <Faq />
-            <FooterLine />
-          </div>
-        </main>
+    <PublicLayout testId="pricing" signedIn={signedIn} mainClassName="xl:hatch-45">
+      <div className="mx-auto max-w-[68rem] bg-bg xl:border-x xl:border-border">
+        <div className="mx-auto flex max-w-[44rem] flex-col items-center gap-4 px-6 pt-16 pb-14 text-center max-md:px-4 max-md:pt-10 max-md:pb-10">
+          <h1 className="text-5xl leading-display font-semibold tracking-tighter text-balance text-fg cjk-wrap md:cjk-keep max-md:text-4xl">
+            {t("Start free. Go Pro when you need more.")}
+          </h1>
+          <p className="max-w-[32em] text-base leading-6 text-muted">
+            {t("End-to-end encrypted: we can't read your sessions, code or terminals")}
+          </p>
+          <p className="text-sm leading-5 text-faint">{t("Prices in US dollars. Pro is not on sale yet, and nothing is charged before you choose to pay.")}</p>
+        </div>
+        <Plans signup={signup} />
+        <Waitlist api={hub} plan={plan} onPlan={open ? undefined : setPlan} state={waitlist} signup={signup} />
+        <Faq />
       </div>
-    </div>
+    </PublicLayout>
   );
 }

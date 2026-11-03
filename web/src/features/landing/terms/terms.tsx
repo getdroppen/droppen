@@ -3,7 +3,7 @@ import i18n from "i18next";
 import { useTranslation } from "react-i18next";
 import { CapsLabel } from "@/components/ui/caps-label";
 import { landingBundles } from "../copy";
-import { cjkTracking, FooterLine, Points, PublicHeader, Section, SectionHead, SECURITY_EMAIL } from "../page-kit";
+import { cjkTracking, Points, PublicLayout, Section, SectionHead, SECURITY_EMAIL, usePageMeta } from "../page-kit";
 import { gb, PLAN_NUMBERS } from "../pricing-plans";
 import { PRICING_PATH, PRIVACY_PATH, publicLink } from "../route";
 import { PRIVACY_EMAIL } from "../waitlist";
@@ -62,22 +62,9 @@ function Pair({ left, right }: { left: ReactNode; right: ReactNode }) {
 
 const linkClass = "text-fg underline underline-offset-4 hover:no-underline";
 
-function useDocumentMeta() {
-  const { t, i18n: active } = useTranslation();
-  useEffect(() => {
-    const before = document.title;
-    document.title = t("Terms of Service — Droppen");
-    document.documentElement.lang = active.language;
-    return () => {
-      document.title = before;
-    };
-  }, [t, active.language]);
-}
-
-/** droppen.app/terms, signed in or not. */
 export default function TermsPage({ signedIn = false }: { signedIn?: boolean }) {
   const { t } = useTranslation();
-  useDocumentMeta();
+  usePageMeta(t("Terms of Service — Droppen"));
   // Arrived at a part of the page (`/terms#contact`, the footer's 「联系我们」): the page was not there to scroll to yet.
   useEffect(() => {
     const id = location.hash.slice(1);
@@ -90,11 +77,8 @@ export default function TermsPage({ signedIn = false }: { signedIn?: boolean }) 
     </a>
   );
   return (
-    <div data-testid="terms" className="h-full w-full overflow-y-auto bg-bg text-base [scrollbar-gutter:stable]">
-      <PublicHeader signedIn={signedIn} />
-      <div className="md:px-8">
-        <main className="mx-auto max-w-[1360px] md:border-x md:border-border">
-          <div className="flex flex-col gap-5 px-10 pt-16 pb-10 max-lg:pt-12 max-md:px-4 max-md:pt-10 max-md:pb-8">
+    <PublicLayout testId="terms" signedIn={signedIn}>
+      <div className="flex flex-col gap-5 px-10 pt-16 pb-10 max-lg:pt-12 max-md:px-4 max-md:pt-10 max-md:pb-8">
             <CapsLabel face="sans" className={cn(cjkTracking, "text-xs font-semibold")}>{t("Terms of Service")}</CapsLabel>
             <h1 className="max-w-[18em] text-5xl leading-display font-normal tracking-tight text-balance text-fg cjk-wrap md:cjk-keep max-md:text-3xl">
               {t("What you can expect from us, and what we ask of you.")}
@@ -323,9 +307,6 @@ export default function TermsPage({ signedIn = false }: { signedIn?: boolean }) 
               </p>
             </div>
           </Section>
-          <FooterLine />
-        </main>
-      </div>
-    </div>
+    </PublicLayout>
   );
 }

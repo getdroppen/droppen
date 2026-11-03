@@ -10,33 +10,13 @@ import { appHost } from "@/lib/hub/hosts";
 import { APP_PATH, publicLink, SIGN_UP_PATH, WAITLIST_HREF } from "./route";
 
 /*
- * The home page hero's actions, for the device reading it (`detect.ts`,
- * `heroOffer`), with one primary action:
- *
- * - **a Mac**: 「下载 Mac 版」, the latest release's universal
- *   `Droppen-<version>.dmg` itself, downloaded in place, its version and
- *   size beside it (`release-files.tsx`: the hub names the file; until it
- *   does, or if it cannot, the button links the release page); the release
- *   page beside it, for its checksums and other files; the account's ways in
- *   after it;
- * - **Linux**: the install command, its copy button the primary, the
- *   tarball for this processor (both when it cannot be told), and the
- *   download page's Linux tab for a server with no browser;
- * - **Windows**: no app yet: droppen.app works in this browser (the account's
- *   way in is the primary), and the ways onto a Mac or a Linux server;
- * - **a phone or tablet**: droppen.app in the browser, on the home screen;
- *   the AI runs on a Mac or Linux;
- * - **a device it cannot tell** (or one the build has no way onto yet): the
- *   account's way in, and every way onto a device, each one click away —
- *   the Mac's the file itself once the App is out (`APP_AVAILABLE`), never a
- *   link to a file that is not there.
- *
- * The download page (`download.tsx`) opens on the same device's tab.
+ * The hero's actions for the device reading the page: the App's download on
+ * a Mac, the install command on Linux, the web app on a phone or Windows, and
+ * every way onto a device when it cannot be told. One primary action.
  */
 
 const quietLink = "whitespace-nowrap text-muted underline underline-offset-4 hover:text-fg";
 
-/** The download page on `os`'s tab (every tab: no `os`), in place. */
 function TabLink({ os, label, testId }: { os?: DownloadOs; label: string; testId: string }) {
   const href = downloadHref(os);
   return (
@@ -46,7 +26,6 @@ function TabLink({ os, label, testId }: { os?: DownloadOs; label: string; testId
   );
 }
 
-/** The latest release's page, for its checksums and other files. */
 function ReleaseLink({ release }: { release: LatestRelease | null | undefined }) {
   const { t } = useTranslation();
   return (
@@ -56,11 +35,7 @@ function ReleaseLink({ release }: { release: LatestRelease | null | undefined })
   );
 }
 
-/**
- * The account's way in: signed out, sign up (where sign-up is closed, the
- * waitlist) — signing in is the header's, once on the page; signed in, back
- * into the app. `lead`: the hero's primary action is the first.
- */
+/** The account's way in; `lead` makes it the hero's primary. */
 function Account({ signedIn, lead, closed }: { signedIn: boolean; lead: boolean; closed: boolean }) {
   const { t } = useTranslation();
   const first = lead ? { "data-variant": "primary", className: landingPrimary } : { className: landingSecondary };
@@ -71,7 +46,7 @@ function Account({ signedIn, lead, closed }: { signedIn: boolean; lead: boolean;
           {t("Open app")}
         </a>
         {lead && (
-          <a href="#how" className={landingSecondary}>
+          <a href="#tour" className={landingSecondary}>
             {t("How it works")}
           </a>
         )}
@@ -87,20 +62,14 @@ function Account({ signedIn, lead, closed }: { signedIn: boolean; lead: boolean;
   );
 }
 
-/** The Mac App's download: the file once the hub has named it, until then (or when it cannot) the download page's Mac tab, never another site. */
 function macDownload(dmg: ReleaseFile | undefined) {
   return dmg ? fileLink(dmg) : publicLink(downloadHref("macos-app"));
 }
 
-const row = "flex flex-wrap items-center gap-3";
+const row = "flex flex-wrap items-center justify-center gap-3";
 const note = "max-w-[34em] text-sm leading-6 text-muted";
 const small = "font-mono text-xs leading-5 text-muted";
 
-/**
- * The hero's actions for `offer`. `release`: the latest release as the hub
- * names it (`undefined` while asked, `null`: none); `cpu`: the processor,
- * for Linux; `signup`: the hub's sign-up mode (`signup-mode.ts`).
- */
 export function HeroGet({
   offer,
   signedIn,
@@ -120,7 +89,7 @@ export function HeroGet({
   const closed = signup === "closed";
   const dmg = release?.files.macos;
   return (
-    <div data-testid="hero-get" data-offer={offer} className="mt-8 flex flex-col gap-3">
+    <div data-testid="hero-get" data-offer={offer} className="mt-8 flex w-full flex-col items-center gap-3">
       {offer === "mac" && (
         <>
           <div className={row}>
