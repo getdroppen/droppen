@@ -137,6 +137,20 @@ export const UNINSTALL_COMMAND = "curl -fsSL https://droppen.app/install.sh | sh
 /** How to check a downloaded file against the checksum the release lists. */
 export const CHECKSUM_COMMAND = "shasum -a 256 <file>";
 
+/** From v0.2.127 the release's files carry build provenance (docs/install.md, "Verify a download"). */
+export const ATTESTATION_COMMAND =
+  "gh attestation verify <file> --repo getdroppen/droppen --signer-workflow getdroppen/droppen/.github/workflows/release.yml --source-ref refs/tags/<version>";
+
+/** The full verification guide, including the Sigstore bundle and the App's signature. */
+export const VERIFY_DOWNLOAD_URL = "https://github.com/getdroppen/droppen/blob/main/docs/install.md#verify-a-download";
+
+/**
+ * What the install script prints when the service would stop at logout: the
+ * systemd user manager needs lingering. It takes the installing user when the
+ * script prints it; without an argument it applies to whoever runs it.
+ */
+export const LINGER_COMMAND = "sudo loginctl enable-linger";
+
 /**
  * The machine hub droppen.app's pages and devices dial (the `rh-hub` marker's
  * `https://` form): a computer signed in elsewhere needs this address set

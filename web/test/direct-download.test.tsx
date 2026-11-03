@@ -7,9 +7,8 @@
 // and checked again here (the tag, each file's exact name and address); every
 // download button is then a plain link to the file itself, which downloads
 // in place, with the version and size beside it — and on any failure a link
-// to the release page; the release page is beside it for checksums and
-// other files; Linux gets the tarball for its processor after the command;
-// the device is told from
+// to the release page; the hero's Linux button gets the tarball for its
+// processor beside the install command; the device is told from
 // `navigator.userAgentData` (platform, and the `architecture` / `bitness`
 // high-entropy hints) or else the user agent, with no request; and the hero
 // offers what fits it — the download on a Mac, the install command on Linux,
@@ -242,11 +241,9 @@ test("with the hub's answer, every download button is a plain link to the file i
   assert.ok(text(hero(landing("en", { hints: HINTS.mac }))).includes("v0.2.129 · 48 MB · macOS 13 or later · Apple silicon and Intel"));
   const page = download("en", { os: "macos-app" });
   assert.ok(text(page).includes("v0.2.129 · 48 MB"), "the file's facts: version and size");
-  // Downloaded, opened, then signed in from inside the App (`APP_SIGN_IN_AVAILABLE`): never "coming in an update".
-  assert.ok(text(page).includes("Sign in to Droppen from the app"));
+  // The App owns its setup guide: the page only hands over the file. `APP_SIGN_IN_AVAILABLE` means no "coming in an update".
+  assert.doesNotMatch(page, /data-testid="app-steps"|Open and sign in|It opens a short setup guide|your browser opens droppen.app/, "the App's own guide is not duplicated here");
   assert.doesNotMatch(page, /data-testid="app-sign-in-soon"|coming in an update/);
-  // The release page beside it, for the checksums and the other files: that release's.
-  assert.match(page, /<a href="https:\/\/github\.com\/getdroppen\/droppen\/releases\/tag\/v0\.2\.129" target="_blank" rel="noopener noreferrer" data-testid="app-release-link"/);
   // The add-device guide's button too (its source: the guide needs an account to render).
   const guide = readFileSync(new URL("../src/features/cloud/add-computer.tsx", import.meta.url), "utf8");
   assert.match(guide, /<a \{\.\.\.fileLink\(latest\?\.files\.macos\)\} data-testid="add-app-download"/);
@@ -293,16 +290,6 @@ test("a hub that counts downloads: each button links its /dl/<platform> on this 
   assert.deepEqual([...linuxHero.matchAll(/<a href="([^"]+)" data-testid="hero-tarballs-file"[^>]*>([^<]+)</g)].map((m) => [m[1], m[2]]), [["/dl/linux-x86_64", "droppen-v0.2.129-linux-x86_64.tar.gz"]]);
   assert.match(linuxHero, /<a href="\/dl\/linux-x86_64" data-testid="hero-tarballs-file" class="[^"]*" rel="nofollow">/, "crawlers leave the count alone");
   assert.ok(text(linuxHero).includes("Or download it: droppen-v0.2.129-linux-x86_64.tar.gz (12 MB)"));
-  const linuxTab = download("en", { os: "linux", hints: HINTS.linux, release: COUNTED });
-  assert.deepEqual(
-    [...linuxTab.matchAll(/<a href="([^"]+)" data-testid="linux-tarballs-file"[^>]*>([^<]+)</g)].map((m) => [m[1], m[2]]),
-    [
-      ["/dl/linux-x86_64", "droppen-v0.2.129-linux-x86_64.tar.gz"],
-      ["/dl/linux-aarch64", "droppen-v0.2.129-linux-aarch64.tar.gz"],
-    ],
-  );
-  // The release page beside it is still GitHub's, for the checksums and the other files.
-  assert.match(download("en", { os: "macos-app", release: COUNTED }), /<a href="https:\/\/github\.com\/getdroppen\/droppen\/releases\/tag\/v0\.2\.129" target="_blank" rel="noopener noreferrer" data-testid="app-release-link"/);
   // A hub without it: the files on GitHub, as before, and no nofollow on them.
   const direct = hero(landing("en", { hints: HINTS.mac })) + download("en", { os: "linux", hints: HINTS.linux });
   assert.doesNotMatch(direct, /href="\/dl\//);
@@ -334,9 +321,6 @@ test("without it (no route, a 503, a failure, or not yet), the hero's Mac downlo
   const fallback = download("en", { os: "macos-app", release: null });
   assert.match(fallback.match(/<a [^>]*data-testid="app-download"[^>]*>/)![0], new RegExp(`^<a href="${esc(RELEASES_URL)}" target="_blank" rel="noopener noreferrer"`));
   assert.doesNotMatch(fallback, /v0\.2\.129|github\.com\/getdroppen\/droppen\/releases\/download/);
-  const page = download("en", { os: "macos-app", release: null });
-  assert.doesNotMatch(page, /macOS 13 or later · Universal/);
-  assert.match(page, new RegExp(`<a href="${esc(RELEASES_URL)}" target="_blank" rel="noopener noreferrer" data-testid="app-release-link"`));
   assert.doesNotMatch(hero(landing("en", { hints: HINTS.linux, release: null, cpu: "x86_64" })), /data-testid="hero-tarballs"/, "no tarball named");
 });
 
@@ -432,48 +416,6 @@ test("the processor: the architecture and bitness high-entropy hints, else the u
   assert.equal(await browserCpu({ userAgent: "Mozilla/5.0 (X11; Linux)" }), null);
   assert.equal(await browserCpu(null), null);
   assert.equal(cpuOf({ architecture: "x86", bitness: "64" }, UA.linuxFirefoxArm), "x86_64", "the hints win over the user agent");
-});
-
-test("the Linux tab says the processor and links its tarball after the command, and says when the release has no build for it", () => {
-  const supported = download("en", { os: "linux", hints: HINTS.linux, cpu: "aarch64" });
-  assert.ok(text(supported).includes("This browser reports Linux on aarch64."));
-  assert.doesNotMatch(text(supported), /builds are for/);
-  const tarballs = (html: string) => [...html.matchAll(/data-testid="linux-tarballs-file"[^>]*>([^<]+)</g)].map((m) => m[1]);
-  assert.deepEqual(tarballs(supported), ["droppen-v0.2.129-linux-aarch64.tar.gz"]);
-  assert.match(supported, new RegExp(`<a href="${esc(`${DL}droppen-v0.2.129-linux-aarch64.tar.gz`)}" data-testid="linux-tarballs-file"`));
-  assert.ok(supported.indexOf('data-testid="install-command"') < supported.indexOf('data-testid="linux-tarballs"'), "the command first");
-  const other = download("zh-CN", { os: "linux", hints: HINTS.linux, cpu: "armv7l" });
-  assert.ok(text(other).includes("Droppen 的 Linux 版本支持 x86_64 和 aarch64。"));
-  assert.equal((text(other).match(/Droppen 的 Linux 版本支持/g) ?? []).length, 1, "said once");
-  assert.deepEqual(tarballs(other), ["droppen-v0.2.129-linux-x86_64.tar.gz", "droppen-v0.2.129-linux-aarch64.tar.gz"]);
-  const unknown = download("en", { os: "linux", hints: HINTS.linux });
-  assert.doesNotMatch(unknown, /data-testid="linux-cpu"/, "nothing said when nothing is known");
-  assert.equal(tarballs(unknown).length, 2, "both, when the processor is not known");
-  // Read on a Mac (Apple silicon is aarch64 too): its processor says nothing about a server's.
-  const mac = download("en", { os: "linux", hints: HINTS.mac, cpu: "aarch64" });
-  assert.doesNotMatch(mac, /data-testid="linux-cpu"/, "no processor named off Linux");
-  assert.equal(tarballs(mac).length, 2, "both, for whichever server it is");
-  assert.deepEqual(tarballs(download("en", { os: "linux", hints: HINTS.linux, cpu: "x86_64", release: null })), [], "none without the hub's answer");
-});
-
-test("the download page opens on the detected tab without ?os=; a device it cannot tell opens on the Mac App, marked as nothing", () => {
-  assert.match(download("en", { hints: HINTS.linux }), /data-os="linux" data-detected="linux"/);
-  assert.match(download("en", { hints: HINTS.windows }), /data-os="windows" data-detected="windows"/);
-  assert.match(download("en", { hints: HINTS.phone }), /data-os="mobile" data-detected="mobile"/);
-  assert.match(download("en", { hints: HINTS.linux, os: "macos-app" }), /data-os="macos-app" data-detected="linux"/, "the address wins");
-  const unknown = download("en", { hints: HINTS.unknown });
-  assert.match(unknown, /data-testid="environments" data-os="macos-app"/);
-  assert.doesNotMatch(unknown, /data-detected=|data-testid="detected"/);
-  // A phone marks no computer: it installs nothing, and is told where to open the page.
-  const phone = download("en", { hints: HINTS.phone });
-  assert.doesNotMatch(phone, /data-testid="detected"/);
-  assert.match(phone, /data-testid="on-a-phone"/);
-  assert.doesNotMatch(unknown, /data-testid="on-a-phone"/);
-  // Windows: no app, droppen.app in this browser, and the Mac and Linux ways for a server.
-  const windows = download("en", { hints: HINTS.windows });
-  assert.match(windows, /data-testid="to-macos-app"/);
-  assert.match(windows, /data-testid="to-linux"[^>]*>the Linux server options</);
-  assert.equal(primaries(windows), 1);
 });
 
 test("the hero on a Mac: 「Download for Mac」 is the one primary action, the file itself; the other systems beside it, and the checksums one click further", () => {
