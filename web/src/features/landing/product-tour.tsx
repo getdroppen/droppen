@@ -54,7 +54,7 @@ export function tourShot(shot: string, language: string, theme: "light" | "dark"
 }
 
 /** One screenshot in both themes: the page's theme (the `dark` class) shows one of them. */
-function Shot({
+export function ProductShot({
   shot,
   alt,
   className,
@@ -101,7 +101,7 @@ function Shot({
 }
 
 /** The Mac app's window: a title bar with its three buttons, and the app. */
-function AppWindow({ children }: { children: ReactNode }) {
+export function AppWindow({ children }: { children: ReactNode }) {
   return (
     <div className="overflow-hidden rounded-[10px] border border-border-strong bg-bg shadow-[0_24px_60px_-28px_rgb(0_0_0/0.35)]">
       <div className="relative flex h-8 items-center gap-2 border-b border-border bg-raised px-3">
@@ -116,7 +116,7 @@ function AppWindow({ children }: { children: ReactNode }) {
 }
 
 /** A browser at my.droppen.app: the address bar, and the page. */
-function BrowserWindow({ children }: { children: ReactNode }) {
+export function BrowserWindow({ children }: { children: ReactNode }) {
   return (
     <div className="overflow-hidden rounded-[10px] border border-border-strong bg-bg shadow-[0_24px_60px_-28px_rgb(0_0_0/0.35)]">
       <div className="flex h-9 items-center gap-3 border-b border-border bg-raised px-3">
@@ -137,7 +137,7 @@ function BrowserWindow({ children }: { children: ReactNode }) {
 }
 
 /** A phone: the bezel, the status bar with its island, and the screen under it. */
-function Phone({ children }: { children: ReactNode }) {
+export function Phone({ children }: { children: ReactNode }) {
   return (
     <div className="w-full max-w-[340px] rounded-[44px] border border-border-strong bg-raised p-[9px] shadow-[0_24px_60px_-28px_rgb(0_0_0/0.35)]">
       <div className="relative overflow-hidden rounded-[36px] border border-border bg-bg">
@@ -171,7 +171,7 @@ function Framed({ tab, alt, eager }: { tab: TourTab; alt: string; eager?: boolea
         {shots.map((shot, i) => (
           <div key={shot} className={cn("flex flex-1 justify-center", i > 0 && "max-sm:hidden")}>
             <Phone>
-              <Shot shot={shot} alt={i === 0 ? alt : ""} eager={eager} {...size} />
+              <ProductShot shot={shot} alt={i === 0 ? alt : ""} eager={eager} {...size} />
             </Phone>
           </div>
         ))}
@@ -181,7 +181,7 @@ function Framed({ tab, alt, eager }: { tab: TourTab; alt: string; eager?: boolea
   const Window = frame === "app" ? AppWindow : BrowserWindow;
   return (
     <Window>
-      <Shot shot={shots[0]!} alt={alt} eager={eager} {...size} />
+      <ProductShot shot={shots[0]!} alt={alt} eager={eager} {...size} />
     </Window>
   );
 }

@@ -1,18 +1,12 @@
-// droppen.app/download (`features/landing/download.tsx`): how Droppen gets
-// onto a device, the way other vendors' download pages work.
+// droppen.app/download (`features/landing/download.tsx`).
 //
-// What these pin: the page in a customer's order (where it goes and what to
-// have, the install, the phone, what gets installed, updating and
-// uninstalling); which device is reading is detected from what the browser
-// says (a table of real user agents, iPadOS-as-a-Mac included) and opens its
-// computer's tab, marked (a phone marks none); the computers are one ARIA
-// tablist, the Mac's two ways a switch inside its tab, named in the address
-// (`?os=`) — the address wins, then the session's choice, then the detected
-// one; the App and Linux degrade to "coming" behind their switches and never
-// link a file that is not there, and the App's last step is signing it in
-// from inside it; each way renders with one primary action; the page reads
-// in zh-CN, en, zh-TW and ja; `/download` is public signed in or not, and the
-// landing page links it from its footer.
+// What these pin: the hero has one action, the Mac App, with the other
+// platforms behind its `▾`; the server section opens on the detected (or
+// `?os=`) platform and keeps its three steps behind one tab; a browser installs
+// nothing; update, uninstall and verification are folded after both; a file
+// link is the release's own (or the release page), never an invented one; the
+// page reads in zh-CN, en, zh-TW and ja with every key translated; `/download`
+// is public signed in or not, and the landing page links it from its footer.
 import * as React from "react";
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -21,16 +15,15 @@ import { I18nextProvider } from "react-i18next";
 import { renderToStaticMarkup } from "react-dom/server";
 import { landingBundles } from "../src/features/landing/copy.js";
 import { downloadJa, downloadZhCN, downloadZhTW } from "../src/features/landing/download-copy.js";
-import { onboardingJa, onboardingZhCN, onboardingZhTW } from "../src/i18n/onboarding.js";
 import { detectKind, type EnvironmentHints, initialOs, osForKind } from "../src/features/landing/detect.js";
 import DownloadPage from "../src/features/landing/download.js";
-import type { LatestRelease } from "../src/lib/hub/releases.js";
+import { parseLatestRelease, type LatestRelease } from "../src/lib/hub/releases.js";
 import {
   APP_AVAILABLE,
-  APP_DOWNLOAD_URL,
   APP_SIGN_IN_AVAILABLE,
   type Availability,
   AVAILABILITY,
+  ATTESTATION_COMMAND,
   CHECKSUM_COMMAND,
   codeInstallCommand,
   DOWNLOAD_OSES,
@@ -38,6 +31,7 @@ import {
   type DownloadOs,
   INSTALL_COMMAND,
   LINUX_AVAILABLE,
+  LINGER_COMMAND,
   osOfSearch,
   RELEASES_URL,
   stdinEnrollCommand,
@@ -49,7 +43,6 @@ import { cloudDevicesJa, cloudDevicesZhCN, cloudDevicesZhTW } from "../src/i18n/
 import { ja } from "../src/i18n/ja.js";
 import { zhCN } from "../src/i18n/zh-CN.js";
 import { zhTW } from "../src/i18n/zh-TW.js";
-import { MemoryStorage } from "./storage.js";
 import { makeI18n } from "./render.js";
 
 const app = { "zh-CN": { ...cloudDevicesZhCN, ...zhCN }, "zh-TW": { ...cloudDevicesZhTW, ...zhTW }, ja: { ...cloudDevicesJa, ...ja } };
@@ -65,11 +58,8 @@ const i18n = makeI18n({
   nsSeparator: false
 });
 
-// The page reads the address (`?os=`) and the session's choice.
 const place = { search: "", origin: "https://droppen.app", hash: "" };
-
-const session = new MemoryStorage();
-Object.assign(globalThis, { location: place, sessionStorage: session });
+Object.assign(globalThis, { location: place });
 
 const MAC_CHROME: EnvironmentHints = {
   userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
@@ -77,25 +67,58 @@ const MAC_CHROME: EnvironmentHints = {
   mobile: false,
   maxTouchPoints: 0,
 };
+const LINUX_FIREFOX: EnvironmentHints = {
+  userAgent: "Mozilla/5.0 (X11; Linux x86_64; rv:131.0) Gecko/20100101 Firefox/131.0",
+  maxTouchPoints: 0,
+};
+const IPHONE: EnvironmentHints = {
+  userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
+  maxTouchPoints: 5,
+};
+
+const ALL_AVAILABLE: Availability = { app: true, appSignIn: true, linux: true };
 
 function draw(
   lng: string,
-  opts: { signedIn?: boolean; app?: boolean; appSignIn?: boolean; linux?: boolean; availability?: Availability; hints?: EnvironmentHints; os?: DownloadOs | null; cpu?: string | null; release?: LatestRelease | null } = {},
+  opts: { signedIn?: boolean; availability?: Availability; hints?: EnvironmentHints; os?: DownloadOs | null; cpu?: string | null; release?: LatestRelease | null } = {},
 ): string {
   void i18n.changeLanguage(lng);
   place.search = opts.os ? `?os=${opts.os}` : "";
-  const availability = opts.availability ?? { app: opts.app ?? false, appSignIn: opts.appSignIn ?? false, linux: opts.linux ?? false };
   return renderToStaticMarkup(
     <I18nextProvider i18n={i18n}>
-      <DownloadPage signedIn={opts.signedIn} availability={availability} hints={opts.hints ?? MAC_CHROME} cpu={opts.cpu} release={opts.release} />
+      <DownloadPage
+        signedIn={opts.signedIn}
+        availability={opts.availability ?? ALL_AVAILABLE}
+        hints={opts.hints ?? MAC_CHROME}
+        cpu={opts.cpu}
+        release={opts.release}
+      />
     </I18nextProvider>,
   );
 }
 
 const text = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/&#x27;/g, "'").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/\s+/g, " ");
 const primaries = (html: string) => (html.match(/data-variant="primary"/g) ?? []).length;
+const tag = (html: string, testId: string) => html.match(new RegExp(`<(?:details|div|button|a|ol|dl)[^>]*data-testid="${testId}"[^>]*>`))?.[0] ?? "";
+const block = (html: string, testId: string, end: string) => html.match(new RegExp(`data-testid="${testId}"[^]*?${end}`))?.[0] ?? "";
 
-test("detection, over real user agents: the device's kind, and the tab it opens on", () => {
+/** The hub's answer for the latest release, as GitHub names its files. */
+const DL = "https://github.com/getdroppen/droppen/releases/download/v0.2.129/";
+const ANSWER = {
+  version: "0.2.129",
+  tag: "v0.2.129",
+  published_at: "2026-10-24T09:30:00Z",
+  releases_page: "https://github.com/getdroppen/droppen/releases/tag/v0.2.129",
+  platforms: {
+    macos: { name: "Droppen-0.2.129.dmg", url: `${DL}Droppen-0.2.129.dmg`, size: 48_000_000 },
+    "linux-x86_64": { name: "droppen-v0.2.129-linux-x86_64.tar.gz", url: `${DL}droppen-v0.2.129-linux-x86_64.tar.gz`, size: 12_300_000 },
+    "linux-aarch64": { name: "droppen-v0.2.129-linux-aarch64.tar.gz", url: `${DL}droppen-v0.2.129-linux-aarch64.tar.gz`, size: 11_000_000 },
+  },
+  fetched_ms: 1_793_000_000_000,
+};
+const RELEASE = parseLatestRelease(ANSWER)!;
+
+test("detection, over real user agents: the device's kind, and the state it opens on", () => {
   const table: { name: string; hints: EnvironmentHints; kind: string; os: DownloadOs | null }[] = [
     {
       name: "Safari on macOS",
@@ -164,7 +187,6 @@ test("detection, over real user agents: the device's kind, and the tab it opens 
       kind: "ipad",
       os: "mobile",
     },
-    // Nothing marked detected; the page opens on the Mac App (`DEFAULT_OS`, test/direct-download.test.tsx).
     { name: "nothing to go on", hints: { userAgent: "" }, kind: "unknown", os: null },
   ];
   for (const row of table) {
@@ -174,10 +196,11 @@ test("detection, over real user agents: the device's kind, and the tab it opens 
   }
 });
 
-test("the tab: the address wins, then the session's choice, then the detected one", () => {
+test("the state: the address wins, then the session's choice, then the detected one", () => {
   assert.equal(initialOs({ search: "?os=linux", remembered: "windows", detected: "macos-app" }), "linux");
   assert.equal(initialOs({ search: "", remembered: "windows", detected: "macos-app" }), "windows");
   assert.equal(initialOs({ search: "?os=nope", remembered: null, detected: "mobile" }), "mobile");
+  assert.equal(initialOs({ search: "", remembered: null, detected: null }), "macos-app", "the Mac by default");
   for (const os of DOWNLOAD_OSES) {
     assert.equal(osOfSearch(downloadHref(os).replace("/download", "")), os, "the address names it, and reads back");
   }
@@ -186,279 +209,171 @@ test("the tab: the address wins, then the session's choice, then the detected on
   assert.equal(osOfSearch("?os=macos"), null);
 });
 
-test("the page opens on the tab the address names, else the session's, else the detected one — marked 「当前设备」", () => {
-  session.values.clear();
-  const detected = draw("zh-CN");
-  assert.match(detected, /data-testid="environments" data-os="macos-app" data-detected="macos-app"/);
-  assert.match(detected, /role="tablist"[^>]*aria-label="选择你的系统"/);
-  assert.equal((detected.match(/data-testid="detected"/g) ?? []).length, 1);
-  assert.match(detected, /data-testid="os-macos-app"[^]*?当前设备/);
-  // The address wins over the detected device.
-  assert.match(draw("zh-CN", { os: "linux" }), /data-os="linux"/);
-  // A choice made in this session, when the address names none.
-  session.setItem("rh.download.os", "mobile");
-  assert.match(draw("zh-CN"), /data-os="mobile"/);
-  assert.match(draw("zh-CN", { os: "windows" }), /data-os="windows"/, "the address still wins");
-  session.values.clear();
-  // A phone: on the phone's way, which is no tab — the Mac's is open, nothing marked, and the page says where to open it.
-  const phone = draw("zh-CN", { hints: { userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1" } });
-  assert.match(phone, /data-os="mobile" data-detected="mobile"/);
-  assert.match(phone, /data-testid="os-macos-app"[^>]*aria-selected="true"|aria-selected="true"[^>]*data-testid="os-macos-app"/);
-  assert.doesNotMatch(phone, /data-testid="detected"/);
-  assert.match(phone, /data-testid="page-address"[^>]*>.*https:\/\/droppen\.app\/download/, "the address to open on the computer");
+test("the page opens on the address's platform, else the detected one", () => {
+  assert.match(draw("zh-CN"), /data-testid="environments" data-os="macos-app" data-detected="macos-app"/);
+  assert.match(draw("zh-CN", { os: "linux" }), /data-os="linux" data-detected="macos-app"/);
+  assert.match(draw("zh-CN", { os: "windows" }), /data-os="windows"/);
+  assert.match(draw("zh-CN", { os: "macos-bg" }), /data-os="macos-bg"/);
+  assert.match(draw("zh-CN", { hints: IPHONE }), /data-os="mobile" data-detected="mobile"/);
+  // Nothing detected: the Mac by default, and no `data-detected` at all.
+  assert.match(draw("en", { hints: { userAgent: "" } }), /data-testid="environments" data-os="macos-app" class=/);
+  // The Mac button and its menu are the first screen's only actions.
+  const html = draw("en");
+  const hero = html.slice(0, html.indexOf('id="server"'));
+  assert.equal(primaries(hero), 1, "one primary action: the download");
+  assert.equal((hero.match(/data-testid="platform-menu-trigger"/g) ?? []).length, 1);
+  assert.match(tag(html, "platform-menu-trigger"), /aria-haspopup="menu"/);
 });
 
-test("the computers are one keyboard-operable tablist, the Mac's two ways a switch in its tab, and each way renders with one primary action", () => {
-  session.values.clear();
-  const tabOf: Record<DownloadOs, string> = { "macos-app": "macos-app", "macos-bg": "macos-app", linux: "linux", windows: "windows", mobile: "macos-app" };
-  for (const os of DOWNLOAD_OSES) {
-    const html = draw("en", { os, app: true });
-    assert.deepEqual([...html.matchAll(/role="tab"[^>]*data-testid="os-([a-z-]+)"|data-testid="os-([a-z-]+)"[^>]*role="tab"/g)].map((m) => m[1] ?? m[2]), ["macos-app", "linux", "windows"], `${os}: Mac, Linux, Windows`);
-    const tab = tabOf[os];
-    assert.match(html, new RegExp(`data-testid="os-${tab}"[^>]*aria-selected="true"|aria-selected="true"[^>]*data-testid="os-${tab}"`), `${os}: the ${tab} tab`);
-    assert.match(html, new RegExp(`data-testid="panel-${tab}"`), `${os} panel`);
-    assert.equal(primaries(html), 1, `${os}: one primary action`);
-  }
-  // The Mac's two ways, flat in the tab: no switch, nothing hidden behind one.
-  const mac = draw("en", { os: "macos-app", app: true });
-  assert.match(mac, /data-testid="way-panel-macos-app"/);
-  assert.match(mac, /data-testid="way-panel-macos-bg"/, "the command line is shown beside the App");
-  assert.doesNotMatch(mac, /data-testid="way-macos-app"|data-testid="way-macos-bg"/, "no switch");
-  assert.equal(primaries(mac), 1, "one primary action: the App's download");
-  const words = (os: DownloadOs, extra: { app?: boolean; linux?: boolean } = {}) => text(draw("en", { os, ...extra }));
-  assert.ok(words("macos-bg").includes(INSTALL_COMMAND));
-  assert.ok(words("macos-bg").includes("It installs and starts at login"));
-  assert.ok(words("windows").includes("On Windows, Droppen runs in the browser:"));
-  assert.ok(words("windows").includes("use droppen.app in this browser"), "no dead end");
-  // The phone is a part of the page, after the install, whatever the tab: nothing to install there.
-  for (const os of DOWNLOAD_OSES) {
-    const html = draw("en", { os });
-    assert.ok(html.indexOf('id="get"') < html.indexOf('id="phone"'), `${os}: the install, then the phone`);
-    assert.ok(text(html).includes("Then, use it from your phone") && text(html).includes("Add to Home Screen") && text(html).includes("Install app"), os);
-  }
-});
-
-test("the macos-bg deep link leads with the background install and keeps both Mac ways on the page", () => {
-  const background = draw("en", { os: "macos-bg", app: true });
-  const backgroundAt = background.indexOf('data-testid="way-panel-macos-bg"');
-  const appAt = background.indexOf('data-testid="way-panel-macos-app"');
-  assert.ok(backgroundAt >= 0 && appAt >= 0, "both installation ways stay visible");
-  assert.ok(backgroundAt < appAt, "the linked way is the first one on the opening screen");
-
-  const regular = draw("en", { os: "macos-app", app: true });
-  assert.ok(regular.indexOf('data-testid="way-panel-macos-app"') < regular.indexOf('data-testid="way-panel-macos-bg"'), "the regular Mac link keeps the App first");
-});
-
-test("Linux always links the release page when the hub fails or names no tarball for this processor", () => {
-  const hints: EnvironmentHints = { userAgent: "Mozilla/5.0 (X11; Linux x86_64; rv:131.0) Gecko/20100101 Firefox/131.0" };
-  const releasePage = "https://github.com/getdroppen/droppen/releases/tag/v0.2.129";
-  const linuxFile = {
-    name: "droppen-v0.2.129-linux-x86_64.tar.gz",
-    url: "https://github.com/getdroppen/droppen/releases/download/v0.2.129/droppen-v0.2.129-linux-x86_64.tar.gz",
-    href: "https://github.com/getdroppen/droppen/releases/download/v0.2.129/droppen-v0.2.129-linux-x86_64.tar.gz",
-    size: 12_300_000,
-  };
-  const release: LatestRelease = { version: "0.2.129", tag: "v0.2.129", publishedAt: "2026-10-24T09:30:00Z", releasesPage: releasePage, files: { "linux-x86_64": linuxFile } };
-  const macFile = { name: "Droppen-0.2.129.dmg", url: "https://github.com/getdroppen/droppen/releases/download/v0.2.129/Droppen-0.2.129.dmg", href: "https://github.com/getdroppen/droppen/releases/download/v0.2.129/Droppen-0.2.129.dmg", size: 48_000_000 };
-  const withoutLinux = { ...release, files: { macos: macFile } };
-  const link = (html: string, href: string) => html.includes(`<a href="${href}" target="_blank" rel="noopener noreferrer" data-testid="linux-release-link"`);
-
-  for (const [name, given, href] of [["hub failure", null, RELEASES_URL], ["no Linux file", withoutLinux, releasePage]] as const) {
-    const html = draw("en", { os: "linux", linux: true, hints, cpu: "x86_64", release: given });
-    assert.ok(link(html, href), `${name}: the public release-page fallback remains in the Linux download area`);
-    assert.doesNotMatch(html, /data-testid="linux-tarballs-file"/, `${name}: no file is invented`);
-  }
-
-  const resolved = draw("en", { os: "linux", linux: true, hints, cpu: "x86_64", release });
-  assert.ok(link(resolved, releasePage), "a resolved release links its own notes and checksums");
-  assert.ok(resolved.includes(`<a href="${linuxFile.href}" data-testid="linux-tarballs-file"`), "the resolved tarball download is unchanged");
-});
-
-test("update, uninstall and verify clear both sticky rows when followed as anchors", () => {
-  const html = draw("en", { os: "macos-app", app: true });
-  for (const id of ["update", "uninstall", "verify"]) {
-    const section = html.match(new RegExp(`<section id="${id}" class="([^"]*)"`));
-    assert.ok(section, `#${id} is a section`);
-    const classes = section[1]!.split(/\s+/);
-    assert.ok(classes.includes("scroll-mt-28"), `#${id} clears the 56px header and 48px platform row`);
-    assert.ok(!classes.includes("scroll-mt-14"), `#${id}'s larger margin wins the class merge`);
-  }
-});
-
-test("every numbered install and uninstall step uses 16px type", () => {
-  for (const os of ["macos-app", "macos-bg", "linux"] as const) {
-    const html = draw("en", { os, app: true, linux: true });
-    const numbers = [...html.matchAll(/<span class="([^"]*tabular-nums[^"]*)">(\d{2})<\/span>/g)];
-    assert.ok(numbers.length >= 3, `${os}: the page has numbered steps`);
-    for (const [, classes, number] of numbers) {
-      assert.ok(classes!.split(/\s+/).includes("text-base"), `${os}: step ${number} is 16px`);
-      assert.ok(!classes!.split(/\s+/).includes("text-xs"), `${os}: step ${number} is not 12px`);
-    }
-  }
-});
-
-test("the switches degrade: no App yet is 「App 即将推出」 and the command; no Linux yet is 「即将支持」 — never a link to a file that is not there", () => {
-  assert.equal(APP_AVAILABLE, true, "the signed and notarised App ships from v0.2.123");
-  assert.equal(LINUX_AVAILABLE, true, "Linux tarballs and DROPPEN_CODE ship from v0.2.121");
-  const noApp = draw("zh-CN", { os: "macos-app" });
+test("the Mac App: one download and its requirements; the other platforms are behind the arrow", () => {
+  const html = draw("en", { release: RELEASE });
+  assert.match(html, new RegExp(`<a href="${DL}Droppen-0\\.2\\.129\\.dmg" data-variant="primary" data-testid="app-download"`));
+  assert.match(html, /data-testid="app-file-facts"[^>]*>v0\.2\.129 · 48 MB/);
+  assert.ok(text(html).includes("macOS 13 or later · Apple silicon and Intel"));
+  assert.match(block(html, "app-download", "</a>"), /<svg/, "the Apple mark leads the button");
+  // Without an answer: the release page, in a new tab, and no invented version.
+  const asking = draw("en");
+  assert.match(asking, new RegExp(`<a href="${RELEASES_URL}" target="_blank" rel="noopener noreferrer" data-variant="primary" data-testid="app-download"`));
+  assert.doesNotMatch(asking, /data-testid="app-file-facts"/);
+  // No App yet: the command is the way in, and it is the one action.
+  const noApp = draw("zh-CN", { availability: { app: false, appSignIn: false, linux: true } });
   assert.match(noApp, /data-testid="app-soon"/);
   assert.ok(text(noApp).includes("App 即将推出"));
   assert.ok(text(noApp).includes(INSTALL_COMMAND), "the way in today");
   assert.doesNotMatch(noApp, /data-testid="app-download"/);
-  const withApp = draw("zh-CN", { os: "macos-app", app: true });
-  assert.match(withApp, new RegExp(`<a href="${APP_DOWNLOAD_URL.replace(/[.?]/g, "\\$&")}"[^>]*data-variant="primary" data-testid="app-download"`));
-  assert.ok(text(withApp).includes("下载 Droppen App（macOS）"));
-  assert.doesNotMatch(withApp, /data-testid="app-soon"/);
-  const noLinux = draw("zh-CN", { os: "linux" });
-  assert.match(noLinux, /data-testid="linux-soon"/);
-  assert.ok(text(noLinux).includes("即将支持"));
-  assert.ok(!text(noLinux).includes("DROPPEN_CODE"), "no command that does not work yet");
-  const withLinux = text(draw("en", { os: "linux", linux: true }));
-  assert.ok(withLinux.includes(codeInstallCommand("<code>")));
-  assert.ok(withLinux.includes("my devices → add a device that runs AI → show a one-time code"));
-  // Windows says what works either way.
-  assert.ok(text(draw("en", { os: "windows" })).includes("Once Linux is supported"));
-  // WSL only with systemd on: the installer runs Droppen as a systemd user service, and stops where there is none.
-  const windows = draw("en", { os: "windows", linux: true });
-  assert.ok(text(windows).includes("Run the AI on a Linux server, or in WSL with systemd turned on."));
-  assert.match(windows, /<a href="https:\/\/learn\.microsoft\.com\/windows\/wsl\/systemd" target="_blank" rel="noopener noreferrer" data-testid="wsl-systemd"[^>]*>how to turn on systemd in WSL<\/a>/);
-  assert.ok(text(draw("zh-CN", { os: "windows", linux: true })).includes("在 Linux 服务器或已开启 systemd 的 WSL 中运行 AI。"));
+  assert.match(tag(noApp, "install-command-copy"), /data-variant="primary"/);
+  // Sign-in from the App still coming: said once, honestly.
+  const off = draw("en", { availability: { app: true, appSignIn: false, linux: true } });
+  assert.match(off, /data-testid="app-sign-in-soon"/);
+  assert.ok(text(off).includes("signing in to Droppen from the app is coming in an update"));
+  assert.doesNotMatch(draw("en"), /data-testid="app-sign-in-soon"/);
 });
 
-/** The App tab's panel alone (the page around it says 「登录 Droppen」 for the other ways in). */
-const appPanel = (html: string) => {
-  const from = html.indexOf('data-testid="panel-macos-app"');
-  assert.ok(from >= 0, "the App tab is open");
-  return html.slice(from, html.indexOf('id="phone"', from));
-};
-const appSteps = (html: string) => (appPanel(html).match(/data-testid="app-steps"[^]*?<\/ol>/)?.[0].match(/<li/g) ?? []).length;
-
-test("signing in from the App: its last step is 「登录 Droppen」 inside it, and nothing says it is coming — in every language", () => {
-  assert.equal(APP_SIGN_IN_AVAILABLE, true, "every App published signs itself in (the hand-off came in 0.2.125; the first public .dmg is 0.2.127)");
-  assert.equal(AVAILABILITY.appSignIn, APP_SIGN_IN_AVAILABLE, "the page reads the switch");
-  // Where the sign-in is in the App: its setup guide's Where to use it step, by the App's own names (i18n/welcome.ts), through the browser, then Settings — as the first-run card says it.
-  const said = {
-    en: {
-      step: "Sign in to Droppen from the app",
-      opens: "It opens a short setup guide, four steps.",
-      where: "In the setup guide, choose “On my phone and other devices too”, then sign in: your browser opens droppen.app, where you check the fingerprint and approve this Mac.",
-      lead: "To use it from your phone and other devices, sign in to Droppen from the app.",
-      note: "signing in to Droppen from the app is coming in an update",
-      gone: "Nothing to type.",
-    },
-    "zh-CN": {
-      step: "在 App 内登录 Droppen",
-      opens: "它会打开一个四步的设置向导。",
-      where: "在设置向导里选择「在手机和其他设备上也能用」，然后登录：浏览器会打开 droppen.app，核对指纹后批准这台 Mac。",
-      lead: "要在手机和其他设备上使用，请在 App 内登录 Droppen",
-      note: "在 App 内登录 Droppen 的功能将在后续更新中提供",
-      gone: "不用输入任何东西",
-    },
-    "zh-TW": {
-      step: "在 App 內登入 Droppen",
-      opens: "它會打開一個四步的設定引導。",
-      where: "在設定精靈裡選擇「在手機和其他裝置上也能用」，然後登入：瀏覽器會開啟 droppen.app，核對指紋後批准這台 Mac。",
-      lead: "要在手機和其他裝置上使用，請在 App 內登入 Droppen",
-      note: "在 App 內登入 Droppen 的功能將在後續更新中提供",
-      gone: "不用輸入任何東西",
-    },
-    ja: {
-      step: "アプリから Droppen にサインイン",
-      opens: "4 ステップの短いセットアップガイドが開きます。",
-      where: "セットアップガイドで「スマホやほかのデバイスからも使う」を選び、サインインします。ブラウザが droppen.app を開くので、指紋を照合してこの Mac を承認します。",
-      lead: "スマホやほかのデバイスから使うには、アプリから Droppen にサインインします",
-      note: "アプリからの Droppen へのサインインは、今後のアップデートで対応します",
-      gone: "入力するものはありません",
-    },
-  };
-  for (const [lng, { step, opens, where, lead, note, gone }] of Object.entries(said)) {
-    // The build's own switches, and the same spelled out.
-    for (const html of [draw(lng, { os: "macos-app", availability: AVAILABILITY }), draw(lng, { os: "macos-app", app: true, appSignIn: true })]) {
-      const panel = text(appPanel(html));
-      assert.match(appPanel(html), /data-testid="app-download"/, `${lng}: the App is offered`);
-      assert.ok(panel.includes(step), `${lng}: ${step}`);
-      assert.ok(panel.includes(opens), `${lng}: ${opens}`);
-      assert.ok(panel.includes(where), `${lng}: ${where}`);
-      assert.ok(panel.indexOf(opens) < panel.indexOf(where), `${lng}: open it, then sign it in`);
-      assert.ok(!panel.includes(gone), `${lng} still says: ${gone}`);
-      assert.ok(panel.includes(lead), `${lng}: ${lead}`);
-      assert.equal(appSteps(html), 4, `${lng}: open the .dmg, drag it to Applications, open it, sign it in`);
-      assert.doesNotMatch(html, /data-testid="app-sign-in-soon"/, `${lng}: no "coming" note`);
-      // Nowhere does the page say that signing in is still to come.
-      assert.ok(!text(html).includes(note), `${lng} still says: ${note}`);
-      assert.equal(primaries(html), 1, `${lng}: one primary action, the download`);
+test("the server: three tabs, opening on the device's platform, with one set of three steps", () => {
+  const opens: [DownloadOs, string, string][] = [
+    ["macos-app", "macos", "macOS 13 or later · Apple silicon and Intel"],
+    ["linux", "linux", "Linux · x86_64 or aarch64 · glibc 2.28+ · systemd"],
+    ["windows", "windows", "Windows · WSL 2"],
+  ];
+  for (const [os, tab, requirement] of opens) {
+    const html = draw("en", { os });
+    const tabs = [...html.matchAll(/data-testid="server-tab-(\w+)"/g)].map((m) => m[1]);
+    assert.deepEqual(tabs, ["macos", "linux", "windows"], `${os}: every platform is offered`);
+    for (const other of ["macos", "linux", "windows"]) {
+      assert.match(tag(html, `server-tab-${other}`), new RegExp(`aria-selected="${other === tab}"`), `${os}: ${other}`);
+    }
+    const chosen = block(html, `server-tab-${tab}`, "</button>");
+    assert.match(chosen, /<svg/, `${os}: the tab carries the platform's mark`);
+    assert.ok(text(html).includes(requirement), `${os}: ${requirement}`);
+    const steps = block(html, "server-steps", "</ol>");
+    assert.equal((steps.match(/<li/g) ?? []).length, 3, `${os}: three steps`);
+    for (const title of ["Get a one-time code", "Install it", "Check it is online"]) assert.ok(text(steps).includes(title), `${os}: ${title}`);
+    const items = steps.split("<li").slice(1);
+    assert.match(items[1]!, /data-testid="install-command"/, `${os}: the command is inside step 2`);
+    assert.ok(text(items[1]!).includes(codeInstallCommand("<code>")));
+    if (tab === "macos") {
+      assert.doesNotMatch(html, /data-testid="linger-command"/, "macOS's launchd agent needs no lingering");
+    } else {
+      assert.match(items[2]!, /data-testid="linger-command"/, `${os}: lingering is step 3's action`);
     }
   }
-  // The step's opening line is the card's, in every language; the page now summarizes the sign-in walkthrough the card spells out.
-  for (const key of ["It opens a short setup guide, four steps."]) {
-    for (const [lng, page, card] of [["zh-CN", downloadZhCN, onboardingZhCN], ["zh-TW", downloadZhTW, onboardingZhTW], ["ja", downloadJa, onboardingJa]] as const) {
-      assert.ok(page[key], `${lng}: the page has ${key}`);
-      assert.equal(page[key], card[key], `${lng}: as the card says it`);
-    }
-  }
-  // Off (an explicit switch, as a preview would pass): no step for a button the App does not have, and a note that it is coming.
-  const off = draw("en", { os: "macos-app", app: true, appSignIn: false });
-  assert.match(appPanel(off), /data-testid="app-sign-in-soon"/);
-  assert.ok(text(appPanel(off)).includes("Using it from your phone: signing in to Droppen from the app is coming in an update."));
-  assert.ok(!text(appPanel(off)).includes("Sign in to Droppen from the app"));
-  assert.equal(appSteps(off), 3);
-  assert.ok(text(appPanel(draw("zh-CN", { os: "macos-app", app: true, appSignIn: false }))).includes("在手机上使用：在 App 内登录 Droppen 的功能将在后续更新中提供。"));
+  // WSL says how to turn systemd on.
+  const windows = draw("en", { os: "windows" });
+  assert.match(windows, /<a href="https:\/\/learn\.microsoft\.com\/windows\/wsl\/systemd" target="_blank" rel="noopener noreferrer" data-testid="wsl-systemd"/);
+  assert.doesNotMatch(draw("en", { os: "macos-app" }), /data-testid="wsl-systemd"/);
 });
 
-test("in a customer's order: what to have, the install, the phone, what gets installed and how to check it, updating and uninstalling", () => {
-  const html = draw("en", { app: true });
-  const words = text(html);
-  // What to have: the panel's own system line, and no account line of its own under the tabs.
-  assert.doesNotMatch(html, /data-testid="download-needs"/, "no needs band under the tabs");
-  for (const line of ["macOS 13 or later: Apple silicon or Intel"]) assert.ok(words.includes(line), line);
-  // The order of the parts: the platform's install, update, uninstall and reference, then the phone.
-  const at = (marker: string) => html.indexOf(marker);
-  const order = ['id="get"', 'id="update"', 'id="uninstall"', 'id="verify"', 'id="phone"'];
-  assert.deepEqual([...order].sort((a, b) => at(a) - at(b)), order);
-  for (const marker of order) assert.ok(at(marker) > 0, marker);
-  // What gets installed, as the install script and the release say it, and how to check the files.
-  for (const line of ["Signed with a Developer ID and notarized by Apple", "never as root", "SHA-256", "a systemd user service on Linux", "--system makes it a system service that starts at boot and still runs as you", "Listens only on 127.0.0.1", "no inbound port to open", "port 8700, or the next free port", "SHA256SUMS", "neither Droppen Hub nor the Droppen relays hold a key"]) assert.ok(words.includes(line), line);
-  const script = readFileSync(new URL("../../scripts/install.sh", import.meta.url), "utf8");
-  assert.match(script, /It does not run as root/);
-  assert.match(script, /127\.0\.0\.1:8700 or the next free port/);
-  assert.match(script, /--system is for Linux/);
-  assert.match(script, /--uninstall {3}stop and remove the service and the server; keep the data/);
-  assert.match(html, new RegExp(`<a href="${RELEASES_URL}" target="_blank" rel="noopener noreferrer"`));
-  assert.ok(words.includes(CHECKSUM_COMMAND), "how to check the file");
+test("Linux says which processor this browser reports, and when there is no build for it", () => {
+  const built = draw("en", { os: "linux", hints: LINUX_FIREFOX, cpu: "x86_64" });
+  assert.match(built, /data-testid="linux-cpu"/);
+  assert.ok(text(built).includes("This browser reports Linux on x86_64."));
+  assert.ok(!text(built).includes("Droppen's Linux builds are for x86_64 and aarch64."));
+  const other = draw("zh-CN", { os: "linux", hints: LINUX_FIREFOX, cpu: "armv7l" });
+  assert.ok(text(other).includes("Droppen 的 Linux 版本支持 x86_64 和 aarch64。"));
+  assert.equal((text(other).match(/Droppen 的 Linux 版本支持/g) ?? []).length, 1, "said once");
+  // Read on a Mac, the Mac's processor says nothing about a server's.
+  assert.doesNotMatch(draw("en", { os: "linux", hints: MAC_CHROME, cpu: "aarch64" }), /data-testid="linux-cpu"/);
+  // A phone that landed on the server section says nothing about a processor.
+  assert.doesNotMatch(draw("en", { hints: IPHONE, cpu: "aarch64" }), /data-testid="linux-cpu"/);
+});
+
+test("with Linux not yet available, the server tab says so instead of a command that would not work", () => {
+  const off: Availability = { app: true, appSignIn: true, linux: false };
+  const linux = draw("en", { os: "linux", availability: off });
+  assert.ok(text(linux).includes("Linux support, with no browser needed on the server, is on its way."));
+  assert.ok(!text(linux).includes("DROPPEN_CODE"));
+  assert.doesNotMatch(linux, /data-testid="server-steps"/);
+  const windows = draw("en", { os: "windows", availability: off });
+  assert.ok(text(windows).includes("Once Linux is supported: a Linux server, or WSL."));
+  assert.doesNotMatch(windows, /data-testid="server-steps"/);
+  // macOS keeps its steps: the install script still runs.
+  assert.match(draw("en", { os: "macos-app", availability: off }), /data-testid="server-steps"/);
+});
+
+test("the browser: nothing to install, approved by a device already in the account", () => {
+  const html = draw("en");
+  assert.ok(html.indexOf('id="browser"') > 0);
+  assert.match(html, /id="phone"/);
+  const steps = block(html, "phone-steps", "</ol>");
+  assert.equal((steps.match(/<li/g) ?? []).length, 2);
+  for (const title of ["Sign in", "Approve this browser"]) assert.ok(text(steps).includes(title), title);
+  assert.ok(html.indexOf('data-testid="phone-steps"') > html.indexOf('id="server"'), "after the server");
+});
+
+test("maintenance is folded after both paths, and the old anchors open the part they name", () => {
+  const html = draw("en", { release: RELEASE });
+  for (const id of ["update", "uninstall", "verify"]) {
+    const details = html.match(new RegExp(`<details[^>]*id="${id}"[^>]*>`))![0];
+    assert.ok(details.includes("scroll-mt-14"), `#${id} clears the 56px header`);
+    assert.ok(!/\sopen(=|"|\s|>)/.test(details), `#${id} is folded`);
+  }
+  assert.match(html, /data-testid="update-command"[^>]*>[^<]*.*curl -fsSL https:\/\/droppen\.app\/install\.sh \| sh/s);
+  const steps = block(html, "uninstall-steps", "</ol>");
+  assert.equal((steps.match(/<li/g) ?? []).length, 3);
+  for (const line of ["Remove it from your account", "Disconnect it", "Remove the program"]) assert.ok(text(steps).includes(line), line);
+  assert.ok(text(html).includes(UNINSTALL_COMMAND));
+  assert.ok(text(html).includes(CHECKSUM_COMMAND));
+  assert.ok(text(html).includes(ATTESTATION_COMMAND));
+  assert.match(html, /data-testid="download-verify"/);
   assert.match(html, /<a href="\/security"[^>]*data-testid="download-security"/);
-  assert.ok(!text(draw("en", { app: false })).includes("notarized"), "no App, nothing said about it");
-  // Updating and uninstalling.
-  assert.ok(words.includes("The Mac app checks for updates by itself."));
-  assert.ok(words.includes(UNINSTALL_COMMAND));
-  assert.ok(words.includes("It stops and removes the service and the program and keeps your data"));
-  assert.ok(words.includes("Settings → Access → Droppen → Disconnect this device"));
-  assert.ok(words.includes("quit Droppen and drag it from Applications to the Trash"));
-  // Said once: no table of systems repeating the tabs, no closing call to install it again.
-  assert.doesNotMatch(html, /id="requirements"|id="manual"|Ready when you are|Install it, then sign it in/);
+  assert.match(html, /data-testid="verify-download-link"/);
+  assert.ok(html.indexOf('data-testid="phone-steps"') < html.indexOf('id="manage"'));
 });
 
-test("no account line of its own: sign-in stays in the header, signed in or not", () => {
-  const out = draw("en");
-  assert.doesNotMatch(out, /data-testid="download-(signup|waitlist|open-devices)"/, "no account link under the tabs");
-  assert.doesNotMatch(text(out), /installed and signed in on the device that runs it/, "no needs line");
-  assert.match(out, /aria-label="Sign in"/, "signed out, the header offers sign-in");
-  const signedIn = draw("en", { signedIn: true, os: "windows" });
-  assert.match(signedIn, /aria-label="Open app"/, "signed in, the header offers the app instead");
-  assert.match(signedIn, /<a href="\/sessions"[^>]*data-testid="use-in-browser"/);
+test("the switches degrade honestly: no App is the command, no Linux is a line — never a link to a file that is not there", () => {
+  assert.equal(APP_AVAILABLE, true, "the signed and notarised App ships from v0.2.123");
+  assert.equal(LINUX_AVAILABLE, true, "Linux tarballs and DROPPEN_CODE ship from v0.2.121");
+  assert.equal(APP_SIGN_IN_AVAILABLE, true);
+  assert.equal(AVAILABILITY.appSignIn, APP_SIGN_IN_AVAILABLE, "the page reads the switch");
 });
 
-test("it leads with where Droppen goes, and reads in zh-CN, zh-TW and ja", () => {
-  const cn = text(draw("zh-CN", { os: "macos-bg" }));
-  assert.ok(cn.includes("在运行 AI 的设备上安装 Droppen"));
-  assert.ok(cn.includes("手机和其他设备无需安装"));
-  assert.ok(cn.indexOf("在运行 AI 的设备上安装") < cn.indexOf(INSTALL_COMMAND), "where it goes before the command");
-  const tw = text(draw("zh-TW", { os: "linux" }));
-  assert.ok(tw.includes("在執行 AI 的裝置上安裝 Droppen"));
-  assert.ok(tw.includes("即將支援"));
-  const jp = text(draw("ja", { os: "mobile" }));
-  assert.ok(jp.includes("AI が動くデバイスに Droppen をインストール。"));
-  assert.ok(jp.includes("インストールしたら、スマホで使う"));
-  for (const words of [cn, tw, jp]) assert.doesNotMatch(words, /Install Droppen on the device|Choose your system|Updating and uninstalling|Then, use it from your phone/);
+test("it reads in zh-CN, zh-TW and ja, with nothing left in English", () => {
+  const cn = text(draw("zh-CN"));
+  assert.ok(cn.includes("下载 Droppen") && cn.includes("运行服务器") && cn.includes("管理安装"));
+  const tw = text(draw("zh-TW"));
+  assert.ok(tw.includes("下載 Droppen") && tw.includes("執行伺服器") && tw.includes("管理安裝"));
+  const jp = text(draw("ja"));
+  assert.ok(jp.includes("Droppen をダウンロード") && jp.includes("サーバーを動かす") && jp.includes("インストールの管理"));
+  for (const words of [cn, tw, jp]) {
+    assert.doesNotMatch(words, /Download Droppen|Run the server|Manage your installation|Nothing to install: any browser works/);
+  }
+});
+
+test("every key the download page uses is translated in all three tables, with the same placeholders", () => {
+  const source = readFileSync(new URL("../src/features/landing/download.tsx", import.meta.url), "utf8");
+  const used = new Set<string>();
+  for (const match of source.matchAll(/(?<![A-Za-z0-9_$.])t\("([^"]+)"/g)) used.add(match[1]!);
+  // Passed through `t(label)` by the server tabs, so the scanner cannot see them.
+  for (const label of ["macOS", "Linux", "Windows / WSL"]) used.add(label);
+  assert.ok(used.size > 60, "the page's strings are found");
+  const placeholders = (value: string) => [...value.matchAll(/\{\{\w+\}\}/g)].map((m) => m[0]).sort().join(",");
+  for (const key of used) {
+    assert.ok(downloadZhCN[key], `zh-CN has ${JSON.stringify(key)}`);
+    for (const [lng, table] of [["zh-TW", downloadZhTW], ["ja", downloadJa]] as const) {
+      assert.ok(table[key], `${lng} has ${JSON.stringify(key)}`);
+      assert.equal(placeholders(table[key]!), placeholders(key), `${lng}: ${JSON.stringify(key)} keeps its placeholders`);
+    }
+  }
 });
 
 test("`/download` is a public page of its own, signed in or not, and the landing page links it from its footer", () => {
