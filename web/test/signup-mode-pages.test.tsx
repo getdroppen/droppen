@@ -3,7 +3,8 @@
 //
 // What these pin: sign-up is open, written in `SIGNUP_CONFIG`, so
 // `useSignupMode` says open without asking anyone and a mode the caller gives
-// wins; the front pages (`front-pages.tsx`) draw the open wording, and a page
+// wins; the front pages (`front-pages.tsx`) draw the pricing page — the
+// comparison with no plan actions, Pro's waitlist form below it — and a page
 // that says nothing of sign-up is the same; and the waitlist form sends what
 // the page shows: Pro whatever the address says where sign-up is open, the
 // plan chosen where an explicit mode says otherwise.
@@ -82,14 +83,16 @@ test("useSignupMode: open, as written in the page; a given mode wins", async () 
   assert.equal(byTestId("mode")?.textContent, "closed", "a given mode wins");
 });
 
-test("the front pages draw the open sign-up: Free signs up, Pro's waitlist stays", async () => {
+test("the front pages draw the pricing page: the comparison stands, and Free's sign-up is the header's where sign-up is open", async () => {
   history.replaceState(null, "", "/pricing");
   const open = hub();
   await draw(<FrontPageView page="pricing" signedIn={false} api={open.api as never} />);
-  await until(() => byTestId("plan-free-signup") !== null);
-  assert.equal(byTestId("plan-free-signup")?.getAttribute("data-variant"), "primary");
-  assert.equal(byTestId("plan-free-waitlist"), null);
-  assert.ok(words().includes("Free, with an account"));
+  await until(() => byTestId("compare-table") !== null);
+  assert.equal(byTestId("plan-free-signup"), null);
+  assert.equal(byTestId("plan-pro-waitlist"), null);
+  assert.ok(words().includes("Sign up with an e-mail address"));
+  assert.equal(byTestId("waitlist-form")?.getAttribute("data-plan"), "pro");
+  assert.equal(container.querySelectorAll('input[type="radio"]').length, 0);
 });
 
 test("a page that says nothing of sign-up is drawn the same, and nothing is asked", async () => {

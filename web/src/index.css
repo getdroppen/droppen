@@ -298,6 +298,13 @@ svg.lucide[stroke-width="2"] {
   }
 }
 
+/* The pricing page's side gutters (`features/landing/pricing.tsx`): 45°
+   hairlines on the sheet's border colour, so the columns either side of the
+   centred content read as drafting paper rather than blank space. */
+@utility hatch-45 {
+  background-image: repeating-linear-gradient(45deg, var(--color-border) 0 1px, transparent 1px 12px);
+}
+
 html,
 body,
 #root {

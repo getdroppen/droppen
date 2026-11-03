@@ -1,22 +1,5 @@
 // droppen.app/pricing (`features/landing/pricing.tsx`), its waitlist form
 // (`waitlist.tsx`) and the privacy notice (`privacy.tsx`).
-//
-// What these pin: the page leads with what you get and reads in zh-CN, en,
-// zh-TW and ja; its numbers are the plans' own (`pricing-plans.ts`, which
-// the hub's own tests hold to its plans) and Pro is $10 a month or $96 a
-// year; Pro's button is "Join the waitlist" — no checkout anywhere — and
-// brings you to the form; Free is a plain sign-up and the form is Pro's
-// alone where the hub's sign-up is open (the default), while by invite
-// Free's button joins the waitlist too and the form offers both plans; one primary
-// action in each part of the page — among the plans, Free's sign-up where
-// sign-up is open, else Pro's; the form says how it went (on the list;
-// not an address; a throwaway address; too many tries, and for how long;
-// out of reach) and sends nothing it cannot; the hub client posts
-// `/v1/waitlist` without a session; `/pricing` and `/privacy` are public
-// pages signed in or not, linked from every public page's header or footer;
-// the privacy notice says what is kept, why, how long, how to be removed,
-// what our servers can and cannot see, which providers run parts of the
-// service and where, and how long each kind of data stays.
 import * as React from "react";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -99,23 +82,22 @@ test("the pricing page leads with what you get, in zh-CN first", () => {
   const words = text(draw("zh-CN"));
   for (const line of [
     "免费开始，需要更多时升级 Pro",
-    "所有方案均端到端加密：无论哪个方案，我们都无法读取你的会话、代码和终端。",
+    "端到端加密：我们无法读取你的会话、代码和终端",
     "价格以美元计。Pro 尚未开放购买；在你决定付款之前，不会产生任何费用。",
     "仅本地",
     "免费版",
-    "无论身在何处，都能在手机上使用你的 AI。",
-    "包含免费版的全部功能，额度更高。",
-    "3 台可运行 AI 的设备",
-    "20 台可运行 AI 的设备",
-    "共 8 台设备，含可运行 AI 的设备、手机和浏览器",
-    "可运行 AI 的设备离线时，手机上可查看它最近 7 天的会话",
-    "可运行 AI 的设备离线时，手机上可查看它最近 30 天的会话",
-    "每月经我们的服务器转发 10 GB，超出后限速至 256 KB/s，直到下个月",
-    "每月经我们的服务器转发 100 GB，超出部分不限速，按量计费",
+    "可运行 AI 的设备",
+    "设备总数",
+    "离线天数",
+    "最近 7 天",
+    "最近 30 天",
+    "每月流量",
+    "10 GB，超出后限速至 256 KB/s",
+    "100 GB，超出部分按量计费",
     "或每年 $96，省 20%",
     "加入等候名单",
-    "各方案包含的内容",
     "留下邮箱，Pro 开放时通知",
+    "常见问题",
     "每月流量额度用完后会怎样？",
     "「仅本地」是什么意思？",
     "可以自行部署吗？",
@@ -134,26 +116,23 @@ test("in English, and every number on the page is a plan's own", () => {
   for (const line of [
     "Start free. Go Pro when you need more.",
     "Local only",
-    "Everything in Free, with higher limits.",
-    `${free.hosts} devices that run AI`,
-    `${pro.hosts} devices that run AI`,
-    `${free.devices} devices in all, including those that run AI, phones and browsers`,
-    `${pro.devices} devices in all, including those that run AI, phones and browsers`,
-    `While a device that runs AI is offline, read its last ${free.retentionDays} days of sessions on your phone`,
-    `While a device that runs AI is offline, read its last ${pro.retentionDays} days of sessions on your phone`,
-    `${gb(free.transferBytes)} GB a month through our servers, then ${THROTTLED_KB_PER_SEC} KB/s until the next month`,
+    "Devices that run AI",
+    "All your devices",
+    "That device, and browsers on the same network",
+    "Offline days",
+    "Sessions your phone can read",
+    `${free.retentionDays} days`,
+    `${pro.retentionDays} days`,
+    "A month's transfer",
+    "Through our servers",
     `${gb(free.transferBytes)} GB, then ${THROTTLED_KB_PER_SEC} KB/s`,
-    `${gb(pro.transferBytes)} GB a month through our servers, then billed by use, at full speed`,
+    `${gb(pro.transferBytes)} GB, then billed by use`,
     `$${PRO_PRICE.monthly} USD / month`,
     `or $${PRO_PRICE.yearly} a year: save ${yearlySaving()}%`,
-    `$${PRO_PRICE.monthly} a month, or $${PRO_PRICE.yearly} a year`,
     `past ${gb(free.transferBytes)} GB that traffic slows to ${THROTTLED_KB_PER_SEC} KB/s`,
     `past ${gb(pro.transferBytes)} GB is billed by use`,
     "End-to-end encrypted",
-    "We can't read your sessions, code or terminals",
     "Prices in US dollars. Pro is not on sale yet, and nothing is charged before you choose to pay.",
-    // The cloud's copy expires once a device has been offline that long (docs/relay-and-plans.md §3.4): offline, not off.
-    `Free keeps an encrypted copy of each device's last ${free.retentionDays} days of sessions in the cloud, Pro its last ${pro.retentionDays}.`,
     "What if a device stays offline for longer?",
     // Only the client is open source: Droppen Hub is not.
     "The Droppen client is open source under the AGPL-3.0",
@@ -167,51 +146,59 @@ test("in English, and every number on the page is a plan's own", () => {
   const compare = part(html, "compare", "waitlist");
   const encrypted = compare.slice(compare.indexOf("End-to-end encrypted"));
   assert.equal((encrypted.match(/>included</g) ?? []).length, 3);
-  // Section ids the header's anchors and the cards' buttons go to.
   for (const id of ["plans", "compare", "waitlist", "faq"]) assert.match(html, new RegExp(`id="${id}"`));
 });
 
-test("nothing can be bought yet: Pro's button joins the waitlist, and no page offers a checkout", () => {
+test("the questions are one accordion: closed until asked, one panel at a time, every answer kept in the page", () => {
+  const faq = part(draw("en"), "faq");
+  assert.ok(text(faq).includes("FAQ"));
+  assert.equal((faq.match(/data-testid="faq-item"/g) ?? []).length, 6);
+  assert.equal((faq.match(/<button[^>]*aria-expanded="false"/g) ?? []).length, 6);
+  assert.equal((faq.match(/<div[^>]*hidden=""[^>]*role="region"/g) ?? []).length, 6);
+  assert.doesNotMatch(faq, /aria-expanded="true"/);
+  // Kept mounted: the answer is in the page even while its panel is hidden.
+  assert.match(faq, /<div[^>]*hidden=""[^>]*role="region"/);
+  const words = text(faq);
+  for (const line of [
+    "What happens when I use up a month's transfer?",
+    "Only what goes through our servers counts",
+    "What does “local only” mean?",
+    "It is just as safe on every plan",
+  ]) {
+    assert.ok(words.includes(line), `missing: ${line}`);
+  }
+});
+
+test("nothing can be bought yet: no checkout, and the comparison carries no actions", () => {
   for (const lng of ["en", "zh-CN", "zh-TW", "ja"]) {
-    for (const signup of ["open", "invite"] as const) {
+    for (const signup of ["open", "invite", "closed"] as const) {
       const html = draw(lng, { signup });
-      assert.match(html, /<a href="#waitlist"[^>]*data-testid="plan-pro-waitlist"/, lng);
       assert.doesNotMatch(html, /stripe|checkout|buy now|subscribe/i, lng);
+      for (const gone of ["plan-local-download", "plan-free-signup", "plan-free-waitlist", "plan-free-open", "plan-pro-waitlist"]) {
+        assert.doesNotMatch(html, new RegExp(`data-testid="${gone}"`), `${lng} (${signup}): ${gone}`);
+      }
     }
-    // Free: a sign-up where sign-up is open, the waitlist where it is by invite.
-    assert.match(draw(lng), /<a href="\/signup"[^>]*data-testid="plan-free-signup"/, lng);
-    assert.doesNotMatch(draw(lng), /data-testid="plan-free-waitlist"/, lng);
-    assert.match(draw(lng, { signup: "invite" }), /<a href="#waitlist"[^>]*data-testid="plan-free-waitlist"/, lng);
   }
   const words = text(draw("en"));
-  assert.ok(words.includes("Payments are not open yet: we'll e-mail you when they are."));
   assert.ok(words.includes("Join the waitlist"));
 });
 
-test("one primary action in each part of the page: among the plans Free's sign-up where sign-up is open, else Pro's; the form's own below the comparison", () => {
-  // Open: signing up is what anyone can do now, so it leads; Pro's waitlist steps back.
-  for (const lng of ["en", "zh-CN", "zh-TW", "ja"]) {
-    const plans = part(draw(lng), "plans", "compare");
-    assert.match(plans, /<a href="\/signup"[^>]*data-variant="primary"[^>]*data-testid="plan-free-signup"/, lng);
-    assert.doesNotMatch(plans, /data-variant="primary"[^>]*data-testid="plan-pro-waitlist"/, lng);
-  }
-  // By invite, or signed in (no sign-up to offer): Pro's, as before.
-  for (const opts of [{ signup: "invite" as const }, { signedIn: true }, { signedIn: true, signup: "invite" as const }]) {
-    const plans = part(draw("en", opts), "plans", "compare");
-    assert.match(plans, /<a href="#waitlist"[^>]*data-variant="primary"[^>]*data-testid="plan-pro-waitlist"/, JSON.stringify(opts));
-    assert.equal(primaries(plans), 1, JSON.stringify(opts));
-  }
-  for (const [lng, signup] of [["en", "open"], ["zh-CN", "open"], ["en", "invite"]] as const) {
+test("one primary action on the page: the waitlist form's, whatever the sign-up mode", () => {
+  for (const [lng, signup] of [
+    ["en", "open"],
+    ["zh-CN", "open"],
+    ["zh-TW", "invite"],
+    ["ja", "closed"],
+  ] as const) {
     const html = draw(lng, { signup });
-    assert.equal(primaries(html), 2, lng);
-    assert.equal(primaries(part(html, "plans", "compare")), 1, `${lng}: the plans`);
-    assert.equal(primaries(part(html, "compare", "waitlist")), 0, `${lng}: the comparison keeps them apart`);
+    assert.equal(primaries(html), 1, `${lng}: one primary`);
+    assert.equal(primaries(part(html, "plans", "waitlist")), 0, `${lng}: the comparison has no actions`);
     assert.equal(primaries(part(html, "waitlist", "faq")), 1, `${lng}: the form`);
     assert.match(part(html, "waitlist", "faq"), /<button type="submit" data-variant="primary" data-testid="waitlist-submit"/);
   }
 });
 
-test("by invite, the form starts on Free, or on Pro when the address says so; both cards' buttons choose their plan", () => {
+test("by invite, the form starts on Free, or on Pro when the address says so", () => {
   assert.equal(planOfSearch(""), "free");
   assert.equal(planOfSearch("?plan=pro"), "pro");
   assert.equal(planOfSearch("?plan=internal"), "free");
@@ -224,8 +211,7 @@ test("by invite, the form starts on Free, or on Pro when the address says so; bo
   assert.match(html, /<fieldset[^>]*><legend[^>]*><span[^>]*>Plan<\/span><\/legend>/);
   assert.match(html, /data-testid="waitlist-form" data-plan="free"/);
   assert.match(html, /<input id="waitlist-email" type="email" autoComplete="email" inputMode="email" required=""[^>]*name="email"/);
-  // The form links the privacy notice.
-  assert.match(html, /<a href="\/privacy"[^>]*data-testid="waitlist-privacy"/);
+  assert.doesNotMatch(html, /waitlist-privacy|No confirmation mail/);
 });
 
 test("open sign-up: the form is Pro's alone — no plan to choose, whatever the address says — and the page never speaks of invites", () => {
@@ -236,12 +222,7 @@ test("open sign-up: the form is Pro's alone — no plan to choose, whatever the 
     assert.match(html, /data-testid="waitlist-form" data-plan="pro"/, search);
   }
   const words = text(draw("en"));
-  for (const line of [
-    "Sign up with an e-mail address",
-    "Free, with an account",
-    "Leave your address, and we'll write when Pro opens",
-    "Pro is not on sale yet: payments are on their way. Submitting the form is all it takes.",
-  ]) {
+  for (const line of ["Sign up with an e-mail address", "Leave your address, and we'll write when Pro opens"]) {
     assert.ok(words.includes(line), `missing: ${line}`);
   }
   assert.doesNotMatch(words, /invite/i);
@@ -251,7 +232,7 @@ test("open sign-up: the form is Pro's alone — no plan to choose, whatever the 
   }
   // By invite, as before.
   const invited = text(draw("en", { signup: "invite" }));
-  for (const line of ["Sign-up is by invite for now", "Free; sign-up by invite for now", "Have an invite code? Sign up", "Leave your address, and we'll write when it's your turn"]) {
+  for (const line of ["Sign-up is by invite for now", "Leave your address, and we'll write when it's your turn"]) {
     assert.ok(invited.includes(line), `invite missing: ${line}`);
   }
 });
@@ -259,20 +240,12 @@ test("open sign-up: the form is Pro's alone — no plan to choose, whatever the 
 test("closed sign-up: closed for now, Free's waitlist and Pro's, and no invite code anywhere", () => {
   const html = draw("en", { signup: "closed" });
   const words = text(html);
-  for (const line of [
-    "Sign-up is closed for now",
-    "Free; sign-up is closed for now",
-    "Leave your address, and we'll write when sign-up or Pro opens",
-    "Sign-up is closed for now, and Pro is not on sale yet. Pick what you are waiting for: we'll e-mail you when sign-up opens, or when Pro does. Submitting the form is all it takes.",
-  ]) {
+  for (const line of ["Sign-up is closed for now", "Leave your address, and we'll write when sign-up or Pro opens"]) {
     assert.ok(words.includes(line), `missing: ${line}`);
   }
   assert.doesNotMatch(words, /invite/i);
-  assert.doesNotMatch(html, /href="\/signup"[^>]*data-testid="plan-free-signup"/, "nothing to sign up with");
   assert.doesNotMatch(words, /your turn/, "no queue: sign-up is closed, not rationed");
-  assert.match(html, /<a href="#waitlist"[^>]*data-testid="plan-free-waitlist"/);
-  // Pro's button leads the plans, as by invite; the form offers both plans.
-  assert.match(part(html, "plans", "compare"), /data-variant="primary"[^>]*data-testid="plan-pro-waitlist"/);
+  assert.doesNotMatch(html, /data-testid="plan-(free|pro)-(signup|waitlist)"/);
   assert.equal((html.match(/<input type="radio"[^>]*name="plan"/g) ?? []).length, 2);
   assert.ok(text(draw("en", { signup: "closed", waitlist: { kind: "done", plan: "free" } })).includes("You're on the list: we'll e-mail you when sign-up opens."));
   assert.ok(text(draw("en", { signup: "closed", waitlist: { kind: "done", plan: "pro" } })).includes("You're on the list: we'll e-mail you when Pro opens."));
@@ -291,17 +264,17 @@ test("sign-up is open, written in the page: nothing is asked of the hub", () => 
   assert.equal(signupModeOf(), "open");
 });
 
-test("signed out, Free offers sign-up (with an invite where sign-up is by invite); signed in, the way back into the app", () => {
-  const out = draw("en");
-  assert.match(out, /<a href="\/signup"[^>]*data-testid="plan-free-signup"[^>]*>Sign up<\/a>/);
-  assert.match(out, /<a href="\/download"[^>]*data-testid="plan-local-download"/);
-  assert.match(draw("zh-CN"), /data-testid="plan-free-signup"[^>]*>注册<\/a>/);
-  assert.match(draw("en", { signup: "invite" }), /<a href="\/signup"[^>]*data-testid="plan-free-signup"[^>]*>Have an invite code\? Sign up<\/a>/);
-  const signedIn = draw("en", { signedIn: true });
-  assert.doesNotMatch(signedIn, /href="\/sign(in|up)"/);
-  assert.match(signedIn, /<a href="\/sessions"[^>]*data-testid="plan-free-open"[^>]*>Open app<\/a>/);
-  // Pro's waitlist stays: an account cannot buy Pro yet either.
-  assert.match(signedIn, /data-testid="plan-pro-waitlist"/);
+test("the plans are facts, not buttons: signed in or not, the waitlist form is the page's way in", () => {
+  for (const signedIn of [false, true]) {
+    const html = draw("en", { signedIn });
+    for (const gone of ["plan-local-download", "plan-free-signup", "plan-free-waitlist", "plan-free-open", "plan-pro-waitlist"]) {
+      assert.doesNotMatch(html, new RegExp(`data-testid="${gone}"`), `${signedIn}: ${gone}`);
+    }
+    assert.match(html, /data-testid="waitlist-form"/, String(signedIn));
+  }
+  // The header still changes with the session: its account button says sign in or open the app.
+  assert.match(draw("en"), /aria-label="Sign in"/);
+  assert.match(draw("en", { signedIn: true }), /aria-label="Open app"/);
 });
 
 test("joined: the form says you're on the list and what comes next, in each language", () => {
@@ -387,9 +360,9 @@ test("the hub client joins with POST /v1/waitlist, with no session and only what
 
 test("the page reads in zh-TW and ja, with nothing left in English", () => {
   const tw = text(draw("zh-TW"));
-  for (const line of ["免費開始，需要更多時升級 Pro", "僅本地", "加入等候名單", "3 台可執行 AI 的裝置", "各方案包含的內容", "可以自行架設嗎？", "裝置長時間離線會怎樣？"]) assert.ok(tw.includes(line), `zh-TW missing: ${line}`);
+  for (const line of ["免費開始，需要更多時升級 Pro", "僅本地", "加入等候名單", "可執行 AI 的裝置", "最近 7 天", "可以自行架設嗎？", "裝置長時間離線會怎樣？"]) assert.ok(tw.includes(line), `zh-TW missing: ${line}`);
   const jp = text(draw("ja"));
-  for (const line of ["無料で始めて、必要なら Pro へ。", "ローカルのみ", "ウェイトリストに登録", "AI を実行できるデバイス 3 台", "各プランの内容", "セルフホストできますか？", "デバイスが長くオフラインのままだと？"]) assert.ok(jp.includes(line), `ja missing: ${line}`);
+  for (const line of ["無料で始めて、必要なら Pro へ。", "ローカルのみ", "ウェイトリストに登録", "AI を実行できるデバイス", "直近 7 日", "セルフホストできますか？", "デバイスが長くオフラインのままだと？"]) assert.ok(jp.includes(line), `ja missing: ${line}`);
   for (const words of [tw, jp, text(draw("zh-CN"))]) {
     assert.doesNotMatch(words, /Join the waitlist|Start free|Local only|Everything in Free|What each plan includes|Before you choose|devices that run AI/);
   }
