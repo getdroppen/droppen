@@ -322,11 +322,15 @@ test("the browser: nothing to install, approved by a device already in the accou
 
 test("maintenance is folded after both paths, and the old anchors open the part they name", () => {
   const html = draw("en", { release: RELEASE });
+  const manage = html.slice(html.indexOf('id="manage"'));
   for (const id of ["update", "uninstall", "verify"]) {
-    const details = html.match(new RegExp(`<details[^>]*id="${id}"[^>]*>`))![0];
-    assert.ok(details.includes("scroll-mt-14"), `#${id} clears the 56px header`);
-    assert.ok(!/\sopen(=|"|\s|>)/.test(details), `#${id} is folded`);
+    const item = tag(manage, `manage-${id}`);
+    assert.ok(item, `#${id} is an item`);
+    assert.ok(item.includes(`id="${id}"`), `#${id} keeps its anchor`);
+    assert.ok(item.includes("scroll-mt-14"), `#${id} clears the 56px header`);
   }
+  assert.equal((manage.match(/aria-expanded="false"/g) ?? []).length, 3, "all three folded");
+  assert.doesNotMatch(manage, /aria-expanded="true"/);
   assert.match(html, /data-testid="update-command"[^>]*>[^<]*.*curl -fsSL https:\/\/droppen\.app\/install\.sh \| sh/s);
   const steps = block(html, "uninstall-steps", "</ol>");
   assert.equal((steps.match(/<li/g) ?? []).length, 3);

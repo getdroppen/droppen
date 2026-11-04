@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./features/landing/figures/iso.css";
 
 /*
  * IBM Plex Sans and IBM Plex Sans SC, self-hosted (SIL OFL 1.1, see

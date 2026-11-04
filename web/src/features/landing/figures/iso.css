@@ -1,0 +1,206 @@
+/*
+ * The isometric drawing kit, adapted from the anatomy skill's kit (MIT).
+ * Scoped to .fig-iso and themed from the app's own tokens: the drawing is
+ * monochrome, and colour is kept for state (a lit rail, a refused probe).
+ * Lines never scale with the viewBox, so the drafting weight stays crisp.
+ */
+.fig-iso {
+  --anatomy-paper: var(--color-bg);
+  --anatomy-face: var(--color-raised);
+  --anatomy-top: #ffffff;
+  --anatomy-shade-0: #c3c8ce;
+  --anatomy-shade-1: #d3d7db;
+  --anatomy-shade-2: #e2e5e8;
+  --anatomy-shade-3: #eff0f1;
+  --anatomy-lit-top: #ffffff;
+  --anatomy-lit-shade: #e3e6e9;
+  --anatomy-hi: var(--color-fg);
+  --anatomy-mid: #5f6670;
+  --anatomy-lo: #8a919a;
+  --anatomy-faint: #c2c7cd;
+  --anatomy-lit: #000000;
+  --anatomy-halo: #8a8a80;
+  --anatomy-halo-opacity: 0.18;
+  --anatomy-dot: #3a3a3e;
+  --anatomy-green: var(--color-ok);
+  --anatomy-red: var(--color-danger);
+  --anatomy-blue: #3e63dd;
+  --anatomy-weight: 0.9px;
+  --anatomy-mono: var(--font-mono);
+}
+
+.dark .fig-iso {
+  --anatomy-paper: var(--color-bg);
+  --anatomy-face: var(--color-raised);
+  --anatomy-top: #2b3138;
+  --anatomy-shade-0: #22272e;
+  --anatomy-shade-1: #282e36;
+  --anatomy-shade-2: #2f363f;
+  --anatomy-shade-3: #37404a;
+  --anatomy-lit-top: #4a525c;
+  --anatomy-lit-shade: #3d454f;
+  --anatomy-hi: var(--color-fg);
+  --anatomy-mid: var(--color-muted);
+  --anatomy-lo: #6f7884;
+  --anatomy-faint: #3d444d;
+  --anatomy-lit: #ffffff;
+  --anatomy-halo: #050505;
+  --anatomy-halo-opacity: 0.55;
+  --anatomy-dot: #e9ebee;
+  --anatomy-green: var(--color-ok);
+  --anatomy-red: var(--color-danger);
+  --anatomy-blue: #6b9bff;
+}
+
+.fig-iso .iso-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.fig-iso .iso-svg path,
+.fig-iso .iso-svg circle {
+  vector-effect: non-scaling-stroke;
+}
+
+.fig-iso .iso-fill {
+  fill: var(--anatomy-paper);
+  stroke: none;
+}
+.fig-iso .iso-solid[data-lit] > .iso-fill {
+  fill: var(--anatomy-face);
+}
+.fig-iso .iso-shade,
+.fig-iso .iso-top {
+  stroke: none;
+}
+.fig-iso .iso-shade[data-shade="0"] {
+  fill: var(--anatomy-shade-0);
+}
+.fig-iso .iso-shade[data-shade="1"] {
+  fill: var(--anatomy-shade-1);
+}
+.fig-iso .iso-shade[data-shade="2"] {
+  fill: var(--anatomy-shade-2);
+}
+.fig-iso .iso-shade[data-shade="3"] {
+  fill: var(--anatomy-shade-3);
+}
+.fig-iso .iso-top {
+  fill: var(--anatomy-top);
+}
+.fig-iso .iso-solid[data-lit] > .iso-top {
+  fill: var(--anatomy-lit-top);
+}
+.fig-iso .iso-solid[data-lit] > .iso-shade {
+  fill: var(--anatomy-lit-shade);
+}
+.fig-iso .iso-solid[data-seamless] > .iso-shade,
+.fig-iso .iso-solid[data-seamless] > .iso-top {
+  stroke-width: 0.4;
+  stroke-linejoin: round;
+}
+.fig-iso .iso-solid[data-seamless] > .iso-shade[data-shade="0"] {
+  stroke: var(--anatomy-shade-0);
+}
+.fig-iso .iso-solid[data-seamless] > .iso-shade[data-shade="1"] {
+  stroke: var(--anatomy-shade-1);
+}
+.fig-iso .iso-solid[data-seamless] > .iso-shade[data-shade="2"] {
+  stroke: var(--anatomy-shade-2);
+}
+.fig-iso .iso-solid[data-seamless] > .iso-shade[data-shade="3"] {
+  stroke: var(--anatomy-shade-3);
+}
+.fig-iso .iso-solid[data-seamless] > .iso-top {
+  stroke: var(--anatomy-top);
+}
+.fig-iso .iso-solid[data-lit] > .iso-edge {
+  stroke: var(--anatomy-lit);
+}
+.fig-iso .iso-halo {
+  fill: var(--anatomy-halo);
+  stroke: none;
+  filter: blur(9px);
+  opacity: var(--anatomy-halo-opacity);
+  transform: translateY(3px);
+  transform-box: fill-box;
+}
+.fig-iso .iso-line {
+  fill: none;
+  stroke: var(--anatomy-lo);
+  stroke-width: var(--anatomy-weight);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.fig-iso .iso-line[data-tone="hi"] {
+  stroke: var(--anatomy-hi);
+}
+.fig-iso .iso-line[data-tone="mid"] {
+  stroke: var(--anatomy-mid);
+}
+.fig-iso .iso-line[data-tone="lo"] {
+  stroke: var(--anatomy-lo);
+}
+.fig-iso .iso-line[data-tone="faint"] {
+  stroke: var(--anatomy-faint);
+}
+.fig-iso .iso-line[data-tone="lit"] {
+  stroke: var(--anatomy-lit);
+}
+.fig-iso .iso-line[data-tone="green"] {
+  stroke: var(--anatomy-green);
+}
+.fig-iso .iso-line[data-tone="red"] {
+  stroke: var(--anatomy-red);
+}
+.fig-iso .iso-line[data-tone="blue"] {
+  stroke: var(--anatomy-blue);
+}
+.fig-iso .iso-line[data-dotted] {
+  stroke-dasharray: 0.01 3.5;
+  stroke-width: 1;
+}
+.fig-iso .iso-line[data-dashed] {
+  stroke-dasharray: 3 3;
+}
+.fig-iso .iso-wire-end {
+  fill: var(--anatomy-paper);
+  stroke: var(--anatomy-lo);
+  stroke-width: var(--anatomy-weight);
+}
+.fig-iso .iso-wire-end[data-tone="hi"] {
+  stroke: var(--anatomy-hi);
+}
+.fig-iso .iso-dots circle {
+  fill: var(--anatomy-dot);
+  stroke: none;
+  opacity: 0.32;
+}
+.fig-iso .iso-dots[data-tone="hi"] circle {
+  opacity: 0.85;
+}
+.fig-iso .iso-dots[data-tone="mid"] circle {
+  opacity: 0.45;
+}
+.fig-iso .iso-dots[data-tone="lo"] circle {
+  opacity: 0.22;
+}
+.fig-iso .iso-dots[data-tone="faint"] circle {
+  opacity: 0.12;
+}
+.fig-iso .iso-face-text {
+  fill: var(--anatomy-mid);
+  font-family: var(--anatomy-mono);
+  letter-spacing: 0.04em;
+}
+.fig-iso .iso-face-text[data-tone="hi"] {
+  fill: var(--anatomy-hi);
+}
+.fig-iso .iso-face-text[data-tone="lo"] {
+  fill: var(--anatomy-lo);
+}
+.fig-iso .iso-face-text[data-tone="faint"] {
+  fill: var(--anatomy-faint);
+}

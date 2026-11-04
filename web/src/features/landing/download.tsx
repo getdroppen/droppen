@@ -24,7 +24,7 @@ import {
   VERIFY_DOWNLOAD_URL,
   WSL_SYSTEMD_URL,
 } from "./get-droppen";
-import { CommandLine, landingPrimary, PublicLayout, Section, usePageMeta } from "./page-kit";
+import { CommandLine, FaqAccordion, landingPrimary, PublicLayout, Section, usePageMeta } from "./page-kit";
 import { AppWindow, ProductShot } from "./product-tour";
 import { fileFacts, fileLink, useLatestRelease } from "./release-files";
 import { publicLink, SECURITY_PATH } from "./route";
@@ -108,35 +108,6 @@ function Steps({ items, testId, className }: { items: Step[]; testId?: string; c
         </li>
       ))}
     </ol>
-  );
-}
-
-/** A hairline disclosure, opened by the address's fragment (`#update`, …) when it names one. */
-function Disclosure({ id, testId, summary, children }: { id?: string; testId?: string; summary: ReactNode; children: ReactNode }) {
-  const ref = useRef<HTMLDetailsElement>(null);
-  useEffect(() => {
-    const details = ref.current;
-    if (!details || !id) return;
-    const sync = () => {
-      if (location.hash === `#${id}`) details.open = true;
-    };
-    sync();
-    addEventListener("hashchange", sync);
-    return () => removeEventListener("hashchange", sync);
-  }, [id]);
-  return (
-    <details ref={ref} id={id} data-testid={testId} className="group scroll-mt-14 border-t border-border first:border-t-0">
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-6 py-4 text-base leading-6 font-semibold text-fg transition-colors hover:bg-hover max-md:px-4 [&::-webkit-details-marker]:hidden">
-        <span className="min-w-0">{summary}</span>
-        <span aria-hidden="true" className="font-mono text-sm text-muted group-open:hidden">
-          +
-        </span>
-        <span aria-hidden="true" className="hidden font-mono text-sm text-muted group-open:inline">
-          −
-        </span>
-      </summary>
-      {children}
-    </details>
   );
 }
 
@@ -421,108 +392,142 @@ function Row({ term, children }: { term: string; children: ReactNode }) {
 
 function Manage({ availability }: { availability: Availability }) {
   const { t } = useTranslation();
+  const [open, setOpen] = useState<string | null>(null);
+  useEffect(() => {
+    const sync = () => {
+      const id = location.hash.slice(1);
+      if (id === "update" || id === "uninstall" || id === "verify") setOpen(id);
+    };
+    sync();
+    addEventListener("hashchange", sync);
+    return () => removeEventListener("hashchange", sync);
+  }, []);
+  const items = [
+    {
+      value: "update",
+      id: "update",
+      testId: "manage-update",
+      q: t("Update"),
+      a: (
+        <div className="flex flex-col gap-4 px-6 py-5 max-md:px-4">
+          <p className="max-w-[44rem] text-base leading-6 text-muted">
+            {availability.app
+              ? t("The Mac app updates itself. For a command-line install, run the install command again: it upgrades in place and keeps your data.")
+              : t("Run the install command again: it upgrades in place and keeps your data.")}
+          </p>
+          <div className="max-w-[44rem]">
+            <CommandLine command={INSTALL_COMMAND} label={t("copy the command")} testId="update-command" />
+          </div>
+        </div>
+      ),
+    },
+    {
+      value: "uninstall",
+      id: "uninstall",
+      testId: "manage-uninstall",
+      q: t("Uninstall"),
+      a: (
+        <Steps
+          testId="uninstall-steps"
+          className="border-t-0"
+          items={[
+            {
+              title: t("Remove it from your account"),
+              body: t("On {{app}}, open my devices and remove the device. Every key it held is replaced, so it cannot decrypt anything written afterwards.", { app: appHost() }),
+            },
+            {
+              title: t("Disconnect it"),
+              body: t(
+                "On that device, open Droppen's Settings → Access → Droppen → Disconnect this device. This deletes the Droppen keys stored on it. Removing the device from your account leaves them in place.",
+              ),
+            },
+            {
+              title: t("Remove the program"),
+              body: (
+                <span className="flex flex-col gap-3">
+                  {availability.app && <span>{t("Mac app: quit Droppen and drag it from Applications to the Trash.")}</span>}
+                  <span>
+                    {availability.app
+                      ? t("Command-line install (Mac or Linux): run this on that device, as the user who installed it:")
+                      : t("Run this on that device, as the user who installed it:")}
+                  </span>
+                  <CommandLine command={UNINSTALL_COMMAND} label={t("copy the command")} testId="uninstall-command" />
+                  <span>{t("It stops and removes the service and the program, keeps your data, and shows where the data is and how to delete it.")}</span>
+                </span>
+              ),
+            },
+          ]}
+        />
+      ),
+    },
+    {
+      value: "verify",
+      id: "verify",
+      testId: "manage-verify",
+      q: t("Checks & connection details"),
+      a: (
+        <div className="flex flex-col gap-5 px-6 py-5 max-md:px-4">
+          <div className="flex max-w-[44rem] flex-col gap-2">
+            <h4 className="text-base leading-6 font-semibold text-fg">{t("Check the file before you open it")}</h4>
+            <p className="text-base leading-6 text-muted">{t("Before you open the .dmg or extract the .tar.gz, check it in a terminal:")}</p>
+            <CommandLine command={CHECKSUM_COMMAND} label={t("copy the command")} testId="checksum-command" />
+            <p className="text-base leading-6 text-muted">
+              {t("The checksum must match that file's line in the release's SHA256SUMS. If it does not, do not install the file. The install script runs the same check first.")}
+            </p>
+          </div>
+          <div className="flex max-w-[44rem] flex-col gap-2 border-t border-border pt-5">
+            <h4 className="text-base leading-6 font-semibold text-fg">{t("Build provenance")}</h4>
+            <p className="text-base leading-6 text-muted">
+              {t("From v0.2.127, every file has a build provenance attestation. With the GitHub CLI, check that this repository's release workflow built it:")}
+            </p>
+            <CommandLine command={ATTESTATION_COMMAND} label={t("copy the command")} testId="attestation-command" />
+            <a
+              href={VERIFY_DOWNLOAD_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              data-testid="verify-download-link"
+              className="inline-flex w-fit items-center gap-1 text-xs font-semibold text-muted underline underline-offset-4 hover:text-fg"
+            >
+              {t("How to verify a download")}
+              <ExternalLink className="size-3" />
+            </a>
+          </div>
+          <dl data-testid="download-verify" className="border-t border-border">
+            {availability.app && (
+              <Row term={t("Mac app")}>{t("Signed with a Developer ID and notarized by Apple. It installs only updates signed for that version.")}</Row>
+            )}
+            <Row term={t("Install script")}>{t("Runs as you, never as root, and checks the release's SHA-256 checksums before it installs anything.")}</Row>
+            <Row term={t("Background service")}>
+              {t("A command-line install runs as a launchd user agent on macOS, or a systemd user service on Linux. On Linux, --system makes it a system service that starts at boot and still runs as you; sudo only sets up and manages that service.")}
+            </Row>
+            <Row term={t("Network")}>
+              {t("Listens only on 127.0.0.1 and connects out to Droppen, so there is no inbound port to open. A command-line install uses port 8700, or the next free port.")}
+            </Row>
+            <Row term={t("Encryption")}>
+              <span className="flex flex-col gap-2">
+                <span>{t("End-to-end encrypted between your devices: neither Droppen Hub nor the Droppen relays hold a key that can decrypt your sessions.")}</span>
+                <a {...publicLink(SECURITY_PATH)} data-testid="download-security" className="w-fit text-fg underline underline-offset-4 hover:no-underline">
+                  {t("How the encryption works")}
+                </a>
+              </span>
+            </Row>
+          </dl>
+        </div>
+      ),
+    },
+  ];
   return (
     <Section id="manage">
       <div className={cn(COLUMN, "py-12 max-md:py-10")}>
         <BlockHead title={t("Manage your installation")} lead={t("Update, uninstall, or check what you installed.")} />
-        <div className="mx-6 border-t border-border max-md:mx-4">
-          <Disclosure id="update" testId="manage-update" summary={t("Update")}>
-            <div className="flex flex-col gap-4 px-6 py-5 max-md:px-4">
-              <p className="max-w-[44rem] text-base leading-6 text-muted">
-                {availability.app
-                  ? t("The Mac app updates itself. For a command-line install, run the install command again: it upgrades in place and keeps your data.")
-                  : t("Run the install command again: it upgrades in place and keeps your data.")}
-              </p>
-              <div className="max-w-[44rem]">
-                <CommandLine command={INSTALL_COMMAND} label={t("copy the command")} testId="update-command" />
-              </div>
-            </div>
-          </Disclosure>
-
-          <Disclosure id="uninstall" testId="manage-uninstall" summary={t("Uninstall")}>
-            <Steps
-              testId="uninstall-steps"
-              className="border-t-0"
-              items={[
-                {
-                  title: t("Remove it from your account"),
-                  body: t("On {{app}}, open my devices and remove the device. Every key it held is replaced, so it cannot decrypt anything written afterwards.", { app: appHost() }),
-                },
-                {
-                  title: t("Disconnect it"),
-                  body: t(
-                    "On that device, open Droppen's Settings → Access → Droppen → Disconnect this device. This deletes the Droppen keys stored on it. Removing the device from your account leaves them in place.",
-                  ),
-                },
-                {
-                  title: t("Remove the program"),
-                  body: (
-                    <span className="flex flex-col gap-3">
-                      {availability.app && <span>{t("Mac app: quit Droppen and drag it from Applications to the Trash.")}</span>}
-                      <span>
-                        {availability.app
-                          ? t("Command-line install (Mac or Linux): run this on that device, as the user who installed it:")
-                          : t("Run this on that device, as the user who installed it:")}
-                      </span>
-                      <CommandLine command={UNINSTALL_COMMAND} label={t("copy the command")} testId="uninstall-command" />
-                      <span>{t("It stops and removes the service and the program, keeps your data, and shows where the data is and how to delete it.")}</span>
-                    </span>
-                  ),
-                },
-              ]}
-            />
-          </Disclosure>
-
-          <Disclosure id="verify" testId="manage-verify" summary={t("Checks & connection details")}>
-            <div className="flex flex-col gap-5 px-6 py-5 max-md:px-4">
-              <div className="flex max-w-[44rem] flex-col gap-2">
-                <h4 className="text-base leading-6 font-semibold text-fg">{t("Check the file before you open it")}</h4>
-                <p className="text-base leading-6 text-muted">{t("Before you open the .dmg or extract the .tar.gz, check it in a terminal:")}</p>
-                <CommandLine command={CHECKSUM_COMMAND} label={t("copy the command")} testId="checksum-command" />
-                <p className="text-base leading-6 text-muted">
-                  {t("The checksum must match that file's line in the release's SHA256SUMS. If it does not, do not install the file. The install script runs the same check first.")}
-                </p>
-              </div>
-              <div className="flex max-w-[44rem] flex-col gap-2 border-t border-border pt-5">
-                <h4 className="text-base leading-6 font-semibold text-fg">{t("Build provenance")}</h4>
-                <p className="text-base leading-6 text-muted">
-                  {t("From v0.2.127, every file has a build provenance attestation. With the GitHub CLI, check that this repository's release workflow built it:")}
-                </p>
-                <CommandLine command={ATTESTATION_COMMAND} label={t("copy the command")} testId="attestation-command" />
-                <a
-                  href={VERIFY_DOWNLOAD_URL}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  data-testid="verify-download-link"
-                  className="inline-flex w-fit items-center gap-1 text-xs font-semibold text-muted underline underline-offset-4 hover:text-fg"
-                >
-                  {t("How to verify a download")}
-                  <ExternalLink className="size-3" />
-                </a>
-              </div>
-              <dl data-testid="download-verify" className="border-t border-border">
-                {availability.app && (
-                  <Row term={t("Mac app")}>{t("Signed with a Developer ID and notarized by Apple. It installs only updates signed for that version.")}</Row>
-                )}
-                <Row term={t("Install script")}>{t("Runs as you, never as root, and checks the release's SHA-256 checksums before it installs anything.")}</Row>
-                <Row term={t("Background service")}>
-                  {t("A command-line install runs as a launchd user agent on macOS, or a systemd user service on Linux. On Linux, --system makes it a system service that starts at boot and still runs as you; sudo only sets up and manages that service.")}
-                </Row>
-                <Row term={t("Network")}>
-                  {t("Listens only on 127.0.0.1 and connects out to Droppen, so there is no inbound port to open. A command-line install uses port 8700, or the next free port.")}
-                </Row>
-                <Row term={t("Encryption")}>
-                  <span className="flex flex-col gap-2">
-                    <span>{t("End-to-end encrypted between your devices: neither Droppen Hub nor the Droppen relays hold a key that can decrypt your sessions.")}</span>
-                    <a {...publicLink(SECURITY_PATH)} data-testid="download-security" className="w-fit text-fg underline underline-offset-4 hover:no-underline">
-                      {t("How the encryption works")}
-                    </a>
-                  </span>
-                </Row>
-              </dl>
-            </div>
-          </Disclosure>
-        </div>
+        <FaqAccordion
+          items={items}
+          value={open ? [open] : []}
+          onValueChange={(next) => setOpen(next[0] ?? null)}
+          className="mx-6 border-t border-border max-md:mx-4"
+          itemClassName="scroll-mt-14 border-t border-b-0 border-border first:border-t-0"
+          triggerClassName="px-6 py-4 max-md:px-4"
+        />
       </div>
     </Section>
   );

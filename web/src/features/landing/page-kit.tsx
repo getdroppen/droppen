@@ -144,7 +144,7 @@ export function usePageMeta(title: string, description?: string) {
   }, [description, active.language]);
 }
 
-/** An FAQ as one accordion; answers stay mounted for search and no-script readers. */
+/** One accordion of questions, one open at a time; answers stay mounted for search and no-script readers. */
 export function FaqAccordion({
   items,
   className,
@@ -153,23 +153,31 @@ export function FaqAccordion({
   questionClassName,
   panelClassName,
   answerClassName,
-  multiple = false,
+  value,
+  onValueChange,
   testId,
 }: {
-  items: { q: string; a: ReactNode }[];
+  items: { q: string; a: ReactNode; value?: string; id?: string; testId?: string }[];
   className?: string;
   itemClassName?: string;
   triggerClassName?: string;
   questionClassName?: string;
   panelClassName?: string;
   answerClassName?: string;
-  multiple?: boolean;
+  value?: (string | null)[];
+  onValueChange?: (value: (string | null)[]) => void;
   testId?: string;
 }) {
   return (
-    <Accordion.Root data-testid={testId} multiple={multiple} keepMounted className={className}>
+    <Accordion.Root data-testid={testId} multiple={false} keepMounted className={className} value={value} onValueChange={onValueChange}>
       {items.map((item) => (
-        <Accordion.Item key={item.q} value={item.q} data-testid="faq-item" className={cn("group border-b border-border", itemClassName)}>
+        <Accordion.Item
+          key={item.value ?? item.q}
+          value={item.value ?? item.q}
+          id={item.id}
+          data-testid={item.testId ?? "faq-item"}
+          className={cn("group border-b border-border", itemClassName)}
+        >
           <Accordion.Header className="m-0">
             <Accordion.Trigger
               className={cn(
@@ -177,12 +185,12 @@ export function FaqAccordion({
                 triggerClassName,
               )}
             >
-              <span className={cn("text-base leading-6 font-semibold text-fg", questionClassName)}>{item.q}</span>
+              <span className={cn("text-base leading-6 font-medium text-fg", questionClassName)}>{item.q}</span>
               <Plus aria-hidden="true" className="mt-1 size-4 shrink-0 text-muted transition-transform duration-150 group-data-[open]:rotate-45 motion-reduce:transition-none" />
             </Accordion.Trigger>
           </Accordion.Header>
           <Accordion.Panel className={panelClassName}>
-            <p className={cn("max-w-prose leading-6 text-muted", answerClassName ?? "text-base")}>{item.a}</p>
+            {typeof item.a === "string" ? <p className={cn("max-w-prose leading-6 text-muted", answerClassName ?? "text-base")}>{item.a}</p> : item.a}
           </Accordion.Panel>
         </Accordion.Item>
       ))}
@@ -324,7 +332,7 @@ export function PublicFooter({ home = false }: { home?: boolean }) {
   const { t } = useTranslation();
   const item = "text-xs leading-5 text-muted transition-colors hover:text-fg";
   return (
-    <Section>
+    <Section rule={!home} seam={home ? false : "both"}>
       <div className={cn(FOOTER_WIDE, "grid gap-9 px-6 py-11 max-md:px-4 max-md:py-8 sm:grid-cols-2 lg:grid-cols-[2.1fr_repeat(3,1fr)]")}>
         <div>
           <a {...publicLink("/")} className="inline-flex items-center gap-2.5" aria-label="Droppen">

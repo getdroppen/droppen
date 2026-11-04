@@ -64,9 +64,9 @@ test("the landing page leads with what you get, in zh-CN first", () => {
     "电脑上的 AI，手机上接着用",
     "Claude Code 和 Codex 仍在你自己的电脑上运行。",
     "所有电脑，一个列表",
-    "你的代码，Droppen 无法读取",
+    "安全与加密",
     // The deep sections, each headed by what it gets you.
-    "网络不稳，工作不断。",
+    "网络不好也能用",
     "免费注册",
     "登录",
   ]) {
@@ -78,6 +78,18 @@ test("the landing page leads with what you get, in zh-CN first", () => {
   for (const id of order) assert.ok(at(id) > 0, id);
   assert.deepEqual([...order].sort((a, b) => at(a) - at(b)), order);
   for (const id of order) assert.match(html, new RegExp(`<a href="#${id}"|id="${id}"`));
+});
+
+test("the FAQ is one vertical list at every width", () => {
+  const html = draw("en");
+  const faq = html.slice(html.indexOf('id="faq"'), html.indexOf('id="start"'));
+  assert.equal((faq.match(/data-testid="faq-item"/g) ?? []).length, 4);
+  const list = /<div[^>]*data-testid="landing-faq"[^>]*>/.exec(faq)?.[0];
+  assert.ok(list, "the FAQ list");
+  assert.match(list, /class="min-w-0 border-t border-border"/);
+  assert.doesNotMatch(list, /grid-cols|flex-row/);
+  // Each question is separated from the next by a line.
+  assert.match(faq, /data-testid="faq-item"[^>]*class="[^"]*border-b border-border/);
 });
 
 test("every public page's header links the site's other pages and the client's source, not the page's own sections", () => {
@@ -305,15 +317,15 @@ test("the home page's words are its own: no key it draws is one the app translat
 test("the page reads in zh-TW and ja", () => {
   const tw = text(draw("zh-TW"));
   assert.ok(tw.includes("電腦上的 AI，手機上接著用"));
-  assert.ok(tw.includes("你的程式碼，Droppen 無法讀取"));
+  assert.ok(tw.includes("安全與加密"));
   assert.ok(tw.includes("所有電腦，一個清單"));
   assert.ok(tw.includes("登入"));
   const jp = text(draw("ja"));
   assert.ok(jp.includes("コンピュータの AI を、スマホで続きから。"));
-  assert.ok(jp.includes("あなたのコードを、Droppen は読めません。"));
+  assert.ok(jp.includes("セキュリティと暗号化"));
   assert.ok(jp.includes("すべてのコンピュータを、ひとつのリストで"));
   assert.ok(jp.includes("無料で登録"));
-  for (const words of [tw, jp]) assert.doesNotMatch(words, /Your computer's AI|Droppen can't read your code|stay readable|Three steps|Run the migration/);
+  for (const words of [tw, jp]) assert.doesNotMatch(words, /Your computer's AI|Security and encryption|stay readable|Three steps|Run the migration/);
 });
 
 test("the hero sells before it explains: no Hub, relay, NAT, STUN, p50 or ciphertext in its words", () => {
@@ -384,9 +396,9 @@ test("a shared link shows the hero: the share image is committed at 2400×1260 a
 test("the product showcase shows the product: three screens in their frames, in the page's language (Chinese or English) and both themes", () => {
   const html = draw("zh-CN");
   const tour = html.slice(html.indexOf('id="tour"'), html.indexOf('id="features"'));
-  // Three rows, each one screen: the queue, the split view, the phone. Not a
+  // Three rows, each one screen: the computer list, the split view, the phone. Not a
   // carousel: nothing in the showcase moves by itself.
-  for (const heading of ["每台电脑，都在同一个队列里。", "左边代码，右边终端。", "离开电脑，在手机上接手。"]) assert.ok(text(tour).includes(heading), heading);
+  for (const heading of ["所有电脑，一个列表。", "左边代码，右边终端。", "离开电脑，在手机上接手。"]) assert.ok(text(tour).includes(heading), heading);
   assert.doesNotMatch(tour, /role="tab"|animate-/);
   // Its pictures, in both themes: the Mac app, its split view and the phone.
   for (const shot of ["app-session", "app-split", "phone-needs-you"]) {
@@ -396,7 +408,7 @@ test("the product showcase shows the product: three screens in their frames, in 
   assert.match(tour, /<img src="\/tour\/app-session-zh-CN-light\.webp" alt="Mac 上的 Droppen[^"]*"/);
   assert.doesNotMatch(tour, /<img src="\/tour\/app-session-zh-CN-dark\.webp"[^>]*aria-hidden/);
   // The three things each row calls out.
-  for (const label of ["等你回答 / 工作中", "终端就在旁边", "只处理需要你的"]) assert.ok(text(tour).includes(label), label);
+  for (const label of ["等你回答 / 工作中", "终端", "需要你处理"]) assert.ok(text(tour).includes(label), label);
   // Chinese pages show the app in Chinese, every other page in English.
   assert.deepEqual(["zh-CN", "zh-TW", "ja", "en"].map(tourLanguage), ["zh-CN", "zh-CN", "en", "en"]);
   assert.match(draw("en"), /<img src="\/tour\/app-session-en-light\.webp" alt="Droppen on a Mac[^"]*"/);
@@ -414,8 +426,8 @@ test("the network section draws the path: direct first, the relay as the fallbac
   const html = draw("en");
   const network = html.slice(html.indexOf('id="direct"'), html.indexOf('id="security"'));
   const words = text(network);
-  assert.equal((network.match(/role="img"/g) ?? []).length, 2, "desktop and phone diagrams");
-  for (const line of ["Direct · 63–73 ms", "Relay · 215–227 ms", "Switches within 1.5 s", "Unconfirmed keys resend in order", "Droppen relay", "Only ciphertext"]) {
+  assert.equal((network.match(/role="img"/g) ?? []).length, 1, "one responsive figure");
+  for (const line of ["Direct · 63–73 ms", "Relay · 215–227 ms", "Switches within 1.5 s", "Keys you type are sent again in order", "Droppen relay", "Encrypted data only"]) {
     assert.ok(words.includes(line), `missing: ${line}`);
   }
   assert.doesNotMatch(network, /data-wire-lock|aria-pressed/);
@@ -440,9 +452,9 @@ test("no region is named anywhere on the page: the relay is Droppen's, wherever 
   }
   for (const lng of ["en", "zh-CN", "zh-TW", "ja"]) assert.doesNotMatch(text(draw(lng)), region, lng);
   assert.doesNotMatch(readFileSync(new URL("../index.html", import.meta.url), "utf8"), region);
-  // The encryption card draws the line between them: Droppen Hub keeps the encrypted copies, Droppen relays pass ciphertext on.
+  // The encryption card draws the line between them: Droppen Hub keeps the encrypted copies, Droppen relays pass encrypted data on.
   assert.ok(text(draw("zh-CN")).includes("Droppen Hub 保存的只是加密副本，Droppen 中继转发的只是加密数据"));
-  assert.ok(text(draw("en")).includes("Droppen Hub stores only encrypted copies and Droppen relays forward only ciphertext"));
+  assert.ok(text(draw("en")).includes("Droppen Hub stores only encrypted copies and Droppen relays forward only encrypted data"));
 });
 
 test("the network diagram shows product properties, not implementation trivia, and calls the relay a Droppen relay", () => {

@@ -74,7 +74,7 @@ export function ProductShot({
 export function AppWindow({ children }: { children: ReactNode }) {
   return (
     <div className="overflow-hidden rounded-[10px] border border-border-strong bg-bg shadow-[0_24px_60px_-28px_rgb(0_0_0/0.35)]">
-      <div className="relative flex h-8 items-center gap-2 border-b border-border bg-raised px-3">
+      <div className="relative flex h-8 items-center gap-2 bg-raised px-3">
         {[0, 1, 2].map((i) => (
           <span key={i} className="size-3 rounded-full border border-border-strong bg-bg" />
         ))}
@@ -88,7 +88,7 @@ export function AppWindow({ children }: { children: ReactNode }) {
 export function BrowserWindow({ children }: { children: ReactNode }) {
   return (
     <div className="overflow-hidden rounded-[10px] border border-border-strong bg-bg shadow-[0_24px_60px_-28px_rgb(0_0_0/0.35)]">
-      <div className="flex h-9 items-center gap-3 border-b border-border bg-raised px-3">
+      <div className="flex h-9 items-center gap-3 bg-raised px-3">
         <span className="flex gap-2">
           {[0, 1, 2].map((i) => (
             <span key={i} className="size-3 rounded-full border border-border-strong bg-bg" />
