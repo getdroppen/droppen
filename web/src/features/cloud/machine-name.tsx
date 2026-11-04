@@ -10,14 +10,15 @@
  *
  * Renaming is a request to the machine itself — `POST /rh/display-name` on an
  * `rpc` pipe of its channel, which only a current full device may make — so
- * it is offered only while the machine is online. The new name shows at once
+ * 「我的设备」 offers it only while the machine is online; the bar only shows
+ * the name. The new name shows at once
  * (what the machine says it goes by now, `GET /rh/info`) and gives way to the
  * next status record, which carries it.
  */
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { Check, Loader2, Pencil, X } from "lucide-react";
+import { Check, Loader2, X } from "lucide-react";
 import { hostRefusalText } from "@/api/errors";
 import { cn } from "@/lib/cn";
 import { type KeyStore, type MachineKey, namingKey } from "@/lib/e2e";
@@ -408,13 +409,10 @@ export function RenameMachineForm({
   initial,
   onRename,
   onDone,
-  compact,
 }: {
   initial: string;
   onRename: (name: string | null) => Promise<void>;
   onDone: () => void;
-  /** The bar's height. */
-  compact?: boolean;
 }) {
   const { t } = useTranslation();
   const [value, setValue] = useState(initial);
@@ -438,10 +436,10 @@ export function RenameMachineForm({
       setBusy(false);
     }
   };
-  const icon = compact ? "size-3" : "size-3.5";
-  const button = cn("flex shrink-0 items-center justify-center text-muted hover:bg-hover hover:text-fg disabled:opacity-40", compact ? "size-5" : "size-9");
+  const icon = "size-3.5";
+  const button = "flex size-9 shrink-0 items-center justify-center text-muted hover:bg-hover hover:text-fg disabled:opacity-40";
   return (
-    <form onSubmit={submit} data-testid="rename-machine" className={cn("flex min-w-0 items-center gap-1", compact ? "flex-1" : "flex-wrap")}>
+    <form onSubmit={submit} data-testid="rename-machine" className="flex min-w-0 flex-wrap items-center gap-1">
       <input
         value={value}
         onChange={(e) => setValue(e.target.value)}
@@ -457,10 +455,7 @@ export function RenameMachineForm({
         placeholder={t("empty: the device's hostname")}
         spellCheck={false}
         disabled={busy}
-        className={cn(
-          "min-w-0 border border-border bg-bg px-2 font-mono text-fg placeholder:text-faint focus:border-fg focus:outline-none",
-          compact ? "h-5 w-40 text-2xs" : "h-9 flex-1 text-xs max-md:text-base",
-        )}
+        className="h-9 min-w-0 flex-1 border border-border bg-bg px-2 font-mono text-xs text-fg placeholder:text-faint focus:border-fg focus:outline-none max-md:text-base"
       />
       <button type="submit" disabled={busy} title={t("save")} aria-label={t("save")} className={button}>
         {busy ? <Loader2 className={cn(icon, "animate-spin")} /> : <Check className={icon} />}
@@ -469,7 +464,7 @@ export function RenameMachineForm({
         <X className={icon} />
       </button>
       {error && (
-        <span role="alert" data-signal="failed" title={error} className={cn("min-w-0 truncate font-mono text-2xs text-danger", !compact && "basis-full")}>
+        <span role="alert" data-signal="failed" title={error} className="min-w-0 basis-full truncate font-mono text-2xs text-danger">
           {error}
         </span>
       )}
@@ -549,35 +544,13 @@ export function MachineNotes({
 }
 
 /**
- * The open machine in the cloud bar: its name (the id beside it, quietly),
- * and — while the page is live on it — a way to rename it over its channel.
+ * The open machine in the cloud bar: its name (the id beside it, quietly).
+ * It is renamed on 「我的设备」, not here.
  */
-export function BarMachineName({
-  machine,
-  mirror,
-  channel,
-  canRename,
-}: {
-  machine: string;
-  mirror: MachineMirror | null | undefined;
-  channel: PipeOpener | null | undefined;
-  canRename: boolean;
-}) {
-  const { t } = useTranslation();
+export function BarMachineName({ machine, mirror }: { machine: string; mirror: MachineMirror | null | undefined }) {
   useRenamed();
   const status = useMirrorStatus(mirror);
-  const [editing, setEditing] = useState(false);
   const name = shownName(machine, status);
-  if (editing && canRename && channel) {
-    return (
-      <RenameMachineForm
-        compact
-        initial={name ?? ""}
-        onRename={async (next) => noteRenamed(machine, await renameMachine(channel, next), status)}
-        onDone={() => setEditing(false)}
-      />
-    );
-  }
   return (
     <>
       <span data-testid="bar-machine-name" className="truncate text-fg" title={machine}>
@@ -587,17 +560,6 @@ export function BarMachineName({
         <span className="truncate text-faint max-sm:hidden" title={machine}>
           {machine}
         </span>
-      )}
-      {canRename && channel && (
-        <button
-          type="button"
-          title={t("rename device")}
-          aria-label={t("rename device")}
-          onClick={() => setEditing(true)}
-          className="flex size-5 shrink-0 items-center justify-center text-faint hover:bg-hover hover:text-fg"
-        >
-          <Pencil className="size-3" />
-        </button>
       )}
     </>
   );

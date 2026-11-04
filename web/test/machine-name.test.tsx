@@ -8,8 +8,8 @@
 // a name is checked as the agent checks it; renaming is `POST
 // /rh/display-name` on an rpc pipe, then the name the machine says it goes by;
 // a refusal to a device that may not rename says so; and the list and the bar
-// show the name with the id beside it, offering a rename only while the
-// machine is online.
+// show the name with the id beside it, the list offering a rename only while
+// the machine is online (the bar offers none).
 //
 // `import * as React` because the test directory is outside the tsconfig's
 // `include`, so tsx compiles JSX here with the classic runtime.
@@ -264,18 +264,17 @@ test("a machine's chain alarm (a fork it was shown) reaches every device through
   assert.equal(status({}).alarms, undefined, "no field when there are none");
 });
 
-test("the bar shows the open machine's name from its copy, and the id beside it", () => {
+test("the bar shows the open machine's name from its copy, and the id beside it, with no rename of its own", () => {
   const mirror = {
     status: { state: status({ displayName: "studio mac" }) },
     onChange: () => () => undefined,
   } as unknown as MachineMirror;
-  const live = draw(<BarMachineName machine="m-3" mirror={mirror} channel={{ open: () => { throw new Error("no"); } }} canRename />);
+  const live = draw(<BarMachineName machine="m-3" mirror={mirror} />);
   assert.match(live, /data-testid="bar-machine-name"[^>]*>studio mac</);
   assert.match(live, />m-3</);
-  assert.match(live, /aria-label="rename device"/);
-  const away = draw(<BarMachineName machine="m-3" mirror={null} channel={null} canRename={false} />);
+  assert.doesNotMatch(live, /rename device/, "renaming is on 「我的设备」");
+  const away = draw(<BarMachineName machine="m-3" mirror={null} />);
   assert.match(away, /data-testid="bar-machine-name"[^>]*>m-3</, "no copy, no name: the id");
-  assert.doesNotMatch(away, /rename device/);
 });
 
 test("a machine whose key lands after the list opened gets a reader then, and its name with it", async () => {

@@ -128,7 +128,7 @@ function Bar({ shell, machine }: { shell: HubShell; machine: HubMachine }) {
     <>
       <div data-cloud-bar="" className="flex h-7 shrink-0 items-center gap-2 border-b border-border bg-bg px-3 font-mono text-2xs">
         <DeviceDot state={presence ?? "offline"} title={presence ? undefined : t("unknown")} />
-        <BarMachineName machine={machine.key} mirror={machine.mirror} channel={machine.channel} canRename={state.label === "e2e" && shell.account.isAdmin !== false} />
+        <BarMachineName machine={machine.key} mirror={machine.mirror} />
         <MachineSwitcher shell={shell} current={machine.key} />
         {label && (
           <span
