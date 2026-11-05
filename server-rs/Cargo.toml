@@ -27,6 +27,12 @@ members = [".", "crates/droppen-proto", "crates/droppen-relay-core", "crates/dro
 # without it, but for the exempt ones it names, each with its reason.
 [workspace.dependencies]
 serde_json = { version = "1", features = ["preserve_order"] }
+# The web framework and the schema core behind its `Schematic` derive. One pin
+# here rather than one per member: every crate routes, documents or derives
+# against the same `gotcha`, and a member that named a different version would
+# compile against a second copy of the trait its neighbours' schemas implement.
+gotcha = { version = "0.5.0", features = ["openapi"] }
+gotcha_core = "0.5.0"
 
 # Two causes of a program that waits on itself forever. In edition 2021 a
 # guard made in a match/if-let/while-let scrutinee lives until the end of the
@@ -110,9 +116,7 @@ droppen-notify = { path = "crates/droppen-notify" }
 # The link to Droppen: the link routes, the remote-view gate, link control and
 # the aggregator gateway.
 droppen-cloud = { path = "crates/droppen-cloud" }
-gotcha = { version = "0.5.0", features = ["openapi"] }
-# What gotcha's `Schematic` derive expands to names it.
-gotcha_core = "0.5.0"
+gotcha = { workspace = true }
 # Named by no code here (the routes reach axum through gotcha), but the one
 # dependency that keeps axum's default features in the binary: gotcha takes
 # axum without them, so this is where `tracing` (an extractor's rejection is

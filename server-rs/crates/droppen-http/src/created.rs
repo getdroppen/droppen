@@ -11,8 +11,7 @@ use gotcha::axum::http::StatusCode;
 use gotcha::axum::response::{IntoResponse, Response};
 use gotcha::oas::Responses;
 use gotcha::response::response as response_contract;
-use gotcha::{Json, Responsible, Schematic};
-use gotcha_core::EnhancedSchema;
+use gotcha::{EnhancedSchema, Json, Responsible, Schematic};
 use serde::Serialize;
 
 /// One success wrapper: its body sent with `$code`, and a `Schematic` that

@@ -38,7 +38,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use gotcha::Schematic;
+use gotcha_core::Schematic;
 use droppen_proto::chain::{ChainError, ChainState};
 use droppen_proto::identity::MachineIdentity;
 use droppen_proto::wrap::{self, HostKeyContext, WrapError};

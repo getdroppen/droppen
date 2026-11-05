@@ -9,8 +9,7 @@ use gotcha::axum::http::StatusCode;
 use gotcha::axum::response::{IntoResponse, Response};
 use gotcha::oas::Responses;
 use gotcha::response::default_response;
-use gotcha::{Json, Responsible, Schematic};
-use gotcha_core::EnhancedSchema;
+use gotcha::{EnhancedSchema, Json, Responsible, Schematic};
 use serde::{Deserialize, Serialize};
 
 /// The error body every failing route returns.

@@ -19,9 +19,7 @@ droppen-search-path = { path = "../droppen-search-path" }
 droppen-sessions = { path = "../droppen-sessions" }
 droppen-workbench = { path = "../droppen-workbench" }
 futures-util = "0.3"
-gotcha = { version = "0.5.0", features = ["openapi"] }
-# What gotcha's `Schematic` derive expands to names it.
-gotcha_core = "0.5.0"
+gotcha = { workspace = true }
 libc = "0.2"
 regex = "1"
 serde = { version = "1", features = ["derive"] }

@@ -35,7 +35,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
-use gotcha::Schematic;
+use gotcha_core::Schematic;
 use rand::Rng;
 use droppen_client::follow::{check_page, Floor, FollowError, Follower, Step};
 use droppen_client::http::HttpError;

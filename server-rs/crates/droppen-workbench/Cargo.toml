@@ -19,9 +19,7 @@ droppen-instance = { path = "../droppen-instance" }
 droppen-plugin-sdk = { path = "../droppen-plugin-sdk" }
 droppen-pty = { path = "../droppen-pty" }
 futures-util = "0.3"
-gotcha = { version = "0.5.0", features = ["openapi"] }
-# What gotcha's `Schematic` derive expands to names it.
-gotcha_core = "0.5.0"
+gotcha = { workspace = true }
 # The `/embed/{id}/*` reverse proxy needs what gotcha's router cannot reach: an
 # upstream HTTP client that streams, and `hyper::upgrade` on both ends of a
 # websocket. Both are already in the graph as axum's own dependencies; naming
