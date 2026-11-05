@@ -89,6 +89,48 @@ async fn a_tarball_over_the_limit_is_413_too_large() {
     assert_eq!(body["limit"], json!(MAX_TARBALL_BYTES));
 }
 
+/// The raised limits belong to their routes, so a body past axum's 2 MiB
+/// default still reaches each handler: the document store's 8 MiB and the
+/// install route's 32 MiB. A layer that went missing would leave the transport
+/// answering `413 too_large` before the handler ever saw the bytes.
+#[tokio::test]
+async fn a_body_over_axums_default_limit_reaches_the_routes_with_a_raised_one() {
+    let home = tempfile::tempdir().unwrap();
+    let (_state, mut router) = crate::api::test_support::guarded_router(home.path(), Some(false)).await;
+    let send = |router: &mut gotcha::axum::Router, method: &'static str, uri: &str, content_type: &str, body: Vec<u8>| {
+        let request = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("content-type", content_type)
+            .body(Body::from(body))
+            .unwrap();
+        let fut = router.call(request);
+        async move {
+            let response = fut.await.unwrap();
+            let status = response.status();
+            let body = gotcha::axum::body::to_bytes(response.into_body(), 1 << 20).await.unwrap();
+            (status, serde_json::from_slice::<serde_json::Value>(&body).unwrap_or_default())
+        }
+    };
+
+    // Past 2 MiB and under both raised limits, so each extractor reads the
+    // bytes and the handler's own `400` answers, never the transport's `413`.
+    let three_mib = vec![b'x'; 3 * 1024 * 1024];
+    let (status, body) = send(
+        &mut router,
+        "PUT",
+        "/api/plugins/tasks/docs/state",
+        "application/json",
+        three_mib.clone(),
+    )
+    .await;
+    assert_eq!((status, body["error"].clone()), (StatusCode::BAD_REQUEST, json!("invalid")));
+    let (status, body) = send(&mut router, "POST", "/api/plugins/tasks/batch", "application/json", three_mib.clone()).await;
+    assert_eq!((status, body["error"].clone()), (StatusCode::BAD_REQUEST, json!("invalid")));
+    let (status, body) = send(&mut router, "POST", LIST, "application/octet-stream", three_mib).await;
+    assert_eq!((status, body["error"].clone()), (StatusCode::BAD_REQUEST, json!("invalid_package")));
+}
+
 #[tokio::test]
 async fn a_cloud_identity_is_refused_everywhere() {
     use gotcha::axum::extract::Request as ExtractRequest;

@@ -1119,6 +1119,10 @@ pub async fn upload_attachment(State(state): State<FilesState>, multipart: Multi
 
 impl FilesState {
     /// Register this subsystem's routes.
+    ///
+    /// The two uploads carry body limits of their own, layered onto their method
+    /// routers: each accepts a different size, and every *other* route keeps
+    /// axum's 2 MiB default rather than inheriting 200 MiB.
     pub fn routes<S>(router: GotchaRouter<S>) -> GotchaRouter<S>
     where
         S: Clone + Send + Sync + 'static,
@@ -1128,28 +1132,15 @@ impl FilesState {
             .get("/api/fs/list", fs_list)
             .get("/api/fs/read", fs_read)
             .get("/api/fs/download", fs_download)
-            .merge(upload_route("/api/fs/upload", fs_upload, UPLOAD_LIMIT))
-            .merge(upload_route("/api/uploads", upload_attachment, ATTACHMENT_LIMIT))
+            .route(
+                "/api/fs/upload",
+                gotcha::post(fs_upload).layer(gotcha::axum::extract::DefaultBodyLimit::max((UPLOAD_LIMIT + MULTIPART_OVERHEAD) as usize)),
+            )
+            .route(
+                "/api/uploads",
+                gotcha::post(upload_attachment).layer(gotcha::axum::extract::DefaultBodyLimit::max((ATTACHMENT_LIMIT + MULTIPART_OVERHEAD) as usize)),
+            )
     }
-}
-
-/// One multipart route carrying its own body limit.
-///
-/// A limit has to be layered onto the route rather than the application: the two
-/// upload routes accept two different sizes, and every *other* route should keep
-/// axum's 2 MiB default rather than inherit 200 MiB. `GotchaRouter` has no
-/// per-route layer, so each route is built as a one-route router — which does
-/// carry its own OpenAPI operation through [`gotcha::GotchaRouter::merge`] — and
-/// layered before being merged back in.
-fn upload_route<S, H, T>(path: &str, handler: H, limit: u64) -> GotchaRouter<S>
-where
-    S: Clone + Send + Sync + 'static,
-    H: gotcha::axum::handler::Handler<T, S>,
-    T: 'static,
-{
-    GotchaRouter::<S>::default()
-        .post(path, handler)
-        .layer(gotcha::axum::extract::DefaultBodyLimit::max((limit + MULTIPART_OVERHEAD) as usize))
 }
 
 /// The `multipart/form-data` body both upload routes read.

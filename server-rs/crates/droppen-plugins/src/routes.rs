@@ -399,11 +399,11 @@ pub async fn plugin_doc_history(
 impl PluginsState {
     /// Register the routes.
     ///
-    /// The two that carry a document are a sub-router of their own, so the raised
-    /// body limit is theirs and no other route's (as `droppen_files` does it). The
-    /// read of a single document shares its path, and so its sub-router; it has no
-    /// body for the limit to matter to. The install route gets a sub-router of its
-    /// own for its own, larger, limit.
+    /// A body limit belongs to the route that needs it, layered onto its method
+    /// router (as `droppen_files` does it), so every other route keeps axum's
+    /// 2 MiB default. The two document methods share a path and one limit; the
+    /// read has no body for the limit to matter to. The install route has its
+    /// own, larger, limit.
     ///
     /// The asset route (`/plugins/…`) is registered here too, so the router claims
     /// it before the SPA fallback can hand a page its shell instead of a module.
@@ -416,24 +416,17 @@ impl PluginsState {
         S: Clone + Send + Sync + 'static,
         PluginsState: FromRef<S>,
     {
+        let request_limit = gotcha::axum::extract::DefaultBodyLimit::max(MAX_REQUEST_BYTES as usize);
         let plugins = GotchaRouter::<S>::default()
             .get(LIST, list_plugins)
             .delete(PLUGIN, uninstall_plugin)
             .put(ENABLED, set_plugin_enabled)
             .get(DOCS, list_plugin_docs)
             .get(HISTORY, plugin_doc_history)
-            .merge(
-                GotchaRouter::<S>::default()
-                    .post(LIST, install_plugin)
-                    .layer(gotcha::axum::extract::DefaultBodyLimit::max(MAX_TARBALL_BYTES)),
-            )
-            .merge(
-                GotchaRouter::<S>::default()
-                    .get(DOC, get_plugin_doc)
-                    .put(DOC, put_plugin_doc)
-                    .post(BATCH, plugin_batch)
-                    .layer(gotcha::axum::extract::DefaultBodyLimit::max(MAX_REQUEST_BYTES as usize)),
-            )
+            .route(LIST, gotcha::post(install_plugin).layer(gotcha::axum::extract::DefaultBodyLimit::max(MAX_TARBALL_BYTES)))
+            .route(DOC, gotcha::get(get_plugin_doc).layer(request_limit))
+            .route(DOC, gotcha::put(put_plugin_doc).layer(request_limit))
+            .route(BATCH, gotcha::post(plugin_batch).layer(request_limit))
             .get(super::serve::ASSET_PATH, super::serve::serve_asset)
             .head(super::serve::ASSET_PATH, super::serve::serve_asset)
             .layer(gotcha::axum::middleware::from_fn(refuse_cloud_requests));

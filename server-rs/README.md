@@ -326,8 +326,10 @@ replay 只做一件事：把 `transcript` / `sidecar` 事件按原始时间轴�
 
 - `GotchaRouter::nest` 拼接时多一个斜杠，会把路径记成 `/api//sessions`
   （`gotcha-0.4.1/src/router.rs:161`）→ 所有路径都写成扁平的全路径。
-- 只有整体 `layer`，没有按路由生效的中间件（`gotcha-0.4.1/src/router.rs:207`）→
-  `origin.rs` 铺满全局，再在守卫第一行自己判断 `/api/` 前缀。
+- `GotchaRouter` 只有整体 `layer` / `route_layer`；只作用于单个路由的层得挂在该路由的
+  method router 上（`gotcha-0.5.0/src/routing.rs:88`）→ `origin.rs` 要管所有 `/api/*`，
+  仍铺满全局，再在守卫第一行自己判断 `/api/` 前缀；各上传路由的体积上限则各自挂在自己的
+  method router 上。
 - 没有自己的静态文件支持，也没有 `nest_service`，只有 `fallback_service`
   （`gotcha-0.4.1/src/router.rs:236`）→ `static_files.rs` 用一个 tower `Service` 占住
   fallback。
