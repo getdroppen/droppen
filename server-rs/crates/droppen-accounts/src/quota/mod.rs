@@ -62,7 +62,7 @@ use droppen_instance::paths::Paths;
 use droppen_base::time::now_ms;
 
 pub use readings::{QuotaReadingSource, UsageLogin};
-pub use routes::{describe, QuotaState};
+pub use routes::QuotaState;
 
 /// How long a Codex reading — successful or not — is reused. Claude readings
 /// follow [`readings`] instead.

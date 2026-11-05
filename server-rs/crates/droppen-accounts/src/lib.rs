@@ -27,14 +27,13 @@ use futures_util::StreamExt;
 
 use gotcha::axum::extract::FromRef;
 use gotcha::axum::http::StatusCode;
-use gotcha::{api, GotchaRouter, Json, Schematic, State};
+use gotcha::{api, GotchaRouter, Json, Schematic, State, WithStatus};
 use serde::{Deserialize, Serialize};
 
-use droppen_http::created::Created;
 use droppen_http::error::{ApiError, Hinted};
 use droppen_http::extract::{ApiJson, ApiPath, ApiQuery};
 use droppen_http::SendResult;
-use droppen_http::openapi_ext::{required_nullable, ExtraResponses, Nullable, Optional};
+use droppen_http::openapi_ext::{required_nullable, Nullable, Optional};
 use rest::AccountLimitEventList;
 use store::{Account, AccountError, AccountKind, AccountList, AccountPatch, AccountProvider, Credential};
 
@@ -275,7 +274,12 @@ pub struct AccountsState {
 droppen_http::substate!(AccountsState);
 
 /// Stored Claude accounts (secrets never leave the server).
-#[api(id = "list_accounts", group = "accounts", summary = "List accounts")]
+#[api(
+    id = "list_accounts",
+    group = "accounts",
+    summary = "List accounts",
+    responses(response(status = 200, body = "AccountList", description = "Stored Claude accounts (secrets never leave the server)"))
+)]
 pub async fn list_accounts(State(state): State<AccountsState>) -> Json<AccountList> {
     Json(state.accounts.account_list().await)
 }
@@ -346,8 +350,17 @@ fn touches_credential(body: &AccountUpdate) -> bool {
 }
 
 /// Store a new Claude account.
-#[api(id = "create_account", group = "accounts", summary = "Add an account")]
-pub async fn create_account(State(state): State<AccountsState>, ApiJson(body): ApiJson<AccountCreate>) -> Result<Created<Account>, ApiError> {
+#[api(
+    id = "create_account",
+    group = "accounts",
+    summary = "Add an account",
+    responses(
+        response(status = 201, body = "Account", description = "Account stored"),
+        response(status = 409, body = "AccountConflict", description = "That token is already stored under another label")
+    ),
+    errors(response(status = 400, body = "droppen_http::error::Error", description = "Unusable label, or a token Anthropic refused"))
+)]
+pub async fn create_account(State(state): State<AccountsState>, ApiJson(body): ApiJson<AccountCreate>) -> Result<WithStatus<Json<Account>, 201>, ApiError> {
     body.label.require_label()?;
     let provider = body.provider.0.unwrap_or_default();
     // The shape is checked before a request is spent on the credential: a
@@ -364,16 +377,28 @@ pub async fn create_account(State(state): State<AccountsState>, ApiJson(body): A
             (state.recheck_holds)();
         })
         .map(|account| {
-            Created(Account {
+            WithStatus::new(Json(Account {
                 unverified: Optional(unchecked),
                 ..account
-            })
+            }))
         })
         .map_err(|error| store_error(error, "cannot store account"))
 }
 
 /// Rename an account, or re-authorize it with a pasted credential.
-#[api(id = "update_account", group = "accounts", summary = "Update an account")]
+#[api(
+    id = "update_account",
+    group = "accounts",
+    summary = "Update an account",
+    responses(
+        response(status = 200, body = "Account", description = "Account updated"),
+        response(status = 409, body = "AccountConflict", description = "That token is already stored under another label")
+    ),
+    errors(
+        response(status = 400, body = "droppen_http::error::Error", description = "Unusable label, or a token Anthropic refused"),
+        response(status = 404, body = "droppen_http::error::Error", description = "Account not found")
+    )
+)]
 pub async fn update_account(
     State(state): State<AccountsState>,
     ApiPath(id): ApiPath<String>,
@@ -427,7 +452,20 @@ pub async fn update_account(
 /// cannot prefill its editor without this read. Kept apart from
 /// `GET /api/accounts` on purpose: a credential should leave the server when
 /// somebody asks for that account, not with every list a picker fetches.
-#[api(id = "get_account_env", group = "accounts", summary = "Get an account's environment block")]
+#[api(
+    id = "get_account_env",
+    group = "accounts",
+    summary = "Get an account's environment block",
+    responses(response(
+        status = 200,
+        body = "AccountEnvBlock",
+        description = "The account's whole environment block, values included, for editing it"
+    )),
+    errors(
+        response(status = 400, body = "droppen_http::error::Error", description = "The account has no environment block"),
+        response(status = 404, body = "droppen_http::error::Error", description = "Account not found")
+    )
+)]
 pub async fn get_account_env(State(state): State<AccountsState>, ApiPath(id): ApiPath<String>) -> Result<Json<AccountEnvBlock>, ApiError> {
     id.require_uuid()?;
     match state.accounts.env_block(&id).await {
@@ -438,7 +476,13 @@ pub async fn get_account_env(State(state): State<AccountsState>, ApiPath(id): Ap
 }
 
 /// Delete an account, its session bindings and its probe login.
-#[api(id = "delete_account", group = "accounts", summary = "Delete an account")]
+#[api(
+    id = "delete_account",
+    group = "accounts",
+    summary = "Delete an account",
+    responses(response(status = 200, body = "SendResult", description = "Account, its session bindings and its probe login are gone")),
+    errors(response(status = 404, body = "droppen_http::error::Error", description = "Account not found"))
+)]
 pub async fn delete_account(State(state): State<AccountsState>, ApiPath(id): ApiPath<String>) -> Result<Json<SendResult>, ApiError> {
     id.require_uuid()?;
     if !state
@@ -453,7 +497,20 @@ pub async fn delete_account(State(state): State<AccountsState>, ApiPath(id): Api
 }
 
 /// Point new sessions at an account, or back at the local login.
-#[api(id = "set_default_account", group = "accounts", summary = "Set the default account")]
+#[api(
+    id = "set_default_account",
+    group = "accounts",
+    summary = "Set the default account",
+    responses(response(
+        status = 200,
+        body = "AccountList",
+        description = "Default account for new sessions (null chooses the local login, signed out or not; automatic clears it)"
+    )),
+    errors(
+        response(status = 400, body = "droppen_http::error::Error", description = "An accountId sent with automatic"),
+        response(status = 404, body = "droppen_http::error::Error", description = "Account not found")
+    )
+)]
 pub async fn set_default_account(State(state): State<AccountsState>, ApiJson(body): ApiJson<AccountDefault>) -> Result<Json<AccountList>, ApiError> {
     let account_id = body.account_id.0;
     let provider = body.provider.0.unwrap_or_default();
@@ -498,7 +555,16 @@ pub async fn set_default_account(State(state): State<AccountsState>, ApiJson(bod
 /// with its own models in order, and the first model the rule places on its
 /// own login wins. A start sent with that model and no account lands there by
 /// the same rule the spawn applies.
-#[api(id = "account_start", group = "accounts", summary = "Where a start that names no account runs")]
+#[api(
+    id = "account_start",
+    group = "accounts",
+    summary = "Where a start that names no account runs",
+    responses(response(
+        status = 200,
+        body = "rotation::AccountStart",
+        description = "The login a start that names no account runs on, and why"
+    ))
+)]
 pub async fn account_start(State(state): State<AccountsState>, ApiQuery(query): ApiQuery<AccountStartQuery>) -> Json<rotation::AccountStart> {
     let provider = query.provider.unwrap_or_default();
     let model = query.model.filter(|model| !model.trim().is_empty());
@@ -563,7 +629,16 @@ async fn limit_subject(state: &AccountsState, id: &str) -> Result<(), ApiError> 
 /// Recorded, not acted on: a limit here changed nothing about how the session
 /// that hit it was driven. Includes the machine's own login, whose events carry
 /// `accountId: null`.
-#[api(id = "list_account_limit_events", group = "accounts", summary = "List recent limit events")]
+#[api(
+    id = "list_account_limit_events",
+    group = "accounts",
+    summary = "List recent limit events",
+    responses(response(
+        status = 200,
+        body = "AccountLimitEventList",
+        description = "Limit events this instance recorded, newest first (recorded, not acted on)"
+    ))
+)]
 pub async fn list_limit_events(State(state): State<AccountsState>, ApiQuery(query): ApiQuery<LimitEventsQuery>) -> Json<AccountLimitEventList> {
     let limit = query.limit.unwrap_or(100) as usize;
     Json(AccountLimitEventList {
@@ -572,7 +647,13 @@ pub async fn list_limit_events(State(state): State<AccountsState>, ApiQuery(quer
 }
 
 /// One account's limit events, newest first.
-#[api(id = "list_account_limit_events_for", group = "accounts", summary = "List an account's limit events")]
+#[api(
+    id = "list_account_limit_events_for",
+    group = "accounts",
+    summary = "List an account's limit events",
+    responses(response(status = 200, body = "AccountLimitEventList", description = "One account's limit events, newest first")),
+    errors(response(status = 404, body = "droppen_http::error::Error", description = "Account not found"))
+)]
 pub async fn list_account_limit_events(
     State(state): State<AccountsState>,
     ApiPath(id): ApiPath<String>,
@@ -586,7 +667,13 @@ pub async fn list_account_limit_events(
 }
 
 /// End an account's rest — one scope, or all of them.
-#[api(id = "clear_account_rest", group = "accounts", summary = "Clear an account's rest")]
+#[api(
+    id = "clear_account_rest",
+    group = "accounts",
+    summary = "Clear an account's rest",
+    responses(response(status = 200, body = "AccountList", description = "Rest cleared; the whole account list")),
+    errors(response(status = 404, body = "droppen_http::error::Error", description = "Account not found"))
+)]
 pub async fn clear_account_rest(
     State(state): State<AccountsState>,
     ApiPath(id): ApiPath<String>,
@@ -626,57 +713,6 @@ impl AccountsState {
             .delete("/api/accounts/{id}", delete_account)
             .put("/api/accounts/default", set_default_account)
     }
-}
-
-/// Every status gotcha cannot derive, plus the golden contract's wordings.
-pub fn describe(reg: &mut ExtraResponses) {
-    reg.describe("GET", "/api/accounts", 200, "Stored Claude accounts (secrets never leave the server)")
-        .describe(
-            "GET",
-            "/api/accounts/limit-events",
-            200,
-            "Limit events this instance recorded, newest first (recorded, not acted on)",
-        )
-        .describe("GET", "/api/accounts/{id}/limit-events", 200, "One account's limit events, newest first")
-        .error("GET", "/api/accounts/{id}/limit-events", 404, "Account not found")
-        .describe(
-            "GET",
-            "/api/accounts/{id}/env",
-            200,
-            "The account's whole environment block, values included, for editing it",
-        )
-        .error("GET", "/api/accounts/{id}/env", 400, "The account has no environment block")
-        .error("GET", "/api/accounts/{id}/env", 404, "Account not found")
-        .describe(
-            "GET",
-            "/api/accounts/start",
-            200,
-            "The login a start that names no account runs on, and why",
-        )
-        .describe("DELETE", "/api/accounts/{id}/rest", 200, "Rest cleared; the whole account list")
-        .error("DELETE", "/api/accounts/{id}/rest", 404, "Account not found")
-        .restatus("POST", "/api/accounts", 200, 201, "Account stored")
-        .error("POST", "/api/accounts", 400, "Unusable label, or a token Anthropic refused")
-        .body::<AccountConflict>("POST", "/api/accounts", 409, "That token is already stored under another label")
-        .describe("PATCH", "/api/accounts/{id}", 200, "Account updated")
-        .error("PATCH", "/api/accounts/{id}", 400, "Unusable label, or a token Anthropic refused")
-        .error("PATCH", "/api/accounts/{id}", 404, "Account not found")
-        .body::<AccountConflict>("PATCH", "/api/accounts/{id}", 409, "That token is already stored under another label")
-        .describe(
-            "DELETE",
-            "/api/accounts/{id}",
-            200,
-            "Account, its session bindings and its probe login are gone",
-        )
-        .error("DELETE", "/api/accounts/{id}", 404, "Account not found")
-        .describe(
-            "PUT",
-            "/api/accounts/default",
-            200,
-            "Default account for new sessions (null chooses the local login, signed out or not; automatic clears it)",
-        )
-        .error("PUT", "/api/accounts/default", 400, "An accountId sent with automatic")
-        .error("PUT", "/api/accounts/default", 404, "Account not found");
 }
 
 #[cfg(test)]
