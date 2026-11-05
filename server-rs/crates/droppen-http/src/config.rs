@@ -1,9 +1,8 @@
 //! Application configuration.
 //!
 //! gotcha reads `configurations/application.toml` plus the `APP_` environment
-//! prefix through `mofa`, with `__` separating nested sections
-//! (`gotcha-0.4.1/src/config.rs:222`). The framework's own bind address lives in
-//! the reserved `[server]` section, so:
+//! prefix, with `__` separating nested sections (`APP_SERVER__PORT`). The
+//! framework's own bind address lives in the reserved `[server]` section, so:
 //!
 //! ```toml
 //! # configurations/application.toml
@@ -19,34 +18,26 @@
 //! `APP_INSTANCE=staging` — rather than in `[server]`, which is the framework's
 //! own struct and cannot grow a field of ours.
 //!
-//! The loader is assembled here rather than through
-//! [`GotchaConfigLoader::load`](gotcha::GotchaConfigLoader::load), for one
-//! reason: **`APP_SERVER__PORT` does not work under the stock loader**. mofa's
-//! environment source can only produce strings, and its merge coerces a string
-//! into a number only when an earlier source already put a number at that path
-//! (`mofa-0.2.0/src/utils.rs:122`). gotcha's loader has no defaults source, so
-//! on a machine with no `configurations/application.toml` the port arrives at
-//! serde as `Value::String("9000")` and the entire load fails with
-//! `invalid type: string "9000", expected u16`.
+//! The load is gotcha's [`ConfigBuilder`] with droppen's typed [`Defaults`]
+//! underneath every file and environment source. Being typed is what makes
+//! `APP_SERVER__PORT` work with no configuration file at all: mofa's environment
+//! source can only produce strings, and its merge coerces one into a number only
+//! where an earlier source already put a number at that path
+//! (`mofa-0.2.0/src/utils.rs:122`), so `server.port`, `server.host` and the
+//! numeric auth settings are integers in the defaults and an environment value
+//! has something to coerce against. The defaults also carry the contract's
+//! `127.0.0.1:8700` in place of gotcha's `3000`; as a real source rather than a
+//! post-load fix-up, that cannot confuse "unset" with "deliberately 3000".
 //!
-//! Putting a typed [`DefaultsSource`] in front of the file and environment
-//! sources fixes that and removes the need for a config file at all — which is
-//! also how the contract's `127.0.0.1:8700` default gets expressed, instead of
-//! fixing up gotcha's `3000` afterwards (a fix-up that cannot tell whether a
-//! port was left untouched or deliberately set to `3000`).
-//!
-//! The trait API is used rather than the `Gotcha` builder because the builder
-//! swallows a configuration error and silently falls back to `Default`
-//! (`gotcha-0.4.1/src/builder.rs`), which would hide a typo'd config file.
+//! `HOST` and `PORT` — the names every host and container runtime already sets —
+//! are the one layer the builder has no slot for. They sit above the files and
+//! below `APP_*`, and a source can only be added below the files (the typed
+//! defaults) or above everything (`env`); [`ConfigBuilder`] has no
+//! add-a-source-here method. [`LegacyEnv`] therefore applies them to the loaded
+//! value, where "below `APP_*`" is a check for the framework-named variable.
 
-use std::path::Path;
-
-use gotcha::config::ConfigError;
-use gotcha::{config, ConfigWrapper};
-// `config` is the `#[config]` attribute macro that makes `AppConfig` extractable
-// as `State<AppConfig>`; it is applied below.
-use mofa::toml::{Table, Value};
-use mofa::{ConfigLoader, EnvironmentSource, FileSource, Source};
+use gotcha::config::{ConfigBuilder, ConfigError};
+use gotcha::{config, ConfigWrapper, ServerConfig};
 use serde::{Deserialize, Serialize};
 
 /// remote-hand's own settings, read from the top level of the config file.
@@ -87,7 +78,7 @@ pub struct AppConfig {
 /// Comma-separated strings rather than arrays because mofa's environment
 /// source can only produce strings (see the module docs), and an emergency
 /// switch that works in the file but not in the environment is not one. Both
-/// carry a typed empty-string default in [`DefaultsSource`]. A plugin named in
+/// carry a typed empty-string default in [`Defaults`]. A plugin named in
 /// `disable` is off whatever else says so; one named only in `enable` is on;
 /// either way the switch in the settings is read-only for it
 /// (the server's `plugins`).
@@ -125,9 +116,9 @@ fn split_ids(list: Option<&str>) -> std::collections::BTreeSet<String> {
 /// What the server's `auth` reads out of the configuration.
 ///
 /// Every field is optional and every default is expressed twice: once as the
-/// accessor's fallback below, and once — typed — in [`DefaultsSource`]. The
-/// second copy is not redundant. mofa's environment source can only produce
-/// strings, and its merge coerces one into a number only where an earlier source
+/// accessor's fallback below, and once — typed — in [`Defaults`]. The second
+/// copy is not redundant. mofa's environment source can only produce strings,
+/// and its merge coerces one into a number only where an earlier source
 /// already put a number (`mofa-0.2.0/src/utils.rs:122`), so without the typed
 /// default `APP_AUTH__SESSION_TTL_DAYS=14` would arrive at serde as
 /// `Value::String("14")` and fail the entire load. See the module docs.
@@ -244,49 +235,71 @@ pub const DEFAULT_PORT: u16 = 8700;
 
 /// The lowest-priority source: remote-hand's defaults, correctly typed.
 ///
-/// Being typed is the point — see the module docs. Every later source (file,
-/// then environment) merges on top.
-struct DefaultsSource;
+/// Every later source (file, `HOST`/`PORT`, then `APP_*`) merges on top, and a
+/// typed value here is what lets an environment string be coerced into a
+/// number at that path. `server` is the framework's reserved section; the rest
+/// sits at the top level of the document.
+#[derive(Serialize)]
+struct Defaults {
+    server: ServerConfig,
+    auth: AuthDefaults,
+    plugins: PluginDefaults,
+}
 
-impl Source for DefaultsSource {
-    fn load(&self) -> Result<Value, Box<dyn std::error::Error>> {
-        let mut server = Table::new();
-        server.insert("host".into(), Value::String(DEFAULT_HOST.into()));
-        server.insert("port".into(), Value::Integer(i64::from(DEFAULT_PORT)));
-        // Typed, so `APP_AUTH__SESSION_TTL_DAYS=14` — which arrives as a string,
-        // like every environment value — has an integer to coerce against.
-        // `auth.enabled` is absent on purpose: it is three-state and carries its
-        // own lenient deserializer instead.
-        let mut auth = Table::new();
-        auth.insert("session_ttl_days".into(), Value::Integer(i64::from(DEFAULT_SESSION_TTL_DAYS)));
-        auth.insert("lockout_attempts".into(), Value::Integer(i64::from(DEFAULT_LOCKOUT_ATTEMPTS)));
-        auth.insert("lockout_minutes".into(), Value::Integer(i64::from(DEFAULT_LOCKOUT_MINUTES)));
-        // Strings already, and typed anyway so the section always exists with
-        // the shape `PluginSettings` reads.
-        let mut plugins = Table::new();
-        plugins.insert("enable".into(), Value::String(String::new()));
-        plugins.insert("disable".into(), Value::String(String::new()));
-        let mut root = Table::new();
-        root.insert("server".into(), Value::Table(server));
-        root.insert("auth".into(), Value::Table(auth));
-        root.insert("plugins".into(), Value::Table(plugins));
-        Ok(Value::Table(root))
+/// The numeric auth defaults, typed so the environment can override them.
+#[derive(Serialize)]
+struct AuthDefaults {
+    session_ttl_days: u32,
+    lockout_attempts: u32,
+    lockout_minutes: u32,
+}
+
+/// The plugin switches, present with their type so the section always has the
+/// shape [`PluginSettings`] reads.
+#[derive(Serialize)]
+struct PluginDefaults {
+    enable: String,
+    disable: String,
+}
+
+impl Default for Defaults {
+    fn default() -> Self {
+        Self {
+            server: ServerConfig {
+                host: DEFAULT_HOST.to_string(),
+                port: DEFAULT_PORT,
+            },
+            auth: AuthDefaults {
+                session_ttl_days: DEFAULT_SESSION_TTL_DAYS,
+                lockout_attempts: DEFAULT_LOCKOUT_ATTEMPTS,
+                lockout_minutes: DEFAULT_LOCKOUT_MINUTES,
+            },
+            plugins: PluginDefaults {
+                enable: String::new(),
+                disable: String::new(),
+            },
+        }
     }
 }
 
 /// `PORT` and `HOST`, the names every host and container runtime already sets.
 ///
-/// A fallback rather than an override: nothing is emitted for a variable that is
-/// not set, and the source sits *below* `APP_*`, so `APP_SERVER__PORT` still
+/// A fallback rather than an override: a variable that is not set changes
+/// nothing, and the layer sits *below* `APP_*`, so `APP_SERVER__PORT` still
 /// wins wherever both are given. It exists because "why is it not on the port I
 /// set?" is the first thing anyone hits who runs the image behind a platform
 /// that hands the port over in `PORT`.
-struct LegacyEnvSource {
+///
+/// Applied to the loaded configuration rather than added to the builder: it has
+/// to sit between the profile file and `APP_*`, and gotcha's builder only takes
+/// a source below the files or above every environment variable. See the
+/// module docs.
+struct LegacyEnv {
     host: Option<String>,
     port: Option<String>,
 }
 
-impl LegacyEnvSource {
+impl LegacyEnv {
     fn from_env() -> Self {
         let read = |name: &str| std::env::var(name).ok().filter(|value| !value.trim().is_empty());
         let source = Self {
@@ -298,123 +311,203 @@ impl LegacyEnvSource {
         }
         source
     }
-}
 
-impl Source for LegacyEnvSource {
-    fn load(&self) -> Result<Value, Box<dyn std::error::Error>> {
-        let mut server = Table::new();
-        if let Some(host) = &self.host {
-            server.insert("host".into(), Value::String(host.clone()));
+    /// Apply the fallback: each value fills in only what the framework-named
+    /// variable leaves alone.
+    fn apply(self, server: &mut ServerConfig) -> Result<(), ConfigError> {
+        let framework_names = |name: &str| std::env::var_os(name).is_some();
+        if let Some(host) = self.host {
+            if !framework_names("APP_SERVER__HOST") {
+                server.host = host;
+            }
         }
-        if let Some(port) = &self.port {
-            server.insert("port".into(), Value::String(port.clone()));
+        if let Some(port) = self.port {
+            // Parsed even when `APP_SERVER__PORT` wins: the loader used to
+            // coerce this layer before the environment source was reached, so
+            // a bad `PORT` refused to start either way.
+            let parsed = port
+                .trim()
+                .parse::<u16>()
+                .map_err(|_| ConfigError::Error(format!("PORT is a number between 0 and 65535, not {port:?}")))?;
+            if !framework_names("APP_SERVER__PORT") {
+                server.port = parsed;
+            }
         }
-        let mut root = Table::new();
-        // An empty `[server]` would still merge cleanly, but leaving it out
-        // keeps "nothing was set" indistinguishable from "this source is absent".
-        if !server.is_empty() {
-            root.insert("server".into(), Value::Table(server));
-        }
-        Ok(Value::Table(root))
+        Ok(())
     }
 }
 
-/// Load defaults, then `configurations/application.toml`, then `PORT`/`HOST`,
-/// then `APP_*`.
+/// Load defaults, then `configurations/application.toml`, then the profile's
+/// file, then `PORT`/`HOST`, then `APP_*`, substituting `${VAR}` and path
+/// placeholders last.
 ///
-/// The profile name comes from `GOTCHA_ACTIVE_PROFILE`, matching the framework.
+/// The profile name comes from `GOTCHA_ACTIVE_PROFILE`, matching the framework;
+/// the caller reads it and passes it here.
 pub fn load(profile: Option<String>) -> Result<ConfigWrapper<AppConfig>, ConfigError> {
-    let mut loader = ConfigLoader::new();
-    loader.add_source(DefaultsSource);
-    loader.add_file_if_present("configurations/application.toml");
-    if let Some(profile) = profile {
-        loader.add_file_if_present(&format!("configurations/application_{profile}.toml"));
-    }
-    loader.add_source(LegacyEnvSource::from_env());
-    loader.add_source(EnvironmentSource::new("APP"));
-    loader.enable_path_variable_processor();
-    loader.enable_environment_variable_processor();
-    loader.construct().map_err(|error| ConfigError::Error(error.to_string()))
-}
-
-/// A file source, added only when the file is there.
-trait AddFileSourceExt {
-    /// Add `path` as a source when it exists; a configuration file that is not
-    /// there is not an error.
-    fn add_file_if_present(&mut self, path: &str);
-}
-
-impl AddFileSourceExt for ConfigLoader {
-    fn add_file_if_present(&mut self, path: &str) {
-        if Path::new(path).exists() {
-            self.add_source(FileSource::new(std::path::PathBuf::from(path)));
-        }
-    }
+    let builder = ConfigBuilder::framework_defaults().defaults(Defaults::default())?;
+    let builder = builder.file_optional("configurations/application.toml");
+    let builder = match profile {
+        Some(profile) => builder.file_optional(format!("configurations/application_{profile}.toml")),
+        None => builder,
+    };
+    let mut config: ConfigWrapper<AppConfig> = builder.env("APP").enable_vars().build()?;
+    LegacyEnv::from_env().apply(&mut config.server)?;
+    Ok(config)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gotcha::config::toml::Value;
 
-    /// A stand-in for `EnvironmentSource`, which reads the real environment and
-    /// so cannot be pointed at a fixture.
-    struct StubSource(Value);
-
-    impl Source for StubSource {
-        fn load(&self) -> Result<Value, Box<dyn std::error::Error>> {
-            Ok(self.0.clone())
+    /// Run the test body again in a child process whose working directory is an
+    /// empty temporary directory and whose configuration environment is exactly
+    /// `env`.
+    ///
+    /// `load` reads `configurations/` from the working directory and the
+    /// process environment; both are process-wide, and the harness runs tests
+    /// on threads. A test that needs either therefore gives itself a process of
+    /// its own: returns `true` in the child, whose caller runs the body, and
+    /// `false` in the parent, whose caller returns after checking the child
+    /// passed. The parent's own environment is inherited except for the names
+    /// this module reads, which `env` sets from scratch.
+    fn in_isolated_process(name: &str, env: &[(&str, &str)]) -> bool {
+        const MARKER: &str = "DROPPEN_HTTP_CONFIG_TEST_CHILD";
+        if std::env::var_os(MARKER).is_some() {
+            return true;
         }
+        let test = name.rsplit("::").next().unwrap_or(name);
+        let dir = std::env::temp_dir().join(format!("droppen-http-config-{}-{test}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("the child's directory");
+        let mut command = std::process::Command::new(std::env::current_exe().expect("the test binary"));
+        command.args(["--exact", name, "--nocapture"]).current_dir(&dir).env(MARKER, "1");
+        for (key, _) in std::env::vars_os() {
+            let key = key.to_string_lossy();
+            if key.starts_with("APP_") || matches!(key.as_ref(), "HOST" | "PORT" | "GOTCHA_ACTIVE_PROFILE") {
+                command.env_remove(key.as_ref());
+            }
+        }
+        command.envs(env.iter().copied());
+        let output = command.output().expect("the child runs");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success() && stdout.contains("test result: ok. 1 passed"),
+            "the child running {name} failed or did not run:\n{stdout}\n{stderr}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        false
     }
 
-    fn server_table(port: &str) -> Value {
-        let mut server = Table::new();
-        server.insert("port".into(), Value::String(port.into()));
-        let mut root = Table::new();
-        root.insert("server".into(), Value::Table(server));
-        Value::Table(root)
+    /// The defaults as they reach gotcha's builder.
+    fn defaults_value() -> Value {
+        Value::try_from(Defaults::default()).expect("the defaults hold only strings and integers")
     }
 
-    /// `load`'s source order, with the `APP_*` source stubbed.
-    fn resolve(legacy: LegacyEnvSource, app: Option<Value>) -> ConfigWrapper<AppConfig> {
-        let mut loader = ConfigLoader::new();
-        loader.add_source(DefaultsSource);
-        loader.add_source(legacy);
-        if let Some(app) = app {
-            loader.add_source(StubSource(app));
+    /// Every layer at once: typed defaults, the base file, the profile file,
+    /// `HOST`/`PORT`, and `APP_*` — each overriding the one before it, with
+    /// `${VAR}` substituted last.
+    #[test]
+    fn the_sources_keep_their_precedence() {
+        const NAME: &str = "config::tests::the_sources_keep_their_precedence";
+        if !in_isolated_process(
+            NAME,
+            &[
+                ("GOTCHA_ACTIVE_PROFILE", "staging"),
+                ("DROPPEN_CONFIG_TEST_HOME", "/profile-from-variable"),
+                ("HOST", "10.0.0.3"),
+                ("PORT", "9001"),
+                ("APP_SERVER__PORT", "9002"),
+            ],
+        ) {
+            return;
         }
-        loader.construct().expect("construct")
+        std::fs::create_dir_all("configurations").expect("the configuration directory");
+        std::fs::write(
+            "configurations/application.toml",
+            "home_dir = \"/base\"\n\n[server]\nhost = \"10.0.0.1\"\nport = 1234\n\n[plugins]\nenable = \"from-file\"\n",
+        )
+        .expect("the base file");
+        std::fs::write(
+            "configurations/application_staging.toml",
+            "home_dir = \"${DROPPEN_CONFIG_TEST_HOME}\"\n\n[server]\nhost = \"10.0.0.2\"\nport = 2345\n\n[plugins]\ndisable = \"from-profile\"\n",
+        )
+        .expect("the profile file");
+
+        let config = load(Some("staging".into())).expect("the configuration loads");
+
+        assert_eq!(
+            config.home(),
+            std::path::PathBuf::from("/profile-from-variable"),
+            "the profile file wins over the base file, and ${{VAR}} is substituted"
+        );
+        assert_eq!(
+            config.plugins.enabled().into_iter().collect::<Vec<_>>(),
+            ["from-file"],
+            "a key the profile does not name keeps the base file's value"
+        );
+        assert_eq!(config.plugins.disabled().into_iter().collect::<Vec<_>>(), ["from-profile"]);
+        assert_eq!(config.server.host, "10.0.0.3", "HOST wins over both files when APP_SERVER__HOST is unset");
+        assert_eq!(config.server.port, 9002, "APP_SERVER__PORT is the top layer");
+        assert_eq!(config.auth.session_ttl_days(), DEFAULT_SESSION_TTL_DAYS, "the typed defaults sit underneath");
+    }
+
+    /// With no configuration file at all, an environment value still reaches a
+    /// typed field: the defaults give mofa an integer to coerce against.
+    #[test]
+    fn app_server_port_loads_with_no_configuration_file() {
+        const NAME: &str = "config::tests::app_server_port_loads_with_no_configuration_file";
+        if !in_isolated_process(NAME, &[("APP_SERVER__PORT", "9000")]) {
+            return;
+        }
+        let config = load(None).expect("environment-only configuration loads");
+        assert_eq!(config.server.port, 9000, "the typed default lets the environment value coerce");
+        assert_eq!(config.server.host, DEFAULT_HOST, "unset fields keep their defaults");
     }
 
     #[test]
     fn port_and_host_fill_in_when_the_framework_names_are_unset() {
-        let config = resolve(
-            LegacyEnvSource {
-                host: Some("0.0.0.0".into()),
-                port: Some("9000".into()),
-            },
-            None,
-        );
+        const NAME: &str = "config::tests::port_and_host_fill_in_when_the_framework_names_are_unset";
+        if !in_isolated_process(NAME, &[("HOST", "0.0.0.0"), ("PORT", "9000")]) {
+            return;
+        }
+        let config = load(None).expect("the configuration loads");
         assert_eq!(config.server.port, 9000);
         assert_eq!(config.server.host, "0.0.0.0");
     }
 
     #[test]
     fn the_framework_names_win_over_port_and_host() {
-        let config = resolve(
-            LegacyEnvSource {
-                host: Some("0.0.0.0".into()),
-                port: Some("9000".into()),
-            },
-            Some(server_table("8701")),
-        );
+        const NAME: &str = "config::tests::the_framework_names_win_over_port_and_host";
+        if !in_isolated_process(NAME, &[("HOST", "0.0.0.0"), ("PORT", "9000"), ("APP_SERVER__PORT", "8701")]) {
+            return;
+        }
+        let config = load(None).expect("the configuration loads");
         assert_eq!(config.server.port, 8701, "APP_SERVER__PORT is the documented name");
         assert_eq!(config.server.host, "0.0.0.0", "and it only overrides what it names");
     }
 
     #[test]
     fn an_unset_port_and_host_leave_the_defaults_alone() {
-        let config = resolve(LegacyEnvSource { host: None, port: None }, None);
+        const NAME: &str = "config::tests::an_unset_port_and_host_leave_the_defaults_alone";
+        if !in_isolated_process(NAME, &[]) {
+            return;
+        }
+        let config = load(None).expect("the configuration loads");
         assert_eq!((config.server.host.as_str(), config.server.port), (DEFAULT_HOST, DEFAULT_PORT));
+    }
+
+    /// A `PORT` that is not a port refuses to start, even when
+    /// `APP_SERVER__PORT` would have won: that is what the old layer did when
+    /// it was merged, and a typo'd variable should not pass silently.
+    #[test]
+    fn an_unparsable_port_is_an_error() {
+        const NAME: &str = "config::tests::an_unparsable_port_is_an_error";
+        if !in_isolated_process(NAME, &[("PORT", "not-a-port"), ("APP_SERVER__PORT", "9000")]) {
+            return;
+        }
+        assert!(load(None).is_err());
     }
 
     #[test]
@@ -433,8 +526,8 @@ mod tests {
     }
 
     #[test]
-    fn the_defaults_source_is_typed_so_a_string_port_can_coerce() {
-        let value = DefaultsSource.load().expect("defaults load");
+    fn the_defaults_are_typed_so_a_string_port_can_coerce() {
+        let value = defaults_value();
         let port = value.get("server").and_then(|s| s.get("port")).expect("server.port");
         assert!(port.is_integer(), "a string default would make APP_SERVER__PORT fail to deserialize");
         assert_eq!(port.as_integer(), Some(i64::from(DEFAULT_PORT)));
@@ -444,59 +537,60 @@ mod tests {
     /// `APP_AUTH__SESSION_TTL_DAYS=14` would fail the whole configuration load.
     #[test]
     fn the_numeric_auth_settings_have_typed_defaults() {
-        let value = DefaultsSource.load().expect("defaults load");
+        let value = defaults_value();
         let auth = value.get("auth").expect("auth section");
         for key in ["session_ttl_days", "lockout_attempts", "lockout_minutes"] {
-            assert!(auth.get(key).is_some_and(mofa::toml::Value::is_integer), "{key} must be typed");
+            assert!(auth.get(key).is_some_and(Value::is_integer), "{key} must be typed");
         }
         assert!(auth.get("enabled").is_none(), "three-state, so there is nothing to default it to");
     }
 
-    fn auth_table(pairs: &[(&str, Value)]) -> Value {
-        let mut auth = Table::new();
-        for (key, value) in pairs {
-            auth.insert((*key).into(), value.clone());
-        }
-        let mut root = Table::new();
-        root.insert("auth".into(), Value::Table(auth));
-        Value::Table(root)
-    }
-
     #[test]
     fn the_auth_settings_default_when_nothing_is_configured() {
-        let config = resolve(LegacyEnvSource { host: None, port: None }, None);
-        assert_eq!(config.app.auth.enabled(), None, "unset means 'on when accounts exist'");
-        assert_eq!(config.app.auth.session_ttl_days(), DEFAULT_SESSION_TTL_DAYS);
-        assert_eq!(config.app.auth.lockout_attempts(), DEFAULT_LOCKOUT_ATTEMPTS);
-        assert_eq!(config.app.auth.lockout_minutes(), DEFAULT_LOCKOUT_MINUTES);
+        const NAME: &str = "config::tests::the_auth_settings_default_when_nothing_is_configured";
+        if !in_isolated_process(NAME, &[]) {
+            return;
+        }
+        let config = load(None).expect("the configuration loads");
+        assert_eq!(config.auth.enabled(), None, "unset means 'on when accounts exist'");
+        assert_eq!(config.auth.session_ttl_days(), DEFAULT_SESSION_TTL_DAYS);
+        assert_eq!(config.auth.lockout_attempts(), DEFAULT_LOCKOUT_ATTEMPTS);
+        assert_eq!(config.auth.lockout_minutes(), DEFAULT_LOCKOUT_MINUTES);
     }
 
     /// Everything an environment variable can say arrives as a string, so both
     /// halves of the coercion story have to hold at once.
     #[test]
     fn the_auth_settings_survive_arriving_as_strings() {
-        let config = resolve(
-            LegacyEnvSource { host: None, port: None },
-            Some(auth_table(&[
-                ("enabled", Value::String("true".into())),
-                ("session_ttl_days", Value::String("14".into())),
-                ("lockout_attempts", Value::String("0".into())),
-                ("lockout_minutes", Value::String("30".into())),
-            ])),
-        );
-        assert_eq!(config.app.auth.enabled(), Some(true));
-        assert_eq!(config.app.auth.session_ttl_days(), 14);
-        assert_eq!(config.app.auth.lockout_attempts(), 0, "zero is honoured: it means never lock");
-        assert_eq!(config.app.auth.lockout_minutes(), 30);
+        const NAME: &str = "config::tests::the_auth_settings_survive_arriving_as_strings";
+        if !in_isolated_process(
+            NAME,
+            &[
+                ("APP_AUTH__ENABLED", "true"),
+                ("APP_AUTH__SESSION_TTL_DAYS", "14"),
+                ("APP_AUTH__LOCKOUT_ATTEMPTS", "0"),
+                ("APP_AUTH__LOCKOUT_MINUTES", "30"),
+            ],
+        ) {
+            return;
+        }
+        let config = load(None).expect("the configuration loads");
+        assert_eq!(config.auth.enabled(), Some(true));
+        assert_eq!(config.auth.session_ttl_days(), 14);
+        assert_eq!(config.auth.lockout_attempts(), 0, "zero is honoured: it means never lock");
+        assert_eq!(config.auth.lockout_minutes(), 30);
     }
 
     #[test]
     fn a_real_boolean_in_the_config_file_works_too() {
-        let config = resolve(
-            LegacyEnvSource { host: None, port: None },
-            Some(auth_table(&[("enabled", Value::Boolean(false))])),
-        );
-        assert_eq!(config.app.auth.enabled(), Some(false));
+        const NAME: &str = "config::tests::a_real_boolean_in_the_config_file_works_too";
+        if !in_isolated_process(NAME, &[]) {
+            return;
+        }
+        std::fs::create_dir_all("configurations").expect("the configuration directory");
+        std::fs::write("configurations/application.toml", "[auth]\nenabled = false\n").expect("the configuration file");
+        let config = load(None).expect("the configuration loads");
+        assert_eq!(config.auth.enabled(), Some(false));
     }
 
     /// A nonsense value is a refusal at boot rather than a silent fallback: the
@@ -504,31 +598,31 @@ mod tests {
     /// reads as "off".
     #[test]
     fn an_unparseable_enabled_is_an_error_not_a_default() {
-        let mut loader = ConfigLoader::new();
-        loader.add_source(DefaultsSource);
-        loader.add_source(StubSource(auth_table(&[("enabled", Value::String("maybe".into()))])));
-        assert!(loader.construct::<ConfigWrapper<AppConfig>>().is_err());
+        const NAME: &str = "config::tests::an_unparseable_enabled_is_an_error_not_a_default";
+        if !in_isolated_process(NAME, &[]) {
+            return;
+        }
+        std::fs::create_dir_all("configurations").expect("the configuration directory");
+        std::fs::write("configurations/application.toml", "[auth]\nenabled = \"maybe\"\n").expect("the configuration file");
+        assert!(load(None).is_err());
     }
 
     #[test]
     fn plugin_switches_default_to_nothing_and_read_comma_separated_strings() {
-        let config = resolve(LegacyEnvSource { host: None, port: None }, None);
-        assert!(config.app.plugins.enabled().is_empty());
-        assert!(config.app.plugins.disabled().is_empty());
-        let value = DefaultsSource.load().expect("defaults load");
+        assert!(PluginSettings::default().enabled().is_empty());
+        assert!(PluginSettings::default().disabled().is_empty());
+        let value = defaults_value();
         let plugins = value.get("plugins").expect("plugins section");
         for key in ["enable", "disable"] {
-            assert!(plugins.get(key).is_some_and(mofa::toml::Value::is_str), "{key} is a typed string");
+            assert!(plugins.get(key).is_some_and(Value::is_str), "{key} is a typed string");
         }
 
-        let mut section = Table::new();
-        section.insert("enable".into(), Value::String(" tasks, notes ,,".into()));
-        section.insert("disable".into(), Value::String("notes".into()));
-        let mut root = Table::new();
-        root.insert("plugins".into(), Value::Table(section));
-        let config = resolve(LegacyEnvSource { host: None, port: None }, Some(Value::Table(root)));
-        assert_eq!(config.app.plugins.enabled().into_iter().collect::<Vec<_>>(), ["notes", "tasks"]);
-        assert_eq!(config.app.plugins.disabled().into_iter().collect::<Vec<_>>(), ["notes"]);
+        let settings = PluginSettings {
+            enable: Some(" tasks, notes ,,".into()),
+            disable: Some("notes".into()),
+        };
+        assert_eq!(settings.enabled().into_iter().collect::<Vec<_>>(), ["notes", "tasks"]);
+        assert_eq!(settings.disabled().into_iter().collect::<Vec<_>>(), ["notes"]);
     }
 
     /// Zero days would mint tokens that have already expired; the accessor
