@@ -808,6 +808,25 @@ async fn an_upload_that_is_refused_leaves_no_staged_binary_behind() {
     server.stop().await;
 }
 
+/// The route carries a body limit of its own, above axum's 2 MiB default: a
+/// 3 MiB upload gets past the transport to the handler, which writes it and
+/// refuses it at the health check. With the default limit the multipart read
+/// would fail first, with "malformed upload".
+#[tokio::test]
+async fn an_upload_past_axums_default_limit_reaches_the_health_check() {
+    let home = tempfile::tempdir().expect("tempdir");
+    let server = Unsupervised::start(home.path()).await;
+
+    let (status, body) = post_upgrade(server.addr, &vec![b'x'; 3 * 1024 * 1024], None).await;
+    assert_eq!(status, 400, "{body}");
+    let message = body["error"].as_str().unwrap_or_default();
+    assert!(message.contains("the uploaded binary"), "the upload reached the handler: {body}");
+    assert!(!message.contains("malformed upload"), "not the transport's refusal: {body}");
+    wait_for_a_clean_store(home.path()).await;
+
+    server.stop().await;
+}
+
 #[tokio::test]
 async fn a_staged_binary_left_by_a_killed_server_is_swept_at_the_next_boot() {
     // The case nothing else covers. An upload guards itself, and a client that

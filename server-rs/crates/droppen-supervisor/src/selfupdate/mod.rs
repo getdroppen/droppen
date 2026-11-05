@@ -567,17 +567,17 @@ impl BinStore {
 impl SelfUpdateState {
     /// Register this subsystem's routes.
     ///
-    /// A one-route sub-router so the body limit is this route's and not every
-    /// route's, exactly as the file uploads do it.
+    /// The upload carries its own body limit, layered onto its method router
+    /// (as the file uploads do it), so every other route keeps axum's 2 MiB
+    /// default.
     pub fn routes<S>(router: GotchaRouter<S>) -> GotchaRouter<S>
     where
         S: Clone + Send + Sync + 'static,
         SelfUpdateState: FromRef<S>,
     {
-        router.merge(
-            GotchaRouter::<S>::default()
-                .post("/api/server/self-upgrade", self_upgrade)
-                .layer(gotcha::axum::extract::DefaultBodyLimit::max((BINARY_LIMIT + MULTIPART_OVERHEAD) as usize)),
+        router.route(
+            "/api/server/self-upgrade",
+            gotcha::post(self_upgrade).layer(gotcha::axum::extract::DefaultBodyLimit::max((BINARY_LIMIT + MULTIPART_OVERHEAD) as usize)),
         )
     }
 }

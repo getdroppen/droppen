@@ -16,11 +16,15 @@ const ADMIN: Standing = Standing {
 /// methods (a path constant resolved in its own file, or else in the one
 /// other file that defines it, as the guard's crate defines
 /// `auth::RETURN_ROUTE` for cloud's handler), and
-/// `upload_route("/api/…", …)` (a POST). The undocumented ones — the
+/// `.route("/api/…", gotcha::post(handler))` (a method router carrying its
+/// own layer, as the body-limited uploads do). The undocumented ones — the
 /// websockets — are only found this way.
 fn registered_in_source() -> std::collections::BTreeSet<(String, String)> {
     let call = regex::Regex::new(r#"\.(get|post|put|patch|delete|head)\(\s*(?:"(/api/[A-Za-z0-9_./{}-]*)"|([A-Z][A-Z0-9_]*))\s*,"#).unwrap();
-    let upload = regex::Regex::new(r#"upload_route\(\s*"(/api/[A-Za-z0-9_./{}-]*)""#).unwrap();
+    let route = regex::Regex::new(
+        r#"\.route\(\s*(?:"(/api/[A-Za-z0-9_./{}-]*)"|([A-Z][A-Z0-9_]*))\s*,\s*(?:gotcha::)?(?:routing::)?(get|post|put|patch|delete|head|options|trace)\s*\("#,
+    )
+    .unwrap();
     let constant = regex::Regex::new(r#"const ([A-Z][A-Z0-9_]*): &str = "(/api/[^"]*)";"#).unwrap();
     let mut files = Vec::new();
     // The server's sources, and those of the crates it is made of that
@@ -67,28 +71,34 @@ fn registered_in_source() -> std::collections::BTreeSet<(String, String)> {
                 .or_insert_with(|| Some(d[2].to_string()));
         }
     }
+    // A literal path, or a route constant resolved from this file or from the
+    // one file that defines it.
+    let path_of = |text: &str, literal: Option<&str>, name: Option<&str>| -> Option<String> {
+        if let Some(literal) = literal {
+            return Some(literal.to_string());
+        }
+        let name = name?;
+        let def = regex::Regex::new(&format!(r#"const {}: &str = "([^"]*)";"#, name)).unwrap();
+        match (def.captures(text), shared.get(name)) {
+            (Some(d), _) => Some(d[1].to_string()),
+            (None, Some(Some(route))) => Some(route.clone()),
+            // Not a route constant (`.get(KEY, …)` on a map).
+            _ => None,
+        }
+    };
     let mut found = std::collections::BTreeSet::new();
     for text in &files {
         for c in call.captures_iter(text) {
-            let route = match (c.get(2), c.get(3)) {
-                (Some(literal), _) => literal.as_str().to_string(),
-                (None, Some(name)) => {
-                    let def = regex::Regex::new(&format!(r#"const {}: &str = "([^"]*)";"#, name.as_str())).unwrap();
-                    match (def.captures(text), shared.get(name.as_str())) {
-                        (Some(d), _) => d[1].to_string(),
-                        (None, Some(Some(route))) => route.clone(),
-                        // Not a route constant (`.get(KEY, …)` on a map).
-                        _ => continue,
-                    }
-                }
-                _ => unreachable!(),
-            };
+            let Some(route) = path_of(text, c.get(2).map(|m| m.as_str()), c.get(3).map(|m| m.as_str())) else { continue };
             if route.starts_with("/api/") {
                 found.insert((c[1].to_ascii_uppercase(), route));
             }
         }
-        for c in upload.captures_iter(text) {
-            found.insert(("POST".to_string(), c[1].to_string()));
+        for c in route.captures_iter(text) {
+            let Some(path) = path_of(text, c.get(1).map(|m| m.as_str()), c.get(2).map(|m| m.as_str())) else { continue };
+            if path.starts_with("/api/") {
+                found.insert((c[3].to_ascii_uppercase(), path));
+            }
         }
     }
     found

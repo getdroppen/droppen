@@ -638,6 +638,23 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
+    /// A raised body limit belongs to the route that raised it. The upload
+    /// routes lift their own limits; a route with none of its own still meets
+    /// axum's 2 MiB default, so a larger body never reaches its handler.
+    #[tokio::test]
+    async fn a_route_without_a_raised_limit_keeps_axums_default() {
+        use tower_service::Service;
+
+        let home = tempfile::tempdir().unwrap();
+        let (_state, mut router) = test_support::guarded_router(home.path(), Some(false)).await;
+        // The api-chat message route reads a raw body and sets no limit.
+        let request = gotcha::axum::http::Request::post("/api/api-chats/x/message")
+            .body(gotcha::axum::body::Body::from(vec![b'x'; 3 * 1024 * 1024]))
+            .unwrap();
+        let response = router.call(request).await.unwrap();
+        assert_eq!(response.status(), gotcha::axum::http::StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
     /// A bridged caller is droppen.app — and the agent's own status mirror,
     /// which reads this route as `cloud:agent-sync` and is what the hub's
     /// offline copy is made from. Neither may learn of a plugin
