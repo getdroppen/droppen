@@ -38,9 +38,9 @@ chrono = "0.4"
 # server and a browser compresses a websocket for it.
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 futures-util = "0.3"
-gotcha = { version = "0.5.0", features = ["openapi"] }
+gotcha = { workspace = true }
 # What gotcha's `Schematic` derive expands to names it.
-gotcha_core = "0.5.0"
+gotcha_core = { workspace = true }
 regex = "1"
 # The BYO-API chat's outbound HTTP (`chats`). `default-features = false` drops
 # `default-tls` (native-tls/OpenSSL) so the binary keeps linking nothing but

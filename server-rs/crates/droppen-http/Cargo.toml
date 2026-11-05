@@ -15,10 +15,10 @@ build = "build.rs"
 droppen-base = { path = "../droppen-base" }
 droppen-instance = { path = "../droppen-instance" }
 futures-util = "0.3"
-gotcha = { version = "0.5.0", features = ["openapi"] }
+gotcha = { workspace = true }
 # `openapi_ext` opens a schema-collection scope (`registry::collect`), which
 # gotcha re-exports the traits for but not the registry.
-gotcha_core = "0.5.0"
+gotcha_core = { workspace = true }
 libc = "0.2"
 # gotcha's own config loader has no defaults source, which makes
 # `APP_SERVER__PORT` unusable — see `config`. Driving mofa directly is the fix;

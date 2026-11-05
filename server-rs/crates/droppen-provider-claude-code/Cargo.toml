@@ -21,9 +21,9 @@ chrono = "0.4"
 # The replay command's own command line (`record::replay::ReplayArgs`).
 clap = { version = "4.5", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
 futures-util = "0.3"
-gotcha = { version = "0.5.0", features = ["openapi"] }
+gotcha = { workspace = true }
 # What gotcha's `Schematic` derive expands to names it.
-gotcha_core = "0.5.0"
+gotcha_core = { workspace = true }
 libc = "0.2"
 memchr = "2"
 regex = "1"

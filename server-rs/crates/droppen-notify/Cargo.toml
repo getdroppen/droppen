@@ -25,9 +25,9 @@ droppen-http = { path = "../droppen-http" }
 droppen-instance = { path = "../droppen-instance" }
 droppen-pty = { path = "../droppen-pty" }
 droppen-sessions = { path = "../droppen-sessions" }
-gotcha = { version = "0.5.0", features = ["openapi"] }
+gotcha = { workspace = true }
 # What gotcha's `Schematic` derive expands to names it.
-gotcha_core = "0.5.0"
+gotcha_core = { workspace = true }
 hkdf = "0.12"
 # The notify token's MAC.
 hmac = "0.12"
