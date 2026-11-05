@@ -48,7 +48,8 @@ pub struct RemoteHandApp {
     /// environment between servers that must not see each other, and by
     /// `agent run`, whose instance is the enrolled one).
     pub instance_override: Option<String>,
-    /// Skip the instance lock. The unit tests' in-process servers set this: one
+    /// Skip the instance lock. The tests' in-process servers set this, unit and
+    /// integration (`tests/pty_shim.rs`) alike: one
     /// must not refuse to run because another — or a real server — owns the
     /// instance, and it must not adopt or sweep anything the owner has.
     pub skip_lock: bool,

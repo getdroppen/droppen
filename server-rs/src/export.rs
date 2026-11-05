@@ -36,6 +36,9 @@ impl ExportOpenapiArgs {
                     tokio::fs::create_dir_all(parent).await.map_err(GotchaError::Io)?;
                 }
                 tokio::fs::write(&path, &spec).await.map_err(GotchaError::Io)?;
+                // Only here: the logger writes to standard output, which is
+                // the spec itself when there is no `--out`.
+                gotcha::default_logger()?;
                 tracing::info!(path = %path.display(), bytes = spec.len(), "wrote openapi spec");
             }
             None => print!("{spec}"),
