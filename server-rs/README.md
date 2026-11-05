@@ -319,8 +319,10 @@ replay 只做一件事：把 `transcript` / `sidecar` 事件按原始时间轴�
   （`api/mod.rs`、`crates/droppen-drive/src/feed/global.rs`、`terminals/routes.rs`）都不标注、不进文档，与
   TypeScript 服务端的选择一致。SSE 同理：`crates/droppen-drive/src/chats/mod.rs` 的 `POST
   /api/api-chats/{id}/message` 也留在文档外。
-- 元组 `Path` 抽取器只对一段和两段有文档实现（`gotcha_core-0.4.1/src/parameter.rs:43,60`）
-  → 三段的路由（`crates/droppen-drive/src/routes.rs`）改用结构体 `AgentPath`。
+- 元组 `Path` 抽取器到 0.5 已覆盖十六段（`gotcha_core-0.5.0/src/parameter.rs:257-272`），
+  但元组元素只能用类型自己的 doc 当参数描述，字段的 doc 进不了文档；三段以上路径的
+  参数描述写在字段上（`crates/droppen-sessions/src/sidecars.rs` 的 `AgentPath`、
+  `crates/droppen-drive/src/routes.rs` 的 `QueuePath` 等）→ 仍用结构体。
 
 ### 路由组装
 
