@@ -35,10 +35,11 @@ pub trait Subagents: Send + Sync {
 
 /// Path of `GET /api/sessions/{source}/{id}/agents/{agentId}`.
 ///
-/// A struct rather than a tuple because gotcha only documents one- and
-/// two-segment tuple paths (`gotcha_core-0.4.1/src/parameter.rs:43,60`); the
-/// generic `Path<T>` impl reads a struct's fields instead, which is the only
-/// way to document three.
+/// A struct rather than a tuple even though gotcha documents tuple paths up to
+/// sixteen segments (`gotcha_core-0.5.0/src/parameter.rs:257-272`): a tuple
+/// element contributes its type's doc as the parameter description, while the
+/// descriptions in the document are these field docs. The generic `Path<T>`
+/// impl reads them off the fields.
 #[derive(Debug, Clone, Deserialize, Serialize, Schematic)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentPath {

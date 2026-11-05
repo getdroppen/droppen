@@ -255,9 +255,8 @@ pub struct SessionAgents {
 
 /// Path of the two queue routes.
 ///
-/// A struct for the same reason [`AgentPath`] is one: gotcha documents one- and
-/// two-segment tuple paths, and the generic `Path<T>` impl is the only way to
-/// document three.
+/// A struct for [`AgentPath`]'s reason: a tuple would lose the field docs that
+/// are this route's parameter descriptions.
 #[derive(Debug, Clone, Deserialize, Serialize, Schematic)]
 #[serde(rename_all = "camelCase")]
 pub struct QueuePath {
@@ -271,9 +270,8 @@ pub struct QueuePath {
 
 /// Path of the stop-one-background-task route.
 ///
-/// A struct for the same reason [`QueuePath`] is one: gotcha documents one- and
-/// two-segment tuple paths, and the generic `Path<T>` impl is the only way to
-/// document three.
+/// A struct for [`AgentPath`]'s reason: a tuple would lose the field docs that
+/// are this route's parameter descriptions.
 #[derive(Debug, Clone, Deserialize, Serialize, Schematic)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskPath {
@@ -290,9 +288,8 @@ pub struct TaskPath {
 
 /// Path of the two question routes.
 ///
-/// A struct for the same reason [`QueuePath`] is one: gotcha documents one- and
-/// two-segment tuple paths, and the generic `Path<T>` impl is the only way to
-/// document three.
+/// A struct for [`AgentPath`]'s reason: a tuple would lose the field docs that
+/// are this route's parameter descriptions.
 #[derive(Debug, Clone, Deserialize, Serialize, Schematic)]
 #[serde(rename_all = "camelCase")]
 pub struct QuestionPath {
