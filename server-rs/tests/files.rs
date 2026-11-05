@@ -317,6 +317,26 @@ async fn a_multipart_body_without_a_file_field_fails_with_the_routes_fallback() 
     server.stop().await;
 }
 
+/// A multipart body gotcha cannot parse now answers in the API's error shape.
+///
+/// gotcha 0.5 made `Multipart` its own extractor: a boundary-less
+/// `multipart/form-data` request used to be axum's `400 text/plain`, and is
+/// now `400 application/json {"error": …}` — the 400 the OpenAPI contract
+/// documents (`Error`), and the same shape every other refusal uses.
+#[tokio::test]
+async fn a_multipart_body_without_a_boundary_is_the_json_400() {
+    let server = TestServer::start().await;
+
+    let (status, head, body) = server
+        .request_full("POST", "/api/uploads", &[("Content-Type", "multipart/form-data")], b"")
+        .await;
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(common::header(&head, "content-type").as_deref(), Some("application/json"), "{head}");
+    assert!(!error_of(&body).is_empty(), "the body is the API's Error shape: {body}");
+
+    server.stop().await;
+}
+
 #[tokio::test]
 async fn the_sweep_drops_stale_upload_directories_and_keeps_fresh_ones() {
     let server = TestServer::start().await;
