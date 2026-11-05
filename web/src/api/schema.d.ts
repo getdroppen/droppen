@@ -3809,6 +3809,27 @@ export interface components {
             /** @description Human-readable failure text. */
             error: string;
         };
+        /**
+         * @description The JSON body of every error response Gotcha generates.
+         *
+         *     It serializes as `{"error": "..."}`, plus a `fields` map for failures that report more than
+         *     one problem: `Valid` sends `{"error": "validation failed", "fields": {"name": ["is
+         *     required"]}}`. `fields` is omitted when there is nothing to report, so every other provider's
+         *     body is unchanged. The type is public so it can be declared as the body of an OpenAPI response
+         *     (`body = "ErrorBody"` in `#[api(errors(...))]` / `#[api(responses(...))]`), and so applications
+         *     can reuse the same wire shape for their own errors.
+         */
+        ErrorBody: {
+            /** @description Human-readable description of the failure. */
+            error: string;
+            /**
+             * @description Per-field failure messages keyed by the field's flattened path (for example `address.city`
+             *     or `items[0].name`). Omitted when `None`.
+             */
+            fields?: {
+                [key: string]: string[];
+            };
+        };
         /** @description A file the item points at, offered to the UI as a download chip. */
         FileRef: {
             /** @description Base name, shown on the chip. */
@@ -6245,15 +6266,15 @@ export interface components {
         /** @description A single normalized transcript entry, as the web transcript renderer expects it. */
         TranscriptItem: {
             /** @description Subagent id on the Task tool_use that spawned it (claude only). */
-            agent?: string | null;
+            agent?: string;
             /** @description Background work: a `run_in_background` launch, or its completion notice. */
-            background?: boolean | null;
+            background?: boolean;
             /** @description Expanded content for tool items (command source, diff, full output). */
             detail: string | null;
             /** @description Downloadable files: non-image attachments, or files the agent produced. */
-            files?: components["schemas"]["FileRef"][] | null;
+            files?: components["schemas"]["FileRef"][];
             /** @description Attached image paths on a user message (rendered as thumbnails). */
-            images?: string[] | null;
+            images?: string[];
             /** @description Whether the item represents a failure. */
             isError: boolean;
             /** @description What kind of content it carries. */
@@ -6275,11 +6296,11 @@ export interface components {
              *     never on a `<synthetic>` message, where the CLI rather than a model wrote
              *     the words.
              */
-            model?: string | null;
+            model?: string;
             /** @description Structured options for an `AskUserQuestion` that is still unanswered. */
             question: components["schemas"]["QuestionEntry"][] | null;
             /** @description The `tool_use` id this result answers, set on `tool_result` items. */
-            resultOf?: string | null;
+            resultOf?: string;
             /** @description Who produced the item. */
             role: components["schemas"]["Role"];
             /**
@@ -6289,7 +6310,7 @@ export interface components {
              *     top level of the transcript entry, not inside the result block, so with
              *     several results in one entry there is no way to say which it describes.
              */
-            structuredPatch?: components["schemas"]["PatchHunk"][] | null;
+            structuredPatch?: components["schemas"]["PatchHunk"][];
             /**
              * @description The CLI wrote this message itself, in the model's voice.
              *
@@ -6298,9 +6319,9 @@ export interface components {
              *     between the model saying something and the CLI apologising on its behalf,
              *     and nothing else in the entry distinguishes the two.
              */
-            synthetic?: boolean | null;
+            synthetic?: boolean;
             /** @description The subagent id the notice is about, when the CLI named one. */
-            taskAgentId?: string | null;
+            taskAgentId?: string;
             /**
              * @description The CLI's `task_id` a background-task notification is about.
              *
@@ -6309,12 +6330,12 @@ export interface components {
              *     started it: the notification arrives as a `user` entry minutes later and
              *     anywhere in the file, so without the ids it is a floating sentence.
              */
-            taskId?: string | null;
+            taskId?: string;
             /**
              * @description How the task ended: `completed`, `failed`, `stopped`, or whatever the
              *     CLI says next. Passed through rather than parsed into an enum.
              */
-            taskStatus?: string | null;
+            taskStatus?: string;
             /**
              * @description The `tool_use` id of the call that launched the task the notice is about.
              *
@@ -6323,7 +6344,7 @@ export interface components {
              *     found for the previous session" shape carries no `tool-use-id` — which
              *     is why it is optional rather than the identity of the item.
              */
-            taskToolUseId?: string | null;
+            taskToolUseId?: string;
             /** @description Body for text/thinking items; a one-line summary for tool items. */
             text: string;
             /** @description ISO-8601 timestamp from the transcript entry. */
@@ -6338,7 +6359,7 @@ export interface components {
              *     dropping one would move every later index and invalidate the paging
              *     window and signature the client already holds.
              */
-            toolUseId?: string | null;
+            toolUseId?: string;
             /** @description Whether the body hit one of the emergency limits. */
             truncated: boolean;
         };
@@ -6708,7 +6729,7 @@ export interface operations {
         parameters: {
             query?: {
                 /** @description Which CLI; claude when absent. */
-                provider?: components["schemas"]["AccountProvider"];
+                provider?: components["schemas"]["AccountProvider"] | null;
                 /**
                  * @description The model the start will ask for. A claude rest scoped to one model
                  *     family stands in the way of that family's sessions only, so the answer
@@ -9736,7 +9757,7 @@ export interface operations {
         parameters: {
             query?: {
                 /** @description Restrict to one CLI. */
-                source?: components["schemas"]["Source"];
+                source?: components["schemas"]["Source"] | null;
                 /** @description Case-insensitive substring match over title and cwd. */
                 q?: string | null;
                 /** @description How many rows to return, from 1 to 1000; defaults to 200. */
@@ -9750,7 +9771,7 @@ export interface operations {
                  *     the old behaviour asks for `all` — and gets a `scope` on every row telling
                  *     it which it is looking at.
                  */
-                scope?: components["schemas"]["ScopeFilter"];
+                scope?: components["schemas"]["ScopeFilter"] | null;
             };
             header?: never;
             path?: never;
@@ -9825,7 +9846,7 @@ export interface operations {
         parameters: {
             query?: {
                 /** @description Restrict to one CLI's sessions. */
-                source?: components["schemas"]["Source"];
+                source?: components["schemas"]["Source"] | null;
             };
             header?: never;
             path?: never;
@@ -10781,7 +10802,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description default return */
+            /** @description The answer to every route that only has to say "done". */
             200: {
                 headers: {
                     [name: string]: unknown;

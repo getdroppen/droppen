@@ -110,9 +110,9 @@ droppen-notify = { path = "crates/droppen-notify" }
 # The link to Droppen: the link routes, the remote-view gate, link control and
 # the aggregator gateway.
 droppen-cloud = { path = "crates/droppen-cloud" }
-gotcha = { version = "0.4.1", features = ["openapi"] }
+gotcha = { version = "0.5.0", features = ["openapi"] }
 # What gotcha's `Schematic` derive expands to names it.
-gotcha_core = "0.4.1"
+gotcha_core = "0.5.0"
 # Named by no code here (the routes reach axum through gotcha), but the one
 # dependency that keeps axum's default features in the binary: gotcha takes
 # axum without them, so this is where `tracing` (an extractor's rejection is

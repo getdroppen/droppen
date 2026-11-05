@@ -384,3 +384,35 @@ async fn a_limit_outside_the_documented_range_is_a_400() {
 
     probe.stop().await;
 }
+
+/// Every `$ref` stands alone or with keywords generators keep. A `nullable`
+/// sibling is ignored by them, so `openapi_ext` must never leave one behind —
+/// no matter how deep an `Option<X>` sits, which is why folding is confined to
+/// the component properties `hoist_nullable_refs` covers.
+#[test]
+fn no_schema_object_carries_nullable_beside_a_ref() {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../openapi/openapi.json");
+    let text = std::fs::read_to_string(path).expect("read openapi/openapi.json");
+    let document: Value = serde_json::from_str(&text).expect("openapi/openapi.json is JSON");
+
+    fn walk(value: &Value, at: &str) {
+        match value {
+            Value::Object(object) => {
+                assert!(
+                    !(object.contains_key("$ref") && object.contains_key("nullable")),
+                    "schema object at `{at}` has both `$ref` and `nullable`"
+                );
+                for (key, child) in object {
+                    walk(child, &format!("{at}/{key}"));
+                }
+            }
+            Value::Array(items) => {
+                for (index, item) in items.iter().enumerate() {
+                    walk(item, &format!("{at}/{index}"));
+                }
+            }
+            _ => {}
+        }
+    }
+    walk(&document, "");
+}

@@ -345,11 +345,8 @@ impl Schematic for AnswerValue {
 
     fn generate_schema() -> gotcha_core::EnhancedSchema {
         let mut schema = gotcha::oas::Schema {
-            _type: None,
-            format: None,
-            nullable: None,
             description: Some("One label or free text, or every label chosen for a multi-select question.".to_string()),
-            extras: Default::default(),
+            ..Default::default()
         };
         schema.extras.insert(
             "oneOf".to_string(),

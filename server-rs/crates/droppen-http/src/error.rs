@@ -7,7 +7,9 @@
 
 use gotcha::axum::http::StatusCode;
 use gotcha::axum::response::{IntoResponse, Response};
-use gotcha::{Json, Schematic};
+use gotcha::oas::Responses;
+use gotcha::response::default_response;
+use gotcha::{Json, Responsible, Schematic};
 use gotcha_core::EnhancedSchema;
 use serde::{Deserialize, Serialize};
 
@@ -123,6 +125,14 @@ impl ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         (self.status, Json(self.body)).into_response()
+    }
+}
+
+/// The error side of a `Result` documents the same `default` response it did
+/// before gotcha 0.5 stopped deriving `Responsible` from `Schematic`.
+impl Responsible for ApiError {
+    fn response() -> Responses {
+        default_response::<Error>("application/json", <Error as Schematic>::doc().unwrap_or_else(|| "error response".to_string()))
     }
 }
 

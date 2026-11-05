@@ -35,7 +35,7 @@ where
     async fn from_request(request: Request, state: &S) -> Result<Self, Self::Rejection> {
         match Json::<T>::from_request(request, state).await {
             Ok(Json(value)) => Ok(ApiJson(value)),
-            Err(rejection) => Err(ApiError::bad_request(body_text(&rejection))),
+            Err(rejected) => Err(ApiError::bad_request(body_text(rejected.rejection()))),
         }
     }
 }
@@ -62,7 +62,7 @@ where
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         match Path::<T>::from_request_parts(parts, state).await {
             Ok(Path(value)) => Ok(ApiPath(value)),
-            Err(rejection) => Err(ApiError::bad_request(body_text(&rejection))),
+            Err(rejected) => Err(ApiError::bad_request(body_text(rejected.rejection()))),
         }
     }
 }
@@ -89,7 +89,7 @@ where
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         match Query::<T>::from_request_parts(parts, state).await {
             Ok(Query(value)) => Ok(ApiQuery(value)),
-            Err(rejection) => Err(ApiError::bad_request(body_text(&rejection))),
+            Err(rejected) => Err(ApiError::bad_request(body_text(rejected.rejection()))),
         }
     }
 }

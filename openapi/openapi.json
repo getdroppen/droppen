@@ -803,28 +803,52 @@
         "nullable": true,
         "properties": {
           "indexAsOfMs": {
-            "description": "When its agent last listed them (ms).",
-            "nullable": true,
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When its agent last listed them (ms)."
           },
           "indexRows": {
-            "description": "Sessions in its index, as copied (`null`: no index yet).",
-            "nullable": true,
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Sessions in its index, as copied (`null`: no index yet)."
           },
           "online": {
-            "description": "Whether it is online now (`null`: not known).",
-            "nullable": true,
-            "type": "boolean"
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Whether it is online now (`null`: not known)."
           },
           "sessions": {
             "description": "Sessions copied here (its newest).",
             "type": "integer"
           },
           "statusAtMs": {
-            "description": "When its agent last signed its status (ms).",
-            "nullable": true,
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When its agent last signed its status (ms)."
           }
         },
         "required": [
@@ -851,14 +875,26 @@
             "type": "string"
           },
           "latestEpoch": {
-            "description": "Its newest committed machine-key epoch.",
-            "nullable": true,
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Its newest committed machine-key epoch."
           },
           "policy": {
-            "description": "Whether its agent declared `policy/1` (refuses this computer its admin\nroutes); `null` until the hub said.",
-            "nullable": true,
-            "type": "boolean"
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Whether its agent declared `policy/1` (refuses this computer its admin\nroutes); `null` until the hub said."
           }
         },
         "required": [
@@ -948,12 +984,12 @@
           }
         },
         "required": [
-          "id",
-          "title",
-          "model",
           "createdAt",
-          "updatedAt",
-          "messages"
+          "id",
+          "messages",
+          "model",
+          "title",
+          "updatedAt"
         ],
         "type": "object"
       },
@@ -974,9 +1010,9 @@
           }
         },
         "required": [
-          "role",
+          "at",
           "content",
-          "at"
+          "role"
         ],
         "type": "object"
       },
@@ -1298,9 +1334,15 @@
             "description": "`\"start\"`: `accountId` is the account `GET /api/accounts/start` named\nfor a pair no model-less start reaches (`placed: false`), not a pick —\nlogged as the start rule's choice and checked again at the spawn."
           },
           "accountId": {
-            "description": "Run a CLI chat under a stored account of its CLI; `null` means the local\nlogin. Absent follows the CLI's default — and, with none, skips a local\nlogin known to be signed out (see `accounts::rotation::start_for`).",
-            "nullable": true,
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Run a CLI chat under a stored account of its CLI; `null` means the local\nlogin. Absent follows the CLI's default — and, with none, skips a local\nlogin known to be signed out (see `accounts::rotation::start_for`)."
           },
           "backend": {
             "$ref": "#/components/schemas/ChatKind",
@@ -1556,9 +1598,15 @@
         "nullable": true,
         "properties": {
           "email": {
-            "description": "The account's e-mail address, as the droppen.app popup said it (display only).",
-            "nullable": true,
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The account's e-mail address, as the droppen.app popup said it (display only)."
           },
           "fingerprint": {
             "description": "The account key's fingerprint, as `agent enroll` shows it.",
@@ -1579,18 +1627,30 @@
         "description": "The aggregator: this computer controlling the account's other devices\nwith its one identity (local-aggregator §5, S1-4).",
         "properties": {
           "askedMs": {
-            "description": "When it last asked the account's admins for keys it lacks.",
-            "nullable": true,
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When it last asked the account's admins for keys it lacks."
           },
           "enabled": {
             "description": "Whether the owner wants it.",
             "type": "boolean"
           },
           "error": {
-            "description": "Why its last round failed.",
-            "nullable": true,
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why its last round failed."
           },
           "hosts": {
             "description": "The devices that accept this computer's control, and the keys held of each.",
@@ -1625,9 +1685,15 @@
             "type": "integer"
           },
           "handoffUrl": {
-            "description": "The droppen.app address that answers it through the browser (§4.9),\nfor the caller who opened it only (it carries the attempt's state).",
-            "nullable": true,
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The droppen.app address that answers it through the browser (§4.9),\nfor the caller who opened it only (it carries the attempt's state)."
           },
           "id": {
             "description": "Its id.",
@@ -1658,19 +1724,37 @@
             "type": "string"
           },
           "error": {
-            "description": "Why it failed: the error code (`hub_unreachable`, `refused`, …).",
-            "nullable": true,
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why it failed: the error code (`hub_unreachable`, `refused`, …)."
           },
           "machine": {
-            "description": "The machine id the hub assigned.",
-            "nullable": true,
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The machine id the hub assigned."
           },
           "message": {
-            "description": "Why it failed, in words.",
-            "nullable": true,
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why it failed, in words."
           },
           "outcome": {
             "description": "`receiving` (taken: enrolling now), `handed_over` (the hub took the\nenrollment: a device of the account completes it) or `failed`.",
@@ -1696,9 +1780,15 @@
             "type": "array"
           },
           "chainSeq": {
-            "description": "The verified device chain's seq.",
-            "nullable": true,
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The verified device chain's seq."
           },
           "changes": {
             "description": "Account changes this machine saw (newest last).",
@@ -1712,29 +1802,59 @@
             "type": "boolean"
           },
           "devices": {
-            "description": "Current devices and machines in the account.",
-            "nullable": true,
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Current devices and machines in the account."
           },
           "error": {
-            "description": "Why the connection last failed.",
-            "nullable": true,
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why the connection last failed."
           },
           "machines": {
-            "description": "Current machines in the account.",
-            "nullable": true,
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Current machines in the account."
           },
           "refused": {
-            "description": "The hub refuses this computer's sign-in: retried, and never taken as\na removal (only the verified chain removes it).",
-            "nullable": true,
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The hub refuses this computer's sign-in: retried, and never taken as\na removal (only the verified chain removes it)."
           },
           "removedMs": {
-            "description": "When this machine learnt it was removed.",
-            "nullable": true,
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When this machine learnt it was removed."
           },
           "rotation": {
             "$ref": "#/components/schemas/CloudRotation",
@@ -1745,9 +1865,15 @@
             "type": "boolean"
           },
           "sinceMs": {
-            "description": "Since when (ms) it has been connected, or not.",
-            "nullable": true,
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Since when (ms) it has been connected, or not."
           }
         },
         "required": [
@@ -1763,18 +1889,30 @@
         "description": "This computer as a machine of the account.",
         "properties": {
           "fingerprint": {
-            "description": "Its keys' fingerprint: 8 groups of 4 hex digits, the same string the\ndroppen.app consent page shows.",
-            "nullable": true,
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Its keys' fingerprint: 8 groups of 4 hex digits, the same string the\ndroppen.app consent page shows."
           },
           "hostname": {
             "description": "The host name it reports.",
             "type": "string"
           },
           "id": {
-            "description": "Its id in the account (`m-…`), once the hub assigned one.",
-            "nullable": true,
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Its id in the account (`m-…`), once the hub assigned one."
           }
         },
         "required": [
@@ -1786,29 +1924,59 @@
         "description": "Renewing this computer's identity key (`docs/host-identity-rotation.md`\n§3.5, §3.7): what the local settings show.",
         "properties": {
           "code": {
-            "description": "For a renewal confirmed on this computer: the code to type on the\nadmin device (`XXXX-XXXX`), for ten minutes.",
-            "nullable": true,
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "For a renewal confirmed on this computer: the code to type on the\nadmin device (`XXXX-XXXX`), for ten minutes."
           },
           "codeExpiresMs": {
-            "description": "Until when (ms) the code is shown.",
-            "nullable": true,
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Until when (ms) the code is shown."
           },
           "previousFingerprint": {
-            "description": "Its fingerprint before (8 groups of 4 hex digits).",
-            "nullable": true,
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Its fingerprint before (8 groups of 4 hex digits)."
           },
           "reason": {
-            "description": "Why: `renewed_elsewhere` for `foreign`, `rotated` for `refused`,\n`staged_key_unreadable` for `unreadable`.",
-            "nullable": true,
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why: `renewed_elsewhere` for `foreign`, `rotated` for `refused`,\n`staged_key_unreadable` for `unreadable`."
           },
           "renewedMs": {
-            "description": "When (ms) it took the renewed key.",
-            "nullable": true,
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When (ms) it took the renewed key."
           },
           "state": {
             "description": "`idle`; `staged` (a new key waits for the renewal to be written);\n`renewed` (it took a renewed key within the last day); `refused` (the\nhub refuses its key as renewed but showed no renewal: it retries,\nnothing else changes); `foreign` (its identity key was replaced\nelsewhere — its own chain gives its id keys it does not hold, for\nexample after restoring a backup made before a renewal: the link\nstopped; `POST /api/cloud/re-enroll-fresh` adds it again under a new\nidentity); `unreadable` (renewed, and a staged key it may have been\nrenewed to does not read: the link stopped until the file beside its\nkey is put right — never taken for `foreign`).",
@@ -1875,9 +2043,15 @@
             "description": "This computer as a machine."
           },
           "owner": {
-            "description": "The local account that signed this computer in.",
-            "nullable": true,
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The local account that signed this computer in."
           },
           "remoteAccess": {
             "description": "Which local accounts may see other machines.",
@@ -2136,6 +2310,29 @@
         ],
         "type": "object"
       },
+      "ErrorBody": {
+        "description": "The JSON body of every error response Gotcha generates.\n\nIt serializes as `{\"error\": \"...\"}`, plus a `fields` map for failures that report more than\none problem: `Valid` sends `{\"error\": \"validation failed\", \"fields\": {\"name\": [\"is\nrequired\"]}}`. `fields` is omitted when there is nothing to report, so every other provider's\nbody is unchanged. The type is public so it can be declared as the body of an OpenAPI response\n(`body = \"ErrorBody\"` in `#[api(errors(...))]` / `#[api(responses(...))]`), and so applications\ncan reuse the same wire shape for their own errors.",
+        "properties": {
+          "error": {
+            "description": "Human-readable description of the failure.",
+            "type": "string"
+          },
+          "fields": {
+            "additionalProperties": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "description": "Per-field failure messages keyed by the field's flattened path (for example `address.city`\nor `items[0].name`). Omitted when `None`.",
+            "type": "object"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "type": "object"
+      },
       "FileRef": {
         "description": "A file the item points at, offered to the UI as a download chip.",
         "properties": {
@@ -2178,9 +2375,15 @@
             "type": "string"
           },
           "email": {
-            "description": "The account's e-mail address, as the popup said it (display only).",
-            "nullable": true,
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The account's e-mail address, as the popup said it (display only)."
           },
           "nonce": {
             "description": "Its nonce.",
@@ -2240,8 +2443,8 @@
           }
         },
         "required": [
-          "cwd",
           "agent",
+          "cwd",
           "prompt"
         ],
         "type": "object"
@@ -2569,9 +2772,15 @@
             "type": "integer"
           },
           "handoffUrl": {
-            "description": "The droppen.app address that answers this attempt through the browser\ninstead of the popup (§4.9: the desktop app's window, a blocked popup):\n`<hub>/link#droppen-link=…`. It carries the attempt's state in its\nfragment — never in a query, never logged. `null` when the request\nsaid no `Origin` to come back to.",
-            "nullable": true,
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The droppen.app address that answers this attempt through the browser\ninstead of the popup (§4.9: the desktop app's window, a blocked popup):\n`<hub>/link#droppen-link=…`. It carries the attempt's state in its\nfragment — never in a query, never logged. `null` when the request\nsaid no `Origin` to come back to."
           },
           "hubWeb": {
             "description": "The popup's origin, where the browser signs in: the hub's app origin\n(`https://my.droppen.app`), else its own (`https://droppen.app`).",
@@ -2650,14 +2859,26 @@
         "description": "`POST /api/cloud/link`.",
         "properties": {
           "aggregate": {
-            "description": "Also run this computer as an aggregator (default `true`).",
-            "nullable": true,
-            "type": "boolean"
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Also run this computer as an aggregator (default `true`)."
           },
           "hub": {
-            "description": "Another hub than the default (advanced).",
-            "nullable": true,
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Another hub than the default (advanced)."
           }
         },
         "required": [],
@@ -2975,9 +3196,15 @@
             "description": "`\"start\"`: `accountId` is the account `GET /api/accounts/start` named\nfor a pair no model-less start reaches (`placed: false`), not a pick —\nlogged as the start rule's choice and checked again at the spawn."
           },
           "accountId": {
-            "description": "Run under a stored Claude account; `null` means the local login.",
-            "nullable": true,
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Run under a stored Claude account; `null` means the local login."
           },
           "acpAgent": {
             "description": "The configured ACP agent to start, by id (`GET /api/acp/agents`):\nrequired when `source` is `acp`, refused otherwise.",
@@ -4644,9 +4871,15 @@
         "description": "`POST /api/sessions/{source}/{id}/message` body.",
         "properties": {
           "accountId": {
-            "description": "Run under a stored Claude account; `null` means the local login.",
-            "nullable": true,
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Run under a stored Claude account; `null` means the local login."
           },
           "clientMessageId": {
             "description": "A UUID the client minted when the message was created, sent unchanged\nwith every attempt. A repeat is answered with the first attempt's answer\n(`duplicate: true`) and enqueues nothing; see `GET …/receipts`.",
@@ -4955,9 +5188,15 @@
             "description": "Model/effort the session last actually ran with."
           },
           "contextTokens": {
-            "description": "How much of the context window the last request occupied; `null` until\nthe session has made one.",
-            "nullable": true,
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How much of the context window the last request occupied; `null` until\nthe session has made one."
           },
           "contextWindow": {
             "description": "The window those tokens are measured against — the size the CLI reported\nitself where it does, and otherwise inferred from the model id.",
@@ -5287,9 +5526,15 @@
             "type": "string"
           },
           "usedPercent": {
-            "description": "For a move `ahead` of a limit, how much of the near window was gone,\n0–100; `null` otherwise.",
-            "nullable": true,
-            "type": "number"
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "For a move `ahead` of a limit, how much of the near window was gone,\n0–100; `null` otherwise."
           }
         },
         "required": [
@@ -5357,14 +5602,26 @@
         "description": "One row in the session list.",
         "properties": {
           "accountId": {
-            "description": "Account the session is pinned to, for managed-root sessions.",
-            "nullable": true,
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Account the session is pinned to, for managed-root sessions."
           },
           "acpAgent": {
-            "description": "The id of the ACP agent an acp session runs on; null for claude and\ncodex. It may name an agent that has since been removed, whose sessions\nare listed and read but not continued.",
-            "nullable": true,
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The id of the ACP agent an acp session runs on; null for claude and\ncodex. It may name an agent that has since been removed, whose sessions\nare listed and read but not continued."
           },
           "activity": {
             "$ref": "#/components/schemas/SessionActivity",
@@ -5729,16 +5986,16 @@
           }
         },
         "required": [
+          "autoOpen",
+          "dismissed",
+          "finishedAt",
+          "first",
           "flow",
           "startedAt",
-          "finishedAt",
-          "dismissed",
-          "steps",
           "stepFlow",
+          "steps",
           "where",
-          "first",
-          "wrap",
-          "autoOpen"
+          "wrap"
         ],
         "type": "object"
       },
@@ -5999,9 +6256,9 @@
           }
         },
         "required": [
+          "first",
           "tools",
           "where",
-          "first",
           "wrap"
         ],
         "type": "object"
@@ -6036,9 +6293,9 @@
           }
         },
         "required": [
+          "first",
           "tools",
           "where",
-          "first",
           "wrap"
         ],
         "type": "object"
@@ -6445,12 +6702,10 @@
         "properties": {
           "agent": {
             "description": "Subagent id on the Task tool_use that spawned it (claude only).",
-            "nullable": true,
             "type": "string"
           },
           "background": {
             "description": "Background work: a `run_in_background` launch, or its completion notice.",
-            "nullable": true,
             "type": "boolean"
           },
           "detail": {
@@ -6463,7 +6718,6 @@
             "items": {
               "$ref": "#/components/schemas/FileRef"
             },
-            "nullable": true,
             "type": "array"
           },
           "images": {
@@ -6471,7 +6725,6 @@
             "items": {
               "type": "string"
             },
-            "nullable": true,
             "type": "array"
           },
           "isError": {
@@ -6489,7 +6742,6 @@
           },
           "model": {
             "description": "The model that wrote the item, when the transcript names one.\n\nRead per item rather than per session, because both CLIs downgrade\nsilently — a rate-limit fallback, a `turn_context` that suddenly names\nsomething smaller — and the session's own `cliChoice` then describes only\nits last turn. Claude supplies `message.model` on every assistant entry;\nCodex supplies it once per turn in a `turn_context`, which is why an item\ntakes the newest one above it.\n\nSet only on the agent's own items (text, thinking, tool calls) — never on\na user turn, a tool result, or one of remote-hand's own system lines — and\nnever on a `<synthetic>` message, where the CLI rather than a model wrote\nthe words.",
-            "nullable": true,
             "type": "string"
           },
           "question": {
@@ -6502,7 +6754,6 @@
           },
           "resultOf": {
             "description": "The `tool_use` id this result answers, set on `tool_result` items.",
-            "nullable": true,
             "type": "string"
           },
           "role": {
@@ -6514,32 +6765,26 @@
             "items": {
               "$ref": "#/components/schemas/PatchHunk"
             },
-            "nullable": true,
             "type": "array"
           },
           "synthetic": {
             "description": "The CLI wrote this message itself, in the model's voice.\n\n`message.model` was `<synthetic>`: a rate-limit wall, a \"Not logged in\",\nan API error the CLI phrased as an assistant turn. It is the difference\nbetween the model saying something and the CLI apologising on its behalf,\nand nothing else in the entry distinguishes the two.",
-            "nullable": true,
             "type": "boolean"
           },
           "taskAgentId": {
             "description": "The subagent id the notice is about, when the CLI named one.",
-            "nullable": true,
             "type": "string"
           },
           "taskId": {
             "description": "The CLI's `task_id` a background-task notification is about.\n\nSet only on the notification item. Together with the three fields below\nit is what lets a client put \"this finished\" back beside the call that\nstarted it: the notification arrives as a `user` entry minutes later and\nanywhere in the file, so without the ids it is a floating sentence.",
-            "nullable": true,
             "type": "string"
           },
           "taskStatus": {
             "description": "How the task ended: `completed`, `failed`, `stopped`, or whatever the\nCLI says next. Passed through rather than parsed into an enum.",
-            "nullable": true,
             "type": "string"
           },
           "taskToolUseId": {
             "description": "The `tool_use` id of the call that launched the task the notice is about.\n\nThe join key to the launching item's `toolUseId`. Absent on a\nnotification the CLI wrote without one — the \"no completion record was\nfound for the previous session\" shape carries no `tool-use-id` — which\nis why it is optional rather than the identity of the item.",
-            "nullable": true,
             "type": "string"
           },
           "text": {
@@ -6558,7 +6803,6 @@
           },
           "toolUseId": {
             "description": "A tool call's own id, set on `tool_use` items (claude only).\n\nPaired with `resultOf` on the matching result. Both items stay in the\nstream — a renderer that merges them visually does so by id, because\ndropping one would move every later index and invalidate the paging\nwindow and signature the client already holds.",
-            "nullable": true,
             "type": "string"
           },
           "truncated": {
@@ -6592,9 +6836,15 @@
         "description": "`POST /api/cloud/unlink`.",
         "properties": {
           "deleteCopies": {
-            "description": "Also delete this machine's encrypted copy on the hub.",
-            "nullable": true,
-            "type": "boolean"
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Also delete this machine's encrypted copy on the hub."
           }
         },
         "required": [],
@@ -6833,7 +7083,7 @@
     "title": "remote-hand API",
     "version": "0.1.0"
   },
-  "openapi": "3.0.0",
+  "openapi": "3.2.0",
   "paths": {
     "/api/accounts": {
       "get": {
@@ -6979,9 +7229,15 @@
             "name": "limit",
             "required": false,
             "schema": {
-              "description": "How many events, newest first; 100 for the whole log and 50 for one\naccount when absent, never more than 500.",
-              "nullable": true,
-              "type": "integer"
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "How many events, newest first; 100 for the whole log and 50 for one\naccount when absent, never more than 500."
             }
           }
         ],
@@ -7177,9 +7433,15 @@
             "name": "provider",
             "required": false,
             "schema": {
-              "$ref": "#/components/schemas/AccountProvider",
-              "description": "Which CLI; claude when absent.",
-              "nullable": true
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/AccountProvider"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Which CLI; claude when absent."
             }
           },
           {
@@ -7188,9 +7450,15 @@
             "name": "model",
             "required": false,
             "schema": {
-              "description": "The model the start will ask for. A claude rest scoped to one model\nfamily stands in the way of that family's sessions only, so the answer\ncan depend on it; absent is a start that names no model at all (the\nCLI's own default, as a scheduled task with none set).",
-              "nullable": true,
-              "type": "string"
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The model the start will ask for. A claude rest scoped to one model\nfamily stands in the way of that family's sessions only, so the answer\ncan depend on it; absent is a start that names no model at all (the\nCLI's own default, as a scheduled task with none set)."
             }
           },
           {
@@ -7199,9 +7467,15 @@
             "name": "chooseModel",
             "required": false,
             "schema": {
-              "description": "The start will ask for whichever model this answer names (a composer\nwith nothing stored): choose the login and its model together, so that\nsending that model lands on that login. Ignored with `model`.",
-              "nullable": true,
-              "type": "boolean"
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The start will ask for whichever model this answer names (a composer\nwith nothing stored): choose the login and its model together, so that\nsending that model lands on that login. Ignored with `model`."
             }
           }
         ],
@@ -7411,9 +7685,15 @@
             "name": "limit",
             "required": false,
             "schema": {
-              "description": "How many events, newest first; 100 for the whole log and 50 for one\naccount when absent, never more than 500.",
-              "nullable": true,
-              "type": "integer"
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "How many events, newest first; 100 for the whole log and 50 for one\naccount when absent, never more than 500."
             }
           }
         ],
@@ -7465,9 +7745,15 @@
             "name": "scope",
             "required": false,
             "schema": {
-              "description": "End only this scope's rest (`all`, or a model family); absent ends every one.",
-              "nullable": true,
-              "type": "string"
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "End only this scope's rest (`all`, or a model family); absent ends every one."
             }
           }
         ],
@@ -9420,9 +9706,15 @@
             "name": "inline",
             "required": false,
             "schema": {
-              "description": "Serve inline with an image content type, for `<img>` thumbnails.",
-              "nullable": true,
-              "type": "boolean"
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Serve inline with an image content type, for `<img>` thumbnails."
             }
           }
         ],
@@ -9467,9 +9759,15 @@
             "name": "path",
             "required": false,
             "schema": {
-              "description": "Directory to list; the home directory when absent.",
-              "nullable": true,
-              "type": "string"
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Directory to list; the home directory when absent."
             }
           }
         ],
@@ -9720,9 +10018,15 @@
             "name": "accountId",
             "required": false,
             "schema": {
-              "description": "Which stored Claude account the list is for; absent or empty is the\nuser's own login. Ignored by the codex lane, which has one config root.",
-              "nullable": true,
-              "type": "string"
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Which stored Claude account the list is for; absent or empty is the\nuser's own login. Ignored by the codex lane, which has one config root."
             }
           },
           {
@@ -9731,9 +10035,15 @@
             "name": "acpAgent",
             "required": false,
             "schema": {
-              "description": "Which ACP agent the list is for, by id: required when `source` is\n`acp`, ignored otherwise.",
-              "nullable": true,
-              "type": "string"
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Which ACP agent the list is for, by id: required when `source` is\n`acp`, ignored otherwise."
             }
           }
         ],
@@ -10170,9 +10480,15 @@
             "name": "prefix",
             "required": false,
             "schema": {
-              "description": "Only documents whose name starts with this; every document when absent.",
-              "nullable": true,
-              "type": "string"
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only documents whose name starts with this; every document when absent."
             }
           }
         ],
@@ -10383,9 +10699,15 @@
             "name": "offset",
             "required": false,
             "schema": {
-              "description": "How many of the newest versions to skip.",
-              "nullable": true,
-              "type": "integer"
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "How many of the newest versions to skip."
             }
           },
           {
@@ -10394,9 +10716,15 @@
             "name": "limit",
             "required": false,
             "schema": {
-              "description": "How many to answer with: 1 to 50, ten when absent.",
-              "nullable": true,
-              "type": "integer"
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "How many to answer with: 1 to 50, ten when absent."
             }
           }
         ],
@@ -10975,9 +11303,15 @@
             "name": "baseListRevision",
             "required": false,
             "schema": {
-              "description": "The list revision the client last saw; when given and stale, nothing is\ndeleted and the answer is `409` with the current list.",
-              "nullable": true,
-              "type": "integer"
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The list revision the client last saw; when given and stale, nothing is\ndeleted and the answer is `409` with the current list."
             }
           }
         ],
@@ -11178,9 +11512,15 @@
             "name": "source",
             "required": false,
             "schema": {
-              "$ref": "#/components/schemas/Source",
-              "description": "Restrict to one CLI.",
-              "nullable": true
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/Source"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Restrict to one CLI."
             }
           },
           {
@@ -11189,9 +11529,15 @@
             "name": "q",
             "required": false,
             "schema": {
-              "description": "Case-insensitive substring match over title and cwd.",
-              "nullable": true,
-              "type": "string"
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Case-insensitive substring match over title and cwd."
             }
           },
           {
@@ -11200,9 +11546,15 @@
             "name": "limit",
             "required": false,
             "schema": {
-              "description": "How many rows to return, from 1 to 1000; defaults to 200.",
-              "nullable": true,
-              "type": "integer"
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "How many rows to return, from 1 to 1000; defaults to 200."
             }
           },
           {
@@ -11211,9 +11563,15 @@
             "name": "scope",
             "required": false,
             "schema": {
-              "$ref": "#/components/schemas/ScopeFilter",
-              "description": "Whose sessions to list: `owned` (default), `external`, or `all`.\n\nThe default is the change this parameter came with. A server's list is\nnow the sessions *it* made; the transcripts in the user's own `~/.claude`\nare still there, read-only, one `scope=external` away. A client that wants\nthe old behaviour asks for `all` — and gets a `scope` on every row telling\nit which it is looking at.",
-              "nullable": true
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/ScopeFilter"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Whose sessions to list: `owned` (default), `external`, or `all`.\n\nThe default is the change this parameter came with. A server's list is\nnow the sessions *it* made; the transcripts in the user's own `~/.claude`\nare still there, read-only, one `scope=external` away. A client that wants\nthe old behaviour asks for `all` — and gets a `scope` on every row telling\nit which it is looking at."
             }
           }
         ],
@@ -11312,9 +11670,15 @@
             "name": "source",
             "required": false,
             "schema": {
-              "$ref": "#/components/schemas/Source",
-              "description": "Restrict to one CLI's sessions.",
-              "nullable": true
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/Source"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Restrict to one CLI's sessions."
             }
           }
         ],
@@ -11365,9 +11729,15 @@
             "name": "after",
             "required": false,
             "schema": {
-              "description": "Absolute item count the client already holds.",
-              "nullable": true,
-              "type": "integer"
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Absolute item count the client already holds."
             }
           },
           {
@@ -11376,9 +11746,15 @@
             "name": "sig",
             "required": false,
             "schema": {
-              "description": "Signature from the previous response; matching means no transcript reads.",
-              "nullable": true,
-              "type": "string"
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Signature from the previous response; matching means no transcript reads."
             }
           }
         ],
@@ -11901,9 +12277,15 @@
             "name": "after",
             "required": false,
             "schema": {
-              "description": "The read marker to count from: the `previousReadAt` the reader's\narrival report answered with. Omitted for a session never read, which\ncounts from the start.",
-              "nullable": true,
-              "type": "string"
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The read marker to count from: the `previousReadAt` the reader's\narrival report answered with. Omitted for a session never read, which\ncounts from the start."
             }
           }
         ],
@@ -11974,9 +12356,15 @@
             "name": "fp",
             "required": false,
             "schema": {
-              "description": "The client's fingerprint of a prefix of the transcript it holds, proving\nthe page will meet its window: of items `[0, before)` (the window's\n`startFp`), or — when `since` is given — of `[0, since - 3)`, the resume\nmarker the session feed last sent (`prefixFp`). Absent, the page is\nserved unchecked and the client compares `sig` itself.",
-              "nullable": true,
-              "type": "string"
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The client's fingerprint of a prefix of the transcript it holds, proving\nthe page will meet its window: of items `[0, before)` (the window's\n`startFp`), or — when `since` is given — of `[0, since - 3)`, the resume\nmarker the session feed last sent (`prefixFp`). Absent, the page is\nserved unchecked and the client compares `sig` itself."
             }
           },
           {
@@ -11985,9 +12373,15 @@
             "name": "since",
             "required": false,
             "schema": {
-              "description": "The `endIndex` of the client's window, when `fp` is its resume marker.",
-              "nullable": true,
-              "type": "integer"
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The `endIndex` of the client's window, when `fp` is its resume marker."
             }
           }
         ],
@@ -12721,9 +13115,15 @@
             "name": "limit",
             "required": false,
             "schema": {
-              "description": "How many matches to describe, newest first; default 200, at most 1000.\n`total` counts every match regardless.",
-              "nullable": true,
-              "type": "integer"
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "How many matches to describe, newest first; default 200, at most 1000.\n`total` counts every match regardless."
             }
           }
         ],
@@ -12853,7 +13253,7 @@
                 }
               }
             },
-            "description": "default return"
+            "description": "The answer to every route that only has to say \"done\"."
           },
           "default": {
             "content": {
@@ -13624,9 +14024,15 @@
             "name": "days",
             "required": false,
             "schema": {
-              "description": "UTC calendar days to cover, ending today; defaults to 30, capped at 365.",
-              "nullable": true,
-              "type": "integer"
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "UTC calendar days to cover, ending today; defaults to 30, capped at 365."
             }
           }
         ],
@@ -13865,5 +14271,67 @@
         ]
       }
     }
-  }
+  },
+  "tags": [
+    {
+      "name": "accounts"
+    },
+    {
+      "name": "acp"
+    },
+    {
+      "name": "chats"
+    },
+    {
+      "name": "apps"
+    },
+    {
+      "name": "auth"
+    },
+    {
+      "name": "cloud"
+    },
+    {
+      "name": "prefs"
+    },
+    {
+      "name": "files"
+    },
+    {
+      "name": "media"
+    },
+    {
+      "name": "models"
+    },
+    {
+      "name": "notify"
+    },
+    {
+      "name": "plugins"
+    },
+    {
+      "name": "push"
+    },
+    {
+      "name": "schedule"
+    },
+    {
+      "name": "screens"
+    },
+    {
+      "name": "meta"
+    },
+    {
+      "name": "sessions"
+    },
+    {
+      "name": "setup"
+    },
+    {
+      "name": "stats"
+    },
+    {
+      "name": "terminals"
+    }
+  ]
 }

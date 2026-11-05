@@ -521,6 +521,10 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
 /// nothing — no lock, so no adoption, no schedule runner, no quota probe.
 #[cfg(test)]
 pub(crate) mod test_support {
+    // The deprecated trait API is the server's own; this module drives it as
+    // `RemoteHandApp::prepare` does.
+    #![allow(deprecated)]
+
     use gotcha::{GotchaApp, GotchaContext};
 
     use crate::app::RemoteHandApp;
@@ -548,10 +552,7 @@ pub(crate) mod test_support {
         let state = app.state(&config).await.expect("state");
         let auth = state.drive.auth.clone();
         let router = app
-            .build_router(GotchaContext {
-                config,
-                state: state.clone(),
-            })
+            .build_router(GotchaContext::new(state.clone(), config))
             .await
             .expect("router");
         (state, router.layer(droppen_auth::layer(auth)))
@@ -582,10 +583,7 @@ pub(crate) mod test_support {
         adjust(&mut state);
         let auth = state.drive.auth.clone();
         let router = app
-            .build_router(GotchaContext {
-                config,
-                state: state.clone(),
-            })
+            .build_router(GotchaContext::new(state.clone(), config))
             .await
             .expect("router")
             .layer(droppen_auth::layer(auth));
@@ -618,7 +616,7 @@ pub(crate) mod test_support {
         let app = app(home);
         let config = app.config().await.expect("config");
         let state = app.state(&config).await.expect("state");
-        let mut router = app.build_router(GotchaContext { config, state }).await.expect("router");
+        let mut router = app.build_router(GotchaContext::new(state, config)).await.expect("router");
         let request = gotcha::axum::http::Request::get("/openapi.json")
             .body(gotcha::axum::body::Body::empty())
             .expect("request");

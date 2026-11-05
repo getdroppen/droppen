@@ -857,16 +857,6 @@ dependencies = [
 
 [[package]]
 name = "darling"
-version = "0.14.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b750cb3417fd1b327431a470f388520309479ab0bf5e323505daf0290cd3850"
-dependencies = [
- "darling_core 0.14.4",
- "darling_macro 0.14.4",
-]
-
-[[package]]
-name = "darling"
 version = "0.20.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc7f46116c46ff9ab3eb1597a45688b6715c6e628b5c133e288e709a29bcb4ee"
@@ -897,20 +887,6 @@ dependencies = [
 
 [[package]]
 name = "darling_core"
-version = "0.14.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "109c1ca6e6b7f82cc233a97004ea8ed7ca123a9af07a8230878fcfda9b158bf0"
-dependencies = [
- "fnv",
- "ident_case",
- "proc-macro2",
- "quote",
- "strsim 0.10.0",
- "syn 1.0.109",
-]
-
-[[package]]
-name = "darling_core"
 version = "0.20.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0d00b9596d185e565c2207a0b01f8bd1a135483d02d9b7b0a54b11da8d53412e"
@@ -919,7 +895,7 @@ dependencies = [
  "ident_case",
  "proc-macro2",
  "quote",
- "strsim 0.11.1",
+ "strsim",
  "syn 2.0.119",
 ]
 
@@ -932,7 +908,7 @@ dependencies = [
  "ident_case",
  "proc-macro2",
  "quote",
- "strsim 0.11.1",
+ "strsim",
  "syn 2.0.119",
 ]
 
@@ -945,19 +921,8 @@ dependencies = [
  "ident_case",
  "proc-macro2",
  "quote",
- "strsim 0.11.1",
+ "strsim",
  "syn 3.0.3",
-]
-
-[[package]]
-name = "darling_macro"
-version = "0.14.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a4aab4dbc9f7611d8b55048a3a16d2d010c2c8334e46304b40ac1cc14bf3b48e"
-dependencies = [
- "darling_core 0.14.4",
- "quote",
- "syn 1.0.109",
 ]
 
 [[package]]
@@ -2239,50 +2204,49 @@ dependencies = [
 
 [[package]]
 name = "gotcha"
-version = "0.4.1"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "90703c1e9097e14d4e5ddb737c2db361260a38ec89d5895246b231f5d649c5ca"
+checksum = "e8b0f578a2eed46f95fcf1894769c8d3f0e01fea7bc6d5cd3bab60d3837932a8"
 dependencies = [
  "async-trait",
  "axum",
  "axum-extra",
  "axum-macros",
- "bigdecimal",
- "cfg-if",
  "chrono",
  "convert_case 0.6.0",
  "either",
+ "futures-util",
  "gotcha_core",
  "gotcha_macro",
  "inventory",
  "log",
  "mofa",
  "oas",
- "once_cell",
- "regex",
- "rust_decimal",
  "serde",
  "serde_json",
+ "slab",
+ "socket2",
  "thiserror 1.0.69",
  "tokio",
+ "tokio-util",
  "tower-layer",
  "tower-service",
  "tracing",
  "tracing-subscriber",
- "uuid",
  "validator",
 ]
 
 [[package]]
 name = "gotcha_core"
-version = "0.4.1"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7f59b9faa1d32a6c4d261b94944981e6e7426acb0383a7448ea2a6bb880a222"
+checksum = "d41f1097408728ff851d6f4878daf6b0197ba22f8a5dd221c268bd664acb88fb"
 dependencies = [
  "axum",
  "axum-extra",
  "bigdecimal",
  "chrono",
+ "convert_case 0.6.0",
  "either",
  "gotcha_macro",
  "oas",
@@ -2290,21 +2254,22 @@ dependencies = [
  "rust_decimal",
  "serde",
  "serde_json",
+ "tracing",
  "uuid",
 ]
 
 [[package]]
 name = "gotcha_macro"
-version = "0.4.1"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e013e2b3ed6d8af198f80d0eff29a75a4832c2a653cab73c886b3af632cd1b9b"
+checksum = "aa78f9cb6363154f6b9fffc9fa7ace64554929c0daf67001e356a79a5c98c216"
 dependencies = [
- "darling 0.14.4",
- "proc-macro-error",
+ "darling 0.23.0",
+ "proc-macro-crate",
  "proc-macro2",
  "quote",
- "syn 1.0.109",
- "uuid",
+ "serde_derive_internals",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -3123,9 +3088,9 @@ dependencies = [
 
 [[package]]
 name = "oas"
-version = "0.1.1"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61afd957d8f2205ebe037f0afbefa8f04fab46578c57f322bac39526324aa5ed"
+checksum = "0a0792af6f633b3a16dfb6d15a496157186d9bb43b3738a50988abb2229c519c"
 dependencies = [
  "either",
  "serde",
@@ -3325,29 +3290,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e67ba7e9b2b56446f1d419b1d807906278ffa1a658a8a5d8a39dcb1f5a78614f"
 dependencies = [
  "toml_edit 0.25.13+spec-1.1.0",
-]
-
-[[package]]
-name = "proc-macro-error"
-version = "1.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da25490ff9892aab3fcf7c36f08cfb902dd3e71ca0f9f9517bea02a73a5ce38c"
-dependencies = [
- "proc-macro-error-attr",
- "proc-macro2",
- "quote",
- "version_check",
-]
-
-[[package]]
-name = "proc-macro-error-attr"
-version = "1.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a1be40180e52ecc98ad80b184934baf3d0d29f979574e439af5a55274b35f869"
-dependencies = [
- "proc-macro2",
- "quote",
- "version_check",
 ]
 
 [[package]]
@@ -3997,6 +3939,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_derive_internals"
+version = "0.29.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "18d26a20a969b9e3fdf2fc2d9f21eda6c40e2de84c9408bb5d3b05d499aae711"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "serde_json"
 version = "1.0.151"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4321,12 +4274,6 @@ dependencies = [
  "str0m-proto",
  "time",
 ]
-
-[[package]]
-name = "strsim"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "73473c0e59e6d5812c5dfe2a064a6444949f089e20eec9a2e5506596494e4623"
 
 [[package]]
 name = "strsim"
