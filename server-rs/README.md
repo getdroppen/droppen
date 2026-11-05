@@ -280,7 +280,9 @@ replay 只做一件事：把 `transcript` / `sidecar` 事件按原始时间轴�
 
 ## 已经撞上的 gotcha 限制
 
-按撞上的位置分组；括号里是上游出处，方便升级框架时逐条复核。
+按撞上的位置分组；括号里是上游出处，方便升级框架时逐条复核。gotcha 0.5 起，下面多数限制已能由
+handler 上的 `#[api(responses(..), errors(..))]` 与 `WithStatus` 直接声明；逐 crate 迁移中
+（已迁移：droppen-accounts），未迁移的 crate 仍用 `openapi_ext`。
 
 ### OpenAPI 响应派生
 
