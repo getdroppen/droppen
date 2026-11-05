@@ -1,13 +1,12 @@
 //! Graceful shutdown.
 //!
-//! gotcha has no shutdown story: [`GotchaApp::run`](gotcha::GotchaApp::run) calls
-//! `axum::serve(listener, router).await` bare (`gotcha-0.4.1/src/lib.rs:230`),
-//! with no `with_graceful_shutdown`, no signal handling, and no lifecycle hook
-//! to attach one to. So the application overrides `run` and serves the router
-//! itself — [`GotchaApp::build_router`](gotcha::GotchaApp::build_router) is a
-//! public trait method that hands back the fully assembled `axum::Router`, which
-//! is what makes that possible without reaching into the crate-private
-//! `into_axum_router`.
+//! The application serves its assembled router itself rather than through
+//! gotcha's `run`/`bind`: those serve without `ConnectInfo`, and the
+//! authentication guard, the app-window gate and the peer rate limiting all
+//! read the peer address. Serving it here is also what gives the shutdown the
+//! ordering this module exists for — [`crate::app::Prepared::serve_until_signalled`]
+//! stops accepting, gives in-flight requests a five-second drain, and runs
+//! [`Cleanups`] at the signal rather than after the drain.
 //!
 //! A [`CancellationToken`] lives in the application state, so a live websocket
 //! sees the shutdown at the same moment the listener stops accepting.

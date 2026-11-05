@@ -145,13 +145,6 @@ tracing = "0.1"
 rust-embed = { version = "8", optional = true }
 mime_guess = { version = "2", optional = true }
 
-# Outbound HTTP: `export`'s download, and the tests' clients. The BYO-API
-# chat's client is in droppen-drive (`chats`), with the chat it serves.
-# `default-features = false` drops
-# `default-tls` (native-tls/OpenSSL) so the binary keeps linking nothing but
-# rustls; `stream` is what makes the completion response readable chunk by chunk.
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "http2", "charset", "json"] }
-
 # An unoptimized argon2 at 64 MiB and three passes takes seconds rather than
 # milliseconds, which would put minutes on every `cargo test` run that touches a
 # login. Optimizing just the hash — and the compression function under it —
@@ -177,6 +170,12 @@ rand = "0.8"
 droppen-client = { path = "crates/droppen-client" }
 # Reading a compressed answer back (`static_files`' tests).
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
+# The tests' outbound HTTP clients; the server's own code makes no request now
+# that `export-openapi` builds the document without one. The BYO-API chat's
+# client is in droppen-drive (`chats`), with the chat it serves.
+# `default-features = false` drops `default-tls` (native-tls/OpenSSL) so the
+# graph keeps linking nothing but rustls; the features match droppen-drive's.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "http2", "charset", "json"] }
 # The source scans of the spawn gate and the runs (`provider_tests::gate`):
 # each file parsed, what it builds for tests alone dropped, and the rest read
 # token by token; `toml` reads a crate's manifest for whether it depends on the

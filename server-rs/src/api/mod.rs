@@ -126,8 +126,9 @@ pub struct AppState {
     pub apps: Arc<droppen_workbench::apps::Registry>,
     /// This server's claim on its instance directory, filled in by
     /// [`crate::app::RemoteHandApp::prepare`] once the flock is held. Empty in
-    /// lock-less servers (`export-openapi`, tests), whose self-upgrade handler
-    /// therefore refuses: replacing the shared binary is an owner's move.
+    /// lock-less servers (the tests' in-process ones), whose self-upgrade
+    /// handler therefore refuses: replacing the shared binary is an owner's
+    /// move.
     ///
     /// Weak, because this state is cloned into every handler and background
     /// task, and some of those outlive the serve task. A strong reference here
@@ -521,11 +522,7 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
 /// nothing — no lock, so no adoption, no schedule runner, no quota probe.
 #[cfg(test)]
 pub(crate) mod test_support {
-    // The deprecated trait API is the server's own; this module drives it as
-    // `RemoteHandApp::prepare` does.
-    #![allow(deprecated)]
-
-    use gotcha::{GotchaApp, GotchaContext};
+    use gotcha::{ConfigWrapper, GotchaContext};
 
     use crate::app::RemoteHandApp;
 
@@ -535,10 +532,16 @@ pub(crate) mod test_support {
             instance_override: Some("unittest".into()),
             port_override: Some(0),
             skip_lock: true,
-            auth_disabled: false,
             auth_enabled_override: None,
             desktop_app_override: None,
         }
+    }
+
+    /// The routes and documentation endpoints `RemoteHandApp::router` starts
+    /// from, assembled for tests that put their own guards in front.
+    fn documented_router(state: &super::AppState, config: &ConfigWrapper<droppen_http::config::AppConfig>) -> gotcha::axum::Router {
+        let context = GotchaContext::new(state.clone(), config.clone());
+        RemoteHandApp::builder(&context).into_router(context).expect("router")
     }
 
     /// A server's whole router, guard included — what a request meets, minus
@@ -551,11 +554,8 @@ pub(crate) mod test_support {
         let config = app.config().await.expect("config");
         let state = app.state(&config).await.expect("state");
         let auth = state.drive.auth.clone();
-        let router = app
-            .build_router(GotchaContext::new(state.clone(), config))
-            .await
-            .expect("router");
-        (state, router.layer(droppen_auth::layer(auth)))
+        let router = documented_router(&state, &config).layer(droppen_auth::layer(auth));
+        (state, router)
     }
 
     /// The handlers' state for a server whose home is `home`.
@@ -582,11 +582,7 @@ pub(crate) mod test_support {
         let mut state = app.state(&config).await.expect("state");
         adjust(&mut state);
         let auth = state.drive.auth.clone();
-        let router = app
-            .build_router(GotchaContext::new(state.clone(), config))
-            .await
-            .expect("router")
-            .layer(droppen_auth::layer(auth));
+        let router = documented_router(&state, &config).layer(droppen_auth::layer(auth));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
         let addr = listener.local_addr().expect("addr");
         let _ = state.listen_port.set(addr.port());
@@ -616,7 +612,7 @@ pub(crate) mod test_support {
         let app = app(home);
         let config = app.config().await.expect("config");
         let state = app.state(&config).await.expect("state");
-        let mut router = app.build_router(GotchaContext::new(state, config)).await.expect("router");
+        let mut router = documented_router(&state, &config);
         let request = gotcha::axum::http::Request::get("/openapi.json")
             .body(gotcha::axum::body::Body::empty())
             .expect("request");

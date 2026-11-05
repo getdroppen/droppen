@@ -1,12 +1,13 @@
 //! The application: configuration, state, routes, and a serve loop that can be
 //! stopped.
 //!
-//! [`GotchaApp::run`] is overridden rather than used, because the stock one
-//! serves bare (see [`crate::shutdown`]). Everything above it —
-//! `config` / `state` / `routes` / `build_router` — is the framework's, so the
-//! router (and therefore `/openapi.json`, `/redoc`, `/scalar`) is assembled
-//! exactly as gotcha assembles it — the documentation endpoints included, which
-//! gotcha 0.5 mounts only when asked ([`GotchaApp::openapi_endpoints`]).
+//! Routes are registered with gotcha's [`Gotcha`] builder (the `GotchaApp`
+//! trait is deprecated in 0.5), and that builder assembles the router.
+//! `/openapi.json` and `/scalar` are gotcha's own documentation endpoints —
+//! opt-in in 0.5, and enabled here — and `/redoc` is our redirect to
+//! `/scalar` ([`redoc_to_scalar`]). The listener is the server's own rather
+//! than one `Gotcha::run`/`bind` binds, because those serve without
+//! `ConnectInfo`, which the guards read (see [`crate::shutdown`]).
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -14,8 +15,7 @@ use std::time::Duration;
 
 use gotcha::axum::extract::FromRef;
 use gotcha::axum::response::Redirect;
-#[allow(deprecated)] // The trait API is what `prepare` builds on; moving to the builder is a separate change.
-use gotcha::{ConfigWrapper, GotchaApp, GotchaContext, GotchaError, GotchaResult, GotchaRouter, OpenApiEndpoints};
+use gotcha::{ConfigWrapper, Gotcha, GotchaContext, GotchaError, GotchaResult, OpenApiEndpoints};
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 
@@ -42,21 +42,17 @@ const DRAIN_GRACE: Duration = Duration::from_secs(5);
 pub struct RemoteHandApp {
     /// Overrides `home_dir` from the config file (used by tests).
     pub home_override: Option<std::path::PathBuf>,
-    /// Overrides `[server].port` (used by `export-openapi`, which wants port 0).
+    /// Overrides `[server].port` (used by tests, which bind port 0).
     pub port_override: Option<u16>,
     /// Overrides `instance` (used by tests, which cannot share one process
-    /// environment between servers that must not see each other).
+    /// environment between servers that must not see each other, and by
+    /// `agent run`, whose instance is the enrolled one).
     pub instance_override: Option<String>,
-    /// Skip the instance lock. `export-openapi` sets this: it serves a throwaway
-    /// router to read one document back and must not refuse to run because a
-    /// real server happens to own the instance.
+    /// Skip the instance lock. The tests' in-process servers set this, unit and
+    /// integration (`tests/pty_shim.rs`) alike: one
+    /// must not refuse to run because another — or a real server — owns the
+    /// instance, and it must not adopt or sweep anything the owner has.
     pub skip_lock: bool,
-    /// Serve without the authentication guard. `export-openapi` sets this for
-    /// the same reason it sets [`Self::skip_lock`]: it reads `/openapi.json` off
-    /// a throwaway in-process server, and on a developer's own machine — where
-    /// accounts exist — that read would otherwise be a `401` and `pnpm gen:api`
-    /// would fail. Never set by anything that serves a port.
-    pub auth_disabled: bool,
     /// Overrides `auth.enabled` from the configuration (used by tests, which
     /// cannot set `APP_AUTH__ENABLED` for one server without setting it for
     /// every server in the process). `Some(false)` is the explicit open mode
@@ -81,125 +77,96 @@ async fn redoc_to_scalar() -> Redirect {
     Redirect::temporary("/scalar")
 }
 
-#[allow(deprecated)] // See the import above: the trait still does everything this server asks of it.
-impl GotchaApp for RemoteHandApp {
-    type State = AppState;
-    type Config = AppConfig;
-
-    fn config(&self) -> impl std::future::Future<Output = GotchaResult<ConfigWrapper<Self::Config>>> + Send {
-        let home_override = self.home_override.clone();
-        let port_override = self.port_override;
-        let instance_override = self.instance_override.clone();
-        let auth_enabled_override = self.auth_enabled_override;
-        async move {
-            let mut config = droppen_http::config::load(std::env::var("GOTCHA_ACTIVE_PROFILE").ok())?;
-            if let Some(home) = home_override {
-                config.app.home_dir = Some(home.to_string_lossy().into_owned());
-            }
-            if let Some(port) = port_override {
-                config.server.port = port;
-            }
-            if let Some(instance) = instance_override {
-                config.app.instance = Some(instance);
-            }
-            if let Some(enabled) = auth_enabled_override {
-                config.app.auth.enabled = Some(enabled);
-            }
-            Ok(config)
+impl RemoteHandApp {
+    /// The configuration this server runs with: the file and environment
+    /// (`GOTCHA_ACTIVE_PROFILE` included), then the overrides this value
+    /// carries.
+    pub(crate) async fn config(&self) -> GotchaResult<ConfigWrapper<AppConfig>> {
+        let mut config = droppen_http::config::load(std::env::var("GOTCHA_ACTIVE_PROFILE").ok())?;
+        if let Some(home) = self.home_override.clone() {
+            config.app.home_dir = Some(home.to_string_lossy().into_owned());
         }
+        if let Some(port) = self.port_override {
+            config.server.port = port;
+        }
+        if let Some(instance) = self.instance_override.clone() {
+            config.app.instance = Some(instance);
+        }
+        if let Some(enabled) = self.auth_enabled_override {
+            config.app.auth.enabled = Some(enabled);
+        }
+        Ok(config)
     }
 
-    fn routes(&self, router: GotchaRouter<GotchaContext<Self::State, Self::Config>>) -> GotchaRouter<GotchaContext<Self::State, Self::Config>> {
-        // `/redoc` is added here rather than through `openapi_endpoints`: an
-        // unannotated handler is a business route, so the guard covers it and
-        // it stays out of `openapi.json`, while the path the desktop app and
-        // the manual name keeps answering.
-        crate::api::routes(router).get("/redoc", redoc_to_scalar)
-    }
-
-    /// gotcha 0.5 mounts no documentation from the `openapi` feature alone,
-    /// and its bundled Redoc cannot render the OpenAPI 3.2 document it now
-    /// generates; this keeps `/openapi.json` (for `export-openapi` and
-    /// clients) and `/scalar` where they already find them. `/redoc` is a
-    /// redirect of ours — see [`redoc_to_scalar`].
-    fn openapi_endpoints(&self) -> Option<OpenApiEndpoints> {
-        Some(OpenApiEndpoints::default())
-    }
-
-    fn state(&self, config: &ConfigWrapper<Self::Config>) -> impl std::future::Future<Output = GotchaResult<Self::State>> + Send {
+    /// Everything a handler needs, built from `config` and the overrides this
+    /// value carries.
+    pub(crate) async fn state(&self, config: &ConfigWrapper<AppConfig>) -> GotchaResult<AppState> {
         let home = config.app.home();
         let instance = config.app.instance();
         let auth_settings = config.app.auth.clone();
         let plugins_config = config.app.plugins.clone();
-        let auth_disabled = self.auth_disabled;
-        async move {
-            // The instance is part of the path set: the Claude root this server
-            // owns lives inside its instance directory, so a `Paths` that did not
-            // know the name would hand every server the same one.
-            let paths = Arc::new(Paths::for_instance(home, &instance));
-            // Derived here rather than handed in, so the framework's own `state`
-            // path and `prepare`'s agree by construction: both read the same two
-            // config fields.
-            let instance = Arc::new(InstanceDirs::new(&paths.data_dir(), &instance).map_err(GotchaError::message)?);
-            // A pending aggregator key from before chain v3 is deleted once at
-            // boot, whatever the link and cloud state: nothing in this build
-            // writes it, and while it exists the status route would keep
-            // reporting `pending` for ever.
-            droppen_aggregator::sweep_legacy_key(paths.as_ref());
-            // Attachments uploaded but never sent accumulate; sweep the stale
-            // ones once at boot, off the startup path so a slow disk cannot
-            // delay the listener.
-            tokio::spawn({
-                let roots = droppen_files::FileRoots::of(&paths);
-                async move { roots.sweep_uploads().await }
-            });
-            let auth = droppen_auth::Auth::new(&paths, &instance, &auth_settings, auth_disabled, Arc::new(NotifyTokens));
-            let logins = logins();
-            let drive = droppen_drive::Drive::new(paths.clone(), &instance, auth, transcript_sources(), register_providers, logins.clone(), NotifyDecoration::new(paths.clone(), instance.as_ref().clone()));
-            let feeds = FeedRegistry::new();
-            let global = GlobalFeed::new();
-            // A session's driver changes things no file shows — an automatic
-            // account rotation above all — and has to be able to say so to the
-            // two feeds that would otherwise only notice on their next poll.
-            let refresh = droppen_http::refresh::Refresh::new(global.clone());
-            drive.injections.host.attach_listeners(feeds.clone(), refresh.clone());
-            drive.injections.host.attach_alerts(Arc::new(PushAlerts {
-                transcripts: drive.transcripts.clone(),
-            }));
-            // Found once, here: an entry that registers no ACP provider fails
-            // to start rather than on the first request for an agent.
-            let acp_agents = droppen_provider_acp::agents::AcpAgentState::new(drive.providers.clone())
-                .ok_or_else(|| GotchaError::message("no ACP provider is registered"))?;
-            Ok(AppState {
-                acp_agents,
-                cloud: droppen_cloud::Cloud::new(paths.as_ref().clone()),
-                // Touches nothing yet: the installed packages are read by the
-                // first status, the instance database by the first switch or
-                // store, and `boot` below.
-                plugins: droppen_plugins::Plugins::load(&paths, &plugins_config, Some(refresh.clone())),
-                chats: droppen_drive::chats::Chats::new(paths.clone()),
-                drive,
-                wizards: droppen_provider_claude_code::setup_token::Captures::new(),
-                terminals: droppen_workbench::terminals::Registry::new(paths.clone(), instance.clone()),
-                apps: droppen_workbench::apps::Registry::new(paths.clone(), instance.clone()),
-                setup: droppen_setup::Setup::new(paths.clone(), &logins),
-                listen_port: Arc::new(std::sync::OnceLock::new()),
-                paths,
-                instance,
-                started_at: Arc::from(iso8601(std::time::SystemTime::now()).as_str()),
-                feeds,
-                global,
-                refresh,
-                cancel: CancellationToken::new(),
-                lock: Arc::new(std::sync::OnceLock::new()),
-                desktop_app: self.desktop_app_override.unwrap_or_else(crate::desktop_app::from_env),
-                send_limit: droppen_http::SEND_LIMIT,
-            })
-        }
-    }
-
-    fn run(self) -> impl std::future::Future<Output = GotchaResult<()>> + Send {
-        self.run_server()
+        // The instance is part of the path set: the Claude root this server
+        // owns lives inside its instance directory, so a `Paths` that did not
+        // know the name would hand every server the same one.
+        let paths = Arc::new(Paths::for_instance(home, &instance));
+        // Derived here rather than handed in, so the instance `prepare`
+        // locked and the one the handlers see agree by construction: both
+        // read the same two config fields.
+        let instance = Arc::new(InstanceDirs::new(&paths.data_dir(), &instance).map_err(GotchaError::message)?);
+        // A pending aggregator key from before chain v3 is deleted once at
+        // boot, whatever the link and cloud state: nothing in this build
+        // writes it, and while it exists the status route would keep
+        // reporting `pending` for ever.
+        droppen_aggregator::sweep_legacy_key(paths.as_ref());
+        // Attachments uploaded but never sent accumulate; sweep the stale
+        // ones once at boot, off the startup path so a slow disk cannot
+        // delay the listener.
+        tokio::spawn({
+            let roots = droppen_files::FileRoots::of(&paths);
+            async move { roots.sweep_uploads().await }
+        });
+        let auth = droppen_auth::Auth::new(&paths, &instance, &auth_settings, false, Arc::new(NotifyTokens));
+        let logins = logins();
+        let drive = droppen_drive::Drive::new(paths.clone(), &instance, auth, transcript_sources(), register_providers, logins.clone(), NotifyDecoration::new(paths.clone(), instance.as_ref().clone()));
+        let feeds = FeedRegistry::new();
+        let global = GlobalFeed::new();
+        // A session's driver changes things no file shows — an automatic
+        // account rotation above all — and has to be able to say so to the
+        // two feeds that would otherwise only notice on their next poll.
+        let refresh = droppen_http::refresh::Refresh::new(global.clone());
+        drive.injections.host.attach_listeners(feeds.clone(), refresh.clone());
+        drive.injections.host.attach_alerts(Arc::new(PushAlerts {
+            transcripts: drive.transcripts.clone(),
+        }));
+        // Found once, here: an entry that registers no ACP provider fails
+        // to start rather than on the first request for an agent.
+        let acp_agents = droppen_provider_acp::agents::AcpAgentState::new(drive.providers.clone())
+            .ok_or_else(|| GotchaError::message("no ACP provider is registered"))?;
+        Ok(AppState {
+            acp_agents,
+            cloud: droppen_cloud::Cloud::new(paths.as_ref().clone()),
+            // Touches nothing yet: the installed packages are read by the
+            // first status, the instance database by the first switch or
+            // store, and `boot` below.
+            plugins: droppen_plugins::Plugins::load(&paths, &plugins_config, Some(refresh.clone())),
+            chats: droppen_drive::chats::Chats::new(paths.clone()),
+            drive,
+            wizards: droppen_provider_claude_code::setup_token::Captures::new(),
+            terminals: droppen_workbench::terminals::Registry::new(paths.clone(), instance.clone()),
+            apps: droppen_workbench::apps::Registry::new(paths.clone(), instance.clone()),
+            setup: droppen_setup::Setup::new(paths.clone(), &logins),
+            listen_port: Arc::new(std::sync::OnceLock::new()),
+            paths,
+            instance,
+            started_at: Arc::from(iso8601(std::time::SystemTime::now()).as_str()),
+            feeds,
+            global,
+            refresh,
+            cancel: CancellationToken::new(),
+            lock: Arc::new(std::sync::OnceLock::new()),
+            desktop_app: self.desktop_app_override.unwrap_or_else(crate::desktop_app::from_env),
+            send_limit: droppen_http::SEND_LIMIT,
+        })
     }
 }
 
@@ -227,7 +194,79 @@ pub struct Prepared {
     _lock: Option<Arc<InstanceLock>>,
 }
 
+/// The route module the server mounts: [`crate::api::routes`], plus `/redoc`
+/// as an unannotated business route — so the guard covers it and it stays out
+/// of `openapi.json`, while the path the desktop app and the manual name keeps
+/// answering.
+///
+/// [`RemoteHandApp::builder`] and `export-openapi` both call this, so the
+/// served document and the exported one come from the same registration.
+pub(crate) fn routes(router: crate::api::ApiRouter) -> crate::api::ApiRouter {
+    crate::api::routes(router).get("/redoc", redoc_to_scalar)
+}
+
 impl RemoteHandApp {
+    /// The routes and documentation endpoints, as gotcha's builder takes them,
+    /// for callers that already have the state.
+    pub(crate) fn builder(context: &GotchaContext<AppState, AppConfig>) -> Gotcha<AppState, AppConfig> {
+        Gotcha::from_context(context.clone())
+            .routes(routes)
+            // gotcha 0.5 mounts no documentation from the `openapi` feature
+            // alone, and its bundled Redoc cannot render the OpenAPI 3.2
+            // document it now generates; this keeps `/openapi.json` (for
+            // clients and `export-openapi`) and `/scalar` where they already
+            // find them. `/redoc` is a redirect of ours — see
+            // [`redoc_to_scalar`].
+            .openapi_endpoints(Some(OpenApiEndpoints::default()))
+    }
+
+    /// The router the server serves: [`Self::builder`], plus the `/embed`
+    /// fallback and the two guards in front of it.
+    ///
+    /// The extra pieces are mounted in `finish_router`, after the documented
+    /// endpoints, because they need the state the routes did not have.
+    pub(crate) fn router(context: GotchaContext<AppState, AppConfig>) -> GotchaResult<gotcha::axum::Router> {
+        Self::builder(&context)
+            .finish_router(|router, context| {
+                // The `/embed/{id}/*` proxy is composed here rather than in
+                // [`crate::api::routes`] for two reasons: it needs the apps
+                // registry, which only exists with the state, and it needs the
+                // raw request — websocket upgrades included — which only a
+                // tower `Service` sees. Re-registering the fallback puts it in
+                // front of the SPA service, which it delegates every non-embed
+                // path to, so the static-file behaviour is exactly what
+                // `api::routes` set up.
+                let router = router.fallback_service(droppen_workbench::apps::embed::fallback(
+                    context.state.apps.clone(),
+                    crate::static_files::service(),
+                ));
+                // The authentication guard goes on **here**, after the last
+                // `fallback_service`, and that ordering is the whole point.
+                // `axum::Router::layer` wraps the routes and the fallback *as
+                // they stand when it is called*; mounting the guard inside
+                // `crate::api::routes` — where `droppen_http::origin`'s sits —
+                // would cover the documented routes and leave `/openapi.json`,
+                // `/redoc`, `/scalar`, the SPA fallback and the `/embed/{id}/*`
+                // proxy outside it. Those are the first paths anyone without a
+                // token would try.
+                //
+                // Being the outermost layer also puts it in front of the origin
+                // guard, which is why it hands `OPTIONS` straight through: a
+                // browser sends no credentials on a preflight, and a `401` there
+                // would break every cross-origin request before the real one was
+                // made.
+                let router = router.layer(droppen_auth::layer(context.state.drive.auth.clone()));
+                // Outside even that: a request addressed to a name this server
+                // does not answer to (`droppen_http::origin`, "Which names the
+                // server answers to") reaches nothing, the exempt sign-in routes
+                // included.
+                router.layer(droppen_http::origin::host_layer(Arc::new(droppen_http::origin::HostPolicy::from_env(
+                    &context.config.server.host,
+                ))))
+            })
+            .into_router(context)
+    }
+
     /// Bind, serve, and stop on the first SIGINT/SIGTERM.
     pub async fn run_server(self) -> GotchaResult<()> {
         self.prepare().await?.serve_until_signalled().await
@@ -235,12 +274,10 @@ impl RemoteHandApp {
 
     /// Load configuration, build state and routes, and bind the listener.
     ///
-    /// Split out of `run` so `export-openapi` and the integration tests can take
-    /// the address the server actually got — which the framework's own `run`
-    /// keeps to itself.
-    #[allow(deprecated)] // The deprecated trait's config/state/build_router are what this assembles.
+    /// Split out of `run_server` so the integration tests can take the address
+    /// the server actually got — which `serve_until_signalled` keeps to itself.
     pub async fn prepare(self) -> GotchaResult<Prepared> {
-        self.logger()?;
+        gotcha::default_logger()?;
         for line in droppen_base::env::unread_dirs() {
             tracing::warn!("{line}");
         }
@@ -268,8 +305,8 @@ impl RemoteHandApp {
         // to the config folder, which is the root a second install may point
         // elsewhere. The move belongs here and nowhere else: under the
         // instance lock, because two servers booting together must not race
-        // the same rename, and after the `skip_lock` check, because the
-        // throwaway server behind `pnpm gen:api` must not move a user's file.
+        // the same rename, and after the `skip_lock` check, because a
+        // lock-less test server must not move a user's file.
         if lock.is_some() {
             let prices = droppen_sessions::stats::usage::PriceOverride::of(&paths);
             prices.migrate_legacy().await;
@@ -278,8 +315,9 @@ impl RemoteHandApp {
         let state = self.state(&config).await?;
         if let Some(lock) = &lock {
             // The handler that replaces the binary needs to ask whether this
-            // claim still holds; a state built without a lock (export-openapi,
-            // tests) leaves the cell empty and that handler refuses.
+            // claim still holds; a state built without a lock (the tests'
+            // in-process servers) leaves the cell empty and that handler
+            // refuses.
             let _ = state.lock.set(Arc::downgrade(lock));
         }
         // Adoption is the first thing the *owner* does, and it happens before
@@ -296,8 +334,8 @@ impl RemoteHandApp {
         // than a server that does not appear at all.
         //
         // It is also gated on the lock, and that gate is load-bearing rather
-        // than tidy. `export-openapi` runs a throwaway server in-process, often
-        // on a developer's machine while the real one is up; without the gate it
+        // than tidy. A test's throwaway server runs in-process, often on a
+        // developer's machine while the real one is up; without the gate it
         // would attach to that server's live shims, advance their cursors and
         // sweep the sidecars of any it could not reach. Adoption without
         // ownership is exactly the thing this whole module exists to prevent.
@@ -374,12 +412,11 @@ impl RemoteHandApp {
                 }
                 // Inside the lock for the same reason every adoption above is,
                 // and it is the sharpest case of the rule: this loop *starts
-                // CLIs*. `export-openapi` builds a throwaway in-process server on
-                // a developer's machine, and every integration test builds one
-                // per case; a runner outside this gate would have each of them
-                // fire the user's real nine-o'clock task. Acting on a schedule
-                // without owning the instance is exactly the thing this block
-                // exists to prevent.
+                // CLIs*. Every integration test builds a throwaway in-process
+                // server on a developer's machine; a runner outside this gate
+                // would have each of them fire the user's real nine-o'clock
+                // task. Acting on a schedule without owning the instance is
+                // exactly the thing this block exists to prevent.
                 droppen_drive::schedule::runner::spawn(&droppen_drive::schedule::ScheduleState::from_ref(&state));
                 // The quota fallback probe starts CLIs as well — against the
                 // usage logins every instance on this machine shares — so it
@@ -390,7 +427,7 @@ impl RemoteHandApp {
         }
         let cancel = state.cancel.clone();
         let desktop_app = state.desktop_app;
-        let auth = state.drive.auth.clone();
+        let auth_for_link = state.drive.auth.clone();
         let host = config.server.host.clone();
         let cloud = state.cloud.control.clone();
         let link_settings = state.cloud.clone();
@@ -404,37 +441,11 @@ impl RemoteHandApp {
             apps: state.apps.clone(),
         };
 
-        let context = GotchaContext::new(state, config.clone());
-        let router = self.build_router(context).await?;
-        // The `/embed/{id}/*` proxy is composed here rather than in
-        // [`crate::api::routes`] for two reasons: it needs the apps registry,
-        // which does not exist yet when the framework asks for routes, and it
-        // needs the raw request — websocket upgrades included — which only a
-        // tower `Service` sees. Re-registering the fallback puts it in front of
-        // the SPA service, which it delegates every non-embed path to, so the
-        // static-file behaviour is exactly what `api::routes` set up.
-        let router = router.fallback_service(droppen_workbench::apps::embed::fallback(cleanups.apps.clone(), crate::static_files::service()));
-        // The authentication guard goes on **here**, after the last
-        // `fallback_service`, and that ordering is the whole point.
-        // `axum::Router::layer` wraps the routes and the fallback *as they stand
-        // when it is called*; mounting the guard inside `crate::api::routes` —
-        // where `droppen_http::origin`'s sits — would cover the documented routes and
-        // leave `/openapi.json`, `/redoc`, `/scalar`, the SPA fallback and the
-        // `/embed/{id}/*` proxy outside it. Those are the first paths anyone
-        // without a token would try.
-        //
-        // Being the outermost layer also puts it in front of the origin guard,
-        // which is why it hands `OPTIONS` straight through: a browser sends no
-        // credentials on a preflight, and a `401` there would break every
-        // cross-origin request before the real one was made.
-        let auth_for_link = auth.clone();
-        let router = router.layer(droppen_auth::layer(auth));
-        // Outside even that: a request addressed to a name this server does
-        // not answer to (`droppen_http::origin`, "Which names the server answers
-        // to") reaches nothing, the exempt sign-in routes included.
-        let router = router.layer(droppen_http::origin::host_layer(std::sync::Arc::new(droppen_http::origin::HostPolicy::from_env(
-            &config.server.host,
-        ))));
+        // The router, assembled the way gotcha assembles it: the documented
+        // routes, then — in `finish_router`, now that the state exists — the
+        // `/embed` fallback and the authentication and host guards. See
+        // [`RemoteHandApp::router`].
+        let router = Self::router(GotchaContext::new(state, config.clone()))?;
 
         let bind = format!("{}:{}", config.server.host, config.server.port);
         let listener = TcpListener::bind(&bind)
@@ -573,8 +584,8 @@ impl Prepared {
     }
 
     /// Everything the shutdown supervisor would tear down. A caller driving the
-    /// server itself (`export-openapi`, the integration tests) reaches the
-    /// subsystem registries through this, and can run the teardown by hand.
+    /// server itself (the integration tests) reaches the subsystem registries
+    /// through this, and can run the teardown by hand.
     pub fn cleanups(&self) -> Cleanups {
         self.cleanups.clone()
     }
@@ -630,7 +641,7 @@ impl Prepared {
     }
 
     /// Serve until the token is cancelled, without installing a signal handler.
-    /// Used by `export-openapi` and by the integration tests.
+    /// Used by the integration tests.
     pub fn serve_task(self) -> impl std::future::Future<Output = std::io::Result<()>> + Send {
         let Prepared {
             listener,
@@ -1023,6 +1034,31 @@ mod tests {
             .expect("the default instance name is valid");
         let refused = InstanceLock::acquire(&dirs).expect_err("the instance is still claimed after serving");
         assert!(refused.to_string().contains(&format!("pid {}", std::process::id())), "by this process: {refused}");
+    }
+
+    /// `/redoc` is not gotcha's Redoc page — its bundle cannot read the
+    /// OpenAPI 3.2 document — but a redirect to `/scalar`, and the
+    /// authentication guard covers it like the other documentation paths.
+    #[tokio::test]
+    async fn redoc_redirects_to_scalar_and_is_guarded() {
+        use gotcha::axum::body::Body;
+        use gotcha::axum::http::{header, Request, StatusCode};
+        use tower_service::Service;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        let get = |router: &mut gotcha::axum::Router| {
+            let request = Request::get("/redoc").body(Body::empty()).expect("request");
+            router.call(request)
+        };
+
+        let (_, mut open) = crate::api::test_support::guarded_router(home.path(), Some(false)).await;
+        let response = get(&mut open).await.expect("infallible");
+        assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT);
+        assert_eq!(response.headers()[header::LOCATION], "/scalar");
+
+        let (_, mut guarded) = crate::api::test_support::guarded_router(home.path(), Some(true)).await;
+        let response = get(&mut guarded).await.expect("infallible");
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "the documentation paths need a login");
     }
 
     /// Whether a session can be sent to, through the readers registered here:

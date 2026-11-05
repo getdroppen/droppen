@@ -551,8 +551,8 @@ impl Setup {
     /// instance's owner only, since the `PATH` is the whole process's.
     ///
     /// Behind the instance lock in `app::RemoteHandApp::prepare`: a
-    /// throwaway in-process server (`export-openapi`) must not rewrite the
-    /// `PATH` of a process it does not own the instance for.
+    /// throwaway in-process test server must not rewrite the `PATH` of a
+    /// process it does not own the instance for.
     ///
     /// Each directory is checked again, as when it was adopted
     /// ([`tasks::trusted_folder`]): a directory gone since and made again by somebody

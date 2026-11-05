@@ -1,20 +1,18 @@
 //! The `/embed/{id}/*` reverse proxy, for HTTP and for websockets.
 //!
-//! The proxy is the router's fallback, composed in `app` outside the
-//! gotcha app, so nothing about it is in the OpenAPI document.
+//! The proxy is the router's fallback, composed in `app` in gotcha's
+//! `finish_router` hook, so nothing about it is in the OpenAPI document.
 //!
 //! # Where it hangs
 //!
-//! gotcha offers two seams — [`fallback_service`](gotcha::GotchaRouter::fallback_service)
-//! and [`layer`](gotcha::GotchaRouter::layer) — and the SPA already owns the
-//! fallback (see the server's `static_files`). It also assembles routes in
-//! `GotchaApp::routes`, which runs *before* the state exists and so cannot be
-//! handed the [`Registry`]. So the composition happens one level up, in
-//! `app`, on the axum router `GotchaApp::build_router` returns: this
-//! module's service takes the fallback, and delegates every path that is not an
-//! embed to the SPA service it wraps. A layer would work too, but would put a
-//! path test in front of every `/api/*` request to serve a route that
-//! by definition never matches one.
+//! The SPA already owns the fallback (see the server's `static_files`), and a
+//! proxy needs the apps [`Registry`], which exists only with the state. So the
+//! composition happens in the server's `finish_router` hook — with the state in
+//! hand and the documented routes and endpoints already mounted: this module's
+//! service takes the fallback, and delegates every path that is not an embed to
+//! the SPA service it wraps. A layer would work too, but would put a path test
+//! in front of every `/api/*` request to serve a route that by definition never
+//! matches one.
 //!
 //! Sitting on the fallback also leaves `/embed/*` outside the `/api/*` origin
 //! guard; what guards it is the unguessable id ([`droppen_auth`], "Who has to

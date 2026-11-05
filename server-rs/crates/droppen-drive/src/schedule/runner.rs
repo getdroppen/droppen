@@ -5,10 +5,9 @@
 //! [`spawn`] is called from `app::RemoteHandApp::prepare` **inside the
 //! block that has already proven this process holds the instance lock**, beside
 //! the adoptions. Anywhere else and it would run in two servers that must not
-//! both act: `export-openapi` builds a throwaway in-process server on a
-//! developer's machine, and every integration test builds one per case. A runner
-//! outside the lock would have each of those start the user's real nine-o'clock
-//! session — a `cargo test` run would spend tokens.
+//! both act: every integration test builds a throwaway in-process server per
+//! case. A runner outside the lock would have each of those start the user's
+//! real nine-o'clock session — a `cargo test` run would spend tokens.
 //!
 //! # The shape of the loop
 //!
