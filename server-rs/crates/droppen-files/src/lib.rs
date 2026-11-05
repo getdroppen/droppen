@@ -248,6 +248,13 @@ impl IntoResponse for FileBytes {
     }
 }
 
+/// The throwaway JSON `200` [`describe`] replaces with the binary entry.
+impl gotcha::Responsible for FileBytes {
+    fn response() -> gotcha::oas::Responses {
+        gotcha::response::response::<FileBytes>(200, "application/json", "default return")
+    }
+}
+
 impl Schematic for FileBytes {
     fn name() -> &'static str {
         "FileBytes"

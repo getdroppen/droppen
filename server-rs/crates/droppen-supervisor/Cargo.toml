@@ -12,9 +12,9 @@ description = "The Droppen server's supervising process and self-update"
 droppen-base = { path = "../droppen-base" }
 droppen-http = { path = "../droppen-http" }
 droppen-instance = { path = "../droppen-instance" }
-gotcha = { version = "0.4.1", features = ["openapi"] }
+gotcha = { version = "0.5.0", features = ["openapi"] }
 # What gotcha's `Schematic` derive expands to names it.
-gotcha_core = "0.4.1"
+gotcha_core = "0.5.0"
 libc = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = { workspace = true }

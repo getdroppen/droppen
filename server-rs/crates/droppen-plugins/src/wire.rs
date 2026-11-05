@@ -38,11 +38,8 @@ impl Schematic for PluginName {
 
     fn generate_schema() -> gotcha_core::EnhancedSchema {
         let mut schema = gotcha::oas::Schema {
-            _type: None,
-            format: None,
-            nullable: None,
             description: Some("One string, or one per language (`en`, `zh-CN`, `zh-TW`, `ja`) with `en` required.".to_string()),
-            extras: Default::default(),
+            ..Default::default()
         };
         schema.extras.insert(
             "oneOf".to_string(),
@@ -183,18 +180,17 @@ impl Schematic for PluginTarballBody {
 
     fn generate_schema() -> gotcha_core::EnhancedSchema {
         let schema = gotcha::oas::Schema {
-            _type: Some("string".to_string()),
+            _type: Some("string".into()),
             format: Some("binary".to_string()),
-            nullable: None,
             description: Some("The plugin package: a gzip'd tar whose entries are under `package/`.".to_string()),
-            extras: Default::default(),
+            ..Default::default()
         };
         gotcha_core::EnhancedSchema { schema, required: true }
     }
 }
 
 /// The empty answer to `DELETE /api/plugins/{id}`: axum sends `204`, and the
-/// empty-body machinery documents it without a schema.
+/// response contract documents it without a schema.
 pub struct PluginDeleted;
 
 impl IntoResponse for PluginDeleted {
@@ -203,21 +199,11 @@ impl IntoResponse for PluginDeleted {
     }
 }
 
-impl Schematic for PluginDeleted {
-    fn name() -> &'static str {
-        "void"
-    }
-
-    fn required() -> bool {
-        false
-    }
-
-    fn type_() -> &'static str {
-        "void"
-    }
-
-    fn empty_body() -> bool {
-        true
+/// The bodyless `200` [`describe`](crate::routes::describe) moves to the `204`
+/// the handler really sends.
+impl gotcha::Responsible for PluginDeleted {
+    fn response() -> gotcha::oas::Responses {
+        gotcha::response::empty_response(200, "no content")
     }
 }
 

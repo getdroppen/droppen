@@ -226,13 +226,7 @@ impl Schematic for AnyValue {
 
     fn generate_schema() -> EnhancedSchema {
         EnhancedSchema {
-            schema: Schema {
-                _type: None,
-                format: None,
-                nullable: None,
-                description: None,
-                extras: Default::default(),
-            },
+            schema: Schema::default(),
             required: false,
         }
     }
@@ -283,14 +277,12 @@ macro_rules! inline_string_enum {
             fn generate_schema() -> $crate::gotcha_core::EnhancedSchema {
                 $crate::gotcha_core::EnhancedSchema {
                     schema: $crate::gotcha::oas::Schema {
-                        _type: Some("string".to_string()),
-                        format: None,
-                        nullable: None,
-                        description: None,
+                        _type: Some("string".into()),
                         extras: ::std::collections::BTreeMap::from([(
                             "enum".to_string(),
                             $crate::serde_json::json!([$($variant),+]),
                         )]),
+                        ..::std::default::Default::default()
                     },
                     required: true,
                 }
@@ -432,11 +424,9 @@ impl ExtraResponses {
         fn binary_schema() -> (Schema, BTreeMap<String, Schema>) {
             (
                 Schema {
-                    _type: Some("string".to_string()),
+                    _type: Some("string".into()),
                     format: Some("binary".to_string()),
-                    nullable: None,
-                    description: None,
-                    extras: Default::default(),
+                    ..Default::default()
                 },
                 BTreeMap::new(),
             )
@@ -504,6 +494,10 @@ trait SpecAmendmentExt {
     /// true` in `openapi/openapi.json`), so this both fixes the type and
     /// matches it.
     fn hoist_nullable_refs(&mut self);
+
+    /// Turn every `anyOf` of a `$ref` and `null` back into a nullable `$ref`,
+    /// which [`Self::hoist_nullable_refs`] then moves onto the component.
+    fn fold_nullable_refs(&mut self);
 }
 
 impl SpecAmendmentExt for OpenAPIV3 {
@@ -541,6 +535,17 @@ impl SpecAmendmentExt for OpenAPIV3 {
             });
     }
 
+    fn fold_nullable_refs(&mut self) {
+        let Some(schemas) = self.components.as_mut().and_then(|c| c.schemas.as_mut()) else {
+            return;
+        };
+        for schema in schemas.values_mut() {
+            let mut value = serde_json::to_value(&*schema).expect("a schema is serializable");
+            fold_nullable_refs_in(&mut value);
+            *schema = serde_json::from_value(value).expect("folding leaves a schema");
+        }
+    }
+
     fn hoist_nullable_refs(&mut self) {
         let Some(schemas) = self.components.as_mut().and_then(|c| c.schemas.as_mut()) else {
             return;
@@ -548,7 +553,7 @@ impl SpecAmendmentExt for OpenAPIV3 {
 
         let mut to_null: Vec<String> = Vec::new();
         for schema in schemas.values_mut() {
-            let Referenceable::Data(schema) = schema else { continue };
+            let Some(schema) = schema.as_object_mut() else { continue };
             let Some(serde_json::Value::Object(properties)) = schema.extras.get_mut("properties") else {
                 continue;
             };
@@ -566,7 +571,7 @@ impl SpecAmendmentExt for OpenAPIV3 {
         }
 
         for name in to_null {
-            if let Some(Referenceable::Data(schema)) = schemas.get_mut(&name) {
+            if let Some(schema) = schemas.get_mut(&name).and_then(gotcha::oas::SchemaValue::as_object_mut) {
                 schema.nullable = Some(true);
             }
         }
@@ -580,7 +585,8 @@ fn body_response(description: &str, content_type: &str, schema: Schema) -> Respo
         content: Some(BTreeMap::from([(
             content_type.to_string(),
             MediaType {
-                schema: Some(Referenceable::Data(schema)),
+                schema: Some(schema.into()),
+                item_schema: None,
                 example: None,
                 examples: None,
                 encoding: None,
@@ -611,7 +617,8 @@ pub fn apply(mut spec: OpenAPIV3, overrides: &ExtraResponses) -> OpenAPIV3 {
             content: BTreeMap::from([(
                 entry.content_type.to_string(),
                 MediaType {
-                    schema: Some(Referenceable::Data(schema)),
+                    schema: Some(schema.into()),
+                    item_schema: None,
                     example: None,
                     examples: None,
                     encoding: None,
@@ -667,13 +674,94 @@ pub fn apply(mut spec: OpenAPIV3, overrides: &ExtraResponses) -> OpenAPIV3 {
         let components = spec.components.get_or_insert_with(default_components);
         let schemas = components.schemas.get_or_insert_with(BTreeMap::new);
         for (name, schema) in new_components {
-            schemas.entry(name).or_insert(Referenceable::Data(schema));
+            schemas.entry(name).or_insert(schema.into());
         }
     }
 
     spec.declare_bearer_scheme();
+    spec.fold_nullable_refs();
     spec.hoist_nullable_refs();
+    restore_always_written_required(&mut spec);
     spec
+}
+
+/// Fold gotcha 0.5's `anyOf: [{ "$ref": X }, { "type": "null" }]` back into
+/// the `$ref` plus `nullable` sibling [gotcha 0.4 wrote][hoist].
+///
+/// The generated TypeScript client imports component names as its own types
+/// (`type AccountRef = components["schemas"]["AccountRef"]`), and the contract
+/// has always meant "this component is nullable" rather than "this field may
+/// be null, the component itself never is". The two describe the same wire
+/// values, but only the former typechecks against code written for it.
+///
+/// [hoist]: SpecAmendmentExt::hoist_nullable_refs
+fn fold_nullable_refs_in(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(object) => {
+            if let Some(serde_json::Value::Array(branches)) = object.get("anyOf") {
+                let null = branches
+                    .iter()
+                    .position(|branch| branch.as_object().is_some_and(|branch| branch.len() == 1 && branch.get("type").and_then(|t| t.as_str()) == Some("null")));
+                let reference = branches
+                    .iter()
+                    .position(|branch| branch.as_object().is_some_and(|branch| branch.len() == 1 && branch.contains_key("$ref")));
+                if let (Some(null), Some(reference)) = (null, reference) {
+                    if branches.len() == 2 && null != reference {
+                        let reference = branches[reference].clone();
+                        object.remove("anyOf");
+                        object.extend(reference.as_object().cloned().unwrap_or_default());
+                        object.insert("nullable".to_string(), serde_json::Value::Bool(true));
+                    }
+                }
+            }
+            for value in object.values_mut() {
+                fold_nullable_refs_in(value);
+            }
+        }
+        serde_json::Value::Array(values) => values.iter_mut().for_each(fold_nullable_refs_in),
+        _ => {}
+    }
+}
+
+/// The components whose Rust types carry a container-level `#[serde(default)]`.
+///
+/// gotcha 0.5 reads that attribute as "every field may be absent", which is
+/// right for the lenient *reader* these types implement — a hand-edited or
+/// older row still loads — but wrong for the *writer*: `Serialize` always
+/// emits every field, and every response built from them does too. Left as
+/// gotcha derives it, each field becomes optional in the generated TypeScript
+/// and the client loses the guarantee the contract used to give it.
+const ALWAYS_WRITTEN: [&str; 8] = [
+    "ApiChat",
+    "ApiChatMessage",
+    "FirstProgress",
+    "SetupProgress",
+    "StepFlows",
+    "StepStates",
+    "WhereProgress",
+    "WrapProgress",
+];
+
+/// Put every property of [`ALWAYS_WRITTEN`] back into its `required` list.
+fn restore_always_written_required(spec: &mut OpenAPIV3) {
+    let Some(schemas) = spec.components.as_mut().and_then(|components| components.schemas.as_mut()) else {
+        return;
+    };
+    for name in ALWAYS_WRITTEN {
+        let Some(schema) = schemas.get_mut(name).and_then(gotcha::oas::SchemaValue::as_object_mut) else {
+            continue;
+        };
+        let Some(serde_json::Value::Object(properties)) = schema.extras.get("properties") else {
+            continue;
+        };
+        // Sorted: gotcha builds `properties` from a hash map, whose order
+        // differs between runs, and this array is not an object the server's
+        // final sort touches. The committed document has to be reproducible.
+        let mut names: Vec<String> = properties.keys().cloned().collect();
+        names.sort();
+        let required = names.into_iter().map(serde_json::Value::String).collect();
+        schema.extras.insert("required".to_string(), serde_json::Value::Array(required));
+    }
 }
 
 fn default_components() -> gotcha::oas::Components {
@@ -753,7 +841,7 @@ mod tests {
         spec.hoist_nullable_refs();
 
         let schemas = spec.components.unwrap().schemas.unwrap();
-        let Referenceable::Data(outer) = &schemas["Outer"] else {
+        let Some(outer) = schemas["Outer"].as_object() else {
             panic!("Outer inlined")
         };
         let properties = outer.extras["properties"].as_object().unwrap();
@@ -761,7 +849,7 @@ mod tests {
         assert!(inner.contains_key("$ref"), "the field stays a $ref");
         assert!(!inner.contains_key("nullable"), "a $ref sibling is ignored by generators");
 
-        let Referenceable::Data(inner_component) = &schemas["Inner"] else {
+        let Some(inner_component) = schemas["Inner"].as_object() else {
             panic!("Inner inlined")
         };
         assert_eq!(inner_component.nullable, Some(true), "nullability lands on the component");
@@ -780,7 +868,7 @@ mod tests {
             paths: BTreeMap::default(),
             servers: None,
             components: Some(gotcha::oas::Components {
-                schemas: Some(components.into_iter().map(|(k, v)| (k, Referenceable::Data(v))).collect()),
+                schemas: Some(components.into_iter().map(|(k, v)| (k, v.into())).collect()),
                 ..default_components()
             }),
             security: None,

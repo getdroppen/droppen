@@ -23,9 +23,9 @@ droppen-instance = { path = "../droppen-instance" }
 droppen-plugin-sdk = { path = "../droppen-plugin-sdk" }
 # The gzip half of a plugin package's tarball. The backend is the server's.
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
-gotcha = { version = "0.4.1", features = ["openapi"] }
+gotcha = { version = "0.5.0", features = ["openapi"] }
 # What gotcha's `Schematic` derive expands to names it.
-gotcha_core = "0.4.1"
+gotcha_core = "0.5.0"
 libc = "0.2"
 rand = "0.8"
 rusqlite = { version = "0.32", features = ["bundled"] }

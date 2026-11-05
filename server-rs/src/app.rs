@@ -5,14 +5,16 @@
 //! serves bare (see [`crate::shutdown`]). Everything above it —
 //! `config` / `state` / `routes` / `build_router` — is the framework's, so the
 //! router (and therefore `/openapi.json`, `/redoc`, `/scalar`) is assembled
-//! exactly as gotcha assembles it.
+//! exactly as gotcha assembles it — the documentation endpoints included, which
+//! gotcha 0.5 mounts only when asked ([`GotchaApp::openapi_endpoints`]).
 
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
 use gotcha::axum::extract::FromRef;
-use gotcha::{ConfigWrapper, GotchaApp, GotchaContext, GotchaError, GotchaResult, GotchaRouter};
+#[allow(deprecated)] // The trait API is what `prepare` builds on; moving to the builder is a separate change.
+use gotcha::{ConfigWrapper, GotchaApp, GotchaContext, GotchaError, GotchaResult, GotchaRouter, OpenApiEndpoints};
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 
@@ -66,6 +68,7 @@ pub struct RemoteHandApp {
     pub desktop_app_override: Option<bool>,
 }
 
+#[allow(deprecated)] // See the import above: the trait still does everything this server asks of it.
 impl GotchaApp for RemoteHandApp {
     type State = AppState;
     type Config = AppConfig;
@@ -95,6 +98,16 @@ impl GotchaApp for RemoteHandApp {
 
     fn routes(&self, router: GotchaRouter<GotchaContext<Self::State, Self::Config>>) -> GotchaRouter<GotchaContext<Self::State, Self::Config>> {
         crate::api::routes(router)
+    }
+
+    /// gotcha 0.5 mounts no documentation from the `openapi` feature alone,
+    /// and leaves Redoc off by default; this keeps `/openapi.json`, `/scalar`
+    /// and `/redoc` where clients and `export-openapi` already find them.
+    fn openapi_endpoints(&self) -> Option<OpenApiEndpoints> {
+        Some(OpenApiEndpoints {
+            redoc_path: Some("/redoc".into()),
+            ..OpenApiEndpoints::default()
+        })
     }
 
     fn state(&self, config: &ConfigWrapper<Self::Config>) -> impl std::future::Future<Output = GotchaResult<Self::State>> + Send {
@@ -209,6 +222,7 @@ impl RemoteHandApp {
     /// Split out of `run` so `export-openapi` and the integration tests can take
     /// the address the server actually got — which the framework's own `run`
     /// keeps to itself.
+    #[allow(deprecated)] // The deprecated trait's config/state/build_router are what this assembles.
     pub async fn prepare(self) -> GotchaResult<Prepared> {
         self.logger()?;
         for line in droppen_base::env::unread_dirs() {
@@ -374,10 +388,7 @@ impl RemoteHandApp {
             apps: state.apps.clone(),
         };
 
-        let context = GotchaContext {
-            config: config.clone(),
-            state,
-        };
+        let context = GotchaContext::new(state, config.clone());
         let router = self.build_router(context).await?;
         // The `/embed/{id}/*` proxy is composed here rather than in
         // [`crate::api::routes`] for two reasons: it needs the apps registry,

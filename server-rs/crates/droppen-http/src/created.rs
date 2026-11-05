@@ -1,18 +1,17 @@
 //! Success statuses other than `200`, which gotcha cannot derive: `201
 //! Created` and `202 Accepted`.
 //!
-//! Every success gotcha documents is a `200`
-//! (`gotcha_core-0.4.1/src/responsible.rs:25`), and `Responsible` carries a
-//! blanket `impl<T: Schematic> Responsible for T` that a downstream crate cannot
-//! add to. So each wrapper borrows `T`'s schema — the derived response is right
-//! about the *body*, wrong only about the status — and
+//! Each wrapper borrows `T`'s schema — the documented response is right about
+//! the *body*, wrong only about the status — and
 //! [`ExtraResponses::restatus`](crate::openapi_ext::ExtraResponses::restatus)
 //! moves the entry to its real status. At runtime the [`IntoResponse`] impl
 //! below sends that status.
 
 use gotcha::axum::http::StatusCode;
 use gotcha::axum::response::{IntoResponse, Response};
-use gotcha::{Json, Schematic};
+use gotcha::oas::Responses;
+use gotcha::response::response as response_contract;
+use gotcha::{Json, Responsible, Schematic};
 use gotcha_core::EnhancedSchema;
 use serde::Serialize;
 
@@ -29,6 +28,15 @@ macro_rules! status_body {
         impl<T: Serialize> IntoResponse for $name<T> {
             fn into_response(self) -> Response {
                 (StatusCode::$code, Json(self.0)).into_response()
+            }
+        }
+
+        /// The `200` the wrapper'd body would document on its own;
+        /// [`ExtraResponses::restatus`](crate::openapi_ext::ExtraResponses::restatus)
+        /// moves it to the status this wrapper really sends.
+        impl<T: Schematic> Responsible for $name<T> {
+            fn response() -> Responses {
+                response_contract::<T>(200, "application/json", "default return")
             }
         }
 
