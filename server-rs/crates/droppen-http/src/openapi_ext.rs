@@ -24,8 +24,8 @@
 use std::collections::BTreeMap;
 
 use gotcha::oas::{MediaType, OpenAPIV3, Operation, Referenceable, Response, Schema};
-use gotcha::Schematic;
-use gotcha_core::{registry, EnhancedSchema};
+use gotcha::gotcha_core::registry;
+use gotcha::{EnhancedSchema, Schematic};
 use serde::{Deserialize, Serialize};
 
 /// A value that is always present in the payload but may be `null`.
@@ -274,13 +274,13 @@ macro_rules! inline_string_enum {
                 "string"
             }
 
-            fn generate_schema() -> $crate::gotcha_core::EnhancedSchema {
-                $crate::gotcha_core::EnhancedSchema {
+            fn generate_schema() -> $crate::gotcha::EnhancedSchema {
+                $crate::gotcha::EnhancedSchema {
                     schema: $crate::gotcha::oas::Schema {
                         _type: Some("string".into()),
                         extras: ::std::collections::BTreeMap::from([(
                             "enum".to_string(),
-                            $crate::serde_json::json!([$($variant),+]),
+                            $crate::gotcha::serde_json::json!([$($variant),+]),
                         )]),
                         ..::std::default::Default::default()
                     },

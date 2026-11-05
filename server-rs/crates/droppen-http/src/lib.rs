@@ -17,15 +17,11 @@ use gotcha::Schematic;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
-// `substate!` and `inline_string_enum!` name these through `$crate`, so a
-// crate that calls the macros needs no dependency of its own on gotcha,
-// gotcha_core or serde_json for them.
+// `substate!` and `inline_string_enum!` name everything they expand to through
+// `$crate`, so a crate that calls the macros needs no dependency of its own on
+// gotcha or serde_json for them.
 #[doc(hidden)]
 pub use gotcha;
-#[doc(hidden)]
-pub use gotcha_core;
-#[doc(hidden)]
-pub use serde_json;
 
 pub mod app_window;
 pub mod bridge;
