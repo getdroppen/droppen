@@ -495,8 +495,9 @@ trait SpecAmendmentExt {
     /// matches it.
     fn hoist_nullable_refs(&mut self);
 
-    /// Turn every `anyOf` of a `$ref` and `null` back into a nullable `$ref`,
-    /// which [`Self::hoist_nullable_refs`] then moves onto the component.
+    /// Turn each component property's `anyOf` of a `$ref` and `null` back into
+    /// a nullable `$ref`, which [`Self::hoist_nullable_refs`] then moves onto
+    /// the component. Only the properties `hoist` looks at are rewritten.
     fn fold_nullable_refs(&mut self);
 }
 
@@ -540,9 +541,13 @@ impl SpecAmendmentExt for OpenAPIV3 {
             return;
         };
         for schema in schemas.values_mut() {
-            let mut value = serde_json::to_value(&*schema).expect("a schema is serializable");
-            fold_nullable_refs_in(&mut value);
-            *schema = serde_json::from_value(value).expect("folding leaves a schema");
+            let Some(schema) = schema.as_object_mut() else { continue };
+            let Some(serde_json::Value::Object(properties)) = schema.extras.get_mut("properties") else {
+                continue;
+            };
+            for property in properties.values_mut() {
+                fold_nullable_ref_in(property);
+            }
         }
     }
 
@@ -685,8 +690,8 @@ pub fn apply(mut spec: OpenAPIV3, overrides: &ExtraResponses) -> OpenAPIV3 {
     spec
 }
 
-/// Fold gotcha 0.5's `anyOf: [{ "$ref": X }, { "type": "null" }]` back into
-/// the `$ref` plus `nullable` sibling [gotcha 0.4 wrote][hoist].
+/// Fold one component property's `anyOf: [{ "$ref": X }, { "type": "null" }]`
+/// back into the `$ref` plus `nullable` sibling [gotcha 0.4 wrote][hoist].
 ///
 /// The generated TypeScript client imports component names as its own types
 /// (`type AccountRef = components["schemas"]["AccountRef"]`), and the contract
@@ -694,33 +699,31 @@ pub fn apply(mut spec: OpenAPIV3, overrides: &ExtraResponses) -> OpenAPIV3 {
 /// be null, the component itself never is". The two describe the same wire
 /// values, but only the former typechecks against code written for it.
 ///
+/// Only a component's own properties are folded — the exact positions
+/// [`SpecAmendmentExt::hoist_nullable_refs`] moves nullability from. A `$ref`
+/// deeper in (a `Vec<Option<X>>` item, a nested object) keeps gotcha's
+/// `anyOf`, which generators do read as `X | null`; folding it there would
+/// leave a `nullable` sibling no generator reads. Literal-value keys
+/// (`examples`, `default`, `enum`) are never visited either.
+///
 /// [hoist]: SpecAmendmentExt::hoist_nullable_refs
-fn fold_nullable_refs_in(value: &mut serde_json::Value) {
-    match value {
-        serde_json::Value::Object(object) => {
-            if let Some(serde_json::Value::Array(branches)) = object.get("anyOf") {
-                let null = branches
-                    .iter()
-                    .position(|branch| branch.as_object().is_some_and(|branch| branch.len() == 1 && branch.get("type").and_then(|t| t.as_str()) == Some("null")));
-                let reference = branches
-                    .iter()
-                    .position(|branch| branch.as_object().is_some_and(|branch| branch.len() == 1 && branch.contains_key("$ref")));
-                if let (Some(null), Some(reference)) = (null, reference) {
-                    if branches.len() == 2 && null != reference {
-                        let reference = branches[reference].clone();
-                        object.remove("anyOf");
-                        object.extend(reference.as_object().cloned().unwrap_or_default());
-                        object.insert("nullable".to_string(), serde_json::Value::Bool(true));
-                    }
-                }
-            }
-            for value in object.values_mut() {
-                fold_nullable_refs_in(value);
-            }
-        }
-        serde_json::Value::Array(values) => values.iter_mut().for_each(fold_nullable_refs_in),
-        _ => {}
+fn fold_nullable_ref_in(value: &mut serde_json::Value) {
+    let serde_json::Value::Object(object) = value else { return };
+    let Some(serde_json::Value::Array(branches)) = object.get("anyOf") else { return };
+    let null = branches
+        .iter()
+        .position(|branch| branch.as_object().is_some_and(|branch| branch.len() == 1 && branch.get("type").and_then(|t| t.as_str()) == Some("null")));
+    let reference = branches
+        .iter()
+        .position(|branch| branch.as_object().is_some_and(|branch| branch.len() == 1 && branch.contains_key("$ref")));
+    let (Some(null), Some(reference)) = (null, reference) else { return };
+    if branches.len() != 2 || null == reference {
+        return;
     }
+    let reference = branches[reference].clone();
+    object.remove("anyOf");
+    object.extend(reference.as_object().cloned().unwrap_or_default());
+    object.insert("nullable".to_string(), serde_json::Value::Bool(true));
 }
 
 /// The components whose Rust types carry a container-level `#[serde(default)]`.
