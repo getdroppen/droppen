@@ -28,8 +28,8 @@ use droppen_instance::paths::Paths;
 /// Why [`Control`] could not do what it was asked.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ControlError {
-    /// This server cannot run a link: it does not own its instance
-    /// (`export-openapi`, a test server), or `DROPPEN_AGENT_LINK=0`.
+    /// This server cannot run a link: it does not own its instance (a test
+    /// server), or `DROPPEN_AGENT_LINK=0`.
     Unavailable(String),
     /// The enrollment could not begin.
     Begin(BeginError),
@@ -66,8 +66,8 @@ pub struct Control {
     paths: Paths,
     files: AgentFiles,
     /// Set once the server owns its instance and listens (the server's
-    /// `RemoteHandApp::prepare`); a server without it (no
-    /// lock: `export-openapi`, tests) never starts a link.
+    /// `RemoteHandApp::prepare`); a server without it (no lock: tests) never
+    /// starts a link.
     env: OnceLock<LinkEnv>,
     running: Mutex<Option<Running>>,
     /// Enrolling, starting, stopping and unenrolling one at a time.

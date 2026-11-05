@@ -1079,9 +1079,8 @@ impl InjectionRegistry {
     /// `GET /api/sessions/...` answered from a half-scanned `runs.json` would
     /// report a live run as absent and unblock the composer, which is the exact
     /// double-spawn this whole mechanism exists to prevent. It is gated on
-    /// ownership for the same reason terminal adoption is — `export-openapi`
-    /// runs a throwaway server in-process, and a throwaway server must not
-    /// claim a real one's runs.
+    /// ownership for the same reason terminal adoption is — a test's throwaway
+    /// server runs in-process, and must not claim a real one's runs.
     ///
     /// `by_source` is each source's provider's runs, as the provider registry
     /// holds them ([`ProviderRegistry::adopt_all`]): each run goes to the

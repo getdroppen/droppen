@@ -22,9 +22,9 @@
 //!   file — the moment the instance has a user account, however that account
 //!   came to be (this page, or `user add`, which removes the file too), and
 //!   with the server that minted it;
-//! * a server that does not own its instance (`export-openapi`, a test's
-//!   throwaway router) never mints one, so it can never overwrite the real
-//!   server's file with a code nobody is checking.
+//! * a server that does not own its instance (a test's throwaway router) never
+//!   mints one, so it can never overwrite the real server's file with a code
+//!   nobody is checking.
 //!
 //! The surface it opens says nothing else — the status route answers a few
 //! booleans and a name, and the setup route answers a token or a refusal.

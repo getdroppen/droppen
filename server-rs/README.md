@@ -32,7 +32,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 | 路径 | 负责 |
 | --- | --- |
 | `api/` | 路由：每个子系统的路由各占一行注册、`AppState` 与它造出的各子系统状态（`state.rs`），以及要同时读几个子系统的会话列表、详情、会话 websocket 和设置 |
-| `app.rs` | 应用装配：config / state / routes / bind、本服务驱动的 CLI（`register_providers`、`transcript_sources`、`logins`）、一个 crate 声明而由另一个 crate 的类型回答的端口，以及取代 `GotchaApp::run` 的可停机 serve loop |
+| `app.rs` | 应用装配：config / state / 用 `Gotcha` builder 组装 routes 与文档端点 / bind、本服务驱动的 CLI（`register_providers`、`transcript_sources`、`logins`）、一个 crate 声明而由另一个 crate 的类型回答的端口，以及自己的 listener 与可停机 serve loop（gotcha 的 `run`/`bind` 不带 `ConnectInfo`） |
 | `stream_source.rs` | link 从本机会话复制的内容：agent 的 `StreamSource`，读会话与 drive 的实时状态 |
 | `cli.rs`、`cli/` | 命令行：一棵 clap 树；`export.rs` 是其中的 `export-openapi` |
 | `static_files.rs` | 打进二进制的前端 |
@@ -61,19 +61,21 @@ cargo clippy --all-targets --all-features -- -D warnings
 | `crates/droppen-agent/` | 机器角色：这台电脑在账号里的身份（种子与机器密钥，`seed`、`fingerprint`）、用设备发的注册码加入账号（`enroll`）、到 hub 的连接与设备的端到端握手（`link`、`hub`）、账号链的状态与争议声明（`state`、`dispute`）、中继（`relays`）与直连路径（`direct`）、通道到本机回环 API 的桥接（`bridge`）、加密的流（`streams`）和身份密钥轮换（`rotation`）；`agent enroll` / `agent status` 的执行部分（`cli`）。推送密钥、账号变化提醒和要复制的会话经 `LinkHost`、`StreamSource` 端口由入口填上 |
 | `crates/droppen-pty/` | 活过服务端重启的 pty：shim 进程（本二进制的隐藏子命令 `pty-shim`）、它的帧格式、环形缓冲与屏幕模型、留在磁盘上的边车文件，以及服务端这一侧的连接 |
 
-## 四个「填坑」模块
+## 集中在入口的几个模块
 
-框架给不了的东西集中在这四个文件里，而不是散落在各子系统：
+框架给不了的、或者只有入口才看得全的东西，集中在这几个文件里，而不是散落在各子系统：
 
 - **`crates/droppen-http/src/openapi_ext.rs`** — 一个声明式的补丁注册表，在唯一一次 `GotchaRouter::openapi(..)`
   里统一应用。承担：额外状态码、把派生出的 `200` 改成 `201`、二进制与 multipart 请求体、
   重写描述，以及 `Nullable<T>` / `Optional<T>` / `AnyValue` 这三个 zod 对齐包装。
-- **`export.rs`** — `export-openapi` 命令。在 0 号端口上把**真实的** router 跑起来，
-  发一个 `GET /openapi.json` 再写盘。这不只是绕路：它保证导出的文件与线上服务的文档逐字节
-  一致。
-- **`shutdown.rs`** — gotcha 完全没有的停机流程：SIGINT/SIGTERM、放在 state 里的
+- **`export.rs`** — `export-openapi` 命令。用与线上服务相同的路由注册（`app::routes`）调
+  `GotchaRouter::into_openapi` 生成文档再写盘：不起服务、不占端口、没有请求，也就不再需要
+  实例锁或关掉登录守卫。`tests/probe.rs` 守住线上文档与 `openapi/openapi.json` 一致，
+  `export.rs` 的测试守住导出与线上文档一致。
+- **`shutdown.rs`** — 服务端自己 serve 之后的停机流程：SIGINT/SIGTERM、放在 state 里的
   `CancellationToken`（让活着的 websocket 与 listener 同时收到停机），以及按序拆掉 feeds /
-  terminals / apps / 全局 watcher 的 `Cleanups`。
+  terminals / apps / 全局 watcher 的 `Cleanups`。listener 之所以是自己的，是因为 gotcha
+  0.5 的 `run`/`bind` 不带 `ConnectInfo`，而三个守卫都要 peer 地址。
 - **`static_files.rs`** — 挂在 router fallback 上的单个 tower `Service`，从二进制里取资源、
   深链接回落到 `index.html`、让 `/api/*` 的 404 仍然是真 404。
 
@@ -330,24 +332,23 @@ replay 只做一件事：把 `transcript` / `sidecar` 事件按原始时间轴�
   （`gotcha-0.4.1/src/router.rs:236`）→ `static_files.rs` 用一个 tower `Service` 占住
   fallback。
 - 组合点因此只剩 `fallback_service` 与 `layer` 两个，而 fallback 已经被 SPA 占了；同时
-  `GotchaApp::routes` 在 state 存在之前就被调用，需要 state 的服务没法在那里注册 →
-  `apps/embed.rs` 的反向代理改在上一层组合：在 `app.rs` 拿到 `build_router` 返回的 axum
-  router 之后重新接管 fallback，把非 `/embed` 的请求转交给它包着的 SPA service。
+  `routes` 在 state 存在之前就被调用，需要 state 的服务没法在那里注册 → `apps/embed.rs`
+  的反向代理改在 builder 的 `finish_router` 里组合：那时 state 已就绪、文档端点已挂好，
+  这个 service 重新接管 fallback，把非 `/embed` 的请求转交给它包着的 SPA service。
 
 ### spec 获取
 
-- `GotchaRouter::operations` 与 `into_axum_router`——装配好的 spec 仅有的两个存在
-  位置——都是 crate-private，文档本身以路由闭包的形式挂载，因此除了走 HTTP 没有别的办法
-  拿到它（`gotcha-0.4.1/src/router.rs:38` 与 `:263`）→ `export.rs`。
+- `GotchaRouter::into_openapi` 消费 router 直接给出完整文档，走的是和文档端点同一条生
+  成/变换管线，不需要 HTTP，也不再需要实例或登录守卫 → `export.rs` 不再起服务再
+  `GET /openapi.json`。
 
 ### 生命周期
 
-- 完全没有停机故事：`GotchaApp::run` 裸调 `axum::serve(listener, router).await`，没有
-  `with_graceful_shutdown`、没有信号处理、也没有可以挂上去的生命周期钩子
-  （`gotcha-0.4.1/src/lib.rs:230`）→ `app.rs` 覆写 `run` 自己 serve，借的是**公开**的
-  `GotchaApp::build_router`，从而绕开 crate-private 的 `into_axum_router`。
-- 框架的 `run` 把绑定到的地址藏在自己肚子里，调用方用不了 0 号端口 → `app.rs` 把
-  bind/prepare 从 `run` 里拆出来，`export-openapi` 与集成测试才能拿到真实地址。
+- gotcha 0.5 有了停机流程（`bind`/`run` 的 `shutdown_signal`、`on_shutdown`、
+  `http_shutdown_timeout`），但它们的 listener 不带 `ConnectInfo`，而登录守卫、桌面
+  app 窗口判定与 Peer 限流都要 peer 地址 → `app.rs` 仍然自己 bind，并用
+  `axum::serve(...into_make_service_with_connect_info...)` serve；停机顺序仍由
+  `shutdown.rs` 掌管，drain 时限仍是 5 秒。
 
 ### 配置
 
@@ -358,8 +359,6 @@ replay 只做一件事：把 `transcript` / `sidecar` 事件按原始时间轴�
   类型化的 `DefaultsSource` 放在文件源与环境源前面。
 - `ServerConfig` 默认端口是 3000，而事后打补丁分不清「没设过」和「就是要 3000」→ 同一个
   `DefaultsSource` 把契约里的 `127.0.0.1:8700` 表达成真正的默认值。
-- `Gotcha` builder 会吞掉配置错误、静默回落到 `Default`（`gotcha-0.4.1/src/builder.rs`）→
-  用 trait API 而不是 builder，写错的配置文件会响。
 
 ### 错误
 

@@ -692,11 +692,10 @@ async fn a_second_server_on_one_instance_is_refused_and_told_the_pid() {
 
 /// A server that skipped the lock has no business in the instance directory.
 ///
-/// `export-openapi` is that server: it stands a throwaway router up in-process
-/// to read one document back out of it, and it is routinely run on a machine
-/// where the real server is up. Without the gate it would attach to that
-/// server's live shims, advance their cursors and sweep the sidecars of any it
-/// could not reach — and then exit.
+/// The tests' own throwaway servers are those servers: `prepare` stands one up
+/// in-process, routinely on a machine where the real server is up. Without the
+/// gate it would attach to that server's live shims, advance their cursors and
+/// sweep the sidecars of any it could not reach — and then exit.
 #[tokio::test]
 async fn a_server_that_skips_the_lock_neither_adopts_nor_claims_the_port() {
     let home = tempfile::tempdir().expect("tempdir");

@@ -169,11 +169,11 @@ use users::UsersStore;
 
 pub use routes::{describe, AuthState};
 
-/// The paths gotcha mounts its own documentation on
-/// (`gotcha-0.4.1/src/router.rs:311`). They sit outside `/api/`, which is what
-/// would otherwise sweep them into the static-asset exemption — and they are the
-/// last thing that should be readable by someone who cannot call the API they
-/// describe.
+/// The paths the server's documentation is on: gotcha's `/openapi.json` and
+/// `/scalar`, and `/redoc`, which `app.rs` answers with a redirect to
+/// `/scalar`. They sit outside `/api/`, which is what would otherwise sweep
+/// them into the static-asset exemption — and they are the last thing that
+/// should be readable by someone who cannot call the API they describe.
 const DOC_PATHS: [&str; 3] = ["/openapi.json", "/redoc", "/scalar"];
 
 /// How often the server that owns its instance brings the setup code in line
@@ -190,8 +190,8 @@ const DAY: Duration = Duration::from_secs(24 * 60 * 60);
 enum Mode {
     /// The default, and `auth.enabled = true`: every request proves who it is.
     Accounts,
-    /// `auth.enabled = false`, or a router built by `export-openapi`: nothing
-    /// is asked of anyone. Unsafe anywhere a stranger can reach the port.
+    /// `auth.enabled = false` (or [`Auth::new`]'s `disabled`): nothing is
+    /// asked of anyone. Unsafe anywhere a stranger can reach the port.
     Off,
 }
 
@@ -299,11 +299,9 @@ impl std::fmt::Debug for Auth {
 impl Auth {
     /// Build the subsystem for one server.
     ///
-    /// `disabled` is `export-openapi`'s: that command serves the real router in
-    /// process and reads `/openapi.json` back off it, which on a developer's own
-    /// machine — where accounts exist — would otherwise be a `401` and a failed
-    /// `pnpm gen:api`. It is the same escape hatch
-    /// `app::RemoteHandApp::skip_lock` is, for the same command.
+    /// `disabled` turns the guard off whatever `settings` say. The server takes
+    /// its mode from `auth.enabled` and always passes `false`; the switch stays
+    /// for callers that assemble a router of their own and want no guard on it.
     pub fn new(
         paths: &Paths,
         instance: &InstanceDirs,
