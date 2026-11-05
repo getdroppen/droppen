@@ -13,8 +13,6 @@ droppen-base = { path = "../droppen-base" }
 droppen-http = { path = "../droppen-http" }
 droppen-instance = { path = "../droppen-instance" }
 gotcha = { workspace = true }
-# What gotcha's `Schematic` derive expands to names it.
-gotcha_core = { workspace = true }
 libc = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = { workspace = true }

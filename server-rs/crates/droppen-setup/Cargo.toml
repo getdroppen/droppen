@@ -20,8 +20,6 @@ droppen-sessions = { path = "../droppen-sessions" }
 droppen-workbench = { path = "../droppen-workbench" }
 futures-util = "0.3"
 gotcha = { workspace = true }
-# What gotcha's `Schematic` derive expands to names it.
-gotcha_core = { workspace = true }
 libc = "0.2"
 regex = "1"
 serde = { version = "1", features = ["derive"] }

@@ -36,7 +36,7 @@ impl Schematic for PluginName {
         "string"
     }
 
-    fn generate_schema() -> gotcha_core::EnhancedSchema {
+    fn generate_schema() -> gotcha::EnhancedSchema {
         let mut schema = gotcha::oas::Schema {
             description: Some("One string, or one per language (`en`, `zh-CN`, `zh-TW`, `ja`) with `en` required.".to_string()),
             ..Default::default()
@@ -53,7 +53,7 @@ impl Schematic for PluginName {
                 }
             ]),
         );
-        gotcha_core::EnhancedSchema { schema, required: true }
+        gotcha::EnhancedSchema { schema, required: true }
     }
 }
 
@@ -178,14 +178,14 @@ impl Schematic for PluginTarballBody {
         "string"
     }
 
-    fn generate_schema() -> gotcha_core::EnhancedSchema {
+    fn generate_schema() -> gotcha::EnhancedSchema {
         let schema = gotcha::oas::Schema {
             _type: Some("string".into()),
             format: Some("binary".to_string()),
             description: Some("The plugin package: a gzip'd tar whose entries are under `package/`.".to_string()),
             ..Default::default()
         };
-        gotcha_core::EnhancedSchema { schema, required: true }
+        gotcha::EnhancedSchema { schema, required: true }
     }
 }
 

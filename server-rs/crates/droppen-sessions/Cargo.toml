@@ -20,8 +20,6 @@ droppen-plugins = { path = "../droppen-plugins" }
 droppen-workbench = { path = "../droppen-workbench" }
 futures-util = "0.3"
 gotcha = { workspace = true }
-# What gotcha's `Schematic` derive expands to names it.
-gotcha_core = { workspace = true }
 memchr = "2"
 regex = "1"
 rusqlite = { version = "0.32", features = ["bundled"] }

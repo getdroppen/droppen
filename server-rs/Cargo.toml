@@ -117,8 +117,6 @@ droppen-notify = { path = "crates/droppen-notify" }
 # the aggregator gateway.
 droppen-cloud = { path = "crates/droppen-cloud" }
 gotcha = { workspace = true }
-# What gotcha's `Schematic` derive expands to names it.
-gotcha_core = { workspace = true }
 # Named by no code here (the routes reach axum through gotcha), but the one
 # dependency that keeps axum's default features in the binary: gotcha takes
 # axum without them, so this is where `tracing` (an extractor's rejection is

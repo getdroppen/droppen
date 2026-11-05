@@ -343,7 +343,7 @@ impl Schematic for AnswerValue {
         "string"
     }
 
-    fn generate_schema() -> gotcha_core::EnhancedSchema {
+    fn generate_schema() -> gotcha::EnhancedSchema {
         let mut schema = gotcha::oas::Schema {
             description: Some("One label or free text, or every label chosen for a multi-select question.".to_string()),
             ..Default::default()
@@ -352,7 +352,7 @@ impl Schematic for AnswerValue {
             "oneOf".to_string(),
             serde_json::json!([{ "type": "string" }, { "type": "array", "items": { "type": "string" } }]),
         );
-        gotcha_core::EnhancedSchema { schema, required: true }
+        gotcha::EnhancedSchema { schema, required: true }
     }
 }
 

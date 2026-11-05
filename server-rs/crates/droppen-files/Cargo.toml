@@ -16,8 +16,6 @@ droppen-http = { path = "../droppen-http" }
 droppen-instance = { path = "../droppen-instance" }
 futures-util = "0.3"
 gotcha = { workspace = true }
-# What gotcha's `Schematic` derive expands to names it.
-gotcha_core = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = { workspace = true }
 tokio = { version = "1", features = ["fs", "io-util", "macros", "process", "rt", "sync", "time"] }

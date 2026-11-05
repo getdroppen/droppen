@@ -21,8 +21,6 @@ droppen-sessions = { path = "../droppen-sessions" }
 clap = { version = "4.5", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
 futures-util = "0.3"
 gotcha = { workspace = true }
-# What gotcha's `Schematic` derive expands to names it.
-gotcha_core = { workspace = true }
 libc = "0.2"
 regex = "1"
 rusqlite = { version = "0.32", features = ["bundled"] }

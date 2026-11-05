@@ -21,8 +21,6 @@ droppen-http = { path = "../droppen-http" }
 droppen-instance = { path = "../droppen-instance" }
 futures-util = "0.3"
 gotcha = { workspace = true }
-# What gotcha's `Schematic` derive expands to names it.
-gotcha_core = { workspace = true }
 rand = "0.8"
 # Asking a hub where its app is (`hub_web`). `default-features = false` drops
 # `default-tls` (native-tls/OpenSSL) so the binary keeps linking nothing but

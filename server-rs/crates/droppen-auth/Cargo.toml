@@ -27,8 +27,6 @@ droppen-instance = { path = "../droppen-instance" }
 # sidecar's.
 droppen-pty = { path = "../droppen-pty" }
 gotcha = { workspace = true }
-# What gotcha's `Schematic` derive expands to names it.
-gotcha_core = { workspace = true }
 libc = "0.2"
 rand = "0.8"
 rusqlite = { version = "0.32", features = ["bundled"] }
