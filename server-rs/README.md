@@ -1,6 +1,6 @@
 # remote-hand-server
 
-Droppen（原名 remote-hand）的服务端，Rust + [gotcha](https://crates.io/crates/gotcha) 0.4.1
+Droppen（原名 remote-hand）的服务端，Rust + [gotcha](https://crates.io/crates/gotcha) 0.5.0
 （axum 0.8 + 从类型派生的 OpenAPI）。由 `server/`（Hono + `@hono/zod-openapi`）
 逐模块移植而来，唯一**刻意**没有移植的是 browsers（`/api/browsers*`）——那个功能连同
 TypeScript 服务端一起退休了。
@@ -43,7 +43,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 | `crates/droppen-notify/` | 服务端的两条提醒通道：会话自己决定「这件事值得打扰你」时走的 Bark，以及注进会话的 `rh-notify` 与 skill（`notify`）；服务端决定发的 Web Push 与同时转给 Bark 的分发（`push`） |
 | `crates/droppen-base/` | 各子系统都用、却不属于任何一个的底层工具：时钟（`time`）、文本编码（`text`）、只有本用户可读的文件（`fsutil`）、「文件里那个 pid 还是当初那个进程吗」的两道守卫（`procs`）、出站 webhook 的守卫（`outbound`）、读环境变量（`env`）、spawn 的环境与输出脱敏（`process_env`）、二进制的两个名字（`program`） |
 | `crates/droppen-instance/` | 实例的底座：各子系统共用的路径（`paths`）、一个服务端独占的实例目录与宣示所有权的 `flock`（`instance`）、改名也不变的服务端身份（`identity`），以及实例自己的 SQLite 状态库和只增不改的 schema（`db`） |
-| `crates/droppen-http/` | 每个路由模块都站在上面的 HTTP 工具：错误体与状态码、出错即 `400` 的提取器、`201`/`202` 响应、websocket 保活与限时发送、构建身份（`SERVER_VERSION`）、`substate!`；以及手工组装的配置加载器（`config`，带类型化默认值，loopback 8700）、OpenAPI 补丁（`openapi_ext`）和每个 `/api/*` 请求都要过的同源守卫（`origin`） |
+| `crates/droppen-http/` | 每个路由模块都站在上面的 HTTP 工具：错误体与状态码、出错即 `400` 的提取器、`201`/`202` 响应、websocket 保活与限时发送、构建身份（`SERVER_VERSION`）、`substate!`；以及基于 gotcha `ConfigBuilder` 的配置加载（`config`，类型化默认值，loopback 8700，`PORT`/`HOST` 兜底层）、OpenAPI 补丁（`openapi_ext`）和每个 `/api/*` 请求都要过的同源守卫（`origin`） |
 | `crates/droppen-supervisor/` | `remote-hand-server up`：重启子进程、回滚坏二进制、收孤儿（`supervisor`）；`POST /api/server/self-upgrade`，以及 `<data>/bin` 这个二进制仓库（`selfupdate`） |
 | `crates/droppen-auth/` | 本机账号：谁能和这个服务端说话。账号与 argon2id 哈希（`users`）、登录会话（`sessions`）、websocket 与下载用的短命票据（`tickets`）、失败锁定（`lockout`）、没有账号的实例的设置码（`setup`）、本机控制 socket 发的一次性令牌（`local_open`）、`/api/auth/*`（`routes`）、`user` / `setup-code` / `open` 命令行（`cli`），以及每个请求最先经过的登录守卫（`guard`） |
 | `crates/droppen-files/` | `$HOME` 下的浏览、读取、下载与上传——客户端传来的路径只在这里被解析和收敛，经 Droppen 进来的设备另被挡在服务端自己的数据和配置目录之外（`FileRoots::fence`）；以及 transcript 里私有 GitHub 仓库图片的代理（`media`，走本机 `gh` 的登录） |
@@ -352,13 +352,11 @@ replay 只做一件事：把 `transcript` / `sidecar` 事件按原始时间轴�
 
 ### 配置
 
-- `APP_SERVER__PORT` 在原生加载器下**不工作**：mofa 的环境源只产出字符串，而它只在更早的
-  源已经在同一路径放过数字时才会做强转（`mofa-0.2.0/src/utils.rs:122`），偏偏 gotcha 的
-  加载器没有默认值源——于是在没有配置文件的机器上直接以
-  `invalid type: string "9000", expected u16` 失败 → `config.rs` 手工组装加载器，把一个
-  类型化的 `DefaultsSource` 放在文件源与环境源前面。
-- `ServerConfig` 默认端口是 3000，而事后打补丁分不清「没设过」和「就是要 3000」→ 同一个
-  `DefaultsSource` 把契约里的 `127.0.0.1:8700` 表达成真正的默认值。
+- `ConfigBuilder` 没有「插在配置文件与 `APP_*` 之间」的公开源位：`defaults` 永远压在文件之下，
+  `env` 永远在最后，而托管平台通用的 `PORT` / `HOST` 必须夹在中间 → `config.rs` 取出 builder
+  的 `ConfigState`，把它们作为一个 `Defaults` 源插到 `APP_*` 之前，再用
+  `ConfigBuilder::from_state()` 重建，于是它们和其他源一起合并、强转、做 `${VAR}` 替换，
+  `APP_SERVER__HOST` / `APP_SERVER__PORT`（任意大小写拼法）照旧压过它们。
 
 ### 错误
 

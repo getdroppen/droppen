@@ -1423,7 +1423,6 @@ dependencies = [
  "futures-util",
  "gotcha",
  "libc",
- "mofa",
  "serde",
  "serde_json",
  "tokio",
