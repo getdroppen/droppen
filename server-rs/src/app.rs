@@ -13,6 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use gotcha::axum::extract::FromRef;
+use gotcha::axum::response::Redirect;
 #[allow(deprecated)] // The trait API is what `prepare` builds on; moving to the builder is a separate change.
 use gotcha::{ConfigWrapper, GotchaApp, GotchaContext, GotchaError, GotchaResult, GotchaRouter, OpenApiEndpoints};
 use tokio::net::TcpListener;
@@ -68,6 +69,18 @@ pub struct RemoteHandApp {
     pub desktop_app_override: Option<bool>,
 }
 
+/// Send a reader of the old `/redoc` page to `/scalar`.
+///
+/// gotcha 0.5's bundled Redoc refuses an OpenAPI 3.2 document, so the page it
+/// would render is dead; the path itself is not — the desktop app, the manual
+/// and the guard's own tests name it — so it stays a URL and forwards. 307,
+/// not 308: it preserves the method, and a temporary redirect is not cached
+/// for ever, so this can change again without visitors' browsers remembering
+/// the old answer.
+async fn redoc_to_scalar() -> Redirect {
+    Redirect::temporary("/scalar")
+}
+
 #[allow(deprecated)] // See the import above: the trait still does everything this server asks of it.
 impl GotchaApp for RemoteHandApp {
     type State = AppState;
@@ -97,17 +110,20 @@ impl GotchaApp for RemoteHandApp {
     }
 
     fn routes(&self, router: GotchaRouter<GotchaContext<Self::State, Self::Config>>) -> GotchaRouter<GotchaContext<Self::State, Self::Config>> {
-        crate::api::routes(router)
+        // `/redoc` is added here rather than through `openapi_endpoints`: an
+        // unannotated handler is a business route, so the guard covers it and
+        // it stays out of `openapi.json`, while the path the desktop app and
+        // the manual name keeps answering.
+        crate::api::routes(router).get("/redoc", redoc_to_scalar)
     }
 
     /// gotcha 0.5 mounts no documentation from the `openapi` feature alone,
-    /// and leaves Redoc off by default; this keeps `/openapi.json`, `/scalar`
-    /// and `/redoc` where clients and `export-openapi` already find them.
+    /// and its bundled Redoc cannot render the OpenAPI 3.2 document it now
+    /// generates; this keeps `/openapi.json` (for `export-openapi` and
+    /// clients) and `/scalar` where they already find them. `/redoc` is a
+    /// redirect of ours — see [`redoc_to_scalar`].
     fn openapi_endpoints(&self) -> Option<OpenApiEndpoints> {
-        Some(OpenApiEndpoints {
-            redoc_path: Some("/redoc".into()),
-            ..OpenApiEndpoints::default()
-        })
+        Some(OpenApiEndpoints::default())
     }
 
     fn state(&self, config: &ConfigWrapper<Self::Config>) -> impl std::future::Future<Output = GotchaResult<Self::State>> + Send {

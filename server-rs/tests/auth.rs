@@ -664,6 +664,27 @@ async fn the_first_account_closes_every_face_of_the_server() {
     server.stop().await;
 }
 
+/// `/redoc` is a URL clients still ask for, but the viewer gotcha bundles
+/// cannot render the OpenAPI 3.2 document it now generates. A signed-in
+/// reader is sent to `/scalar`; an anonymous one meets the guard first,
+/// exactly as it did when Redoc was still mounted.
+#[tokio::test]
+async fn redoc_sends_a_signed_in_reader_to_scalar() {
+    let home = tempfile::tempdir().expect("tempdir");
+    seed_account(home.path(), "ada", PASSWORD).await;
+    let server = common::TestServer::start_guarded_at(home.path(), None).await;
+
+    let (status, _) = server.get("/redoc").await;
+    assert_eq!(status, 401, "the redirect is behind the guard like the page was");
+
+    let token = login(&server, "ada", PASSWORD).await;
+    let authorization = format!("Bearer {token}");
+    let (status, head, body) = server.request_full("GET", "/redoc", &[("Authorization", &authorization)], &[]).await;
+    assert_eq!(status, 307, "GET /redoc -> {status}: {body}");
+    assert_eq!(common::header(&head, "location").as_deref(), Some("/scalar"));
+    server.stop().await;
+}
+
 /// The one thing an unauthenticated browser must still be able to do: load the
 /// page it is going to type the password into.
 #[tokio::test]
