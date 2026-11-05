@@ -30,13 +30,18 @@
 //! post-load fix-up, that cannot confuse "unset" with "deliberately 3000".
 //!
 //! `HOST` and `PORT` — the names every host and container runtime already sets —
-//! are the one layer the builder has no slot for. They sit above the files and
-//! below `APP_*`, and a source can only be added below the files (the typed
-//! defaults) or above everything (`env`); [`ConfigBuilder`] has no
-//! add-a-source-here method. [`LegacyEnv`] therefore applies them to the loaded
-//! value, where "below `APP_*`" is a check for the framework-named variable.
+//! sit above the files and below `APP_*`. [`ConfigBuilder`] can add a source
+//! below the files (the typed defaults) or above everything (`env`), but has no
+//! add-a-source-here method; its [`ConfigState`](gotcha::config::ConfigState) is
+//! public, though, so
+//! [`LegacyEnv`] inserts its table into the source list between the profile file
+//! and the `APP` environment and rebuilds. As a real source it merges, coerces
+//! and substitutes exactly as every other one does: a `PORT` that is not a port
+//! fails only when nothing later overrides it, any spelling mofa's environment
+//! source maps under `APP_` wins over it, and `${VAR}`/path placeholders see it.
 
-use gotcha::config::{ConfigBuilder, ConfigError};
+use gotcha::config::{ConfigBuilder, ConfigError, ConfigSource};
+use gotcha::config::toml::{Table, Value};
 use gotcha::{config, ConfigWrapper, ServerConfig};
 use serde::{Deserialize, Serialize};
 
@@ -285,15 +290,11 @@ impl Default for Defaults {
 /// `PORT` and `HOST`, the names every host and container runtime already sets.
 ///
 /// A fallback rather than an override: a variable that is not set changes
-/// nothing, and the layer sits *below* `APP_*`, so `APP_SERVER__PORT` still
-/// wins wherever both are given. It exists because "why is it not on the port I
-/// set?" is the first thing anyone hits who runs the image behind a platform
-/// that hands the port over in `PORT`.
-///
-/// Applied to the loaded configuration rather than added to the builder: it has
-/// to sit between the profile file and `APP_*`, and gotcha's builder only takes
-/// a source below the files or above every environment variable. See the
-/// module docs.
+/// nothing, and the layer sits *below* `APP_*`, so `APP_SERVER__PORT` — and
+/// every spelling mofa maps to the same path, such as `APP_server__port` —
+/// still wins wherever both are given. It exists because "why is it not on the
+/// port I set?" is the first thing anyone hits who runs the image behind a
+/// platform that hands the port over in `PORT`.
 struct LegacyEnv {
     host: Option<String>,
     port: Option<String>,
@@ -312,28 +313,27 @@ impl LegacyEnv {
         source
     }
 
-    /// Apply the fallback: each value fills in only what the framework-named
-    /// variable leaves alone.
-    fn apply(self, server: &mut ServerConfig) -> Result<(), ConfigError> {
-        let framework_names = |name: &str| std::env::var_os(name).is_some();
-        if let Some(host) = self.host {
-            if !framework_names("APP_SERVER__HOST") {
-                server.host = host;
-            }
+    /// The source's table, or `None` when neither name is set.
+    ///
+    /// Both values stay strings: mofa's merge coerces them against the typed
+    /// defaults at `server.port`, which is what lets `APP_*` override either
+    /// one later in the list, and what lets a value that is not a port fail
+    /// only when nothing overrides it. The variable processors run over the
+    /// merged document, so `${VAR}` is substituted here like everywhere else.
+    fn value(&self) -> Option<Value> {
+        let mut server = Table::new();
+        if let Some(host) = &self.host {
+            server.insert("host".into(), Value::String(host.clone()));
         }
-        if let Some(port) = self.port {
-            // Parsed even when `APP_SERVER__PORT` wins: the loader used to
-            // coerce this layer before the environment source was reached, so
-            // a bad `PORT` refused to start either way.
-            let parsed = port
-                .trim()
-                .parse::<u16>()
-                .map_err(|_| ConfigError::Error(format!("PORT is a number between 0 and 65535, not {port:?}")))?;
-            if !framework_names("APP_SERVER__PORT") {
-                server.port = parsed;
-            }
+        if let Some(port) = &self.port {
+            server.insert("port".into(), Value::String(port.clone()));
         }
-        Ok(())
+        if server.is_empty() {
+            return None;
+        }
+        let mut root = Table::new();
+        root.insert("server".into(), Value::Table(server));
+        Some(Value::Table(root))
     }
 }
 
@@ -350,9 +350,24 @@ pub fn load(profile: Option<String>) -> Result<ConfigWrapper<AppConfig>, ConfigE
         Some(profile) => builder.file_optional(format!("configurations/application_{profile}.toml")),
         None => builder,
     };
-    let mut config: ConfigWrapper<AppConfig> = builder.env("APP").enable_vars().build()?;
-    LegacyEnv::from_env().apply(&mut config.server)?;
-    Ok(config)
+    let builder = builder.env("APP").enable_vars();
+
+    // A source, not a post-load fix-up: it has to merge between the profile
+    // file and `APP_*`, so that order, coercion and the variable processors all
+    // apply to it as they did to the hand-assembled loader. The builder has no
+    // insert-a-source-here method, but its state is public; the source is a
+    // `Defaults` table, which merges wherever it is listed rather than only
+    // beneath the files.
+    let mut state = builder.state();
+    if let Some(value) = LegacyEnv::from_env().value() {
+        let at = state
+            .sources
+            .iter()
+            .position(|source| matches!(source, ConfigSource::Env { .. }))
+            .unwrap_or(state.sources.len());
+        state.sources.insert(at, ConfigSource::Defaults { value });
+    }
+    ConfigBuilder::from_state(state).build()
 }
 
 #[cfg(test)]
@@ -498,16 +513,86 @@ mod tests {
         assert_eq!((config.server.host.as_str(), config.server.port), (DEFAULT_HOST, DEFAULT_PORT));
     }
 
-    /// A `PORT` that is not a port refuses to start, even when
-    /// `APP_SERVER__PORT` would have won: that is what the old layer did when
-    /// it was merged, and a typo'd variable should not pass silently.
+    /// A `PORT` that is not a port refuses to start when it is the value that
+    /// remains: mofa cannot coerce it against the default integer.
     #[test]
-    fn an_unparsable_port_is_an_error() {
-        const NAME: &str = "config::tests::an_unparsable_port_is_an_error";
-        if !in_isolated_process(NAME, &[("PORT", "not-a-port"), ("APP_SERVER__PORT", "9000")]) {
+    fn an_unparsable_port_is_an_error_when_nothing_overrides_it() {
+        const NAME: &str = "config::tests::an_unparsable_port_is_an_error_when_nothing_overrides_it";
+        if !in_isolated_process(NAME, &[("PORT", "not-a-port")]) {
             return;
         }
         assert!(load(None).is_err());
+    }
+
+    /// `PORT` is merged as an `i64` and only checked against `u16` after every
+    /// source has spoken, so a value outside the port range is harmless when
+    /// `APP_SERVER__PORT` overrides it — as it was when the layer was a source.
+    #[test]
+    fn an_out_of_range_port_yields_to_the_framework_name() {
+        const NAME: &str = "config::tests::an_out_of_range_port_yields_to_the_framework_name";
+        for port in ["65536", "-1", "70000"] {
+            if !in_isolated_process(NAME, &[("PORT", port), ("APP_SERVER__PORT", "3000")]) {
+                continue;
+            }
+            let config = load(None).expect("the value that wins is a valid port");
+            assert_eq!(config.server.port, 3000, "PORT={port} is overridden before it is range-checked");
+            return;
+        }
+    }
+
+    /// mofa maps every `APP_`-prefixed spelling to the same path — it lowercases
+    /// what follows the prefix and drops empty `__` segments — so the merge
+    /// order, not a literal name, is what makes the framework's names win.
+    #[test]
+    fn the_environment_source_wins_whatever_its_spelling() {
+        const NAME: &str = "config::tests::the_environment_source_wins_whatever_its_spelling";
+        if !in_isolated_process(NAME, &[]) {
+            return;
+        }
+        std::env::set_var("PORT", "9000");
+        std::env::set_var("HOST", "10.0.0.1");
+        std::env::set_var("APP_server__port", "9001");
+        std::env::set_var("APP_SERVER__host", "10.9.9.9");
+        let config = load(None).expect("the configuration loads");
+        assert_eq!(config.server.port, 9001, "APP_server__port is APP_SERVER__PORT");
+        assert_eq!(config.server.host, "10.9.9.9", "APP_SERVER__host is APP_SERVER__HOST");
+        std::env::remove_var("APP_server__port");
+        std::env::remove_var("APP_SERVER__host");
+
+        std::env::set_var("APP_SERVER____PORT", "9001");
+        let config = load(None).expect("the configuration loads");
+        assert_eq!(config.server.port, 9001, "mofa drops the empty segment");
+    }
+
+    /// Path placeholders resolve over the merged document, so a file that
+    /// names `${server.host}` sees the `HOST` layer too.
+    #[test]
+    fn a_path_placeholder_sees_the_port_and_host_layer() {
+        const NAME: &str = "config::tests::a_path_placeholder_sees_the_port_and_host_layer";
+        if !in_isolated_process(NAME, &[("HOST", "10.1.1.1")]) {
+            return;
+        }
+        std::fs::create_dir_all("configurations").expect("the configuration directory");
+        std::fs::write("configurations/application.toml", "home_dir = \"${server.host}\"\n").expect("the configuration file");
+        let config = load(None).expect("the configuration loads");
+        assert_eq!(config.home(), std::path::PathBuf::from("10.1.1.1"));
+    }
+
+    /// `HOST`/`PORT` are strings in the merged document until the variable
+    /// processors run, so `${VAR}` is substituted in them like everywhere else;
+    /// an unresolved placeholder becomes the empty string.
+    #[test]
+    fn host_and_port_are_variable_substituted() {
+        const NAME: &str = "config::tests::host_and_port_are_variable_substituted";
+        if !in_isolated_process(NAME, &[("HOST", "${DROPPEN_X}"), ("DROPPEN_X", "10.2.2.2")]) {
+            return;
+        }
+        let config = load(None).expect("the configuration loads");
+        assert_eq!(config.server.host, "10.2.2.2");
+
+        std::env::set_var("HOST", "${DROPPEN_MISSING}");
+        let config = load(None).expect("an unresolved placeholder is not an error");
+        assert_eq!(config.server.host, "", "an unresolved placeholder substitutes to nothing");
     }
 
     #[test]
