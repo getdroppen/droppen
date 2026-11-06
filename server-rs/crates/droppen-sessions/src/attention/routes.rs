@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use droppen_http::error::ApiError;
 use droppen_http::extract::ApiPath;
 use droppen_http::refresh::Refresh;
-use droppen_http::openapi_ext::{ExtraResponses, Nullable};
+use droppen_http::openapi_ext::Nullable;
 use droppen_instance::paths::Paths;
 use crate::attention::seen;
 use crate::Source;
@@ -33,7 +33,7 @@ droppen_http::substate!(AttentionState);
 /// and visibility change, and a lookup would mean scanning a projects tree to
 /// answer a request whose whole job is to write eight words to a small file. An
 /// id that names nothing costs one entry, which the store's own cap reclaims.
-#[api(id = "mark_session_seen", group = "sessions", summary = "Mark a session read")]
+#[api(id = "mark_session_seen", group = "sessions", summary = "Mark a session read", responses(200 = "The session is now marked read"), drop_default)]
 pub async fn mark_seen(State(state): State<AttentionState>, ApiPath((source, id)): ApiPath<(Source, String)>) -> Result<Json<SeenResult>, ApiError> {
     let previous = seen::mark(state.paths.as_ref(), source, &id)
         .await
@@ -54,7 +54,7 @@ pub async fn mark_seen(State(state): State<AttentionState>, ApiPath((source, id)
 /// lives within its parent's: the tree under a session shows it unread until
 /// it, or the session, is opened after it last wrote. A subagent that is a
 /// session (a Codex thread) is marked through the session route.
-#[api(id = "mark_agent_seen", group = "sessions", summary = "Mark a subagent read")]
+#[api(id = "mark_agent_seen", group = "sessions", summary = "Mark a subagent read", responses(200 = "The subagent is now marked read"), drop_default)]
 pub async fn mark_agent_seen(
     State(state): State<AttentionState>,
     ApiPath(crate::sidecars::AgentPath { source, id, agent_id }): ApiPath<crate::sidecars::AgentPath>,
@@ -101,15 +101,4 @@ impl AttentionState {
             .post("/api/sessions/{source}/{id}/seen", mark_seen)
             .post("/api/sessions/{source}/{id}/agents/{agentId}/seen", mark_agent_seen)
     }
-}
-
-/// Everything gotcha cannot express about those routes.
-pub fn describe(reg: &mut ExtraResponses) {
-    reg.describe_final("POST", "/api/sessions/{source}/{id}/seen", 200, "The session is now marked read")
-        .describe_final(
-            "POST",
-            "/api/sessions/{source}/{id}/agents/{agentId}/seen",
-            200,
-            "The subagent is now marked read",
-        );
 }

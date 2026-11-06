@@ -13,7 +13,6 @@ use gotcha::{api, GotchaRouter, Json, Schematic, State};
 use serde::{Deserialize, Serialize};
 
 use droppen_http::extract::ApiQuery;
-use droppen_http::openapi_ext::ExtraResponses;
 use droppen_instance::paths::Paths;
 use usage::UsageStats;
 
@@ -36,7 +35,12 @@ pub struct StatsState {
 droppen_http::substate!(StatsState);
 
 /// Token usage aggregated by day and model over the recent window.
-#[api(id = "usage_stats", group = "stats", summary = "Token usage")]
+#[api(
+    id = "usage_stats",
+    group = "stats",
+    summary = "Token usage",
+    responses(200 = "Token usage aggregated by day and model over the recent window")
+)]
 pub async fn usage_stats(State(state): State<StatsState>, ApiQuery(query): ApiQuery<UsageQuery>) -> Json<UsageStats> {
     Json(state.transcripts.collect_usage(state.paths.as_ref(), query.days).await)
 }
@@ -50,14 +54,4 @@ impl StatsState {
     {
         router.get("/api/stats/usage", usage_stats)
     }
-}
-
-/// Everything gotcha cannot express about those routes.
-pub fn describe(reg: &mut ExtraResponses) {
-    reg.describe(
-        "GET",
-        "/api/stats/usage",
-        200,
-        "Token usage aggregated by day and model over the recent window",
-    );
 }
