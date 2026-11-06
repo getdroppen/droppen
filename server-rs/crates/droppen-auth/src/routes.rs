@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use droppen_http::error::{ApiError, Hinted};
 use droppen_http::extract::{ApiJson, ApiPath};
 use droppen_http::SendResult;
-use droppen_http::openapi_ext::{ExtraResponses, Nullable, Optional};
+use droppen_http::openapi_ext::{Nullable, Optional};
 use droppen_base::time::iso8601;
 
 use super::setup::Refused;
@@ -303,7 +303,13 @@ pub struct AuthState {
 droppen_http::substate!(AuthState);
 
 /// Exchange a name and a password for a bearer token.
-#[api(id = "auth_login", group = "auth", summary = "Log in")]
+#[api(
+    id = "auth_login",
+    group = "auth",
+    summary = "Log in",
+    responses(200 = "A bearer token and when it expires"),
+    errors(401 = "Invalid credentials — wrong name, wrong password, or locked out")
+)]
 pub async fn login(
     State(state): State<AuthState>,
     #[api(skip)] ClientLabel(label): ClientLabel,
@@ -364,7 +370,7 @@ pub async fn login(
 }
 
 /// Revoke the token this request arrived with.
-#[api(id = "auth_logout", group = "auth", summary = "Log out", security = "bearerAuth")]
+#[api(id = "auth_logout", group = "auth", summary = "Log out", security = "bearerAuth", responses(200 = "The token this request carried is revoked"))]
 pub async fn logout(State(state): State<AuthState>, #[api(skip)] Identity(identity): Identity) -> Json<SendResult> {
     if let Some(digest) = identity.token_sha256.as_deref() {
         state.auth.sessions.revoke(digest).await;
@@ -376,7 +382,12 @@ pub async fn logout(State(state): State<AuthState>, #[api(skip)] Identity(identi
 ///
 /// The one route besides [`login`] that answers without a token, because the web
 /// app has to ask it before it knows whether to draw a login page.
-#[api(id = "auth_status", group = "auth", summary = "Authentication status")]
+#[api(
+    id = "auth_status",
+    group = "auth",
+    summary = "Authentication status",
+    responses(200 = "Whether a login is required, whether the first account is still to be made, and who the caller is")
+)]
 pub async fn status(State(state): State<AuthState>, #[api(skip)] MaybeIdentity(identity): MaybeIdentity) -> Json<AuthStatus> {
     let auth = &state.auth;
     Json(AuthStatus {
@@ -399,7 +410,16 @@ pub async fn status(State(state): State<AuthState>, #[api(skip)] MaybeIdentity(i
 /// can reach ([`super::local_open`]), so whoever holds it is that user — the
 /// one the AI CLIs run as. Works once, for a minute, and only while the device
 /// has no user account: once it has one, logging in is the way in.
-#[api(id = "auth_local_open", group = "auth", summary = "Open the page as this device's owner")]
+#[api(
+    id = "auth_local_open",
+    group = "auth",
+    summary = "Open the page as this device's owner",
+    responses(200 = "A session of this device's owner (`local:owner`)"),
+    errors(
+        403 = "Not a live local-open token (`invalid_local_open`), or a device bridged through Droppen (`not_from_cloud`)",
+        409 = "The device has an account: sign in (`accounts_exist`), or authentication is off (`auth_off`)"
+    )
+)]
 pub async fn local_open(
     State(state): State<AuthState>,
     #[api(skip)] MaybeIdentity(identity): MaybeIdentity,
@@ -472,7 +492,13 @@ pub async fn local_open(
     id = "auth_local_open_grant",
     group = "auth",
     summary = "A one-time page link for the desktop app",
-    security = "bearerAuth"
+    security = "bearerAuth",
+    responses(200 = "A one-time local-open token, or `null` once the instance has a user account"),
+    errors(
+        403 = "Not a server the desktop app runs (`not_desktop_app`), or not the app's own account (`not_app_account`)",
+        409 = "Authentication is off (`auth_off`)",
+        429 = "Too many unused links (`too_many_links`)"
+    )
 )]
 pub async fn local_open_grant(State(state): State<AuthState>, #[api(skip)] Identity(identity): Identity) -> Result<Json<LocalOpenGrant>, ApiError> {
     let auth = &state.auth;
@@ -520,7 +546,18 @@ pub async fn local_open_grant(State(state): State<AuthState>, #[api(skip)] Ident
 /// (see [`super::setup`]). What it hands back is exactly what a login does, so
 /// the page that made the account is signed in to it; every local-owner session
 /// ends with it.
-#[api(id = "auth_setup", group = "auth", summary = "Create the first account with the setup code")]
+#[api(
+    id = "auth_setup",
+    group = "auth",
+    summary = "Create the first account with the setup code",
+    responses(200 = "The first account is made, and this is a login to it"),
+    errors(
+        400 = "The name or the password does not meet the rules (`invalid_account`), or no code from a caller that needs one (`code_required`)",
+        403 = "Not the setup code (`wrong_setup_code`), or a device bridged through Droppen (`not_from_cloud`)",
+        409 = "An account exists already (`setup_done`), the name is the desktop app's own account's (`name_taken`), authentication is off (`auth_off`), or this server has no code (`no_setup_code`)",
+        429 = "Too many wrong codes; `retryAfterSeconds` says how long to wait (`too_many_attempts`)"
+    )
+)]
 pub async fn setup(
     State(state): State<AuthState>,
     #[api(skip)] MaybeIdentity(identity): MaybeIdentity,
@@ -688,7 +725,13 @@ fn name_taken() -> ApiError {
 }
 
 /// The caller's own live sessions.
-#[api(id = "auth_sessions", group = "auth", summary = "List login sessions", security = "bearerAuth")]
+#[api(
+    id = "auth_sessions",
+    group = "auth",
+    summary = "List login sessions",
+    security = "bearerAuth",
+    responses(200 = "The caller's own live sessions")
+)]
 pub async fn list_sessions(State(state): State<AuthState>, #[api(skip)] Identity(identity): Identity) -> Json<AuthSessionList> {
     let current = identity.token_sha256.as_deref();
     let sessions = state
@@ -712,7 +755,14 @@ pub async fn list_sessions(State(state): State<AuthState>, #[api(skip)] Identity
 }
 
 /// Revoke one of the caller's sessions — the phone that was left on a train.
-#[api(id = "auth_revoke_session", group = "auth", summary = "Revoke a login session", security = "bearerAuth")]
+#[api(
+    id = "auth_revoke_session",
+    group = "auth",
+    summary = "Revoke a login session",
+    security = "bearerAuth",
+    responses(200 = "The session is revoked"),
+    errors(404 = "No such session")
+)]
 pub async fn revoke_session(
     State(state): State<AuthState>,
     #[api(skip)] Identity(identity): Identity,
@@ -739,7 +789,9 @@ pub async fn revoke_session(
     id = "auth_ticket",
     group = "auth",
     summary = "Mint a websocket or download ticket",
-    security = "bearerAuth"
+    security = "bearerAuth",
+    responses(200 = "A scoped, short-lived ticket"),
+    errors(403 = "Not a signed-in session (`no_session`)", 429 = "Too many live tickets")
 )]
 pub async fn issue_ticket(
     State(state): State<AuthState>,
@@ -763,7 +815,18 @@ pub async fn issue_ticket(
 }
 
 /// Change the caller's password, and log every other device out.
-#[api(id = "auth_change_password", group = "auth", summary = "Change password", security = "bearerAuth")]
+#[api(
+    id = "auth_change_password",
+    group = "auth",
+    summary = "Change password",
+    security = "bearerAuth",
+    responses(200 = "The password is changed and other sessions are revoked"),
+    errors(
+        400 = "The new password does not meet the rules",
+        401 = "The current password is wrong",
+        403 = "The Droppen app's own account, whose password the app keeps (`app_account`)"
+    )
+)]
 pub async fn change_password(
     State(state): State<AuthState>,
     #[api(skip)] Identity(identity): Identity,
@@ -815,76 +878,6 @@ impl AuthState {
             .post("/api/auth/ticket", issue_ticket)
             .post("/api/auth/password", change_password)
     }
-}
-
-/// Everything gotcha cannot derive about those operations.
-pub fn describe(reg: &mut ExtraResponses) {
-    reg.body::<LoginResult>("POST", LOGIN_PATH, 200, "A bearer token and when it expires")
-        .error("POST", LOGIN_PATH, 401, "Invalid credentials — wrong name, wrong password, or locked out")
-        .describe("POST", "/api/auth/logout", 200, "The token this request carried is revoked")
-        .describe(
-            "GET",
-            STATUS_PATH,
-            200,
-            "Whether a login is required, whether the first account is still to be made, and who the caller is",
-        )
-        .body::<LoginResult>("POST", SETUP_PATH, 200, "The first account is made, and this is a login to it")
-        .error(
-            "POST",
-            SETUP_PATH,
-            400,
-            "The name or the password does not meet the rules (`invalid_account`), or no code from a caller that needs one (`code_required`)",
-        )
-        .error(
-            "POST",
-            SETUP_PATH,
-            403,
-            "Not the setup code (`wrong_setup_code`), or a device bridged through Droppen (`not_from_cloud`)",
-        )
-        .error(
-            "POST",
-            SETUP_PATH,
-            409,
-            "An account exists already (`setup_done`), the name is the desktop app's own account's (`name_taken`), authentication is off (`auth_off`), or this server has no code (`no_setup_code`)",
-        )
-        .error(
-            "POST",
-            SETUP_PATH,
-            429,
-            "Too many wrong codes; `retryAfterSeconds` says how long to wait (`too_many_attempts`)",
-        )
-        .body::<LoginResult>("POST", LOCAL_OPEN_PATH, 200, "A session of this device's owner (`local:owner`)")
-        .error("POST", LOCAL_OPEN_PATH, 403, "Not a live local-open token (`invalid_local_open`), or a device bridged through Droppen (`not_from_cloud`)")
-        .error("POST", LOCAL_OPEN_PATH, 409, "The device has an account: sign in (`accounts_exist`), or authentication is off (`auth_off`)")
-        .body::<LocalOpenGrant>("POST", LOCAL_OPEN_GRANT_PATH, 200, "A one-time local-open token, or `null` once the instance has a user account")
-        .error(
-            "POST",
-            LOCAL_OPEN_GRANT_PATH,
-            403,
-            "Not a server the desktop app runs (`not_desktop_app`), or not the app's own account (`not_app_account`)",
-        )
-        .error("POST", LOCAL_OPEN_GRANT_PATH, 409, "Authentication is off (`auth_off`)")
-        .error("POST", LOCAL_OPEN_GRANT_PATH, 429, "Too many unused links (`too_many_links`)")
-        .describe("GET", "/api/auth/sessions", 200, "The caller's own live sessions")
-        .body::<SendResult>("DELETE", "/api/auth/sessions/{id}", 200, "The session is revoked")
-        .error("DELETE", "/api/auth/sessions/{id}", 404, "No such session")
-        .body::<TicketResult>("POST", "/api/auth/ticket", 200, "A scoped, short-lived ticket")
-        .error("POST", "/api/auth/ticket", 403, "Not a signed-in session (`no_session`)")
-        .error("POST", "/api/auth/ticket", 429, "Too many live tickets")
-        .body::<SendResult>(
-            "POST",
-            "/api/auth/password",
-            200,
-            "The password is changed and other sessions are revoked",
-        )
-        .error("POST", "/api/auth/password", 400, "The new password does not meet the rules")
-        .error(
-            "POST",
-            "/api/auth/password",
-            403,
-            "The Droppen app's own account, whose password the app keeps (`app_account`)",
-        )
-        .error("POST", "/api/auth/password", 401, "The current password is wrong");
 }
 
 #[cfg(test)]

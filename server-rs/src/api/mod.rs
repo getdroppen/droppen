@@ -440,7 +440,6 @@ fn response_overrides() -> ExtraResponses {
     describe(&mut reg);
     droppen_provider_acp::agents::describe(&mut reg);
     droppen_sessions::attention::routes::describe(&mut reg);
-    droppen_auth::describe(&mut reg);
     droppen_drive::chats::describe(&mut reg);
     droppen_drive::describe(&mut reg);
     droppen_drive::feed::global::describe(&mut reg);
