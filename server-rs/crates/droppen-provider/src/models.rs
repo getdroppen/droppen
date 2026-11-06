@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 
 use droppen_http::error::ApiError;
 use droppen_http::extract::ApiQuery;
-use droppen_http::openapi_ext::{ExtraResponses, Nullable, Optional};
+use droppen_http::openapi_ext::{Nullable, Optional};
 use droppen_sessions::Source;
 
 
@@ -201,7 +201,13 @@ droppen_http::substate!(ModelsState);
 /// `accountId` absent is the user's own `~/.claude`. Each root's list is cached
 /// for the process — asking costs a CLI startup — so only the first request
 /// after a cold start or an expired reading waits for one.
-#[api(id = "list_models", group = "models", summary = "List models")]
+#[api(
+    id = "list_models",
+    group = "models",
+    summary = "List models",
+    responses(200 = "Models the named login's CLI publishes, in the order it publishes them"),
+    errors(400 = "An ACP list that names no usable agent")
+)]
 pub async fn list_models(State(state): State<ModelsState>, ApiQuery(query): ApiQuery<ModelsQuery>) -> Result<Json<ModelList>, ApiError> {
     // A source no provider runs has no list to offer.
     let models = state
@@ -220,15 +226,4 @@ impl ModelsState {
     {
         router.get("/api/models", list_models)
     }
-}
-
-/// Everything gotcha cannot express about those routes.
-pub fn describe(reg: &mut ExtraResponses) {
-    reg.describe(
-        "GET",
-        "/api/models",
-        200,
-        "Models the named login's CLI publishes, in the order it publishes them",
-    )
-    .error("GET", "/api/models", 400, "An ACP list that names no usable agent");
 }

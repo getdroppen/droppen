@@ -438,9 +438,6 @@ fn describe(reg: &mut ExtraResponses) {
 fn response_overrides() -> ExtraResponses {
     let mut reg = ExtraResponses::default();
     describe(&mut reg);
-    droppen_sessions::attention::routes::describe(&mut reg);
-    droppen_provider::models::describe(&mut reg);
-    droppen_sessions::stats::describe(&mut reg);
     reg
 }
 
