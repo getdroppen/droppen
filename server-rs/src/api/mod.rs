@@ -441,7 +441,6 @@ fn response_overrides() -> ExtraResponses {
     droppen_provider_claude_code::setup_token::describe(&mut reg);
     droppen_provider_claude_code::usage_login::describe(&mut reg);
     droppen_provider_acp::agents::describe(&mut reg);
-    droppen_workbench::apps::describe(&mut reg);
     droppen_sessions::attention::routes::describe(&mut reg);
     droppen_auth::describe(&mut reg);
     droppen_drive::chats::describe(&mut reg);
@@ -453,14 +452,11 @@ fn response_overrides() -> ExtraResponses {
     droppen_provider::models::describe(&mut reg);
     droppen_notify::notify::describe(&mut reg);
     droppen_plugins::routes::describe(&mut reg);
-    droppen_workbench::prefs::describe(&mut reg);
     droppen_notify::push::describe(&mut reg);
     droppen_drive::schedule::describe(&mut reg);
-    droppen_workbench::screens::describe(&mut reg);
     droppen_supervisor::selfupdate::describe(&mut reg);
     droppen_setup::describe(&mut reg);
     droppen_sessions::stats::describe(&mut reg);
-    droppen_workbench::terminals::describe(&mut reg);
     reg
 }
 

@@ -54,7 +54,6 @@ use droppen_http::error::{ApiError, Hinted};
 use droppen_http::extract::{ApiJson, ApiPath};
 use droppen_http::SendResult;
 use droppen_instance::instance::InstanceDirs;
-use droppen_http::openapi_ext::ExtraResponses;
 use droppen_instance::paths::Paths;
 use droppen_base::process_env::{self, Env};
 use droppen_base::procs;
@@ -1036,13 +1035,19 @@ pub struct AppsState {
 droppen_http::substate!(AppsState);
 
 /// Running embedded app instances.
-#[api(id = "list_apps", group = "apps", summary = "List apps")]
+#[api(id = "list_apps", group = "apps", summary = "List apps", responses(200 = "Running embedded app instances"))]
 pub async fn list_apps(State(state): State<AppsState>) -> Json<AppList> {
     Json(AppList { apps: state.apps.list() })
 }
 
 /// Start an app instance and wait for it to come up.
-#[api(id = "create_app", group = "apps", summary = "Create an app")]
+#[api(
+    id = "create_app",
+    group = "apps",
+    summary = "Create an app",
+    responses(200 = "App started; embed via /embed/{id}/"),
+    errors(409 = "App could not be started; `code_server_missing` (with a `hint`) when code-server is not on the server's PATH")
+)]
 pub async fn create_app(State(state): State<AppsState>, ApiJson(body): ApiJson<AppCreate>) -> Result<Json<AppInfo>, ApiError> {
     state
         .apps
@@ -1053,26 +1058,12 @@ pub async fn create_app(State(state): State<AppsState>, ApiJson(body): ApiJson<A
 }
 
 /// Stop an app instance.
-#[api(id = "close_app", group = "apps", summary = "Close an app")]
+#[api(id = "close_app", group = "apps", summary = "Close an app", responses(200 = "App closed"), errors(404 = "App not found"))]
 pub async fn close_app(State(state): State<AppsState>, ApiPath(id): ApiPath<String>) -> Result<Json<SendResult>, ApiError> {
     if !state.apps.close_app(&id).await {
         return Err(ApiError::not_found("app not found"));
     }
     Ok(Json(SendResult { accepted: true }))
-}
-
-/// Everything gotcha cannot derive about these operations.
-pub fn describe(reg: &mut ExtraResponses) {
-    reg.describe("GET", "/api/apps", 200, "Running embedded app instances")
-        .describe("POST", "/api/apps", 200, "App started; embed via /embed/{id}/")
-        .error(
-            "POST",
-            "/api/apps",
-            409,
-            "App could not be started; `code_server_missing` (with a `hint`) when code-server is not on the server's PATH",
-        )
-        .describe("DELETE", "/api/apps/{id}", 200, "App closed")
-        .error("DELETE", "/api/apps/{id}", 404, "App not found");
 }
 
 impl AppsState {

@@ -34,7 +34,6 @@ use droppen_http::error::ApiError;
 use droppen_http::extract::{ApiJson, ApiPath};
 use droppen_http::{send_within, WsSender as Sender};
 use droppen_http::SendResult;
-use droppen_http::openapi_ext::ExtraResponses;
 
 use super::{Chunk, TerminalCreate, TerminalError, TerminalInfo, TerminalList, TerminalRename, SLOW_NOTE};
 
@@ -65,7 +64,7 @@ pub struct TerminalsState {
 droppen_http::substate!(TerminalsState);
 
 /// Every terminal whose process is still running.
-#[api(id = "list_terminals", group = "terminals", summary = "List terminals")]
+#[api(id = "list_terminals", group = "terminals", summary = "List terminals", responses(200 = "Live terminals"))]
 pub(crate) async fn list_terminals(State(state): State<TerminalsState>) -> Json<TerminalList> {
     Json(TerminalList {
         terminals: state.terminals.list(),
@@ -73,7 +72,13 @@ pub(crate) async fn list_terminals(State(state): State<TerminalsState>) -> Json<
 }
 
 /// Start a terminal running the user's login shell.
-#[api(id = "create_terminal", group = "terminals", summary = "Create a terminal")]
+#[api(
+    id = "create_terminal",
+    group = "terminals",
+    summary = "Create a terminal",
+    responses(200 = "Terminal created; attach via /api/terminals/{id}/ws"),
+    errors(400 = "Invalid working directory", 429 = "Too many terminals")
+)]
 pub(crate) async fn create_terminal(State(state): State<TerminalsState>, ApiJson(body): ApiJson<TerminalCreate>) -> Result<Json<TerminalInfo>, ApiError> {
     let cwd = match body.cwd.as_deref() {
         // An empty string means "no cwd".
@@ -85,7 +90,13 @@ pub(crate) async fn create_terminal(State(state): State<TerminalsState>, ApiJson
 }
 
 /// Give a terminal a new display name.
-#[api(id = "rename_terminal", group = "terminals", summary = "Rename a terminal")]
+#[api(
+    id = "rename_terminal",
+    group = "terminals",
+    summary = "Rename a terminal",
+    responses(200 = "Terminal renamed"),
+    errors(404 = "Terminal not found")
+)]
 pub(crate) async fn rename_terminal(
     State(state): State<TerminalsState>,
     ApiPath(id): ApiPath<String>,
@@ -100,7 +111,7 @@ pub(crate) async fn rename_terminal(
 }
 
 /// Kill a terminal's process.
-#[api(id = "kill_terminal", group = "terminals", summary = "Kill a terminal")]
+#[api(id = "kill_terminal", group = "terminals", summary = "Kill a terminal", responses(200 = "Terminal killed"), errors(404 = "Terminal not found"))]
 pub(crate) async fn kill_terminal(State(state): State<TerminalsState>, ApiPath(id): ApiPath<String>) -> Result<Json<SendResult>, ApiError> {
     if !state.terminals.kill_terminal(&id) {
         return Err(ApiError::not_found("terminal not found"));
@@ -327,18 +338,6 @@ fn create_error(error: TerminalError) -> ApiError {
         TerminalError::TooMany => ApiError::new(gotcha::axum::http::StatusCode::TOO_MANY_REQUESTS, error.to_string()),
         other => bad_request(other),
     }
-}
-
-/// Everything gotcha cannot derive about these operations.
-pub fn describe(reg: &mut ExtraResponses) {
-    reg.describe("GET", "/api/terminals", 200, "Live terminals")
-        .describe("POST", "/api/terminals", 200, "Terminal created; attach via /api/terminals/{id}/ws")
-        .error("POST", "/api/terminals", 400, "Invalid working directory")
-        .error("POST", "/api/terminals", 429, "Too many terminals")
-        .describe("PATCH", "/api/terminals/{id}", 200, "Terminal renamed")
-        .error("PATCH", "/api/terminals/{id}", 404, "Terminal not found")
-        .describe("DELETE", "/api/terminals/{id}", 200, "Terminal killed")
-        .error("DELETE", "/api/terminals/{id}", 404, "Terminal not found");
 }
 
 impl TerminalsState {

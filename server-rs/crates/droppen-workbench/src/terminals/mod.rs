@@ -56,7 +56,7 @@ use droppen_pty::proto::{self, Frame, Meta, Resize};
 use droppen_pty::sidecar::{self, Sidecars};
 use droppen_pty::{self as shim, gap_note};
 
-pub use routes::{describe, TerminalsState};
+pub use routes::TerminalsState;
 
 /// How much output a (re)connecting client is repainted with.
 const BUFFER_CAP: usize = 200 * 1024;
