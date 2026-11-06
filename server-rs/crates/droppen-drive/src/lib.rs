@@ -38,7 +38,7 @@ use droppen_provider::{InjectionRegistry, ProviderRegistry, SpawnDecoration};
 use droppen_instance::paths::Paths;
 use droppen_sessions::{titles, TranscriptSources};
 
-pub use routes::{describe, DriveState};
+pub use routes::DriveState;
 
 /// Everything needed to drive the local CLIs, as one piece of application state.
 pub struct Drive {
