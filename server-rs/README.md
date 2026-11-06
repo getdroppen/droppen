@@ -1,6 +1,6 @@
 # remote-hand-server
 
-Droppen（原名 remote-hand）的服务端，Rust + [gotcha](https://crates.io/crates/gotcha) 0.5.0
+Droppen（原名 remote-hand）的服务端，Rust + [gotcha](https://crates.io/crates/gotcha) 0.5.1
 （axum 0.8 + 从类型派生的 OpenAPI）。由 `server/`（Hono + `@hono/zod-openapi`）
 逐模块移植而来，唯一**刻意**没有移植的是 browsers（`/api/browsers*`）——那个功能连同
 TypeScript 服务端一起退休了。
@@ -281,8 +281,9 @@ replay 只做一件事：把 `transcript` / `sidecar` 事件按原始时间轴�
 ## 已经撞上的 gotcha 限制
 
 按撞上的位置分组；括号里是上游出处，方便升级框架时逐条复核。gotcha 0.5 起，下面多数限制已能由
-handler 上的 `#[api(responses(..), errors(..))]` 与 `WithStatus` 直接声明；逐 crate 迁移中
-（已迁移：droppen-accounts），未迁移的 crate 仍用 `openapi_ext`。
+handler 上的 `#[api(responses(..), errors(..))]` 与 `WithStatus` 直接声明，0.5.1 起只改描述的写成
+`responses(200 = "…")`、`errors(404 = "…")`；逐 crate 迁移中（已迁移：droppen-accounts），
+未迁移的 crate 仍用 `openapi_ext`。
 
 ### OpenAPI 响应派生
 
