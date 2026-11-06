@@ -3831,27 +3831,6 @@ export interface components {
             /** @description Human-readable failure text. */
             error: string;
         };
-        /**
-         * @description The JSON body of every error response Gotcha generates.
-         *
-         *     It serializes as `{"error": "..."}`, plus a `fields` map for failures that report more than
-         *     one problem: `Valid` sends `{"error": "validation failed", "fields": {"name": ["is
-         *     required"]}}`. `fields` is omitted when there is nothing to report, so every other provider's
-         *     body is unchanged. The type is public so it can be declared as the body of an OpenAPI response
-         *     (`body = "ErrorBody"` in `#[api(errors(...))]` / `#[api(responses(...))]`), and so applications
-         *     can reuse the same wire shape for their own errors.
-         */
-        ErrorBody: {
-            /** @description Human-readable description of the failure. */
-            error: string;
-            /**
-             * @description Per-field failure messages keyed by the field's flattened path (for example `address.city`
-             *     or `items[0].name`). Omitted when `None`.
-             */
-            fields?: {
-                [key: string]: string[];
-            };
-        };
         /** @description A file the item points at, offered to the UI as a download chip. */
         FileRef: {
             /** @description Base name, shown on the chip. */
