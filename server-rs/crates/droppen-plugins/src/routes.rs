@@ -27,13 +27,13 @@ use gotcha::axum::http::StatusCode;
 use gotcha::axum::middleware::Next;
 use gotcha::axum::response::{IntoResponse, Response};
 use gotcha::oas::{Parameter, RequestBody};
-use gotcha::{api, Either, GotchaRouter, Json, ParameterProvider, State};
+use gotcha::{api, Either, GotchaRouter, Json, ParameterProvider, State, WithStatus};
 use serde::de::DeserializeOwned;
 
 use super::install::{InstallError, MAX_TARBALL_BYTES};
 use super::store::{StoreError, MAX_REQUEST_BYTES};
 use super::wire::{
-    PluginBatch, PluginBatchResult, PluginCurrentDoc, PluginDeleted, PluginDoc, PluginDocConflict, PluginDocHistory, PluginDocList, PluginDocQuery,
+    PluginBatch, PluginBatchResult, PluginCurrentDoc, PluginDoc, PluginDocConflict, PluginDocHistory, PluginDocList, PluginDocQuery,
     PluginCloudSwitch, PluginHistoryQuery, PluginInvalidPackage, PluginList, PluginPutDoc, PluginStatus, PluginSwitch, PluginTarballBody,
     PluginTooLarge,
 };
@@ -41,7 +41,6 @@ use super::{CloudIdentityExt, DecisionReason, PluginError, Plugins};
 use droppen_auth::MaybeIdentity;
 use droppen_http::error::{ApiError, Coded};
 use droppen_http::extract::{ApiJson, ApiPath, ApiQuery};
-use droppen_http::openapi_ext::ExtraResponses;
 use droppen_plugin_sdk::codes;
 
 /// The plugin list, and where a package is installed.
@@ -255,7 +254,13 @@ pub struct PluginsState {
 droppen_http::substate!(PluginsState);
 
 /// Every plugin installed in this instance, as this instance sees it.
-#[api(id = "list_plugins", group = "plugins", summary = "List plugins")]
+#[api(
+    id = "list_plugins",
+    group = "plugins",
+    summary = "List plugins",
+    responses(200 = "Every plugin installed in this instance, as this instance sees it"),
+    drop_default
+)]
 pub async fn list_plugins(State(state): State<PluginsState>, #[api(skip)] who: MaybeIdentity) -> Result<Json<PluginList>, ApiError> {
     who.refuse_cloud()?;
     Ok(Json(PluginList {
@@ -269,7 +274,22 @@ pub async fn list_plugins(State(state): State<PluginsState>, #[api(skip)] who: M
 /// on; a refused package leaves the previous install as it was. The bytes are
 /// the tarball itself, not multipart: `application/gzip` or
 /// `application/octet-stream`.
-#[api(id = "install_plugin", group = "plugins", summary = "Install a plugin")]
+#[api(
+    id = "install_plugin",
+    group = "plugins",
+    summary = "Install a plugin",
+    responses(
+        200 = "The plugin as installed and switched on",
+        response(status = 400, body = "PluginInvalidPackage", description = "`invalid_package`: the package was refused; `message` says why"),
+        response(status = 413, body = "PluginTooLarge", description = "`too_large`: the tarball is over 32 MiB")
+    ),
+    request_body(
+        content_type = "application/octet-stream",
+        body = "PluginTarballBody",
+        description = "The plugin package: a gzip'd tar whose entries are under `package/` (`application/gzip` is the same bytes)"
+    ),
+    drop_default
+)]
 pub async fn install_plugin(
     State(state): State<PluginsState>,
     #[api(skip)] who: MaybeIdentity,
@@ -284,19 +304,34 @@ pub async fn install_plugin(
 
 /// Uninstall a plugin. Its documents and its switches stay, for a later
 /// install.
-#[api(id = "uninstall_plugin", group = "plugins", summary = "Uninstall a plugin")]
+#[api(
+    id = "uninstall_plugin",
+    group = "plugins",
+    summary = "Uninstall a plugin",
+    responses(204 = "The plugin is uninstalled; its documents and its switches are kept"),
+    errors(404 = "`plugin_not_found`: no plugin of that id is installed")
+)]
 pub async fn uninstall_plugin(
     State(state): State<PluginsState>,
     ApiPath(id): ApiPath<String>,
     #[api(skip)] who: MaybeIdentity,
-) -> Result<PluginDeleted, ApiError> {
+) -> Result<WithStatus<(), 204>, ApiError> {
     who.refuse_cloud()?;
     state.plugins.blocking( move |plugins| plugins.uninstall(&id)).await?;
-    Ok(PluginDeleted)
+    Ok(WithStatus::new(()))
 }
 
 /// Turn a plugin on or off for this instance. Any signed-in user may.
-#[api(id = "set_plugin_enabled", group = "plugins", summary = "Switch a plugin")]
+#[api(
+    id = "set_plugin_enabled",
+    group = "plugins",
+    summary = "Switch a plugin",
+    responses(200 = "The plugin's status after the switch"),
+    errors(
+        404 = "`plugin_not_found`: no plugin of that id is installed",
+        409 = "`forced_by_config`: the configuration pins it; the switch is read-only"
+    )
+)]
 pub async fn set_plugin_enabled(
     State(state): State<PluginsState>,
     ApiPath(id): ApiPath<String>,
@@ -315,7 +350,13 @@ pub async fn set_plugin_enabled(
 /// Let droppen.app show a plugin for this instance, or stop it. Any
 /// signed-in user here may; a bridged (`cloud:`) request never can. The
 /// configuration does not pin this switch.
-#[api(id = "set_plugin_cloud", group = "plugins", summary = "Show a plugin on droppen.app")]
+#[api(
+    id = "set_plugin_cloud",
+    group = "plugins",
+    summary = "Show a plugin on droppen.app",
+    responses(200 = "The plugin's status after the switch"),
+    errors(404 = "`plugin_not_found`: no plugin of that id is installed")
+)]
 pub async fn set_plugin_cloud(
     State(state): State<PluginsState>,
     ApiPath(id): ApiPath<String>,
@@ -332,7 +373,13 @@ pub async fn set_plugin_cloud(
 }
 
 /// A plugin's documents, without values, by name.
-#[api(id = "list_plugin_docs", group = "plugins", summary = "List a plugin's documents")]
+#[api(
+    id = "list_plugin_docs",
+    group = "plugins",
+    summary = "List a plugin's documents",
+    responses(200 = "The plugin's documents under `prefix`, without values, by name"),
+    errors(404 = "`plugin_disabled`: installed but not on here (or incompatible); `plugin_not_found`: not installed")
+)]
 pub async fn list_plugin_docs(
     State(state): State<PluginsState>,
     ApiPath(id): ApiPath<String>,
@@ -349,7 +396,13 @@ pub async fn list_plugin_docs(
 }
 
 /// One document.
-#[api(id = "get_plugin_doc", group = "plugins", summary = "Read a plugin document")]
+#[api(
+    id = "get_plugin_doc",
+    group = "plugins",
+    summary = "Read a plugin document",
+    responses(200 = "The document"),
+    errors(400 = "`invalid`: not a document name", 404 = "`doc_not_found`, `plugin_disabled` or `plugin_not_found`")
+)]
 pub async fn get_plugin_doc(
     State(state): State<PluginsState>,
     ApiPath((id, name)): ApiPath<(String, String)>,
@@ -362,7 +415,24 @@ pub async fn get_plugin_doc(
 }
 
 /// Write one document by compare-and-set.
-#[api(id = "put_plugin_doc", group = "plugins", summary = "Write a plugin document")]
+#[api(
+    id = "put_plugin_doc",
+    group = "plugins",
+    summary = "Write a plugin document",
+    responses(
+        200 = "The document as written",
+        response(status = 409, body = "PluginDocConflict", description = "`conflict`: the document is not at `expectedRevision`; nothing was written"),
+        response(
+            status = 413,
+            body = "PluginTooLarge",
+            description = "`too_large`: the document, the request or the plugin's store is over its limit"
+        )
+    ),
+    errors(
+        400 = "`invalid`: not a document name, or not a JSON body",
+        404 = "`plugin_disabled`: installed but not on here (or incompatible); `plugin_not_found`: not installed"
+    )
+)]
 pub async fn put_plugin_doc(
     State(state): State<PluginsState>,
     ApiPath((id, name)): ApiPath<(String, String)>,
@@ -377,7 +447,28 @@ pub async fn put_plugin_doc(
 }
 
 /// Write several documents, all or none.
-#[api(id = "plugin_batch", group = "plugins", summary = "Write plugin documents together")]
+#[api(
+    id = "plugin_batch",
+    group = "plugins",
+    summary = "Write plugin documents together",
+    responses(
+        200 = "Every document as written, in the order of the writes",
+        response(
+            status = 409,
+            body = "PluginDocConflict",
+            description = "`conflict`: the first write whose revision did not hold; nothing was written"
+        ),
+        response(
+            status = 413,
+            body = "PluginTooLarge",
+            description = "`too_large`: a document, the request or the plugin's store is over its limit"
+        )
+    ),
+    errors(
+        400 = "`invalid`: a bad name, a name twice, or not a JSON body",
+        404 = "`plugin_disabled`: installed but not on here (or incompatible); `plugin_not_found`: not installed"
+    )
+)]
 pub async fn plugin_batch(
     State(state): State<PluginsState>,
     ApiPath(id): ApiPath<String>,
@@ -397,7 +488,16 @@ pub async fn plugin_batch(
 }
 
 /// The versions a document was replaced from, newest first.
-#[api(id = "plugin_doc_history", group = "plugins", summary = "A plugin document's history")]
+#[api(
+    id = "plugin_doc_history",
+    group = "plugins",
+    summary = "A plugin document's history",
+    responses(200 = "Replaced versions, newest first, at most fifty"),
+    errors(
+        400 = "`invalid`: not a document name",
+        404 = "`plugin_disabled`: installed but not on here (or incompatible); `plugin_not_found`: not installed"
+    )
+)]
 pub async fn plugin_doc_history(
     State(state): State<PluginsState>,
     ApiPath((id, name)): ApiPath<(String, String)>,
@@ -454,77 +554,6 @@ impl PluginsState {
             .layer(gotcha::axum::middleware::from_fn(refuse_cloud_requests));
         router.merge(plugins)
     }
-}
-
-/// Everything gotcha cannot derive about these routes.
-pub fn describe(reg: &mut ExtraResponses) {
-    const OFF: &str = "`plugin_disabled`: installed but not on here (or incompatible); `plugin_not_found`: not installed";
-    reg.describe_final("GET", LIST, 200, "Every plugin installed in this instance, as this instance sees it")
-        .describe("POST", LIST, 200, "The plugin as installed and switched on")
-        .body::<PluginInvalidPackage>("POST", LIST, 400, "`invalid_package`: the package was refused; `message` says why")
-        .body::<PluginTooLarge>("POST", LIST, 413, "`too_large`: the tarball is over 32 MiB")
-        .request_body::<PluginTarballBody>(
-            "POST",
-            LIST,
-            "application/octet-stream",
-            "The plugin package: a gzip'd tar whose entries are under `package/` (`application/gzip` is the same bytes)",
-        )
-        .restatus(
-            "DELETE",
-            PLUGIN,
-            200,
-            204,
-            "The plugin is uninstalled; its documents and its switches are kept",
-        )
-        .error("DELETE", PLUGIN, 404, "`plugin_not_found`: no plugin of that id is installed")
-        .describe("PUT", ENABLED, 200, "The plugin's status after the switch")
-        .error("PUT", ENABLED, 404, "`plugin_not_found`: no plugin of that id is installed")
-        .error(
-            "PUT",
-            ENABLED,
-            409,
-            "`forced_by_config`: the configuration pins it; the switch is read-only",
-        )
-        .describe("PUT", CLOUD, 200, "The plugin's status after the switch")
-        .error("PUT", CLOUD, 404, "`plugin_not_found`: no plugin of that id is installed")
-        .describe("GET", DOCS, 200, "The plugin's documents under `prefix`, without values, by name")
-        .error("GET", DOCS, 404, OFF)
-        .describe("GET", DOC, 200, "The document")
-        .error("GET", DOC, 400, "`invalid`: not a document name")
-        .error("GET", DOC, 404, "`doc_not_found`, `plugin_disabled` or `plugin_not_found`")
-        .describe("PUT", DOC, 200, "The document as written")
-        .error("PUT", DOC, 400, "`invalid`: not a document name, or not a JSON body")
-        .error("PUT", DOC, 404, OFF)
-        .body::<PluginDocConflict>(
-            "PUT",
-            DOC,
-            409,
-            "`conflict`: the document is not at `expectedRevision`; nothing was written",
-        )
-        .body::<PluginTooLarge>(
-            "PUT",
-            DOC,
-            413,
-            "`too_large`: the document, the request or the plugin's store is over its limit",
-        )
-        .describe("POST", BATCH, 200, "Every document as written, in the order of the writes")
-        .error("POST", BATCH, 400, "`invalid`: a bad name, a name twice, or not a JSON body")
-        .error("POST", BATCH, 404, OFF)
-        .body::<PluginDocConflict>(
-            "POST",
-            BATCH,
-            409,
-            "`conflict`: the first write whose revision did not hold; nothing was written",
-        )
-        .body::<PluginTooLarge>(
-            "POST",
-            BATCH,
-            413,
-            "`too_large`: a document, the request or the plugin's store is over its limit",
-        )
-        .describe("GET", HISTORY, 200, "Replaced versions, newest first, at most fifty")
-        .error("GET", HISTORY, 400, "`invalid`: not a document name")
-        .error("GET", HISTORY, 404, OFF);
 }
 
 #[cfg(test)]

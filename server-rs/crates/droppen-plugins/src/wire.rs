@@ -11,7 +11,6 @@
 //! away from silently describing something else.
 
 use droppen_plugin_sdk as sdk;
-use gotcha::axum::response::IntoResponse;
 use gotcha::Schematic;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -191,24 +190,6 @@ impl Schematic for PluginTarballBody {
             ..Default::default()
         };
         gotcha::EnhancedSchema { schema, required: true }
-    }
-}
-
-/// The empty answer to `DELETE /api/plugins/{id}`: axum sends `204`, and the
-/// response contract documents it without a schema.
-pub struct PluginDeleted;
-
-impl IntoResponse for PluginDeleted {
-    fn into_response(self) -> gotcha::axum::response::Response {
-        gotcha::axum::http::StatusCode::NO_CONTENT.into_response()
-    }
-}
-
-/// The bodyless `200` [`describe`](crate::routes::describe) moves to the `204`
-/// the handler really sends.
-impl gotcha::Responsible for PluginDeleted {
-    fn response() -> gotcha::oas::Responses {
-        gotcha::response::empty_response(200, "no content")
     }
 }
 
