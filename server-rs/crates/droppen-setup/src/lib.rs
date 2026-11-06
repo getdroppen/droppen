@@ -58,15 +58,14 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use gotcha::axum::extract::FromRef;
-use gotcha::{api, GotchaRouter, Json, Schematic, State};
+use gotcha::{api, GotchaRouter, Json, Schematic, State, WithStatus};
 use serde::{Deserialize, Serialize};
 
 use droppen_instance::db::scope;
 use droppen_http::app_window::{AppWindow, Caller};
-use droppen_http::created::Created;
 use droppen_http::error::ApiError;
 use droppen_http::extract::{ApiJson, ApiPath};
-use droppen_http::openapi_ext::{ExtraResponses, Nullable, Optional};
+use droppen_http::openapi_ext::{Nullable, Optional};
 use droppen_instance::paths::Paths;
 use droppen_accounts::login::{Login, Logins};
 use detect::{Detection, Probe};
@@ -751,7 +750,12 @@ impl SetupState {
 }
 
 /// Which AI tools this device has, and whether each is ready.
-#[api(id = "setup_tools", group = "setup", summary = "Report which AI tools are ready")]
+#[api(
+    id = "setup_tools",
+    group = "setup",
+    summary = "Report which AI tools are ready",
+    responses(200 = "Claude Code and Codex on this device, and whether each is ready")
+)]
 pub async fn tools_report(State(state): State<SetupState>, #[api(skip)] caller: Caller) -> Json<ToolsReport> {
     let can_install = state.window().local_app_request(&caller);
     Json(state.setup.report(&state, can_install).await)
@@ -762,7 +766,13 @@ pub async fn tools_report(State(state): State<SetupState>, #[api(skip)] caller: 
 /// The desktop app's only (`AppWindow::app_caller`): it rewrites the `PATH` every
 /// child of this server gets from now on, which is no request for anything
 /// but the app's own window to make.
-#[api(id = "setup_rescan_tools", group = "setup", summary = "Look for the AI tools again")]
+#[api(
+    id = "setup_rescan_tools",
+    group = "setup",
+    summary = "Look for the AI tools again",
+    responses(200 = "The login shell was read again, its PATH adopted, and the tools looked for afresh"),
+    errors(400 = "Malformed body", 403 = "Not the desktop app's own window on this device (`app_only`)")
+)]
 pub async fn rescan_tools(
     State(state): State<SetupState>,
     #[api(skip)] caller: Caller,
@@ -775,52 +785,89 @@ pub async fn rescan_tools(
 }
 
 /// Every command the guide can run, exactly as it would run it.
-#[api(id = "setup_commands", group = "setup", summary = "List the install and sign-in commands")]
+#[api(
+    id = "setup_commands",
+    group = "setup",
+    summary = "List the install and sign-in commands",
+    responses(200 = "Every command the guide can run, verbatim, and whether it can run here")
+)]
 pub async fn list_commands(State(state): State<SetupState>) -> Json<commands::SetupCommandList> {
     Json(commands::list(&*state.setup.detection(false).await))
 }
 
 /// Start a whitelisted install or update in a terminal.
-async fn start_method(state: &SetupState, tool: &str, kind: TaskKind, method: &str) -> Result<Created<SetupTask>, ApiError> {
+async fn start_method(state: &SetupState, tool: &str, kind: TaskKind, method: &str) -> Result<WithStatus<Json<SetupTask>, 201>, ApiError> {
     let tool = tool_of(tool)?;
     let entry = commands::find(tool.into(), kind, method).ok_or_else(|| ApiError::bad_request("unknown_method"))?;
     commands::availability(entry, &*state.setup.detection(false).await).map_err(tasks::unavailable)?;
-    tasks::start_in_terminal(state, tool, entry).await.map(Created)
+    tasks::start_in_terminal(state, tool, entry).await.map(|task| WithStatus::new(Json(task)))
 }
 
 /// Install a tool: the whitelisted command for `method`, in a terminal.
-#[api(id = "setup_install_tool", group = "setup", summary = "Install an AI tool")]
+#[api(
+    id = "setup_install_tool",
+    group = "setup",
+    summary = "Install an AI tool",
+    responses(201 = "Install running in a terminal"),
+    errors(
+        400 = "Unknown tool, unknown method (`unknown_method`), or one this device cannot run (`unavailable`, with a `reason`)",
+        403 = "Not the desktop app's own window on this device (`app_only`)",
+        409 = "A task for this tool is still running (`busy`)",
+        500 = "The terminal could not be started"
+    )
+)]
 pub async fn install_tool(
     State(state): State<SetupState>,
     #[api(skip)] caller: Caller,
     ApiPath(tool): ApiPath<String>,
     ApiJson(body): ApiJson<ToolMethodRequest>,
-) -> Result<Created<SetupTask>, ApiError> {
+) -> Result<WithStatus<Json<SetupTask>, 201>, ApiError> {
     state.window().app_caller(&caller)?;
     start_method(&state, &tool, TaskKind::Install, &body.method).await
 }
 
 /// Update a tool: the whitelisted command for `method`, in a terminal.
-#[api(id = "setup_update_tool", group = "setup", summary = "Update an AI tool")]
+#[api(
+    id = "setup_update_tool",
+    group = "setup",
+    summary = "Update an AI tool",
+    responses(201 = "Update running in a terminal"),
+    errors(
+        400 = "Unknown tool, unknown method (`unknown_method`), or one this device cannot run (`unavailable`, with a `reason`)",
+        403 = "Not the desktop app's own window on this device (`app_only`)",
+        409 = "A task for this tool is still running (`busy`)",
+        500 = "The terminal could not be started"
+    )
+)]
 pub async fn update_tool(
     State(state): State<SetupState>,
     #[api(skip)] caller: Caller,
     ApiPath(tool): ApiPath<String>,
     ApiJson(body): ApiJson<ToolMethodRequest>,
-) -> Result<Created<SetupTask>, ApiError> {
+) -> Result<WithStatus<Json<SetupTask>, 201>, ApiError> {
     state.window().app_caller(&caller)?;
     start_method(&state, &tool, TaskKind::Update, &body.method).await
 }
 
 /// Sign a tool in: its own login command in a terminal, or — codex's
 /// `apikey` mode — with the key on its standard input.
-#[api(id = "setup_login_tool", group = "setup", summary = "Sign an AI tool in")]
+#[api(
+    id = "setup_login_tool",
+    group = "setup",
+    summary = "Sign an AI tool in",
+    responses(201 = "Sign-in running in a terminal; for `apikey`, finished"),
+    errors(
+        400 = "Unknown tool or mode, no key for `apikey`, or the tool is not installed (`unavailable`)",
+        403 = "Not the desktop app's own window on this device (`app_only`)",
+        409 = "A task for this tool is still running (`busy`)"
+    )
+)]
 pub async fn login_tool(
     State(state): State<SetupState>,
     #[api(skip)] caller: Caller,
     ApiPath(tool): ApiPath<String>,
     ApiJson(body): ApiJson<ToolLoginRequest>,
-) -> Result<Created<SetupTask>, ApiError> {
+) -> Result<WithStatus<Json<SetupTask>, 201>, ApiError> {
     state.window().app_caller(&caller)?;
     let tool = tool_of(&tool)?;
     let entry = commands::find(tool.into(), TaskKind::Login, &body.mode).ok_or_else(|| ApiError::bad_request("unknown_method"))?;
@@ -828,34 +875,55 @@ pub async fn login_tool(
         let Some(key) = body.api_key.0.as_deref() else {
             return Err(ApiError::bad_request("api_key_required"));
         };
-        return tasks::login_with_api_key(&state, key).await.map(Created);
+        return tasks::login_with_api_key(&state, key).await.map(|task| WithStatus::new(Json(task)));
     }
-    tasks::start_in_terminal(&state, tool, entry).await.map(Created)
+    tasks::start_in_terminal(&state, tool, entry).await.map(|task| WithStatus::new(Json(task)))
 }
 
 /// Is it signed in yet? One cheap status check, for polling during a sign-in.
-#[api(id = "setup_tool_login", group = "setup", summary = "Check an AI tool's sign-in")]
+#[api(
+    id = "setup_tool_login",
+    group = "setup",
+    summary = "Check an AI tool's sign-in",
+    responses(200 = "What the tool's own status command says right now"),
+    errors(400 = "Unknown tool")
+)]
 pub async fn tool_login(State(state): State<SetupState>, ApiPath(tool): ApiPath<String>) -> Result<Json<ToolLogin>, ApiError> {
     Ok(Json(state.setup.poll_login(tool_of(&tool)?).await))
 }
 
 /// Ask macOS for its command line tools (git): Apple's own installer window.
-#[api(id = "setup_install_git", group = "setup", summary = "Install git (Apple's command line tools)")]
+#[api(
+    id = "setup_install_git",
+    group = "setup",
+    summary = "Install git (Apple's command line tools)",
+    responses(201 = "Apple's installer window was asked for"),
+    errors(400 = "Not a Mac, or git is already there (`unavailable`)", 403 = "Not the desktop app's own window on this device (`app_only`)")
+)]
 pub async fn install_git(
     State(state): State<SetupState>,
     #[api(skip)] caller: Caller,
-) -> Result<Created<GitInstallStarted>, ApiError> {
+) -> Result<WithStatus<Json<GitInstallStarted>, 201>, ApiError> {
     state.window().app_caller(&caller)?;
     let entry = commands::find(commands::CommandTool::Git, TaskKind::Install, "apple").expect("whitelisted");
     commands::availability(entry, &*state.setup.detection(false).await).map_err(tasks::unavailable)?;
-    Ok(Created(GitInstallStarted {
+    Ok(WithStatus::new(Json(GitInstallStarted {
         started: tasks::install_git(&state).await,
-    }))
+    })))
 }
 
 /// Adopt a CLI the user pointed at (or the guide found off the `PATH`): its
 /// directory joins every child's `PATH`, now and after a restart.
-#[api(id = "setup_use_tool", group = "setup", summary = "Use an AI tool found elsewhere")]
+#[api(
+    id = "setup_use_tool",
+    group = "setup",
+    summary = "Use an AI tool found elsewhere",
+    responses(200 = "Adopted; the tools as they are now"),
+    errors(
+        400 = "Unknown tool, not an executable named for it (`not_the_tool`), in a folder whose real path has a `:` (`colon_in_path`), or one somebody else can change: the folder, a folder above it, the CLI or a link on the way to it is not owned by this user or root, or others may write to it (`not_yours`)",
+        403 = "Not the desktop app's own window on this device (`app_only`)"
+    )
+)]
 pub async fn use_tool(
     State(state): State<SetupState>,
     #[api(skip)] caller: Caller,
@@ -890,125 +958,6 @@ impl SetupState {
             .get("/api/setup/projects/recent", folders::recent_folders)
             .post("/api/setup/practice-folder", folders::practice_folder)
     }
-}
-
-/// Everything gotcha cannot say about the guide's routes.
-pub fn describe(reg: &mut ExtraResponses) {
-    reg.describe(
-        "GET",
-        "/api/setup/tools",
-        200,
-        "Claude Code and Codex on this device, and whether each is ready",
-    )
-    .describe(
-        "POST",
-        "/api/setup/tools/rescan",
-        200,
-        "The login shell was read again, its PATH adopted, and the tools looked for afresh",
-    )
-    .error("POST", "/api/setup/tools/rescan", 400, "Malformed body")
-    .error(
-        "POST",
-        "/api/setup/tools/rescan",
-        403,
-        "Not the desktop app's own window on this device (`app_only`)",
-    )
-    .describe(
-        "GET",
-        "/api/setup/commands",
-        200,
-        "Every command the guide can run, verbatim, and whether it can run here",
-    );
-    for (path, what) in [
-        ("/api/setup/tools/{tool}/install", "Install running in a terminal"),
-        ("/api/setup/tools/{tool}/update", "Update running in a terminal"),
-    ] {
-        reg.restatus("POST", path, 200, 201, what)
-            .error(
-                "POST",
-                path,
-                400,
-                "Unknown tool, unknown method (`unknown_method`), or one this device cannot run (`unavailable`, with a `reason`)",
-            )
-            .error("POST", path, 403, "Not the desktop app's own window on this device (`app_only`)")
-            .error("POST", path, 409, "A task for this tool is still running (`busy`)")
-            .error("POST", path, 500, "The terminal could not be started");
-    }
-    reg.restatus(
-        "POST",
-        "/api/setup/tools/{tool}/login",
-        200,
-        201,
-        "Sign-in running in a terminal; for `apikey`, finished",
-    )
-    .error(
-        "POST",
-        "/api/setup/tools/{tool}/login",
-        400,
-        "Unknown tool or mode, no key for `apikey`, or the tool is not installed (`unavailable`)",
-    )
-    .error(
-        "POST",
-        "/api/setup/tools/{tool}/login",
-        403,
-        "Not the desktop app's own window on this device (`app_only`)",
-    )
-    .error(
-        "POST",
-        "/api/setup/tools/{tool}/login",
-        409,
-        "A task for this tool is still running (`busy`)",
-    )
-    .describe(
-        "GET",
-        "/api/setup/tools/{tool}/login",
-        200,
-        "What the tool's own status command says right now",
-    )
-    .error("GET", "/api/setup/tools/{tool}/login", 400, "Unknown tool")
-    .describe("POST", "/api/setup/tools/{tool}/use", 200, "Adopted; the tools as they are now")
-    .error(
-        "POST",
-        "/api/setup/tools/{tool}/use",
-        400,
-        "Unknown tool, not an executable named for it (`not_the_tool`), in a folder whose real path has a `:` (`colon_in_path`), or one somebody else can change: the folder, a folder above it, the CLI or a link on the way to it is not owned by this user or root, or others may write to it (`not_yours`)",
-    )
-    .error(
-        "POST",
-        "/api/setup/tools/{tool}/use",
-        403,
-        "Not the desktop app's own window on this device (`app_only`)",
-    )
-    .restatus("POST", "/api/setup/git/install", 200, 201, "Apple's installer window was asked for")
-    .error(
-        "POST",
-        "/api/setup/git/install",
-        400,
-        "Not a Mac, or git is already there (`unavailable`)",
-    )
-    .error("POST", "/api/setup/git/install", 403, "Not the desktop app's own window on this device (`app_only`)")
-    .describe(
-        "GET",
-        "/api/setup/progress",
-        200,
-        "How far the first-run guide got, and whether it opens by itself",
-    )
-    .body::<progress::SetupProgress>("PUT", "/api/setup/progress", 200, "Stored; the progress as it now reads")
-    .error("PUT", "/api/setup/progress", 400, "Malformed body")
-    .describe(
-        "GET",
-        "/api/setup/projects/recent",
-        200,
-        "The folders sessions ran in on this device, the most recent first",
-    )
-    .restatus(
-        "POST",
-        "/api/setup/practice-folder",
-        200,
-        201,
-        "An empty practice folder: the one made last while it is still empty, else a new one",
-    )
-    .error("POST", "/api/setup/practice-folder", 500, "The folder could not be made");
 }
 
 #[cfg(test)]
