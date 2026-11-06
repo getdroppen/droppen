@@ -57,7 +57,6 @@ use droppen_aggregator::controller::AggregatorHost;
 use droppen_auth::{MaybeIdentity, RETURN_ROUTE};
 use droppen_http::error::{ApiError, Coded};
 use droppen_http::extract::ApiJson;
-use droppen_http::openapi_ext::ExtraResponses;
 use droppen_instance::paths::Paths;
 
 mod access;
@@ -699,7 +698,13 @@ pub struct CloudState {
 droppen_http::substate!(CloudState);
 
 /// Where this computer stands with Droppen.
-#[api(id = "cloud_status", group = "cloud", summary = "Droppen link status")]
+#[api(
+    id = "cloud_status",
+    group = "cloud",
+    summary = "Droppen link status",
+    responses(200 = "Where this computer stands with Droppen"),
+    errors(403 = "Bridged from Droppen (`not_from_cloud`)")
+)]
 pub async fn get_cloud(State(state): State<CloudState>, #[api(skip)] who: MaybeIdentity) -> Result<Json<CloudStatus>, ApiError> {
     let user = caller(&who)?;
     Ok(Json(status_for(&state, user.as_deref()).await))
@@ -707,7 +712,7 @@ pub async fn get_cloud(State(state): State<CloudState>, #[api(skip)] who: MaybeI
 
 /// Turn the aggregator off — the other devices' keys here are deleted — or
 /// on again (S1-4: it needs nothing from droppen.app since chain v3).
-#[api(id = "cloud_aggregator", group = "cloud", summary = "Turn the aggregator off or on")]
+#[api(id = "cloud_aggregator", group = "cloud", summary = "Turn the aggregator off or on", responses(200 = "The status after"))]
 pub async fn post_aggregator(
     State(state): State<CloudState>,
     #[api(skip)] who: MaybeIdentity,
@@ -735,7 +740,13 @@ pub async fn post_aggregator(
 }
 
 /// Disconnect this computer from Droppen.
-#[api(id = "cloud_unlink", group = "cloud", summary = "Disconnect this computer from Droppen")]
+#[api(
+    id = "cloud_unlink",
+    group = "cloud",
+    summary = "Disconnect this computer from Droppen",
+    responses(200 = "The status after"),
+    errors(502 = "The copy on the hub could not be deleted (`hub_unreachable`)")
+)]
 pub async fn post_unlink(
     State(state): State<CloudState>,
     #[api(skip)] who: MaybeIdentity,
@@ -777,7 +788,13 @@ pub async fn post_unlink(
 /// again), the old enrollment forgotten as a disconnection forgets it, and a
 /// fresh seed made: the computer is signed in to Droppen again like a new
 /// one, with a registration code, under a new id.
-#[api(id = "cloud_re_enroll_fresh", group = "cloud", summary = "Add this computer again with a new identity")]
+#[api(
+    id = "cloud_re_enroll_fresh",
+    group = "cloud",
+    summary = "Add this computer again with a new identity",
+    responses(200 = "The new identity's fingerprint; the computer waits for a registration code"),
+    errors(409 = "Local authentication is off, or this computer's identity key was not replaced elsewhere (`not_renewed_elsewhere`)")
+)]
 pub async fn post_re_enroll_fresh(State(state): State<CloudState>, #[api(skip)] who: MaybeIdentity) -> Result<Json<ReEnrollFresh>, ApiError> {
     let user = local_user(&state, &who).await?;
     require_manager(&state, &user).await?;
@@ -808,7 +825,16 @@ pub async fn post_re_enroll_fresh(State(state): State<CloudState>, #[api(skip)] 
 /// claims at once, one wins), as is a `cloud.json` that does not read (409
 /// `unreadable`: claiming must not write over the owner's settings). What
 /// was allowed before goes: who else sees them is the new owner's to say.
-#[api(id = "cloud_claim", group = "cloud", summary = "Claim this device's Droppen link")]
+#[api(
+    id = "cloud_claim",
+    group = "cloud",
+    summary = "Claim this device's Droppen link",
+    responses(200 = "The status after: the caller owns the link"),
+    errors(
+        403 = "Does not manage the link, or bridged from Droppen",
+        409 = "Local authentication is off, the link has an owner here (`has_owner`), it is not signed in, or its settings do not read"
+    )
+)]
 pub async fn post_claim(State(state): State<CloudState>, #[api(skip)] who: MaybeIdentity) -> Result<Json<CloudStatus>, ApiError> {
     let user = local_user(&state, &who).await?;
     require_manager(&state, &user).await?;
@@ -838,7 +864,17 @@ pub async fn post_claim(State(state): State<CloudState>, #[api(skip)] who: Maybe
 }
 
 /// Which local accounts may see and use other machines.
-#[api(id = "cloud_access", group = "cloud", summary = "Set a local account's access to other machines")]
+#[api(
+    id = "cloud_access",
+    group = "cloud",
+    summary = "Set a local account's access to other machines",
+    responses(200 = "The status after"),
+    errors(
+        403 = "Not the owner of the link (`not_owner`), or bridged from Droppen",
+        404 = "No such local account (`no_user`)",
+        409 = "Local authentication is off, or the link's settings do not read (`unreadable`)"
+    )
+)]
 pub async fn put_access(
     State(state): State<CloudState>,
     #[api(skip)] who: MaybeIdentity,
@@ -898,87 +934,6 @@ impl CloudState {
             .put("/api/cloud/access", put_access)
             .post("/api/cloud/claim", post_claim)
     }
-}
-
-/// Everything gotcha cannot express about those routes.
-pub fn describe(reg: &mut ExtraResponses) {
-    reg.describe("GET", "/api/cloud", 200, "Where this computer stands with Droppen")
-        .error("GET", "/api/cloud", 403, "Bridged from Droppen (`not_from_cloud`)")
-        .describe("POST", "/api/cloud/link", 200, "The attempt: its nonce and the keys the popup checks")
-        .error("POST", "/api/cloud/link", 403, "Not the owner, or bridged from Droppen")
-        .error("POST", "/api/cloud/link", 409, "Local authentication is off (`local_auth_required`)")
-        .restatus(
-            "POST",
-            "/api/cloud/link/finish",
-            200,
-            202,
-            "Enrolling: a device of the account completes it",
-        )
-        .error("POST", "/api/cloud/link/finish", 403, "Another user's attempt, or a wrong nonce")
-        .error("POST", "/api/cloud/link/finish", 404, "No such attempt")
-        .error("POST", "/api/cloud/link/finish", 410, "The attempt expired")
-        .error("POST", "/api/cloud/link/finish", 502, "The hub could not be reached (`hub_unreachable`)")
-        .restatus(
-            "POST",
-            "/api/cloud/link/return",
-            200,
-            202,
-            "Enrolling: a device of the account completes it",
-        )
-        .error("POST", "/api/cloud/link/return", 400, "Not a readable reply (`bad_reply`), or not a code (`bad_code`)")
-        .error(
-            "POST",
-            "/api/cloud/link/return",
-            403,
-            "The reply does not open for this attempt (`bad_reply`), the one who opened it no longer manages the link (`not_owner`), or bridged from Droppen",
-        )
-        .error("POST", "/api/cloud/link/return", 404, "No such attempt")
-        .error(
-            "POST",
-            "/api/cloud/link/return",
-            409,
-            "Local authentication is off, the attempt takes no answer through the browser (`no_handoff`), or — once the reply opened — this device is in an account already (`already_enrolled`)",
-        )
-        .error("POST", "/api/cloud/link/return", 410, "The attempt expired")
-        .error("POST", "/api/cloud/link/return", 502, "The hub could not be reached (`hub_unreachable`)")
-        .describe("POST", "/api/cloud/link/cancel", 200, "Cancelled")
-        .describe("POST", "/api/cloud/aggregator", 200, "The status after")
-        .describe("POST", "/api/cloud/unlink", 200, "The status after")
-        .error(
-            "POST",
-            "/api/cloud/unlink",
-            502,
-            "The copy on the hub could not be deleted (`hub_unreachable`)",
-        )
-        .describe("POST", "/api/cloud/re-enroll-fresh", 200, "The new identity's fingerprint; the computer waits for a registration code")
-        .error(
-            "POST",
-            "/api/cloud/re-enroll-fresh",
-            409,
-            "Local authentication is off, or this computer's identity key was not replaced elsewhere (`not_renewed_elsewhere`)",
-        )
-        .describe("PUT", "/api/cloud/access", 200, "The status after")
-        .error(
-            "PUT",
-            "/api/cloud/access",
-            403,
-            "Not the owner of the link (`not_owner`), or bridged from Droppen",
-        )
-        .error("PUT", "/api/cloud/access", 404, "No such local account (`no_user`)")
-        .error(
-            "PUT",
-            "/api/cloud/access",
-            409,
-            "Local authentication is off, or the link's settings do not read (`unreadable`)",
-        )
-        .describe("POST", "/api/cloud/claim", 200, "The status after: the caller owns the link")
-        .error("POST", "/api/cloud/claim", 403, "Does not manage the link, or bridged from Droppen")
-        .error(
-            "POST",
-            "/api/cloud/claim",
-            409,
-            "Local authentication is off, the link has an owner here (`has_owner`), it is not signed in, or its settings do not read",
-        );
 }
 
 #[cfg(test)]

@@ -7,7 +7,7 @@ use droppen_agent::enroll::BeginError;
 use droppen_http::SendResult;
 use crate::link_handoff::{self, Handoff, HandoffMachine, PageOrigin, Reply};
 
-use droppen_http::created::Accepted;
+use gotcha::WithStatus;
 use super::*;
 
 /// How long an attempt waits for its code.
@@ -133,7 +133,13 @@ pub fn web_origin(ws_origin: &str) -> String {
 /// Open a sign-in attempt: a nonce, and the keys the popup checks — and,
 /// for a page that said its origin, the droppen.app address that answers it
 /// through the browser instead (§4.9).
-#[api(id = "cloud_link", group = "cloud", summary = "Start signing in to Droppen")]
+#[api(
+    id = "cloud_link",
+    group = "cloud",
+    summary = "Start signing in to Droppen",
+    responses(200 = "The attempt: its nonce and the keys the popup checks"),
+    errors(403 = "Not the owner, or bridged from Droppen", 409 = "Local authentication is off (`local_auth_required`)")
+)]
 pub async fn post_link(
     State(state): State<CloudState>,
     #[api(skip)] who: MaybeIdentity,
@@ -330,12 +336,23 @@ pub(super) fn refuse_if_enrolled(state: &CloudState) -> Result<(), ApiError> {
 }
 
 /// Hand over the popup's code and enroll in process.
-#[api(id = "cloud_link_finish", group = "cloud", summary = "Finish signing in to Droppen")]
+#[api(
+    id = "cloud_link_finish",
+    group = "cloud",
+    summary = "Finish signing in to Droppen",
+    responses(202 = "Enrolling: a device of the account completes it"),
+    errors(
+        403 = "Another user's attempt, or a wrong nonce",
+        404 = "No such attempt",
+        410 = "The attempt expired",
+        502 = "The hub could not be reached (`hub_unreachable`)"
+    )
+)]
 pub async fn post_finish(
     State(state): State<CloudState>,
     #[api(skip)] who: MaybeIdentity,
     ApiJson(body): ApiJson<FinishRequest>,
-) -> Result<Accepted<FinishResult>, ApiError> {
+) -> Result<WithStatus<Json<FinishResult>, 202>, ApiError> {
     let user = local_user(&state, &who).await?;
     let code = finish_code(&body.code)?;
     refuse_if_enrolled(&state)?;
@@ -364,12 +381,25 @@ pub async fn post_finish(
 /// Whether this device is in an account already is said only once the reply
 /// opened (409 `already_enrolled`, and the attempt is used up): before that,
 /// the caller is anybody who reaches the port.
-#[api(id = "cloud_link_return", group = "cloud", summary = "Hand back droppen.app's answer from the browser")]
+#[api(
+    id = "cloud_link_return",
+    group = "cloud",
+    summary = "Hand back droppen.app's answer from the browser",
+    responses(202 = "Enrolling: a device of the account completes it"),
+    errors(
+        400 = "Not a readable reply (`bad_reply`), or not a code (`bad_code`)",
+        403 = "The reply does not open for this attempt (`bad_reply`), the one who opened it no longer manages the link (`not_owner`), or bridged from Droppen",
+        404 = "No such attempt",
+        409 = "Local authentication is off, the attempt takes no answer through the browser (`no_handoff`), or — once the reply opened — this device is in an account already (`already_enrolled`)",
+        410 = "The attempt expired",
+        502 = "The hub could not be reached (`hub_unreachable`)"
+    )
+)]
 pub async fn post_return(
     State(state): State<CloudState>,
     #[api(skip)] who: MaybeIdentity,
     ApiJson(body): ApiJson<ReturnRequest>,
-) -> Result<Accepted<FinishResult>, ApiError> {
+) -> Result<WithStatus<Json<FinishResult>, 202>, ApiError> {
     caller(&who)?;
     if state.auth.is_off() {
         return Err(local_auth_off());
@@ -401,7 +431,7 @@ pub async fn post_return(
     }
     .await;
     let outcome = match &result {
-        Ok(Accepted(done)) => HandoffResult::HandedOver(done.machine.clone()),
+        Ok(done) => HandoffResult::HandedOver(done.clone().into_inner().0.machine.clone()),
         Err(error) => {
             let body = error.body();
             let code = body["error"].as_str().unwrap_or("failed").to_string();
@@ -421,7 +451,7 @@ pub(super) async fn complete_sign_in(
     attempt: Attempt,
     code: &droppen_proto::identity::EnrollCode,
     email: Option<String>,
-) -> Result<Accepted<FinishResult>, ApiError> {
+) -> Result<WithStatus<Json<FinishResult>, 202>, ApiError> {
     let cloud = &state.cloud;
     let user = attempt.owner.clone();
     let (account, machine) = match cloud.control.enroll(code, &attempt.hub).await {
@@ -465,11 +495,11 @@ pub(super) async fn complete_sign_in(
         file.remote_access.insert(user.clone(), true);
     })?;
     tracing::info!(%account, %machine, owner = %user, "signed in to Droppen from the local settings; a device completes the enrollment");
-    Ok(Accepted(FinishResult { machine, account }))
+    Ok(WithStatus::new(Json(FinishResult { machine, account })))
 }
 
 /// Drop the attempt (and an enrollment it started that no device completed).
-#[api(id = "cloud_link_cancel", group = "cloud", summary = "Cancel signing in to Droppen")]
+#[api(id = "cloud_link_cancel", group = "cloud", summary = "Cancel signing in to Droppen", responses(200 = "Cancelled"))]
 pub async fn post_cancel(
     State(state): State<CloudState>,
     #[api(skip)] who: MaybeIdentity,

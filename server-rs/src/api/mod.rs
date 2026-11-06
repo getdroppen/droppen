@@ -445,7 +445,6 @@ fn response_overrides() -> ExtraResponses {
     droppen_sessions::attention::routes::describe(&mut reg);
     droppen_auth::describe(&mut reg);
     droppen_drive::chats::describe(&mut reg);
-    droppen_cloud::describe(&mut reg);
     droppen_drive::describe(&mut reg);
     droppen_drive::feed::global::describe(&mut reg);
     droppen_files::describe(&mut reg);
