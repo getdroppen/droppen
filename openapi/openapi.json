@@ -2310,29 +2310,6 @@
         ],
         "type": "object"
       },
-      "ErrorBody": {
-        "description": "The JSON body of every error response Gotcha generates.\n\nIt serializes as `{\"error\": \"...\"}`, plus a `fields` map for failures that report more than\none problem: `Valid` sends `{\"error\": \"validation failed\", \"fields\": {\"name\": [\"is\nrequired\"]}}`. `fields` is omitted when there is nothing to report, so every other provider's\nbody is unchanged. The type is public so it can be declared as the body of an OpenAPI response\n(`body = \"ErrorBody\"` in `#[api(errors(...))]` / `#[api(responses(...))]`), and so applications\ncan reuse the same wire shape for their own errors.",
-        "properties": {
-          "error": {
-            "description": "Human-readable description of the failure.",
-            "type": "string"
-          },
-          "fields": {
-            "additionalProperties": {
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
-            "description": "Per-field failure messages keyed by the field's flattened path (for example `address.city`\nor `items[0].name`). Omitted when `None`.",
-            "type": "object"
-          }
-        },
-        "required": [
-          "error"
-        ],
-        "type": "object"
-      },
       "FileRef": {
         "description": "A file the item points at, offered to the UI as a download chip.",
         "properties": {
