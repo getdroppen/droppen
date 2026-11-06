@@ -38,7 +38,6 @@ use crate::Drive;
 use droppen_http::extract::ApiQuery;
 use droppen_http::refresh::RefreshSink;
 use droppen_http::{close_within, send_within, CLOSE_LIMIT};
-use droppen_http::openapi_ext::ExtraResponses;
 use droppen_instance::paths::Paths;
 use droppen_sessions::{SessionSummary, Source};
 
@@ -772,9 +771,6 @@ impl EventsState {
         router.get("/api/events", events_ws)
     }
 }
-
-/// Nothing to amend: the websocket carries no OpenAPI operation.
-pub fn describe(_reg: &mut ExtraResponses) {}
 
 #[cfg(test)]
 mod tests {

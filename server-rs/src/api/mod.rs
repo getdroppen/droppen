@@ -439,10 +439,7 @@ fn response_overrides() -> ExtraResponses {
     let mut reg = ExtraResponses::default();
     describe(&mut reg);
     droppen_sessions::attention::routes::describe(&mut reg);
-    droppen_drive::chats::describe(&mut reg);
-    droppen_drive::feed::global::describe(&mut reg);
     droppen_provider::models::describe(&mut reg);
-    droppen_drive::schedule::describe(&mut reg);
     droppen_setup::describe(&mut reg);
     droppen_sessions::stats::describe(&mut reg);
     reg

@@ -40,7 +40,7 @@ use droppen_http::error::ApiError;
 use droppen_http::extract::{ApiJson, ApiPath};
 use droppen_http::SendResult;
 use droppen_provider::SendOptions;
-use droppen_http::openapi_ext::{ExtraResponses, Nullable, Optional};
+use droppen_http::openapi_ext::{Nullable, Optional};
 use droppen_instance::paths::Paths;
 use droppen_sessions::{chats_cwd, Source};
 
@@ -311,7 +311,7 @@ pub struct ChatsState {
 droppen_http::substate!(ChatsState);
 
 /// Instant chats from both backends, newest first.
-#[api(id = "list_chats", group = "chats", summary = "List chats")]
+#[api(id = "list_chats", group = "chats", summary = "List chats", responses(200 = "Instant chats from both backends, newest first"))]
 pub async fn list_chats(State(state): State<ChatsState>) -> Json<ChatList> {
     let paths = state.paths.as_ref();
     let bindings = state.drive.accounts.session_account_map().await;
@@ -354,7 +354,13 @@ pub async fn list_chats(State(state): State<ChatsState>) -> Json<ChatList> {
 
 /// Start a chat. For the CLI backends the first message is already running when
 /// this returns.
-#[api(id = "new_chat", group = "chats", summary = "Start a chat")]
+#[api(
+    id = "new_chat",
+    group = "chats",
+    summary = "Start a chat",
+    responses(200 = "Chat created (claude: the first message is already running)"),
+    errors(400 = "Invalid request or provider not configured")
+)]
 pub async fn new_chat(State(state): State<ChatsState>, ApiJson(body): ApiJson<ChatNew>) -> Result<Json<ChatNewResult>, ApiError> {
     validate_new(&body)?;
 
@@ -400,7 +406,13 @@ pub async fn new_chat(State(state): State<ChatsState>, ApiJson(body): ApiJson<Ch
 }
 
 /// One API-backed chat, with every message.
-#[api(id = "get_api_chat", group = "chats", summary = "Get an API chat")]
+#[api(
+    id = "get_api_chat",
+    group = "chats",
+    summary = "Get an API chat",
+    responses(200 = "Full API-backed chat with messages"),
+    errors(404 = "Chat not found")
+)]
 pub async fn get_api_chat(State(state): State<ChatsState>, ApiPath(id): ApiPath<String>) -> Result<Json<ApiChat>, ApiError> {
     store::read_api_chat(&state.paths, &id)
         .await
@@ -409,7 +421,7 @@ pub async fn get_api_chat(State(state): State<ChatsState>, ApiPath(id): ApiPath<
 }
 
 /// Delete an API-backed chat.
-#[api(id = "delete_api_chat", group = "chats", summary = "Delete an API chat")]
+#[api(id = "delete_api_chat", group = "chats", summary = "Delete an API chat", responses(200 = "Chat deleted"), errors(404 = "Chat not found"))]
 pub async fn delete_api_chat(State(state): State<ChatsState>, ApiPath(id): ApiPath<String>) -> Result<Json<SendResult>, ApiError> {
     if !state.chats.delete_api_chat(&id).await {
         return Err(ApiError::not_found("chat not found"));
@@ -418,13 +430,16 @@ pub async fn delete_api_chat(State(state): State<ChatsState>, ApiPath(id): ApiPa
 }
 
 /// The configured provider, with the key redacted.
-#[api(id = "chat_provider", group = "chats", summary = "Chat provider")]
+#[api(id = "chat_provider", group = "chats", summary = "Chat provider", responses(200 = "OpenAI-compatible provider config (key masked)"))]
 pub async fn chat_provider(State(state): State<ChatsState>) -> Json<ChatProviderInfo> {
     Json(state.chats.provider_info().await)
 }
 
 /// Update the provider configuration. An empty `apiKey` clears the stored key.
-#[api(id = "update_chat_provider", group = "chats", summary = "Update the chat provider")]
+//
+// A write failure is a `500` the golden contract does not document, so the
+// inferred `default` is dropped without a status entry taking its place.
+#[api(id = "update_chat_provider", group = "chats", summary = "Update the chat provider", responses(200 = "Updated provider config"), drop_default)]
 pub async fn update_chat_provider(
     State(state): State<ChatsState>,
     ApiJson(body): ApiJson<ChatProviderUpdate>,
@@ -438,7 +453,13 @@ pub async fn update_chat_provider(
 }
 
 /// Model ids from the provider's `/models` endpoint.
-#[api(id = "chat_provider_models", group = "chats", summary = "Provider models")]
+#[api(
+    id = "chat_provider_models",
+    group = "chats",
+    summary = "Provider models",
+    responses(200 = "Model ids from the provider's /models endpoint"),
+    errors(400 = "Provider not configured or unreachable")
+)]
 pub async fn chat_provider_models(State(state): State<ChatsState>) -> Result<Json<ChatModelList>, ApiError> {
     let models = state
         .chats
@@ -579,31 +600,6 @@ impl ChatsState {
             .put("/api/chat-provider", update_chat_provider)
             .get("/api/chat-provider/models", chat_provider_models)
     }
-}
-
-/// Everything gotcha cannot express about those routes.
-///
-/// `PUT /api/chat-provider` uses [`ExtraResponses::describe_final`] because a
-/// write failure is a `500` the golden contract does not document, so the
-/// `default` response gotcha derives from the handler's `Result` has to go
-/// without a status entry taking its place.
-pub fn describe(reg: &mut ExtraResponses) {
-    reg.describe("GET", "/api/chats", 200, "Instant chats from both backends, newest first")
-        .describe(
-            "POST",
-            "/api/chats/new",
-            200,
-            "Chat created (claude: the first message is already running)",
-        )
-        .error("POST", "/api/chats/new", 400, "Invalid request or provider not configured")
-        .describe("GET", "/api/api-chats/{id}", 200, "Full API-backed chat with messages")
-        .error("GET", "/api/api-chats/{id}", 404, "Chat not found")
-        .describe("DELETE", "/api/api-chats/{id}", 200, "Chat deleted")
-        .error("DELETE", "/api/api-chats/{id}", 404, "Chat not found")
-        .describe("GET", "/api/chat-provider", 200, "OpenAI-compatible provider config (key masked)")
-        .describe_final("PUT", "/api/chat-provider", 200, "Updated provider config")
-        .describe("GET", "/api/chat-provider/models", 200, "Model ids from the provider's /models endpoint")
-        .error("GET", "/api/chat-provider/models", 400, "Provider not configured or unreachable");
 }
 
 #[cfg(test)]
