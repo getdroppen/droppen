@@ -66,7 +66,6 @@ use droppen_base::text::hex;
 use tokio::io::AsyncWriteExt;
 
 use droppen_http::error::{ApiError, Detailed};
-use droppen_http::openapi_ext::ExtraResponses;
 use droppen_instance::paths::Paths;
 
 use store::BinStore;
@@ -220,7 +219,23 @@ impl SelfUpdateState {
 }
 
 /// Replace the server binary, and restart into it if something is supervising.
-#[api(id = "self_upgrade", group = "meta", summary = "Replace the server binary")]
+#[api(
+    id = "self_upgrade",
+    group = "meta",
+    summary = "Replace the server binary",
+    responses(200 = "The new binary is installed"),
+    errors(
+        400 = "The upload was malformed, hashed to something else, or failed its health check",
+        403 = "This server is run by the Droppen desktop app, which updates it with the app",
+        409 = "This server's instance lock is lost or absent; another server may own the instance",
+        413 = "The uploaded binary is over the size limit"
+    ),
+    request_body(
+        content_type = "multipart/form-data",
+        body = "ServerBinaryUpload",
+        description = "The replacement server binary, and optionally its SHA-256"
+    )
+)]
 pub async fn self_upgrade(State(state): State<SelfUpdateState>, multipart: Multipart) -> Result<Json<SelfUpgrade>, ApiError> {
     // Before anything else, and before a byte is read: a server the desktop app
     // runs is updated with the app, and this route would only replace the
@@ -580,36 +595,6 @@ impl SelfUpdateState {
             gotcha::post(self_upgrade).layer(gotcha::axum::extract::DefaultBodyLimit::max((BINARY_LIMIT + MULTIPART_OVERHEAD) as usize)),
         )
     }
-}
-
-/// Everything gotcha cannot derive about this operation.
-pub fn describe(reg: &mut ExtraResponses) {
-    reg.describe("POST", "/api/server/self-upgrade", 200, "The new binary is installed")
-        .error(
-            "POST",
-            "/api/server/self-upgrade",
-            400,
-            "The upload was malformed, hashed to something else, or failed its health check",
-        )
-        .error("POST", "/api/server/self-upgrade", 413, "The uploaded binary is over the size limit")
-        .error(
-            "POST",
-            "/api/server/self-upgrade",
-            403,
-            "This server is run by the Droppen desktop app, which updates it with the app",
-        )
-        .error(
-            "POST",
-            "/api/server/self-upgrade",
-            409,
-            "This server's instance lock is lost or absent; another server may own the instance",
-        )
-        .request_body::<ServerBinaryUpload>(
-            "POST",
-            "/api/server/self-upgrade",
-            "multipart/form-data",
-            "The replacement server binary, and optionally its SHA-256",
-        );
 }
 
 #[cfg(test)]
