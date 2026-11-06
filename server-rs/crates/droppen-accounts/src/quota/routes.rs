@@ -23,11 +23,7 @@ droppen_http::substate!(QuotaState);
     id = "quota",
     group = "stats",
     summary = "Subscription quota",
-    responses(response(
-        status = 200,
-        body = "Quota",
-        description = "Subscription quota: Codex rolling-window usage and the Claude plan"
-    ))
+    responses(200 = "Subscription quota: Codex rolling-window usage and the Claude plan")
 )]
 pub async fn quota(State(state): State<QuotaState>) -> Json<Quota> {
     Json(state.quota.collect(&state.accounts).await)

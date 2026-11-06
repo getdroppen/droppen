@@ -278,7 +278,7 @@ droppen_http::substate!(AccountsState);
     id = "list_accounts",
     group = "accounts",
     summary = "List accounts",
-    responses(response(status = 200, body = "AccountList", description = "Stored Claude accounts (secrets never leave the server)"))
+    responses(200 = "Stored Claude accounts (secrets never leave the server)")
 )]
 pub async fn list_accounts(State(state): State<AccountsState>) -> Json<AccountList> {
     Json(state.accounts.account_list().await)
@@ -355,10 +355,10 @@ fn touches_credential(body: &AccountUpdate) -> bool {
     group = "accounts",
     summary = "Add an account",
     responses(
-        response(status = 201, body = "Account", description = "Account stored"),
+        201 = "Account stored",
         response(status = 409, body = "AccountConflict", description = "That token is already stored under another label")
     ),
-    errors(response(status = 400, body = "droppen_http::error::Error", description = "Unusable label, or a token Anthropic refused"))
+    errors(400 = "Unusable label, or a token Anthropic refused")
 )]
 pub async fn create_account(State(state): State<AccountsState>, ApiJson(body): ApiJson<AccountCreate>) -> Result<WithStatus<Json<Account>, 201>, ApiError> {
     body.label.require_label()?;
@@ -391,12 +391,12 @@ pub async fn create_account(State(state): State<AccountsState>, ApiJson(body): A
     group = "accounts",
     summary = "Update an account",
     responses(
-        response(status = 200, body = "Account", description = "Account updated"),
+        200 = "Account updated",
         response(status = 409, body = "AccountConflict", description = "That token is already stored under another label")
     ),
     errors(
-        response(status = 400, body = "droppen_http::error::Error", description = "Unusable label, or a token Anthropic refused"),
-        response(status = 404, body = "droppen_http::error::Error", description = "Account not found")
+        400 = "Unusable label, or a token Anthropic refused",
+        404 = "Account not found"
     )
 )]
 pub async fn update_account(
@@ -456,14 +456,10 @@ pub async fn update_account(
     id = "get_account_env",
     group = "accounts",
     summary = "Get an account's environment block",
-    responses(response(
-        status = 200,
-        body = "AccountEnvBlock",
-        description = "The account's whole environment block, values included, for editing it"
-    )),
+    responses(200 = "The account's whole environment block, values included, for editing it"),
     errors(
-        response(status = 400, body = "droppen_http::error::Error", description = "The account has no environment block"),
-        response(status = 404, body = "droppen_http::error::Error", description = "Account not found")
+        400 = "The account has no environment block",
+        404 = "Account not found"
     )
 )]
 pub async fn get_account_env(State(state): State<AccountsState>, ApiPath(id): ApiPath<String>) -> Result<Json<AccountEnvBlock>, ApiError> {
@@ -480,8 +476,8 @@ pub async fn get_account_env(State(state): State<AccountsState>, ApiPath(id): Ap
     id = "delete_account",
     group = "accounts",
     summary = "Delete an account",
-    responses(response(status = 200, body = "SendResult", description = "Account, its session bindings and its probe login are gone")),
-    errors(response(status = 404, body = "droppen_http::error::Error", description = "Account not found"))
+    responses(200 = "Account, its session bindings and its probe login are gone"),
+    errors(404 = "Account not found")
 )]
 pub async fn delete_account(State(state): State<AccountsState>, ApiPath(id): ApiPath<String>) -> Result<Json<SendResult>, ApiError> {
     id.require_uuid()?;
@@ -501,14 +497,10 @@ pub async fn delete_account(State(state): State<AccountsState>, ApiPath(id): Api
     id = "set_default_account",
     group = "accounts",
     summary = "Set the default account",
-    responses(response(
-        status = 200,
-        body = "AccountList",
-        description = "Default account for new sessions (null chooses the local login, signed out or not; automatic clears it)"
-    )),
+    responses(200 = "Default account for new sessions (null chooses the local login, signed out or not; automatic clears it)"),
     errors(
-        response(status = 400, body = "droppen_http::error::Error", description = "An accountId sent with automatic"),
-        response(status = 404, body = "droppen_http::error::Error", description = "Account not found")
+        400 = "An accountId sent with automatic",
+        404 = "Account not found"
     )
 )]
 pub async fn set_default_account(State(state): State<AccountsState>, ApiJson(body): ApiJson<AccountDefault>) -> Result<Json<AccountList>, ApiError> {
@@ -559,11 +551,7 @@ pub async fn set_default_account(State(state): State<AccountsState>, ApiJson(bod
     id = "account_start",
     group = "accounts",
     summary = "Where a start that names no account runs",
-    responses(response(
-        status = 200,
-        body = "rotation::AccountStart",
-        description = "The login a start that names no account runs on, and why"
-    ))
+    responses(200 = "The login a start that names no account runs on, and why")
 )]
 pub async fn account_start(State(state): State<AccountsState>, ApiQuery(query): ApiQuery<AccountStartQuery>) -> Json<rotation::AccountStart> {
     let provider = query.provider.unwrap_or_default();
@@ -633,11 +621,7 @@ async fn limit_subject(state: &AccountsState, id: &str) -> Result<(), ApiError> 
     id = "list_account_limit_events",
     group = "accounts",
     summary = "List recent limit events",
-    responses(response(
-        status = 200,
-        body = "AccountLimitEventList",
-        description = "Limit events this instance recorded, newest first (recorded, not acted on)"
-    ))
+    responses(200 = "Limit events this instance recorded, newest first (recorded, not acted on)")
 )]
 pub async fn list_limit_events(State(state): State<AccountsState>, ApiQuery(query): ApiQuery<LimitEventsQuery>) -> Json<AccountLimitEventList> {
     let limit = query.limit.unwrap_or(100) as usize;
@@ -651,8 +635,8 @@ pub async fn list_limit_events(State(state): State<AccountsState>, ApiQuery(quer
     id = "list_account_limit_events_for",
     group = "accounts",
     summary = "List an account's limit events",
-    responses(response(status = 200, body = "AccountLimitEventList", description = "One account's limit events, newest first")),
-    errors(response(status = 404, body = "droppen_http::error::Error", description = "Account not found"))
+    responses(200 = "One account's limit events, newest first"),
+    errors(404 = "Account not found")
 )]
 pub async fn list_account_limit_events(
     State(state): State<AccountsState>,
@@ -671,8 +655,8 @@ pub async fn list_account_limit_events(
     id = "clear_account_rest",
     group = "accounts",
     summary = "Clear an account's rest",
-    responses(response(status = 200, body = "AccountList", description = "Rest cleared; the whole account list")),
-    errors(response(status = 404, body = "droppen_http::error::Error", description = "Account not found"))
+    responses(200 = "Rest cleared; the whole account list"),
+    errors(404 = "Account not found")
 )]
 pub async fn clear_account_rest(
     State(state): State<AccountsState>,
