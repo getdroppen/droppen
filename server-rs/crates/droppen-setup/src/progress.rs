@@ -298,14 +298,25 @@ pub async fn answered(state: &SetupState, progress: SetupProgress) -> SetupProgr
 }
 
 /// How far the first-run guide got on this instance.
-#[api(id = "setup_progress", group = "setup", summary = "Read the first-run guide's progress")]
+#[api(
+    id = "setup_progress",
+    group = "setup",
+    summary = "Read the first-run guide's progress",
+    responses(200 = "How far the first-run guide got, and whether it opens by itself")
+)]
 pub async fn get_progress(State(state): State<SetupState>) -> Json<SetupProgress> {
     let stored = state.setup.stored_progress();
     Json(answered(&state, stored).await)
 }
 
 /// Store how far the first-run guide got, and hand it back as stored.
-#[api(id = "setup_store_progress", group = "setup", summary = "Store the first-run guide's progress")]
+#[api(
+    id = "setup_store_progress",
+    group = "setup",
+    summary = "Store the first-run guide's progress",
+    responses(200 = "Stored; the progress as it now reads"),
+    errors(400 = "Malformed body")
+)]
 pub async fn put_progress(State(state): State<SetupState>, ApiJson(body): ApiJson<SetupProgress>) -> Result<Json<SetupProgress>, ApiError> {
     let stored = state.setup.store_progress(&body);
     Ok(Json(answered(&state, stored).await))

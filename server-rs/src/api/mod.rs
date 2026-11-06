@@ -440,7 +440,6 @@ fn response_overrides() -> ExtraResponses {
     describe(&mut reg);
     droppen_sessions::attention::routes::describe(&mut reg);
     droppen_provider::models::describe(&mut reg);
-    droppen_setup::describe(&mut reg);
     droppen_sessions::stats::describe(&mut reg);
     reg
 }

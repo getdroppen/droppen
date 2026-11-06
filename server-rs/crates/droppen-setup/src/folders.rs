@@ -20,12 +20,11 @@
 
 use std::path::{Path, PathBuf};
 
-use gotcha::{api, Json, Schematic, State};
+use gotcha::{api, Json, Schematic, State, WithStatus};
 use serde::{Deserialize, Serialize};
 
 use super::SetupState;
 use droppen_instance::db::scope;
-use droppen_http::created::Created;
 use droppen_http::error::ApiError;
 use droppen_http::openapi_ext::Nullable;
 use droppen_sessions::{SessionScope, SessionSummary, Source, TranscriptSources};
@@ -202,7 +201,12 @@ pub fn practice_folder_for(home: &Path, earlier: Option<&Path>) -> std::io::Resu
 // -------------------------------------------------------------------- routes
 
 /// The folders sessions ran in on this device, for step 03.
-#[api(id = "setup_recent_folders", group = "setup", summary = "List folders sessions ran in")]
+#[api(
+    id = "setup_recent_folders",
+    group = "setup",
+    summary = "List folders sessions ran in",
+    responses(200 = "The folders sessions ran in on this device, the most recent first")
+)]
 pub async fn recent_folders(State(state): State<SetupState>) -> Json<RecentFolders> {
     let bindings = state.accounts.session_account_map().await;
     let sessions = state
@@ -223,8 +227,14 @@ pub async fn recent_folders(State(state): State<SetupState>) -> Json<RecentFolde
 
 /// An empty practice folder for the first session: the one made last while it
 /// is still empty, else a new one.
-#[api(id = "setup_practice_folder", group = "setup", summary = "Make a practice folder")]
-pub async fn practice_folder(State(state): State<SetupState>) -> Result<Created<PracticeFolder>, ApiError> {
+#[api(
+    id = "setup_practice_folder",
+    group = "setup",
+    summary = "Make a practice folder",
+    responses(201 = "An empty practice folder: the one made last while it is still empty, else a new one"),
+    errors(500 = "The folder could not be made")
+)]
+pub async fn practice_folder(State(state): State<SetupState>) -> Result<WithStatus<Json<PracticeFolder>, 201>, ApiError> {
     let home = state.paths.home.clone();
     let db = state.setup.db();
     let earlier = db.kv_get(scope::SETUP, PRACTICE_KEY).map(PathBuf::from);
@@ -234,7 +244,7 @@ pub async fn practice_folder(State(state): State<SetupState>) -> Result<Created<
         .map_err(|error| ApiError::internal(format!("cannot make the practice folder: {error}")))?;
     let path = made.to_string_lossy().into_owned();
     db.kv_set(scope::SETUP, PRACTICE_KEY, &path);
-    Ok(Created(PracticeFolder { path }))
+    Ok(WithStatus::new(Json(PracticeFolder { path })))
 }
 
 #[cfg(test)]
@@ -296,11 +306,11 @@ mod tests {
     async fn the_route_remembers_the_practice_folder_it_made() {
         let home = tempfile::tempdir().expect("tempdir");
         let state = crate::testing::setup_state(home.path(), crate::testing::guide(home.path(), Fixture::new(), None));
-        let first = practice_folder(State(state.clone())).await.expect("made").0.path;
-        let again = practice_folder(State(state.clone())).await.expect("again").0.path;
+        let first = practice_folder(State(state.clone())).await.expect("made").into_inner().0.path;
+        let again = practice_folder(State(state.clone())).await.expect("again").into_inner().0.path;
         assert_eq!(again, first, "still empty: the same folder");
         std::fs::write(Path::new(&first).join("a.txt"), "x").expect("write");
-        let next = practice_folder(State(state.clone())).await.expect("next").0.path;
+        let next = practice_folder(State(state.clone())).await.expect("next").into_inner().0.path;
         assert_ne!(next, first);
         assert!(next.ends_with("first-session-2"), "{next}");
     }
