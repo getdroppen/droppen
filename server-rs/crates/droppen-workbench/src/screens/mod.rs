@@ -63,7 +63,7 @@ use droppen_http::refresh::Refresh;
 use droppen_http::error::ApiError;
 use droppen_http::extract::{ApiJson, ApiPath, ApiQuery};
 use droppen_http::SendResult;
-use droppen_http::openapi_ext::{AnyValue, ExtraResponses, Optional};
+use droppen_http::openapi_ext::{AnyValue, Optional};
 use droppen_instance::paths::Paths;
 use droppen_base::time::iso8601;
 
@@ -1383,13 +1383,27 @@ pub struct ScreensState {
 droppen_http::substate!(ScreensState);
 
 /// Persistent screens, saved pane layouts.
-#[api(id = "list_screens", group = "screens", summary = "List screens")]
+#[api(
+    id = "list_screens",
+    group = "screens",
+    summary = "List screens",
+    responses(200 = "Persistent screens (saved pane layouts) and the list revision")
+)]
 pub async fn list_screens(State(state): State<ScreensState>) -> Json<ScreenList> {
     Json(ScreenStore::of(&state.paths).read_list().await)
 }
 
 /// Create a screen holding one empty pane.
-#[api(id = "create_screen", group = "screens", summary = "Create a screen")]
+#[api(
+    id = "create_screen",
+    group = "screens",
+    summary = "Create a screen",
+    responses(
+        200 = "Screen created with a single empty pane",
+        response(status = 409, body = "ScreenListConflict", description = "baseListRevision is stale; nothing was created and the body carries the current list")
+    ),
+    drop_default
+)]
 pub async fn create_screen(State(state): State<ScreensState>, ApiJson(body): ApiJson<ScreenCreate>) -> Result<Json<Screen>, ApiError> {
     ScreenStore::of(&state.paths).create(&state.refresh, body).await.map(Json)
 }
@@ -1398,7 +1412,16 @@ pub async fn create_screen(State(state): State<ScreensState>, ApiJson(body): Api
 ///
 /// Refused with `409` and the current screen when `baseRevision` is not the
 /// stored revision.
-#[api(id = "update_screen", group = "screens", summary = "Update a screen")]
+#[api(
+    id = "update_screen",
+    group = "screens",
+    summary = "Update a screen",
+    responses(
+        200 = "Screen updated, with its new revision",
+        response(status = 409, body = "ScreenConflict", description = "The screen changed since baseRevision; nothing was written and the body carries it as it is now")
+    ),
+    errors(400 = "Invalid screen emoji, or no baseRevision", 404 = "Screen not found")
+)]
 pub async fn update_screen(
     State(state): State<ScreensState>,
     ApiPath(id): ApiPath<String>,
@@ -1408,7 +1431,16 @@ pub async fn update_screen(
 }
 
 /// Delete a screen. The resources its leaves reference are left untouched.
-#[api(id = "delete_screen", group = "screens", summary = "Delete a screen")]
+#[api(
+    id = "delete_screen",
+    group = "screens",
+    summary = "Delete a screen",
+    responses(
+        200 = "Screen deleted; referenced resources are left untouched",
+        response(status = 409, body = "ScreenListConflict", description = "baseListRevision is stale; nothing was deleted and the body carries the current list")
+    ),
+    errors(404 = "Screen not found")
+)]
 pub async fn delete_screen(
     State(state): State<ScreensState>,
     ApiPath(id): ApiPath<String>,
@@ -1420,7 +1452,16 @@ pub async fn delete_screen(
 
 /// Put screens in a new order. Screens the request does not name keep their
 /// relative order after the ones it does.
-#[api(id = "reorder_screens", group = "screens", summary = "Reorder screens")]
+#[api(
+    id = "reorder_screens",
+    group = "screens",
+    summary = "Reorder screens",
+    responses(
+        200 = "The list in its new order",
+        response(status = 409, body = "ScreenListConflict", description = "baseListRevision is stale; nothing moved and the body carries the current list")
+    ),
+    drop_default
+)]
 pub async fn reorder_screens(State(state): State<ScreensState>, ApiJson(body): ApiJson<ScreenOrder>) -> Result<Json<ScreenList>, ApiError> {
     ScreenStore::of(&state.paths).reorder(&state.refresh, body).await.map(Json)
 }
@@ -1441,57 +1482,6 @@ impl ScreensState {
             .patch("/api/screens/{id}", update_screen)
             .delete("/api/screens/{id}", delete_screen)
     }
-}
-
-/// Everything gotcha cannot express about those routes.
-///
-/// `POST` re-states its `200` through [`ExtraResponses::body`] rather than
-/// [`ExtraResponses::describe`], because that is the only way to drop the
-/// `default` response gotcha derives from the handler's `Result`; the other
-/// fallible routes lose theirs to their documented errors.
-pub fn describe(reg: &mut ExtraResponses) {
-    reg.describe(
-        "GET",
-        "/api/screens",
-        200,
-        "Persistent screens (saved pane layouts) and the list revision",
-    )
-    .body::<Screen>("POST", "/api/screens", 200, "Screen created with a single empty pane")
-    .body::<ScreenListConflict>(
-        "POST",
-        "/api/screens",
-        409,
-        "baseListRevision is stale; nothing was created and the body carries the current list",
-    )
-    .describe("PATCH", "/api/screens/{id}", 200, "Screen updated, with its new revision")
-    .error("PATCH", "/api/screens/{id}", 400, "Invalid screen emoji, or no baseRevision")
-    .error("PATCH", "/api/screens/{id}", 404, "Screen not found")
-    .body::<ScreenConflict>(
-        "PATCH",
-        "/api/screens/{id}",
-        409,
-        "The screen changed since baseRevision; nothing was written and the body carries it as it is now",
-    )
-    .describe(
-        "DELETE",
-        "/api/screens/{id}",
-        200,
-        "Screen deleted; referenced resources are left untouched",
-    )
-    .error("DELETE", "/api/screens/{id}", 404, "Screen not found")
-    .body::<ScreenListConflict>(
-        "DELETE",
-        "/api/screens/{id}",
-        409,
-        "baseListRevision is stale; nothing was deleted and the body carries the current list",
-    )
-    .describe("PUT", "/api/screens/order", 200, "The list in its new order")
-    .body::<ScreenListConflict>(
-        "PUT",
-        "/api/screens/order",
-        409,
-        "baseListRevision is stale; nothing moved and the body carries the current list",
-    );
 }
 
 #[cfg(test)]

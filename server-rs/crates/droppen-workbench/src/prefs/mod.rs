@@ -30,7 +30,6 @@ use droppen_instance::db::scope;
 use droppen_http::error::ApiError;
 use droppen_http::extract::ApiJson;
 use droppen_http::refresh::Refresh;
-use droppen_http::openapi_ext::ExtraResponses;
 use droppen_instance::paths::Paths;
 
 /// How the session list is grouped.
@@ -312,13 +311,13 @@ pub struct PrefsState {
 droppen_http::substate!(PrefsState);
 
 /// The stored UI preferences.
-#[api(id = "get_prefs", group = "prefs", summary = "UI preferences")]
+#[api(id = "get_prefs", group = "prefs", summary = "UI preferences", responses(200 = "UI preferences"))]
 pub async fn get_prefs(State(state): State<PrefsState>) -> Json<Prefs> {
     Json(PrefsStore::of(&state.paths).read().await)
 }
 
 /// Persist the UI preferences and hand them straight back.
-#[api(id = "put_prefs", group = "prefs", summary = "Update UI preferences")]
+#[api(id = "put_prefs", group = "prefs", summary = "Update UI preferences", responses(200 = "Updated preferences"), drop_default)]
 pub async fn put_prefs(State(state): State<PrefsState>, ApiJson(prefs): ApiJson<Prefs>) -> Result<Json<Prefs>, ApiError> {
     let store = PrefsStore::of(&state.paths);
     let before = store.read().await;
@@ -342,18 +341,6 @@ impl PrefsState {
     {
         router.get("/api/prefs", get_prefs).put("/api/prefs", put_prefs)
     }
-}
-
-/// Everything gotcha cannot express about those routes.
-///
-/// `PUT` re-states its `200` through [`ExtraResponses::body`] rather than
-/// [`ExtraResponses::describe`]: the handler returns a `Result`, from which
-/// gotcha derives a `default` response, and re-stating the success case is the
-/// only way to drop it. The contract documents this route's `200` alone — a
-/// failed write is a `500` there too, just an undocumented one.
-pub fn describe(reg: &mut ExtraResponses) {
-    reg.describe("GET", "/api/prefs", 200, "UI preferences")
-        .body::<Prefs>("PUT", "/api/prefs", 200, "Updated preferences");
 }
 
 #[cfg(test)]
