@@ -1,30 +1,23 @@
-//! Everything gotcha 0.4.1 cannot express about the OpenAPI document, expressed
-//! declaratively and applied in a single `GotchaRouter::openapi(..)` pass.
+//! The OpenAPI document's shape fixes, applied in a single
+//! `GotchaRouter::openapi(..)` pass.
 //!
-//! gotcha derives one `200` response per handler from the return type and folds
-//! a `Result`'s error side into `default` (`gotcha_core-0.4.1/src/responsible.rs:129`),
-//! so a route cannot document a `404`/`409` of its own. The registry below closes
-//! that gap without touching the framework: [`ResponseOverride`] entries name a
-//! `(method, path, status)` and a body type, and [`apply`] inserts the
-//! `Schematic`-generated schema into `components/schemas` (reusing the generated
-//! name) plus the status entry into the operation's `responses`.
+//! Responses are declared on the handlers themselves, with
+//! `#[api(responses(..), errors(..))]`; what remains here is what no per-route
+//! declaration can say. [`normalize`] registers the `bearerAuth` scheme, folds
+//! gotcha's `anyOf` nullability back onto its `$ref`, hoists it onto the
+//! component, and restores the `required` lists gotcha loosens. The wrappers
+//! [`Nullable`], [`Optional`] and [`AnyValue`] express the zod shapes gotcha's
+//! `Option<T>` cannot, and [`BinaryBody`] documents a raw-bytes response.
 //!
-//! It also carries two shape fixes that keep the generated TypeScript identical
-//! to the checked-in contract (`openapi/openapi.json`):
-//!
-//! * [`Nullable`] — a value that is always present but may be `null`. gotcha maps
-//!   `Option<T>` to *optional and nullable*, but the contract means *required
-//!   and nullable*, which is a different TS type.
-//! * [`SpecAmendmentExt::hoist_nullable_refs`] — the contract carries the
-//!   nullability on a registered object schema *inside* the component
-//!   (`Injection` is `type: object` with `nullable: true`), whereas a
-//!   `Nullable<Injection>` field would carry `nullable` next to its `$ref`,
-//!   where generators ignore it.
+//! The generated TypeScript must stay identical to the checked-in contract
+//! (`openapi/openapi.json`), which is why the nullability placement matters:
+//! the contract carries it on the registered component (`Injection` is
+//! `type: object` with `nullable: true`), whereas a `Nullable<Injection>` field
+//! would carry `nullable` next to its `$ref`, where generators ignore it.
 
 use std::collections::BTreeMap;
 
-use gotcha::oas::{MediaType, OpenAPIV3, Operation, Referenceable, Response, Schema};
-use gotcha::gotcha_core::registry;
+use gotcha::oas::{OpenAPIV3, Referenceable, Schema};
 use gotcha::{EnhancedSchema, Schematic};
 use serde::{Deserialize, Serialize};
 
@@ -33,7 +26,7 @@ use serde::{Deserialize, Serialize};
 /// The contract's required-and-nullable shape: `required` in the schema,
 /// `nullable: true` on the value. Plain `Option<T>` cannot express this because
 /// `<Option<T> as Schematic>::required()` is hard-coded to `false`
-/// (`gotcha_core-0.4.1/src/lib.rs:262`).
+/// (`gotcha_core-0.5.1/src/lib.rs:624`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Nullable<T>(pub Option<T>);
@@ -97,7 +90,7 @@ impl<T: Schematic> Schematic for Nullable<T> {
 /// `required` and the value carries no `nullable`. Plain `Option<T>` cannot
 /// express this either, because gotcha hard-codes
 /// `<Option<T> as Schematic>::nullable()` to `Some(true)`
-/// (`gotcha_core-0.4.1/src/lib.rs:275`), which generators read as `T | null`.
+/// (`gotcha_core-0.5.1/src/lib.rs:627`), which generators read as `T | null`.
 ///
 /// Pair it with `#[serde(default, skip_serializing_if = "Optional::is_none")]`
 /// so an absent value stays absent on the wire rather than becoming `null`.
@@ -265,24 +258,9 @@ impl Schematic for BinaryBody {
     }
 }
 
-/// Builds a schema plus every named component it pulled in, ready to be merged
-/// into `components/schemas`.
-type SchemaFactory = fn() -> (Schema, BTreeMap<String, Schema>);
-
-fn collect_schema<T: Schematic>() -> (Schema, BTreeMap<String, Schema>) {
-    // Run inside a fresh collection scope so a derived type comes back as a
-    // `$ref` and its component (plus anything it references) lands in the map,
-    // exactly as it would during gotcha's own assembly.
-    let (schema, components) = registry::collect(|| T::generate_schema());
-    (schema.schema, components)
-}
-
-/// The media type a JSON body is served as.
 /// The security scheme name the guarded operations reference, and the key it is
 /// registered under in `components/securitySchemes`.
 pub const BEARER_SCHEME: &str = "bearerAuth";
-
-const JSON: &str = "application/json";
 
 /// Implement `Schematic` for a string enum that must stay *inline* in its
 /// parent schema.
@@ -324,189 +302,14 @@ macro_rules! inline_string_enum {
     };
 }
 
-/// One declarative amendment to a generated operation.
-struct ResponseOverride {
-    /// HTTP method, uppercase (`"GET"`).
-    pub method: &'static str,
-    /// Route path as registered (`"/api/sessions/{source}/{id}"`).
-    pub path: &'static str,
-    /// Status code the entry documents.
-    pub status: u16,
-    /// The response description.
-    pub description: &'static str,
-    /// Body schema, or `None` to only set the description of an existing entry.
-    pub schema: Option<SchemaFactory>,
-    /// Media type the body is served as.
-    pub content_type: &'static str,
-    /// Drop the `default` response gotcha derives from the handler's `Result`
-    /// error side, when the real status codes are documented instead.
-    pub drop_default: bool,
-    /// Move the response generated under this status to [`Self::status`],
-    /// keeping its body. gotcha derives every success as `200`
-    /// (`gotcha_core-0.4.1/src/responsible.rs:25`), so a `201` route has to say so.
-    pub rename_from: Option<u16>,
-}
-
-/// One declarative amendment to a generated operation's request body.
-///
-/// gotcha derives a body schema from the extractor, and `Multipart` carries
-/// none — the generated `requestBody` names the media type and stops there. A
-/// route whose parts the handler really does know therefore documents them
-/// through this.
-pub struct RequestBodyOverride {
-    /// HTTP method, uppercase (`"POST"`).
-    pub method: &'static str,
-    /// Route path as registered.
-    pub path: &'static str,
-    /// Media type the body is read as.
-    pub content_type: &'static str,
-    /// The body's description.
-    pub description: &'static str,
-    /// Body schema.
-    pub schema: SchemaFactory,
-}
-
-/// Every override a subsystem contributes, collected in one place.
-///
-/// Each module's `describe(&mut ExtraResponses)` pushes its own amendments here,
-/// so `api::routes` registers a subsystem with one line for its routes and one
-/// for its documentation, and no module has to know the shape of the registry.
-#[derive(Default)]
-pub struct ExtraResponses {
-    responses: Vec<ResponseOverride>,
-    request_bodies: Vec<RequestBodyOverride>,
-}
-
-impl ExtraResponses {
-    /// Reword a response gotcha already generated (it hard-codes `"default return"`).
-    pub fn describe(&mut self, method: &'static str, path: &'static str, status: u16, description: &'static str) -> &mut Self {
-        self.responses.push(ResponseOverride {
-            method,
-            path,
-            status,
-            description,
-            schema: None,
-            content_type: JSON,
-            drop_default: false,
-            rename_from: None,
-        });
-        self
-    }
-
-    /// Document a failure status whose body is the API's [`crate::error::Error`].
-    pub fn error(&mut self, method: &'static str, path: &'static str, status: u16, description: &'static str) -> &mut Self {
-        self.body::<crate::error::Error>(method, path, status, description)
-    }
-
-    /// Document an extra status whose body is `T`.
-    pub fn body<T: Schematic>(&mut self, method: &'static str, path: &'static str, status: u16, description: &'static str) -> &mut Self {
-        self.responses.push(ResponseOverride {
-            method,
-            path,
-            status,
-            description,
-            schema: Some(collect_schema::<T>),
-            content_type: JSON,
-            drop_default: true,
-            rename_from: None,
-        });
-        self
-    }
-
-    /// [`Self::describe`], and drop the `default` response gotcha derives from a
-    /// `Result` handler's error side — for a route whose documented statuses are
-    /// exactly the ones it already carries.
-    pub fn describe_final(&mut self, method: &'static str, path: &'static str, status: u16, description: &'static str) -> &mut Self {
-        self.responses.push(ResponseOverride {
-            method,
-            path,
-            status,
-            description,
-            schema: None,
-            content_type: JSON,
-            drop_default: true,
-            rename_from: None,
-        });
-        self
-    }
-
-    /// Restate the generated `200` under the status the handler actually sends.
-    ///
-    /// The body schema is kept exactly as gotcha derived it from the return
-    /// type; only the key and the description change.
-    pub fn restatus(&mut self, method: &'static str, path: &'static str, from: u16, to: u16, description: &'static str) -> &mut Self {
-        self.responses.push(ResponseOverride {
-            method,
-            path,
-            status: to,
-            description,
-            schema: None,
-            content_type: JSON,
-            drop_default: false,
-            rename_from: Some(from),
-        });
-        self
-    }
-
-    /// Document a success status that carries raw bytes.
-    ///
-    /// A handler that streams a file returns `axum::response::Response`, which
-    /// is not `Schematic`, so it cannot be documented from the return type at
-    /// all; the route documents its success case through this instead.
-    pub fn binary(&mut self, method: &'static str, path: &'static str, status: u16, description: &'static str) -> &mut Self {
-        fn binary_schema() -> (Schema, BTreeMap<String, Schema>) {
-            (
-                Schema {
-                    _type: Some("string".into()),
-                    format: Some("binary".to_string()),
-                    ..Default::default()
-                },
-                BTreeMap::new(),
-            )
-        }
-        self.responses.push(ResponseOverride {
-            method,
-            path,
-            status,
-            description,
-            schema: Some(binary_schema),
-            content_type: "application/octet-stream",
-            drop_default: true,
-            rename_from: None,
-        });
-        self
-    }
-
-    /// Document the body of a route gotcha could derive nothing for.
-    pub fn request_body<T: Schematic>(
-        &mut self,
-        method: &'static str,
-        path: &'static str,
-        content_type: &'static str,
-        description: &'static str,
-    ) -> &mut Self {
-        self.request_bodies.push(RequestBodyOverride {
-            method,
-            path,
-            content_type,
-            description,
-            schema: collect_schema::<T>,
-        });
-        self
-    }
-}
-
-/// The amendments this module makes, on the document they amend.
+/// The document normalizations this module makes, on the document they amend.
 trait SpecAmendmentExt {
-    /// The operation registered under `(method, path)`, if any.
-    fn operation_mut<'a>(&'a mut self, method: &str, path: &str) -> Option<&'a mut Operation>;
-
     /// Register the `bearerAuth` scheme every `#[api(security = "bearerAuth")]`
     /// operation refers to.
     ///
     /// gotcha emits the *requirement* on the operation
-    /// (`gotcha-0.4.1/src/openapi/mod.rs:127`) but hard-codes
-    /// `security_schemes: None` on the components it builds (`:175`), so a
+    /// (`gotcha-0.5.1/src/openapi/mod.rs:169`) but hard-codes
+    /// `security_schemes: None` on the components it builds (`:445`), so a
     /// document with requirements and no definitions would be one no generator
     /// could resolve.
     ///
@@ -535,18 +338,6 @@ trait SpecAmendmentExt {
 }
 
 impl SpecAmendmentExt for OpenAPIV3 {
-    fn operation_mut<'a>(&'a mut self, method: &str, path: &str) -> Option<&'a mut Operation> {
-        let item = self.paths.get_mut(path)?;
-        match method {
-            "GET" => item.get.as_mut(),
-            "POST" => item.post.as_mut(),
-            "PUT" => item.put.as_mut(),
-            "PATCH" => item.patch.as_mut(),
-            "DELETE" => item.delete.as_mut(),
-            _ => None,
-        }
-    }
-
     fn declare_bearer_scheme(&mut self) {
         use gotcha::oas::{SecurityScheme, SecurityType};
 
@@ -616,106 +407,13 @@ impl SpecAmendmentExt for OpenAPIV3 {
     }
 }
 
-fn body_response(description: &str, content_type: &str, schema: Schema) -> Response {
-    Response {
-        description: description.to_string(),
-        headers: None,
-        content: Some(BTreeMap::from([(
-            content_type.to_string(),
-            MediaType {
-                schema: Some(schema.into()),
-                item_schema: None,
-                example: None,
-                examples: None,
-                encoding: None,
-            },
-        )])),
-        links: None,
-    }
-}
-
-/// Apply every override, then normalize the nullable-`$ref` placement.
+/// Normalize the generated document to the shape the checked-in contract has.
 ///
-/// A `(method, path)` that matches no generated operation is a programming
-/// error — the route has another name or was never registered — so it is
-/// logged loudly rather than silently skipped.
-pub fn apply(mut spec: OpenAPIV3, overrides: &ExtraResponses) -> OpenAPIV3 {
-    let mut new_components: BTreeMap<String, Schema> = BTreeMap::new();
-
-    for entry in &overrides.request_bodies {
-        let (schema, components) = (entry.schema)();
-        let Some(operation) = spec.operation_mut(entry.method, entry.path) else {
-            tracing::error!(method = entry.method, path = entry.path, "openapi override targets an unregistered route");
-            continue;
-        };
-        new_components.extend(components);
-        operation.request_body = Some(Referenceable::Data(gotcha::oas::RequestBody {
-            description: Some(entry.description.to_string()),
-            required: Some(true),
-            content: BTreeMap::from([(
-                entry.content_type.to_string(),
-                MediaType {
-                    schema: Some(schema.into()),
-                    item_schema: None,
-                    example: None,
-                    examples: None,
-                    encoding: None,
-                },
-            )]),
-        }));
-    }
-
-    for entry in &overrides.responses {
-        let built = entry.schema.map(|factory| factory());
-        let Some(operation) = spec.operation_mut(entry.method, entry.path) else {
-            tracing::error!(method = entry.method, path = entry.path, "openapi override targets an unregistered route");
-            continue;
-        };
-        let status = entry.status.to_string();
-        if let Some(from) = entry.rename_from {
-            match operation.responses.data.remove(&from.to_string()) {
-                Some(response) => {
-                    operation.responses.data.insert(status.clone(), response);
-                }
-                None => tracing::error!(
-                    method = entry.method,
-                    path = entry.path,
-                    from,
-                    "openapi override renames a response that was never generated"
-                ),
-            }
-        }
-        match built {
-            Some((schema, components)) => {
-                new_components.extend(components);
-                operation
-                    .responses
-                    .data
-                    .insert(status, Referenceable::Data(body_response(entry.description, entry.content_type, schema)));
-            }
-            None => match operation.responses.data.get_mut(&status) {
-                Some(Referenceable::Data(response)) => response.description = entry.description.to_string(),
-                _ => tracing::error!(
-                    method = entry.method,
-                    path = entry.path,
-                    status,
-                    "openapi override targets a missing response"
-                ),
-            },
-        }
-        if entry.drop_default {
-            operation.responses.default = None;
-        }
-    }
-
-    if !new_components.is_empty() {
-        let components = spec.components.get_or_insert_with(default_components);
-        let schemas = components.schemas.get_or_insert_with(BTreeMap::new);
-        for (name, schema) in new_components {
-            schemas.entry(name).or_insert(schema.into());
-        }
-    }
-
+/// gotcha's own assembly is left alone: this registers the `bearerAuth` scheme
+/// its operations refer to, folds the `anyOf`-of-null nullability back into a
+/// `$ref`, hoists it onto the referenced component, and restores the
+/// `required` lists that a container-level `#[serde(default)]` loosens.
+pub fn normalize(mut spec: OpenAPIV3) -> OpenAPIV3 {
     spec.declare_bearer_scheme();
     spec.fold_nullable_refs();
     spec.hoist_nullable_refs();
@@ -817,6 +515,8 @@ fn default_components() -> gotcha::oas::Components {
 
 #[cfg(test)]
 mod tests {
+    use gotcha::gotcha_core::registry;
+
     use super::*;
 
     #[derive(Schematic)]

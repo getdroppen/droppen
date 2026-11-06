@@ -1,10 +1,10 @@
 //! The HTTP kit every route module builds on: the error body and its status
 //! codes ([`error`]), the extractors that answer a bad request with that body
-//! ([`extract`]), the `201`/`202` responses ([`created`]), the websocket
-//! keepalive and bounded sends, the build's identity, and [`substate!`], which
-//! lets a subsystem's routes take a state of their own. With it, the server's
-//! configuration ([`config`]), the OpenAPI helpers ([`openapi_ext`]) and the
-//! guard every `/api/*` request passes ([`origin`]).
+//! ([`extract`]), the websocket keepalive and bounded sends, the build's
+//! identity, and [`substate!`], which lets a subsystem's routes take a state
+//! of their own. With it, the server's configuration ([`config`]), the OpenAPI
+//! helpers ([`openapi_ext`]) and the guard every `/api/*` request passes
+//! ([`origin`]).
 //!
 //! It sits below the subsystems and the router alike, so a subsystem can
 //! answer a request without depending on the router that mounts it. A name in
@@ -26,7 +26,6 @@ pub use gotcha;
 pub mod app_window;
 pub mod bridge;
 pub mod config;
-pub mod created;
 pub mod error;
 pub mod extract;
 pub mod identity;
