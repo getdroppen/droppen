@@ -438,7 +438,6 @@ fn describe(reg: &mut ExtraResponses) {
 fn response_overrides() -> ExtraResponses {
     let mut reg = ExtraResponses::default();
     describe(&mut reg);
-    droppen_accounts::describe(&mut reg);
     droppen_provider_claude_code::setup_token::describe(&mut reg);
     droppen_provider_claude_code::usage_login::describe(&mut reg);
     droppen_provider_acp::agents::describe(&mut reg);
@@ -456,7 +455,6 @@ fn response_overrides() -> ExtraResponses {
     droppen_plugins::routes::describe(&mut reg);
     droppen_workbench::prefs::describe(&mut reg);
     droppen_notify::push::describe(&mut reg);
-    droppen_accounts::quota::describe(&mut reg);
     droppen_drive::schedule::describe(&mut reg);
     droppen_workbench::screens::describe(&mut reg);
     droppen_supervisor::selfupdate::describe(&mut reg);

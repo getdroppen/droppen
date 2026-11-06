@@ -129,7 +129,11 @@ impl IntoResponse for ApiError {
 
 /// The error side of a `Result` documents the same `default` response it did
 /// before gotcha 0.5 stopped deriving `Responsible` from `Schematic`.
+/// `HAS_DEFAULT` says so at compile time, which is what lets a handler write
+/// `errors(404 = "…")` and get this body under its own description.
 impl Responsible for ApiError {
+    const HAS_DEFAULT: bool = true;
+
     fn response() -> Responses {
         default_response::<Error>("application/json", <Error as Schematic>::doc().unwrap_or_else(|| "error response".to_string()))
     }

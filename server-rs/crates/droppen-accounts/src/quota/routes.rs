@@ -7,7 +7,6 @@ use gotcha::{api, GotchaRouter, Json, State};
 
 use super::{Quota, QuotaCache};
 use crate::store::AccountsStore;
-use droppen_http::openapi_ext::ExtraResponses;
 
 /// What the quota route uses of the server's state.
 #[derive(Clone)]
@@ -20,7 +19,12 @@ pub struct QuotaState {
 droppen_http::substate!(QuotaState);
 
 /// Subscription quota: Codex rolling-window usage and the Claude plan.
-#[api(id = "quota", group = "stats", summary = "Subscription quota")]
+#[api(
+    id = "quota",
+    group = "stats",
+    summary = "Subscription quota",
+    responses(200 = "Subscription quota: Codex rolling-window usage and the Claude plan")
+)]
 pub async fn quota(State(state): State<QuotaState>) -> Json<Quota> {
     Json(state.quota.collect(&state.accounts).await)
 }
@@ -34,14 +38,4 @@ impl QuotaState {
     {
         router.get("/api/stats/quota", quota)
     }
-}
-
-/// The response wordings the golden contract carries.
-pub fn describe(reg: &mut ExtraResponses) {
-    reg.describe(
-        "GET",
-        "/api/stats/quota",
-        200,
-        "Subscription quota: Codex rolling-window usage and the Claude plan",
-    );
 }
