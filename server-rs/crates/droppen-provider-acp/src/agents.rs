@@ -53,7 +53,7 @@ use droppen_base::env_block::{parse_env_block, EnvVar};
 use droppen_http::error::ApiError;
 use droppen_http::extract::{ApiJson, ApiPath};
 use droppen_http::SendResult;
-use droppen_http::openapi_ext::{ExtraResponses, Optional};
+use droppen_http::openapi_ext::Optional;
 use droppen_instance::paths::Paths;
 use droppen_base::process_env::{clean_env_bare, resolve_on_path, Env};
 use crate::sessions::{valid_agent_id, MAX_AGENT_ID};
@@ -697,7 +697,12 @@ impl AcpAgentState {
 }
 
 /// The ACP agents configured on this machine, and the built-in descriptions.
-#[api(id = "acp_agents", group = "acp", summary = "ACP agents")]
+#[api(
+    id = "acp_agents",
+    group = "acp",
+    summary = "ACP agents",
+    responses(200 = "The configured ACP agents, with the names of their extra variables, and the built-in descriptions")
+)]
 pub async fn acp_agents(State(state): State<AcpAgentState>) -> Json<AcpAgentList> {
     let env = clean_env_bare();
     Json(AcpAgentList {
@@ -723,7 +728,13 @@ impl AcpAgentState {
 /// environment renews the processes its sessions run in: one with nothing to
 /// do ends now, one with a turn or messages waiting when they are done, and
 /// each session's next message starts the agent as it is configured now.
-#[api(id = "put_acp_agent", group = "acp", summary = "Add or update an ACP agent")]
+#[api(
+    id = "put_acp_agent",
+    group = "acp",
+    summary = "Add or update an ACP agent",
+    responses(200 = "The agent as now configured"),
+    errors(400 = "An unusable id, name, executable, argument or environment block")
+)]
 pub async fn put_acp_agent(
     State(state): State<AcpAgentState>,
     ApiPath(id): ApiPath<String>,
@@ -738,7 +749,13 @@ pub async fn put_acp_agent(
 /// their processes afresh: the ones they had, idle by then, are stopped.
 /// Refused while a turn of the agent is running, or a message is waiting for
 /// one.
-#[api(id = "delete_acp_agent", group = "acp", summary = "Remove an ACP agent")]
+#[api(
+    id = "delete_acp_agent",
+    group = "acp",
+    summary = "Remove an ACP agent",
+    responses(200 = "The agent is gone; its sessions stay"),
+    errors(404 = "No such ACP agent", 409 = "A turn of the agent is running, or a message is waiting for one")
+)]
 pub async fn delete_acp_agent(State(state): State<AcpAgentState>, ApiPath(id): ApiPath<String>) -> Result<Json<SendResult>, ApiError> {
     let Some(agent) = AcpAgentRegistry::of(&state.paths).get(&id) else {
         return Err(ApiError::not_found("no such ACP agent"));
@@ -753,7 +770,13 @@ pub async fn delete_acp_agent(State(state): State<AcpAgentState>, ApiPath(id): A
 /// Check an ACP agent: start it with its environment, send `initialize`, read
 /// what it says it is and can do, and stop it. Nothing is sent to a model. The
 /// answer is kept as the agent's `lastCheck`.
-#[api(id = "check_acp_agent", group = "acp", summary = "Check an ACP agent")]
+#[api(
+    id = "check_acp_agent",
+    group = "acp",
+    summary = "Check an ACP agent",
+    responses(200 = "What the check found: ready, or why the agent cannot start"),
+    errors(404 = "No such ACP agent")
+)]
 pub async fn check_acp_agent(State(state): State<AcpAgentState>, ApiPath(id): ApiPath<String>) -> Result<Json<AcpCheck>, ApiError> {
     let agent = AcpAgentRegistry::of(&state.paths).get(&id).ok_or_else(|| ApiError::not_found("no such ACP agent"))?;
     let check = state.acp.check_acp_agent(&agent).await;
@@ -764,7 +787,13 @@ pub async fn check_acp_agent(State(state): State<AcpAgentState>, ApiPath(id): Ap
 /// An ACP agent's last check in full: the error it ended with included, which
 /// is the agent's own words, the end of its stderr among them. A route of its
 /// own so that the list, which every device reads, never carries it.
-#[api(id = "last_acp_check", group = "acp", summary = "The last check of an ACP agent")]
+#[api(
+    id = "last_acp_check",
+    group = "acp",
+    summary = "The last check of an ACP agent",
+    responses(200 = "The agent's last check, its error included"),
+    errors(404 = "No such ACP agent, or it has not been checked")
+)]
 pub async fn last_acp_check(State(state): State<AcpAgentState>, ApiPath(id): ApiPath<String>) -> Result<Json<AcpCheck>, ApiError> {
     let agent = AcpAgentRegistry::of(&state.paths).get(&id).ok_or_else(|| ApiError::not_found("no such ACP agent"))?;
     agent
@@ -787,45 +816,6 @@ impl AcpAgentState {
             .post("/api/acp/agents/{id}/check", check_acp_agent)
             .get("/api/acp/agents/{id}/check", last_acp_check)
     }
-}
-
-/// Everything gotcha cannot express about those routes.
-pub fn describe(reg: &mut ExtraResponses) {
-    reg.describe(
-        "GET",
-        "/api/acp/agents",
-        200,
-        "The configured ACP agents, with the names of their extra variables, and the built-in descriptions",
-    )
-    .describe("PUT", "/api/acp/agents/{id}", 200, "The agent as now configured")
-    .error(
-        "PUT",
-        "/api/acp/agents/{id}",
-        400,
-        "An unusable id, name, executable, argument or environment block",
-    )
-    .describe("DELETE", "/api/acp/agents/{id}", 200, "The agent is gone; its sessions stay")
-    .error("DELETE", "/api/acp/agents/{id}", 404, "No such ACP agent")
-    .error(
-        "DELETE",
-        "/api/acp/agents/{id}",
-        409,
-        "A turn of the agent is running, or a message is waiting for one",
-    )
-    .describe(
-        "POST",
-        "/api/acp/agents/{id}/check",
-        200,
-        "What the check found: ready, or why the agent cannot start",
-    )
-    .error("POST", "/api/acp/agents/{id}/check", 404, "No such ACP agent")
-    .describe("GET", "/api/acp/agents/{id}/check", 200, "The agent's last check, its error included")
-    .error(
-        "GET",
-        "/api/acp/agents/{id}/check",
-        404,
-        "No such ACP agent, or it has not been checked",
-    );
 }
 
 #[cfg(test)]
