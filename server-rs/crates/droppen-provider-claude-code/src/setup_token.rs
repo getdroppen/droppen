@@ -71,16 +71,15 @@ use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use gotcha::axum::extract::FromRef;
-use gotcha::{api, GotchaRouter, Schematic, State};
+use gotcha::{api, GotchaRouter, Schematic, State, WithStatus};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
-use droppen_http::created::Created;
 use droppen_http::error::ApiError;
 use droppen_http::extract::{ApiJson, ApiPath};
 use droppen_http::app_window::AppWindow;
 use droppen_http::SendResult;
-use droppen_http::openapi_ext::{ExtraResponses, Optional};
+use droppen_http::openapi_ext::Optional;
 use droppen_base::process_env::{claude_env, clean_env_bare, resolve_on_path};
 use droppen_workbench::terminals::{CreateSpec, Registry};
 use droppen_base::text::strip_ansi;
@@ -1002,19 +1001,25 @@ impl TokenWizardState {
 }
 
 /// Start the `claude setup-token` wizard in a terminal.
-#[api(id = "start_setup_token", group = "accounts", summary = "Start the setup-token wizard")]
+#[api(
+    id = "start_setup_token",
+    group = "accounts",
+    summary = "Start the setup-token wizard",
+    responses(201 = "Wizard running; attach the terminal and poll the capture"),
+    errors(500 = "The wizard could not be started")
+)]
 pub async fn start_setup_token(
     State(state): State<TokenWizardState>,
     #[api(skip)] caller: droppen_http::app_window::Caller,
     ApiJson(body): ApiJson<SetupTokenStart>,
-) -> Result<Created<SetupTokenStarted>, ApiError> {
+) -> Result<WithStatus<gotcha::Json<SetupTokenStarted>, 201>, ApiError> {
     // `z.string().min(1).max(100)`, which fails in the validator before the
     // TypeScript handler runs — so it is a 400 there too, undocumented.
     body.label.require_label()?;
     let open_browser = state.window().app_caller(&caller).is_ok();
     start(state, Target::New(body.label), open_browser)
         .await
-        .map(Created)
+        .map(|started| WithStatus::new(gotcha::Json(started)))
         .map_err(|error| ApiError::internal(error.to_string()))
 }
 
@@ -1023,12 +1028,18 @@ pub async fn start_setup_token(
 /// The account keeps its id, which is the whole point: `sessionAccounts` binds
 /// sessions to that id, so a session mid-conversation carries on under the same
 /// account with a credential that works again.
-#[api(id = "reauth_account", group = "accounts", summary = "Re-authorize an account")]
+#[api(
+    id = "reauth_account",
+    group = "accounts",
+    summary = "Re-authorize an account",
+    responses(201 = "Wizard running for an account that already exists; its id and bindings are kept"),
+    errors(404 = "Account not found", 409 = "API-key accounts have no OAuth flow", 500 = "The wizard could not be started")
+)]
 pub async fn reauth_account(
     State(state): State<TokenWizardState>,
     #[api(skip)] caller: droppen_http::app_window::Caller,
     ApiPath(id): ApiPath<String>,
-) -> Result<Created<SetupTokenStarted>, ApiError> {
+) -> Result<WithStatus<gotcha::Json<SetupTokenStarted>, 201>, ApiError> {
     id.require_uuid()?;
     let Some(account) = state.accounts.get(&id).await else {
         return Err(ApiError::not_found("account not found"));
@@ -1051,7 +1062,7 @@ pub async fn reauth_account(
     let open_browser = state.window().app_caller(&caller).is_ok();
     start(state, target, open_browser)
         .await
-        .map(Created)
+        .map(|started| WithStatus::new(gotcha::Json(started)))
         .map_err(|error| ApiError::internal(error.to_string()))
 }
 
@@ -1059,7 +1070,13 @@ pub async fn reauth_account(
 ///
 /// The browser never sees the pty; it hands the code here and the server types
 /// it, so the flow works from a phone that cannot reach this machine's terminal.
-#[api(id = "submit_setup_token_code", group = "accounts", summary = "Submit the OAuth code to a capture")]
+#[api(
+    id = "submit_setup_token_code",
+    group = "accounts",
+    summary = "Submit the OAuth code to a capture",
+    responses(200 = "The authorization code was typed into the wizard"),
+    errors(400 = "Not an authorization code", 404 = "Unknown or expired capture", 409 = "This capture is no longer waiting for a code")
+)]
 pub async fn submit_setup_token_code(
     State(state): State<TokenWizardState>,
     ApiPath(capture_id): ApiPath<String>,
@@ -1084,7 +1101,13 @@ pub async fn submit_setup_token_code(
 }
 
 /// Where a capture stands (never the token itself).
-#[api(id = "setup_token_status", group = "accounts", summary = "Poll a setup-token capture")]
+#[api(
+    id = "setup_token_status",
+    group = "accounts",
+    summary = "Poll a setup-token capture",
+    responses(200 = "Where the capture stands (never the token itself)"),
+    errors(404 = "Unknown or expired capture")
+)]
 pub async fn setup_token_status(
     State(state): State<TokenWizardState>,
     ApiPath(capture_id): ApiPath<String>,
@@ -1109,43 +1132,6 @@ impl TokenWizardState {
             .post("/api/accounts/setup-token/{captureId}/code", submit_setup_token_code)
             .post("/api/accounts/{id}/setup-token", reauth_account)
     }
-}
-
-/// The token wizard's statuses gotcha cannot derive.
-pub fn describe(reg: &mut ExtraResponses) {
-    reg.restatus("POST", "/api/accounts/setup-token", 200, 201, "Wizard running; attach the terminal and poll the capture")
-        .error("POST", "/api/accounts/setup-token", 500, "The wizard could not be started")
-        .describe(
-            "GET",
-            "/api/accounts/setup-token/{captureId}",
-            200,
-            "Where the capture stands (never the token itself)",
-        )
-        .error("GET", "/api/accounts/setup-token/{captureId}", 404, "Unknown or expired capture")
-        .describe(
-            "POST",
-            "/api/accounts/setup-token/{captureId}/code",
-            200,
-            "The authorization code was typed into the wizard",
-        )
-        .error("POST", "/api/accounts/setup-token/{captureId}/code", 400, "Not an authorization code")
-        .error("POST", "/api/accounts/setup-token/{captureId}/code", 404, "Unknown or expired capture")
-        .error(
-            "POST",
-            "/api/accounts/setup-token/{captureId}/code",
-            409,
-            "This capture is no longer waiting for a code",
-        )
-        .restatus(
-            "POST",
-            "/api/accounts/{id}/setup-token",
-            200,
-            201,
-            "Wizard running for an account that already exists; its id and bindings are kept",
-        )
-        .error("POST", "/api/accounts/{id}/setup-token", 404, "Account not found")
-        .error("POST", "/api/accounts/{id}/setup-token", 409, "API-key accounts have no OAuth flow")
-        .error("POST", "/api/accounts/{id}/setup-token", 500, "The wizard could not be started");
 }
 
 #[cfg(test)]

@@ -15,13 +15,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use gotcha::axum::extract::FromRef;
-use gotcha::{api, GotchaRouter, Json, Schematic, State};
+use gotcha::{api, GotchaRouter, Json, Schematic, State, WithStatus};
 use serde::{Deserialize, Serialize};
 
-use droppen_http::created::Created;
 use droppen_http::error::ApiError;
 use droppen_http::extract::ApiPath;
-use droppen_http::openapi_ext::{ExtraResponses, Optional};
+use droppen_http::openapi_ext::Optional;
 use droppen_base::process_env::{apply_env, claude_env, clean_env_bare, resolve_on_path};
 use droppen_workbench::terminals::{CreateSpec, Registry};
 
@@ -133,14 +132,23 @@ pub struct UsageLoginState {
 droppen_http::substate!(UsageLoginState);
 
 /// Start `claude auth login` for one account, in a terminal.
-#[api(id = "start_usage_login", group = "accounts", summary = "Start an account's usage login")]
-pub async fn start_usage_login(State(state): State<UsageLoginState>, ApiPath(id): ApiPath<String>) -> Result<Created<UsageLoginStarted>, ApiError> {
+#[api(
+    id = "start_usage_login",
+    group = "accounts",
+    summary = "Start an account's usage login",
+    responses(201 = "Login wizard running in a terminal; verify when it finishes"),
+    errors(404 = "Account not found", 409 = "API-key accounts have no login to perform", 500 = "The wizard could not be started")
+)]
+pub async fn start_usage_login(
+    State(state): State<UsageLoginState>,
+    ApiPath(id): ApiPath<String>,
+) -> Result<WithStatus<Json<UsageLoginStarted>, 201>, ApiError> {
     id.require_uuid()?;
     let Some(account) = state.accounts.get(&id).await else {
         return Err(ApiError::not_found("account not found"));
     };
     match start(&state.accounts, &state.terminals, &account).await {
-        Ok(started) => Ok(Created(started)),
+        Ok(started) => Ok(WithStatus::new(Json(started))),
         Err(UsageLoginError::NotSupported(message)) => Err(ApiError::conflict(message)),
         Err(error) => Err(ApiError::internal(error.to_string())),
     }
@@ -179,7 +187,13 @@ async fn read_auth_status(config_dir: &std::path::Path, cwd: &std::path::Path) -
 ///
 /// Makes the stored account agree with the answer. Never fails on a CLI
 /// failure — an unusable login is a `false`, not a 500.
-#[api(id = "verify_usage_login", group = "accounts", summary = "Verify an account's usage login")]
+#[api(
+    id = "verify_usage_login",
+    group = "accounts",
+    summary = "Verify an account's usage login",
+    responses(200 = "Whether the account's probe directory holds a live login"),
+    errors(404 = "Account not found", 409 = "API-key accounts have no login to verify")
+)]
 pub async fn verify_usage_login(State(state): State<AccountsState>, ApiPath(id): ApiPath<String>) -> Result<Json<UsageVerifyResult>, ApiError> {
     id.require_uuid()?;
     let accounts = &state.accounts;
@@ -259,23 +273,6 @@ impl UsageLoginState {
             .post("/api/accounts/{id}/usage-verify", verify_usage_login)
             .post("/api/accounts/{id}/usage-login", start_usage_login)
     }
-}
-
-/// The usage-login routes' statuses gotcha cannot derive.
-pub fn describe(reg: &mut ExtraResponses) {
-    reg.describe("POST", "/api/accounts/{id}/usage-verify", 200, "Whether the account's probe directory holds a live login")
-        .error("POST", "/api/accounts/{id}/usage-verify", 404, "Account not found")
-        .error("POST", "/api/accounts/{id}/usage-verify", 409, "API-key accounts have no login to verify")
-        .restatus(
-            "POST",
-            "/api/accounts/{id}/usage-login",
-            200,
-            201,
-            "Login wizard running in a terminal; verify when it finishes",
-        )
-        .error("POST", "/api/accounts/{id}/usage-login", 404, "Account not found")
-        .error("POST", "/api/accounts/{id}/usage-login", 409, "API-key accounts have no login to perform")
-        .error("POST", "/api/accounts/{id}/usage-login", 500, "The wizard could not be started");
 }
 
 #[cfg(test)]
