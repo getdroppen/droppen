@@ -25,7 +25,7 @@ use droppen_http::extract::{ApiJson, ApiPath, ApiQuery};
 use droppen_provider::questions::{self, Answer};
 use droppen_provider::receipts::{Kind, LOOKUP_CAP};
 use droppen_provider::{AccountChoice, AnswerOutcome, ContinueError, Reply, SendOptions};
-use droppen_http::openapi_ext::{double_option, required_nullable, ExtraResponses, Nullable, Optional};
+use droppen_http::openapi_ext::{double_option, required_nullable, Nullable, Optional};
 use droppen_instance::paths::ClaudeRoot;
 use droppen_sessions::delivery::{QuestionState, ReceiptLookup, ReceiptStatus, SessionQuestion};
 use droppen_sessions::sidecars::{is_agent_id, AgentPath, Checklist};
@@ -527,7 +527,16 @@ pub struct DriveState {
 droppen_http::substate!(DriveState);
 
 /// Start a new session in the given directory.
-#[api(id = "new_session", group = "sessions", summary = "Start a new session")]
+#[api(
+    id = "new_session",
+    group = "sessions",
+    summary = "Start a new session",
+    responses(200 = "New session started in the given directory"),
+    errors(
+        400 = "Invalid working directory",
+        409 = "The CLI failed to start a new session, an attachment is not from `/api/uploads` or is no longer on this device (`attachment_missing`), or the `clientMessageId` is still being accepted (`in_progress`) or was used elsewhere (`client_message_id_reused`)"
+    )
+)]
 pub async fn new_session(State(state): State<DriveState>, ApiJson(body): ApiJson<NewSession>) -> Result<Json<NewSessionResult>, ApiError> {
     validate_body(
         state.drive.providers.model_rule(body.source),
@@ -617,7 +626,16 @@ fn from_answer<T: serde::de::DeserializeOwned>(answer: serde_json::Value) -> Res
 /// anything is enqueued, a repeat replays the first answer with `duplicate:
 /// true`, and a refusal is not recorded. Without one it is the send it always
 /// was.
-#[api(id = "send_message", group = "sessions", summary = "Send a message")]
+#[api(
+    id = "send_message",
+    group = "sessions",
+    summary = "Send a message",
+    responses(200 = "Message handed to the local CLI (claude --print / codex exec resume)"),
+    errors(
+        404 = "Session not found",
+        409 = "Session cannot accept input right now, belongs to another server (`external_session`), an attachment is not from `/api/uploads` or is no longer on this device (`attachment_missing`), or the `clientMessageId` is still being accepted (`in_progress`) or was used elsewhere (`client_message_id_reused`)"
+    )
+)]
 pub async fn send_message(
     State(state): State<DriveState>,
     #[api(skip)] MaybeIdentity(identity): MaybeIdentity,
@@ -777,7 +795,12 @@ async fn deliver_message(
 
 /// The questions the agent stopped to ask in this session, and what became of
 /// them. The same list the session's `state` frames carry.
-#[api(id = "session_questions", group = "sessions", summary = "Questions the agent asked")]
+#[api(
+    id = "session_questions",
+    group = "sessions",
+    summary = "Questions the agent asked",
+    responses(200 = "The questions the agent asked, oldest first: the one it is blocked on and the recent ones with what became of them")
+)]
 pub async fn session_questions(
     State(state): State<DriveState>,
     ApiPath((source, id)): ApiPath<(Source, String)>,
@@ -798,7 +821,17 @@ pub async fn session_questions(
 /// is sent to the session as an ordinary message that says what it answers.
 /// Either way, once: a second answer — from another screen, or a double tap —
 /// is a `409` carrying the question as the first one left it.
-#[api(id = "answer_question", group = "sessions", summary = "Answer a question the agent asked")]
+#[api(
+    id = "answer_question",
+    group = "sessions",
+    summary = "Answer a question the agent asked",
+    responses(200 = "Answered: into the waiting turn (`turn`), or — the process that asked is gone — as a new message (`message`)"),
+    errors(
+        400 = "An answer keyed by something that is not one of the questions, or no answer at all",
+        404 = "No such question in this session",
+        409 = "Already answered, dismissed or withdrawn (`question_settled`, with the question as it stands), or the session cannot take it right now"
+    )
+)]
 pub async fn answer_question(
     State(state): State<DriveState>,
     #[api(skip)] MaybeIdentity(identity): MaybeIdentity,
@@ -840,7 +873,16 @@ pub async fn answer_question(
 
 /// Decline to answer: the agent is told to use its own judgement and carries
 /// on. An expired question is simply closed — there is nobody left to tell.
-#[api(id = "dismiss_question", group = "sessions", summary = "Dismiss a question the agent asked")]
+#[api(
+    id = "dismiss_question",
+    group = "sessions",
+    summary = "Dismiss a question the agent asked",
+    responses(200 = "Dismissed: the agent was told to use its own judgement, or an expired question was closed"),
+    errors(
+        404 = "No such question in this session",
+        409 = "Already answered, dismissed or withdrawn (`question_settled`, with the question as it stands)"
+    )
+)]
 pub async fn dismiss_question(
     State(state): State<DriveState>,
     #[api(skip)] MaybeIdentity(identity): MaybeIdentity,
@@ -1049,7 +1091,13 @@ async fn settle_expired(
 /// again: an id in `receipts` is in there (do not resend it), an id in
 /// `unknown` never arrived (resend it, under the same id), and an id in
 /// neither is still being accepted.
-#[api(id = "session_receipts", group = "sessions", summary = "Message receipts")]
+#[api(
+    id = "session_receipts",
+    group = "sessions",
+    summary = "Message receipts",
+    responses(200 = "What became of the named messages: accepted ones with their status, and the ones this server never saw"),
+    errors(400 = "No ids, or more than 100")
+)]
 pub async fn session_receipts(
     State(state): State<DriveState>,
     ApiPath((source, id)): ApiPath<(Source, String)>,
@@ -1143,7 +1191,13 @@ pub(crate) async fn writable_session(drive: &crate::Drive, source: Source, id: &
 }
 
 /// Kill the CLI run remote-hand started for this session.
-#[api(id = "interrupt_session", group = "sessions", summary = "Interrupt a run")]
+#[api(
+    id = "interrupt_session",
+    group = "sessions",
+    summary = "Interrupt a run",
+    responses(200 = "The CLI run remote-hand started for this session was killed"),
+    errors(409 = "No remote-hand message is running for this session")
+)]
 pub async fn interrupt_session(
     State(state): State<DriveState>,
     ApiPath((source, id)): ApiPath<(Source, String)>,
@@ -1218,7 +1272,16 @@ fn queue_result(outcome: droppen_provider::QueueOutcome) -> Result<Json<SendResu
 }
 
 /// Take a message out of a session's queue before it is sent.
-#[api(id = "drop_queued_message", group = "sessions", summary = "Drop a queued message")]
+#[api(
+    id = "drop_queued_message",
+    group = "sessions",
+    summary = "Drop a queued message",
+    responses(200 = "The queued message was withdrawn before it reached the CLI"),
+    errors(
+        404 = "No queue for this session, or no message with that id: it may already have started",
+        409 = "The message has already been steered into the CLI and cannot be taken back"
+    )
+)]
 pub async fn drop_queued_message(
     State(state): State<DriveState>,
     ApiPath(QueuePath { source, id, qid }): ApiPath<QueuePath>,
@@ -1233,7 +1296,16 @@ pub async fn drop_queued_message(
 /// turn — before anything else still queued. What it is for is the case a queue
 /// cannot serve at all: an agent that has gone the wrong way, and a correction
 /// that is worth nothing twenty minutes from now.
-#[api(id = "steer_queued_message", group = "sessions", summary = "Steer a queued message")]
+#[api(
+    id = "steer_queued_message",
+    group = "sessions",
+    summary = "Steer a queued message",
+    responses(200 = "The queued message was written to the CLI ahead of the turn in flight; it runs next"),
+    errors(
+        404 = "No queue for this session, or no message with that id: it may already have started",
+        409 = "Already steered, or the message needs settings the running process was not started with"
+    )
+)]
 pub async fn steer_queued_message(
     State(state): State<DriveState>,
     ApiPath(QueuePath { source, id, qid }): ApiPath<QueuePath>,
@@ -1249,7 +1321,18 @@ pub struct SessionPin {
 }
 
 /// Pin or unpin an owned session in this instance's sidebar.
-#[api(id = "pin_session", group = "sessions", summary = "Pin a session")]
+#[api(
+    id = "pin_session",
+    group = "sessions",
+    summary = "Pin a session",
+    responses(200 = "The stored pin state"),
+    errors(
+        400 = "Invalid pin state or source",
+        404 = "Session not found",
+        409 = "The session belongs to another server (`external_session`)",
+        500 = "Could not persist pin state"
+    )
+)]
 pub async fn pin_session(
     State(state): State<DriveState>,
     ApiPath((source, id)): ApiPath<(Source, String)>,
@@ -1262,7 +1345,13 @@ pub async fn pin_session(
 }
 
 /// Set a session's display title.
-#[api(id = "rename_session", group = "sessions", summary = "Rename a session")]
+#[api(
+    id = "rename_session",
+    group = "sessions",
+    summary = "Rename a session",
+    responses(200 = "The effective custom title (empty when reset to the derived one)"),
+    errors(404 = "Session not found", 409 = "The session belongs to another server (`external_session`); titles are shared config")
+)]
 pub async fn rename_session(
     State(state): State<DriveState>,
     ApiPath((source, id)): ApiPath<(Source, String)>,
@@ -1287,7 +1376,13 @@ pub async fn rename_session(
 }
 
 /// Hide a session from the list.
-#[api(id = "archive_session", group = "sessions", summary = "Archive a session")]
+#[api(
+    id = "archive_session",
+    group = "sessions",
+    summary = "Archive a session",
+    responses(200 = "Session archived (codex via the official CLI, claude via remote-hand's hidden list)"),
+    errors(404 = "Session not found", 409 = "Archive failed, or the session belongs to another server (`external_session`)")
+)]
 pub async fn archive_session(State(state): State<DriveState>, ApiPath((source, id)): ApiPath<(Source, String)>) -> Result<Json<SendResult>, ApiError> {
     let drive = &state.drive;
     // Both arms leave this server: claude's `archived.json` is shared config, and
@@ -1301,7 +1396,16 @@ pub async fn archive_session(State(state): State<DriveState>, ApiPath((source, i
 }
 
 /// The transcript page immediately before an index the client already holds.
-#[api(id = "session_history", group = "sessions", summary = "Older transcript")]
+#[api(
+    id = "session_history",
+    group = "sessions",
+    summary = "Older transcript",
+    responses(200 = "The contiguous transcript page immediately before the requested index"),
+    errors(
+        404 = "Session not found",
+        409 = "`transcript_changed`: the items before `before` are no longer the ones `fp` fingerprinted; the client's window needs replacing"
+    )
+)]
 pub async fn session_history(
     State(state): State<DriveState>,
     ApiPath((source, id)): ApiPath<(Source, String)>,
@@ -1337,7 +1441,13 @@ pub async fn session_history(
 ///
 /// Read-only like the detail route, so an external session is as searchable as
 /// an owned one.
-#[api(id = "session_search", group = "sessions", summary = "Search a session's transcript")]
+#[api(
+    id = "session_search",
+    group = "sessions",
+    summary = "Search a session's transcript",
+    responses(200 = "Every item of the whole transcript holding all the query's terms: the count, and the newest `limit` with snippets"),
+    errors(400 = "Empty or whitespace-only query, longer than 256 characters, or more than 16 terms", 404 = "Session not found")
+)]
 pub async fn session_search(
     State(state): State<DriveState>,
     ApiPath((source, id)): ApiPath<(Source, String)>,
@@ -1397,7 +1507,13 @@ async fn whole_transcript(drive: &crate::Drive, source: Source, id: &str) -> Res
 /// no later report can move it. Read-only and ungated like search, and answered
 /// over the same cached parse, so the index is one the history route can page
 /// to. See `sessions::attention::first_unread`.
-#[api(id = "session_first_unread", group = "sessions", summary = "Where unread messages begin")]
+#[api(
+    id = "session_first_unread",
+    group = "sessions",
+    summary = "Where unread messages begin",
+    responses(200 = "The index of the first agent message newer than `after`, and how many there are"),
+    errors(404 = "Session not found")
+)]
 pub async fn session_first_unread(
     State(state): State<DriveState>,
     ApiPath((source, id)): ApiPath<(Source, String)>,
@@ -1427,7 +1543,13 @@ pub(crate) async fn first_unread_of(
 /// an agent did — 2.5 MB across eleven agents in `b16232e3`, 116 of them in
 /// another session — was unreachable from the UI. This lists them all, anchored
 /// or not, so there is always a way in.
-#[api(id = "session_agents", group = "sessions", summary = "Subagents of a session")]
+#[api(
+    id = "session_agents",
+    group = "sessions",
+    summary = "Subagents of a session",
+    responses(200 = "Every subagent that wrote a transcript under this session, anchored or not"),
+    errors(404 = "Session not found, or the source has no subagents")
+)]
 pub async fn session_agents(
     State(state): State<DriveState>,
     ApiPath((source, id)): ApiPath<(Source, String)>,
@@ -1473,7 +1595,13 @@ pub async fn session_agents(
 }
 
 /// The transcript of a subagent this session's Task call spawned.
-#[api(id = "agent_transcript", group = "sessions", summary = "Subagent transcript")]
+#[api(
+    id = "agent_transcript",
+    group = "sessions",
+    summary = "Subagent transcript",
+    responses(200 = "Transcript of a subagent spawned by this session's Task call"),
+    errors(404 = "Session or subagent not found")
+)]
 pub async fn agent_transcript(
     State(state): State<DriveState>,
     ApiPath(AgentPath { source, id, agent_id }): ApiPath<AgentPath>,
@@ -1517,7 +1645,13 @@ pub async fn agent_transcript(
 /// Claude-only, like the subagent route above: Codex has no equivalent sidecar,
 /// so asking for one is a `404` rather than an empty list that would imply the
 /// session simply has not planned anything yet.
-#[api(id = "session_checklist", group = "sessions", summary = "Session checklist")]
+#[api(
+    id = "session_checklist",
+    group = "sessions",
+    summary = "Session checklist",
+    responses(200 = "The task checklist Claude Code keeps beside this session"),
+    errors(404 = "Session not found, or the source has no checklists")
+)]
 pub async fn session_checklist(State(state): State<DriveState>, ApiPath((source, id)): ApiPath<(Source, String)>) -> Result<Json<Checklist>, ApiError> {
     let Some(checklists) = state.drive.transcripts.checklists(source) else {
         return Err(ApiError::not_found("checklists exist only for claude sessions"));
@@ -1544,7 +1678,12 @@ pub struct RecentCwds {
 }
 
 /// Working directories to offer when starting a new session.
-#[api(id = "recent_cwds", group = "sessions", summary = "Recently used directories")]
+#[api(
+    id = "recent_cwds",
+    group = "sessions",
+    summary = "Recently used directories",
+    responses(200 = "Working directories recent sessions were started in, newest first")
+)]
 pub async fn recent_cwds(State(state): State<DriveState>, ApiQuery(query): ApiQuery<RecentCwdsQuery>) -> Json<RecentCwds> {
     let bindings = state.drive.accounts.session_account_map().await;
     let cwds = state.drive.transcripts.recent_cwds(&state.drive.paths, &bindings, query.source).await;
@@ -1552,13 +1691,24 @@ pub async fn recent_cwds(State(state): State<DriveState>, ApiQuery(query): ApiQu
 }
 
 /// Composer model/effort/permission choices, shared across devices.
-#[api(id = "composer_prefs", group = "prefs", summary = "Composer preferences")]
+#[api(
+    id = "composer_prefs",
+    group = "prefs",
+    summary = "Composer preferences",
+    responses(200 = "Composer model/effort/permission choices, shared across devices")
+)]
 pub async fn composer_prefs(State(state): State<DriveState>) -> Json<ComposerPrefs> {
     Json(state.drive.composer.read().await)
 }
 
 /// Update the source default.
-#[api(id = "put_composer_default", group = "prefs", summary = "Set a source's composer default")]
+#[api(
+    id = "put_composer_default",
+    group = "prefs",
+    summary = "Set a source's composer default",
+    responses(200 = "Updated composer prefs (source default)"),
+    drop_default
+)]
 pub async fn put_composer_default(
     State(state): State<DriveState>,
     ApiPath(source): ApiPath<Source>,
@@ -1574,7 +1724,13 @@ pub async fn put_composer_default(
 }
 
 /// Update one session's entry, and the source default with it.
-#[api(id = "put_composer_session", group = "prefs", summary = "Set a session's composer choice")]
+#[api(
+    id = "put_composer_session",
+    group = "prefs",
+    summary = "Set a session's composer choice",
+    responses(200 = "Updated composer prefs (session entry + source default)"),
+    drop_default
+)]
 pub async fn put_composer_session(
     State(state): State<DriveState>,
     ApiPath((source, id)): ApiPath<(Source, String)>,
@@ -1620,7 +1776,17 @@ pub struct ContinuedSession {
 }
 
 /// Pin a session to an account, or unbind it.
-#[api(id = "bind_session_account", group = "accounts", summary = "Bind a session to an account")]
+#[api(
+    id = "bind_session_account",
+    group = "accounts",
+    summary = "Bind a session to an account",
+    responses(200 = "Session pinned to an account (null unbinds it)"),
+    errors(
+        400 = "The account belongs to the other CLI",
+        404 = "Session or account not found",
+        409 = "The session keeps the local login, or is not this instance's to bind"
+    )
+)]
 pub async fn bind_session_account(
     State(state): State<DriveState>,
     ApiPath((source, id)): ApiPath<(Source, String)>,
@@ -1691,7 +1857,14 @@ pub async fn bind_session_account(
 #[api(
     id = "continue_session_on_account",
     group = "accounts",
-    summary = "Continue a local-login session on an account"
+    summary = "Continue a local-login session on an account",
+    responses(200 = "A new session on the account, holding a copy of this conversation; the original is untouched"),
+    errors(
+        400 = "A codex session, or an account for the other CLI",
+        404 = "Session or account not found",
+        409 = "Not this instance's session, or not one on the local login",
+        500 = "The conversation could not be copied"
+    )
 )]
 pub async fn continue_session_on_account(
     State(state): State<DriveState>,
@@ -1859,287 +2032,6 @@ impl DriveState {
             .put("/api/sessions/{source}/{id}/account", bind_session_account)
             .post("/api/sessions/{source}/{id}/continue", continue_session_on_account)
     }
-}
-
-/// Every status gotcha cannot derive, plus the golden contract's wordings.
-pub fn describe(reg: &mut ExtraResponses) {
-    reg.describe("PUT", "/api/sessions/{source}/{id}/pin", 200, "The stored pin state")
-        .error("PUT", "/api/sessions/{source}/{id}/pin", 400, "Invalid pin state or source")
-        .error("PUT", "/api/sessions/{source}/{id}/pin", 404, "Session not found")
-        .error(
-            "PUT",
-            "/api/sessions/{source}/{id}/pin",
-            409,
-            "The session belongs to another server (`external_session`)",
-        )
-        .error("PUT", "/api/sessions/{source}/{id}/pin", 500, "Could not persist pin state");
-    reg.describe("POST", "/api/sessions/new", 200, "New session started in the given directory")
-        .error("POST", "/api/sessions/new", 400, "Invalid working directory")
-        .error(
-            "POST",
-            "/api/sessions/new",
-            409,
-            "The CLI failed to start a new session, an attachment is not from `/api/uploads` or is no longer on this device (`attachment_missing`), or the `clientMessageId` is still being accepted (`in_progress`) or was used elsewhere (`client_message_id_reused`)",
-        )
-        .describe(
-            "POST",
-            "/api/sessions/{source}/{id}/message",
-            200,
-            "Message handed to the local CLI (claude --print / codex exec resume)",
-        )
-        .error("POST", "/api/sessions/{source}/{id}/message", 404, "Session not found")
-        .error(
-            "POST",
-            "/api/sessions/{source}/{id}/message",
-            409,
-            "Session cannot accept input right now, belongs to another server (`external_session`), an attachment is not from `/api/uploads` or is no longer on this device (`attachment_missing`), or the `clientMessageId` is still being accepted (`in_progress`) or was used elsewhere (`client_message_id_reused`)",
-        )
-        .describe(
-            "GET",
-            "/api/sessions/{source}/{id}/receipts",
-            200,
-            "What became of the named messages: accepted ones with their status, and the ones this server never saw",
-        )
-        .error("GET", "/api/sessions/{source}/{id}/receipts", 400, "No ids, or more than 100")
-        .describe(
-            "POST",
-            "/api/sessions/{source}/{id}/interrupt",
-            200,
-            "The CLI run remote-hand started for this session was killed",
-        )
-        .error(
-            "POST",
-            "/api/sessions/{source}/{id}/interrupt",
-            409,
-            "No remote-hand message is running for this session",
-        )
-        .describe(
-            "DELETE",
-            "/api/sessions/{source}/{id}/queue/{qid}",
-            200,
-            "The queued message was withdrawn before it reached the CLI",
-        )
-        .error(
-            "DELETE",
-            "/api/sessions/{source}/{id}/queue/{qid}",
-            404,
-            "No queue for this session, or no message with that id: it may already have started",
-        )
-        .error(
-            "DELETE",
-            "/api/sessions/{source}/{id}/queue/{qid}",
-            409,
-            "The message has already been steered into the CLI and cannot be taken back",
-        )
-        .describe(
-            "POST",
-            "/api/sessions/{source}/{id}/queue/{qid}/steer",
-            200,
-            "The queued message was written to the CLI ahead of the turn in flight; it runs next",
-        )
-        .error(
-            "POST",
-            "/api/sessions/{source}/{id}/queue/{qid}/steer",
-            404,
-            "No queue for this session, or no message with that id: it may already have started",
-        )
-        .error(
-            "POST",
-            "/api/sessions/{source}/{id}/queue/{qid}/steer",
-            409,
-            "Already steered, or the message needs settings the running process was not started with",
-        )
-        .describe(
-            "GET",
-            "/api/sessions/{source}/{id}/questions",
-            200,
-            "The questions the agent asked, oldest first: the one it is blocked on and the recent ones with what became of them",
-        )
-        .describe(
-            "POST",
-            "/api/sessions/{source}/{id}/questions/{requestId}/answer",
-            200,
-            "Answered: into the waiting turn (`turn`), or — the process that asked is gone — as a new message (`message`)",
-        )
-        .error(
-            "POST",
-            "/api/sessions/{source}/{id}/questions/{requestId}/answer",
-            400,
-            "An answer keyed by something that is not one of the questions, or no answer at all",
-        )
-        .error("POST", "/api/sessions/{source}/{id}/questions/{requestId}/answer", 404, "No such question in this session")
-        .error(
-            "POST",
-            "/api/sessions/{source}/{id}/questions/{requestId}/answer",
-            409,
-            "Already answered, dismissed or withdrawn (`question_settled`, with the question as it stands), or the session cannot take it right now",
-        )
-        .describe(
-            "POST",
-            "/api/sessions/{source}/{id}/questions/{requestId}/dismiss",
-            200,
-            "Dismissed: the agent was told to use its own judgement, or an expired question was closed",
-        )
-        .error("POST", "/api/sessions/{source}/{id}/questions/{requestId}/dismiss", 404, "No such question in this session")
-        .error(
-            "POST",
-            "/api/sessions/{source}/{id}/questions/{requestId}/dismiss",
-            409,
-            "Already answered, dismissed or withdrawn (`question_settled`, with the question as it stands)",
-        )
-        .describe(
-            "PUT",
-            "/api/sessions/{source}/{id}/title",
-            200,
-            "The effective custom title (empty when reset to the derived one)",
-        )
-        .error("PUT", "/api/sessions/{source}/{id}/title", 404, "Session not found")
-        .error(
-            "PUT",
-            "/api/sessions/{source}/{id}/title",
-            409,
-            "The session belongs to another server (`external_session`); titles are shared config",
-        )
-        .describe(
-            "POST",
-            "/api/sessions/{source}/{id}/archive",
-            200,
-            "Session archived (codex via the official CLI, claude via remote-hand's hidden list)",
-        )
-        .error("POST", "/api/sessions/{source}/{id}/archive", 404, "Session not found")
-        .error(
-            "POST",
-            "/api/sessions/{source}/{id}/archive",
-            409,
-            "Archive failed, or the session belongs to another server (`external_session`)",
-        )
-        .describe(
-            "GET",
-            "/api/sessions/{source}/{id}/history",
-            200,
-            "The contiguous transcript page immediately before the requested index",
-        )
-        .error("GET", "/api/sessions/{source}/{id}/history", 404, "Session not found")
-        .error(
-            "GET",
-            "/api/sessions/{source}/{id}/history",
-            409,
-            "`transcript_changed`: the items before `before` are no longer the ones `fp` fingerprinted; the client's window needs replacing",
-        )
-        .describe(
-            "GET",
-            "/api/sessions/{source}/{id}/search",
-            200,
-            "Every item of the whole transcript holding all the query's terms: the count, and the newest `limit` with snippets",
-        )
-        .error(
-            "GET",
-            "/api/sessions/{source}/{id}/search",
-            400,
-            "Empty or whitespace-only query, longer than 256 characters, or more than 16 terms",
-        )
-        .error("GET", "/api/sessions/{source}/{id}/search", 404, "Session not found")
-        .describe(
-            "GET",
-            "/api/sessions/{source}/{id}/first-unread",
-            200,
-            "The index of the first agent message newer than `after`, and how many there are",
-        )
-        .error("GET", "/api/sessions/{source}/{id}/first-unread", 404, "Session not found")
-        .describe(
-            "GET",
-            "/api/sessions/{source}/{id}/agents",
-            200,
-            "Every subagent that wrote a transcript under this session, anchored or not",
-        )
-        .error(
-            "GET",
-            "/api/sessions/{source}/{id}/agents",
-            404,
-            "Session not found, or the source has no subagents",
-        )
-        .describe(
-            "GET",
-            "/api/sessions/{source}/{id}/agents/{agentId}",
-            200,
-            "Transcript of a subagent spawned by this session's Task call",
-        )
-        .error(
-            "GET",
-            "/api/sessions/{source}/{id}/agents/{agentId}",
-            404,
-            "Session or subagent not found",
-        )
-        .describe(
-            "GET",
-            "/api/sessions/{source}/{id}/checklist",
-            200,
-            "The task checklist Claude Code keeps beside this session",
-        )
-        .error(
-            "GET",
-            "/api/sessions/{source}/{id}/checklist",
-            404,
-            "Session not found, or the source has no checklists",
-        )
-        .describe(
-            "GET",
-            "/api/sessions/recent-cwds",
-            200,
-            "Working directories recent sessions were started in, newest first",
-        )
-        .describe(
-            "GET",
-            "/api/composer-prefs",
-            200,
-            "Composer model/effort/permission choices, shared across devices",
-        )
-        .describe_final("PUT", "/api/composer-prefs/{source}", 200, "Updated composer prefs (source default)")
-        .describe_final(
-            "PUT",
-            "/api/composer-prefs/{source}/{id}",
-            200,
-            "Updated composer prefs (session entry + source default)",
-        )
-        .describe(
-            "PUT",
-            "/api/sessions/{source}/{id}/account",
-            200,
-            "Session pinned to an account (null unbinds it)",
-        )
-        .error("PUT", "/api/sessions/{source}/{id}/account", 400, "The account belongs to the other CLI")
-        .error("PUT", "/api/sessions/{source}/{id}/account", 404, "Session or account not found")
-        .error(
-            "PUT",
-            "/api/sessions/{source}/{id}/account",
-            409,
-            "The session keeps the local login, or is not this instance's to bind",
-        )
-        .describe(
-            "POST",
-            "/api/sessions/{source}/{id}/continue",
-            200,
-            "A new session on the account, holding a copy of this conversation; the original is untouched",
-        )
-        .error(
-            "POST",
-            "/api/sessions/{source}/{id}/continue",
-            400,
-            "A codex session, or an account for the other CLI",
-        )
-        .error("POST", "/api/sessions/{source}/{id}/continue", 404, "Session or account not found")
-        .error(
-            "POST",
-            "/api/sessions/{source}/{id}/continue",
-            409,
-            "Not this instance's session, or not one on the local login",
-        )
-        .error(
-            "POST",
-            "/api/sessions/{source}/{id}/continue",
-            500,
-            "The conversation could not be copied",
-        );
 }
 
 #[cfg(test)]
