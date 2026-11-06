@@ -16,10 +16,10 @@ import { SOURCE_URL } from "../page-kit";
  */
 
 /** The repository the links lead into, as the build answer names it. */
-export const SOURCE_REPO = "getdroppen/droppen";
+const SOURCE_REPO = "getdroppen/droppen";
 
 /** Where the server says which build it serves. */
-export const BUILD_INFO_PATH = "/.well-known/droppen-build";
+const BUILD_INFO_PATH = "/.well-known/droppen-build";
 
 /** The commit a `/.well-known/droppen-build` answer names, when it is one (7 to 64 hex digits) of this repository; else null. */
 export function buildCommit(answer: unknown): string | null {

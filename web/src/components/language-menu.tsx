@@ -4,22 +4,20 @@
  * and the setup guide's top bar; those differ only in the trigger they draw
  * and in how roomy the popup is.
  */
-import { Menu } from "@base-ui-components/react/menu";
-import { Check } from "lucide-react";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem } from "@/components/ui/dropdown-menu";
 import { browserLanguages, LANGUAGE_NAMES, pickLanguage, type LanguagePref } from "@/i18n";
 
 /** The popup's two looks: the public pages' roomy one, the guide's compact one. */
 const LOOK = {
   public: {
-    popup:
-      "popup-motion max-h-[min(var(--available-height),20rem)] min-w-[10rem] max-w-[20rem] overflow-y-auto border border-border-strong bg-bg py-1.5 outline-none",
-    item: "flex min-h-8 w-full cursor-pointer items-center gap-2 px-3 py-1 text-left text-sm text-fg outline-none pointer-coarse:min-h-11 data-[highlighted]:bg-hover",
+    popup: undefined,
+    item: "gap-2 text-sm",
   },
   guide: {
-    popup: "min-w-36 border border-border-strong bg-bg py-1 outline-none",
-    item: "flex w-full cursor-pointer items-center gap-2 px-3 py-1 text-left text-xs text-fg outline-none data-[highlighted]:bg-hover",
+    popup: "min-w-36 py-1",
+    item: "gap-2",
   },
 } as const;
 
@@ -33,11 +31,7 @@ function browserLanguage(): { id: LanguagePref; label: string } {
   return LANGUAGE_NAMES.find((l) => l.id === pickLanguage(browserLanguages()))!;
 }
 
-/**
- * The menu itself; `children` is the caller's `Menu.Trigger`, which keeps its
- * own size and chrome (a 36px framed control on the public pages, a 24px bar
- * button in the guide).
- */
+/** The menu itself; `children` is the caller's trigger. */
 export function LanguageMenu({
   value,
   onChoose,
@@ -52,37 +46,23 @@ export function LanguageMenu({
   const { t } = useTranslation();
   const browser = browserLanguage();
   return (
-    <Menu.Root>
+    <DropdownMenu>
       {children}
-      <Menu.Portal>
-        <Menu.Positioner side="bottom" align="end" sideOffset={4} className="z-50 outline-none">
-          <Menu.Popup className={LOOK[look].popup}>
-            <Menu.RadioGroup value={value} onValueChange={(next: LanguagePref) => onChoose(next)}>
-              <Menu.RadioItem value="auto" closeOnClick className={LOOK[look].item}>
-                <span className="flex size-3.5 shrink-0 items-center justify-center">
-                  <Menu.RadioItemIndicator>
-                    <Check className="size-3.5" />
-                  </Menu.RadioItemIndicator>
-                </span>
-                {t("auto")}
-                <span lang={browser.id} className="text-faint">
-                  {browser.label}
-                </span>
-              </Menu.RadioItem>
-              {LANGUAGE_NAMES.map((l) => (
-                <Menu.RadioItem key={l.id} value={l.id} lang={l.id} closeOnClick className={LOOK[look].item}>
-                  <span className="flex size-3.5 shrink-0 items-center justify-center">
-                    <Menu.RadioItemIndicator>
-                      <Check className="size-3.5" />
-                    </Menu.RadioItemIndicator>
-                  </span>
-                  {l.label}
-                </Menu.RadioItem>
-              ))}
-            </Menu.RadioGroup>
-          </Menu.Popup>
-        </Menu.Positioner>
-      </Menu.Portal>
-    </Menu.Root>
+      <DropdownMenuContent align="end" side="bottom" sideOffset={4} className={LOOK[look].popup}>
+        <DropdownMenuRadioGroup value={value} onValueChange={(next: LanguagePref) => onChoose(next)}>
+          <DropdownMenuRadioItem value="auto" closeOnClick className={LOOK[look].item}>
+            {t("auto")}
+            <span lang={browser.id} className="text-faint">
+              {browser.label}
+            </span>
+          </DropdownMenuRadioItem>
+          {LANGUAGE_NAMES.map((l) => (
+            <DropdownMenuRadioItem key={l.id} value={l.id} lang={l.id} closeOnClick className={LOOK[look].item}>
+              {l.label}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

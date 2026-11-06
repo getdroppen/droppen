@@ -17,6 +17,8 @@
  * Its own chunk: loaded with the page only, never with the landing page.
  */
 
+import i18n from "@/i18n";
+
 type Bundle = Record<string, string>;
 
 /** Each line once: the English (the key), then zh-CN, zh-TW and ja, in the order the page says them. */
@@ -352,3 +354,6 @@ export const termsBundles: Record<"zh-CN" | "zh-TW" | "ja", Bundle> = {
   "zh-TW": termsZhTW,
   ja: termsJa,
 };
+
+// Added here, never overwriting (see `copy.ts`): the words register themselves.
+for (const [lng, bundle] of Object.entries(termsBundles)) i18n.addResourceBundle(lng, "translation", bundle, true, false);

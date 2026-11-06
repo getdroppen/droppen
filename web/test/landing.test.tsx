@@ -19,7 +19,7 @@ import i18next from "i18next";
 import { I18nextProvider, initReactI18next } from "react-i18next";
 import { renderToStaticMarkup } from "react-dom/server";
 import { landingBundles } from "../src/features/landing/copy.js";
-import { TOUR_SHOTS, TOUR_TABS, tourLanguage, tourShot } from "../src/features/landing/product-tour.js";
+import { TOUR_SHOTS, tourLanguage, tourShot } from "../src/features/landing/product-tour.js";
 import LandingPage from "../src/features/landing/landing.js";
 import { PLAN_NUMBERS } from "../src/features/landing/pricing-plans.js";
 import { APP_PATH, bootRoute, isAuthPath, isLandingPath, publicPage } from "../src/features/landing/route.js";
@@ -124,17 +124,17 @@ test("one primary action, and the calls to action go to sign-up and sign-in", ()
   const html = draw("en");
   const primaries = html.match(/data-variant="primary"/g) ?? [];
   assert.equal(primaries.length, 1, "one primary per page (docs/ui-spec.md V10)");
-  assert.match(html, /<a href="\/signup"[^>]*data-variant="primary"[^>]*>Create a free account<\/a>/);
+  assert.match(html, /<a (?=[^>]*href="\/signup")(?=[^>]*data-variant="primary")[^>]*>Create a free account<\/a>/);
   // Sign-in is the header's user menu and nothing else: the page ends on sign-up alone.
   assert.match(html, /aria-label="Sign in"/, "sign-in in the header user menu");
   assert.equal((html.match(/<a href="\/signin"/g) ?? []).length, 0, "no sign-in link on the page");
   // The page ends on the same call to action, as a secondary.
-  assert.match(html, /<a href="\/signup"[^>]*>[\s\S]*Create a free account[\s\S]*<\/a>/, "sign-up at the end");
+  assert.match(html, /<a (?=[^>]*href="\/signup")[^>]*>[\s\S]*Create a free account[\s\S]*<\/a>/, "sign-up at the end");
 });
 
 test("signed in, the landing page is still the landing page, with a way back into the app instead of sign-in and sign-up", () => {
   const app = (label: string, primary: boolean) =>
-    new RegExp(`<a href="${APP_PATH}"[^>]*${primary ? 'data-variant="primary"[^>]*' : ""}>${label}</a>`);
+    new RegExp(`<a (?=[^>]*href="${APP_PATH}")${primary ? '(?=[^>]*data-variant="primary")' : ""}[^>]*>${label}</a>`);
   for (const [lng, open, how] of [
     ["zh-CN", "打开应用", "工作原理"],
     ["en", "Open app", "How it works"],
@@ -144,10 +144,10 @@ test("signed in, the landing page is still the landing page, with a way back int
     const html = draw(lng, { signedIn: true });
     // The hero's primary opens the app; the header offers entry via user menu.
     assert.match(html, new RegExp(`aria-label="${open}"`), `${lng}: header user menu opens app`);
-    assert.equal((html.match(new RegExp(`<a href="${APP_PATH}"`, "g")) ?? []).length, 1, lng);
+    assert.equal((html.match(new RegExp(`<a (?=[^>]*href="${APP_PATH}")[^>]*>`, "g")) ?? []).length, 1, lng);
     assert.match(html, app(open, true), `${lng}: the hero's primary opens the app`);
     assert.equal((html.match(/data-variant="primary"/g) ?? []).length, 1, `${lng}: one primary`);
-    assert.match(html, new RegExp(`<a href="#tour"[^>]*>${how}</a>`), `${lng}: the secondary reads on through the page`);
+    assert.match(html, new RegExp(`<a (?=[^>]*href="#tour")[^>]*>${how}</a>`), `${lng}: the secondary reads on through the page`);
     // Nothing asks someone signed in to sign in or sign up.
     assert.doesNotMatch(html, /href="\/sign(in|up)"/, lng);
     // The page itself is all there.
@@ -242,7 +242,7 @@ test("open sign-up by default: no invite wording; the invite wording only where 
     assert.doesNotMatch(words, /Public beta|Free for up to|See pricing/, `${signup}: no plans in the hero`);
     assert.doesNotMatch(html, /data-testid="hero-pricing"/);
     assert.doesNotMatch(html, /data-testid="hero-waitlist"/);
-    assert.match(html, /<a href="\/signup"[^>]*>Create a free account<\/a>/);
+    assert.match(html, /<a (?=[^>]*href="\/signup")[^>]*>Create a free account<\/a>/);
   }
   for (const [lng, invite] of [["zh-CN", /邀请/], ["zh-TW", /邀請/], ["ja", /招待/]] as const) {
     assert.doesNotMatch(text(draw(lng)), invite, `${lng}: no invite`);
@@ -260,9 +260,9 @@ test("open sign-up by default: no invite wording; the invite wording only where 
   assert.doesNotMatch(text(closed), /invite|Public beta|Sign up with your/i);
   // The ways in: the waitlist where "Get started" was (the hero's and the footer's), and sign-in.
   assert.doesNotMatch(closed, /href="\/signup"|Create a free account/);
-  assert.equal((closed.match(/<a href="\/pricing#waitlist"[^>]*>[\s\S]*?Join the waitlist[\s\S]*?<\/a>/g) ?? []).length, 3, "the hero's line, its account action and the footer's");
+  assert.equal((closed.match(/<a (?=[^>]*href="\/pricing#waitlist")[^>]*>[\s\S]*?Join the waitlist[\s\S]*?<\/a>/g) ?? []).length, 3, "the hero's line, its account action and the footer's");
   assert.match(closed, /aria-label="Sign in"/, "sign-in stays in the header's user menu");
-  for (const signup of ["open", "invite"] as const) assert.match(draw("en", { signup }), /<a href="\/signup"[^>]*>Create a free account<\/a>/, signup);
+  for (const signup of ["open", "invite"] as const) assert.match(draw("en", { signup }), /<a (?=[^>]*href="\/signup")[^>]*>Create a free account<\/a>/, signup);
   for (const [lng, line] of [["zh-CN", "目前暂停注册。"], ["zh-TW", "目前暫停註冊。"], ["ja", "現在、新規登録を停止しています。"]] as const) {
     const words = text(draw(lng, { signup: "closed" }));
     assert.ok(words.includes(line), `${lng}: ${line}`);
@@ -416,8 +416,8 @@ test("the product showcase shows the product: three screens in their frames, in 
 
 test("every screenshot the tour can show is in the build, in both languages and both themes, and nothing it cannot", () => {
   const files = readdirSync(new URL("../public/tour/", import.meta.url)).sort();
-  const shown = TOUR_TABS.flatMap((tab) =>
-    TOUR_SHOTS[tab].shots.flatMap((shot) => ["zh-CN", "en"].flatMap((lng) => (["light", "dark"] as const).map((theme) => tourShot(shot, lng, theme).replace("/tour/", "")))),
+  const shown = TOUR_SHOTS.flatMap((shot) =>
+    ["zh-CN", "en"].flatMap((lng) => (["light", "dark"] as const).map((theme) => tourShot(shot, lng, theme).replace("/tour/", ""))),
   );
   assert.deepEqual(files, [...new Set(shown)].sort());
 });

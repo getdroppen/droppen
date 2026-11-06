@@ -41,6 +41,7 @@
  * names the client (AGPL-3.0), never Droppen Hub or Droppen as a whole.
  */
 
+import i18n from "@/i18n";
 import { downloadJa, downloadZhCN, downloadZhTW } from "./download-copy";
 import { pricingJa, pricingZhCN, pricingZhTW } from "./pricing-copy";
 
@@ -136,7 +137,6 @@ const zhCN: Bundle = {
   // The product page's composition: the proof line, the product as one
   // ensemble, the three screens, the network, the questions, the plans.
   "Free plan": "免费版",
-  "No credit card": "无需信用卡",
   "Product facts": "产品信息",
   "All computers, one list.": "所有电脑，一个列表。",
   "Your home Mac, the Linux machine at work and the server in the rack, on one account. Open it and see which one needs you, instead of signing in to each.":
@@ -283,7 +283,6 @@ const zhTW: Bundle = {
   "Your AI keeps working on your computer. When it needs you, answer from your phone.": "AI 在你的電腦上繼續工作，需要你時，在手機上即可回應",
 
   "Free plan": "免費版",
-  "No credit card": "無需信用卡",
   "Product facts": "產品資訊",
   "All computers, one list.": "所有電腦，一個清單。",
   "Your home Mac, the Linux machine at work and the server in the rack, on one account. Open it and see which one needs you, instead of signing in to each.":
@@ -430,7 +429,6 @@ const ja: Bundle = {
   "Your AI keeps working on your computer. When it needs you, answer from your phone.": "AI はコンピュータで作業を続け、呼ばれたらスマホで応えられます。",
 
   "Free plan": "無料プラン",
-  "No credit card": "クレジットカード不要",
   "Product facts": "製品情報",
   "All computers, one list.": "すべてのコンピュータを、ひとつのリストで。",
   "Your home Mac, the Linux machine at work and the server in the rack, on one account. Open it and see which one needs you, instead of signing in to each.":
@@ -502,3 +500,7 @@ export const landingBundles: Record<"zh-CN" | "zh-TW" | "ja", Bundle> = {
   "zh-TW": { ...zhTW, ...downloadZhTW, ...pricingZhTW },
   ja: { ...ja, ...downloadJa, ...pricingJa },
 };
+
+// Added here, never overwriting: a key the app already translates keeps its wording. The words
+// register themselves where they live, so a page that imports them cannot forget the merge.
+for (const [lng, bundle] of Object.entries(landingBundles)) i18n.addResourceBundle(lng, "translation", bundle, true, false);

@@ -1,7 +1,9 @@
-import { Fragment, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, createContext, useContext, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import { Fragment, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
+import { useEventListener } from "usehooks-ts";
 import { Check, Minus, Pin } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
 import { BLOCKS, type BlockId, type FormulaBlock, type Kind, KINDS, type Lang, LANGS, PARTIES, type Party, type Roles, TERMS, type Words } from "./formula-data";
 import { type Analysis, analyze, flowOf, type Lit, lights } from "./formula-model";
@@ -26,6 +28,9 @@ import { cjkTracking } from "../page-kit";
  */
 
 const ANALYSIS: Analysis = analyze();
+
+/** One options object, so `useEventListener` keeps its listener attached: the card follows every scroll, not just the page's. */
+const CAPTURE = { capture: true } as const;
 
 const RANK: Record<Lit, number> = { def: 3, same: 2, flow: 1, "": 0 };
 
@@ -215,8 +220,8 @@ function Term({ block, occ, text, tabbable }: { block: BlockId; occ: string; tex
  * themselves wherever the page says them, with the same cards.
  */
 
-export const CONCEPTS = ["host", "client"] as const;
-export type ConceptId = (typeof CONCEPTS)[number];
+const CONCEPTS = ["host", "client"] as const;
+type ConceptId = (typeof CONCEPTS)[number];
 
 /**
  * The two words as the page spells them in each language: a device (or
@@ -415,15 +420,19 @@ function Tools({ block, legendId, showLegend, onLegend }: { block: BlockId; lege
           </span>
         </>
       )}
-      <button
-        type="button"
+      <Button
+        variant="ghost"
+        size="sm"
         aria-expanded={showLegend}
         aria-controls={legendId}
         onClick={onLegend}
-        className={cn("ml-auto uppercase tracking-label text-xs leading-4 text-faint underline decoration-dotted underline-offset-[3px] hover:text-fg", cjkTracking)}
+        className={cn(
+          "ml-auto h-auto px-0 text-xs leading-4 font-normal text-faint uppercase tracking-label underline decoration-dotted underline-offset-[3px] hover:bg-transparent hover:text-fg",
+          cjkTracking,
+        )}
       >
         {t("Legend")}
-      </button>
+      </Button>
     </div>
   );
 }
@@ -556,43 +565,42 @@ function Glossary() {
 function Card({ occ, pinned, below }: { occ: string; pinned: boolean; below: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   const [at, setAt] = useState<{ left: number; top: number } | null>(null);
+  const frame = useRef(0);
+
+  const place = useCallback(() => {
+    const anchor = document.querySelector(`[data-occ="${occ}"]`);
+    const card = ref.current;
+    if (!anchor || !card) return;
+    const a = anchor.getBoundingClientRect();
+    const b = (anchor.closest("[data-formula]") ?? anchor).getBoundingClientRect();
+    const vw = document.documentElement.clientWidth || window.innerWidth;
+    const vh = document.documentElement.clientHeight || window.innerHeight;
+    const w = card.offsetWidth;
+    const h = card.offsetHeight;
+    const m = 8;
+    const gap = 6;
+    const above = b.top - gap - h;
+    const under = b.bottom + gap;
+    const fitsAbove = above >= m;
+    const fitsUnder = under + h <= vh - m;
+    let top = below ? (fitsUnder || !fitsAbove ? under : above) : fitsAbove || !fitsUnder ? above : under;
+    if (!fitsAbove && !fitsUnder) top = b.top - m > vh - b.bottom - m ? Math.max(m, above) : Math.min(under, vh - h - m);
+    const left = Math.max(m, Math.min(a.left, vw - w - m));
+    setAt({ left, top });
+  }, [occ, below]);
+
+  const later = useCallback(() => {
+    cancelAnimationFrame(frame.current);
+    frame.current = requestAnimationFrame(place);
+  }, [place]);
 
   useLayoutEffect(() => {
-    const place = () => {
-      const anchor = document.querySelector(`[data-occ="${occ}"]`);
-      const card = ref.current;
-      if (!anchor || !card) return;
-      const a = anchor.getBoundingClientRect();
-      const b = (anchor.closest("[data-formula]") ?? anchor).getBoundingClientRect();
-      const vw = document.documentElement.clientWidth || window.innerWidth;
-      const vh = document.documentElement.clientHeight || window.innerHeight;
-      const w = card.offsetWidth;
-      const h = card.offsetHeight;
-      const m = 8;
-      const gap = 6;
-      const above = b.top - gap - h;
-      const under = b.bottom + gap;
-      const fitsAbove = above >= m;
-      const fitsUnder = under + h <= vh - m;
-      let top = below ? (fitsUnder || !fitsAbove ? under : above) : fitsAbove || !fitsUnder ? above : under;
-      if (!fitsAbove && !fitsUnder) top = b.top - m > vh - b.bottom - m ? Math.max(m, above) : Math.min(under, vh - h - m);
-      const left = Math.max(m, Math.min(a.left, vw - w - m));
-      setAt({ left, top });
-    };
     place();
-    let frame = 0;
-    const later = () => {
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(place);
-    };
-    window.addEventListener("resize", later);
-    document.addEventListener("scroll", later, true);
-    return () => {
-      cancelAnimationFrame(frame);
-      window.removeEventListener("resize", later);
-      document.removeEventListener("scroll", later, true);
-    };
-  }, [occ, below]);
+    return () => cancelAnimationFrame(frame.current);
+  }, [place]);
+
+  useEventListener("resize", later);
+  useEventListener("scroll", later, undefined, CAPTURE);
 
   return createPortal(
     <div
@@ -662,22 +670,24 @@ function Cards() {
   );
   const [pin, passing] = snapshot.split("|").map((s) => s || null) as [string | null, string | null];
 
-  useEffect(() => {
-    if (!pin && !passing) return;
-    const onKey = (e: KeyboardEvent) => {
+  // Esc unpins, and so does a press anywhere but the card, the term or the tools — but only while there is a card to unpin.
+  const onKey = useCallback(
+    (e: KeyboardEvent) => {
+      if (!pin && !passing) return;
       if (e.key === "Escape") store.update({ pin: null, dismissed: store.passing() ?? store.dismissed });
-    };
-    const onDown = (e: PointerEvent) => {
+    },
+    [pin, passing, store],
+  );
+  const onDown = useCallback(
+    (e: PointerEvent) => {
+      if (!pin && !passing) return;
       const target = e.target as Element | null;
       if (store.pin && !target?.closest?.("[data-occ],[data-formula-popup],[data-formula-tools]")) store.update({ pin: null });
-    };
-    document.addEventListener("keydown", onKey);
-    document.addEventListener("pointerdown", onDown, true);
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.removeEventListener("pointerdown", onDown, true);
-    };
-  }, [pin, passing, store]);
+    },
+    [pin, passing, store],
+  );
+  useEventListener("keydown", onKey);
+  useEventListener("pointerdown", onDown, undefined, CAPTURE);
 
   const sameBlock = (a: string | null, b: string | null) => !!a && !!b && a.split(":")[0] === b.split(":")[0];
   return (
@@ -717,15 +727,16 @@ export function FormulaProvider({ children }: { children: ReactNode }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => {
     setMounted(true);
-    const pointer = () => void (store.pointing = true);
-    const keyboard = () => void (store.pointing = false);
-    document.addEventListener("pointerdown", pointer, true);
-    document.addEventListener("keydown", keyboard, true);
-    return () => {
-      document.removeEventListener("pointerdown", pointer, true);
-      document.removeEventListener("keydown", keyboard, true);
-    };
+  }, []);
+  // A press points at things; the keyboard moves between them (that is what lights a term, not a pointer).
+  const pointer = useCallback(() => {
+    store.pointing = true;
   }, [store]);
+  const keyboard = useCallback(() => {
+    store.pointing = false;
+  }, [store]);
+  useEventListener("pointerdown", pointer, undefined, CAPTURE);
+  useEventListener("keydown", keyboard, undefined, CAPTURE);
   return (
     <StoreContext.Provider value={store}>
       {children}

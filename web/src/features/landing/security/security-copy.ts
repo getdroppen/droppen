@@ -16,6 +16,8 @@
  * Its own chunk: loaded with the page only, never with the landing page.
  */
 
+import i18n from "@/i18n";
+
 type Bundle = Record<string, string>;
 
 /**
@@ -2013,3 +2015,6 @@ export const securityBundles: Record<"zh-CN" | "zh-TW" | "ja", Bundle> = {
   "zh-TW": securityZhTW,
   ja: securityJa,
 };
+
+// Added here, never overwriting (see `copy.ts`): the words register themselves.
+for (const [lng, bundle] of Object.entries(securityBundles)) i18n.addResourceBundle(lng, "translation", bundle, true, false);

@@ -14,7 +14,7 @@
  */
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { Menu } from "@base-ui-components/react/menu";
+import { Menu } from "@base-ui/react/menu";
 import { ArrowRight, ChevronRight, Ellipsis, Globe, MonitorSmartphone, Server, Smartphone } from "lucide-react";
 import type { components } from "@/api/schema";
 import { Badge } from "@/components/ui/badge";

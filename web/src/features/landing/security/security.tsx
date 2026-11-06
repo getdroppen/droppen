@@ -1,15 +1,16 @@
-import { Fragment, type ComponentProps, type ReactNode, type RefObject, useEffect, useRef, useState } from "react";
-import i18n, { type TFunction } from "i18next";
+import { Fragment, type ComponentProps, type ReactNode, type RefObject, useCallback, useEffect, useRef, useState } from "react";
+import { type TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
-import { Dialog as BaseDialog } from "@base-ui-components/react/dialog";
 import { ChevronDown, Info, X } from "lucide-react";
+import { useEventListener } from "usehooks-ts";
 import { CapsLabel } from "@/components/ui/caps-label";
+import { Sheet, SheetClose, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { cn } from "@/lib/cn";
-import { landingBundles } from "../copy";
+import "../copy";
 import { cjkTracking, PublicLayout, Section, SectionHead, SECURITY_EMAIL, usePageMeta } from "../page-kit";
 import { Formula, FormulaProvider, MentionScope, withConcepts } from "./formula";
 import { RepoLink } from "./repo-link";
-import { securityBundles } from "./security-copy";
+import "./security-copy";
 
 /*
  * droppen.app/security: how the end-to-end encryption works, for a technical
@@ -35,11 +36,6 @@ import { securityBundles } from "./security-copy";
  * host), a full device (its admin), the content key (`MK`).
  */
 
-// Added, never overwriting: a key the app already translates keeps its wording.
-for (const bundles of [landingBundles, securityBundles]) {
-  for (const [lng, bundle] of Object.entries(bundles)) i18n.addResourceBundle(lng, "translation", bundle, true, false);
-}
-
 /** When the page last changed, as the page says it. */
 export const SECURITY_UPDATED = "2026-10-28";
 
@@ -48,6 +44,8 @@ export { SECURITY_EMAIL };
 
 /** The page's sections, in order: the table of contents and the anchors. */
 export const SECURITY_SECTIONS = ["overview", "chain", "keys", "channels", "offline", "renewal", "threats", "verify"] as const;
+/** One options object, so `useEventListener` keeps its listener attached. */
+const PASSIVE = { passive: true } as const;
 /** The identity renewal's parts, each with an anchor of its own. */
 export const RENEWAL_PARTS = ["renewal-why", "renewal-entry", "renewal-staging", "renewal-policy", "renewal-disputes", "renewal-groups", "renewal-hub"] as const;
 
@@ -323,7 +321,7 @@ function Table({ label, heads, rows }: { label: string; heads: string[]; rows: s
       <div role="row" className={cn("grid border-b border-border", wide ? "max-lg:hidden" : "max-md:hidden", grid)}>
         {heads.map((h, i) => (
           <span key={h} role="columnheader" className={cn("px-6 py-3", wide ? "max-lg:px-4" : "max-md:px-4", i > 0 && "border-l border-border")}>
-            <CapsLabel face="sans" className={cn("text-fg", cjkTracking, "text-xs font-semibold")}>{h}</CapsLabel>
+            <CapsLabel variant="section" className="text-fg">{h}</CapsLabel>
           </span>
         ))}
       </div>
@@ -496,62 +494,71 @@ function tocEntries(t: TFunction): TocEntry[] {
   ];
 }
 
+type SecuritySection = (typeof SECURITY_SECTIONS)[number];
+
 /**
  * Which section the reader is in, and how far down the page they are. The page
  * scrolls in its own container (`data-testid="security"`), not the window; the
- * bar below xl takes a second line under the header.
+ * bar below xl takes a second line under the header. Called once, by the page,
+ * and handed to both contents views — they are both mounted (one is hidden),
+ * so each instance would otherwise read the scroll for a view nobody sees.
  */
 function useReadingPosition(scroller: RefObject<HTMLDivElement | null>) {
-  const [active, setActive] = useState<(typeof SECURITY_SECTIONS)[number]>("overview");
+  const [active, setActive] = useState<SecuritySection>("overview");
   const [progress, setProgress] = useState(0);
-  useEffect(() => {
+  const sections = useRef<{ id: SecuritySection; at: HTMLElement }[]>([]);
+  const frame = useRef(0);
+
+  const update = useCallback(() => {
     const root = scroller.current;
     if (!root) return;
-    const sections = SECURITY_SECTIONS.map((id) => document.getElementById(id)).filter((e): e is HTMLElement => e !== null);
-    let frame = 0;
-    const update = () => {
-      frame = 0;
-      const header = document.querySelector("header");
-      const bar = document.querySelector<HTMLElement>("[data-security-toc-bar]");
-      const line = root.scrollTop + (header?.getBoundingClientRect().height ?? 56) + (bar?.offsetHeight ?? 0) + 16;
-      let next: (typeof SECURITY_SECTIONS)[number] = "overview";
-      for (const section of sections) {
-        const top = section.getBoundingClientRect().top - root.getBoundingClientRect().top + root.scrollTop;
-        if (top <= line) {
-          const id = SECURITY_SECTIONS.find((candidate) => candidate === section.id);
-          if (id) next = id;
-        }
-      }
-      setActive((prev) => (prev === next ? prev : next));
-      const max = root.scrollHeight - root.clientHeight;
-      setProgress(max > 0 ? Math.min(1, Math.max(0, root.scrollTop / max)) : 0);
-    };
-    const onScroll = () => {
-      if (!frame) frame = requestAnimationFrame(update);
-    };
-    update();
-    root.addEventListener("scroll", onScroll, { passive: true });
-    window.addEventListener("resize", onScroll);
-    return () => {
-      if (frame) cancelAnimationFrame(frame);
-      root.removeEventListener("scroll", onScroll);
-      window.removeEventListener("resize", onScroll);
-    };
+    const header = document.querySelector("header");
+    const bar = document.querySelector<HTMLElement>("[data-security-toc-bar]");
+    const line = root.scrollTop + (header?.getBoundingClientRect().height ?? 56) + (bar?.offsetHeight ?? 0) + 16;
+    let next: SecuritySection = "overview";
+    for (const { id, at } of sections.current) {
+      const top = at.getBoundingClientRect().top - root.getBoundingClientRect().top + root.scrollTop;
+      if (top <= line) next = id;
+    }
+    setActive((prev) => (prev === next ? prev : next));
+    const max = root.scrollHeight - root.clientHeight;
+    setProgress(max > 0 ? Math.min(1, Math.max(0, root.scrollTop / max)) : 0);
   }, [scroller]);
+
+  const onScroll = useCallback(() => {
+    if (frame.current) return;
+    frame.current = requestAnimationFrame(() => {
+      frame.current = 0;
+      update();
+    });
+  }, [update]);
+
+  useEffect(() => {
+    sections.current = SECURITY_SECTIONS.map((id) => ({ id, at: document.getElementById(id) })).filter(
+      (section): section is { id: SecuritySection; at: HTMLElement } => section.at !== null,
+    );
+    update();
+    return () => cancelAnimationFrame(frame.current);
+  }, [update]);
+
+  // The container scrolls; a resize is the xl bar appearing under the header. (React 19 types a
+  // ref's `current` as nullable, usehooks-ts types the element itself; the page owns the ref.)
+  useEventListener("scroll", onScroll, scroller as RefObject<HTMLDivElement>, PASSIVE);
+  useEventListener("resize", onScroll);
+
   return { active, progress };
 }
 
 /** The desktop chapter rail: sticky under the header, with the section the reader is in and a hairline progress. */
-function TocSidebar({ scroller }: { scroller: RefObject<HTMLDivElement | null> }) {
+function TocSidebar({ active, progress }: { active: SecuritySection; progress: number }) {
   const { t } = useTranslation();
   const entries = tocEntries(t);
-  const { active, progress } = useReadingPosition(scroller);
   const percent = Math.round(progress * 100);
   return (
     <aside className="hidden border-r border-border xl:block">
       <div className="sticky top-14 max-h-[calc(100dvh-3.5rem)] overflow-y-auto px-6 pt-10 pb-8">
         <div className="flex items-center justify-between gap-2">
-          <CapsLabel face="sans" className={cn(cjkTracking, "text-xs font-semibold")}>
+          <CapsLabel variant="section">
             {t("On this page")}
           </CapsLabel>
           <span className="font-mono text-xs leading-4 tabular-nums text-faint">{String(percent).padStart(2, "0")}%</span>
@@ -587,7 +594,7 @@ function TocSidebar({ scroller }: { scroller: RefObject<HTMLDivElement | null> }
 }
 
 const TOC_SHEET =
-  "fixed inset-x-0 bottom-0 z-50 max-h-[80dvh] overflow-y-auto border-t border-border-strong bg-bg outline-none md:right-auto md:left-1/2 md:w-[min(32rem,calc(100vw-2rem))] md:-translate-x-1/2 md:border-x";
+  "fixed inset-x-0 bottom-0 z-50 max-h-[80dvh] gap-0 overflow-y-auto border-t border-border-strong bg-bg outline-none md:mx-auto md:w-[min(32rem,calc(100vw-2rem))] md:border-x";
 
 /** The phone/tablet chapter sheet: the same eight entries, with their one-line descriptions. */
 function TocSheet({ active, open, onClose }: { active: (typeof SECURITY_SECTIONS)[number]; open: boolean; onClose: () => void }) {
@@ -603,80 +610,77 @@ function TocSheet({ active, open, onClose }: { active: (typeof SECURITY_SECTIONS
     return () => cancelAnimationFrame(frame);
   }, [open]);
   return (
-    <BaseDialog.Portal>
-      <BaseDialog.Backdrop className="fixed inset-0 z-40 bg-black/20 dark:bg-black/60" />
-      <BaseDialog.Popup
-        className={TOC_SHEET}
-        finalFocus={() => {
-          const id = destinationRef.current;
-          destinationRef.current = null;
-          if (!id) return true;
-          const destination = document.getElementById(id);
-          if (!destination) return true;
-          // A chosen chapter is the reader's destination; do not undo its anchor
-          // scroll by returning focus to the trigger at the top of the page.
-          destination.tabIndex = -1;
-          destination.focus({ preventScroll: true });
-          return false;
-        }}
-      >
-        <div className="sticky top-0 z-10 flex h-9 items-center justify-between gap-2 border-b border-border bg-bg px-4">
-          <BaseDialog.Title className="min-w-0 py-1.5 text-sm leading-5 font-semibold text-fg">{t("On this page")}</BaseDialog.Title>
-          <BaseDialog.Close aria-label={t("close")} className="flex size-5 shrink-0 items-center justify-center text-muted hover:bg-hover hover:text-fg pointer-coarse:size-9">
-            <X className="size-3.5" />
-          </BaseDialog.Close>
-        </div>
-        <nav aria-label={t("On this page")} data-testid="security-contents-sheet">
-          <ol className="divide-y divide-border">
-            {entries.map((e, i) => (
-              <li key={e.id}>
-                <a
-                  href={`#${e.id}`}
-                  onClick={() => {
-                    destinationRef.current = e.id;
-                    onClose();
-                  }}
-                  ref={active === e.id ? activeRef : undefined}
-                  aria-current={active === e.id ? "location" : undefined}
-                  className={cn(
-                    "flex gap-3 border-l-2 py-3 pr-4 pl-3 transition-colors",
-                    active === e.id ? "border-fg bg-raised" : "border-transparent hover:bg-hover",
-                  )}
-                >
-                  <span className="w-5 shrink-0 text-base leading-6 font-semibold tabular-nums text-faint">{String(i + 1).padStart(2, "0")}</span>
-                  <span className="min-w-0 flex-1">
-                    <span className="flex flex-nowrap items-center gap-2 text-base leading-6 font-medium text-fg">
-                      <span className="min-w-0">{e.title}</span>
-                      {e.chip && <Chip>{e.chip}</Chip>}
-                    </span>
-                    <span className="mt-0.5 block text-xs leading-5 text-muted">{e.line}</span>
+    <SheetContent
+      showCloseButton={false}
+      className={TOC_SHEET}
+      finalFocus={() => {
+        const id = destinationRef.current;
+        destinationRef.current = null;
+        if (!id) return true;
+        const destination = document.getElementById(id);
+        if (!destination) return true;
+        // A chosen chapter is the reader's destination; do not undo its anchor
+        // scroll by returning focus to the trigger at the top of the page.
+        destination.tabIndex = -1;
+        destination.focus({ preventScroll: true });
+        return false;
+      }}
+    >
+      <div className="sticky top-0 z-10 flex h-9 items-center justify-between gap-2 border-b border-border bg-bg px-4">
+        <SheetTitle className="min-w-0 py-1.5 text-sm leading-5 font-semibold text-fg">{t("On this page")}</SheetTitle>
+        <SheetClose aria-label={t("close")} className="flex size-5 shrink-0 items-center justify-center text-muted hover:bg-hover hover:text-fg pointer-coarse:size-9">
+          <X className="size-3.5" />
+        </SheetClose>
+      </div>
+      <nav aria-label={t("On this page")} data-testid="security-contents-sheet">
+        <ol className="divide-y divide-border">
+          {entries.map((e, i) => (
+            <li key={e.id}>
+              <a
+                href={`#${e.id}`}
+                onClick={() => {
+                  destinationRef.current = e.id;
+                  onClose();
+                }}
+                ref={active === e.id ? activeRef : undefined}
+                aria-current={active === e.id ? "location" : undefined}
+                className={cn(
+                  "flex gap-3 border-l-2 py-3 pr-4 pl-3 transition-colors",
+                  active === e.id ? "border-fg bg-raised" : "border-transparent hover:bg-hover",
+                )}
+              >
+                <span className="w-5 shrink-0 text-base leading-6 font-semibold tabular-nums text-faint">{String(i + 1).padStart(2, "0")}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex flex-nowrap items-center gap-2 text-base leading-6 font-medium text-fg">
+                    <span className="min-w-0">{e.title}</span>
+                    {e.chip && <Chip>{e.chip}</Chip>}
                   </span>
-                </a>
-              </li>
-            ))}
-          </ol>
-        </nav>
-      </BaseDialog.Popup>
-    </BaseDialog.Portal>
+                  <span className="mt-0.5 block text-xs leading-5 text-muted">{e.line}</span>
+                </span>
+              </a>
+            </li>
+          ))}
+        </ol>
+      </nav>
+    </SheetContent>
   );
 }
 
 /** Below xl: a 44px bar under the header that opens the chapter sheet. */
-function TocBar({ scroller }: { scroller: RefObject<HTMLDivElement | null> }) {
+function TocBar({ active }: { active: SecuritySection }) {
   const { t } = useTranslation();
   const entries = tocEntries(t);
-  const { active } = useReadingPosition(scroller);
   const [open, setOpen] = useState(false);
   const current = entries.find((e) => e.id === active) ?? entries[0]!;
   const index = entries.findIndex((e) => e.id === current.id);
   return (
     <div data-security-toc-bar className="sticky top-14 z-40 border-b border-border bg-bg xl:hidden">
-      <BaseDialog.Root open={open} onOpenChange={setOpen}>
-        <BaseDialog.Trigger
+      <Sheet open={open} onOpenChange={setOpen}>
+        <SheetTrigger
           data-testid="security-toc-trigger"
           className="flex h-11 w-full items-center gap-3 bg-bg px-4 text-left transition-colors hover:bg-hover data-[popup-open]:bg-hover md:px-6"
         >
-          <CapsLabel face="sans" className={cn(cjkTracking, "shrink-0 text-xs font-semibold")}>
+          <CapsLabel variant="section" className="shrink-0">
             {t("On this page")}
           </CapsLabel>
           <span className="flex min-w-0 flex-1 items-center gap-2 text-base text-fg">
@@ -684,9 +688,9 @@ function TocBar({ scroller }: { scroller: RefObject<HTMLDivElement | null> }) {
             <span className="truncate">{current.title}</span>
           </span>
           <ChevronDown className="size-4 shrink-0 text-muted" />
-        </BaseDialog.Trigger>
+        </SheetTrigger>
         <TocSheet active={active} open={open} onClose={() => setOpen(false)} />
-      </BaseDialog.Root>
+      </Sheet>
     </div>
   );
 }
@@ -1269,43 +1273,15 @@ export default function SecurityPage({ signedIn = false }: { signedIn?: boolean 
     t("The keys, the signed device chain, the channels, the offline copies and the threat model of Droppen's end-to-end encryption, and how to check them."),
   );
   const scrollRef = useRef<HTMLDivElement>(null);
-  // Arrived at a part of the page (`/security#renewal`): the page was not there to scroll to yet.
-  // Fonts swap in after that first scroll, so ask again once they have settled.
-  useEffect(() => {
-    const id = window.location.hash.slice(1);
-    if (!id) return;
-    let live = true;
-    const interactions = ["hashchange", "pointerdown", "wheel", "touchstart", "keydown"] as const;
-    const unsubscribe = () => {
-      for (const type of interactions) window.removeEventListener(type, cancel);
-    };
-    const cancel = () => {
-      live = false;
-      unsubscribe();
-    };
-    const to = () => {
-      if (live && window.location.hash.slice(1) === id) document.getElementById(id)?.scrollIntoView();
-    };
-    const frame = requestAnimationFrame(to);
-    for (const type of interactions) window.addEventListener(type, cancel, { passive: true });
-    void document.fonts?.ready.then(() => {
-      if (live) to();
-      unsubscribe();
-    });
-    return () => {
-      live = false;
-      unsubscribe();
-      cancelAnimationFrame(frame);
-    };
-  }, []);
+  const { active, progress } = useReadingPosition(scrollRef);
   return (
     <PublicLayout testId="security" signedIn={signedIn} scrollerRef={scrollRef}>
-      <TocBar scroller={scrollRef} />
+      <TocBar active={active} />
       <FormulaProvider>
         <Hero />
         <Definitions />
         <Section className="xl:grid xl:grid-cols-[20rem_minmax(0,1fr)]">
-          <TocSidebar scroller={scrollRef} />
+          <TocSidebar active={active} progress={progress} />
           <div className="min-w-0">
             <OverviewSection />
             <ChainSection />

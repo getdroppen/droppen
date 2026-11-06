@@ -1,14 +1,14 @@
-import { type AnchorHTMLAttributes, type ReactNode, type Ref, useEffect } from "react";
-import { Accordion } from "@base-ui-components/react/accordion";
-import { Menu } from "@base-ui-components/react/menu";
-import { ArrowRight, Check, Copy, LogIn, Plus, UserPlus, UserRound } from "lucide-react";
+import { type AnchorHTMLAttributes, type ReactNode, type Ref, useCallback, useEffect, useRef } from "react";
+import { ArrowRight, Check, Copy, LogIn, UserPlus, UserRound } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { useDocumentTitle } from "usehooks-ts";
+import { useDocumentTitle, useEventListener } from "usehooks-ts";
 import { BrandMark } from "@/components/brand-mark";
 import { PrefsControls } from "@/components/prefs-controls";
 import { RegMark } from "@/components/reg-mark";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { CapsLabel } from "@/components/ui/caps-label";
-import { primary, secondary } from "@/features/cloud/ui";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useCopy } from "@/lib/clipboard";
 import { cn } from "@/lib/cn";
 import { appHost, appOrigin, appUrl } from "@/lib/hub/hosts";
@@ -17,8 +17,18 @@ import { APP_PATH, publicLink, PRICING_PATH, PRIVACY_PATH, SECURITY_PATH, SIGN_I
 
 /* The public pages' frame: a sticky header over a 1360px column, hairline sections, and the footer. */
 
-export const landingPrimary = cn(primary, "h-auto min-h-9 py-1.5 text-sm");
-export const landingSecondary = cn(secondary, "h-auto min-h-9 py-1.5 text-sm");
+const landingAction = "flex h-auto min-h-9 justify-center py-1.5 text-sm";
+
+const landingPrimary = cn(buttonVariants({ variant: "primary", size: "lg" }), landingAction);
+const landingSecondary = cn(buttonVariants({ variant: "secondary", size: "lg" }), landingAction);
+
+export function ButtonLink({
+  variant = "secondary",
+  className,
+  ...props
+}: AnchorHTMLAttributes<HTMLAnchorElement> & { variant?: "primary" | "secondary" }) {
+  return <a data-variant={variant} className={cn(buttonVariants({ variant, size: "lg" }), className)} {...props} />;
+}
 
 /** A public page's call to action: its label, then an arrow that steps right on hover. */
 export function ArrowLink({
@@ -28,22 +38,22 @@ export function ArrowLink({
   ...props
 }: AnchorHTMLAttributes<HTMLAnchorElement> & { variant?: "primary" | "secondary" }) {
   return (
-    <a
+    <ButtonLink
       {...props}
+      variant={variant}
       className={cn(
-        "group flex h-10 shrink-0 items-center justify-between gap-3 whitespace-nowrap border px-4 text-sm font-medium transition-colors",
-        variant === "primary" ? "border-fg bg-fg text-bg hover:bg-fg/85" : "border-border-strong bg-bg text-fg hover:border-fg hover:bg-hover",
+        "group flex h-10 justify-between gap-3 px-4 text-sm font-medium transition-colors hover:border-fg [&_svg]:size-4",
         className,
       )}
     >
       <span>{children}</span>
-      <ArrowRight className="size-4 shrink-0 transition-transform duration-150 group-hover:translate-x-0.5" />
-    </a>
+      <ArrowRight className="shrink-0 transition-transform duration-150 group-hover:translate-x-0.5 motion-reduce:transition-none" />
+    </ButtonLink>
   );
 }
 
 /** Registration marks where a section line meets the frame. */
-export function Seam({ side = "both" }: { side?: "both" | "left" | "right" }) {
+function Seam({ side = "both" }: { side?: "both" | "left" | "right" }) {
   return (
     <>
       {side !== "right" && <RegMark className="-top-[5px] -left-[5px]" />}
@@ -79,19 +89,19 @@ export const cjkTracking = "[&:lang(ja)]:tracking-normal [&:lang(zh)]:tracking-n
 export function SectionHead({ label, title, lead, className }: { label?: string; title: ReactNode; lead?: ReactNode; className?: string }) {
   return (
     <div className={cn("flex flex-col gap-3 px-6 pt-10 pb-8 max-md:px-4 max-md:pt-8 max-md:pb-6", className)}>
-      {label && <CapsLabel face="sans" className={cn(cjkTracking, "text-xs font-semibold")}>{label}</CapsLabel>}
+      {label && <CapsLabel variant="section">{label}</CapsLabel>}
       <h2 className="text-3xl leading-tight font-normal tracking-tight text-balance text-fg max-[359px]:text-pretty cjk-wrap md:cjk-keep max-md:text-2xl">{title}</h2>
       {lead && <p className="max-w-[38em] text-sm leading-6 text-muted">{lead}</p>}
     </div>
   );
 }
 
-export function Points({ items, className, render, large }: { items: string[]; className?: string; render?: (item: string) => ReactNode; large?: boolean }) {
+export function Points({ items, className, render }: { items: string[]; className?: string; render?: (item: string) => ReactNode }) {
   return (
     <ul className={cn("flex flex-col gap-2.5", className)}>
       {items.map((item) => (
-        <li key={item} className={cn("flex gap-2.5 text-muted", large ? "text-base leading-6 text-pretty" : "text-xs leading-5")}>
-          <span className={cn("size-1.5 shrink-0 bg-fg", large ? "mt-[9px]" : "mt-[7px]")} />
+        <li key={item} className="flex gap-2.5 text-xs leading-5 text-muted">
+          <span className="mt-[7px] size-1.5 shrink-0 bg-fg" />
           <span>{render ? render(item) : item}</span>
         </li>
       ))}
@@ -110,20 +120,19 @@ export function CommandLine({ command, label, testId, primaryCopy = false }: { c
           <span aria-hidden="true" className="mr-2 text-faint select-none">$</span>
           {command}
         </code>
-        <button
-          type="button"
-          data-variant={primaryCopy ? "primary" : undefined}
+        <Button
+          variant={primaryCopy ? "primary" : "secondary"}
           data-testid={testId ? `${testId}-copy` : undefined}
           aria-label={copied ? t("copied") : label}
           onClick={() => copy(command)}
           className={cn(
             primaryCopy ? landingPrimary : landingSecondary,
-            "h-auto min-w-[11rem] shrink-0 justify-center rounded-none border-0 @max-[30rem]/command:h-9 @max-[30rem]/command:border-t @max-[30rem]/command:border-border-strong @min-[30rem]/command:border-l @min-[30rem]/command:border-border-strong",
+            "[&_svg]:size-3.5 h-auto min-w-[11rem] shrink-0 justify-center rounded-none border-0 @max-[30rem]/command:h-9 @max-[30rem]/command:border-t @max-[30rem]/command:border-border-strong @min-[30rem]/command:border-l @min-[30rem]/command:border-border-strong",
           )}
         >
           {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
           {copied ? t("copied") : label}
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -144,13 +153,75 @@ export function usePageMeta(title: string, description?: string) {
   }, [description, active.language]);
 }
 
+/** One options object, so `useEventListener` keeps its listener attached (`{ passive: true }`). */
+const PASSIVE = { passive: true } as const;
+
+/**
+ * Arrive at the fragment in the address (`/pricing#waitlist` from the landing
+ * page, `/terms#contact` from any footer): the page was not there to scroll to
+ * yet, so scroll once the frame is up, and again once the webfonts settle —
+ * they swap in after that first scroll and move its target with them. The
+ * reader's own moving of the page (a wheel, a key, a touch, a press) ends the
+ * correction, and so does a newer fragment; a link can also change the
+ * fragment in place, which scrolls to the one it names.
+ *
+ * `fallback` names the section a fragment-less deep link should land on (the
+ * download page's old `?os=` links); the pages that only ever need the
+ * address's own fragment leave it out.
+ */
+export function useHashScroll(fallback?: (hash: string) => string): void {
+  const map = useRef(fallback);
+  const live = useRef(false);
+  const frame = useRef(0);
+
+  /** Scroll to the fragment the address (or `map`) names, if it is still the one there. */
+  const start = useCallback(() => {
+    if (typeof location === "undefined" || typeof requestAnimationFrame === "undefined") return;
+    cancelAnimationFrame(frame.current);
+    live.current = true;
+    const hash = location.hash.slice(1);
+    const id = hash || map.current?.(hash) || "";
+    if (!id) return;
+    const to = () => {
+      if (live.current && location.hash.slice(1) === hash) document.getElementById(id)?.scrollIntoView();
+    };
+    frame.current = requestAnimationFrame(to);
+    void document.fonts?.ready.then(() => {
+      if (live.current) to();
+    });
+  }, []);
+
+  useEffect(() => {
+    map.current = fallback;
+  }, [fallback]);
+
+  useEffect(() => {
+    start();
+    return () => {
+      live.current = false;
+      cancelAnimationFrame(frame.current);
+    };
+  }, [start]);
+
+  /** The reader moving the page wins over a correction still in flight. */
+  const stop = useCallback(() => {
+    live.current = false;
+    cancelAnimationFrame(frame.current);
+  }, []);
+
+  useEventListener("hashchange", start);
+  useEventListener("pointerdown", stop, undefined, PASSIVE);
+  useEventListener("wheel", stop, undefined, PASSIVE);
+  useEventListener("touchstart", stop, undefined, PASSIVE);
+  useEventListener("keydown", stop, undefined, PASSIVE);
+}
+
 /** One accordion of questions, one open at a time; answers stay mounted for search and no-script readers. */
 export function FaqAccordion({
   items,
   className,
   itemClassName,
   triggerClassName,
-  questionClassName,
   panelClassName,
   answerClassName,
   value,
@@ -161,7 +232,6 @@ export function FaqAccordion({
   className?: string;
   itemClassName?: string;
   triggerClassName?: string;
-  questionClassName?: string;
   panelClassName?: string;
   answerClassName?: string;
   value?: (string | null)[];
@@ -169,32 +239,26 @@ export function FaqAccordion({
   testId?: string;
 }) {
   return (
-    <Accordion.Root data-testid={testId} multiple={false} keepMounted className={className} value={value} onValueChange={onValueChange}>
-      {items.map((item) => (
-        <Accordion.Item
-          key={item.value ?? item.q}
-          value={item.value ?? item.q}
-          id={item.id}
-          data-testid={item.testId ?? "faq-item"}
-          className={cn("group border-b border-border", itemClassName)}
-        >
-          <Accordion.Header className="m-0">
-            <Accordion.Trigger
-              className={cn(
-                "flex w-full cursor-pointer items-start justify-between gap-6 bg-transparent text-left transition-colors hover:bg-hover",
-                triggerClassName,
-              )}
-            >
-              <span className={cn("text-base leading-6 font-medium text-fg", questionClassName)}>{item.q}</span>
-              <Plus aria-hidden="true" className="mt-1 size-4 shrink-0 text-muted transition-transform duration-150 group-data-[open]:rotate-45 motion-reduce:transition-none" />
-            </Accordion.Trigger>
-          </Accordion.Header>
-          <Accordion.Panel className={panelClassName}>
-            {typeof item.a === "string" ? <p className={cn("max-w-prose leading-6 text-muted", answerClassName ?? "text-base")}>{item.a}</p> : item.a}
-          </Accordion.Panel>
-        </Accordion.Item>
-      ))}
-    </Accordion.Root>
+    <div data-testid={testId} className={className}>
+      <Accordion multiple={false} keepMounted value={value} onValueChange={onValueChange}>
+        {items.map((item) => (
+          <AccordionItem
+            key={item.value ?? item.q}
+            value={item.value ?? item.q}
+            id={item.id}
+            data-testid={item.testId ?? "faq-item"}
+            className={cn("group", itemClassName ?? "last:border-b")}
+          >
+            <AccordionTrigger className={triggerClassName}>
+              <span className="text-base leading-6 font-medium text-fg">{item.q}</span>
+            </AccordionTrigger>
+            <AccordionContent className={cn("p-0", panelClassName)}>
+              {typeof item.a === "string" ? <p className={cn("max-w-prose leading-6 text-muted", answerClassName ?? "text-base")}>{item.a}</p> : item.a}
+            </AccordionContent>
+          </AccordionItem>
+        ))}
+      </Accordion>
+    </div>
   );
 }
 
@@ -219,52 +283,46 @@ function GitHubMark({ className }: { className?: string }) {
   );
 }
 
-const MENU_POPUP =
-  "popup-motion max-h-[min(var(--available-height),20rem)] min-w-[10rem] max-w-[20rem] overflow-y-auto border border-border-strong bg-bg py-1.5 outline-none";
-const MENU_ITEM =
-  "flex min-h-8 w-full cursor-pointer items-center gap-2 px-3 py-1 text-left text-sm text-fg outline-none pointer-coarse:min-h-11 data-[highlighted]:bg-hover";
-const MENU_TRIGGER =
-  "flex size-9 shrink-0 items-center justify-center border border-border-strong bg-bg text-muted transition-colors hover:bg-hover hover:text-fg data-[popup-open]:bg-hover data-[popup-open]:text-fg";
+const iconControl = cn(
+  buttonVariants({ variant: "secondary" }),
+  "flex size-9 p-0 text-muted transition-colors hover:text-fg data-[popup-open]:bg-hover data-[popup-open]:text-fg",
+);
 
 function MenuLink({ path, icon: Icon, children }: { path: string; icon: typeof LogIn; children: ReactNode }) {
   return (
-    <Menu.Item closeOnClick render={<a {...publicLink(path)} />} className={MENU_ITEM}>
+    <DropdownMenuItem render={<a {...publicLink(path)} />} className="gap-2 text-sm">
       <span className="flex size-3.5 shrink-0 items-center justify-center">
         <Icon className="size-3.5" />
       </span>
       <span>{children}</span>
-    </Menu.Item>
+    </DropdownMenuItem>
   );
 }
 
 function AccountMenu({ signedIn }: { signedIn: boolean }) {
   const { t } = useTranslation();
   return (
-    <Menu.Root>
-      <Menu.Trigger aria-label={signedIn ? t("Open app") : t("Sign in")} title={signedIn ? t("Open app") : t("Sign in")} className={MENU_TRIGGER}>
+    <DropdownMenu>
+      <DropdownMenuTrigger aria-label={signedIn ? t("Open app") : t("Sign in")} title={signedIn ? t("Open app") : t("Sign in")} className={iconControl}>
         <UserRound className="size-3.5" />
-      </Menu.Trigger>
-      <Menu.Portal keepMounted>
-        <Menu.Positioner side="bottom" align="end" sideOffset={4} className="z-50 outline-none">
-          <Menu.Popup className={MENU_POPUP}>
-            {signedIn ? (
-              <MenuLink path={APP_PATH} icon={LogIn}>
-                {t("Open app")}
-              </MenuLink>
-            ) : (
-              <>
-                <MenuLink path={SIGN_IN_PATH} icon={LogIn}>
-                  {t("Sign in")}
-                </MenuLink>
-                <MenuLink path={SIGN_UP_PATH} icon={UserPlus}>
-                  {t("Create a free account")}
-                </MenuLink>
-              </>
-            )}
-          </Menu.Popup>
-        </Menu.Positioner>
-      </Menu.Portal>
-    </Menu.Root>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent side="bottom" align="end" sideOffset={4}>
+        {signedIn ? (
+          <MenuLink path={APP_PATH} icon={LogIn}>
+            {t("Open app")}
+          </MenuLink>
+        ) : (
+          <>
+            <MenuLink path={SIGN_IN_PATH} icon={LogIn}>
+              {t("Sign in")}
+            </MenuLink>
+            <MenuLink path={SIGN_UP_PATH} icon={UserPlus}>
+              {t("Create a free account")}
+            </MenuLink>
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -300,7 +358,7 @@ export function PublicHeader({ signedIn }: { signedIn: boolean }) {
           data-testid="header-source"
           aria-label={t("Client source code")}
           title={t("Client source code")}
-          className="flex size-9 shrink-0 items-center justify-center border border-border-strong bg-bg text-muted hover:bg-hover hover:text-fg max-sm:hidden"
+          className={cn(buttonVariants({ variant: "secondary" }), "flex size-9 p-0 text-muted transition-colors hover:text-fg [&_svg]:size-4 max-sm:hidden")}
         >
           <GitHubMark className="size-4" />
         </a>
@@ -394,6 +452,7 @@ export function PublicLayout({
   mainClassName,
   mainData,
   home = false,
+  hashFallback,
   children,
 }: {
   testId: string;
@@ -403,8 +462,11 @@ export function PublicLayout({
   mainClassName?: string;
   mainData?: Record<string, string | undefined>;
   home?: boolean;
+  /** Names the section a fragment-less deep link lands on (the download page's old `?os=` links). */
+  hashFallback?: (hash: string) => string;
   children: ReactNode;
 }) {
+  useHashScroll(hashFallback);
   return (
     <div ref={scrollerRef} data-testid={testId} className="h-full w-full overflow-x-hidden overflow-y-auto bg-bg text-base [scrollbar-gutter:stable]">
       <PublicHeader signedIn={signedIn} />

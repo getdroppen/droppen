@@ -180,15 +180,35 @@ export function publicHref(path: string): string {
 
 type LinkClick = { button: number; metaKey: boolean; ctrlKey: boolean; shiftKey: boolean; altKey: boolean; preventDefault(): void };
 
+/** The part of `path` before its fragment, without a trailing slash (`/terms/#contact` → `/terms`). */
+function beforeFragment(path: string): string {
+  const marker = path.indexOf("#");
+  const bare = marker === -1 ? path : path.slice(0, marker);
+  return bare.length > 1 ? bare.replace(/\/+$/, "") : bare;
+}
+
+/**
+ * Whether `path` names a fragment of the page already showing (`/terms#contact`
+ * clicked on `/terms`, the footer's "Contact"): the browser scrolls to it
+ * natively, on the history entry it already has, so the click is left alone.
+ * A fragment link to another page is a navigation like any other.
+ */
+function samePageFragment(path: string): boolean {
+  if (!path.includes("#") || typeof location === "undefined") return false;
+  return beforeFragment(path) === beforeFragment(location.pathname + location.search);
+}
+
 /**
  * A link's click, done in place: a plain left click moves without a reload;
  * a modified click (new tab, new window) is left to the browser, and so is
- * any click on a link to another host ({@link publicHref}).
+ * any click on a link to another host ({@link publicHref}) or to a fragment
+ * of the page already showing ({@link samePageFragment}).
  */
 export function onPublicLink(path: string) {
   const elsewhere = publicHref(path) !== path;
   return (event: LinkClick) => {
     if (elsewhere || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    if (samePageFragment(path)) return;
     event.preventDefault();
     goPublic(path);
   };

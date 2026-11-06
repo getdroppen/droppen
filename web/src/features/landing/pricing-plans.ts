@@ -11,7 +11,7 @@
 /** A GiB, as the hub counts transfer; the page says "GB". */
 export const GIB = 1024 ** 3;
 
-export interface PlanNumbers {
+interface PlanNumbers {
   /** `hosts.max`: devices that run AI. */
   hosts: number;
   /** `devices.max`: every device in the account, the ones that run AI included. */

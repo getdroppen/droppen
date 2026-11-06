@@ -59,10 +59,10 @@ const app = (icons: string[]) => ({
   "entry.js": [
     'import { createRoot } from "react-dom/client";',
     'import { jsx } from "react/jsx-runtime";',
-    'import { clsx } from "clsx";',
+    'import { cn } from "cn";',
     'import { useVirtualizer } from "@tanstack/react-virtual";',
     `import { ${icons.join(", ")} } from "lucide-react";`,
-    `createRoot(document.body).render([${icons.map((i) => `jsx(${i}, { className: clsx("a") })`).join(", ")}]);`,
+    `createRoot(document.body).render([${icons.map((i) => `jsx(${i}, { className: cn("a") })`).join(", ")}]);`,
     // An app build keeps no exports of its entry: only what it runs is bundled.
     'console.log(useVirtualizer, () => import("./settings.js"));',
     "",
@@ -76,7 +76,7 @@ test("vendor holds what the entry reaches statically, React its own chunk, and l
   assert.deepEqual(bootNames(chunks), ["entry", "vendor", "vendor-react"]);
   for (const pkg of ["react", "react-dom", "scheduler"]) assert.deepEqual(holding(chunks, pkg), ["vendor-react"], pkg);
   assert.deepEqual(chunk(chunks, "vendor-react").imports, [], "vendor-react imports no other chunk");
-  assert.deepEqual(holding(chunks, "clsx"), ["vendor"]);
+  assert.deepEqual(holding(chunks, "cn"), ["vendor"]);
   assert.deepEqual(holding(chunks, "@tanstack/react-virtual"), ["vendor"]);
   assert.deepEqual(namesOf(chunks, chunk(chunks, "vendor").imports), ["vendor-react"]);
   assert.deepEqual(holding(chunks, "jsqr"), ["settings"], "a package only lazy code uses is not in vendor");
@@ -111,7 +111,7 @@ test("a boot chunk with code of an on-demand package fails the build", async () 
 });
 
 test("so does one with an on-demand package's stylesheet, which renders no JS", async () => {
-  const eager = { "entry.js": 'import "katex/dist/katex.min.css";\nimport { clsx } from "clsx";\nconsole.log(clsx);\n' };
+  const eager = { "entry.js": 'import "katex/dist/katex.min.css";\nimport { cn } from "cn";\nconsole.log(cn);\n' };
   await assert.rejects(bundle(eager, { onDemand: ["katex"] }), /is a boot chunk, but holds code or CSS the app loads on demand: .*\/node_modules\/katex\/dist\/katex\.min\.css/);
   // Imported by a lazy module, it ships with that module's chunk.
   const lazy = { "entry.js": 'console.log(() => import("./math.js"));\n', "math.js": 'import "katex/dist/katex.min.css";\nexport default 1;\n' };

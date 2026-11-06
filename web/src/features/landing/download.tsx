@@ -1,14 +1,14 @@
-import { type MouseEvent, type ReactNode, type RefObject, type SVGProps, useEffect, useMemo, useRef, useState } from "react";
-import { Menu } from "@base-ui-components/react/menu";
-import { Tabs } from "@base-ui-components/react/tabs";
-import i18n from "i18next";
+import { type MouseEvent, type ReactNode, type RefObject, type SVGProps, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { TFunction } from "i18next";
 import { ArrowRight, Check, ChevronDown, ExternalLink, Globe } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { useEventListener } from "usehooks-ts";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Tabs, TabsList, TabsPanel, TabsTab } from "@/components/ui/tabs";
 import { cn } from "@/lib/cn";
 import { appHost } from "@/lib/hub/hosts";
 import type { LatestRelease } from "@/lib/hub/releases";
-import { landingBundles } from "./copy";
+import "./copy";
 import { browserCpu, browserHints, detectKind, type EnvironmentHints, initialOs, LINUX_CPUS, osForKind } from "./detect";
 import {
   type Availability,
@@ -24,7 +24,7 @@ import {
   VERIFY_DOWNLOAD_URL,
   WSL_SYSTEMD_URL,
 } from "./get-droppen";
-import { CommandLine, FaqAccordion, landingPrimary, PublicLayout, Section, usePageMeta } from "./page-kit";
+import { ButtonLink, CommandLine, FaqAccordion, PublicLayout, Section, usePageMeta } from "./page-kit";
 import { AppWindow, ProductShot } from "./product-tour";
 import { fileFacts, fileLink, useLatestRelease } from "./release-files";
 import { publicLink, SECURITY_PATH } from "./route";
@@ -37,8 +37,6 @@ import { publicLink, SECURITY_PATH } from "./route";
 
 const COLUMN = "mx-auto w-full max-w-[64rem]";
 const LINK = "text-fg underline underline-offset-4 hover:no-underline";
-
-for (const [lng, bundle] of Object.entries(landingBundles)) i18n.addResourceBundle(lng, "translation", bundle, true, false);
 
 type MarkProps = SVGProps<SVGSVGElement>;
 
@@ -111,7 +109,7 @@ function Steps({ items, testId, className }: { items: Step[]; testId?: string; c
   );
 }
 
-const MENU_ITEM = "flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm outline-none";
+const MENU_ITEM = "gap-2.5 py-2 text-left text-sm";
 
 /** The `▾` half of the download control: the other platforms. */
 function PlatformMenu({ anchor }: { anchor: RefObject<HTMLDivElement | null> }) {
@@ -122,45 +120,41 @@ function PlatformMenu({ anchor }: { anchor: RefObject<HTMLDivElement | null> }) 
     history.replaceState(null, "", "#browser");
   };
   return (
-    <Menu.Root>
-      <Menu.Trigger
+    <DropdownMenu>
+      <DropdownMenuTrigger
         aria-label={t("Other platforms")}
         data-testid="platform-menu-trigger"
         className="group flex min-h-9 shrink-0 items-center justify-center border-l border-bg/25 bg-fg px-2.5 text-bg transition-colors hover:bg-fg/85 data-[popup-open]:bg-fg/85"
       >
         <ChevronDown aria-hidden="true" className="size-4 transition-transform duration-150 group-data-[popup-open]:rotate-180" />
-      </Menu.Trigger>
-      <Menu.Portal keepMounted>
-        <Menu.Positioner anchor={anchor} side="bottom" align="start" sideOffset={4} className="z-50 outline-none">
-          <Menu.Popup data-testid="platform-menu" className="popup-motion w-60 border border-border-strong bg-bg py-1 outline-none">
-            <Menu.Item data-testid="hero-os-macos" className={cn(MENU_ITEM, "text-fg data-[highlighted]:bg-hover")}>
-              <AppleMark className="size-4 shrink-0" />
-              <span className="flex-1 font-medium">{t("macOS")}</span>
-              <Check aria-hidden="true" className="size-3.5 shrink-0" />
-            </Menu.Item>
-            <Menu.Item disabled data-testid="hero-os-linux" className={cn(MENU_ITEM, "cursor-not-allowed text-faint")}>
-              <LinuxMark className="size-4 shrink-0" />
-              <span className="flex-1">{t("Linux")}</span>
-              <span className="shrink-0 text-xs">{t("Coming soon")}</span>
-            </Menu.Item>
-            <Menu.Item disabled data-testid="hero-os-windows" className={cn(MENU_ITEM, "cursor-not-allowed text-faint")}>
-              <WindowsMark className="size-4 shrink-0" />
-              <span className="flex-1">{t("Windows")}</span>
-              <span className="shrink-0 text-xs">{t("Coming soon")}</span>
-            </Menu.Item>
-            <Menu.Item
-              render={<a href="#browser" onClick={jumpToBrowser} />}
-              data-testid="hero-browser"
-              className={cn(MENU_ITEM, "border-t border-border text-fg data-[highlighted]:bg-hover")}
-            >
-              <Globe aria-hidden="true" className="size-4 shrink-0" strokeWidth={1.5} />
-              <span className="flex-1 font-medium">{t("Browser")}</span>
-              <ArrowRight aria-hidden="true" className="size-3.5 shrink-0" />
-            </Menu.Item>
-          </Menu.Popup>
-        </Menu.Positioner>
-      </Menu.Portal>
-    </Menu.Root>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent anchor={anchor} side="bottom" align="start" sideOffset={4} data-testid="platform-menu" className="w-60 py-1">
+        <DropdownMenuItem data-testid="hero-os-macos" className={MENU_ITEM}>
+          <AppleMark className="size-4 shrink-0" />
+          <span className="flex-1 font-medium">{t("macOS")}</span>
+          <Check aria-hidden="true" className="size-3.5 shrink-0" />
+        </DropdownMenuItem>
+        <DropdownMenuItem disabled data-testid="hero-os-linux" className={MENU_ITEM}>
+          <LinuxMark className="size-4 shrink-0" />
+          <span className="flex-1">{t("Linux")}</span>
+          <span className="shrink-0 text-xs">{t("Coming soon")}</span>
+        </DropdownMenuItem>
+        <DropdownMenuItem disabled data-testid="hero-os-windows" className={MENU_ITEM}>
+          <WindowsMark className="size-4 shrink-0" />
+          <span className="flex-1">{t("Windows")}</span>
+          <span className="shrink-0 text-xs">{t("Coming soon")}</span>
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          render={<a href="#browser" onClick={jumpToBrowser} />}
+          data-testid="hero-browser"
+          className={cn(MENU_ITEM, "border-t border-border")}
+        >
+          <Globe aria-hidden="true" className="size-4 shrink-0" strokeWidth={1.5} />
+          <span className="flex-1 font-medium">{t("Browser")}</span>
+          <ArrowRight aria-hidden="true" className="size-3.5 shrink-0" />
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -186,15 +180,15 @@ function MacDownload({ availability, release }: { availability: Availability; re
   return (
     <div className="flex flex-col gap-2">
       <div ref={control} className="relative inline-flex w-fit border border-fg bg-fg max-sm:w-full">
-        <a
+        <ButtonLink
           {...fileLink(dmg)}
-          data-variant="primary"
+          variant="primary"
           data-testid="app-download"
-          className={cn(landingPrimary, "min-h-9 border-0 bg-fg max-sm:flex-1")}
+          className="min-h-9 border-0 bg-fg max-sm:flex-1"
         >
           <AppleMark className="size-4 shrink-0" />
           {t("Download for macOS")}
-        </a>
+        </ButtonLink>
         <PlatformMenu anchor={control} />
       </div>
       <p className="text-xs leading-5 text-muted">
@@ -331,29 +325,26 @@ function ServerSection({ availability, os, arch }: { availability: Availability;
     <Section id="server">
       <div className={cn(COLUMN, "py-12 max-md:py-10")}>
         <BlockHead title={t("Run the server")} />
-        <Tabs.Root value={tab} onValueChange={(value) => setTab(value as ServerTab)}>
-          <Tabs.List aria-label={t("Server")} activateOnFocus className="mx-6 flex w-fit max-w-full items-stretch border border-border-strong bg-bg max-md:mx-4">
-            {SERVER_TABS.map(({ id, label, Icon }, index) => (
-              <Tabs.Tab
+        <Tabs value={tab} onValueChange={(value) => setTab(value as ServerTab)}>
+          <TabsList aria-label={t("Server")} activateOnFocus className="mx-6 h-auto w-fit max-w-full max-md:mx-4">
+            {SERVER_TABS.map(({ id, label, Icon }) => (
+              <TabsTab
                 key={id}
                 value={id}
                 data-testid={`server-tab-${id}`}
-                className={cn(
-                  "flex min-h-9 shrink-0 items-center gap-2 px-4 text-sm font-medium text-muted transition-colors hover:text-fg data-[active]:bg-fg data-[active]:text-bg max-md:min-h-11 max-md:px-3",
-                  index > 0 && "border-l border-border",
-                )}
+                className="min-h-9 shrink-0 flex-none gap-2 px-4 text-sm transition-colors max-md:min-h-11 max-md:px-3"
               >
                 <Icon aria-hidden="true" className="size-4 max-md:hidden" />
                 {t(label)}
-              </Tabs.Tab>
+              </TabsTab>
             ))}
-          </Tabs.List>
+          </TabsList>
           {SERVER_TABS.map(({ id }) => (
-            <Tabs.Panel key={id} value={id} tabIndex={-1} className="outline-none">
+            <TabsPanel key={id} value={id} tabIndex={-1} className="outline-none">
               {panel}
-            </Tabs.Panel>
+            </TabsPanel>
           ))}
-        </Tabs.Root>
+        </Tabs>
       </div>
     </Section>
   );
@@ -393,15 +384,15 @@ function Row({ term, children }: { term: string; children: ReactNode }) {
 function Manage({ availability }: { availability: Availability }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState<string | null>(null);
-  useEffect(() => {
-    const sync = () => {
-      const id = location.hash.slice(1);
-      if (id === "update" || id === "uninstall" || id === "verify") setOpen(id);
-    };
-    sync();
-    addEventListener("hashchange", sync);
-    return () => removeEventListener("hashchange", sync);
+  // A link to `/download#update` (or `#uninstall`, `#verify`) opens that panel.
+  const sync = useCallback(() => {
+    const id = location.hash.slice(1);
+    if (id === "update" || id === "uninstall" || id === "verify") setOpen(id);
   }, []);
+  useEffect(() => {
+    sync();
+  }, [sync]);
+  useEventListener("hashchange", sync);
   const items = [
     {
       value: "update",
@@ -533,6 +524,12 @@ function Manage({ availability }: { availability: Availability }) {
   );
 }
 
+/** The section a stale `?os=` deep link names, below the hero: the Mac app's, or the server's. */
+function sectionOf(os: DownloadOs | null): string {
+  if (os === "windows") return "browser";
+  return os === "linux" || os === "macos-bg" ? "server" : "";
+}
+
 export default function DownloadPage({
   signedIn = false,
   availability = AVAILABILITY,
@@ -570,12 +567,6 @@ export default function DownloadPage({
 
   // The old platform deep links now name a section below the hero.
   const explicit = typeof location === "undefined" ? null : osOfSearch(location.search);
-  useEffect(() => {
-    if (typeof location === "undefined") return;
-    const id = location.hash.slice(1) || (explicit === "windows" ? "browser" : explicit === "linux" || explicit === "macos-bg" ? "server" : "");
-    if (!id || typeof requestAnimationFrame === "undefined") return;
-    requestAnimationFrame(() => document.getElementById(id)?.scrollIntoView());
-  }, [explicit]);
 
   return (
     <PublicLayout
@@ -583,7 +574,9 @@ export default function DownloadPage({
       signedIn={signedIn}
       mainTestId="environments"
       mainData={{ "data-os": os, "data-detected": detected ?? undefined }}
-    >      <Hero availability={availability} release={latest} />
+      hashFallback={() => sectionOf(explicit)}
+    >
+      <Hero availability={availability} release={latest} />
       <ServerSection availability={availability} os={os} arch={onLinux ? arch : null} />
       <BrowserSection />
       <Manage availability={availability} />

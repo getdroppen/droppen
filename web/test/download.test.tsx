@@ -227,13 +227,19 @@ test("the page opens on the address's platform, else the detected one", () => {
 
 test("the Mac App: one download and its requirements; the other platforms are behind the arrow", () => {
   const html = draw("en", { release: RELEASE });
-  assert.match(html, new RegExp(`<a href="${DL}Droppen-0\\.2\\.129\\.dmg" data-variant="primary" data-testid="app-download"`));
+  const download = tag(html, "app-download");
+  assert.match(download, new RegExp(`href="${DL}Droppen-0\\.2\\.129\\.dmg"`));
+  assert.match(download, /data-variant="primary"/);
   assert.match(html, /data-testid="app-file-facts"[^>]*>v0\.2\.129 · 48 MB/);
   assert.ok(text(html).includes("macOS 13 or later · Apple silicon and Intel"));
   assert.match(block(html, "app-download", "</a>"), /<svg/, "the Apple mark leads the button");
   // Without an answer: the release page, in a new tab, and no invented version.
   const asking = draw("en");
-  assert.match(asking, new RegExp(`<a href="${RELEASES_URL}" target="_blank" rel="noopener noreferrer" data-variant="primary" data-testid="app-download"`));
+  const fallback = tag(asking, "app-download");
+  assert.match(fallback, new RegExp(`href="${RELEASES_URL}"`));
+  assert.match(fallback, /target="_blank"/);
+  assert.match(fallback, /rel="noopener noreferrer"/);
+  assert.match(fallback, /data-variant="primary"/);
   assert.doesNotMatch(asking, /data-testid="app-file-facts"/);
   // No App yet: the command is the way in, and it is the one action.
   const noApp = draw("zh-CN", { availability: { app: false, appSignIn: false, linux: true } });

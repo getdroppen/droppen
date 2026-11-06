@@ -1,14 +1,12 @@
 import { Fragment, type ReactNode } from "react";
-import i18n from "i18next";
 import { useTranslation } from "react-i18next";
 import { CapsLabel } from "@/components/ui/caps-label";
 import { SIGNUP_CONFIG } from "@/lib/hub/api";
 import { PLAN_TABLE } from "@/lib/hub/plan";
-import { landingBundles } from "./copy";
-import { cjkTracking, Points, PublicLayout, Section, SectionHead, usePageMeta } from "./page-kit";
+import "./copy";
+import { Points, PublicLayout, Section, SectionHead, usePageMeta } from "./page-kit";
 import { publicLink, SECURITY_PATH } from "./route";
 import { PRIVACY_EMAIL } from "./waitlist";
-import { cn } from "@/lib/cn";
 
 /*
  * droppen.app/privacy: a short, honest notice — what the waitlist keeps, why,
@@ -23,14 +21,11 @@ import { cn } from "@/lib/cn";
  * not; drawn like the other public pages.
  */
 
-// Added, never overwriting: a key the app already translates keeps its wording.
-for (const [lng, bundle] of Object.entries(landingBundles)) i18n.addResourceBundle(lng, "translation", bundle, true, false);
-
 /** When the notice last changed, as the page says it. */
 export const PRIVACY_UPDATED = "2026-10-28";
 
 /** How long droppen.app keeps a deleted account's address hash (droppen.app's `SIGNUP_CONFIG.deletion`). */
-export const DELETED_EMAIL_HOLD_DAYS = SIGNUP_CONFIG.deletion?.emailHoldDays ?? 0;
+const DELETED_EMAIL_HOLD_DAYS = SIGNUP_CONFIG.deletion?.emailHoldDays ?? 0;
 
 /** Within how many days copies in droppen.app's backups and logs expire (the owner's word, 2026-10-23). */
 export const BACKUPS_EXPIRE_DAYS = 30;
@@ -81,7 +76,7 @@ export default function PrivacyPage({ signedIn = false }: { signedIn?: boolean }
   return (
     <PublicLayout testId="privacy" signedIn={signedIn}>
       <div className="flex flex-col gap-5 px-10 pt-16 pb-10 max-lg:pt-12 max-md:px-4 max-md:pt-10 max-md:pb-8">
-            <CapsLabel face="sans" className={cn(cjkTracking, "text-xs font-semibold")}>{t("Privacy notice")}</CapsLabel>
+            <CapsLabel variant="section">{t("Privacy notice")}</CapsLabel>
             <h1 className="max-w-[18em] text-5xl leading-display font-normal tracking-tight text-balance text-fg cjk-wrap md:cjk-keep max-md:text-3xl">
               {t("What we keep, and what we can't see.")}
             </h1>
@@ -225,7 +220,7 @@ export default function PrivacyPage({ signedIn = false }: { signedIn?: boolean }
           </Section>
           <Section id="contact">
             <div className="flex flex-col gap-3 px-6 py-8 max-md:px-4">
-              <CapsLabel face="sans" className={cn(cjkTracking, "text-xs font-semibold")}>{t("Contact")}</CapsLabel>
+              <CapsLabel variant="section">{t("Contact")}</CapsLabel>
               <p className="text-sm leading-6 text-muted">
                 {t("Questions, or a request about your data:")} {mail}
               </p>

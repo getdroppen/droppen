@@ -1,16 +1,13 @@
-import { type ReactNode, useEffect, useMemo, useState } from "react";
-import i18n from "i18next";
+import { type ReactNode, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Check } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { HubApi, type SignupMode, type WaitlistPlan } from "@/lib/hub/api";
 import { cn } from "@/lib/cn";
-import { landingBundles } from "./copy";
+import "./copy";
 import { cjkTracking, FaqAccordion, PublicLayout, Section, SectionHead, usePageMeta } from "./page-kit";
 import { gb, PLAN_NUMBERS, PRO_PRICE, THROTTLED_KB_PER_SEC, yearlySaving } from "./pricing-plans";
 import { type WaitlistState, WaitlistForm } from "./waitlist";
-
-// Added, never overwriting: a key the app already translates keeps its wording.
-for (const [lng, bundle] of Object.entries(landingBundles)) i18n.addResourceBundle(lng, "translation", bundle, true, false);
 
 /** The plan an address names (`?plan=pro`), Free otherwise (where Free has a waitlist: sign-up by invite, or closed). */
 export function planOfSearch(search: string): WaitlistPlan {
@@ -38,9 +35,9 @@ function PlanHead({
       <div className="flex min-h-6 flex-wrap items-center justify-center gap-2">
         <h3 id={`${testId}-name`} className="text-base leading-6 font-semibold text-fg">{name}</h3>
         {recommended && (
-          <span className={cn("inline-flex items-center bg-fg px-1.5 py-0.5 text-xs font-medium tracking-label text-bg uppercase", cjkTracking)}>
+          <Badge className={cn("h-[18px] bg-fg px-1.5 font-sans text-xs font-medium tracking-label text-bg uppercase shadow-none", cjkTracking)}>
             {t("Recommended")}
-          </span>
+          </Badge>
         )}
       </div>
       <p className="flex flex-wrap items-baseline justify-center gap-2">
@@ -261,11 +258,6 @@ export default function PricingPage({
       : t("Use Droppen on one device with no account, free with an account, or Pro for more devices and longer offline reading. Every plan is end-to-end encrypted."),
   );
   const hub = useMemo(() => api ?? new HubApi(), [api]);
-  // Arrived at a part of the page (`/pricing#waitlist` from the landing page): the page was not there to scroll to yet.
-  useEffect(() => {
-    const id = location.hash.slice(1);
-    if (id) requestAnimationFrame(() => document.getElementById(id)?.scrollIntoView());
-  }, []);
   const [chosen, setPlan] = useState<WaitlistPlan>(() => planOfSearch(typeof location === "undefined" ? "" : location.search));
   // Open sign-up: Free needs no waitlist, so the form is Pro's.
   const plan = open ? "pro" : chosen;

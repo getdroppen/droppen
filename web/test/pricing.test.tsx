@@ -194,7 +194,7 @@ test("one primary action on the page: the waitlist form's, whatever the sign-up 
     assert.equal(primaries(html), 1, `${lng}: one primary`);
     assert.equal(primaries(part(html, "plans", "waitlist")), 0, `${lng}: the comparison has no actions`);
     assert.equal(primaries(part(html, "waitlist", "faq")), 1, `${lng}: the form`);
-    assert.match(part(html, "waitlist", "faq"), /<button type="submit" data-variant="primary" data-testid="waitlist-submit"/);
+    assert.match(part(html, "waitlist", "faq"), /<button type="submit" data-variant="primary" [^>]*data-testid="waitlist-submit"/);
   }
 });
 
@@ -210,7 +210,7 @@ test("by invite, the form starts on Free, or on Pro when the address says so", (
   assert.equal((html.match(/<input type="radio"[^>]*name="plan"/g) ?? []).length, 2);
   assert.match(html, /<fieldset[^>]*><legend[^>]*><span[^>]*>Plan<\/span><\/legend>/);
   assert.match(html, /data-testid="waitlist-form" data-plan="free"/);
-  assert.match(html, /<input id="waitlist-email" type="email" autoComplete="email" inputMode="email" required=""[^>]*name="email"/);
+  assert.match(html, /<input [^>]*id="waitlist-email" type="email" autoComplete="email" inputMode="email" required=""[^>]*name="email"/);
   assert.doesNotMatch(html, /waitlist-privacy|No confirmation mail/);
 });
 

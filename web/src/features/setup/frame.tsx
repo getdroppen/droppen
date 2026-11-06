@@ -8,7 +8,6 @@
  * the frame's lines and the rail's divider. Under 960px the rail is a row of
  * four cells across the top, and no marks are drawn.
  */
-import { Menu } from "@base-ui-components/react/menu";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, ChevronDown, Globe, Info } from "lucide-react";
 import { forwardRef, useEffect, useState, type ReactNode } from "react";
@@ -18,6 +17,7 @@ import { BrandMark } from "@/components/brand-mark";
 import { activeLanguage, LanguageMenu } from "@/components/language-menu";
 import { RegMark } from "@/components/reg-mark";
 import { Button } from "@/components/ui/button";
+import { DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { applyLanguage, storedLanguagePref, type LanguagePref } from "@/i18n";
 import { cn } from "@/lib/cn";
 import { useApi, useMachine } from "@/lib/machines/context";
@@ -74,7 +74,7 @@ function LanguagePicker() {
   };
   return (
     <LanguageMenu value={prefs?.language ?? chosen} onChoose={choose} look="guide">
-      <Menu.Trigger
+      <DropdownMenuTrigger
         aria-label={t("Language")}
         title={t("Language")}
         className="flex h-6 shrink-0 items-center gap-1 px-2 font-mono text-2xs text-muted hover:bg-hover hover:text-fg"
@@ -82,7 +82,7 @@ function LanguagePicker() {
         <Globe className="size-3" />
         <span lang={active.id}>{active.label}</span>
         <ChevronDown className="size-2.5" />
-      </Menu.Trigger>
+      </DropdownMenuTrigger>
     </LanguageMenu>
   );
 }

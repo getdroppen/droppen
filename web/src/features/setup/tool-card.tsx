@@ -4,7 +4,7 @@
  * for each state, and the card's header. `tools-step.tsx` owns the live step:
  * polling, the actions and the view around these cards.
  */
-import { Menu } from "@base-ui-components/react/menu";
+import { Menu } from "@base-ui/react/menu";
 import { Ellipsis, KeyRound } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";

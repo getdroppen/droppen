@@ -1,4 +1,4 @@
-import { Select as BaseSelect } from "@base-ui-components/react/select";
+import { Select as BaseSelect } from "@base-ui/react/select";
 import { Settings } from "lucide-react";
 import { Fragment } from "react";
 import { useTranslation } from "react-i18next";

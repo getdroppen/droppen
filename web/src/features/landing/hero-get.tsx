@@ -4,7 +4,7 @@ import type { SignupMode } from "@/lib/hub/api";
 import type { LatestRelease, ReleaseFile } from "@/lib/hub/releases";
 import type { HeroOffer } from "./detect";
 import { type Availability, downloadHref, type DownloadOs, INSTALL_COMMAND, RELEASES_URL } from "./get-droppen";
-import { ArrowLink, CommandLine, landingPrimary, landingSecondary } from "./page-kit";
+import { ArrowLink, ButtonLink, CommandLine } from "./page-kit";
 import { fileFacts, fileLink, LinuxTarballs } from "./release-files";
 import { appHost } from "@/lib/hub/hosts";
 import { APP_PATH, publicLink, SIGN_UP_PATH, WAITLIST_HREF } from "./route";
@@ -38,27 +38,25 @@ function ReleaseLink({ release }: { release: LatestRelease | null | undefined })
 /** The account's way in; `lead` makes it the hero's primary. */
 function Account({ signedIn, lead, closed }: { signedIn: boolean; lead: boolean; closed: boolean }) {
   const { t } = useTranslation();
-  const first = lead ? { "data-variant": "primary", className: landingPrimary } : { className: landingSecondary };
+  const variant = lead ? "primary" : "secondary";
   if (signedIn) {
     return (
       <>
-        <a {...publicLink(APP_PATH)} {...first}>
+        <ButtonLink variant={variant} {...publicLink(APP_PATH)}>
           {t("Open app")}
-        </a>
+        </ButtonLink>
         {lead && (
-          <a href="#tour" className={landingSecondary}>
+          <ButtonLink variant="secondary" href="#tour">
             {t("How it works")}
-          </a>
+          </ButtonLink>
         )}
       </>
     );
   }
   return (
-    <>
-      <a {...publicLink(closed ? WAITLIST_HREF : SIGN_UP_PATH)} {...first}>
-        {closed ? t("Join the waitlist") : t("Create a free account")}
-      </a>
-    </>
+    <ButtonLink variant={variant} {...publicLink(closed ? WAITLIST_HREF : SIGN_UP_PATH)}>
+      {closed ? t("Join the waitlist") : t("Create a free account")}
+    </ButtonLink>
   );
 }
 
@@ -94,10 +92,10 @@ export function HeroGet({
         <>
           <div className={row}>
             {/* The file itself when the hub named it (a click downloads it: the page stays), else this site's download page, on the Mac's tab. */}
-            <a {...macDownload(dmg)} data-variant="primary" data-testid="hero-download" className={landingPrimary}>
+            <ButtonLink variant="primary" {...macDownload(dmg)} data-testid="hero-download">
               <Download className="size-3.5" />
               {t("Download for Mac")}
-            </a>
+            </ButtonLink>
             <Account signedIn={signedIn} lead={false} closed={closed} />
           </div>
           <p className={small}>
@@ -127,7 +125,6 @@ export function HeroGet({
           <ArrowLink
             variant="primary"
             {...publicLink(signedIn ? APP_PATH : closed ? WAITLIST_HREF : SIGN_UP_PATH)}
-            data-variant="primary"
             data-testid="hero-web-signup"
           >
             {signedIn ? t("Open web app") : closed ? t("Join the web waitlist") : t("Sign up on the web")}

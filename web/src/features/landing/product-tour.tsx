@@ -1,24 +1,12 @@
 import { type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { Lock } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useDarkTheme } from "@/lib/theme";
 
 /* Real screenshots in HTML-drawn frames; each is per language and theme. */
 
-export const TOUR_TABS = ["sessions", "split", "terminal", "cloud", "phone", "security"] as const;
-export type TourTab = (typeof TOUR_TABS)[number];
-
-type FrameKind = "app" | "browser" | "phone";
-
-export const TOUR_SHOTS: Record<TourTab, { frame: FrameKind; shots: string[] }> = {
-  sessions: { frame: "app", shots: ["app-session"] },
-  split: { frame: "app", shots: ["app-split"] },
-  terminal: { frame: "app", shots: ["app-terminal"] },
-  cloud: { frame: "browser", shots: ["cloud-devices"] },
-  phone: { frame: "phone", shots: ["phone-needs-you", "phone-session"] },
-  security: { frame: "phone", shots: ["security-pair"] },
-};
+/** Every screenshot the build ships, for the test that checks none is missing; the page picks the ones it draws. */
+export const TOUR_SHOTS = ["app-session", "app-split", "app-terminal", "cloud-devices", "phone-needs-you", "phone-session", "security-pair"] as const;
 
 export function tourLanguage(language: string): "zh-CN" | "en" {
   return language.startsWith("zh") ? "zh-CN" : "en";
@@ -79,26 +67,6 @@ export function AppWindow({ children }: { children: ReactNode }) {
           <span key={i} className="size-3 rounded-full border border-border-strong bg-bg" />
         ))}
         <span className="absolute inset-x-0 text-center text-xs font-medium text-muted">Droppen</span>
-      </div>
-      {children}
-    </div>
-  );
-}
-
-export function BrowserWindow({ children }: { children: ReactNode }) {
-  return (
-    <div className="overflow-hidden rounded-[10px] border border-border-strong bg-bg shadow-[0_24px_60px_-28px_rgb(0_0_0/0.35)]">
-      <div className="flex h-9 items-center gap-3 bg-raised px-3">
-        <span className="flex gap-2">
-          {[0, 1, 2].map((i) => (
-            <span key={i} className="size-3 rounded-full border border-border-strong bg-bg" />
-          ))}
-        </span>
-        <span className="mx-auto flex h-6 w-full max-w-[22rem] items-center justify-center gap-1.5 rounded-md border border-border bg-bg font-mono text-xs text-muted">
-          <Lock className="size-3" />
-          my.droppen.app
-        </span>
-        <span className="w-[52px] max-sm:hidden" />
       </div>
       {children}
     </div>

@@ -1,10 +1,10 @@
 import { type ReactNode, useEffect, useState } from "react";
-import i18n from "i18next";
 import { useTranslation } from "react-i18next";
 import { ArrowRight, CalendarClock, FolderOpen, Laptop as LaptopIcon, ListChecks, MessageSquareReply, SquarePlus } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { appHost } from "@/lib/hub/hosts";
 import { cn } from "@/lib/cn";
-import { landingBundles } from "./copy";
+import "./copy";
 import type { SignupMode } from "@/lib/hub/api";
 import type { LatestRelease } from "@/lib/hub/releases";
 import { browserCpu, browserHints, detectKind, type EnvironmentHints, type HeroOffer, heroOffer } from "./detect";
@@ -12,9 +12,9 @@ import { type Availability, AVAILABILITY, DOWNLOAD_PATH } from "./get-droppen";
 import { HeroGet } from "./hero-get";
 import { ArrowLink, FaqAccordion, PublicLayout, Section, SOURCE_URL, usePageMeta } from "./page-kit";
 import { PLAN_NUMBERS, PRO_PRICE, gb, yearlySaving } from "./pricing-plans";
-import { AppWindow, BrowserWindow, Phone, ProductShot } from "./product-tour";
+import { AppWindow, Phone, ProductShot } from "./product-tour";
 import { useLatestRelease } from "./release-files";
-import { publicLink, PRICING_PATH, PRIVACY_PATH, SECURITY_PATH, SIGN_UP_PATH, TERMS_PATH, WAITLIST_HREF } from "./route";
+import { publicLink, PRICING_PATH, SECURITY_PATH, SIGN_UP_PATH, WAITLIST_HREF } from "./route";
 import { gridPaper } from "./figures/paper";
 import { NetworkFigure } from "./figures/network/figure";
 import { KeyFigure } from "./figures/key/figure";
@@ -25,12 +25,9 @@ import { KeyFigure } from "./figures/key/figure";
  * Loaded on demand so the app's own boot does not carry it.
  */
 
-// Added, never overwriting: a key the app already translates keeps its wording.
-for (const [lng, bundle] of Object.entries(landingBundles)) i18n.addResourceBundle(lng, "translation", bundle, true, false);
-
 const WIDE = "mx-auto w-full max-w-[72rem]";
 
-const TRUST = ["Free plan", "No credit card", "End-to-end encrypted", "Open-source client"] as const;
+const TRUST = ["Free plan", "End-to-end encrypted", "Open-source client"] as const;
 
 function TrustLines({ className }: { className?: string }) {
   const { t } = useTranslation();
@@ -116,7 +113,7 @@ function Hero({
 
 function HeroStage() {
   const { t } = useTranslation();
-  const session = t("Droppen on a Mac: a list of Claude Code and Codex sessions, and a session waiting for an answer");
+  const phone = t("Droppen on a phone: what needs you, and a session's question");
   return (
     <div className="relative mt-10 pb-2 max-lg:mt-8">
       <div
@@ -129,35 +126,21 @@ function HeroStage() {
           opacity: 0.75,
         }}
       />
+      {/* The story in one frame, not five device thumbnails: the AI is working in a terminal on
+          the computer (cut by the edge, it is context), and the session asks its question on the
+          phone in front. The screens are ones the tour below does not show, so the two do not repeat. */}
       <div className="relative mx-auto hidden w-full max-w-[1120px] px-8 lg:block">
-        <div className="relative aspect-[1200/620] w-full">
-          <div className="absolute top-[24%] left-[-1%] z-10 w-[27%]">
-            <Laptop>
-              <BrowserWindow>
-                <ProductShot shot="app-session" alt="" width={2560} height={1600} />
-              </BrowserWindow>
-            </Laptop>
-          </div>
-          <div className="absolute top-[4%] left-[15%] z-20 w-[40%]">
+        <div className="relative aspect-[1200/680] w-full">
+          <div className="absolute top-[22%] -left-[9%] w-[56%]">
             <Laptop>
               <AppWindow>
-                <ProductShot shot="app-session" alt={session} eager width={2560} height={1600} />
+                <ProductShot shot="app-terminal" alt="" eager width={2560} height={1600} />
               </AppWindow>
             </Laptop>
           </div>
-          <div className="absolute top-[15%] left-[52%] z-30 w-[21%]">
-            <Tablet>
-              <ProductShot shot="app-session" alt="" width={2560} height={1600} />
-            </Tablet>
-          </div>
-          <div className="absolute top-[25%] left-[82%] z-40 w-[13%]">
-            <Android>
-              <ProductShot shot="phone-needs-you" alt="" width={640} height={1386} />
-            </Android>
-          </div>
-          <div className="absolute top-[34%] left-[70%] z-50 w-[13%]">
+          <div className="absolute top-0 right-[26%] z-10 w-[24%]">
             <Phone>
-              <ProductShot shot="phone-session" alt={t("Droppen on a phone: what needs you, and a session's question")} width={640} height={1386} />
+              <ProductShot shot="phone-session" alt={phone} width={640} height={1386} />
             </Phone>
           </div>
         </div>
@@ -165,7 +148,7 @@ function HeroStage() {
       <div className="relative flex justify-center px-6 lg:hidden">
         <div className="w-[264px] max-w-full">
           <Phone>
-            <ProductShot shot="phone-session" alt={t("Droppen on a phone: what needs you, and a session's question")} eager width={640} height={1386} />
+            <ProductShot shot="phone-session" alt={phone} eager width={640} height={1386} />
           </Phone>
         </div>
       </div>
@@ -179,36 +162,6 @@ function Laptop({ children }: { children: ReactNode }) {
       <div className="overflow-hidden rounded-[10px] border-[6px] border-raised bg-raised shadow-[0_30px_80px_-44px_rgb(15_18_22/0.38)]">{children}</div>
       <div className="mx-[-6%] h-2.5 rounded-b-[8px] bg-raised" />
       <div className="mx-auto h-[3px] w-[13%] rounded-b-[3px] bg-border-strong" />
-    </div>
-  );
-}
-
-function Tablet({ children }: { children: ReactNode }) {
-  return (
-    <div className="overflow-hidden rounded-[18px] border-[8px] border-raised bg-raised shadow-[0_30px_80px_-44px_rgb(15_18_22/0.38)]">
-      <div className="relative overflow-hidden rounded-[10px] bg-bg">
-        <span aria-hidden="true" className="absolute top-1 left-1/2 z-1 size-1 -translate-x-1/2 rounded-full bg-border-strong" />
-        {children}
-      </div>
-    </div>
-  );
-}
-
-function Android({ children }: { children: ReactNode }) {
-  return (
-    <div className="overflow-hidden rounded-[22px] border-[5px] border-raised bg-raised shadow-[0_30px_80px_-44px_rgb(15_18_22/0.38)]">
-      <div className="relative overflow-hidden rounded-[17px] bg-bg">
-        <div aria-hidden="true" className="relative flex h-5 items-center justify-between px-2 font-mono text-xs text-fg">
-          <span>9:41</span>
-          <span className="absolute top-1.5 left-1/2 size-1.5 -translate-x-1/2 rounded-full bg-fg" />
-          <span className="flex items-end gap-px">
-            {[3, 5, 7].map((height) => (
-              <span key={height} className="w-px bg-fg" style={{ height }} />
-            ))}
-          </span>
-        </div>
-        {children}
-      </div>
     </div>
   );
 }
@@ -422,10 +375,10 @@ function Plan({
   href: string;
 }) {
   return (
-    <div className="flex min-w-0 flex-col">
+    <div className="flex min-w-0 flex-col px-6 py-7 max-md:px-4">
       <div className="flex items-center gap-2 text-sm font-semibold text-fg">
         {name}
-        {badge && <span className="inline-flex h-[18px] items-center bg-fg px-1.5 font-mono text-xs tracking-label text-bg uppercase">{badge}</span>}
+        {badge && <Badge className="h-[18px] bg-fg px-1.5 text-xs tracking-label text-bg uppercase shadow-none">{badge}</Badge>}
       </div>
       <div className="mt-4 font-mono text-3xl leading-none font-medium tracking-tight text-fg tabular-nums">
         {price}
@@ -464,14 +417,7 @@ function Pricing({ signedIn, signup }: { signedIn: boolean; signup: SignupMode }
             </a>
           }
         />
-        <div className="mx-6 grid gap-x-12 gap-y-14 max-md:mx-4 lg:grid-cols-3">
-          <Plan
-            name={t("Local only")}
-            price="$0"
-            points={[t("On your own computer, with no account."), t("1 device that runs AI"), t("No access from other devices"), t("Nothing saved to the cloud")]}
-            cta={t("Full install instructions")}
-            href={DOWNLOAD_PATH}
-          />
+        <div className="mx-6 grid divide-y divide-border border border-border max-md:mx-4 lg:grid-cols-2 lg:divide-x lg:divide-y-0">
           <Plan
             name={t("Free")}
             price="$0"

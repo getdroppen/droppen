@@ -1,4 +1,4 @@
-import { Menu } from "@base-ui-components/react/menu";
+import { Menu } from "@base-ui/react/menu";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import {

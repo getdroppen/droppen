@@ -1,4 +1,4 @@
-import { Menu } from "@base-ui-components/react/menu";
+import { Menu } from "@base-ui/react/menu";
 import { Archive, Ellipsis, Loader2, Pencil } from "lucide-react";
 import { useTranslation } from "react-i18next";
 

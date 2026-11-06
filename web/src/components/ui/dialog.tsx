@@ -1,4 +1,4 @@
-import { Dialog as BaseDialog } from "@base-ui-components/react/dialog";
+import { Dialog as BaseDialog } from "@base-ui/react/dialog";
 import { X } from "lucide-react";
 import { cn } from "@/lib/cn";
 
@@ -13,7 +13,6 @@ export function DialogContent({
 }: {
   title: string;
   children: React.ReactNode;
-  /** Overrides the default width for content that needs more room. */
   className?: string;
   closeLabel?: string;
 }) {

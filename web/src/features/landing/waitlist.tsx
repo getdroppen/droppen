@@ -1,11 +1,12 @@
 import { type FormEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Check, Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { CapsLabel } from "@/components/ui/caps-label";
+import { Input } from "@/components/ui/input";
 import { type HubApi, HubApiError, type SignupMode, type WaitlistPlan } from "@/lib/hub/api";
 import { cn } from "@/lib/cn";
 import { PRO_PRICE } from "./pricing-plans";
-import { cjkTracking, landingPrimary } from "./page-kit";
 
 /*
  * The waitlist form on droppen.app/pricing (`#waitlist`): an e-mail address,
@@ -87,7 +88,7 @@ function PlanChoice({ plan, onPlan }: { plan: WaitlistPlan; onPlan: (plan: Waitl
   return (
     <fieldset className="flex flex-col gap-1.5">
       <legend className="mb-1.5">
-        <CapsLabel face="sans" className={cn(cjkTracking, "text-xs font-semibold")}>{t("Plan")}</CapsLabel>
+        <CapsLabel variant="section">{t("Plan")}</CapsLabel>
       </legend>
       <div className="grid grid-cols-2 gap-px border border-border-strong bg-border-strong">
         {options.map((o) => (
@@ -125,21 +126,20 @@ function Joined({ plan, signup, onAgain }: { plan: WaitlistPlan; signup: SignupM
         </span>
       </p>
       <p className="text-sm leading-6 text-muted">{t("We'll send nothing else. To be taken off the list, write to {{email}}.", { email: PRIVACY_EMAIL })}</p>
-      <button type="button" onClick={onAgain} data-testid="waitlist-again" className="w-fit text-sm text-fg underline underline-offset-4 hover:no-underline">
+      <Button
+        type="button"
+        variant="ghost"
+        onClick={onAgain}
+        data-testid="waitlist-again"
+        className="h-auto w-fit px-0 text-sm text-fg underline underline-offset-4 hover:bg-transparent hover:text-fg hover:no-underline"
+      >
         {t("Add another address")}
-      </button>
+      </Button>
     </div>
   );
 }
 
-/**
- * The e-mail field at the public pages' size and face: 36px, sans 14px (16px
- * on phones), the field's own border as the auxiliary cue and the page's 2px
- * keyboard-focus ring (docs/ui-spec.md §1). `field` in `features/cloud/ui` is
- * the app's 12px mono control, which is not this page's face.
- */
-const emailField =
-  "h-9 w-full border border-border bg-bg px-2.5 text-sm text-fg placeholder:text-faint focus:border-fg max-md:h-10 max-md:text-base";
+const emailField = "h-9 px-2.5 text-sm text-fg max-md:h-10 max-md:text-base";
 
 /**
  * The form. `plan` is the page's (from `?plan=`); with `onPlan` the form
@@ -176,8 +176,8 @@ export function WaitlistForm({
     <form noValidate onSubmit={(e) => void submit(e)} data-testid="waitlist-form" data-plan={plan} className="flex max-w-[34rem] flex-col gap-5">
       {onPlan && <PlanChoice plan={plan} onPlan={onPlan} />}
       <label className="flex flex-col gap-1.5">
-        <CapsLabel face="sans" className={cn(cjkTracking, "text-xs font-semibold")}>{t("E-mail address")}</CapsLabel>
-        <input
+        <CapsLabel variant="section">{t("E-mail address")}</CapsLabel>
+        <Input
           id="waitlist-email"
           type="email"
           name="email"
@@ -201,10 +201,10 @@ export function WaitlistForm({
           {problemText(refused, t)}
         </p>
       )}
-      <button type="submit" data-variant="primary" data-testid="waitlist-submit" disabled={sending} className={cn(landingPrimary, "w-full self-center sm:w-fit max-md:h-10")}>
+      <Button type="submit" variant="primary" size="lg" data-testid="waitlist-submit" disabled={sending} className="w-full self-center sm:w-fit max-md:h-10">
         {sending && <Loader2 aria-hidden="true" className="size-3.5 animate-spin" />}
         {t("Join the waitlist")}
-      </button>
+      </Button>
     </form>
   );
 }

@@ -1,14 +1,12 @@
-import { type ReactNode, useEffect } from "react";
-import i18n from "i18next";
+import { type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { CapsLabel } from "@/components/ui/caps-label";
-import { landingBundles } from "../copy";
-import { cjkTracking, Points, PublicLayout, Section, SectionHead, SECURITY_EMAIL, usePageMeta } from "../page-kit";
+import "../copy";
+import { Points, PublicLayout, Section, SectionHead, SECURITY_EMAIL, usePageMeta } from "../page-kit";
 import { gb, PLAN_NUMBERS } from "../pricing-plans";
 import { PRICING_PATH, PRIVACY_PATH, publicLink } from "../route";
 import { PRIVACY_EMAIL } from "../waitlist";
-import { termsBundles } from "./terms-copy";
-import { cn } from "@/lib/cn";
+import "./terms-copy";
 
 /*
  * droppen.app/terms: the terms of service of the hosted service, in plain
@@ -29,11 +27,6 @@ import { cn } from "@/lib/cn";
  * to supply would be a placeholder `[IN CAPITALS]`, listed in
  * `web/owner-placeholders.txt`, which a release checks its build against.
  */
-
-// Added, never overwriting: a key the app already translates keeps its wording.
-for (const bundles of [landingBundles, termsBundles]) {
-  for (const [lng, bundle] of Object.entries(bundles)) i18n.addResourceBundle(lng, "translation", bundle, true, false);
-}
 
 /** When the terms last changed, as the page says it. */
 export const TERMS_UPDATED = "2026-10-28";
@@ -65,11 +58,6 @@ const linkClass = "text-fg underline underline-offset-4 hover:no-underline";
 export default function TermsPage({ signedIn = false }: { signedIn?: boolean }) {
   const { t } = useTranslation();
   usePageMeta(t("Terms of Service — Droppen"));
-  // Arrived at a part of the page (`/terms#contact`, the footer's 「联系我们」): the page was not there to scroll to yet.
-  useEffect(() => {
-    const id = location.hash.slice(1);
-    if (id) requestAnimationFrame(() => document.getElementById(id)?.scrollIntoView());
-  }, []);
   const free = PLAN_NUMBERS.free;
   const mail = (email: string, testId: string) => (
     <a href={`mailto:${email}`} data-testid={testId} className={linkClass}>
@@ -79,7 +67,7 @@ export default function TermsPage({ signedIn = false }: { signedIn?: boolean }) 
   return (
     <PublicLayout testId="terms" signedIn={signedIn}>
       <div className="flex flex-col gap-5 px-10 pt-16 pb-10 max-lg:pt-12 max-md:px-4 max-md:pt-10 max-md:pb-8">
-            <CapsLabel face="sans" className={cn(cjkTracking, "text-xs font-semibold")}>{t("Terms of Service")}</CapsLabel>
+            <CapsLabel variant="section">{t("Terms of Service")}</CapsLabel>
             <h1 className="max-w-[18em] text-5xl leading-display font-normal tracking-tight text-balance text-fg cjk-wrap md:cjk-keep max-md:text-3xl">
               {t("What you can expect from us, and what we ask of you.")}
             </h1>
@@ -293,7 +281,7 @@ export default function TermsPage({ signedIn = false }: { signedIn?: boolean }) 
           </Section>
           <Section id="contact">
             <div className="flex flex-col gap-3 px-6 py-8 max-md:px-4">
-              <CapsLabel face="sans" className={cn(cjkTracking, "text-xs font-semibold")}>{t("Contact")}</CapsLabel>
+              <CapsLabel variant="section">{t("Contact")}</CapsLabel>
               <p className="text-sm leading-6 text-muted">
                 {t("Questions about these terms, or a request about your account:")} {mail(PRIVACY_EMAIL, "terms-email")}
               </p>

@@ -55,6 +55,7 @@ const CLOUD_CODE: [pattern: RegExp, what: string][] = [
   [/\/src\/(?:lib\/e2e\/(?!(?:bytes|keys|field)\.ts$)|lib\/transport\/p2p\.ts$)/, "the end-to-end protocol"],
   [/\/src\/features\/link\/(?:link-popup\.tsx|add-host\.ts)$/, "droppen.app's half of a computer's sign-in"],
   [/\/src\/features\/landing\/(?!(?:route|get-droppen)\.ts$)/, "the public pages"],
+  [/\/src\/components\/ui\/(?:accordion|sheet)\.tsx$/, "the public pages' kit"],
   [/\/src\/(?:features\/move\/|lib\/move\/(?!types\.ts$))/, "the browser key move"],
   [/\/src\/features\/hosts\//, "the hub origin's move notice"],
 ];

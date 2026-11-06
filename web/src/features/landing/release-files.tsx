@@ -8,7 +8,7 @@ import { RELEASES_URL } from "./get-droppen";
 
 let asked: Promise<LatestRelease | null> | null = null;
 
-export function loadLatestRelease(): Promise<LatestRelease | null> {
+function loadLatestRelease(): Promise<LatestRelease | null> {
   if (!asked) {
     asked = fetchLatestRelease().then((release) => {
       if (!release) asked = null;
@@ -32,7 +32,7 @@ export function useLatestRelease(given?: LatestRelease | null): LatestRelease | 
   return given !== undefined ? given : release;
 }
 
-export function countedLink(file: ReleaseFile): boolean {
+function countedLink(file: ReleaseFile): boolean {
   return file.href !== file.url;
 }
 

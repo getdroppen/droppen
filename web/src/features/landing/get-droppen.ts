@@ -116,7 +116,7 @@ export function codeInstallCommand(code: string, hub?: string): string {
  * link, whatever version it runs now. This path is the one every install has,
  * and the data folder keeps its name.
  */
-export const SERVER_BIN_PATH = "~/.local/share/remote-hand/bin/remote-hand-server";
+const SERVER_BIN_PATH = "~/.local/share/remote-hand/bin/remote-hand-server";
 
 /** For a Droppen server already there, installed some other way: the code on standard input (`printf` is a shell builtin, so it is in no process's arguments). */
 export function stdinEnrollCommand(code: string, hub: string): string {
@@ -159,13 +159,13 @@ export const LINGER_COMMAND = "sudo loginctl enable-linger";
  * itself stays a temporary alias during the move (docs/hub-api/README.md,
  * "Hosts").
  */
-export const DROPPEN_ORIGIN = "https://api.droppen.app";
+const DROPPEN_ORIGIN = "https://api.droppen.app";
 
 /** The public pages' origin, where this build's landing, download and policy pages live. */
 export const DROPPEN_SITE_ORIGIN = "https://www.droppen.app";
 
 /** The app's origin, where a browser signs in, pairs and uses the account. */
-export const DROPPEN_APP_ORIGIN = "https://my.droppen.app";
+const DROPPEN_APP_ORIGIN = "https://my.droppen.app";
 
 /** Every name of droppen.app's hub: the machine hub, the app, the site, and the apex it is moving off. */
 const DROPPEN_NAMES = new Set([DROPPEN_ORIGIN, DROPPEN_APP_ORIGIN, DROPPEN_SITE_ORIGIN, "https://droppen.app"]);
