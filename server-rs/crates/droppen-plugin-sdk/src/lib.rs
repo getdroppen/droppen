@@ -399,6 +399,12 @@ pub struct PluginStatus {
     pub aliases: Vec<String>,
     /// What it says it uses: declared, not enforced (see [`Permission`]).
     pub permissions: Vec<Permission>,
+    /// The instance's decision to let droppen.app show this plugin: off
+    /// until switched on for this instance. It takes effect only while the
+    /// plugin is [`Self::enabled`], and a bridged (`cloud:`) caller can never
+    /// change it.
+    #[serde(default)]
+    pub cloud: bool,
 }
 
 /// One thing a plugin's host wants the user to see.
@@ -587,6 +593,7 @@ mod tests {
             entry: Some("/plugins/key/tasks/0.1.0-0123456789ab/dist/index.js".into()),
             aliases: vec!["/tasks".into()],
             permissions: vec![Permission::Storage],
+            cloud: false,
         };
         let value = serde_json::to_value(&status).unwrap();
         assert_eq!(value["version"], json!("0.1.0"));
@@ -596,5 +603,10 @@ mod tests {
         assert_eq!(value["permissions"], json!(["storage"]));
         assert_eq!(value["build"], json!("0.1.0-0123456789ab"));
         assert_eq!(value["switchedOn"], json!(true));
+        assert_eq!(value["cloud"], json!(false));
+        let mut older = value.clone();
+        older.as_object_mut().unwrap().remove("cloud");
+        let older: PluginStatus = serde_json::from_value(older).unwrap();
+        assert!(!older.cloud, "a host that predates the switch shows nothing on droppen.app");
     }
 }

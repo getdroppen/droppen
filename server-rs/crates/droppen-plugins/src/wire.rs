@@ -93,6 +93,10 @@ pub struct PluginStatus {
     pub aliases: Vec<String>,
     /// What it asks the host for (`storage`, `sessions:read`, `notify`).
     pub permissions: Vec<String>,
+    /// The instance's decision to let droppen.app show it: off unless
+    /// switched on here. It takes effect only while the plugin is `enabled`,
+    /// and a bridged (`cloud:`) caller can never change it.
+    pub cloud: bool,
 }
 
 /// One thing a plugin's host wants the user to see.
@@ -140,6 +144,7 @@ impl From<sdk::PluginStatus> for PluginStatus {
             entry: status.entry.into(),
             aliases: status.aliases,
             permissions: status.permissions.into_iter().map(|permission| permission.as_str().to_string()).collect(),
+            cloud: status.cloud,
         }
     }
 }
@@ -212,6 +217,13 @@ impl gotcha::Responsible for PluginDeleted {
 pub struct PluginSwitch {
     /// On or off, for this instance.
     pub enabled: bool,
+}
+
+/// The body of `PUT /api/plugins/{id}/cloud`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Schematic)]
+pub struct PluginCloudSwitch {
+    /// Whether droppen.app may show the plugin, for this instance.
+    pub cloud: bool,
 }
 
 /// A stored document.
@@ -445,7 +457,7 @@ mod tests {
             sdk::LocalizedText::Plain("Tasks".into()),
             sdk::LocalizedText::Localized([("en".to_string(), "Tasks".to_string()), ("zh-CN".into(), "待办".into())].into()),
         ] {
-            for (reason, notice) in [(None, None), (Some("off".to_string()), Some("reset".to_string()))] {
+            for (reason, notice, cloud) in [(None, None, false), (Some("off".to_string()), Some("reset".to_string()), true)] {
                 let status = sdk::PluginStatus {
                     id: sdk::PluginId::new("tasks").unwrap(),
                     version: "1.2.3".parse().unwrap(),
@@ -470,6 +482,7 @@ mod tests {
                     entry: Some("/plugins/k/tasks/1.2.3-0123456789ab/dist/index.js".into()),
                     aliases: vec!["/tasks".into()],
                     permissions: vec![sdk::Permission::Storage],
+                    cloud,
                 };
                 same(&status, &PluginStatus::from(status.clone()));
             }

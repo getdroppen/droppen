@@ -67,8 +67,11 @@ pub mod scope {
     /// bumped by every create, delete and reorder (see the server's `screens`).
     pub const SCREENS: &str = "screens";
     /// Which plugins this instance turned on or off, one row per plugin id:
-    /// `{"enabled", "by", "at", "reason"}` (see the server's `plugins`). Instance
-    /// state only — never the machine-wide database two instances share.
+    /// `{"enabled", "by", "at", "reason"}` (see the server's `plugins`); which
+    /// of them it lets droppen.app show, one `cloud:<id>` row each:
+    /// `{"shown", "by", "at", "reason"}`; and the code's capability key,
+    /// `assetKey`. Instance state only — never the machine-wide database two
+    /// instances share.
     pub const PLUGINS: &str = "plugins";
     /// The first-run guide's own state (the server's `setup`): `progress` (where
     /// the guide stands), `pathOverlay` (the directories the user adopted for

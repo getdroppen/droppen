@@ -1,12 +1,12 @@
-//! `remote-hand-server plugin list|install|uninstall|enable|disable|export|import|verify|purge`.
+//! `remote-hand-server plugin list|install|uninstall|enable|disable|cloud|export|import|verify|purge`.
 //!
 //! Safe while a server runs, for the reason `user` is: an install swaps a
 //! package directory in place, the switches live in the instance's `state.db`
 //! and each store is its own SQLite file, so SQLite arbitrates between this
 //! process and the server, and no instance lock is taken. A running server
-//! reads the switch on every request and the package list on every status, so
-//! `install`, `uninstall`, `enable` and `disable` take effect at once; it is
-//! not told about documents this writes until a client next reads them.
+//! reads the switches on every request and the package list on every status, so
+//! `install`, `uninstall`, `enable`, `disable` and `cloud` take effect at once;
+//! it is not told about documents this writes until a client next reads them.
 //!
 //! The instance is chosen exactly as `user` chooses it — `--instance`, else
 //! `$APP_INSTANCE`, else `default`, and a defaulted instance that does not
@@ -14,6 +14,7 @@
 
 use std::path::Path;
 
+use clap::builder::TypedValueParser;
 use clap::{Args, Subcommand};
 use droppen_plugin_sdk::{valid_id, PluginId, StoreExport, EXPORT_FORMAT};
 
@@ -28,18 +29,22 @@ USAGE:
     remote-hand-server plugin uninstall <id>                    [--instance <name>]
     remote-hand-server plugin enable  <id>                      [--instance <name>]
     remote-hand-server plugin disable <id>                      [--instance <name>]
+    remote-hand-server plugin cloud   <id> on|off               [--instance <name>]
     remote-hand-server plugin export  <id> [--out <file>]       [--instance <name>]
     remote-hand-server plugin import  <id> <file> [--replace]   [--instance <name>]
     remote-hand-server plugin verify  <id>                      [--instance <name>]
     remote-hand-server plugin purge   <id> --yes                [--instance <name>]
 
 `list` shows the plugins installed in the instance, the build each was
-installed at, and whether each is on. `install` unpacks and checks a package
-(the tarball `pnpm pack` writes) and switches it on, replacing an installed
-plugin of the same id atomically; `uninstall` removes the code and keeps the
-plugin's documents and its switch. `enable`/`disable` switch one for the
-instance (the configuration's [plugins] enable/disable, or
-APP_PLUGINS__ENABLE/DISABLE, win over both). `export` writes the plugin's
+installed at, whether each is on and whether droppen.app may show it.
+`install` unpacks and checks a package (the tarball `pnpm pack` writes) and
+switches it on, replacing an installed plugin of the same id atomically;
+`uninstall` removes the code and keeps the plugin's documents and its
+switches. `enable`/`disable` switch one for the instance (the configuration's
+[plugins] enable/disable, or APP_PLUGINS__ENABLE/DISABLE, win over both).
+`cloud` lets droppen.app show one for the instance (`on`) or stops it (`off`):
+off until switched on, never pinned by the configuration, and in effect only
+while the plugin is on. `export` writes the plugin's
 documents as JSON (to stdout without --out); `import` restores such a file,
 refusing over existing documents unless --replace, which keeps the replaced
 values in their history. `verify` checks a plugin's store and its documents.
@@ -82,7 +87,7 @@ pub enum PluginCommand {
         #[arg(allow_hyphen_values = true)]
         file: String,
     },
-    /// Remove a plugin's code, keeping its documents and switch.
+    /// Remove a plugin's code, keeping its documents and switches.
     Uninstall {
         /// The plugin id.
         #[arg(value_parser = plugin_id)]
@@ -99,6 +104,15 @@ pub enum PluginCommand {
         /// The plugin id.
         #[arg(value_parser = plugin_id)]
         id: String,
+    },
+    /// Let droppen.app show a plugin (`on`), or stop it (`off`).
+    Cloud {
+        /// The plugin id.
+        #[arg(value_parser = plugin_id)]
+        id: String,
+        /// `on` or `off`.
+        #[arg(value_name = "on|off", action = clap::ArgAction::Set, value_parser = clap::builder::PossibleValuesParser::new(["on", "off"]).map(|word| word == "on"))]
+        shown: bool,
     },
     /// Write a plugin's documents as JSON (stdout without `--out`).
     Export {
@@ -187,11 +201,15 @@ impl PluginCommand {
                 for status in statuses {
                     let state = if status.enabled { "on" } else { "off" };
                     let pinned = if status.forced { ", pinned by the configuration" } else { "" };
+                    let cloud = if status.cloud { "on" } else { "off" };
                     let stored = match plugins.existing_store(status.id.as_str()) {
                         Some(store) => format!(", {} documents", store.count().map_err(|e| e.to_string())?),
                         None => String::new(),
                     };
-                    println!("  {} {} (build {}) — {state}{pinned}{stored}", status.id, status.version, status.build);
+                    println!(
+                        "  {} {} (build {}) — {state}{pinned}, droppen.app {cloud}{stored}",
+                        status.id, status.version, status.build
+                    );
                     if let Some(reason) = status.reason {
                         println!("      {reason}");
                     }
@@ -213,10 +231,10 @@ impl PluginCommand {
             }
             PluginCommand::Uninstall { id } => {
                 plugins.uninstall(&id).map_err(refusal)?;
-                println!("uninstalled {id} on instance {instance}; its documents and switch are kept");
+                println!("uninstalled {id} on instance {instance}; its documents and switches are kept");
                 Ok(())
             }
-            PluginCommand::Enable { id } | PluginCommand::Disable { id } if plugins.manifest(&id).is_none() => {
+            PluginCommand::Enable { id } | PluginCommand::Disable { id } | PluginCommand::Cloud { id, .. } if plugins.manifest(&id).is_none() => {
                 Err(format!("this instance has no plugin {id:?} installed"))
             }
             PluginCommand::Enable { id } => {
@@ -233,6 +251,19 @@ impl PluginCommand {
             PluginCommand::Disable { id } => {
                 plugins.set_enabled(&id, false, None, DecisionReason::Cli).map_err(refusal)?;
                 println!("{id} is off on instance {instance}; its data is kept ({})", plugins.dir(&id).display());
+                Ok(())
+            }
+            PluginCommand::Cloud { id, shown } => {
+                let status = plugins.set_cloud(&id, shown, None, DecisionReason::Cli).map_err(refusal)?;
+                if !shown {
+                    println!("droppen.app does not show {id} for instance {instance}");
+                    return Ok(());
+                }
+                println!("droppen.app may show {id} for instance {instance}");
+                if !status.enabled {
+                    let hint = format!("  {id} is off on this instance, so it shows nothing until it is on: remote-hand-server plugin enable {id} --instance {instance}");
+                    println!("{}", droppen_base::program::Name::invoked().rewrite(&hint));
+                }
                 Ok(())
             }
             PluginCommand::Export { id, out } => {
@@ -350,6 +381,29 @@ mod tests {
     }
 
     #[test]
+    fn cloud_sets_the_droppen_app_switch_even_on_a_pinned_plugin() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = PluginSettings {
+            enable: Some("notes".into()),
+            disable: None,
+        };
+        let plugins = installed_host(dir.path(), &["tasks", "notes"], config, None);
+        let paths = Paths::new(dir.path().to_path_buf());
+        let cloud = |id: &str, shown| PluginCommand::Cloud { id: id.into(), shown };
+        cloud("tasks", true).execute(&plugins, &paths).unwrap();
+        let decision = plugins.cloud_decision("tasks").unwrap();
+        assert_eq!((decision.shown, decision.by, decision.reason), (true, None, DecisionReason::Cli));
+        assert!(plugins.status_of("tasks").unwrap().cloud);
+        PluginCommand::List.execute(&plugins, &paths).unwrap();
+        cloud("tasks", false).execute(&plugins, &paths).unwrap();
+        assert!(!plugins.status_of("tasks").unwrap().cloud);
+        cloud("notes", true).execute(&plugins, &paths).expect("the configuration pins on or off, not this");
+        assert!(plugins.status_of("notes").unwrap().cloud);
+        assert!(cloud("clock", true).execute(&plugins, &paths).unwrap_err().contains("no plugin"));
+        assert!(plugins.cloud_decision("clock").is_none());
+    }
+
+    #[test]
     fn purge_wants_the_plugin_off_and_moves_its_data_aside() {
         let dir = tempfile::tempdir().unwrap();
         let plugins = installed_host(dir.path(), &["notes"], PluginSettings::default(), None);
@@ -369,9 +423,11 @@ mod tests {
             .execute(&plugins, &paths)
             .unwrap_err()
             .contains("turn it off"));
+        PluginCommand::Cloud { id: "notes".into(), shown: true }.execute(&plugins, &paths).unwrap();
         PluginCommand::Disable { id: "notes".into() }.execute(&plugins, &paths).unwrap();
         PluginCommand::Purge { id: "notes".into(), yes: 1 }.execute(&plugins, &paths).unwrap();
         assert!(!plugins.dir("notes").exists());
+        assert!(plugins.status_of("notes").unwrap().cloud, "a purge moves the documents, not the switches");
         let moved: Vec<String> = std::fs::read_dir(plugins.instance_dir().join("plugins"))
             .unwrap()
             .filter_map(Result::ok)

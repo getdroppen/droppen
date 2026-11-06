@@ -20,6 +20,7 @@ the instance's normal authentication. JSON is camelCase. Errors are
 | `POST /api/plugins` | the package's bytes: a gzip'd tar (`application/gzip` or `application/octet-stream`), ≤ 32 MiB | `200 PluginStatus`; `400 invalid_package`; `413 too_large` |
 | `DELETE /api/plugins/{id}` | — | `204`; `404 plugin_not_found` |
 | `PUT /api/plugins/{id}/enabled` | `{ enabled: boolean }` | `200 PluginStatus`; `404 plugin_not_found`; `409 forced_by_config` |
+| `PUT /api/plugins/{id}/cloud` | `{ cloud: boolean }` | `200 PluginStatus`; `404 plugin_not_found` |
 
 ```ts
 interface PluginStatus {
@@ -38,6 +39,7 @@ interface PluginStatus {
                          // compatible; null otherwise
   aliases: string[];     // old top-level paths the host redirects to /p/<id>/
   permissions: string[]; // storage | sessions:read | notify — declared, not enforced
+  cloud: boolean;        // droppen.app may show it (runtime.md §4); off until switched on here
 }
 
 interface PluginNotice {
@@ -169,7 +171,7 @@ meta(key TEXT PRIMARY KEY, value TEXT)
 ```
 
 The host never interprets a value. Uninstalling a plugin keeps its directory
-and its switch; disabling it keeps its directory.
+and its switches; disabling it keeps its directory.
 `remote-hand-server plugin purge <id> --yes` moves it aside to
 `plugins/<id>.purged-<time>/` rather than deleting it.
 
@@ -181,6 +183,7 @@ remote-hand-server plugin install <file.tgz>       [--instance <name>]
 remote-hand-server plugin uninstall <id>           [--instance <name>]
 remote-hand-server plugin enable  <id>             [--instance <name>]
 remote-hand-server plugin disable <id>             [--instance <name>]
+remote-hand-server plugin cloud   <id> on|off      [--instance <name>]
 remote-hand-server plugin export  <id> [--out <file>]
 remote-hand-server plugin import  <id> <file> [--replace]
 remote-hand-server plugin verify  <id>

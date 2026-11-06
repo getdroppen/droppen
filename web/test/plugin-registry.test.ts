@@ -35,6 +35,7 @@ function status(id: string, overrides: Partial<PluginStatus> = {}): PluginStatus
     entry: `/plugins/${KEY}/${id}/${build}/dist/index.js`,
     aliases: [],
     permissions: ["storage"],
+    cloud: false,
     ...overrides,
   };
 }

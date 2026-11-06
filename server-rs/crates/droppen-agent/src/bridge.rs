@@ -986,6 +986,7 @@ mod tests {
             ("GET", "/api/plugins"),
             ("GET", "/api/plugins/tasks/enabled"),
             ("PUT", "/api/plugins/tasks/enabled"),
+            ("PUT", "/api/plugins/tasks/cloud"),
             ("GET", "/api/plugins/tasks/docs"),
             ("GET", "/api/plugins/tasks/docs/state"),
             ("PUT", "/api/plugins/tasks/docs/state"),
