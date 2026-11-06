@@ -232,6 +232,39 @@ impl Schematic for AnyValue {
     }
 }
 
+/// Raw bytes, as the contract documents a file download.
+///
+/// A handler that streams a `Response` has no `Schematic` of its own, so it
+/// declares that response with `skip_response` and names this type as the body.
+/// gotcha 0.5's own `Binary` emits `contentMediaType`, but the contract spells
+/// the schema `{"type": "string", "format": "binary"}`.
+pub struct BinaryBody;
+
+impl Schematic for BinaryBody {
+    fn name() -> &'static str {
+        "BinaryBody"
+    }
+
+    fn required() -> bool {
+        true
+    }
+
+    fn type_() -> &'static str {
+        "string"
+    }
+
+    fn generate_schema() -> EnhancedSchema {
+        EnhancedSchema {
+            schema: Schema {
+                _type: Some("string".into()),
+                format: Some("binary".into()),
+                ..Default::default()
+            },
+            required: true,
+        }
+    }
+}
+
 /// Builds a schema plus every named component it pulled in, ready to be merged
 /// into `components/schemas`.
 type SchemaFactory = fn() -> (Schema, BTreeMap<String, Schema>);
