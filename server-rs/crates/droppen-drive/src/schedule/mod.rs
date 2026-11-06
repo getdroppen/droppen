@@ -83,7 +83,7 @@ use droppen_instance::db::Db;
 use droppen_http::error::ApiError;
 use droppen_http::extract::{ApiJson, ApiPath};
 use droppen_http::SendResult;
-use droppen_http::openapi_ext::{ExtraResponses, Nullable, Optional};
+use droppen_http::openapi_ext::{Nullable, Optional};
 use droppen_instance::paths::Paths;
 use droppen_sessions::Source;
 use droppen_base::time::iso8601;
@@ -591,7 +591,7 @@ pub struct ScheduleState {
 droppen_http::substate!(ScheduleState);
 
 /// Every scheduled task this instance runs.
-#[api(id = "list_scheduled_tasks", group = "schedule", summary = "List scheduled tasks")]
+#[api(id = "list_scheduled_tasks", group = "schedule", summary = "List scheduled tasks", responses(200 = "Every scheduled task this instance runs"))]
 pub async fn list_scheduled_tasks(State(state): State<ScheduleState>) -> Json<ScheduledTaskList> {
     Json(ScheduledTaskList {
         tasks: read_tasks(state.paths.as_ref()).await,
@@ -599,7 +599,24 @@ pub async fn list_scheduled_tasks(State(state): State<ScheduleState>) -> Json<Sc
 }
 
 /// Create a scheduled task.
-#[api(id = "create_scheduled_task", group = "schedule", summary = "Create a scheduled task")]
+//
+// The `400` is documented rather than left to `default` for a reason of this
+// feature's own: the flag checks answer with the CLI's actual effort ladder —
+// *"unknown claude effort: max (expected one of low, medium, high)"* — and that
+// sentence is the entire payoff of checking at save time instead of at three in
+// the morning. An undocumented status is typed away by `openapi-typescript`, so
+// the form would be left with nothing to show but its own guess at what went
+// wrong.
+#[api(
+    id = "create_scheduled_task",
+    group = "schedule",
+    summary = "Create a scheduled task",
+    responses(200 = "Scheduled task created"),
+    errors(
+        400 = "Unusable schedule, working directory, prompt, or a flag value this CLI does not take",
+        409 = "This instance already holds the maximum number of scheduled tasks"
+    )
+)]
 pub async fn create_scheduled_task(
     State(state): State<ScheduleState>,
     ApiJson(body): ApiJson<ScheduledTaskCreate>,
@@ -653,7 +670,13 @@ pub async fn create_scheduled_task(
 }
 
 /// Change a scheduled task. Absent fields are left alone.
-#[api(id = "update_scheduled_task", group = "schedule", summary = "Update a scheduled task")]
+#[api(
+    id = "update_scheduled_task",
+    group = "schedule",
+    summary = "Update a scheduled task",
+    responses(200 = "Scheduled task updated"),
+    errors(400 = "Unusable schedule, working directory, prompt, or a flag value this CLI does not take", 404 = "Scheduled task not found")
+)]
 pub async fn update_scheduled_task(
     State(state): State<ScheduleState>,
     ApiPath(id): ApiPath<String>,
@@ -738,7 +761,13 @@ pub async fn update_scheduled_task(
 }
 
 /// Delete a scheduled task. Sessions it already started are left alone.
-#[api(id = "delete_scheduled_task", group = "schedule", summary = "Delete a scheduled task")]
+#[api(
+    id = "delete_scheduled_task",
+    group = "schedule",
+    summary = "Delete a scheduled task",
+    responses(200 = "Scheduled task deleted"),
+    errors(404 = "Scheduled task not found")
+)]
 pub async fn delete_scheduled_task(State(state): State<ScheduleState>, ApiPath(id): ApiPath<String>) -> Result<Json<SendResult>, ApiError> {
     let removed = update(state.paths.as_ref(), |tasks| {
         let before = tasks.len();
@@ -765,47 +794,6 @@ impl ScheduleState {
             .patch("/api/scheduled-tasks/{id}", update_scheduled_task)
             .delete("/api/scheduled-tasks/{id}", delete_scheduled_task)
     }
-}
-
-/// Everything gotcha cannot express about those routes.
-///
-/// `POST` re-states its `200` through [`ExtraResponses::body`] rather than
-/// [`ExtraResponses::describe`], because that is the only way to drop the
-/// `default` response gotcha derives from the handler's `Result`; the other two
-/// fallible routes lose theirs to their documented `404`.
-///
-/// The `400`s are documented rather than left to `default` for a reason that is
-/// this feature's own. The flag checks above answer with the CLI's actual effort
-/// ladder — *"unknown claude effort: max (expected one of low, medium, high)"* —
-/// and that sentence is the entire payoff of checking at save time instead of at
-/// three in the morning. An undocumented status is typed away by
-/// `openapi-typescript`, so the form would be left with nothing to show but its
-/// own guess at what went wrong.
-pub fn describe(reg: &mut ExtraResponses) {
-    reg.describe("GET", "/api/scheduled-tasks", 200, "Every scheduled task this instance runs")
-        .body::<ScheduledTask>("POST", "/api/scheduled-tasks", 200, "Scheduled task created")
-        .error(
-            "POST",
-            "/api/scheduled-tasks",
-            400,
-            "Unusable schedule, working directory, prompt, or a flag value this CLI does not take",
-        )
-        .error(
-            "POST",
-            "/api/scheduled-tasks",
-            409,
-            "This instance already holds the maximum number of scheduled tasks",
-        )
-        .describe("PATCH", "/api/scheduled-tasks/{id}", 200, "Scheduled task updated")
-        .error(
-            "PATCH",
-            "/api/scheduled-tasks/{id}",
-            400,
-            "Unusable schedule, working directory, prompt, or a flag value this CLI does not take",
-        )
-        .error("PATCH", "/api/scheduled-tasks/{id}", 404, "Scheduled task not found")
-        .describe("DELETE", "/api/scheduled-tasks/{id}", 200, "Scheduled task deleted")
-        .error("DELETE", "/api/scheduled-tasks/{id}", 404, "Scheduled task not found");
 }
 
 #[cfg(test)]
