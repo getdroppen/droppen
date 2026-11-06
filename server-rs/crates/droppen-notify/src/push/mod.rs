@@ -69,15 +69,14 @@ use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 use gotcha::axum::extract::FromRef;
-use gotcha::{api, GotchaRouter, Json, Schematic, State};
+use gotcha::{api, GotchaRouter, Json, Schematic, State, WithStatus};
 use serde::{Deserialize, Serialize};
 
 use droppen_sessions::attention;
-use droppen_http::created::Created;
 use droppen_http::error::ApiError;
 use droppen_http::extract::ApiJson;
 use droppen_http::SendResult;
-use droppen_http::openapi_ext::{ExtraResponses, Optional};
+use droppen_http::openapi_ext::Optional;
 use droppen_instance::paths::Paths;
 use droppen_sessions::{DriverStates, InjectionRunState, ResidentInfo, Source, TranscriptSources};
 
@@ -182,7 +181,13 @@ pub struct PushState {
 droppen_http::substate!(PushState);
 
 /// The public key browsers subscribe against, minting the keypair on first ask.
-#[api(id = "push_vapid_key", group = "push", summary = "Web Push application server key")]
+#[api(
+    id = "push_vapid_key",
+    group = "push",
+    summary = "Web Push application server key",
+    responses(200 = "The application server key browsers subscribe with"),
+    drop_default
+)]
 pub async fn vapid_key(State(state): State<PushState>) -> Result<Json<VapidKey>, ApiError> {
     let public_key = store::vapid_public(state.paths.as_ref())
         .await
@@ -191,8 +196,14 @@ pub async fn vapid_key(State(state): State<PushState>) -> Result<Json<VapidKey>,
 }
 
 /// Register a browser for notifications, replacing any earlier one on the same endpoint.
-#[api(id = "push_subscribe", group = "push", summary = "Register a push subscription")]
-pub async fn subscribe(State(state): State<PushState>, ApiJson(body): ApiJson<SubscribeBody>) -> Result<Created<SendResult>, ApiError> {
+#[api(
+    id = "push_subscribe",
+    group = "push",
+    summary = "Register a push subscription",
+    responses(201 = "The subscription is stored"),
+    errors(400 = "Malformed endpoint or keys")
+)]
+pub async fn subscribe(State(state): State<PushState>, ApiJson(body): ApiJson<SubscribeBody>) -> Result<WithStatus<Json<SendResult>, 201>, ApiError> {
     // Refused here rather than at send time: a malformed row would otherwise sit
     // in the file failing every notification, and the browser that sent it would
     // never find out.
@@ -220,11 +231,17 @@ pub async fn subscribe(State(state): State<PushState>, ApiJson(body): ApiJson<Su
     )
     .await
     .map_err(|error| ApiError::internal(format!("failed to store the subscription: {error}")))?;
-    Ok(Created(SendResult { accepted: true }))
+    Ok(WithStatus::new(Json(SendResult { accepted: true })))
 }
 
 /// Forget a subscription. Idempotent: unsubscribing twice is not an error.
-#[api(id = "push_unsubscribe", group = "push", summary = "Remove a push subscription")]
+#[api(
+    id = "push_unsubscribe",
+    group = "push",
+    summary = "Remove a push subscription",
+    responses(200 = "The subscription is forgotten"),
+    drop_default
+)]
 pub async fn unsubscribe(State(state): State<PushState>, ApiJson(body): ApiJson<UnsubscribeBody>) -> Result<Json<SendResult>, ApiError> {
     store::remove(state.paths.as_ref(), &body.endpoint)
         .await
@@ -244,18 +261,6 @@ impl PushState {
             .post("/api/push/subscriptions", subscribe)
             .delete("/api/push/subscriptions", unsubscribe)
     }
-}
-
-/// Everything gotcha cannot express about those routes.
-///
-/// `POST` is a `201` the same way `POST /api/accounts` is: gotcha derives every
-/// success as a `200` (`gotcha_core-0.4.1/src/responsible.rs:25`), so the entry
-/// is restated under the status [`Created`] actually sends.
-pub fn describe(reg: &mut ExtraResponses) {
-    reg.describe_final("GET", "/api/push/vapid", 200, "The application server key browsers subscribe with")
-        .restatus("POST", "/api/push/subscriptions", 200, 201, "The subscription is stored")
-        .error("POST", "/api/push/subscriptions", 400, "Malformed endpoint or keys")
-        .describe_final("DELETE", "/api/push/subscriptions", 200, "The subscription is forgotten");
 }
 
 /* ── the send path ───────────────────────────────────────────────────── */

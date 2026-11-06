@@ -64,7 +64,7 @@ use serde::{Deserialize, Serialize};
 use droppen_http::error::ApiError;
 use droppen_http::extract::ApiJson;
 use droppen_http::SendResult;
-use droppen_http::openapi_ext::{ExtraResponses, Optional};
+use droppen_http::openapi_ext::Optional;
 use droppen_instance::paths::Paths;
 use droppen_sessions::Source;
 
@@ -367,13 +367,24 @@ pub struct NotifyState {
 droppen_http::substate!(NotifyState);
 
 /// Where the stored configuration currently points.
-#[api(id = "notify_config", group = "notify", summary = "Read the notification channel")]
+#[api(
+    id = "notify_config",
+    group = "notify",
+    summary = "Read the notification channel",
+    responses(200 = "Where notifications go, with the device key masked")
+)]
 pub async fn notify_config(State(state): State<NotifyState>) -> Json<NotifyConfigInfo> {
     Json(store::read(state.paths.as_ref()).await.info())
 }
 
 /// Change it. Every field is optional; an empty string clears one.
-#[api(id = "update_notify_config", group = "notify", summary = "Configure the notification channel")]
+#[api(
+    id = "update_notify_config",
+    group = "notify",
+    summary = "Configure the notification channel",
+    responses(200 = "The updated channel, with the device key masked"),
+    errors(400 = "The endpoint is not a Bark device key or https URL")
+)]
 pub async fn update_notify_config(
     State(state): State<NotifyState>,
     ApiJson(body): ApiJson<NotifyConfigUpdate>,
@@ -416,7 +427,13 @@ pub async fn update_notify_config(
 ///
 /// The only way to find out whether a device key is right is to use it, and
 /// finding out by waiting for an agent to be blocked is not finding out.
-#[api(id = "notify_test", group = "notify", summary = "Send a test notification")]
+#[api(
+    id = "notify_test",
+    group = "notify",
+    summary = "Send a test notification",
+    responses(200 = "A test notification was accepted by the channel"),
+    errors(400 = "No endpoint is configured", 502 = "The channel refused it")
+)]
 pub async fn notify_test(State(state): State<NotifyState>) -> Result<Json<SendResult>, ApiError> {
     let stored = store::read(state.paths.as_ref()).await;
     if stored.endpoint.is_empty() {
@@ -437,7 +454,18 @@ pub async fn notify_test(State(state): State<NotifyState>) -> Result<Json<SendRe
 }
 
 /// The route an agent's `rh-notify` calls.
-#[api(id = "notify", group = "notify", summary = "Send a notification from a session")]
+#[api(
+    id = "notify",
+    group = "notify",
+    summary = "Send a notification from a session",
+    responses(200 = "The notification was accepted by the channel"),
+    errors(
+        400 = "Notifications are off, or the title is empty",
+        401 = "No valid session token",
+        429 = "This session has nudged too often",
+        502 = "The channel refused it"
+    )
+)]
 pub async fn notify(
     State(state): State<NotifyState>,
     // `#[api(skip)]` for [`droppen_auth::Identity`]'s reason: the caller is
@@ -511,21 +539,6 @@ impl NotifyState {
             .post("/api/notify/test", notify_test)
             .post(NOTIFY_PATH, notify)
     }
-}
-
-/// Everything gotcha cannot express about those routes.
-pub fn describe(reg: &mut ExtraResponses) {
-    reg.describe_final("GET", "/api/notify/config", 200, "Where notifications go, with the device key masked")
-        .describe("PUT", "/api/notify/config", 200, "The updated channel, with the device key masked")
-        .error("PUT", "/api/notify/config", 400, "The endpoint is not a Bark device key or https URL")
-        .describe("POST", "/api/notify/test", 200, "A test notification was accepted by the channel")
-        .error("POST", "/api/notify/test", 400, "No endpoint is configured")
-        .error("POST", "/api/notify/test", 502, "The channel refused it")
-        .describe("POST", NOTIFY_PATH, 200, "The notification was accepted by the channel")
-        .error("POST", NOTIFY_PATH, 400, "Notifications are off, or the title is empty")
-        .error("POST", NOTIFY_PATH, 401, "No valid session token")
-        .error("POST", NOTIFY_PATH, 429, "This session has nudged too often")
-        .error("POST", NOTIFY_PATH, 502, "The channel refused it");
 }
 
 #[cfg(test)]
