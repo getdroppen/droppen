@@ -12,7 +12,8 @@ import { type Availability, AVAILABILITY, DOWNLOAD_PATH } from "./get-droppen";
 import { HeroGet } from "./hero-get";
 import { ArrowLink, FaqAccordion, PublicLayout, Section, SOURCE_URL, usePageMeta } from "./page-kit";
 import { PLAN_NUMBERS, PRO_PRICE, gb, yearlySaving } from "./pricing-plans";
-import { AppWindow, Phone, ProductShot } from "./product-tour";
+import { AgentBurst } from "./agent-burst";
+import { ProductTour } from "./product-tour";
 import { useLatestRelease } from "./release-files";
 import { publicLink, PRICING_PATH, SECURITY_PATH, SIGN_UP_PATH, WAITLIST_HREF } from "./route";
 import { gridPaper } from "./figures/paper";
@@ -32,7 +33,7 @@ const TRUST = ["Free plan", "End-to-end encrypted", "Open-source client"] as con
 function TrustLines({ className }: { className?: string }) {
   const { t } = useTranslation();
   return (
-    <div aria-label={t("Product facts")} className={cn("flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-xs text-muted", className)}>
+    <div role="group" aria-label={t("Product facts")} className={cn("flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-xs text-muted", className)}>
       {TRUST.map((line) => (
         <span key={line} className="inline-flex items-center gap-2">
           <i aria-hidden="true" className="size-1 bg-border-strong" />
@@ -77,127 +78,59 @@ function Hero({
 }) {
   const { t } = useTranslation();
   return (
-    <div className="mx-auto flex w-full max-w-[46rem] flex-col items-center px-6 pt-16 pb-10 text-center max-lg:pt-12 max-md:px-4 max-md:pt-10 max-md:pb-8">
-      <h1 className="mb-6 max-w-[14em] text-5xl leading-display font-normal tracking-tighter text-balance text-fg cjk-wrap md:cjk-keep max-md:text-4xl">
-        {t("Your computer's AI, from your phone.")}
-      </h1>
-      <p className="max-w-[36em] leading-6 text-pretty text-muted [overflow-wrap:anywhere] cjk-wrap md:cjk-keep">
-        {t("Claude Code and Codex keep running on your own computers. From your phone or another device, check progress, answer questions, send instructions and open a terminal.")}
-      </p>
-      {/* The way onto this device, and the account's way in (signed in: back into the app). */}
-      <HeroGet offer={offer} signedIn={signedIn} availability={availability} release={release} cpu={cpu} signup={signup} />
-      {/* By invite or closed, the way to the waitlist. Open sign-up says nothing of plans here: the first screen sells the product, not its price (the header and the footer link the plans). */}
-      {!signedIn &&
-        (signup === "invite" ? (
-          <p className="mt-3 font-mono text-xs text-muted">
-            {t("Invite-only for now: sign-up needs an invite code.")}{" "}
-            <a {...publicLink(WAITLIST_HREF)} data-testid="hero-waitlist" className="whitespace-nowrap text-fg underline underline-offset-4">
-              {t("No code yet? Join the waitlist")}
-            </a>
-          </p>
-        ) : signup === "closed" ? (
-          <p className="mt-3 font-mono text-xs text-muted">
-            {t("Sign-up is closed for now.")}{" "}
-            <a {...publicLink(WAITLIST_HREF)} data-testid="hero-waitlist" className="whitespace-nowrap text-fg underline underline-offset-4">
-              {t("Join the waitlist")}
-            </a>
-          </p>
-        ) : null)}
-      {(offer === "all" || offer === "windows" || offer === "phone") && (
-        <p className="mt-4 font-mono text-xs leading-5 text-muted">{t("macOS 13 or later · Linux · Windows in the browser · iOS and Android")}</p>
-      )}
-      <TrustLines className="mt-4" />
-    </div>
-  );
-}
-
-function HeroStage() {
-  const { t } = useTranslation();
-  const phone = t("Droppen on a phone: what needs you, and a session's question");
-  return (
-    <div className="relative mt-10 pb-2 max-lg:mt-8">
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-0"
-        style={{
-          ...gridPaper(),
-          maskImage: "radial-gradient(75% 80% at 50% 45%, #000 35%, transparent 100%)",
-          WebkitMaskImage: "radial-gradient(75% 80% at 50% 45%, #000 35%, transparent 100%)",
-          opacity: 0.75,
-        }}
-      />
-      {/* The story in one frame, not five device thumbnails: the AI is working in a terminal on
-          the computer (cut by the edge, it is context), and the session asks its question on the
-          phone in front. The screens are ones the tour below does not show, so the two do not repeat. */}
-      <div className="relative mx-auto hidden w-full max-w-[1120px] px-8 lg:block">
-        <div className="relative aspect-[1200/680] w-full">
-          <div className="absolute top-[22%] -left-[9%] w-[56%]">
-            <Laptop>
-              <AppWindow>
-                <ProductShot shot="app-terminal" alt="" eager width={2560} height={1600} />
-              </AppWindow>
-            </Laptop>
-          </div>
-          <div className="absolute top-0 right-[26%] z-10 w-[24%]">
-            <Phone>
-              <ProductShot shot="phone-session" alt={phone} width={640} height={1386} />
-            </Phone>
+    <div className="relative mx-auto w-full max-w-[1200px] px-6 pt-16 max-lg:pt-12 max-md:px-4 max-md:pt-10">
+      <div className="mx-auto flex w-full max-w-[46rem] flex-col items-center text-center">
+        <h1 className="mb-6 max-w-[14em] text-5xl leading-display font-normal tracking-tighter text-balance text-fg cjk-wrap md:cjk-keep max-md:text-4xl">
+          {t("Your computer's AI, from your phone.")}
+        </h1>
+        <p className="max-w-[36em] leading-6 text-pretty text-muted [overflow-wrap:anywhere] cjk-wrap md:cjk-keep">
+          {t("Claude Code and Codex keep running on your own computers. From your phone or another device, check progress, answer questions, send instructions and open a terminal.")}
+        </p>
+      </div>
+      {/* Where the screens used to be: the hero's action, with the marks of the agents it lists
+          thrown around it like confetti when the page opens. The paper under it is the same
+          drafting sheet the page's figures are drawn on. */}
+      <div className="relative mt-2 max-md:mt-0">
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 opacity-70 max-md:opacity-40 dark:opacity-50"
+          style={{
+            ...gridPaper(),
+            // The paper is a soft halo around the action: clear under its words, faded at the edges.
+            maskImage: "radial-gradient(ellipse 50% 50% at 50% 50%, transparent 45%, #000 62%, transparent 100%)",
+            WebkitMaskImage: "radial-gradient(ellipse 50% 50% at 50% 50%, transparent 45%, #000 62%, transparent 100%)",
+          }}
+        />
+        <AgentBurst />
+        <div className="relative z-10 flex min-h-[24rem] w-full items-center justify-center px-6 py-10 max-md:min-h-[21rem] max-md:px-0 max-md:py-8">
+          <div className="flex w-full max-w-[46rem] flex-col items-center text-center">
+            {/* The way onto this device, and the account's way in (signed in: back into the app). */}
+            <HeroGet offer={offer} signedIn={signedIn} availability={availability} release={release} cpu={cpu} signup={signup} />
+            {/* By invite or closed, the way to the waitlist. Open sign-up says nothing of plans here: the first screen sells the product, not its price (the header and the footer link the plans). */}
+            {!signedIn &&
+              (signup === "invite" ? (
+                <p className="mt-3 font-mono text-xs text-muted">
+                  {t("Invite-only for now: sign-up needs an invite code.")}{" "}
+                  <a {...publicLink(WAITLIST_HREF)} data-testid="hero-waitlist" className="whitespace-nowrap text-fg underline underline-offset-4">
+                    {t("No code yet? Join the waitlist")}
+                  </a>
+                </p>
+              ) : signup === "closed" ? (
+                <p className="mt-3 font-mono text-xs text-muted">
+                  {t("Sign-up is closed for now.")}{" "}
+                  <a {...publicLink(WAITLIST_HREF)} data-testid="hero-waitlist" className="whitespace-nowrap text-fg underline underline-offset-4">
+                    {t("Join the waitlist")}
+                  </a>
+                </p>
+              ) : null)}
+            {(offer === "all" || offer === "windows" || offer === "phone") && (
+              <p className="mt-4 font-mono text-xs leading-5 text-muted">{t("macOS 13 or later · Linux · Windows in the browser · iOS and Android")}</p>
+            )}
+            <TrustLines className="mt-4" />
           </div>
         </div>
       </div>
-      <div className="relative flex justify-center px-6 lg:hidden">
-        <div className="w-[264px] max-w-full">
-          <Phone>
-            <ProductShot shot="phone-session" alt={phone} eager width={640} height={1386} />
-          </Phone>
-        </div>
-      </div>
     </div>
-  );
-}
-
-function Laptop({ children }: { children: ReactNode }) {
-  return (
-    <div className="relative">
-      <div className="overflow-hidden rounded-[10px] border-[6px] border-raised bg-raised shadow-[0_30px_80px_-44px_rgb(15_18_22/0.38)]">{children}</div>
-      <div className="mx-[-6%] h-2.5 rounded-b-[8px] bg-raised" />
-      <div className="mx-auto h-[3px] w-[13%] rounded-b-[3px] bg-border-strong" />
-    </div>
-  );
-}
-
-function Focus({ left, top, width, height, label }: { left: string; top: string; width: string; height: string; label: string }) {
-  return (
-    <span data-signal="waiting" className="pointer-events-none absolute border border-warn" style={{ left, top, width, height }}>
-      <b className="absolute -top-px -left-px bg-warn px-1.5 py-1 font-mono text-xs font-medium whitespace-nowrap text-on-signal">{label}</b>
-    </span>
-  );
-}
-
-function ProductRow({
-  title,
-  body,
-  reverse,
-  figure,
-}: {
-  title: string;
-  body: string;
-  reverse?: boolean;
-  figure: ReactNode;
-}) {
-  return (
-    <article
-      className={cn(
-        "grid items-center gap-8 py-12 last:pb-0 max-lg:gap-6 max-lg:py-10 lg:gap-16",
-        reverse ? "lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]" : "lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]",
-      )}
-    >
-      <div className={cn("min-w-0", reverse && "lg:order-2")}>
-        <h3 className="text-xl leading-7 font-semibold tracking-tight text-balance text-fg cjk-wrap md:cjk-keep max-md:text-lg">{title}</h3>
-        <p className="mt-3 max-w-[44ch] text-sm leading-6 text-pretty text-muted">{body}</p>
-      </div>
-      <figure className={cn("min-w-0", reverse && "lg:order-1")}>{figure}</figure>
-    </article>
   );
 }
 
@@ -205,48 +138,36 @@ function ProductShowcase() {
   const { t } = useTranslation();
   return (
     <Section id="tour" rule={false} seam={false}>
-      <div className={cn(WIDE, "pt-8 pb-16 max-md:pt-4 max-md:pb-12")}>
-        <div className="px-6 max-md:px-4">
-          <ProductRow
-            title={t("All computers, one list.")}
-            body={t("Your home Mac, the Linux machine at work and the server in the rack, on one account. Open it and see which one needs you, instead of signing in to each.")}
-            figure={
-              <AppWindow>
-                <div className="relative">
-                  <ProductShot shot="app-session" alt={t("Droppen on a Mac: a list of Claude Code and Codex sessions, and a session waiting for an answer")} width={2560} height={1600} />
-                  <Focus left="3.6%" top="8.2%" width="17.5%" height="9.6%" label={t("Waiting for you / working")} />
-                </div>
-              </AppWindow>
-            }
-          />
-          <ProductRow
-            reverse
-            title={t("Code on the left, terminal on the right.")}
-            body={t("When you need to watch two tasks, put a session and a terminal side by side. Changes, test output and errors in one window, with nothing copied and pasted.")}
-            figure={
-              <AppWindow>
-                <div className="relative">
-                  <ProductShot shot="app-split" alt={t("Droppen with three panes: two sessions and a terminal")} width={2560} height={1600} />
-                  <Focus left="55.2%" top="60.4%" width="43.6%" height="38%" label={t("Terminal")} />
-                </div>
-              </AppWindow>
-            }
-          />
-          <ProductRow
-            title={t("Leave the computer, take over on your phone.")}
-            body={t("Open {{app}} in your phone's browser and the same sessions are there. The row marked “needs you” comes first; open it and answer.", { app: appHost() })}
-            figure={
-              <div className="flex justify-center py-2">
-                <div className="w-[300px] max-w-full">
-                  <Phone>
-                    <div className="relative">
-                      <ProductShot shot="phone-needs-you" alt={t("Droppen on a phone: what needs you, and a session's question")} width={640} height={1386} />
-                      <Focus left="3%" top="58.6%" width="94%" height="23.5%" label={t("Needs you")} />
-                    </div>
-                  </Phone>
-                </div>
-              </div>
-            }
+      <div className={cn(WIDE, "pb-16 max-md:pb-12")}>
+        <Head title={t("The app, in three screens.")} />
+        <div className="mx-6 max-md:mx-4">
+          <ProductTour
+            screens={[
+              {
+                value: "sessions",
+                title: t("All computers, one list."),
+                body: t("Your home Mac, the Linux machine at work and the server in the rack, on one account. Open it and see which one needs you, instead of signing in to each."),
+                shot: "app-session",
+                alt: t("Droppen on a Mac: a list of Claude Code and Codex sessions, and a session waiting for an answer"),
+                device: "app",
+              },
+              {
+                value: "split",
+                title: t("Code on the left, terminal on the right."),
+                body: t("When you need to watch two tasks, put a session and a terminal side by side. Changes, test output and errors in one window, with nothing copied and pasted."),
+                shot: "app-split",
+                alt: t("Droppen with three panes: two sessions and a terminal"),
+                device: "app",
+              },
+              {
+                value: "phone",
+                title: t("Leave the computer, take over on your phone."),
+                body: t("Open {{app}} in your phone's browser and the same sessions are there. The row marked “needs you” comes first; open it and answer.", { app: appHost() }),
+                shot: "phone-needs-you",
+                alt: t("Droppen on a phone: what needs you, and a session's question"),
+                device: "phone",
+              },
+            ]}
           />
         </div>
       </div>
@@ -561,7 +482,6 @@ export default function LandingPage({
   return (
     <PublicLayout testId="landing" signedIn={signedIn} home>
       <Hero signedIn={signedIn} signup={signup} offer={offer} availability={availability} release={latest} cpu={cpu === undefined ? detectedCpu : cpu} />
-      <HeroStage />
       <ProductShowcase />
       <Features />
       <Network />

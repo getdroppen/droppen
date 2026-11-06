@@ -3,8 +3,10 @@
 //
 // What these pin: the page says what it is, in zh-CN first and in en, zh-TW
 // and ja, with every string on it translated and in its own words (never an
-// app translation of the same key); it shows the product first (the screens,
-// in their frames), the network diagram, and says end-to-end encryption once,
+// app translation of the same key); the hero sells with its action, and the
+// agents' marks are thrown around it as confetti; the product follows (the
+// screens, one at a time in their frames, as a three-screen carousel), then the
+// network diagram, and it says end-to-end encryption once,
 // near the end; it calls only the client open source; it carries exactly one
 // primary action, and its links go to /signup and /signin; its numbers are the
 // measured ones and it makes no absolute claims; and only the bare root is the
@@ -198,6 +200,25 @@ test("the numbers are the measured ones, and nothing claims more than the build 
   assert.ok(words.includes(`the last ${PLAN_NUMBERS.free.retentionDays} days (${PLAN_NUMBERS.pro.retentionDays} on Pro)`));
   for (const claim of [/unhackable/i, /zero risk/i, /\baudited\b/i, /military[- ]grade/i, /100% secure/i]) {
     assert.doesNotMatch(words, claim);
+  }
+});
+
+test("the hero is its action, not a screenshot: the agents' marks burst around it as decoration", () => {
+  for (const lng of ["en", "zh-CN"]) {
+    const html = draw(lng);
+    const hero = html.slice(html.indexOf("<main"), html.indexOf('id="tour"'));
+    // The screens are gone from the hero: the first screen is the promise and the way in.
+    assert.doesNotMatch(hero, /<img\b/, `${lng}: no screenshots in the hero`);
+    assert.doesNotMatch(hero, /\/tour\//, `${lng}: no product shot in the hero`);
+    assert.match(hero, /data-testid="hero-get"/, `${lng}: the action is still there`);
+    // The marks of the agents the app lists are thrown around that action, as decoration:
+    // one field hidden from assistive technology and taking no pointer, with ten marks in
+    // it — OpenAI (its blossom names ChatGPT and Codex), Claude Code, Cursor, GitHub
+    // Copilot, Gemini, Windsurf, Cline, Warp, opencode and Antigravity.
+    assert.match(hero, /<div aria-hidden="true" data-allow-color=""[^>]*class="pointer-events-none absolute inset-0"/, `${lng}: a hidden, inert field`);
+    assert.equal((hero.match(/<svg aria-hidden="true" focusable="false"/g) ?? []).length, 10, `${lng}: ten marks`);
+    // The makers' colours (the page's ink for a monochrome mark), so they read in both themes.
+    for (const colour of ["#D97757", "#8E75B2", "#01A4FF", "#3186FF"]) assert.ok(hero.includes(`color:${colour}`), `${lng}: ${colour}`);
   }
 });
 
@@ -396,21 +417,81 @@ test("a shared link shows the hero: the share image is committed at 2400×1260 a
 test("the product showcase shows the product: three screens in their frames, in the page's language (Chinese or English) and both themes", () => {
   const html = draw("zh-CN");
   const tour = html.slice(html.indexOf('id="tour"'), html.indexOf('id="features"'));
-  // Three rows, each one screen: the computer list, the split view, the phone. Not a
-  // carousel: nothing in the showcase moves by itself.
-  for (const heading of ["所有电脑，一个列表。", "左边代码，右边终端。", "离开电脑，在手机上接手。"]) assert.ok(text(tour).includes(heading), heading);
-  assert.doesNotMatch(tour, /role="tab"|animate-/);
-  // Its pictures, in both themes: the Mac app, its split view and the phone.
-  for (const shot of ["app-session", "app-split", "phone-needs-you"]) {
-    assert.match(tour, new RegExp(`<img src="/tour/${shot}-zh-CN-light\\.webp"`), shot);
-    assert.match(tour, new RegExp(`<img src="/tour/${shot}-zh-CN-dark\\.webp"`), shot);
+  // The section head names the set: the product, shown three screens at a time.
+  assert.ok(text(tour).includes("应用里的三个界面。"), "the showcase's section head");
+  // Three entries: each names a screen and says what it is for. They are now the tour's
+  // index, so each one is a tab whose accessible description is its body line.
+  const entries = [
+    ["sessions", "所有电脑，一个列表。", "家里的 Mac、公司的 Linux 电脑、机架上的服务器，都在同一个账户里。打开就能看到哪一台需要你，不用逐台登录。"],
+    ["split", "左边代码，右边终端。", "需要同时盯两件事时，把一个会话和终端并排。改动、测试输出和报错都在同一个窗口里，不用来回复制粘贴。"],
+    ["phone", "离开电脑，在手机上接手。", "在手机浏览器里打开 droppen.app，还是那些会话。标着「需要你」的那一行排在最前，点开就能回答。"],
+  ] as const;
+  for (const [value, title, body] of entries) {
+    assert.ok(text(tour).includes(title), title);
+    assert.ok(text(tour).includes(body), body);
+    assert.ok(tour.includes(`aria-describedby="tour-${value}"`), `${value}: the tab names its body`);
+    assert.ok(tour.includes(`id="tour-${value}"`), `${value}: the body carries that id`);
   }
+  // A carousel of exactly three screens: three tabs and three panels. Every panel is
+  // kept mounted (so all three screenshots below are in the markup, and the swap is a
+  // style change rather than a reload), but the server render opens the first one and
+  // leaves the other two `hidden` so the page is usable before hydration.
+  assert.equal((tour.match(/role="tab"/g) ?? []).length, 3, "three index entries, as tabs");
+  assert.equal((tour.match(/role="tabpanel"/g) ?? []).length, 3, "three screens, one panel each");
+  const firstTab = /<button[^>]*role="tab"[^>]*>/.exec(tour)?.[0];
+  assert.ok(firstTab, "the first tab");
+  assert.match(firstTab, /aria-selected="true"/, "the first screen is open in the server render");
+  assert.equal((tour.match(/role="tab"[^>]*aria-selected="true"/g) ?? []).length, 1, "only one tab selected");
+  assert.equal((tour.match(/role="tab"[^>]*aria-selected="false"/g) ?? []).length, 2, "the other two tabs are closed");
+  const panels = [...tour.matchAll(/<div[^>]*role="tabpanel"[^>]*>/g)].map((m) => m[0]);
+  assert.equal(panels.length, 3, "one panel per screen");
+  assert.doesNotMatch(panels[0]!, /\shidden=""/, "the first panel is open");
+  for (const panel of panels.slice(1)) assert.match(panel, /\shidden=""/, "the other panels start hidden");
+  // The mono counter tells the reader where they are in the set: the first of three.
+  assert.ok(text(tour).includes("01 / 03"), "the counter");
+  // One screenshot per screen, in both themes, in the page's language: the app window,
+  // its split view and the phone, with the alt texts that describe them.
+  const shots: Record<string, string> = {
+    "app-session": "Mac 上的 Droppen：Claude Code 和 Codex 的会话列表，以及一个等你回答的会话",
+    "app-split": "Mac 上的 Droppen 分成三栏：两个会话和一个终端",
+    "phone-needs-you": "手机上的 Droppen：「需要你」清单，以及一个会话的提问",
+  };
+  for (const [shot, alt] of Object.entries(shots)) {
+    for (const theme of ["light", "dark"] as const) {
+      assert.ok(tour.includes(`src="/tour/${shot}-zh-CN-${theme}.webp" alt="${alt}"`), `${shot} (${theme}): ${alt}`);
+    }
+  }
+  // The dark variant is a real picture with the same alt, not hidden from assistive
+  // technology: the theme swap is CSS (`dark:hidden` / `dark:block`), so a reader gets
+  // one image either way, never none.
   assert.match(tour, /<img src="\/tour\/app-session-zh-CN-light\.webp" alt="Mac 上的 Droppen[^"]*"/);
   assert.doesNotMatch(tour, /<img src="\/tour\/app-session-zh-CN-dark\.webp"[^>]*aria-hidden/);
-  // The three things each row calls out.
-  for (const label of ["等你回答 / 工作中", "终端", "需要你处理"]) assert.ok(text(tour).includes(label), label);
-  // Chinese pages show the app in Chinese, every other page in English.
+  // The old showcase's amber Focus callouts are gone: no signal marker, no warn border,
+  // and none of the callout labels. 终端 survives only inside the split view's body
+  // copy, so the removed key is what the test pins, not the word.
+  assert.doesNotMatch(tour, /data-signal="waiting"/);
+  assert.doesNotMatch(tour, /border-warn/);
+  for (const label of ["等你回答 / 工作中", "需要你处理"]) assert.ok(!text(tour).includes(label), `still there: ${label}`);
+  for (const lng of ["zh-CN", "zh-TW", "ja"] as const) {
+    for (const key of ["Waiting for you / working", "Terminal", "Needs you"]) {
+      assert.ok(!(key in landingBundles[lng]), `${lng}: the removed callout key ${key}`);
+    }
+  }
+  // The three controls: stop the rotation (the server render offers Pause, because a
+  // fresh visit starts rotating), step back and step forward. Their labels are what a
+  // screen reader announces, so these are the words the test holds them to.
+  for (const label of ["暂停轮播", "上一个界面", "下一个界面"]) assert.match(tour, new RegExp(`aria-label="${label}"`), label);
+  // Chinese pages show the app in Chinese, every other page in English, in both themes.
   assert.deepEqual(["zh-CN", "zh-TW", "ja", "en"].map(tourLanguage), ["zh-CN", "zh-CN", "en", "en"]);
+  for (const [lng, lang] of [["zh-TW", "zh-CN"], ["ja", "en"]] as const) {
+    const localized = draw(lng);
+    const section = localized.slice(localized.indexOf('id="tour"'), localized.indexOf('id="features"'));
+    for (const shot of Object.keys(shots)) {
+      for (const theme of ["light", "dark"] as const) {
+        assert.ok(section.includes(`/tour/${shot}-${lang}-${theme}.webp`), `${lng}: ${shot} (${theme})`);
+      }
+    }
+  }
   assert.match(draw("en"), /<img src="\/tour\/app-session-en-light\.webp" alt="Droppen on a Mac[^"]*"/);
 });
 
