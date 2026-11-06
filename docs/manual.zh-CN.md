@@ -8,7 +8,7 @@ Droppen —— 远程浏览与管理本机的 Claude Code / Codex 会话。
 
 ## 功能
 
-- **插件**：Droppen 的核心不带任何插件；插件按实例安装，装好后默认开启（配置 `[plugins] enable/disable` 可强制），由该实例自己的服务器提供给它的页面（桌面应用窗口、服务器自己的浏览器页面），droppen.app 上不出现。在「设置 › 插件」里可从 `.tgz` 文件安装、卸载或开关；页面在 `/p/<插件 id>/`，数据在插件自己的文档存储 `instances/<实例>/plugins/<id>/store.db`。SDK 是 `packages/plugin-sdk`（`@droppen/plugin-sdk`）与 `server-rs/crates/droppen-plugin-sdk`，MIT OR Apache-2.0。见 [运行时插件](plugins/runtime.md)、[文档存储协议](plugins/storage-protocol.md)。
+- **插件**：Droppen 的核心不带任何插件；插件按实例安装，装好后默认开启（配置 `[plugins] enable/disable` 可强制），由该实例自己的服务器提供给它的页面（桌面应用窗口、服务器自己的浏览器页面），droppen.app 上不出现。每个插件另有一个「在 droppen.app 上显示」开关，默认关，只能在本机打开（`plugin cloud <id> on|off`）；droppen.app 显示插件的部分还没做，见 [droppen.app 上的插件](plugins/cloud.md)。在「设置 › 插件」里可从 `.tgz` 文件安装、卸载或开关；页面在 `/p/<插件 id>/`，数据在插件自己的文档存储 `instances/<实例>/plugins/<id>/store.db`。SDK 是 `packages/plugin-sdk`（`@droppen/plugin-sdk`）与 `server-rs/crates/droppen-plugin-sdk`，MIT OR Apache-2.0。见 [运行时插件](plugins/runtime.md)、[文档存储协议](plugins/storage-protocol.md)。
 
 - **会话置顶**：列表右键菜单或会话详情标题栏可置顶／取消置顶。置顶会话显示在整个列表最上方（目录分组之前），仍遵守搜索与来源筛选，置顶项内部沿用原列表顺序。状态保存在实例自己的数据库，通过实时 feed 同步到手机和电脑；不修改 CLI 的会话文件。
 

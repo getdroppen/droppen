@@ -155,6 +155,10 @@ async fn a_cloud_identity_is_refused_everywhere() {
         ("GET", LIST, Body::empty()),
         ("POST", LIST, Body::empty()),
         ("PUT", "/api/plugins/tasks/enabled", Body::empty()),
+        ("PUT", "/api/plugins/tasks/cloud", Body::empty()),
+        // A well-formed one too: the droppen.app switch is the consent a
+        // device must never give itself.
+        ("PUT", "/api/plugins/tasks/cloud", Body::from(r#"{"cloud":true}"#)),
         ("PUT", "/api/plugins/tasks/docs/state", Body::empty()),
         ("POST", "/api/plugins/tasks/batch", Body::empty()),
         ("GET", "/api/plugins/tasks/docs", Body::empty()),
@@ -168,4 +172,44 @@ async fn a_cloud_identity_is_refused_everywhere() {
         let body: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
         assert_eq!(body["error"], json!("plugin_not_found"), "{method} {uri}");
     }
+    assert!(state.plugins.cloud_decision("tasks").is_none(), "a device switched nothing");
+    assert!(!state.plugins.status_of("tasks").unwrap().cloud);
+}
+
+/// The droppen.app switch over HTTP, from a local caller: off after an
+/// install, on and off again through the route, and `404` for a plugin this
+/// instance does not have.
+#[tokio::test]
+async fn the_droppen_app_switch_round_trips_for_a_local_caller() {
+    let home = tempfile::tempdir().unwrap();
+    let (state, mut router) = crate::api::test_support::guarded_router(home.path(), Some(false)).await;
+    state.plugins.install(&droppen_plugins::testing::package_bytes("tasks", "0.1.0"), None).unwrap();
+    let send = |router: &mut gotcha::axum::Router, method: &'static str, uri: &str, body: &'static str| {
+        let request = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("content-type", "application/json")
+            .body(Body::from(body))
+            .unwrap();
+        let fut = router.call(request);
+        async move {
+            let response = fut.await.unwrap();
+            let status = response.status();
+            let body = gotcha::axum::body::to_bytes(response.into_body(), 1 << 20).await.unwrap();
+            (status, serde_json::from_slice::<serde_json::Value>(&body).unwrap_or_default())
+        }
+    };
+
+    let (status, list) = send(&mut router, "GET", LIST, "").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(list["plugins"][0]["cloud"], json!(false), "off until switched on here");
+    let (status, body) = send(&mut router, "PUT", "/api/plugins/tasks/cloud", r#"{"cloud":true}"#).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!((body["id"].clone(), body["cloud"].clone(), body["enabled"].clone()), (json!("tasks"), json!(true), json!(true)));
+    let (_, list) = send(&mut router, "GET", LIST, "").await;
+    assert_eq!(list["plugins"][0]["cloud"], json!(true));
+    let (status, body) = send(&mut router, "PUT", "/api/plugins/tasks/cloud", r#"{"cloud":false}"#).await;
+    assert_eq!((status, body["cloud"].clone()), (StatusCode::OK, json!(false)));
+    let (status, body) = send(&mut router, "PUT", "/api/plugins/notes/cloud", r#"{"cloud":true}"#).await;
+    assert_eq!((status, body["error"].clone()), (StatusCode::NOT_FOUND, json!("plugin_not_found")));
 }

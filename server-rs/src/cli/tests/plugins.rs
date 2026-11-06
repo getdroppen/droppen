@@ -43,6 +43,8 @@ fn the_subcommands_parse_and_anything_else_is_the_usage() {
     assert_eq!(action("install /tmp/tasks.tgz"), Ok(PluginCommand::Install { file: "/tmp/tasks.tgz".into() }));
     assert_eq!(action("uninstall tasks"), Ok(PluginCommand::Uninstall { id: "tasks".into() }));
     assert_eq!(action("enable tasks"), Ok(PluginCommand::Enable { id: "tasks".into() }));
+    assert_eq!(action("cloud tasks on"), Ok(PluginCommand::Cloud { id: "tasks".into(), shown: true }));
+    assert_eq!(action("cloud tasks off"), Ok(PluginCommand::Cloud { id: "tasks".into(), shown: false }));
     assert_eq!(
         action("export tasks --out /tmp/x.json"),
         Ok(PluginCommand::Export {
@@ -81,6 +83,10 @@ fn the_subcommands_parse_and_anything_else_is_the_usage() {
         ("install", ErrorKind::MissingRequiredArgument),
         ("uninstall", ErrorKind::MissingRequiredArgument),
         ("enable", ErrorKind::MissingRequiredArgument),
+        ("cloud", ErrorKind::MissingRequiredArgument),
+        ("cloud tasks", ErrorKind::MissingRequiredArgument),
+        ("cloud tasks yes", ErrorKind::InvalidValue),
+        ("cloud ../x on", ErrorKind::ValueValidation),
         ("import tasks", ErrorKind::MissingRequiredArgument),
         ("import tasks a b", ErrorKind::UnknownArgument),
         ("export tasks --out", ErrorKind::InvalidValue),
@@ -107,6 +113,10 @@ fn the_plugin_argument_table() {
         (&["uninstall", "tasks"], PluginCommand::Uninstall { id: "tasks".into() }),
         (&["enable", "tasks"], PluginCommand::Enable { id: "tasks".into() }),
         (&["disable", "tasks"], PluginCommand::Disable { id: "tasks".into() }),
+        (&["cloud", "tasks", "on"], PluginCommand::Cloud { id: "tasks".into(), shown: true }),
+        (&["cloud", "tasks", "off"], PluginCommand::Cloud { id: "tasks".into(), shown: false }),
+        (&["cloud", "tasks", "on", "--instance", "bob"], PluginCommand::Cloud { id: "tasks".into(), shown: true }),
+        (&["cloud", "--", "tasks", "off"], PluginCommand::Cloud { id: "tasks".into(), shown: false }),
         (&["verify", "tasks"], PluginCommand::Verify { id: "tasks".into() }),
         (&["export", "tasks"], PluginCommand::Export { id: "tasks".into(), out: None }),
         (
@@ -166,6 +176,11 @@ fn the_plugin_argument_table() {
         (&["uninstall", "../x"], ErrorKind::ValueValidation),
         (&["enable"], ErrorKind::MissingRequiredArgument),
         (&["disable"], ErrorKind::MissingRequiredArgument),
+        (&["cloud", "tasks"], ErrorKind::MissingRequiredArgument),
+        (&["cloud", "tasks", "On"], ErrorKind::InvalidValue),
+        (&["cloud", "tasks", "true"], ErrorKind::InvalidValue),
+        (&["cloud", "tasks", "on", "off"], ErrorKind::UnknownArgument),
+        (&["cloud", "../x", "on"], ErrorKind::ValueValidation),
         (&["verify"], ErrorKind::MissingRequiredArgument),
         (&["import", "tasks"], ErrorKind::MissingRequiredArgument),
         (&["import", "tasks", "a", "b"], ErrorKind::UnknownArgument),
@@ -183,7 +198,7 @@ fn the_plugin_argument_table() {
 
 #[test]
 fn help_is_claps() {
-    for line in ["--help", "-h", "list --help", "export --help", "install --help", "export tasks --help"] {
+    for line in ["--help", "-h", "list --help", "export --help", "install --help", "export tasks --help", "cloud --help"] {
         assert_eq!(parse(&args(line)).unwrap_err().kind(), ErrorKind::DisplayHelp, "{line:?}");
     }
 }

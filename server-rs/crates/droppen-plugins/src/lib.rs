@@ -32,6 +32,16 @@
 //! decision is read on every call rather than cached, so `remote-hand-server
 //! plugin enable` takes effect on a running server at its next request.
 //!
+//! # Shown on droppen.app
+//!
+//! A second switch per plugin, apart from on or off: whether this instance
+//! lets droppen.app show it (`docs/plugins/cloud.md`). Off unless switched on
+//! here, by the settings page or the CLI. The configuration does not pin it,
+//! and a bridged (`cloud:`) caller can neither read nor change it. It is a row
+//! of its own in the same scope, keyed `cloud:<id>`, and like the on/off
+//! decision it outlives an upgrade, an uninstall and a purge. It takes effect
+//! only while the plugin is on.
+//!
 //! # The capability key
 //!
 //! A page cannot send its bearer header with `import()`, and a query string
@@ -80,6 +90,13 @@ pub use store::{Store, StoreError};
 /// A key no plugin id can name: ids are lower-case, and this one is not.
 const ASSET_KEY_ROW: &str = "assetKey";
 
+/// The `state.db` row holding `id`'s droppen.app switch, in scope `plugins`.
+///
+/// A key no plugin id can name: ids carry no `:`.
+fn cloud_row(id: &str) -> String {
+    format!("cloud:{id}")
+}
+
 /// What the host tells every client over the feed, tagged `type`.
 #[derive(Serialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
@@ -99,13 +116,13 @@ impl FeedFrame<'_> {
     }
 }
 
-/// Who turned a plugin on or off, and through what.
+/// Who switched a plugin, and through what.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DecisionReason {
-    /// The settings page (`PUT /api/plugins/{id}/enabled`).
+    /// The settings page (`PUT /api/plugins/{id}/enabled` or `…/cloud`).
     Settings,
-    /// `remote-hand-server plugin enable|disable`.
+    /// `remote-hand-server plugin enable|disable|cloud`.
     Cli,
     /// A decision written by the boot that moved a built-in feature into a
     /// plugin, which turned it on where it had data. Nothing writes it now, but
@@ -120,6 +137,21 @@ pub enum DecisionReason {
 pub struct Decision {
     /// On or off.
     pub enabled: bool,
+    /// The signed-in user who decided, when there was one.
+    pub by: Option<String>,
+    /// When, ISO-8601.
+    pub at: String,
+    /// Through what.
+    pub reason: DecisionReason,
+}
+
+/// An instance's decision to let droppen.app show one plugin, as its
+/// `state.db` keeps it. Apart from the on/off [`Decision`]: the configuration
+/// pins that one, and not this.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CloudDecision {
+    /// Shown or not.
+    pub shown: bool,
     /// The signed-in user who decided, when there was one.
     pub by: Option<String>,
     /// When, ISO-8601.
@@ -310,6 +342,19 @@ impl Plugins {
         droppen_instance::db::at(&self.instance_db).kv_set(scope::PLUGINS, id, &value);
     }
 
+    /// The instance's droppen.app decision about `id`, if it ever made one.
+    pub fn cloud_decision(&self, id: &str) -> Option<CloudDecision> {
+        let raw = droppen_instance::db::at(&self.instance_db).kv_get(scope::PLUGINS, &cloud_row(id))?;
+        serde_json::from_str(&raw)
+            .map_err(|error| tracing::warn!(plugin = id, %error, "an unreadable droppen.app switch; treating it as never decided"))
+            .ok()
+    }
+
+    fn record_cloud(&self, id: &str, decision: &CloudDecision) {
+        let value = serde_json::to_string(decision).expect("a decision serialises");
+        droppen_instance::db::at(&self.instance_db).kv_set(scope::PLUGINS, &cloud_row(id), &value);
+    }
+
     /// Every installed plugin as this instance sees it, by id.
     pub fn status(&self) -> Vec<PluginStatus> {
         let installed = self.installed();
@@ -357,6 +402,7 @@ impl Plugins {
                 status.entry = Some(entry_url(key, id, &package.build, &package.entry));
             }
         }
+        status.cloud = self.cloud_decision(id).is_some_and(|decision| decision.shown);
         status.notices = self.notice_list(id);
         status.notice = (!status.notices.is_empty()).then(|| status.notices.iter().map(|n| n.text.as_str()).collect::<Vec<_>>().join("；"));
         status
@@ -441,6 +487,28 @@ impl Plugins {
         self.status_of(id).ok_or_else(|| PluginError::NotFound(id.to_string()))
     }
 
+    /// Let droppen.app show `id` for this instance, or stop it. Refused for a
+    /// plugin this instance has not installed, and for a bridged (`cloud:`)
+    /// caller — a lock of its own behind the routes'. Not refused for one the
+    /// configuration pins: it pins on or off, not this.
+    pub fn set_cloud(&self, id: &str, shown: bool, by: Option<&str>, reason: DecisionReason) -> Result<PluginStatus, PluginError> {
+        if self.installed_package(id).is_none() || by.is_some_and(|by| by.starts_with("cloud:")) {
+            return Err(PluginError::NotFound(id.to_string()));
+        }
+        self.record_cloud(
+            id,
+            &CloudDecision {
+                shown,
+                by: by.map(str::to_string),
+                at: store::now(),
+                reason,
+            },
+        );
+        tracing::info!(plugin = id, shown, ?by, ?reason, "plugin's droppen.app switch set");
+        self.announce_status();
+        self.status_of(id).ok_or_else(|| PluginError::NotFound(id.to_string()))
+    }
+
     /// Unpack and install `tarball` as this instance's copy of its plugin,
     /// replacing any previous install of the same id and switching it on
     /// (unless the configuration pins it off).
@@ -463,8 +531,8 @@ impl Plugins {
         self.status_of(&id).ok_or(PluginError::NotFound(id))
     }
 
-    /// Remove the installed package of `id`. Its documents and its on/off
-    /// decision stay for a later install.
+    /// Remove the installed package of `id`. Its documents, its on/off
+    /// decision and its droppen.app one stay for a later install.
     pub fn uninstall(&self, id: &str) -> Result<(), PluginError> {
         install::uninstall(&self.instance_dir, id)?;
         tracing::info!(plugin = id, "plugin uninstalled");
@@ -700,6 +768,7 @@ impl PluginManifestExt for Manifest {
         entry: None,
         aliases: manifest.aliases.clone(),
         permissions: manifest.permissions.clone(),
+        cloud: false,
     }
     }
 }
@@ -880,7 +949,92 @@ pub(crate) mod tests {
             plugins.set_enabled("tasks", true, None, DecisionReason::Settings),
             Err(PluginError::NotFound(_))
         ));
+        assert!(matches!(
+            plugins.set_cloud("tasks", true, None, DecisionReason::Settings),
+            Err(PluginError::NotFound(_))
+        ));
         assert!(!dir.path().join("instances").exists(), "not even the instance database");
+    }
+
+    #[test]
+    fn the_droppen_app_switch_is_off_until_set_and_every_change_is_announced() {
+        let dir = tempfile::tempdir().unwrap();
+        let feed = Arc::new(Frames::default());
+        let plugins = host(dir.path(), PluginSettings::default(), Some(Refresh::new(feed.clone())));
+        let status = plugins.install(&package_bytes("tasks", "0.1.0"), Some("ada")).unwrap();
+        assert!(status.enabled && !status.cloud, "an install shows nothing on droppen.app");
+        assert!(plugins.cloud_decision("tasks").is_none(), "and decides nothing about it");
+        let frame: serde_json::Value = serde_json::from_str(&feed.next()).unwrap();
+        assert_eq!(frame["plugins"][0]["cloud"], json!(false));
+
+        let status = plugins.set_cloud("tasks", true, Some("ada"), DecisionReason::Settings).unwrap();
+        assert!(status.cloud && status.enabled && status.entry.is_some());
+        let decision = plugins.cloud_decision("tasks").unwrap();
+        assert_eq!((decision.shown, decision.by.as_deref(), decision.reason), (true, Some("ada"), DecisionReason::Settings));
+        assert_eq!(plugins.decision("tasks").unwrap().reason, DecisionReason::Install, "the on/off decision is its own row");
+        let raw = feed.next();
+        assert_eq!(&*raw, format!(r#"{{"type":"plugins","plugins":{}}}"#, serde_json::to_string(&plugins.status()).unwrap()));
+        let frame: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(frame["plugins"][0]["cloud"], json!(true));
+
+        // Another process (the CLI) reads and writes the same row.
+        let other = host(dir.path(), PluginSettings::default(), None);
+        assert!(other.status_of("tasks").unwrap().cloud);
+        other.set_cloud("tasks", false, None, DecisionReason::Cli).unwrap();
+        assert!(!plugins.status_of("tasks").unwrap().cloud, "seen at the next call");
+
+        // Switching the plugin off leaves the droppen.app decision as it was.
+        plugins.set_cloud("tasks", true, None, DecisionReason::Settings).unwrap();
+        let frame: serde_json::Value = serde_json::from_str(&feed.next()).unwrap();
+        assert_eq!(frame["plugins"][0]["cloud"], json!(true));
+        let status = plugins.set_enabled("tasks", false, None, DecisionReason::Settings).unwrap();
+        assert!(!status.enabled && status.cloud, "kept for when the plugin is on again");
+    }
+
+    #[test]
+    fn the_droppen_app_switch_is_refused_only_for_an_unknown_plugin_or_a_bridged_caller() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = PluginSettings {
+            enable: Some("notes".into()),
+            disable: Some("clock".into()),
+        };
+        let plugins = installed_host(dir.path(), &["notes", "clock"], config, None);
+        assert!(matches!(
+            plugins.set_cloud("tasks", true, None, DecisionReason::Settings),
+            Err(PluginError::NotFound(_))
+        ));
+        assert!(plugins.cloud_decision("tasks").is_none());
+        for id in ["notes", "clock"] {
+            let status = plugins
+                .set_cloud(id, true, None, DecisionReason::Settings)
+                .expect("the configuration pins on or off, not this");
+            assert!(status.forced && status.cloud, "{id}");
+        }
+        assert!(!plugins.status_of("clock").unwrap().enabled, "pinned off stays off");
+        assert!(!plugins.dir("clock").exists(), "and the switch made no store for it");
+        assert!(matches!(
+            plugins.set_cloud("notes", false, Some("cloud:device-1"), DecisionReason::Settings),
+            Err(PluginError::NotFound(_))
+        ));
+        assert!(plugins.status_of("notes").unwrap().cloud, "a bridged caller changed nothing");
+    }
+
+    #[test]
+    fn the_droppen_app_switch_outlives_an_upgrade_and_an_uninstall() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugins = installed_host(dir.path(), &["notes"], PluginSettings::default(), None);
+        plugins.set_cloud("notes", true, Some("ada"), DecisionReason::Settings).unwrap();
+        let upgraded = plugins.install(&package_bytes("notes", "0.2.0"), None).unwrap();
+        assert!(upgraded.cloud, "an upgrade keeps it");
+        plugins.uninstall("notes").unwrap();
+        assert!(plugins.cloud_decision("notes").unwrap().shown, "an uninstall keeps it");
+        let reinstalled = plugins.install(&package_bytes("notes", "0.1.0"), None).unwrap();
+        assert!(reinstalled.cloud, "and a later install finds it");
+        assert_eq!(
+            plugins.cloud_decision("notes").unwrap().by.as_deref(),
+            Some("ada"),
+            "an install writes no droppen.app decision of its own"
+        );
     }
 
     #[test]

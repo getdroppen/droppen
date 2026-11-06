@@ -34,7 +34,8 @@ use super::install::{InstallError, MAX_TARBALL_BYTES};
 use super::store::{StoreError, MAX_REQUEST_BYTES};
 use super::wire::{
     PluginBatch, PluginBatchResult, PluginCurrentDoc, PluginDeleted, PluginDoc, PluginDocConflict, PluginDocHistory, PluginDocList, PluginDocQuery,
-    PluginHistoryQuery, PluginInvalidPackage, PluginList, PluginPutDoc, PluginStatus, PluginSwitch, PluginTarballBody, PluginTooLarge,
+    PluginCloudSwitch, PluginHistoryQuery, PluginInvalidPackage, PluginList, PluginPutDoc, PluginStatus, PluginSwitch, PluginTarballBody,
+    PluginTooLarge,
 };
 use super::{CloudIdentityExt, DecisionReason, PluginError, Plugins};
 use droppen_auth::MaybeIdentity;
@@ -47,6 +48,7 @@ use droppen_plugin_sdk::codes;
 pub const LIST: &str = "/api/plugins";
 const PLUGIN: &str = "/api/plugins/{id}";
 const ENABLED: &str = "/api/plugins/{id}/enabled";
+const CLOUD: &str = "/api/plugins/{id}/cloud";
 const DOCS: &str = "/api/plugins/{id}/docs";
 const DOC: &str = "/api/plugins/{id}/docs/{name}";
 const HISTORY: &str = "/api/plugins/{id}/docs/{name}/history";
@@ -280,8 +282,8 @@ pub async fn install_plugin(
         .map(|status| Json(status.into()))
 }
 
-/// Uninstall a plugin. Its documents and its on/off decision stay, for a
-/// later install.
+/// Uninstall a plugin. Its documents and its switches stay, for a later
+/// install.
 #[api(id = "uninstall_plugin", group = "plugins", summary = "Uninstall a plugin")]
 pub async fn uninstall_plugin(
     State(state): State<PluginsState>,
@@ -305,6 +307,25 @@ pub async fn set_plugin_enabled(
     let by = who.caller();
     state.plugins.blocking( move |plugins| {
         plugins.set_enabled(&id, body.enabled, by.as_deref(), DecisionReason::Settings)
+    })
+    .await
+    .map(|status| Json(status.into()))
+}
+
+/// Let droppen.app show a plugin for this instance, or stop it. Any
+/// signed-in user here may; a bridged (`cloud:`) request never can. The
+/// configuration does not pin this switch.
+#[api(id = "set_plugin_cloud", group = "plugins", summary = "Show a plugin on droppen.app")]
+pub async fn set_plugin_cloud(
+    State(state): State<PluginsState>,
+    ApiPath(id): ApiPath<String>,
+    #[api(skip)] who: MaybeIdentity,
+    ApiJson(body): ApiJson<PluginCloudSwitch>,
+) -> Result<Json<PluginStatus>, ApiError> {
+    who.refuse_cloud()?;
+    let by = who.caller();
+    state.plugins.blocking( move |plugins| {
+        plugins.set_cloud(&id, body.cloud, by.as_deref(), DecisionReason::Settings)
     })
     .await
     .map(|status| Json(status.into()))
@@ -421,6 +442,7 @@ impl PluginsState {
             .get(LIST, list_plugins)
             .delete(PLUGIN, uninstall_plugin)
             .put(ENABLED, set_plugin_enabled)
+            .put(CLOUD, set_plugin_cloud)
             .get(DOCS, list_plugin_docs)
             .get(HISTORY, plugin_doc_history)
             .route(LIST, gotcha::post(install_plugin).layer(gotcha::axum::extract::DefaultBodyLimit::max(MAX_TARBALL_BYTES)))
@@ -452,7 +474,7 @@ pub fn describe(reg: &mut ExtraResponses) {
             PLUGIN,
             200,
             204,
-            "The plugin is uninstalled; its documents and its on/off decision are kept",
+            "The plugin is uninstalled; its documents and its switches are kept",
         )
         .error("DELETE", PLUGIN, 404, "`plugin_not_found`: no plugin of that id is installed")
         .describe("PUT", ENABLED, 200, "The plugin's status after the switch")
@@ -463,6 +485,8 @@ pub fn describe(reg: &mut ExtraResponses) {
             409,
             "`forced_by_config`: the configuration pins it; the switch is read-only",
         )
+        .describe("PUT", CLOUD, 200, "The plugin's status after the switch")
+        .error("PUT", CLOUD, 404, "`plugin_not_found`: no plugin of that id is installed")
         .describe("GET", DOCS, 200, "The plugin's documents under `prefix`, without values, by name")
         .error("GET", DOCS, 404, OFF)
         .describe("GET", DOC, 200, "The document")

@@ -51,8 +51,8 @@ On disk:
 - Installing turns the plugin **on** (an instance decision, as if switched
   on), unless the configuration forces it off.
 - Uninstalling removes the package directory only. Its documents
-  (`plugins/<id>/store.db`) and its on/off decision stay, for a later install;
-  `plugin purge` is still how documents go.
+  (`plugins/<id>/store.db`), its on/off decision and its droppen.app one
+  (§4) stay, for a later install; `plugin purge` is still how documents go.
 
 ### What an install checks
 
@@ -164,6 +164,7 @@ interface PluginStatus {
   aliases: string[];
   permissions: string[];  // declared, not enforced (§8)
   switchedOn: boolean;    // on by the configuration or the instance, whether or not compatible
+  cloud: boolean;         // droppen.app may show it; off until switched on here
 }
 ```
 
@@ -172,7 +173,13 @@ interface PluginStatus {
 | `GET /api/plugins` | — | `200 { plugins: PluginStatus[] }` — every plugin **installed** in this instance |
 | `POST /api/plugins` | the tarball's bytes (`application/gzip` or `application/octet-stream`), ≤ 32 MiB | `200 PluginStatus`; `400 { error: "invalid_package", message }`; `413 too_large` |
 | `DELETE /api/plugins/{id}` | — | `204`; `404 plugin_not_found` |
+| `PUT /api/plugins/{id}/cloud` | `{ cloud: boolean }` | `200 PluginStatus`; `404 plugin_not_found` |
 | the rest of `storage-protocol.md` | | unchanged |
+
+`cloud` is the instance's consent to let droppen.app show a plugin;
+`cloud.md` says what it gates. It is off until a local caller switches it
+on, the configuration does not pin it, it takes effect only while the plugin
+is `enabled`, and a bridged request can neither read nor change it (§5).
 
 After an install, an uninstall or a switch, open (non-cloud) clients get a
 `plugins` frame, as after a switch today.

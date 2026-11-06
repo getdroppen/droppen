@@ -3445,6 +3445,19 @@
         ],
         "type": "object"
       },
+      "PluginCloudSwitch": {
+        "description": "The body of `PUT /api/plugins/{id}/cloud`.",
+        "properties": {
+          "cloud": {
+            "description": "Whether droppen.app may show the plugin, for this instance.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "cloud"
+        ],
+        "type": "object"
+      },
       "PluginCurrentDoc": {
         "description": "The document a conflict names, as it is now.\n\nThe same JSON as [`PluginDoc`], under a name of its own: the `409` may\ncarry `null` here, and the OpenAPI pass that spells a nullable reference\nmarks the *component* nullable (`openapi_ext::hoist_nullable_refs`), which\nwould make every `PluginDoc` read as possibly `null`.",
         "nullable": true,
@@ -3738,6 +3751,10 @@
             "description": "`<version>-<first 12 hex of the tarball's sha256>`: this exact code.",
             "type": "string"
           },
+          "cloud": {
+            "description": "The instance's decision to let droppen.app show it: off unless\nswitched on here. It takes effect only while the plugin is `enabled`,\nand a bridged (`cloud:`) caller can never change it.",
+            "type": "boolean"
+          },
           "compatible": {
             "description": "The host satisfies the plugin's `engines.droppen`.",
             "type": "boolean"
@@ -3828,7 +3845,8 @@
           "build",
           "entry",
           "aliases",
-          "permissions"
+          "permissions",
+          "cloud"
         ],
         "type": "object"
       },
@@ -10343,7 +10361,7 @@
     "/api/plugins/{id}": {
       "delete": {
         "deprecated": false,
-        "description": "Uninstall a plugin. Its documents and its on/off decision stay, for a\nlater install.",
+        "description": "Uninstall a plugin. Its documents and its switches stay, for a later\ninstall.",
         "operationId": "uninstall_plugin",
         "parameters": [
           {
@@ -10357,7 +10375,7 @@
         ],
         "responses": {
           "204": {
-            "description": "The plugin is uninstalled; its documents and its on/off decision are kept"
+            "description": "The plugin is uninstalled; its documents and its switches are kept"
           },
           "404": {
             "content": {
@@ -10455,6 +10473,60 @@
           }
         },
         "summary": "Write plugin documents together",
+        "tags": [
+          "plugins"
+        ]
+      }
+    },
+    "/api/plugins/{id}/cloud": {
+      "put": {
+        "deprecated": false,
+        "description": "Let droppen.app show a plugin for this instance, or stop it. Any\nsigned-in user here may; a bridged (`cloud:`) request never can. The\nconfiguration does not pin this switch.",
+        "operationId": "set_plugin_cloud",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PluginCloudSwitch"
+              }
+            }
+          },
+          "description": "The body of `PUT /api/plugins/{id}/cloud`.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginStatus"
+                }
+              }
+            },
+            "description": "The plugin's status after the switch"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`plugin_not_found`: no plugin of that id is installed"
+          }
+        },
+        "summary": "Show a plugin on droppen.app",
         "tags": [
           "plugins"
         ]

@@ -1311,8 +1311,8 @@ export interface paths {
         post?: never;
         /**
          * Uninstall a plugin
-         * @description Uninstall a plugin. Its documents and its on/off decision stay, for a
-         *     later install.
+         * @description Uninstall a plugin. Its documents and its switches stay, for a later
+         *     install.
          */
         delete: operations["uninstall_plugin"];
         options?: never;
@@ -1334,6 +1334,28 @@ export interface paths {
          * @description Write several documents, all or none.
          */
         post: operations["plugin_batch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/plugins/{id}/cloud": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Show a plugin on droppen.app
+         * @description Let droppen.app show a plugin for this instance, or stop it. Any
+         *     signed-in user here may; a bridged (`cloud:`) request never can. The
+         *     configuration does not pin this switch.
+         */
+        put: operations["set_plugin_cloud"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -4397,6 +4419,11 @@ export interface components {
             /** @description Every document written, in the order of the writes. */
             docs: components["schemas"]["PluginDoc"][];
         };
+        /** @description The body of `PUT /api/plugins/{id}/cloud`. */
+        PluginCloudSwitch: {
+            /** @description Whether droppen.app may show the plugin, for this instance. */
+            cloud: boolean;
+        };
         /**
          * @description The document a conflict names, as it is now.
          *
@@ -4528,6 +4555,12 @@ export interface components {
             aliases: string[];
             /** @description `<version>-<first 12 hex of the tarball's sha256>`: this exact code. */
             build: string;
+            /**
+             * @description The instance's decision to let droppen.app show it: off unless
+             *     switched on here. It takes effect only while the plugin is `enabled`,
+             *     and a bridged (`cloud:`) caller can never change it.
+             */
+            cloud: boolean;
             /** @description The host satisfies the plugin's `engines.droppen`. */
             compatible: boolean;
             /** @description On for this instance, and compatible. */
@@ -8912,7 +8945,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The plugin is uninstalled; its documents and its on/off decision are kept */
+            /** @description The plugin is uninstalled; its documents and its switches are kept */
             204: {
                 headers: {
                     [name: string]: unknown;
@@ -8989,6 +9022,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PluginTooLarge"];
+                };
+            };
+        };
+    };
+    set_plugin_cloud: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** @description The body of `PUT /api/plugins/{id}/cloud`. */
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PluginCloudSwitch"];
+            };
+        };
+        responses: {
+            /** @description The plugin's status after the switch */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PluginStatus"];
+                };
+            };
+            /** @description `plugin_not_found`: no plugin of that id is installed */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
                 };
             };
         };
