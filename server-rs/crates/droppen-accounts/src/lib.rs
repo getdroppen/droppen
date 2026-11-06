@@ -394,10 +394,7 @@ pub async fn create_account(State(state): State<AccountsState>, ApiJson(body): A
         200 = "Account updated",
         response(status = 409, body = "AccountConflict", description = "That token is already stored under another label")
     ),
-    errors(
-        400 = "Unusable label, or a token Anthropic refused",
-        404 = "Account not found"
-    )
+    errors(400 = "Unusable label, or a token Anthropic refused", 404 = "Account not found")
 )]
 pub async fn update_account(
     State(state): State<AccountsState>,
@@ -457,10 +454,7 @@ pub async fn update_account(
     group = "accounts",
     summary = "Get an account's environment block",
     responses(200 = "The account's whole environment block, values included, for editing it"),
-    errors(
-        400 = "The account has no environment block",
-        404 = "Account not found"
-    )
+    errors(400 = "The account has no environment block", 404 = "Account not found")
 )]
 pub async fn get_account_env(State(state): State<AccountsState>, ApiPath(id): ApiPath<String>) -> Result<Json<AccountEnvBlock>, ApiError> {
     id.require_uuid()?;
@@ -498,10 +492,7 @@ pub async fn delete_account(State(state): State<AccountsState>, ApiPath(id): Api
     group = "accounts",
     summary = "Set the default account",
     responses(200 = "Default account for new sessions (null chooses the local login, signed out or not; automatic clears it)"),
-    errors(
-        400 = "An accountId sent with automatic",
-        404 = "Account not found"
-    )
+    errors(400 = "An accountId sent with automatic", 404 = "Account not found")
 )]
 pub async fn set_default_account(State(state): State<AccountsState>, ApiJson(body): ApiJson<AccountDefault>) -> Result<Json<AccountList>, ApiError> {
     let account_id = body.account_id.0;
