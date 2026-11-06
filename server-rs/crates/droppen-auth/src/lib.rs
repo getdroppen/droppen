@@ -167,7 +167,7 @@ use lockout::{LockoutPolicy, Lockouts};
 use tickets::{TicketScope, Tickets};
 use users::UsersStore;
 
-pub use routes::{describe, AuthState};
+pub use routes::AuthState;
 
 /// The paths the server's documentation is on: gotcha's `/openapi.json` and
 /// `/scalar`, and `/redoc`, which `app.rs` answers with a redirect to
