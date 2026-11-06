@@ -12,8 +12,7 @@
 //! server at a temporary home, and a direct read would step out of it.
 //!
 //! [`media`] serves the pictures an agent links to in private GitHub
-//! repositories, under the same inline image rules ([`FileBytes`],
-//! [`INLINE_CSP`]).
+//! repositories, under the same inline image rules ([`INLINE_CSP`]).
 //!
 //! A name in backticks such as `sessions` in these docs is a module of the
 //! server, which this crate cannot link to.
@@ -27,7 +26,7 @@ use std::time::{Duration, SystemTime};
 use gotcha::axum::body::Body;
 use gotcha::axum::http::header::{CONTENT_DISPOSITION, CONTENT_SECURITY_POLICY, CONTENT_TYPE, X_CONTENT_TYPE_OPTIONS};
 use gotcha::axum::http::StatusCode;
-use gotcha::axum::response::{IntoResponse, Response};
+use gotcha::axum::response::Response;
 use gotcha::axum::extract::FromRef;
 use gotcha::{api, GotchaRouter, Json, Multipart, Schematic, State};
 use serde::{Deserialize, Serialize};
@@ -36,7 +35,7 @@ use tokio::io::AsyncReadExt;
 use droppen_auth::MaybeIdentity;
 use droppen_http::error::{ApiError, Coded};
 use droppen_http::extract::ApiQuery;
-use droppen_http::openapi_ext::{ExtraResponses, Nullable};
+use droppen_http::openapi_ext::Nullable;
 use droppen_instance::paths::Paths;
 use droppen_base::time::iso8601;
 
@@ -223,54 +222,6 @@ pub struct FsDownloadQuery {
 pub struct FsUploadQuery {
     /// Directory to save into; it must already exist.
     pub dir: String,
-}
-
-/// The raw file body `GET /api/fs/download` streams.
-///
-/// gotcha documents an operation from its return type, and the blanket
-/// `Responsible` impl needs the type to be `Schematic`
-/// (`gotcha_core-0.4.1/src/responsible.rs:81`), which `axum::response::Response`
-/// is not. Leaving the handler un-annotated is not a way out either: only
-/// annotated handlers are recorded as operations at all
-/// (`gotcha-0.4.1/src/router.rs:104`), so the route would vanish from the spec
-/// rather than merely losing its response schema — and `openapi_ext::apply`
-/// would then log its override as targeting an unregistered route.
-///
-/// So the response travels inside a newtype whose `Schematic` is hand-written
-/// (it registers no component, exactly as `openapi_ext::AnyValue` does), and
-/// [`describe`] replaces the JSON `200` that yields with the
-/// `application/octet-stream` entry the contract names.
-pub struct FileBytes(pub(crate) Response);
-
-impl IntoResponse for FileBytes {
-    fn into_response(self) -> Response {
-        self.0
-    }
-}
-
-/// The throwaway JSON `200` [`describe`] replaces with the binary entry.
-impl gotcha::Responsible for FileBytes {
-    fn response() -> gotcha::oas::Responses {
-        gotcha::response::response::<FileBytes>(200, "application/json", "default return")
-    }
-}
-
-impl Schematic for FileBytes {
-    fn name() -> &'static str {
-        "FileBytes"
-    }
-
-    fn required() -> bool {
-        true
-    }
-
-    fn type_() -> &'static str {
-        "string"
-    }
-
-    fn format() -> Option<String> {
-        Some("binary".to_string())
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1019,7 +970,13 @@ pub struct FilesState {
 droppen_http::substate!(FilesState);
 
 /// List a directory under the home directory.
-#[api(id = "fs_list", group = "files", summary = "List a directory")]
+#[api(
+    id = "fs_list",
+    group = "files",
+    summary = "List a directory",
+    responses(200 = "List a directory under the home directory"),
+    errors(400 = "Invalid path")
+)]
 pub async fn fs_list(
     State(state): State<FilesState>,
     #[api(skip)] who: MaybeIdentity,
@@ -1032,7 +989,13 @@ pub async fn fs_list(
 }
 
 /// Read a text file under the home directory (capped at 256 KiB).
-#[api(id = "fs_read", group = "files", summary = "Read a file")]
+#[api(
+    id = "fs_read",
+    group = "files",
+    summary = "Read a file",
+    responses(200 = "Read a text file under the home directory (capped at 256 KiB)"),
+    errors(400 = "Invalid path")
+)]
 pub async fn fs_read(
     State(state): State<FilesState>,
     #[api(skip)] who: MaybeIdentity,
@@ -1045,12 +1008,22 @@ pub async fn fs_read(
 }
 
 /// Raw file bytes, as an attachment or inline for an image.
-#[api(id = "fs_download", group = "files", summary = "Download a file")]
+#[api(
+    id = "fs_download",
+    group = "files",
+    summary = "Download a file",
+    skip_response,
+    responses(
+        response(status = 200, content_type = "application/octet-stream",
+                 body = "droppen_http::openapi_ext::BinaryBody", description = "Raw file bytes as an attachment"),
+        response(status = 400, body = "droppen_http::error::Error", description = "Invalid path")
+    )
+)]
 pub async fn fs_download(
     State(state): State<FilesState>,
     #[api(skip)] who: MaybeIdentity,
     ApiQuery(query): ApiQuery<FsDownloadQuery>,
-) -> Result<FileBytes, ApiError> {
+) -> Result<Response, ApiError> {
     let fallback = "cannot download file";
     let (path, name) = FileRoots::of(&state.paths).stat_for_download(Reach::of(&who), &query.path)
         .await
@@ -1087,11 +1060,18 @@ pub async fn fs_download(
         // and a chunked body that ends early beats a truncated one that lies.
         .body(Body::from_stream(file.file_stream()))
         .map_err(|_| ApiError::bad_request(fallback))?;
-    Ok(FileBytes(response))
+    Ok(response)
 }
 
 /// Save an uploaded file into a directory under the home directory.
-#[api(id = "fs_upload", group = "files", summary = "Upload a file")]
+#[api(
+    id = "fs_upload",
+    group = "files",
+    summary = "Upload a file",
+    responses(200 = "File saved into the target directory (never overwrites)"),
+    errors(400 = "Invalid upload"),
+    request_body(content_type = "multipart/form-data", body = "FileUpload", description = "The file to save")
+)]
 pub async fn fs_upload(
     State(state): State<FilesState>,
     #[api(skip)] who: MaybeIdentity,
@@ -1107,7 +1087,14 @@ pub async fn fs_upload(
 }
 
 /// Store a file for attaching to a message.
-#[api(id = "upload_attachment", group = "files", summary = "Upload an attachment")]
+#[api(
+    id = "upload_attachment",
+    group = "files",
+    summary = "Upload an attachment",
+    responses(200 = "File stored for attaching to a message"),
+    errors(400 = "Invalid attachment"),
+    request_body(content_type = "multipart/form-data", body = "FileUpload", description = "The file to store")
+)]
 pub async fn upload_attachment(State(state): State<FilesState>, multipart: Multipart) -> Result<Json<Attachment>, ApiError> {
     let fallback = "cannot save image";
     let file = multipart.take_file_field().await.map_err(|error| error.into_api(fallback))?;
@@ -1145,38 +1132,13 @@ impl FilesState {
 
 /// The `multipart/form-data` body both upload routes read.
 // gotcha derives nothing from a `Multipart` extractor — the generated
-// `requestBody` names the media type and stops — so the one part the handlers
-// read is documented by hand.
+// `requestBody` names the media type and stops — so each handler declares the
+// one part it reads with `request_body(...)`.
 #[derive(Debug, Clone, Serialize, Deserialize, Schematic)]
 pub struct FileUpload {
     /// The file part; the only one either route looks at.
     pub file: serde_json::Value,
 }
-
-/// Everything gotcha cannot derive about these operations.
-pub fn describe(reg: &mut ExtraResponses) {
-    reg.describe("GET", "/api/fs/list", 200, "List a directory under the home directory")
-        .error("GET", "/api/fs/list", 400, "Invalid path")
-        .describe(
-            "GET",
-            "/api/fs/read",
-            200,
-            "Read a text file under the home directory (capped at 256 KiB)",
-        )
-        .error("GET", "/api/fs/read", 400, "Invalid path")
-        // Replaces the JSON `200` derived from `FileBytes`; see its doc comment.
-        .binary("GET", "/api/fs/download", 200, "Raw file bytes as an attachment")
-        .error("GET", "/api/fs/download", 400, "Invalid path")
-        .describe("POST", "/api/fs/upload", 200, "File saved into the target directory (never overwrites)")
-        .error("POST", "/api/fs/upload", 400, "Invalid upload")
-        .describe("POST", "/api/uploads", 200, "File stored for attaching to a message")
-        .error("POST", "/api/uploads", 400, "Invalid attachment")
-        .request_body::<FileUpload>("POST", "/api/fs/upload", MULTIPART, "The file to save")
-        .request_body::<FileUpload>("POST", "/api/uploads", MULTIPART, "The file to store");
-}
-
-/// The media type both upload routes read their body as.
-const MULTIPART: &str = "multipart/form-data";
 
 #[cfg(test)]
 mod tests {

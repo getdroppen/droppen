@@ -448,8 +448,6 @@ fn response_overrides() -> ExtraResponses {
     droppen_cloud::describe(&mut reg);
     droppen_drive::describe(&mut reg);
     droppen_drive::feed::global::describe(&mut reg);
-    droppen_files::describe(&mut reg);
-    droppen_files::media::describe(&mut reg);
     droppen_provider::models::describe(&mut reg);
     droppen_notify::notify::describe(&mut reg);
     droppen_plugins::routes::describe(&mut reg);

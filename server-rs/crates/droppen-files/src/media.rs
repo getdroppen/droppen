@@ -46,13 +46,12 @@ use gotcha::{api, GotchaRouter, Schematic};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
 
-use crate::{FileBytes, INLINE_CSP};
+use crate::INLINE_CSP;
 use droppen_http::error::ApiError;
 use droppen_http::extract::ApiQuery;
-use droppen_http::openapi_ext::ExtraResponses;
 use droppen_base::process_env::{apply_env, clean_env_bare, resolve_on_path, Env};
 
-/// The route, written once for the router, the spec and the tests.
+/// The route, written once for the router and the tests.
 const ROUTE: &str = "/api/media/github";
 /// How long one `gh` call may take, start to exit.
 const GH_TIMEOUT: Duration = Duration::from_secs(20);
@@ -611,8 +610,23 @@ static CACHE: LazyLock<Mutex<ImageCache>> = LazyLock::new(Mutex::default);
 // ---------------------------------------------------------------------------
 
 /// An image from a GitHub repository, fetched with the host's `gh` login.
-#[api(id = "media_github", group = "media", summary = "Proxy a GitHub image")]
-pub async fn github_image(ApiQuery(query): ApiQuery<GithubMediaQuery>) -> Result<FileBytes, ApiError> {
+#[api(
+    id = "media_github",
+    group = "media",
+    summary = "Proxy a GitHub image",
+    skip_response,
+    responses(
+        response(status = 200, content_type = "application/octet-stream",
+                 body = "droppen_http::openapi_ext::BinaryBody", description = "The image's bytes, fetched with the host's gh CLI"),
+        response(status = 400, body = "droppen_http::error::Error", description = "Not a GitHub image URL this proxy accepts"),
+        response(status = 404, body = "droppen_http::error::Error", description = "No such file at any ref the URL could name"),
+        response(status = 415, body = "droppen_http::error::Error", description = "The file is not an image"),
+        response(status = 502, body = "droppen_http::error::Error", description = "gh or GitHub failed, or the image is larger than 20 MiB"),
+        response(status = 503, body = "droppen_http::error::Error", description = "gh is not installed or not logged in on the server"),
+        response(status = 504, body = "droppen_http::error::Error", description = "gh did not answer within 20 seconds")
+    )
+)]
+pub async fn github_image(ApiQuery(query): ApiQuery<GithubMediaQuery>) -> Result<Response, ApiError> {
     let target = parse_github_url(&query.url).map_err(ApiError::bad_request)?;
     let key = target.key();
     let cached = CACHE.lock().expect("media cache poisoned").get(&key, Instant::now());
@@ -635,7 +649,7 @@ pub async fn github_image(ApiQuery(query): ApiQuery<GithubMediaQuery>) -> Result
         .header(CACHE_CONTROL, BROWSER_CACHE)
         .body(Body::from(image.bytes))
         .map_err(|_| ApiError::internal("cannot build response"))?;
-    Ok(FileBytes(response))
+    Ok(response)
 }
 
 /// Register this subsystem's routes.
@@ -644,17 +658,6 @@ where
     S: Clone + Send + Sync + 'static,
 {
     router.get(ROUTE, github_image)
-}
-
-/// Everything gotcha cannot derive about this route.
-pub fn describe(reg: &mut ExtraResponses) {
-    reg.binary("GET", ROUTE, 200, "The image's bytes, fetched with the host's gh CLI")
-        .error("GET", ROUTE, 400, "Not a GitHub image URL this proxy accepts")
-        .error("GET", ROUTE, 404, "No such file at any ref the URL could name")
-        .error("GET", ROUTE, 415, "The file is not an image")
-        .error("GET", ROUTE, 502, "gh or GitHub failed, or the image is larger than 20 MiB")
-        .error("GET", ROUTE, 503, "gh is not installed or not logged in on the server")
-        .error("GET", ROUTE, 504, "gh did not answer within 20 seconds");
 }
 
 #[cfg(test)]
