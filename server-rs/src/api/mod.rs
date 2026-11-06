@@ -20,7 +20,7 @@ use droppen_plugins::CloudIdentityExt;
 use droppen_http::error::ApiError;
 use droppen_http::extract::{ApiPath, ApiQuery};
 use droppen_http::{close_within, hostname, node_platform, send_within, Heartbeat, CLOSE_LIMIT, RUNTIME_VERSION, SERVER_VERSION};
-use droppen_http::openapi_ext::{self, ExtraResponses};
+use droppen_http::openapi_ext;
 use droppen_instance::paths::Paths;
 use droppen_provider_claude_code::sessions::claude;
 use droppen_provider_codex::sessions::codex;
@@ -195,7 +195,13 @@ const MIN_LIMIT: u32 = 1;
 const MAX_LIMIT: u32 = 1000;
 
 /// List sessions from claude and codex, newest first.
-#[api(id = "list_sessions", group = "sessions", summary = "List sessions")]
+#[api(
+    id = "list_sessions",
+    group = "sessions",
+    summary = "List sessions",
+    responses(200 = "Sessions from claude and codex, newest first; this server's own unless `scope` says otherwise"),
+    errors(400 = "Invalid limit")
+)]
 pub async fn list_sessions(State(state): State<AppState>, ApiQuery(query): ApiQuery<SessionListQuery>) -> Result<Json<SessionList>, ApiError> {
     // Clamping would answer a `limit=0` with 200 rows, which is neither what was
     // asked for nor what the zod validator did: out of range was a `400` there,
@@ -227,7 +233,13 @@ pub async fn list_sessions(State(state): State<AppState>, ApiQuery(query): ApiQu
 }
 
 /// Session state plus transcript delta (full on first call or reset).
-#[api(id = "session_detail", group = "sessions", summary = "Get a session")]
+#[api(
+    id = "session_detail",
+    group = "sessions",
+    summary = "Get a session",
+    responses(200 = "Session state plus transcript delta (full on first call or reset)"),
+    errors(404 = "Session not found")
+)]
 pub async fn session_detail(
     State(state): State<AppState>,
     ApiPath((source, id)): ApiPath<(Source, String)>,
@@ -260,7 +272,7 @@ pub async fn session_detail(
 /// `entry`, which carries the instance's capability key — for the reason
 /// `docs/plugins/runtime.md` §5 gives: the cloud sees neither the list, the
 /// code nor the documents. The device's own pages still get it.
-#[api(id = "settings", group = "meta", summary = "Server settings")]
+#[api(id = "settings", group = "meta", summary = "Server settings", responses(200 = "Server and data-source information"))]
 pub async fn settings(State(state): State<AppState>, #[api(skip)] who: droppen_auth::MaybeIdentity) -> Json<Settings> {
     let paths = state.paths.as_ref();
     let bindings = state.drive.accounts.session_account_map().await;
@@ -411,37 +423,7 @@ async fn run_session_socket(
     close_within(&mut sender, CLOSE_LIMIT, shutdown).await;
 }
 
-/// Everything gotcha cannot express about this module's own routes.
-///
-/// The `404`s exist because gotcha derives exactly one success response and
-/// folds a `Result`'s error side into `default`, with no way to name a status
-/// (`gotcha_core-0.4.1/src/responsible.rs:129`).
-fn describe(reg: &mut ExtraResponses) {
-    reg.describe(
-        "GET",
-        "/api/sessions",
-        200,
-        "Sessions from claude and codex, newest first; this server's own unless `scope` says otherwise",
-    )
-    .error("GET", "/api/sessions", 400, "Invalid limit")
-    .describe("GET", "/api/settings", 200, "Server and data-source information")
-    .describe(
-        "GET",
-        "/api/sessions/{source}/{id}",
-        200,
-        "Session state plus transcript delta (full on first call or reset)",
-    )
-    .error("GET", "/api/sessions/{source}/{id}", 404, "Session not found");
-}
-
-/// Every amendment every subsystem contributes, in one place.
-fn response_overrides() -> ExtraResponses {
-    let mut reg = ExtraResponses::default();
-    describe(&mut reg);
-    reg
-}
-
-/// Register every route and the spec post-transform.
+/// Register every route and the spec normalization.
 pub fn routes(router: ApiRouter) -> ApiRouter {
     let router = router
         .get("/api/sessions", list_sessions)
@@ -479,7 +461,7 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
             spec.info.title = API_TITLE.to_string();
             spec.info.version = API_VERSION.to_string();
             spec.info.description = Some(API_DESCRIPTION.to_string());
-            let spec = openapi_ext::apply(spec, &response_overrides());
+            let spec = openapi_ext::normalize(spec);
             // Every JSON object sorted: gotcha builds some of the spec's maps (a
             // schema's `properties`) from hash maps, and a `Value` keeps the
             // order it was given (`preserve_order`), so each server would

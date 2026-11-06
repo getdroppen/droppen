@@ -43,7 +43,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 | `crates/droppen-notify/` | 服务端的两条提醒通道：会话自己决定「这件事值得打扰你」时走的 Bark，以及注进会话的 `rh-notify` 与 skill（`notify`）；服务端决定发的 Web Push 与同时转给 Bark 的分发（`push`） |
 | `crates/droppen-base/` | 各子系统都用、却不属于任何一个的底层工具：时钟（`time`）、文本编码（`text`）、只有本用户可读的文件（`fsutil`）、「文件里那个 pid 还是当初那个进程吗」的两道守卫（`procs`）、出站 webhook 的守卫（`outbound`）、读环境变量（`env`）、spawn 的环境与输出脱敏（`process_env`）、二进制的两个名字（`program`） |
 | `crates/droppen-instance/` | 实例的底座：各子系统共用的路径（`paths`）、一个服务端独占的实例目录与宣示所有权的 `flock`（`instance`）、改名也不变的服务端身份（`identity`），以及实例自己的 SQLite 状态库和只增不改的 schema（`db`） |
-| `crates/droppen-http/` | 每个路由模块都站在上面的 HTTP 工具：错误体与状态码、出错即 `400` 的提取器、`201`/`202` 响应、websocket 保活与限时发送、构建身份（`SERVER_VERSION`）、`substate!`；以及基于 gotcha `ConfigBuilder` 的配置加载（`config`，类型化默认值，loopback 8700，`PORT`/`HOST` 兜底层）、OpenAPI 补丁（`openapi_ext`）和每个 `/api/*` 请求都要过的同源守卫（`origin`） |
+| `crates/droppen-http/` | 每个路由模块都站在上面的 HTTP 工具：错误体与状态码、出错即 `400` 的提取器、websocket 保活与限时发送、构建身份（`SERVER_VERSION`）、`substate!`；以及基于 gotcha `ConfigBuilder` 的配置加载（`config`，类型化默认值，loopback 8700，`PORT`/`HOST` 兜底层）、OpenAPI 文档归一（`openapi_ext`）和每个 `/api/*` 请求都要过的同源守卫（`origin`） |
 | `crates/droppen-supervisor/` | `remote-hand-server up`：重启子进程、回滚坏二进制、收孤儿（`supervisor`）；`POST /api/server/self-upgrade`，以及 `<data>/bin` 这个二进制仓库（`selfupdate`） |
 | `crates/droppen-auth/` | 本机账号：谁能和这个服务端说话。账号与 argon2id 哈希（`users`）、登录会话（`sessions`）、websocket 与下载用的短命票据（`tickets`）、失败锁定（`lockout`）、没有账号的实例的设置码（`setup`）、本机控制 socket 发的一次性令牌（`local_open`）、`/api/auth/*`（`routes`）、`user` / `setup-code` / `open` 命令行（`cli`），以及每个请求最先经过的登录守卫（`guard`） |
 | `crates/droppen-files/` | `$HOME` 下的浏览、读取、下载与上传——客户端传来的路径只在这里被解析和收敛，经 Droppen 进来的设备另被挡在服务端自己的数据和配置目录之外（`FileRoots::fence`）；以及 transcript 里私有 GitHub 仓库图片的代理（`media`，走本机 `gh` 的登录） |
@@ -65,9 +65,11 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 框架给不了的、或者只有入口才看得全的东西，集中在这几个文件里，而不是散落在各子系统：
 
-- **`crates/droppen-http/src/openapi_ext.rs`** — 一个声明式的补丁注册表，在唯一一次 `GotchaRouter::openapi(..)`
-  里统一应用。承担：额外状态码、把派生出的 `200` 改成 `201`、二进制与 multipart 请求体、
-  重写描述，以及 `Nullable<T>` / `Optional<T>` / `AnyValue` 这三个 zod 对齐包装。
+- **`crates/droppen-http/src/openapi_ext.rs`** — 响应本身由 handler 上的
+  `#[api(responses(..), errors(..))]` 声明；这里只剩整个文档的形状归一：注册 `bearerAuth`
+  方案、把 `$ref` 旁的 `nullable` 提到组件上（`hoist_nullable_refs`）、把 `anyOf` 里的
+  `null` 折回 `$ref`，以及恢复被容器级 `#[serde(default)]` 放松掉的 `required` 表。另有
+  `Nullable<T>` / `Optional<T>` / `AnyValue` 这三个 zod 对齐包装和文档二进制的 `BinaryBody`。
 - **`export.rs`** — `export-openapi` 命令。用与线上服务相同的路由注册（`app::routes`）调
   `GotchaRouter::into_openapi` 生成文档再写盘：不起服务、不占端口、没有请求，也就不再需要
   实例锁或关掉登录守卫。`tests/probe.rs` 守住线上文档与 `openapi/openapi.json` 一致，
@@ -280,34 +282,34 @@ replay 只做一件事：把 `transcript` / `sidecar` 事件按原始时间轴�
 
 ## 已经撞上的 gotcha 限制
 
-按撞上的位置分组；括号里是上游出处，方便升级框架时逐条复核。gotcha 0.5 起，下面多数限制已能由
-handler 上的 `#[api(responses(..), errors(..))]` 与 `WithStatus` 直接声明，0.5.1 起只改描述的写成
-`responses(200 = "…")`、`errors(404 = "…")`；逐 crate 迁移中（已迁移：droppen-accounts），
-未迁移的 crate 仍用 `openapi_ext`。
+按撞上的位置分组；括号里是上游出处，方便升级框架时逐条复核。响应声明都在 handler 的
+`#[api(..)]` 上：成功侧由返回类型派生，错误侧用 `errors(..)` 声明；只改描述时用 0.5.1 的
+简写 `responses(200 = "…")` / `errors(404 = "…")`，要指定 body 或状态码时用长写
+`response(status = .., body = "..", description = "..")`。
 
 ### OpenAPI 响应派生
 
-- 一个 handler 只派生一个成功响应，`Result` 的错误侧被折进 `default`，路由无法声明自己的
-  `404` / `409`（`gotcha_core-0.4.1/src/responsible.rs:129`）→ `openapi_ext` 的
-  `ExtraResponses` 注册表。
-- 派生出的成功响应恒为 `200`，而 `Responsible` 有一个 `impl<T: Schematic>` 的全覆盖实现，
-  下游 crate 无法补充——所以拿不到 `201`（`gotcha_core-0.4.1/src/responsible.rs:25`）→
-  `api/created.rs` 的 `Created<T>` 借用 `T` 的 schema，再由 `openapi_ext` 改状态码。
-- 那个 `default` 响应删不掉，只能靠重新声明成功侧把它挤走 → `ResponseOverride` 上的
-  `drop_default`。
-- 响应描述被写死成 `"default return"` → `openapi_ext::describe` 事后改写。
-- 返回 `axum::response::Response` 的 handler 根本无法被文档化，因为全覆盖实现要求
-  `Schematic`（`gotcha_core-0.4.1/src/responsible.rs:81`）；而去掉 `#[api]` 也不是出路——
-  未标注的 handler 干脆不会被记成 operation（`gotcha-0.4.1/src/router.rs:104`）→
-  `files/mod.rs` 用一个手写 `Schematic`、不注册任何组件的 `FileBytes` newtype 兜底。
-- `Multipart` 抽取器派生不出请求体 schema，只给出媒体类型 → `RequestBodyOverride`。
+- 成功响应由返回类型派生一个；`Result` 的错误侧不再折进 `default`，而是由 `errors(..)` 逐状态
+  声明——它替换整个 `Err` 分支，所以一个操作的所有错误状态写在同一个 `errors(..)` 里。
+- 只改描述时用简写：`responses(200 = "…")` 沿用派生出的 body 与状态，`errors(404 = "…")`
+  沿用错误类型的 body；没有派生 `default` 的 `Result` 操作必须写 `errors(..)` 或
+  `drop_default`，否则 0.5 会把它加回来。
+- 非 `200` 的成功状态用 `WithStatus<T, 201>` 发送，并在 handler 上声明
+  `responses(201 = "…")`；`WithStatus` 单独不产生文档，必须配一条声明。
+- 返回 `axum::response::Response` 的 handler 用 `skip_response` 关掉返回类型的派生，把每个
+  状态都写进 `responses(..)`；二进制下载的 body 写成
+  `droppen_http::openapi_ext::BinaryBody`，得到契约里的
+  `{"type":"string","format":"binary"}`（gotcha 自带的 `Binary` 给的是 `contentMediaType`）。
+- `Multipart` 抽取器派生不出请求体 schema，只有媒体类型；用
+  `request_body(content_type = "multipart/form-data", body = "FileUpload", description = "…")`
+  在 handler 上补上。
 
 ### schema 形状（与 zod 对齐）
 
 - `<Option<T>>::required()` 恒为 `false`，表达不出 zod 的 `.nullable()`（一定在，但可以是
-  `null`）（`gotcha_core-0.4.1/src/lib.rs:262`）→ `Nullable<T>`。
+  `null`）（`gotcha_core-0.5.1/src/lib.rs:624`）→ `Nullable<T>`。
 - `<Option<T>>::nullable()` 恒为 `Some(true)`，表达不出 zod 的 `.optional()`（可以缺省，但
-  不会是 `null`）（`gotcha_core-0.4.1/src/lib.rs:275`）→ `Optional<T>`，配
+  不会是 `null`）（`gotcha_core-0.5.1/src/lib.rs:627`）→ `Optional<T>`，配
   `#[serde(default, skip_serializing_if)]`。
 - 两者都覆盖不到第三种：可缺省且不涉及 nullability 的 `z.any()` 盲盒 → `AnyValue`
   （`Screen.layout` 这类完全由客户端拥有的数据）。
@@ -381,5 +383,6 @@ handler 上的 `#[api(responses(..), errors(..))]` 与 `WithStatus` 直接声明
 - `rust-embed` 的 derive 在目录缺失时直接让构建失败 → `build.rs` 判断 `web/dist` 是否存在，
   以 `web_dist_missing` cfg 的形式交给 crate 选择占位实现。
 
-`tests/probe.rs` 里有一条测试专门守住上面最大的一类改动：断言 `openapi_ext` 的注册表确实
-生效了（该有的 `404` 在、派生出的 `default` 不在）。升级 gotcha 后先看它。
+`tests/probe.rs` 里有一条测试专门守住文档与声明的一致性：断言
+`GET /api/sessions/{source}/{id}` 由 `errors(..)` 声明的 `404` 在、派生出的 `default` 不在，
+并把线上文档与 `openapi/openapi.json` 逐值比对。升级 gotcha 后先看它。

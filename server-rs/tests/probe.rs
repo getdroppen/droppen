@@ -182,9 +182,9 @@ async fn the_spec_is_served_and_names_the_ported_routes() {
     assert_eq!(spec["info"]["title"], "remote-hand API");
     assert_eq!(spec["info"]["version"], "0.1.0");
     assert!(spec["paths"]["/api/sessions"].is_object());
-    // The 404 the framework cannot express, added by `openapi_ext`.
+    // The 404 the handler declares with `errors(..)`.
     let detail = &spec["paths"]["/api/sessions/{source}/{id}"]["get"];
-    assert!(detail["responses"]["404"].is_object(), "the extra-response registry did not apply");
+    assert!(detail["responses"]["404"].is_object(), "the declared 404 is missing");
     assert_eq!(detail["responses"]["default"], Value::Null, "the derived `default` should be replaced");
 
     // The committed contract is this document (`export-openapi` writes the

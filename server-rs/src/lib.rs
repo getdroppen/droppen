@@ -28,11 +28,11 @@
 //!
 //! # Shared contract plumbing
 //!
-//! Four pieces exist for every subsystem, not just the ones that added them:
+//! Three pieces exist for every subsystem, not just the ones that added them:
 //! [`droppen_http::openapi_ext::Nullable`] /
 //! [`droppen_http::openapi_ext::Optional`] for zod's two flavours of "may be
-//! absent", [`droppen_http::created::Created`] for a `201`, and
-//! [`droppen_http::extract`] for extractors whose rejection is a JSON `400`
+//! absent", [`droppen_http::openapi_ext::BinaryBody`] for a raw-bytes response,
+//! and [`droppen_http::extract`] for extractors whose rejection is a JSON `400`
 //! rather than axum's `422`/`415` text.
 //!
 //! # What is deliberately absent
