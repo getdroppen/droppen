@@ -1,5 +1,5 @@
 import { useParams } from "@tanstack/react-router";
-import { Bot, ChevronLeft } from "lucide-react";
+import { RobotIcon, CaretLeftIcon } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import type { components } from "@/api/schema";
@@ -87,7 +87,7 @@ export function SubagentDetail() {
             aria-label={t("back to {{name}}", { name: backName })}
             className="flex size-5 shrink-0 items-center justify-center text-muted hover:bg-hover hover:text-fg max-md:size-9"
           >
-            <ChevronLeft className="size-3.5 max-md:size-4" />
+            <CaretLeftIcon className="size-3.5 max-md:size-4" />
           </MachineLink>
           {self && <ChildStatusMark status={self.status} />}
           <span className="min-w-0 flex-1 truncate text-[13px] font-semibold max-md:text-[15px]" title={name}>{name}</span>
@@ -95,7 +95,7 @@ export function SubagentDetail() {
         metadata={<>
           <SourceIcon source={source} className="text-muted" />
           <span className="flex min-w-0 items-center gap-1">
-            <Bot aria-hidden="true" className="size-3 shrink-0" />
+            <RobotIcon aria-hidden="true" className="size-3 shrink-0" />
             <span className="shrink-0">{t("subagent of")}</span>
             <MachineLink {...back} className="min-w-0 truncate text-fg hover:underline" title={backName}>
               {backName}

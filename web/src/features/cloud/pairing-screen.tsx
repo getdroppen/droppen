@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Check, Loader2 } from "lucide-react";
+import { CheckIcon, CircleNotchIcon } from "@phosphor-icons/react";
 import type { CloudAccount } from "@/lib/hub/account";
 import { CODE_PAIRING_WINDOW_MS } from "@/lib/hub/api";
 import { DELIVERY_TIMEOUT_MS, type PairingCause, PairingResponder, type ResponderState } from "@/lib/hub/pairing";
@@ -279,7 +279,7 @@ function PairingAttempt({
       return (
         <div data-signal="ok" className="flex flex-col gap-2 border border-border p-3 shadow-[inset_2px_0_0_var(--color-ok)]">
           <span className="flex items-center gap-1.5 font-mono text-xs text-ok">
-            <Check className="size-3.5" />
+            <CheckIcon className="size-3.5" />
             {t("paired")}
           </span>
           <p className="text-xs leading-5 text-muted">{t("This browser is now a device of the account, with its keys.")}</p>
@@ -292,7 +292,7 @@ function PairingAttempt({
     if (state.kind === "verifying") {
       return (
         <p className="flex items-center gap-2 text-2xs text-faint">
-          <Loader2 className="size-3 animate-spin" />
+          <CircleNotchIcon className="size-3 animate-spin" />
           {t("keys received; checking the account's device chain…")}
         </p>
       );
@@ -320,7 +320,7 @@ function PairingAttempt({
       }
       // Shut before a code was opened: said up front, never asked of the hub.
       if (codeClosed && !holdsCode) return <PairingStopped cause="windowClosed" actions={pairingActions("windowClosed", { again: listed, codePath: true, codeClosed })} again={listed} windowLeftMs={null} onAction={(a) => act(a, false)} />;
-      return <Loader2 className="size-4 animate-spin text-faint" />;
+      return <CircleNotchIcon className="size-4 animate-spin text-faint" />;
     }
     if (state.kind === "offer") {
       return (
@@ -335,13 +335,13 @@ function PairingAttempt({
             {t("this device")}: <Fingerprint value={state.fingerprint} />
           </p>
           <p className="flex items-center gap-2 text-2xs text-faint">
-            <Loader2 className="size-3 animate-spin" />
+            <CircleNotchIcon className="size-3 animate-spin" />
             {t("waiting for the other device…")}
           </p>
         </div>
       );
     }
-    return <Loader2 className="size-4 animate-spin text-faint" />;
+    return <CircleNotchIcon className="size-4 animate-spin text-faint" />;
   })();
 
   const options: { id: Mode; label: string }[] = [
@@ -435,7 +435,7 @@ export function CodeShown({
         {t("this device")}: <Fingerprint value={state.fingerprint} />
       </p>
       <p data-testid="pairing-code-left" className="flex items-center gap-2 text-2xs text-faint">
-        <Loader2 className="size-3 animate-spin" />
+        <CircleNotchIcon className="size-3 animate-spin" />
         {state.kind === "answered"
           ? t("code entered on the other device; waiting for it to confirm…")
           : t("waiting for the code to be entered: {{time}} left, once", { time: countdown(codeLeftMs ?? 0) })}

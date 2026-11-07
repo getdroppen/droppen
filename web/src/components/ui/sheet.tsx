@@ -1,5 +1,5 @@
 import { Dialog as SheetPrimitive } from "@base-ui/react/dialog";
-import { X } from "lucide-react";
+import { XIcon } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
 
@@ -40,7 +40,7 @@ function SheetContent({
             data-slot="sheet-close"
             render={<Button variant="ghost" className="absolute top-3 right-3 size-5 p-0" size="md" />}
           >
-            <X className="size-3.5" />
+            <XIcon className="size-3.5" />
             <span className="sr-only">Close</span>
           </SheetPrimitive.Close>
         )}

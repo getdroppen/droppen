@@ -6,7 +6,7 @@
  * module store so it outlives the guide's page when it navigates away, read
  * out politely, gone after a few seconds or on its ×.
  */
-import { X } from "lucide-react";
+import { XIcon } from "@phosphor-icons/react";
 import { useEffect, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -78,7 +78,7 @@ export function SetupToasts() {
             onClick={() => dismissSetupToast(toast.id)}
             className="flex size-5 shrink-0 items-center justify-center text-bg/70 hover:text-bg"
           >
-            <X className="size-3" />
+            <XIcon className="size-3" />
           </button>
         </div>
       )}

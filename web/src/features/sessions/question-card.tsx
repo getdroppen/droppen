@@ -1,5 +1,5 @@
 import { useMutation } from "@tanstack/react-query";
-import { Check, Loader2, SendHorizontal } from "lucide-react";
+import { CheckIcon, CircleNotchIcon, PaperPlaneTiltIcon } from "@phosphor-icons/react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ApiError, errorText } from "@/api/errors";
@@ -200,7 +200,7 @@ function Mark({ kind, on }: { kind: "checkbox" | "radio"; on: boolean }) {
       )}
       data-shape={kind === "radio" ? "radio" : undefined}
     >
-      {on && (kind === "radio" ? <span data-shape="dot" className="size-1.5 rounded-full bg-current" /> : <Check className="size-2.5" />)}
+      {on && (kind === "radio" ? <span data-shape="dot" className="size-1.5 rounded-full bg-current" /> : <CheckIcon className="size-2.5" />)}
     </span>
   );
 }
@@ -309,7 +309,7 @@ function OpenQuestion({
                     onClick={() => send(draft)}
                     data-variant="primary" className="flex size-7 shrink-0 items-center justify-center bg-fg text-bg hover:bg-fg/85 disabled:opacity-40"
                   >
-                    <SendHorizontal className="size-3.5" />
+                    <PaperPlaneTiltIcon className="size-3.5" />
                   </button>
                 )}
               </div>
@@ -338,7 +338,7 @@ function OpenQuestion({
             {t("let the agent decide")}
           </button>
         )}
-        {busy && <Loader2 className="size-3 animate-spin text-muted" />}
+        {busy && <CircleNotchIcon className="size-3 animate-spin text-muted" />}
       </div>
       {error && (
         <p data-signal="failed" className="font-mono text-2xs leading-4 break-words text-danger">

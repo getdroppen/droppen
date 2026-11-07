@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Loader2 } from "lucide-react";
+import { CircleNotchIcon } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Tabs, TabsList, TabsTab } from "@/components/ui/tabs";
@@ -236,7 +236,7 @@ export function ChatHome() {
           onClick={send}
           data-variant="primary" className="flex h-7 items-center justify-center gap-1.5 bg-fg text-xs font-medium text-bg hover:bg-fg/85 disabled:opacity-40"
         >
-          {(start.isPending || sendQueued) && <Loader2 className="size-3 animate-spin" />}
+          {(start.isPending || sendQueued) && <CircleNotchIcon className="size-3 animate-spin" />}
           {leftToServer && (!startReady || sendQueued) && !start.isPending ? t("choosing account…") : t("start chat")}
         </button>
       </div>

@@ -2,14 +2,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AcpAgentChip, SourceIcon } from "@/components/source-icon";
 import { useParams } from "@tanstack/react-router";
 import {
-  ArrowDown,
-  Bot,
-  ChevronLeft,
-  GitBranch,
-  Loader2,
-  Square,
-  X,
-} from "lucide-react";
+  ArrowDownIcon,
+  RobotIcon,
+  CaretLeftIcon,
+  GitBranchIcon,
+  CircleNotchIcon,
+  SquareIcon,
+  XIcon,
+} from "@phosphor-icons/react";
 import {
   useCallback,
   useEffect,
@@ -125,7 +125,7 @@ function ParentSessionLink({ source, id }: { source: Source; id: string }) {
   const title = useFeedSessionTitle(ref) ?? id.slice(0, 8);
   return (
     <span data-parent-session={id} className="flex min-w-0 shrink items-center gap-1">
-      <Bot aria-hidden="true" className="size-3 shrink-0" />
+      <RobotIcon aria-hidden="true" className="size-3 shrink-0" />
       <span className="shrink-0">{t("subagent of")}</span>
       <MachineLink to="/sessions/$source/$id" params={{ source, id }} className="min-w-0 truncate text-fg hover:underline" title={title}>
         {title}
@@ -696,7 +696,7 @@ export function SessionDetailInner({
             title={t("back")}
             className="flex size-9 shrink-0 items-center justify-center text-muted hover:bg-hover md:hidden"
           >
-            <ChevronLeft className="size-4" />
+            <CaretLeftIcon className="size-4" />
           </MachineLink>}
           <span className="min-w-0 flex-1 truncate text-[13px] font-semibold max-md:text-[15px]" title={displayTitle}>{displayTitle}</span>
           <PaneUnreadPill />
@@ -743,7 +743,7 @@ export function SessionDetailInner({
           )}
           {summary.gitBranch && (
             <span className="flex min-w-0 items-center gap-1 font-mono text-2xs text-muted" title={summary.gitBranch}>
-              <GitBranch aria-hidden="true" className="size-3 shrink-0" />
+              <GitBranchIcon aria-hidden="true" className="size-3 shrink-0" />
               <span className="truncate">{summary.gitBranch}</span>
             </span>
           )}
@@ -817,7 +817,7 @@ export function SessionDetailInner({
             aria-label={t("dismiss")}
             onClick={() => setActionError(null)} data-signal="failed" className="flex size-4 shrink-0 items-center justify-center rounded hover:bg-danger/15"
           >
-            <X className="size-3" />
+            <XIcon className="size-3" />
           </button>
         </div>
       )}
@@ -895,7 +895,7 @@ export function SessionDetailInner({
               disabled={isLoadingEarlier}
               className="flex h-7 w-full items-center justify-center gap-1.5 border-b border-border font-mono text-2xs text-faint hover:bg-hover hover:text-muted disabled:pointer-events-none"
             >
-              {isLoadingEarlier && <Loader2 className="size-3 animate-spin" />}
+              {isLoadingEarlier && <CircleNotchIcon className="size-3 animate-spin" />}
               {t(
                 isLoadingEarlier
                   ? "loading earlier history…"
@@ -972,7 +972,7 @@ export function SessionDetailInner({
           jumpShown ? "opacity-100" : "pointer-events-none opacity-0",
         )}
       >
-        <ArrowDown className="size-4 shrink-0" />
+        <ArrowDownIcon className="size-4 shrink-0" />
         {/* What arrived while you were reading history — the reason to press it. */}
         {unread > 0 && (
           <span className="pr-0.5 font-mono text-2xs text-accent">{unreadLabel(unread)}</span>

@@ -1,18 +1,21 @@
-import { type ReactNode, useMemo, useState } from "react";
+import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Check } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
-import { HubApi, type SignupMode, type WaitlistPlan } from "@/lib/hub/api";
+import { CheckIcon } from "@phosphor-icons/react";
+import { Card } from "@/components/ui/card";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { type HubApi, type SignupMode, type WaitlistPlan } from "@/lib/hub/api";
 import { cn } from "@/lib/cn";
 import "./copy";
-import { cjkTracking, FaqAccordion, PublicLayout, Section, SectionHead, usePageMeta } from "./page-kit";
+import { DocumentHead, FaqAccordion, PublicLayout, RecommendedBadge, Section, SectionHead, SUBHEAD, usePageMeta } from "./page-kit";
 import { gb, PLAN_NUMBERS, PRO_PRICE, THROTTLED_KB_PER_SEC, yearlySaving } from "./pricing-plans";
+import { SIGNUP_COPY } from "./signup-copy";
 import { type WaitlistState, WaitlistForm } from "./waitlist";
 
-/** The plan an address names (`?plan=pro`), Free otherwise (where Free has a waitlist: sign-up by invite, or closed). */
 export function planOfSearch(search: string): WaitlistPlan {
   return new URLSearchParams(search).get("plan") === "pro" ? "pro" : "free";
 }
+
+const SECTION_SPACING = "py-20 max-md:py-14";
 
 function PlanHead({
   testId,
@@ -33,12 +36,8 @@ function PlanHead({
   return (
     <div data-testid={testId} role="group" aria-labelledby={`${testId}-name`} className="flex min-w-0 flex-col items-center gap-4 text-center">
       <div className="flex min-h-6 flex-wrap items-center justify-center gap-2">
-        <h3 id={`${testId}-name`} className="text-base leading-6 font-semibold text-fg">{name}</h3>
-        {recommended && (
-          <Badge className={cn("h-[18px] bg-fg px-1.5 font-sans text-xs font-medium tracking-label text-bg uppercase shadow-none", cjkTracking)}>
-            {t("Recommended")}
-          </Badge>
-        )}
+        <h3 id={`${testId}-name`} className={SUBHEAD}>{name}</h3>
+        {recommended && <RecommendedBadge>{t("Recommended")}</RecommendedBadge>}
       </div>
       <p className="flex flex-wrap items-baseline justify-center gap-2">
         <span className="text-4xl leading-none font-semibold tracking-tight text-fg tabular-nums">{price}</span>
@@ -55,7 +54,7 @@ function Plans({ signup }: { signup: SignupMode }) {
 
   const yes = (
     <span className="inline-flex items-center">
-      <Check aria-hidden="true" className="size-4" />
+      <CheckIcon aria-hidden="true" className="size-4" />
       <span className="sr-only">{t("included")}</span>
     </span>
   );
@@ -80,73 +79,79 @@ function Plans({ signup }: { signup: SignupMode }) {
   ];
 
   return (
-    <Section id="plans">
-      <div className="overflow-x-auto overscroll-x-contain">
-        <table aria-label={t("Compare")} data-testid="compare-table" className="w-full min-w-[48rem] table-fixed border-collapse text-left">
-          <colgroup>
-            <col className="w-[14rem] max-md:w-[9rem]" />
-            <col />
-            <col />
-            <col />
-          </colgroup>
-          <thead>
-            <tr className="border-b border-border align-top">
-              <td className="sticky left-0 z-10 border-r border-border bg-bg" />
-              <th scope="col" className="border-l border-border p-6 align-top max-md:p-4">
-                <PlanHead
-                  testId="plan-local"
-                  name={t("Local only")}
-                  price="$0"
-                  unit={t("forever")}
-                  note={t("No account, nothing to sign up for")}
-                />
-              </th>
-              <th scope="col" className="border-l border-border p-6 align-top max-md:p-4">
-                <PlanHead
-                  testId="plan-free"
-                  name={t("Free")}
-                  price="$0"
-                  note={signup === "invite" ? t("Sign-up is by invite for now") : signup === "closed" ? t("Sign-up is closed for now") : t("Sign up with an e-mail address")}
-                />
-              </th>
-              <th scope="col" className="border-l border-border p-6 align-top max-md:p-4">
-                <PlanHead
-                  testId="plan-pro"
-                  name="Pro"
-                  recommended
-                  price={`$${PRO_PRICE.monthly}`}
-                  unit={t("USD / month")}
-                  note={t("or ${{price}} a year: save {{saving}}%", { price: PRO_PRICE.yearly, saving: yearlySaving() })}
-                />
-              </th>
-            </tr>
-          </thead>
-          <tbody id="compare">
-            {rows.map((r) => (
-              <tr key={r.title} className="border-b border-border">
-                <th scope="row" className="sticky left-0 z-10 border-r border-border bg-bg p-5 text-left align-top font-normal max-md:p-4">
-                  <span className="block text-sm leading-5 font-semibold text-fg">{r.title}</span>
-                  {r.detail && <span className="block text-xs leading-4 text-muted">{r.detail}</span>}
-                </th>
-                {r.values.map((v, i) => (
-                  <td key={i} className="border-l border-border p-5 text-center align-top text-sm leading-5 text-muted tabular-nums max-md:p-4">
-                    {v}
-                  </td>
+    <Section id="plans" rule={false} seam={false}>
+      <DocumentHead
+        center
+        className={cn("pt-0", SECTION_SPACING)}
+        title={t("Start free. Go Pro when you need more.")}
+        lead={t("End-to-end encrypted: we can't read your sessions, code or terminals")}
+        note={t("Prices in US dollars. Pro is not on sale yet, and nothing is charged before you choose to pay.")}
+      />
+      <div className="mx-auto max-w-[68rem] px-6 pb-20 max-md:px-4 max-md:pb-16">
+        <Card className="gap-0 overflow-hidden p-0">
+          <div className="overflow-x-auto overscroll-x-contain">
+            <Table aria-label={t("Compare")} data-testid="compare-table" className="min-w-[48rem] table-fixed border-collapse text-left">
+              <colgroup>
+                <col className="w-[14rem] max-md:w-[9rem]" />
+                <col />
+                <col />
+                <col />
+              </colgroup>
+              <TableHeader>
+                <TableRow className="border-b border-border align-top hover:bg-transparent">
+                  <TableHead className="sticky left-0 z-10 border-r border-border bg-bg" />
+                  <TableHead scope="col" className="border-l border-border p-6 align-top whitespace-normal max-md:p-4">
+                    <PlanHead
+                      testId="plan-local"
+                      name={t("Local only")}
+                      price="$0"
+                      unit={t("forever")}
+                      note={t("No account, nothing to sign up for")}
+                    />
+                  </TableHead>
+                  <TableHead scope="col" className="border-l border-border p-6 align-top whitespace-normal max-md:p-4">
+                    <PlanHead
+                      testId="plan-free"
+                      name={t("Free")}
+                      price="$0"
+                      note={t(SIGNUP_COPY[signup].planNote)}
+                    />
+                  </TableHead>
+                  <TableHead scope="col" className="border-l border-border p-6 align-top whitespace-normal max-md:p-4">
+                    <PlanHead
+                      testId="plan-pro"
+                      name="Pro"
+                      recommended
+                      price={`$${PRO_PRICE.monthly}`}
+                      unit={t("USD / month")}
+                      note={t("or ${{price}} a year: save {{saving}}%", { price: PRO_PRICE.yearly, saving: yearlySaving() })}
+                    />
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody id="compare">
+                {rows.map((r) => (
+                  <TableRow key={r.title} className="border-b border-border last:border-b-0 hover:bg-transparent">
+                    <TableHead scope="row" className="sticky left-0 z-10 h-auto border-r border-border bg-bg p-5 text-left align-top font-normal whitespace-normal max-md:p-4">
+                      <span className="block text-sm leading-5 font-semibold text-fg">{r.title}</span>
+                      {r.detail && <span className="block text-xs leading-4 text-muted">{r.detail}</span>}
+                    </TableHead>
+                    {r.values.map((v, i) => (
+                      <TableCell key={i} className="border-l border-border p-5 text-center align-top text-sm leading-5 whitespace-normal text-muted tabular-nums max-md:p-4">
+                        {v}
+                      </TableCell>
+                    ))}
+                  </TableRow>
                 ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+              </TableBody>
+            </Table>
+          </div>
+        </Card>
       </div>
     </Section>
   );
 }
 
-/**
- * The waitlist: Pro's alone where sign-up is open (no plan to choose), or
- * Free's and Pro's where sign-up is by invite or closed (`onPlan` given: the
- * form offers both).
- */
 function Waitlist({
   api,
   plan,
@@ -161,21 +166,17 @@ function Waitlist({
   signup: SignupMode;
 }) {
   const { t } = useTranslation();
+  const copy = SIGNUP_COPY[signup];
   return (
     <Section id="waitlist">
-      <div className="mx-auto flex max-w-[34rem] flex-col gap-8 px-6 py-12 max-md:px-4 max-md:py-10">
+      <div className={cn("mx-auto flex max-w-[34rem] flex-col gap-8 px-6 max-md:px-4", SECTION_SPACING)}>
         <SectionHead
           label={t("Waitlist")}
-          title={
-            signup === "invite"
-              ? t("Leave your address, and we'll write when it's your turn")
-              : signup === "closed"
-                ? t("Leave your address, and we'll write when sign-up or Pro opens")
-                : t("Leave your address, and we'll write when Pro opens")
-          }
-          className="items-center p-0 text-center [&>h2]:font-semibold"
+          title={t(copy.waitlistTitle)}
+          lead={t(copy.waitlistLead)}
+          className="items-center p-0 text-center [&>h2]:font-semibold [&>p]:max-w-[34em] [&>p]:text-balance"
         />
-        <WaitlistForm api={api} plan={plan} onPlan={onPlan} state={state} signup={signup} />
+        <WaitlistForm api={api} plan={plan} onPlan={onPlan} initialState={state} signup={signup} />
       </div>
     </Section>
   );
@@ -225,15 +226,17 @@ function Faq() {
     },
   ];
   return (
-    <Section id="faq" className="pb-10 max-md:pb-8">
-      <SectionHead title={t("FAQ")} className="items-center text-center [&>h2]:font-semibold" />
-      <FaqAccordion
-        testId="faq"
-        items={items}
-        className="border-t border-border"
-        triggerClassName="px-6 py-5 max-md:px-4"
-        panelClassName="px-6 pb-6 max-md:px-4"
-      />
+    <Section id="faq">
+      <div className={cn("mx-auto grid max-w-[68rem] gap-8 lg:grid-cols-[minmax(0,0.45fr)_minmax(0,1fr)] lg:items-center lg:gap-16", SECTION_SPACING)}>
+        <h2 className="text-2xl leading-8 font-semibold tracking-tight text-balance text-fg cjk-wrap md:cjk-keep max-md:px-4 max-md:text-xl">{t("FAQ")}</h2>
+        <FaqAccordion
+          testId="faq"
+          items={items}
+          className="min-w-0 max-md:mx-4"
+          triggerClassName="px-6 py-5 max-md:px-4"
+          panelClassName="px-6 pb-6 max-md:px-4"
+        />
+      </div>
     </Section>
   );
 }
@@ -245,7 +248,7 @@ export default function PricingPage({
   signup = "open",
 }: {
   signedIn?: boolean;
-  api?: Pick<HubApi, "joinWaitlist">;
+  api: Pick<HubApi, "joinWaitlist">;
   waitlist?: WaitlistState;
   signup?: SignupMode;
 }) {
@@ -253,30 +256,15 @@ export default function PricingPage({
   const open = signup === "open";
   usePageMeta(
     t("Droppen pricing — start free, Pro for ${{price}} a month", { price: PRO_PRICE.monthly }),
-    signup === "invite"
-      ? t("Use Droppen on one device with no account, free with an invite, or Pro for more devices and longer offline reading. Every plan is end-to-end encrypted.")
-      : t("Use Droppen on one device with no account, free with an account, or Pro for more devices and longer offline reading. Every plan is end-to-end encrypted."),
+    t(SIGNUP_COPY[signup].pricingDescription),
   );
-  const hub = useMemo(() => api ?? new HubApi(), [api]);
   const [chosen, setPlan] = useState<WaitlistPlan>(() => planOfSearch(typeof location === "undefined" ? "" : location.search));
-  // Open sign-up: Free needs no waitlist, so the form is Pro's.
   const plan = open ? "pro" : chosen;
   return (
-    <PublicLayout testId="pricing" signedIn={signedIn} mainClassName="xl:hatch-45">
-      <div className="mx-auto max-w-[68rem] bg-bg xl:border-x xl:border-border">
-        <div className="mx-auto flex max-w-[44rem] flex-col items-center gap-4 px-6 pt-16 pb-14 text-center max-md:px-4 max-md:pt-10 max-md:pb-10">
-          <h1 className="text-5xl leading-display font-semibold tracking-tighter text-balance text-fg cjk-wrap md:cjk-keep max-md:text-4xl">
-            {t("Start free. Go Pro when you need more.")}
-          </h1>
-          <p className="max-w-[32em] text-base leading-6 text-muted">
-            {t("End-to-end encrypted: we can't read your sessions, code or terminals")}
-          </p>
-          <p className="text-sm leading-5 text-faint">{t("Prices in US dollars. Pro is not on sale yet, and nothing is charged before you choose to pay.")}</p>
-        </div>
-        <Plans signup={signup} />
-        <Waitlist api={hub} plan={plan} onPlan={open ? undefined : setPlan} state={waitlist} signup={signup} />
-        <Faq />
-      </div>
+    <PublicLayout testId="pricing" signedIn={signedIn}>
+      <Plans signup={signup} />
+      <Waitlist api={api} plan={plan} onPlan={open ? undefined : setPlan} state={waitlist} signup={signup} />
+      <Faq />
     </PublicLayout>
   );
 }

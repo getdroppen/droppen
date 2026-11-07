@@ -1,34 +1,14 @@
 /*
- * The formulas of droppen.app/security, part by part (`formula.tsx` draws
- * them). Every part of every formula is a term: what kind of thing it is,
- * which party can know it, one or two lines on what it is and why it is
- * there (en, zh-CN, zh-TW, ja), and the code it was read from (`src`, a
- * path from the repository root with its lines) — so a reviewer can check
- * each claim, and `test/security-formulas.test.tsx` checks that every token
- * of every formula has all of it.
- *
- * The parties ("view as"): `me` is your device and `other` the device at the
- * other end, each block saying which role is which (the sender and the
- * recipient of a sealed key, the reader and the device that runs AI that
- * writes a stream…); `hub` is Droppen Hub, `relay` a Droppen relay. A party
- * "knows" a value when the protocol hands it the value or everything needed
- * to compute it: the Hub stores and serves the chain, the mailbox and the
- * encrypted streams (chain.rs: "The hub stores and serves the chain"; wrap.rs;
- * record.rs: "The hub stores what it is handed"); a relay holds only tickets
- * (account, ids, Ed25519 public keys: ticket.rs) and copies channel frames;
- * labels, constants, functions and operators are public, in the source.
- *
- * The same symbol can mean different things in different places — `e` in
- * `X25519(e, R)` is the one-off private key, in `info = e ‖ …` its public
- * half — so a block or a line maps a symbol per occurrence where it must.
+ * Formula terms, translations, party knowledge and source references. `known`
+ * includes parties given a value or everything needed to derive it; labels,
+ * functions and operators are public. Line/block mappings disambiguate reused
+ * symbols, and tests ensure every token has complete metadata.
  */
 
 export const LANGS = ["en", "zh-CN", "zh-TW", "ja"] as const;
 export type Lang = (typeof LANGS)[number];
-/** One text in every language: en, zh-CN, zh-TW, ja. */
 export type Words = readonly [en: string, zhCN: string, zhTW: string, ja: string];
 
-/** What a token is; each kind is drawn its own way (`formula.tsx`). */
 export const KINDS = ["secret", "derived", "public", "value", "label", "fn", "op"] as const;
 export type Kind = (typeof KINDS)[number];
 
@@ -37,20 +17,15 @@ export type Party = (typeof PARTIES)[number];
 
 export interface Term {
   kind: Kind;
-  /** Who can know this value (`label`, `fn` and `op`: everyone). */
   known: readonly Party[];
-  /** What it is, and why it is there. */
   says: Words;
-  /** Other terms to light up with it: its other half, the value it names. */
+  /** Related terms to highlight, such as a key pair's other half. */
   rel?: readonly string[];
-  /** Where it was read from, from the repository root. */
   src: string;
 }
 
 const ALL: readonly Party[] = ["me", "other", "hub", "relay"];
-/** The two ends only. */
 const ENDS: readonly Party[] = ["me", "other"];
-/** The two ends and the Hub, which stores it or carries it in the clear. */
 const STORED: readonly Party[] = ["me", "other", "hub"];
 const ME: readonly Party[] = ["me"];
 const OTHER: readonly Party[] = ["other"];
@@ -1485,7 +1460,6 @@ export const TERMS: Record<string, Term> = {
   },
 };
 
-/** Who "your device" and "the other device" are in a block. */
 export interface Roles {
   me: Words;
   other: Words;
@@ -1493,19 +1467,15 @@ export interface Roles {
 
 export interface FormulaLine {
   text: string;
-  /** This line's own meanings: a symbol, or one meaning per occurrence in the line. */
   terms?: Readonly<Record<string, string | readonly string[]>>;
 }
 
 export interface FormulaBlock {
-  /** The parties' roles; a block without them (labels only) has no "view as". */
   roles?: Roles;
-  /** The block's meanings; a number not named here takes `#` if given. */
   terms?: Readonly<Record<string, string>>;
   lines: readonly (string | FormulaLine)[];
 }
 
-/** Meanings that hold on every line unless a block or a line says otherwise. */
 export const COMMON: Readonly<Record<string, string>> = {
   Ed25519: "fn.ed25519",
   "SHA-256": "fn.sha256",
@@ -1542,7 +1512,6 @@ export const COMMON: Readonly<Record<string, string>> = {
   SHA256: "fn.sha256",
 };
 
-/** Every label, quoted in a formula (without its `\0`) or listed bare. */
 export const LABELS: Readonly<Record<string, string>> = {
   "rh/v1": "label.rh-v1",
   "rh/v1 chain-entry": "label.chain-entry",
@@ -1585,7 +1554,6 @@ const renewal: Roles = {
   other: ["the device that runs AI being renewed", "正在更换身份的可运行 AI 的设备", "正在更換身分的可執行 AI 的裝置", "ID を更新される AI を実行できるデバイス"],
 };
 
-/** The page's formula blocks, by the place they stand. */
 export const BLOCKS = {
   chain: {
     roles: {

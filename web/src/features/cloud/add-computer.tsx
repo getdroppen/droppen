@@ -1,6 +1,6 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Check, Columns2, Download, ExternalLink, Loader2, RefreshCw } from "lucide-react";
+import { ArrowSquareOutIcon, ArrowsClockwiseIcon, CheckIcon, CircleNotchIcon, ColumnsIcon, DownloadSimpleIcon } from "@phosphor-icons/react";
 import { hostRefusalText } from "@/api/errors";
 import { cn } from "@/lib/cn";
 import { type EnrollCode, formatEnrollCode } from "@/lib/e2e";
@@ -137,7 +137,7 @@ function AddMachineRound({ account, link, origin, onDone, onNewCode }: { account
   }, [account, link]);
 
   const pad = "px-6 py-5 max-md:px-4";
-  if (state.kind === "starting") return <div className={pad}><Loader2 className="size-4 animate-spin text-faint" /></div>;
+  if (state.kind === "starting") return <div className={pad}><CircleNotchIcon className="size-4 animate-spin text-faint" /></div>;
   if (state.kind === "error") return <div className={pad}><ErrorLine message={state.message} /></div>;
   if (state.kind === "limit") {
     return (
@@ -221,7 +221,7 @@ export function CodeRoundView({
           <p className="text-xs leading-5 text-muted">{t("No device used it in time. Get a new code, and run the new command on that device.")}</p>
           <div className="flex flex-wrap gap-2">
             <button type="button" data-variant="primary" data-testid="enroll-new-code" className={primary} onClick={onNewCode}>
-              <RefreshCw className="size-3.5" />
+              <ArrowsClockwiseIcon className="size-3.5" />
               {t("new code")}
             </button>
             <button type="button" className={quiet} onClick={onCancel}>
@@ -258,7 +258,7 @@ export function CodeRoundView({
       <div className={cn(pad, "flex flex-col gap-3")}>
         <CapsLabel>{t("02 · waiting for it")}</CapsLabel>
         <p className="flex items-center gap-2 text-xs text-faint">
-          <Loader2 className="size-3 shrink-0 animate-spin" />
+          <CircleNotchIcon className="size-3 shrink-0 animate-spin" />
           {state.kind === "key"
             ? t("added; handing the device its key (end to end if it comes online, else by mailbox)…")
             : state.kind === "adding"
@@ -398,12 +398,12 @@ export function AddComputer({
               <div className="flex flex-wrap items-center gap-2">
                 {/* The latest release's .dmg itself when the hub names it, downloaded in place; else the release page. */}
                 <a {...fileLink(latest?.files.macos)} data-testid="add-app-download" className={cn(secondary, "inline-flex items-center gap-1.5")}>
-                  <Download className="size-3.5" />
+                  <DownloadSimpleIcon className="size-3.5" />
                   {t("Download Droppen App (macOS)")}
                 </a>
                 <a href={publicHref(downloadHref("macos-app"))} target="_blank" rel="noopener" data-testid="add-download-link" className={cn(quiet, "inline-flex items-center gap-1.5")}>
                   {t("download page")}
-                  <ExternalLink className="size-3" />
+                  <ArrowSquareOutIcon className="size-3" />
                 </a>
               </div>
             </>
@@ -423,7 +423,7 @@ export function AddComputer({
                 <CopyButton text={INSTALL_COMMAND} label={t("copy command")} />
                 <a href={publicHref(downloadHref("macos-bg"))} target="_blank" rel="noopener" data-testid="add-download-link" className={cn(quiet, "inline-flex items-center gap-1.5")}>
                   {t("download page")}
-                  <ExternalLink className="size-3" />
+                  <ArrowSquareOutIcon className="size-3" />
                 </a>
               </div>
               <p className="text-2xs leading-4 text-muted">{t("It starts Droppen there, makes a local login for it, and opens its page.")}</p>
@@ -460,7 +460,7 @@ export function AddComputer({
         <li data-testid="add-step-wait" className={pad}>
           <CapsLabel>{t("03 · it comes online here")}</CapsLabel>
           <p data-testid="add-waiting" className="flex items-center gap-2 text-xs text-fg">
-            <Loader2 className="size-3 shrink-0 animate-spin text-faint" />
+            <CircleNotchIcon className="size-3 shrink-0 animate-spin text-faint" />
             {watch.kind === "joined"
               ? t("{{name}} joined the account; waiting for it to come online…", { name: watch.info.name })
               : t("waiting for the new device to come online…")}
@@ -551,7 +551,7 @@ export function NewDeviceReady({ account, added, machines, onDone }: { account: 
     <div data-testid="add-computer" data-step="ready" className="px-6 py-5 max-md:px-4">
       <Note tone="ok" className="max-w-xl">
         <span data-signal="ok" data-testid="add-ready" data-device={added.key} className="flex items-center gap-2 font-mono text-xs text-ok">
-          <Check className="size-3 shrink-0" />
+          <CheckIcon className="size-3 shrink-0" />
           {online ? t("{{name}} is online", { name: added.name }) : t("{{name}} is in your account", { name: added.name })}
         </span>
         {partner ? (
@@ -573,7 +573,7 @@ export function NewDeviceReady({ account, added, machines, onDone }: { account: 
         <div className="flex flex-wrap gap-2">
           {partner ? (
             <button type="button" data-variant="primary" data-testid="side-by-side" className={primary} disabled={busy} onClick={() => void sideBySide()}>
-              {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Columns2 className="size-3.5" />}
+              {busy ? <CircleNotchIcon className="size-3.5 animate-spin" /> : <ColumnsIcon className="size-3.5" />}
               {t("put them on one screen")}
             </button>
           ) : null}

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { BrandMark } from "@/components/brand-mark";
 import { useSearch } from "@tanstack/react-router";
-import { Loader2 } from "lucide-react";
+import { CircleNotchIcon } from "@phosphor-icons/react";
 import { ApiError } from "@/api/errors";
 import { login, pageDroppenCommand, safeNext } from "@/lib/auth";
 
@@ -90,7 +90,7 @@ export function LoginView() {
           disabled={busy || username.trim() === "" || password === ""}
           data-variant="primary" className="flex h-8 items-center justify-center gap-1.5 bg-fg text-xs font-medium text-bg hover:bg-fg/85 disabled:opacity-40"
         >
-          {busy && <Loader2 className="size-3.5 animate-spin" />}
+          {busy && <CircleNotchIcon className="size-3.5 animate-spin" />}
           {busy ? t("signing in…") : t("sign in")}
         </button>
         <p className="text-2xs text-faint">

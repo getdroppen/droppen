@@ -1,6 +1,6 @@
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ArrowLeft, ArrowRight, ChevronRight, KeyRound, Loader2, MonitorSmartphone, Plus, Server } from "lucide-react";
+import { ArrowLeftIcon, ArrowRightIcon, CaretRightIcon, CircleNotchIcon, DevicesIcon, HardDrivesIcon, KeyIcon, PlusIcon } from "@phosphor-icons/react";
 import { osLabel, versionLabel } from "@/features/machines/device-facts";
 import { useDeviceSessions } from "@/features/machines/device-sessions";
 import { needsYou, recentSessions } from "@/features/machines/needs-you";
@@ -162,7 +162,7 @@ function ResendLine({ state }: { state: ResendState | undefined }) {
   if (state.state === "busy") {
     return (
       <span className="flex items-center gap-1.5 font-mono text-2xs text-muted">
-        <Loader2 className="size-3 animate-spin" />
+        <CircleNotchIcon className="size-3 animate-spin" />
         {t("re-send keys")}
       </span>
     );
@@ -574,7 +574,7 @@ export function DevicesPanel({ account, link }: DevicesPanelProps) {
             className={cn(account.rotationDue || firstRun || justJoined ? secondary : primary, "max-md:w-full")}
             onClick={() => setSection(firstHost ? { kind: "addComputer" } : { kind: "add" })}
           >
-            <Plus className="size-3.5" />
+            <PlusIcon className="size-3.5" />
             {t("add a device")}
           </button>
         )}
@@ -629,7 +629,7 @@ export function DevicesPanel({ account, link }: DevicesPanelProps) {
             <p className="text-[13px] leading-5 text-muted">{t("no devices yet")}</p>
             {viewerAdmin && !adding && (
               <button type="button" data-testid="add-device-empty" className={secondary} onClick={() => setSection({ kind: "add" })}>
-                <Plus className="size-3.5" />
+                <PlusIcon className="size-3.5" />
                 {t("add a device")}
               </button>
             )}
@@ -662,14 +662,14 @@ export function DevicesPanel({ account, link }: DevicesPanelProps) {
         {viewerAdmin && chain && !chain.currentRecoveryKey && section.kind === "list" && (
           <Note tone="warn">
             <span data-signal="warn" className="flex items-center gap-1.5 font-mono text-xs text-warn-fg">
-              <KeyRound className="size-3.5" />
+              <KeyIcon className="size-3.5" />
               {t("this account has no recovery words")}
             </span>
             <p className="text-xs leading-5 text-muted">
               {t("Without them, losing every device means losing everything encrypted. (Words are cleared when the device that made them, or one that came back with them, is removed.)")}
             </p>
             <button type="button" className={cn(secondary, "self-start")} disabled={busy} onClick={() => void newWords()}>
-              {busy && <Loader2 className="size-3.5 animate-spin" />}
+              {busy && <CircleNotchIcon className="size-3.5 animate-spin" />}
               {t("create new recovery words")}
             </button>
           </Note>
@@ -687,7 +687,7 @@ export function DevicesPanel({ account, link }: DevicesPanelProps) {
         <details data-testid="removed-devices" className="group/removed">
           {/* A folded aside, not a section: 13px, muted, with its count. */}
           <summary className="flex h-10 cursor-pointer list-none items-center gap-2 px-6 text-muted select-none hover:text-fg max-md:px-4 [&::-webkit-details-marker]:hidden">
-            <ChevronRight aria-hidden="true" className="size-3 transition-transform group-open/removed:rotate-90" />
+            <CaretRightIcon aria-hidden="true" className="size-3 transition-transform group-open/removed:rotate-90" />
             <span className="text-[13px] leading-5 font-medium">{t("removed devices ({{n}})", { n: removed.length })}</span>
           </summary>
           <ul className="mt-2 grid grid-cols-1 items-start gap-2.5 px-6 max-md:px-4 @min-[44rem]/devices:grid-cols-[repeat(auto-fill,minmax(20rem,1fr))] @min-[44rem]/devices:gap-3">
@@ -706,7 +706,7 @@ function AddHead({ title, onBack }: { title: string; onBack: () => void }) {
   return (
     <div className="flex h-12 items-center gap-3 border-b border-border px-6 max-md:px-4">
       <button type="button" onClick={onBack} title={t("back")} aria-label={t("back")} className="flex size-6 items-center justify-center text-muted hover:bg-hover hover:text-fg pointer-coarse:size-9">
-        <ArrowLeft className="size-3.5" />
+        <ArrowLeftIcon className="size-3.5" />
       </button>
       <h2 className="text-base leading-6 font-semibold text-fg">{title}</h2>
     </div>
@@ -717,8 +717,8 @@ function AddHead({ title, onBack }: { title: string; onBack: () => void }) {
 export function AddChooser({ onPick, onCancel }: { onPick: (kind: "addBrowser" | "addComputer") => void; onCancel: () => void }) {
   const { t } = useTranslation();
   const choices = [
-    { kind: "addBrowser" as const, testId: "add-browser", Icon: MonitorSmartphone, title: t("a browser or phone"), body: t("Sign in to this account on it, then scan its QR code, paste its text or type the code it shows.") },
-    { kind: "addComputer" as const, testId: "add-computer", Icon: Server, title: t("a device that runs AI"), body: t("The device your AI CLIs run on, with Droppen installed: your sessions run there, and you open it from here.") },
+    { kind: "addBrowser" as const, testId: "add-browser", Icon: DevicesIcon, title: t("a browser or phone"), body: t("Sign in to this account on it, then scan its QR code, paste its text or type the code it shows.") },
+    { kind: "addComputer" as const, testId: "add-computer", Icon: HardDrivesIcon, title: t("a device that runs AI"), body: t("The device your AI CLIs run on, with Droppen installed: your sessions run there, and you open it from here.") },
   ];
   return (
     <section data-testid="add-chooser">
@@ -742,7 +742,7 @@ export function AddChooser({ onPick, onCancel }: { onPick: (kind: "addBrowser" |
               <span className="text-[13px] font-medium text-fg">{title}</span>
               <span className="text-xs leading-5 text-muted">{body}</span>
             </span>
-            <ArrowRight aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-faint group-hover:text-fg" />
+            <ArrowRightIcon aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-faint group-hover:text-fg" />
           </button>
         ))}
       </div>
@@ -778,7 +778,7 @@ export function MoreSettings({ children }: { children: ReactNode }) {
   return (
     <details data-testid="more-settings" open={open} onToggle={(e) => setOpen(e.currentTarget.open)} className="group/more">
       <summary className="flex h-10 cursor-pointer list-none items-center gap-2 px-6 text-muted select-none hover:text-fg max-md:px-4 [&::-webkit-details-marker]:hidden">
-        <ChevronRight aria-hidden="true" className="size-3 transition-transform group-open/more:rotate-90" />
+        <CaretRightIcon aria-hidden="true" className="size-3 transition-transform group-open/more:rotate-90" />
         <span className="text-[13px] leading-5 font-medium">{t("more settings")}</span>
         <span className="min-w-0 truncate text-xs">{t("connections, relays and keys")}</span>
       </summary>
@@ -913,7 +913,7 @@ export function PromoteDevice({ device, busy, onConfirm, onCancel }: { device: s
         </ul>
         <div className="flex gap-2">
           <button type="button" data-variant="primary" className={primary} disabled={busy} onClick={onConfirm} data-testid="promote-device-confirm">
-            {busy && <Loader2 className="size-3.5 animate-spin" />}
+            {busy && <CircleNotchIcon className="size-3.5 animate-spin" />}
             {t("make it a full device")}
           </button>
           <button type="button" className={quiet} disabled={busy} onClick={onCancel}>
@@ -965,7 +965,7 @@ export function StopHost({ device, busy, onConfirm, onCancel }: { device: string
         </ul>
         <div className="flex gap-2">
           <button type="button" className={danger} disabled={busy} onClick={onConfirm} data-testid="stop-host-confirm">
-            {busy && <Loader2 className="size-3.5 animate-spin" />}
+            {busy && <CircleNotchIcon className="size-3.5 animate-spin" />}
             {t("stop running AI")}
           </button>
           <button type="button" className={quiet} disabled={busy} onClick={onCancel}>
@@ -1096,7 +1096,7 @@ function RemoveDevice({
             }
           }}
         >
-          {busy && <Loader2 className="size-3.5 animate-spin" />}
+          {busy && <CircleNotchIcon className="size-3.5 animate-spin" />}
           {busy ? t("removing and rotating keys…") : t("remove")}
         </button>
         <button type="button" className={quiet} disabled={busy} onClick={onDone}>

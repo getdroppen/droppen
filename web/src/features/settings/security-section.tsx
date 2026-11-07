@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { LogOut, Trash2 } from "lucide-react";
+import { SignOutIcon, TrashIcon } from "@phosphor-icons/react";
 import { Fragment, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { ApiClient } from "@/api/client";
@@ -93,7 +93,7 @@ function AccountSection({ user }: { user: string }) {
           onClick={() => void signOut()}
           className={SETTINGS_ACTION}
         >
-          <LogOut className="size-3" />
+          <SignOutIcon className="size-3" />
           {t("sign out")}
         </button>
       </div>
@@ -221,7 +221,7 @@ function SessionRow({ session, onRevoke, busy }: { session: AuthSession; onRevok
           title={session.current ? t("sign this device out") : t("revoke this session")}
           onClick={onRevoke} data-signal="failed" className="rounded p-1 text-muted hover:bg-hover hover:text-danger disabled:opacity-40"
         >
-          <Trash2 className="size-3" />
+          <TrashIcon className="size-3" />
         </button>
       </td>
     </tr>

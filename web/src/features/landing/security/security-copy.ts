@@ -1,30 +1,14 @@
 /*
- * The words of the security design (`security.tsx`), droppen.app/security.
- * As everywhere (`src/i18n`), the keys are the English text, so English needs
- * no table; zh-CN, zh-TW and ja say the same things, and
- * `test/security-page.test.tsx` holds the three to the page's keys.
- *
- * Product words, as on the other public pages: a device (设备 / 裝置 /
- * デバイス), a device that runs AI (可运行 AI 的设备 / 可執行 AI 的裝置 /
- * AI を実行できるデバイス; the chain's host), a full device (完整设备 /
- * 完整裝置 / フルデバイス; its admin), the content key (内容密钥 / 內容金鑰 /
- * コンテンツ鍵; `MK`), the user key, the identity key, the recovery words:
- * the app's own names for them (`i18n/cloud-devices.ts`). Droppen Hub is
- * "Droppen Hub" or "Hub" in every language, a relay a Droppen relay. The
- * protocol's labels and formulas are code and stay in the page, untranslated.
- *
- * Its own chunk: loaded with the page only, never with the landing page.
+ * Security-page translations keyed by English source text; tests keep these
+ * bundles aligned with the page. Reuse product terminology from cloud devices.
+ * Protocol labels and formulas remain untranslated code.
  */
 
-import i18n from "@/i18n";
+import { registerCopy } from "../register-copy";
 
 type Bundle = Record<string, string>;
 
-/**
- * Each line once: the English (the key), then zh-CN, zh-TW and ja, in the
- * order the page says them. The English is not repeated per language, which
- * keeps the page's chunk small.
- */
+/** English is the key and is not repeated in each language bundle. */
 const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: string])[] = [
 
   [
@@ -2001,6 +1985,17 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "見たり操作したりする場所：ブラウザやスマホで開く my.droppen.app。いまペアリングするものはすべてフルデバイスで、ユーザー鍵を持ち、アカウントのチェーンのエントリに署名します。",
   ],
   ["close", "关闭", "關閉", "閉じる"],
+
+  // Register furniture unique to this lazy chunk.
+  ["On this page", "本页", "本頁", "このページ"],
+  ["Droppen relay", "Droppen 中继", "Droppen 中繼", "Droppen 中継"],
+  ["encrypted copy", "加密副本", "加密副本", "暗号化コピー"],
+  [
+    "Droppen is in beta. Its encryption design has had internal security reviews, not an external audit. In a browser you trust the page code as it was loaded that time: that code can use your private keys, and could copy them out.",
+    "Droppen 目前是测试版。加密设计经过了内部安全评审，还没有做过外部审计。在浏览器里使用时，你需要信任当次加载的页面代码：这份代码能使用你的私钥，也能把它们复制出去。",
+    "Droppen 目前是測試版。加密設計經過內部安全審查，還沒有做過外部稽核。在瀏覽器裡使用時，你需要信任當次載入的頁面程式碼：這份程式碼能使用你的私密金鑰，也能把它們複製出去。",
+    "Droppen はベータ版です。暗号設計は社内のセキュリティレビューを受けていますが、外部監査はまだです。ブラウザで使う場合は、そのとき読み込んだページのコードを信頼することになります。そのコードは秘密鍵を使えるうえ、持ち出すこともできます。",
+  ],
 ];
 
 const column = (i: 1 | 2 | 3): Bundle => Object.fromEntries(LINES.map((line) => [line[0], line[i]]));
@@ -2009,12 +2004,10 @@ export const securityZhCN: Bundle = column(1);
 export const securityZhTW: Bundle = column(2);
 export const securityJa: Bundle = column(3);
 
-/** The page's tables, by language. */
 export const securityBundles: Record<"zh-CN" | "zh-TW" | "ja", Bundle> = {
   "zh-CN": securityZhCN,
   "zh-TW": securityZhTW,
   ja: securityJa,
 };
 
-// Added here, never overwriting (see `copy.ts`): the words register themselves.
-for (const [lng, bundle] of Object.entries(securityBundles)) i18n.addResourceBundle(lng, "translation", bundle, true, false);
+registerCopy(securityBundles);

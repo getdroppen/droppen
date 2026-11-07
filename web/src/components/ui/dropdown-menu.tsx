@@ -1,5 +1,5 @@
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
-import { Check } from "lucide-react";
+import { CheckIcon } from "@phosphor-icons/react";
 import { cn } from "@/lib/cn";
 
 function DropdownMenu({ ...props }: MenuPrimitive.Root.Props) {
@@ -63,7 +63,7 @@ function DropdownMenuRadioItem({ className, children, ...props }: MenuPrimitive.
         className="pointer-events-none absolute right-2 flex items-center justify-center text-fg [&_svg]:size-3.5"
       >
         <MenuPrimitive.RadioItemIndicator>
-          <Check />
+          <CheckIcon />
         </MenuPrimitive.RadioItemIndicator>
       </span>
     </MenuPrimitive.RadioItem>

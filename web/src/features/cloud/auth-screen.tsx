@@ -7,7 +7,7 @@
 
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
-import { Loader2 } from "lucide-react";
+import { CircleNotchIcon } from "@phosphor-icons/react";
 import { authErrorKind, HubApi, type HubSession, type PasskeySignedIn, PASSWORD_MIN_CHARS, SIGNUP_CONFIG, type SignedIn, type SignupConfig } from "@/lib/hub/api";
 import { finishPasskeyLogin, type PasskeyAnswer, PasskeyAutofill, passkeyCancelled, passkeyLogin, passkeySignUp, pageCredentials, probePasskeys, webAuthnAvailable } from "@/lib/hub/passkey";
 import { rememberPasskeySignIn } from "@/lib/hub/passkey-join";
@@ -362,12 +362,12 @@ export function AuthScreen({
                   disabled={busy || !email.trim()}
                   className={primary}
                 >
-                  {busy && <Loader2 className="size-3.5 animate-spin" />}
+                  {busy && <CircleNotchIcon className="size-3.5 animate-spin" />}
                   {t("create a passkey and sign up")}
                 </button>
               ) : (
                 <button type="submit" data-testid="passkey-signin" data-variant="primary" disabled={busy} className={primary}>
-                  {busy && <Loader2 className="size-3.5 animate-spin" />}
+                  {busy && <CircleNotchIcon className="size-3.5 animate-spin" />}
                   {t("sign in with a passkey")}
                 </button>
               )
@@ -379,7 +379,7 @@ export function AuthScreen({
                 disabled={method === "pending" || busy || !email.trim() || !password}
                 className={primary}
               >
-                {(busy || method === "pending") && <Loader2 className="size-3.5 animate-spin" />}
+                {(busy || method === "pending") && <CircleNotchIcon className="size-3.5 animate-spin" />}
                 {mode === "signup" ? t("create account") : t("sign in")}
               </button>
             )}

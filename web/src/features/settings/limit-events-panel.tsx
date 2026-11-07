@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Check, ChevronRight, Copy, RefreshCw } from "lucide-react";
+import { CheckIcon, CaretRightIcon, CopyIcon, ArrowsClockwiseIcon } from "@phosphor-icons/react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Badge } from "@/components/ui/badge";
@@ -34,7 +34,7 @@ function CopyRaw({ text }: { text: string }) {
       onClick={() => copy(text)}
       className="ml-auto flex size-5 shrink-0 items-center justify-center rounded text-muted hover:bg-hover hover:text-fg"
     >
-      {copied ? <Check data-signal="ok" className="size-3 text-ok" /> : <Copy className="size-3" />}
+      {copied ? <CheckIcon data-signal="ok" className="size-3 text-ok" /> : <CopyIcon className="size-3" />}
     </button>
   );
 }
@@ -133,7 +133,7 @@ export function LimitEventsPanel({ accounts }: { accounts: Account[] }) {
           onClick={() => setOpen((v) => !v)}
           className="flex h-7 items-center gap-1.5 rounded px-2 text-xs font-medium text-muted hover:bg-hover hover:text-fg"
         >
-          <ChevronRight className={cn("size-3 transition-transform", open && "rotate-90")} />
+          <CaretRightIcon className={cn("size-3 transition-transform", open && "rotate-90")} />
           {t("limit log")}
           <span className="tabular-nums text-faint">
             {events.isPending ? "…" : events.isError ? "?" : list.length}
@@ -148,7 +148,7 @@ export function LimitEventsPanel({ accounts }: { accounts: Account[] }) {
             onClick={() => void events.refetch()}
             className="flex size-6 items-center justify-center rounded text-muted hover:bg-hover hover:text-fg disabled:opacity-40"
           >
-            <RefreshCw className={cn("size-3", events.isFetching && "animate-spin")} />
+            <ArrowsClockwiseIcon className={cn("size-3", events.isFetching && "animate-spin")} />
           </button>
         )}
       </div>

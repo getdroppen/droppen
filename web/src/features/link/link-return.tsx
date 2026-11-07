@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Check, Loader2 } from "lucide-react";
+import { CheckIcon, CircleNotchIcon } from "@phosphor-icons/react";
 import { Centered, Note, Panel } from "@/features/cloud/page";
 
 /*
@@ -84,13 +84,13 @@ export function LinkReturnView({ state }: { state: ReturnState }) {
         <div data-testid="link-return" data-state={state.kind} className="flex flex-col gap-3">
           {state.kind === "sending" ? (
             <p className="flex items-center gap-2 text-xs text-faint">
-              <Loader2 className="size-3 animate-spin" />
+              <CircleNotchIcon className="size-3 animate-spin" />
               {t("handing the sign-in to Droppen on this device…")}
             </p>
           ) : state.kind === "done" ? (
             <Note tone="ok">
               <p data-signal="ok" className="flex items-center gap-2 text-xs text-ok">
-                <Check className="size-3" />
+                <CheckIcon className="size-3" />
                 {t("This device has the sign-in.")}
               </p>
               <p className="text-xs leading-5 text-fg">{t("droppen.app, in the other tab, finishes adding it. You can close this tab and go back to Droppen.")}</p>

@@ -1,4 +1,4 @@
-import { Undo2, X } from "lucide-react";
+import { ArrowUUpLeftIcon, XIcon } from "@phosphor-icons/react";
 import { useCallback, useLayoutEffect, useMemo, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { LightboxImage } from "@/components/image-lightbox";
@@ -133,7 +133,7 @@ export function DeliveryPreviews({
                     onClick={() => onRequeue(message)}
                     className="flex size-5 items-center justify-center rounded text-accent hover:bg-hover"
                   >
-                    <Undo2 className="size-3" />
+                    <ArrowUUpLeftIcon className="size-3" />
                   </button>
                 )}
                 {onDismiss && (
@@ -143,7 +143,7 @@ export function DeliveryPreviews({
                     onClick={() => onDismiss(message.id)}
                     className="flex size-5 items-center justify-center rounded text-muted hover:bg-hover"
                   >
-                    <X className="size-3" />
+                    <XIcon className="size-3" />
                   </button>
                 )}
               </span>

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Loader2 } from "lucide-react";
+import { CircleNotchIcon } from "@phosphor-icons/react";
 
 /*
  * QR codes for pairing a device (`lib/hub/pairing.ts`): drawing the new
@@ -45,7 +45,7 @@ export function QrCode({ text, label }: { text: string; label: string }) {
   if (!qr) {
     return (
       <div className="flex aspect-square w-full max-w-64 items-center justify-center self-center border border-border">
-        <Loader2 className="size-4 animate-spin text-faint" />
+        <CircleNotchIcon className="size-4 animate-spin text-faint" />
       </div>
     );
   }

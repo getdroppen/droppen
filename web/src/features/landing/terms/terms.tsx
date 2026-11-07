@@ -1,32 +1,13 @@
-import { type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { CapsLabel } from "@/components/ui/caps-label";
 import "../copy";
-import { Points, PublicLayout, Section, SectionHead, SECURITY_EMAIL, usePageMeta } from "../page-kit";
+import { Block, DocumentHead, LINK, MailLink, Pair, PRIVACY_EMAIL, PublicLayout, Section, SectionHead, SECURITY_EMAIL, usePageMeta } from "../page-kit";
 import { gb, PLAN_NUMBERS } from "../pricing-plans";
 import { PRICING_PATH, PRIVACY_PATH, publicLink } from "../route";
-import { PRIVACY_EMAIL } from "../waitlist";
 import "./terms-copy";
 
-/*
- * droppen.app/terms: the terms of service of the hosted service, in plain
- * words — what it is and what the terms cover (droppen.app, not the code,
- * which its licences govern), the account, the reader's own devices and AI
- * tools, fair use, the plans, availability and liability, leaving, and
- * changes. Every fact is the product's own: end-to-end encryption and what
- * our servers see (the privacy notice, `/security`), the plans' numbers
- * (`pricing-plans.ts`), the e-mail check (docs/hub-api/http.md, sign-up),
- * the identity renewal in testing (`/security` §06), abuse judged by volume
- * and behaviour (docs/cross-machine-architecture.md §6), security reports
- * (SECURITY.md), the licences (README, LICENSE). Signed in or not; drawn
- * like the privacy notice; its own lazy chunk with its own words
- * (`terms-copy.ts`), as `/security` has.
- *
- * The owner's facts (2026-10-23): Droppen operates droppen.app, the laws and
- * courts of Singapore, no postal address published, 16 and over. A fact still
- * to supply would be a placeholder `[IN CAPITALS]`, listed in
- * `web/owner-placeholders.txt`, which a release checks its build against.
- */
+// Owner-supplied legal facts: Singapore law, minimum age 16, no published postal address.
+// Unsupplied facts remain capitalized placeholders checked against web/owner-placeholders.txt.
 
 /** When the terms last changed, as the page says it. */
 export const TERMS_UPDATED = "2026-10-28";
@@ -34,48 +15,18 @@ export const TERMS_UPDATED = "2026-10-28";
 /** The minimum age to use droppen.app, in years (the owner's word). */
 export const MINIMUM_AGE = 16;
 
-function Block({ title, items }: { title: string; items: string[] }) {
-  return (
-    <div className="flex min-w-0 flex-col gap-3 px-6 py-6 max-md:px-4">
-      <span className="text-sm leading-5 font-semibold text-fg">{title}</span>
-      <Points items={items} />
-    </div>
-  );
-}
-
-/** Two blocks side by side (stacked below 768px), as on the privacy notice. */
-function Pair({ left, right }: { left: ReactNode; right: ReactNode }) {
-  return (
-    <div className="grid border-t border-border md:grid-cols-2">
-      {left}
-      <div className="max-md:border-t max-md:border-border md:border-l md:border-border">{right}</div>
-    </div>
-  );
-}
-
-const linkClass = "text-fg underline underline-offset-4 hover:no-underline";
-
 export default function TermsPage({ signedIn = false }: { signedIn?: boolean }) {
   const { t } = useTranslation();
   usePageMeta(t("Terms of Service — Droppen"));
   const free = PLAN_NUMBERS.free;
-  const mail = (email: string, testId: string) => (
-    <a href={`mailto:${email}`} data-testid={testId} className={linkClass}>
-      {email}
-    </a>
-  );
   return (
     <PublicLayout testId="terms" signedIn={signedIn}>
-      <div className="flex flex-col gap-5 px-10 pt-16 pb-10 max-lg:pt-12 max-md:px-4 max-md:pt-10 max-md:pb-8">
-            <CapsLabel variant="section">{t("Terms of Service")}</CapsLabel>
-            <h1 className="max-w-[18em] text-5xl leading-display font-normal tracking-tight text-balance text-fg cjk-wrap md:cjk-keep max-md:text-3xl">
-              {t("What you can expect from us, and what we ask of you.")}
-            </h1>
-            <p className="max-w-[40em] text-base leading-6 text-muted max-md:text-sm max-md:leading-6">
-              {t("These terms are the agreement between you and Droppen (“we”), which operates droppen.app. Creating an account, or using the service, means you accept them.")}
-            </p>
-            <p className="text-xs text-faint">{t("Last updated {{date}}", { date: TERMS_UPDATED })}</p>
-          </div>
+      <DocumentHead
+        label={t("Terms of Service")}
+        title={t("What you can expect from us, and what we ask of you.")}
+        lead={t("These terms are the agreement between you and Droppen (“we”), which operates droppen.app. Creating an account, or using the service, means you accept them.")}
+        note={t("Last updated {{date}}", { date: TERMS_UPDATED })}
+      />
           <Section id="service">
             <SectionHead label={t("The service")} title={t("What these terms cover")} />
             <Pair
@@ -203,7 +154,7 @@ export default function TermsPage({ signedIn = false }: { signedIn?: boolean }) 
               }
             />
             <p className="border-t border-border px-6 py-4 text-xs leading-5 max-md:px-4">
-              <a {...publicLink(PRICING_PATH)} data-testid="terms-pricing" className={linkClass}>
+              <a {...publicLink(PRICING_PATH)} data-testid="terms-pricing" className={LINK}>
                 {t("See the plans")}
               </a>
             </p>
@@ -283,13 +234,13 @@ export default function TermsPage({ signedIn = false }: { signedIn?: boolean }) 
             <div className="flex flex-col gap-3 px-6 py-8 max-md:px-4">
               <CapsLabel variant="section">{t("Contact")}</CapsLabel>
               <p className="text-sm leading-6 text-muted">
-                {t("Questions about these terms, or a request about your account:")} {mail(PRIVACY_EMAIL, "terms-email")}
+                {t("Questions about these terms, or a request about your account:")} <MailLink email={PRIVACY_EMAIL} testId="terms-email" />
               </p>
               <p className="text-sm leading-6 text-muted">
-                {t("Security issues:")} {mail(SECURITY_EMAIL, "terms-security-email")}
+                {t("Security issues:")} <MailLink email={SECURITY_EMAIL} testId="terms-security-email" />
               </p>
               <p className="text-xs leading-5">
-                <a {...publicLink(PRIVACY_PATH)} data-testid="terms-privacy" className={linkClass}>
+                <a {...publicLink(PRIVACY_PATH)} data-testid="terms-privacy" className={LINK}>
                   {t("What we keep, and what we can't see: the privacy notice")}
                 </a>
               </p>

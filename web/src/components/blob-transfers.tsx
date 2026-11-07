@@ -9,7 +9,7 @@
  * (the machine went offline, the file is past what the hub carries).
  */
 import type { TFunction } from "i18next";
-import { Download, Loader2, X } from "lucide-react";
+import { DownloadSimpleIcon, CircleNotchIcon, XIcon } from "@phosphor-icons/react";
 import { useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { formatBytes } from "@/lib/format";
@@ -127,7 +127,7 @@ export function TransferList({ transfers: list, labelOf }: { transfers: readonly
             className="pointer-events-auto flex flex-col gap-1 rounded border border-border bg-panel px-2.5 py-1.5 font-mono text-2xs shadow-lg"
           >
             <div className="flex min-w-0 items-center gap-1.5">
-              {failed ? <Download className="size-3 shrink-0 text-danger" /> : <Loader2 className="size-3 shrink-0 animate-spin text-faint" />}
+              {failed ? <DownloadSimpleIcon className="size-3 shrink-0 text-danger" /> : <CircleNotchIcon className="size-3 shrink-0 animate-spin text-faint" />}
               <span className="min-w-0 flex-1 truncate text-fg" title={item.name}>
                 {item.name}
               </span>
@@ -143,7 +143,7 @@ export function TransferList({ transfers: list, labelOf }: { transfers: readonly
               )}
               {failed && (
                 <button type="button" aria-label={t("dismiss")} onClick={() => endTransfer(item.id)} className="shrink-0 text-faint hover:text-fg">
-                  <X className="size-3" />
+                  <XIcon className="size-3" />
                 </button>
               )}
             </div>

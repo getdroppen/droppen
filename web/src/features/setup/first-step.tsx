@@ -9,7 +9,7 @@
  * the empty-session view with them filled in (`first-session.ts`), where only
  * the user's Send starts anything.
  */
-import { Check, FolderPlus, Folder, Search, TriangleAlert } from "lucide-react";
+import { CheckIcon, FolderPlusIcon, FolderIcon, MagnifyingGlassIcon, WarningIcon } from "@phosphor-icons/react";
 import type { ReactNode } from "react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -88,7 +88,7 @@ function FolderRow({
         {detail && <span className="block truncate font-mono text-2xs leading-4 text-faint">{detail}</span>}
       </span>
       <span className="truncate font-mono text-2xs text-faint">{meta}</span>
-      <span>{checked && <Check className="size-3.5" aria-hidden="true" />}</span>
+      <span>{checked && <CheckIcon className="size-3.5" aria-hidden="true" />}</span>
     </button>
   );
 }
@@ -112,7 +112,7 @@ function NoTool({ onGoto }: { onGoto: (step: StepId) => void }) {
   const { t } = useTranslation();
   return (
     <div data-testid="first-no-tool" className="grid max-w-[720px] grid-cols-[16px_minmax(0,1fr)_auto] items-center gap-3 border border-border px-4 py-3.5 max-[720px]:grid-cols-[16px_minmax(0,1fr)]">
-      <TriangleAlert className="size-4 text-warn-fg" aria-hidden="true" />
+      <WarningIcon className="size-4 text-warn-fg" aria-hidden="true" />
       <p className="text-xs leading-[18px]">{t("No AI tool is ready yet, so there is nothing to start. Get one ready in step 1, or skip this step.")}</p>
       <Button variant="primary" data-guide-primary="" data-testid="first-back" className="max-[720px]:col-start-2 max-[720px]:justify-self-start" onClick={() => onGoto("tools")}>
         {t("Back to step 1")}
@@ -160,7 +160,7 @@ export function FirstStepView({
               <FolderRow
                 key={folder.path}
                 path={folder.path}
-                icon={<Folder />}
+                icon={<FolderIcon />}
                 name={folder.name || basename(folder.path)}
                 detail={short(folder.path)}
                 meta={[...folder.tools.map((s) => SOURCE_NAME[s]), ago(folder.lastUsed, i18n.language)].filter(Boolean).join(" · ")}
@@ -174,7 +174,7 @@ export function FirstStepView({
           <FolderRow
             testId="practice-row"
             path={practice.path ?? undefined}
-            icon={<FolderPlus />}
+            icon={<FolderPlusIcon />}
             name={t("Make a practice folder")}
             detail={practice.path ? short(practice.path) : t("~/Droppen/first-session: empty, safe to experiment in.")}
             checked={ui.practice && ui.cwd !== null && ui.cwd === practice.path}
@@ -184,7 +184,7 @@ export function FirstStepView({
           <FolderRow
             testId="other-row"
             path={other ?? undefined}
-            icon={<Search />}
+            icon={<MagnifyingGlassIcon />}
             name={t("Choose another folder…")}
             detail={other ? short(other) : null}
             checked={other !== null}

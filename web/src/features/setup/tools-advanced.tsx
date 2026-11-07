@@ -9,7 +9,7 @@
  */
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
-import { Check, ChevronDown, ChevronRight, KeyRound } from "lucide-react";
+import { CheckIcon, CaretDownIcon, CaretRightIcon, KeyIcon } from "@phosphor-icons/react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { components } from "@/api/schema";
@@ -177,9 +177,9 @@ export function AdvancedAccounts({
         onClick={() => onOpen(!open)}
         className="flex h-10 w-full items-center gap-2 px-3.5 text-left text-[13px] font-semibold hover:bg-hover"
       >
-        {open ? <ChevronDown className="size-3" aria-hidden="true" /> : <ChevronRight className="size-3" aria-hidden="true" />}
+        {open ? <CaretDownIcon className="size-3" aria-hidden="true" /> : <CaretRightIcon className="size-3" aria-hidden="true" />}
         <span className="min-w-0 flex-1">{t("Add accounts to Droppen (advanced)")}</span>
-        <KeyRound className="size-3.5 text-faint" aria-hidden="true" />
+        <KeyIcon className="size-3.5 text-faint" aria-hidden="true" />
       </button>
       {open && (
         <div className="border-t border-border px-3.5 pt-3 pb-3.5">
@@ -244,7 +244,7 @@ export function AdvancedAccounts({
                   <AddError error={add.error} />
                   {added && !added.unverified && (
                     <span className="flex items-center gap-1 font-mono text-2xs text-ok">
-                      <Check className="size-3" aria-hidden="true" />
+                      <CheckIcon className="size-3" aria-hidden="true" />
                       {t("Added to Droppen as “{{label}}”.", { label: added.label })}
                     </span>
                   )}

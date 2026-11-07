@@ -1,4 +1,4 @@
-import { Languages } from "lucide-react";
+import { TranslateIcon } from "@phosphor-icons/react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { activeLanguage, LanguageMenu } from "@/components/language-menu";
@@ -44,7 +44,7 @@ export function PrefsControls() {
     <div data-prefs="" className="flex shrink-0 items-center gap-2">
       <LanguageMenu value={language} onChoose={chooseLanguage} look="public">
         <DropdownMenuTrigger aria-label={langLabel} title={langLabel} className={cn(control, "w-9")}>
-          <Languages className="size-4" strokeWidth={1.5} />
+          <TranslateIcon className="size-4" />
         </DropdownMenuTrigger>
       </LanguageMenu>
       <Button
@@ -58,7 +58,7 @@ export function PrefsControls() {
         aria-label={themeLabel}
         className={cn(control, "w-9")}
       >
-        <Icon className="size-4" strokeWidth={1.5} />
+        <Icon className="size-4" />
       </Button>
     </div>
   );

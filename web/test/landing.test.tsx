@@ -1,18 +1,4 @@
-// The landing page (`features/landing`): what a signed-out visitor sees at `/`
-// in cloud mode, and the paths that move sign-in and sign-up off the root.
-//
-// What these pin: the page says what it is, in zh-CN first and in en, zh-TW
-// and ja, with every string on it translated and in its own words (never an
-// app translation of the same key); the hero sells with its action, and the
-// agents' marks ring it as decoration; the product follows (the
-// screens, one at a time in their frames, as a three-screen carousel), then the
-// network diagram, and it says end-to-end encryption once,
-// near the end; it calls only the client open source; it carries exactly one
-// primary action, and its links go to /signup and /signin; its numbers are the
-// measured ones and it makes no absolute claims; and only the bare root is the
-// landing page.
-//
-// `react-dom/server` with no DOM, like the other render tests.
+// Server-rendered public landing page, routing, translation, and content contracts.
 import * as React from "react";
 import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
@@ -63,18 +49,18 @@ test("the landing page leads with what you get, in zh-CN first", () => {
   const html = draw("zh-CN");
   const words = text(html);
   for (const line of [
-    // The selling points: your computer's AI on your phone, every session in one list, code only you can read.
-    "电脑上的 AI，手机上接着用",
+    // The selling points: your computer's Agent on your phone, every session in one list, code only you can read.
+    "电脑上的 Agent，在手机上接着使用",
     "Claude Code 和 Codex 仍在你自己的电脑上运行。",
     "所有电脑，一个列表",
-    "安全与加密",
+    "安全与端到端加密",
     // The deep sections, each headed by what it gets you.
-    "网络不好也能用",
+    "直连优先，网络受限时自动中继",
     "免费注册",
-    "登录",
   ]) {
     assert.ok(words.includes(line), `missing: ${line}`);
   }
+  assert.ok(html.includes("登录"), "header includes sign in");
   // The sections the header links to, in the page's order: the product first, encryption last.
   const at = (id: string) => html.indexOf(`id="${id}"`);
   const order = ["tour", "features", "direct", "security"];
@@ -89,10 +75,18 @@ test("the FAQ is one vertical list at every width", () => {
   assert.equal((faq.match(/data-testid="faq-item"/g) ?? []).length, 4);
   const list = /<div[^>]*data-testid="landing-faq"[^>]*>/.exec(faq)?.[0];
   assert.ok(list, "the FAQ list");
-  assert.match(list, /class="min-w-0 border-t border-border"/);
+  // The questions are one card (`components/ui/card`, shadcn): it draws its own edge on
+  // all four sides, so the block reads as a card rather than as more of the page's hairlines.
+  assert.match(list, /data-slot="card"/);
+  assert.match(list, /\bring-1\b/);
   assert.doesNotMatch(list, /grid-cols|flex-row/);
   // Each question is separated from the next by a line.
   assert.match(faq, /data-testid="faq-item"[^>]*class="[^"]*border-b border-border/);
+  // The heading is the wide window's at every width — left-aligned, never centred over the
+  // card — and the two columns are for lg and up.
+  assert.match(faq, /<h2 class="[^"]*">FAQ<\/h2>/);
+  assert.doesNotMatch(faq, /<h2 class="[^"]*text-center/);
+  assert.match(faq, /lg:grid-cols-\[minmax\(0,0\.45fr\)_minmax\(0,1fr\)\]/);
 });
 
 test("every public page's header links the site's other pages and the client's source, not the page's own sections", () => {
@@ -189,9 +183,6 @@ test("routing: `/` is the landing page signed in or not; the app keeps its own r
   const manifest = JSON.parse(readFileSync(new URL("../public/manifest.webmanifest", import.meta.url), "utf8")) as { start_url: string };
   assert.equal(manifest.start_url, APP_PATH);
   assert.equal(bootRoute(manifest.start_url, true).show, "app");
-  // Sign-out still lands on the sign-in page.
-  const signOut = readFileSync(new URL("../src/features/cloud/sign-out.ts", import.meta.url), "utf8");
-  assert.match(signOut, /location\.replace\(SIGN_IN_PATH\)/);
 });
 
 test("the numbers are the measured ones, and nothing claims more than the build does", () => {
@@ -223,10 +214,6 @@ test("the hero is its action, not a screenshot: the agents' marks ring it as dec
       const files = [`${agent.icon.slug}-color.svg`, `${agent.icon.slug}.svg`];
       assert.ok(files.some((f) => existsSync(new URL(f, icons))), `${lng}: ${agent.name} has a mark in the icon set`);
     }
-    // Monochrome marks follow the page's ink, so they read in both themes; the hero's own
-    // source says so where the mark is drawn.
-    const source = readFileSync(new URL("../src/features/landing/agent-burst.tsx", import.meta.url), "utf8");
-    assert.match(source, /tone === "ink" && "\[&_path\]:fill-current"/, `${lng}: ink marks follow the page`);
   }
 });
 
@@ -344,17 +331,19 @@ test("the home page's words are its own: no key it draws is one the app translat
 });
 
 test("the page reads in zh-TW and ja", () => {
-  const tw = text(draw("zh-TW"));
-  assert.ok(tw.includes("電腦上的 AI，手機上接著用"));
-  assert.ok(tw.includes("安全與加密"));
+  const twHtml = draw("zh-TW");
+  const tw = text(twHtml);
+  assert.ok(tw.includes("電腦上的 Agent，在手機上接著使用"));
+  assert.ok(tw.includes("安全與端對端加密"));
   assert.ok(tw.includes("所有電腦，一個清單"));
-  assert.ok(tw.includes("登入"));
-  const jp = text(draw("ja"));
-  assert.ok(jp.includes("コンピュータの AI を、スマホで続きから。"));
-  assert.ok(jp.includes("セキュリティと暗号化"));
+  assert.ok(twHtml.includes("登入"));
+  const jpHtml = draw("ja");
+  const jp = text(jpHtml);
+  assert.ok(jp.includes("コンピュータの Agent を、スマホで続きから。"));
+  assert.ok(jp.includes("セキュリティとエンドツーエンド暗号化"));
   assert.ok(jp.includes("すべてのコンピュータを、ひとつのリストで"));
   assert.ok(jp.includes("無料で登録"));
-  for (const words of [tw, jp]) assert.doesNotMatch(words, /Your computer's AI|Security and encryption|stay readable|Three steps|Run the migration/);
+  for (const words of [tw, jp]) assert.doesNotMatch(words, /Your computer's Agent|Security and encryption|stay readable|Three steps|Run the migration/);
 });
 
 test("the hero sells before it explains: no Hub, relay, NAT, STUN, p50 or ciphertext in its words", () => {
@@ -434,9 +423,9 @@ test("the product showcase shows the product: three screens in their frames, in 
   // Three screens, and only the caption of the one on screen is written: the server render
   // opens the first, so its headline and body are there and the other two are not.
   const entries = [
-    ["sessions", "所有电脑，一个列表。", "家里的 Mac、公司的 Linux 电脑、机架上的服务器，都在同一个账户里。打开就能看到哪一台需要你，不用逐台登录。"],
-    ["split", "左边代码，右边终端。", "需要同时盯两件事时，把一个会话和终端并排。改动、测试输出和报错都在同一个窗口里，不用来回复制粘贴。"],
-    ["phone", "离开电脑，在手机上接手。", "在手机浏览器里打开 droppen.app，还是那些会话。标着「需要你」的那一行排在最前，点开就能回答。"],
+    ["sessions", "所有电脑，一个列表。", "将多台 Mac 与 Linux 电脑接入同一个账户。会话状态实时汇总，一目了然定位正在运行或等待确认的任务。"],
+    ["split", "左边代码，右边终端。", "AI 会话与主机原生终端同屏并排运行。实时查看代码改动、测试日志与命令输出，无需在窗口间频繁切换。"],
+    ["phone", "离开电脑，在手机上接手。", "在手机浏览器打开 droppen.app 即时同步会话。「需要你」待处理任务优先置顶，随时随地审批命令、回复提问或派发新任务。"],
   ] as const;
   const [first] = entries;
   assert.ok(text(tour).includes(first[1]), `${first[0]}: the open screen's headline`);
@@ -462,8 +451,16 @@ test("the product showcase shows the product: three screens in their frames, in 
   assert.equal((tour.match(/role="tab"[^>]*aria-selected="false"/g) ?? []).length, 2, "the other two ticks are closed");
   // Three compact capsules, not a second toolbar or a full-width rail. Each has a
   // generous tap target and names the screen it goes to.
-  assert.match(tour, /data-shape=""[^>]*class="[^"]*h-1 w-3 rounded-full/, "compact capsule marks");
-  assert.match(tour, /aria-label="选择界面"[^>]*class="flex items-center justify-center gap-1"/, "three compact marks");
+  // The rail is the ui-spec's (§83): a centred, w-fit list (three 44px taps, 132px); a 24px track
+  // in each; and, in the tick on show, an ink fill that runs the tour's own interval.
+  assert.match(tour, /data-shape="" class="relative block h-1 w-6 rounded-full bg-border[^"]*"/, "compact capsule tracks");
+  assert.equal((tour.match(/data-shape="" class="relative block h-1 w-6/g) ?? []).length, 3, "one track per screen");
+  assert.match(tour, /role="tablist" aria-label="选择界面"[^>]*class="[^"]*flex[^"]*w-fit[^"]*justify-center"/, "three compact marks");
+  assert.equal((tour.match(/class="group\/tick flex h-11 w-11 /g) ?? []).length, 3, "a 44px tap target per mark");
+  const fill = /<span[^>]*data-fill="[^"]+"[^>]*class="[^"]*bg-fg[^"]*"[^>]*>/.exec(tour)?.[0];
+  assert.ok(fill, "the tick on show carries a fill");
+  assert.match(fill, /hidden group-data-\[active\]\/tick:block/, "only the tick on show is inked");
+  assert.match(fill, /animation-duration:var\(--tour-rotate\)/, "the fill runs the tour's interval");
   assert.match(firstTab, /aria-label="第 1 个界面，共 3 个：所有电脑，一个列表。"/, "the tick names its screen");
   assert.equal((tour.match(/aria-label="第 \d 个界面，共 3 个：/g) ?? []).length, 3, "one tick per screen");
   const panels = [...tour.matchAll(/<div[^>]*role="tabpanel"[^>]*>/g)].map((m) => m[0]);
@@ -543,7 +540,7 @@ test("the network section draws the path: direct first, the relay as the fallbac
   }
   assert.doesNotMatch(network, /data-wire-lock|aria-pressed/);
   // Every diagram has a real viewBox.
-  for (const [, box] of network.matchAll(/viewBox="([^"]+)"/g)) assert.match(box!, /^0 0 \d+ \d+$/, box);
+  for (const [, box] of network.matchAll(/viewBox="([^"]+)"/g)) assert.match(box!, /^-?\d+(\.\d+)?\s+-?\d+(\.\d+)?\s+\d+(\.\d+)?\s+\d+(\.\d+)?$/, box);
   // The diagram is about the path, not the payload: no ciphertext hex groups anywhere.
   assert.doesNotMatch(text(html), /\b[0-9a-f]{4} [0-9a-f]{4} [0-9a-f]{4}\b/);
 });

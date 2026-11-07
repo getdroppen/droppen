@@ -3,7 +3,7 @@
  * DOM and the network. The rules are in `first-unread.ts`, where they are
  * tested.
  */
-import { ArrowUp, Loader2, X } from "lucide-react";
+import { ArrowUpIcon, CircleNotchIcon, XIcon } from "@phosphor-icons/react";
 import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/cn";
@@ -184,7 +184,7 @@ export function FirstUnreadButton({
   if (view.kind === "jumping") {
     return (
       <div role="status" data-first-unread="jumping" className={cn(PILL, "bg-unread pr-1 text-bg", className)}>
-        <Loader2 aria-hidden="true" className="size-3.5 shrink-0 animate-spin" />
+        <CircleNotchIcon aria-hidden="true" className="size-3.5 shrink-0 animate-spin" />
         <span className="truncate">{t("going to the first unread message…")}</span>
         {paging && paging.total > 1 && (
           <span className="shrink-0 font-mono text-2xs tabular-nums opacity-80">
@@ -198,7 +198,7 @@ export function FirstUnreadButton({
           onClick={onCancel}
           className="flex size-5 shrink-0 items-center justify-center hover:bg-bg/20"
         >
-          <X className="size-3.5" />
+          <XIcon className="size-3.5" />
         </button>
       </div>
     );
@@ -213,7 +213,7 @@ export function FirstUnreadButton({
       onClick={onJump}
       className={cn(PILL, "bg-unread text-bg hover:brightness-110", className)}
     >
-      <ArrowUp aria-hidden="true" className="size-3.5 shrink-0" />
+      <ArrowUpIcon aria-hidden="true" className="size-3.5 shrink-0" />
       <span className="truncate tabular-nums">{t("{{n}} unread · jump to the first", { n: formatInt(view.target.count) })}</span>
     </button>
   );

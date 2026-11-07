@@ -1,4 +1,4 @@
-import { ChevronRight, Loader2, Square } from "lucide-react";
+import { CaretRightIcon, CircleNotchIcon, SquareIcon } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { LiveDot } from "@/components/live-dot";
@@ -164,7 +164,7 @@ export function BackgroundTaskPanel({
             )}
           >
             <PanelSummary count={panel.count} subtasks={panel.subtasks} now={now} />
-            <ChevronRight
+            <CaretRightIcon
               className={cn(
                 "size-3 shrink-0 self-center text-faint transition-transform",
                 open && "rotate-90",
@@ -332,9 +332,9 @@ function SubtaskRow({
           className="-my-0.5 shrink-0 self-center rounded p-1 text-faint hover:bg-danger/15 hover:text-danger disabled:opacity-50"
         >
           {stopping?.has(subtask.taskId) ? (
-            <Loader2 className="size-3 animate-spin" />
+            <CircleNotchIcon className="size-3 animate-spin" />
           ) : (
-            <Square className="size-2.5 fill-current" />
+            <SquareIcon className="size-2.5 fill-current" />
           )}
         </button>
       )}
@@ -362,7 +362,7 @@ function SubtaskRow({
         className={cn(ROW, "cursor-pointer list-none hover:bg-hover")}
       >
         {line}
-        <ChevronRight className="size-3 shrink-0 self-center text-faint transition-transform group-open/task:rotate-90" />
+        <CaretRightIcon className="size-3 shrink-0 self-center text-faint transition-transform group-open/task:rotate-90" />
       </summary>
       {/* The transcript's own `DetailPre`, in the panel's smaller box: the
           prompt is the thing being quoted, so it is drawn where the rest of

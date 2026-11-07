@@ -1,5 +1,5 @@
 import { Menu } from "@base-ui/react/menu";
-import { Archive, Ellipsis, Loader2, Pencil } from "lucide-react";
+import { ArchiveIcon, DotsThreeIcon, CircleNotchIcon, PencilSimpleIcon } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
 
 /** Low-frequency actions share one slot; search and pin remain directly accessible. */
@@ -20,7 +20,7 @@ export function SessionActionsMenu({
         aria-label={t("session actions")}
         className="flex size-6 shrink-0 items-center justify-center rounded text-muted hover:bg-hover hover:text-fg"
       >
-        {archiving ? <Loader2 className="size-3.5 animate-spin" /> : <Ellipsis className="size-3.5" />}
+        {archiving ? <CircleNotchIcon className="size-3.5 animate-spin" /> : <DotsThreeIcon className="size-3.5" />}
       </Menu.Trigger>
       <Menu.Portal>
         <Menu.Positioner side="bottom" align="end" sideOffset={4} className="z-50 outline-none">
@@ -29,7 +29,7 @@ export function SessionActionsMenu({
               onClick={onRename}
               className="flex w-full cursor-pointer items-center gap-2 px-3 py-1 text-left font-mono text-2xs text-fg outline-none data-[highlighted]:bg-hover"
             >
-              <Pencil className="size-3.5 shrink-0" />
+              <PencilSimpleIcon className="size-3.5 shrink-0" />
               {t("rename session")}
             </Menu.Item>
             {onArchive && (
@@ -38,7 +38,7 @@ export function SessionActionsMenu({
                 onClick={onArchive}
                 className="flex w-full cursor-pointer items-center gap-2 px-3 py-1 text-left font-mono text-2xs text-danger outline-none data-[disabled]:pointer-events-none data-[disabled]:opacity-40 data-[highlighted]:bg-hover"
               >
-                <Archive className="size-3.5 shrink-0" />
+                <ArchiveIcon className="size-3.5 shrink-0" />
                 {t("archive session")}
               </Menu.Item>
             )}

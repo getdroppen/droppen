@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Loader2, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { CheckIcon, CircleNotchIcon, PencilSimpleIcon, PlusIcon, ArrowsClockwiseIcon, TrashIcon } from "@phosphor-icons/react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { components } from "@/api/schema";
@@ -270,7 +270,7 @@ function AccountRow({
       )}
       {usage === "ready" && (
         <span data-signal="ok" className="flex items-center gap-0.5 font-mono text-2xs text-ok">
-          <Check className="size-3" />
+          <CheckIcon className="size-3" />
           {t("usage enabled")}
         </span>
       )}
@@ -329,9 +329,9 @@ function AccountRow({
           className="rounded px-1.5 py-0.5 font-mono text-2xs text-muted hover:bg-hover hover:text-fg"
         >
           {account.kind === "env" ? (
-            <Pencil className="mr-1 inline size-3 align-[-2px]" />
+            <PencilSimpleIcon className="mr-1 inline size-3 align-[-2px]" />
           ) : (
-            <RefreshCw className="mr-1 inline size-3 align-[-2px]" />
+            <ArrowsClockwiseIcon className="mr-1 inline size-3 align-[-2px]" />
           )}
           {account.kind === "env" ? t("edit") : t("re-auth")}
         </button>
@@ -360,7 +360,7 @@ function AccountRow({
             aria-label={t("delete account")}
             onClick={() => setConfirming(true)} data-signal="failed" className="flex size-6 items-center justify-center rounded text-muted hover:bg-hover hover:text-danger"
           >
-            <Trash2 className="size-3.5" />
+            <TrashIcon className="size-3.5" />
           </button>
         )}
       </div>
@@ -573,7 +573,7 @@ function AddAccountForm({
               onClick={() => add.mutate()}
               data-variant="primary" className={SETTINGS_ACTION_PRIMARY}
             >
-              {add.isPending && <Loader2 className="size-3 animate-spin" />}
+              {add.isPending && <CircleNotchIcon className="size-3 animate-spin" />}
               {t("add account")}
             </button>
             <button
@@ -817,7 +817,7 @@ export function AccountsSection({ provider }: { provider: AccountProvider }) {
             onClick={() => setAdding(true)}
             data-variant="primary" className={SETTINGS_ACTION_PRIMARY}
           >
-            <Plus className="size-3" />
+            <PlusIcon className="size-3" />
             {t("add account")}
           </button>
         )}

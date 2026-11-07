@@ -23,7 +23,7 @@
  * it (`seedDeliveryPreview`).
  */
 import { useSearch } from "@tanstack/react-router";
-import { ChevronDown, ChevronLeft, Folder } from "lucide-react";
+import { CaretDownIcon, CaretLeftIcon, FolderIcon } from "@phosphor-icons/react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useFeedSessions, useFeedSettings } from "@/app/global-feed";
@@ -498,7 +498,7 @@ export function NewSessionView({
               title={t("back")}
               className="flex size-9 shrink-0 items-center justify-center text-muted hover:bg-hover md:hidden"
             >
-              <ChevronLeft className="size-4" />
+              <CaretLeftIcon className="size-4" />
             </MachineLink>
           )}
           <span className="min-w-0 flex-1 truncate text-[13px] font-semibold max-md:text-[15px]">{t("new session")}</span>
@@ -900,9 +900,9 @@ function DirectoryChip({ cwd, onShow, disabled }: { cwd: string; onShow: () => v
       data-chip="directory"
       className="flex h-6 max-w-48 shrink-0 items-center gap-1 rounded pr-1 pl-1.5 font-mono text-2xs text-muted hover:bg-hover hover:text-fg disabled:opacity-40"
     >
-      <Folder className="size-3 shrink-0" />
+      <FolderIcon className="size-3 shrink-0" />
       <span className="truncate">{cwd ? basename(cwd) || cwd : t("working directory")}</span>
-      <ChevronDown className="size-2.5 shrink-0 text-faint" />
+      <CaretDownIcon className="size-2.5 shrink-0 text-faint" />
     </button>
   );
 }

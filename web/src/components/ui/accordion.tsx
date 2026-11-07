@@ -1,5 +1,5 @@
 import { Accordion as AccordionPrimitive } from "@base-ui/react/accordion";
-import { Plus } from "lucide-react";
+import { PlusIcon } from "@phosphor-icons/react";
 import { cn } from "@/lib/cn";
 
 function Accordion({ className, ...props }: AccordionPrimitive.Root.Props) {
@@ -28,7 +28,7 @@ function AccordionTrigger({ className, children, ...props }: AccordionPrimitive.
         {...props}
       >
         {children}
-        <Plus
+        <PlusIcon
           data-slot="accordion-trigger-icon"
           className="pointer-events-none mt-0.5 transition-transform duration-150 group-aria-expanded/accordion-trigger:rotate-45 motion-reduce:transition-none"
         />

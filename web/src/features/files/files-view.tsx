@@ -3,20 +3,20 @@ import { useSearch } from "@tanstack/react-router";
 import { useMachineNavigate } from "@/app/machine-route";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
-  ArrowLeft,
-  ArrowRight,
-  ArrowUp,
-  ChevronRight,
-  Copy,
-  Eye,
-  EyeOff,
-  FileText,
-  Folder,
-  Home,
-  RefreshCw,
-  Search,
-  X,
-} from "lucide-react";
+  ArrowLeftIcon,
+  ArrowRightIcon,
+  ArrowUpIcon,
+  ArrowsClockwiseIcon,
+  CaretRightIcon,
+  CopyIcon,
+  EyeIcon,
+  EyeSlashIcon,
+  FileTextIcon,
+  FolderIcon,
+  HouseIcon,
+  MagnifyingGlassIcon,
+  XIcon,
+} from "@phosphor-icons/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -207,7 +207,7 @@ export function FilesBrowser({
       aria-label={t("Files")}
     >
       <header className="flex h-9 shrink-0 items-center gap-2 border-b border-border px-3">
-        <Folder className="size-4 text-accent" />
+        <FolderIcon className="size-4 text-accent" />
         <span className="min-w-0 flex-1 truncate text-xs font-semibold">
           {t("Files")}
         </span>
@@ -230,7 +230,7 @@ export function FilesBrowser({
           disabled={history.index === 0}
           onClick={() => step(-1)}
         >
-          <ArrowLeft className="size-4" />
+          <ArrowLeftIcon className="size-4" />
         </button>
         <button
           type="button"
@@ -240,7 +240,7 @@ export function FilesBrowser({
           disabled={history.index >= history.entries.length - 1}
           onClick={() => step(1)}
         >
-          <ArrowRight className="size-4" />
+          <ArrowRightIcon className="size-4" />
         </button>
         <button
           type="button"
@@ -250,7 +250,7 @@ export function FilesBrowser({
           disabled={!data?.parent}
           onClick={() => go({ path: data?.parent ?? "~" })}
         >
-          <ArrowUp className="size-4" />
+          <ArrowUpIcon className="size-4" />
         </button>
         <button
           type="button"
@@ -259,7 +259,7 @@ export function FilesBrowser({
           aria-label={t("home directory")}
           onClick={() => go({ path: "~" })}
         >
-          <Home className="size-4" />
+          <HouseIcon className="size-4" />
         </button>
         <input
           ref={pathRef}
@@ -281,7 +281,7 @@ export function FilesBrowser({
           aria-label={t("open directory")}
           title={t("open directory")}
         >
-          <ChevronRight className="size-4" />
+          <CaretRightIcon className="size-4" />
         </button>
         <button
           type="button"
@@ -291,7 +291,7 @@ export function FilesBrowser({
           disabled={isFetching}
           onClick={() => void refetch()}
         >
-          <RefreshCw
+          <ArrowsClockwiseIcon
             className={`size-3.5 ${isFetching ? "animate-spin" : ""}`}
           />
         </button>
@@ -302,7 +302,7 @@ export function FilesBrowser({
       >
         {fileBreadcrumbs(directory, home).map((part, i) => (
           <span key={part.path} className="flex shrink-0 items-center gap-1">
-            {i > 0 && <ChevronRight className="size-3 text-faint" />}
+            {i > 0 && <CaretRightIcon className="size-3 text-faint" />}
             <button
               type="button"
               className="max-w-64 truncate rounded px-1 py-1 text-muted hover:bg-hover hover:text-accent"
@@ -320,7 +320,7 @@ export function FilesBrowser({
           title={t("copy absolute path")}
           onClick={() => void copy(directory)}
         >
-          <Copy className="size-3.5" />
+          <CopyIcon className="size-3.5" />
         </button>
       </nav>
       {notice && (
@@ -334,7 +334,7 @@ export function FilesBrowser({
             aria-label={t("dismiss")}
             onClick={() => setNotice("")}
           >
-            <X className="size-3" />
+            <XIcon className="size-3" />
           </button>
         </div>
       )}
@@ -344,7 +344,7 @@ export function FilesBrowser({
         <div className="files-list flex min-h-0 min-w-0 flex-1 flex-col">
           <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-border p-2">
             <label className="flex h-8 min-w-24 flex-1 items-center gap-1.5 rounded border border-border bg-bg px-2">
-              <Search className="size-3.5 shrink-0 text-faint" />
+              <MagnifyingGlassIcon className="size-3.5 shrink-0 text-faint" />
               <input
                 aria-label={t("filter files")}
                 placeholder={t("filter this directory…")}
@@ -358,7 +358,7 @@ export function FilesBrowser({
                   aria-label={t("clear filter")}
                   onClick={() => setQuery("")}
                 >
-                  <X className="size-3" />
+                  <XIcon className="size-3" />
                 </button>
               )}
             </label>
@@ -383,9 +383,9 @@ export function FilesBrowser({
               onClick={() => setShowHidden(!showHidden)}
             >
               {showHidden ? (
-                <Eye className="size-4 text-accent" />
+                <EyeIcon className="size-4 text-accent" />
               ) : (
-                <EyeOff className="size-4" />
+                <EyeSlashIcon className="size-4" />
               )}
             </button>
           </div>
@@ -468,9 +468,9 @@ export function FilesBrowser({
                               className="flex min-w-0 flex-1 items-center gap-2 self-stretch text-left outline-offset-[-2px]"
                             >
                               {isDir ? (
-                                <Folder className="size-4 shrink-0 fill-accent/10 text-accent" />
+                                <FolderIcon className="size-4 shrink-0 fill-accent/10 text-accent" />
                               ) : (
-                                <FileText className="size-4 shrink-0 text-faint" />
+                                <FileTextIcon className="size-4 shrink-0 text-faint" />
                               )}
                               <span
                                 className={`min-w-0 flex-1 truncate text-xs ${isDir ? "font-medium" : "font-mono"}`}
@@ -482,7 +482,7 @@ export function FilesBrowser({
                               </span>
                               <span className="w-16 shrink-0 text-right font-mono text-2xs text-faint">
                                 {isDir ? (
-                                  <ChevronRight className="ml-auto size-3.5" />
+                                  <CaretRightIcon className="ml-auto size-3.5" />
                                 ) : (
                                   formatBytes(entry.sizeBytes)
                                 )}

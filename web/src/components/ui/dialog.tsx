@@ -1,5 +1,5 @@
 import { Dialog as BaseDialog } from "@base-ui/react/dialog";
-import { X } from "lucide-react";
+import { XIcon } from "@phosphor-icons/react";
 import { cn } from "@/lib/cn";
 
 export const Dialog = BaseDialog.Root;
@@ -30,7 +30,7 @@ export function DialogContent({
             {title}
           </BaseDialog.Title>
           <BaseDialog.Close aria-label={closeLabel ?? "close"} className="flex size-5 shrink-0 items-center justify-center text-muted hover:bg-hover hover:text-fg">
-            <X className="size-3.5" />
+            <XIcon className="size-3.5" />
           </BaseDialog.Close>
         </div>
         {children}

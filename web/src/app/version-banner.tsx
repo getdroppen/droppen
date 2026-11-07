@@ -1,4 +1,4 @@
-import { RefreshCw, X } from "lucide-react";
+import { ArrowsClockwiseIcon, XIcon } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useFeedSettings } from "./global-feed";
@@ -37,7 +37,7 @@ export function VersionBanner() {
   if (!drifted || dismissed) return null;
   return (
     <div data-signal="warn" className="flex shrink-0 items-center gap-2 border-b border-border/40 border-l-2 border-l-warn bg-warn/5 px-3 py-1.5">
-      <RefreshCw className="size-3 shrink-0 text-warn-fg" />
+      <ArrowsClockwiseIcon className="size-3 shrink-0 text-warn-fg" />
       <span className="min-w-0 flex-1 truncate text-xs text-muted">
         {t("server updated — reload when convenient")}
       </span>
@@ -54,7 +54,7 @@ export function VersionBanner() {
         onClick={() => setDismissed(true)}
         className="shrink-0 rounded p-0.5 text-faint hover:bg-hover hover:text-fg"
       >
-        <X className="size-3" />
+        <XIcon className="size-3" />
       </button>
     </div>
   );

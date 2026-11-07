@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "@tanstack/react-router";
-import { Check, ChevronsUpDown, CloudOff, KeyRound, LayoutGrid, LogOut } from "lucide-react";
+import { CaretUpDownIcon, CheckIcon, CloudSlashIcon, KeyIcon, SignOutIcon, SquaresFourIcon } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { BlobTransfers } from "@/components/blob-transfers";
 import { cn } from "@/lib/cn";
@@ -153,7 +153,7 @@ function Bar({ shell, machine }: { shell: HubShell; machine: HubMachine }) {
               title={t("sign out")}
               aria-label={t("sign out")}
             >
-              <LogOut className="size-3" />
+              <SignOutIcon className="size-3" />
             </button>
           )}
         </SignOutChoice>
@@ -380,7 +380,7 @@ export function OldKeyNotice({ onRetry }: { onRetry?: () => void }) {
       className="flex shrink-0 items-center gap-2 border-b border-border bg-warn/7 px-3 py-1.5 shadow-[inset_2px_0_0_var(--color-warn)]"
     >
       <span className="inline-flex h-4 shrink-0 items-center bg-warn px-1 font-mono text-[10px] leading-none font-semibold text-on-signal">{t("old key")}</span>
-      <KeyRound aria-hidden="true" className="size-3 shrink-0 text-muted" />
+      <KeyIcon aria-hidden="true" className="size-3 shrink-0 text-muted" />
       <span className="min-w-0 flex-1 truncate text-xs text-muted">{t("the device in view still uses an old key, and could not be given the new one")}</span>
       {onRetry && (
         <Button size="sm" variant="secondary" onClick={onRetry}>
@@ -406,7 +406,7 @@ export function BlockedNotice({ kind }: { kind: "noRelay" | "agentTooOld" }) {
       data-signal="warn"
       className="flex shrink-0 items-center gap-2 border-b border-border bg-warn/7 px-3 py-1.5 shadow-[inset_2px_0_0_var(--color-warn)]"
     >
-      <CloudOff aria-hidden="true" className="size-3 shrink-0 text-muted" />
+      <CloudSlashIcon aria-hidden="true" className="size-3 shrink-0 text-muted" />
       <span className="min-w-0 flex-1 truncate text-xs text-muted">
         {kind === "agentTooOld"
           ? t("the device in view has an agent too old to be reached: update it on that device")
@@ -448,7 +448,7 @@ export function RefusalNotice({ refusal, limited, others, onDevices }: { refusal
       data-signal="warn"
       className="flex shrink-0 items-center gap-2 border-b border-border bg-warn/7 px-3 py-1.5 shadow-[inset_2px_0_0_var(--color-warn)]"
     >
-      <KeyRound aria-hidden="true" className="size-3 shrink-0 text-muted" />
+      <KeyIcon aria-hidden="true" className="size-3 shrink-0 text-muted" />
       <span className="min-w-0 flex-1 text-xs text-muted" title={refusal.kind === "notAccepted" && limited ? (refusal.why ?? undefined) : undefined}>
         {text}
       </span>
@@ -474,7 +474,7 @@ export function OfflineNotice({ freshestMs, storageFull = null }: { freshestMs: 
       className="flex shrink-0 flex-col border-b border-border bg-danger/4 px-3 py-1.5 shadow-[inset_2px_0_0_var(--color-danger)]"
     >
       <span className="flex min-w-0 items-center gap-2">
-        <CloudOff className="size-3 shrink-0 text-danger" />
+        <CloudSlashIcon className="size-3 shrink-0 text-danger" />
         <span className="min-w-0 flex-1 truncate text-xs text-muted">
           <span className="font-mono text-fg" title={iso ? formatExactTime(iso) : undefined}>
             {iso ? t("offline copy · as of {{time}}", { time: formatTime(iso) }) : t("offline copy")}
@@ -499,7 +499,7 @@ export function NoCopyCover({ onDevices }: { onDevices: () => void }) {
     <div data-testid="no-offline-copy" className="fixed inset-x-0 top-7 bottom-0 z-50 flex items-center justify-center bg-bg">
       <div className="flex max-w-[26rem] flex-col gap-3 p-6">
         <span data-label="" data-signal="offline" className="label-caps flex items-center gap-1.5 text-2xs text-danger">
-          <CloudOff className="size-3" />
+          <CloudSlashIcon className="size-3" />
           {t("device offline")}
         </span>
         <span className="text-[28px] leading-[1.1] font-semibold tracking-[-0.03em] text-fg">{t("Nothing of it on this device yet.")}</span>
@@ -512,7 +512,7 @@ export function NoCopyCover({ onDevices }: { onDevices: () => void }) {
           onClick={onDevices}
           className="mt-1 flex h-9 items-center justify-center gap-1.5 self-start border border-fg bg-fg px-4 text-[13px] font-medium text-bg hover:bg-fg/85"
         >
-          <LayoutGrid className="size-3.5" />
+          <SquaresFourIcon className="size-3.5" />
           {t("my devices")}
         </button>
       </div>
@@ -609,7 +609,7 @@ export function MachineSwitcher({ shell, current }: { shell: HubShell; current: 
         title={t("switch device")}
         className="flex h-5 shrink-0 items-center px-1 text-muted hover:bg-hover hover:text-fg"
       >
-        <ChevronsUpDown className="size-3" />
+        <CaretUpDownIcon className="size-3" />
       </PopoverTrigger>
       <PopoverContent side="bottom" className="w-80 max-w-[calc(100vw-2rem)] p-1">
         <ul data-testid="machine-switcher-list" className="flex flex-col">
@@ -632,7 +632,7 @@ export function MachineSwitcher({ shell, current }: { shell: HubShell; current: 
                   <span title={note ?? undefined} className={cn("min-w-0 flex-1 truncate text-right", info.state === "offline" ? "text-danger" : "text-faint")}>
                     {note}
                   </span>
-                  <Check className={cn("size-3 shrink-0", info.key === current ? "text-fg" : "invisible")} />
+                  <CheckIcon className={cn("size-3 shrink-0", info.key === current ? "text-fg" : "invisible")} />
                 </button>
               </li>
             );

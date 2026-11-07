@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Copy, Loader2 } from "lucide-react";
+import { CheckIcon, CopyIcon, CircleNotchIcon } from "@phosphor-icons/react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { components } from "@/api/schema";
@@ -42,7 +42,7 @@ function AuthUrlBlock({ url }: { url: string }) {
       <div className="flex items-center gap-1.5">
         <input readOnly value={url} onFocus={(e) => e.currentTarget.select()} className={cn(field, "flex-1")} />
         <button type="button" onClick={() => copy(url)} className={cn(secondary, "shrink-0 px-2")}>
-          {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
+          {copied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />}
           {copied ? t("copied") : t("copy")}
         </button>
       </div>
@@ -96,7 +96,7 @@ function CodeBox({ captureId }: { captureId: string }) {
           onClick={() => submit.mutate()}
           className={cn(primary, "shrink-0")}
         >
-          {submit.isPending && <Loader2 className="size-3 animate-spin" />}
+          {submit.isPending && <CircleNotchIcon className="size-3 animate-spin" />}
           {t("submit code")}
         </button>
       </div>
@@ -169,13 +169,13 @@ function CapturePanel({
       {pending && status?.authUrl && <CodeBox captureId={capture.captureId} />}
       {pending && !status?.authUrl && (
         <div className="flex items-center gap-1.5 font-mono text-2xs text-faint">
-          <Loader2 className="size-3 animate-spin" />
+          <CircleNotchIcon className="size-3 animate-spin" />
           {t("waiting for the authorization url…")}
         </div>
       )}
       {status?.status === "captured" && (
         <div className={cn("flex items-center gap-1.5 font-mono text-2xs", status.reused ? "text-muted" : "text-ok")}>
-          <Check className="size-3.5" />
+          <CheckIcon className="size-3.5" />
           {!status.reused
             ? capturedText
             : already
@@ -297,7 +297,7 @@ export function SetupTokenDialog({
               onClick={() => start.mutate()}
               className={primary}
             >
-              {start.isPending && <Loader2 className="size-3 animate-spin" />}
+              {start.isPending && <CircleNotchIcon className="size-3 animate-spin" />}
               {t("start wizard")}
             </button>
           </div>
@@ -447,7 +447,7 @@ export function ReauthDialog({
                   onClick={() => account && start.mutate(account.id)}
                   className={primary}
                 >
-                  {start.isPending && <Loader2 className="size-3 animate-spin" />}
+                  {start.isPending && <CircleNotchIcon className="size-3 animate-spin" />}
                   {t("run setup-token wizard")}
                 </button>
                 <div className="text-center font-mono text-2xs text-faint">{t("or")}</div>
@@ -471,7 +471,7 @@ export function ReauthDialog({
               </label>
             ) : stored.isPending ? (
               <div className="flex items-center gap-1.5 font-mono text-2xs text-faint">
-                <Loader2 className="size-3 animate-spin" />
+                <CircleNotchIcon className="size-3 animate-spin" />
                 {t("reading this account's environment variables…")}
               </div>
             ) : stored.isError ? (
@@ -503,7 +503,7 @@ export function ReauthDialog({
               onClick={() => account && paste.mutate(account.id)}
               className={oauth ? secondary : primary}
             >
-              {paste.isPending && <Loader2 className="size-3 animate-spin" />}
+              {paste.isPending && <CircleNotchIcon className="size-3 animate-spin" />}
               {paste.isPending ? t("checking the token…") : t(oauth ? "save token" : "save environment variables")}
             </button>
           </div>
@@ -592,7 +592,7 @@ export function UsageLoginDialog({
           ) : (
             !start.isError && (
               <div className="flex items-center gap-1.5 font-mono text-2xs text-faint">
-                <Loader2 className="size-3 animate-spin" />
+                <CircleNotchIcon className="size-3 animate-spin" />
                 {t("starting the login wizard…")}
               </div>
             )
@@ -604,7 +604,7 @@ export function UsageLoginDialog({
               onClick={() => account && verify.mutate(account.id)}
               className={cn(primary, "px-3")}
             >
-              {verify.isPending && <Loader2 className="size-3 animate-spin" />}
+              {verify.isPending && <CircleNotchIcon className="size-3 animate-spin" />}
               {t("verify")}
             </button>
             {notYet && (

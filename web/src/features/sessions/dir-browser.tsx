@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { ArrowUp, Folder } from "lucide-react";
+import { ArrowUpIcon, FolderIcon } from "@phosphor-icons/react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Spinner } from "@/components/ui/spinner";
@@ -42,7 +42,7 @@ export function DirBrowser({ start, onPick }: { start: string; onPick: (path: st
           onClick={() => data?.parent && setPath(data.parent)}
           className="flex size-5 shrink-0 items-center justify-center rounded text-muted hover:bg-hover disabled:opacity-30"
         >
-          <ArrowUp className="size-3" />
+          <ArrowUpIcon className="size-3" />
         </button>
         <span className="min-w-0 flex-1 truncate font-mono text-2xs text-muted" title={data?.path}>
           {data?.path ?? "…"}
@@ -81,7 +81,7 @@ export function DirBrowser({ start, onPick }: { start: string; onPick: (path: st
               onClick={() => setPath(`${data.path === "/" ? "" : data.path}/${d.name}`)}
               className="flex w-full items-center gap-1.5 px-2 py-1 text-left hover:bg-hover"
             >
-              <Folder className="size-3 shrink-0 text-muted" />
+              <FolderIcon className="size-3 shrink-0 text-muted" />
               <span className="truncate font-mono text-2xs text-fg">{d.name}</span>
             </button>
           ))}

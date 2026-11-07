@@ -1,46 +1,29 @@
 import { BLOCKS, type BlockId, COMMON, type FormulaBlock, type FormulaLine, LABELS, TERMS } from "./formula-data";
 
 /*
- * The formulas as tokens, and how their values flow (`formula.tsx` draws
- * them). Pure, so the tests read exactly what the page draws.
- *
- * A line splits into labels ("rh/v1 …"), names, numbers, operators (‖ | ← →
- * and the [0..5] slice) and plain punctuation; every token but punctuation
- * names a term (`formula-data.ts`): the line's own meaning first, then the
- * block's, then the common one. A name not found whole that has underscores
- * (the Noise suite) is split at them.
- *
- * The flow is read off the formula's shape: a name at the start of a line
- * (or after `;` or `·`) followed by `=` is where that value is defined, made
- * by the function call that follows the `=`; every other token is an input
- * of the innermost function call around it.
+ * Pure tokenization and data-flow analysis shared by the UI and tests.
+ * Line/block/local meanings disambiguate symbols. Definitions are names before
+ * `=` at a segment start; other tokens belong to their innermost function call.
  */
 
-export type TokenType = "label" | "name" | "number" | "op" | "punct";
+type TokenType = "label" | "name" | "number" | "op" | "punct";
 
-export interface Token {
+interface Token {
   text: string;
   type: TokenType;
-  /** The term (`TERMS`); none for punctuation, or when nothing names it (a test catches that). */
   term?: string;
-  /** This occurrence's key, `block:line:index`: unique on the page. */
   occ?: string;
 }
 
-export interface Occurrence {
+interface Occurrence {
   occ: string;
   term: string;
   block: BlockId;
   text: string;
-  /** Where its value is defined (the name before `=`). */
   def: boolean;
-  /** A function called here (followed by `(`). */
   call: boolean;
-  /** The call that takes it as an input. */
   usedBy?: string;
-  /** For a definition: the call that makes it. */
   madeBy?: string;
-  /** For a call: its inputs, and the value it makes. */
   inputs: string[];
   makes?: string;
 }
@@ -48,13 +31,11 @@ export interface Occurrence {
 export interface Analysis {
   lines: Record<BlockId, Token[][]>;
   occurrences: Map<string, Occurrence>;
-  /** Each term's occurrences on the page, in order. */
   byTerm: Map<string, string[]>;
 }
 
 const TOKEN = /("(?:[^"\\]|\\.)*")|(rh\/v1(?: [a-z-]+)?)|(\[\d+\.\.\d+\])|(\d+ [dh](?![\w]))|([A-Za-z_][\w\-.−]*(?:\[\])?)|(\d+)|(‖|\||←|→)|([\s\S])/gu;
 
-/** A quoted label without its quotes and `\0`. */
 function labelOf(text: string): string {
   return text.replace(/^"|"$/g, "").replace(/\\0$/, "");
 }
@@ -72,14 +53,12 @@ function lex(text: string): { text: string; type: TokenType }[] {
 
 type Meanings = Readonly<Record<string, string | readonly string[]>>;
 
-/** The term `text` names here: the n-th occurrence of it in its line and in its block. */
 function meaning(text: string, type: TokenType, line: Meanings | undefined, block: FormulaBlock, nthInLine: number, nthInBlock: number): string | undefined {
   if (type === "label") return LABELS[labelOf(text)];
   const pick = (m: string | readonly string[] | undefined, n: number) => (typeof m === "string" ? m : m?.[n]);
   return pick(line?.[text], nthInLine) ?? pick(block.terms?.[text] as string | undefined, nthInBlock) ?? COMMON[text] ?? (type === "number" ? block.terms?.["#"] : undefined);
 }
 
-/** One line's tokens, each with its term. */
 function tokenize(block: FormulaBlock, line: string | FormulaLine, counts: Map<string, number>): Token[] {
   const text = typeof line === "string" ? line : line.text;
   const own = typeof line === "string" ? undefined : line.terms;
@@ -105,7 +84,6 @@ function tokenize(block: FormulaBlock, line: string | FormulaLine, counts: Map<s
   return out;
 }
 
-/** The whole page's formulas, tokenized, with each value's flow. */
 export function analyze(): Analysis {
   const lines = {} as Record<BlockId, Token[][]>;
   const occurrences = new Map<string, Occurrence>();
@@ -124,7 +102,6 @@ export function analyze(): Analysis {
         at[ti] = o;
         byTerm.set(t.term, [...(byTerm.get(t.term) ?? []), t.occ]);
       });
-      // The shape: definitions, calls, and what each call takes.
       const stack: (Occurrence | null)[] = [];
       let segmentStart = true;
       tokens.forEach((t, ti) => {
@@ -162,10 +139,9 @@ export function analyze(): Analysis {
   return { lines, occurrences, byTerm };
 }
 
-/** How a token is lit while another is pointed at, focused or pinned. */
 export type Lit = "def" | "same" | "flow" | "";
+export const LIT_RANK: Record<Lit, number> = { def: 3, same: 2, flow: 1, "": 0 };
 
-/** Every occurrence `active` lights: the same value everywhere, where it is defined, and its flow. */
 export function lights(a: Analysis, active: string): Map<string, Lit> {
   const out = new Map<string, Lit>();
   const occ = a.occurrences.get(active);
@@ -173,8 +149,7 @@ export function lights(a: Analysis, active: string): Map<string, Lit> {
   const term = TERMS[occ.term]!;
   const put = (key: string | undefined, lit: Lit) => {
     if (!key) return;
-    const rank = { def: 3, same: 2, flow: 1, "": 0 };
-    if (rank[lit] > rank[out.get(key) ?? ""]) out.set(key, lit);
+    if (LIT_RANK[lit] > LIT_RANK[out.get(key) ?? ""]) out.set(key, lit);
   };
   for (const key of a.byTerm.get(occ.term) ?? []) put(key, a.occurrences.get(key)!.def ? "def" : "same");
   if (term.kind === "fn") {
@@ -193,7 +168,6 @@ export function lights(a: Analysis, active: string): Map<string, Lit> {
   return out;
 }
 
-/** The functions that make a term's value, and those that take it, by name, as the formulas spell them. */
 export function flowOf(a: Analysis, term: string): { madeBy: string[]; usedBy: string[] } {
   const madeBy = new Set<string>();
   const usedBy = new Set<string>();

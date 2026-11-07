@@ -1,5 +1,5 @@
 import { Select as BaseSelect } from "@base-ui/react/select";
-import { Check, ChevronDown, ChevronUp } from "lucide-react";
+import { CheckIcon, CaretDownIcon, CaretUpIcon } from "@phosphor-icons/react";
 import { Children, memo, useCallback, useLayoutEffect, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { GlyphIcon, type Glyph } from "@/components/glyph";
@@ -39,7 +39,7 @@ export function SelectTrigger({
           iconClassName,
         )}
       >
-        <ChevronDown />
+        <CaretDownIcon />
       </BaseSelect.Icon>
     </BaseSelect.Trigger>
   );
@@ -86,7 +86,7 @@ export function SelectContent({
           )}
         >
           <BaseSelect.ScrollUpArrow className={cn(ARROW, "border-b")}>
-            <ChevronUp />
+            <CaretUpIcon />
           </BaseSelect.ScrollUpArrow>
           {empty ? (
             <div className="px-3 py-2 text-[13px] text-muted">{emptyLabel ?? t("no options")}</div>
@@ -94,7 +94,7 @@ export function SelectContent({
             children
           )}
           <BaseSelect.ScrollDownArrow className={cn(ARROW, "border-t")}>
-            <ChevronDown />
+            <CaretDownIcon />
           </BaseSelect.ScrollDownArrow>
         </BaseSelect.Popup>
       </BaseSelect.Positioner>
@@ -116,7 +116,7 @@ export function SelectItem({ className, children, ...props }: React.ComponentPro
     >
       <BaseSelect.ItemText className="min-w-0 flex-1 truncate">{children}</BaseSelect.ItemText>
       <BaseSelect.ItemIndicator keepMounted className="flex shrink-0 text-fg not-data-[selected]:invisible">
-        <Check className="size-3.5" />
+        <CheckIcon className="size-3.5" />
       </BaseSelect.ItemIndicator>
     </BaseSelect.Item>
   );

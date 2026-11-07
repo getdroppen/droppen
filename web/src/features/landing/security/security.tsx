@@ -1,18 +1,18 @@
 import { Fragment, type ComponentProps, type ReactNode, type RefObject, useCallback, useEffect, useRef, useState } from "react";
 import { type TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
-import { ChevronDown, Info, X } from "lucide-react";
+import { CaretDownIcon, InfoIcon, XIcon } from "@phosphor-icons/react";
 import { useEventListener } from "usehooks-ts";
 import { CapsLabel } from "@/components/ui/caps-label";
 import { Sheet, SheetClose, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { cn } from "@/lib/cn";
-import "../copy";
-import { cjkTracking, PublicLayout, Section, SectionHead, SECURITY_EMAIL, usePageMeta } from "../page-kit";
+import { cjkTracking, DocumentHead, LINK, MailLink, PASSIVE, PublicLayout, Section, SectionHead, SECURITY_EMAIL, SUBHEAD, usePageMeta } from "../page-kit";
 import { Formula, FormulaProvider, MentionScope, withConcepts } from "./formula";
 import { RepoLink } from "./repo-link";
 import "./security-copy";
 
 /*
+<<<<<<< HEAD
  * droppen.app/security: how the end-to-end encryption works, for a technical
  * reader — the overview and what Droppen Hub sees, the signed device chain,
  * the keys, the channels and relays, the offline copies, the identity renewal
@@ -34,32 +34,49 @@ import "./security-copy";
  * (`formula.tsx`, its words and code references in `formula-data.ts`).
  * Product words as elsewhere: a device, a device that runs AI (the chain's
  * host), a full device (its admin), the content key (`MK`).
+||||||| parent of 4d1d34b (wip)
+ * droppen.app/security: how the end-to-end encryption works, for a technical
+ * reader — the overview and what Droppen Hub sees, the signed device chain,
+ * the keys, the channels and relays, the offline copies, the identity renewal
+ * of a device that runs AI (switched on at droppen.app for early testing,
+ * marked so),
+ * the threat model, and how to check all of it. Signed in or not; its own
+ * lazy chunk with its own words (`security-copy.ts`), drawn like the other
+ * public pages: numbered sections with an on-page table of contents, each
+ * mechanism in a section of its own with an anchor.
+ *
+ * Only what main ships is described as live; every claim traces to the
+ * protocol code (`server-rs/crates/droppen-proto`, `web/src/lib/e2e`) or the
+ * public design notes (docs/cross-machine-architecture.md, docs/local-
+ * aggregator.md §3, docs/web-integrity.md, docs/relay-and-plans.md §2,
+ * docs/hub-api/, SECURITY.md, docs/security-model.md's "What the Hub sees");
+ * the renewal section follows docs/host-identity-rotation.md. The labels and
+ * formulas in the mono blocks are the code's own bytes, quoted, so they are
+ * not translated; every part of them explains itself on hover, focus or tap
+ * (`formula.tsx`, its words and code references in `formula-data.ts`).
+ * Product words as elsewhere: a device, a device that runs AI (the chain's
+ * host), a full device (its admin), the content key (`MK`).
+=======
+ * Public, lazily loaded security design. Claims must match shipped protocol
+ * behavior and cite its code or design notes; features still in testing are
+ * marked. Formula bytes remain untranslated and link to verifiable sources.
+>>>>>>> 4d1d34b (wip)
  */
 
-/** When the page last changed, as the page says it. */
 export const SECURITY_UPDATED = "2026-10-28";
 
-/** Where to report a vulnerability (`page-kit.tsx`, so the terms can name it without this page's chunk). */
+/** Re-exported from the shared kit to keep it out of this lazy chunk. */
 export { SECURITY_EMAIL };
 
-/** The page's sections, in order: the table of contents and the anchors. */
 export const SECURITY_SECTIONS = ["overview", "chain", "keys", "channels", "offline", "renewal", "threats", "verify"] as const;
-/** One options object, so `useEventListener` keeps its listener attached. */
-const PASSIVE = { passive: true } as const;
-/** The identity renewal's parts, each with an anchor of its own. */
 export const RENEWAL_PARTS = ["renewal-why", "renewal-entry", "renewal-staging", "renewal-policy", "renewal-disputes", "renewal-groups", "renewal-hub"] as const;
 
-/**
- * Prose keeps its measure (46em: about 46 characters of Chinese, 95 of English a line) however wide
- * the column. What is not prose (formulas, quoted labels and paths, the algorithm table, paired
- * lists) takes the topic's whole width, so it is not wrapped short beside empty space.
- */
+/** Prose keeps its reading measure; formulas and tables use the full width. */
 const prose = "max-w-[46em] text-base text-pretty text-muted cjk-wrap";
 
 /** Below xl the 44px contents bar sits under the 56px header; an anchor stops below both. */
 const sectionScroll = "max-xl:scroll-mt-[6.5rem]";
 
-/** A section's head, with this page's 16px reading size for its lead (the shared head's is 14px). */
 function Head(props: ComponentProps<typeof SectionHead>) {
   return <SectionHead {...props} className={cn("[&>p]:text-base [&>p]:text-pretty [&>p]:cjk-wrap", props.className)} />;
 }
@@ -77,23 +94,10 @@ function titleWords(text: string): ReactNode {
   );
 }
 
-/**
- * A translated line in the page's mini-markup, written the same way in every
- * language, so each line stays one key (the English):
- * - `[[text|anchor]]`, a cross-reference: `<a href="#anchor">text</a>`;
- * - `[[path]]` or `[[text|path]]` (a target that is not an anchor): a path
- *   in the repository, linked on GitHub (`RepoLink`); `|/` is the repository;
- * - `**term**`, a key term: `<strong>` (it may hold a cross-reference);
- * - `**term** (reason)` or `**term**（理由）`: a parenthesis that follows a key
- *   term at once (after one space, or none) is that term's reason, kept in
- *   normal weight and the muted colour whatever holds it;
- * - `\n- `: a line that starts with "- " is a list item; items in a row make
- *   one `<ul>`, an ink square per item as in `List`, and any other line is a
- *   paragraph: the lead-in before the items, or a closing line after them.
- * A line with no "\n" stays inline (it fits in a `<p>` or a `<span>`); one
- * with lines becomes blocks (`<p>` and `<ul>` in a `<div>`), so `P` and `Note`
- * draw it in a `<div>`, and list items and table cells are `<div>`s. `small`:
- * in the 12px / 20px text of a table cell or a note.
+/*
+ * Translated mini-markup: `[[text|anchor/path]]` links, `**term**` marks key
+ * terms, an immediately following parenthesis is muted explanatory text, and
+ * newline-prefixed `- ` items form lists. Multiline input renders as blocks.
  */
 export function linked(node: ReactNode, small = false): ReactNode {
   if (typeof node !== "string") return node;
@@ -115,14 +119,12 @@ export function linked(node: ReactNode, small = false): ReactNode {
   return <div className={cn("flex flex-col", small ? "gap-1.5" : "gap-2")}>{blocks}</div>;
 }
 
-/** Whether a translated line is drawn as blocks (it has lines: list items, a lead-in, a closing line). */
 function hasLines(node: ReactNode): node is string {
   return typeof node === "string" && node.includes("\n");
 }
 
 const MARKUP = /\*\*(.+?)\*\*|\[\[([^\]|]+)(?:\|([^\]|]+))?\]\]/g;
 
-/** One line's key terms, their reasons and its cross-references. */
 function inline(line: string): ReactNode {
   if (!line.includes("**") && !line.includes("[[")) return withConcepts(line);
   const out: ReactNode[] = [];
@@ -148,7 +150,7 @@ function inline(line: string): ReactNode {
       }
     } else if (/^[a-z0-9-]+$/.test(m[3] ?? m[2]!)) {
       out.push(
-        <a key={m.index} href={`#${m[3] ?? m[2]}`} className="text-fg underline underline-offset-4 hover:no-underline">
+        <a key={m.index} href={`#${m[3] ?? m[2]}`} className={LINK}>
           {m[2]}
         </a>,
       );
@@ -165,7 +167,6 @@ function inline(line: string): ReactNode {
   return out;
 }
 
-/** The parenthesis, `(…)` or `（…）`, that starts at `from` (after one space or none), up to the one that closes it. */
 function reason(line: string, from: number): { text: string; end: number; space: boolean } | null {
   const space = line[from] === " ";
   const start = space ? from + 1 : from;
@@ -181,7 +182,6 @@ function reason(line: string, from: number): { text: string; end: number; space:
   return null;
 }
 
-/** A line's list items: drawn like `List`, the square beside the first line of each. */
 function Items({ items, small }: { items: string[]; small: boolean }) {
   return (
     <ul className={cn("flex flex-col", small ? "gap-1" : "gap-2")}>
@@ -195,13 +195,11 @@ function Items({ items, small }: { items: string[]; small: boolean }) {
   );
 }
 
-/** A paragraph of a topic (a `<div>` when it holds a list). */
 function P({ children }: { children: ReactNode }) {
   const Block = hasLines(children) ? "div" : "p";
   return <Block className={prose}>{linked(children)}</Block>;
 }
 
-/** A topic's list: an ink square per item, as on the other public pages, in the topic's reading size. */
 function List({ items }: { items: ReactNode[] }) {
   return (
     <ul className="flex max-w-[46em] flex-col gap-2">
@@ -215,7 +213,7 @@ function List({ items }: { items: ReactNode[] }) {
   );
 }
 
-/** The code's own bytes, quoted, never translated (the formulas: `Formula`). */
+/** Protocol bytes are quoted verbatim and never translated. */
 function Spec({ children }: { children: ReactNode }) {
   return <div className="flex flex-col gap-1 border-l border-border-strong py-0.5 pl-3 font-mono text-xs font-semibold leading-4 text-fg [overflow-wrap:anywhere]">{children}</div>;
 }
@@ -224,16 +222,10 @@ function Line({ children }: { children: ReactNode }) {
   return <code className="block">{children}</code>;
 }
 
-/** A small filled chip: what is still in testing, as the pricing page marks what it recommends. */
 function Chip({ children }: { children: ReactNode }) {
   return <span className={cn("inline-flex shrink-0 items-center bg-fg px-1.5 py-0.5 text-xs leading-4 font-semibold tracking-wider text-bg uppercase", cjkTracking)}>{children}</span>;
 }
 
-/**
- * One mechanism: its number and name on the left, what it does on the right;
- * `wide` puts the title above the content instead, for a topic whose content
- * is a two-column comparison (the overview's "what the Hub sees").
- */
 function Topic({ id, n, title, children, wide = false }: { id?: string; n: string; title: string; children: ReactNode; wide?: boolean }) {
   const anchor = id ?? `t${n.replace(".", "-")}`;
   if (wide) {
@@ -258,13 +250,12 @@ function Topic({ id, n, title, children, wide = false }: { id?: string; n: strin
   );
 }
 
-/** Two lists side by side (one above the other when narrow). */
 function Pair({ left, right }: { left: { title: string; items: string[] }; right: { title: string; items: string[] } }) {
   return (
     <div className="grid gap-6 md:grid-cols-2">
       {[left, right].map((side) => (
         <div key={side.title} className="flex min-w-0 flex-col gap-3">
-          <span className="text-base leading-6 font-semibold text-fg">{withConcepts(side.title)}</span>
+          <span className={SUBHEAD}>{withConcepts(side.title)}</span>
           <List items={side.items} />
         </div>
       ))}
@@ -272,19 +263,14 @@ function Pair({ left, right }: { left: { title: string; items: string[] }; right
   );
 }
 
-/**
- * The overview's two groups as the download page's definition list: a
- * full-width heading cell for each group, then its items in a ruled
- * two-column grid. The items alternate columns, so no column is left with a
- * long blank tail under a shorter list.
- */
+/** Alternate items across columns to balance uneven list lengths. */
 function Comparison({ left, right }: { left: { title: string; items: string[] }; right: { title: string; items: string[] } }) {
   return (
     <div className="grid border-t border-border md:grid-cols-2">
       {[left, right].map((side) => (
         <Fragment key={side.title}>
           <div className="border-b border-border px-6 py-3.5 md:col-span-2 max-md:px-4">
-            <span className="text-base leading-6 font-semibold text-fg">{withConcepts(side.title)}</span>
+            <span className={SUBHEAD}>{withConcepts(side.title)}</span>
           </div>
           {side.items.map((item, i) => {
             const alone = side.items.length % 2 === 1 && i === side.items.length - 1;
@@ -307,10 +293,7 @@ function Comparison({ left, right }: { left: { title: string; items: string[] };
   );
 }
 
-/**
- * A table that reads row by row: a grid from 1024px for the five-column key table, from 768px for the
- * three-column threat model (five columns need the width); each row's cells stack under its name below.
- */
+/** Five-column tables need more width; narrow layouts stack each row's cells. */
 function Table({ label, heads, rows }: { label: string; heads: string[]; rows: string[][] }) {
   const wide = heads.length >= 5;
   const grid = wide
@@ -354,12 +337,11 @@ function Table({ label, heads, rows }: { label: string; heads: string[]; rows: s
   );
 }
 
-/** A line for what the page leaves out on purpose, or what is not done. */
 function Note({ children }: { children: ReactNode }) {
   const Block = hasLines(children) ? "div" : "p";
   return (
     <div className="flex items-start gap-3 border-t border-border px-6 py-4 max-md:px-4">
-      <Info className="mt-0.5 size-4 shrink-0 text-muted" />
+      <InfoIcon className="mt-0.5 size-4 shrink-0 text-muted" />
       <Block className="max-w-[60em] text-base text-pretty text-muted cjk-wrap">{linked(children, true)}</Block>
     </div>
   );
@@ -368,18 +350,15 @@ function Note({ children }: { children: ReactNode }) {
 function Hero() {
   const { t } = useTranslation();
   return (
-    <div className="flex flex-col gap-5 px-10 pt-16 pb-10 max-lg:pt-12 max-md:px-4 max-md:pt-10 max-md:pb-8">
-      <h1 className="max-w-[18em] text-5xl leading-display font-normal tracking-tight text-balance text-fg cjk-wrap md:cjk-keep max-md:text-3xl">
-        {titleWords(t("How Droppen's end-to-end encryption works."))}
-      </h1>
-      <p className="max-w-[44em] text-base leading-6 text-pretty text-muted cjk-wrap">
-        {t("A technical description for anyone who wants to verify our claims: who holds which key, how your devices agree on which devices belong to your account, what our servers can and cannot see, and what each of them could still do if it were malicious or compelled. It describes what Droppen does today; the parts that are not live yet, or still in testing, are marked as such.")}
-      </p>
-      <p className="text-xs text-faint">{t("Last updated {{date}}", { date: SECURITY_UPDATED })}</p>
-    </div>
+    <DocumentHead
+      title={titleWords(t("How Droppen's end-to-end encryption works."))}
+      lead={t("A technical description for anyone who wants to verify our claims: who holds which key, how your devices agree on which devices belong to your account, what our servers can and cannot see, and what each of them could still do if it were malicious or compelled. It describes what Droppen does today; the parts that are not live yet, or still in testing, are marked as such.")}
+      note={t("Last updated {{date}}", { date: SECURITY_UPDATED })}
+    />
   );
 }
 
+<<<<<<< HEAD
 /**
  * The page's two kinds of device, defined before anything else says them:
  * what each is, which keys it holds, what it may do (the chain's host and
@@ -391,6 +370,21 @@ function Hero() {
  * later mention explains itself with the same words (`withConcepts`), one
  * tab stop per word in each section (`MentionScope`).
  */
+||||||| parent of 4d1d34b (wip)
+/**
+ * The page's two kinds of device, defined before anything else says them:
+ * what each is, which keys it holds, what it may do (the chain's host and
+ * admin flags, `droppen-proto` chain.rs: a host is never an admin, an admin may
+ * control any host; the keys table below; with local aggregation, on by
+ * default, a host also takes the content keys other hosts' accept lists let
+ * it have, wrap.rs `HOST_KEY_PURPOSE`, and the local web app shows its own
+ * device's view and holds no keys, server-rs/crates/droppen-aggregator/src/lib.rs). Every
+ * later mention explains itself with the same words (`withConcepts`), one
+ * tab stop per word in each section (`MentionScope`).
+ */
+=======
+/** Later mentions reuse these definitions and their accessible explanations. */
+>>>>>>> 4d1d34b (wip)
 function Definitions() {
   const { t } = useTranslation();
   const cards = [
@@ -425,11 +419,11 @@ function Definitions() {
     >
       {/* Below lg the terms sit in each card; from lg they are the rail beside the two descriptions. */}
       <div className="border-b border-border px-6 py-3.5 lg:hidden max-md:px-4">
-        <span className="text-base leading-6 font-semibold text-fg">{t("Terms")}</span>
+        <span className={SUBHEAD}>{t("Terms")}</span>
       </div>
       <div className="hidden lg:contents">
         <div className="lg:col-start-1 lg:row-start-1 lg:border-r lg:border-b lg:border-border lg:py-3.5 lg:pr-6 lg:pl-[2.375rem]">
-          <span className="text-base leading-6 font-semibold text-fg">{t("Terms")}</span>
+          <span className={SUBHEAD}>{t("Terms")}</span>
         </div>
         {terms.map((label, i) => (
           <div key={label} className={cn("lg:col-start-1 lg:border-r lg:border-b lg:border-border lg:py-4 lg:pr-6 lg:pl-[2.375rem]", rowAt[i]!)}>
@@ -448,7 +442,7 @@ function Definitions() {
         >
           <dfn
             className={cn(
-              "text-base leading-6 font-semibold text-fg not-italic lg:row-start-1 lg:border-b lg:border-border lg:px-6 lg:py-3.5",
+              cn(SUBHEAD, "not-italic lg:row-start-1 lg:border-b lg:border-border lg:px-6 lg:py-3.5"),
               colAt[i]!,
               i === 0 && "lg:border-r",
             )}
@@ -480,7 +474,12 @@ function Definitions() {
 
 type TocEntry = { id: (typeof SECURITY_SECTIONS)[number]; title: string; line: string; chip?: string };
 
-/** The eight sections, with the words the page already translates for its contents. */
+function sectionLabel(t: TFunction, id: TocId): string {
+  const at = SECURITY_SECTIONS.indexOf(id) + 1;
+  const { title } = tocEntries(t).find((entry) => entry.id === id)!;
+  return `${String(at).padStart(2, "0")} · ${title}`;
+}
+
 function tocEntries(t: TFunction): TocEntry[] {
   return [
     { id: "overview", title: t("Overview"), line: t("What Droppen Hub and the relays see, and what they never see.") },
@@ -494,19 +493,16 @@ function tocEntries(t: TFunction): TocEntry[] {
   ];
 }
 
-type SecuritySection = (typeof SECURITY_SECTIONS)[number];
+type TocId = TocEntry["id"];
 
-/**
- * Which section the reader is in, and how far down the page they are. The page
- * scrolls in its own container (`data-testid="security"`), not the window; the
- * bar below xl takes a second line under the header. Called once, by the page,
- * and handed to both contents views — they are both mounted (one is hidden),
- * so each instance would otherwise read the scroll for a view nobody sees.
+/*
+ * Track the custom scroll container once and share it between both mounted TOC
+ * views; otherwise the hidden view also subscribes to scroll updates.
  */
 function useReadingPosition(scroller: RefObject<HTMLDivElement | null>) {
-  const [active, setActive] = useState<SecuritySection>("overview");
+  const [active, setActive] = useState<TocId>("overview");
   const [progress, setProgress] = useState(0);
-  const sections = useRef<{ id: SecuritySection; at: HTMLElement }[]>([]);
+  const sections = useRef<{ id: TocId; at: HTMLElement }[]>([]);
   const frame = useRef(0);
 
   const update = useCallback(() => {
@@ -515,7 +511,7 @@ function useReadingPosition(scroller: RefObject<HTMLDivElement | null>) {
     const header = document.querySelector("header");
     const bar = document.querySelector<HTMLElement>("[data-security-toc-bar]");
     const line = root.scrollTop + (header?.getBoundingClientRect().height ?? 56) + (bar?.offsetHeight ?? 0) + 16;
-    let next: SecuritySection = "overview";
+    let next: TocId = "overview";
     for (const { id, at } of sections.current) {
       const top = at.getBoundingClientRect().top - root.getBoundingClientRect().top + root.scrollTop;
       if (top <= line) next = id;
@@ -535,7 +531,7 @@ function useReadingPosition(scroller: RefObject<HTMLDivElement | null>) {
 
   useEffect(() => {
     sections.current = SECURITY_SECTIONS.map((id) => ({ id, at: document.getElementById(id) })).filter(
-      (section): section is { id: SecuritySection; at: HTMLElement } => section.at !== null,
+      (section): section is { id: TocId; at: HTMLElement } => section.at !== null,
     );
     update();
     return () => cancelAnimationFrame(frame.current);
@@ -549,8 +545,7 @@ function useReadingPosition(scroller: RefObject<HTMLDivElement | null>) {
   return { active, progress };
 }
 
-/** The desktop chapter rail: sticky under the header, with the section the reader is in and a hairline progress. */
-function TocSidebar({ active, progress }: { active: SecuritySection; progress: number }) {
+function TocSidebar({ active, progress }: { active: TocId; progress: number }) {
   const { t } = useTranslation();
   const entries = tocEntries(t);
   const percent = Math.round(progress * 100);
@@ -596,7 +591,6 @@ function TocSidebar({ active, progress }: { active: SecuritySection; progress: n
 const TOC_SHEET =
   "fixed inset-x-0 bottom-0 z-50 max-h-[80dvh] gap-0 overflow-y-auto border-t border-border-strong bg-bg outline-none md:mx-auto md:w-[min(32rem,calc(100vw-2rem))] md:border-x";
 
-/** The phone/tablet chapter sheet: the same eight entries, with their one-line descriptions. */
 function TocSheet({ active, open, onClose }: { active: (typeof SECURITY_SECTIONS)[number]; open: boolean; onClose: () => void }) {
   const { t } = useTranslation();
   const entries = tocEntries(t);
@@ -629,7 +623,7 @@ function TocSheet({ active, open, onClose }: { active: (typeof SECURITY_SECTIONS
       <div className="sticky top-0 z-10 flex h-9 items-center justify-between gap-2 border-b border-border bg-bg px-4">
         <SheetTitle className="min-w-0 py-1.5 text-sm leading-5 font-semibold text-fg">{t("On this page")}</SheetTitle>
         <SheetClose aria-label={t("close")} className="flex size-5 shrink-0 items-center justify-center text-muted hover:bg-hover hover:text-fg pointer-coarse:size-9">
-          <X className="size-3.5" />
+          <XIcon className="size-3.5" />
         </SheetClose>
       </div>
       <nav aria-label={t("On this page")} data-testid="security-contents-sheet">
@@ -666,8 +660,7 @@ function TocSheet({ active, open, onClose }: { active: (typeof SECURITY_SECTIONS
   );
 }
 
-/** Below xl: a 44px bar under the header that opens the chapter sheet. */
-function TocBar({ active }: { active: SecuritySection }) {
+function TocBar({ active }: { active: TocId }) {
   const { t } = useTranslation();
   const entries = tocEntries(t);
   const [open, setOpen] = useState(false);
@@ -687,7 +680,7 @@ function TocBar({ active }: { active: SecuritySection }) {
             <span className="text-base font-semibold tabular-nums text-faint">{String(index + 1).padStart(2, "0")}</span>
             <span className="truncate">{current.title}</span>
           </span>
-          <ChevronDown className="size-4 shrink-0 text-muted" />
+          <CaretDownIcon className="size-4 shrink-0 text-muted" />
         </SheetTrigger>
         <TocSheet active={active} open={open} onClose={() => setOpen(false)} />
       </Sheet>
@@ -695,7 +688,6 @@ function TocBar({ active }: { active: SecuritySection }) {
   );
 }
 
-/** Who holds what, and where the ciphertext goes: from 768px a figure; below it, the same four boxes in a column. */
 function Overview() {
   const { t } = useTranslation();
   const devices = { title: t("Your browsers and phones"), lines: [t("device key · user key"), t("encrypt and decrypt here")] };
@@ -728,7 +720,7 @@ function Overview() {
         <text x={520} y={26} textAnchor="middle" className="fill-fg text-sm">
           {e2e}
         </text>
-        {/* The channel: ink, 2px, through the relay. */}
+        {/* the channel */}
         <path d="M256 92H404M636 92H784" className="stroke-fg" strokeWidth={2} fill="none" />
         <text x={330} y={84} textAnchor="middle" className="fill-muted text-sm">
           {wire}
@@ -736,7 +728,7 @@ function Overview() {
         <text x={710} y={84} textAnchor="middle" className="fill-muted text-sm">
           {wire}
         </text>
-        {/* The copy: dashed, 1.5px, an L each way. */}
+        {/* the copy */}
         <path d="M900 136V242.75H660M380 242.75H140V136" className="stroke-fg" strokeWidth={1.5} strokeDasharray="5 4" fill="none" />
         <text x={780} y={232} textAnchor="middle" className="fill-muted text-sm">
           {sealed}
@@ -783,7 +775,7 @@ function OverviewSection() {
     <Section id="overview" seam={false} rule={false} className={sectionScroll}>
       <MentionScope>
         <Head
-          label={`01 · ${t("Overview")}`}
+          label={sectionLabel(t, "overview")}
           title={withConcepts(t("Your devices hold the keys. Our servers carry ciphertext."))}
           lead={withConcepts(t("Droppen runs Claude Code and Codex on your devices that run AI (in the protocol, hosts), and your browsers and phones control them over channels encrypted end to end. Droppen Hub, at droppen.app, keeps your account, the device chain and the encrypted copies, and serves the web app at my.droppen.app. Droppen relays pass a channel's ciphertext on; Droppen Hub carries no channel (Hub). Neither holds a key that can decrypt anything. Droppen Hub is not open source: lines that rest on its own behaviour or policy are marked (Hub)."))}
         />
@@ -825,7 +817,6 @@ function OverviewSection() {
   );
 }
 
-/** The chain as it starts for a new account and as a removal continues it: each entry names the one before by its hash. */
 function ChainFigure() {
   const { t } = useTranslation();
   const entries = [
@@ -867,7 +858,7 @@ function ChainSection() {
     <Section id="chain" seam="right" className={sectionScroll}>
       <MentionScope>
         <Head
-          label={`02 · ${t("The device chain")}`}
+          label={sectionLabel(t, "chain")}
           title={withConcepts(t("One signed list decides who is in your account."))}
           lead={withConcepts(t("The device chain is an append-only, hash-linked log of the account's devices and their public keys. Each entry is signed; every device, and every device that runs AI, checks the whole chain for itself, with the same rules implemented twice, in Rust and in TypeScript. Droppen Hub stores the chain and passes it on, but cannot add to it."))}
         />
@@ -929,7 +920,7 @@ function KeysSection() {
     <Section id="keys" seam="right" className={sectionScroll}>
       <MentionScope>
         <Head
-          label={`03 · ${t("Keys")}`}
+          label={sectionLabel(t, "keys")}
           title={withConcepts(t("Every key, where it lives, and what it opens."))}
           lead={withConcepts(t("No server holds a key that can decrypt anything, and nothing is held in escrow: if you lose every browser and phone and have no recovery words, the copies on Droppen Hub can never be read again, not even by us; only what is still on your devices that run AI remains."))}
         />
@@ -980,7 +971,7 @@ function ChannelsSection() {
     <Section id="channels" seam="right" className={sectionScroll}>
       <MentionScope>
         <Head
-          label={`04 · ${t("Channels and relays")}`}
+          label={sectionLabel(t, "channels")}
           title={withConcepts(t("Every channel is end to end, whichever path it takes."))}
           lead={withConcepts(t("Your device and a device that runs AI talk over one Noise channel. A Droppen relay only forwards its frames, and Droppen Hub carries no channel (Hub); when the two ends can reach each other, the same channel can also take a direct path."))}
         />
@@ -1013,7 +1004,7 @@ function OfflineSection() {
     <Section id="offline" seam="right" className={sectionScroll}>
       <MentionScope>
         <Head
-          label={`05 · ${t("Offline copies")}`}
+          label={sectionLabel(t, "offline")}
           title={withConcepts(t("History that you, and only you, can read while the device that runs AI is offline."))}
           lead={withConcepts(t("A device that runs AI writes its session list, its status and its sessions as encrypted, append-only streams that Droppen Hub stores and cannot read. Your devices read them back and accept a record only once a head signed by the device that runs AI covers it: each record is authenticated under the stream key and linked to the one before, and the signed head gives the newest link value."))}
         />
@@ -1043,7 +1034,7 @@ function RenewalSection() {
     <Section id="renewal" seam="right" className={sectionScroll}>
       <MentionScope>
         <Head
-          label={`06 · ${t("Identity renewal")}`}
+          label={sectionLabel(t, "renewal")}
           title={withConcepts(t("Renewing the identity key of a device that runs AI."))}
           lead={
             <span className="flex flex-col items-start gap-3">
@@ -1166,7 +1157,7 @@ function ThreatsSection() {
     <Section id="threats" seam="right" className={sectionScroll}>
       <MentionScope>
         <Head
-          label={`07 · ${t("Threat model")}`}
+          label={sectionLabel(t, "threats")}
           title={withConcepts(t("Who could attack, and what each of them can do."))}
           lead={withConcepts(t("The design assumes Droppen Hub may be malicious, or compelled. Here is what each position can and cannot do, as the protocol stands today."))}
         />
@@ -1202,9 +1193,7 @@ function ThreatsSection() {
 function VerifySection() {
   const { t } = useTranslation();
   const mail = (
-    <a href={`mailto:${SECURITY_EMAIL}`} data-testid="security-email" className="text-fg underline underline-offset-4 hover:no-underline">
-      {SECURITY_EMAIL}
-    </a>
+    <MailLink email={SECURITY_EMAIL} testId="security-email" />
   );
   const choices = [
     [t("Signatures"), t("Ed25519, verified strictly, always behind a fixed label")],
@@ -1219,7 +1208,7 @@ function VerifySection() {
     <Section id="verify" seam="right" className={sectionScroll}>
       <MentionScope>
         <Head
-          label={`08 · ${t("Verify it yourself")}`}
+          label={sectionLabel(t, "verify")}
           title={withConcepts(t("Don't take our word for it."))}
           lead={withConcepts(t("Statements about the protocol, the apps and the local program come from this repository's code and design notes; Droppen Hub is not open source, and lines that rest on its own behaviour or policy, or on test results on droppen.app, are marked (Hub). Here is where to look."))}
         />
@@ -1227,7 +1216,7 @@ function VerifySection() {
           <dl className="grid grid-cols-[minmax(0,auto)_minmax(0,1fr)] gap-x-6 gap-y-2">
             {choices.map(([name, value]) => (
               <div key={name} className="contents">
-                <dt className="text-base leading-6 font-semibold text-fg">{name}</dt>
+                <dt className={SUBHEAD}>{name}</dt>
                 <dd className="text-sm leading-6 text-muted [overflow-wrap:anywhere]">{value}</dd>
               </div>
             ))}

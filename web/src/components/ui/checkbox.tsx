@@ -1,4 +1,4 @@
-import { Check } from "lucide-react";
+import { CheckIcon } from "@phosphor-icons/react";
 import { cn } from "@/lib/cn";
 
 export const CHECKBOX_LABEL = "flex cursor-pointer items-start gap-2 text-2xs text-muted";
@@ -13,7 +13,7 @@ export const CHECKBOX_BOX = cn(
 export function CheckboxMark({ className }: { className?: string }) {
   return (
     <span aria-hidden="true" data-audit-checkbox="" className={cn(CHECKBOX_BOX, className)}>
-      <Check className="size-2.5 opacity-0" />
+      <CheckIcon className="size-2.5 opacity-0" />
     </span>
   );
 }

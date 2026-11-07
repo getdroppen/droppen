@@ -11,7 +11,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import { Check } from "lucide-react";
+import { CheckIcon } from "@phosphor-icons/react";
 import type { components } from "@/api/schema";
 import { Spinner } from "@/components/ui/spinner";
 import { useApi, useMachine } from "@/lib/machines/context";
@@ -165,7 +165,7 @@ function PanelBody({ signIn, chosen }: { signIn: GuideSignIn; chosen: "droppen" 
       <div data-testid="where-sign-in" data-state="linked" className={box}>
         <div className="flex flex-col gap-2">
           <p className="flex items-center gap-2 text-[13px] leading-[18px] font-semibold" data-testid="where-linked">
-            <Check className="size-3.5" aria-hidden="true" />
+            <CheckIcon className="size-3.5" aria-hidden="true" />
             {t("This Mac is in your Droppen account")}
           </p>
           {state.email && state.device && (

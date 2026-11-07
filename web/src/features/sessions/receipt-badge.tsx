@@ -1,4 +1,4 @@
-import { Check, CheckCheck, CircleHelp, CircleX, Loader2, RotateCw, Smartphone } from "lucide-react";
+import { CheckIcon, ChecksIcon, QuestionIcon, XCircleIcon, CircleNotchIcon, ArrowClockwiseIcon, DeviceMobileIcon } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/cn";
 import type { DeliveryState } from "./send-receipts";
@@ -33,19 +33,19 @@ function Icon({ state }: { state: DeliveryState }) {
   const className = "size-3 shrink-0";
   switch (state) {
     case "saved":
-      return <Smartphone className={className} />;
+      return <DeviceMobileIcon className={className} />;
     case "sending":
-      return <Loader2 className={cn(className, "animate-spin")} />;
+      return <CircleNotchIcon className={cn(className, "animate-spin")} />;
     case "delivered":
-      return <Check className={className} />;
+      return <CheckIcon className={className} />;
     case "executed":
-      return <CheckCheck className={className} />;
+      return <ChecksIcon className={className} />;
     case "unknown":
-      return <CircleHelp className={className} />;
+      return <QuestionIcon className={className} />;
     case "unsent":
-      return <RotateCw className={className} />;
+      return <ArrowClockwiseIcon className={className} />;
     case "failed":
-      return <CircleX className={className} />;
+      return <XCircleIcon className={className} />;
   }
 }
 

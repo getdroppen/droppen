@@ -2,7 +2,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { SourceIcon } from "@/components/source-icon";
 import { Outlet, useParams } from "@tanstack/react-router";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Bot, ChevronRight, Folder, Pin, Plus, X } from "lucide-react";
+import { RobotIcon, CaretRightIcon, FolderIcon, PushPinIcon, PlusIcon, XIcon } from "@phosphor-icons/react";
 import { memo, useCallback, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ApiError, errorText } from "@/api/errors";
@@ -163,7 +163,7 @@ const SessionRow = memo(function SessionRow({
                   onToggle={() => onToggleChildren(expandKey, readOnly)}
                 />
               )}
-              {session.pinned && <span title={t("pinned session")} aria-label={t("pinned session")}><Pin className="size-3 shrink-0 text-fg" /></span>}
+              {session.pinned && <span title={t("pinned session")} aria-label={t("pinned session")}><PushPinIcon className="size-3 shrink-0 text-fg" /></span>}
               <span className={cn("min-w-0 flex-1 truncate text-[13px] leading-4.5 text-fg max-md:text-sm max-md:leading-5", unreadCountOf(session) > 0 && "font-semibold")}>{session.title}</span>
               <StatusBadge session={session} unread={unreadCountOf(session)} />
             </div>
@@ -270,7 +270,7 @@ function TreeChevron({ isOpen, label, onToggle }: { isOpen: boolean; label: stri
       }}
       className="relative flex size-3 shrink-0 cursor-pointer items-center justify-center text-muted after:absolute after:-inset-2 hover:text-fg"
     >
-      <ChevronRight className={cn("size-3 transition-transform", isOpen && "rotate-90")} />
+      <CaretRightIcon className={cn("size-3 transition-transform", isOpen && "rotate-90")} />
     </button>
   );
 }
@@ -286,7 +286,7 @@ function SubagentCount({ list, isOpen }: { list: readonly SessionChild[]; isOpen
   const label = t("{{n}} subagents", { n: tally.total });
   return (
     <span data-subagent-count="" title={label} aria-label={label} className="flex h-4 shrink-0 items-center gap-1 font-mono text-2xs text-muted tabular-nums">
-      <Bot className="size-3 shrink-0" />
+      <RobotIcon className="size-3 shrink-0" />
       {tally.total}
       {!isOpen && tally.working > 0 && <LiveDot className="bg-ok" title={t("{{n}} subagents working", { n: tally.working })} />}
       {!isOpen && tally.waiting > 0 && (
@@ -466,10 +466,10 @@ const GroupHeader = memo(function GroupHeader({
                 className={cn("pointer-events-none absolute inset-y-0 left-0 w-[2px]", EDGE_CLASS[inside.strongest])}
               />
             )}
-            <ChevronRight
+            <CaretRightIcon
               className={`size-3 shrink-0 text-muted transition-transform ${isOpen ? "rotate-90" : ""}`}
             />
-            <Folder className="size-3.5 shrink-0 text-muted" />
+            <FolderIcon className="size-3.5 shrink-0 text-muted" />
             <span data-label="" className="label-caps truncate text-2xs text-fg" title={dir}>
               {realDir ? basename(dir) : dir}
             </span>
@@ -755,7 +755,7 @@ function SessionsPanel({ detailOpen, unified, devices }: { detailOpen: boolean; 
                 onClick={() => openNewSession(null)}
                 className="flex size-5 items-center justify-center text-muted hover:bg-hover hover:text-fg"
               >
-                <Plus className="size-3.5" />
+                <PlusIcon className="size-3.5" />
               </button>
             </span>
           }
@@ -768,7 +768,7 @@ function SessionsPanel({ detailOpen, unified, devices }: { detailOpen: boolean; 
               aria-label={t("dismiss")}
               onClick={() => setNotice(null)} data-signal="failed" className="flex size-4 shrink-0 items-center justify-center hover:bg-danger/15"
             >
-              <X className="size-3" />
+              <XIcon className="size-3" />
             </button>
           </div>
         )}

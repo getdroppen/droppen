@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams } from "@tanstack/react-router";
-import { ChevronLeft, Loader2, SendHorizontal } from "lucide-react";
+import { CaretLeftIcon, CircleNotchIcon, PaperPlaneTiltIcon } from "@phosphor-icons/react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { DiagramRendering, drawsDiagrams, Markdown, MathRendering } from "@/components/markdown";
@@ -168,7 +168,7 @@ export function ApiChatViewInner({ id }: { id: string }) {
           title={t("back")}
           className="flex size-6 shrink-0 items-center justify-center rounded text-muted hover:bg-hover md:hidden"
         >
-          <ChevronLeft className="size-4" />
+          <CaretLeftIcon className="size-4" />
         </MachineLink>
         <span className="min-w-0 flex-1 truncate text-xs font-medium">{chat.title}</span>
         <Badge variant="outline">{chat.model}</Badge>
@@ -186,7 +186,7 @@ export function ApiChatViewInner({ id }: { id: string }) {
         {rows.map((m, i) => {
           const isUser = m.role === "user";
           const spinner = streaming !== null && i === rows.length - 1 && (
-            <Loader2 className="mt-1 size-3 animate-spin text-muted" />
+            <CircleNotchIcon className="mt-1 size-3 animate-spin text-muted" />
           );
           const inner = isUser ? (
             <div className="whitespace-pre-wrap text-xs">{m.content}</div>
@@ -255,9 +255,9 @@ export function ApiChatViewInner({ id }: { id: string }) {
             data-variant="primary" className="flex size-7 shrink-0 items-center justify-center bg-fg text-bg hover:bg-fg/85 disabled:opacity-40"
           >
             {streaming !== null ? (
-              <Loader2 className="size-3.5 animate-spin" />
+              <CircleNotchIcon className="size-3.5 animate-spin" />
             ) : (
-              <SendHorizontal className="size-3.5" />
+              <PaperPlaneTiltIcon className="size-3.5" />
             )}
           </button>
         </div>

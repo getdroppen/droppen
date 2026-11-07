@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { AlertTriangle, Fingerprint as FingerprintIcon, Loader2 } from "lucide-react";
+import { CircleNotchIcon, FingerprintIcon, WarningIcon } from "@phosphor-icons/react";
 import { formatMoment } from "@/lib/format";
 import { hex } from "@/lib/e2e";
 import type { CloudAccount } from "@/lib/hub/account";
@@ -69,7 +69,7 @@ export function PasskeyJoin({ account, onPending }: { account: CloudAccount; onP
         {t("It then waits: it reads nothing and controls none of your devices until you approve it from another device of the account, with the code or QR code it shows. Any full device of the account can refuse it.")}
       </p>
       <button type="button" data-variant="primary" className={primary} disabled={busy} onClick={() => void join()}>
-        {busy ? <Loader2 className="size-3.5 animate-spin" /> : <FingerprintIcon className="size-3.5" />}
+        {busy ? <CircleNotchIcon className="size-3.5 animate-spin" /> : <FingerprintIcon className="size-3.5" />}
         {t("join with a passkey")}
       </button>
       {note && <p className="text-2xs text-faint">{note}</p>}
@@ -108,7 +108,7 @@ export function PendingPasskeyBanner({ account, link, onRemovePasskey }: { accou
       {refused.map((r) => (
         <div key={r.id} data-testid="join-refused" className="flex flex-col gap-1.5 text-xs">
           <p role="status" className="flex items-start gap-2 text-muted">
-            <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-danger" />
+            <WarningIcon className="mt-0.5 size-3.5 shrink-0 text-danger" />
             <span className="min-w-0 flex-1">
               <span className="font-mono whitespace-nowrap text-fg">{t("removed {{id}}", { id: r.id })}</span>.{" "}
               {t("The passkey it joined with still signs in to your account. Secure the account it syncs with, then remove that passkey here and make a new one.")}
@@ -157,7 +157,7 @@ function PendingPasskeyJoin({ account, link, id, joinSeq, onRefused }: { account
   return (
     <div data-testid="pending-passkey-join" className="flex flex-col gap-1.5 text-xs">
       <p role="status" className="flex items-start gap-2 text-muted">
-        <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-danger" />
+        <WarningIcon className="mt-0.5 size-3.5 shrink-0 text-danger" />
         <span className="min-w-0 flex-1">
           {t("A new device is asking to join with a passkey:")} <span className="font-mono whitespace-nowrap text-fg">{id}</span>
           {atMs !== null && <span className="font-mono whitespace-nowrap text-faint"> · {formatMoment(atMs, i18n.language, true)}</span>}
@@ -190,7 +190,7 @@ function PendingPasskeyJoin({ account, link, id, joinSeq, onRefused }: { account
             </p>
             <div className="flex flex-wrap gap-2">
               <button type="button" data-testid="refuse-confirm" className={cn(danger, "h-7 px-3 text-xs pointer-coarse:h-9")} disabled={busy} onClick={() => void remove()}>
-                {busy && <Loader2 className="size-3 animate-spin" />}
+                {busy && <CircleNotchIcon className="size-3 animate-spin" />}
                 {t("remove {{id}}", { id })}
               </button>
               <button type="button" className={cn(quiet, "h-7 pointer-coarse:h-9")} disabled={busy} onClick={() => setOpen(null)}>

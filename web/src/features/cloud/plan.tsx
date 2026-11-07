@@ -1,6 +1,6 @@
 import { type ReactNode, useEffect, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
-import { ChevronRight } from "lucide-react";
+import { CaretRightIcon } from "@phosphor-icons/react";
 import { cn } from "@/lib/cn";
 import { formatExactTime, formatMoment, formatRelative, formatResetAt } from "@/lib/format";
 import type { CloudAccount } from "@/lib/hub/account";
@@ -425,7 +425,7 @@ export function UsagePanel({
                 onClick={() => setByDevice(!byDevice)}
                 className="flex w-fit items-center gap-1 font-mono text-xs text-muted hover:text-fg pointer-coarse:py-1.5"
               >
-                <ChevronRight aria-hidden="true" className={cn("size-3 transition-transform", byDevice && "rotate-90")} />
+                <CaretRightIcon aria-hidden="true" className={cn("size-3 transition-transform", byDevice && "rotate-90")} />
                 {t("by device")}
               </button>
             )}

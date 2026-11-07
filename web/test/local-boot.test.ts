@@ -42,7 +42,6 @@ test("what of cloud mode the local app's boot may not hold, and the few modules 
     "/w/web/src/lib/e2e/keys.ts",
     "/w/web/src/lib/move/types.ts",
     "/w/web/src/features/landing/route.ts",
-    "/w/web/src/features/landing/get-droppen.ts",
     "/w/web/src/features/link/handoff.ts",
     "/w/web/src/lib/machines/shells/gateway.ts",
     "/w/web/src/lib/transport/direct.ts",

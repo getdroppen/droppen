@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { ChevronRight } from "lucide-react";
+import { CaretRightIcon } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
 import { useDesktopUpdate, type UpdateStatus } from "@/app/desktop-update";
 import { cn } from "@/lib/cn";
@@ -60,7 +60,7 @@ export function UpdatesRow({ status }: { status: UpdateStatus | null }) {
             {state}
           </span>
         </span>
-        <ChevronRight className="size-3.5 shrink-0 text-faint" strokeWidth={1.5} />
+        <CaretRightIcon className="size-3.5 shrink-0 text-faint" />
       </Link>
     </section>
   );

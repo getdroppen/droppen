@@ -2,7 +2,7 @@
  * The session header's secondary facts, formatted in one place and shown
  * behind a chip.
  */
-import { Check, Copy, Info } from "lucide-react";
+import { CheckIcon, CopyIcon, InfoIcon } from "@phosphor-icons/react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -95,7 +95,7 @@ export function SessionMetaChip({ facts }: { facts: SessionMetaFacts }) {
         aria-label={t("session details")}
         className="flex h-5 shrink-0 items-center gap-1 px-1.5 font-mono text-2xs text-faint hover:bg-hover hover:text-fg"
       >
-        <Info className="size-3 shrink-0" />
+        <InfoIcon className="size-3 shrink-0" />
         <span className="tabular-nums">{formatCompact(facts.items)}</span>
       </PopoverTrigger>
       <PopoverContent side="bottom" className="w-72 max-w-[calc(100vw-2rem)]">
@@ -114,7 +114,7 @@ export function SessionMetaChip({ facts }: { facts: SessionMetaFacts }) {
                   onClick={() => void copy(cwd)}
                   className="flex size-5 shrink-0 items-center justify-center rounded text-muted hover:bg-hover hover:text-fg"
                 >
-                  {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
+                  {copied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />}
                 </button>
               </div>
             </div>

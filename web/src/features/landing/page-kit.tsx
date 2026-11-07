@@ -1,21 +1,66 @@
-import { type AnchorHTMLAttributes, type ReactNode, type Ref, useCallback, useEffect, useRef } from "react";
-import { ArrowRight, Check, Copy, LogIn, UserPlus, UserRound } from "lucide-react";
+import { type AnchorHTMLAttributes, Fragment, type ReactNode, type Ref, useCallback, useEffect, useRef } from "react";
+import { ArrowRightIcon, CheckIcon, CopyIcon, GithubLogoIcon, SignInIcon, UserPlusIcon, UserCircleIcon } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
-import { useDocumentTitle, useEventListener } from "usehooks-ts";
+import { useDocumentTitle, useEventCallback, useEventListener } from "usehooks-ts";
 import { BrandMark } from "@/components/brand-mark";
 import { PrefsControls } from "@/components/prefs-controls";
 import { RegMark } from "@/components/reg-mark";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { CapsLabel } from "@/components/ui/caps-label";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useCopy } from "@/lib/clipboard";
 import { cn } from "@/lib/cn";
 import { appHost, appOrigin, appUrl } from "@/lib/hub/hosts";
-import { DOWNLOAD_PATH } from "./get-droppen";
-import { APP_PATH, publicLink, PRICING_PATH, PRIVACY_PATH, SECURITY_PATH, SIGN_IN_PATH, SIGN_UP_PATH, TERMS_PATH, usePathname } from "./route";
+import { APP_PATH, DOWNLOAD_PATH, publicLink, PRICING_PATH, PRIVACY_PATH, SECURITY_PATH, SIGN_IN_PATH, SIGN_UP_PATH, TERMS_PATH, usePathname } from "./route";
 
-/* The public pages' frame: a sticky header over a 1360px column, hairline sections, and the footer. */
+export const LINK = "text-fg underline underline-offset-4 hover:no-underline";
+export const QUIET_LINK = "text-muted underline underline-offset-4 hover:text-fg";
+
+export function DocumentHead({
+  label,
+  title,
+  lead,
+  note,
+  center = false,
+  className,
+}: {
+  label?: string;
+  title: ReactNode;
+  lead: string;
+  note?: ReactNode;
+  center?: boolean;
+  className?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "flex flex-col gap-5 px-10 pt-16 pb-10 max-lg:pt-12 max-md:px-4 max-md:pt-10 max-md:pb-8",
+        center && "mx-auto max-w-[44rem] items-center gap-4 px-6 pt-16 text-center max-md:px-4 max-md:pt-10",
+        className,
+      )}
+    >
+      {label && <CapsLabel variant="section">{label}</CapsLabel>}
+      <h1 className="max-w-[18em] text-5xl leading-display font-normal tracking-tight text-balance text-fg cjk-wrap md:cjk-keep max-md:text-3xl">{title}</h1>
+      <p className={cn("max-w-[44em] text-base leading-6 text-pretty text-muted cjk-wrap", center && "max-w-[32em]")}>{lead}</p>
+      {note && <p className="text-xs text-faint">{note}</p>}
+    </div>
+  );
+}
+
+export function MailLink({ email, testId }: { email: string; testId?: string }) {
+  return (
+    <a href={`mailto:${email}`} data-testid={testId} className={LINK}>
+      {email}
+    </a>
+  );
+}
+
+export const SUBHEAD = "text-base leading-6 font-semibold text-fg";
+export const NOWRAP_LINK = `whitespace-nowrap ${LINK}`;
+export const QUIET_NOWRAP_LINK = `whitespace-nowrap ${QUIET_LINK}`;
 
 const landingAction = "flex h-auto min-h-9 justify-center py-1.5 text-sm";
 
@@ -30,7 +75,6 @@ export function ButtonLink({
   return <a data-variant={variant} className={cn(buttonVariants({ variant, size: "lg" }), className)} {...props} />;
 }
 
-/** A public page's call to action: its label, then an arrow that steps right on hover. */
 export function ArrowLink({
   variant = "secondary",
   children,
@@ -47,12 +91,11 @@ export function ArrowLink({
       )}
     >
       <span>{children}</span>
-      <ArrowRight className="shrink-0 transition-transform duration-150 group-hover:translate-x-0.5 motion-reduce:transition-none" />
+      <ArrowRightIcon className="shrink-0 transition-transform duration-150 group-hover:translate-x-0.5 motion-reduce:transition-none" />
     </ButtonLink>
   );
 }
 
-/** Registration marks where a section line meets the frame. */
 function Seam({ side = "both" }: { side?: "both" | "left" | "right" }) {
   return (
     <>
@@ -86,17 +129,66 @@ export function Section({
 /** Latin capitals are tracked; Chinese and Japanese are not. */
 export const cjkTracking = "[&:lang(ja)]:tracking-normal [&:lang(zh)]:tracking-normal";
 
-export function SectionHead({ label, title, lead, className }: { label?: string; title: ReactNode; lead?: ReactNode; className?: string }) {
+export function SectionHead({
+  label,
+  title,
+  lead,
+  action,
+  compact = false,
+  className,
+}: {
+  label?: string;
+  title: ReactNode;
+  lead?: ReactNode;
+  action?: ReactNode;
+  /** The landing page's smaller section head: a title, with an optional action beside it. */
+  compact?: boolean;
+  className?: string;
+}) {
+  const heading = (
+    <h2
+      className={cn(
+        "text-balance text-fg cjk-wrap md:cjk-keep",
+        compact
+          ? "text-2xl leading-8 font-semibold tracking-tight max-md:text-xl"
+          : "text-3xl leading-tight font-normal tracking-tight max-[359px]:text-pretty max-md:text-2xl",
+      )}
+    >
+      {title}
+    </h2>
+  );
   return (
-    <div className={cn("flex flex-col gap-3 px-6 pt-10 pb-8 max-md:px-4 max-md:pt-8 max-md:pb-6", className)}>
+    <div
+      className={cn(
+        "flex flex-col gap-3 px-6 max-md:px-4",
+        compact ? "pt-16 pb-10 max-md:pt-14 max-md:pb-8" : "pt-10 pb-8 max-md:pt-8 max-md:pb-6",
+        className,
+      )}
+    >
       {label && <CapsLabel variant="section">{label}</CapsLabel>}
-      <h2 className="text-3xl leading-tight font-normal tracking-tight text-balance text-fg max-[359px]:text-pretty cjk-wrap md:cjk-keep max-md:text-2xl">{title}</h2>
+      {action ? (
+        <div className="flex flex-wrap items-end justify-between gap-6">
+          <div className="min-w-0">{heading}</div>
+          {action}
+        </div>
+      ) : (
+        heading
+      )}
       {lead && <p className="max-w-[38em] text-sm leading-6 text-muted">{lead}</p>}
     </div>
   );
 }
 
-export function Points({ items, className, render }: { items: string[]; className?: string; render?: (item: string) => ReactNode }) {
+/** The plan page's and the landing page's one "Recommended" mark. */
+export function RecommendedBadge({ children }: { children: ReactNode }) {
+  return (
+    <Badge className={cn("h-[18px] bg-fg px-1.5 font-sans text-xs font-medium tracking-label text-bg uppercase shadow-none", cjkTracking)}>
+      {children}
+    </Badge>
+  );
+}
+
+function Points({ items, className, render }: { items: string[]; className?: string; render?: (item: string) => ReactNode }) {
   return (
     <ul className={cn("flex flex-col gap-2.5", className)}>
       {items.map((item) => (
@@ -109,10 +201,10 @@ export function Points({ items, className, render }: { items: string[]; classNam
   );
 }
 
-/** A command on the raised paper, with its copy button. */
-export function CommandLine({ command, label, testId, primaryCopy = false }: { command: string; label: string; testId?: string; primaryCopy?: boolean }) {
+export function CommandLine({ command, testId, primaryCopy = false }: { command: string; testId?: string; primaryCopy?: boolean }) {
   const { t } = useTranslation();
   const { copied, copy } = useCopy();
+  const label = t("copy the command");
   return (
     <div className="@container/command">
       <div className="flex min-w-0 items-stretch border border-border-strong bg-raised @max-[30rem]/command:flex-col">
@@ -130,7 +222,7 @@ export function CommandLine({ command, label, testId, primaryCopy = false }: { c
             "[&_svg]:size-3.5 h-auto min-w-[11rem] shrink-0 justify-center rounded-none border-0 @max-[30rem]/command:h-9 @max-[30rem]/command:border-t @max-[30rem]/command:border-border-strong @min-[30rem]/command:border-l @min-[30rem]/command:border-border-strong",
           )}
         >
-          {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+          {copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
           {copied ? t("copied") : label}
         </Button>
       </div>
@@ -138,23 +230,21 @@ export function CommandLine({ command, label, testId, primaryCopy = false }: { c
   );
 }
 
-/** The page's title, description and language. */
 export function usePageMeta(title: string, description?: string) {
   const { i18n: active } = useTranslation();
   useDocumentTitle(title, { preserveTitleOnUnmount: false });
   useEffect(() => {
     document.documentElement.lang = active.language;
-    const meta = document.querySelector('meta[name="description"]');
-    const previous = meta?.getAttribute("content") ?? null;
-    if (description) meta?.setAttribute("content", description);
-    return () => {
-      if (meta && previous !== null) meta.setAttribute("content", previous);
-    };
+    if (description) document.querySelector('meta[name="description"]')?.setAttribute("content", description);
   }, [description, active.language]);
 }
 
-/** One options object, so `useEventListener` keeps its listener attached (`{ passive: true }`). */
-const PASSIVE = { passive: true } as const;
+/**
+ * Listeners that never block the reader's own gesture, shared so each stays one stable object
+ * (`useEventListener` re-attaches whenever its options object changes identity).
+ */
+export const PASSIVE = { passive: true } as const;
+export const CAPTURE = { capture: true } as const;
 
 /**
  * Arrive at the fragment in the address (`/pricing#waitlist` from the landing
@@ -169,18 +259,17 @@ const PASSIVE = { passive: true } as const;
  * download page's old `?os=` links); the pages that only ever need the
  * address's own fragment leave it out.
  */
-export function useHashScroll(fallback?: (hash: string) => string): void {
-  const map = useRef(fallback);
+function useHashScroll(fallback?: (hash: string) => string): void {
+  const map = useEventCallback((hash: string) => fallback?.(hash) ?? "");
   const live = useRef(false);
   const frame = useRef(0);
 
-  /** Scroll to the fragment the address (or `map`) names, if it is still the one there. */
   const start = useCallback(() => {
     if (typeof location === "undefined" || typeof requestAnimationFrame === "undefined") return;
     cancelAnimationFrame(frame.current);
     live.current = true;
     const hash = location.hash.slice(1);
-    const id = hash || map.current?.(hash) || "";
+    const id = hash || map(hash);
     if (!id) return;
     const to = () => {
       if (live.current && location.hash.slice(1) === hash) document.getElementById(id)?.scrollIntoView();
@@ -192,10 +281,6 @@ export function useHashScroll(fallback?: (hash: string) => string): void {
   }, []);
 
   useEffect(() => {
-    map.current = fallback;
-  }, [fallback]);
-
-  useEffect(() => {
     start();
     return () => {
       live.current = false;
@@ -203,7 +288,6 @@ export function useHashScroll(fallback?: (hash: string) => string): void {
     };
   }, [start]);
 
-  /** The reader moving the page wins over a correction still in flight. */
   const stop = useCallback(() => {
     live.current = false;
     cancelAnimationFrame(frame.current);
@@ -216,10 +300,14 @@ export function useHashScroll(fallback?: (hash: string) => string): void {
   useEventListener("keydown", stop, undefined, PASSIVE);
 }
 
-/** One accordion of questions, one open at a time; answers stay mounted for search and no-script readers. */
+/** Answers stay mounted for search and no-script readers. */
 export function FaqAccordion({
   items,
+  title,
+  description,
+  footer,
   className,
+  cardClassName,
   itemClassName,
   triggerClassName,
   panelClassName,
@@ -229,7 +317,11 @@ export function FaqAccordion({
   testId,
 }: {
   items: { q: string; a: ReactNode; value?: string; id?: string; testId?: string }[];
+  title?: ReactNode;
+  description?: ReactNode;
+  footer?: ReactNode;
   className?: string;
+  cardClassName?: string;
   itemClassName?: string;
   triggerClassName?: string;
   panelClassName?: string;
@@ -239,25 +331,74 @@ export function FaqAccordion({
   testId?: string;
 }) {
   return (
-    <div data-testid={testId} className={className}>
-      <Accordion multiple={false} keepMounted value={value} onValueChange={onValueChange}>
-        {items.map((item) => (
-          <AccordionItem
-            key={item.value ?? item.q}
-            value={item.value ?? item.q}
-            id={item.id}
-            data-testid={item.testId ?? "faq-item"}
-            className={cn("group", itemClassName ?? "last:border-b")}
-          >
-            <AccordionTrigger className={triggerClassName}>
-              <span className="text-base leading-6 font-medium text-fg">{item.q}</span>
-            </AccordionTrigger>
-            <AccordionContent className={cn("p-0", panelClassName)}>
-              {typeof item.a === "string" ? <p className={cn("max-w-prose leading-6 text-muted", answerClassName ?? "text-base")}>{item.a}</p> : item.a}
-            </AccordionContent>
-          </AccordionItem>
-        ))}
-      </Accordion>
+    <Card data-testid={testId} className={cn("gap-0", className, cardClassName)}>
+      {(title || description) && (
+        <CardHeader className="border-b border-border">
+          {title && <CardTitle>{title}</CardTitle>}
+          {description && <CardDescription>{description}</CardDescription>}
+        </CardHeader>
+      )}
+      {/* The rows set their own inset (`triggerClassName`), so the card's body carries none. */}
+      <CardContent className="px-0">
+        <Accordion multiple={false} keepMounted value={value} onValueChange={onValueChange}>
+          {items.map((item) => (
+            <AccordionItem
+              key={item.value ?? item.q}
+              value={item.value ?? item.q}
+              id={item.id}
+              data-testid={item.testId ?? "faq-item"}
+              className={cn("group border-b border-border last:border-b-0", itemClassName)}
+            >
+              <AccordionTrigger className={triggerClassName}>
+                <span className="text-base leading-6 font-medium text-fg">{item.q}</span>
+              </AccordionTrigger>
+              <AccordionContent className={cn("p-0", panelClassName)}>
+                {typeof item.a === "string" ? <p className={cn("max-w-prose leading-6 text-muted", answerClassName ?? "text-base")}>{item.a}</p> : item.a}
+              </AccordionContent>
+            </AccordionItem>
+          ))}
+        </Accordion>
+      </CardContent>
+      {footer && <CardFooter className="border-t border-border px-0 pt-0">{footer}</CardFooter>}
+    </Card>
+  );
+}
+
+/**
+ * A value still to be supplied by the owner: `[IN CAPITALS]`. The notice shows one marked
+ * ({@link marked}); each is listed in `web/owner-placeholders.txt`, and a release refuses a
+ * web build that still holds one (`scripts/release-text-check.sh`).
+ */
+export const PLACEHOLDER = /\[[A-Z][A-Z ]*\]/;
+
+export function marked(text: string): ReactNode {
+  const parts = text.split(new RegExp(`(${PLACEHOLDER.source})`));
+  if (parts.length === 1) return text;
+  return parts.map((part, i) =>
+    i % 2 === 1 ? (
+      <mark key={i} data-placeholder="" className="bg-warn/25 px-0.5 font-mono text-warn-fg">
+        {part}
+      </mark>
+    ) : (
+      <Fragment key={i}>{part}</Fragment>
+    ),
+  );
+}
+
+export function Pair({ left, right }: { left: ReactNode; right: ReactNode }) {
+  return (
+    <div className="grid border-t border-border md:grid-cols-2">
+      {left}
+      <div className="max-md:border-t max-md:border-border md:border-l md:border-border">{right}</div>
+    </div>
+  );
+}
+
+export function Block({ title, items }: { title: string; items: string[] }) {
+  return (
+    <div className="flex min-w-0 flex-col gap-3 px-6 py-6 max-md:px-4">
+      <span className="text-sm leading-5 font-semibold text-fg">{title}</span>
+      <Points items={items} render={marked} />
     </div>
   );
 }
@@ -274,21 +415,12 @@ function PageLink({ path, label, className, testId }: { path: string; label: str
   );
 }
 
-/** GitHub's mark (Octicons' mark-github, MIT). */
-function GitHubMark({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 16 16" aria-hidden="true" className={className} fill="currentColor">
-      <path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z" />
-    </svg>
-  );
-}
-
 const iconControl = cn(
   buttonVariants({ variant: "secondary" }),
   "flex size-9 p-0 text-muted transition-colors hover:text-fg data-[popup-open]:bg-hover data-[popup-open]:text-fg",
 );
 
-function MenuLink({ path, icon: Icon, children }: { path: string; icon: typeof LogIn; children: ReactNode }) {
+function MenuLink({ path, icon: Icon, children }: { path: string; icon: typeof SignInIcon; children: ReactNode }) {
   return (
     <DropdownMenuItem render={<a {...publicLink(path)} />} className="gap-2 text-sm">
       <span className="flex size-3.5 shrink-0 items-center justify-center">
@@ -304,19 +436,19 @@ function AccountMenu({ signedIn }: { signedIn: boolean }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger aria-label={signedIn ? t("Open app") : t("Sign in")} title={signedIn ? t("Open app") : t("Sign in")} className={iconControl}>
-        <UserRound className="size-4" strokeWidth={1.5} />
+        <UserCircleIcon className="size-4" />
       </DropdownMenuTrigger>
       <DropdownMenuContent side="bottom" align="end" sideOffset={4}>
         {signedIn ? (
-          <MenuLink path={APP_PATH} icon={LogIn}>
+          <MenuLink path={APP_PATH} icon={SignInIcon}>
             {t("Open app")}
           </MenuLink>
         ) : (
           <>
-            <MenuLink path={SIGN_IN_PATH} icon={LogIn}>
+            <MenuLink path={SIGN_IN_PATH} icon={SignInIcon}>
               {t("Sign in")}
             </MenuLink>
-            <MenuLink path={SIGN_UP_PATH} icon={UserPlus}>
+            <MenuLink path={SIGN_UP_PATH} icon={UserPlusIcon}>
               {t("Create a free account")}
             </MenuLink>
           </>
@@ -326,7 +458,6 @@ function AccountMenu({ signedIn }: { signedIn: boolean }) {
   );
 }
 
-/** The public pages' header. */
 export function PublicHeader({ signedIn }: { signedIn: boolean }) {
   const { t } = useTranslation();
   const pages = [
@@ -361,7 +492,7 @@ export function PublicHeader({ signedIn }: { signedIn: boolean }) {
             title={t("Client source code")}
             className={cn(buttonVariants({ variant: "secondary" }), "flex size-9 p-0 text-muted transition-colors hover:text-fg [&_svg]:size-4 max-sm:hidden")}
           >
-            <GitHubMark className="size-4" />
+            <GithubLogoIcon weight="fill" aria-hidden="true" className="size-4" />
           </a>
           <PrefsControls />
           <AccountMenu signedIn={signedIn} />
@@ -380,72 +511,83 @@ export const SOURCE_URL = "https://github.com/getdroppen/droppen";
 
 export const SECURITY_EMAIL = "security@droppen.app";
 
-/** The last line of every public page. */
-const FOOTER_WIDE = "mx-auto w-full max-w-[72rem]";
+/** The privacy contact, for removals and requests about data (the owner's word, 2026-10-23). */
+export const PRIVACY_EMAIL = "privacy@droppen.app";
+
+export const PAGE_WIDE = "mx-auto w-full max-w-[72rem]";
 
 function FooterHeading({ children }: { children: ReactNode }) {
-  return <h4 className="font-mono text-xs tracking-label uppercase text-muted">{children}</h4>;
+  return <h4 className="font-mono text-xs font-semibold tracking-label uppercase text-fg">{children}</h4>;
 }
 
-/** The footer every public page ends with; `home` keeps its in-page links on the landing page. */
+const footerList = "mt-1.5 flex flex-col gap-2 max-sm:flex-row max-sm:flex-wrap max-sm:gap-x-4 max-sm:gap-y-1.5";
+
+function FooterList({ heading, children }: { heading: string; children: ReactNode }) {
+  return (
+    <div className="max-sm:col-span-2">
+      <FooterHeading>{heading}</FooterHeading>
+      <ul className={footerList}>{children}</ul>
+    </div>
+  );
+}
+
 export function PublicFooter({ home = false }: { home?: boolean }) {
   const { t } = useTranslation();
   const item = "text-xs leading-5 text-muted transition-colors hover:text-fg";
   return (
     <Section rule={!home} seam={home ? false : "both"}>
-      <div className={cn(FOOTER_WIDE, "grid gap-9 px-6 py-11 max-md:px-4 max-md:py-8 sm:grid-cols-2 lg:grid-cols-[2.1fr_repeat(3,1fr)]")}>
-        <div>
+      {/* Wide, three columns stand beside the name. Narrower — a phone above all — they are
+          two or three lines of links each, and stacking them would make a page of its own:
+          they fold into two cells whose links wrap in a row, and the name stands over both. */}
+      <div
+        className={cn(
+          PAGE_WIDE,
+          "grid gap-x-9 gap-y-10 px-6 py-11 max-sm:px-6 max-sm:py-8 max-md:px-4 max-md:py-7",
+          "sm:grid-cols-2 lg:grid-cols-[2.1fr_repeat(3,1fr)]",
+          "max-sm:grid-cols-2 max-sm:gap-x-4 max-sm:gap-y-10",
+        )}
+      >
+        <div className="sm:max-lg:col-span-2 max-sm:col-span-2">
           <a {...publicLink("/")} className="inline-flex items-center gap-2.5" aria-label="Droppen">
             <BrandMark size={18} />
             <span className="font-mono text-base font-medium text-fg">Droppen</span>
           </a>
           <p className="mt-3 max-w-[17em] text-xs leading-5 text-muted">{t("Your AI, from your phone. End-to-end encrypted, open-source client.")}</p>
         </div>
-        <div>
-          <FooterHeading>{t("Product")}</FooterHeading>
-          <ul className="mt-3 flex flex-col gap-2">
-            <li><a {...(home ? { href: "#tour" } : publicLink("/#tour"))} className={item}>{t("Interface")}</a></li>
-            <li><a {...publicLink(DOWNLOAD_PATH)} data-testid="footer-download" className={item}>{t("Download Droppen")}</a></li>
-            <li><a {...publicLink(PRICING_PATH)} data-testid="footer-pricing" className={item}>{t("Pricing")}</a></li>
-            <li><a {...publicLink(SECURITY_PATH)} data-testid="footer-security" className={item}><span>{t("Security")}</span></a></li>
-          </ul>
-        </div>
-        <div>
-          <FooterHeading>{t("Resources")}</FooterHeading>
-          <ul className="mt-3 flex flex-col gap-2">
-            <li><a href={SOURCE_URL} data-testid="footer-source" className={item}>{t("Client source code")}</a></li>
-            <li><a {...(home ? { href: "#faq" } : publicLink("/#faq"))} className={item}>{t("FAQ")}</a></li>
-            <li><a {...publicLink(SECURITY_PATH)} className={item}>{t("Encryption design")}</a></li>
-          </ul>
-        </div>
-        <div>
-          <FooterHeading>{t("Legal")}</FooterHeading>
-          <ul className="mt-3 flex flex-col gap-2">
-            <li><a {...publicLink(PRIVACY_PATH)} data-testid="footer-privacy" className={item}><span>{t("Privacy notice")}</span></a></li>
-            <li><a {...publicLink(TERMS_PATH)} data-testid="footer-terms" className={item}><span>{t("Terms of Service")}</span></a></li>
-            <li><a href={NOTICES_PATH} data-testid="footer-licences" className={item}>{t("Third-party notices")}</a></li>
-            <li><a {...publicLink(`${TERMS_PATH}#contact`)} data-testid="footer-contact" className={item}>{t("Contact")}</a></li>
-          </ul>
-        </div>
+        <FooterList heading={t("Product")}>
+          <li><a {...(home ? { href: "#tour" } : publicLink("/#tour"))} className={item}>{t("Interface")}</a></li>
+          <li><a {...publicLink(DOWNLOAD_PATH)} data-testid="footer-download" className={item}>{t("Download Droppen")}</a></li>
+          <li><a {...publicLink(PRICING_PATH)} data-testid="footer-pricing" className={item}>{t("Pricing")}</a></li>
+          <li><a {...publicLink(SECURITY_PATH)} data-testid="footer-security" className={item}><span>{t("Security")}</span></a></li>
+        </FooterList>
+        <FooterList heading={t("Resources")}>
+          <li><a href={SOURCE_URL} data-testid="footer-source" className={item}>{t("Client source code")}</a></li>
+          <li><a {...(home ? { href: "#faq" } : publicLink("/#faq"))} className={item}>{t("FAQ")}</a></li>
+          <li><a {...publicLink(SECURITY_PATH)} className={item}>{t("Encryption design")}</a></li>
+        </FooterList>
+        <FooterList heading={t("Legal")}>
+          <li><a {...publicLink(PRIVACY_PATH)} data-testid="footer-privacy" className={item}><span>{t("Privacy notice")}</span></a></li>
+          <li><a {...publicLink(TERMS_PATH)} data-testid="footer-terms" className={item}><span>{t("Terms of Service")}</span></a></li>
+          <li><a href={NOTICES_PATH} data-testid="footer-licences" className={item}>{t("Third-party notices")}</a></li>
+          <li><a {...publicLink(`${TERMS_PATH}#contact`)} data-testid="footer-contact" className={item}>{t("Contact")}</a></li>
+        </FooterList>
       </div>
-      <div className={cn(FOOTER_WIDE, "flex flex-wrap items-center justify-between gap-3 border-t border-border px-6 py-4 text-xs text-faint max-md:px-4")}>
-        <span className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono">
+      <div className={cn(PAGE_WIDE, "flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-border px-6 py-4 text-xs text-faint max-md:px-4")}>
+        <span className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
           <span className="flex items-center gap-2"><BrandMark size={12} />© 2026 Droppen</span>
           <span>AGPL-3.0-only</span>
-          <span>www.droppen.app</span>
           {appOrigin() && (
             <a href={appUrl("/")} data-testid="footer-app" className="underline-offset-4 hover:text-fg hover:underline">
               {appHost()}
             </a>
           )}
         </span>
-        <a href="#top" className="underline-offset-4 hover:text-fg hover:underline">{t("Back to top")}</a>
+        <a href="#top" className="ml-auto underline-offset-4 hover:text-fg hover:underline">{t("Back to top")}</a>
       </div>
     </Section>
   );
 }
 
-/** The frame every public page shares: the scrolling page, the header, the 1360px column and the footer. */
 export function PublicLayout({
   testId,
   signedIn = false,
@@ -464,7 +606,6 @@ export function PublicLayout({
   mainClassName?: string;
   mainData?: Record<string, string | undefined>;
   home?: boolean;
-  /** Names the section a fragment-less deep link lands on (the download page's old `?os=` links). */
   hashFallback?: (hash: string) => string;
   children: ReactNode;
 }) {

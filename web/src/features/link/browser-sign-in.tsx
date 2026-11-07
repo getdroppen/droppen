@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Check, Copy, Loader2 } from "lucide-react";
+import { CheckIcon, CopyIcon, CircleNotchIcon } from "@phosphor-icons/react";
 import { isDesktopApp } from "@/lib/auth";
 import type { Attempt, LinkOpener } from "./opener";
 
@@ -71,7 +71,7 @@ function CopyLink({ text }: { text: string }) {
         });
       }}
     >
-      {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
+      {copied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />}
       {copied ? t("copied") : t("copy link")}
     </button>
   );
@@ -116,7 +116,7 @@ export function BrowserSignInWaiting({
       </div>
       {/* Ticks every second: kept out of any surrounding live region, so a screen reader is not read the panel again each second. */}
       <p className="flex items-center gap-2 text-2xs text-faint" data-testid="droppen-browser-left" aria-live="off">
-        <Loader2 className="size-3 animate-spin" />
+        <CircleNotchIcon className="size-3 animate-spin" />
         {left > 0 ? t("waiting for droppen.app… the link works for another {{left}}", { left: formatLeft(left) }) : t("waiting for droppen.app…")}
       </p>
       <div className="flex flex-wrap items-center gap-2">

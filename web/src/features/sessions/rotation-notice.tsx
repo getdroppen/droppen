@@ -1,4 +1,4 @@
-import { X } from "lucide-react";
+import { XIcon } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -121,7 +121,7 @@ export function RotationNotice({
         onBlur={() => setHeld(false)}
         className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded px-0.5 tabular-nums hover:bg-hover hover:text-fg"
       >
-        {held ? <X className="size-3" /> : <span data-countdown>{left}</span>}
+        {held ? <XIcon className="size-3" /> : <span data-countdown>{left}</span>}
       </button>
     </div>
   );

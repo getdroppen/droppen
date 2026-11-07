@@ -1,26 +1,19 @@
 import { useTranslation } from "react-i18next";
 import type { SignupMode } from "@/lib/hub/api";
-import type { LatestRelease, ReleaseFile } from "@/lib/hub/releases";
+import { AppleLogoIcon } from "@phosphor-icons/react";
+import type { LatestRelease } from "@/lib/hub/releases";
 import type { HeroOffer } from "./detect";
 import { type Availability, downloadHref, type DownloadOs, INSTALL_COMMAND, RELEASES_URL } from "./get-droppen";
-import { ArrowLink, ButtonLink, CommandLine } from "./page-kit";
-import { fileFacts, fileLink, LinuxTarballs } from "./release-files";
+import { ArrowLink, ButtonLink, CommandLine, QUIET_NOWRAP_LINK } from "./page-kit";
+import { DownloadButton, fileFacts, fileLink, LinuxTarballs } from "./release-files";
 import { appHost } from "@/lib/hub/hosts";
 import { APP_PATH, publicLink, SIGN_UP_PATH, WAITLIST_HREF } from "./route";
-import { MacDownloadControl } from "./download";
-
-/*
- * The hero's actions for the device reading the page: the App's download on
- * a Mac, the install command on Linux, the web app on a phone or Windows, and
- * every way onto a device when it cannot be told. One primary action.
- */
-
-const quietLink = "whitespace-nowrap text-muted underline underline-offset-4 hover:text-fg";
+import { SIGNUP_COPY } from "./signup-copy";
 
 function TabLink({ os, label, testId }: { os?: DownloadOs; label: string; testId: string }) {
   const href = downloadHref(os);
   return (
-    <a {...publicLink(href)} data-testid={testId} className={quietLink}>
+    <a {...publicLink(href)} data-testid={testId} className={QUIET_NOWRAP_LINK}>
       {label}
     </a>
   );
@@ -29,16 +22,16 @@ function TabLink({ os, label, testId }: { os?: DownloadOs; label: string; testId
 function ReleaseLink({ release }: { release: LatestRelease | null | undefined }) {
   const { t } = useTranslation();
   return (
-    <a href={release?.releasesPage ?? RELEASES_URL} target="_blank" rel="noopener noreferrer" data-testid="hero-release-link" className={quietLink}>
+    <a href={release?.releasesPage ?? RELEASES_URL} target="_blank" rel="noopener noreferrer" data-testid="hero-release-link" className={QUIET_NOWRAP_LINK}>
       {t("checksums and other files")}
     </a>
   );
 }
 
-/** The account's way in; `lead` makes it the hero's primary. */
-function Account({ signedIn, lead, closed }: { signedIn: boolean; lead: boolean; closed: boolean }) {
+function Account({ signedIn, lead, signup }: { signedIn: boolean; lead: boolean; signup: SignupMode }) {
   const { t } = useTranslation();
   const variant = lead ? "primary" : "secondary";
+  const closed = signup === "closed";
   if (signedIn) {
     return (
       <>
@@ -55,13 +48,9 @@ function Account({ signedIn, lead, closed }: { signedIn: boolean; lead: boolean;
   }
   return (
     <ButtonLink variant={variant} {...publicLink(closed ? WAITLIST_HREF : SIGN_UP_PATH)}>
-      {closed ? t("Join the waitlist") : t("Create a free account")}
+      {t(SIGNUP_COPY[signup].freeCta)}
     </ButtonLink>
   );
-}
-
-function macDownload(dmg: ReleaseFile | undefined) {
-  return dmg ? fileLink(dmg) : publicLink(downloadHref("macos-app"));
 }
 
 const row = "flex flex-wrap items-center justify-center gap-3";
@@ -87,16 +76,21 @@ export function HeroGet({
   const closed = signup === "closed";
   const dmg = release?.files.macos;
   return (
-    <div data-testid="hero-get" data-offer={offer} className="mt-4 flex w-full flex-col items-center gap-3">
+    <div data-testid="hero-get" data-offer={offer} className="mt-4 flex w-full flex-col items-center gap-3 [&_a]:shrink-0 [&_button]:shrink-0">
       {offer === "mac" && (
         <>
           <div className={row}>
-            <MacDownloadControl release={release} testId="hero-download" />
-            <Account signedIn={signedIn} lead={false} closed={closed} />
+            <DownloadButton
+              file={dmg}
+              mark={<AppleLogoIcon weight="fill" className="size-4 shrink-0" />}
+              testId="hero-download"
+              label={t("Download for Mac")}
+              fallback={publicLink(downloadHref("macos-app"))}
+            />
+            <Account signedIn={signedIn} lead={false} signup={signup} />
           </div>
           <p className={small}>
             {release && dmg && <span data-testid="hero-file-facts">{fileFacts(release, dmg)} · </span>}
-            {/* The checksums and the release's other files are the download page's, one click away. */}
             {t("macOS 13 or later · Apple silicon and Intel")} · <TabLink label={t("Linux and other platforms")} testId="hero-other-systems" />
           </p>
         </>
@@ -104,7 +98,7 @@ export function HeroGet({
       {offer === "linux" && (
         <>
           <div className="flex max-w-[36rem] flex-col gap-2">
-            <CommandLine command={INSTALL_COMMAND} label={t("copy the command")} testId="hero-install-command" primaryCopy />
+            <CommandLine command={INSTALL_COMMAND} testId="hero-install-command" primaryCopy />
             <p className={small}>
               {t("Paste it into a terminal on this device: Droppen installs, starts and opens its page.")}{" "}
               <TabLink os="linux" label={t("A server with no browser?")} testId="hero-linux-tab" /> · <ReleaseLink release={release} />
@@ -112,7 +106,7 @@ export function HeroGet({
             <LinuxTarballs release={release} cpu={cpu} testId="hero-tarballs" />
           </div>
           <div className={row}>
-            <Account signedIn={signedIn} lead={false} closed={closed} />
+            <Account signedIn={signedIn} lead={false} signup={signup} />
           </div>
         </>
       )}
@@ -136,7 +130,7 @@ export function HeroGet({
       {offer === "phone" && (
         <>
           <div className={row}>
-            <Account signedIn={signedIn} lead closed={closed} />
+            <Account signedIn={signedIn} lead signup={signup} />
           </div>
           <p data-testid="hero-phone" className={note}>
             {t("On your phone, Droppen works in the browser: open {{app}} and add it to your home screen. Your AI runs on a Mac or on Linux, with Droppen installed there.", { app: appHost() })}{" "}
@@ -147,12 +141,12 @@ export function HeroGet({
       {offer === "all" && (
         <>
           <div className={row}>
-            <Account signedIn={signedIn} lead closed={closed} />
+            <Account signedIn={signedIn} lead signup={signup} />
           </div>
           <p data-testid="hero-all" className={small}>
             {t("Get Droppen:")}{" "}
             {availability.app ? (
-              <a {...macDownload(dmg)} data-testid="hero-download" className={quietLink}>
+              <a {...(dmg ? fileLink(dmg) : publicLink(downloadHref("macos-app")))} data-testid="hero-download" className={QUIET_NOWRAP_LINK}>
                 {t("Download for Mac")}
               </a>
             ) : (

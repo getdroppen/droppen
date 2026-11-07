@@ -1,28 +1,15 @@
 /*
- * The agents' marks: the tools whose sessions Droppen follows, drawn from the
- * Lobe Icons set (`@lobehub/icons-static-svg`, MIT, `icons.lobehub.com`) —
- * the library's own files, not paths copied into this module. Each entry
- * names the library's file and the sizes the hero draws it at; the SVG is read
- * raw and parsed into the page's own `<svg>` at build time, so adding an agent
- * is one line here and nothing else.
- *
- * The marks name the tools and belong to their makers; Droppen ships none of
- * them. `tone: "ink"` draws a mark in the page's ink, which turns white in the
- * dark theme — what a mark whose file has no colour version gets. `brand`
- * keeps the colours of the library's `-color.svg` file.
+ * Marks come from Lobe Icons (`@lobehub/icons-static-svg`, MIT, `icons.lobehub.com`)
+ * and belong to their makers. `tone: "ink"` follows the page colour and inverts in
+ * dark mode; `brand` keeps the colours of the library's `-color.svg` file.
  */
 
-/** A brand's mark in the library: the monochrome file, or the `-color` one. */
 export type AgentIcon = {
-  /** The library's file name, without `.svg`. */
   slug: string;
-  /** `ink` follows the page; `brand` keeps the file's own colours. */
   tone: "ink" | "brand";
 };
 
-/** One agent: what it is called, and which of its marks the hero draws. */
 export type Agent = {
-  /** The tool's name, as the settings and the download page call it. */
   name: string;
   icon: AgentIcon;
 };

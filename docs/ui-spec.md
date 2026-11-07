@@ -38,7 +38,7 @@
 
 composer 的附加文件/拍照与 ghost 选项为 24px，主发送按钮为 26px 墨色实心，是主操作层级的合理差异。消息图片查看器使用 28px 工具按钮，区别于共享表单弹窗的 20px 关闭按钮。
 
-同一上下文控件共用高度和对齐方式。文本链接、breadcrumb、checkbox、badge 和清单行属于不同角色，不因与按钮同排就拉成同尺寸。图标为 lucide，`strokeWidth` 1.5，通常 12/14/16px（手机 18px），选择用途已有档位。
+同一上下文控件共用高度和对齐方式。文本链接、breadcrumb、checkbox、badge 和清单行属于不同角色，不因与按钮同排就拉成同尺寸。图标为 Phosphor（`@phosphor-icons/react`，按规范的 `*Icon` 命名，如 `CheckIcon`、`CaretDownIcon`），默认 `weight="regular"`，视觉上等同原先 lucide 的 1.5px 描边；Phosphor 不描边，所以**不再有 `strokeWidth`**，粗细只由 `weight` 决定（默认值只在 `lib/icon.ts` 里写一处，调用点不写）。尺寸档位不变：通常 12/14/16px（手机 18px），选择用途已有档位。
 
 圆角一律为 0：控件、弹窗、菜单、分段、chip、未读数、图片缩略图都是直角；只有状态点和 radio 指示是圆形。按钮四种：primary（`bg-fg text-bg`）、secondary（`border-strong` 描边）、ghost（无框，muted → fg）、danger（`danger` 文字 + 描边）；不再使用 accent 15% / 25% 着色按钮。输入背景 `bg`，边框 `border`，焦点时边框变 `fg`；键盘焦点另加 2px `fg` 的 `focus-visible` 外框。
 
@@ -80,10 +80,11 @@ composer 的附加文件/拍照与 ghost 选项为 24px，主发送按钮为 26p
 - 终端（xterm）在两种主题下都是深色，底色 `#0f1115`（与暗色主题的墨面同值），ANSI 色沿用信号色相。
 - 账户额度微型图表、状态 chip、未读数量、session receipt、消息气泡和终端字体各有语义，不强行统一成输入框或操作按钮。
 - 用户上传的图片和屏幕 emoji 是用户内容，不去色。应用图标、favicon 与启动图由 `web/scripts/gen-pwa-assets.mjs` 从套准标记矢量生成，不手工改 PNG。
+- 公共页面（`features/landing`）的截图轮播（`ProductTour`）指示条是三段的紧凑横条，居中放在图片下方，不铺满图片宽度（`w-fit`，三段共 132px）：每屏一段，点击区 44×44px（`h-11 w-11`），段内居中画一条 24px 宽、4px 高的轨道（`h-1 w-6 bg-border`；指针悬停在段上时 `border-strong`），当前段的轨道里是一条实心墨线（`bg-fg`），兼作轮播的进度：宽度从 0 走到满宽，时长等于轮播间隔（`ROTATE_MS` 由常量传入 CSS 变量），指针指在横条上时暂停（触屏不算）；`prefers-reduced-motion` 下不播放动画、静止显示满格。轨道与墨线是 `rounded-full` 胶囊，按 `[data-shape]` 标记，是状态点、radio 之后为 4px 线端不粗糙而设的同一种圆形例外；它是翻页指示，不是控件形状，不推广到按钮或外框。墨线是有/未选的区别，不是状态色，不用 `data-signal`。键盘焦点仍是 2px 墨色外框，画在 44px 段框之内的边缘（`outline-offset-0`），不压到中间的墨线。横条从不是唯一的位置提示：`aria-selected`、标签上的「第 N 个界面，共 N 个：标题」和上方的说明文字都在。段内没有文字（§1 字号规则照旧）。没有箭头按钮、没有位置计数器、没有暂停开关。
 
 ## 6. 验证原则
 
-测量默认字号和 xlarge、明暗主题、1920 / 2560（云端宽屏页面）、1440 / 700 / 390 / 320px 宽度；短视口与长内容检查弹窗可达性。同一前后对比使用相同 fixture 和滚动位置，截图需实际查看，并与对应的设计稿对照（设计稿不在本仓库）。fixture 必须覆盖第 7 节状态矩阵中的每个状态（工作中、排队、在问你、未读、后台、空闲、失败、离线）和三窗格分屏。尺寸扫描只发现候选偏差，规范和用途决定是否修改。隔离 mock 只能证明前端渲染，不能证明真实后台业务行为。
+测量默认字号和 xlarge、明暗主题、1920 / 2560（云端宽屏页面）、1440 / 700 / 390 / 320px 宽度；短视口与长内容检查弹窗可达性。同一前后对比使用相同 fixture 和滚动位置，截图需实际查看，并与对应的设计稿对照（设计稿不在本仓库）。fixture 必须覆盖第 7 节状态矩阵中的每个状态（工作中、排队、在问你、未读、后台、空闲、失败、离线）和三窗格分屏。尺寸扫描只发现候选偏差，规范和用途决定是否修改。隔离 mock 只能证明前端渲染，不能证明真实后台业务行为。公共页面（`features/landing`）的结构由 `web/test/landing.test.tsx` 守住：截图轮播每屏一个 `role="tab"`、恰好一个 `aria-selected="true"`、标签带「第 N 个界面，共 N 个：标题」、每段 44×44px 点击区（`h-11 w-11`）、轨道与当前段实心 `bg-fg` 墨线（`[data-shape]`）、没有箭头/计数器/暂停开关，另有第 1 节的字号规则。`scripts/ui-audit` 不渲染公共页面，所以第 7 节不为它新增规则。
 
 ## 7. 视觉语言（可机检）
 
@@ -91,7 +92,7 @@ composer 的附加文件/拍照与 ghost 选项为 24px，主发送按钮为 26p
 
 | # | 规则 | 检查方法 | 允许的例外 |
 | --- | --- | --- | --- |
-| V1 | `border-radius` 全为 0 | 所有可见元素 | 状态点与 radio 等圆形指示（`[data-shape]`）、原生 radio / checkbox、xterm 内部 |
+| V1 | `border-radius` 全为 0 | 所有可见元素 | 状态点与 radio 等圆形指示（`[data-shape]`）、轮播指示条的 4px 高轨道与填充（`[data-shape]`，见 §5）、原生 radio / checkbox、xterm 内部 |
 | V2 | 没有投影：任何 `box-shadow` 的 blur 与 spread 外扩为 0 | 解析 computed `box-shadow` | 无；内框 `inset 0 0 0 Npx` 可用作描边 |
 | V3 | 线宽：边框 1px；2px 只用于状态边条、窗格状态框、tab 下划线、键盘焦点；4px 只用于聚焦角标 | `border-*-width`、inset 宽度 | — |
 | V4 | 非灰色（RGB 极差 ≥ 3）的 `color` / `background-color` / `border-color` / `box-shadow` 颜色必须位于带信号标记的元素内 | 祖先或自身含 `data-signal`、`data-edge`、`data-activity`、`data-unread`、`data-pane-state`、`data-diff` 或 `data-allow-color` | diff 行、插件里有业务含义的颜色（`data-allow-color`）、终端、用户图片 |

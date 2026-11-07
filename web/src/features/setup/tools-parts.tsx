@@ -5,7 +5,7 @@
  * action primitives (the main button, the link-style button, the official
  * guide link, the action row and the quota bar).
  */
-import { ArrowUpRight, Check, Copy, SquareTerminal } from "lucide-react";
+import { ArrowUpRightIcon, CheckIcon, CopyIcon, TerminalWindowIcon } from "@phosphor-icons/react";
 import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { LiveDot } from "@/components/live-dot";
@@ -34,7 +34,7 @@ export function StatusChip({ tone, children }: { tone: ChipTone; children: React
         tone === "neutral" && "text-muted shadow-[inset_0_0_0_1px_var(--color-border-strong)]",
       )}
     >
-      {tone === "ready" && <Check className="size-2.5" aria-hidden="true" />}
+      {tone === "ready" && <CheckIcon className="size-2.5" aria-hidden="true" />}
       {/* Blinks once a second; steady under reduced motion (LiveDot). */}
       {tone === "running" && <LiveDot className="size-1.5 bg-ok" />}
       {children}
@@ -61,7 +61,7 @@ export function CommandWell({ command, testId }: { command: string; testId?: str
         onClick={() => copy(command)}
         className="flex size-6 shrink-0 items-center justify-center text-muted hover:bg-hover hover:text-fg"
       >
-        {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+        {copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
       </button>
     </div>
   );
@@ -78,7 +78,7 @@ export function CopyCommandButton({ command, primary = false, disabled }: { comm
       disabled={disabled}
       onClick={() => copy(command)}
     >
-      {copied && <Check className="size-3.5" aria-hidden="true" />}
+      {copied && <CheckIcon className="size-3.5" aria-hidden="true" />}
       {copied ? t("Copied") : t("Copy command")}
     </Button>
   );
@@ -140,7 +140,7 @@ export function TaskTerminal({ terminalId, startedAt, onStop, stopLabel }: { ter
   return (
     <div role="region" aria-label={t("Terminal · on this device")} data-setup-terminal={terminalId} className="mt-2.5 border border-[#2b313a] bg-[#0f1115]">
       <div className="flex h-7 items-center gap-2 border-b border-[#2b313a] pr-1 pl-2.5 font-mono text-2xs text-[#a4abb5]">
-        <SquareTerminal className="size-3" aria-hidden="true" />
+        <TerminalWindowIcon className="size-3" aria-hidden="true" />
         <span className="min-w-0 flex-1 truncate">{t("Terminal · on this device")}</span>
         <Elapsed since={startedAt} />
         {onStop && (
@@ -222,7 +222,7 @@ export function DocsLink({ href, label, primary = false, className }: { href: st
       )}
     >
       {label}
-      <ArrowUpRight className="size-3" aria-hidden="true" />
+      <ArrowUpRightIcon className="size-3" aria-hidden="true" />
     </a>
   );
 }

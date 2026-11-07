@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearch } from "@tanstack/react-router";
 import { useMachineNavigate } from "@/app/machine-route";
-import { ChevronLeft, Plus, SquareTerminal } from "lucide-react";
+import { CaretLeftIcon, PlusIcon, TerminalWindowIcon } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
 import { ApiError, errorText } from "@/api/errors";
 import type { components } from "@/api/schema";
@@ -123,7 +123,7 @@ export function TerminalsView() {
               onClick={() => create.mutate()}
               className="flex size-5 items-center justify-center rounded text-muted hover:bg-hover hover:text-fg"
             >
-              <Plus className="size-3.5" />
+              <PlusIcon className="size-3.5" />
             </button>
           }
         />
@@ -140,7 +140,7 @@ export function TerminalsView() {
                       t.id === activeId ? "bg-hover" : ""
                     }`}
                   >
-                    <SquareTerminal className="size-3.5 shrink-0 text-ok/70" />
+                    <TerminalWindowIcon className="size-3.5 shrink-0 text-ok/70" />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-xs">{t.title}</span>
                       <span className="block truncate font-mono text-2xs text-faint">{basename(t.cwd)}</span>
@@ -181,7 +181,7 @@ export function TerminalsView() {
               onClick={() => void navigate({ to: "/terminals", search: {} })}
               className="flex size-6 shrink-0 items-center justify-center rounded text-muted hover:bg-hover"
             >
-              <ChevronLeft className="size-4" />
+              <CaretLeftIcon className="size-4" />
             </button>
             <span className="truncate font-mono text-xs">{active.title}</span>
           </header>
