@@ -24,6 +24,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
+import { workerNotices } from "./worker-notices.mjs";
 
 /** SPDX ids the server binary may carry. Keep in step with `about.toml`. */
 export const ALLOWED = new Set([
@@ -298,6 +299,9 @@ export function thirdPartyNotices() {
     generateBundle(_options, bundle) {
       const seen = recorder();
       seen.record(bundle);
+      // The diagram worker is a separate Rollup pass, emitted into this
+      // bundle as an asset; its modules are recorded by worker-notices.mjs.
+      for (const file of workerNotices()) seen.files.add(file);
       // Vite's root may be reached through a symlink (macOS's /tmp is
       // /private/tmp); the modules it records are real paths.
       const found = collect(realpathSync(resolve(root)), seen);

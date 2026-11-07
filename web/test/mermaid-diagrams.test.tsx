@@ -5,27 +5,30 @@
 // reply and the transcript shows the fence as code. What is pinned here:
 //   · with diagrams off (`source`, or outside a view that read the pref) a
 //     mermaid fence is byte-for-byte the code block every other fence is, and
-//     the engine is never imported;
-//   · with them on, the fence goes through the diagram renderer and is shown
+//     no worker is made;
+//   · with them on, the fence goes through the worker renderer and is shown
 //     as an `<img>` of the SVG, themed from the page's tokens;
 //   · the options the renderer relies on — no links, no images, bounded
-//     source/edges/output — are what the real package is given, and a fence's
-//     own init directive or frontmatter cannot change them or the theme;
-//   · a fence Pele rejects is the code block again, without an error banner;
+//     source/edges/output — are what the real package is given; a fence's own
+//     init directive or frontmatter cannot change them or the theme, and its
+//     series palette is stripped before Pele sees it;
+//   · a fence Pele rejects, a worker that times out, and a source over the
+//     length cap are the code block again, without an error banner;
+//   · the client queues one render at a time, terminates a timed-out worker,
+//     makes a fresh one for the next diagram, and caches both pictures and
+//     failures by fence text (a theme toggle never re-renders);
 //   · inline code and every other language are untouched;
 //   · a streaming fence is handed to the renderer once its text settles, and a
 //     diagram already up stays up while the text moves; the per-block
 //     "source" control flips only that one;
-//   · a failed engine import is retried, and blocks do not wait for one
-//     another (the engine is synchronous once loaded: no queue, no timer);
 //   · turning diagrams off puts the code back in an open transcript.
 // Where the pref comes from (the server, the settings row) is pinned in
 // `crates/droppen-workbench/src/prefs` and `test/settings-message-rendering.test.tsx`.
 //
 // jsdom rather than `react-dom/server`, because the diagram arrives through an
-// effect and a dynamic import. Pele lays nothing out in jsdom but it draws
-// without a DOM, so the security and theme tests run the real package; the
-// fake engine is used only where a test has to count, hold or fail a render.
+// effect and a dynamic import. jsdom has no Worker, so the client's queue,
+// timeout and message mapping are exercised through `setMermaidForTests`; the
+// security and palette tests run the real package through `renderDiagram`.
 // `import * as React` because the test directory is outside the tsconfig's
 // `include`, so tsx compiles JSX with the classic runtime.
 import * as React from "react";
@@ -73,9 +76,16 @@ const { createRoot } = await import("react-dom/client");
 type Root = import("react-dom/client").Root;
 const { I18nextProvider } = await import("react-i18next");
 const { DiagramRendering, drawsDiagrams, Markdown } = await import("../src/components/markdown.js");
-const { MERMAID_STABLE_MS, diagramPicture, diagramSettings, renderMermaidDiagram, setMermaidForTests } = await import(
-  "../src/lib/mermaid-render.js"
-);
+const {
+  MERMAID_STABLE_MS,
+  DiagramRenderError,
+  diagramPicture,
+  diagramSettings,
+  renderMermaidDiagram,
+  setMermaidForTests,
+} = await import("../src/lib/mermaid-render.js");
+const { renderDiagram } = await import("../src/lib/diagram-render.js");
+const { withoutFenceThemeVariables, withoutSeriesPalette } = await import("../src/lib/fence-config.js");
 const { PeleError, renderAsync } = await import("pele/lazy");
 
 const i18n = makeI18n({
@@ -108,12 +118,7 @@ beforeEach(async () => {
 });
 
 const flush = (ms = 30) => act(async () => void (await new Promise((resolve) => setTimeout(resolve, ms))));
-
-/** Wait for a condition the engine's dynamic import makes asynchronous. */
-async function until(done: () => boolean, ms = 3000): Promise<void> {
-  const start = Date.now();
-  while (!done() && Date.now() - start < ms) await flush(25);
-}
+const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 
 async function mount(text: string, diagrams: boolean | null = true): Promise<void> {
   root = createRoot(container);
@@ -129,50 +134,101 @@ async function show(text: string, diagrams: boolean | null = true): Promise<void
   });
 }
 
-interface Call {
-  options: RenderOptions;
-  code: string;
+/* ── the worker seam ────────────────────────────────────────────────────── */
+
+type Behavior = (worker: FakeWorker, message: import("../src/lib/diagram-protocol.js").DiagramWorkerRequest) => void;
+
+class FakeWorker {
+  readonly posted: import("../src/lib/diagram-protocol.js").DiagramWorkerRequest[] = [];
+  terminated = false;
+  private readonly messages = new Set<(event: MessageEvent) => void>();
+  private readonly errors = new Set<(event: Event) => void>();
+
+  constructor(private readonly behavior: Behavior) {}
+
+  postMessage(message: import("../src/lib/diagram-protocol.js").DiagramWorkerRequest): void {
+    this.posted.push(message);
+    this.behavior(this, message);
+  }
+
+  terminate(): void {
+    this.terminated = true;
+  }
+
+  addEventListener(type: string, listener: (event: never) => void): void {
+    (type === "message" ? this.messages : this.errors).add(listener as never);
+  }
+
+  removeEventListener(type: string, listener: (event: never) => void): void {
+    (type === "message" ? this.messages : this.errors).delete(listener as never);
+  }
+
+  reply(reply: import("../src/lib/diagram-protocol.js").DiagramWorkerReply): void {
+    for (const listener of [...this.messages]) listener({ data: reply } as MessageEvent);
+  }
+
+  fail(): void {
+    for (const listener of [...this.errors]) listener({} as Event);
+  }
+}
+
+function fakeSvg(code: string): string {
+  const safe = code.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return `<svg width="120" height="80" xmlns="http://www.w3.org/2000/svg" style="max-width: 120px; height: auto;" viewBox="0 0 120 80"><title>${safe}</title><text>${safe}</text></svg>`;
+}
+
+function success(worker: FakeWorker, message: import("../src/lib/diagram-protocol.js").DiagramWorkerRequest): void {
+  queueMicrotask(() => {
+    worker.reply({ phase: "rendering" });
+    worker.reply({ ok: true, svg: fakeSvg(message.code), width: 120, height: 80 });
+  });
+}
+
+function failure(code: "syntax" | "limit" | "semantic" | "unsupported-diagram" | "error") {
+  return (worker: FakeWorker): void => {
+    queueMicrotask(() => {
+      worker.reply({ phase: "rendering" });
+      worker.reply({ ok: false, code, message: `cannot draw (${code})` });
+    });
+  };
+}
+
+interface FakeEngine {
+  workers: FakeWorker[];
+  factory: () => FakeWorker;
+  release: () => void;
 }
 
 /**
- * The engine, as far as `lib/mermaid-render.ts` can tell. `hold` keeps a
- * render waiting until the returned release is called; `never` makes one that
- * does not settle at all; `fail` rejects.
+ * A fake worker factory. `"hold"` keeps every reply until `release()` (the
+ * load phase's `rendering` too); a behavior replies itself.
  */
-function fakeEngine(options: { fail?: (code: string) => boolean; hold?: (code: string) => boolean } = {}) {
-  const calls: Call[] = [];
+function fakeEngine(behavior: Behavior | "hold"): FakeEngine {
+  const workers: FakeWorker[] = [];
   const held: (() => void)[] = [];
-  let loads = 0;
-  const api = {
-    async renderAsync(code: string, next: RenderOptions = {}) {
-      calls.push({ code, options: next });
-      if (options.hold?.(code)) await new Promise<void>((resolve) => held.push(resolve));
-      if (options.fail?.(code)) throw new Error("cannot parse this diagram");
-      const safe = code.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-      // The shape Pele gives: absolute width/height, the same box in the viewBox.
-      return {
-        svg: `<svg id="${next.idPrefix ?? "d"}" width="120" height="80" xmlns="http://www.w3.org/2000/svg" style="max-width: 120px; height: auto;" viewBox="0 0 120 80"><title>${safe}</title><text>${safe}</text></svg>`,
-        width: 120,
-        height: 80,
-      };
-    },
+  const run: Behavior = (worker, message) => {
+    if (behavior === "hold") {
+      held.push(() => {
+        worker.reply({ phase: "rendering" });
+        worker.reply({ ok: true, svg: fakeSvg(message.code), width: 120, height: 80 });
+      });
+      return;
+    }
+    behavior(worker, message);
   };
   return {
-    calls,
-    release: () => held.splice(0).forEach((resolve) => resolve()),
-    get loads() {
-      return loads;
+    workers,
+    factory: () => {
+      const worker = new FakeWorker(run);
+      workers.push(worker);
+      return worker;
     },
-    load: () => {
-      loads += 1;
-      return Promise.resolve(api);
-    },
+    release: () => held.splice(0).forEach((send) => send()),
   };
 }
 
-/** Hand `lib/mermaid-render.ts` a fake engine. */
-function useFake(fake: ReturnType<typeof fakeEngine>) {
-  setMermaidForTests({ load: fake.load as never });
+function installWorker(engine: FakeEngine, timers: { loadTimeoutMs?: number; renderTimeoutMs?: number } = {}): void {
+  setMermaidForTests({ createWorker: engine.factory, ...timers });
 }
 
 const diagramImage = () => container.querySelector<HTMLImageElement>("[data-mermaid-image] img");
@@ -183,14 +239,13 @@ for (const [name, diagrams] of [
   ["set to source", false],
   ["outside a view that read the pref", null],
 ] as const) {
-  test(`with diagrams off (${name}) a mermaid fence is the code block any fence is, and nothing is loaded`, async () => {
-    const fake = fakeEngine();
-    useFake(fake);
+  test(`with diagrams off (${name}) a mermaid fence is the code block any fence is, and no worker is made`, async () => {
+    const engine = fakeEngine(success);
+    installWorker(engine);
     await mount(`${FLOWCHART}\n\n${FLOWCHART.replace("mermaid", "rust")}`, diagrams);
     await flush(MERMAID_STABLE_MS + 100);
 
-    assert.equal(fake.loads, 0, "the engine is never imported");
-    assert.equal(fake.calls.length, 0, "and never asked to draw");
+    assert.equal(engine.workers.length, 0, "the worker is never made");
     const [mermaidBlock, rustBlock] = [...container.querySelectorAll("pre")].map((pre) => pre.outerHTML);
     assert.ok(mermaidBlock && rustBlock);
     assert.equal(mermaidBlock.replaceAll("language-mermaid", "language-rust"), rustBlock, "only the info string differs");
@@ -213,7 +268,7 @@ test("every diagram is drawn without links or images, within fixed limits, in th
   assert.equal(options.responsive, false, "natural size, scrolled in the message");
   assert.equal(options.idPrefix, "droppen-diagram-7");
   assert.equal(options.maxWidth, undefined, "no container adaptation");
-  assert.equal(options.measurer, undefined, "Pele measures with the canvas, or its table");
+  assert.equal(options.measurer, undefined, "the worker measures with OffscreenCanvas, or Pele's table");
   assert.equal(options.config, undefined, "a fence's config is the only config");
   assert.equal(options.icons, undefined, "no icon resolver");
   assert.equal(options.math, undefined, "no typesetting of $$…$$");
@@ -230,6 +285,8 @@ test("every diagram is drawn without links or images, within fixed limits, in th
   assert.equal(style["--pele-accent"], "#1a1e23");
   assert.equal(style["--pele-critical"], "#d42a1f");
   assert.equal(style["--pele-radius"], "0px");
+  assert.equal(style["--pele-fg-on-light"], "#1a1e23", "the light sheet's ink");
+  assert.equal(style["--pele-fg-on-dark"], "#ffffff", "the light sheet's paper");
   assert.equal(style["color-scheme"], "light");
 });
 
@@ -242,6 +299,8 @@ test("the picture's colours are the dark sheet's when the page is dark", () => {
     assert.equal(style["--pele-muted"], "#a6adb7");
     assert.equal(style["--pele-border"], "#626b76");
     assert.equal(style["--pele-critical"], "#ff665b");
+    assert.equal(style["--pele-fg-on-light"], "#1a1e23", "the dark sheet's canvas is the dark ink");
+    assert.equal(style["--pele-fg-on-dark"], "#e9ebee", "and its ink the light ink");
     assert.equal(style["color-scheme"], "dark");
   } finally {
     document.documentElement.classList.remove("dark");
@@ -251,25 +310,23 @@ test("the picture's colours are the dark sheet's when the page is dark", () => {
 test("the real engine drops links and images under these options, and draws them only when allowed", async () => {
   const { options } = diagramSettings("light");
   const click = 'flowchart LR\n  A[Start] --> B[End]\n  click A "https://example.com/click" "tip"';
-  const bare = await renderAsync(click, options);
+  const bare = await renderDiagram(click, options);
   assert.doesNotMatch(bare.svg, /<a\b|href=/, "no link in the picture");
-  assert.deepEqual(bare.links, []);
-  const linked = await renderAsync(click, { ...options, links: true });
+  const linked = await renderDiagram(click, { ...options, links: true });
   assert.match(linked.svg, /<a\b/, "the same fence would draw a link if links were on");
   assert.match(linked.svg, /href="https:\/\/example\.com\/click"/);
-  assert.equal(linked.links.length, 1);
 
   const image = 'flowchart LR\n  A@{ img: "https://example.com/pixel.png", label: "pic" } --> B';
-  const noImage = await renderAsync(image, options);
+  const noImage = await renderDiagram(image, options);
   assert.doesNotMatch(noImage.svg, /<image\b|href=/, "nothing to fetch when the picture is shown");
-  const withImage = await renderAsync(image, { ...options, images: true });
+  const withImage = await renderDiagram(image, { ...options, images: true });
   assert.match(withImage.svg, /<image\b/, "the same fence would draw an image if images were on");
   assert.match(withImage.svg, /href="https:\/\/example\.com\/pixel\.png"/);
 });
 
 test("a fence's init directive or frontmatter cannot change theme, fonts or limits (the real engine)", async () => {
   const { options } = diagramSettings("light");
-  const base = await renderAsync("flowchart TD\n  A-->B", options);
+  const base = await renderDiagram("flowchart TD\n  A-->B", options);
   const directive = [
     '%%{init:{"theme":"forest","fontFamily":"Comic Sans MS","themeCSS":"@keyframes spin{}",',
     '"htmlLabels":true,"securityLevel":"loose","secure":[],"fontSize":30,"layout":"elk",',
@@ -300,7 +357,7 @@ test("a fence's init directive or frontmatter cannot change theme, fonts or limi
     ["init directive", directive],
     ["frontmatter", frontmatter],
   ] as const) {
-    const rendered = await renderAsync(fence, options);
+    const rendered = await renderDiagram(fence, options);
     assert.equal(rendered.svg, base.svg, `${name}: the picture is the one the options ask for`);
     assert.equal(rendered.width, base.width, `${name}: same font metrics`);
     assert.equal(rendered.height, base.height, `${name}: same font metrics`);
@@ -310,21 +367,82 @@ test("a fence's init directive or frontmatter cannot change theme, fonts or limi
 test("a fence past the source, edge or output limit is a limit error (the real engine)", async () => {
   const { options } = diagramSettings("light");
   const long = `flowchart TD\n  A["${"x".repeat(50_000)}"] --> B`;
-  await assert.rejects(renderAsync(long, options), (error: unknown) => error instanceof PeleError && error.code === "limit");
+  await assert.rejects(renderDiagram(long, options), (error: unknown) => error instanceof PeleError && error.code === "limit");
 
   const edges = `%%{init:{"maxEdges":99999}}%%\nflowchart TD\n${Array.from({ length: 501 }, (_, i) => `  A${i} --> A${i + 1}`).join("\n")}`;
-  await assert.rejects(renderAsync(edges, options), (error: unknown) => error instanceof PeleError && error.code === "limit");
+  await assert.rejects(renderDiagram(edges, options), (error: unknown) => error instanceof PeleError && error.code === "limit");
+
+  // A 20-character source that draws an SVG past 2,000,000 characters.
+  await assert.rejects(
+    renderDiagram('packet\n0-320000: "x"', options),
+    (error: unknown) => error instanceof PeleError && error.code === "limit",
+  );
 });
 
 test("a fence Pele cannot read is a syntax error, and a render leaves nothing in the page (the real engine)", async () => {
-  await assert.rejects(
-    renderAsync("flowchart TD\n  A--", diagramSettings("light").options),
-    (error: unknown) => error instanceof PeleError && error.code === "syntax",
-  );
+  const { options } = diagramSettings("light");
+  await assert.rejects(renderDiagram("flowchart TD\n  A--", options), (error: unknown) => error instanceof PeleError && error.code === "syntax");
+  await assert.rejects(renderDiagram("this is not a diagram", options), (error: unknown) => error instanceof PeleError && error.code === "unsupported-diagram");
   const before = document.body.innerHTML;
-  await assert.rejects(renderMermaidDiagram("flowchart TD\n  A--", "light"));
-  await renderMermaidDiagram("flowchart TD\n  A-->B", "light");
+  await renderDiagram("flowchart TD\n  A-->B", options);
   assert.equal(document.body.innerHTML, before, "no error picture, no scratch node");
+});
+
+/* ── a fence's series palette ────────────────────────────────────────────── */
+
+test("themeVariables is stripped from init directives and frontmatter, leaving other config alone", () => {
+  const init = withoutFenceThemeVariables(
+    '%%{init: {"themeVariables":{"pie1":"transparent"},"flowchart":{"curve":"step"}}}%%\npie title P\n  "A": 1',
+  );
+  assert.doesNotMatch(init, /themeVariables/);
+  assert.match(init, /"curve":"step"/);
+
+  const block = withoutFenceThemeVariables(
+    "---\ntitle: P\nconfig:\n  themeVariables:\n    pie1: transparent\n  gantt:\n    displayMode: compact\n---\npie title P\n  \"A\": 1",
+  );
+  assert.doesNotMatch(block, /themeVariables|transparent/);
+  assert.match(block, /title: P/);
+  assert.match(block, /gantt:\n    displayMode: compact/);
+
+  const flow = withoutFenceThemeVariables(
+    "---\nconfig: {themeVariables: {pie1: transparent}, gantt: {displayMode: compact}}\n---\npie title P\n  \"A\": 1",
+  );
+  assert.doesNotMatch(flow, /themeVariables|transparent/);
+  assert.match(flow, /gantt: \{displayMode: compact\}/);
+
+  const quoted = withoutFenceThemeVariables('---\nconfig:\n  "themeVariables":\n    pie1: transparent\n---\npie\n"A": 1');
+  assert.doesNotMatch(quoted, /themeVariables|transparent/);
+  assert.match(quoted, /^---\nconfig:\n---/);
+
+  // Not a config key: a block scalar's text is untouched.
+  const scalar = withoutFenceThemeVariables("---\ntitle: |\n  themeVariables: keep me\n---\npie\n\"A\": 1");
+  assert.match(scalar, /themeVariables: keep me/);
+
+  const legit = '%%{init: {"flowchart":{"curve":"step"}}}%%\nflowchart TD\n  A-->B';
+  assert.equal(withoutFenceThemeVariables(legit), legit);
+});
+
+test("a fence's series palette cannot reach the output (the real engine)", async () => {
+  const { options } = diagramSettings("light");
+  const fences = [
+    '%%{init: {"themeVariables":{"pie1":"transparent","pie2":"var(--pele-bg)"}}}%%\npie title P\n  "A": 10\n  "B": 5',
+    "---\nconfig:\n  themeVariables:\n    pie1: transparent\n    pie2: var(--pele-bg)\n---\npie title P\n  \"A\": 10\n  \"B\": 5",
+    "---\nconfig: {themeVariables: {pie1: transparent, pie2: var(--pele-bg)}}\n---\npie title P\n  \"A\": 10\n  \"B\": 5",
+  ];
+  for (const fence of fences) {
+    const picture = await renderDiagram(fence, options);
+    assert.doesNotMatch(picture.svg, /--pele-series-\d+:/, "no palette declaration");
+    assert.doesNotMatch(picture.svg, /transparent/, "nothing hidden");
+    assert.match(picture.svg, /--pele-series-1,#4c78a8/, "Pele's own first series colour");
+  }
+
+  // The output sweep, for a config form the source stripper does not know.
+  const raw = await renderAsync(
+    '%%{init: {"themeVariables":{"pie1":"transparent"}}}%%\npie\n"A": 1\n"B": 2',
+    options,
+  );
+  assert.match(raw.svg, /--pele-series-1:transparent/);
+  assert.doesNotMatch(withoutSeriesPalette(raw.svg), /--pele-series-\d+:/);
 });
 
 /* ── the picture ────────────────────────────────────────────────────────── */
@@ -359,15 +477,19 @@ test("the picture is the SVG as well-formed XML at its natural size, titled and 
 
 /* ── on: the diagram renderer ───────────────────────────────────────────── */
 
-test("with diagrams on, the fence goes through the renderer and is shown as a picture", async () => {
-  const fake = fakeEngine();
-  useFake(fake);
+test("with diagrams on, the fence goes through a worker and is shown as a picture", async () => {
+  const engine = fakeEngine(success);
+  installWorker(engine);
   // A finished message: drawn straight away, without waiting for its text to settle.
   await mount(FLOWCHART);
 
-  assert.equal(fake.calls.length, 1);
-  assert.equal(fake.calls[0]!.code.trim(), "flowchart TD\n  A-->B\n  B-->C");
-  assert.equal(fake.calls[0]!.options.links, false, "agent output is untrusted, never linked");
+  assert.equal(engine.workers.length, 1);
+  assert.equal(engine.workers[0]!.posted.length, 1);
+  const message = engine.workers[0]!.posted[0]!;
+  assert.equal(message.code.trim(), "flowchart TD\n  A-->B\n  B-->C");
+  assert.equal(message.options.links, false, "agent output is untrusted, never linked");
+  assert.equal(message.options.images, false);
+  assert.match(message.options.idPrefix ?? "", /^droppen-diagram-\d+$/);
   const img = diagramImage();
   assert.ok(img, "the diagram is on the page");
   assert.match(img.src, /^blob:/, "as a picture from a blob URL");
@@ -378,39 +500,9 @@ test("with diagrams on, the fence goes through the renderer and is shown as a pi
   assert.equal(container.querySelector("pre"), null, "the source is replaced, not shown under it");
 });
 
-test("the real engine draws a finished fence without a DOM and it is shown as a picture", async () => {
-  await mount(FLOWCHART);
-  await until(() => diagramImage() !== null);
-  const img = diagramImage();
-  assert.ok(img, "the diagram is on the page");
-  assert.match(img.src, /^blob:/);
-  assert.equal(img.alt, "Mermaid diagram", "no accTitle, so the shared label");
-  assert.equal(container.querySelector("[data-mermaid-image] svg"), null);
-  assert.equal(container.querySelector("pre"), null);
-});
-
-test("a fence the real engine cannot read is the plain code block, with no error banner", async () => {
-  await mount("```mermaid\nflowchart TD\n  A--\n```");
-  // The dynamic import and the failed render have both finished when the
-  // block is still its code and no engine work remains; a fixed wait would be
-  // either slow or flaky, so wait for the code to have been there a moment.
-  await flush(500);
-
-  assert.match(container.innerHTML, /language-mermaid/);
-  assert.match(container.innerHTML, /flowchart TD/);
-  assert.equal(container.querySelector("[data-mermaid-diagram]"), null);
-  assert.doesNotMatch(container.textContent ?? "", /cannot parse|error|failed/i);
-});
-
-test("a diagram with an accTitle is titled by it (the real engine)", async () => {
-  await mount("```mermaid\nsequenceDiagram\n  accTitle: Request flow\n  Client->>Server: GET /x\n```");
-  await until(() => diagramImage()?.alt === "Request flow");
-  assert.equal(diagramImage()?.alt, "Request flow");
-});
-
-test("the diagram follows a theme change, and a picture no longer shown is released", async () => {
-  const fake = fakeEngine();
-  useFake(fake);
+test("a theme switch re-bakes the picture, releases the old one, and does not render again", async () => {
+  const engine = fakeEngine(success);
+  installWorker(engine);
   const pictures: Blob[] = [];
   const revoked: string[] = [];
   const create = URL.createObjectURL;
@@ -424,63 +516,221 @@ test("the diagram follows a theme change, and a picture no longer shown is relea
     revoke(url);
   };
   try {
-    document.documentElement.classList.add("dark");
     await mount(FLOWCHART);
-    assert.equal(fake.calls.length, 1);
-    assert.match(await pictures.at(-1)!.text(), /--pele-fg:\s*#e9ebee/, "the dark sheet's ink");
-    const dark = diagramImage()!.src;
+    assert.equal(engine.workers[0]!.posted.length, 1);
+    assert.match(await pictures.at(-1)!.text(), /--pele-fg:\s*#1a1e23/);
+    const light = diagramImage()!.src;
 
     await act(async () => {
-      document.documentElement.classList.remove("dark");
+      document.documentElement.classList.add("dark");
     });
     await flush();
-    assert.equal(fake.calls.length, 2, "the diagram is drawn again for the other sheet");
-    assert.match(await pictures.at(-1)!.text(), /--pele-fg:\s*#1a1e23/, "the light sheet's ink");
-    const light = diagramImage()!.src;
-    assert.notEqual(light, dark);
+    assert.equal(engine.workers[0]!.posted.length, 1, "the cache is re-baked, not rendered again");
+    assert.match(await pictures.at(-1)!.text(), /--pele-fg:\s*#e9ebee/);
+    const dark = diagramImage()!.src;
+    assert.notEqual(dark, light);
     await flush(1100);
-    assert.ok(revoked.includes(dark), "the replaced picture is released");
-    assert.ok(!revoked.includes(light), "the one on screen is not");
-
-    await act(async () => {
-      root?.unmount();
-    });
-    root = null;
-    await flush(1100);
-    assert.ok(revoked.includes(light), "and the last one once the block is gone");
+    assert.ok(revoked.includes(light), "the replaced picture is released");
+    assert.ok(!revoked.includes(dark), "the one on screen is not");
   } finally {
     URL.createObjectURL = create;
     URL.revokeObjectURL = revoke;
   }
 });
 
-test("a fence the engine cannot read is the plain code block, with no error banner", async () => {
-  const fake = fakeEngine({ fail: () => true });
-  useFake(fake);
+test("the client queues one render at a time, and a held render delays the next", async () => {
+  const engine = fakeEngine("hold");
+  installWorker(engine);
+  const first = renderMermaidDiagram("flowchart TD\n A-->B", "light");
+  const second = renderMermaidDiagram("flowchart TD\n C-->D", "light");
+  await tick();
+  assert.equal(engine.workers[0]!.posted.length, 1, "the second render waits its turn");
+  engine.release();
+  await first;
+  await tick();
+  assert.equal(engine.workers[0]!.posted.length, 2, "and starts once the first has settled");
+  engine.release();
+  await second;
+  assert.equal(engine.workers.length, 1, "both use the same worker");
+});
+
+test("a timed-out render terminates its worker and the next render gets a fresh one", async () => {
+  let hang = false;
+  const engine = fakeEngine((worker, message) => {
+    if (hang) {
+      worker.reply({ phase: "rendering" });
+      return;
+    }
+    success(worker, message);
+  });
+  installWorker(engine, { renderTimeoutMs: 20, loadTimeoutMs: 100 });
+  hang = true;
+  await assert.rejects(
+    renderMermaidDiagram("flowchart TD\n HANG-->A", "light"),
+    (error: unknown) => error instanceof DiagramRenderError && error.code === "timeout",
+  );
+  assert.equal(engine.workers.length, 1);
+  assert.equal(engine.workers[0]!.terminated, true, "the worker was killed");
+
+  // The timeout is cached: a theme toggle must not run it again.
+  await assert.rejects(
+    renderMermaidDiagram("flowchart TD\n HANG-->A", "dark"),
+    (error: unknown) => error instanceof DiagramRenderError && error.code === "timeout",
+  );
+  assert.equal(engine.workers.length, 1);
+
+  hang = false;
+  await renderMermaidDiagram("flowchart TD\n A-->B", "light");
+  assert.equal(engine.workers.length, 2, "a fresh worker is made for the next diagram");
+  assert.equal(engine.workers[1]!.posted.length, 1);
+});
+
+test("a worker that never starts is timed out, terminated and replaced", async () => {
+  let silent = false;
+  const engine = fakeEngine((worker, message) => {
+    if (!silent) success(worker, message);
+  });
+  installWorker(engine, { renderTimeoutMs: 100, loadTimeoutMs: 20 });
+  silent = true;
+  await assert.rejects(
+    renderMermaidDiagram("flowchart TD\n SLOW-->A", "light"),
+    (error: unknown) => error instanceof DiagramRenderError && error.code === "timeout",
+  );
+  assert.equal(engine.workers[0]!.terminated, true);
+  silent = false;
+  await renderMermaidDiagram("flowchart TD\n B-->C", "light");
+  assert.equal(engine.workers.length, 2);
+});
+
+test("a worker's error event terminates it and a fresh one draws the next diagram", async () => {
+  let broken = false;
+  const engine = fakeEngine((worker, message) => {
+    if (broken) {
+      worker.reply({ phase: "rendering" });
+      worker.fail();
+      return;
+    }
+    success(worker, message);
+  });
+  installWorker(engine);
+  broken = true;
+  await assert.rejects(
+    renderMermaidDiagram("flowchart TD\n A-->B", "light"),
+    (error: unknown) => error instanceof DiagramRenderError && error.code === "worker",
+  );
+  assert.equal(engine.workers[0]!.terminated, true);
+  broken = false;
+  await renderMermaidDiagram("flowchart TD\n C-->D", "light");
+  assert.equal(engine.workers.length, 2);
+});
+
+test("a Pele error is mapped to its code, and the worker is kept for the next render", async () => {
+  let fail = true;
+  const engine = fakeEngine((worker, message) => {
+    if (fail) {
+      fail = false;
+      failure("syntax")(worker);
+      return;
+    }
+    success(worker, message);
+  });
+  installWorker(engine);
+  await assert.rejects(
+    renderMermaidDiagram("flowchart TD\n A--", "light"),
+    (error: unknown) => error instanceof DiagramRenderError && error.code === "syntax",
+  );
+  assert.equal(engine.workers[0]!.terminated, false, "the worker itself is healthy");
+  await renderMermaidDiagram("flowchart TD\n A-->B", "light");
+  assert.equal(engine.workers.length, 1, "and reused");
+  assert.equal(engine.workers[0]!.posted.length, 2);
+});
+
+test("a source over the length cap is refused before a worker is made", async () => {
+  const engine = fakeEngine(success);
+  installWorker(engine);
+  await assert.rejects(
+    renderMermaidDiagram("x".repeat(50_001), "light"),
+    (error: unknown) => error instanceof DiagramRenderError && error.code === "limit",
+  );
+  assert.equal(engine.workers.length, 0, "no worker, no Pele preprocess");
+});
+
+test("an aborted render terminates its worker, and a queued aborted render never posts", async () => {
+  const engine = fakeEngine("hold");
+  installWorker(engine);
+  const live = new AbortController();
+  const first = renderMermaidDiagram("flowchart TD\n A-->B", "light", live.signal);
+  await tick();
+  assert.equal(engine.workers[0]!.posted.length, 1);
+
+  const queued = new AbortController();
+  const second = renderMermaidDiagram("flowchart TD\n C-->D", "light", queued.signal);
+  const third = renderMermaidDiagram("flowchart TD\n E-->F", "light", queued.signal);
+  queued.abort();
+  live.abort();
+  await assert.rejects(first, (error: Error) => error.name === "AbortError");
+  await assert.rejects(second, (error: Error) => error.name === "AbortError");
+  await assert.rejects(third, (error: Error) => error.name === "AbortError");
+  assert.equal(engine.workers[0]!.terminated, true);
+  assert.equal(engine.workers.length, 1, "the queued renders never made a worker");
+  assert.equal(engine.workers[0]!.posted.length, 1);
+});
+
+test("the picture is cached by fence text, so a theme change never renders again", async () => {
+  const engine = fakeEngine(success);
+  installWorker(engine);
+  document.documentElement.classList.add("dark");
+  const dark = await renderMermaidDiagram("flowchart TD\n A-->B", "dark");
+  assert.equal(engine.workers[0]!.posted.length, 1);
+  assert.match(await dark.blob.text(), /--pele-fg:\s*#e9ebee/);
+  assert.match(await dark.blob.text(), /--pele-fg-on-light:\s*#1a1e23/);
+  assert.match(await dark.blob.text(), /--pele-fg-on-dark:\s*#e9ebee/);
+
+  document.documentElement.classList.remove("dark");
+  const light = await renderMermaidDiagram("flowchart TD\n A-->B", "light");
+  assert.equal(engine.workers[0]!.posted.length, 1, "the theme toggle is a re-bake only");
+  assert.match(await light.blob.text(), /--pele-fg:\s*#1a1e23/);
+});
+
+test("a failed fence is cached too: changing the theme does not ask the worker again", async () => {
+  const engine = fakeEngine(failure("syntax"));
+  installWorker(engine);
+  await assert.rejects(renderMermaidDiagram("flowchart TD\n A--", "light"));
+  assert.equal(engine.workers[0]!.posted.length, 1);
+  await assert.rejects(
+    renderMermaidDiagram("flowchart TD\n A--", "dark"),
+    (error: unknown) => error instanceof DiagramRenderError && error.code === "syntax",
+  );
+  assert.equal(engine.workers[0]!.posted.length, 1);
+});
+
+/* ── the component and its fallback ─────────────────────────────────────── */
+
+test("a fence the worker cannot draw is the plain code block, with no error banner", async () => {
+  const engine = fakeEngine(failure("syntax"));
+  installWorker(engine);
   await mount("```mermaid\nflowchart TD\n  A--\n```");
 
   assert.match(container.innerHTML, /language-mermaid/);
   assert.match(container.innerHTML, /flowchart TD/);
   assert.equal(container.querySelector("[data-mermaid-diagram]"), null);
-  assert.doesNotMatch(container.textContent ?? "", /cannot parse|error|failed/i);
+  assert.doesNotMatch(container.textContent ?? "", /cannot draw|error|failed/i);
 });
 
 test("inline code and other fenced languages stay exactly as they were, even with diagrams on", async () => {
-  const fake = fakeEngine();
-  useFake(fake);
+  const engine = fakeEngine(success);
+  installWorker(engine);
   await mount("`flowchart TD` and then\n\n```js\nconst x = 1;\n```\n");
 
-  assert.equal(fake.calls.length, 0);
+  assert.equal(engine.workers.length, 0);
   assert.match(container.innerHTML, /<code class="bg-raised px-1 py-px font-mono text-\[0\.9em\] text-fg shadow-\[inset_0_0_0_1px_var\(--color-border\)\]">flowchart TD<\/code>/);
   assert.match(container.innerHTML, /language-js/);
   assert.equal(container.querySelector("[data-mermaid-diagram]"), null);
 });
 
-/* ── the per-block source control ───────────────────────────────────────── */
-
 test("the source control flips one block to its code and back", async () => {
-  const fake = fakeEngine();
-  useFake(fake);
+  const engine = fakeEngine(success);
+  installWorker(engine);
   await mount(FLOWCHART);
 
   const button = () => container.querySelector<HTMLButtonElement>("[data-mermaid-diagram] button");
@@ -501,100 +751,93 @@ test("the source control flips one block to its code and back", async () => {
 /* ── streaming ──────────────────────────────────────────────────────────── */
 
 test("a streaming fence is drawn once its text settles, and the diagram stays up while the text moves", async () => {
-  const fake = fakeEngine({ fail: (code) => code.includes("BROKEN") });
-  useFake(fake);
+  let broken = false;
+  const engine = fakeEngine((worker, message) => {
+    queueMicrotask(() => {
+      worker.reply({ phase: "rendering" });
+      if (broken) worker.reply({ ok: false, code: "syntax", message: "broken" });
+      else worker.reply({ ok: true, svg: fakeSvg(message.code), width: 120, height: 80 });
+    });
+  });
+  installWorker(engine);
   const start = "```mermaid\nflowchart TD\n  A-->B";
   await mount(start);
-  assert.equal(fake.calls.length, 1, "the first frame is drawn straight away");
+  assert.equal(engine.workers[0]!.posted.length, 1, "the first frame is drawn straight away");
   const first = diagramImage()?.src;
   assert.ok(first);
 
   await show(`${start}\n  B-->C`);
   await show(`${start}\n  B-->C\n  C-->D`);
   await flush(100);
-  assert.equal(fake.calls.length, 1, "tokens inside the wait are not rendered one by one");
+  assert.equal(engine.workers[0]!.posted.length, 1, "tokens inside the wait are not rendered one by one");
   assert.equal(diagramImage()?.src, first, "the last diagram stays up, rather than flipping to code");
   assert.equal(container.querySelector("pre"), null);
 
   await flush(MERMAID_STABLE_MS + 150);
-  assert.equal(fake.calls.length, 2);
-  assert.match(fake.calls[1]!.code, /C-->D/, "the settled text is what is drawn");
+  assert.equal(engine.workers[0]!.posted.length, 2);
+  assert.match(engine.workers[0]!.posted[1]!.code, /C-->D/, "the settled text is what is drawn");
   assert.notEqual(diagramImage()?.src, first, "and replaces the picture");
 
   // Text that does not draw: the diagram stays while it may still be arriving…
+  broken = true;
   await show(`${start}\n  B-->C\n  C-->D\n  BROKEN`);
   await flush(100);
   assert.ok(diagramImage(), "still the last good diagram");
   // …and gives way to the code once it has stood still and failed.
   await flush(MERMAID_STABLE_MS + 150);
-  assert.equal(fake.calls.length, 3);
+  assert.equal(engine.workers[0]!.posted.length, 3);
   assert.equal(container.querySelector("[data-mermaid-diagram]"), null);
   assert.match(container.innerHTML, /language-mermaid/);
   assert.match(container.textContent ?? "", /BROKEN/);
 });
 
 test("a result whose block has moved on is not drawn", async () => {
-  const fake = fakeEngine({ hold: (code) => code.includes("SLOW") });
-  useFake(fake);
+  const engine = fakeEngine("hold");
+  installWorker(engine);
   const slow = "```mermaid\nflowchart TD\n  SLOW-->A\n```";
   await mount(slow);
-  assert.equal(fake.calls.length, 1);
+  await tick();
+  assert.equal(engine.workers[0]!.posted.length, 1);
   assert.equal(diagramImage(), null, "the held render has not finished");
 
   await show("```mermaid\nflowchart TD\n  FAST-->B\n```");
   await flush(MERMAID_STABLE_MS + 100);
-  assert.equal(fake.calls.length, 2, "the new text is not queued behind the old render");
-  assert.equal(diagramImage()?.alt, "flowchart TD\n  FAST-->B");
+  assert.equal(engine.workers[0]!.terminated, true, "the superseded render's worker is stopped");
+  assert.equal(engine.workers.length, 2, "the new text gets a fresh worker");
+  assert.equal(engine.workers[1]!.posted.length, 1);
+  assert.equal(diagramImage(), null);
 
-  await act(async () => fake.release());
+  engine.release();
   await flush();
   assert.equal(diagramImage()?.alt, "flowchart TD\n  FAST-->B", "the superseded picture never replaces it");
 });
 
 test("a block that left the page while its render was running is not drawn", async () => {
-  const fake = fakeEngine({ hold: (code) => code.includes("SLOW") });
-  useFake(fake);
+  const engine = fakeEngine("hold");
+  installWorker(engine);
   await mount("```mermaid\nflowchart TD\n  SLOW-->A\n```");
-  assert.equal(fake.calls.length, 1);
+  await tick();
+  assert.equal(engine.workers[0]!.posted.length, 1);
 
   await act(async () => {
     root?.unmount();
   });
   root = null;
-  await act(async () => fake.release());
+  assert.equal(engine.workers[0]!.terminated, true, "its worker is stopped");
+  engine.release();
   await flush();
   assert.equal(container.querySelector("[data-mermaid-image]"), null);
 });
 
-test("one block's render does not hold up another block (there is no queue)", async () => {
-  const fake = fakeEngine({ hold: (code) => code.includes("SLOW") });
-  useFake(fake);
-  await mount(`\`\`\`mermaid\nflowchart TD\n  SLOW-->A\n\`\`\`\n\n${FLOWCHART}`);
-  await flush();
-
-  assert.equal(fake.calls.length, 2, "both renders started");
-  const blocks = [...container.children[0]!.children];
-  assert.equal(blocks.length, 2);
-  assert.equal(blocks[0]!.tagName, "PRE", "the held one is its code");
-  assert.match(blocks[0]!.textContent ?? "", /SLOW-->A/);
-  assert.ok(blocks[1]!.querySelector("[data-mermaid-image] img"), "the second one is already drawn");
-
-  await act(async () => fake.release());
-  await flush();
-  const finished = [...container.children[0]!.children];
-  assert.ok(finished[0]!.querySelector("[data-mermaid-image] img"), "and the first follows when it finishes");
-});
-
-/* ── the engine ─────────────────────────────────────────────────────────── */
-
-test("an engine that failed to load is fetched again for the next diagram", async () => {
-  const fake = fakeEngine();
+test("an engine that failed to start is retried for the next diagram", async () => {
+  const engine = fakeEngine(success);
   let attempts = 0;
   setMermaidForTests({
-    load: (() => {
+    createWorker: () => {
       attempts += 1;
-      return attempts === 1 ? Promise.reject(new Error("chunk failed to load")) : fake.load();
-    }) as never,
+      if (attempts === 1) throw new Error("chunk failed to load");
+      return engine.factory();
+    },
   });
   await mount(FLOWCHART);
   assert.equal(attempts, 1);
@@ -603,16 +846,16 @@ test("an engine that failed to load is fetched again for the next diagram", asyn
   await show(`${FLOWCHART}\n\n${FLOWCHART.replace("B-->C", "C-->D")}`);
   await flush();
   assert.equal(attempts, 2, "the failure was not kept");
-  assert.equal(fake.calls.length, 1);
-  assert.match(fake.calls[0]!.code, /C-->D/);
+  assert.equal(engine.workers[0]!.posted.length, 1);
+  assert.match(engine.workers[0]!.posted[0]!.code, /C-->D/);
   assert.ok(diagramImage(), "the new block is drawn");
 });
 
 /* ── the pref ───────────────────────────────────────────────────────────── */
 
 test("turning diagrams off returns an open transcript to the code block", async () => {
-  const fake = fakeEngine();
-  useFake(fake);
+  const engine = fakeEngine(success);
+  installWorker(engine);
   await mount(FLOWCHART);
   assert.ok(diagramImage());
 

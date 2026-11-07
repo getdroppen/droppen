@@ -11,6 +11,7 @@ import { fillServiceWorker, type LanguageFiles } from "./build/service-worker";
 import { BUILD_TARGET } from "./build/target";
 import { thirdPartyNotices } from "./build/third-party-notices.mjs";
 import { guardBootChunks, vendorChunk } from "./build/vendor-chunks";
+import { recordWorkerModules } from "./build/worker-notices.mjs";
 import { viewPrefetch } from "./build/view-prefetch";
 
 /**
@@ -211,6 +212,12 @@ export default defineConfig({
       output: { manualChunks: vendorChunk },
     },
   },
+  // The diagram worker imports Pele's lazy entry, which splits each diagram
+  // type into a chunk of its own; a classic (iife) worker cannot code-split.
+  // `new Worker(…, { type: "module" })` matches the ES output. Its modules
+  // are recorded for THIRD_PARTY_NOTICES.txt: the main bundle only sees the
+  // worker as an asset (build/worker-notices.mjs).
+  worker: { format: "es", plugins: () => [recordWorkerModules()] },
   plugins: [
     // The host's React and plugin SDK as facade chunks, named by the shell's
     // import map: runtime plugins share this build's instances of them (§3).

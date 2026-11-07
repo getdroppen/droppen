@@ -4,28 +4,30 @@
  * A message's ```mermaid fence becomes a diagram while the device's
  * `diagrams` pref is `rendered` (the default), once the fence's text has
  * stopped moving (see `MERMAID_STABLE_MS`). Until a fence asks, nothing here
- * is imported: the dynamic import below is the only reference to the package,
- * and `vite.config.ts` keeps Pele — including the one chunk it fetches for
- * each diagram type — out of the boot chunks, so a page that never draws a
- * diagram never downloads the engine.
+ * is imported: the worker below is created on the first fence, and
+ * `vite.config.ts` keeps Pele — including the one chunk it fetches for each
+ * diagram type — out of the boot chunks, so a page that never draws a diagram
+ * never downloads the engine.
+ *
+ * Pele draws synchronously and has superlinear paths (a gantt `dateFormat` of
+ * 20,000 brackets, a venn union of thousands of sets, a 48 KB `accDescr`), so
+ * it runs in a module Worker, one render at a time, behind a 2 s hard timer.
+ * A fence that does not finish is its code block; the worker is terminated
+ * and a fresh one is made for the next diagram. The main thread only
+ * serialises the returned SVG, bakes the page's theme into it and shows it as
+ * a picture (`<img src="blob:…">`, see `components/mermaid-block.tsx`).
  *
  * Agent output is untrusted, and this page drives shells on the user's host,
  * so a diagram is kept at arm's length three ways: the engine is told to draw
  * no links and no images, the work it may do is capped (source, edges,
- * output), and the finished SVG is shown as a picture (`<img src="blob:…">`,
- * see `components/mermaid-block.tsx`) rather than put into the page as markup
- * — where nothing in it can be followed, fetched or reach the page's styles.
- *
- * A fence can carry config (`%%{init: …}%%` or frontmatter `config:`), and
- * Pele reads it. Nothing in that config shares a surface with the options
- * above: limits are render arguments, theme and fonts are the `--pele-*`
- * properties baked into the picture here, and Pele reads a diagram's
- * `themeVariables` only for its own series palette — colour values, validated
- * by Pele, never fonts or page colours. Mermaid keys such as `theme`,
- * `fontFamily`, `themeCSS`, `htmlLabels` and `securityLevel` are ignored by
- * Pele, and there is nothing like Mermaid's `secure` list to add to.
+ * output), and the finished SVG is shown as a picture rather than put into the
+ * page as markup — where nothing in it can be followed, fetched or reach the
+ * page's styles. A fence's config cannot change any of that: the worker strips
+ * its `themeVariables` before Pele reads it (see `lib/fence-config.ts`), and a
+ * source over the length cap is refused here before a worker is even asked.
  */
 import type { RenderOptions } from "pele/lazy";
+import type { DiagramErrorCode, DiagramWorkerReply, DiagramWorkerRequest } from "./diagram-protocol";
 
 export type DiagramTheme = "light" | "dark";
 
@@ -43,19 +45,35 @@ export const MERMAID_STABLE_MS = 300;
 /**
  * What one diagram may cost.
  *
- * Pele draws synchronously once its type has been fetched, so a timer cannot
- * interrupt it — a `setTimeout` cannot even run while the main thread is
- * inside it. These caps are what bound the work instead, and they are render
- * options, not fence config:
- *   · 50,000 characters of source (Mermaid's own default, and Pele's);
- *   · 500 edges (Mermaid's default; Pele's own is 5,000). `A & B --> C & D`
- *     multiplies, so one short line can otherwise ask for millions;
- *   · 2,000,000 characters of SVG (Pele's default is 4,000,000): a source
- *     within the other limits can still describe a drawing of many megabytes.
+ * The source cap is checked on the main thread before anything is posted, so
+ * a fence cannot make Pele's quadratic preprocess run here. The rest are
+ * render options, not fence config, and the worker's hard timer catches what
+ * they cannot: Pele's own limits cover only some of its superlinear paths.
  */
 const MAX_SOURCE_CHARS = 50_000;
 const MAX_EDGES = 500;
 const MAX_OUTPUT_CHARS = 2_000_000;
+
+/**
+ * How long the worker gets to draw, once its diagram type has loaded.
+ *
+ * The reviewer's legitimate worst cases are under 175 ms; 2 s is more than
+ * ten times that, and still cuts off the hostile 2.6 s `accDescr` case. The
+ * load phase (worker script, Pele's entry, the type's chunk) is asynchronous
+ * and gets a separate, longer guard: a slow network must not be mistaken for
+ * a slow render.
+ */
+const RENDER_TIMEOUT_MS = 2_000;
+const LOAD_TIMEOUT_MS = 10_000;
+
+/**
+ * Raw pictures kept for the session, keyed by the fence's exact text. A theme
+ * toggle only re-bakes the style onto one of these; it never asks the worker
+ * again, and a fence that timed out or failed is remembered too so toggling
+ * the sheet does not repeat its work. Bounded by both entry count and bytes.
+ */
+const MAX_CACHE_ENTRIES = 64;
+const MAX_CACHE_CHARS = 8_000_000;
 
 /**
  * The fonts the picture is measured and drawn in.
@@ -65,20 +83,13 @@ const MAX_OUTPUT_CHARS = 2_000_000;
  * page's webfonts. Measuring in the page with IBM Plex and drawing in the
  * picture with its fallback would size every label for one font and show
  * another, so both sides use the system families `--font-sans` falls back to
- * (the tail of that token in `index.css`). The mono stack has no webfonts to
- * lose; the page's token is read for it.
+ * (the tail of that token in `index.css`). The worker measures with these
+ * through OffscreenCanvas when it has one, and Pele's Arial advance table
+ * otherwise. The mono stack has no webfonts to lose; the page's token is read.
  */
 const DIAGRAM_FONT =
   'ui-sans-serif, system-ui, -apple-system, "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif';
 const FALLBACK_MONO = 'ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace';
-
-/**
- * Ink on the two sheets, for labels Pele prints on colours the diagram source
- * itself sets. These are contrast values, not chrome: the page's theme cannot
- * say which one a diagram's own fill needs.
- */
-const INK_ON_LIGHT = "#1a1e23";
-const PAPER_ON_DARK = "#ffffff";
 
 function cssToken(name: string): string {
   if (typeof document === "undefined" || typeof getComputedStyle !== "function") return "";
@@ -90,27 +101,34 @@ function cssToken(name: string): string {
  * (`--color-*` in `index.css`) and baked into the SVG as the public
  * `--pele-*` variables. The series colours are left to Pele: those are a
  * diagram's data colours, not chrome, and its defaults read on both sheets.
+ *
+ * The ink for labels on colours the diagram source sets is the other sheet's
+ * canvas (light text on the dark sheet, dark text on the light one), derived
+ * from the same tokens rather than a second palette.
  */
-function themeStyle(): Record<string, string> {
+export function diagramStyle(theme: DiagramTheme): Record<string, string> {
+  const fg = cssToken("--color-fg");
+  const bg = cssToken("--color-bg");
   const values: Array<[string, string]> = [
     ["--pele-bg", cssToken("--color-raised")],
-    ["--pele-fg", cssToken("--color-fg")],
+    ["--pele-fg", fg],
     ["--pele-muted", cssToken("--color-muted")],
-    ["--pele-line", cssToken("--color-fg")],
-    ["--pele-surface", cssToken("--color-bg")],
+    ["--pele-line", fg],
+    ["--pele-surface", bg],
     ["--pele-surface-alt", cssToken("--color-hover")],
     ["--pele-border", cssToken("--color-border-strong")],
-    ["--pele-accent", cssToken("--color-fg")],
+    ["--pele-accent", fg],
     ["--pele-critical", cssToken("--color-danger")],
     ["--pele-error", cssToken("--color-danger")],
     ["--pele-radius", cssToken("--radius")],
-    ["--pele-fg-on-light", INK_ON_LIGHT],
-    ["--pele-fg-on-dark", PAPER_ON_DARK],
+    ["--pele-fg-on-light", theme === "light" ? fg : bg],
+    ["--pele-fg-on-dark", theme === "light" ? bg : fg],
   ];
   const style: Record<string, string> = {};
   for (const [property, value] of values) if (value !== "") style[property] = value;
   style["--pele-font"] = DIAGRAM_FONT;
   style["--pele-font-mono"] = cssToken("--font-mono") || FALLBACK_MONO;
+  style["color-scheme"] = theme;
   return style;
 }
 
@@ -136,16 +154,12 @@ export interface DiagramSettings {
  *
  * `maxWidth`, `measurer`, `config`, `icons` and `math` are deliberately left
  * unset: the picture keeps its natural width and scrolls in the message
- * rather than adapting to the container, Pele measures with the canvas (or
- * its built-in table where there is none), nothing in the host supplies an
- * icon or typeset formula, and a fence's own config is all the config Pele
- * gets to see.
+ * rather than adapting to the container, the worker measures with
+ * OffscreenCanvas or Pele's table, nothing in the host supplies an icon or
+ * typeset formula, and a fence's own config is all the config Pele gets.
  */
 export function diagramSettings(theme: DiagramTheme, idPrefix?: string): DiagramSettings {
-  const style = themeStyle();
-  // A diagram may name `light-dark()` colours itself; the sheet it is drawn
-  // on is the one the page is on.
-  style["color-scheme"] = theme;
+  const style = diagramStyle(theme);
   const options: RenderOptions = {
     links: false,
     images: false,
@@ -180,7 +194,8 @@ function pixels(value: string | null): number {
  * and scroll inside the message rather than being shrunk until the labels are
  * unreadable.
  *
- * Parsed in an inert document: nothing in it runs or loads.
+ * Parsed in an inert document: nothing in it runs or loads. The worker has
+ * already removed a fence's series palette from the string.
  */
 export function diagramPicture(svg: string, style: Readonly<Record<string, string>> = {}): DiagramPicture {
   const root = new DOMParser().parseFromString(svg, "text/html").querySelector("svg");
@@ -201,64 +216,274 @@ export function diagramPicture(svg: string, style: Readonly<Record<string, strin
   return { blob: new Blob([xml], { type: "image/svg+xml" }), width, height, title };
 }
 
-/** The little of `pele/lazy` this file uses. */
-export interface PeleEngine {
-  renderAsync(code: string, options?: RenderOptions): Promise<{ svg: string; width: number; height: number }>;
+/** The little of a dedicated worker this client uses. */
+export interface DiagramWorker {
+  postMessage(message: DiagramWorkerRequest): void;
+  terminate(): void;
+  addEventListener(type: "message", listener: (event: MessageEvent<DiagramWorkerReply>) => void): void;
+  addEventListener(type: "error" | "messageerror", listener: (event: Event) => void): void;
+  removeEventListener(type: "message", listener: (event: MessageEvent<DiagramWorkerReply>) => void): void;
+  removeEventListener(type: "error" | "messageerror", listener: (event: Event) => void): void;
 }
 
+export type DiagramWorkerFactory = () => DiagramWorker;
+
 interface Engine {
-  load: () => Promise<PeleEngine>;
+  createWorker: DiagramWorkerFactory;
+  loadTimeoutMs: number;
+  renderTimeoutMs: number;
 }
 
 const REAL_ENGINE: Engine = {
-  load: () => import("pele/lazy"),
+  createWorker: () =>
+    new Worker(new URL("./diagram-worker.ts", import.meta.url), {
+      type: "module",
+      name: "droppen-diagram",
+    }) as unknown as DiagramWorker,
+  loadTimeoutMs: LOAD_TIMEOUT_MS,
+  renderTimeoutMs: RENDER_TIMEOUT_MS,
 };
 
-let engine = REAL_ENGINE;
-let loaded: Promise<PeleEngine> | null = null;
+/** A diagram that could not be drawn, with enough detail for a test. */
+export class DiagramRenderError extends Error {
+  readonly code: DiagramErrorCode;
 
-function loadEngine(): Promise<PeleEngine> {
-  loaded ??= engine.load().catch((error: unknown) => {
-    // A fetch that failed (offline, a release that replaced the chunk) is not
-    // kept: the next diagram asks again.
-    loaded = null;
-    throw error;
-  });
-  return loaded;
+  constructor(code: DiagramErrorCode, message: string) {
+    super(message);
+    this.name = "DiagramRenderError";
+    this.code = code;
+  }
+}
+
+interface RawDiagram {
+  svg: string;
+  width: number;
+  height: number;
+}
+
+type CacheEntry =
+  | { ok: true; raw: RawDiagram }
+  | { ok: false; code: DiagramErrorCode; message: string };
+
+/** Failures that are worth remembering: a rerun of the same fence cannot differ. */
+const CACHEABLE_FAILURES = new Set<DiagramErrorCode>(["unsupported-diagram", "syntax", "semantic", "limit", "timeout"]);
+
+let engine = REAL_ENGINE;
+let worker: DiagramWorker | null = null;
+let queue: Promise<unknown> = Promise.resolve();
+let nextId = 0;
+let epoch = 0;
+
+const rawCache = new Map<string, CacheEntry>();
+let rawCacheChars = 0;
+
+function rawCacheGet(code: string): CacheEntry | undefined {
+  const entry = rawCache.get(code);
+  if (entry === undefined) return undefined;
+  // Refresh its place in insertion order: the map is the LRU list.
+  rawCache.delete(code);
+  rawCache.set(code, entry);
+  return entry;
+}
+
+function rawCacheSet(code: string, entry: CacheEntry): void {
+  const old = rawCache.get(code);
+  if (old !== undefined) {
+    rawCache.delete(code);
+    rawCacheChars -= old.ok ? old.raw.svg.length : 0;
+  }
+  rawCache.set(code, entry);
+  rawCacheChars += entry.ok ? entry.raw.svg.length : 0;
+  while (rawCache.size > MAX_CACHE_ENTRIES || rawCacheChars > MAX_CACHE_CHARS) {
+    const oldest = rawCache.keys().next().value;
+    if (oldest === undefined) break;
+    const evicted = rawCache.get(oldest)!;
+    rawCache.delete(oldest);
+    rawCacheChars -= evicted.ok ? evicted.raw.svg.length : 0;
+  }
+}
+
+function clearRawCache(): void {
+  rawCache.clear();
+  rawCacheChars = 0;
+}
+
+function workerFor(): DiagramWorker {
+  worker ??= engine.createWorker();
+  return worker;
+}
+
+function retire(current: DiagramWorker): void {
+  current.terminate();
+  if (worker === current) worker = null;
 }
 
 /**
- * Test seam only (`web/test/mermaid-diagrams.test.tsx`): an engine in place of
- * the real import (so a test can hold, fail or count renders).
+ * Test seam only (`web/test/mermaid-diagrams.test.tsx`): a fake worker
+ * factory and shorter timers in place of the real import (jsdom has no
+ * Worker, and a test must be able to hold or fail a message).
  */
 export function setMermaidForTests(fake: Partial<Engine> | null): void {
+  if (worker !== null) {
+    worker.terminate();
+    worker = null;
+  }
+  queue = Promise.resolve();
+  epoch++;
+  clearRawCache();
   engine = fake ? { ...REAL_ENGINE, ...fake } : REAL_ENGINE;
-  loaded = null;
 }
 
-let nextId = 0;
+function enqueue<T>(work: () => Promise<T>): Promise<T> {
+  const run = queue.then(work, work);
+  queue = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function abortReason(signal: AbortSignal): unknown {
+  return signal.reason ?? new DOMException("Aborted", "AbortError");
+}
+
+/**
+ * Post one render to the worker. The load guard covers the worker script and
+ * the diagram type's chunk; the worker says `rendering` after both, and the
+ * hard render timer starts there. A timeout, an abort or an error event
+ * terminates the worker; the next call makes a new one.
+ */
+function renderInWorker(
+  code: string,
+  options: RenderOptions,
+  signal?: AbortSignal,
+): Promise<RawDiagram> {
+  if (signal?.aborted) return Promise.reject(abortReason(signal));
+  return new Promise((resolve, reject) => {
+    let current: DiagramWorker;
+    try {
+      current = workerFor();
+    } catch (error) {
+      reject(new DiagramRenderError("worker", messageOf(error)));
+      return;
+    }
+    let loadTimer: ReturnType<typeof setTimeout> | undefined;
+    let renderTimer: ReturnType<typeof setTimeout> | undefined;
+    let settled = false;
+
+    const cleanup = () => {
+      if (loadTimer !== undefined) clearTimeout(loadTimer);
+      if (renderTimer !== undefined) clearTimeout(renderTimer);
+      current.removeEventListener("message", onMessage);
+      current.removeEventListener("error", onError);
+      current.removeEventListener("messageerror", onError);
+      signal?.removeEventListener("abort", onAbort);
+    };
+
+    const fail = (error: unknown, stopWorker: boolean) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (stopWorker) retire(current);
+      reject(error);
+    };
+
+    const succeed = (raw: RawDiagram) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(raw);
+    };
+
+    const timedOut = (ms: number) =>
+      fail(new DiagramRenderError("timeout", `no diagram after ${ms} ms`), true);
+
+    const onMessage = (event: MessageEvent<DiagramWorkerReply>) => {
+      const reply = event.data;
+      if (reply === null || typeof reply !== "object") return;
+      if ("phase" in reply) {
+        // The type chunk is in; the work from here is synchronous and timed.
+        if (loadTimer !== undefined) {
+          clearTimeout(loadTimer);
+          loadTimer = undefined;
+        }
+        renderTimer ??= setTimeout(() => timedOut(engine.renderTimeoutMs), engine.renderTimeoutMs);
+        return;
+      }
+      if (reply.ok) {
+        succeed({ svg: reply.svg, width: reply.width, height: reply.height });
+      } else {
+        // Pele refused the fence: the worker is healthy and stays for reuse.
+        fail(new DiagramRenderError(reply.code, reply.message), false);
+      }
+    };
+
+    const onError = () => fail(new DiagramRenderError("worker", "the diagram worker failed"), true);
+
+    const onAbort = () => fail(abortReason(signal!), true);
+
+    current.addEventListener("message", onMessage);
+    current.addEventListener("error", onError);
+    current.addEventListener("messageerror", onError);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    loadTimer = setTimeout(() => timedOut(engine.loadTimeoutMs), engine.loadTimeoutMs);
+    try {
+      current.postMessage({ code, options });
+    } catch (error) {
+      fail(new DiagramRenderError("worker", messageOf(error)), true);
+    }
+  });
+}
+
+function cachedPicture(entry: CacheEntry, theme: DiagramTheme): DiagramPicture {
+  if (!entry.ok) throw new DiagramRenderError(entry.code, entry.message);
+  return diagramPicture(entry.raw.svg, diagramStyle(theme));
+}
 
 /**
  * Draw `code` and resolve to the picture.
  *
- * There is no queue: Pele's `render()` is synchronous and keeps no state
- * between calls, so two diagrams cannot interleave, and one slow render
- * cannot hold the next block behind it. There is no timeout for the same
- * reason — a timer cannot fire during a synchronous render — and the limits
- * in `diagramSettings` are what keep a hostile fence from asking for
- * unbounded work. A parse or layout failure, a limit, or `signal` aborted
- * before the result is drawn rejects.
+ * The length check happens first, before a worker exists or a message is
+ * posted: Pele's own limit is checked only after its quadratic preprocess, so
+ * a four-hundred-thousand-newline fence must never get that far. A source
+ * over the cap is the code block, like any other rejection.
+ *
+ * One render runs at a time: the queue keeps hostile fences from piling their
+ * work into one long task and keeps a single worker's message order simple.
+ * A theme change is served from the raw-picture cache and never reaches the
+ * queue at all.
  */
-export function renderMermaidDiagram(code: string, theme: DiagramTheme, signal?: AbortSignal): Promise<DiagramPicture> {
-  return (async () => {
+export async function renderMermaidDiagram(
+  code: string,
+  theme: DiagramTheme,
+  signal?: AbortSignal,
+): Promise<DiagramPicture> {
+  if (code.length > MAX_SOURCE_CHARS) {
+    throw new DiagramRenderError("limit", `Diagram source is longer than the limit of ${MAX_SOURCE_CHARS} characters.`);
+  }
+  signal?.throwIfAborted();
+  const early = rawCacheGet(code);
+  if (early !== undefined) return cachedPicture(early, theme);
+  const started = epoch;
+  return enqueue(async () => {
     signal?.throwIfAborted();
-    const pele = await loadEngine();
-    signal?.throwIfAborted();
-    // A plain id: Pele uses it for markers and link targets, and the prefix
-    // keeps two diagrams on one page from naming the same elements.
+    const hit = rawCacheGet(code);
+    if (hit !== undefined) return cachedPicture(hit, theme);
     const settings = diagramSettings(theme, `droppen-diagram-${++nextId}`);
-    const { svg } = await pele.renderAsync(code, settings.options);
-    signal?.throwIfAborted();
-    return diagramPicture(svg, settings.style);
-  })();
+    try {
+      const raw = await renderInWorker(code, settings.options, signal);
+      if (started === epoch) rawCacheSet(code, { ok: true, raw });
+      signal?.throwIfAborted();
+      return diagramPicture(raw.svg, settings.style);
+    } catch (error) {
+      if (started === epoch && error instanceof DiagramRenderError && CACHEABLE_FAILURES.has(error.code)) {
+        rawCacheSet(code, { ok: false, code: error.code, message: error.message });
+      }
+      throw error;
+    }
+  });
 }

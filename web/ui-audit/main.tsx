@@ -4,8 +4,9 @@
  * in step with `features/settings/`, `features/cloud/` and `components/ui/`.
  *
  * `?fixture=settings` (default), `?fixture=devices`, `?fixture=agents`
- * (`&view=cards|details|empty`) or `?fixture=diagrams` (a transcript of the
- * diagram types messages draw), plus `?theme=dark`.
+ * (`&view=cards|details|empty`), `?fixture=diagrams` (a transcript of the
+ * diagram types messages draw) or `?fixture=hostile` (the reviewer's
+ * worst-case fences beside one normal diagram), plus `?theme=dark`.
  * `web/src/index.css` excludes this directory from Tailwind's scan
  * (`@source not`), so nothing here can change the production stylesheet. That
  * also means every class below must already occur in `web/src`; the layout
@@ -14,6 +15,7 @@
 import "@/index.css";
 import { createRoot } from "react-dom/client";
 import { DiagramRendering, Markdown } from "@/components/markdown";
+import { MermaidBlock } from "@/components/mermaid-block";
 import { Button } from "@/components/ui/button";
 import { CHECKBOX_INPUT, CHECKBOX_LABEL, CheckboxMark } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -350,10 +352,59 @@ function DiagramsFixture() {
   );
 }
 
+/**
+ * The fences from the security review's reproduction (`/tmp/pele-eval/rv/`),
+ * plus one normal diagram. They are rendered through the real `MermaidBlock`
+ * (the transcript's diagram block) rather than through Markdown, so a
+ * long-task measurement sees the diagram engine's own work and not the
+ * markdown parser's. The normal diagram is first in the queue.
+ */
+const HOSTILE: ReadonlyArray<readonly [name: string, source: string]> = (() => {
+  const range = (n: number, make: (i: number) => string, sep = "\n") => Array.from({ length: n }, (_, i) => make(i)).join(sep);
+  const tasks = (n: number) => range(n, (i) => `T${i} :2024-01-01, 1d`);
+  return [
+    ["normal diagram (renders)", "flowchart TD\n  A[Start] --> B[End]"],
+    ["gantt dateFormat [x20000, 150 tasks", "gantt\ndateFormat " + "[".repeat(20000) + "YYYY-MM-DD\nsection S\n" + tasks(150)],
+    [
+      "venn union of 3231 sets",
+      "venn-beta\n" + range(3231, (i) => `set S${i}`) + "\nunion " + range(3231, (i) => `S${i}`, ",") + '["all"]',
+    ],
+    ["pie accDescr 48k spaces", 'pie\naccDescr {\nx' + " ".repeat(48000) + 'y\n}\n"a": 1'],
+    ["over the 50k source cap", "flowchart TD\n%%x\n" + "\n".repeat(400000) + "A-->B"],
+  ];
+})();
+
+function HostileFixture() {
+  return (
+    <div data-fixture-root="" className="@container/settings mx-auto max-w-3xl p-4">
+      <header className="mb-3 flex h-8 items-center border-b border-border text-[13px] font-semibold">Transcript</header>
+      {HOSTILE.map(([name, source]) => (
+        <section key={name} data-audit-row={name} className="border-b border-border py-3">
+          <div className="mb-1 font-mono text-2xs text-muted">{name}</div>
+          <MermaidBlock
+            code={source}
+            // The block receives the full source; the harness shows only a
+            // bounded stand-in for the code, or the page would lay out tens
+            // of thousands of preformatted lines while the measurement runs.
+            fallback={
+              <pre className="my-1.5 overflow-x-auto border border-border bg-raised px-2.5 py-2">
+                <code className="block font-mono text-2xs leading-[18px]">
+                  {source.length > 2_000 ? `source of ${source.length} chars (not laid out in this harness)` : source}
+                </code>
+              </pre>
+            }
+          />
+        </section>
+      ))}
+    </div>
+  );
+}
+
 // The agents and diagrams fixtures' words go through i18n (counts, "5 min
 // ago", the diagram controls' labels): English unless `&lang=` names another
 // of the app's languages.
-if (fixture === "agents" || fixture === "diagrams") await applyLanguage((query.get("lang") as LanguagePref | null) ?? "en");
+if (fixture === "agents" || fixture === "diagrams" || fixture === "hostile")
+  await applyLanguage((query.get("lang") as LanguagePref | null) ?? "en");
 createRoot(document.getElementById("root")!).render(
   fixture === "devices" ? (
     <DevicesFixture />
@@ -361,6 +412,8 @@ createRoot(document.getElementById("root")!).render(
     <AgentsFixture />
   ) : fixture === "diagrams" ? (
     <DiagramsFixture />
+  ) : fixture === "hostile" ? (
+    <HostileFixture />
   ) : (
     <SettingsFixture />
   ),
