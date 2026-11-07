@@ -1,17 +1,17 @@
-# The repository root is the Cargo workspace root. The server's package and its
-# crates stay under `server-rs/`; this manifest owns the lockfile, the target
+# The repository root is the Cargo workspace root, and the server is
+# `crates/droppen-server`; this manifest owns the lockfile, the target
 # directory, the profiles and the lints every member inherits.
 
-# A workspace so the cloud protocol crate (`server-rs/crates/droppen-proto`),
-# the device side of the hub API (`server-rs/crates/droppen-client`) and the
-# headless test device (`server-rs/crates/droppen-devkit`) share this lockfile
-# and target directory. The members are listed explicitly; the server package
-# stays in `server-rs/` and every build command names it (`-p droppen-server`).
+# A workspace so the cloud protocol crate (`crates/droppen-proto`), the device
+# side of the hub API (`crates/droppen-client`) and the headless test device
+# (`crates/droppen-devkit`) share this lockfile and target directory. The
+# members are listed explicitly; the server package is `crates/droppen-server`
+# and every build command names it (`-p droppen-server`).
 [workspace]
 # A virtual workspace otherwise defaults to resolver 1; the server's features
 # must resolve exactly as they did when its package was the workspace root.
 resolver = "2"
-members = ["server-rs", "server-rs/crates/droppen-proto", "server-rs/crates/droppen-relay-core", "server-rs/crates/droppen-relay", "server-rs/crates/droppen-client", "server-rs/crates/droppen-devkit", "server-rs/crates/droppen-plugin-sdk", "server-rs/crates/droppen-search-path", "server-rs/crates/droppen-base", "server-rs/crates/droppen-instance", "server-rs/crates/droppen-http", "server-rs/crates/droppen-pty", "server-rs/crates/droppen-supervisor", "server-rs/crates/droppen-auth", "server-rs/crates/droppen-files", "server-rs/crates/droppen-workbench", "server-rs/crates/droppen-plugins", "server-rs/crates/droppen-aggregator", "server-rs/crates/droppen-sessions", "server-rs/crates/droppen-agent", "server-rs/crates/droppen-cloud", "server-rs/crates/droppen-notify", "server-rs/crates/droppen-accounts", "server-rs/crates/droppen-setup", "server-rs/crates/droppen-provider", "server-rs/crates/droppen-provider-acp", "server-rs/crates/droppen-drive", "server-rs/crates/droppen-provider-codex", "server-rs/crates/droppen-provider-claude-code"]
+members = ["crates/droppen-server", "crates/droppen-proto", "crates/droppen-relay-core", "crates/droppen-relay", "crates/droppen-client", "crates/droppen-devkit", "crates/droppen-plugin-sdk", "crates/droppen-search-path", "crates/droppen-base", "crates/droppen-instance", "crates/droppen-http", "crates/droppen-pty", "crates/droppen-supervisor", "crates/droppen-auth", "crates/droppen-files", "crates/droppen-workbench", "crates/droppen-plugins", "crates/droppen-aggregator", "crates/droppen-sessions", "crates/droppen-agent", "crates/droppen-cloud", "crates/droppen-notify", "crates/droppen-accounts", "crates/droppen-setup", "crates/droppen-provider", "crates/droppen-provider-acp", "crates/droppen-drive", "crates/droppen-provider-codex", "crates/droppen-provider-claude-code"]
 
 # Every member takes serde_json from here, so `preserve_order` is on in every
 # build: a `Value` writes its keys in insertion order rather than sorted. Cargo

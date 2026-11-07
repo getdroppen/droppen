@@ -288,7 +288,7 @@ mod assets {
     use super::*;
 
     #[derive(rust_embed::Embed)]
-    #[folder = "../web/dist"]
+    #[folder = "../../web/dist"]
     struct Dist;
 
     pub fn get(path: &str) -> Option<Vec<u8>> {

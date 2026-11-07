@@ -141,7 +141,7 @@ test("the SDK version is the same in the package, the constant and the Rust crat
   const { readFileSync } = await import("node:fs");
   const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
   assert.equal(pkg.version, SDK_VERSION);
-  const crate = readFileSync(new URL("../../../server-rs/crates/droppen-plugin-sdk/src/lib.rs", import.meta.url), "utf8");
+  const crate = readFileSync(new URL("../../../crates/droppen-plugin-sdk/src/lib.rs", import.meta.url), "utf8");
   assert.match(crate, new RegExp(`pub const SDK_VERSION: &str = "${SDK_VERSION.replaceAll(".", "\\.")}";`));
 });
 

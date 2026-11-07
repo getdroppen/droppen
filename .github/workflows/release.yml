@@ -103,11 +103,11 @@ jobs:
           DRY_RUN_INPUT: ${{ inputs.dry_run }}
         run: |
           set -euo pipefail
-          crate=$(sed -n 's/^version = "\(.*\)"$/\1/p' server-rs/Cargo.toml | head -n 1)
+          crate=$(sed -n 's/^version = "\(.*\)"$/\1/p' crates/droppen-server/Cargo.toml | head -n 1)
           if [ "$GITHUB_REF_TYPE" = tag ]; then
             version=$GITHUB_REF_NAME
             if [ "$version" != "v$crate" ]; then
-              echo "::error::the tag $version is not the server's version, v$crate (server-rs/Cargo.toml)"
+              echo "::error::the tag $version is not the server's version, v$crate (crates/droppen-server/Cargo.toml)"
               exit 1
             fi
             # A tag releases; a manual run on a tag only when dry_run is unticked.
@@ -348,7 +348,7 @@ jobs:
           npm install -g "pnpm@$PNPM_VERSION"
           SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"; export SOURCE_DATE_EPOCH
           pnpm install --frozen-lockfile --filter "@droppen/web..."
-          crate=$(sed -n 's/^version = "\(.*\)"$/\1/p' server-rs/Cargo.toml | head -n 1)
+          crate=$(sed -n 's/^version = "\(.*\)"$/\1/p' crates/droppen-server/Cargo.toml | head -n 1)
           mkdir -p "$RUNNER_TEMP/out"
           scripts/third-party-notices.sh "$GITHUB_WORKSPACE" "$RUNNER_TEMP/out/THIRD_PARTY_NOTICES" "$VERSION" "$crate" "$REV"
           members=(THIRD_PARTY_NOTICES)
@@ -902,7 +902,7 @@ jobs:
           same LICENSE LICENSE
           same "$RUNNER_TEMP/INSTALL-macos.txt" INSTALL-macos.txt
           same "$RUNNER_TEMP/INSTALL-linux.txt" INSTALL-linux.txt
-          crate=$(sed -n 's/^version = "\(.*\)"$/\1/p' server-rs/Cargo.toml | head -n 1)
+          crate=$(sed -n 's/^version = "\(.*\)"$/\1/p' crates/droppen-server/Cargo.toml | head -n 1)
           notes_args=("$VERSION" "$SHA" "$REV" "$crate" 1)
           [ ! -f "docs/releases/$VERSION.md" ] || notes_args+=("docs/releases/$VERSION.md")
           scripts/release-notes.sh "${notes_args[@]}" >"$RUNNER_TEMP/NOTES.md"

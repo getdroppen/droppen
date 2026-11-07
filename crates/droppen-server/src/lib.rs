@@ -1,5 +1,5 @@
 //! Droppen's server: the entry. Every subsystem is a crate of its own under
-//! `server-rs/crates`, in the layers the root `layers.json` gives it
+//! `crates/`, in the layers the root `layers.json` gives it
 //! (`scripts/check-layers.mjs` holds them there); this crate builds them into
 //! one program and serves them.
 //!

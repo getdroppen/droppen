@@ -542,7 +542,7 @@ mod tests {
     /// them with this crate. Both run the same vectors, so they cannot disagree.
     #[test]
     fn engine_vectors_agree_with_the_typescript_sdk() {
-        let vectors: serde_json::Value = serde_json::from_str(include_str!("../../../../packages/plugin-sdk/test/engine-vectors.json")).unwrap();
+        let vectors: serde_json::Value = serde_json::from_str(include_str!("../../../packages/plugin-sdk/test/engine-vectors.json")).unwrap();
         for case in vectors["matches"].as_array().unwrap() {
             let (range, version, expected) = (case[0].as_str().unwrap(), case[1].as_str().unwrap(), case[2].as_bool().unwrap());
             let req = semver::VersionReq::parse(range).unwrap_or_else(|e| panic!("{range:?}: {e}"));

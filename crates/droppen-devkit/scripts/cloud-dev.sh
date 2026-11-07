@@ -39,7 +39,7 @@
 # session (copied to the hub as snapshot pages), and a session in ~/.claude
 # that the server lists but never copies to the hub.
 #
-# The hub: where this tree has its source (server-rs/crates/rh-hub), `up`
+# The hub: where this tree has its source (crates/rh-hub), `up`
 # builds it and runs target/debug/rh-hub. Elsewhere — the open repository has
 # no hub — it runs the image DROPPEN_HUB_IMAGE names, which must be pinned by
 # its digest (<registry>/<name>@sha256:<64 hex digits>): a tag is refused, so
@@ -66,8 +66,8 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
-root="$(cd "$here/../../.." && pwd)" # server-rs
-repo="$(cd "$root/.." && pwd)"       # the repository root; cargo's target directory is here
+repo="$(cd "$here/../../.." && pwd)" # the repository root; cargo's target directory is here
+root="$repo"                         # the Rust crates are under crates/
 state="${DROPPEN_CLOUD_DEV_DIR:-/tmp/rh-cloud-dev}"
 export DOCKER_HOST="${DOCKER_HOST:-unix://$HOME/.orbstack/run/docker.sock}"
 mkdir -p "$state"
@@ -106,7 +106,7 @@ pinned() { [[ "$1" =~ @sha256:[0-9a-f]{64}$ ]]; }
 # Which hub runs, on stderr: stdout's `hub:` line is the URL that callers read.
 say_hub() {
   if ! image_mode; then
-    echo "hub: source (server-rs/crates/rh-hub)" >&2
+    echo "hub: source (crates/rh-hub)" >&2
   elif [ -d "$root/crates/rh-hub" ]; then
     echo "hub: image $HUB_IMAGE — this tree's rh-hub is not used" >&2
   else
@@ -245,14 +245,14 @@ up)
     *) echo "cloud-dev.sh: DROPPEN_CLOUD_DEV_HUB is \`source\` or \`image\`, not \`$DROPPEN_CLOUD_DEV_HUB\`" >&2; exit 2 ;;
   esac
   if [ "$hub" = source ] && [ ! -d "$root/crates/rh-hub" ]; then
-    echo "cloud-dev.sh: DROPPEN_CLOUD_DEV_HUB=source, but this tree has no server-rs/crates/rh-hub" >&2
+    echo "cloud-dev.sh: DROPPEN_CLOUD_DEV_HUB=source, but this tree has no crates/rh-hub" >&2
     exit 2
   fi
   if [ "$hub" = image ] && [ -z "$hub_image" ]; then
     if [ -d "$root/crates/rh-hub" ]; then
       echo "cloud-dev.sh: DROPPEN_CLOUD_DEV_HUB=image needs DROPPEN_HUB_IMAGE, the image to run" >&2
     else
-      echo "cloud-dev.sh: no hub to run: this tree has no server-rs/crates/rh-hub to build it from." >&2
+      echo "cloud-dev.sh: no hub to run: this tree has no crates/rh-hub to build it from." >&2
     fi
     echo "  Set DROPPEN_HUB_IMAGE to a hub image pinned by digest (<registry>/<name>@sha256:<64 hex digits>)," >&2
     echo "  or use \`cloud-dev.sh remote <url>\` with a deployed hub." >&2

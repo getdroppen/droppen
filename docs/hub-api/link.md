@@ -99,7 +99,7 @@ All are plain objects with `v: 1` and a type `t`. Hex is lower-case.
 ## Which host the popup and the hand-off open
 
 The opener and the hand-off use the hub's **app origin**, `hubWeb`, which the
-local server works out (`server-rs/src/api/hub_web.rs`) and gives in
+local server works out (`crates/droppen-server/src/api/hub_web.rs`) and gives in
 `GET /api/cloud` and `POST /api/cloud/link`:
 
 - It asks the hub for `GET /.well-known/droppen-hub` (`http.md`) and takes

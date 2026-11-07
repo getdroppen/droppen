@@ -8,7 +8,7 @@
 > - **开源边界**：`droppen`（本机执行器、agent、本机 React 前端）与 `droppen-relay` 开源；只有 Droppen Hub 闭源（§2.1）。
 > - **设备与机器合一**：「客户自己用 droppen 在本地启用，那么他既是设备也是机器」；「只是部分机器无法提供启动 agent 的功能」。一切都是**设备**，唯一的内在差别是能不能运行 AI；唯一可以开关的权限是「可管理账号」（§3）。
 >
-> 路径缩写：`S/` = `server-rs/src/`，`C/` = `server-rs/crates/`，`W/` = `web/src/`。
+> 路径缩写：`S/` = `crates/droppen-server/src/`，`C/` = `crates/`，`W/` = `web/src/`。
 
 ## 0. 结论
 
@@ -673,7 +673,7 @@ W 轮询到 `proved` 后检查两件事：证明成立；**并且**证明里的�
 **1. 发起**（`POST /api/cloud/link`，与弹窗共用一个 attempt）
 
 - 请求带 `Origin` 时（本机页面发起的都带），S 除了 nonce 之外再为这个 attempt 生成一把一次性 X25519 钥 `E` 和 16 字节 `state`，只在内存里，随 attempt 一起过期、用掉或取消。
-- `hubWeb` 是浏览器登录 Hub 的地址，弹窗也在这里打开：S 问 Hub 的 `/.well-known/droppen-hub`，取其中的 `app`（如 `https://my.droppen.app`，须是 Hub 自己的主机或它的子域）；没有、或不合规则，就用 Hub 自己的源（`https://droppen.app`）。S 自己仍连 `wss://<hub>`。规则与各版本的行为见 `docs/hub-api/link.md`「Which host the popup and the hand-off open」（`server-rs/src/api/hub_web.rs`）。
+- `hubWeb` 是浏览器登录 Hub 的地址，弹窗也在这里打开：S 问 Hub 的 `/.well-known/droppen-hub`，取其中的 `app`（如 `https://my.droppen.app`，须是 Hub 自己的主机或它的子域）；没有、或不合规则，就用 Hub 自己的源（`https://droppen.app`）。S 自己仍连 `wss://<hub>`。规则与各版本的行为见 `docs/hub-api/link.md`「Which host the popup and the hand-off open」（`crates/droppen-server/src/api/hub_web.rs`）。
 - 回复多一个 `handoffUrl`：`<hubWeb>/link#droppen-link=<base64url(JSON)>`。JSON 里只有：attempt id、`E` 的公钥、`state`、页面的源（取自 `Origin`）、过期时间、主机名与设备两把公钥。全部在片段里，不进查询串；S 不记日志。
 - 桌面应用：页面 `window.open(handoffUrl, "_blank", "noopener")`，应用把它交给系统浏览器。应用往外交地址时一向去掉片段（本机地址的片段可能是登录令牌）；只有形如 `/link#droppen-link=…`、又不是应用自己服务器的地址保留片段（`desktop/core/src/sign_in.rs`）。
 - 浏览器：弹窗被拦或被关后，「改在浏览器标签页里继续」用同一个 attempt 打开这个地址（点击里打开，不会被拦）。
@@ -1003,7 +1003,7 @@ interface AppShell {
 - **新建会话**：两台以上设备时对话框顶部有设备选择，默认顺序：当前叶子或路由的设备 → 上次用的（`rh.hub.new-session-device`）→ `home`；离线、`stale` 的置灰并写原因。选中即占用（拨号），模型、账号、目录、最近目录都走所选设备的 `api`；建好后在那台打开（`/m/<设备>/sessions/…`，或叶子带上 `machine`）。窗格里的新终端、文件同理走叶子的设备。
 - **设置**：`/m/<设备>/settings`；两台以上设备时设置页标题行有设备选择。字号与语言只由主设备的偏好决定（`PrefsSync`），所以只在主设备的设置里出现；其它设备的设置里换成一行说明和去主设备设置的链接。
 - **不串号**：查询、feed、草稿、发件箱、回执检查、排队提示、终端、上传本来就按 `useMachine()` 与 `sessionKey` 取址，换成叶子或路由的 provider 即可；新键都在 `rh.hub.` 下；`check:machines` 保持通过。
-- **服务端也要认 `machine`**：屏幕的清洗（`server-rs/crates/droppen-workbench/src/screens`）按已知字段重建每个叶子，读和写都过它，原来会把 `machine` 丢掉。现在它在 `session`、`chat`、`terminal`、`files`、`picker` 上保留一个能用的 `machine`（非空、不超过 200 字、无控制字符，与 id 同样只存不解），退化成选择器的内容不带。droppen.app 上屏幕存在主设备的 agent 里，所以主设备的 agent 要升级到这一版，跨设备的屏幕才存得住；旧 agent 存回来少了设备时，网页在那块屏幕上提示（`machinesDropped`），窗格回到主设备。
+- **服务端也要认 `machine`**：屏幕的清洗（`crates/droppen-workbench/src/screens`）按已知字段重建每个叶子，读和写都过它，原来会把 `machine` 丢掉。现在它在 `session`、`chat`、`terminal`、`files`、`picker` 上保留一个能用的 `machine`（非空、不超过 200 字、无控制字符，与 id 同样只存不解），退化成选择器的内容不带。droppen.app 上屏幕存在主设备的 agent 里，所以主设备的 agent 要升级到这一版，跨设备的屏幕才存得住；旧 agent 存回来少了设备时，网页在那块屏幕上提示（`machinesDropped`），窗格回到主设备。
 - **回滚**：旧版本（网页或 agent）读到带 `machine` 的叶子会在 `home` 上找那个 id：会话「找不到」、终端「已退出」、文件落在 `home` 的同一路径，都不崩；旧 agent 读时就丢掉 `machine`，下一次保存把它写没。`/m/…` 地址在旧版本里是未知路由。除了可选的 `machine`，存储格式不变。
 - **拆成两步**：第一步是路由、叶子与屏幕 JSON（含服务端清洗）、`MachineView`、按设备计数的列表 feed、`hold()` 接口、导航栏、新建会话的设备选择、设置的设备选择、一致性预览的 `uiDevices=1`、测试；第二步是 `hub-shell.ts`（占用计数、focus 从路由来、主设备固定与「设为主设备」、`select` 改为导航）、`cloud-bar.tsx`、`cloud-app.tsx`、仪表盘 `openAt` 改用 `/m/` 地址、`sw.js` 的离线壳路由加 `m/`、`ui-wording` 测试收进新文案表、浏览器验收与云端 e2e。
 
@@ -1071,7 +1071,7 @@ interface AppShell {
 **M-2 落地时的取舍**（S2-3 的 droppen.app 一半，两个 PR：路由与叶子、`HubShell` 一侧）：
 
 - 计划（上面的「M-2 计划」）照做。与计划不同或计划没写到的：
-  - **服务端也改了**：屏幕的清洗在读写时都按已知字段重建叶子，原来会丢掉 `machine`。`server-rs/src/screens` 现在保留它。所以 droppen.app 上主设备的 agent 要到这一版，跨设备屏幕才存得住；旧 agent 存回来少了设备时，网页在那块屏幕上提示。
+  - **服务端也改了**：屏幕的清洗在读写时都按已知字段重建叶子，原来会丢掉 `machine`。`crates/droppen-server/src/screens` 现在保留它。所以 droppen.app 上主设备的 agent 要到这一版，跨设备屏幕才存得住；旧 agent 存回来少了设备时，网页在那块屏幕上提示。
   - **主设备**：存在浏览器里，按账户（`rh.hub.home.<账户>`）。只有「设为主设备」（切换器底部）或它离开账户才会换，换了才重建 `RootLayout`。换的时候眼前的页面不变：旧主设备的普通地址改写成 `/m/<旧>/…`，新主设备的 `/m/<新>/…` 变成普通地址；屏幕、应用、插件页（只有主设备有）回到会话。
   - **在看的设备就是地址所在的设备**：栏（`CloudBar`）显示它，并用 `HubShell.follow` 让 focus 跟上路由。切换器用路由导航到那台的同一栏（是一条历史记录，后退能回来），不再移动 home。`select` 只在「我的设备」与应用之间换地址，从「我的设备」打开某台时：应用的地址就是那台的，就回到那个地址，否则去那台的同一栏（`addressOn`）。`openAt` 用那台自己的地址。
   - **主设备是这个浏览器记住的**：没有记住的浏览器，默认是上次在看的那台（升级时），否则是账户链上第一台可运行 AI 的设备——每个浏览器都一样，不看先打开哪台。「设为主设备」之前要确认（「屏幕布局存在主设备上：换成 B 后，A 上的屏幕会暂时看不到，换回 A 即可恢复」）。主设备离开账户时，换成正在看的那台，没有就换成链上剩下的第一台。换了主设备以后，历史里更早的普通地址（后退、前进到的）都按新的主设备打开。
@@ -1183,7 +1183,7 @@ droppen.app 网页适合随手打开；要高保障的人用本机界面或 Taur
 ### 7.4 两个名字落地时的取舍（S5-1）
 
 - **一个二进制**：cargo 的 `[[bin]]` 与构建产物现在叫 `droppen-server`；安装后的托管文件仍是 `<数据>/bin/remote-hand-server`，supervisor、自升级和 `.prev`/`.bad` 都按它找。发版包里的 `droppen` 是实体、`remote-hand-server` 是它的硬链接，`<数据>/bin/droppen` 是旁边指向旧路径的符号链接。桌面 sidecar 也叫 `droppen-server`，`is_leftover_server` 永久同时认旧名。
-- **`argv[0]` 只管说法**（`server-rs/crates/droppen-base/src/program.rs`）：最后一段是 `droppen` 或 `droppen-server` 时，帮助的第一行、用法、错误里建议的命令说这个名字，stderr 前缀是 `droppen:`；其他名字（旧名、`up` 拉起的子进程、测试）一字不改，`remote-hand:` 前缀照旧，grep 它的脚本不受影响。只改写命令，不改写路径和文件名（`<数据>/bin/remote-hand-server`、`remote-hand-server.prev` 原样）。`[rh-up]` 日志前缀不变。
+- **`argv[0]` 只管说法**（`crates/droppen-base/src/program.rs`）：最后一段是 `droppen` 或 `droppen-server` 时，帮助的第一行、用法、错误里建议的命令说这个名字，stderr 前缀是 `droppen:`；其他名字（旧名、`up` 拉起的子进程、测试）一字不改，`remote-hand:` 前缀照旧，grep 它的脚本不受影响。只改写命令，不改写路径和文件名（`<数据>/bin/remote-hand-server`、`remote-hand-server.prev` 原样）。`[rh-up]` 日志前缀不变。
 - **发版**（`scripts/release-public.sh`）：每个平台两个包。新包 `droppen-…` 里 `droppen` 是实体、`remote-hand-server` 是它的硬链接（tar 里只存一份数据；单独解出任何一个都是完整文件，符号链接单独解出来是悬空的）；旧包 `remote-hand-…` 和以前一样只有 `remote-hand-server`。`SHA256SUMS` 列全部。每个包都解开再查一遍：成员不多不少、每个程序与前面检查和冒烟过的二进制逐字节相同、标记/glibc/`$HOME` 路径等检查再跑一遍；新包里的 `droppen` 再冒烟一次（以新名字运行）。旧名资产至少发到 2027-01-31（`OLD_ASSETS_UNTIL`）。
 - **安装脚本**：先读 `SHA256SUMS`，列了新包就下新包（取 `droppen` 成员），否则（或下载失败）下旧包（取 `remote-hand-server`）。装出来的仍是 `<数据>/bin/remote-hand-server`，与以前完全相同；plist、systemd unit、数据目录一律不动。旁边建 `droppen -> remote-hand-server`（相对链接，自升级换文件后照样指向新的；已有一个不是链接的 `droppen` 就不动它，并提示）。打印给人敲的命令（改密码、最后的 `Command:`）用 `droppen`；手动启动的 `up -- serve` 命令仍用旧路径，脚本靠这个路径认出手动启动的监督进程。卸载时连这个链接一起删。只认旧资产名的旧版脚本照常能装，所以旧资产要继续发。
 - **网页里让人敲的命令**：`GET /api/auth/status` 加 `droppenPath`——运行中二进制旁边的 `droppen`（是同一个文件才算），否则二进制本身；家目录写成 `~`，因为这个接口不登录也能读，不把账户名放出去。登录页的提示与「设置 → 访问」里的 `user add` 用它（需要时加引号）；旧服务器没有这个字段，网页说 `remote-hand-server`。

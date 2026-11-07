@@ -1,6 +1,6 @@
 /*
  * Encrypted log records, browser side: how a device reads the streams an
- * agent wrote to the hub (`server-rs/crates/droppen-proto/src/record.rs` — read that
+ * agent wrote to the hub (`crates/droppen-proto/src/record.rs` — read that
  * for the why).
  *
  * - `stream_id = HMAC-SHA256(K_id, source ‖ 0 ‖ id)`, `K_id = HKDF(salt = "rh/v1 stream-id", ikm = MK)`

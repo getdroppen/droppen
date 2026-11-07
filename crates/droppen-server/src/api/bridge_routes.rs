@@ -30,23 +30,24 @@ fn registered_in_source() -> std::collections::BTreeSet<(String, String)> {
     // The server's sources, and those of the crates it is made of that
     // register routes.
     let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = manifest.parent().and_then(|crates| crates.parent()).expect("the repository root");
     let mut dirs = vec![
         manifest.join("src"),
-        manifest.join("crates/droppen-supervisor/src"),
-        manifest.join("crates/droppen-auth/src"),
-        manifest.join("crates/droppen-files/src"),
-        manifest.join("crates/droppen-workbench/src"),
-        manifest.join("crates/droppen-plugins/src"),
-        manifest.join("crates/droppen-accounts/src"),
-        manifest.join("crates/droppen-setup/src"),
-        manifest.join("crates/droppen-sessions/src"),
-        manifest.join("crates/droppen-agent/src"),
-        manifest.join("crates/droppen-cloud/src"),
-        manifest.join("crates/droppen-notify/src"),
-        manifest.join("crates/droppen-provider/src"),
-        manifest.join("crates/droppen-provider-acp/src"),
-        manifest.join("crates/droppen-provider-claude-code/src"),
-        manifest.join("crates/droppen-drive/src"),
+        root.join("crates/droppen-supervisor/src"),
+        root.join("crates/droppen-auth/src"),
+        root.join("crates/droppen-files/src"),
+        root.join("crates/droppen-workbench/src"),
+        root.join("crates/droppen-plugins/src"),
+        root.join("crates/droppen-accounts/src"),
+        root.join("crates/droppen-setup/src"),
+        root.join("crates/droppen-sessions/src"),
+        root.join("crates/droppen-agent/src"),
+        root.join("crates/droppen-cloud/src"),
+        root.join("crates/droppen-notify/src"),
+        root.join("crates/droppen-provider/src"),
+        root.join("crates/droppen-provider-acp/src"),
+        root.join("crates/droppen-provider-claude-code/src"),
+        root.join("crates/droppen-drive/src"),
     ];
     while let Some(dir) = dirs.pop() {
         for entry in std::fs::read_dir(&dir).unwrap() {

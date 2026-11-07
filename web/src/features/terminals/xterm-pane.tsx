@@ -122,7 +122,7 @@ export function XtermPane({ id, visible }: { id: string; visible: boolean }) {
       //
       // What makes "not before the repaint arrives" safe is that the server
       // sends a frame on every attach, empty replay and all
-      // (`server-rs/src/terminals/routes.rs`). Without that promise a terminal
+      // (`crates/droppen-server/src/terminals/routes.rs`). Without that promise a terminal
       // with nothing buffered left this armed until the user's next keystroke
       // produced output, and the reset then wiped a screen they were reading.
       let pendingReset = attachedBefore;

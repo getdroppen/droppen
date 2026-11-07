@@ -122,7 +122,7 @@ export function parseLinkMessage(data: unknown): LinkMessage | null {
 /**
  * The fingerprint both sides show for the machine: the first 16 bytes of
  * SHA-256("rh/v1 machine fingerprint\0" ‖ signing key ‖ channel key), as 8
- * groups of 4 hex digits (`machine_fingerprint` in `server-rs/crates/droppen-agent/src/fingerprint.rs`).
+ * groups of 4 hex digits (`machine_fingerprint` in `crates/droppen-agent/src/fingerprint.rs`).
  */
 export async function machineFingerprint(signKey: Uint8Array, dhKey: Uint8Array): Promise<string> {
   const digest = (await sha256(utf8("rh/v1 machine fingerprint\0"), signKey, dhKey)).slice(0, 16);
@@ -170,7 +170,7 @@ export type CallbackTier = "local" | "warn" | "public" | "refuse";
 /**
  * Names that are not on the public internet: mDNS, the home network's, private
  * use, a tailnet's. The local server answers to the same ones
- * (`LOCAL_SUFFIXES` in `server-rs/crates/droppen-http/src/origin.rs`).
+ * (`LOCAL_SUFFIXES` in `crates/droppen-http/src/origin.rs`).
  */
 const PRIVATE_SUFFIXES = [".local", ".lan", ".home.arpa", ".internal", ".ts.net"];
 
@@ -281,7 +281,7 @@ export function hubWebOrigin(input: string): string | null {
 
 /*
  * The browser hand-off (docs/local-aggregator.md §4.9;
- * `server-rs/src/api/link_handoff.rs`): when there is no opener to post to —
+ * `crates/droppen-server/src/api/link_handoff.rs`): when there is no opener to post to —
  * the Droppen desktop app's window, or a browser that blocks the popup — the
  * local page has the browser open `<hub>/link#droppen-link=<payload>`, and
  * droppen.app sends the browser back to `<origin>/link/return#droppen-return=…`
@@ -344,7 +344,7 @@ export function plainOrigin(text: unknown): string | null {
   }
 }
 
-/** The payload (`server-rs/src/api/link_handoff.rs`, `Payload`) as a hand-off, if it is a well-formed one. */
+/** The payload (`crates/droppen-server/src/api/link_handoff.rs`, `Payload`) as a hand-off, if it is a well-formed one. */
 export function handoffOf(value: unknown): HandoffRequest | null {
   if (!value || typeof value !== "object") return null;
   const p = value as Record<string, unknown>;

@@ -49,7 +49,7 @@ attestations ([The move from getdroppen/releases](#the-move-from-getdroppenrelea
 ## Cutting a release
 
 1. **The version bump**, in one pull request: `version` in
-   `server-rs/Cargo.toml` (and `Cargo.lock`), and the release notes,
+   `crates/droppen-server/Cargo.toml` (and `Cargo.lock`), and the release notes,
    `docs/releases/vX.Y.Z.md`: what changed for people, in English and Chinese.
    Name `Droppen-X.Y.Z.dmg` in them (the paragraph on the desktop app, as in
    earlier notes) when the release has the desktop app: the workflow builds,
@@ -82,7 +82,7 @@ attestations ([The move from getdroppen/releases](#the-move-from-getdroppenrelea
    git push origin vX.Y.Z
    ```
 
-   The tag must be the version in `server-rs/Cargo.toml` at that commit,
+   The tag must be the version in `crates/droppen-server/Cargo.toml` at that commit,
    and the commit must be on main: the workflow refuses to publish anything
    else. A run of *release* for the tag shows up under *Actions* within a
    minute. If none does (a skip marker in the commit's message, or GitHub

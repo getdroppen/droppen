@@ -1,5 +1,5 @@
 // The direct path, Rust → TypeScript: replay the `path` section of
-// `server-rs/crates/droppen-proto/vectors/rust.json` through `lib/e2e/path.ts`.
+// `crates/droppen-proto/vectors/rust.json` through `lib/e2e/path.ts`.
 //
 // What these pin: envelopes, signals and DataChannel messages encode to
 // Rust's bytes and decode back, and the junk Rust refuses is refused here;
@@ -58,7 +58,7 @@ import {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Json = any;
-const V: Json = JSON.parse(readFileSync(new URL("../../server-rs/crates/droppen-proto/vectors/rust.json", import.meta.url), "utf8"));
+const V: Json = JSON.parse(readFileSync(new URL("../../crates/droppen-proto/vectors/rust.json", import.meta.url), "utf8"));
 const P: Json = V.path;
 const h = (s: string) => fromHex(s);
 const DOWN = ["closed", "timeout", "failed"] as const;

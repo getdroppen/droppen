@@ -1,7 +1,7 @@
 /*
  * The end-to-end channel, browser side: `Noise_IK_25519_AESGCM_SHA256` on
  * WebCrypto, byte-compatible with the agent's `snow`
- * (`server-rs/crates/droppen-proto/src/noise.rs` — read that for the why).
+ * (`crates/droppen-proto/src/noise.rs` — read that for the why).
  *
  * The device is the initiator: it knows the agent's static key from the
  * device chain, so its first message is encrypted to the agent. The prologue

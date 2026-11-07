@@ -50,7 +50,7 @@ interface ScreensApi {
   /**
    * Whether the device keeping the screen dropped its panes' other devices on
    * the last save: a build from before panes named their device
-   * (`server-rs/src/screens`), which kept only what it knew.
+   * (`crates/droppen-server/src/screens`), which kept only what it knew.
    */
   machinesDropped: (id: string) => boolean;
   dismissMachinesDropped: (id: string) => void;

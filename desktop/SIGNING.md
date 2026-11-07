@@ -376,7 +376,7 @@ it but what the signature binds: the archive and its version.
 ### Rules for a release
 
 - The app's version must be the release's: `desktop/build.sh --ref vX.Y.Z`
-  builds the version in `server-rs/Cargo.toml` at that tag and refuses a tag
+  builds the version in `crates/droppen-server/Cargo.toml` at that tag and refuses a tag
   that disagrees; the updater compares it with `latest.json`'s `version`.
 - **Every release carries a `latest.json`**: the app always reads the
   *latest* release's. Without one, apps' own checks fail quietly and *Check

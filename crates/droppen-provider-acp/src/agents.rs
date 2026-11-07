@@ -857,16 +857,16 @@ mod tests {
                 }
             }
         }
-        let server = std::fs::canonicalize(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")).expect("server-rs");
+        let root = std::fs::canonicalize(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")).expect("the repository root");
         let mut files = Vec::new();
-        for dir in ["src", "tests", "crates"] {
-            walk(&server.join(dir), &mut files);
+        for dir in ["crates/droppen-server/src", "crates/droppen-server/tests", "crates"] {
+            walk(&root.join(dir), &mut files);
         }
         assert!(files.len() > 100, "the scan reads the server's sources: {} files", files.len());
         let naming: Vec<String> = files
             .iter()
             .filter(|path| names_the_scope(&std::fs::read_to_string(path).expect("source")))
-            .map(|path| path.strip_prefix(&server).expect("under server-rs").display().to_string())
+            .map(|path| path.strip_prefix(&root).expect("under the repository root").display().to_string())
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
             .collect();

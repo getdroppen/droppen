@@ -440,7 +440,7 @@ self.addEventListener("fetch", (e) => {
   }
 });
 
-/* Web Push arrival. Payload (server-rs push module): {title, body, tag, url}.
+/* Web Push arrival. Payload (the server's push module): {title, body, tag, url}.
  * tag is the session key, so a chatty session collapses into one notification
  * rather than a column of them.
  *

@@ -11,21 +11,24 @@ useDefault = true
 # fixed seeds (`droppen-proto/src/vectors.rs`, `web/test/e2e-ts-vectors.test.ts`)
 # so the Rust and WebCrypto sides can check each other byte for byte. The keys
 # in them are test fixtures, and the generic-api-key rule flags every one. The
-# path is listed under both crate names: an allowlist entry is kept once added.
+# path is listed under both crate names and both layouts (`server-rs/` before
+# the crates moved to the root): an allowlist entry is kept once added, and
+# the history scan reads every commit of every branch.
 [[allowlists]]
 description = "the cloud protocol's deterministic interop vectors"
 targetRules = ["generic-api-key"]
-paths = ['''^server-rs/crates/rh-proto/vectors/[^/]+\.json$''', '''^server-rs/crates/droppen-proto/vectors/[^/]+\.json$''']
+paths = ['''^server-rs/crates/rh-proto/vectors/[^/]+\.json$''', '''^server-rs/crates/droppen-proto/vectors/[^/]+\.json$''', '''^crates/droppen-proto/vectors/[^/]+\.json$''']
 
 # `dGhlIHNhbXBsZSBub25jZQ==` is the `Sec-WebSocket-Key` of RFC 6455 §1.3 ("the
 # sample nonce"), which the auth tests send to make a request a WebSocket
 # handshake: a published example, not a credential. Both files the tests have
-# lived in stay named: the history scan reads every commit of every branch.
+# lived in stay named, in both layouts: the history scan reads every commit of
+# every branch.
 [[allowlists]]
 description = "RFC 6455's sample WebSocket key in the auth tests"
 condition = "AND"
 targetRules = ["generic-api-key"]
-paths = ['''^server-rs/src/auth/routes\.rs$''', '''^server-rs/src/api/auth_routes\.rs$''']
+paths = ['''^server-rs/src/auth/routes\.rs$''', '''^server-rs/src/api/auth_routes\.rs$''', '''^crates/droppen-server/src/auth/routes\.rs$''', '''^crates/droppen-server/src/api/auth_routes\.rs$''']
 regexTarget = "secret"
 regexes = ['''^dGhlIHNhbXBsZSBub25jZQ==$''']
 
@@ -35,7 +38,7 @@ regexes = ['''^dGhlIHNhbXBsZSBub25jZQ==$''']
 description = "a made-up OpenAI API key in the setup tests"
 condition = "AND"
 targetRules = ["generic-api-key"]
-paths = ['''^server-rs/src/setup/tasks\.rs$''', '''^server-rs/crates/droppen-setup/src/tasks\.rs$''']
+paths = ['''^server-rs/src/setup/tasks\.rs$''', '''^server-rs/crates/droppen-setup/src/tasks\.rs$''', '''^crates/droppen-server/src/setup/tasks\.rs$''', '''^crates/droppen-setup/src/tasks\.rs$''']
 regexTarget = "secret"
 regexes = ['''^sk-proj-TESTKEY0123456789abcdefghijklmnop$''']
 

@@ -58,7 +58,7 @@
 //! `PushManager` and says so. Every route here still works over HTTP (they are
 //! ordinary JSON, and `GET /api/push/vapid` in particular is useful to hit while
 //! diagnosing exactly this), so the failure is visible rather than silent. See
-//! `server-rs/README.md` for the deployment shapes that do work.
+//! `crates/droppen-server/README.md` for the deployment shapes that do work.
 
 pub mod ece;
 pub mod store;

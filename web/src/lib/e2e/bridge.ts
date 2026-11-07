@@ -1,6 +1,6 @@
 /*
  * What a sub-stream carries when the agent bridges it to its own loopback API
- * (`server-rs/crates/droppen-proto/src/bridge.rs` — read that for the why):
+ * (`crates/droppen-proto/src/bridge.rs` — read that for the why):
  *
  * - every stream opens with a request head as its `open` metadata: method,
  *   path (with query) and headers;

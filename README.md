@@ -100,11 +100,11 @@ Copyright (C) 2026 Kilerd.
 
 - **The applications** are licensed under the GNU Affero General Public License
   v3.0 only ([LICENSE](LICENSE), `AGPL-3.0-only`): the local program (the root
-  crate in `server-rs/`), the desktop app (`desktop/`), the web app (`web/`) and
+  crate in `crates/droppen-server/`), the desktop app (`desktop/`), the web app (`web/`) and
   the relay program (`droppen-relay`).
 - **The protocol and library crates**, `droppen-proto`, `droppen-relay-core` (the library),
   `droppen-client` and `droppen-devkit`, and the plugin SDKs (`packages/plugin-sdk`,
-  `server-rs/crates/droppen-plugin-sdk`) are licensed under `MIT OR
+  `crates/droppen-plugin-sdk`) are licensed under `MIT OR
   Apache-2.0`, at your option; each has `LICENSE-MIT` and `LICENSE-APACHE` in
   its directory. These are the only parts of this repository the closed Hub
   links.

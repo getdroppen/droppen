@@ -5,7 +5,7 @@ import { Dialog, DialogContent } from "@/components/ui/dialog";
 
 /**
  * `POST /api/apps`'s refusal when the device has no `code-server` on its
- * server's `PATH` (`server-rs/src/apps/mod.rs`): a token beside the server's
+ * server's `PATH` (`crates/droppen-server/src/apps/mod.rs`): a token beside the server's
  * own sentence, so the words here can be the reader's and say what to do.
  */
 export const CODE_SERVER_MISSING = "code_server_missing";

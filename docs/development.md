@@ -4,13 +4,13 @@
 
 | Part | Where | What it is |
 |---|---|---|
-| Local program | `server-rs/` (root crate `remote-hand-server`; the command is `droppen`) | One binary with the web app built in. It runs the CLIs and serves the local API and web app. Once signed in, it is also the agent that connects this computer to your other devices, and the local gateway through which the local web app sees your other computers without holding keys itself. |
+| Local program | `crates/droppen-server/` (root crate `remote-hand-server`; the command is `droppen`) | One binary with the web app built in. It runs the CLIs and serves the local API and web app. Once signed in, it is also the agent that connects this computer to your other devices, and the local gateway through which the local web app sees your other computers without holding keys itself. |
 | Web app | `web/` | Vite + React: the local UI, and the cloud mode droppen.app serves (`web/src/features/cloud`, `web/src/lib/hub`, `web/src/lib/e2e`). |
 | Desktop app | `desktop/` | Droppen for macOS (Tauri). It carries the local program and runs it for you. Its own Cargo workspace; see [desktop/README.md](../desktop/README.md). |
-| Relay | `server-rs/crates/droppen-relay` (the program), `server-rs/crates/droppen-relay-core` (the library) | `droppen-relay` pairs a device's channel with a computer's on tickets the Hub signs and copies the ciphertext between them. It stores nothing and holds no keys. See [Running a relay](relay.md). |
-| Protocol | `server-rs/crates/droppen-proto` | Hub frames, the Noise end-to-end channel, the device chain, encrypted log records and interoperability vectors. |
-| Client libraries | `server-rs/crates/droppen-client`, `server-rs/crates/droppen-devkit` | The device side of the Hub API in Rust; a headless device for tests. |
-| Plugin SDKs | `packages/plugin-sdk` (`@droppen/plugin-sdk`), `server-rs/crates/droppen-plugin-sdk` | For writing plugins. Droppen ships none: a plugin is installed into an instance at runtime and served by that instance's server; see [plugins/runtime.md](plugins/runtime.md). |
+| Relay | `crates/droppen-relay` (the program), `crates/droppen-relay-core` (the library) | `droppen-relay` pairs a device's channel with a computer's on tickets the Hub signs and copies the ciphertext between them. It stores nothing and holds no keys. See [Running a relay](relay.md). |
+| Protocol | `crates/droppen-proto` | Hub frames, the Noise end-to-end channel, the device chain, encrypted log records and interoperability vectors. |
+| Client libraries | `crates/droppen-client`, `crates/droppen-devkit` | The device side of the Hub API in Rust; a headless device for tests. |
+| Plugin SDKs | `packages/plugin-sdk` (`@droppen/plugin-sdk`), `crates/droppen-plugin-sdk` | For writing plugins. Droppen ships none: a plugin is installed into an instance at runtime and served by that instance's server; see [plugins/runtime.md](plugins/runtime.md). |
 | Hub API | [`docs/hub-api/`](hub-api/README.md) | The contract between this code and the Hub. |
 
 Droppen Hub, the service at droppen.app, is not in this repository and is not
@@ -30,7 +30,7 @@ Besides Claude Code and Codex, it starts and drives any agent that speaks the
 [Agent Client Protocol](https://agentclientprotocol.com) (ACP) over stdio.
 Settings → Agents & accounts → ACP holds one card per agent: add a known one
 from the built-in presets
-([`server-rs/crates/droppen-provider-acp/src/acp-agents.json`](../server-rs/crates/droppen-provider-acp/src/acp-agents.json)) or give
+([`crates/droppen-provider-acp/src/acp-agents.json`](../crates/droppen-provider-acp/src/acp-agents.json)) or give
 any agent's command line, and check that it starts. Every session records the
 agent it was started on and is always resumed with that agent.
 
@@ -42,7 +42,7 @@ You need Rust (stable), Node 22 (see `.nvmrc`) and pnpm 10.6.3 (the version in
 ```sh
 pnpm install
 pnpm build:web                                               # first: the web app is embedded in the binary
-cargo build --release --manifest-path server-rs/Cargo.toml   # the same as pnpm build:server
+cargo build --release -p droppen-server                      # the same as pnpm build:server
 ```
 
 The program is `target/release/droppen-server`.
@@ -68,7 +68,7 @@ pnpm dev:web      # Vite on http://localhost:5180, proxying /api and /embed to t
 Tests and checks:
 
 ```sh
-pnpm test         # the web app's tests, then cargo test for server-rs
+pnpm test         # the web app's tests, then cargo test for the server
 pnpm typecheck
 pnpm gen:api      # after changing the server's routes or types:
                   # regenerates openapi/openapi.json and web/src/api/schema.d.ts
@@ -76,7 +76,7 @@ pnpm gen:api      # after changing the server's routes or types:
 
 `pnpm test` runs the server's tests on several threads of one process, which is
 fine for a quick run on macOS. CI runs them with cargo-nextest, one process per
-test (`cargo nextest run` in `server-rs/`), and that is what a pull
+test (`cargo nextest run` from the repository root), and that is what a pull
 request has to pass; [CONTRIBUTING.md](../CONTRIBUTING.md#run-the-tests-before-you-open-a-pull-request)
 has the exact commands. The desktop app's tests run with
 `cargo test --workspace` in `desktop/`.

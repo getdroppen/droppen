@@ -1201,7 +1201,7 @@ mod tests {
     fn configure_fake(paths: &Paths, home: &Path, id: &str, env: &str) {
         use std::os::unix::fs::PermissionsExt;
         let program = home.join("fake-agent");
-        std::fs::write(&program, include_str!("../../../tests/support/fake_acp_agent.py")).expect("agent");
+        std::fs::write(&program, include_str!("../../droppen-server/tests/support/fake_acp_agent.py")).expect("agent");
         std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).expect("chmod");
         let patch = crate::agents::AcpAgentUpdate {
             name: None.into(),

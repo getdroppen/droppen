@@ -191,7 +191,7 @@ async fn the_spec_is_served_and_names_the_ported_routes() {
     // same one). A route or doc-comment change that skipped `pnpm gen:api`
     // leaves `openapi/openapi.json` behind, and `web/src/api/schema.d.ts`,
     // generated from it, with it.
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../openapi/openapi.json");
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../openapi/openapi.json");
     let text = std::fs::read_to_string(path).expect("read openapi/openapi.json");
     let committed: Value = serde_json::from_str(&text).expect("openapi/openapi.json is JSON");
     assert!(
@@ -391,7 +391,7 @@ async fn a_limit_outside_the_documented_range_is_a_400() {
 /// the component properties `hoist_nullable_refs` covers.
 #[test]
 fn no_schema_object_carries_nullable_beside_a_ref() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../openapi/openapi.json");
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../openapi/openapi.json");
     let text = std::fs::read_to_string(path).expect("read openapi/openapi.json");
     let document: Value = serde_json::from_str(&text).expect("openapi/openapi.json is JSON");
 

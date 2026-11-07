@@ -212,7 +212,7 @@ SHA=$(git -C "$REPO" rev-parse --verify --quiet "$REF^{commit}") \
   || die "cannot resolve $REF (fetch the tag, or pass --ref <commit>)"
 REV=$(git -C "$REPO" rev-parse --short "$SHA")
 COMMIT_TIME=$(git -C "$REPO" log -1 --format=%ct "$SHA")
-CRATE_VERSION=$(git -C "$REPO" show "$SHA:server-rs/Cargo.toml" | sed -n 's/^version = "\(.*\)"$/\1/p' | head -1)
+CRATE_VERSION=$(git -C "$REPO" show "$SHA:crates/droppen-server/Cargo.toml" | sed -n 's/^version = "\(.*\)"$/\1/p' | head -1)
 if [ "v$CRATE_VERSION" != "$VERSION" ] && [ "$SNAPSHOT" != 1 ]; then
   die "$REF is server version $CRATE_VERSION, not $VERSION (pass --ref for the right commit)"
 fi

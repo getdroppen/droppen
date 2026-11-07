@@ -379,7 +379,7 @@ mod guide {
         // The stand-in app server runs only under a test root.
         std::fs::write(home.path().join(".rh-test-root"), b"").expect("test root");
         let codex = home.path().join("codex");
-        let fake = concat!(env!("CARGO_MANIFEST_DIR"), "/crates/droppen-provider-codex/tests/support/fake_codex.py");
+        let fake = concat!(env!("CARGO_MANIFEST_DIR"), "/../droppen-provider-codex/tests/support/fake_codex.py");
         std::fs::write(&codex, format!("#!/bin/sh\nexec python3 {fake} \"$@\"\n")).expect("codex");
         std::fs::set_permissions(&codex, std::fs::Permissions::from_mode(0o755)).expect("chmod");
         let setup = Setup::new(Arc::new(Paths::new(home.path().to_path_buf())), &crate::app::logins());

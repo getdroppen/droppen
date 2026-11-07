@@ -1,7 +1,7 @@
 # Running the hub image
 
 What open tooling relies on when it runs a Droppen Hub **image** instead of a
-hub it built: today `server-rs/crates/droppen-devkit/scripts/cloud-dev.sh` with
+hub it built: today `crates/droppen-devkit/scripts/cloud-dev.sh` with
 `DROPPEN_HUB_IMAGE`, the local cloud stack for developing the web app and the
 local server against a throwaway hub. This page is that image's run
 interface for such a hub — how to start it, what to set, what it listens on

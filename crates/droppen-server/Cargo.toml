@@ -25,64 +25,64 @@ embed = ["dep:rust-embed", "dep:mime_guess"]
 # `rtc` is the direct path's WebRTC peer (str0m, sans-IO ICE/DTLS/SCTP on
 # pure-Rust crypto): UDP sockets bound per attempt, and only by an enrolled
 # agent's link (`agent::direct`; `DROPPEN_AGENT_DIRECT=0` turns it off).
-droppen-proto = { path = "crates/droppen-proto", features = ["runtime", "rtc"] }
+droppen-proto = { path = "../droppen-proto", features = ["runtime", "rtc"] }
 # The plugin contract (manifest, ids, document-store wire format). The host
 # links it; it links nothing of the host's — see the crate's own manifest.
-droppen-plugin-sdk = { path = "crates/droppen-plugin-sdk" }
+droppen-plugin-sdk = { path = "../droppen-plugin-sdk" }
 # The helpers below every subsystem: the clock, text codecs, private files,
 # process guards, outbound webhooks, the environment and the program's name.
-droppen-base = { path = "crates/droppen-base" }
+droppen-base = { path = "../droppen-base" }
 # The instance: its paths, the directory and lock it owns, who it is and its
 # databases.
-droppen-instance = { path = "crates/droppen-instance" }
+droppen-instance = { path = "../droppen-instance" }
 # The HTTP kit every route module builds on: errors, extractors, response
 # types, the websocket helpers, the OpenAPI helpers, the origin guard, the
 # configuration and the build's identity.
-droppen-http = { path = "crates/droppen-http" }
+droppen-http = { path = "../droppen-http" }
 # The supervising process (`up`) and self-update (`POST /api/server/self-upgrade`).
-droppen-supervisor = { path = "crates/droppen-supervisor" }
+droppen-supervisor = { path = "../droppen-supervisor" }
 # The pseudo-terminals that outlive the server: the shim this binary runs as
 # (`pty-shim`), and the server's end of the link to it.
-droppen-pty = { path = "crates/droppen-pty" }
+droppen-pty = { path = "../droppen-pty" }
 # Local accounts: users, logins, tickets, the login guard and its routes.
-droppen-auth = { path = "crates/droppen-auth" }
+droppen-auth = { path = "../droppen-auth" }
 # Files under the home directory behind the path fence, and the media proxy.
-droppen-files = { path = "crates/droppen-files" }
+droppen-files = { path = "../droppen-files" }
 # The panes and the layout around sessions: terminals, apps, screens, prefs.
-droppen-workbench = { path = "crates/droppen-workbench" }
+droppen-workbench = { path = "../droppen-workbench" }
 # The plugin host: installed packages, their switches, store, routes and assets.
-droppen-plugins = { path = "crates/droppen-plugins" }
+droppen-plugins = { path = "../droppen-plugins" }
 # Sessions: their vocabulary, stores, listing, attention and usage stats, and
 # the `Transcripts` port the readers in `src/sessions` implement.
-droppen-sessions = { path = "crates/droppen-sessions" }
+droppen-sessions = { path = "../droppen-sessions" }
 # Accounts: the store, rotation, limits, the quota cache and the `Login` port
 # each CLI's login in `src/accounts` implements.
-droppen-accounts = { path = "crates/droppen-accounts" }
-droppen-provider = { path = "crates/droppen-provider" }
+droppen-accounts = { path = "../droppen-accounts" }
+droppen-provider = { path = "../droppen-provider" }
 # The ACP agents' provider: their runs, their routes, their model list and
 # their transcripts. The entry registers it.
-droppen-provider-acp = { path = "crates/droppen-provider-acp" }
+droppen-provider-acp = { path = "../droppen-provider-acp" }
 # Codex's provider: its app-server driver, its threads and their claims, its
 # model list, quota reading and login. The entry registers it.
-droppen-provider-codex = { path = "crates/droppen-provider-codex" }
+droppen-provider-codex = { path = "../droppen-provider-codex" }
 # Claude Code's provider: its resident driver, its transcripts and their
 # roots, its model list, quota reading and logins, and the flight recorder.
 # The entry registers it.
-droppen-provider-claude-code = { path = "crates/droppen-provider-claude-code" }
+droppen-provider-claude-code = { path = "../droppen-provider-claude-code" }
 # The drive: starting, sending to and answering sessions, the feeds, the
 # instant chats and the scheduled tasks. The entry builds it.
-droppen-drive = { path = "crates/droppen-drive" }
+droppen-drive = { path = "../droppen-drive" }
 # The first-run guide: detection, installs and sign-ins, folders and progress.
-droppen-setup = { path = "crates/droppen-setup" }
+droppen-setup = { path = "../droppen-setup" }
 # The device role: verified copies of the account's other machines.
-droppen-aggregator = { path = "crates/droppen-aggregator" }
+droppen-aggregator = { path = "../droppen-aggregator" }
 # The machine role: identity, enrollment, the hub link, chain, relays, streams.
-droppen-agent = { path = "crates/droppen-agent" }
+droppen-agent = { path = "../droppen-agent" }
 # The alert channels: Bark, Web Push and the alert fan-out.
-droppen-notify = { path = "crates/droppen-notify" }
+droppen-notify = { path = "../droppen-notify" }
 # The link to Droppen: the link routes, the remote-view gate, link control and
 # the aggregator gateway.
-droppen-cloud = { path = "crates/droppen-cloud" }
+droppen-cloud = { path = "../droppen-cloud" }
 gotcha = { workspace = true }
 # Named by no code here (the routes reach axum through gotcha), but the one
 # dependency that keeps axum's default features in the binary: gotcha takes
@@ -124,7 +124,7 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 regex = "1"
 p256 = { version = "0.13", features = ["ecdh"] }
 rand = "0.8"
-droppen-client = { path = "crates/droppen-client" }
+droppen-client = { path = "../droppen-client" }
 # Reading a compressed answer back (`static_files`' tests).
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 # The tests' outbound HTTP clients; the server's own code makes no request now
@@ -153,52 +153,52 @@ tokio = { version = "1", features = ["test-util"] }
 tokio-tungstenite = { version = "0.29", features = ["rustls-tls-webpki-roots"] }
 # The child-PATH override per test thread, which the unit tests that set it
 # rely on (`setup::tests::ChildPathGuard`): see the feature's own comment.
-droppen-base = { path = "crates/droppen-base", features = ["test-support"] }
+droppen-base = { path = "../droppen-base", features = ["test-support"] }
 # The device role's test switch and a published index slot, for the tests of
 # the controller under a real agent state and of the gateway.
-droppen-aggregator = { path = "crates/droppen-aggregator", features = ["test-support"] }
+droppen-aggregator = { path = "../droppen-aggregator", features = ["test-support"] }
 # What the tests of `cloud::control`, the `agent` command line and the bridge's
 # route classification reach of the agent's files (`droppen_agent::testing`), and
 # transcripts made the way the loader makes them (`streams::test_transcripts`).
-droppen-agent = { path = "crates/droppen-agent", features = ["test-support"] }
+droppen-agent = { path = "../droppen-agent", features = ["test-support"] }
 # A link whose frames are all queued at once, for the terminal tests
 # (`droppen_pty::client::Link::preloaded`).
-droppen-pty = { path = "crates/droppen-pty", features = ["test-support"] }
+droppen-pty = { path = "../droppen-pty", features = ["test-support"] }
 # The live setup code and a hold on the account store's writes, for the tests
 # of the guard and the `/api/auth/*` routes (`api::auth_routes`).
-droppen-auth = { path = "crates/droppen-auth", features = ["test-support"] }
+droppen-auth = { path = "../droppen-auth", features = ["test-support"] }
 # Plugin packages built in code and a host with some installed
 # (`droppen_plugins::testing`), for the feed's and the settings route's tests
 # and the plugin routes' and assets' (`api::plugins_routes`, `api::plugins_serve`).
-droppen-plugins = { path = "crates/droppen-plugins", features = ["test-support"] }
+droppen-plugins = { path = "../droppen-plugins", features = ["test-support"] }
 # The lock the tests that install the process-wide session index take, and a
 # transcript parse forgotten as a restart forgets it (`droppen_sessions::{index,
 # loader}`), for the readers', the feed's and the routes' tests.
-droppen-sessions = { path = "crates/droppen-sessions", features = ["test-support"] }
+droppen-sessions = { path = "../droppen-sessions", features = ["test-support"] }
 # The scratch-less paths and the stub CLI the logins' checks are tested with
 # (`droppen_accounts::verify`), for the tests of each CLI's login.
-droppen-accounts = { path = "crates/droppen-accounts", features = ["test-support"] }
-droppen-provider = { path = "crates/droppen-provider", features = ["test-support"] }
+droppen-accounts = { path = "../droppen-accounts", features = ["test-support"] }
+droppen-provider = { path = "../droppen-provider", features = ["test-support"] }
 # What the server's tests reach of the drive (`droppen_drive::testing`): the
 # search and first-unread helpers, and the list broadcast's capacity.
-droppen-drive = { path = "crates/droppen-drive", features = ["test-support"] }
+droppen-drive = { path = "../droppen-drive", features = ["test-support"] }
 # An ACP agent configured without the gate, and an agent's last check
 # recorded (`droppen_provider_acp::testing`), for the provider registry's and
 # the agents' routes' tests.
-droppen-provider-acp = { path = "crates/droppen-provider-acp", features = ["test-support"] }
+droppen-provider-acp = { path = "../droppen-provider-acp", features = ["test-support"] }
 # The resident's test harness (`resident::test_harness`), for the test in
 # `api::feed_session` that runs a resident through a real session feed.
-droppen-provider-claude-code = { path = "crates/droppen-provider-claude-code", features = ["test-support"] }
+droppen-provider-claude-code = { path = "../droppen-provider-claude-code", features = ["test-support"] }
 # A Codex row added to a run journal as Codex reads it
 # (`app_server::CodexRowsExt`), for the tests of each CLI's journal rows.
-droppen-provider-codex = { path = "crates/droppen-provider-codex", features = ["test-support"] }
+droppen-provider-codex = { path = "../droppen-provider-codex", features = ["test-support"] }
 # The guide's stand-in logins, its state without a server and its runner
 # fixture (`droppen_setup::{testing, runner::fixture}`), for the server's tests
 # of the guide on its own logins (`src/setup_tests.rs`).
-droppen-setup = { path = "crates/droppen-setup", features = ["test-support"] }
+droppen-setup = { path = "../droppen-setup", features = ["test-support"] }
 # The options a parsed `notify` command line asks for, for its tests through
 # this binary's command tree (`cli::tests::notify`, `droppen_notify::testing`).
-droppen-notify = { path = "crates/droppen-notify", features = ["test-support"] }
+droppen-notify = { path = "../droppen-notify", features = ["test-support"] }
 # What the tests of the cloud routes, the remote-view gate and link control
 # (`api::cloud_routes`, `api::cloud_control`) reach of cloud (`droppen_cloud::testing`).
-droppen-cloud = { path = "crates/droppen-cloud", features = ["test-support"] }
+droppen-cloud = { path = "../droppen-cloud", features = ["test-support"] }

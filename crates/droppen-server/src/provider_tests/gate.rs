@@ -15,7 +15,8 @@ use syn::visit_mut::{self, VisitMut};
 use syn::{Attribute, Expr, ForeignItem, ImplItem, Item, Meta, Stmt, Token, TraitItem};
 
 /// One source file of the server or of a crate of its workspace: its path
-/// from `server-rs` (`src/…`, `crates/<crate>/src/…`), what it says, its code
+/// from the server's package (`src/…`) or the repository root
+/// (`crates/<crate>/src/…`), what it says, its code
 /// built outside tests ([`Code::of`]), and whether that code can reach the
 /// provider base at all ([`ManifestExt::sees_the_base`]). A file that is a
 /// test module's has no code.
@@ -48,9 +49,10 @@ impl Source {
             }
         }
         let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root = manifest.parent().and_then(|crates| crates.parent()).expect("the repository root");
         let mut paths = Vec::new();
-        let crates = std::fs::read_dir(manifest.join("crates")).expect("the workspace's crates").flatten();
-        for dir in std::iter::once(manifest.join("src")).chain(crates.map(|entry| entry.path().join("src"))) {
+        let crates = std::fs::read_dir(root.join("crates")).expect("the workspace's crates").flatten();
+        for dir in crates.map(|entry| entry.path().join("src")) {
             if dir.is_dir() {
                 walk(&dir, &mut paths);
             }
@@ -80,9 +82,9 @@ impl Source {
             .into_iter()
             .map(|(path, text, (code, _))| {
                 let test = tests.iter().any(|module| path.starts_with(module) || path == module.with_extension("rs"));
-                let path = path.strip_prefix(manifest).expect("under server-rs").display().to_string();
+                let path = path.strip_prefix(&manifest).or_else(|_| path.strip_prefix(&root)).expect("under the workspace").display().to_string();
                 let sees_base = path.strip_prefix("crates/").and_then(|rest| rest.split_once('/')).is_none_or(|(name, _)| {
-                    let manifest = std::fs::read_to_string(manifest.join("crates").join(name).join("Cargo.toml")).expect("its manifest");
+                    let manifest = std::fs::read_to_string(root.join("crates").join(name).join("Cargo.toml")).expect("its manifest");
                     manifest.parse::<toml::Table>().expect("a manifest").sees_the_base()
                 });
                 Self {
@@ -709,7 +711,7 @@ fn only_the_providers_keep_the_runs() {
 #[test]
 fn outside_the_providers_a_source_is_named_as_often_as_layers_json_records() {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let layers: Layers = serde_json::from_str(&std::fs::read_to_string(manifest.join("../layers.json")).expect("layers.json")).expect("layers.json's sourceMatches");
+    let layers: Layers = serde_json::from_str(&std::fs::read_to_string(manifest.join("../../layers.json")).expect("layers.json")).expect("layers.json's sourceMatches");
     let sources = Source::every();
     let crates: BTreeSet<&str> = sources.iter().map(Source::krate).collect();
     let exempt: BTreeSet<&str> = layers.source_matches.exempt.iter().map(|exempt| exempt.krate.as_str()).collect();

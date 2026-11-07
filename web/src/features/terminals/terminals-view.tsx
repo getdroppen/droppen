@@ -104,7 +104,7 @@ export function TerminalsView() {
   // and Chrome silently drops the oldest WebGL context past its per-page cap
   // (~16), leaving already-mounted terminals to fall back to the DOM renderer.
   // Nothing was gained: the server replays a full repaint on every attach
-  // (`server-rs/src/terminals/routes.rs`), so a first selection paints straight
+  // (`crates/droppen-server/src/terminals/routes.rs`), so a first selection paints straight
   // away without having been attached in advance.
   // Prune killed terminals, but only once the list has actually answered — an
   // empty `data` is "not loaded yet" and would unmount every pane on a refetch.

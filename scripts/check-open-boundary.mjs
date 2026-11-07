@@ -3,7 +3,7 @@
  * The open-source boundary (docs/local-aggregator.md §2.1): the open crates
  * and `web/` never reach into the hub — not its code, not its schema, not its
  * environment — and the hub depends on them, never the other way round. The
- * hub (`server-rs/crates/rh-hub`, `droppen-hub` once renamed) is closed and
+ * hub (`crates/rh-hub`, `droppen-hub` once renamed) is closed and
  * moves to a repository of its own; this check keeps the open tree buildable
  * without it, here (hub present) and in the public repository (hub absent).
  *
@@ -30,7 +30,7 @@
  * except what {@link ALLOWED} lets a file name, and says why.
  *
  * `desktop/` is not looked at: it is a cargo workspace of its own (the Tauri
- * app), which builds the server from `server-rs/` and, as of this writing,
+ * app), which builds the server from `crates/` and, as of this writing,
  * names nothing of the hub.
  *
  *   node scripts/check-open-boundary.mjs        (pnpm check:boundary)
@@ -50,7 +50,7 @@ export const isHub = (name) => HUB_NAMES.some((hub) => dashed(name) === hub || d
 
 /**
  * Environment variables named like the hub's that are the open side's own:
- * the hub a new sign-in uses (`server-rs/src/cloud/link.rs`) and the hub-API
+ * the hub a new sign-in uses (`crates/droppen-cloud/src/link.rs`) and the hub-API
  * traffic capture (`docs/hub-api/check.mjs --traffic`). Exactly the names main
  * reads; a new one is added here with its reason, never by widening the
  * pattern.
@@ -83,7 +83,7 @@ export const ALLOWED = [
   // documented run interface (docs/hub-api/running-the-hub-image.md),
   // under the names before the rename too.
   {
-    file: "server-rs/crates/droppen-devkit/scripts/cloud-dev.sh",
+    file: "crates/droppen-devkit/scripts/cloud-dev.sh",
     allow: [
       "DROPPEN_HUB_REDIS_URL", "DROPPEN_HUB_BUCKET_DIR", "DROPPEN_HUB_BIND", "DROPPEN_HUB_ORIGIN", "DROPPEN_HUB_SESSION_KEY",
       "DROPPEN_HUB_WEB_DIR", "DROPPEN_HUB_CHAIN_V3", "RH_HUB_CHAIN_V3", "DROPPEN_HUB_SIGNUP", "DROPPEN_HUB_DEV_OPEN_SIGNUP",
@@ -532,7 +532,7 @@ function cargoMetadata(root) {
 export function checkOpenBoundary(root, { metadata = cargoMetadata } = {}) {
   const problems = [];
   const notes = [];
-  const crates = join(root, "server-rs", "crates");
+  const crates = join(root, "crates");
   // the hub's side on disk (`crates/rh-hub`, `crates/rh-hub-tools`), in the workspace or not
   const hubDirs = (existsSync(crates) ? readdirSync(crates).sort() : [])
     .filter((name) => isHub(name) && existsSync(join(crates, name, "Cargo.toml")))
@@ -554,7 +554,7 @@ export function checkOpenBoundary(root, { metadata = cargoMetadata } = {}) {
     if (!side.length && !unlisted.length) notes.push("the hub is not in this tree (the public repository's shape)");
   } else {
     problems.push(`cargo metadata cannot load Cargo.toml:\n      ${error.split("\n").join("\n      ")}`);
-    open = [{ name: "droppen-server", dir: join(root, "server-rs") }];
+    open = [{ name: "droppen-server", dir: join(root, "crates", "droppen-server") }];
     for (const name of existsSync(crates) ? readdirSync(crates).sort() : []) {
       if (!isHub(name) && existsSync(join(crates, name, "Cargo.toml"))) open.push({ name, dir: join(crates, name) });
     }

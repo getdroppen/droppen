@@ -10,13 +10,13 @@ fn main() {
     build_identity();
 }
 
-/// The server package's version (`server-rs/Cargo.toml`), as
+/// The server package's version (`crates/droppen-server/Cargo.toml`), as
 /// `DROPPEN_SERVER_VERSION`: what `CARGO_PKG_VERSION` says when the server
 /// itself is compiled. The release tooling bumps that one line, so it stays
 /// the only place the version is written.
 fn server_version() {
-    println!("cargo::rerun-if-changed=../../Cargo.toml");
-    let manifest = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.toml")).expect("the server's manifest");
+    println!("cargo::rerun-if-changed=../droppen-server/Cargo.toml");
+    let manifest = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../droppen-server/Cargo.toml")).expect("the server's manifest");
     let mut section = "";
     let version = manifest
         .lines()
@@ -53,7 +53,7 @@ fn server_version() {
 /// keep a stale revision baked into an otherwise fresh binary, and a self-update
 /// that swapped one commit for another would report no change at all.
 fn build_identity() {
-    for path in ["../../../.git/HEAD", "../../../.git/index"] {
+    for path in ["../../.git/HEAD", "../../.git/index"] {
         if Path::new(env!("CARGO_MANIFEST_DIR")).join(path).exists() {
             println!("cargo::rerun-if-changed={path}");
         }

@@ -248,7 +248,7 @@ test("the labels it quotes are the protocol's own, and it names no Hub setting o
     assert.ok(words.includes(label), label);
   }
   // The same labels the Rust code signs under.
-  const sig = readFileSync(new URL("../../server-rs/crates/droppen-proto/src/sig.rs", import.meta.url), "utf8");
+  const sig = readFileSync(new URL("../../crates/droppen-proto/src/sig.rs", import.meta.url), "utf8");
   for (const m of words.matchAll(/rh\/v1 ([a-z-]+)(?= ·| rh\/v1|$)/g)) assert.ok(sig.includes(`b"rh/v1 ${m[1]}\\0"`), `sig.rs signs under rh/v1 ${m[1]}`);
   // No Hub setting and no path into the Hub's code (spelled so the open-boundary check does not take the test for one).
   assert.doesNotMatch(html, /(?:DROPPEN|RH)_HUB_|rh[-_]hub/);
@@ -363,7 +363,7 @@ test("every repository path on the page links to it on GitHub, at `main` until t
   // A commit the answer does not tie to this repository (a Hub's own, say) would lead nowhere: `main` instead.
   for (const repo of [undefined, "someone/fork", "getdroppen/droppen-fork"]) assert.equal(buildCommit({ commit: "0123abcd", repo }), null, String(repo));
   assert.equal(repoHref("scripts/verify-web.mjs", "0123abcd"), `${REPO}/blob/0123abcd/scripts/verify-web.mjs`);
-  assert.equal(repoHref("server-rs/crates/droppen-proto", "main"), `${REPO}/tree/main/server-rs/crates/droppen-proto`);
+  assert.equal(repoHref("crates/droppen-proto", "main"), `${REPO}/tree/main/crates/droppen-proto`);
   assert.equal(repoHref("/", "0123abcd"), REPO);
 
   const root = new URL("../../", import.meta.url);

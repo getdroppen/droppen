@@ -1220,7 +1220,7 @@ mod tests {
         fn no_source_the_module_runs_names_a_credential_path() {
             let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
             let mut checked = 0;
-            for entry in std::fs::read_dir(src.join("../crates/droppen-setup/src")).expect("crates/droppen-setup/src") {
+            for entry in std::fs::read_dir(src.join("../../droppen-setup/src")).expect("crates/droppen-setup/src") {
                 let path = entry.expect("entry").path();
                 if path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
                     continue;
@@ -1238,12 +1238,12 @@ mod tests {
             assert!(checked >= 6, "the scan found the module's files");
 
             for (file, functions) in [
-                ("../crates/droppen-accounts/src/lib.rs", &["parse_auth_status"][..]),
-                ("../crates/droppen-base/src/text.rs", &["strip_ansi"][..]),
-                ("../crates/droppen-provider-claude-code/src/login.rs", &["plan_label"][..]),
-                ("../crates/droppen-provider-codex/src/quota.rs", &["app_server_call", "ask", "send", "reply"][..]),
-                ("../crates/droppen-provider-codex/src/login.rs", &["app_server_call"][..]),
-                ("../crates/droppen-base/src/process_env.rs", &["apply_env"][..]),
+                ("../../droppen-accounts/src/lib.rs", &["parse_auth_status"][..]),
+                ("../../droppen-base/src/text.rs", &["strip_ansi"][..]),
+                ("../../droppen-provider-claude-code/src/login.rs", &["plan_label"][..]),
+                ("../../droppen-provider-codex/src/quota.rs", &["app_server_call", "ask", "send", "reply"][..]),
+                ("../../droppen-provider-codex/src/login.rs", &["app_server_call"][..]),
+                ("../../droppen-base/src/process_env.rs", &["apply_env"][..]),
             ] {
                 let source = std::fs::read_to_string(src.join(file)).expect(file);
                 for name in functions {

@@ -13,33 +13,33 @@ Node、不需要静态资源目录。
 改名会把同一台机器上的数据分成两份。这两个目录名和它们下面的路径是兼容面,不是遗留。
 
 ```bash
-cargo run -- serve                                   # 127.0.0.1:8700
-cargo run -- export-openapi --out ../openapi/openapi.json
-cargo run -- replay --log <录像>.ndjson --home /tmp/replay   # 见「会话飞行记录器与 replay」
-cargo test
-cargo clippy --all-targets --all-features -- -D warnings
+cargo run -p droppen-server -- serve                                   # 127.0.0.1:8700
+cargo run -p droppen-server -- export-openapi --out openapi/openapi.json
+cargo run -p droppen-server -- replay --log <录像>.ndjson --home /tmp/replay   # 见「会话飞行记录器与 replay」
+cargo test -p droppen-server
+cargo clippy -p droppen-server --all-targets --all-features -- -D warnings
 ```
 
-`web/dist` 缺席时 `build.rs` 会把 embed 降级成一个「请先跑 pnpm build」的占位页，所以
+`web/dist` 缺席时 `crates/droppen-server/build.rs` 会把 embed 降级成一个「请先跑 pnpm build」的占位页，所以
 在没构建过前端的干净 checkout 上 `cargo check` / `cargo test` 照样能跑。
 
 ## 布局
 
 服务端 crate 只是入口：每个子系统都是 `crates/` 下自己的 crate，按 `layers.json` 给的层次依赖彼此。
-子系统的路由跑在它自己的状态上，在 `api/mod.rs` 里各占一行注册（大多是 `XxxState::routes`）；
-`api/state.rs` 是唯一知道 `AppState` 各字段的地方，从它造出每个子系统的状态。
+子系统的路由跑在它自己的状态上，在 `crates/droppen-server/src/api/mod.rs` 里各占一行注册（大多是 `XxxState::routes`）；
+`crates/droppen-server/src/api/state.rs` 是唯一知道 `AppState` 各字段的地方，从它造出每个子系统的状态。
 
 | 路径 | 负责 |
 | --- | --- |
-| `api/` | 路由：每个子系统的路由各占一行注册、`AppState` 与它造出的各子系统状态（`state.rs`），以及要同时读几个子系统的会话列表、详情、会话 websocket 和设置 |
-| `app.rs` | 应用装配：config / state / 用 `Gotcha` builder 组装 routes 与文档端点 / bind、本服务驱动的 CLI（`register_providers`、`transcript_sources`、`logins`）、一个 crate 声明而由另一个 crate 的类型回答的端口，以及自己的 listener 与可停机 serve loop（gotcha 的 `run`/`bind` 不带 `ConnectInfo`） |
-| `stream_source.rs` | link 从本机会话复制的内容：agent 的 `StreamSource`，读会话与 drive 的实时状态 |
-| `cli.rs`、`cli/` | 命令行：一棵 clap 树；`export.rs` 是其中的 `export-openapi` |
-| `static_files.rs` | 打进二进制的前端 |
-| `desktop_app.rs` | 由桌面 app 启动的服务端 |
-| `shutdown.rs` | 让服务端停下的信号，以及停下时要收拾的东西 |
-| `provider_tests/` | 需要真 provider 的底座测试：在入口注册的 provider 上（`register_providers`），以及 spawn 闸门与运行的源码扫描 |
-| `accounts_tests/`、`setup_tests.rs` | 账号规则与首次使用向导在入口构造的真实登录上的测试（`logins`） |
+| `crates/droppen-server/src/api/` | 路由：每个子系统的路由各占一行注册、`AppState` 与它造出的各子系统状态（`state.rs`），以及要同时读几个子系统的会话列表、详情、会话 websocket 和设置 |
+| `crates/droppen-server/src/app.rs` | 应用装配：config / state / 用 `Gotcha` builder 组装 routes 与文档端点 / bind、本服务驱动的 CLI（`register_providers`、`transcript_sources`、`logins`）、一个 crate 声明而由另一个 crate 的类型回答的端口，以及自己的 listener 与可停机 serve loop（gotcha 的 `run`/`bind` 不带 `ConnectInfo`） |
+| `crates/droppen-server/src/stream_source.rs` | link 从本机会话复制的内容：agent 的 `StreamSource`，读会话与 drive 的实时状态 |
+| `crates/droppen-server/src/cli.rs`、`crates/droppen-server/src/cli/` | 命令行：一棵 clap 树；`crates/droppen-server/src/export.rs` 是其中的 `export-openapi` |
+| `crates/droppen-server/src/static_files.rs` | 打进二进制的前端 |
+| `crates/droppen-server/src/desktop_app.rs` | 由桌面 app 启动的服务端 |
+| `crates/droppen-server/src/shutdown.rs` | 让服务端停下的信号，以及停下时要收拾的东西 |
+| `crates/droppen-server/src/provider_tests/` | 需要真 provider 的底座测试：在入口注册的 provider 上（`register_providers`），以及 spawn 闸门与运行的源码扫描 |
+| `crates/droppen-server/src/accounts_tests/`、`crates/droppen-server/src/setup_tests.rs` | 账号规则与首次使用向导在入口构造的真实登录上的测试（`logins`） |
 | `crates/droppen-notify/` | 服务端的两条提醒通道：会话自己决定「这件事值得打扰你」时走的 Bark，以及注进会话的 `rh-notify` 与 skill（`notify`）；服务端决定发的 Web Push 与同时转给 Bark 的分发（`push`） |
 | `crates/droppen-base/` | 各子系统都用、却不属于任何一个的底层工具：时钟（`time`）、文本编码（`text`）、只有本用户可读的文件（`fsutil`）、「文件里那个 pid 还是当初那个进程吗」的两道守卫（`procs`）、出站 webhook 的守卫（`outbound`）、读环境变量（`env`）、spawn 的环境与输出脱敏（`process_env`）、二进制的两个名字（`program`） |
 | `crates/droppen-instance/` | 实例的底座：各子系统共用的路径（`paths`）、一个服务端独占的实例目录与宣示所有权的 `flock`（`instance`）、改名也不变的服务端身份（`identity`），以及实例自己的 SQLite 状态库和只增不改的 schema（`db`） |
@@ -47,7 +47,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 | `crates/droppen-supervisor/` | `remote-hand-server up`：重启子进程、回滚坏二进制、收孤儿（`supervisor`）；`POST /api/server/self-upgrade`，以及 `<data>/bin` 这个二进制仓库（`selfupdate`） |
 | `crates/droppen-auth/` | 本机账号：谁能和这个服务端说话。账号与 argon2id 哈希（`users`）、登录会话（`sessions`）、websocket 与下载用的短命票据（`tickets`）、失败锁定（`lockout`）、没有账号的实例的设置码（`setup`）、本机控制 socket 发的一次性令牌（`local_open`）、`/api/auth/*`（`routes`）、`user` / `setup-code` / `open` 命令行（`cli`），以及每个请求最先经过的登录守卫（`guard`） |
 | `crates/droppen-files/` | `$HOME` 下的浏览、读取、下载与上传——客户端传来的路径只在这里被解析和收敛，经 Droppen 进来的设备另被挡在服务端自己的数据和配置目录之外（`FileRoots::fence`）；以及 transcript 里私有 GitHub 仓库图片的代理（`media`，走本机 `gh` 的登录） |
-| `crates/droppen-workbench/` | 会话周围的窗格与布局：浏览器通过 websocket 驱动的 PTY（`terminals`）、每个 app 一个 code-server 及 iframe 用的 `/embed/{id}/*` 反向代理（`apps`，`apps/embed.rs`）、持久化分屏布局（`screens`）、界面偏好（`prefs`） |
+| `crates/droppen-workbench/` | 会话周围的窗格与布局：浏览器通过 websocket 驱动的 PTY（`terminals`）、每个 app 一个 code-server 及 iframe 用的 `/embed/{id}/*` 反向代理（`apps`，`crates/droppen-workbench/src/apps/embed.rs`）、持久化分屏布局（`screens`）、界面偏好（`prefs`） |
 | `crates/droppen-plugins/` | 插件宿主：本实例装了哪些插件、哪些开着（配置 > 实例自己的决定 > 关）、它们的代码从哪里供给（`serve`，带实例级的能力密钥）、每个插件自己的文档存储（`store`）、安装包的校验（`install`）、`/api/plugins*`（`routes`）和 `plugin` 命令行（`cli`）；经 Droppen 进来的设备看不到任何插件 |
 | `crates/droppen-sessions/` | 会话本身：各处共用的会话词汇与线上数据形状、会话列表、未读与已读标记（`attention`，`…/seen` 路由在 `attention::routes`）、标题、置顶、归档、本实例的会话归属（`owned_sessions`）、`index.db`（`index`）、transcript 加载器（`loader`）和 token 用量统计（`stats`）；每个 CLI 的 transcript 都经 `Transcripts` 端口读，由各自 provider 里的读取器实现 |
 | `crates/droppen-accounts/` | 账号本身：服务端保存的多个登录（`store`）、会话从哪个账号启动、碰到限额换到哪个（`rotation`）、限额与休息（`limits`、`rest`）、本机自己的登录（`local_login`）、凭据保存前的验证（`verify`）、用量缓存与探测调度（`quota`）和 `/api/accounts*` 路由；与 CLI 有关的一切都经 `Login` 端口问各 CLI 的登录，由各 CLI 的 provider 实现（`droppen-provider-claude-code`、`droppen-provider-codex` 的 `login`） |
@@ -70,16 +70,16 @@ cargo clippy --all-targets --all-features -- -D warnings
   方案、把 `$ref` 旁的 `nullable` 提到组件上（`hoist_nullable_refs`）、把 `anyOf` 里的
   `null` 折回 `$ref`，以及恢复被容器级 `#[serde(default)]` 放松掉的 `required` 表。另有
   `Nullable<T>` / `Optional<T>` / `AnyValue` 这三个 zod 对齐包装和文档二进制的 `BinaryBody`。
-- **`export.rs`** — `export-openapi` 命令。用与线上服务相同的路由注册（`app::routes`）调
+- **`crates/droppen-server/src/export.rs`** — `export-openapi` 命令。用与线上服务相同的路由注册（`app::routes`）调
   `GotchaRouter::into_openapi` 生成文档再写盘：不起服务、不占端口、没有请求，也就不再需要
-  实例锁或关掉登录守卫。`tests/probe.rs` 守住线上文档与 `openapi/openapi.json` 一致，
-  `export.rs` 的测试守住导出与线上文档一致。
-- **`shutdown.rs`** — 服务端自己 serve 之后的停机流程：SIGINT/SIGTERM、放在 state 里的
+  实例锁或关掉登录守卫。`crates/droppen-server/tests/probe.rs` 守住线上文档与 `openapi/openapi.json` 一致，
+  `crates/droppen-server/src/export.rs` 的测试守住导出与线上文档一致。
+- **`crates/droppen-server/src/shutdown.rs`** — 服务端自己 serve 之后的停机流程：SIGINT/SIGTERM、放在 state 里的
   `CancellationToken`（让活着的 websocket 与 listener 同时收到停机），以及按序拆掉 feeds /
   terminals / apps / 全局 watcher 的 `Cleanups`。listener 之所以是自己的：gotcha 0.5.2 的
   `run`/`bind` 虽然能用 `connect_info(true)` 带上三个守卫要的 peer 地址，但停机顺序不对——
   见下文「生命周期」。
-- **`static_files.rs`** — 挂在 router fallback 上的单个 tower `Service`，从二进制里取资源、
+- **`crates/droppen-server/src/static_files.rs`** — 挂在 router fallback 上的单个 tower `Service`，从二进制里取资源、
   深链接回落到 `index.html`、让 `/api/*` 的 404 仍然是真 404。
 
 ## 部署与运维注记
@@ -322,7 +322,7 @@ replay 只做一件事：把 `transcript` / `sidecar` 事件按原始时间轴�
 - `WebSocketUpgrade` 不是 `ParameterProvider`，`#[api]` 生成的
   `<WebSocketUpgrade as ParameterProvider>::generate(..)` 直接编译失败——websocket 路由
   根本没法标注（`gotcha_macro-0.4.1/src/route.rs:88`）→ 三个 socket 路由
-  （`api/mod.rs`、`crates/droppen-drive/src/feed/global.rs`、`terminals/routes.rs`）都不标注、不进文档，与
+  （`crates/droppen-server/src/api/mod.rs`、`crates/droppen-drive/src/feed/global.rs`、`crates/droppen-workbench/src/terminals/routes.rs`）都不标注、不进文档，与
   TypeScript 服务端的选择一致。SSE 同理：`crates/droppen-drive/src/chats/mod.rs` 的 `POST
   /api/api-chats/{id}/message` 也留在文档外。
 - 元组 `Path` 抽取器到 0.5 已覆盖十六段（`gotcha_core-0.5.0/src/parameter.rs:257-272`），
@@ -335,21 +335,21 @@ replay 只做一件事：把 `transcript` / `sidecar` 事件按原始时间轴�
 - `GotchaRouter::nest` 拼接时多一个斜杠，会把路径记成 `/api//sessions`
   （`gotcha-0.4.1/src/router.rs:161`）→ 所有路径都写成扁平的全路径。
 - `GotchaRouter` 只有整体 `layer` / `route_layer`；只作用于单个路由的层得挂在该路由的
-  method router 上（`gotcha-0.5.0/src/routing.rs:88`）→ `origin.rs` 要管所有 `/api/*`，
+  method router 上（`gotcha-0.5.0/src/routing.rs:88`）→ `crates/droppen-http/src/origin.rs` 要管所有 `/api/*`，
   仍铺满全局，再在守卫第一行自己判断 `/api/` 前缀；各上传路由的体积上限则各自挂在自己的
   method router 上。
 - 没有自己的静态文件支持，也没有 `nest_service`，只有 `fallback_service`
-  （`gotcha-0.4.1/src/router.rs:236`）→ `static_files.rs` 用一个 tower `Service` 占住
+  （`gotcha-0.4.1/src/router.rs:236`）→ `crates/droppen-server/src/static_files.rs` 用一个 tower `Service` 占住
   fallback。
 - 组合点因此只剩 `fallback_service` 与 `layer` 两个，而 fallback 已经被 SPA 占了；同时
-  `routes` 在 state 存在之前就被调用，需要 state 的服务没法在那里注册 → `apps/embed.rs`
+  `routes` 在 state 存在之前就被调用，需要 state 的服务没法在那里注册 → `crates/droppen-workbench/src/apps/embed.rs`
   的反向代理改在 builder 的 `finish_router` 里组合：那时 state 已就绪、文档端点已挂好，
   这个 service 重新接管 fallback，把非 `/embed` 的请求转交给它包着的 SPA service。
 
 ### spec 获取
 
 - `GotchaRouter::into_openapi` 消费 router 直接给出完整文档，走的是和文档端点同一条生
-  成/变换管线，不需要 HTTP，也不再需要实例或登录守卫 → `export.rs` 不再起服务再
+  成/变换管线，不需要 HTTP，也不再需要实例或登录守卫 → `crates/droppen-server/src/export.rs` 不再起服务再
   `GET /openapi.json`。
 
 ### 生命周期
@@ -360,13 +360,13 @@ replay 只做一件事：把 `transcript` / `sidecar` 事件按原始时间轴�
   的连接——embed 代理转发的 websocket 不看取消信号，会把 drain 拖到时限；而桌面端在
   `SIGTERM` 之后 5 秒就发 `SIGKILL`（`desktop/src-tauri/src/shell.rs` 的 `STOP_GRACE`）。
   另外 `bind` 只收 IP，还会把 `config.server` 改写成绑定到的地址，而 Host 守卫读的正是它
-  → `app.rs` 仍然自己 bind，并用 `axum::serve(...into_make_service_with_connect_info...)`
-  serve；`shutdown.rs` 在收到信号时先跑 `Cleanups`，drain 连同收尾限时 5 秒。
+  → `crates/droppen-server/src/app.rs` 仍然自己 bind，并用 `axum::serve(...into_make_service_with_connect_info...)`
+  serve；`crates/droppen-server/src/shutdown.rs` 在收到信号时先跑 `Cleanups`，drain 连同收尾限时 5 秒。
 
 ### 配置
 
 - `ConfigBuilder` 没有「插在配置文件与 `APP_*` 之间」的公开源位：`defaults` 永远压在文件之下，
-  `env` 永远在最后，而托管平台通用的 `PORT` / `HOST` 必须夹在中间 → `config.rs` 取出 builder
+  `env` 永远在最后，而托管平台通用的 `PORT` / `HOST` 必须夹在中间 → `crates/droppen-http/src/config.rs` 取出 builder
   的 `ConfigState`，把它们作为一个 `Defaults` 源插到 `APP_*` 之前，再用
   `ConfigBuilder::from_state()` 重建，于是它们和其他源一起合并、强转、做 `${VAR}` 替换，
   `APP_SERVER__HOST` / `APP_SERVER__PORT`（任意大小写拼法）照旧压过它们。
@@ -374,19 +374,19 @@ replay 只做一件事：把 `transcript` / `sidecar` 事件按原始时间轴�
 ### 错误
 
 - `GotchaError` 把一切失败渲染成裸 `500` + 文本 body，既不携带状态码，也不是 web 客户端读
-  的 `{ "error": string }`（`gotcha-0.4.1/src/error.rs:57`）→ `api/error.rs` 自带
+  的 `{ "error": string }`（`gotcha-0.4.1/src/error.rs:57`）→ `crates/droppen-http/src/error.rs` 自带
   `ApiError`（状态码 + JSON body）。
 
 ### 非 gotcha、但同源的几处
 
 - axum 的抽取器拒绝请求时返回 `text/plain` 与飘忽的状态码（`422` / `415` / `400`），而
-  `@hono/zod-validator` 一律 `c.json(result, 400)` → `api/extract.rs` 用
+  `@hono/zod-validator` 一律 `c.json(result, 400)` → `crates/droppen-http/src/extract.rs` 用
   `ApiJson` / `ApiPath` / `ApiQuery` 包一层，并转发 `ParameterProvider`，OpenAPI 贡献不变。
 - serde 的 `missing_field` 会让一个朴素的 `Nullable` 字段悄悄变成可缺省 → `openapi_ext` 加
   了 `deserialize_with`，缺 key 直接报错。
-- `rust-embed` 的 derive 在目录缺失时直接让构建失败 → `build.rs` 判断 `web/dist` 是否存在，
+- `rust-embed` 的 derive 在目录缺失时直接让构建失败 → `crates/droppen-server/build.rs` 判断 `web/dist` 是否存在，
   以 `web_dist_missing` cfg 的形式交给 crate 选择占位实现。
 
-`tests/probe.rs` 里有一条测试专门守住文档与声明的一致性：断言
+`crates/droppen-server/tests/probe.rs` 里有一条测试专门守住文档与声明的一致性：断言
 `GET /api/sessions/{source}/{id}` 由 `errors(..)` 声明的 `404` 在、派生出的 `default` 不在，
 并把线上文档与 `openapi/openapi.json` 逐值比对。升级 gotcha 后先看它。

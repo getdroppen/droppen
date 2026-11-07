@@ -6,7 +6,7 @@ from the repository root, make it a key, and run it behind a TLS-terminating
 proxy:
 
 ```sh
-docker build -f server-rs/crates/droppen-relay-core/Dockerfile -t droppen-relay .
+docker build -f crates/droppen-relay-core/Dockerfile -t droppen-relay .
 docker run --rm droppen-relay droppen-relay keygen   # prints DROPPEN_RELAY_KEY=… (a secret)
 docker run -p 8080:8080 \
   -e DROPPEN_RELAY_HUB=https://<the Hub's origin> \
@@ -30,7 +30,7 @@ relay takes the socket's address, which behind a proxy is the proxy's for
 every client.
 
 Every variable is described in
-[`server-rs/crates/droppen-relay-core/src/config.rs`](../server-rs/crates/droppen-relay-core/src/config.rs),
+[`crates/droppen-relay-core/src/config.rs`](../crates/droppen-relay-core/src/config.rs),
 and the protocol between a relay and its Hub in
 [relay-and-plans.md](relay-and-plans.md) (in Chinese). A relay pairs
 channels only on tickets its Hub signs, so it serves the accounts of the Hub

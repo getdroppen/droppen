@@ -3,7 +3,7 @@
 The one server-side extension point of SDK 0.1. Every plugin gets a private
 document store per instance; the host implements it, no plugin ships server
 code. Licensed with the SDK (MIT OR Apache-2.0). Wire types live in
-`server-rs/crates/droppen-plugin-sdk` and `packages/plugin-sdk`; this page is
+`crates/droppen-plugin-sdk` and `packages/plugin-sdk`; this page is
 what they describe.
 
 A plugin is installed into an instance at runtime (`docs/plugins/runtime.md`):

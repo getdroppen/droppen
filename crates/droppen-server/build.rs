@@ -15,11 +15,11 @@ use std::path::Path;
 /// `pnpm test` scripts set it; `pnpm build:server` deliberately does not.
 fn main() {
     println!("cargo::rustc-check-cfg=cfg(web_dist_missing)");
-    println!("cargo::rerun-if-changed=../web/dist/index.html");
+    println!("cargo::rerun-if-changed=../../web/dist/index.html");
 
     // Watched always, read only when needed.
     rerun_if_changed(&["DROPPEN_ALLOW_MISSING_WEB_DIST"]);
-    let dist = Path::new(env!("CARGO_MANIFEST_DIR")).join("../web/dist/index.html");
+    let dist = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../web/dist/index.html");
     if dist.exists() {
         return;
     }

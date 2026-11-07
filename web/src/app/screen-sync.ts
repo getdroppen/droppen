@@ -387,7 +387,7 @@ export function dropScreen(copy: ScreensWorkingCopy, id: string): ScreensWorking
   return { trees, syncs };
 }
 
-/** What the global feed says about screens; see `server-rs/src/screens`. */
+/** What the global feed says about screens; see `crates/droppen-server/src/screens`. */
 export type ScreensFeedEvent =
   | { type: "screens:changed"; id: string; revision: number; deleted?: boolean }
   | { type: "screens:list"; listRevision: number }

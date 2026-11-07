@@ -35,10 +35,10 @@
  * Every claim here is one the build makes good on (docs/cross-machine-
  * architecture.md §0, §2, §5, §7, §9; the devices dashboard and its
  * 「需要你」 list in features/cloud/my-devices.tsx and machines/needs-you.ts;
- * the notifications in server-rs/src/push; a new session in
+ * the notifications in crates/droppen-server/src/push; a new session in
  * features/sessions/new-session-view.tsx; the files in features/files;
- * scheduled prompts in server-rs/src/schedule; the offline window, the plan's
- * retention, in server-rs/crates/droppen-agent/src/streams/retention.rs): numbers are the measured
+ * scheduled prompts in crates/droppen-server/src/schedule; the offline window, the plan's
+ * retention, in crates/droppen-agent/src/streams/retention.rs): numbers are the measured
  * p50s, nothing says "unhackable" or "audited", and "open source" only ever
  * names the client (AGPL-3.0), never Droppen Hub or Droppen as a whole.
  */

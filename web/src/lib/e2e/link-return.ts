@@ -1,6 +1,6 @@
 /*
  * Signing a device in to Droppen through the system browser, browser side
- * (`server-rs/crates/droppen-proto/src/link_return.rs` — read that for the why):
+ * (`crates/droppen-proto/src/link_return.rs` — read that for the why):
  * droppen.app seals the enrollment code to the sign-in attempt's one-off
  * X25519 key `E`, bound to the attempt's `state` and to what the consent page
  * showed, and the device's own page hands it to its server.

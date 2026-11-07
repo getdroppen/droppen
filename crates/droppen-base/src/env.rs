@@ -165,11 +165,11 @@ mod tests {
         let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).canonicalize().expect("this crate");
         let src = manifest.join("src");
         let mut found = Vec::new();
-        // The server's sources too, and those of every crate of its workspace,
-        // this one's among them: they read the environment through this
-        // module, and a crate that leaves the server is read wherever it goes.
+        // The sources of every crate of its workspace, the server's own among
+        // them: they read the environment through this module, and a crate
+        // that leaves the server is read wherever it goes.
         let crates = std::fs::read_dir(manifest.parent().expect("the workspace's crates")).expect("the workspace's crates").flatten();
-        let mut dirs: Vec<_> = std::iter::once(manifest.join("../../src").canonicalize().expect("the server's sources")).chain(crates.map(|entry| entry.path().join("src"))).filter(|dir| dir.is_dir()).collect();
+        let mut dirs: Vec<_> = crates.map(|entry| entry.path().join("src")).filter(|dir| dir.is_dir()).collect();
         while let Some(dir) = dirs.pop() {
             for entry in std::fs::read_dir(&dir).expect("read src").flatten() {
                 let path = entry.path();

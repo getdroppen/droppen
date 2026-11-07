@@ -1,7 +1,7 @@
 /*
  * The device chain, browser side: build, sign and verify the signed,
  * append-only list of an account's devices. The encoding and the rules are
- * `server-rs/crates/droppen-proto/src/chain.rs`'s, check for check and in the same
+ * `crates/droppen-proto/src/chain.rs`'s, check for check and in the same
  * order, so both sides refuse the same chains for the same reason — read that
  * file for the reasoning; in short:
  *
