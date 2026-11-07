@@ -3,13 +3,13 @@
 # have: the provider base's probes, a permit that takes no spawn gate, stand-in
 # logins. Tests turn it on through `[dev-dependencies]`, which no release build
 # reads. This checks that nothing turns one on any other way (a dependency's
-# features, a default): a build of the whole server-rs workspace without its
+# features, a default): a build of the whole server workspace without its
 # dev-dependencies, which is more than any release builds, has none on. The
 # targets are the ones this workspace is built for, as in
 # `check-serde-json-order.sh`.
 set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
-manifest="$root/server-rs/Cargo.toml"
+manifest="$root/Cargo.toml"
 targets="--target x86_64-unknown-linux-gnu --target aarch64-unknown-linux-gnu --target aarch64-apple-darwin --target x86_64-apple-darwin"
 
 # Its own step, so a failing `cargo tree` fails the check rather than reading

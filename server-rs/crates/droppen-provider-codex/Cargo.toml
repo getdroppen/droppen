@@ -44,7 +44,7 @@ missing_docs = "deny"
 unreachable_pub = "deny"
 
 # `[lints] workspace = true` cannot be mixed with the rust lints above, so the
-# workspace's two clippy denials (`server-rs/Cargo.toml` `[workspace.lints]`)
+# workspace's two clippy denials (the root `Cargo.toml` `[workspace.lints]`)
 # are repeated here: keep them in step.
 [lints.clippy]
 significant_drop_in_scrutinee = "deny"

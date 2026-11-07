@@ -5,7 +5,7 @@
 # TypeScript half of the same rule is scripts/check-plugin-boundary.mjs.
 set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
-tree=$(cargo tree --manifest-path "$root/server-rs/Cargo.toml" -p droppen-plugin-sdk -e normal --prefix none)
+tree=$(cargo tree --manifest-path "$root/Cargo.toml" -p droppen-plugin-sdk -e normal --prefix none)
 # Each line is `<crate> v<version> …`; a forbidden name also covers its
 # satellites (`gotcha_core`, `tokio-util`, `axum-core`).
 leaks=$(printf '%s\n' "$tree" | grep -E '^(rh-hub|droppen-proto|gotcha|axum|tokio)([-_][a-z0-9_-]+)? v' | sort -u || true)

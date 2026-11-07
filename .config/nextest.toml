@@ -1,5 +1,5 @@
 # cargo-nextest settings for the server workspace (docs: https://nexte.st).
-# CI runs `cargo nextest run --profile ci ...` from server-rs/ (see
+# CI runs `cargo nextest run --profile ci ...` from the repository root (see
 # .github/workflows/ci.yml); locally `cargo nextest run` uses the default
 # profile.
 #

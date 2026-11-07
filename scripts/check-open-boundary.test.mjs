@@ -256,13 +256,14 @@ describe("the whole check, over a made-up tree", () => {
       writeFileSync(join(root, path), text);
     }
     const packages = Object.keys(files)
-      .filter((p) => p.endsWith("Cargo.toml"))
+      .filter((p) => p.endsWith("Cargo.toml") && /name = "([^"]+)"/.test(files[p]))
       .map((p) => ({ name: /name = "([^"]+)"/.exec(files[p])[1], source: null, manifest_path: join(root, p), dependencies: [] }));
     return { root, metadata: () => ({ meta: { packages } }) };
   }
   const crate = (name) => `[package]\nname = "${name}"\n`;
   const open = {
-    "server-rs/Cargo.toml": `${crate("droppen-server")}[workspace]\n`,
+    "Cargo.toml": '[workspace]\nmembers = ["server-rs", "server-rs/crates/droppen-proto"]\n',
+    "server-rs/Cargo.toml": crate("droppen-server"),
     "server-rs/src/main.rs": 'fn main() { let _ = std::env::var("DROPPEN_HUB_DEFAULT"); }\n',
     "server-rs/crates/droppen-proto/Cargo.toml": crate("droppen-proto"),
     "server-rs/crates/droppen-proto/src/lib.rs": "pub fn f() {}\n",
@@ -290,6 +291,16 @@ describe("the whole check, over a made-up tree", () => {
     const { problems, notes } = checkOpenBoundary(root, { metadata });
     assert.deepEqual(problems, []);
     assert.ok(notes.includes("the hub is not in this tree (the public repository's shape)"), notes.join("\n"));
+  });
+
+  test("the server package's own manifest naming the hub is reported", () => {
+    const { root, metadata } = tree({
+      ...open,
+      "server-rs/Cargo.toml": `${crate("droppen-server")}[dependencies]\nrh-hub-api = { path = "../rh-hub-api" }\n`,
+    });
+    const { problems } = checkOpenBoundary(root, { metadata });
+    assert.equal(problems.length, 1, problems.join("\n"));
+    assert.match(problems[0], /^server-rs\/Cargo\.toml:4: names the hub's side, and the hub is not in this tree/);
   });
 
   test("the hub's side without the hub", () => {

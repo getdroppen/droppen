@@ -6,13 +6,16 @@
 # Give it ≥ 35 s after SIGTERM so `goaway` can drain its clients
 # (DROPPEN_RELAY_DRAIN_SECS, default 30).
 #
-# The binary is the `droppen-relay` package (crates/droppen-relay); this file
-# stays beside the library because the deployment configuration outside this
-# repository and the services' settings name this path.
+# The binary is the `droppen-relay` package (server-rs/crates/droppen-relay);
+# this file stays beside the library because the deployment configuration
+# outside this repository and the services' settings name this path.
 
 FROM rust:1-slim-bookworm AS build
-WORKDIR /src/server-rs
-COPY server-rs/ ./
+# The workspace manifest and lockfile are at the repository root; the sources
+# stay under server-rs/.
+WORKDIR /src
+COPY Cargo.toml Cargo.lock ./
+COPY server-rs/ ./server-rs/
 RUN cargo build --release --locked -p droppen-relay \
  && cp target/release/droppen-relay /usr/local/bin/droppen-relay
 

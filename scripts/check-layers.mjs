@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * The server's crates as Cargo builds them: the workspace's members held to
- * `server-rs/layers.json`, read from `cargo metadata --no-deps`: the declared
+ * the root `layers.json`, read from `cargo metadata --no-deps`: the declared
  * dependencies, whatever a manifest's spelling (renamed, per target,
  * inherited from the workspace), with no resolution and no network. The
  * server itself is the entry, the one crate whose `mayUse` is `*`.
@@ -488,9 +488,9 @@ export function checkCrates(meta, config, code = new Map()) {
   return { problems, stats };
 }
 
-function cargoMetadata(serverDir) {
+function cargoMetadata(root) {
   const cargo = process.env.CARGO || "cargo";
-  const run = spawnSync(cargo, ["metadata", "--format-version", "1", "--no-deps", "--manifest-path", join(serverDir, "Cargo.toml")], {
+  const run = spawnSync(cargo, ["metadata", "--format-version", "1", "--no-deps", "--manifest-path", join(root, "Cargo.toml")], {
     encoding: "utf8",
     maxBuffer: 256 * 1024 * 1024,
   });
@@ -500,13 +500,13 @@ function cargoMetadata(serverDir) {
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
-  const serverDir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "server-rs");
-  const config = JSON.parse(readFileSync(join(serverDir, "layers.json"), "utf8"));
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const config = JSON.parse(readFileSync(join(root, "layers.json"), "utf8"));
   let meta;
   try {
-    meta = cargoMetadata(serverDir);
+    meta = cargoMetadata(root);
   } catch (error) {
-    console.error(`layers: cargo metadata cannot read server-rs/Cargo.toml:\n  ${error.message.split("\n").join("\n  ")}`);
+    console.error(`layers: cargo metadata cannot read Cargo.toml:\n  ${error.message.split("\n").join("\n  ")}`);
     process.exit(1);
   }
   const { problems, stats } = checkCrates(meta, config, crateCode(meta));
@@ -528,7 +528,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     for (const p of problems) console.error(`  - ${p}`);
     console.error(
       "\nA crate depends on the crates its mayUse lists, and on the crates of the open layers below it " +
-        "(server-rs/layers.json); nothing depends on the entry. Move the shared piece down to where both sides can reach it, " +
+        "(layers.json); nothing depends on the entry. Move the shared piece down to where both sides can reach it, " +
         "or declare a port in the lower crate that the upper one implements. Outside the providers, dispatch on a Source " +
         "through the provider registry.",
     );

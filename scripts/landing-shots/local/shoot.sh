@@ -64,7 +64,7 @@ XML
 
   # The app, from this checkout: the web build is embedded in the server.
   (cd "$SRC" && pnpm install --frozen-lockfile >/dev/null && pnpm --filter @droppen/web build >/dev/null)
-  (cd "$SRC/server-rs" && DROPPEN_BUILD_REV="" cargo build --release --quiet -p droppen-server)
+  (cd "$SRC" && DROPPEN_BUILD_REV="" cargo build --release --quiet -p droppen-server)
   (cd "$SRC" && pnpm --filter @droppen/e2e exec playwright install --with-deps chromium >/dev/null)
 
   # The scripted CLIs, on the server's PATH as `claude` and `codex`.

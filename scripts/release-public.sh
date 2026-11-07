@@ -340,7 +340,7 @@ for target in ${TARGETS_TO_BUILD[@]+"${TARGETS_TO_BUILD[@]}"}; do
     CARGO_BUILD_BUILD_DIR="$WORK/build" \
     DROPPEN_BUILD_REV="$REV" RH_BUILD_REV="$REV" \
     RUSTFLAGS="--remap-path-prefix=$SRC=/droppen --remap-path-prefix=$CARGO_HOME_DIR=/cargo" \
-    cargo build --release --locked --target "$target" --manifest-path "$SRC/server-rs/Cargo.toml"
+    cargo build --release --locked --target "$target" --manifest-path "$SRC/Cargo.toml" -p droppen-server
 done
 
 if [ "$LINUX" = 1 ] && [ -z "$PREBUILT" ]; then

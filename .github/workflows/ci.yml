@@ -234,9 +234,6 @@ jobs:
       CARGO_PROFILE_DEV_DEBUG: "line-tables-only"
       CARGO_PROFILE_TEST_DEBUG: "line-tables-only"
       CARGO_BUILD_JOBS: "4"
-    defaults:
-      run:
-        working-directory: server-rs
     steps:
       - uses: actions/checkout@v4
       # The action has no releases: pinned to a commit of its master branch,
@@ -253,7 +250,7 @@ jobs:
           tool: cargo-nextest@0.9.148
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          workspaces: server-rs -> target
+          workspaces: . -> target
           # Preserve compiled dependencies even when clippy or a test fails.
           cache-on-failure: true
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -261,18 +258,18 @@ jobs:
       # Node): nothing but the hub depends on the hub, no path dependency
       # leaves the repository, and the open crates and web/src name none of
       # the hub's code or environment (docs/local-aggregator.md §2.1).
-      - run: node ../scripts/check-open-boundary.mjs
+      - run: node scripts/check-open-boundary.mjs
       # The crates' layers (`pnpm check:layers`): every workspace member sits
-      # in server-rs/layers.json and depends only on what its layer may use,
+      # in layers.json and depends only on what its layer may use,
       # so the subsystems do not grow back into one dependency cycle; no crate
       # reaches a pair the file forbids or depends on the entry; portable-pty
       # and tokio-tungstenite are depended on only by the crates that wrap
       # them. (The Source matches outside the provider crates, which may only
       # shrink, are counted by the server's source scans, in its tests.)
-      - run: node --test ../scripts/check-layers.test.mjs
-      - run: node ../scripts/check-layers.mjs
+      - run: node --test scripts/check-layers.test.mjs
+      - run: node scripts/check-layers.mjs
       # No `cargo fmt --check`, and of clippy only the two deadlock lints
-      # `server-rs/Cargo.toml`'s `[workspace.lints.clippy]` denies gate CI:
+      # the root `Cargo.toml`'s `[workspace.lints.clippy]` denies gate CI:
       # a guard made in a match/if-let scrutinee lives through the whole
       # block, and a std guard held across an `.await` blocks the thread —
       # either can wait on itself forever (the class behind the updater
@@ -281,7 +278,7 @@ jobs:
       - run: cargo clippy --locked --workspace --all-targets --features droppen-devkit/p2p-probe -- -A warnings
         timeout-minutes: 20
       # The tests run under cargo-nextest, which runs every test in its own
-      # process (settings: server-rs/.config/nextest.toml, profile `ci`).
+      # process (settings: .config/nextest.toml, profile `ci`).
       # That is what makes them safe to run in parallel: the harness mutates
       # PATH and tests read the process environment from server threads, and
       # on glibc a concurrent setenv/getenv is undefined behaviour that wedged
@@ -301,15 +298,15 @@ jobs:
       # minutes, not the 6-hour cap.
       - run: cargo nextest run --profile ci --workspace --features droppen-devkit/p2p-probe
         timeout-minutes: 20
-      - run: ../scripts/check-sdk-crate-deps.sh
+      - run: scripts/check-sdk-crate-deps.sh
       # serde_json's `preserve_order` on for every member that reaches it
-      # (server-rs/Cargo.toml `[workspace.dependencies]`), so the JSON a
+      # (the root `Cargo.toml`'s `[workspace.dependencies]`), so the JSON a
       # member writes does not depend on which packages a build selects.
-      - run: ../scripts/check-serde-json-order.sh
+      - run: scripts/check-serde-json-order.sh
       # No member's `test-support` is on in a build without dev-dependencies:
       # what it carries (a permit that takes no spawn gate, stand-in logins)
       # is for tests alone.
-      - run: ../scripts/check-test-support-off.sh
+      - run: scripts/check-test-support-off.sh
       # The docs as rustdoc reads them, private items included: a link to an
       # item that is not there or not where it says, an ambiguous one, and
       # stray HTML fail the job, so a move that leaves a doc on the old path

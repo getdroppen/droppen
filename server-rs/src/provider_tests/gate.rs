@@ -709,7 +709,7 @@ fn only_the_providers_keep_the_runs() {
 #[test]
 fn outside_the_providers_a_source_is_named_as_often_as_layers_json_records() {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let layers: Layers = serde_json::from_str(&std::fs::read_to_string(manifest.join("layers.json")).expect("layers.json")).expect("layers.json's sourceMatches");
+    let layers: Layers = serde_json::from_str(&std::fs::read_to_string(manifest.join("../layers.json")).expect("layers.json")).expect("layers.json's sourceMatches");
     let sources = Source::every();
     let crates: BTreeSet<&str> = sources.iter().map(Source::krate).collect();
     let exempt: BTreeSet<&str> = layers.source_matches.exempt.iter().map(|exempt| exempt.krate.as_str()).collect();
