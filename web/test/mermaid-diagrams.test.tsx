@@ -645,11 +645,17 @@ test("a Pele error is mapped to its code, and the worker is kept for the next re
   assert.equal(engine.workers[0]!.posted.length, 2);
 });
 
-test("a source over the length cap is refused before a worker is made", async () => {
+test("a source over the length cap, or with a huge whitespace run, is refused before a worker is made", async () => {
   const engine = fakeEngine(success);
   installWorker(engine);
   await assert.rejects(
     renderMermaidDiagram("x".repeat(50_001), "light"),
+    (error: unknown) => error instanceof DiagramRenderError && error.code === "limit",
+  );
+  // 32,001 spaces is under the source cap but Pele's accDescr trim is
+  // quadratic in it; the shape cap refuses it on this thread.
+  await assert.rejects(
+    renderMermaidDiagram("flowchart TD\n" + " ".repeat(32_001) + "A-->B", "light"),
     (error: unknown) => error instanceof DiagramRenderError && error.code === "limit",
   );
   assert.equal(engine.workers.length, 0, "no worker, no Pele preprocess");

@@ -55,6 +55,16 @@ const MAX_EDGES = 500;
 const MAX_OUTPUT_CHARS = 2_000_000;
 
 /**
+ * The longest run of whitespace a fence may contain. Pele trims an `accDescr`
+ * with a `/\s+$/gm` whose backtracking is quadratic in such a run: 48,000
+ * spaces take 2.6 s in Chromium and about 1 s in WebKit. No diagram needs a
+ * 32,000-character whitespace run, so it is refused here, before the worker,
+ * like an over-long source. The worker's timer remains the general bound.
+ */
+const MAX_WHITESPACE_RUN = 32_000;
+const LONG_WHITESPACE = new RegExp(String.raw`\s{${MAX_WHITESPACE_RUN + 1}}`);
+
+/**
  * How long the worker gets to draw, once its diagram type has loaded.
  *
  * The reviewer's legitimate worst cases are under 175 ms; 2 s is more than
@@ -462,8 +472,8 @@ export async function renderMermaidDiagram(
   theme: DiagramTheme,
   signal?: AbortSignal,
 ): Promise<DiagramPicture> {
-  if (code.length > MAX_SOURCE_CHARS) {
-    throw new DiagramRenderError("limit", `Diagram source is longer than the limit of ${MAX_SOURCE_CHARS} characters.`);
+  if (code.length > MAX_SOURCE_CHARS || LONG_WHITESPACE.test(code)) {
+    throw new DiagramRenderError("limit", `Diagram source is longer than the limit of ${MAX_SOURCE_CHARS} characters, or has a whitespace run over ${MAX_WHITESPACE_RUN}.`);
   }
   signal?.throwIfAborted();
   const early = rawCacheGet(code);
