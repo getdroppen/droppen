@@ -1,7 +1,8 @@
 /*
  * Marks come from Lobe Icons (`@lobehub/icons-static-svg`, MIT, `icons.lobehub.com`)
- * and belong to their makers. `tone: "ink"` follows the page colour and inverts in
- * dark mode; `brand` keeps the colours of the library's `-color.svg` file.
+ * and belong to their makers. `tone: "ink"` draws in the page's ink — dark on the
+ * light sheet, light on the dark; `brand` keeps the colours of the library's
+ * `-color.svg` file.
  */
 
 export type AgentIcon = {
@@ -28,7 +29,7 @@ export const AGENTS: readonly Agent[] = [
   { name: "Windsurf", icon: { slug: "windsurf", tone: "ink" } },
   { name: "Cline", icon: { slug: "cline", tone: "ink" } },
   { name: "Roo Code", icon: { slug: "roocode", tone: "ink" } },
-  { name: "Kilo Code", icon: { slug: "kilocode", tone: "brand" } },
+  { name: "Kilo Code", icon: { slug: "kilocode", tone: "ink" } },
   { name: "OpenCode", icon: { slug: "opencode", tone: "ink" } },
   { name: "Goose", icon: { slug: "goose", tone: "ink" } },
   { name: "Junie", icon: { slug: "junie", tone: "brand" } },

@@ -1,5 +1,8 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useTimeout } from "usehooks-ts";
+import { formatCountdown } from "@/lib/format";
+import { useTicker } from "@/lib/ticker";
 import { ArrowSquareOutIcon, ArrowsClockwiseIcon, CheckIcon, CircleNotchIcon, ColumnsIcon, DownloadSimpleIcon } from "@phosphor-icons/react";
 import { hostRefusalText } from "@/api/errors";
 import { cn } from "@/lib/cn";
@@ -70,12 +73,6 @@ export function codeDeadline(now: number, expiresMs: number | null | undefined):
 /** The time left until `deadline`, never below 0. */
 export function codeTimeLeft(deadline: number, now: number): number {
   return Math.max(0, deadline - now);
-}
-
-/** `ms` as the countdown shows it: minutes and seconds, `9:05`, rounded up so it reads `0:00` only once it is over. */
-export function formatCountdown(ms: number): string {
-  const total = Math.max(0, Math.ceil(ms / 1000));
-  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
 }
 
 /**
@@ -172,18 +169,6 @@ function AddMachineRound({ account, link, origin, onDone, onNewCode }: { account
   return <CodeRoundView state={state} hubUrl={hubUrl} onNewCode={onNewCode} onCancel={onDone} />;
 }
 
-/** This page's clock, read again every second while `on`. */
-function useNow(on: boolean): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!on) return;
-    setNow(Date.now());
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, [on]);
-  return now;
-}
-
 /**
  * A round of the one-time code, once it is issued: the command to run there
  * with the time it has left, counted down, and that this page has to stay
@@ -206,7 +191,7 @@ export function CodeRoundView({
 }) {
   const { t } = useTranslation();
   const ticking = state.kind === "waiting" && fixedNow === undefined;
-  const clock = useNow(ticking);
+  const clock = useTicker(1000, ticking);
   const now = fixedNow ?? clock;
   const pad = "px-6 py-5 max-md:px-4";
   const left = state.kind === "waiting" ? codeTimeLeft(state.deadline, now) : null;
@@ -504,13 +489,10 @@ function useNewHost(before: ReadonlySet<MachineKey>, machines: readonly MachineI
   const watch = watchNewHost({ before, machines, joinedAt, now });
   const joined = watch.kind === "joined";
   useEffect(() => {
-    if (!joined) return;
-    const at = Date.now();
-    setJoinedAt((was) => was ?? at);
-    // One look again once the patience runs out: its presence may never come.
-    const timer = setTimeout(() => setNow(Date.now()), PATIENCE_MS + 50);
-    return () => clearTimeout(timer);
+    if (joined) setJoinedAt((was) => was ?? Date.now());
   }, [joined]);
+  // One look again once the patience runs out: its presence may never come.
+  useTimeout(() => setNow(Date.now()), joined ? PATIENCE_MS + 50 : null);
   return watch;
 }
 

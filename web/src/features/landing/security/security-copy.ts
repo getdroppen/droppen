@@ -5,6 +5,7 @@
  */
 
 import { registerCopy } from "../register-copy";
+import { columnOf } from "../copy-columns";
 
 type Bundle = Record<string, string>;
 
@@ -1998,11 +1999,9 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
   ],
 ];
 
-const column = (i: 1 | 2 | 3): Bundle => Object.fromEntries(LINES.map((line) => [line[0], line[i]]));
-
-export const securityZhCN: Bundle = column(1);
-export const securityZhTW: Bundle = column(2);
-export const securityJa: Bundle = column(3);
+export const securityZhCN: Bundle = columnOf(LINES, 1);
+export const securityZhTW: Bundle = columnOf(LINES, 2);
+export const securityJa: Bundle = columnOf(LINES, 3);
 
 export const securityBundles: Record<"zh-CN" | "zh-TW" | "ja", Bundle> = {
   "zh-CN": securityZhCN,

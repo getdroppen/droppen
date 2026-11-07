@@ -110,8 +110,9 @@ export function AgentBurst({ className }: { className?: string }) {
       aria-hidden="true"
       focusable="false"
       viewBox={piece.mark.viewBox}
-      // An ink mark follows the page (`currentColor`), and `invert` turns its dark art white.
-      className={cn("block size-full", piece.icon.tone === "ink" && "[&_path]:fill-current", piece.icon.tone === "ink" && "dark:invert")}
+      // An ink mark takes the page's ink in both themes (`currentColor`). No filter: in the
+      // dark theme the mark is already white, and inverting it would turn it black.
+      className={cn("block size-full", piece.icon.tone === "ink" && "[&_path]:fill-current")}
       dangerouslySetInnerHTML={{ __html: piece.mark.body }}
     />
   );

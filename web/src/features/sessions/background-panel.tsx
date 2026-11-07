@@ -1,6 +1,7 @@
 import { CaretRightIcon, CircleNotchIcon, SquareIcon } from "@phosphor-icons/react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useInterval } from "usehooks-ts";
 import { LiveDot } from "@/components/live-dot";
 import {
   backgroundFold,
@@ -125,11 +126,7 @@ export function BackgroundTaskPanel({
   // background work produces no other render for minutes at a time. Still true
   // folded: the summary carries the oldest child's stopwatch.
   const ticking = panel !== null && panel.subtasks.length > 0 && now === undefined;
-  useEffect(() => {
-    if (!ticking) return;
-    const timer = setInterval(() => setTick((n) => n + 1), TICK);
-    return () => clearInterval(timer);
-  }, [ticking]);
+  useInterval(() => setTick((n) => n + 1), ticking ? TICK : null);
 
   if (!panel) return null;
 

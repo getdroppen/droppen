@@ -10,7 +10,7 @@ import { autoGrowTextarea, useEnterSendsModifier } from "@/features/sessions/com
 import { takePendingMessage } from "@/features/chat/pending-message";
 import { authHeader, noteUnauthorized } from "@/lib/auth";
 import { cn } from "@/lib/cn";
-import { isImeKeydown } from "@/lib/ime";
+import { isSendKeydown } from "@/lib/ime";
 import { useApi, useMachine } from "@/lib/machines/context";
 import type { MachineKey } from "@/lib/machines/key";
 import { mq } from "@/lib/machines/query";
@@ -236,12 +236,9 @@ export function ApiChatViewInner({ id }: { id: string }) {
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key !== "Enter" || isImeKeydown(e)) return;
-              const sendKey = enterSendsModifier ? e.metaKey || e.ctrlKey : !e.shiftKey;
-              if (sendKey) {
-                e.preventDefault();
-                submit();
-              }
+              if (!isSendKeydown(e, enterSendsModifier)) return;
+              e.preventDefault();
+              submit();
             }}
             rows={2}
             placeholder={t("message {{model}}…", { model: chat.model })}

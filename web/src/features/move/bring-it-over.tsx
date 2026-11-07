@@ -4,6 +4,7 @@ import { CircleNotchIcon } from "@phosphor-icons/react";
 import { Note, secondary } from "@/features/cloud/ui";
 import { localDevice, watchMoves } from "@/lib/move";
 import { onlyUnfinishedHere } from "@/lib/move/receiver";
+import { hostOf } from "@/lib/move/env";
 import { type MoveOutcome, startPull } from "./index";
 
 /*
@@ -15,14 +16,6 @@ import { type MoveOutcome, startPull } from "./index";
  * with no pairing. Whether droppen.app holds one cannot be seen from here
  * (its storage is its own): the window says so if it does not.
  */
-
-const hostOf = (origin: string) => {
-  try {
-    return new URL(origin).host;
-  } catch {
-    return origin;
-  }
-};
 
 export type BringState = { kind: "idle" } | { kind: "busy" } | { kind: "failed"; message: string };
 

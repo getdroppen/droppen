@@ -27,7 +27,6 @@ import { mq } from "@/lib/machines/query";
 
 type AuthSession = components["schemas"]["AuthSession"];
 
-const authStatusKey = (machine: MachineKey) => mq(machine, "auth-status");
 const authSessionsKey = (machine: MachineKey) => mq(machine, "auth-sessions");
 
 const field = SETTINGS_FIELD;
@@ -329,7 +328,7 @@ export function SecuritySection({ embedded = false }: { embedded?: boolean } = {
     isPending,
     error,
   } = useQuery({
-    queryKey: authStatusKey(machine),
+    queryKey: mq(machine, "auth-status"),
     queryFn: () => askAuthStatus(api),
   });
 

@@ -2,7 +2,7 @@
 // static import that pulls it back in fails the build, and a shell a hub
 // serves starts fetching the cloud app's chunks as it loads.
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -116,7 +116,9 @@ test("the shell's preload asks for the cloud app's scripts on a page a hub serve
 
 /** A small app in a temporary directory, built with the plugin: `files` are its sources under `src/`. */
 async function buildApp(files: Record<string, string>) {
-  const root = mkdtempSync(join(tmpdir(), "local-boot-"));
+  // The real path: on macOS the temp dir is reached through a `/var` symlink, and
+  // Vite emits its root as written, not as resolved.
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "local-boot-")));
   try {
     writeFileSync(join(root, "index.html"), '<!doctype html><html><head><title>t</title></head><body><script type="module" src="/src/main.ts"></script></body></html>');
     for (const [path, text] of Object.entries(files)) {

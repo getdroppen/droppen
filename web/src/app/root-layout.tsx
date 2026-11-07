@@ -13,6 +13,7 @@ import {
   XIcon,
 } from "@phosphor-icons/react";
 import { useEffect, useMemo, useState } from "react";
+import { useMediaQuery } from "usehooks-ts";
 import type { components } from "@/api/schema";
 import {
   ContextMenu,
@@ -69,15 +70,11 @@ const NAV = [
 function ThemeToggle() {
   const { t } = useTranslation();
   const [mode, setMode] = useState<ThemeMode>(storedThemeMode);
+  const prefersDark = useMediaQuery("(prefers-color-scheme: dark)");
 
   useEffect(() => {
     applyThemeMode(mode);
-    if (mode !== "auto") return;
-    const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    const follow = () => applyThemeMode("auto");
-    mq.addEventListener("change", follow);
-    return () => mq.removeEventListener("change", follow);
-  }, [mode]);
+  }, [mode, prefersDark]);
 
   const Icon = MODE_ICONS[mode];
   return (
@@ -360,20 +357,9 @@ function PaneHotkeys() {
   return null;
 }
 
-function useIsDesktop(): boolean {
-  const [desktop, setDesktop] = useState(() => window.matchMedia("(min-width: 768px)").matches);
-  useEffect(() => {
-    const mq = window.matchMedia("(min-width: 768px)");
-    const update = () => setDesktop(mq.matches);
-    mq.addEventListener("change", update);
-    return () => mq.removeEventListener("change", update);
-  }, []);
-  return desktop;
-}
-
 function PaneArea() {
   const panes = usePanes();
-  const desktop = useIsDesktop();
+  const desktop = useMediaQuery("(min-width: 768px)");
   // The routed view's device: what a pane beside it picks from until told otherwise.
   const routeMachine = useRouteMachine();
   // Splitting is a desktop feature: phones always render the routed view alone.

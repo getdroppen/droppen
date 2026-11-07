@@ -47,10 +47,8 @@ export interface PushApi {
 
 // This browser's, not a device's (one subscription per browser): kept with the hub account's keys.
 export const PUSH_RECORD_KEY = "rh.hub.push.subscribed";
-const RECORD_KEY = PUSH_RECORD_KEY;
 /** A device whose renewal left this browser without notifications, until a tap turns them back on. */
 export const PUSH_RENEW_KEY = "rh.hub.push.renew";
-const RENEW_KEY = PUSH_RENEW_KEY;
 
 /**
  * `serviceWorker.ready` never settles when no worker was ever registered — a
@@ -93,7 +91,7 @@ export function browserPushEnv(): PushEnv {
 
 export function readPushRecord(env: Pick<PushEnv, "storage"> = browserPushEnv()): PushRecord | null {
   try {
-    const r = JSON.parse(env.storage?.getItem(RECORD_KEY) ?? "null") as Partial<PushRecord> | null;
+    const r = JSON.parse(env.storage?.getItem(PUSH_RECORD_KEY) ?? "null") as Partial<PushRecord> | null;
     if (!r || typeof r.machine !== "string" || typeof r.vapid !== "string") return null;
     return { machine: r.machine, vapid: r.vapid, seq: typeof r.seq === "number" ? r.seq : null };
   } catch {
@@ -103,8 +101,8 @@ export function readPushRecord(env: Pick<PushEnv, "storage"> = browserPushEnv())
 
 function writePushRecord(env: Pick<PushEnv, "storage">, record: PushRecord | null): void {
   try {
-    if (record) env.storage?.setItem(RECORD_KEY, JSON.stringify(record));
-    else env.storage?.removeItem(RECORD_KEY);
+    if (record) env.storage?.setItem(PUSH_RECORD_KEY, JSON.stringify(record));
+    else env.storage?.removeItem(PUSH_RECORD_KEY);
   } catch {
     // memory only: the next renewal is noticed when a page subscribes again
   }
@@ -112,8 +110,8 @@ function writePushRecord(env: Pick<PushEnv, "storage">, record: PushRecord | nul
 
 function setRenewal(env: Pick<PushEnv, "storage">, machine: MachineKey | null): void {
   try {
-    if (machine) env.storage?.setItem(RENEW_KEY, machine);
-    else env.storage?.removeItem(RENEW_KEY);
+    if (machine) env.storage?.setItem(PUSH_RENEW_KEY, machine);
+    else env.storage?.removeItem(PUSH_RENEW_KEY);
   } catch {
     // memory only
   }
@@ -149,7 +147,7 @@ export function forgetPushMoved(env: Pick<PushEnv, "storage"> = browserPushEnv()
 /** The device whose renewal left this browser without notifications until a tap turns them back on (`null`: none). */
 export function pushRenewalNeeded(env: Pick<PushEnv, "storage"> = browserPushEnv()): MachineKey | null {
   try {
-    return env.storage?.getItem(RENEW_KEY) ?? null;
+    return env.storage?.getItem(PUSH_RENEW_KEY) ?? null;
   } catch {
     return null;
   }

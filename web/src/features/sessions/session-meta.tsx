@@ -3,9 +3,9 @@
  * behind a chip.
  */
 import { CheckIcon, CopyIcon, InfoIcon } from "@phosphor-icons/react";
-import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { useCopy } from "@/lib/clipboard";
 import { formatBytes, formatCompact, formatInt, formatTime } from "@/lib/format";
 
 /** The session facts the header keeps behind a chip, already formatted. */
@@ -74,19 +74,8 @@ function MetaRow({ label, value }: { label: string; value: string }) {
  */
 export function SessionMetaChip({ facts }: { facts: SessionMetaFacts }) {
   const { t } = useTranslation();
-  const [copied, setCopied] = useState(false);
+  const { copied, copy } = useCopy();
   const cwd = facts.cwd;
-
-  const copy = async (path: string) => {
-    try {
-      await navigator.clipboard.writeText(path);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // No clipboard permission (or no secure context): the path in the popover
-      // is selectable text, which is the fallback that always works.
-    }
-  };
 
   return (
     <Popover>
@@ -111,7 +100,7 @@ export function SessionMetaChip({ facts }: { facts: SessionMetaFacts }) {
                   type="button"
                   title={copied ? t("copied") : t("copy")}
                   aria-label={copied ? t("copied") : t("copy")}
-                  onClick={() => void copy(cwd)}
+                  onClick={() => copy(cwd)}
                   className="flex size-5 shrink-0 items-center justify-center rounded text-muted hover:bg-hover hover:text-fg"
                 >
                   {copied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />}

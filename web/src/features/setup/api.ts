@@ -15,8 +15,6 @@ import type { LoginMode, SetupProgress, SetupTask, SetupTool, ToolId, ToolsRepor
 
 export const setupProgressKey = (machine: MachineKey) => mq(machine, "setup", "progress");
 export const setupToolsKey = (machine: MachineKey) => mq(machine, "setup", "tools");
-export const setupCommandsKey = (machine: MachineKey) => mq(machine, "setup", "commands");
-export const setupRecentKey = (machine: MachineKey) => mq(machine, "setup", "recent");
 
 /** The stored progress; `null` from a server without the route (an older one), which is read as "no guide". */
 export async function fetchProgress(api: ApiClient): Promise<SetupProgress | null> {
@@ -58,7 +56,7 @@ export function useSetupCommands(enabled = true) {
   const api = useApi();
   const machine = useMachine();
   return useQuery({
-    queryKey: setupCommandsKey(machine),
+    queryKey: mq(machine, "setup", "commands"),
     queryFn: async () => (await api.GET("/api/setup/commands")).data ?? null,
     enabled,
     staleTime: 5 * 60_000,
@@ -71,7 +69,7 @@ export function useRecentFolders(enabled = true) {
   const api = useApi();
   const machine = useMachine();
   return useQuery({
-    queryKey: setupRecentKey(machine),
+    queryKey: mq(machine, "setup", "recent"),
     queryFn: async () => (await api.GET("/api/setup/projects/recent")).data?.folders ?? [],
     enabled,
     staleTime: 60_000,

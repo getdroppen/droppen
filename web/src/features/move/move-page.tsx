@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { CheckIcon, CircleNotchIcon } from "@phosphor-icons/react";
 import { Centered, Note, Panel, primary, quiet } from "@/features/cloud/ui";
+import { hostOf } from "@/lib/move/env";
 import { type MoveOutcome, type MovePageProps, type PullSender, type ReceiverView, type SenderView, servePullSender, servePushReceiver } from "@/lib/move";
 
 /*
@@ -16,14 +17,6 @@ import { type MoveOutcome, type MovePageProps, type PullSender, type ReceiverVie
  */
 
 type T = (key: string, vars?: Record<string, unknown>) => string;
-
-const hostOf = (origin: string) => {
-  try {
-    return new URL(origin).host;
-  } catch {
-    return origin;
-  }
-};
 
 /** How a move ended, as the person reads it. */
 export function outcomeText(t: T, outcome: MoveOutcome, hosts: { app: string; legacy: string }): string {

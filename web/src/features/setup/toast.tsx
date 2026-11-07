@@ -7,8 +7,9 @@
  * out politely, gone after a few seconds or on its ×.
  */
 import { XIcon } from "@phosphor-icons/react";
-import { useEffect, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
+import { useTimeout } from "usehooks-ts";
 
 export interface SetupToast {
   id: number;
@@ -53,17 +54,19 @@ function subscribe(listener: () => void) {
   return () => void listeners.delete(listener);
 }
 
+/** The line's clock: keyed by its id, so a new line starts a new wait. */
+function ToastLifetime({ toast }: { toast: SetupToast }) {
+  useTimeout(() => dismissSetupToast(toast.id), toast.ms);
+  return null;
+}
+
 /** Where the line is drawn: once in the guide's window, once in the app's. */
 export function SetupToasts() {
   const { t } = useTranslation();
   const toast = useSyncExternalStore(subscribe, setupToastNow, () => null);
-  useEffect(() => {
-    if (!toast) return;
-    const timer = setTimeout(() => dismissSetupToast(toast.id), toast.ms);
-    return () => clearTimeout(timer);
-  }, [toast]);
   return (
     <div aria-live="polite" className="pointer-events-none fixed inset-x-0 bottom-16 z-50 flex justify-center px-4">
+      {toast && <ToastLifetime key={toast.id} toast={toast} />}
       {toast && (
         <div
           role="status"

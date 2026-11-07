@@ -42,6 +42,7 @@ import {
   type RefObject,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { useDebounceValue } from "usehooks-ts";
 import { errorText } from "@/api/errors";
 import type { components } from "@/api/schema";
 import { cn } from "@/lib/cn";
@@ -494,13 +495,11 @@ export function useSessionSearch(host: SearchHost): SessionSearch {
   );
 
   // Search on a pause in typing.
+  const [paused] = useDebounceValue(committed, SEARCH_DEBOUNCE_MS);
   useEffect(() => {
     if (!open) return;
-    const handle = setTimeout(() => {
-      if (committed.trim() !== requestedRef.current) void runSearch(committed, "jump");
-    }, SEARCH_DEBOUNCE_MS);
-    return () => clearTimeout(handle);
-  }, [open, committed, runSearch]);
+    if (paused.trim() !== requestedRef.current) void runSearch(paused, "jump");
+  }, [open, paused, runSearch]);
 
   // The box is focused (and its text selected, so typing replaces the last
   // query) at once when it is already on screen, and by the effect below on

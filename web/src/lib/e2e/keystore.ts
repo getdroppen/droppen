@@ -60,7 +60,7 @@ export class MemoryKeyStore implements KeyStore {
 /** The IndexedDB database the key store is kept in, and its one object store (keyed by record name). */
 export const KEY_STORE_DB = "rh-e2e";
 const STORE = "keys";
-export const KEY_STORE_STORE = STORE;
+export { STORE as KEY_STORE_STORE };
 
 function request<T>(req: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -123,6 +123,8 @@ const DEVICE_KEYS = "device-keys/v1";
  * while non-extractable AES-GCM keys and plain bytes come back intact.
  */
 const DEVICE_KEYS_V2 = "device-keys/v2";
+/** The device-key records, newest first: their names are all `device-here` reads. */
+export const DEVICE_KEY_RECORDS = [DEVICE_KEYS_V2, DEVICE_KEYS] as const;
 /**
  * The non-extractable AES-GCM key {@link DEVICE_KEYS_V2} is sealed under —
  * unless the record names another (`wrapName`): keys made over keys that

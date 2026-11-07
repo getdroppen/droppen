@@ -2,7 +2,6 @@ import { type ReactNode, useEffect, useState } from "react";
 import { NOWRAP_LINK, SOURCE_URL } from "../page-kit";
 
 /*
-<<<<<<< HEAD
  * The security page's paths in the repository (`scripts/verify-web.mjs`,
  * `crates/droppen-proto`, …) as links to them on GitHub, at the commit
  * the served web app was built from. The build does not carry its commit:
@@ -14,24 +13,6 @@ import { NOWRAP_LINK, SOURCE_URL } from "../page-kit";
  * say the commit is this repository's (`repo: "getdroppen/droppen"`), since a
  * commit of another repository would lead nowhere here. Never asked in a
  * static render.
-||||||| parent of 4d1d34b (wip)
- * The security page's paths in the repository (`scripts/verify-web.mjs`,
- * `server-rs/crates/droppen-proto`, …) as links to them on GitHub, at the commit
- * the served web app was built from. The build does not carry its commit:
- * its bytes must equal the release's web-manifest.json whichever commit
- * deployed it (docs/web-integrity.md). So the page asks the server that
- * served it, once: Droppen Hub names the commit at `/.well-known/droppen-build`
- * (docs/hub-api/http.md). Until it answers, and where nothing does (the local
- * program), the links point at `main`; so they do when the answer does not
- * say the commit is this repository's (`repo: "getdroppen/droppen"`), since a
- * commit of another repository would lead nowhere here. Never asked in a
- * static render.
-=======
- * Link source references to the commit reported by the serving Hub. The build
- * cannot embed it because release bytes must be deploy-independent. Accept only
- * this repository's hex commits; otherwise retain the `main` fallback. Do not
- * fetch during static rendering.
->>>>>>> 4d1d34b (wip)
  */
 
 const SOURCE_REPO = "getdroppen/droppen";

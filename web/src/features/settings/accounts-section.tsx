@@ -41,6 +41,7 @@ import { ReauthDialog, SetupTokenDialog, UsageLoginDialog } from "@/features/set
 import { LimitEventsPanel } from "@/features/settings/limit-events-panel";
 import { isImeKeydown } from "@/lib/ime";
 import { cn } from "@/lib/cn";
+import { PROVIDER_NAME } from "@/lib/provider-name";
 import {
   SETTINGS_ACTION,
   SETTINGS_ACTION_PRIMARY,
@@ -62,8 +63,6 @@ class DuplicateAccountError extends Error {
 }
 
 /** Proper names, untranslated: they are the products' own spelling. */
-const PROVIDER_NAME: Record<AccountProvider, string> = { claude: "Claude Code", codex: "Codex" };
-
 const field = SETTINGS_FIELD;
 
 /** Label cell that turns into an input on click; Enter commits, Escape reverts. */

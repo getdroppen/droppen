@@ -12,7 +12,6 @@ import { RepoLink } from "./repo-link";
 import "./security-copy";
 
 /*
-<<<<<<< HEAD
  * droppen.app/security: how the end-to-end encryption works, for a technical
  * reader — the overview and what Droppen Hub sees, the signed device chain,
  * the keys, the channels and relays, the offline copies, the identity renewal
@@ -34,33 +33,6 @@ import "./security-copy";
  * (`formula.tsx`, its words and code references in `formula-data.ts`).
  * Product words as elsewhere: a device, a device that runs AI (the chain's
  * host), a full device (its admin), the content key (`MK`).
-||||||| parent of 4d1d34b (wip)
- * droppen.app/security: how the end-to-end encryption works, for a technical
- * reader — the overview and what Droppen Hub sees, the signed device chain,
- * the keys, the channels and relays, the offline copies, the identity renewal
- * of a device that runs AI (switched on at droppen.app for early testing,
- * marked so),
- * the threat model, and how to check all of it. Signed in or not; its own
- * lazy chunk with its own words (`security-copy.ts`), drawn like the other
- * public pages: numbered sections with an on-page table of contents, each
- * mechanism in a section of its own with an anchor.
- *
- * Only what main ships is described as live; every claim traces to the
- * protocol code (`server-rs/crates/droppen-proto`, `web/src/lib/e2e`) or the
- * public design notes (docs/cross-machine-architecture.md, docs/local-
- * aggregator.md §3, docs/web-integrity.md, docs/relay-and-plans.md §2,
- * docs/hub-api/, SECURITY.md, docs/security-model.md's "What the Hub sees");
- * the renewal section follows docs/host-identity-rotation.md. The labels and
- * formulas in the mono blocks are the code's own bytes, quoted, so they are
- * not translated; every part of them explains itself on hover, focus or tap
- * (`formula.tsx`, its words and code references in `formula-data.ts`).
- * Product words as elsewhere: a device, a device that runs AI (the chain's
- * host), a full device (its admin), the content key (`MK`).
-=======
- * Public, lazily loaded security design. Claims must match shipped protocol
- * behavior and cite its code or design notes; features still in testing are
- * marked. Formula bytes remain untranslated and link to verifiable sources.
->>>>>>> 4d1d34b (wip)
  */
 
 export const SECURITY_UPDATED = "2026-10-28";
@@ -358,7 +330,6 @@ function Hero() {
   );
 }
 
-<<<<<<< HEAD
 /**
  * The page's two kinds of device, defined before anything else says them:
  * what each is, which keys it holds, what it may do (the chain's host and
@@ -370,21 +341,6 @@ function Hero() {
  * later mention explains itself with the same words (`withConcepts`), one
  * tab stop per word in each section (`MentionScope`).
  */
-||||||| parent of 4d1d34b (wip)
-/**
- * The page's two kinds of device, defined before anything else says them:
- * what each is, which keys it holds, what it may do (the chain's host and
- * admin flags, `droppen-proto` chain.rs: a host is never an admin, an admin may
- * control any host; the keys table below; with local aggregation, on by
- * default, a host also takes the content keys other hosts' accept lists let
- * it have, wrap.rs `HOST_KEY_PURPOSE`, and the local web app shows its own
- * device's view and holds no keys, server-rs/crates/droppen-aggregator/src/lib.rs). Every
- * later mention explains itself with the same words (`withConcepts`), one
- * tab stop per word in each section (`MentionScope`).
- */
-=======
-/** Later mentions reuse these definitions and their accessible explanations. */
->>>>>>> 4d1d34b (wip)
 function Definitions() {
   const { t } = useTranslation();
   const cards = [

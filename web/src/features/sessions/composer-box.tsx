@@ -15,7 +15,7 @@ import { useTranslation } from "react-i18next";
 import { HostImage } from "@/components/host-file";
 import { authHeader, noteUnauthorized } from "@/lib/auth";
 import { cn } from "@/lib/cn";
-import { isImeKeydown, useImeComposition } from "@/lib/ime";
+import { isSendKeydown, useImeComposition } from "@/lib/ime";
 import { useMachineRuntime } from "@/lib/machines/context";
 import { autoGrowTextarea, useEnterSendsModifier } from "./composer-controls";
 
@@ -347,12 +347,9 @@ export function ComposerBox({
           }
         }}
         onKeyDown={(e) => {
-          if (e.key !== "Enter" || isImeKeydown(e)) return;
-          const sendKey = enterSendsModifier ? e.metaKey || e.ctrlKey : !e.shiftKey;
-          if (sendKey) {
-            e.preventDefault();
-            onSubmit();
-          }
+          if (!isSendKeydown(e, enterSendsModifier)) return;
+          e.preventDefault();
+          onSubmit();
         }}
         rows={2}
         placeholder={placeholder}

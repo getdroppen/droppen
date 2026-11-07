@@ -72,9 +72,6 @@ export function RelaySection({ pool, machine, channel, bare = false }: { pool: R
     if (failure) return { label: t("last failure: {{why}}", { why: knownText(failure) }), disabled: false };
     return { label: null, disabled: false };
   };
-  const pick = (id: string | null) => {
-    pool.setManual(id);
-  };
   return (
     <section id="relays" data-testid="relays" className={cn("flex flex-col gap-2 px-6 max-md:px-4", bare ? "pt-1 pb-3.5 pl-11 max-md:pl-9" : "border-b border-border py-3.5")}>
       {!bare && (
@@ -86,7 +83,7 @@ export function RelaySection({ pool, machine, channel, bare = false }: { pool: R
       <ul role="radiogroup" aria-label={t("Relays")} className="flex flex-col">
         <li>
           <label data-relay="auto" className="flex cursor-pointer items-center gap-3 py-1.5">
-            <input type="radio" name="relay" checked={!manual} onChange={() => pick(null)} />
+            <input type="radio" name="relay" checked={!manual} onChange={() => pool.setManual(null)} />
             <span className="flex-1 text-xs text-fg">{t("Automatic (recommended)")}</span>
             {autoChoice && (
               <span className="font-mono text-2xs text-muted">
@@ -108,7 +105,7 @@ export function RelaySection({ pool, machine, channel, bare = false }: { pool: R
                 title={state.disabled ? t("At most {{limit}} relays at once · in use: {{list}}", { limit: dir.limit, list: inUse }) : undefined}
                 className={cn("flex items-center gap-3 py-1.5", state.disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer")}
               >
-                <input type="radio" name="relay" checked={manual === r.id} disabled={state.disabled} onChange={() => pick(r.id)} />
+                <input type="radio" name="relay" checked={manual === r.id} disabled={state.disabled} onChange={() => pool.setManual(r.id)} />
                 <span className="flex min-w-0 flex-1 items-baseline gap-2">
                   <span className="truncate text-xs text-fg">{cityName(t, r.city)}</span>
                   <span className="font-mono text-2xs text-faint">{r.id}</span>

@@ -1,7 +1,8 @@
-import { type ReactNode, useState } from "react";
+import { type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { CheckIcon, CopyIcon } from "@phosphor-icons/react";
 import { CapsLabel } from "@/components/ui/caps-label";
+import { useCopy } from "@/lib/clipboard";
 import { cn } from "@/lib/cn";
 import { formatMoment } from "@/lib/format";
 import i18next from "i18next";
@@ -306,19 +307,14 @@ export function ErrorLine({ message }: { message: string | null | undefined }) {
 /** A button that copies `text`; `primary` when it is the view's one primary action. */
 export function CopyButton({ text, label, primary: main = false, testId }: { text: string; label: string; primary?: boolean; testId?: string }) {
   const { t } = useTranslation();
-  const [copied, setCopied] = useState(false);
+  const { copied, copy } = useCopy();
   return (
     <button
       type="button"
       data-variant={main ? "primary" : undefined}
       data-testid={testId}
       className={main ? primary : secondary}
-      onClick={() => {
-        void navigator.clipboard?.writeText(text).then(() => {
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1500);
-        });
-      }}
+      onClick={() => copy(text)}
     >
       {copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
       {copied ? t("copied") : label}

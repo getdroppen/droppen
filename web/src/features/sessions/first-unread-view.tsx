@@ -6,6 +6,7 @@
 import { ArrowUpIcon, CircleNotchIcon, XIcon } from "@phosphor-icons/react";
 import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
+import { useTimeout } from "usehooks-ts";
 import { cn } from "@/lib/cn";
 import { formatInt } from "@/lib/format";
 import {
@@ -128,11 +129,7 @@ export function useFirstUnread(input: {
   }, [offeredAt, check]);
 
   const failed = state.phase === "failed";
-  useEffect(() => {
-    if (!failed) return;
-    const timer = setTimeout(() => dispatch({ type: "dismiss" }), FAILED_MS);
-    return () => clearTimeout(timer);
-  }, [failed]);
+  useTimeout(() => dispatch({ type: "dismiss" }), failed ? FAILED_MS : null);
 
   const jump = useCallback(() => {
     const target = offeredRef.current;

@@ -183,13 +183,12 @@ export function FilesBrowser({
     });
   }, [path, file]);
 
-  const go = (next: FilesLocation) => onNavigate(next);
   const step = (delta: number) => {
     const index = history.index + delta;
     const target = history.entries[index];
     if (target) {
       setHistory({ ...history, index });
-      go(target);
+      onNavigate(target);
     }
   };
   const copy = useCopy({
@@ -219,7 +218,7 @@ export function FilesBrowser({
         onSubmit={(e) => {
           e.preventDefault();
           const next = directoryInput(pathInput, directory);
-          if (next) go({ path: next });
+          if (next) onNavigate({ path: next });
         }}
       >
         <button
@@ -248,7 +247,7 @@ export function FilesBrowser({
           title={t("parent directory")}
           aria-label={t("parent directory")}
           disabled={!data?.parent}
-          onClick={() => go({ path: data?.parent ?? "~" })}
+          onClick={() => onNavigate({ path: data?.parent ?? "~" })}
         >
           <ArrowUpIcon className="size-4" />
         </button>
@@ -257,7 +256,7 @@ export function FilesBrowser({
           className={tool}
           title={t("home directory")}
           aria-label={t("home directory")}
-          onClick={() => go({ path: "~" })}
+          onClick={() => onNavigate({ path: "~" })}
         >
           <HouseIcon className="size-4" />
         </button>
@@ -307,7 +306,7 @@ export function FilesBrowser({
               type="button"
               className="max-w-64 truncate rounded px-1 py-1 text-muted hover:bg-hover hover:text-accent"
               title={part.path}
-              onClick={() => go({ path: part.path })}
+              onClick={() => onNavigate({ path: part.path })}
             >
               {part.label}
             </button>
@@ -457,7 +456,7 @@ export function FilesBrowser({
                             <button
                               type="button"
                               onClick={() =>
-                                go(
+                                onNavigate(
                                   isDir
                                     ? { path: full }
                                     : { path: directory, file: full },
@@ -541,7 +540,7 @@ export function FilesBrowser({
           <FilePreview
             key={file}
             file={file}
-            onClose={() => go({ path: directory })}
+            onClose={() => onNavigate({ path: directory })}
           />
         )}
       </div>

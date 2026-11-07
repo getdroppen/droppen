@@ -13,10 +13,10 @@ export { movesLocal, MOVED_DATABASES } from "./allowlist";
 export { servePullSender, servePushReceiver, type PullSender, type ReceiverView, type SenderView } from "./flows";
 
 /** Push, from the legacy origin (see {@link StartMove}). */
-export const startMove: StartMove = (opts) => start(opts);
+export const startMove: StartMove = start;
 
 /** Pull, from the app host (see {@link StartPull}). */
-export const startPull: StartPull = (opts) => pull(opts);
+export const startPull: StartPull = pull;
 
 /** What this origin holds of a device, read without creating anything (`null`: nothing). */
 export function localDevice(env: MoveEnv = browserEnv()): Promise<LocalDevice | null> {

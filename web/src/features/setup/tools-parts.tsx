@@ -6,8 +6,9 @@
  * guide link, the action row and the quota bar).
  */
 import { ArrowUpRightIcon, CheckIcon, CopyIcon, TerminalWindowIcon } from "@phosphor-icons/react";
-import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import { type KeyboardEvent, type ReactNode, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useInterval } from "usehooks-ts";
 import { LiveDot } from "@/components/live-dot";
 import { Button } from "@/components/ui/button";
 import type { QuotaWindow } from "@/features/accounts/use-accounts";
@@ -122,10 +123,7 @@ export function Segmented<T extends string>({ label, value, options, onChange }:
 /** The running time of a task, ticking once a second. */
 function Elapsed({ since }: { since: string }) {
   const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, []);
+  useInterval(() => setNow(Date.now()), 1000);
   return <span className="font-mono text-2xs text-[#a4abb5] tabular-nums">{elapsed(since, now)}</span>;
 }
 

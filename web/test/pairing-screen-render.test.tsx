@@ -20,7 +20,8 @@ const { createRoot } = await import("react-dom/client");
 const { renderToStaticMarkup } = await import("react-dom/server");
 const { I18nextProvider } = await import("react-i18next");
 const { default: i18n } = await import("./i18n-all.js");
-const { CodeShown, countdown, PairingScreen, PairingStopped, pairingActions } = await import("../src/features/cloud/pairing-screen.js");
+const { CodeShown, PairingScreen, PairingStopped, pairingActions } = await import("../src/features/cloud/pairing-screen.js");
+const { formatCountdown } = await import("../src/lib/format.js");
 const { AuthScreen } = await import("../src/features/cloud/cloud-app.js");
 const { PAIRING_RESUME_KEY } = await import("../src/features/cloud/sign-out.js");
 const { HubApiError } = await import("../src/lib/hub/api.js");
@@ -42,12 +43,12 @@ const noop = () => undefined;
 const HUB_WORDS = /registered too long ago|too many pairings are open|no such pairing|has had all its messages|sign in again on it/;
 
 test("countdown: m:ss, rounded up, never below 0:00", () => {
-  assert.equal(countdown(0), "0:00");
-  assert.equal(countdown(-5_000), "0:00");
-  assert.equal(countdown(1), "0:01");
-  assert.equal(countdown(61_000), "1:01");
-  assert.equal(countdown(9 * MIN + 41_000), "9:41");
-  assert.equal(countdown(30 * MIN), "30:00");
+  assert.equal(formatCountdown(0), "0:00");
+  assert.equal(formatCountdown(-5_000), "0:00");
+  assert.equal(formatCountdown(1), "0:01");
+  assert.equal(formatCountdown(61_000), "1:01");
+  assert.equal(formatCountdown(9 * MIN + 41_000), "9:41");
+  assert.equal(formatCountdown(30 * MIN), "30:00");
 });
 
 test("the ways on: starting again only where it can work", () => {

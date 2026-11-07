@@ -244,6 +244,12 @@ export function shortenHome(path: string, homeDir: string): string {
   return path[homeDir.length] === "/" ? `~${path.slice(homeDir.length)}` : path;
 }
 
+/** `ms` as `m:ss` (never below `0:00`), rounded up so `0:00` means it is over. */
+export function formatCountdown(ms: number): string {
+  const s = Math.max(0, Math.ceil(ms / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
 export function basename(path: string | null): string {
   if (!path) return "";
   const parts = path.split("/").filter(Boolean);

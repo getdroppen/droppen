@@ -1,6 +1,7 @@
 import { XIcon } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useInterval } from "usehooks-ts";
 import {
   countdownTick,
   ROTATION_NOTICE_SECONDS,
@@ -80,14 +81,10 @@ export function RotationNotice({
     }
   };
 
-  useEffect(() => {
-    if (!showing || held) return;
-    const timer = window.setInterval(() => {
-      const visible = document.visibilityState === "visible";
-      setCount((c) => (c.for === showing ? { ...c, left: countdownTick(c.left, { visible, held: false }) } : c));
-    }, 1000);
-    return () => window.clearInterval(timer);
-  }, [showing, held]);
+  useInterval(() => {
+    const visible = document.visibilityState === "visible";
+    setCount((c) => (c.for === showing ? { ...c, left: countdownTick(c.left, { visible, held: false }) } : c));
+  }, showing !== null && !held ? 1000 : null);
 
   const expired = showing !== null && left === 0;
   useEffect(() => {

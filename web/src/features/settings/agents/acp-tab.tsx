@@ -595,7 +595,6 @@ function AgentDialog({
   const [check, setCheck] = useState<AcpCheck | null>(existing?.lastCheck ?? null);
   const save = useMutation({
     mutationFn: async () => {
-      const target = id;
       const body =
         existing
           ? {
@@ -605,13 +604,13 @@ function AgentDialog({
               ...(env ? { env } : {}),
             }
           : { name, command, args: splitArgs(args), ...(env ? { env } : {}) };
-      const res = await api.PUT("/api/acp/agents/{id}", { params: { path: { id: target } }, body });
+      const res = await api.PUT("/api/acp/agents/{id}", { params: { path: { id } }, body });
       if (!res.data) throw new ApiError(res.error);
       setSaved(res.data);
       setDraft({ name: null, command: null, args: null });
       setEnv("");
-      void queryClient.invalidateQueries({ queryKey: mq(machine, "models", "acp", target) });
-      return runCheck(api, target);
+      void queryClient.invalidateQueries({ queryKey: mq(machine, "models", "acp", id) });
+      return runCheck(api, id);
     },
     onSuccess: (result) => {
       setCheck(result);

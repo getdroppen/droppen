@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useTicker } from "@/lib/ticker";
+import { formatCountdown } from "@/lib/format";
 import { CheckIcon, CircleNotchIcon } from "@phosphor-icons/react";
 import type { CloudAccount } from "@/lib/hub/account";
 import { CODE_PAIRING_WINDOW_MS } from "@/lib/hub/api";
@@ -52,12 +54,6 @@ export const WINDOW_MARGIN_MS = 15_000;
 
 /** The window's length in whole minutes, as the words say it. */
 const WINDOW_MINUTES = Math.round(CODE_PAIRING_WINDOW_MS / 60_000);
-
-/** `ms` as `m:ss` (never below `0:00`). */
-export function countdown(ms: number): string {
-  const s = Math.max(0, Math.ceil(ms / 1000));
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-}
 
 /**
  * The ways on from a stopped pairing, the first the main one. Starting again
@@ -159,18 +155,6 @@ function usePairingFacts(account: CloudAccount, opts: { limit: boolean; window: 
   return facts;
 }
 
-/** The time now, a second at a time while `on`. */
-function useNow(on: boolean): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!on) return;
-    setNow(Date.now());
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, [on]);
-  return now;
-}
-
 export function PairingScreen({
   account,
   again = false,
@@ -247,7 +231,7 @@ function PairingAttempt({
   const { hit: limit, registeredMs, read: factsRead } = usePairingFacts(account, { limit: !listed, window: windowApplies });
   const windowEndMs = windowApplies && registeredMs !== null ? registeredMs + CODE_PAIRING_WINDOW_MS : null;
   const settled = state.kind === "paired" || state.kind === "verifying" || state.kind === "failed";
-  const now = useNow(!settled || state.kind === "failed");
+  const now = useTicker(1000, !settled || state.kind === "failed");
   const windowLeftMs = windowEndMs === null ? null : windowEndMs - now;
   const codeClosed = windowLeftMs !== null && windowLeftMs <= WINDOW_MARGIN_MS;
   const codeOpen = state.kind === "code" || state.kind === "answered";
@@ -438,14 +422,14 @@ export function CodeShown({
         <CircleNotchIcon className="size-3 animate-spin" />
         {state.kind === "answered"
           ? t("code entered on the other device; waiting for it to confirm…")
-          : t("waiting for the code to be entered: {{time}} left, once", { time: countdown(codeLeftMs ?? 0) })}
+          : t("waiting for the code to be entered: {{time}} left, once", { time: formatCountdown(codeLeftMs ?? 0) })}
       </p>
       {lastCode && (
         <p data-testid="pairing-window-left" className="text-2xs leading-4 text-warn-fg">
           {windowLeftMs > 0
             ? again
-              ? t("In {{time}} this device can no longer make a code: use the QR code after that.", { time: countdown(windowLeftMs) })
-              : t("In {{time}} a new code needs a fresh sign-in: this one still works until it lapses.", { time: countdown(windowLeftMs) })
+              ? t("In {{time}} this device can no longer make a code: use the QR code after that.", { time: formatCountdown(windowLeftMs) })
+              : t("In {{time}} a new code needs a fresh sign-in: this one still works until it lapses.", { time: formatCountdown(windowLeftMs) })
             : again
               ? t("This code still works; after it, use the QR code.")
               : t("This code still works; a new one needs a fresh sign-in.")}
@@ -547,7 +531,7 @@ export function PairingStopped({
         )}
         {windowLeftMs !== null && windowLeftMs > WINDOW_MARGIN_MS && (
           <p data-testid="pairing-window-left" className="text-2xs text-faint">
-            {t("a new code can be made here for another {{time}}", { time: countdown(windowLeftMs) })}
+            {t("a new code can be made here for another {{time}}", { time: formatCountdown(windowLeftMs) })}
           </p>
         )}
       </div>

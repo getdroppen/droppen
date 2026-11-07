@@ -1,18 +1,11 @@
 import { Tooltip } from "@base-ui/react/tooltip";
-import { useSyncExternalStore, type ReactElement, type ReactNode } from "react";
+import { type ReactElement, type ReactNode } from "react";
+import { useMediaQuery } from "usehooks-ts";
 
 const COLUMN = "(min-width: 768px)";
 
-function subscribe(onChange: () => void): () => void {
-  const query = window.matchMedia(COLUMN);
-  query.addEventListener("change", onChange);
-  return () => query.removeEventListener("change", onChange);
-}
-
-const isColumn = () => window.matchMedia(COLUMN).matches;
-
 export function RailHint({ label, render, children }: { label: string; render: ReactElement<Record<string, unknown>>; children: ReactNode }) {
-  const column = useSyncExternalStore(subscribe, isColumn, () => true);
+  const column = useMediaQuery(COLUMN, { defaultValue: true });
   return (
     <Tooltip.Root>
       <Tooltip.Trigger delay={400} closeDelay={0} render={render}>
