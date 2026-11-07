@@ -10,8 +10,7 @@
  * page: the worker has no DOM and uses Pele's OffscreenCanvas measurer when
  * the browser provides one, its built-in advance table otherwise.
  */
-import { PeleError } from "pele/lazy";
-import { renderDiagram } from "./diagram-render";
+import { handleDiagramMessage } from "./diagram-worker-handler";
 import type { DiagramWorkerReply, DiagramWorkerRequest } from "./diagram-protocol";
 
 const scope = self as unknown as {
@@ -19,20 +18,6 @@ const scope = self as unknown as {
   postMessage: (reply: DiagramWorkerReply) => void;
 };
 
-scope.onmessage = async (event) => {
-  // The client's 2 s render clock starts here, not after `detectType` and the
-  // chunk import; only the `await load(type)` between these phases is paused.
-  scope.postMessage({ phase: "started" });
-  try {
-    const { svg, width, height } = await renderDiagram(event.data.code, event.data.options, {
-      loading: () => scope.postMessage({ phase: "loading" }),
-      rendering: () => scope.postMessage({ phase: "rendering" }),
-    });
-    scope.postMessage({ ok: true, svg, width, height });
-  } catch (error) {
-    // Error messages may quote the fence; the page never shows them, and a
-    // block's fallback is its code. Keep the reply small.
-    const message = (error instanceof Error ? error.message : String(error)).slice(0, 500);
-    scope.postMessage({ ok: false, code: error instanceof PeleError ? error.code : "error", message });
-  }
+scope.onmessage = (event) => {
+  void handleDiagramMessage(event.data, (reply) => scope.postMessage(reply));
 };
