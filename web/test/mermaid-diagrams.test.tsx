@@ -1,4 +1,4 @@
-// Mermaid in the transcript, behind the `diagrams` pref (Settings → message
+// Pele in the transcript, behind the `diagrams` pref (Settings → message
 // rendering; `rendered` unless the device's server says `source`).
 //
 // The bug this feature answers: an agent writes a ```mermaid flowchart in its
@@ -6,31 +6,32 @@
 //   · with diagrams off (`source`, or outside a view that read the pref) a
 //     mermaid fence is byte-for-byte the code block every other fence is, and
 //     the engine is never imported;
-//   · with them on, the fence goes through the diagram renderer, with the
-//     app's theme and strict security, and is shown as an `<img>` of the SVG;
-//   · the fence's own config (an init directive, frontmatter) cannot loosen
-//     what the app locks, and a failed render leaves nothing in the page —
-//     both against the real engine;
-//   · a fence Mermaid rejects is the code block again, without an error banner;
+//   · with them on, the fence goes through the diagram renderer and is shown
+//     as an `<img>` of the SVG, themed from the page's tokens;
+//   · the options the renderer relies on — no links, no images, bounded
+//     source/edges/output — are what the real package is given, and a fence's
+//     own init directive or frontmatter cannot change them or the theme;
+//   · a fence Pele rejects is the code block again, without an error banner;
 //   · inline code and every other language are untouched;
 //   · a streaming fence is handed to the renderer once its text settles, and a
 //     diagram already up stays up while the text moves; the per-block
 //     "source" control flips only that one;
-//   · a failed engine import is retried, a block that has moved on or gone is
-//     skipped, and a render that never ends does not hold up the rest;
+//   · a failed engine import is retried, and blocks do not wait for one
+//     another (the engine is synchronous once loaded: no queue, no timer);
 //   · turning diagrams off puts the code back in an open transcript.
 // Where the pref comes from (the server, the settings row) is pinned in
 // `crates/droppen-workbench/src/prefs` and `test/settings-message-rendering.test.tsx`.
 //
 // jsdom rather than `react-dom/server`, because the diagram arrives through an
-// effect and a dynamic import. For the rendering itself the engine is
-// replaced by `setMermaidForTests` (jsdom lays nothing out, so the real one
-// cannot draw here); the config and cleanup tests load the real package.
+// effect and a dynamic import. Pele lays nothing out in jsdom but it draws
+// without a DOM, so the security and theme tests run the real package; the
+// fake engine is used only where a test has to count, hold or fail a render.
 // `import * as React` because the test directory is outside the tsconfig's
 // `include`, so tsx compiles JSX with the classic runtime.
 import * as React from "react";
 import assert from "node:assert/strict";
 import test, { after, beforeEach } from "node:test";
+import type { RenderOptions } from "pele/lazy";
 import { installJsdom } from "./jsdom.js";
 import { makeI18n } from "./render.js";
 
@@ -40,14 +41,42 @@ after(() => {
   setTimeout(() => process.exit(), 50);
 });
 
+// The app's own tokens (`src/index.css`), as a real stylesheet so jsdom's
+// computed custom properties follow the `.dark` class the theme switch sets.
+const tokens = document.createElement("style");
+tokens.textContent = `
+:root {
+  --color-bg: #ffffff;
+  --color-raised: #f6f6f6;
+  --color-hover: #f0f0f0;
+  --color-border-strong: #a3a3a3;
+  --color-fg: #1a1e23;
+  --color-muted: #666666;
+  --color-danger: #d42a1f;
+  --radius: 0px;
+  --font-sans: "IBM Plex Sans", "IBM Plex Sans SC", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+}
+.dark {
+  --color-bg: #1a1e23;
+  --color-raised: #23282f;
+  --color-hover: #2b3138;
+  --color-border-strong: #626b76;
+  --color-fg: #e9ebee;
+  --color-muted: #a6adb7;
+  --color-danger: #ff665b;
+}`;
+document.head.appendChild(tokens);
+
 const { act } = await import("react");
 const { createRoot } = await import("react-dom/client");
 type Root = import("react-dom/client").Root;
 const { I18nextProvider } = await import("react-i18next");
 const { DiagramRendering, drawsDiagrams, Markdown } = await import("../src/components/markdown.js");
-const { MERMAID_STABLE_MS, diagramPicture, mermaidConfig, renderMermaidDiagram, setMermaidForTests } = await import(
+const { MERMAID_STABLE_MS, diagramPicture, diagramSettings, renderMermaidDiagram, setMermaidForTests } = await import(
   "../src/lib/mermaid-render.js"
 );
+const { PeleError, renderAsync } = await import("pele/lazy");
 
 const i18n = makeI18n({
   lng: "en",
@@ -80,6 +109,12 @@ beforeEach(async () => {
 
 const flush = (ms = 30) => act(async () => void (await new Promise((resolve) => setTimeout(resolve, ms))));
 
+/** Wait for a condition the engine's dynamic import makes asynchronous. */
+async function until(done: () => boolean, ms = 3000): Promise<void> {
+  const start = Date.now();
+  while (!done() && Date.now() - start < ms) await flush(25);
+}
+
 async function mount(text: string, diagrams: boolean | null = true): Promise<void> {
   root = createRoot(container);
   await act(async () => {
@@ -95,37 +130,30 @@ async function show(text: string, diagrams: boolean | null = true): Promise<void
 }
 
 interface Call {
-  config: Record<string, unknown>;
-  id: string;
+  options: RenderOptions;
   code: string;
 }
 
 /**
- * The engine, as far as `lib/mermaid-render.ts` can tell. `initialize` is
- * followed by one `render`, so a call's config is the one set immediately
- * before it — that is how the tests see the theme and the security level.
- * `hold` keeps a render waiting until the returned release is called; `never`
- * makes one that does not settle at all.
+ * The engine, as far as `lib/mermaid-render.ts` can tell. `hold` keeps a
+ * render waiting until the returned release is called; `never` makes one that
+ * does not settle at all; `fail` rejects.
  */
-function fakeMermaid(options: { fail?: (code: string) => boolean; hold?: (code: string) => boolean; never?: (code: string) => boolean } = {}) {
+function fakeEngine(options: { fail?: (code: string) => boolean; hold?: (code: string) => boolean } = {}) {
   const calls: Call[] = [];
   const held: (() => void)[] = [];
-  let config: Record<string, unknown> = {};
   let loads = 0;
   const api = {
-    initialize(next: Record<string, unknown>) {
-      config = next;
-    },
-    async render(id: string, code: string) {
-      calls.push({ config, id, code });
-      if (options.never?.(code)) await new Promise(() => undefined);
+    async renderAsync(code: string, next: RenderOptions = {}) {
+      calls.push({ code, options: next });
       if (options.hold?.(code)) await new Promise<void>((resolve) => held.push(resolve));
       if (options.fail?.(code)) throw new Error("cannot parse this diagram");
       const safe = code.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-      // The shape Mermaid gives with `useMaxWidth`: a relative width, the size in the viewBox.
+      // The shape Pele gives: absolute width/height, the same box in the viewBox.
       return {
-        svg: `<svg id="${id}" width="100%" xmlns="http://www.w3.org/2000/svg" style="max-width: 120px;" viewBox="0 0 120 80"><text>${safe}</text></svg>`,
-        diagramType: "flowchart-v2",
+        svg: `<svg id="${next.idPrefix ?? "d"}" width="120" height="80" xmlns="http://www.w3.org/2000/svg" style="max-width: 120px; height: auto;" viewBox="0 0 120 80"><title>${safe}</title><text>${safe}</text></svg>`,
+        width: 120,
+        height: 80,
       };
     },
   };
@@ -142,9 +170,9 @@ function fakeMermaid(options: { fail?: (code: string) => boolean; hold?: (code: 
   };
 }
 
-/** Hand `lib/mermaid-render.ts` a fake engine (and, optionally, a shorter time limit). */
-function useFake(fake: ReturnType<typeof fakeMermaid>, timeoutMs?: number) {
-  setMermaidForTests({ load: fake.load as never, ...(timeoutMs === undefined ? {} : { timeoutMs }) });
+/** Hand `lib/mermaid-render.ts` a fake engine. */
+function useFake(fake: ReturnType<typeof fakeEngine>) {
+  setMermaidForTests({ load: fake.load as never });
 }
 
 const diagramImage = () => container.querySelector<HTMLImageElement>("[data-mermaid-image] img");
@@ -156,7 +184,7 @@ for (const [name, diagrams] of [
   ["outside a view that read the pref", null],
 ] as const) {
   test(`with diagrams off (${name}) a mermaid fence is the code block any fence is, and nothing is loaded`, async () => {
-    const fake = fakeMermaid();
+    const fake = fakeEngine();
     useFake(fake);
     await mount(`${FLOWCHART}\n\n${FLOWCHART.replace("mermaid", "rust")}`, diagrams);
     await flush(MERMAID_STABLE_MS + 100);
@@ -174,123 +202,139 @@ for (const [name, diagrams] of [
 
 /* ── what the engine is told ────────────────────────────────────────────── */
 
-test("the engine is always strict, keeps failures out of the page, draws SVG text with dagre, and locks what a fence could loosen", () => {
-  for (const theme of ["light", "dark"] as const) {
-    const config = mermaidConfig(theme);
-    assert.equal(config.securityLevel, "strict");
-    assert.equal(config.startOnLoad, false);
-    assert.equal(config.suppressErrorRendering, true, "no error picture left in <body>");
-    assert.equal(config.htmlLabels, false, "top level: wins over flowchart.htmlLabels in Mermaid 12");
-    assert.equal(config.flowchart?.htmlLabels, false);
-    assert.equal(config.layout, "dagre", "Mermaid 12 defaults to ELK, which is not in the build");
-    for (const key of ["htmlLabels", "themeCSS", "theme", "themeVariables", "darkMode", "fontFamily", "altFontFamily", "layout", "look"])
-      assert.ok(config.secure?.includes(key), `${key} is locked`);
-    // The SVG is drawn inside an <img>, where the page's custom properties do not resolve.
-    assert.doesNotMatch(config.fontFamily ?? "", /var\(/);
-  }
-  assert.equal(mermaidConfig("light").theme, "default");
-  assert.equal(mermaidConfig("dark").theme, "dark");
+test("every diagram is drawn without links or images, within fixed limits, in the page's font", () => {
+  const { options, style } = diagramSettings("light", "droppen-diagram-7");
+  assert.equal(options.links, false, "no link a reader could follow");
+  assert.equal(options.images, false, "nothing fetched when the picture is shown");
+  assert.equal(options.limit, 50_000, "source cap");
+  assert.equal(options.maxEdges, 500, "edge cap");
+  assert.equal(options.outputLimit, 2_000_000, "output cap");
+  assert.equal(options.fontSize, 13, "the transcript's body size");
+  assert.equal(options.responsive, false, "natural size, scrolled in the message");
+  assert.equal(options.idPrefix, "droppen-diagram-7");
+  assert.equal(options.maxWidth, undefined, "no container adaptation");
+  assert.equal(options.measurer, undefined, "Pele measures with the canvas, or its table");
+  assert.equal(options.config, undefined, "a fence's config is the only config");
+  assert.equal(options.icons, undefined, "no icon resolver");
+  assert.equal(options.math, undefined, "no typesetting of $$…$$");
+  assert.equal(options.fontFamily, style["--pele-font"]);
+  assert.equal(options.fontFamilyMono, style["--pele-font-mono"]);
+  assert.match(options.fontFamily ?? "", /system-ui/, "the families an <img> can resolve");
+  assert.doesNotMatch(options.fontFamily ?? "", /IBM Plex/, "the page's webfont cannot be fetched inside the picture");
+  assert.equal(style["--pele-fg"], "#1a1e23");
+  assert.equal(style["--pele-muted"], "#666666");
+  assert.equal(style["--pele-line"], "#1a1e23");
+  assert.equal(style["--pele-surface"], "#ffffff");
+  assert.equal(style["--pele-surface-alt"], "#f0f0f0");
+  assert.equal(style["--pele-border"], "#a3a3a3");
+  assert.equal(style["--pele-accent"], "#1a1e23");
+  assert.equal(style["--pele-critical"], "#d42a1f");
+  assert.equal(style["--pele-radius"], "0px");
+  assert.equal(style["color-scheme"], "light");
 });
 
-/** The real package, initialised the way the app does it. */
-async function realMermaid() {
-  const mermaid = (await import("mermaid")).default;
-  mermaid.initialize(mermaidConfig("light"));
-  return mermaid;
-}
+test("the picture's colours are the dark sheet's when the page is dark", () => {
+  document.documentElement.classList.add("dark");
+  try {
+    const { style } = diagramSettings("dark");
+    assert.equal(style["--pele-bg"], "#23282f");
+    assert.equal(style["--pele-fg"], "#e9ebee");
+    assert.equal(style["--pele-muted"], "#a6adb7");
+    assert.equal(style["--pele-border"], "#626b76");
+    assert.equal(style["--pele-critical"], "#ff665b");
+    assert.equal(style["color-scheme"], "dark");
+  } finally {
+    document.documentElement.classList.remove("dark");
+  }
+});
 
-test("a fence's init directive or frontmatter config cannot change the locked keys (the real engine)", async () => {
-  const mermaid = await realMermaid();
-  const effective = async (fence: string) => {
-    await mermaid.parse(fence, { suppressErrors: true });
-    return mermaid.mermaidAPI.getConfig();
-  };
-  const base = await effective("flowchart TD\n  A-->B");
-  assert.equal(base.htmlLabels, false);
-  assert.equal(base.layout, "dagre");
-  assert.equal(base.securityLevel, "strict");
+test("the real engine drops links and images under these options, and draws them only when allowed", async () => {
+  const { options } = diagramSettings("light");
+  const click = 'flowchart LR\n  A[Start] --> B[End]\n  click A "https://example.com/click" "tip"';
+  const bare = await renderAsync(click, options);
+  assert.doesNotMatch(bare.svg, /<a\b|href=/, "no link in the picture");
+  assert.deepEqual(bare.links, []);
+  const linked = await renderAsync(click, { ...options, links: true });
+  assert.match(linked.svg, /<a\b/, "the same fence would draw a link if links were on");
+  assert.match(linked.svg, /href="https:\/\/example\.com\/click"/);
+  assert.equal(linked.links.length, 1);
 
+  const image = 'flowchart LR\n  A@{ img: "https://example.com/pixel.png", label: "pic" } --> B';
+  const noImage = await renderAsync(image, options);
+  assert.doesNotMatch(noImage.svg, /<image\b|href=/, "nothing to fetch when the picture is shown");
+  const withImage = await renderAsync(image, { ...options, images: true });
+  assert.match(withImage.svg, /<image\b/, "the same fence would draw an image if images were on");
+  assert.match(withImage.svg, /href="https:\/\/example\.com\/pixel\.png"/);
+});
+
+test("a fence's init directive or frontmatter cannot change theme, fonts or limits (the real engine)", async () => {
+  const { options } = diagramSettings("light");
+  const base = await renderAsync("flowchart TD\n  A-->B", options);
   const directive = [
-    '%%{init:{"htmlLabels":true,"layout":"elk","themeCSS":"@keyframes spin{}","theme":"forest","look":"handDrawn",',
-    '"fontFamily":"Comic Sans MS","securityLevel":"loose","secure":[],"themeVariables":{"primaryColor":"#ff0000"},',
-    '"flowchart":{"htmlLabels":true,"curve":"stepBefore"}}}%%',
+    '%%{init:{"theme":"forest","fontFamily":"Comic Sans MS","themeCSS":"@keyframes spin{}",',
+    '"htmlLabels":true,"securityLevel":"loose","secure":[],"fontSize":30,"layout":"elk",',
+    '"look":"handDrawn","maxEdges":99999,"limit":99999,',
+    '"themeVariables":{"primaryColor":"#ff0000","fontSize":"30px"}}}%%',
     "\nflowchart TD\n  A-->B",
   ].join("");
   const frontmatter = [
     "---",
     "config:",
-    "  htmlLabels: true",
-    "  layout: elk",
     "  theme: forest",
-    "  look: handDrawn",
-    '  themeCSS: "@keyframes spin{}"',
     "  fontFamily: Comic Sans MS",
+    "  themeCSS: '@keyframes spin{}'",
+    "  htmlLabels: true",
     "  securityLevel: loose",
+    "  fontSize: 30",
+    "  layout: elk",
+    "  look: handDrawn",
+    "  maxEdges: 99999",
+    "  limit: 99999",
     "  themeVariables:",
     '    primaryColor: "#ff0000"',
-    "  flowchart:",
-    "    htmlLabels: true",
-    "    curve: stepBefore",
+    "    fontSize: 30px",
     "---",
     "flowchart TD\n  A-->B",
   ].join("\n");
-
   for (const [name, fence] of [
     ["init directive", directive],
     ["frontmatter", frontmatter],
   ] as const) {
-    const config = await effective(fence);
-    assert.equal(config.flowchart?.curve, "stepBefore", `${name}: the fence's config is read (an unlocked key takes)`);
-    assert.equal(config.htmlLabels, false, `${name}: htmlLabels`);
-    assert.equal(config.flowchart?.htmlLabels, false, `${name}: flowchart.htmlLabels`);
-    assert.equal(config.layout, "dagre", `${name}: layout`);
-    assert.equal(config.themeCSS, base.themeCSS, `${name}: themeCSS`);
-    assert.equal(config.theme, base.theme, `${name}: theme`);
-    assert.equal(config.look, base.look, `${name}: look`);
-    assert.equal(config.fontFamily, base.fontFamily, `${name}: fontFamily`);
-    assert.equal(config.themeVariables?.primaryColor, base.themeVariables?.primaryColor, `${name}: themeVariables`);
-    assert.equal(config.securityLevel, "strict", `${name}: securityLevel`);
-    assert.deepEqual(config.secure, base.secure, `${name}: secure`);
+    const rendered = await renderAsync(fence, options);
+    assert.equal(rendered.svg, base.svg, `${name}: the picture is the one the options ask for`);
+    assert.equal(rendered.width, base.width, `${name}: same font metrics`);
+    assert.equal(rendered.height, base.height, `${name}: same font metrics`);
   }
 });
 
-test("a render that fails leaves nothing behind in the page (the real engine)", async () => {
-  await realMermaid();
+test("a fence past the source, edge or output limit is a limit error (the real engine)", async () => {
+  const { options } = diagramSettings("light");
+  const long = `flowchart TD\n  A["${"x".repeat(50_000)}"] --> B`;
+  await assert.rejects(renderAsync(long, options), (error: unknown) => error instanceof PeleError && error.code === "limit");
+
+  const edges = `%%{init:{"maxEdges":99999}}%%\nflowchart TD\n${Array.from({ length: 501 }, (_, i) => `  A${i} --> A${i + 1}`).join("\n")}`;
+  await assert.rejects(renderAsync(edges, options), (error: unknown) => error instanceof PeleError && error.code === "limit");
+});
+
+test("a fence Pele cannot read is a syntax error, and a render leaves nothing in the page (the real engine)", async () => {
+  await assert.rejects(
+    renderAsync("flowchart TD\n  A--", diagramSettings("light").options),
+    (error: unknown) => error instanceof PeleError && error.code === "syntax",
+  );
   const before = document.body.innerHTML;
-  await assert.rejects(renderMermaidDiagram("flowchart TD\n  A-->", "light"));
-  await assert.rejects(renderMermaidDiagram("this is not a diagram", "dark"));
-  // Mermaid's stylesheet step throws outside its own cleanup.
-  await renderMermaidDiagram("flowchart TD\n  classDef a/b fill:red\n  A-->B", "light").catch(() => undefined);
-  assert.equal(document.body.innerHTML, before, "no error picture, no leftover render node");
+  await assert.rejects(renderMermaidDiagram("flowchart TD\n  A--", "light"));
+  await renderMermaidDiagram("flowchart TD\n  A-->B", "light");
+  assert.equal(document.body.innerHTML, before, "no error picture, no scratch node");
 });
 
-/* ── on: the diagram renderer ───────────────────────────────────────────── */
+/* ── the picture ────────────────────────────────────────────────────────── */
 
-test("with diagrams on, the fence goes through the renderer under the page's theme and is shown as a picture", async () => {
-  const fake = fakeMermaid();
-  useFake(fake);
-  // A finished message: drawn straight away, without waiting for its text to settle.
-  await mount(FLOWCHART);
-
-  assert.equal(fake.calls.length, 1);
-  assert.equal(fake.calls[0]!.code.trim(), "flowchart TD\n  A-->B\n  B-->C");
-  assert.equal(fake.calls[0]!.config.securityLevel, "strict", "agent output is untrusted, always strict");
-  assert.equal(fake.calls[0]!.config.theme, "default", "the light sheet");
-  const img = diagramImage();
-  assert.ok(img, "the diagram is on the page");
-  assert.match(img.src, /^blob:/, "as a picture from a blob URL");
-  assert.equal(img.getAttribute("width"), "120", "at its natural width, from the viewBox");
-  assert.equal(img.getAttribute("height"), "80");
-  assert.equal(img.alt, "Mermaid diagram");
-  assert.equal(container.querySelector("[data-mermaid-image] svg"), null, "no SVG markup in the page");
-  assert.equal(container.querySelector("pre"), null, "the source is replaced, not shown under it");
-});
-
-test("the picture is the SVG as well-formed XML at its natural size, titled by the diagram's own title", async () => {
+test("the picture is the SVG as well-formed XML at its natural size, titled and themed", async () => {
   const picture = diagramPicture(
-    '<svg id="d1" width="100%" xmlns="http://www.w3.org/2000/svg" style="max-width: 640.5px;" viewBox="-8 -8 640.5 200">' +
+    '<svg id="d1" width="100%" height="auto" xmlns="http://www.w3.org/2000/svg" style="max-width: 640.5px; height: auto;" viewBox="-8 -8 640.5 200">' +
       '<title id="chart-title-d1">Request flow</title><style>#d1{fill:#333;}</style>' +
-      '<g><foreignObject width="10" height="10"><div xmlns="http://www.w3.org/1999/xhtml">a<br>b</div></foreignObject></g></svg>',
+      '<g class="pele-node"><text>Request flow</text></g></svg>',
+    { "--pele-fg": "#1a1e23", "--pele-font": "system-ui" },
   );
   assert.equal(picture.width, 640.5);
   assert.equal(picture.height, 200);
@@ -299,11 +343,13 @@ test("the picture is the SVG as well-formed XML at its natural size, titled by t
   const xml = await picture.blob.text();
   const parsed = new DOMParser().parseFromString(xml, "image/svg+xml");
   assert.equal(parsed.querySelector("parsererror"), null, "an image decoder can read it");
-  assert.equal(parsed.querySelector("div")?.namespaceURI, "http://www.w3.org/1999/xhtml", "a label's HTML is still HTML");
   const svg = parsed.documentElement;
   assert.equal(svg.getAttribute("width"), "640.5");
   assert.equal(svg.getAttribute("height"), "200");
   assert.doesNotMatch(svg.getAttribute("style") ?? "", /max-width/);
+  assert.doesNotMatch(svg.getAttribute("style") ?? "", /(^|;)height:/);
+  assert.match(svg.getAttribute("style") ?? "", /--pele-fg: ?#1a1e23/);
+  assert.match(svg.getAttribute("style") ?? "", /--pele-font: ?system-ui/);
 
   // Both sides in pixels and no viewBox: the attributes are the size.
   const sized = diagramPicture('<svg xmlns="http://www.w3.org/2000/svg" width="300" height="150"></svg>');
@@ -311,19 +357,77 @@ test("the picture is the SVG as well-formed XML at its natural size, titled by t
   assert.throws(() => diagramPicture('<svg xmlns="http://www.w3.org/2000/svg" width="100%"></svg>'), /without a size/);
 });
 
-test("the diagram follows a theme change, and a picture no longer shown is released", async () => {
-  const fake = fakeMermaid();
+/* ── on: the diagram renderer ───────────────────────────────────────────── */
+
+test("with diagrams on, the fence goes through the renderer and is shown as a picture", async () => {
+  const fake = fakeEngine();
   useFake(fake);
+  // A finished message: drawn straight away, without waiting for its text to settle.
+  await mount(FLOWCHART);
+
+  assert.equal(fake.calls.length, 1);
+  assert.equal(fake.calls[0]!.code.trim(), "flowchart TD\n  A-->B\n  B-->C");
+  assert.equal(fake.calls[0]!.options.links, false, "agent output is untrusted, never linked");
+  const img = diagramImage();
+  assert.ok(img, "the diagram is on the page");
+  assert.match(img.src, /^blob:/, "as a picture from a blob URL");
+  assert.equal(img.getAttribute("width"), "120", "at its natural width, from the viewBox");
+  assert.equal(img.getAttribute("height"), "80");
+  assert.equal(img.alt, "flowchart TD\n  A-->B\n  B-->C", "the fake's title stands in for accTitle");
+  assert.equal(container.querySelector("[data-mermaid-image] svg"), null, "no SVG markup in the page");
+  assert.equal(container.querySelector("pre"), null, "the source is replaced, not shown under it");
+});
+
+test("the real engine draws a finished fence without a DOM and it is shown as a picture", async () => {
+  await mount(FLOWCHART);
+  await until(() => diagramImage() !== null);
+  const img = diagramImage();
+  assert.ok(img, "the diagram is on the page");
+  assert.match(img.src, /^blob:/);
+  assert.equal(img.alt, "Mermaid diagram", "no accTitle, so the shared label");
+  assert.equal(container.querySelector("[data-mermaid-image] svg"), null);
+  assert.equal(container.querySelector("pre"), null);
+});
+
+test("a fence the real engine cannot read is the plain code block, with no error banner", async () => {
+  await mount("```mermaid\nflowchart TD\n  A--\n```");
+  // The dynamic import and the failed render have both finished when the
+  // block is still its code and no engine work remains; a fixed wait would be
+  // either slow or flaky, so wait for the code to have been there a moment.
+  await flush(500);
+
+  assert.match(container.innerHTML, /language-mermaid/);
+  assert.match(container.innerHTML, /flowchart TD/);
+  assert.equal(container.querySelector("[data-mermaid-diagram]"), null);
+  assert.doesNotMatch(container.textContent ?? "", /cannot parse|error|failed/i);
+});
+
+test("a diagram with an accTitle is titled by it (the real engine)", async () => {
+  await mount("```mermaid\nsequenceDiagram\n  accTitle: Request flow\n  Client->>Server: GET /x\n```");
+  await until(() => diagramImage()?.alt === "Request flow");
+  assert.equal(diagramImage()?.alt, "Request flow");
+});
+
+test("the diagram follows a theme change, and a picture no longer shown is released", async () => {
+  const fake = fakeEngine();
+  useFake(fake);
+  const pictures: Blob[] = [];
   const revoked: string[] = [];
+  const create = URL.createObjectURL;
   const revoke = URL.revokeObjectURL;
+  URL.createObjectURL = (blob: Blob) => {
+    pictures.push(blob);
+    return create(blob);
+  };
   URL.revokeObjectURL = (url: string) => {
     revoked.push(url);
     revoke(url);
   };
   try {
-      document.documentElement.classList.add("dark");
+    document.documentElement.classList.add("dark");
     await mount(FLOWCHART);
-    assert.equal(fake.calls.at(-1)!.config.theme, "dark");
+    assert.equal(fake.calls.length, 1);
+    assert.match(await pictures.at(-1)!.text(), /--pele-fg:\s*#e9ebee/, "the dark sheet's ink");
     const dark = diagramImage()!.src;
 
     await act(async () => {
@@ -331,7 +435,7 @@ test("the diagram follows a theme change, and a picture no longer shown is relea
     });
     await flush();
     assert.equal(fake.calls.length, 2, "the diagram is drawn again for the other sheet");
-    assert.equal(fake.calls.at(-1)!.config.theme, "default");
+    assert.match(await pictures.at(-1)!.text(), /--pele-fg:\s*#1a1e23/, "the light sheet's ink");
     const light = diagramImage()!.src;
     assert.notEqual(light, dark);
     await flush(1100);
@@ -345,12 +449,13 @@ test("the diagram follows a theme change, and a picture no longer shown is relea
     await flush(1100);
     assert.ok(revoked.includes(light), "and the last one once the block is gone");
   } finally {
+    URL.createObjectURL = create;
     URL.revokeObjectURL = revoke;
   }
 });
 
-test("a fence Mermaid cannot read is the plain code block, with no error banner", async () => {
-  const fake = fakeMermaid({ fail: () => true });
+test("a fence the engine cannot read is the plain code block, with no error banner", async () => {
+  const fake = fakeEngine({ fail: () => true });
   useFake(fake);
   await mount("```mermaid\nflowchart TD\n  A--\n```");
 
@@ -361,7 +466,7 @@ test("a fence Mermaid cannot read is the plain code block, with no error banner"
 });
 
 test("inline code and other fenced languages stay exactly as they were, even with diagrams on", async () => {
-  const fake = fakeMermaid();
+  const fake = fakeEngine();
   useFake(fake);
   await mount("`flowchart TD` and then\n\n```js\nconst x = 1;\n```\n");
 
@@ -374,7 +479,7 @@ test("inline code and other fenced languages stay exactly as they were, even wit
 /* ── the per-block source control ───────────────────────────────────────── */
 
 test("the source control flips one block to its code and back", async () => {
-  const fake = fakeMermaid();
+  const fake = fakeEngine();
   useFake(fake);
   await mount(FLOWCHART);
 
@@ -396,7 +501,7 @@ test("the source control flips one block to its code and back", async () => {
 /* ── streaming ──────────────────────────────────────────────────────────── */
 
 test("a streaming fence is drawn once its text settles, and the diagram stays up while the text moves", async () => {
-  const fake = fakeMermaid({ fail: (code) => code.includes("BROKEN") });
+  const fake = fakeEngine({ fail: (code) => code.includes("BROKEN") });
   useFake(fake);
   const start = "```mermaid\nflowchart TD\n  A-->B";
   await mount(start);
@@ -428,10 +533,62 @@ test("a streaming fence is drawn once its text settles, and the diagram stays up
   assert.match(container.textContent ?? "", /BROKEN/);
 });
 
-/* ── the engine and the queue ───────────────────────────────────────────── */
+test("a result whose block has moved on is not drawn", async () => {
+  const fake = fakeEngine({ hold: (code) => code.includes("SLOW") });
+  useFake(fake);
+  const slow = "```mermaid\nflowchart TD\n  SLOW-->A\n```";
+  await mount(slow);
+  assert.equal(fake.calls.length, 1);
+  assert.equal(diagramImage(), null, "the held render has not finished");
+
+  await show("```mermaid\nflowchart TD\n  FAST-->B\n```");
+  await flush(MERMAID_STABLE_MS + 100);
+  assert.equal(fake.calls.length, 2, "the new text is not queued behind the old render");
+  assert.equal(diagramImage()?.alt, "flowchart TD\n  FAST-->B");
+
+  await act(async () => fake.release());
+  await flush();
+  assert.equal(diagramImage()?.alt, "flowchart TD\n  FAST-->B", "the superseded picture never replaces it");
+});
+
+test("a block that left the page while its render was running is not drawn", async () => {
+  const fake = fakeEngine({ hold: (code) => code.includes("SLOW") });
+  useFake(fake);
+  await mount("```mermaid\nflowchart TD\n  SLOW-->A\n```");
+  assert.equal(fake.calls.length, 1);
+
+  await act(async () => {
+    root?.unmount();
+  });
+  root = null;
+  await act(async () => fake.release());
+  await flush();
+  assert.equal(container.querySelector("[data-mermaid-image]"), null);
+});
+
+test("one block's render does not hold up another block (there is no queue)", async () => {
+  const fake = fakeEngine({ hold: (code) => code.includes("SLOW") });
+  useFake(fake);
+  await mount(`\`\`\`mermaid\nflowchart TD\n  SLOW-->A\n\`\`\`\n\n${FLOWCHART}`);
+  await flush();
+
+  assert.equal(fake.calls.length, 2, "both renders started");
+  const blocks = [...container.children[0]!.children];
+  assert.equal(blocks.length, 2);
+  assert.equal(blocks[0]!.tagName, "PRE", "the held one is its code");
+  assert.match(blocks[0]!.textContent ?? "", /SLOW-->A/);
+  assert.ok(blocks[1]!.querySelector("[data-mermaid-image] img"), "the second one is already drawn");
+
+  await act(async () => fake.release());
+  await flush();
+  const finished = [...container.children[0]!.children];
+  assert.ok(finished[0]!.querySelector("[data-mermaid-image] img"), "and the first follows when it finishes");
+});
+
+/* ── the engine ─────────────────────────────────────────────────────────── */
 
 test("an engine that failed to load is fetched again for the next diagram", async () => {
-  const fake = fakeMermaid();
+  const fake = fakeEngine();
   let attempts = 0;
   setMermaidForTests({
     load: (() => {
@@ -451,57 +608,10 @@ test("an engine that failed to load is fetched again for the next diagram", asyn
   assert.ok(diagramImage(), "the new block is drawn");
 });
 
-test("a block whose text moved on while it waited its turn is skipped, not drawn", async () => {
-  const fake = fakeMermaid({ hold: (code) => code.includes("SLOW") });
-  useFake(fake);
-  const slow = "```mermaid\nflowchart TD\n  SLOW-->A\n```";
-  const streaming = "```mermaid\nflowchart TD\n  X-->Y";
-  await mount(`${slow}\n\n${streaming}`);
-  assert.equal(fake.calls.length, 1, "the second block waits behind the first");
-  assert.match(fake.calls[0]!.code, /SLOW-->A/);
-
-  await show(`${slow}\n\n${streaming}\n  Y-->Z`);
-  await flush(MERMAID_STABLE_MS + 150);
-  await act(async () => fake.release());
-  await flush();
-  assert.equal(fake.calls.length, 2, "the superseded text was never handed to the engine");
-  assert.match(fake.calls[1]!.code, /Y-->Z/);
-  assert.equal(container.querySelectorAll("[data-mermaid-image] img").length, 2);
-});
-
-test("a block that left the page while it waited its turn is skipped", async () => {
-  const fake = fakeMermaid({ hold: (code) => code.includes("SLOW") });
-  useFake(fake);
-  await mount(`\`\`\`mermaid\nflowchart TD\n  SLOW-->A\n\`\`\`\n\n${FLOWCHART}`);
-  assert.equal(fake.calls.length, 1);
-
-  await act(async () => {
-    root?.unmount();
-  });
-  root = null;
-  await act(async () => fake.release());
-  await flush();
-  assert.equal(fake.calls.length, 1, "nothing is drawn for a block that is gone");
-});
-
-test("a render that never finishes gives up after the time limit and does not hold up the next block", async () => {
-  const fake = fakeMermaid({ never: (code) => code.includes("HANG") });
-  useFake(fake, 50);
-  await mount(`\`\`\`mermaid\nflowchart TD\n  HANG-->A\n\`\`\`\n\n${FLOWCHART}`);
-  await flush(150);
-
-  assert.equal(fake.calls.length, 2, "the second block got its turn");
-  const blocks = [...container.children[0]!.children];
-  assert.equal(blocks.length, 2);
-  assert.equal(blocks[0]!.tagName, "PRE", "the one that hung is its code");
-  assert.match(blocks[0]!.textContent ?? "", /HANG-->A/);
-  assert.ok(blocks[1]!.querySelector("[data-mermaid-image] img"), "the next one is drawn");
-});
-
 /* ── the pref ───────────────────────────────────────────────────────────── */
 
 test("turning diagrams off returns an open transcript to the code block", async () => {
-  const fake = fakeMermaid();
+  const fake = fakeEngine();
   useFake(fake);
   await mount(FLOWCHART);
   assert.ok(diagramImage());

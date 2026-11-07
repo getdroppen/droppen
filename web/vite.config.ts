@@ -49,10 +49,9 @@ const cloud = cloudConfig();
  * only), compatibility mode's curves (`@noble/curves` and its hashes, reached
  * only from `lib/e2e/soft25519.ts`, on a browser without them natively), math:
  * KaTeX and the parsing around it (`components/markdown-math.ts`), fetched by
- * the first message that may hold a formula, and diagrams: Mermaid
+ * the first message that may hold a formula, and diagrams: Pele
  * (`lib/mermaid-render.ts`), fetched by the first ```mermaid fence a message
- * draws, with the largest packages only it uses: its parser's chevrotain,
- * cytoscape and cytoscape's layouts.
+ * draws, with the chunk it loads for each diagram type.
  */
 const ON_DEMAND = [
   "src/features/sessions/session-detail.tsx",
@@ -79,12 +78,7 @@ const ON_DEMAND = [
   "mdast-util-math",
   "hast-util-from-html-isomorphic",
   "hast-util-from-dom",
-  "mermaid",
-  "@mermaid-js/",
-  "chevrotain",
-  "cytoscape",
-  "layout-base",
-  "cose-base",
+  "pele",
 ];
 
 /**
@@ -238,15 +232,7 @@ export default defineConfig({
     devTools(fileURLToPath(new URL("./dev", import.meta.url))),
   ],
   resolve: {
-    alias: [
-      { find: "@", replacement: fileURLToPath(new URL("./src", import.meta.url)) },
-      // Mermaid registers its ELK layouts behind a lazy loader that imports
-      // elkjs, which is EPL-2.0: not a licence this app ships (the allow-list
-      // in `build/third-party-notices.mjs`). The diagrams are laid out with
-      // dagre (`lib/mermaid-render.ts`); this stub is what that loader gets,
-      // and it refuses, so the block stays its code.
-      { find: /^elkjs(?:\/.*)?$/, replacement: fileURLToPath(new URL("./src/lib/elk-stub.ts", import.meta.url)) },
-    ],
+    alias: [{ find: "@", replacement: fileURLToPath(new URL("./src", import.meta.url)) }],
   },
   server: {
     port: Number(process.env.DROPPEN_DEV_PORT ?? 5180),

@@ -3,8 +3,9 @@
  * with no API, router or machine context. It is a fixture, not a page; keep it
  * in step with `features/settings/`, `features/cloud/` and `components/ui/`.
  *
- * `?fixture=settings` (default), `?fixture=devices` or `?fixture=agents`
- * (`&view=cards|details|empty`), plus `?theme=dark`.
+ * `?fixture=settings` (default), `?fixture=devices`, `?fixture=agents`
+ * (`&view=cards|details|empty`) or `?fixture=diagrams` (a transcript of the
+ * diagram types messages draw), plus `?theme=dark`.
  * `web/src/index.css` excludes this directory from Tailwind's scan
  * (`@source not`), so nothing here can change the production stylesheet. That
  * also means every class below must already occur in `web/src`; the layout
@@ -12,6 +13,7 @@
  */
 import "@/index.css";
 import { createRoot } from "react-dom/client";
+import { DiagramRendering, Markdown } from "@/components/markdown";
 import { Button } from "@/components/ui/button";
 import { CHECKBOX_INPUT, CHECKBOX_LABEL, CheckboxMark } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -231,9 +233,135 @@ function AgentsFixture() {
   );
 }
 
-// The agents fixture's words go through i18n (counts, "5 min ago"): English
-// unless `&lang=` names another of the app's languages.
-if (fixture === "agents") await applyLanguage((query.get("lang") as LanguagePref | null) ?? "en");
+/**
+ * A transcript of the diagram types the message renderer must draw, plus one
+ * fence that cannot be drawn. The blocks are the real `<Markdown>` component
+ * under the same `DiagramRendering` provider a session view supplies, so the
+ * fixture exercises the engine, the picture and the code fallback.
+ */
+const DIAGRAMS: ReadonlyArray<readonly [name: string, source: string]> = [
+  [
+    "flowchart (subgraph and labels)",
+    `flowchart TD
+  A[Client] --> B{Access token?}
+  B -->|yes| C[Hub]
+  B -->|no| D[Login]
+  subgraph Cloud [Cloud]
+    C --> E[(Database)]
+  end`,
+  ],
+  [
+    "sequence",
+    `sequenceDiagram
+  participant C as Client
+  participant H as Hub
+  C->>H: GET /v1/sessions
+  H-->>C: 200 JSON`,
+  ],
+  [
+    "class",
+    `classDiagram
+  class Agent {
+    +run(task) string
+  }
+  class Session {
+    +id string
+  }
+  Agent --> Session : owns`,
+  ],
+  [
+    "state",
+    `stateDiagram-v2
+  [*] --> Idle
+  Idle --> Working: start
+  Working --> Idle: done`,
+  ],
+  [
+    "er",
+    `erDiagram
+  AGENT ||--o{ SESSION : runs
+  AGENT {
+    string id
+    string name
+  }
+  SESSION {
+    string id
+    string title
+  }`,
+  ],
+  [
+    "gantt",
+    `gantt
+  title Release
+  dateFormat YYYY-MM-DD
+  section Build
+  Compile :a1, 2026-01-01, 3d
+  Test :a2, after a1, 2d`,
+  ],
+  [
+    "pie",
+    `pie title Messages
+  "Claude" : 60
+  "Codex" : 30
+  "Other" : 10`,
+  ],
+  [
+    "mindmap",
+    `mindmap
+  root((Droppen))
+    Sessions
+      Transcript
+    Devices
+      Remote`,
+  ],
+  [
+    "timeline",
+    `timeline
+  title Releases
+  2025 : v0.1
+  2026 : v0.2 : v0.3`,
+  ],
+  [
+    "gitGraph",
+    `gitGraph
+  commit id: "init"
+  branch feat
+  checkout feat
+  commit id: "diagram"
+  checkout main
+  merge feat`,
+  ],
+  ["invalid fence (the code block)", "flowchart TD\n  A--"],
+];
+
+function DiagramsFixture() {
+  return (
+    <div data-fixture-root="" className="@container/settings mx-auto max-w-3xl p-4">
+      <header className="mb-3 flex h-8 items-center border-b border-border text-[13px] font-semibold">Transcript</header>
+      <DiagramRendering.Provider value>
+        {DIAGRAMS.map(([name, source]) => (
+          <section key={name} data-audit-row={name} className="border-b border-border py-3">
+            <div className="mb-1 font-mono text-2xs text-muted">{name}</div>
+            <Markdown text={"```mermaid\n" + source + "\n```"} />
+          </section>
+        ))}
+      </DiagramRendering.Provider>
+    </div>
+  );
+}
+
+// The agents and diagrams fixtures' words go through i18n (counts, "5 min
+// ago", the diagram controls' labels): English unless `&lang=` names another
+// of the app's languages.
+if (fixture === "agents" || fixture === "diagrams") await applyLanguage((query.get("lang") as LanguagePref | null) ?? "en");
 createRoot(document.getElementById("root")!).render(
-  fixture === "devices" ? <DevicesFixture /> : fixture === "agents" ? <AgentsFixture /> : <SettingsFixture />,
+  fixture === "devices" ? (
+    <DevicesFixture />
+  ) : fixture === "agents" ? (
+    <AgentsFixture />
+  ) : fixture === "diagrams" ? (
+    <DiagramsFixture />
+  ) : (
+    <SettingsFixture />
+  ),
 );

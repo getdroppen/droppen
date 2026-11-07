@@ -51,9 +51,8 @@ export const ALLOWED = new Set([
  * version, or a different text, fails the check again until somebody reads it.
  */
 export const CLARIFIED = new Map([
-  // Mermaid's colour maths: MIT in its `license` file and its repository
-  // (github.com/fabiospampinato/khroma).
-  ["khroma@2.1.0", { license: "MIT", file: "license", sha256: "66b333b0f66759a0b710459e03f7029abe17f4358114a128d2c972e642961b49" }],
+  // Nothing needs one today. A package without a declared licence gets an
+  // entry here, pinned to its version and the sha256 of the file that says so.
 ]);
 
 /** Licences outside the everyday MIT / Apache / BSD / ISC set, to be named in the summary. */

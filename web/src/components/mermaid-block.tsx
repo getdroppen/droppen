@@ -39,8 +39,8 @@ interface Drawn extends DiagramPicture {
  *
  * `fallback` is the plain code block the message has always shown. It stays on
  * screen while a new fence is still arriving, while the engine loads, and when
- * Mermaid refuses the text — no spinner, no error banner, just the source as
- * it was. Once a diagram is up, a small "source" control swaps that one block
+ * the engine refuses the text — no spinner, no error banner, just the source
+ * as it was. Once a diagram is up, a small "source" control swaps that one block
  * back to its code (and "diagram" swaps it back again); the `diagrams` pref
  * (Settings → message rendering) is what turns them off for every block.
  *
