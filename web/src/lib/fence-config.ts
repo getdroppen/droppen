@@ -6,14 +6,14 @@
  * key Pele honours for how the diagram looks is `themeVariables`: it becomes
  * the series palette (pie slices, git branches, …) and the ink of the labels
  * on those colours. That palette is the fence's to choose in Mermaid, but here
- * `transparent`, or `var(--pele-bg)`, can hide a slice and its legend, so it
- * must not reach the picture.
+ * it can hide a slice and its legend, so it must not reach the picture.
  *
  * The host `config` option cannot override it: Pele merges a fence's config
- * over the host's (`{ ...extra, ...pre.config }` in its core), so the source
- * is stripped before Pele sees it. The returned SVG is swept once more for
- * `--pele-series-*` declarations as a defence in depth, for a config form
- * this stripper does not know.
+ * over the host's (`{ ...extra, ...pre.config }` in its core), so this
+ * stripper removes it before Pele sees it. The stripper is best effort (YAML
+ * is a large language); the guarantee is the output check in
+ * `diagram-render.ts`: if any fence series declaration survives, the render
+ * fails and the block shows its code.
  *
  * Only `themeVariables` is removed; every other config key (a gantt's
  * `displayMode`, a flowchart's `curve`, a frontmatter `title`) is left where
@@ -28,7 +28,8 @@ const RE_DIRECTIVE = /%{2}{\s*(?:(\w+)\s*:|(\w+))\s*(?:(\w+)|((?:(?!}%{2}).|\r?\
 /**
  * Remove `themeVariables` from every init directive that is a JSON object.
  * A directive Pele would ignore (invalid JSON, not an object) is left as it
- * is; an unclosed one is too, as rewriting it could eat the diagram.
+ * is; an unclosed one is too, as rewriting it could eat the diagram. Those
+ * reach the output check, which refuses the render if the palette appears.
  */
 function stripDirectives(source: string): string {
   const matches = [...source.matchAll(RE_DIRECTIVE)].filter((match) => {
@@ -49,7 +50,7 @@ function stripDirectives(source: string): string {
     const { [THEME]: _removed, ...rest } = args as Record<string, unknown>;
     const body = JSON.stringify(rest);
     // A `}%%` in a string would end Pele's directive early; leave that one
-    // for the output sweep rather than change what the rest of the config says.
+    // for the output check rather than change what the rest of the config says.
     if (body.includes("}%%")) continue;
     out = out.slice(0, match.index!) + `%%{init:${body}}%%` + out.slice(match.index! + match[0].length);
   }
@@ -59,43 +60,74 @@ function stripDirectives(source: string): string {
 interface FrontMatter {
   bodyStart: number;
   bodyEnd: number;
+  /** Just past the closing fence line; directives before this are ignored (Pele removes the frontmatter first). */
+  end: number;
 }
 
+/** Spaces, tabs, BOM, NBSP and the other whitespace YAML treats as indentation. */
+const INDENT = "[^\\S\\r\\n]*";
+
 /**
- * Pele's frontmatter is a `---` fence at the start (after spaces or tabs) and
- * the last `---` line after it (`matchFrontMatter` in its preprocess). Its
- * body is what the config stripper works on.
+ * Pele's frontmatter is a `---` fence at the start (after whitespace that is
+ * not a line break, which includes a BOM and NBSP) and the last `---` line
+ * after it (`matchFrontMatter` in its preprocess).
  */
 function frontMatter(source: string): FrontMatter | null {
-  const open = /^([ \t]*)---[ \t]*(?:\n|$)/.exec(source);
+  const open = new RegExp(`^(${INDENT})---${INDENT}(?:\\n|$)`).exec(source);
   if (!open) return null;
   const bodyStart = open[0].length;
-  const closing = new RegExp(`^${escapeRegExp(open[1]!)}---[ \\t]*(?:\\n|$)`, "gm");
+  const closing = new RegExp(`^${escapeRegExp(open[1]!)}---${INDENT}(?:\\n|$)`, "gm");
   closing.lastIndex = bodyStart;
   let last: RegExpExecArray | null = null;
   for (let match = closing.exec(source); match !== null; match = closing.exec(source)) last = match;
   if (last === null) return null;
-  return { bodyStart, bodyEnd: last.index };
+  return { bodyStart, bodyEnd: last.index, end: last.index + last[0].length };
 }
 
 function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function indentation(line: string): number {
+  return /^[^\S\r\n]*/.exec(line)![0].length;
+}
+
+const BLOCK_KEY = /^([^\S\r\n]*)(?:"((?:[^"\\]|\\.)*)"|'((?:[^']|'')*)'|([^\s:][^:]*?))[^\S\r\n]*:/;
+const CONFIG_LINE = /^([^\S\r\n]*)(?:"config"|'config'|config)[^\S\r\n]*:[^\S\r\n]*(?:#.*)?$/;
+
 /** A YAML key at the start of a line, with its indentation. */
 function blockKey(line: string): { indent: number; key: string } | null {
-  const match = /^([ \t]*)(?:"([^"]+)"|'([^']+)'|([^\s:][^:]*?))[ \t]*:/.exec(line);
+  const match = BLOCK_KEY.exec(line);
   if (!match) return null;
-  return { indent: match[1]!.length, key: (match[2] ?? match[3] ?? match[4] ?? "").trim() };
+  const raw = match[2] ?? match[3] ?? match[4] ?? "";
+  return {
+    indent: match[1]!.length,
+    key: match[2] !== undefined ? decodeYamlKey(raw, '"') : match[3] !== undefined ? decodeYamlKey(raw, "'") : raw.trim(),
+  };
+}
+
+/** YAML double-quoted escapes, enough for a key Pele would read as `themeVariables`. */
+function decodeYamlKey(raw: string, quote: '"' | "'"): string {
+  if (quote === "'") return raw.replace(/''/g, "'");
+  return raw.replace(/\\(x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|.)/g, (_whole, escape: string) => {
+    const kind = escape[0]!;
+    if (kind === "x" || kind === "u" || kind === "U") return String.fromCodePoint(Number.parseInt(escape.slice(1), 16));
+    if (kind === "n") return "\n";
+    if (kind === "t") return "\t";
+    if (kind === "r") return "\r";
+    if (kind === "0") return "\0";
+    return escape;
+  });
 }
 
 /**
- * Remove every `themeVariables` block inside a `config:` block, including its
- * indented children. A `title: |` block outside `config` is not touched.
+ * Remove every `themeVariables` block inside a `config:` block, then any
+ * `themeVariables` key in a flow map that is the config's value (on the same
+ * line or the next). A `title: |` block outside `config` is not touched.
  */
 function stripBlockConfig(lines: string[]): string[] {
   for (let i = 0; i < lines.length; i++) {
-    const config = /^([ \t]*)config[ \t]*:[ \t]*(?:#.*)?$/.exec(lines[i]!);
+    const config = CONFIG_LINE.exec(lines[i]!);
     if (!config) continue;
     const childIndent = config[1]!.length;
     let end = i + 1;
@@ -125,23 +157,25 @@ function stripBlockConfig(lines: string[]): string[] {
       end -= stop - j;
       j--;
     }
+    // A flow map may be the config's value on the next line:
+    //   config:
+    //     {themeVariables: {...}}
+    const section = lines.slice(i + 1, end).join("\n");
+    const cleaned = removeFlowKey(section, THEME);
+    if (cleaned !== section) {
+      const next = cleaned.split("\n");
+      lines.splice(i + 1, end - (i + 1), ...next);
+      end = i + 1 + next.length;
+    }
   }
   return lines;
 }
 
-function indentation(line: string): number {
-  return /^[ \t]*/.exec(line)![0].length;
-}
-
-/**
- * Remove `themeVariables` keys from a YAML flow mapping (`config: { … }`).
- * Keys and values are scanned with their quotes respected.
- */
+/** Remove `themeVariables` keys from a YAML flow mapping (`config: { … }`). */
 function stripFlowConfig(text: string): string {
   const starts: number[] = [];
-  for (const match of text.matchAll(/(^|\n)([ \t]*)config[ \t]*:[ \t]*\{/gm)) {
-    starts.push(match.index! + match[0].length - 1);
-  }
+  const config = new RegExp(`(^|\\n)(${INDENT})(?:"config"|'config'|config)${INDENT}:${INDENT}\\{`, "gm");
+  for (const match of text.matchAll(config)) starts.push(match.index! + match[0].length - 1);
   let out = text;
   for (let i = starts.length - 1; i >= 0; i--) {
     const open = starts[i]!;
@@ -206,32 +240,31 @@ interface FlowKey {
 
 /** `key:` in a flow mapping, outside a quoted string, starting at `from`. */
 function flowKey(text: string, key: string, from: number): FlowKey | null {
-  let quote = "";
   let previous = "{";
   for (let i = from; i < text.length; i++) {
     const char = text[i]!;
-    if (quote !== "") {
-      if (char === "\\" && quote === '"') i++;
-      else if (char === quote) quote = "";
+    if (char === "#" && (i === 0 || /[\s{,]/.test(text[i - 1]!))) {
+      // A YAML comment, including one containing a colon; skip to its end.
+      const newline = text.indexOf("\n", i);
+      if (newline < 0) return null;
+      i = newline;
       continue;
     }
     if (char === '"' || char === "'") {
-      if (previous === "{" || previous === ",") {
-        const closing = text[i + key.length + 1];
-        if (text.startsWith(key, i + 1) && closing === char) {
-          const colon = skipSpace(text, i + key.length + 2);
-          if (text[colon] === ":") return { start: i, end: flowValueEnd(text, colon + 1) };
-        }
+      const end = quotedEnd(text, i);
+      if (end < 0) return null;
+      if ((previous === "{" || previous === ",") && decodeYamlKey(text.slice(i + 1, end), char) === key) {
+        const colon = skipFlowSpace(text, end + 1);
+        if (text[colon] === ":") return { start: i, end: flowValueEnd(text, colon + 1) };
       }
-      quote = char;
+      // A quoted key or value: neither its contents nor its punctuation is
+      // structure to this scan.
+      i = end;
+      previous = char;
       continue;
     }
-    if (char === "{") {
-      previous = "{";
-      continue;
-    }
-    if (char === "}") {
-      previous = "}";
+    if (char === "{" || char === "}") {
+      previous = char;
       continue;
     }
     if (char === ",") {
@@ -240,7 +273,7 @@ function flowKey(text: string, key: string, from: number): FlowKey | null {
     }
     if (/\s/.test(char)) continue;
     if ((previous === "{" || previous === ",") && text.startsWith(key, i) && !/[\w-]/.test(text[i + key.length] ?? "")) {
-      const colon = skipSpace(text, i + key.length);
+      const colon = skipFlowSpace(text, i + key.length);
       if (text[colon] === ":") return { start: i, end: flowValueEnd(text, colon + 1) };
     }
     previous = char;
@@ -248,14 +281,33 @@ function flowKey(text: string, key: string, from: number): FlowKey | null {
   return null;
 }
 
-function skipSpace(text: string, at: number): number {
-  while (at < text.length && /[ \t]/.test(text[at]!)) at++;
+/** The end quote of a YAML string starting at `start`, or -1. */
+function quotedEnd(text: string, start: number): number {
+  const quote = text[start]!;
+  for (let i = start + 1; i < text.length; i++) {
+    const char = text[i]!;
+    if (quote === '"') {
+      if (char === "\\") {
+        i++;
+      } else if (char === '"') {
+        return i;
+      }
+    } else if (char === "'") {
+      if (text[i + 1] === "'") i++;
+      else return i;
+    }
+  }
+  return -1;
+}
+
+function skipFlowSpace(text: string, at: number): number {
+  while (at < text.length && /[^\S\r\n]/.test(text[at]!)) at++;
   return at;
 }
 
 /** The index just past a flow value starting at `from`. */
 function flowValueEnd(text: string, from: number): number {
-  let at = skipSpace(text, from);
+  let at = skipFlowSpace(text, from);
   if (text[at] === "{" || text[at] === "[") {
     const close = balancedEnd(text, at);
     return close < 0 ? text.length : close + 1;
@@ -281,23 +333,18 @@ function flowValueEnd(text: string, from: number): number {
 export function withoutFenceThemeVariables(source: string): string {
   let out = source.replace(/\r\n?/g, "\n");
   const front = frontMatter(out);
-  if (front !== null) {
-    const body = out.slice(front.bodyStart, front.bodyEnd);
-    let cleaned = stripFlowConfig(stripBlockConfig(body.split("\n")).join("\n"));
-    // The block remover takes blank lines that followed the removed key with
-    // it; the newline before the closing fence is structural.
-    if (body.endsWith("\n") && !cleaned.endsWith("\n")) cleaned += "\n";
-    if (cleaned !== body) out = out.slice(0, front.bodyStart) + cleaned + out.slice(front.bodyEnd);
-  }
-  return stripDirectives(out);
-}
-
-/**
- * Defence in depth: Pele writes a fence's series palette as
- * `--pele-series-N:<colour>` declarations on the SVG root. Remove them, so
- * the `var(--pele-series-N, <theme default>)` references fall back to the
- * host's colours even if a config form slipped past the source stripper.
- */
-export function withoutSeriesPalette(svg: string): string {
-  return svg.replace(/--pele-series-\d+:[^;"]*;?/g, "");
+  if (front === null) return stripDirectives(out);
+  const body = out.slice(front.bodyStart, front.bodyEnd);
+  let cleaned = stripFlowConfig(stripBlockConfig(body.split("\n")).join("\n"));
+  // The block remover takes blank lines that followed the removed key with
+  // it; the newline before the closing fence is structural.
+  if (body.endsWith("\n") && !cleaned.endsWith("\n")) cleaned += "\n";
+  return (
+    out.slice(0, front.bodyStart) +
+    cleaned +
+    out.slice(front.bodyEnd, front.end) +
+    // Pele removes the frontmatter before it reads directives; a `%%{` in a
+    // frontmatter title must not swallow the diagram's real init directive.
+    stripDirectives(out.slice(front.end))
+  );
 }

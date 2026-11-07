@@ -81,11 +81,13 @@ const {
   DiagramRenderError,
   diagramPicture,
   diagramSettings,
+  hasLongWhitespaceRun,
+  isDiagramWhitespace,
   renderMermaidDiagram,
   setMermaidForTests,
 } = await import("../src/lib/mermaid-render.js");
-const { renderDiagram } = await import("../src/lib/diagram-render.js");
-const { withoutFenceThemeVariables, withoutSeriesPalette } = await import("../src/lib/fence-config.js");
+const { assertNoFencePalette, renderDiagram } = await import("../src/lib/diagram-render.js");
+const { withoutFenceThemeVariables } = await import("../src/lib/fence-config.js");
 const { PeleError, renderAsync } = await import("pele/lazy");
 
 const i18n = makeI18n({
@@ -179,6 +181,8 @@ function fakeSvg(code: string): string {
 
 function success(worker: FakeWorker, message: import("../src/lib/diagram-protocol.js").DiagramWorkerRequest): void {
   queueMicrotask(() => {
+    worker.reply({ phase: "started" });
+    worker.reply({ phase: "loading" });
     worker.reply({ phase: "rendering" });
     worker.reply({ ok: true, svg: fakeSvg(message.code), width: 120, height: 80 });
   });
@@ -187,6 +191,8 @@ function success(worker: FakeWorker, message: import("../src/lib/diagram-protoco
 function failure(code: "syntax" | "limit" | "semantic" | "unsupported-diagram" | "error") {
   return (worker: FakeWorker): void => {
     queueMicrotask(() => {
+      worker.reply({ phase: "started" });
+      worker.reply({ phase: "loading" });
       worker.reply({ phase: "rendering" });
       worker.reply({ ok: false, code, message: `cannot draw (${code})` });
     });
@@ -209,6 +215,8 @@ function fakeEngine(behavior: Behavior | "hold"): FakeEngine {
   const run: Behavior = (worker, message) => {
     if (behavior === "hold") {
       held.push(() => {
+        worker.reply({ phase: "started" });
+        worker.reply({ phase: "loading" });
         worker.reply({ phase: "rendering" });
         worker.reply({ ok: true, svg: fakeSvg(message.code), width: 120, height: 80 });
       });
@@ -436,13 +444,56 @@ test("a fence's series palette cannot reach the output (the real engine)", async
     assert.match(picture.svg, /--pele-series-1,#4c78a8/, "Pele's own first series colour");
   }
 
-  // The output sweep, for a config form the source stripper does not know.
+  // The output check, for a config form the source stripper does not know.
   const raw = await renderAsync(
     '%%{init: {"themeVariables":{"pie1":"transparent"}}}%%\npie\n"A": 1\n"B": 2',
     options,
   );
   assert.match(raw.svg, /--pele-series-1:transparent/);
-  assert.doesNotMatch(withoutSeriesPalette(raw.svg), /--pele-series-\d+:/);
+  assert.throws(
+    () => assertNoFencePalette(raw.svg),
+    (error: unknown) => error instanceof PeleError && error.code === "semantic",
+    "a surviving fence palette fails the render, it is not stripped",
+  );
+});
+
+test("every round-2 themeVariables form is stripped or refused (the real engine)", async () => {
+  const { options } = diagramSettings("light");
+  const body = 'pie\n"a": 1\n"b": 2\n';
+  const fm = (open: string, config: string, close = "---") => `${open}\n${config}\n${close}\n${body}`;
+  const forms: Array<[string, string]> = [
+    ["baseline init", `%%{init: {"themeVariables": {"pie1": "#abcdef"}}}%%\n${body}`],
+    ["baseline frontmatter", fm("---", 'config:\n  themeVariables:\n    pie1: "#abcdef"')],
+    ["BOM-indented frontmatter", "﻿---\n﻿config:\n﻿  themeVariables:\n﻿    pie1: \"#abcdef\"\n﻿---\n" + body],
+    ["opening ---<NBSP>", fm("--- ", 'config:\n  themeVariables:\n    pie1: "#abcdef"')],
+    ["closing ---<NBSP>", fm("---", 'config:\n  themeVariables:\n    pie1: "#abcdef"', "--- ")],
+    ['quoted "config" key', fm("---", '"config":\n  themeVariables:\n    pie1: "#abcdef"')],
+    ["flow map on next line", fm("---", 'config:\n  {themeVariables: {pie1: "#abcdef"}}')],
+    ["%%{ in frontmatter title", `---\ntitle: "%%{x"\n---\n%%{init: {"themeVariables": {"pie1": "#abcdef"}}}%%\n${body}`],
+    ["unclosed trailing init", `${body}%%{init: {"themeVariables": {"pie1": "#abcdef"}}}`],
+    ["escaped key \\x56", fm("---", 'config:\n  "theme\\x56ariables":\n    pie1: "#abcdef"')],
+    ["escaped key \\u0056 in flow", fm("---", 'config: {"theme\\u0056ariables": {pie1: "#abcdef"}}')],
+    ["comment in flow map", fm("---", 'config: { # c\n  themeVariables: {pie1: "#abcdef"}}')],
+    ["quoted 'config' single", fm("---", "'config':\n  themeVariables:\n    pie1: '#abcdef'")],
+    ["config with trailing NBSP", fm("---", 'config: \n  themeVariables:\n    pie1: "#abcdef"')],
+    ["tab-indented frontmatter", fm("\t---", '\tconfig:\n\t  themeVariables:\n\t    pie1: "#abcdef"', "\t---")],
+    ["init+initialize twice", `%%{initialize: {"themeVariables": {"pie1": "#abcdef"}}}%%\n%%{init: {"x":1}}%%\n${body}`],
+    ["directive with }%% in string", `%%{init: {"a":"}%%", "themeVariables": {"pie1": "#abcdef"}}}%%\n${body}`],
+    ["themeVariables after a comment line", fm("---", 'config:\n  # c\n  themeVariables:\n    pie1: "#abcdef"')],
+    ["xychart plotColorPalette", `%%{init: {"themeVariables": {"xyChart": {"plotColorPalette": "#abcdef"}}}}%%\nxychart\nx-axis [a,b]\nbar [1,2]\n`],
+    ["unclosed initialize after frontmatter", `---\ntitle: t\n---\n${body}%%{initialize: {"themeVariables": {"pie1": "#abcdef"}}}`],
+    ["explicit key ?", fm("---", 'config:\n  ? themeVariables\n  : {pie1: "#abcdef"}')],
+    ["config: !!map", fm("---", 'config: !!map\n  themeVariables:\n    pie1: "#abcdef"')],
+  ];
+  for (const [name, source] of forms) {
+    try {
+      const picture = await renderDiagram(source, options);
+      assert.doesNotMatch(picture.svg, /--pele-series-\d+\s*:/, `${name}: no fence palette`);
+      assert.doesNotMatch(picture.svg, /#abcdef/i, `${name}: no fence colour`);
+    } catch (error) {
+      assert.ok(error instanceof PeleError, `${name}: a refusal is a PeleError, got ${String(error)}`);
+    }
+  }
 });
 
 /* ── the picture ────────────────────────────────────────────────────────── */
@@ -558,6 +609,8 @@ test("a timed-out render terminates its worker and the next render gets a fresh 
   let hang = false;
   const engine = fakeEngine((worker, message) => {
     if (hang) {
+      worker.reply({ phase: "started" });
+      worker.reply({ phase: "loading" });
       worker.reply({ phase: "rendering" });
       return;
     }
@@ -585,27 +638,86 @@ test("a timed-out render terminates its worker and the next render gets a fresh 
   assert.equal(engine.workers[1]!.posted.length, 1);
 });
 
-test("a worker that never starts is timed out, terminated and replaced", async () => {
+test("a worker that never starts is timed out, terminated and not cached", async () => {
   let silent = false;
   const engine = fakeEngine((worker, message) => {
     if (!silent) success(worker, message);
   });
   installWorker(engine, { renderTimeoutMs: 100, loadTimeoutMs: 20 });
   silent = true;
+  const code = "flowchart TD\n SLOW-->A";
   await assert.rejects(
-    renderMermaidDiagram("flowchart TD\n SLOW-->A", "light"),
-    (error: unknown) => error instanceof DiagramRenderError && error.code === "timeout",
+    renderMermaidDiagram(code, "light"),
+    (error: unknown) => error instanceof DiagramRenderError && error.code === "timeout" && error.cacheable === false,
   );
   assert.equal(engine.workers[0]!.terminated, true);
+  // A load timeout may be a slow network, not a broken fence: the same code
+  // is tried again and gets a fresh worker.
   silent = false;
-  await renderMermaidDiagram("flowchart TD\n B-->C", "light");
+  await renderMermaidDiagram(code, "light");
   assert.equal(engine.workers.length, 2);
 });
 
-test("a worker's error event terminates it and a fresh one draws the next diagram", async () => {
+test("a load failure is not cached, and the same fence retries with a fresh worker", async () => {
+  let broken = true;
+  const engine = fakeEngine((worker, message) => {
+    if (broken) {
+      worker.reply({ phase: "started" });
+      worker.reply({ phase: "loading" });
+      worker.reply({ ok: false, code: "error", message: "chunk failed" });
+      return;
+    }
+    success(worker, message);
+  });
+  installWorker(engine);
+  const code = "flowchart TD\n A-->B";
+  await assert.rejects(
+    renderMermaidDiagram(code, "light"),
+    (error: unknown) => error instanceof DiagramRenderError && error.code === "error" && error.cacheable === false,
+  );
+  assert.equal(engine.workers[0]!.terminated, false, "the worker is reused for a load failure");
+  broken = false;
+  await renderMermaidDiagram(code, "light");
+  assert.equal(engine.workers[0]!.posted.length, 2, "the same fence is retried");
+  assert.ok(await renderMermaidDiagram(code, "dark"));
+});
+
+test("the render clock pauses around the type chunk load, and counts the work before it", async () => {
+  // A 20 ms render clock; the load phase takes 40 ms and must not count.
+  const slowLoad = fakeEngine((worker, message) => {
+    worker.reply({ phase: "started" });
+    setTimeout(() => {
+      worker.reply({ phase: "loading" });
+      setTimeout(() => {
+        worker.reply({ phase: "rendering" });
+        worker.reply({ ok: true, svg: fakeSvg(message.code), width: 120, height: 80 });
+      }, 40);
+    }, 10);
+  });
+  installWorker(slowLoad, { renderTimeoutMs: 20, loadTimeoutMs: 200 });
+  await renderMermaidDiagram("flowchart TD\n A-->B", "light");
+  assert.equal(slowLoad.workers.length, 1);
+
+  // A 30 ms synchronous phase before `loading` is 30 ms against a 20 ms
+  // clock: the worker is killed before the load even starts.
+  const slowStart = fakeEngine((worker) => {
+    worker.reply({ phase: "started" });
+    setTimeout(() => worker.reply({ phase: "loading" }), 30);
+  });
+  installWorker(slowStart, { renderTimeoutMs: 20, loadTimeoutMs: 200 });
+  await assert.rejects(
+    renderMermaidDiagram("flowchart TD\n C-->D", "light"),
+    (error: unknown) => error instanceof DiagramRenderError && error.code === "timeout" && error.cacheable === true,
+  );
+  assert.equal(slowStart.workers[0]!.terminated, true);
+});
+
+test("a worker's error event terminates it, is not cached, and a fresh one draws the same fence", async () => {
   let broken = false;
   const engine = fakeEngine((worker, message) => {
     if (broken) {
+      worker.reply({ phase: "started" });
+      worker.reply({ phase: "loading" });
       worker.reply({ phase: "rendering" });
       worker.fail();
       return;
@@ -614,14 +726,16 @@ test("a worker's error event terminates it and a fresh one draws the next diagra
   });
   installWorker(engine);
   broken = true;
+  const code = "flowchart TD\n A-->B";
   await assert.rejects(
-    renderMermaidDiagram("flowchart TD\n A-->B", "light"),
-    (error: unknown) => error instanceof DiagramRenderError && error.code === "worker",
+    renderMermaidDiagram(code, "light"),
+    (error: unknown) => error instanceof DiagramRenderError && error.code === "worker" && error.cacheable === false,
   );
   assert.equal(engine.workers[0]!.terminated, true);
   broken = false;
-  await renderMermaidDiagram("flowchart TD\n C-->D", "light");
+  await renderMermaidDiagram(code, "light");
   assert.equal(engine.workers.length, 2);
+  assert.equal(engine.workers[1]!.posted.length, 1);
 });
 
 test("a Pele error is mapped to its code, and the worker is kept for the next render", async () => {
@@ -659,6 +773,42 @@ test("a source over the length cap, or with a huge whitespace run, is refused be
     (error: unknown) => error instanceof DiagramRenderError && error.code === "limit",
   );
   assert.equal(engine.workers.length, 0, "no worker, no Pele preprocess");
+});
+
+test("the whitespace guard is one linear pass on 50k adversarial sources", () => {
+  const exact = " ".repeat(32_000) + "x" + " ".repeat(17_900);
+  const cases: Array<[string, boolean]> = [
+    [exact, false],
+    ["\n".repeat(32_000) + "x" + "\n".repeat(17_900), false],
+    [Array.from({ length: 25 }, () => " ".repeat(1_999)).join("x"), false],
+    ["　\t\n ".repeat(8_000) + "x" + " ".repeat(17_900), false],
+    [" x".repeat(25_000), false],
+    [" ".repeat(50_000), true],
+  ];
+  for (const [source, expected] of cases) {
+    const start = performance.now();
+    const found = hasLongWhitespaceRun(source);
+    const ms = performance.now() - start;
+    assert.equal(found, expected, `${source.length} chars`);
+    assert.ok(ms < 100, `${source.length} chars took ${ms.toFixed(1)} ms`);
+  }
+  // The scan's set is exactly `\s`, not an approximation.
+  for (let code = 0; code <= 0xffff; code++) {
+    assert.equal(isDiagramWhitespace(code), /\s/.test(String.fromCharCode(code)), `U+${code.toString(16)}`);
+  }
+});
+
+test("a cached adversarial fence is not re-scanned on a theme toggle", async () => {
+  const engine = fakeEngine(success);
+  installWorker(engine);
+  const probe = 'pie\n"a": 1\n%%' + " ".repeat(32_000) + "x" + " ".repeat(17_900);
+  await renderMermaidDiagram(probe, "light");
+  assert.equal(engine.workers[0]!.posted.length, 1);
+  const start = performance.now();
+  await renderMermaidDiagram(probe, "dark");
+  const ms = performance.now() - start;
+  assert.equal(engine.workers[0]!.posted.length, 1, "the cache hit does not post");
+  assert.ok(ms < 100, `the cached theme change took ${ms.toFixed(1)} ms`);
 });
 
 test("an aborted render terminates its worker, and a queued aborted render never posts", async () => {

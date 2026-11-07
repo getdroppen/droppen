@@ -60,9 +60,46 @@ const MAX_OUTPUT_CHARS = 2_000_000;
  * spaces take 2.6 s in Chromium and about 1 s in WebKit. No diagram needs a
  * 32,000-character whitespace run, so it is refused here, before the worker,
  * like an over-long source. The worker's timer remains the general bound.
+ *
+ * Counted in one pass over the char codes, not with a `\s{N}` regular
+ * expression: a regex retries from every start position after a failed match,
+ * which is quadratic on exactly the inputs this cap is meant to reject.
  */
-const MAX_WHITESPACE_RUN = 32_000;
-const LONG_WHITESPACE = new RegExp(String.raw`\s{${MAX_WHITESPACE_RUN + 1}}`);
+export const MAX_WHITESPACE_RUN = 32_000;
+
+/** The code points ECMAScript's `\s` matches, as a linear scan can use them. */
+export function isDiagramWhitespace(code: number): boolean {
+  return (
+    code === 0x09 ||
+    code === 0x0a ||
+    code === 0x0b ||
+    code === 0x0c ||
+    code === 0x0d ||
+    code === 0x20 ||
+    code === 0xa0 ||
+    code === 0x1680 ||
+    (code >= 0x2000 && code <= 0x200a) ||
+    code === 0x2028 ||
+    code === 0x2029 ||
+    code === 0x202f ||
+    code === 0x205f ||
+    code === 0x3000 ||
+    code === 0xfeff
+  );
+}
+
+/** Whether `text` has a run of more than `max` whitespace code points. */
+export function hasLongWhitespaceRun(text: string, max = MAX_WHITESPACE_RUN): boolean {
+  let run = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (isDiagramWhitespace(text.charCodeAt(i))) {
+      if (++run > max) return true;
+    } else {
+      run = 0;
+    }
+  }
+  return false;
+}
 
 /**
  * How long the worker gets to draw, once its diagram type has loaded.
@@ -257,11 +294,19 @@ const REAL_ENGINE: Engine = {
 /** A diagram that could not be drawn, with enough detail for a test. */
 export class DiagramRenderError extends Error {
   readonly code: DiagramErrorCode;
+  /**
+   * Whether a rerun of the same fence cannot differ. Pele's own errors and
+   * the 2 s render timeout are; a load failure, a load timeout, a worker
+   * crash and the source caps are not (the next attempt may succeed, and the
+   * caps are cheap to re-check).
+   */
+  readonly cacheable: boolean;
 
-  constructor(code: DiagramErrorCode, message: string) {
+  constructor(code: DiagramErrorCode, message: string, cacheable = false) {
     super(message);
     this.name = "DiagramRenderError";
     this.code = code;
+    this.cacheable = cacheable;
   }
 }
 
@@ -275,8 +320,8 @@ type CacheEntry =
   | { ok: true; raw: RawDiagram }
   | { ok: false; code: DiagramErrorCode; message: string };
 
-/** Failures that are worth remembering: a rerun of the same fence cannot differ. */
-const CACHEABLE_FAILURES = new Set<DiagramErrorCode>(["unsupported-diagram", "syntax", "semantic", "limit", "timeout"]);
+/** Pele's own refusals: a rerun of the same fence cannot differ. */
+const PELE_ERROR_CODES = new Set<DiagramErrorCode>(["unsupported-diagram", "syntax", "semantic", "limit"]);
 
 let engine = REAL_ENGINE;
 let worker: DiagramWorker | null = null;
@@ -383,6 +428,12 @@ function renderInWorker(
     }
     let loadTimer: ReturnType<typeof setTimeout> | undefined;
     let renderTimer: ReturnType<typeof setTimeout> | undefined;
+    // The render clock starts at the worker's `started` message, pauses only
+    // around `await load(type)`, and counts the synchronous work on either
+    // side (the sanitizer, detectType, the render, the palette check).
+    let renderClockStarted = 0;
+    let renderElapsed = 0;
+    let phase: "start" | "loading" | "rendering" = "start";
     let settled = false;
 
     const cleanup = () => {
@@ -409,26 +460,60 @@ function renderInWorker(
       resolve(raw);
     };
 
-    const timedOut = (ms: number) =>
-      fail(new DiagramRenderError("timeout", `no diagram after ${ms} ms`), true);
+    const pauseRenderClock = () => {
+      if (renderClockStarted !== 0) {
+        renderElapsed += performance.now() - renderClockStarted;
+        renderClockStarted = 0;
+      }
+      if (renderTimer !== undefined) {
+        clearTimeout(renderTimer);
+        renderTimer = undefined;
+      }
+    };
+
+    const startRenderClock = () => {
+      if (renderClockStarted !== 0 || settled) return;
+      renderClockStarted = performance.now();
+      const remaining = engine.renderTimeoutMs - renderElapsed;
+      if (remaining <= 0) {
+        fail(new DiagramRenderError("timeout", `no diagram after ${engine.renderTimeoutMs} ms`, true), true);
+        return;
+      }
+      renderTimer = setTimeout(
+        () => fail(new DiagramRenderError("timeout", `no diagram after ${engine.renderTimeoutMs} ms`, true), true),
+        remaining,
+      );
+    };
 
     const onMessage = (event: MessageEvent<DiagramWorkerReply>) => {
       const reply = event.data;
       if (reply === null || typeof reply !== "object") return;
       if ("phase" in reply) {
-        // The type chunk is in; the work from here is synchronous and timed.
-        if (loadTimer !== undefined) {
-          clearTimeout(loadTimer);
-          loadTimer = undefined;
+        if (reply.phase === "started") {
+          phase = "start";
+          startRenderClock();
+        } else if (reply.phase === "loading") {
+          phase = "loading";
+          // The chunk import is the one thing a slow network may stretch;
+          // everything before and after it counts against the render clock.
+          if (renderClockStarted === 0) startRenderClock();
+          pauseRenderClock();
+        } else if (reply.phase === "rendering") {
+          phase = "rendering";
+          if (loadTimer !== undefined) {
+            clearTimeout(loadTimer);
+            loadTimer = undefined;
+          }
+          if (renderClockStarted === 0) startRenderClock();
         }
-        renderTimer ??= setTimeout(() => timedOut(engine.renderTimeoutMs), engine.renderTimeoutMs);
         return;
       }
       if (reply.ok) {
         succeed({ svg: reply.svg, width: reply.width, height: reply.height });
       } else {
         // Pele refused the fence: the worker is healthy and stays for reuse.
-        fail(new DiagramRenderError(reply.code, reply.message), false);
+        // A load-phase failure is not remembered; the next attempt may work.
+        fail(new DiagramRenderError(reply.code, reply.message, phase !== "loading" && PELE_ERROR_CODES.has(reply.code)), false);
       }
     };
 
@@ -440,7 +525,10 @@ function renderInWorker(
     current.addEventListener("error", onError);
     current.addEventListener("messageerror", onError);
     signal?.addEventListener("abort", onAbort, { once: true });
-    loadTimer = setTimeout(() => timedOut(engine.loadTimeoutMs), engine.loadTimeoutMs);
+    loadTimer = setTimeout(
+      () => fail(new DiagramRenderError("timeout", `the worker did not start within ${engine.loadTimeoutMs} ms`), true),
+      engine.loadTimeoutMs,
+    );
     try {
       current.postMessage({ code, options });
     } catch (error) {
@@ -472,12 +560,18 @@ export async function renderMermaidDiagram(
   theme: DiagramTheme,
   signal?: AbortSignal,
 ): Promise<DiagramPicture> {
-  if (code.length > MAX_SOURCE_CHARS || LONG_WHITESPACE.test(code)) {
+  // The cache is consulted before the source is scanned: a theme toggle over
+  // a cached 50 KB fence must not walk it again, and an adversarial fence in
+  // the cache is exactly what the round-2 probes exercise.
+  const early = rawCacheGet(code);
+  if (early !== undefined) {
+    signal?.throwIfAborted();
+    return cachedPicture(early, theme);
+  }
+  if (code.length > MAX_SOURCE_CHARS || hasLongWhitespaceRun(code)) {
     throw new DiagramRenderError("limit", `Diagram source is longer than the limit of ${MAX_SOURCE_CHARS} characters, or has a whitespace run over ${MAX_WHITESPACE_RUN}.`);
   }
   signal?.throwIfAborted();
-  const early = rawCacheGet(code);
-  if (early !== undefined) return cachedPicture(early, theme);
   const started = epoch;
   return enqueue(async () => {
     signal?.throwIfAborted();
@@ -490,7 +584,7 @@ export async function renderMermaidDiagram(
       signal?.throwIfAborted();
       return diagramPicture(raw.svg, settings.style);
     } catch (error) {
-      if (started === epoch && error instanceof DiagramRenderError && CACHEABLE_FAILURES.has(error.code)) {
+      if (started === epoch && error instanceof DiagramRenderError && error.cacheable) {
         rawCacheSet(code, { ok: false, code: error.code, message: error.message });
       }
       throw error;

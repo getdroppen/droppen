@@ -20,10 +20,14 @@ const scope = self as unknown as {
 };
 
 scope.onmessage = async (event) => {
+  // The client's 2 s render clock starts here, not after `detectType` and the
+  // chunk import; only the `await load(type)` between these phases is paused.
+  scope.postMessage({ phase: "started" });
   try {
-    const { svg, width, height } = await renderDiagram(event.data.code, event.data.options, () =>
-      scope.postMessage({ phase: "rendering" }),
-    );
+    const { svg, width, height } = await renderDiagram(event.data.code, event.data.options, {
+      loading: () => scope.postMessage({ phase: "loading" }),
+      rendering: () => scope.postMessage({ phase: "rendering" }),
+    });
     scope.postMessage({ ok: true, svg, width, height });
   } catch (error) {
     // Error messages may quote the fence; the page never shows them, and a

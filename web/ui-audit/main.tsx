@@ -371,6 +371,13 @@ const HOSTILE: ReadonlyArray<readonly [name: string, source: string]> = (() => {
     ],
     ["pie accDescr 48k spaces", 'pie\naccDescr {\nx' + " ".repeat(48000) + 'y\n}\n"a": 1'],
     ["over the 50k source cap", "flowchart TD\n%%x\n" + "\n".repeat(400000) + "A-->B"],
+    // Five cached adversarial fences from the round-2 review: 32,000 spaces
+    // + x + 17,900 spaces, under both caps. The theme toggle must not re-scan
+    // them (one linear pass at mount; the cache is consulted first after).
+    ...Array.from({ length: 5 }, (_, i) => [
+      `whitespace guard ${i + 1}`,
+      `pie\n"a${i}": 1\n%%` + " ".repeat(32_000) + "x" + " ".repeat(17_900) + "\n",
+    ] as const),
   ];
 })();
 

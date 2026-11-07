@@ -37,4 +37,5 @@ export interface Found {
 export function collect(webDir: string, recorded: Recorded, clarified?: Map<string, Clarification>): Found;
 export function render(found: Pick<Found, "entries" | "helpers">, intro: string[]): string;
 export function failureText(found: Pick<Found, "failures">): string | null;
+export function workerNoticeProblem(bundle: Rollup.OutputBundle, recorded?: Set<string>): string | null;
 export function thirdPartyNotices(): Plugin;

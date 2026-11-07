@@ -19,8 +19,12 @@ export type DiagramErrorCode =
   | "worker"
   | "error";
 
-/** What the diagram worker says back: a render phase, a picture, or a failure. */
+/**
+ * What the diagram worker says back: a render phase, a picture, or a failure.
+ * `started` begins the render clock at the top of the message; `loading` and
+ * `rendering` pause and resume it around the one chunk import.
+ */
 export type DiagramWorkerReply =
-  | { phase: "rendering" }
+  | { phase: "started" | "loading" | "rendering" }
   | { ok: true; svg: string; width: number; height: number }
   | { ok: false; code: DiagramErrorCode; message: string };
