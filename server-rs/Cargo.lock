@@ -2186,9 +2186,9 @@ dependencies = [
 
 [[package]]
 name = "gotcha"
-version = "0.5.1"
+version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "644c49da426b346b314c55991d9aab3821c480e7202d12aaaa184b530b951699"
+checksum = "f683302e066fd700710fa8127b874b61f994750e4716249044faaec9de08fad4"
 dependencies = [
  "async-trait",
  "axum",
@@ -2220,9 +2220,9 @@ dependencies = [
 
 [[package]]
 name = "gotcha_core"
-version = "0.5.1"
+version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eb484849b6d3153c73583a1b304152beb8613cf056e04c72ac55a883afb0738e"
+checksum = "b5507a8b1989c78cdf54038052386210f54f374331f632a948d1d4ff49962460"
 dependencies = [
  "axum",
  "axum-extra",
@@ -2242,9 +2242,9 @@ dependencies = [
 
 [[package]]
 name = "gotcha_macro"
-version = "0.5.1"
+version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "43fce55a02917cd55c797da3ad671e84f4f7f1922896039752025d99ecdd11a4"
+checksum = "1ec4c5cb6d68b4f129753bbe76faaee317cbbbc1a61e6fe39eb0e78be7b2a1d4"
 dependencies = [
  "darling 0.23.0",
  "proc-macro-crate",
