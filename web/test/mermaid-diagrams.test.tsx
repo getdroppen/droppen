@@ -683,7 +683,7 @@ test("a load failure is not cached, and the same fence retries with a fresh work
 });
 
 test("the render clock pauses around the type chunk load, and counts the work before it", async () => {
-  // A 20 ms render clock; the load phase takes 40 ms and must not count.
+  // A 50 ms render clock; the load phase takes 100 ms and must not count.
   const slowLoad = fakeEngine((worker, message) => {
     worker.reply({ phase: "started" });
     setTimeout(() => {
@@ -691,10 +691,10 @@ test("the render clock pauses around the type chunk load, and counts the work be
       setTimeout(() => {
         worker.reply({ phase: "rendering" });
         worker.reply({ ok: true, svg: fakeSvg(message.code), width: 120, height: 80 });
-      }, 40);
+      }, 100);
     }, 10);
   });
-  installWorker(slowLoad, { renderTimeoutMs: 20, loadTimeoutMs: 200 });
+  installWorker(slowLoad, { renderTimeoutMs: 50, loadTimeoutMs: 300 });
   await renderMermaidDiagram("flowchart TD\n A-->B", "light");
   assert.equal(slowLoad.workers.length, 1);
 
