@@ -6,8 +6,10 @@
 //! `/openapi.json` and `/scalar` are gotcha's own documentation endpoints —
 //! opt-in in 0.5, and enabled here — and `/redoc` is our redirect to
 //! `/scalar` ([`redoc_to_scalar`]). The listener is the server's own rather
-//! than one `Gotcha::run`/`bind` binds, because those serve without
-//! `ConnectInfo`, which the guards read (see [`crate::shutdown`]).
+//! than one `Gotcha::run`/`bind` binds. Those can attach `ConnectInfo` since
+//! gotcha 0.5.2, but their shutdown is not this server's (see
+//! [`crate::shutdown`]), and `bind` takes only an IP address and rewrites
+//! `config.server` to it, which the host guard reads.
 
 use std::net::SocketAddr;
 use std::sync::Arc;

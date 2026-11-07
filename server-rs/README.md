@@ -1,6 +1,6 @@
 # remote-hand-server
 
-Droppen（原名 remote-hand）的服务端，Rust + [gotcha](https://crates.io/crates/gotcha) 0.5.1
+Droppen（原名 remote-hand）的服务端，Rust + [gotcha](https://crates.io/crates/gotcha) 0.5.2
 （axum 0.8 + 从类型派生的 OpenAPI）。由 `server/`（Hono + `@hono/zod-openapi`）
 逐模块移植而来，唯一**刻意**没有移植的是 browsers（`/api/browsers*`）——那个功能连同
 TypeScript 服务端一起退休了。
@@ -76,8 +76,9 @@ cargo clippy --all-targets --all-features -- -D warnings
   `export.rs` 的测试守住导出与线上文档一致。
 - **`shutdown.rs`** — 服务端自己 serve 之后的停机流程：SIGINT/SIGTERM、放在 state 里的
   `CancellationToken`（让活着的 websocket 与 listener 同时收到停机），以及按序拆掉 feeds /
-  terminals / apps / 全局 watcher 的 `Cleanups`。listener 之所以是自己的，是因为 gotcha
-  0.5 的 `run`/`bind` 不带 `ConnectInfo`，而三个守卫都要 peer 地址。
+  terminals / apps / 全局 watcher 的 `Cleanups`。listener 之所以是自己的：gotcha 0.5.2 的
+  `run`/`bind` 虽然能用 `connect_info(true)` 带上三个守卫要的 peer 地址，但停机顺序不对——
+  见下文「生命周期」。
 - **`static_files.rs`** — 挂在 router fallback 上的单个 tower `Service`，从二进制里取资源、
   深链接回落到 `index.html`、让 `/api/*` 的 404 仍然是真 404。
 
@@ -307,9 +308,9 @@ replay 只做一件事：把 `transcript` / `sidecar` 事件按原始时间轴�
 ### schema 形状（与 zod 对齐）
 
 - `<Option<T>>::required()` 恒为 `false`，表达不出 zod 的 `.nullable()`（一定在，但可以是
-  `null`）（`gotcha_core-0.5.1/src/lib.rs:624`）→ `Nullable<T>`。
+  `null`）（`gotcha_core-0.5.2/src/lib.rs:624`）→ `Nullable<T>`。
 - `<Option<T>>::nullable()` 恒为 `Some(true)`，表达不出 zod 的 `.optional()`（可以缺省，但
-  不会是 `null`）（`gotcha_core-0.5.1/src/lib.rs:627`）→ `Optional<T>`，配
+  不会是 `null`）（`gotcha_core-0.5.2/src/lib.rs:627`）→ `Optional<T>`，配
   `#[serde(default, skip_serializing_if)]`。
 - 两者都覆盖不到第三种：可缺省且不涉及 nullability 的 `z.any()` 盲盒 → `AnyValue`
   （`Screen.layout` 这类完全由客户端拥有的数据）。
@@ -354,10 +355,13 @@ replay 只做一件事：把 `transcript` / `sidecar` 事件按原始时间轴�
 ### 生命周期
 
 - gotcha 0.5 有了停机流程（`bind`/`run` 的 `shutdown_signal`、`on_shutdown`、
-  `http_shutdown_timeout`），但它们的 listener 不带 `ConnectInfo`，而登录守卫、桌面
-  app 窗口判定与 Peer 限流都要 peer 地址 → `app.rs` 仍然自己 bind，并用
-  `axum::serve(...into_make_service_with_connect_info...)` serve；停机顺序仍由
-  `shutdown.rs` 掌管，drain 时限仍是 5 秒。
+  `http_shutdown_timeout`），0.5.2 起也能用 `connect_info(true)` 带上登录守卫、桌面 app
+  窗口判定与 Peer 限流要的 peer 地址。但 `on_shutdown` 在 drain 之后才跑，drain 还会等已升级
+  的连接——embed 代理转发的 websocket 不看取消信号，会把 drain 拖到时限；而桌面端在
+  `SIGTERM` 之后 5 秒就发 `SIGKILL`（`desktop/src-tauri/src/shell.rs` 的 `STOP_GRACE`）。
+  另外 `bind` 只收 IP，还会把 `config.server` 改写成绑定到的地址，而 Host 守卫读的正是它
+  → `app.rs` 仍然自己 bind，并用 `axum::serve(...into_make_service_with_connect_info...)`
+  serve；`shutdown.rs` 在收到信号时先跑 `Cleanups`，drain 连同收尾限时 5 秒。
 
 ### 配置
 

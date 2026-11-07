@@ -1,12 +1,17 @@
 //! Graceful shutdown.
 //!
 //! The application serves its assembled router itself rather than through
-//! gotcha's `run`/`bind`: those serve without `ConnectInfo`, and the
-//! authentication guard, the app-window gate and the peer rate limiting all
-//! read the peer address. Serving it here is also what gives the shutdown the
-//! ordering this module exists for — [`crate::app::Prepared::serve_until_signalled`]
-//! stops accepting, gives in-flight requests a five-second drain, and runs
-//! [`Cleanups`] at the signal rather than after the drain.
+//! gotcha's `run`/`bind`. Since gotcha 0.5.2 those can attach the
+//! `ConnectInfo` the authentication guard, the app-window gate and the peer
+//! rate limiting read, but they shut down in another order: their
+//! `on_shutdown` hooks run after the drain, and their drain also waits for
+//! upgraded connections — an embedded app's proxied websocket watches no
+//! cancel token, so it holds the drain until the deadline. Serving it here is
+//! what gives the shutdown the ordering this module exists for —
+//! [`crate::app::Prepared::serve_until_signalled`] stops accepting, gives
+//! in-flight requests a five-second drain, and runs [`Cleanups`] at the signal
+//! rather than after the drain — so a stop ends within the five seconds the
+//! desktop app waits after `SIGTERM` before it sends `SIGKILL`.
 //!
 //! A [`CancellationToken`] lives in the application state, so a live websocket
 //! sees the shutdown at the same moment the listener stops accepting.
