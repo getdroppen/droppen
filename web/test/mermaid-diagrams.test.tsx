@@ -87,6 +87,7 @@ const {
   setMermaidForTests,
 } = await import("../src/lib/mermaid-render.js");
 const { assertNoFencePalette, renderDiagram } = await import("../src/lib/diagram-render.js");
+const { handleDiagramMessage } = await import("../src/lib/diagram-worker-handler.js");
 const { withoutFenceThemeVariables } = await import("../src/lib/fence-config.js");
 const { PeleError, renderAsync } = await import("pele/lazy");
 
@@ -494,6 +495,38 @@ test("every round-2 themeVariables form is stripped or refused (the real engine)
       assert.ok(error instanceof PeleError, `${name}: a refusal is a PeleError, got ${String(error)}`);
     }
   }
+});
+
+test("a label that mentions --pele-series-1: draws (the check is anchored to the root style)", async () => {
+  const { options } = diagramSettings("light");
+  const picture = await renderDiagram('flowchart LR\n  A["set --pele-series-1: red"]', options);
+  assert.match(picture.svg, /set --pele-series-1: red/, "the label is drawn, not refused as a palette");
+  assert.doesNotMatch(picture.svg, /<svg[^>]*--pele-series-1:/, "and no palette declaration was added");
+});
+
+test("the output check refuses a fence palette even with the stripper bypassed", async () => {
+  const { options } = diagramSettings("light");
+  const fence = '%%{init: {"themeVariables":{"pie1":"#abcdef"}}}%%\npie\n"a": 1\n"b": 2';
+  await assert.rejects(
+    renderDiagram(fence, options, {}, (source) => source),
+    (error: unknown) => error instanceof PeleError && error.code === "semantic",
+    "the output check, not the stripper, must refuse this",
+  );
+});
+
+test("the worker reports started before sanitize, loading before rendering, and the palette check after render", async () => {
+  const { options } = diagramSettings("light");
+  const fence = '%%{init: {"themeVariables":{"pie1":"#abcdef"}}}%%\npie\n"a": 1\n"b": 2';
+  const events: string[] = [];
+  await handleDiagramMessage(
+    { code: fence, options },
+    (reply) => events.push("phase" in reply ? reply.phase : reply.ok ? "ok" : `error:${reply.code}`),
+    (source) => {
+      events.push("sanitize");
+      return source;
+    },
+  );
+  assert.deepEqual(events, ["started", "sanitize", "loading", "rendering", "error:semantic"]);
 });
 
 /* ── the picture ────────────────────────────────────────────────────────── */
