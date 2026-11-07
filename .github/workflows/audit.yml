@@ -1,8 +1,9 @@
 name: audit
 
-# RustSec advisories against every Rust lockfile in the repository
-# (server-rs/, desktop/, desktop/update-signer/). An advisory can land on any
-# day, whatever a pull request changes, so this also runs once a week on main.
+# RustSec advisories against every Rust lockfile in the repository (the
+# repository root's, desktop/, desktop/update-signer/). An advisory can land on
+# any day, whatever a pull request changes, so this also runs once a week on
+# main.
 on:
   pull_request:
   schedule:

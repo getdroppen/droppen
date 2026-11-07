@@ -6,42 +6,9 @@ publish = false
 description = "Droppen local server"
 license = "AGPL-3.0-only"
 
-# The lints in `[workspace.lints]` below apply to this package too.
+# The lints in the workspace root's `[workspace.lints]` apply to this package.
 [lints]
 workspace = true
-
-# A workspace so the cloud protocol crate (`crates/droppen-proto`), the device side
-# of the hub API (`crates/droppen-client`) and the headless test device
-# (`crates/droppen-devkit`) share this lockfile and target directory. The root
-# package stays the default member, so a bare `cargo build`/`cargo test` here
-# still means the server and nothing else.
-[workspace]
-members = [".", "crates/droppen-proto", "crates/droppen-relay-core", "crates/droppen-relay", "crates/droppen-client", "crates/droppen-devkit", "crates/droppen-plugin-sdk", "crates/droppen-search-path", "crates/droppen-base", "crates/droppen-instance", "crates/droppen-http", "crates/droppen-pty", "crates/droppen-supervisor", "crates/droppen-auth", "crates/droppen-files", "crates/droppen-workbench", "crates/droppen-plugins", "crates/droppen-aggregator", "crates/droppen-sessions", "crates/droppen-agent", "crates/droppen-cloud", "crates/droppen-notify", "crates/droppen-accounts", "crates/droppen-setup", "crates/droppen-provider", "crates/droppen-provider-acp", "crates/droppen-drive", "crates/droppen-provider-codex", "crates/droppen-provider-claude-code"]
-
-# Every member takes serde_json from here, so `preserve_order` is on in every
-# build: a `Value` writes its keys in insertion order rather than sorted. Cargo
-# unifies features per build and `agent-client-protocol-schema` turns this one
-# on with no way off, so a member that took serde_json on its own would write
-# different bytes under `cargo test -p <member>` than in a workspace build.
-# `scripts/check-serde-json-order.sh` (CI) checks that no member builds
-# without it, but for the exempt ones it names, each with its reason.
-[workspace.dependencies]
-serde_json = { version = "1", features = ["preserve_order"] }
-# The web framework and the schema core behind its `Schematic` derive. One pin
-# here rather than one per member: every crate routes, documents or derives
-# against the same `gotcha`, and a member that named a different version would
-# compile against a second copy of the trait its neighbours' schemas implement.
-gotcha = { version = "0.5.2", features = ["openapi"] }
-gotcha_core = "0.5.2"
-
-# Two causes of a program that waits on itself forever. In edition 2021 a
-# guard made in a match/if-let/while-let scrutinee lives until the end of the
-# whole block, so code reached there (a hook, a callback) can take the same
-# lock again; and a std guard held across an `.await` blocks the thread. Both
-# are denied for every member, each opted in with `[lints] workspace = true`.
-[workspace.lints.clippy]
-significant_drop_in_scrutinee = "deny"
-await_holding_lock = "deny"
 
 [features]
 default = ["embed"]
@@ -144,16 +111,6 @@ tracing = "0.1"
 
 rust-embed = { version = "8", optional = true }
 mime_guess = { version = "2", optional = true }
-
-# An unoptimized argon2 at 64 MiB and three passes takes seconds rather than
-# milliseconds, which would put minutes on every `cargo test` run that touches a
-# login. Optimizing just the hash — and the compression function under it —
-# leaves the rest of the debug build alone, so a backtrace through this server's
-# own code is still a debug backtrace.
-[profile.dev.package.argon2]
-opt-level = 3
-[profile.dev.package.blake2]
-opt-level = 3
 
 [dev-dependencies]
 # What the tests reach that the server's own code does not name, each at the

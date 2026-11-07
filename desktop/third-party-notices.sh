@@ -43,13 +43,17 @@ awk '/^[[:space:]]*targets[[:space:]]*=/ {
 for kept in '^accepted[[:space:]]*=' '^ignore-build-dependencies[[:space:]]*=[[:space:]]*true' '^ignore-dev-dependencies[[:space:]]*=[[:space:]]*true' '^private[[:space:]]*=[[:space:]]*\{[[:space:]]*ignore[[:space:]]*=[[:space:]]*true[[:space:]]*\}'; do
   grep -qE "$kept" "$WORK/about-macos.toml" || die "the copy of about.toml lost a setting it must keep ($kept)"
 done
-for manifest in server-rs desktop; do
+for manifest in . desktop; do
+  case "$manifest" in
+    .) label=server ;;
+    *) label=$manifest ;;
+  esac
   cargo fetch --locked --manifest-path "$SRC/$manifest/Cargo.toml" >/dev/null
   cargo about generate --frozen --fail -c "$WORK/about-macos.toml" \
-    -m "$SRC/$manifest/Cargo.toml" --format json -o "$WORK/about-$manifest.json" \
+    -m "$SRC/$manifest/Cargo.toml" --format json -o "$WORK/about-$label.json" \
     || die "cargo-about refused a Rust licence of $manifest (see above; the allow-list is about.toml's accepted)"
 done
-node "$REPO/scripts/notices/rust-notices.mjs" "$WORK/about-desktop.json,$WORK/about-server-rs.json" "$WORK/notices-rust.txt" \
+node "$REPO/scripts/notices/rust-notices.mjs" "$WORK/about-desktop.json,$WORK/about-server.json" "$WORK/notices-rust.txt" \
   "the app and its bundled server"
 node "$REPO/scripts/notices/web-notices.mjs" "$SRC/web" "$WORK/notices-web.txt" \
   || die "an npm package bundled into the web app fails the licence check (see above)"

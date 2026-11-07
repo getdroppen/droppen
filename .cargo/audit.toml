@@ -1,4 +1,4 @@
-# `cargo audit` for server-rs/Cargo.lock (.github/workflows/audit.yml runs it
+# `cargo audit` for the root Cargo.lock (.github/workflows/audit.yml runs it
 # from this directory). The lockfile lists every optional dependency of every
 # crate, built or not, so an advisory here is not always one in the server.
 # Each entry below was checked against what is actually compiled: a crate "not

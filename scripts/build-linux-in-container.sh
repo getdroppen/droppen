@@ -37,7 +37,7 @@ cargo install --locked --quiet cargo-zigbuild --version "${ZIGBUILD_VERSION}"
 for arch in $ARCHES; do
   rustup target add "${arch}-unknown-linux-gnu"
 done
-cd /work/src/server-rs
+cd /work/src
 for arch in $ARCHES; do
   echo "== ${arch}-unknown-linux-gnu.${GLIBC}"
   RUSTFLAGS="--remap-path-prefix=/work/src=/droppen --remap-path-prefix=${CARGO_HOME:-/usr/local/cargo}=/cargo" \

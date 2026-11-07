@@ -2,7 +2,7 @@
 // The Rust half of THIRD_PARTY_NOTICES, rendered from cargo-about's JSON.
 // Node >= 20, no dependencies.
 //
-//   cargo about generate --frozen --fail -c about.toml -m server-rs/Cargo.toml --format json -o about.json
+//   cargo about generate --frozen --fail -c about.toml -m Cargo.toml --format json -o about.json
 //   node scripts/notices/rust-notices.mjs about.json <out-file> [<what they are compiled into>]
 //
 // Several cargo-about reports, comma-separated (`server.json,app.json`), make

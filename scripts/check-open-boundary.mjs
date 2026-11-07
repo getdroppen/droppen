@@ -11,7 +11,7 @@
  * (`rh-hub-*`, `droppen-hub-*`: `rh-hub-tools`, its white-box e2e and stress
  * runs). They may depend on one another and on the open crates.
  *
- * From `cargo metadata --no-deps` over `server-rs/Cargo.toml` (the declared
+ * From `cargo metadata --no-deps` over the root `Cargo.toml` (the declared
  * dependencies are all it needs: no resolution, no network, and Cargo.lock is
  * never rewritten):
  * - no open package depends on the hub's side, as a normal, dev or build
@@ -517,7 +517,7 @@ export function metadataProblems(meta, root) {
 
 function cargoMetadata(root) {
   const cargo = process.env.CARGO || "cargo";
-  const run = spawnSync(cargo, ["metadata", "--format-version", "1", "--no-deps", "--manifest-path", join(root, "server-rs", "Cargo.toml")], {
+  const run = spawnSync(cargo, ["metadata", "--format-version", "1", "--no-deps", "--manifest-path", join(root, "Cargo.toml")], {
     encoding: "utf8",
     maxBuffer: 256 * 1024 * 1024,
   });
@@ -553,7 +553,7 @@ export function checkOpenBoundary(root, { metadata = cargoMetadata } = {}) {
     if (unlisted.length) notes.push(`${unlisted.map((dir) => relative(root, dir)).join(", ")} on disk but not in the workspace`);
     if (!side.length && !unlisted.length) notes.push("the hub is not in this tree (the public repository's shape)");
   } else {
-    problems.push(`cargo metadata cannot load server-rs/Cargo.toml:\n      ${error.split("\n").join("\n      ")}`);
+    problems.push(`cargo metadata cannot load Cargo.toml:\n      ${error.split("\n").join("\n      ")}`);
     open = [{ name: "droppen-server", dir: join(root, "server-rs") }];
     for (const name of existsSync(crates) ? readdirSync(crates).sort() : []) {
       if (!isHub(name) && existsSync(join(crates, name, "Cargo.toml"))) open.push({ name, dir: join(crates, name) });
@@ -564,7 +564,7 @@ export function checkOpenBoundary(root, { metadata = cargoMetadata } = {}) {
   if (!hubHere) {
     const left = [...new Set([...side, ...hubDirs.map((dir) => basename(dir))].map(dashed))];
     if (left.length) problems.push(`${left.join(", ")}: on the hub's side, but the hub is not in this tree; it goes with the hub`);
-    const manifests = [join(root, "server-rs", "Cargo.toml"), ...open.filter((p) => p.dir !== join(root, "server-rs")).map((p) => join(p.dir, "Cargo.toml"))];
+    const manifests = [join(root, "Cargo.toml"), ...open.filter((p) => p.dir !== join(root, "server-rs")).map((p) => join(p.dir, "Cargo.toml"))];
     for (const file of manifests) {
       if (!existsSync(file)) continue;
       for (const m of manifestMentions(readFileSync(file, "utf8"))) {

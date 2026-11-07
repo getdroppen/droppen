@@ -256,13 +256,14 @@ describe("the whole check, over a made-up tree", () => {
       writeFileSync(join(root, path), text);
     }
     const packages = Object.keys(files)
-      .filter((p) => p.endsWith("Cargo.toml"))
+      .filter((p) => p.endsWith("Cargo.toml") && /name = "([^"]+)"/.test(files[p]))
       .map((p) => ({ name: /name = "([^"]+)"/.exec(files[p])[1], source: null, manifest_path: join(root, p), dependencies: [] }));
     return { root, metadata: () => ({ meta: { packages } }) };
   }
   const crate = (name) => `[package]\nname = "${name}"\n`;
   const open = {
-    "server-rs/Cargo.toml": `${crate("droppen-server")}[workspace]\n`,
+    "Cargo.toml": '[workspace]\nmembers = ["server-rs", "server-rs/crates/droppen-proto"]\n',
+    "server-rs/Cargo.toml": crate("droppen-server"),
     "server-rs/src/main.rs": 'fn main() { let _ = std::env::var("DROPPEN_HUB_DEFAULT"); }\n',
     "server-rs/crates/droppen-proto/Cargo.toml": crate("droppen-proto"),
     "server-rs/crates/droppen-proto/src/lib.rs": "pub fn f() {}\n",

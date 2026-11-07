@@ -1,6 +1,6 @@
 #!/bin/sh
-# serde_json's `preserve_order` is on for the whole server-rs workspace
-# (`[workspace.dependencies]` in server-rs/Cargo.toml says why). Cargo resolves
+# serde_json's `preserve_order` is on for the whole server workspace
+# (`[workspace.dependencies]` in the root Cargo.toml says why). Cargo resolves
 # features for the packages a build selects, so every member whose dependency
 # graph reaches serde_json has to turn the feature on itself; otherwise
 # `cargo test -p <member>` writes JSON keys in another order than a workspace
@@ -15,7 +15,7 @@
 # reqwest's wasm-only use of serde_json.
 set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
-manifest="$root/server-rs/Cargo.toml"
+manifest="$root/Cargo.toml"
 targets="--target x86_64-unknown-linux-gnu --target aarch64-unknown-linux-gnu --target aarch64-apple-darwin --target x86_64-apple-darwin"
 
 # Members that keep serde_json as it comes, each with why:

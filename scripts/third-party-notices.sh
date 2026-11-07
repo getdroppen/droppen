@@ -32,10 +32,10 @@ trap 'rm -rf "$WORK"' EXIT
 # The targets come from about.toml: the macOS and Linux ones, so one file
 # covers every binary of the release. Every target's crates are fetched
 # first: cargo-about reads their licences from the sources (--frozen).
-cargo fetch --locked --manifest-path "$SRC/server-rs/Cargo.toml" >/dev/null \
+cargo fetch --locked --manifest-path "$SRC/Cargo.toml" >/dev/null \
   || die "cannot fetch the server's crates for the licences"
 cargo about generate --frozen --fail -c "$REPO/about.toml" \
-  -m "$SRC/server-rs/Cargo.toml" --format json -o "$WORK/about.json" \
+  -m "$SRC/Cargo.toml" --format json -o "$WORK/about.json" \
   || die "cargo-about refused a Rust licence (see above; the allow-list is about.toml's accepted)"
 node "$REPO/scripts/notices/rust-notices.mjs" "$WORK/about.json" "$WORK/notices-rust.txt"
 node "$REPO/scripts/notices/web-notices.mjs" "$SRC/web" "$WORK/notices-web.txt" \

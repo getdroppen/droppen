@@ -101,7 +101,7 @@ x() { "${K[@]}" exec -i "$POD" -c build -- "$@"; }
 
 x mkdir -p /work/src /work/out
 # Everything but build outputs and dependencies: the pod builds those itself.
-tar -C "$SRC" -cf - --exclude ./node_modules --exclude ./web/node_modules --exclude ./server-rs/target \
+tar -C "$SRC" -cf - --exclude ./node_modules --exclude ./web/node_modules --exclude ./target \
   --exclude ./packages/plugin-sdk/node_modules . | x tar -x -C /work/src
 echo "build-linux: source uploaded; building"
 

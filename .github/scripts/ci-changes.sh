@@ -30,8 +30,9 @@
 #    desktop/src-tauri/tauri.conf.json, install.sh, release-public.sh,
 #    install-key.sh, LICENSE, scripts/notices/attributions.txt and
 #    web/owner-placeholders.txt;
-#  - the desktop core tests read desktop/build.sh, desktop/e2e-identity.sh and
-#    scripts/install.sh.
+#  - the desktop core tests read desktop/build.sh, desktop/e2e-identity.sh,
+#    scripts/install.sh and the root Cargo.toml (the droppen-search-path path
+#    dependency inherits that workspace's lints).
 # Everything a rule does not name is unknown, and unknown runs every job.
 set -u
 
@@ -142,7 +143,7 @@ while IFS= read -r path; do
   esac
 
   case "$path" in
-    server-rs/*|openapi/openapi.json|packages/plugin-sdk/test/engine-vectors.json|scripts/check-open-boundary.mjs|scripts/check-layers.mjs|scripts/check-layers.test.mjs|scripts/check-sdk-crate-deps.sh|scripts/check-serde-json-order.sh|scripts/install.sh)
+    server-rs/*|Cargo.toml|Cargo.lock|rustfmt.toml|layers.json|.config/*|.cargo/*|openapi/openapi.json|packages/plugin-sdk/test/engine-vectors.json|scripts/check-open-boundary.mjs|scripts/check-layers.mjs|scripts/check-layers.test.mjs|scripts/check-sdk-crate-deps.sh|scripts/check-serde-json-order.sh|scripts/install.sh)
       server=1; matched=1 ;;
   esac
 
@@ -152,7 +153,7 @@ while IFS= read -r path; do
   esac
 
   case "$path" in
-    desktop/*|scripts/install.sh)
+    desktop/*|scripts/install.sh|Cargo.toml)
       desktop_core=1; matched=1 ;;
   esac
 

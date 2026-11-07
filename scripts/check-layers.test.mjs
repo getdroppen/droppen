@@ -1,7 +1,7 @@
 // Tests for scripts/check-layers.mjs: `node --test scripts/check-layers.test.mjs`.
 //
 // The code reader, the crate rules over made-up workspaces, the Source
-// exemptions, and server-rs/layers.json's own rules as the check reads them.
+// exemptions, and layers.json's own rules as the check reads them.
 // The real thing is `pnpm check:layers`; the Source count is the server's
 // source scans' (`provider_tests::gate`).
 
@@ -380,7 +380,7 @@ describe("the numbers", () => {
   });
 });
 
-test("server-rs/layers.json: its outside crates, forbidden pairs, wrappers and exemptions name what it lists, no mayUse lists a forbidden pair, and nothing places a module", () => {
-  const real = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "server-rs", "layers.json"), "utf8"));
+test("layers.json: its outside crates, forbidden pairs, wrappers and exemptions name what it lists, no mayUse lists a forbidden pair, and nothing places a module", () => {
+  const real = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "layers.json"), "utf8"));
   assert.deepEqual(checkCrates({ packages: [], workspace_members: [] }, real).problems, []);
 });

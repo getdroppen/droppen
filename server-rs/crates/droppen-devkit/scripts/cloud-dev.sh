@@ -67,6 +67,7 @@ set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/../../.." && pwd)" # server-rs
+repo="$(cd "$root/.." && pwd)"       # the repository root; cargo's target directory is here
 state="${DROPPEN_CLOUD_DEV_DIR:-/tmp/rh-cloud-dev}"
 export DOCKER_HOST="${DOCKER_HOST:-unix://$HOME/.orbstack/run/docker.sock}"
 mkdir -p "$state"
@@ -84,7 +85,7 @@ toxi=$name-toxi
 # The hub's container, when it runs from DROPPEN_HUB_IMAGE.
 hubc=$name-hub
 # The web app the hub serves: this tree's build.
-web_dist="$(cd "$root/.." && pwd)/web/dist"
+web_dist="$repo/web/dist"
 session_id=c10dc0de-0000-4000-8000-00000000e2e0
 big_id=c10dc0de-0000-4000-8000-0000000b16b1
 external_id=c10dc0de-0000-4000-8000-0000000e7e2a
@@ -142,7 +143,7 @@ hub_cli() {
     set_hub_docker
     docker run --rm "${hub_docker[@]}" "${hub_vars[@]/#/--env=}" "$HUB_IMAGE" rh-hub "$@" </dev/null
   else
-    env "${hub_vars[@]}" "$root/target/debug/rh-hub" "$@"
+    env "${hub_vars[@]}" "$repo/target/debug/rh-hub" "$@"
   fi
 }
 
@@ -193,7 +194,7 @@ start_hub() {
     docker rm -f "$hubc" >/dev/null 2>&1 || true
     (exec docker run --rm --name "$hubc" "${hub_docker[@]}" "${hub_vars[@]/#/--env=}" "$HUB_IMAGE" rh-hub serve >>"$state/hub.log" 2>&1 </dev/null) &
   else
-    (exec env "${hub_vars[@]}" "$root/target/debug/rh-hub" serve >>"$state/hub.log" 2>&1 </dev/null) &
+    (exec env "${hub_vars[@]}" "$repo/target/debug/rh-hub" serve >>"$state/hub.log" 2>&1 </dev/null) &
   fi
   echo $! >"$state/hub.pid"
   for _ in $(seq 1 60); do curl -sf "http://127.0.0.1:$HUB_PORT/healthz" >/dev/null && break; sleep 0.25; done
@@ -228,7 +229,7 @@ start_relay() {
   (exec env -i PATH="$PATH" DROPPEN_RELAY_HUB="ws://127.0.0.1:$HUB_PORT" DROPPEN_RELAY_ORIGIN="$origin" DROPPEN_RELAY_ID="$id" \
     DROPPEN_RELAY_KEY="$(cat "$state/relay-$id.key")" DROPPEN_RELAY_REGISTRATION_TOKEN="$(cat "$state/relay-$id.token")" \
     DROPPEN_RELAY_BIND=127.0.0.1 PORT="$port" DROPPEN_RELAY_DRAIN_SECS=3 RUST_LOG=trace \
-    "$root/target/debug/droppen-relay" serve >>"$state/relay-$id.log" 2>&1 </dev/null) &
+    "$repo/target/debug/droppen-relay" serve >>"$state/relay-$id.log" 2>&1 </dev/null) &
   echo $! >"$state/relay-$id.pid"
   echo "$id $port $origin" >"$state/relay-$id.conf"
 }
@@ -296,9 +297,9 @@ ENV
   load
   fixtures
   if image_mode; then
-    (cd "$root" && cargo build -q -p droppen-relay -p droppen-server)
+    (cd "$repo" && cargo build -q -p droppen-relay -p droppen-server)
   else
-    (cd "$root" && cargo build -q -p rh-hub -p droppen-relay -p droppen-server)
+    (cd "$repo" && cargo build -q -p rh-hub -p droppen-relay -p droppen-server)
   fi
   start_hub
   echo "hub:    http://$(hub_host):$HUB_PORT"
@@ -315,7 +316,7 @@ AGENT_PORT=$(free_port)
 ENV
   load
   fixtures
-  (cd "$root" && cargo build -q -p droppen-server)
+  (cd "$repo" && cargo build -q -p droppen-server)
   echo "agent instance ready for $HUB_URL"
   ;;
 enroll)
@@ -323,10 +324,10 @@ enroll)
   # `agent enroll` wants a local account on the instance first (a linked
   # device's page reaches the others): a throwaway one, made once.
   if [ ! -f "$state/local-account" ]; then
-    printf '%s\n' "cloud-dev throwaway" | agent_env "$root/target/debug/droppen-server" user add dev --instance cloudtest >/dev/null &&
+    printf '%s\n' "cloud-dev throwaway" | agent_env "$repo/target/debug/droppen-server" user add dev --instance cloudtest >/dev/null &&
       echo "local account: dev / cloud-dev throwaway" >"$state/local-account"
   fi
-  agent_env "$root/target/debug/droppen-server" agent enroll "$2" --hub "${HUB_URL:-http://$(hub_host):$HUB_PORT}"
+  agent_env "$repo/target/debug/droppen-server" agent enroll "$2" --hub "${HUB_URL:-http://$(hub_host):$HUB_PORT}"
   ;;
 agent)
   load
@@ -334,7 +335,7 @@ agent)
     APP_SERVER__PORT="$AGENT_PORT" APP_SERVER__HOST=127.0.0.1 \
     DROPPEN_CONFIG_DIR="$state/config" DROPPEN_DATA_DIR="$state/data" SHELL=/bin/sh RUST_LOG=info \
     DROPPEN_AGENT_RELAY_INSECURE=1 \
-    "$root/target/debug/droppen-server" agent run >>"$state/agent.log" 2>&1 </dev/null) &
+    "$repo/target/debug/droppen-server" agent run >>"$state/agent.log" 2>&1 </dev/null) &
   echo $! >"$state/agent.pid"
   echo "agent started (log: $state/agent.log)"
   ;;
@@ -350,7 +351,7 @@ restart-hub)
   load
   # A source hub is rebuilt first (a changed hub is the usual reason to
   # restart it), before the running one stops: a build that fails leaves it up.
-  if ! image_mode; then (cd "$root" && cargo build -q -p rh-hub); fi
+  if ! image_mode; then (cd "$repo" && cargo build -q -p rh-hub); fi
   pid="$(cat "$state/hub.pid")"
   kill -TERM "$pid"
   for _ in $(seq 1 100); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done

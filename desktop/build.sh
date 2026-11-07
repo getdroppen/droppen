@@ -369,7 +369,7 @@ if [ -z "$SIDECAR" ]; then
       CARGO_BUILD_BUILD_DIR="$WORK/build-server" \
       DROPPEN_BUILD_REV="$REV" RH_BUILD_REV="$REV" \
       RUSTFLAGS="$REMAP" \
-      cargo build --release --locked -j "$JOBS" --target "$target" --manifest-path "$SRC/server-rs/Cargo.toml"
+      cargo build --release --locked -j "$JOBS" --target "$target" --manifest-path "$SRC/Cargo.toml" -p droppen-server
     check_binary "$WORK/target-server/$target/release/$BIN_NAME"
   done
   if [ "$ARCH" = universal ]; then

@@ -433,7 +433,7 @@ jobs:
           CARGO_TARGET_DIR="$RUNNER_TEMP/target" CARGO_BUILD_BUILD_DIR="$RUNNER_TEMP/build" \
             DROPPEN_BUILD_REV="$REV" RH_BUILD_REV="$REV" \
             RUSTFLAGS="--remap-path-prefix=$src=/droppen --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo" \
-            cargo build --release --locked --target "$TARGET" --manifest-path "$src/server-rs/Cargo.toml"
+            cargo build --release --locked --target "$TARGET" --manifest-path "$src/Cargo.toml" -p droppen-server
           cp "$RUNNER_TEMP/target/$TARGET/release/droppen-server" "$RUNNER_TEMP/out/$TARGET/"
           COPYFILE_DISABLE=1 tar -cf "$RUNNER_TEMP/server-$TARGET.tar" -C "$RUNNER_TEMP/out" "$TARGET"
           echo "sha_$KEY=$(shasum -a 256 "$RUNNER_TEMP/server-$TARGET.tar" | cut -d' ' -f1)" | tee -a "$GITHUB_OUTPUT"
