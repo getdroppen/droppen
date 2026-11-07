@@ -1,6 +1,6 @@
 # Droppen 云 M3/M4：拆出中继器、套餐与权益
 
-> 设计稿，2026-10-17。只写设计，不改代码。前提与协议见 `docs/cross-machine-architecture.md`（下称「架构文档」）；代码依据当时的 `main`：Hub、`droppen-proto/src/frame.rs`、`server-rs/src/agent/link.rs`、`web/src/lib/{hub,e2e,transport}/`。
+> 设计稿，2026-10-17。只写设计，不改代码。前提与协议见 `docs/cross-machine-architecture.md`（下称「架构文档」）；代码依据当时的 `main`：Hub、`droppen-proto/src/frame.rs`、`crates/droppen-server/src/agent/link.rs`、`web/src/lib/{hub,e2e,transport}/`。
 
 > **公开版。** 本文在公开仓库里只保留中继（§2，除 §2.13 的部署选择与成本）和每轮密钥一套流名（§5）。套餐、定价与计费、注册、Hub 的内部实现与运维在 Hub 的私有仓库里；那些节只留标题和一行说明，编号不变，代码注释照旧按「relay-and-plans §n」引用。
 >

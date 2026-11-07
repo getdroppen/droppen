@@ -6,7 +6,7 @@
  * means "the server is restarting", not "this terminal is gone". The pane keeps
  * retrying until the server says otherwise — the one thing it treats as final
  * is the `[terminal not found]` note the attach route sends for an unknown id
- * (`server-rs/src/terminals/routes.rs`).
+ * (`crates/droppen-server/src/terminals/routes.rs`).
  */
 import type { Terminal } from "@xterm/xterm";
 

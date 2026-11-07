@@ -1,5 +1,5 @@
 {
-  "comment": "Engine ranges as the host reads them (the semver crate's rules). Checked by packages/plugin-sdk/test/sdk.test.ts and server-rs/crates/droppen-plugin-sdk (engine_vectors_agree_with_the_typescript_sdk).",
+  "comment": "Engine ranges as the host reads them (the semver crate's rules). Checked by packages/plugin-sdk/test/sdk.test.ts and crates/droppen-plugin-sdk (engine_vectors_agree_with_the_typescript_sdk).",
   "matches": [
     ["^0.1.0", "0.1.0", true],
     ["^0.1.0", "0.1.9", true],

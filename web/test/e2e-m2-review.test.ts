@@ -58,7 +58,7 @@ import {
 } from "../src/lib/e2e/index.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const V: any = JSON.parse(readFileSync(new URL("../../server-rs/crates/droppen-proto/vectors/rust.json", import.meta.url), "utf8"));
+const V: any = JSON.parse(readFileSync(new URL("../../crates/droppen-proto/vectors/rust.json", import.meta.url), "utf8"));
 const h = (s: string) => fromHex(s);
 const fill = (b: number, n = 32) => new Uint8Array(n).fill(b);
 const ACCOUNT = "acct-1";

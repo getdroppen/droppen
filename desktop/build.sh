@@ -210,16 +210,16 @@ fi
 REV=$(git -C "$REPO" rev-parse --short "$SHA")
 COMMIT_TIME=$(git -C "$REPO" log -1 --format=%ct "$SHA")
 if [ "$WORKTREE" = 1 ]; then
-  VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' "$REPO/server-rs/Cargo.toml" | head -1)
+  VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' "$REPO/crates/droppen-server/Cargo.toml" | head -1)
 else
-  VERSION=$(git -C "$REPO" show "$SHA:server-rs/Cargo.toml" | sed -n 's/^version = "\(.*\)"$/\1/p' | head -1)
+  VERSION=$(git -C "$REPO" show "$SHA:crates/droppen-server/Cargo.toml" | sed -n 's/^version = "\(.*\)"$/\1/p' | head -1)
 fi
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "cannot read the server version (got '$VERSION')"
 SERVER_VERSION=$VERSION
 # The app's version is what the updater compares with the newest release's
 # (`latest.json`), so a release tag must name it exactly.
 if [[ "${REF:-}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] && [ "$REF" != "v$VERSION" ]; then
-  die "$REF has the server version $VERSION in server-rs/Cargo.toml; the app would call itself $VERSION"
+  die "$REF has the server version $VERSION in crates/droppen-server/Cargo.toml; the app would call itself $VERSION"
 fi
 if [ -n "$TEST_VERSION" ]; then
   [[ "$TEST_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || die "--version $TEST_VERSION is not a semantic version"

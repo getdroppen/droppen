@@ -72,17 +72,17 @@ pub fn server_env(inherited: impl IntoIterator<Item = (String, String)>, path: &
     env.push(("APP_SERVER__PORT".into(), port.to_string()));
     // The server is run by the app: no self-upgrade (it would replace the
     // shared `<data>/bin`, not the app), and the web app hides what would be a
-    // dead end for a login nobody types (`server-rs/src/desktop_app.rs`).
+    // dead end for a login nobody types (`crates/droppen-server/src/desktop_app.rs`).
     env.push((DESKTOP_APP_ENV.into(), "1".into()));
     env.sort();
     env
 }
 
-/// What tells the server the app runs it (`server-rs/src/desktop_app.rs`).
+/// What tells the server the app runs it (`crates/droppen-server/src/desktop_app.rs`).
 pub const DESKTOP_APP_ENV: &str = "DROPPEN_DESKTOP_APP";
 
 /// What `serve` exits with when another server already holds its instance
-/// (`EX_TEMPFAIL`; `server-rs/crates/droppen-supervisor/src/supervisor.rs`, `INSTANCE_HELD_EXIT`).
+/// (`EX_TEMPFAIL`; `crates/droppen-supervisor/src/supervisor.rs`, `INSTANCE_HELD_EXIT`).
 pub const INSTANCE_HELD_EXIT: i32 = 75;
 
 /// How to start one server process.

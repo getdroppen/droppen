@@ -135,7 +135,7 @@ machine.
 
 ## 6. Server, feed and hub
 
-- **The bridge** (`server-rs/crates/droppen-agent/src/bridge.rs`) lets through
+- **The bridge** (`crates/droppen-agent/src/bridge.rs`) lets through
   `GET /api/plugins`, `GET /api/plugins/{id}/package`, a document's `GET` and
   `PUT`, `POST …/batch` and `GET …/history`. Installing, uninstalling,
   `…/enabled`, `…/cloud` and notice dismissal stay `not_from_cloud`.

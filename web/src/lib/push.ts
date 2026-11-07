@@ -2,7 +2,7 @@ import type { MachineKey } from "@/lib/machines/key";
 import { apiFor } from "@/lib/machines/registry";
 
 /**
- * Web Push subscription for this browser (server-rs `push` module is the peer).
+ * Web Push subscription for this browser (the server's `push` module is the peer).
  *
  * Subscribing is the opt-in: whatever `pushManager.subscribe` hands back is
  * posted verbatim to the server, and notifications are raised by the push

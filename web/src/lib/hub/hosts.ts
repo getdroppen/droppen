@@ -99,7 +99,7 @@ function underApex(host: string, apex: string): boolean {
  * `com.au`): a hub at `evil.co.uk` is the registrable domain itself, and its
  * parent (`co.uk`) is a public suffix that must never become one. Only a
  * longer TLD's parent is taken as the hub's domain — the rule the local
- * server applies to this answer too (`server-rs/src/api/hub_web.rs`).
+ * server applies to this answer too (`crates/droppen-server/src/api/hub_web.rs`).
  *
  * The conservative cost: a hub API on `api.example.io` or `api.example.co.uk`
  * cannot name `my.*` siblings (its parent is `example.io`/`example.co.uk`,

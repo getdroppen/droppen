@@ -53,10 +53,10 @@ describe("sources", () => {
   });
 
   test("a path into the hub's source", () => {
-    const found = sourceProblems('import plans from "../../server-rs/crates/rh-hub/src/plans.rs?raw";', "js", "web/src/a.ts");
+    const found = sourceProblems('import plans from "../../crates/rh-hub/src/plans.rs?raw";', "js", "web/src/a.ts");
     assert.equal(found.length, 1);
     assert.match(found[0], /^web\/src\/a\.ts:1: `rh-hub\/` — a path into the hub's source/);
-    assert.deepEqual(sourceProblems("/** mirrors server-rs/crates/rh-hub/src/plans.rs */\nexport const x = 1;", "js", "web/src/a.ts"), []);
+    assert.deepEqual(sourceProblems("/** mirrors crates/rh-hub/src/plans.rs */\nexport const x = 1;", "js", "web/src/a.ts"), []);
     // the hub's page marker is a documented name, not a path
     assert.deepEqual(sourceProblems(`document.querySelector('meta[name="rh-hub"]');`, "js", "web/src/a.ts"), []);
     assert.deepEqual(sourceProblems(`const shell = Buffer.from('<head><meta name="rh-hub" content="wss://x" /></head>');`, "js", "scripts/a.mjs"), []);
@@ -75,23 +75,23 @@ describe("sources", () => {
       'let mut p = PathBuf::from(root); p.push("rh-hub-tools");',
     ];
     for (const src of forms) {
-      const found = sourceProblems(src, "rs", "server-rs/crates/droppen-devkit/src/a.rs");
+      const found = sourceProblems(src, "rs", "crates/droppen-devkit/src/a.rs");
       assert.equal(found.length, 1, src);
       assert.match(found[0], /a path into the hub's source/, src);
     }
-    for (const src of ['const hub = join(root, "server-rs", "crates", "rh-hub");', 'const hub = new URL("../rh-hub", import.meta.url);']) {
+    for (const src of ['const hub = join(root, "crates", "rh-hub");', 'const hub = new URL("../rh-hub", import.meta.url);']) {
       const found = sourceProblems(src, "js", "scripts/a.mjs");
       assert.equal(found.length, 1, src);
       assert.match(found[0], /a path into the hub's source/, src);
     }
     // a file or a binary named after it is not a path into it
     for (const src of ['let bin = "target/debug/rh-hub-stress";', '#[path = "bin/rh-hub-stress.rs"]\nmod stress;', 'let s = "rh-hub-web";']) {
-      assert.deepEqual(sourceProblems(src, "rs", "server-rs/crates/droppen-devkit/src/a.rs"), [], src);
+      assert.deepEqual(sourceProblems(src, "rs", "crates/droppen-devkit/src/a.rs"), [], src);
     }
     // nor is the documented route of which hosts a hub serves
-    assert.deepEqual(sourceProblems('pub const DISCOVERY_PATH: &str = "/.well-known/droppen-hub";', "rs", "server-rs/src/a.rs"), []);
+    assert.deepEqual(sourceProblems('pub const DISCOVERY_PATH: &str = "/.well-known/droppen-hub";', "rs", "crates/droppen-server/src/a.rs"), []);
     assert.deepEqual(sourceProblems('await fetch("/.well-known/droppen-hub");', "js", "web/src/a.ts"), []);
-    assert.equal(sourceProblems('let p = "/srv/well-known/droppen-hub";', "rs", "server-rs/src/a.rs").length, 1, "only that route");
+    assert.equal(sourceProblems('let p = "/srv/well-known/droppen-hub";', "rs", "crates/droppen-server/src/a.rs").length, 1, "only that route");
   });
 
   test("shell and YAML: `#` comments out, quotes and `$#` do not", () => {
@@ -101,7 +101,7 @@ describe("sources", () => {
       "n=${#items[@]} DROPPEN_HUB_ORIGIN=x # DROPPEN_HUB_AFTER_A_COMMENT",
       "cat ../rh-hub/Cargo.toml",
     ].join("\n");
-    const found = sourceProblems(sh, "sh", "server-rs/crates/droppen-devkit/scripts/a.sh").map((p) => /`([^`]+)`/.exec(p)[1]);
+    const found = sourceProblems(sh, "sh", "crates/droppen-devkit/scripts/a.sh").map((p) => /`([^`]+)`/.exec(p)[1]);
     assert.deepEqual(found, ["rh-hub/", "DROPPEN_HUB_BIND", "DROPPEN_HUB_ORIGIN"]);
     // a here-document is what a command reads: its `#` lines are not comments
     const heredoc = [
@@ -126,26 +126,26 @@ describe("sources", () => {
   });
 
   test("the hub's environment, but for the open side's own variables", () => {
-    const found = sourceProblems('let o = std::env::var("DROPPEN_HUB_ORIGIN");\nlet p = format!("RH_HUB_{x}");', "rs", "server-rs/src/a.rs");
+    const found = sourceProblems('let o = std::env::var("DROPPEN_HUB_ORIGIN");\nlet p = format!("RH_HUB_{x}");', "rs", "crates/droppen-server/src/a.rs");
     assert.equal(found.length, 2);
     assert.match(found[0], /`DROPPEN_HUB_ORIGIN` — the hub's environment/);
     assert.match(found[1], /`RH_HUB_` —/);
     for (const name of ["DROPPEN_HUB_DEFAULT", "DROPPEN_HUB_API_TRAFFIC"]) {
-      assert.deepEqual(sourceProblems(`std::env::var("${name}")`, "rs", "server-rs/src/a.rs"), [], name);
+      assert.deepEqual(sourceProblems(`std::env::var("${name}")`, "rs", "crates/droppen-server/src/a.rs"), [], name);
     }
     for (const name of ["RH_HUB_DEFAULT", "RH_HUB_API_TRAFFIC"]) {
-      assert.equal(sourceProblems(`std::env::var("${name}")`, "rs", "server-rs/src/a.rs").length, 1, `${name}, which nothing reads any more`);
+      assert.equal(sourceProblems(`std::env::var("${name}")`, "rs", "crates/droppen-server/src/a.rs").length, 1, `${name}, which nothing reads any more`);
     }
     assert.deepEqual(sourceProblems("/** off unless `RH_HUB_CHANNEL_RELAY` */\nexport {};", "js", "web/src/a.ts"), []);
   });
 
   test("an allowed file names only what it is allowed to", () => {
-    assert.deepEqual(sourceProblems('DROPPEN_HUB_BIND=127.0.0.1 "$hub" serve', "sh", "server-rs/crates/droppen-devkit/scripts/cloud-dev.sh"), []);
-    assert.equal(sourceProblems('DROPPEN_HUB_NOT_DOCUMENTED=1 "$hub" serve', "sh", "server-rs/crates/droppen-devkit/scripts/cloud-dev.sh").length, 1);
+    assert.deepEqual(sourceProblems('DROPPEN_HUB_BIND=127.0.0.1 "$hub" serve', "sh", "crates/droppen-devkit/scripts/cloud-dev.sh"), []);
+    assert.equal(sourceProblems('DROPPEN_HUB_NOT_DOCUMENTED=1 "$hub" serve', "sh", "crates/droppen-devkit/scripts/cloud-dev.sh").length, 1);
     // the devkit's e2e harness went to the hub's side (rh-hub-tools), and the relay's config names no hub
     // variable: no allowance is left for either
-    assert.equal(sourceProblems('env("DROPPEN_HUB_ORIGIN")', "rs", "server-rs/crates/droppen-relay-core/src/config.rs").length, 1);
-    assert.equal(sourceProblems('("DROPPEN_HUB_BIND", "127.0.0.1")', "rs", "server-rs/crates/droppen-devkit/src/bin/rh-cloud-e2e.rs").length, 1);
+    assert.equal(sourceProblems('env("DROPPEN_HUB_ORIGIN")', "rs", "crates/droppen-relay-core/src/config.rs").length, 1);
+    assert.equal(sourceProblems('("DROPPEN_HUB_BIND", "127.0.0.1")', "rs", "crates/droppen-devkit/src/bin/rh-cloud-e2e.rs").length, 1);
   });
 });
 
@@ -189,10 +189,10 @@ describe("cargo metadata", () => {
   test("an open tree passes", () => {
     const meta = {
       packages: [
-        pkg("droppen-server", ["server-rs"], [dep("droppen-proto", { path: at("server-rs", "crates", "droppen-proto") }), dep("serde", { source: "registry+https://github.com/rust-lang/crates.io-index" })]),
-        pkg("droppen-proto", ["server-rs", "crates", "droppen-proto"], []),
+        pkg("droppen-server", ["crates", "droppen-server"], [dep("droppen-proto", { path: at("crates", "droppen-proto") }), dep("serde", { source: "registry+https://github.com/rust-lang/crates.io-index" })]),
+        pkg("droppen-proto", ["crates", "droppen-proto"], []),
         // the hub may depend on the open crates, and on itself
-        pkg("rh-hub", ["server-rs", "crates", "rh-hub"], [dep("droppen-proto", { path: at("server-rs", "crates", "droppen-proto") }), dep("rh-hub", { kind: "dev", path: at("server-rs", "crates", "rh-hub") })]),
+        pkg("rh-hub", ["crates", "rh-hub"], [dep("droppen-proto", { path: at("crates", "droppen-proto") }), dep("rh-hub", { kind: "dev", path: at("crates", "rh-hub") })]),
       ],
     };
     assert.deepEqual(metadataProblems(meta, root), []);
@@ -201,14 +201,14 @@ describe("cargo metadata", () => {
   test("a dependency of any kind on the hub, from any source", () => {
     const meta = {
       packages: [
-        pkg("droppen-devkit", ["server-rs", "crates", "droppen-devkit"], [dep("rh-hub", { kind: "dev", path: at("server-rs", "crates", "rh-hub") })]),
-        pkg("droppen-relay-core", ["server-rs", "crates", "droppen-relay-core"], [dep("droppen-hub", { kind: "build", source: "git+https://example.invalid/hub" })]),
-        pkg("droppen-client", ["server-rs", "crates", "droppen-client"], [dep("rh-hub", { rename: "hub" })]),
+        pkg("droppen-devkit", ["crates", "droppen-devkit"], [dep("rh-hub", { kind: "dev", path: at("crates", "rh-hub") })]),
+        pkg("droppen-relay-core", ["crates", "droppen-relay-core"], [dep("droppen-hub", { kind: "build", source: "git+https://example.invalid/hub" })]),
+        pkg("droppen-client", ["crates", "droppen-client"], [dep("rh-hub", { rename: "hub" })]),
       ],
     };
     const found = metadataProblems(meta, root);
     assert.equal(found.length, 3);
-    assert.match(found[0], /^server-rs\/crates\/droppen-devkit\/Cargo\.toml: droppen-devkit has a dev dependency rh-hub/);
+    assert.match(found[0], /^crates\/droppen-devkit\/Cargo\.toml: droppen-devkit has a dev dependency rh-hub/);
     assert.match(found[1], /droppen-relay-core has a build dependency droppen-hub/);
     assert.match(found[2], /droppen-client has a normal dependency hub \(rh-hub\)/);
   });
@@ -217,10 +217,10 @@ describe("cargo metadata", () => {
     const outside = join(root, "..", "elsewhere", "foo");
     const meta = {
       packages: [
-        pkg("droppen-devkit", ["server-rs", "crates", "droppen-devkit"], [dep("foo", { path: outside })]),
+        pkg("droppen-devkit", ["crates", "droppen-devkit"], [dep("foo", { path: outside })]),
         { name: "stray", source: null, manifest_path: join(outside, "Cargo.toml"), dependencies: [] },
         // the hub is not held to it
-        pkg("rh-hub", ["server-rs", "crates", "rh-hub"], [dep("foo", { path: outside })]),
+        pkg("rh-hub", ["crates", "rh-hub"], [dep("foo", { path: outside })]),
       ],
     };
     const found = metadataProblems(meta, root);
@@ -232,9 +232,9 @@ describe("cargo metadata", () => {
   test("the hub's side: rh-hub-tools may depend on the hub, and nothing open on it", () => {
     const meta = {
       packages: [
-        pkg("rh-hub", ["server-rs", "crates", "rh-hub"], [dep("rh-hub-tools", { kind: "dev", path: at("server-rs", "crates", "rh-hub-tools") })]),
-        pkg("rh-hub-tools", ["server-rs", "crates", "rh-hub-tools"], [dep("rh-hub", { path: at("server-rs", "crates", "rh-hub") }), dep("droppen-devkit", { path: at("server-rs", "crates", "droppen-devkit") })]),
-        pkg("droppen-devkit", ["server-rs", "crates", "droppen-devkit"], [dep("rh-hub-tools", { kind: "dev", path: at("server-rs", "crates", "rh-hub-tools") })]),
+        pkg("rh-hub", ["crates", "rh-hub"], [dep("rh-hub-tools", { kind: "dev", path: at("crates", "rh-hub-tools") })]),
+        pkg("rh-hub-tools", ["crates", "rh-hub-tools"], [dep("rh-hub", { path: at("crates", "rh-hub") }), dep("droppen-devkit", { path: at("crates", "droppen-devkit") })]),
+        pkg("droppen-devkit", ["crates", "droppen-devkit"], [dep("rh-hub-tools", { kind: "dev", path: at("crates", "rh-hub-tools") })]),
       ],
     };
     const found = metadataProblems(meta, root);
@@ -262,20 +262,20 @@ describe("the whole check, over a made-up tree", () => {
   }
   const crate = (name) => `[package]\nname = "${name}"\n`;
   const open = {
-    "Cargo.toml": '[workspace]\nmembers = ["server-rs", "server-rs/crates/droppen-proto"]\n',
-    "server-rs/Cargo.toml": crate("droppen-server"),
-    "server-rs/src/main.rs": 'fn main() { let _ = std::env::var("DROPPEN_HUB_DEFAULT"); }\n',
-    "server-rs/crates/droppen-proto/Cargo.toml": crate("droppen-proto"),
-    "server-rs/crates/droppen-proto/src/lib.rs": "pub fn f() {}\n",
+    "Cargo.toml": '[workspace]\nmembers = ["crates/droppen-server", "crates/droppen-proto"]\n',
+    "crates/droppen-server/Cargo.toml": crate("droppen-server"),
+    "crates/droppen-server/src/main.rs": 'fn main() { let _ = std::env::var("DROPPEN_HUB_DEFAULT"); }\n',
+    "crates/droppen-proto/Cargo.toml": crate("droppen-proto"),
+    "crates/droppen-proto/src/lib.rs": "pub fn f() {}\n",
   };
   // the hub's side may name the hub's environment: it is not scanned
   const tools = {
-    "server-rs/crates/rh-hub-tools/Cargo.toml": crate("rh-hub-tools"),
-    "server-rs/crates/rh-hub-tools/src/lib.rs": 'pub const K: &str = "DROPPEN_HUB_SESSION_KEY";\n',
+    "crates/rh-hub-tools/Cargo.toml": crate("rh-hub-tools"),
+    "crates/rh-hub-tools/src/lib.rs": 'pub const K: &str = "DROPPEN_HUB_SESSION_KEY";\n',
   };
   const hub = {
-    "server-rs/crates/rh-hub/Cargo.toml": crate("rh-hub"),
-    "server-rs/crates/rh-hub/src/lib.rs": 'pub const K: &str = "DROPPEN_HUB_ORIGIN";\n',
+    "crates/rh-hub/Cargo.toml": crate("rh-hub"),
+    "crates/rh-hub/src/lib.rs": 'pub const K: &str = "DROPPEN_HUB_ORIGIN";\n',
   };
 
   test("with the hub and its side", () => {
@@ -296,11 +296,11 @@ describe("the whole check, over a made-up tree", () => {
   test("the server package's own manifest naming the hub is reported", () => {
     const { root, metadata } = tree({
       ...open,
-      "server-rs/Cargo.toml": `${crate("droppen-server")}[dependencies]\nrh-hub-api = { path = "../rh-hub-api" }\n`,
+      "crates/droppen-server/Cargo.toml": `${crate("droppen-server")}[dependencies]\nrh-hub-api = { path = "../rh-hub-api" }\n`,
     });
     const { problems } = checkOpenBoundary(root, { metadata });
     assert.equal(problems.length, 1, problems.join("\n"));
-    assert.match(problems[0], /^server-rs\/Cargo\.toml:4: names the hub's side, and the hub is not in this tree/);
+    assert.match(problems[0], /^crates\/droppen-server\/Cargo\.toml:4: names the hub's side, and the hub is not in this tree/);
   });
 
   test("the hub's side without the hub", () => {
@@ -315,16 +315,16 @@ describe("the whole check, over a made-up tree", () => {
       ...open,
       ...hub,
       ...tools,
-      "server-rs/crates/rh-hub-tools/scripts/e2e.sh": "DROPPEN_HUB_BIND=127.0.0.1 ../rh-hub/run\n",
-      "server-rs/crates/droppen-proto/scripts/dev.sh": "DROPPEN_HUB_BIND=127.0.0.1 cargo run # DROPPEN_HUB_NOT\n",
-      "web/test/plans.test.ts": 'const crate = new URL("../../server-rs/crates/rh-hub/", import.meta.url);\n',
+      "crates/rh-hub-tools/scripts/e2e.sh": "DROPPEN_HUB_BIND=127.0.0.1 ../rh-hub/run\n",
+      "crates/droppen-proto/scripts/dev.sh": "DROPPEN_HUB_BIND=127.0.0.1 cargo run # DROPPEN_HUB_NOT\n",
+      "web/test/plans.test.ts": 'const crate = new URL("../../crates/rh-hub/", import.meta.url);\n',
       "packages/plugin-sdk/src/index.ts": 'export const hub = "DROPPEN_HUB_ORIGIN";\n',
       ".github/workflows/ci.yml": "env:\n  RH_HUB_TEST_REDIS_URL: redis://127.0.0.1\n",
       ".github/workflows/other.yml": "env:\n  RH_HUB_TEST_REDIS_URL: redis://127.0.0.1\n",
     });
     const { problems, notes } = checkOpenBoundary(root, { metadata });
     assert.deepEqual(problems.map((p) => p.replace(/ — .*/, "")), [
-      "server-rs/crates/droppen-proto/scripts/dev.sh:1: `DROPPEN_HUB_BIND`",
+      "crates/droppen-proto/scripts/dev.sh:1: `DROPPEN_HUB_BIND`",
       "web/test/plans.test.ts:1: `rh-hub/`",
       "packages/plugin-sdk/src/index.ts:1: `DROPPEN_HUB_ORIGIN`",
       // ci.yml may name it (ALLOWED); another workflow may not
@@ -332,13 +332,13 @@ describe("the whole check, over a made-up tree", () => {
     ]);
     // what ALLOWED lets ci.yml name and it does not, and the files it lists that are not here
     assert.ok(notes.some((n) => n.startsWith("ALLOWED lets .github/workflows/ci.yml name rh-hub/, RH_HUB_TEST_DATABASE_URL, RH_HUB_TEST_REQUIRE_DB,")), notes.join("\n"));
-    assert.ok(notes.some((n) => n.startsWith("ALLOWED lists server-rs/crates/droppen-devkit/scripts/cloud-dev.sh, which is no longer here")), notes.join("\n"));
+    assert.ok(notes.some((n) => n.startsWith("ALLOWED lists crates/droppen-devkit/scripts/cloud-dev.sh, which is no longer here")), notes.join("\n"));
   });
 
   test("a hub variable in an open crate", () => {
-    const { root, metadata } = tree({ ...open, ...hub, "server-rs/crates/droppen-proto/src/lib.rs": 'pub const K: &str = "DROPPEN_HUB_ORIGIN";\n' });
+    const { root, metadata } = tree({ ...open, ...hub, "crates/droppen-proto/src/lib.rs": 'pub const K: &str = "DROPPEN_HUB_ORIGIN";\n' });
     const { problems } = checkOpenBoundary(root, { metadata });
     assert.equal(problems.length, 1, problems.join("\n"));
-    assert.match(problems[0], /^server-rs\/crates\/droppen-proto\/src\/lib\.rs:1: `DROPPEN_HUB_ORIGIN`/);
+    assert.match(problems[0], /^crates\/droppen-proto\/src\/lib\.rs:1: `DROPPEN_HUB_ORIGIN`/);
   });
 });

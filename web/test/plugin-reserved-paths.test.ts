@@ -1,7 +1,7 @@
 // The server refuses an install whose `droppen.aliases` names a top-level
 // path the shell already answers (`docs/plugins/runtime.md` §1). That list
 // lives on the Rust side, next to the install checks
-// (`server-rs/crates/droppen-plugin-sdk/reserved-paths.txt`); this test keeps
+// (`crates/droppen-plugin-sdk/reserved-paths.txt`); this test keeps
 // it in step with the shell's router.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -9,7 +9,7 @@ import { resolve } from "node:path";
 import test from "node:test";
 
 const webRoot = resolve(import.meta.dirname, "..");
-const reservedFile = resolve(webRoot, "..", "server-rs", "crates", "droppen-plugin-sdk", "reserved-paths.txt");
+const reservedFile = resolve(webRoot, "..", "crates", "droppen-plugin-sdk", "reserved-paths.txt");
 
 /**
  * The file's paths as a set, without leading slashes: one per line (blank

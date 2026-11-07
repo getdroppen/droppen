@@ -102,7 +102,7 @@ CI 的 `web-reproducible` 任务每次都检查：两个全新检出放在不同
 
 **不放应用的主机上的 Worker。** 应用搬到 `my.droppen.app` 之后，droppen.app 和 `www.droppen.app` 上不再有应用，但浏览器里可能还注册着以前的 `/sw.js`，它会在离线时继续拿出缓存的旧外壳。这两个主机对 `/sw.js`（以及任何 Worker 请求）回一段「退役 Worker」：装上后清空这个源的所有缓存并注销自己。它不碰 IndexedDB 和 localStorage：这台浏览器的设备钥还要从那里搬到 `my.`。`verify-web.mjs` 内置这段代码（`RETIRING_WORKER`），只接受与它逐字节相同的回答。
 
-**别的地址上的 Worker。** 一次恶意投递还可以从别的地址（如 `/x.js`）为 `/` 注册一个 Worker，替掉 `/sw.js` 的注册。以前诚实的 Hub 对那个地址回 HTML 外壳，浏览器的更新检查因 MIME 类型失败，就一直留着旧 Worker，改 `CACHE` 也换不掉它。现在 Droppen Hub 对带 `Service-Worker: script` 请求头、路径不是 `/sw.js` 的请求，回一段小 Worker（`text/javascript`，`no-store`）：它装上后清空本站所有缓存并注销自己，页面下次加载时再注册 `/sw.js`。本机 `droppen` 服务器也这样回答（`server-rs/src/static_files.rs`）。
+**别的地址上的 Worker。** 一次恶意投递还可以从别的地址（如 `/x.js`）为 `/` 注册一个 Worker，替掉 `/sw.js` 的注册。以前诚实的 Hub 对那个地址回 HTML 外壳，浏览器的更新检查因 MIME 类型失败，就一直留着旧 Worker，改 `CACHE` 也换不掉它。现在 Droppen Hub 对带 `Service-Worker: script` 请求头、路径不是 `/sw.js` 的请求，回一段小 Worker（`text/javascript`，`no-store`）：它装上后清空本站所有缓存并注销自己，页面下次加载时再注册 `/sw.js`。本机 `droppen` 服务器也这样回答（`crates/droppen-server/src/static_files.rs`）。
 
 ## 4. 现状和剩下的风险
 

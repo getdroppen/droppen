@@ -1,7 +1,7 @@
 Other third-party material
 
 BIP-39 English word list
-  server-rs/crates/droppen-proto/src/data/bip39-english.txt and
+  crates/droppen-proto/src/data/bip39-english.txt and
   web/src/lib/e2e/wordlist.ts carry the English word list of BIP-39,
   "Mnemonic code for generating deterministic keys", by Marek Palatinus,
   Pavol Rusnak, Aaron Voisine and Sean Bowe
@@ -13,7 +13,7 @@ BIP-39 English word list
     This BIP falls under the MIT License.
 
 magpie
-  The rate-limit signal phrases in server-rs/crates/droppen-accounts/src/limits.rs are
+  The rate-limit signal phrases in crates/droppen-accounts/src/limits.rs are
   adapted from the router of magpie (https://github.com/yetone/magpie), which
   is published under the MIT License below with this notice:
 

@@ -3,7 +3,7 @@ import { SOURCE_URL } from "../page-kit";
 
 /*
  * The security page's paths in the repository (`scripts/verify-web.mjs`,
- * `server-rs/crates/droppen-proto`, …) as links to them on GitHub, at the commit
+ * `crates/droppen-proto`, …) as links to them on GitHub, at the commit
  * the served web app was built from. The build does not carry its commit:
  * its bytes must equal the release's web-manifest.json whichever commit
  * deployed it (docs/web-integrity.md). So the page asks the server that

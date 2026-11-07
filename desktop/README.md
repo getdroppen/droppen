@@ -147,7 +147,7 @@ Droppen (Tauri, the app)                     ~/Library/Logs/Droppen/desktop.log
   `REMOTE_HAND_*`, `DROPPEN_*`, `CLAUDE_CODE_*`, `PORT`, `HOST` and
   `CLAUDECODE` removed, so an app started from a shell inside another Droppen
   session does not inherit that session's instance or port. Then
-  `DROPPEN_DESKTOP_APP=1` (`server-rs/src/desktop_app.rs`). The server refuses
+  `DROPPEN_DESKTOP_APP=1` (`crates/droppen-server/src/desktop_app.rs`). The server refuses
   `POST /api/server/self-upgrade` with `403 self_upgrade_disabled` — it would
   replace the shared `<data>/bin`, not the app — and tells the web app it runs
   under the app (`GET /api/auth/status` → `desktopApp: true`), which then hides
@@ -268,7 +268,7 @@ password it made up.
    the removal itself refuses a user account.
 2. **Only the app's account.** Accounts are per-instance; a new instance does
    not inherit the machine-wide set an older build kept
-   (`server-rs/crates/droppen-auth/src/users.rs`). One cleanup remains for instances an older
+   (`crates/droppen-auth/src/users.rs`). One cleanup remains for instances an older
    build first started: if that start was cut short before the inherited
    accounts were removed, the marker still says so and every start retries the
    removal (`user rm --yes`, which the server asks for before removing the last
@@ -365,7 +365,7 @@ installs the pinned `tauri-cli` (`cargo install --locked`, under
 `~/.cache/droppen-desktop/tools`) and runs `cargo tauri build`. Output in
 `/tmp/droppen-desktop-release/`; the scratch directory is deleted at the end.
 It checks the release app carries no test hooks and no `$HOME` paths. The app
-is its own Cargo workspace, outside `server-rs`'s, so server builds never
+is its own Cargo workspace, outside the server's, so server builds never
 compile Tauri.
 
 Every build but `--e2e` ships the app's licence and third-party notices:
@@ -489,7 +489,7 @@ system browser (`docs/local-aggregator.md` §4.9, the browser hand-off):
 The attempt is the app's own account's (`droppen-app`, app-internal): on the
 app's server — and only there — that account may sign in a device whose link
 nobody owns yet, and owns the link it signs in; a link a person's account owns
-stays theirs (`server-rs/src/api/cloud/access.rs`, `may_manage`).
+stays theirs (`crates/droppen-server/src/api/cloud/access.rs`, `may_manage`).
 
 droppen.app has to serve this hand-off before an app that uses it ships: an
 older droppen.app only says to open the sign-in from the device's settings.

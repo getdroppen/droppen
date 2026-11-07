@@ -1,8 +1,8 @@
 # Droppen hub API, v1
 
 This is the contract between the **open** clients — the local server and its
-agent (`server-rs`), the web app (`web/`, which droppen.app also serves, at `my.droppen.app`),
-`droppen-relay` (`server-rs/crates/droppen-relay-core`), `droppen-proto`, `droppen-client` (the
+agent (`crates/droppen-server`), the web app (`web/`, which droppen.app also serves, at `my.droppen.app`),
+`droppen-relay` (`crates/droppen-relay-core`), `droppen-proto`, `droppen-client` (the
 device side, in Rust) and `droppen-devkit` —
 and the **closed** Droppen Hub (a separate, private repository). Open code may rely
 on what is written here and on nothing else of the hub: not its source, its
@@ -364,7 +364,7 @@ node docs/hub-api/check.mjs --traffic /tmp/traffic.jsonl
 ```
 
 It scans the open clients (`web/src/lib/hub`, `web/src/lib/e2e`,
-`web/src/features/cloud`, `server-rs/crates/droppen-agent`, `server-rs/crates/droppen-aggregator`,
+`web/src/features/cloud`, `crates/droppen-agent`, `crates/droppen-aggregator`,
 `droppen-relay-core`, `droppen-client`, `droppen-devkit`, `droppen-proto`'s `wire`) for
 `/v1/…` paths in string literals (format strings and template literals
 included, their placeholders read as path parameters) and for control

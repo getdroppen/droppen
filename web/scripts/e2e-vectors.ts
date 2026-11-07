@@ -1,5 +1,5 @@
 /*
- * The TypeScript → Rust interop vectors: `server-rs/crates/droppen-proto/vectors/ts.json`.
+ * The TypeScript → Rust interop vectors: `crates/droppen-proto/vectors/ts.json`.
  *
  * Everything here is produced by `web/src/lib/e2e` on WebCrypto, from fixed
  * seeds, and replayed by the Rust test `vectors::ts_vectors_verify_in_rust`:
@@ -123,7 +123,7 @@ import {
   verifyRotateConfirm,
 } from "../src/lib/e2e/index";
 
-export const TS_VECTORS_PATH = fileURLToPath(new URL("../../server-rs/crates/droppen-proto/vectors/ts.json", import.meta.url));
+export const TS_VECTORS_PATH = fileURLToPath(new URL("../../crates/droppen-proto/vectors/ts.json", import.meta.url));
 
 const seed = (n: number): Promise<Bytes> => sha256(utf8(`rh-proto ts vector ${n}`));
 

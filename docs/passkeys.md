@@ -16,7 +16,7 @@
 >
 > **开源边界**（聚合器文档 §2.1）：客户端的一切密码学（PRF 派生、`PAK`、封装、链上的通行密钥条目）都在开源的 `web/` 与 `droppen-proto` 里；闭源 Hub 只校验 WebAuthn 断言、存公钥和打不开的密文。每个新接口都写进 `docs/hub-api/`。
 >
-> 路径缩写：`S/` = `server-rs/src/`，`C/` = `server-rs/crates/`，`W/` = `web/src/`。方括号里的数字是 §12 的资料来源。
+> 路径缩写：`S/` = `crates/droppen-server/src/`，`C/` = `crates/`，`W/` = `web/src/`。方括号里的数字是 §12 的资料来源。
 
 ## 0. 结论
 

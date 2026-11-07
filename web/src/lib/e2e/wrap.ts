@@ -1,5 +1,5 @@
 /*
- * Key wrapping, browser side (`server-rs/crates/droppen-proto/src/wrap.rs` — read
+ * Key wrapping, browser side (`crates/droppen-proto/src/wrap.rs` — read
  * that for the why).
  *
  * - Sealed from one key pair to another, sender-authenticated (HPKE Auth-mode

@@ -23,7 +23,7 @@ import { securityBundles } from "./security-copy";
  * mechanism in a section of its own with an anchor.
  *
  * Only what main ships is described as live; every claim traces to the
- * protocol code (`server-rs/crates/droppen-proto`, `web/src/lib/e2e`) or the
+ * protocol code (`crates/droppen-proto`, `web/src/lib/e2e`) or the
  * public design notes (docs/cross-machine-architecture.md, docs/local-
  * aggregator.md §3, docs/web-integrity.md, docs/relay-and-plans.md §2,
  * docs/hub-api/, SECURITY.md, docs/security-model.md's "What the Hub sees");
@@ -389,7 +389,7 @@ function Hero() {
  * control any host; the keys table below; with local aggregation, on by
  * default, a host also takes the content keys other hosts' accept lists let
  * it have, wrap.rs `HOST_KEY_PURPOSE`, and the local web app shows its own
- * device's view and holds no keys, server-rs/crates/droppen-aggregator/src/lib.rs). Every
+ * device's view and holds no keys, crates/droppen-aggregator/src/lib.rs). Every
  * later mention explains itself with the same words (`withConcepts`), one
  * tab stop per word in each section (`MentionScope`).
  */
@@ -1238,15 +1238,15 @@ function VerifySection() {
           <P>{t("The protocol is written twice, in Rust and in TypeScript, and each must read the other's test vectors (the one exception is in [[8.4|t8-4]]). The app, the local program, the desktop app and the relay program (droppen-relay) are licensed under the **AGPL-3.0**, and the protocol and client libraries ({{crates}}) under **MIT or Apache-2.0**; their source code is at [[github.com/getdroppen/droppen|/]]. Droppen Hub is not open source.", { crates: "droppen-proto, droppen-relay-core, droppen-client" })}</P>
           <Spec>
             <Line>
-              <RepoLink path="server-rs/crates/droppen-proto" /> (Rust) · <RepoLink path="web/src/lib/e2e" /> (TypeScript)
+              <RepoLink path="crates/droppen-proto" /> (Rust) · <RepoLink path="web/src/lib/e2e" /> (TypeScript)
             </Line>
             <Line>
-              <RepoLink path="server-rs/crates/droppen-relay-core" /> · <RepoLink path="server-rs/crates/droppen-relay" /> · <RepoLink path="server-rs/crates/droppen-client" />
+              <RepoLink path="crates/droppen-relay-core" /> · <RepoLink path="crates/droppen-relay" /> · <RepoLink path="crates/droppen-client" />
             </Line>
           </Spec>
         </Topic>
         <Topic n="8.4" title={t("Shared test vectors")}>
-          <P>{t("Each implementation writes test vectors ([[vectors/rust.json|server-rs/crates/droppen-proto/vectors/rust.json]], [[vectors/ts.json|server-rs/crates/droppen-proto/vectors/ts.json]]) and **must read the other's**:\n- Noise transcripts through rekeys\n- chains that must be refused, each with the same error in both\n- key wraps\n- records and pages\nThe direct-path handshake is checked one way only: TypeScript reads Rust's vectors. Attacks found in our reviews stay as regression tests on both sides.")}</P>
+          <P>{t("Each implementation writes test vectors ([[vectors/rust.json|crates/droppen-proto/vectors/rust.json]], [[vectors/ts.json|crates/droppen-proto/vectors/ts.json]]) and **must read the other's**:\n- Noise transcripts through rekeys\n- chains that must be refused, each with the same error in both\n- key wraps\n- records and pages\nThe direct-path handshake is checked one way only: TypeScript reads Rust's vectors. Attacks found in our reviews stay as regression tests on both sides.")}</P>
         </Topic>
         <Topic n="8.5" title={t("The page you are reading")}>
           <P>{t("node [[scripts/verify-web.mjs]] checks what my.droppen.app, www.droppen.app and droppen.app serve against the latest release's manifest by default (an older one only when you ask), and fails a page without a sufficient Content-Security-Policy; /.well-known/droppen-build says which build each is. Releases since v0.2.127 carry a **signed attestation** of their manifest; Droppen Hub may also run a build that is not a release, which only a build of that commit can match ([[docs/web-integrity.md]]). [[scripts/install.sh]] checks a release's checksums (SHA256SUMS-server) against a signature by the release key it pins before it installs anything; it goes without one only if you set DROPPEN_ALLOW_UNSIGNED=1 (meant for a release from before the checksums were signed, or a system without openssl), and a signature that does not check out is never accepted.")}</P>

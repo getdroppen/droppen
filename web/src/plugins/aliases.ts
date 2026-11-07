@@ -3,7 +3,7 @@
  * statuses rather than from a build-time list (`docs/plugins/runtime.md` §6).
  *
  * The shell's own top-level routes are not aliases: the server refuses an
- * install whose `droppen.aliases` names one (`server-rs/crates/droppen-plugin-sdk`'s
+ * install whose `droppen.aliases` names one (`crates/droppen-plugin-sdk`'s
  * reserved paths, which `RESERVED` used to mirror on the web side). So a
  * match here is always a plugin's page under `/p/<id>/`.
  *

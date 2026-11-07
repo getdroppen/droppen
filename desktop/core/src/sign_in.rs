@@ -29,7 +29,7 @@ use crate::web;
 
 /// The path of droppen.app's sign-in page.
 pub const LINK_PATH: &str = "/link";
-/// The fragment key of the hand-off (`server-rs/src/api/link_handoff.rs`).
+/// The fragment key of the hand-off (`crates/droppen-server/src/api/link_handoff.rs`).
 pub const HANDOFF_FRAGMENT: &str = "droppen-link";
 
 /// How often the app asks its server.
@@ -174,7 +174,7 @@ mod tests {
     }
 
     /// The hub may name its app on another host (`/.well-known/droppen-hub`,
-    /// `server-rs/src/api/hub_web.rs`): the hand-off is then there, and goes
+    /// `crates/droppen-server/src/api/hub_web.rs`): the hand-off is then there, and goes
     /// to the browser whole all the same — any host, only the shape counts.
     #[test]
     fn a_sign_in_on_the_hub_s_app_host_goes_to_the_browser_whole() {

@@ -45,14 +45,14 @@ const ROOTS = [
   "web/src/lib/hub",
   "web/src/lib/e2e",
   "web/src/features/cloud",
-  "server-rs/crates/droppen-agent/src",
-  "server-rs/crates/droppen-aggregator/src",
-  "server-rs/src/cloud",
-  "server-rs/crates/droppen-relay-core/src",
-  "server-rs/crates/droppen-client/src",
-  "server-rs/crates/droppen-devkit/src",
-  "server-rs/crates/rh-hub-tools/src",
-  "server-rs/crates/droppen-proto/src/wire",
+  "crates/droppen-agent/src",
+  "crates/droppen-aggregator/src",
+  "crates/droppen-cloud/src",
+  "crates/droppen-relay-core/src",
+  "crates/droppen-client/src",
+  "crates/droppen-devkit/src",
+  "crates/rh-hub-tools/src",
+  "crates/droppen-proto/src/wire",
 ];
 
 /**
@@ -66,22 +66,22 @@ const SPEAKS = [
   ["web/src/lib/e2e/", [["/v1/client", "client"], ["/v1/agent", "client"]]],
   ["web/src/features/cloud/turnstile.tsx", [["/turnstile", "client"]]],
   ["web/src/features/cloud/", [["/v1/client", "client"]]],
-  ["server-rs/crates/droppen-agent/src/relays.rs", [["/v1/agent", "client"], ["/v1/connect", "client"]]],
-  ["server-rs/crates/droppen-agent/src/", [["/v1/agent", "client"]]],
-  ["server-rs/src/cloud/gateway.rs", [["/api/agg/ws", "server"]]],
-  ["server-rs/crates/droppen-aggregator/src/live.rs", [["/api/agg/ws", "server"]]],
-  ["server-rs/crates/droppen-aggregator/src/", [["/v1/client", "client"]]],
-  ["server-rs/crates/droppen-relay-core/src/uplink.rs", [["/v1/relay", "client"]]],
-  ["server-rs/crates/droppen-relay-core/src/meter.rs", [["/v1/relay", "client"]]],
-  ["server-rs/crates/droppen-relay-core/src/traffic.rs", [["/v1/relay", "client"]]],
-  ["server-rs/crates/droppen-relay-core/src/lib.rs", [["/v1/relay", "client"]]],
-  ["server-rs/crates/droppen-relay-core/src/", [["/v1/connect", "server"]]],
-  ["server-rs/crates/droppen-client/src/", [["/v1/client", "client"], ["/v1/connect", "client"]]],
-  ["server-rs/crates/droppen-devkit/src/agent.rs", [["/v1/agent", "client"], ["/v1/connect", "client"]]],
-  ["server-rs/crates/droppen-devkit/src/", [["/v1/client", "client"], ["/v1/agent", "client"], ["/v1/connect", "client"]]],
+  ["crates/droppen-agent/src/relays.rs", [["/v1/agent", "client"], ["/v1/connect", "client"]]],
+  ["crates/droppen-agent/src/", [["/v1/agent", "client"]]],
+  ["crates/droppen-cloud/src/gateway.rs", [["/api/agg/ws", "server"]]],
+  ["crates/droppen-aggregator/src/live.rs", [["/api/agg/ws", "server"]]],
+  ["crates/droppen-aggregator/src/", [["/v1/client", "client"]]],
+  ["crates/droppen-relay-core/src/uplink.rs", [["/v1/relay", "client"]]],
+  ["crates/droppen-relay-core/src/meter.rs", [["/v1/relay", "client"]]],
+  ["crates/droppen-relay-core/src/traffic.rs", [["/v1/relay", "client"]]],
+  ["crates/droppen-relay-core/src/lib.rs", [["/v1/relay", "client"]]],
+  ["crates/droppen-relay-core/src/", [["/v1/connect", "server"]]],
+  ["crates/droppen-client/src/", [["/v1/client", "client"], ["/v1/connect", "client"]]],
+  ["crates/droppen-devkit/src/agent.rs", [["/v1/agent", "client"], ["/v1/connect", "client"]]],
+  ["crates/droppen-devkit/src/", [["/v1/client", "client"], ["/v1/agent", "client"], ["/v1/connect", "client"]]],
   // The local gateway's e2e leg (the hub's white-box harness).
-  ["server-rs/crates/rh-hub-tools/src/local_gateway.rs", [["/api/agg/ws", "client"]]],
-  ["server-rs/crates/rh-hub-tools/src/", [["/v1/client", "client"], ["/v1/agent", "client"], ["/v1/connect", "client"]]],
+  ["crates/rh-hub-tools/src/local_gateway.rs", [["/api/agg/ws", "client"]]],
+  ["crates/rh-hub-tools/src/", [["/v1/client", "client"], ["/v1/agent", "client"], ["/v1/connect", "client"]]],
 ];
 
 /**
@@ -109,9 +109,9 @@ const IGNORE = [
   // the hub relays without reading them (off unless DROPPEN_HUB_P2P_PROBE=1), and
   // over the DataChannel itself. The room's route is documented; its
   // messages are the probe's, not the hub's.
-  { file: "server-rs/crates/droppen-devkit/src/bin/droppen-p2p-probe.rs", t: true },
+  { file: "crates/droppen-devkit/src/bin/droppen-p2p-probe.rs", t: true },
   // A unit test's placeholder message for the relay's connection writer.
-  { file: "server-rs/crates/droppen-relay-core/src/conn.rs", t: ["x"] },
+  { file: "crates/droppen-relay-core/src/conn.rs", t: ["x"] },
 ];
 
 /**
@@ -124,7 +124,7 @@ const IGNORE = [
  * the file must speak the channel (SPEAKS), and is listed as sending or
  * receiving it from its end.
  */
-const WIRE_ROOT = "server-rs/crates/droppen-proto/src/wire/";
+const WIRE_ROOT = "crates/droppen-proto/src/wire/";
 const WIRE = [
   { file: `${WIRE_ROOT}connect.rs`, channel: "/v1/connect", c2s: "PeerToRelay", s2c: "RelayToPeer" },
   { file: `${WIRE_ROOT}relay.rs`, channel: "/v1/relay", c2s: "RelayToHub", s2c: "HubToRelay" },

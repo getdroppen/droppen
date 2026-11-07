@@ -17,9 +17,9 @@
 #
 # The map follows what each job reads, not its directory:
 #  - the web job's check:hub-api scans crates/droppen-agent/src,
-#    crates/droppen-aggregator/src and rh-{relay,client,devkit}/src, and its
+#    crates/droppen-aggregator/src and crates/droppen-{relay,client,devkit}/src, and its
 #    plugin-sdk test reads
-#    server-rs/crates/droppen-plugin-sdk/src/lib.rs (the SDK version);
+#    crates/droppen-plugin-sdk/src/lib.rs (the SDK version);
 #  - the web tests read droppen-proto's committed vectors and src/sig.rs, the two
 #    lint scripts they import, SECURITY.md, and the repository paths the
 #    security page cites (droppen-relay-core, droppen-client, droppen-relay, docs);
@@ -32,7 +32,7 @@
 #    web/owner-placeholders.txt;
 #  - the desktop core tests read desktop/build.sh, desktop/e2e-identity.sh,
 #    scripts/install.sh, the root Cargo.toml and
-#    server-rs/crates/droppen-search-path (the path dependency it compiles,
+#    crates/droppen-search-path (the path dependency it compiles,
 #    which inherits that workspace's lints).
 # Everything a rule does not name is unknown, and unknown runs every job.
 set -u
@@ -102,16 +102,17 @@ while IFS= read -r path; do
   esac
 
   # Prose at the top of a tree whose jobs read code there, not these files.
-  # Exact names only: a `server-rs/*.md` glob would also swallow
-  # server-rs/src/notify/SKILL.md, which inject.rs embeds with include_str!.
+  # Exact names only: a `crates/droppen-server/*.md` glob would also swallow
+  # crates/droppen-server/src/notify/SKILL.md, which inject.rs embeds with
+  # include_str!.
   case "$path" in
-    desktop/README.md|desktop/SIGNING.md|server-rs/README.md) continue ;;
+    desktop/README.md|desktop/SIGNING.md|crates/droppen-server/README.md) continue ;;
   esac
 
   matched=0
 
   case "$path" in
-    web/*|packages/*|package.json|pnpm-lock.yaml|pnpm-workspace.yaml|.nvmrc|e2e/package.json|distribution.json|openapi/*|docs/hub-api/*|scripts/check-plugin-boundary.mjs|scripts/check-machine-keys.mjs|scripts/check-open-boundary.mjs|scripts/check-open-boundary.test.mjs|server-rs/crates/droppen-agent/src/*|server-rs/crates/droppen-aggregator/src/*|server-rs/crates/droppen-relay-core/src/*|server-rs/crates/droppen-client/src/*|server-rs/crates/droppen-devkit/src/*|server-rs/crates/droppen-plugin-sdk/*)
+    web/*|packages/*|package.json|pnpm-lock.yaml|pnpm-workspace.yaml|.nvmrc|e2e/package.json|distribution.json|openapi/*|docs/hub-api/*|scripts/check-plugin-boundary.mjs|scripts/check-machine-keys.mjs|scripts/check-open-boundary.mjs|scripts/check-open-boundary.test.mjs|crates/droppen-agent/src/*|crates/droppen-aggregator/src/*|crates/droppen-relay-core/src/*|crates/droppen-client/src/*|crates/droppen-devkit/src/*|crates/droppen-plugin-sdk/*)
       web=1; matched=1 ;;
   esac
 
@@ -120,7 +121,7 @@ while IFS= read -r path; do
   # links to (it stats them), SECURITY.md, the distribution manifest, and the
   # two lint scripts they import.
   case "$path" in
-    web/*|packages/*|package.json|pnpm-lock.yaml|pnpm-workspace.yaml|.nvmrc|e2e/package.json|distribution.json|SECURITY.md|docs/web-integrity.md|scripts/check-machine-keys.mjs|scripts/check-plugin-boundary.mjs|scripts/install.sh|scripts/verify-web.mjs|server-rs/crates/droppen-proto/*|server-rs/crates/droppen-relay-core/*|server-rs/crates/droppen-client/*|server-rs/crates/droppen-relay/*|server-rs/crates/droppen-provider/src/drafts.rs)
+    web/*|packages/*|package.json|pnpm-lock.yaml|pnpm-workspace.yaml|.nvmrc|e2e/package.json|distribution.json|SECURITY.md|docs/web-integrity.md|scripts/check-machine-keys.mjs|scripts/check-plugin-boundary.mjs|scripts/install.sh|scripts/verify-web.mjs|crates/droppen-proto/*|crates/droppen-relay-core/*|crates/droppen-client/*|crates/droppen-relay/*|crates/droppen-provider/src/drafts.rs)
       web_tests=1; matched=1 ;;
   esac
 
@@ -144,7 +145,7 @@ while IFS= read -r path; do
   esac
 
   case "$path" in
-    server-rs/*|Cargo.toml|Cargo.lock|rustfmt.toml|layers.json|.config/*|.cargo/*|openapi/openapi.json|packages/plugin-sdk/test/engine-vectors.json|scripts/check-open-boundary.mjs|scripts/check-layers.mjs|scripts/check-layers.test.mjs|scripts/check-sdk-crate-deps.sh|scripts/check-serde-json-order.sh|scripts/install.sh)
+    crates/*|Cargo.toml|Cargo.lock|rustfmt.toml|layers.json|.config/*|.cargo/*|openapi/openapi.json|packages/plugin-sdk/test/engine-vectors.json|scripts/check-open-boundary.mjs|scripts/check-layers.mjs|scripts/check-layers.test.mjs|scripts/check-sdk-crate-deps.sh|scripts/check-serde-json-order.sh|scripts/install.sh)
       server=1; matched=1 ;;
   esac
 
@@ -154,7 +155,7 @@ while IFS= read -r path; do
   esac
 
   case "$path" in
-    desktop/*|server-rs/crates/droppen-search-path/*|scripts/install.sh|Cargo.toml)
+    desktop/*|crates/droppen-search-path/*|scripts/install.sh|Cargo.toml)
       desktop_core=1; matched=1 ;;
   esac
 

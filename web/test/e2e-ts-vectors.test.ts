@@ -1,4 +1,4 @@
-// TypeScript → Rust interop: the committed `server-rs/crates/droppen-proto/vectors/ts.json`
+// TypeScript → Rust interop: the committed `crates/droppen-proto/vectors/ts.json`
 // is what `web/scripts/e2e-vectors.ts` produces today.
 //
 // The Rust test `vectors::ts_vectors_verify_in_rust` replays that file (a
