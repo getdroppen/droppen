@@ -17,6 +17,7 @@ import {
   CHECKSUM_COMMAND,
   codeInstallCommand,
   type DownloadOs,
+  DOWNLOAD_PATH,
   INSTALL_COMMAND,
   LINGER_COMMAND,
   osOfSearch,
@@ -115,8 +116,10 @@ const MENU_ITEM = "gap-2.5 py-2 text-left text-sm";
 function PlatformMenu({ anchor }: { anchor: RefObject<HTMLDivElement | null> }) {
   const { t } = useTranslation();
   const jumpToBrowser = (event: MouseEvent<HTMLAnchorElement>) => {
+    const section = document.getElementById("browser");
+    if (!section) return;
     event.preventDefault();
-    document.getElementById("browser")?.scrollIntoView();
+    section.scrollIntoView();
     history.replaceState(null, "", "#browser");
   };
   return (
@@ -145,7 +148,7 @@ function PlatformMenu({ anchor }: { anchor: RefObject<HTMLDivElement | null> }) 
           <span className="shrink-0 text-xs">{t("Coming soon")}</span>
         </DropdownMenuItem>
         <DropdownMenuItem
-          render={<a href="#browser" onClick={jumpToBrowser} />}
+          render={<a href={`${DOWNLOAD_PATH}#browser`} onClick={jumpToBrowser} />}
           data-testid="hero-browser"
           className={cn(MENU_ITEM, "border-t border-border")}
         >
@@ -158,9 +161,22 @@ function PlatformMenu({ anchor }: { anchor: RefObject<HTMLDivElement | null> }) 
   );
 }
 
-function MacDownload({ availability, release }: { availability: Availability; release: LatestRelease | null | undefined }) {
+export function MacDownloadControl({ release, testId }: { release: LatestRelease | null | undefined; testId: string }) {
   const { t } = useTranslation();
   const control = useRef<HTMLDivElement>(null);
+  return (
+    <div ref={control} className="relative inline-flex w-fit border border-fg bg-fg max-sm:w-full">
+      <ButtonLink {...fileLink(release?.files.macos)} variant="primary" data-testid={testId} className="min-h-9 border-0 bg-fg max-sm:flex-1">
+        <AppleMark className="size-4 shrink-0" />
+        {t("Download for macOS")}
+      </ButtonLink>
+      <PlatformMenu anchor={control} />
+    </div>
+  );
+}
+
+function MacDownload({ availability, release }: { availability: Availability; release: LatestRelease | null | undefined }) {
+  const { t } = useTranslation();
   if (!availability.app) {
     return (
       <div className="flex flex-col gap-2">
@@ -179,18 +195,7 @@ function MacDownload({ availability, release }: { availability: Availability; re
   const facts = release && dmg ? fileFacts(release, dmg) : null;
   return (
     <div className="flex flex-col gap-2">
-      <div ref={control} className="relative inline-flex w-fit border border-fg bg-fg max-sm:w-full">
-        <ButtonLink
-          {...fileLink(dmg)}
-          variant="primary"
-          data-testid="app-download"
-          className="min-h-9 border-0 bg-fg max-sm:flex-1"
-        >
-          <AppleMark className="size-4 shrink-0" />
-          {t("Download for macOS")}
-        </ButtonLink>
-        <PlatformMenu anchor={control} />
-      </div>
+      <MacDownloadControl release={release} testId="app-download" />
       <p className="text-xs leading-5 text-muted">
         {facts && (
           <span data-testid="app-file-facts" className="font-semibold text-faint">

@@ -1,6 +1,5 @@
 import type { ReactNode } from "react";
 import { cn } from "@/lib/cn";
-import { gridPaper } from "./paper";
 
 /*
  * A landing figure's frame: a title, the drawing, its live state and only the
@@ -53,7 +52,7 @@ export function Figure({
   children: ReactNode;
 }) {
   return (
-    <figure className="relative mx-6 border border-border bg-bg max-md:mx-4" style={gridPaper()}>
+    <figure className="relative mx-6 border border-border bg-bg max-md:mx-4">
       <span className="absolute top-0 left-0 z-1 bg-bg px-2.5 py-1.5 font-mono text-xs tracking-label text-muted uppercase">
         {title}
       </span>

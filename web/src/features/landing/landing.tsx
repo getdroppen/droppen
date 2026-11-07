@@ -16,7 +16,6 @@ import { AgentBurst } from "./agent-burst";
 import { ProductTour } from "./product-tour";
 import { useLatestRelease } from "./release-files";
 import { publicLink, PRICING_PATH, SECURITY_PATH, SIGN_UP_PATH, WAITLIST_HREF } from "./route";
-import { gridPaper } from "./figures/paper";
 import { NetworkFigure } from "./figures/network/figure";
 import { KeyFigure } from "./figures/key/figure";
 
@@ -78,32 +77,27 @@ function Hero({
 }) {
   const { t } = useTranslation();
   return (
-    <div className="relative mx-auto w-full max-w-[1200px] px-6 pt-16 max-lg:pt-12 max-md:px-4 max-md:pt-10">
-      <div className="mx-auto flex w-full max-w-[46rem] flex-col items-center text-center">
-        <h1 className="mb-6 max-w-[14em] text-5xl leading-display font-normal tracking-tighter text-balance text-fg cjk-wrap md:cjk-keep max-md:text-4xl">
+    <div className="relative isolate mx-auto flex min-h-[44rem] w-full items-center overflow-hidden px-6 py-10 max-md:min-h-[38rem] max-md:px-4 max-md:py-8">
+      {/* The whole promise — copy, action and its facts — is the centre of one
+          quiet ellipse. The agent marks occupy the taller field around it. */}
+      <AgentBurst />
+      <div
+        aria-hidden="true"
+        data-shape=""
+        className="pointer-events-none absolute top-1/2 left-1/2 h-[34rem] w-[64rem] -translate-x-1/2 -translate-y-1/2 rounded-full bg-bg/60 backdrop-blur-2xl [mask-image:radial-gradient(ellipse_at_center,black_50%,transparent_82%)]"
+        style={{
+          backgroundImage: `url("data:image/svg+xml,%3Csvg width='180' height='180' viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' opacity='.16' filter='url(%23n)'/%3E%3C/svg%3E")`,
+        }}
+      />
+      <div className="relative z-10 mx-auto flex w-full max-w-[46rem] flex-col items-center text-center">
+        <h1 className="relative mb-6 max-w-[14em] text-6xl leading-display font-semibold tracking-tighter text-balance text-fg cjk-wrap md:cjk-keep max-md:text-4xl">
           {t("Your computer's AI, from your phone.")}
         </h1>
-        <p className="max-w-[36em] leading-6 text-pretty text-muted [overflow-wrap:anywhere] cjk-wrap md:cjk-keep">
+        <p className="relative max-w-[36em] leading-6 text-pretty text-muted [overflow-wrap:anywhere] cjk-wrap md:cjk-keep">
           {t("Claude Code and Codex keep running on your own computers. From your phone or another device, check progress, answer questions, send instructions and open a terminal.")}
         </p>
-      </div>
-      {/* Where the screens used to be: the hero's action, with the marks of the agents it lists
-          thrown around it like confetti when the page opens. The paper under it is the same
-          drafting sheet the page's figures are drawn on. */}
-      <div className="relative mt-2 max-md:mt-0">
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-0 opacity-70 max-md:opacity-40 dark:opacity-50"
-          style={{
-            ...gridPaper(),
-            // The paper is a soft halo around the action: clear under its words, faded at the edges.
-            maskImage: "radial-gradient(ellipse 50% 50% at 50% 50%, transparent 45%, #000 62%, transparent 100%)",
-            WebkitMaskImage: "radial-gradient(ellipse 50% 50% at 50% 50%, transparent 45%, #000 62%, transparent 100%)",
-          }}
-        />
-        <AgentBurst />
-        <div className="relative z-10 flex min-h-[24rem] w-full items-center justify-center px-6 py-10 max-md:min-h-[21rem] max-md:px-0 max-md:py-8">
-          <div className="flex w-full max-w-[46rem] flex-col items-center text-center">
+        <div className="flex w-full items-center justify-center pb-2">
+          <div className="flex w-full flex-col items-center text-center">
             {/* The way onto this device, and the account's way in (signed in: back into the app). */}
             <HeroGet offer={offer} signedIn={signedIn} availability={availability} release={release} cpu={cpu} signup={signup} />
             {/* By invite or closed, the way to the waitlist. Open sign-up says nothing of plans here: the first screen sells the product, not its price (the header and the footer link the plans). */}
@@ -126,7 +120,7 @@ function Hero({
             {(offer === "all" || offer === "windows" || offer === "phone") && (
               <p className="mt-4 font-mono text-xs leading-5 text-muted">{t("macOS 13 or later · Linux · Windows in the browser · iOS and Android")}</p>
             )}
-            <TrustLines className="mt-4" />
+            <TrustLines className="mt-5" />
           </div>
         </div>
       </div>
@@ -139,7 +133,6 @@ function ProductShowcase() {
   return (
     <Section id="tour" rule={false} seam={false}>
       <div className={cn(WIDE, "pb-16 max-md:pb-12")}>
-        <Head title={t("The app, in three screens.")} />
         <div className="mx-6 max-md:mx-4">
           <ProductTour
             screens={[
@@ -420,16 +413,6 @@ function FinalCta({ signup }: { signup: SignupMode }) {
   const closed = signup === "closed";
   return (
     <Section id="start" rule={false} seam={false} className="relative overflow-hidden">
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-0"
-        style={{
-          ...gridPaper(),
-          maskImage: "radial-gradient(60% 70% at 50% 50%, #000 20%, transparent 100%)",
-          WebkitMaskImage: "radial-gradient(60% 70% at 50% 50%, #000 20%, transparent 100%)",
-          opacity: 0.7,
-        }}
-      />
       <div className="relative mx-auto w-full max-w-[46rem] px-6 py-20 text-center max-md:px-4 max-md:py-14">
         <h2 className="mx-auto max-w-[30em] text-3xl leading-tight font-semibold tracking-tight text-balance text-fg cjk-wrap md:cjk-keep max-md:text-2xl">
           {t("Your AI keeps working on your computer. When it needs you, answer from your phone.")}

@@ -4,7 +4,7 @@
 // What these pin: the page says what it is, in zh-CN first and in en, zh-TW
 // and ja, with every string on it translated and in its own words (never an
 // app translation of the same key); the hero sells with its action, and the
-// agents' marks are thrown around it as confetti; the product follows (the
+// agents' marks ring it as decoration; the product follows (the
 // screens, one at a time in their frames, as a three-screen carousel), then the
 // network diagram, and it says end-to-end encryption once,
 // near the end; it calls only the client open source; it carries exactly one
@@ -15,11 +15,12 @@
 // `react-dom/server` with no DOM, like the other render tests.
 import * as React from "react";
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import test from "node:test";
 import i18next from "i18next";
 import { I18nextProvider, initReactI18next } from "react-i18next";
 import { renderToStaticMarkup } from "react-dom/server";
+import { AGENTS } from "../src/features/landing/agent-marks.js";
 import { landingBundles } from "../src/features/landing/copy.js";
 import { TOUR_SHOTS, tourLanguage, tourShot } from "../src/features/landing/product-tour.js";
 import LandingPage from "../src/features/landing/landing.js";
@@ -203,7 +204,7 @@ test("the numbers are the measured ones, and nothing claims more than the build 
   }
 });
 
-test("the hero is its action, not a screenshot: the agents' marks burst around it as decoration", () => {
+test("the hero is its action, not a screenshot: the agents' marks ring it as decoration", () => {
   for (const lng of ["en", "zh-CN"]) {
     const html = draw(lng);
     const hero = html.slice(html.indexOf("<main"), html.indexOf('id="tour"'));
@@ -211,14 +212,21 @@ test("the hero is its action, not a screenshot: the agents' marks burst around i
     assert.doesNotMatch(hero, /<img\b/, `${lng}: no screenshots in the hero`);
     assert.doesNotMatch(hero, /\/tour\//, `${lng}: no product shot in the hero`);
     assert.match(hero, /data-testid="hero-get"/, `${lng}: the action is still there`);
-    // The marks of the agents the app lists are thrown around that action, as decoration:
-    // one field hidden from assistive technology and taking no pointer, with ten marks in
-    // it — OpenAI (its blossom names ChatGPT and Codex), Claude Code, Cursor, GitHub
-    // Copilot, Gemini, Windsurf, Cline, Warp, opencode and Antigravity.
+    // The marks of the agents the app follows ring that action, as decoration: one field
+    // hidden from assistive technology and taking no pointer. Its marks are the library's
+    // SVGs, which only Vite can read (`import.meta.glob`), so this test reads the same files
+    // from disk: every agent `agent-marks.tsx` lists has one.
     assert.match(hero, /<div aria-hidden="true" data-allow-color=""[^>]*class="pointer-events-none absolute inset-0"/, `${lng}: a hidden, inert field`);
-    assert.equal((hero.match(/<svg aria-hidden="true" focusable="false"/g) ?? []).length, 10, `${lng}: ten marks`);
-    // The makers' colours (the page's ink for a monochrome mark), so they read in both themes.
-    for (const colour of ["#D97757", "#8E75B2", "#01A4FF", "#3186FF"]) assert.ok(hero.includes(`color:${colour}`), `${lng}: ${colour}`);
+    assert.ok(AGENTS.length >= 30, "the ring carries the agents a terminal can run, not just two");
+    const icons = new URL("../node_modules/@lobehub/icons-static-svg/icons/", import.meta.url);
+    for (const agent of AGENTS) {
+      const files = [`${agent.icon.slug}-color.svg`, `${agent.icon.slug}.svg`];
+      assert.ok(files.some((f) => existsSync(new URL(f, icons))), `${lng}: ${agent.name} has a mark in the icon set`);
+    }
+    // Monochrome marks follow the page's ink, so they read in both themes; the hero's own
+    // source says so where the mark is drawn.
+    const source = readFileSync(new URL("../src/features/landing/agent-burst.tsx", import.meta.url), "utf8");
+    assert.match(source, /tone === "ink" && "\[&_path\]:fill-current"/, `${lng}: ink marks follow the page`);
   }
 });
 
@@ -417,38 +425,54 @@ test("a shared link shows the hero: the share image is committed at 2400×1260 a
 test("the product showcase shows the product: three screens in their frames, in the page's language (Chinese or English) and both themes", () => {
   const html = draw("zh-CN");
   const tour = html.slice(html.indexOf('id="tour"'), html.indexOf('id="features"'));
-  // The section head names the set: the product, shown three screens at a time.
-  assert.ok(text(tour).includes("应用里的三个界面。"), "the showcase's section head");
-  // Three entries: each names a screen and says what it is for. They are now the tour's
-  // index, so each one is a tab whose accessible description is its body line.
+  // No section head over the pictures: the screenshots and their captions say what the
+  // product is, without a line announcing them.
+  for (const [lng, head] of [["zh-CN", "应用里的三个界面。"], ["zh-TW", "應用程式裡的三個介面。"], ["ja", "アプリの 3 つの画面。"], ["en", "The app, in three screens."]] as const) {
+    assert.ok(!text(draw(lng)).includes(head), `${lng}: the showcase has no section head`);
+    if (lng !== "en") assert.ok(!("The app, in three screens." in landingBundles[lng]), `${lng}: the removed section head`);
+  }
+  // Three screens, and only the caption of the one on screen is written: the server render
+  // opens the first, so its headline and body are there and the other two are not.
   const entries = [
     ["sessions", "所有电脑，一个列表。", "家里的 Mac、公司的 Linux 电脑、机架上的服务器，都在同一个账户里。打开就能看到哪一台需要你，不用逐台登录。"],
     ["split", "左边代码，右边终端。", "需要同时盯两件事时，把一个会话和终端并排。改动、测试输出和报错都在同一个窗口里，不用来回复制粘贴。"],
     ["phone", "离开电脑，在手机上接手。", "在手机浏览器里打开 droppen.app，还是那些会话。标着「需要你」的那一行排在最前，点开就能回答。"],
   ] as const;
-  for (const [value, title, body] of entries) {
-    assert.ok(text(tour).includes(title), title);
-    assert.ok(text(tour).includes(body), body);
-    assert.ok(tour.includes(`aria-describedby="tour-${value}"`), `${value}: the tab names its body`);
-    assert.ok(tour.includes(`id="tour-${value}"`), `${value}: the body carries that id`);
+  const [first] = entries;
+  assert.ok(text(tour).includes(first[1]), `${first[0]}: the open screen's headline`);
+  assert.ok(text(tour).includes(first[2]), `${first[0]}: the open screen's body`);
+  assert.ok(tour.includes(`id="tour-${first[0]}"`), `${first[0]}: the body carries its id`);
+  // The captions of the screens not on screen are nowhere on the page.
+  for (const [value, title, body] of entries.slice(1)) {
+    assert.ok(!text(tour).includes(title), `${value}: its headline waits for its turn`);
+    assert.ok(!text(tour).includes(body), `${value}: its body waits for its turn`);
   }
-  // A carousel of exactly three screens: three tabs and three panels. Every panel is
-  // kept mounted (so all three screenshots below are in the markup, and the swap is a
-  // style change rather than a reload), but the server render opens the first one and
-  // leaves the other two `hidden` so the page is usable before hydration.
-  assert.equal((tour.match(/role="tab"/g) ?? []).length, 3, "three index entries, as tabs");
+  // No 01/02/03 numbering beside the entries, and no list of the entries as an index.
+  assert.doesNotMatch(tour, />0[123]<\/span>/, "no numbered entries");
+  // A carousel of exactly three screens: three ticks on its rail over three panels. Every
+  // panel is kept mounted (so all three screenshots below are in the markup, and the
+  // swap is a style change rather than a reload), but the server render opens the first
+  // one and leaves the other two `hidden` so the page is usable before hydration.
+  assert.equal((tour.match(/role="tab"/g) ?? []).length, 3, "three ticks, as tabs");
   assert.equal((tour.match(/role="tabpanel"/g) ?? []).length, 3, "three screens, one panel each");
   const firstTab = /<button[^>]*role="tab"[^>]*>/.exec(tour)?.[0];
-  assert.ok(firstTab, "the first tab");
+  assert.ok(firstTab, "the first tick");
   assert.match(firstTab, /aria-selected="true"/, "the first screen is open in the server render");
-  assert.equal((tour.match(/role="tab"[^>]*aria-selected="true"/g) ?? []).length, 1, "only one tab selected");
-  assert.equal((tour.match(/role="tab"[^>]*aria-selected="false"/g) ?? []).length, 2, "the other two tabs are closed");
+  assert.equal((tour.match(/role="tab"[^>]*aria-selected="true"/g) ?? []).length, 1, "only one tick filled");
+  assert.equal((tour.match(/role="tab"[^>]*aria-selected="false"/g) ?? []).length, 2, "the other two ticks are closed");
+  // Three compact capsules, not a second toolbar or a full-width rail. Each has a
+  // generous tap target and names the screen it goes to.
+  assert.match(tour, /data-shape=""[^>]*class="[^"]*h-1 w-3 rounded-full/, "compact capsule marks");
+  assert.match(tour, /aria-label="选择界面"[^>]*class="flex items-center justify-center gap-1"/, "three compact marks");
+  assert.match(firstTab, /aria-label="第 1 个界面，共 3 个：所有电脑，一个列表。"/, "the tick names its screen");
+  assert.equal((tour.match(/aria-label="第 \d 个界面，共 3 个：/g) ?? []).length, 3, "one tick per screen");
   const panels = [...tour.matchAll(/<div[^>]*role="tabpanel"[^>]*>/g)].map((m) => m[0]);
   assert.equal(panels.length, 3, "one panel per screen");
   assert.doesNotMatch(panels[0]!, /\shidden=""/, "the first panel is open");
   for (const panel of panels.slice(1)) assert.match(panel, /\shidden=""/, "the other panels start hidden");
-  // The mono counter tells the reader where they are in the set: the first of three.
-  assert.ok(text(tour).includes("01 / 03"), "the counter");
+  // Nothing counts the screens on the page: the capsules say where the tour is, and the
+  // caption says which screen it belongs to. No `01 / 03`, no `01`/`02`/`03` entries.
+  assert.doesNotMatch(text(tour), /\b0\d\s*\/\s*0\d\b/, "no position counter");
   // One screenshot per screen, in both themes, in the page's language: the app window,
   // its split view and the phone, with the alt texts that describe them.
   const shots: Record<string, string> = {
@@ -477,10 +501,16 @@ test("the product showcase shows the product: three screens in their frames, in 
       assert.ok(!(key in landingBundles[lng]), `${lng}: the removed callout key ${key}`);
     }
   }
-  // The three controls: stop the rotation (the server render offers Pause, because a
-  // fresh visit starts rotating), step back and step forward. Their labels are what a
-  // screen reader announces, so these are the words the test holds them to.
-  for (const label of ["暂停轮播", "上一个界面", "下一个界面"]) assert.match(tour, new RegExp(`aria-label="${label}"`), label);
+  // The pictures rotate by themselves, the small marks choose one directly, and touch
+  // swipes move between them. No arrow buttons or play/pause switch crowd the picture, and
+  // their words are not kept in the tables for a control that no longer exists.
+  assert.doesNotMatch(tour, /aria-label="暂停轮播"/, "no pause switch: the tour stops itself while it is being read");
+  assert.doesNotMatch(tour, /aria-label="上一个界面"|aria-label="下一个界面"/, "no arrow buttons");
+  for (const lng of ["zh-CN", "zh-TW", "ja"] as const) {
+    for (const key of ["Previous screen", "Next screen", "Pause the rotation", "Play the rotation"]) {
+      assert.ok(!(key in landingBundles[lng]), `${lng}: the removed tour key ${key}`);
+    }
+  }
   // Chinese pages show the app in Chinese, every other page in English, in both themes.
   assert.deepEqual(["zh-CN", "zh-TW", "ja", "en"].map(tourLanguage), ["zh-CN", "zh-CN", "en", "en"]);
   for (const [lng, lang] of [["zh-TW", "zh-CN"], ["ja", "en"]] as const) {

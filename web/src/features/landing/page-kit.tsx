@@ -304,7 +304,7 @@ function AccountMenu({ signedIn }: { signedIn: boolean }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger aria-label={signedIn ? t("Open app") : t("Sign in")} title={signedIn ? t("Open app") : t("Sign in")} className={iconControl}>
-        <UserRound className="size-3.5" />
+        <UserRound className="size-4" strokeWidth={1.5} />
       </DropdownMenuTrigger>
       <DropdownMenuContent side="bottom" align="end" sideOffset={4}>
         {signedIn ? (
@@ -353,17 +353,19 @@ export function PublicHeader({ signedIn }: { signedIn: boolean }) {
           ))}
         </nav>
         <span className="flex-1" />
-        <a
-          href={SOURCE_URL}
-          data-testid="header-source"
-          aria-label={t("Client source code")}
-          title={t("Client source code")}
-          className={cn(buttonVariants({ variant: "secondary" }), "flex size-9 p-0 text-muted transition-colors hover:text-fg [&_svg]:size-4 max-sm:hidden")}
-        >
-          <GitHubMark className="size-4" />
-        </a>
-        <PrefsControls />
-        <AccountMenu signedIn={signedIn} />
+        <div className="flex items-center gap-2">
+          <a
+            href={SOURCE_URL}
+            data-testid="header-source"
+            aria-label={t("Client source code")}
+            title={t("Client source code")}
+            className={cn(buttonVariants({ variant: "secondary" }), "flex size-9 p-0 text-muted transition-colors hover:text-fg [&_svg]:size-4 max-sm:hidden")}
+          >
+            <GitHubMark className="size-4" />
+          </a>
+          <PrefsControls />
+          <AccountMenu signedIn={signedIn} />
+        </div>
         <RegMark className="-bottom-[5px] -left-[5px]" />
         <RegMark className="-right-[5px] -bottom-[5px]" />
       </div>

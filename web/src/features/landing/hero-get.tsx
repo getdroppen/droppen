@@ -1,5 +1,4 @@
 import { useTranslation } from "react-i18next";
-import { Download } from "lucide-react";
 import type { SignupMode } from "@/lib/hub/api";
 import type { LatestRelease, ReleaseFile } from "@/lib/hub/releases";
 import type { HeroOffer } from "./detect";
@@ -8,6 +7,7 @@ import { ArrowLink, ButtonLink, CommandLine } from "./page-kit";
 import { fileFacts, fileLink, LinuxTarballs } from "./release-files";
 import { appHost } from "@/lib/hub/hosts";
 import { APP_PATH, publicLink, SIGN_UP_PATH, WAITLIST_HREF } from "./route";
+import { MacDownloadControl } from "./download";
 
 /*
  * The hero's actions for the device reading the page: the App's download on
@@ -87,15 +87,11 @@ export function HeroGet({
   const closed = signup === "closed";
   const dmg = release?.files.macos;
   return (
-    <div data-testid="hero-get" data-offer={offer} className="mt-8 flex w-full flex-col items-center gap-3">
+    <div data-testid="hero-get" data-offer={offer} className="mt-4 flex w-full flex-col items-center gap-3">
       {offer === "mac" && (
         <>
           <div className={row}>
-            {/* The file itself when the hub named it (a click downloads it: the page stays), else this site's download page, on the Mac's tab. */}
-            <ButtonLink variant="primary" {...macDownload(dmg)} data-testid="hero-download">
-              <Download className="size-3.5" />
-              {t("Download for Mac")}
-            </ButtonLink>
+            <MacDownloadControl release={release} testId="hero-download" />
             <Account signedIn={signedIn} lead={false} closed={closed} />
           </div>
           <p className={small}>

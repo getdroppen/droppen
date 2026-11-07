@@ -135,15 +135,12 @@ const zhCN: Bundle = {
   "Your AI keeps working on your computer. When it needs you, answer from your phone.": "AI 在你的电脑上继续工作，需要你时，在手机上即可回应",
 
   // The product page's composition: the proof line, the product as one
-  // ensemble, the three screens, the network, the questions, the plans.
+  // ensemble of three screens, the network, the questions, the plans.
   "Free plan": "免费版",
   "Product facts": "产品信息",
-  "The app, in three screens.": "应用里的三个界面。",
   "Choose a screen": "选择界面",
-  "Previous screen": "上一个界面",
-  "Next screen": "下一个界面",
-  "Pause the rotation": "暂停轮播",
-  "Play the rotation": "继续轮播",
+  "Screen {{n}} of {{total}}": "第 {{n}} 个界面，共 {{total}} 个",
+  "Screen {{n}} of {{total}}: {{title}}": "第 {{n}} 个界面，共 {{total}} 个：{{title}}",
   "All computers, one list.": "所有电脑，一个列表。",
   "Your home Mac, the Linux machine at work and the server in the rack, on one account. Open it and see which one needs you, instead of signing in to each.":
     "家里的 Mac、公司的 Linux 电脑、机架上的服务器，都在同一个账户里。打开就能看到哪一台需要你，不用逐台登录。",
@@ -287,12 +284,9 @@ const zhTW: Bundle = {
 
   "Free plan": "免費版",
   "Product facts": "產品資訊",
-  "The app, in three screens.": "應用程式裡的三個介面。",
   "Choose a screen": "選擇介面",
-  "Previous screen": "上一個介面",
-  "Next screen": "下一個介面",
-  "Pause the rotation": "暫停輪播",
-  "Play the rotation": "繼續輪播",
+  "Screen {{n}} of {{total}}": "第 {{n}} 個介面，共 {{total}} 個",
+  "Screen {{n}} of {{total}}: {{title}}": "第 {{n}} 個介面，共 {{total}} 個：{{title}}",
   "All computers, one list.": "所有電腦，一個清單。",
   "Your home Mac, the Linux machine at work and the server in the rack, on one account. Open it and see which one needs you, instead of signing in to each.":
     "家裡的 Mac、公司的 Linux 電腦、機架上的伺服器，都在同一個帳戶裡。打開就能看到哪一台需要你，不用逐台登入。",
@@ -436,12 +430,9 @@ const ja: Bundle = {
 
   "Free plan": "無料プラン",
   "Product facts": "製品情報",
-  "The app, in three screens.": "アプリの 3 つの画面。",
   "Choose a screen": "画面を選ぶ",
-  "Previous screen": "前の画面",
-  "Next screen": "次の画面",
-  "Pause the rotation": "自動切り替えを一時停止",
-  "Play the rotation": "自動切り替えを再開",
+  "Screen {{n}} of {{total}}": "{{total}} 画面中 {{n}} 画面目",
+  "Screen {{n}} of {{total}}: {{title}}": "{{total}} 画面中 {{n}} 画面目：{{title}}",
   "All computers, one list.": "すべてのコンピュータを、ひとつのリストで。",
   "Your home Mac, the Linux machine at work and the server in the rack, on one account. Open it and see which one needs you, instead of signing in to each.":
     "自宅の Mac、職場の Linux、ラックのサーバーをひとつのアカウントに。開けば、どれがあなたを待っているかが一度に分かり、1 台ずつログインする必要はありません。",

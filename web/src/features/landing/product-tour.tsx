@@ -1,13 +1,10 @@
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Tabs } from "@base-ui/react/tabs";
-import { ArrowLeft, ArrowRight, Pause, Play } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { useIntersectionObserver, useInterval, useMediaQuery } from "usehooks-ts";
-import { Button } from "@/components/ui/button";
+import { useIntersectionObserver, useInterval } from "usehooks-ts";
 import { cn } from "@/lib/cn";
 import { usePrefersReducedMotion } from "@/lib/reduced-motion";
 import { useDarkTheme } from "@/lib/theme";
-import { gridPaper } from "./figures/paper";
 
 /* Real screenshots in HTML-drawn frames; each is per language and theme. */
 
@@ -67,7 +64,7 @@ export function ProductShot({
 
 export function AppWindow({ children }: { children: ReactNode }) {
   return (
-    <div className="overflow-hidden rounded-[10px] border border-border-strong bg-bg shadow-[0_24px_60px_-28px_rgb(0_0_0/0.35)]">
+    <div className="overflow-hidden border border-border-strong bg-bg">
       <div className="relative flex h-8 items-center gap-2 bg-raised px-3">
         {[0, 1, 2].map((i) => (
           <span key={i} className="size-3 rounded-full border border-border-strong bg-bg" />
@@ -104,10 +101,11 @@ export function Phone({ children }: { children: ReactNode }) {
   );
 }
 
-/** One screen of the tour: its index entry and the picture behind it. */
+/** One screen of the tour: its caption and the picture behind it. */
 export type TourScreen = {
+  /** A stable name for the screen, used for its ids and its indicator button. */
   value: string;
-  /** The entry's headline and the line that says what the screen is for. */
+  /** The caption's headline and the line that says what the screen is for. */
   title: string;
   body: string;
   /** The screenshot, framed as the device it was taken on. */
@@ -116,41 +114,46 @@ export type TourScreen = {
   device: "app" | "phone";
 };
 
-/** How long one screen stays before the next one, when nothing holds it. */
+/** How long one screen stays before the next one, when the tour is free to move on. */
 const ROTATE_MS = 6000;
 
+/** Where the tour is, announced to a screen reader as it moves on by itself. */
+function Live({ index, total }: { index: number; total: number }) {
+  const { t } = useTranslation();
+  return (
+    <span aria-live="polite" className="sr-only">
+      {t("Screen {{n}} of {{total}}", { n: index + 1, total })}
+    </span>
+  );
+}
+
 /**
- * The product tour: three screens, one at a time. The index at the left names
- * each one and says what it is for; the frame at the right shows it, framed as
- * the device it was taken on. It moves on by itself every few seconds until
- * the reader points at it, focuses it or stops it — or asks the system for less
- * motion — and the index, the arrow keys and the buttons beside it move it by
- * hand, one screen at a time.
+ * The product tour: three screens, one at a time. The picture is the subject; the
+ * caption above it is the one belonging to the picture on screen, and nothing else of
+ * the set is written on the page. The tour moves on by itself every few seconds at every
+ * width — it stops while the reader points at it or is focused in it, while the tab is
+ * hidden, while it is scrolled away, and when the reader asked the system for less
+ * motion. Small capsule marks under the picture choose a screen directly, and a
+ * horizontal touch swipe moves to the next or previous one.
  */
 export function ProductTour({ screens }: { screens: readonly TourScreen[] }) {
   const { t } = useTranslation();
   const [value, setValue] = useState(screens[0]!.value);
+  const touchStart = useRef<{ x: number; y: number } | null>(null);
   /** The reader is pointing at or focused in the tour, so the rotation waits. */
   const [held, setHeld] = useState(false);
-  /** The reader stopped the rotation with its button: only they start it again. */
-  const [stopped, setStopped] = useState(false);
   const reduced = usePrefersReducedMotion();
-  /**
-   * The two-column layout (the stage beside the index) has a fixed height, so a
-   * screen swap moves nothing on the page. Below it the frame is as tall as the
-   * screen it shows, and a carousel that moved the page on its own would be a
-   * nuisance: there the tour waits for the reader's tabs and arrows.
-   */
-  const sideBySide = useMediaQuery("(min-width: 64rem)", { defaultValue: true });
-  /** A background tab, or the tour scrolled away, keeps the rotation for later. */
+  /** A background tab keeps the rotation for later. */
   const [away, setAway] = useState(false);
   const [inViewRef, inView] = useIntersectionObserver({ threshold: 0.35 });
   const index = Math.max(
     0,
     screens.findIndex((screen) => screen.value === value),
   );
-  const rotating = sideBySide && !reduced && !held && !stopped && !away && inView;
-  const counter = (n: number) => String(n).padStart(2, "0");
+  const screen = screens[index]!;
+  // The stage has a fixed height at every width (see below), so moving on by itself never
+  // moves the page under the reader's thumb.
+  const rotating = !reduced && !held && !away && inView;
 
   useEffect(() => {
     const onChange = () => setAway(document.hidden);
@@ -160,110 +163,98 @@ export function ProductTour({ screens }: { screens: readonly TourScreen[] }) {
   }, []);
 
   useInterval(
-    () => setValue((current) => screens[(screens.findIndex((screen) => screen.value === current) + 1) % screens.length]!.value),
+    () => setValue((current) => screens[(screens.findIndex((entry) => entry.value === current) + 1) % screens.length]!.value),
     rotating ? ROTATE_MS : null,
   );
 
-  const step = (delta: number) => setValue(screens[(index + delta + screens.length) % screens.length]!.value);
+  const choose = (next: number) => setValue(screens[(next + screens.length) % screens.length]!.value);
+  /* The picture is the subject: it takes the full column, with three capsule marks under
+     it and the caption above it. */
+  const stage = (
+    <div ref={inViewRef} className="relative isolate">
+      <div className="relative grid place-items-center lg:h-full">
+        {screens.map((entry) => (
+          <Tabs.Panel
+            key={entry.value}
+            value={entry.value}
+            keepMounted
+            className="col-start-1 row-start-1 w-full place-self-center transition-opacity duration-300 ease-out data-[ending-style]:opacity-0 data-[starting-style]:opacity-0 motion-reduce:transition-none"
+          >
+            {entry.device === "phone" ? (
+              <div className="mx-auto w-full max-w-[15rem]">
+                <Phone>
+                  <ProductShot shot={entry.shot} alt={entry.alt} eager width={640} height={1386} />
+                </Phone>
+              </div>
+            ) : (
+              <AppWindow>
+                <ProductShot shot={entry.shot} alt={entry.alt} eager width={2560} height={1600} />
+              </AppWindow>
+            )}
+          </Tabs.Panel>
+        ))}
+      </div>
+    </div>
+  );
+
+  /* Three compact capsules, not another piece of chrome. The generous button
+     around each mark keeps it easy to tap without making it look heavy. */
+  const rail = (
+    <Tabs.List aria-label={t("Choose a screen")} className="flex items-center justify-center gap-1">
+      {screens.map((entry, at) => (
+        <Tabs.Tab
+          key={entry.value}
+          value={entry.value}
+          aria-label={t("Screen {{n}} of {{total}}: {{title}}", { n: at + 1, total: screens.length, title: entry.title })}
+          className="group/tick flex size-7 cursor-pointer items-center justify-center focus-visible:outline-offset-0"
+        >
+          <span aria-hidden="true" data-shape="" className="block h-1 w-3 rounded-full bg-border-strong transition-[width,background-color] duration-200 group-hover/tick:bg-muted group-data-[active]:w-6 group-data-[active]:bg-fg" />
+        </Tabs.Tab>
+      ))}
+    </Tabs.List>
+  );
+
+  /* A short, stable caption above the picture; the images and their small marks
+     are the carousel, with no extra arrow chrome. */
+  const caption = (
+    <div className="min-h-20 min-w-0">
+      <p id={`tour-${screen.value}`} className="text-xl leading-7 font-semibold tracking-tight text-balance text-fg cjk-wrap md:cjk-keep">{screen.title}</p>
+      <p className="mt-3 max-w-[44rem] text-sm leading-6 text-pretty text-muted">{screen.body}</p>
+    </div>
+  );
 
   return (
     <Tabs.Root
       value={value}
       onValueChange={(next) => setValue(String(next))}
-      orientation="vertical"
       onPointerEnter={() => setHeld(true)}
       onPointerLeave={() => setHeld(false)}
       onFocusCapture={() => setHeld(true)}
       onBlurCapture={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setHeld(false);
       }}
-      className="grid gap-10 max-md:gap-8 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:items-center lg:gap-16"
+      onTouchStart={(event) => {
+        const touch = event.touches[0];
+        touchStart.current = touch ? { x: touch.clientX, y: touch.clientY } : null;
+      }}
+      onTouchEnd={(event) => {
+        const start = touchStart.current;
+        const touch = event.changedTouches[0];
+        touchStart.current = null;
+        if (!start || !touch) return;
+        const x = touch.clientX - start.x;
+        const y = touch.clientY - start.y;
+        // Horizontal intent only: an ordinary vertical scroll must not change the screen.
+        if (Math.abs(x) > 48 && Math.abs(x) > Math.abs(y)) choose(index + (x < 0 ? 1 : -1));
+      }}
+      className="grid touch-pan-y gap-y-5"
     >
-      <Tabs.List aria-label={t("Choose a screen")} activateOnFocus className="flex flex-col border-t border-border">
-        {screens.map((screen, at) => (
-          <Tabs.Tab
-            key={screen.value}
-            value={screen.value}
-            aria-label={screen.title}
-            aria-describedby={`tour-${screen.value}`}
-            className={cn(
-              "group flex w-full items-start gap-4 border-b border-l-2 border-l-transparent border-b-border py-5 pr-2 pl-4 text-left transition-colors",
-              "hover:border-l-border-strong data-[active]:border-l-fg",
-            )}
-          >
-            <span aria-hidden="true" className="mt-0.5 font-mono text-xs text-faint tabular-nums group-hover:text-muted group-data-[active]:text-fg">
-              {counter(at + 1)}
-            </span>
-            <span className="flex min-w-0 flex-col gap-1.5">
-              <span className="text-lg leading-6 font-semibold tracking-tight text-balance text-muted group-hover:text-fg group-data-[active]:text-fg cjk-wrap md:cjk-keep">{screen.title}</span>
-              <span id={`tour-${screen.value}`} className="text-sm leading-6 text-pretty text-faint group-data-[active]:text-muted">
-                {screen.body}
-              </span>
-            </span>
-          </Tabs.Tab>
-        ))}
-      </Tabs.List>
-
+      <div className="min-w-0">{caption}</div>
       <div className="min-w-0">
-        <div ref={inViewRef} className="relative isolate lg:h-[36rem]">
-          <div
-            aria-hidden="true"
-            className="pointer-events-none absolute inset-0"
-            style={{
-              ...gridPaper(22),
-              maskImage: "radial-gradient(72% 82% at 50% 48%, #000 28%, transparent 100%)",
-              WebkitMaskImage: "radial-gradient(72% 82% at 50% 48%, #000 28%, transparent 100%)",
-              opacity: 0.7,
-            }}
-          />
-          <div className="relative grid h-full place-items-center px-5 py-6 lg:px-8 lg:py-0">
-            {screens.map((screen) => (
-              <Tabs.Panel
-                key={screen.value}
-                value={screen.value}
-                keepMounted
-                className="col-start-1 row-start-1 w-full place-self-center transition-opacity duration-200 ease-out data-[ending-style]:opacity-0 data-[starting-style]:opacity-0 motion-reduce:transition-none"
-              >
-                {screen.device === "phone" ? (
-                  <div className="mx-auto w-full max-w-[250px]">
-                    <Phone>
-                      <ProductShot shot={screen.shot} alt={screen.alt} eager width={640} height={1386} />
-                    </Phone>
-                  </div>
-                ) : (
-                  <AppWindow>
-                    <ProductShot shot={screen.shot} alt={screen.alt} eager width={2560} height={1600} />
-                  </AppWindow>
-                )}
-              </Tabs.Panel>
-            ))}
-          </div>
-        </div>
-        <div className="mt-2 flex items-center justify-between gap-4 border-t border-border pt-4">
-          <span aria-hidden="true" className="font-mono text-xs text-muted tabular-nums">
-            {counter(index + 1)} / {counter(screens.length)}
-          </span>
-          <div className="flex items-center gap-2">
-            {!reduced && sideBySide && (
-              <Button
-                variant="secondary"
-                size="lg"
-                className="size-9 px-0"
-                aria-label={stopped ? t("Play the rotation") : t("Pause the rotation")}
-                onClick={() => setStopped((was) => !was)}
-              >
-                {stopped ? <Play aria-hidden="true" /> : <Pause aria-hidden="true" />}
-              </Button>
-            )}
-            <Button variant="secondary" size="lg" className="size-9 px-0" aria-label={t("Previous screen")} onClick={() => step(-1)}>
-              <ArrowLeft aria-hidden="true" />
-            </Button>
-            <Button variant="secondary" size="lg" className="size-9 px-0" aria-label={t("Next screen")} onClick={() => step(1)}>
-              <ArrowRight aria-hidden="true" />
-            </Button>
-          </div>
-        </div>
+        {stage}
+        <div className="mt-2">{rail}</div>
       </div>
+      <Live index={index} total={screens.length} />
     </Tabs.Root>
   );
 }
