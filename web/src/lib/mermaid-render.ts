@@ -545,15 +545,15 @@ function cachedPicture(entry: CacheEntry, theme: DiagramTheme): DiagramPicture {
 /**
  * Draw `code` and resolve to the picture.
  *
- * The length check happens first, before a worker exists or a message is
- * posted: Pele's own limit is checked only after its quadratic preprocess, so
- * a four-hundred-thousand-newline fence must never get that far. A source
- * over the cap is the code block, like any other rejection.
+ * The raw cache is consulted before the source is touched: a theme change
+ * over a cached fence (even an adversarial one) only re-bakes the style. On a
+ * miss, the length and whitespace caps are checked before a worker exists or
+ * a message is posted — Pele's own limit is checked only after its quadratic
+ * preprocess, so a four-hundred-thousand-newline fence must never get there.
+ * A source over a cap is the code block, like any other rejection.
  *
  * One render runs at a time: the queue keeps hostile fences from piling their
  * work into one long task and keeps a single worker's message order simple.
- * A theme change is served from the raw-picture cache and never reaches the
- * queue at all.
  */
 export async function renderMermaidDiagram(
   code: string,
