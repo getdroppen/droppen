@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 /// The contract's required-and-nullable shape: `required` in the schema,
 /// `nullable: true` on the value. Plain `Option<T>` cannot express this because
 /// `<Option<T> as Schematic>::required()` is hard-coded to `false`
-/// (`gotcha_core-0.5.1/src/lib.rs:624`).
+/// (`gotcha_core-0.5.2/src/lib.rs:624`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Nullable<T>(pub Option<T>);
@@ -90,7 +90,7 @@ impl<T: Schematic> Schematic for Nullable<T> {
 /// `required` and the value carries no `nullable`. Plain `Option<T>` cannot
 /// express this either, because gotcha hard-codes
 /// `<Option<T> as Schematic>::nullable()` to `Some(true)`
-/// (`gotcha_core-0.5.1/src/lib.rs:627`), which generators read as `T | null`.
+/// (`gotcha_core-0.5.2/src/lib.rs:627`), which generators read as `T | null`.
 ///
 /// Pair it with `#[serde(default, skip_serializing_if = "Optional::is_none")]`
 /// so an absent value stays absent on the wire rather than becoming `null`.
@@ -308,7 +308,7 @@ trait SpecAmendmentExt {
     /// operation refers to.
     ///
     /// gotcha emits the *requirement* on the operation
-    /// (`gotcha-0.5.1/src/openapi/mod.rs:169`) but hard-codes
+    /// (`gotcha-0.5.2/src/openapi/mod.rs:169`) but hard-codes
     /// `security_schemes: None` on the components it builds (`:445`), so a
     /// document with requirements and no definitions would be one no generator
     /// could resolve.
