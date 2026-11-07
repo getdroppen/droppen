@@ -72,8 +72,8 @@ export const DiagramRendering = createContext(false);
  * The value a view provides for `DiagramRendering`, from its device's prefs:
  * drawn unless they say `source` (a server from before the pref sends none),
  * but not before they have been read — a reader who chose the source must not
- * have Mermaid run on the agent's text while the prefs load, or when they
- * cannot be read at all.
+ * have the diagram engine run on the agent's text while the prefs load, or
+ * when they cannot be read at all.
  */
 export function drawsDiagrams(prefs: { diagrams?: "rendered" | "source" } | undefined): boolean {
   return prefs !== undefined && prefs.diagrams !== "source";
@@ -112,8 +112,8 @@ function mermaidSourceOf(node: unknown): string | null {
 
 /**
  * A fenced block. Every block renders exactly as it always has; a ```mermaid
- * fence is drawn instead when diagrams are on and Mermaid can read it, and is
- * the same code block in every other case.
+ * fence is drawn instead when diagrams are on and the engine can read it, and
+ * is the same code block in every other case.
  */
 function MarkdownPre({ children, node }: React.ComponentProps<"pre"> & { node?: unknown }) {
   const renderDiagrams = useContext(DiagramRendering);

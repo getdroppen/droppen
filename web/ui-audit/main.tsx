@@ -3,8 +3,10 @@
  * with no API, router or machine context. It is a fixture, not a page; keep it
  * in step with `features/settings/`, `features/cloud/` and `components/ui/`.
  *
- * `?fixture=settings` (default), `?fixture=devices` or `?fixture=agents`
- * (`&view=cards|details|empty`), plus `?theme=dark`.
+ * `?fixture=settings` (default), `?fixture=devices`, `?fixture=agents`
+ * (`&view=cards|details|empty`), `?fixture=diagrams` (a transcript of the
+ * diagram types messages draw) or `?fixture=hostile` (the reviewer's
+ * worst-case fences beside one normal diagram), plus `?theme=dark`.
  * `web/src/index.css` excludes this directory from Tailwind's scan
  * (`@source not`), so nothing here can change the production stylesheet. That
  * also means every class below must already occur in `web/src`; the layout
@@ -12,6 +14,8 @@
  */
 import "@/index.css";
 import { createRoot } from "react-dom/client";
+import { DiagramRendering, Markdown } from "@/components/markdown";
+import { MermaidBlock } from "@/components/mermaid-block";
 import { Button } from "@/components/ui/button";
 import { CHECKBOX_INPUT, CHECKBOX_LABEL, CheckboxMark } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -231,9 +235,193 @@ function AgentsFixture() {
   );
 }
 
-// The agents fixture's words go through i18n (counts, "5 min ago"): English
-// unless `&lang=` names another of the app's languages.
-if (fixture === "agents") await applyLanguage((query.get("lang") as LanguagePref | null) ?? "en");
+/**
+ * A transcript of the diagram types the message renderer must draw, plus one
+ * fence that cannot be drawn. The blocks are the real `<Markdown>` component
+ * under the same `DiagramRendering` provider a session view supplies, so the
+ * fixture exercises the engine, the picture and the code fallback.
+ */
+const DIAGRAMS: ReadonlyArray<readonly [name: string, source: string]> = [
+  [
+    "flowchart (subgraph and labels)",
+    `flowchart TD
+  A[Client] --> B{Access token?}
+  B -->|yes| C[Hub]
+  B -->|no| D[Login]
+  subgraph Cloud [Cloud]
+    C --> E[(Database)]
+  end`,
+  ],
+  [
+    "sequence",
+    `sequenceDiagram
+  participant C as Client
+  participant H as Hub
+  C->>H: GET /v1/sessions
+  H-->>C: 200 JSON`,
+  ],
+  [
+    "class",
+    `classDiagram
+  class Agent {
+    +run(task) string
+  }
+  class Session {
+    +id string
+  }
+  Agent --> Session : owns`,
+  ],
+  [
+    "state",
+    `stateDiagram-v2
+  [*] --> Idle
+  Idle --> Working: start
+  Working --> Idle: done`,
+  ],
+  [
+    "er",
+    `erDiagram
+  AGENT ||--o{ SESSION : runs
+  AGENT {
+    string id
+    string name
+  }
+  SESSION {
+    string id
+    string title
+  }`,
+  ],
+  [
+    "gantt",
+    `gantt
+  title Release
+  dateFormat YYYY-MM-DD
+  section Build
+  Compile :a1, 2026-01-01, 3d
+  Test :a2, after a1, 2d`,
+  ],
+  [
+    "pie",
+    `pie title Messages
+  "Claude" : 60
+  "Codex" : 30
+  "Other" : 10`,
+  ],
+  [
+    "mindmap",
+    `mindmap
+  root((Droppen))
+    Sessions
+      Transcript
+    Devices
+      Remote`,
+  ],
+  [
+    "timeline",
+    `timeline
+  title Releases
+  2025 : v0.1
+  2026 : v0.2 : v0.3`,
+  ],
+  [
+    "gitGraph",
+    `gitGraph
+  commit id: "init"
+  branch feat
+  checkout feat
+  commit id: "diagram"
+  checkout main
+  merge feat`,
+  ],
+  ["invalid fence (the code block)", "flowchart TD\n  A--"],
+];
+
+function DiagramsFixture() {
+  return (
+    <div data-fixture-root="" className="@container/settings mx-auto max-w-3xl p-4">
+      <header className="mb-3 flex h-8 items-center border-b border-border text-[13px] font-semibold">Transcript</header>
+      <DiagramRendering.Provider value>
+        {DIAGRAMS.map(([name, source]) => (
+          <section key={name} data-audit-row={name} className="border-b border-border py-3">
+            <div className="mb-1 font-mono text-2xs text-muted">{name}</div>
+            <Markdown text={"```mermaid\n" + source + "\n```"} />
+          </section>
+        ))}
+      </DiagramRendering.Provider>
+    </div>
+  );
+}
+
+/**
+ * The fences from the security review's reproduction (`/tmp/pele-eval/rv/`),
+ * plus one normal diagram. They are rendered through the real `MermaidBlock`
+ * (the transcript's diagram block) rather than through Markdown, so a
+ * long-task measurement sees the diagram engine's own work and not the
+ * markdown parser's. The normal diagram is first in the queue.
+ */
+const HOSTILE: ReadonlyArray<readonly [name: string, source: string]> = (() => {
+  const range = (n: number, make: (i: number) => string, sep = "\n") => Array.from({ length: n }, (_, i) => make(i)).join(sep);
+  const tasks = (n: number) => range(n, (i) => `T${i} :2024-01-01, 1d`);
+  return [
+    ["normal diagram (renders)", "flowchart TD\n  A[Start] --> B[End]"],
+    ["gantt dateFormat [x20000, 150 tasks", "gantt\ndateFormat " + "[".repeat(20000) + "YYYY-MM-DD\nsection S\n" + tasks(150)],
+    [
+      "venn union of 3231 sets",
+      "venn-beta\n" + range(3231, (i) => `set S${i}`) + "\nunion " + range(3231, (i) => `S${i}`, ",") + '["all"]',
+    ],
+    ["pie accDescr 48k spaces", 'pie\naccDescr {\nx' + " ".repeat(48000) + 'y\n}\n"a": 1'],
+    ["over the 50k source cap", "flowchart TD\n%%x\n" + "\n".repeat(400000) + "A-->B"],
+    // Five cached adversarial fences from the round-2 review: 32,000 spaces
+    // + x + 17,900 spaces, under both caps. The theme toggle must not re-scan
+    // them (one linear pass at mount; the cache is consulted first after).
+    ...Array.from({ length: 5 }, (_, i) => [
+      `whitespace guard ${i + 1}`,
+      `pie\n"a${i}": 1\n%%` + " ".repeat(32_000) + "x" + " ".repeat(17_900) + "\n",
+    ] as const),
+  ];
+})();
+
+function HostileFixture() {
+  return (
+    <div data-fixture-root="" className="@container/settings mx-auto max-w-3xl p-4">
+      <header className="mb-3 flex h-8 items-center border-b border-border text-[13px] font-semibold">Transcript</header>
+      {HOSTILE.map(([name, source]) => (
+        <section key={name} data-audit-row={name} className="border-b border-border py-3">
+          <div className="mb-1 font-mono text-2xs text-muted">{name}</div>
+          <MermaidBlock
+            code={source}
+            // The block receives the full source; the harness shows only a
+            // bounded stand-in for the code, or the page would lay out tens
+            // of thousands of preformatted lines while the measurement runs.
+            fallback={
+              <pre className="my-1.5 overflow-x-auto border border-border bg-raised px-2.5 py-2">
+                <code className="block font-mono text-2xs leading-[18px]">
+                  {source.length > 2_000 ? `source of ${source.length} chars (not laid out in this harness)` : source}
+                </code>
+              </pre>
+            }
+          />
+        </section>
+      ))}
+    </div>
+  );
+}
+
+// The agents and diagrams fixtures' words go through i18n (counts, "5 min
+// ago", the diagram controls' labels): English unless `&lang=` names another
+// of the app's languages.
+if (fixture === "agents" || fixture === "diagrams" || fixture === "hostile")
+  await applyLanguage((query.get("lang") as LanguagePref | null) ?? "en");
 createRoot(document.getElementById("root")!).render(
-  fixture === "devices" ? <DevicesFixture /> : fixture === "agents" ? <AgentsFixture /> : <SettingsFixture />,
+  fixture === "devices" ? (
+    <DevicesFixture />
+  ) : fixture === "agents" ? (
+    <AgentsFixture />
+  ) : fixture === "diagrams" ? (
+    <DiagramsFixture />
+  ) : fixture === "hostile" ? (
+    <HostileFixture />
+  ) : (
+    <SettingsFixture />
+  ),
 );

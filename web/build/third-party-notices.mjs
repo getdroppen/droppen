@@ -24,6 +24,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
+import { workerNotices } from "./worker-notices.mjs";
 
 /** SPDX ids the server binary may carry. Keep in step with `about.toml`. */
 export const ALLOWED = new Set([
@@ -51,9 +52,8 @@ export const ALLOWED = new Set([
  * version, or a different text, fails the check again until somebody reads it.
  */
 export const CLARIFIED = new Map([
-  // Mermaid's colour maths: MIT in its `license` file and its repository
-  // (github.com/fabiospampinato/khroma).
-  ["khroma@2.1.0", { license: "MIT", file: "license", sha256: "66b333b0f66759a0b710459e03f7029abe17f4358114a128d2c972e642961b49" }],
+  // Nothing needs one today. A package without a declared licence gets an
+  // entry here, pinned to its version and the sha256 of the file that says so.
 ]);
 
 /** Licences outside the everyday MIT / Apache / BSD / ISC set, to be named in the summary. */
@@ -276,6 +276,23 @@ export function render({ entries, helpers }, intro) {
   return lines.filter((line, i) => line !== "" || lines[i - 1] !== "").join("\n") + "\n";
 }
 
+/**
+ * A diagram-worker asset in the main bundle whose modules were never
+ * recorded for the notices. Vite builds the worker in a separate Rollup pass
+ * and emits only the asset here; if `worker-notices.mjs` is removed or its
+ * hook stops running, the asset is still in `dist` but its packages (Pele)
+ * silently vanish from THIRD_PARTY_NOTICES.txt. Fail the build instead.
+ */
+export function workerNoticeProblem(bundle, recorded = workerNotices()) {
+  const worker = Object.values(bundle).some((output) => {
+    if (output.type !== "asset") return false;
+    const name = String(output.fileName ?? "");
+    return name.includes("diagram-worker-") || (output.originalFileNames ?? []).some((file) => String(file).includes("/src/lib/diagram-worker.ts"));
+  });
+  if (!worker || recorded.size > 0) return null;
+  return "the diagram worker is in this build, but its modules were not recorded (build/worker-notices.mjs): THIRD_PARTY_NOTICES.txt would miss its bundled packages";
+}
+
 /** The licence check's verdict as error text, or null when every package passes. */
 export function failureText({ failures }) {
   if (!failures.length) return null;
@@ -299,6 +316,11 @@ export function thirdPartyNotices() {
     generateBundle(_options, bundle) {
       const seen = recorder();
       seen.record(bundle);
+      // The diagram worker is a separate Rollup pass, emitted into this
+      // bundle as an asset; its modules are recorded by worker-notices.mjs.
+      for (const file of workerNotices()) seen.files.add(file);
+      const workerProblem = workerNoticeProblem(bundle);
+      if (workerProblem) this.error(workerProblem);
       // Vite's root may be reached through a symlink (macOS's /tmp is
       // /private/tmp); the modules it records are real paths.
       const found = collect(realpathSync(resolve(root)), seen);

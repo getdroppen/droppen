@@ -25,6 +25,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { collect, recorder, render } from "../../web/build/third-party-notices.mjs";
+import { workerNotices } from "../../web/build/worker-notices.mjs";
 
 async function main() {
   const [webArg, outArg] = process.argv.slice(2);
@@ -63,6 +64,9 @@ async function main() {
   } finally {
     rmSync(outDir, { recursive: true, force: true });
   }
+
+  // The diagram worker is a separate Rollup pass (web/build/worker-notices.mjs).
+  for (const file of workerNotices()) seen.files.add(file);
 
   const found = collect(webDir, seen);
   writeFileSync(

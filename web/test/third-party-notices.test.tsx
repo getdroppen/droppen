@@ -18,10 +18,23 @@ import { join } from "node:path";
 import test from "node:test";
 import { I18nextProvider } from "react-i18next";
 import { renderToStaticMarkup } from "react-dom/server";
-import { collect, evaluate, failureText, NOTICES_FILE, recorder, render } from "../build/third-party-notices.mjs";
+import { collect, evaluate, failureText, NOTICES_FILE, recorder, render, workerNoticeProblem } from "../build/third-party-notices.mjs";
 import { landingBundles } from "../src/features/landing/copy.js";
 import { FooterLine, NOTICES_PATH, SOURCE_URL } from "../src/features/landing/page-kit.js";
 import { makeI18n } from "./render.js";
+
+test("a diagram-worker asset without recorded modules fails the notices build", () => {
+  const worker = {
+    "assets/diagram-worker-abc.js": {
+      type: "asset",
+      fileName: "assets/diagram-worker-abc.js",
+      originalFileNames: [],
+    },
+  } as never;
+  assert.match(workerNoticeProblem(worker, new Set()) ?? "", /diagram worker/);
+  assert.equal(workerNoticeProblem(worker, new Set(["/web/node_modules/pele/dist/esm/core.js"])), null);
+  assert.equal(workerNoticeProblem({ "assets/app.js": { type: "chunk", fileName: "assets/app.js" } } as never, new Set()), null);
+});
 
 test("the allow-list: permissive licences and MPL-2.0, never a copyleft one", () => {
   for (const ok of ["MIT", "(MIT OR Apache-2.0)", "Apache-2.0 WITH LLVM-exception", "MPL-2.0", "MIT OR GPL-3.0-only", "BSD-3-Clause AND ISC"])

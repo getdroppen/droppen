@@ -11,6 +11,7 @@ import { fillServiceWorker, type LanguageFiles } from "./build/service-worker";
 import { BUILD_TARGET } from "./build/target";
 import { thirdPartyNotices } from "./build/third-party-notices.mjs";
 import { guardBootChunks, vendorChunk } from "./build/vendor-chunks";
+import { recordWorkerModules } from "./build/worker-notices.mjs";
 import { viewPrefetch } from "./build/view-prefetch";
 
 /**
@@ -49,10 +50,9 @@ const cloud = cloudConfig();
  * only), compatibility mode's curves (`@noble/curves` and its hashes, reached
  * only from `lib/e2e/soft25519.ts`, on a browser without them natively), math:
  * KaTeX and the parsing around it (`components/markdown-math.ts`), fetched by
- * the first message that may hold a formula, and diagrams: Mermaid
+ * the first message that may hold a formula, and diagrams: Pele
  * (`lib/mermaid-render.ts`), fetched by the first ```mermaid fence a message
- * draws, with the largest packages only it uses: its parser's chevrotain,
- * cytoscape and cytoscape's layouts.
+ * draws, with the chunk it loads for each diagram type.
  */
 const ON_DEMAND = [
   "src/features/sessions/session-detail.tsx",
@@ -79,12 +79,7 @@ const ON_DEMAND = [
   "mdast-util-math",
   "hast-util-from-html-isomorphic",
   "hast-util-from-dom",
-  "mermaid",
-  "@mermaid-js/",
-  "chevrotain",
-  "cytoscape",
-  "layout-base",
-  "cose-base",
+  "pele",
 ];
 
 /**
@@ -217,6 +212,12 @@ export default defineConfig({
       output: { manualChunks: vendorChunk },
     },
   },
+  // The diagram worker imports Pele's lazy entry, which splits each diagram
+  // type into a chunk of its own; a classic (iife) worker cannot code-split.
+  // `new Worker(…, { type: "module" })` matches the ES output. Its modules
+  // are recorded for THIRD_PARTY_NOTICES.txt: the main bundle only sees the
+  // worker as an asset (build/worker-notices.mjs).
+  worker: { format: "es", plugins: () => [recordWorkerModules()] },
   plugins: [
     // The host's React and plugin SDK as facade chunks, named by the shell's
     // import map: runtime plugins share this build's instances of them (§3).
@@ -238,15 +239,7 @@ export default defineConfig({
     devTools(fileURLToPath(new URL("./dev", import.meta.url))),
   ],
   resolve: {
-    alias: [
-      { find: "@", replacement: fileURLToPath(new URL("./src", import.meta.url)) },
-      // Mermaid registers its ELK layouts behind a lazy loader that imports
-      // elkjs, which is EPL-2.0: not a licence this app ships (the allow-list
-      // in `build/third-party-notices.mjs`). The diagrams are laid out with
-      // dagre (`lib/mermaid-render.ts`); this stub is what that loader gets,
-      // and it refuses, so the block stays its code.
-      { find: /^elkjs(?:\/.*)?$/, replacement: fileURLToPath(new URL("./src/lib/elk-stub.ts", import.meta.url)) },
-    ],
+    alias: [{ find: "@", replacement: fileURLToPath(new URL("./src", import.meta.url)) }],
   },
   server: {
     port: Number(process.env.DROPPEN_DEV_PORT ?? 5180),
