@@ -12,6 +12,8 @@ Node、不需要静态资源目录。
 改名前的名字:每套安装、launchd job / systemd 服务单元和更早的版本都按这些绝对路径找数据,
 改名会把同一台机器上的数据分成两份。这两个目录名和它们下面的路径是兼容面,不是遗留。
 
+以下命令都在仓库根目录运行（`--out` 等相对路径相对于根目录）：
+
 ```bash
 cargo run -p droppen-server -- serve                                   # 127.0.0.1:8700
 cargo run -p droppen-server -- export-openapi --out openapi/openapi.json

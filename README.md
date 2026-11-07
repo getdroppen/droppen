@@ -99,8 +99,8 @@ not an external audit. [How the encryption works](https://www.droppen.app/securi
 Copyright (C) 2026 Kilerd.
 
 - **The applications** are licensed under the GNU Affero General Public License
-  v3.0 only ([LICENSE](LICENSE), `AGPL-3.0-only`): the local program (the root
-  crate in `crates/droppen-server/`), the desktop app (`desktop/`), the web app (`web/`) and
+  v3.0 only ([LICENSE](LICENSE), `AGPL-3.0-only`): the local program (the
+  `droppen-server` crate, `crates/droppen-server/`), the desktop app (`desktop/`), the web app (`web/`) and
   the relay program (`droppen-relay`).
 - **The protocol and library crates**, `droppen-proto`, `droppen-relay-core` (the library),
   `droppen-client` and `droppen-devkit`, and the plugin SDKs (`packages/plugin-sdk`,
