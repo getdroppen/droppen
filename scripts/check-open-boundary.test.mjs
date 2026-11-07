@@ -293,6 +293,16 @@ describe("the whole check, over a made-up tree", () => {
     assert.ok(notes.includes("the hub is not in this tree (the public repository's shape)"), notes.join("\n"));
   });
 
+  test("the server package's own manifest naming the hub is reported", () => {
+    const { root, metadata } = tree({
+      ...open,
+      "server-rs/Cargo.toml": `${crate("droppen-server")}[dependencies]\nrh-hub-api = { path = "../rh-hub-api" }\n`,
+    });
+    const { problems } = checkOpenBoundary(root, { metadata });
+    assert.equal(problems.length, 1, problems.join("\n"));
+    assert.match(problems[0], /^server-rs\/Cargo\.toml:4: names the hub's side, and the hub is not in this tree/);
+  });
+
   test("the hub's side without the hub", () => {
     const { root, metadata } = tree({ ...open, ...tools });
     const { problems } = checkOpenBoundary(root, { metadata });

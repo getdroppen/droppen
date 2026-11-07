@@ -31,8 +31,9 @@
 #    install-key.sh, LICENSE, scripts/notices/attributions.txt and
 #    web/owner-placeholders.txt;
 #  - the desktop core tests read desktop/build.sh, desktop/e2e-identity.sh,
-#    scripts/install.sh and the root Cargo.toml (the droppen-search-path path
-#    dependency inherits that workspace's lints).
+#    scripts/install.sh, the root Cargo.toml and
+#    server-rs/crates/droppen-search-path (the path dependency it compiles,
+#    which inherits that workspace's lints).
 # Everything a rule does not name is unknown, and unknown runs every job.
 set -u
 
@@ -153,7 +154,7 @@ while IFS= read -r path; do
   esac
 
   case "$path" in
-    desktop/*|scripts/install.sh|Cargo.toml)
+    desktop/*|server-rs/crates/droppen-search-path/*|scripts/install.sh|Cargo.toml)
       desktop_core=1; matched=1 ;;
   esac
 

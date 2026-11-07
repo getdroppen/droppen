@@ -12,7 +12,7 @@ edition = "2021"
 publish = false
 license = "AGPL-3.0-only"
 
-# As in `server-rs/Cargo.toml`: a guard made in a match/if-let/while-let
+# As in the root `Cargo.toml`: a guard made in a match/if-let/while-let
 # scrutinee lives until the end of the whole block in edition 2021, and a std
 # guard held across an `.await` blocks the thread. Each member opts in with
 # `[lints] workspace = true`.

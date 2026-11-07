@@ -59,7 +59,7 @@ echo "run.sh: uploading $REPO to $POD" >&2
 # macOS's tar would add its extended attributes, which GNU tar warns about per file.
 mac=(); tar --version 2>/dev/null | grep -q bsdtar && mac=(--no-xattrs --no-mac-metadata)
 COPYFILE_DISABLE=1 tar ${mac[@]+"${mac[@]}"} -C "$REPO" -cf - --exclude ./.git --exclude node_modules \
-  --exclude ./desktop/target --exclude ./target --exclude ./web/dist . |
+  --exclude ./server-rs/target --exclude ./desktop/target --exclude ./target --exclude ./web/dist . |
   "${K[@]}" exec -i "$POD" -- tar -x -C /work/src
 
 "${K[@]}" exec "$POD" -- env SRC=/work/src OUT=/work/out LANGS="${LANGS:-en zh-CN}" bash /work/src/scripts/landing-shots/local/shoot.sh all

@@ -51,7 +51,7 @@ for manifest in . desktop; do
   cargo fetch --locked --manifest-path "$SRC/$manifest/Cargo.toml" >/dev/null
   cargo about generate --frozen --fail -c "$WORK/about-macos.toml" \
     -m "$SRC/$manifest/Cargo.toml" --format json -o "$WORK/about-$label.json" \
-    || die "cargo-about refused a Rust licence of $manifest (see above; the allow-list is about.toml's accepted)"
+    || die "cargo-about refused a Rust licence of $label (see above; the allow-list is about.toml's accepted)"
 done
 node "$REPO/scripts/notices/rust-notices.mjs" "$WORK/about-desktop.json,$WORK/about-server.json" "$WORK/notices-rust.txt" \
   "the app and its bundled server"

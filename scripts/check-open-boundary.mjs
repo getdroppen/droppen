@@ -564,7 +564,7 @@ export function checkOpenBoundary(root, { metadata = cargoMetadata } = {}) {
   if (!hubHere) {
     const left = [...new Set([...side, ...hubDirs.map((dir) => basename(dir))].map(dashed))];
     if (left.length) problems.push(`${left.join(", ")}: on the hub's side, but the hub is not in this tree; it goes with the hub`);
-    const manifests = [join(root, "Cargo.toml"), ...open.filter((p) => p.dir !== join(root, "server-rs")).map((p) => join(p.dir, "Cargo.toml"))];
+    const manifests = [join(root, "Cargo.toml"), ...open.map((p) => join(p.dir, "Cargo.toml"))];
     for (const file of manifests) {
       if (!existsSync(file)) continue;
       for (const m of manifestMentions(readFileSync(file, "utf8"))) {
