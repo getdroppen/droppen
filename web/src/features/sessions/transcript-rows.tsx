@@ -3,7 +3,7 @@
  * tool call with its own transcript under it.
  */
 import { useQuery } from "@tanstack/react-query";
-import { ChevronRight } from "lucide-react";
+import { CaretRightIcon } from "@phosphor-icons/react";
 import { memo, useContext, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ApiError, errorText } from "@/api/errors";
@@ -71,7 +71,7 @@ export const StepGroup = memo(function StepGroup({ items, base }: { items: Trans
           inBubble ? "-mx-1 px-1" : "px-4",
         )}
       >
-        <ChevronRight className="size-3 shrink-0 text-faint group-open/steps:rotate-90" />
+        <CaretRightIcon className="size-3 shrink-0 text-faint group-open/steps:rotate-90" />
         <span data-label="" className="label-caps shrink-0 text-[10px] text-fg">{t("{{n}} steps", { n: steps })}</span>
         <span className="truncate text-muted">{summary}</span>
         {hasError && (
@@ -289,7 +289,7 @@ export function SubagentTool({
         onClick={() => setOpen((o) => !o)}
         className="flex w-full cursor-pointer items-center gap-1.5 px-3 py-1 text-left font-mono text-2xs hover:bg-hover"
       >
-        <ChevronRight className={cn("size-3 shrink-0 text-faint transition-transform", open && "rotate-90")} />
+        <CaretRightIcon className={cn("size-3 shrink-0 text-faint transition-transform", open && "rotate-90")} />
         <span className="shrink-0 text-accent">⚡ {t("subagent")}</span>
         <span className="min-w-0 flex-1 truncate text-muted">{data?.description ?? item.text}</span>
         {data && (

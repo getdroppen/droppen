@@ -215,7 +215,6 @@ function desktopWindow(): boolean {
 export function createPluginHost(id: string, deps: HostDeps): PluginHost {
   const ns = pluginNamespace(id);
   const root = `/p/${id}/`;
-  const confirm = requestConfirm;
   return {
     sdkVersion: SDK_VERSION,
     pluginId: id,
@@ -228,7 +227,7 @@ export function createPluginHost(id: string, deps: HostDeps): PluginHost {
       ),
       DialogContent,
       Spinner,
-      confirm,
+      confirm: requestConfirm,
     },
     i18n: {
       language: () => hostLocale(),
@@ -241,7 +240,7 @@ export function createPluginHost(id: string, deps: HostDeps): PluginHost {
       },
       useLeaveGuard(active: boolean, message: string) {
         useBlocker({
-          shouldBlockFn: async () => !(await confirm(message)),
+          shouldBlockFn: async () => !(await requestConfirm(message)),
           enableBeforeUnload: active,
           disabled: !active,
         });

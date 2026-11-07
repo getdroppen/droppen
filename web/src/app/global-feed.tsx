@@ -362,9 +362,7 @@ const machineFeeds = perMachine(
 );
 
 /** `machine`'s list: its store, and the way to say the page shows it. */
-export function machineFeedFor(machine: MachineKey): MachineFeed {
-  return machineFeeds(machine);
-}
+export { machineFeeds as machineFeedFor };
 
 /**
  * One slice of `machine`'s feed, wherever in the tree this is — for a view
@@ -373,7 +371,7 @@ export function machineFeedFor(machine: MachineKey): MachineFeed {
  * {@link useGlobalFeedSelector}.
  */
 export function useMachineFeedSelector<T>(machine: MachineKey, select: (state: GlobalFeedState) => T): T {
-  const store = machineFeedFor(machine).store;
+  const store = machineFeeds(machine).store;
   const read = useCallback(() => select(store.getSnapshot()), [store, select]);
   return useSyncExternalStore(store.subscribe, read, read);
 }
@@ -482,7 +480,7 @@ function startList(machine: MachineKey, store: GlobalFeedStore): () => void {
  */
 export function GlobalFeedProvider({ children }: { children: React.ReactNode }) {
   const machine = useMachine();
-  const feed = machineFeedFor(machine);
+  const feed = machineFeeds(machine);
   // Not for a machine gone between the commit and this effect: its transport
   // is gone with it, and the view re-renders without it.
   useEffect(() => (isOpen(machine) ? feed.acquire() : undefined), [feed, machine]);

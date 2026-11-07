@@ -15,7 +15,7 @@
  * dials anything: they read the shell's machine list.
  */
 import { useTranslation } from "react-i18next";
-import { Columns2, Plus, X } from "lucide-react";
+import { ColumnsIcon, PlusIcon, XIcon } from "@phosphor-icons/react";
 import { cn } from "@/lib/cn";
 import { hubShell, useShellMachines } from "@/features/machines/shells";
 import { dismissHint, type Hint, openAddDevice, useHint } from "./onboarding";
@@ -53,7 +53,7 @@ function Dismiss({ onClick, className }: { onClick: () => void; className?: stri
       onClick={onClick}
       className={cn("flex size-5 shrink-0 items-center justify-center text-muted hover:bg-hover hover:text-fg", className)}
     >
-      <X className="size-3" />
+      <XIcon className="size-3" />
     </button>
   );
 }
@@ -71,7 +71,7 @@ export function AddDeviceHint({ variant, onAdd, className }: { variant: "row" | 
   if (variant === "row") {
     return (
       <div data-testid="add-device-hint" className={cn("flex items-center gap-3 px-6 py-3 max-md:px-4", className)}>
-        <Columns2 aria-hidden="true" className="size-4 shrink-0 text-fg" />
+        <ColumnsIcon aria-hidden="true" className="size-4 shrink-0 text-fg" />
         <p className="min-w-0 flex-1 text-[13px] leading-5 text-fg">{t("Add another device to see both on one screen.")}</p>
         <button
           type="button"
@@ -79,7 +79,7 @@ export function AddDeviceHint({ variant, onAdd, className }: { variant: "row" | 
           onClick={add}
           className="flex h-7 shrink-0 items-center gap-1.5 border border-border-strong px-2.5 text-xs text-fg hover:bg-hover"
         >
-          <Plus className="size-3.5" />
+          <PlusIcon className="size-3.5" />
           <span className="max-sm:hidden">{t("add a device that runs AI")}</span>
           <span className="sm:hidden">{t("add")}</span>
         </button>
@@ -89,7 +89,7 @@ export function AddDeviceHint({ variant, onAdd, className }: { variant: "row" | 
   }
   return (
     <div data-testid="add-device-hint" className={cn("flex items-start gap-2", className)}>
-      <Columns2 aria-hidden="true" className="mt-0.5 size-3 shrink-0 text-faint" />
+      <ColumnsIcon aria-hidden="true" className="mt-0.5 size-3 shrink-0 text-faint" />
       <span className="min-w-0 flex-1 font-mono text-2xs leading-4 text-muted">
         {t("Add another device to see both on one screen.")}{" "}
         <button type="button" data-testid="add-device-hint-add" onClick={add} className="text-fg underline underline-offset-2 hover:no-underline">
@@ -113,7 +113,7 @@ export function SideBySideTip({ onScreen }: { onScreen: () => void }) {
   if (!shown) return null;
   return (
     <div data-testid="side-by-side-tip" role="note" className="flex h-8 shrink-0 items-center gap-2.5 border-b border-border bg-raised px-3 max-md:hidden">
-      <Columns2 aria-hidden="true" className="size-3.5 shrink-0 text-fg" />
+      <ColumnsIcon aria-hidden="true" className="size-3.5 shrink-0 text-fg" />
       <span className="min-w-0 flex-1 truncate text-xs text-fg">
         {t("Each pane can show a different device's content.")}
         <span className="text-faint"> · </span>
@@ -128,7 +128,7 @@ export function SideBySideTip({ onScreen }: { onScreen: () => void }) {
         }}
         className="flex h-6 shrink-0 items-center gap-1 border border-border-strong bg-bg px-2 font-mono text-2xs text-fg hover:bg-hover"
       >
-        <Plus className="size-3" />
+        <PlusIcon className="size-3" />
         {t("new screen")}
       </button>
       <Dismiss onClick={dismiss} />

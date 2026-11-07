@@ -19,7 +19,7 @@
  * an API; `AcpTab` is the part that talks to the device.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, ExternalLink, Plus, RefreshCw } from "lucide-react";
+import { CaretRightIcon, ArrowSquareOutIcon, PlusIcon, ArrowsClockwiseIcon } from "@phosphor-icons/react";
 import { useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { ApiError, errorText } from "@/api/errors";
@@ -156,7 +156,7 @@ export function AddCard({ label, hint, onClick }: { label: string; hint?: string
         className="flex min-h-[5.5rem] w-full flex-col items-center justify-center gap-1 border border-border px-3 text-xs font-medium text-muted hover:border-border-strong hover:text-fg"
       >
         <span className="flex items-center gap-1.5">
-          <Plus className="size-3.5" />
+          <PlusIcon className="size-3.5" />
           {label}
         </span>
         {hint && <span className="text-center text-2xs font-normal text-faint">{hint}</span>}
@@ -204,7 +204,7 @@ export function AcpEmpty({ presets, onPick }: { presets: readonly AcpAgentPreset
               <span className="mt-auto flex min-h-5 items-center justify-between gap-2">
                 <PresetAvailability preset={preset} added={false} />
                 <span className="flex items-center gap-1 text-xs font-medium text-muted group-hover/card:text-fg">
-                  <Plus className="size-3" />
+                  <PlusIcon className="size-3" />
                   {t("add")}
                 </span>
               </span>
@@ -396,7 +396,7 @@ export function AcpDetailsBody({
       ) : (
         <div className="flex flex-wrap items-center gap-1.5 border-t border-border pt-3">
           <button type="button" disabled={busy || status.kind === "checking"} onClick={onCheck} className={SETTINGS_ACTION}>
-            <RefreshCw className="size-3" />
+            <ArrowsClockwiseIcon className="size-3" />
             {t("check again")}
           </button>
           <button type="button" disabled={busy} onClick={onEdit} className={SETTINGS_ACTION}>
@@ -443,7 +443,7 @@ export function PresetChoices({
               {preset?.note && <span className="block text-2xs leading-4 text-faint">{preset.note}</span>}
             </span>
             {preset && <PresetAvailability preset={preset} added={added.has(preset.id)} />}
-            <ChevronRight aria-hidden="true" className="size-3 shrink-0 text-faint" />
+            <CaretRightIcon aria-hidden="true" className="size-3 shrink-0 text-faint" />
           </button>
         ))}
       </div>
@@ -595,7 +595,6 @@ function AgentDialog({
   const [check, setCheck] = useState<AcpCheck | null>(existing?.lastCheck ?? null);
   const save = useMutation({
     mutationFn: async () => {
-      const target = id;
       const body =
         existing
           ? {
@@ -605,13 +604,13 @@ function AgentDialog({
               ...(env ? { env } : {}),
             }
           : { name, command, args: splitArgs(args), ...(env ? { env } : {}) };
-      const res = await api.PUT("/api/acp/agents/{id}", { params: { path: { id: target } }, body });
+      const res = await api.PUT("/api/acp/agents/{id}", { params: { path: { id } }, body });
       if (!res.data) throw new ApiError(res.error);
       setSaved(res.data);
       setDraft({ name: null, command: null, args: null });
       setEnv("");
-      void queryClient.invalidateQueries({ queryKey: mq(machine, "models", "acp", target) });
-      return runCheck(api, target);
+      void queryClient.invalidateQueries({ queryKey: mq(machine, "models", "acp", id) });
+      return runCheck(api, id);
     },
     onSuccess: (result) => {
       setCheck(result);
@@ -684,7 +683,7 @@ function AgentDialog({
               </button>
               {existing && (
                 <button type="button" disabled={recheck.isPending || save.isPending} onClick={() => recheck.mutate()} className={SETTINGS_ACTION}>
-                  <RefreshCw className="size-3" />
+                  <ArrowsClockwiseIcon className="size-3" />
                   {t("check again")}
                 </button>
               )}
@@ -694,7 +693,7 @@ function AgentDialog({
               {described?.homepage && (
                 <a href={described.homepage} target="_blank" rel="noreferrer" className="ml-auto flex items-center gap-1 text-2xs text-muted underline hover:text-fg">
                   {t("learn more")}
-                  <ExternalLink className="size-3" />
+                  <ArrowSquareOutIcon className="size-3" />
                 </a>
               )}
             </div>

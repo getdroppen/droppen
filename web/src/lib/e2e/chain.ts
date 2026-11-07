@@ -2220,8 +2220,7 @@ export class ChainState {
    * about every change to who is in the account replace it.)
    */
   async freshness(requester: string, attestations: Attestation[], nowMs: number, maxAgeMs: number): Promise<Freshness> {
-    const sole = this.admins().length === 1;
-    const selfCounts = sole;
+    const selfCounts = this.admins().length === 1;
     let newest: number | null = null;
     let behind: number | null = null;
     for (const att of attestations) {

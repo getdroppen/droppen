@@ -11,7 +11,7 @@
 
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { AlertTriangle, Loader2, RefreshCw } from "lucide-react";
+import { ArrowsClockwiseIcon, CircleNotchIcon, WarningIcon } from "@phosphor-icons/react";
 import { formatExactTime, formatRelative } from "@/lib/format";
 import { type ChainAlert, type CloudAccount, deviceFingerprint, type HeldChange, type RotationReport, type VetoPlan, type VetoTarget } from "@/lib/hub/account";
 import { chainV3Writable } from "@/lib/hub/api";
@@ -221,7 +221,7 @@ export function UpgradeConfirm({ ukEpoch, busy, error, onConfirm, onCancel }: { 
       <ErrorLine message={error} />
       <div className="flex gap-2">
         <button type="button" data-testid="upgrade-confirm-button" className={danger} disabled={busy} onClick={onConfirm}>
-          {busy && <Loader2 className="size-3.5 animate-spin" />}
+          {busy && <CircleNotchIcon className="size-3.5 animate-spin" />}
           {t("upgrade the account")}
         </button>
         <button type="button" className={quiet} disabled={busy} onClick={onCancel}>
@@ -277,11 +277,11 @@ export function MissingUserKey({ account, link, epoch }: { account: CloudAccount
         </span>
       </span>
       <Button disabled={busy !== null} onClick={() => void run("ask")}>
-        {busy === "ask" && <Loader2 className="animate-spin" />}
+        {busy === "ask" && <CircleNotchIcon className="animate-spin" />}
         {t("ask again")}
       </Button>
       <Button variant="primary" disabled={busy !== null} onClick={() => void run("rotate")}>
-        {busy === "rotate" ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+        {busy === "rotate" ? <CircleNotchIcon className="animate-spin" /> : <ArrowsClockwiseIcon />}
         {busy === "rotate" ? t("rotating keys…") : t("rotate keys again")}
       </Button>
       <ErrorLine message={error} />
@@ -338,7 +338,7 @@ export function RotateKeys({ account, link, due }: { account: CloudAccount; link
           </span>
         </span>
         <Button variant="primary" disabled={busy} onClick={() => void run()}>
-          {busy ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+          {busy ? <CircleNotchIcon className="animate-spin" /> : <ArrowsClockwiseIcon />}
           {busy ? t("rotating keys…") : t("rotate keys again")}
         </Button>
         <ErrorLine message={error} />
@@ -352,7 +352,7 @@ export function RotateKeys({ account, link, due }: { account: CloudAccount; link
         {t("Rotate the keys if a removal did not finish, or you think a key got out: every device gets a new user key and every device that runs AI a new content key. Old history stays readable here.")}
       </p>
       <Button className="self-start" disabled={busy} onClick={() => void run()}>
-        {busy ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+        {busy ? <CircleNotchIcon className="animate-spin" /> : <ArrowsClockwiseIcon />}
         {busy ? t("rotating keys…") : t("rotate keys again")}
       </Button>
       <ErrorLine message={error} />
@@ -520,7 +520,7 @@ export function ChainAlerts({ account, link }: { account: CloudAccount; link: Hu
                     }
                   }}
                 >
-                  {busy === a.seq && <Loader2 className="animate-spin" />}
+                  {busy === a.seq && <CircleNotchIcon className="animate-spin" />}
                   {t("remove {{id}}", { id: a.remove })}
                 </Button>
               )}
@@ -679,7 +679,7 @@ export function VetoChoice({
       )}
       <div className="flex flex-wrap gap-2">
         <button type="button" data-testid="veto-go" className={cn(danger, "h-7 px-3 text-xs")} disabled={busy} onClick={onConfirm}>
-          {busy && <Loader2 className="size-3 animate-spin" />}
+          {busy && <CircleNotchIcon className="size-3 animate-spin" />}
           {alsoTrusted && plan.trusted.length > 0 ? t("remove all of them") : t("remove it and what it brought in")}
         </button>
         <button type="button" className={cn(quiet, "h-7 px-2 text-xs")} disabled={busy} onClick={onCancel}>
@@ -732,7 +732,7 @@ function VetoConfirm({ account, link, onCancel }: { account: CloudAccount; link:
       <div data-testid="veto-confirm" className="flex w-full flex-col gap-1 text-xs text-muted">
         {!error && (
           <span className="flex items-center gap-1.5">
-            <Loader2 className="size-3 animate-spin" />
+            <CircleNotchIcon className="size-3 animate-spin" />
             {t("reading what it takes out…")}
           </span>
         )}
@@ -778,7 +778,7 @@ export function PendingRecoveryBanner({ account, link }: { account: CloudAccount
     <div role="alert" data-testid="pending-recovery" data-signal="alarm" className="flex flex-col gap-1.5 border-b border-border bg-danger/4 px-4 py-2.5 shadow-[inset_2px_0_0_var(--color-danger)]">
       {pending.map((p) => (
         <div key={p.id} className="flex flex-wrap items-center gap-2 text-xs">
-          <AlertTriangle className="size-3.5 shrink-0 text-danger" />
+          <WarningIcon className="size-3.5 shrink-0 text-danger" />
           <span className="min-w-0 flex-1 text-muted">
             {t("A device is coming back into this account with the recovery words:")} <span className="font-mono text-fg">{p.id}</span>.{" "}
             {account.heldBack?.device === p.id
@@ -833,7 +833,7 @@ export function PendingRecoveryBanner({ account, link }: { account: CloudAccount
               }
             }}
           >
-            {busy === p.id && <Loader2 className="size-3 animate-spin" />}
+            {busy === p.id && <CircleNotchIcon className="size-3 animate-spin" />}
             {account.heldBack?.device === p.id ? t("remove it and what it brought in") : t("remove")}
           </button>
             </>

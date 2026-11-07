@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ListChecks, TriangleAlert } from "lucide-react";
+import { ListChecksIcon, WarningIcon } from "@phosphor-icons/react";
 import { memo, useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { components } from "@/api/schema";
@@ -763,7 +763,7 @@ export function ModelSourceHint({ fallback, hidden = 0 }: { fallback: boolean; h
     // Native tooltip: the hint sits in a toolbar that already scrolls
     // horizontally on a phone, where a popover would be a trap.
     <span data-signal="warn" className="flex shrink-0 items-center text-warn-fg/70" title={said} aria-label={said}>
-      <TriangleAlert className="size-3 shrink-0" />
+      <WarningIcon className="size-3 shrink-0" />
     </span>
   );
 }
@@ -826,7 +826,7 @@ export function ModelDriftBadge({
         aria-label={said}
         className="flex size-5 shrink-0 items-center justify-center rounded bg-warn/15 text-warn-fg hover:bg-warn/25"
       >
-        <TriangleAlert className="size-3 shrink-0" />
+        <WarningIcon className="size-3 shrink-0" />
       </PopoverTrigger>
       <PopoverContent side="bottom" className="w-64 max-w-[calc(100vw-2rem)]">
         <div className="flex flex-col gap-1 font-mono text-2xs leading-4">
@@ -1100,7 +1100,7 @@ export function ChecklistChip({
         title={t("task checklist")}
         className="flex h-6 shrink-0 items-center gap-1 rounded px-1.5 font-mono text-2xs text-muted hover:bg-hover hover:text-fg"
       >
-        <ListChecks className="size-3 shrink-0" />
+        <ListChecksIcon className="size-3 shrink-0" />
         <span className="tabular-nums">
           {data.done}/{data.total}
         </span>

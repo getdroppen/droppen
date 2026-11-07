@@ -15,7 +15,7 @@
  * failure line under the composer when a message failed on the local login.
  */
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, Loader2 } from "lucide-react";
+import { ArrowRightIcon, CircleNotchIcon } from "@phosphor-icons/react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { errorText } from "@/api/errors";
@@ -98,7 +98,7 @@ export function ContinueOnAccountPanel({
             onClick={() => start.mutate(pending.id)}
             className="flex h-6.5 items-center gap-1.5 bg-fg px-2.5 text-xs font-medium text-bg hover:bg-fg/85 disabled:opacity-40"
           >
-            {start.isPending && <Loader2 className="size-3 animate-spin" />}
+            {start.isPending && <CircleNotchIcon className="size-3 animate-spin" />}
             {t("continue")}
           </button>
           <button
@@ -147,7 +147,7 @@ export function ContinueOnAccountButton({ id, onOpenSession }: { id: string; onO
         className="ml-2 inline-flex items-center gap-1 rounded bg-danger/15 px-1.5 py-px align-baseline font-mono text-2xs text-danger hover:bg-danger/25"
       >
         {t("continue on another account")}
-        <ArrowRight className="size-3 shrink-0" />
+        <ArrowRightIcon className="size-3 shrink-0" />
       </PopoverTrigger>
       <PopoverContent side="top" className="max-h-[50vh] w-72 max-w-[calc(100vw-2rem)] overflow-y-auto">
         <ContinueOnAccountPanel id={id} onOpenSession={onOpenSession} onDone={() => setOpen(false)} />

@@ -3,8 +3,8 @@
  * with no API, router or machine context. It is a fixture, not a page; keep it
  * in step with `features/settings/`, `features/cloud/` and `components/ui/`.
  *
- * `?fixture=settings` (default), `?fixture=devices` or `?fixture=agents`
- * (`&view=cards|details|empty`), plus `?theme=dark`.
+ * `?fixture=settings` (default), `?fixture=devices`, `?fixture=agents`
+ * (`&view=cards|details|empty`) or `?fixture=landing`, plus `?theme=dark`.
  * `web/src/index.css` excludes this directory from Tailwind's scan
  * (`@source not`), so nothing here can change the production stylesheet. That
  * also means every class below must already occur in `web/src`; the layout
@@ -20,6 +20,7 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTab } from "@/components/ui/tabs";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { DeviceRow, type DeviceRowView } from "@/features/cloud/device-row";
+import LandingPage from "@/features/landing/landing";
 import { SectionHead } from "@/features/cloud/ui";
 import type { AcpAgentInfo } from "@/features/sessions/acp-agent";
 import type { AcpAgentPreset } from "@/features/sessions/acp-agent-presets";
@@ -231,9 +232,24 @@ function AgentsFixture() {
   );
 }
 
-// The agents fixture's words go through i18n (counts, "5 min ago"): English
-// unless `&lang=` names another of the app's languages.
-if (fixture === "agents") await applyLanguage((query.get("lang") as LanguagePref | null) ?? "en");
+// The landing page in full, with the hub's switches at their defaults and no
+// release to look up: the page's own composition, for a live screenshot.
+function LandingFixture() {
+  return <LandingPage release={null} />;
+}
+
+// The agents and landing fixtures' words go through i18n (counts, "5 min
+// ago", the page's copy): English unless `&lang=` names another of the app's
+// languages.
+if (fixture === "agents" || fixture === "landing") await applyLanguage((query.get("lang") as LanguagePref | null) ?? "en");
 createRoot(document.getElementById("root")!).render(
-  fixture === "devices" ? <DevicesFixture /> : fixture === "agents" ? <AgentsFixture /> : <SettingsFixture />,
+  fixture === "devices" ? (
+    <DevicesFixture />
+  ) : fixture === "agents" ? (
+    <AgentsFixture />
+  ) : fixture === "landing" ? (
+    <LandingFixture />
+  ) : (
+    <SettingsFixture />
+  ),
 );

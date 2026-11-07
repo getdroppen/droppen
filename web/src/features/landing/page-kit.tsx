@@ -1,43 +1,80 @@
-import { type AnchorHTMLAttributes, type ReactNode, useState } from "react";
+import { type AnchorHTMLAttributes, Fragment, type ReactNode, type Ref, useCallback, useEffect, useRef } from "react";
+import { ArrowRightIcon, CheckIcon, CopyIcon, GithubLogoIcon, SignInIcon, UserPlusIcon, UserCircleIcon } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
-import { Menu } from "@base-ui-components/react/menu";
-import { ArrowRight, Check, Copy, LogIn, UserPlus, UserRound } from "lucide-react";
+import { useDocumentTitle, useEventCallback, useEventListener } from "usehooks-ts";
 import { BrandMark } from "@/components/brand-mark";
 import { PrefsControls } from "@/components/prefs-controls";
 import { RegMark } from "@/components/reg-mark";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { Badge } from "@/components/ui/badge";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { CapsLabel } from "@/components/ui/caps-label";
-import { primary, secondary } from "@/features/cloud/ui";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { useCopy } from "@/lib/clipboard";
 import { cn } from "@/lib/cn";
 import { appHost, appOrigin, appUrl } from "@/lib/hub/hosts";
-import { DOWNLOAD_PATH } from "./get-droppen";
-import { APP_PATH, publicLink, PRICING_PATH, PRIVACY_PATH, SECURITY_PATH, SIGN_IN_PATH, SIGN_UP_PATH, TERMS_PATH, usePathname } from "./route";
+import { APP_PATH, DOWNLOAD_PATH, publicLink, PRICING_PATH, PRIVACY_PATH, SECURITY_PATH, SIGN_IN_PATH, SIGN_UP_PATH, TERMS_PATH, usePathname } from "./route";
 
-/*
- * The public pages' frame, in the landing page's drafting-sheet language: a
- * sticky header over a 1360px framed column, hairline
- * sections with registration marks at their seams, and the one-line footer.
- * The landing page (`landing.tsx`), the download page (`download.tsx`), the
- * pricing page (`pricing.tsx`), the privacy notice (`privacy.tsx`), the
- * security design (`security/security.tsx`) and the terms of service
- * (`terms/terms.tsx`) are all drawn with these; the
- * header links the pricing page, the footer every page. A command to paste
- * (`CommandLine`) looks the same on the landing page's hero and the download
- * page.
- */
+export const LINK = "text-fg underline underline-offset-4 hover:no-underline";
+export const QUIET_LINK = "text-muted underline underline-offset-4 hover:text-fg";
 
-/**
- * The app's buttons at the public pages' size: `primary` and `secondary` carry
- * the app's own 13px label, and the theme's `text-base` page does not borrow it.
- * `cn` drops the narrower size in favour of the page's 14px.
- */
-export const landingPrimary = cn(primary, "h-auto min-h-9 py-1.5 text-sm");
-export const landingSecondary = cn(secondary, "h-auto min-h-9 py-1.5 text-sm");
+export function DocumentHead({
+  label,
+  title,
+  lead,
+  note,
+  center = false,
+  className,
+}: {
+  label?: string;
+  title: ReactNode;
+  lead: string;
+  note?: ReactNode;
+  center?: boolean;
+  className?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "flex flex-col gap-5 px-10 pt-16 pb-10 max-lg:pt-12 max-md:px-4 max-md:pt-10 max-md:pb-8",
+        center && "mx-auto max-w-[44rem] items-center gap-4 px-6 pt-16 text-center max-md:px-4 max-md:pt-10",
+        className,
+      )}
+    >
+      {label && <CapsLabel variant="section">{label}</CapsLabel>}
+      <h1 className="max-w-[18em] text-5xl leading-display font-normal tracking-tight text-balance text-fg cjk-wrap md:cjk-keep max-md:text-3xl">{title}</h1>
+      <p className={cn("max-w-[44em] text-base leading-6 text-pretty text-muted cjk-wrap", center && "max-w-[32em]")}>{lead}</p>
+      {note && <p className="text-xs text-faint">{note}</p>}
+    </div>
+  );
+}
 
-/**
- * A public page's call to action: its label, then an arrow that steps right
- * under the pointer. The primary is ink; the secondary is a hairline that
- * darkens. Both are 40px tall, so a row of them lines up.
- */
+export function MailLink({ email, testId }: { email: string; testId?: string }) {
+  return (
+    <a href={`mailto:${email}`} data-testid={testId} className={LINK}>
+      {email}
+    </a>
+  );
+}
+
+export const SUBHEAD = "text-base leading-6 font-semibold text-fg";
+export const NOWRAP_LINK = `whitespace-nowrap ${LINK}`;
+export const QUIET_NOWRAP_LINK = `whitespace-nowrap ${QUIET_LINK}`;
+
+const landingAction = "flex h-auto min-h-9 justify-center py-1.5 text-sm";
+
+const landingPrimary = cn(buttonVariants({ variant: "primary", size: "lg" }), landingAction);
+const landingSecondary = cn(buttonVariants({ variant: "secondary", size: "lg" }), landingAction);
+
+export function ButtonLink({
+  variant = "secondary",
+  className,
+  ...props
+}: AnchorHTMLAttributes<HTMLAnchorElement> & { variant?: "primary" | "secondary" }) {
+  return <a data-variant={variant} className={cn(buttonVariants({ variant, size: "lg" }), className)} {...props} />;
+}
+
 export function ArrowLink({
   variant = "secondary",
   children,
@@ -45,22 +82,21 @@ export function ArrowLink({
   ...props
 }: AnchorHTMLAttributes<HTMLAnchorElement> & { variant?: "primary" | "secondary" }) {
   return (
-    <a
+    <ButtonLink
       {...props}
+      variant={variant}
       className={cn(
-        "group flex h-10 shrink-0 items-center justify-between gap-3 whitespace-nowrap border px-4 text-sm font-medium transition-colors",
-        variant === "primary" ? "border-fg bg-fg text-bg hover:bg-fg/85" : "border-border-strong bg-bg text-fg hover:border-fg hover:bg-hover",
+        "group flex h-10 justify-between gap-3 px-4 text-sm font-medium transition-colors hover:border-fg [&_svg]:size-4",
         className,
       )}
     >
       <span>{children}</span>
-      <ArrowRight className="size-4 shrink-0 transition-transform duration-150 group-hover:translate-x-0.5" />
-    </a>
+      <ArrowRightIcon className="shrink-0 transition-transform duration-150 group-hover:translate-x-0.5 motion-reduce:transition-none" />
+    </ButtonLink>
   );
 }
 
-/** The two marks where a section's top line meets the frame; `side` keeps one where the other edge is a column divider. */
-export function Seam({ side = "both" }: { side?: "both" | "left" | "right" }) {
+function Seam({ side = "both" }: { side?: "both" | "left" | "right" }) {
   return (
     <>
       {side !== "right" && <RegMark className="-top-[5px] -left-[5px]" />}
@@ -79,9 +115,7 @@ export function Section({
   id?: string;
   children: ReactNode;
   className?: string;
-  /** `right` for a section inside a framed content column: its left edge is a column divider, not the page frame. */
   seam?: "both" | "left" | "right" | false;
-  /** The top rule; off for a first section whose parent already draws it across the frame. */
   rule?: boolean;
 }) {
   return (
@@ -92,30 +126,74 @@ export function Section({
   );
 }
 
-/**
- * The caps labels' letter spacing is for Latin capitals; Chinese and Japanese
- * set without it, as their headlines do (产品, not 产 品).
- */
+/** Latin capitals are tracked; Chinese and Japanese are not. */
 export const cjkTracking = "[&:lang(ja)]:tracking-normal [&:lang(zh)]:tracking-normal";
 
-/** A section's head; `label`, the caps line over the title, only where the title does not already say what the section is. */
-export function SectionHead({ label, title, lead, className }: { label?: string; title: ReactNode; lead?: ReactNode; className?: string }) {
+export function SectionHead({
+  label,
+  title,
+  lead,
+  action,
+  compact = false,
+  className,
+}: {
+  label?: string;
+  title: ReactNode;
+  lead?: ReactNode;
+  action?: ReactNode;
+  /** The landing page's smaller section head: a title, with an optional action beside it. */
+  compact?: boolean;
+  className?: string;
+}) {
+  const heading = (
+    <h2
+      className={cn(
+        "text-balance text-fg cjk-wrap md:cjk-keep",
+        compact
+          ? "text-2xl leading-8 font-semibold tracking-tight max-md:text-xl"
+          : "text-3xl leading-tight font-normal tracking-tight max-[359px]:text-pretty max-md:text-2xl",
+      )}
+    >
+      {title}
+    </h2>
+  );
   return (
-    <div className={cn("flex flex-col gap-3 px-6 pt-10 pb-8 max-md:px-4 max-md:pt-8 max-md:pb-6", className)}>
-      {label && <CapsLabel face="sans" className={cn(cjkTracking, "text-xs font-semibold")}>{label}</CapsLabel>}
-      <h2 className="text-3xl leading-tight font-normal tracking-tight text-balance text-fg max-[359px]:text-pretty cjk-wrap md:cjk-keep max-md:text-2xl">{title}</h2>
+    <div
+      className={cn(
+        "flex flex-col gap-3 px-6 max-md:px-4",
+        compact ? "pt-16 pb-10 max-md:pt-14 max-md:pb-8" : "pt-10 pb-8 max-md:pt-8 max-md:pb-6",
+        className,
+      )}
+    >
+      {label && <CapsLabel variant="section">{label}</CapsLabel>}
+      {action ? (
+        <div className="flex flex-wrap items-end justify-between gap-6">
+          <div className="min-w-0">{heading}</div>
+          {action}
+        </div>
+      ) : (
+        heading
+      )}
       {lead && <p className="max-w-[38em] text-sm leading-6 text-muted">{lead}</p>}
     </div>
   );
 }
 
-/** A list of points; `large`: the pricing page's reading size (16px), else the 12px of the denser pages. */
-export function Points({ items, className, render, large }: { items: string[]; className?: string; render?: (item: string) => ReactNode; large?: boolean }) {
+/** The plan page's and the landing page's one "Recommended" mark. */
+export function RecommendedBadge({ children }: { children: ReactNode }) {
+  return (
+    <Badge className={cn("h-[18px] bg-fg px-1.5 font-sans text-xs font-medium tracking-label text-bg uppercase shadow-none", cjkTracking)}>
+      {children}
+    </Badge>
+  );
+}
+
+function Points({ items, className, render }: { items: string[]; className?: string; render?: (item: string) => ReactNode }) {
   return (
     <ul className={cn("flex flex-col gap-2.5", className)}>
       {items.map((item) => (
-        <li key={item} className={cn("flex gap-2.5 text-muted", large ? "text-base leading-6 text-pretty" : "text-xs leading-5")}>
-          <span className={cn("size-1.5 shrink-0 bg-fg", large ? "mt-[9px]" : "mt-[7px]")} />
+        <li key={item} className="flex gap-2.5 text-xs leading-5 text-muted">
+          <span className="mt-[7px] size-1.5 shrink-0 bg-fg" />
           <span>{render ? render(item) : item}</span>
         </li>
       ))}
@@ -123,10 +201,10 @@ export function Points({ items, className, render, large }: { items: string[]; c
   );
 }
 
-/** A command, as the page shows it: mono on the raised paper, selectable whole, with its copy button. */
-export function CommandLine({ command, label, testId, primaryCopy = false }: { command: string; label: string; testId?: string; primaryCopy?: boolean }) {
+export function CommandLine({ command, testId, primaryCopy = false }: { command: string; testId?: string; primaryCopy?: boolean }) {
   const { t } = useTranslation();
-  const [copied, setCopied] = useState(false);
+  const { copied, copy } = useCopy();
+  const label = t("copy the command");
   return (
     <div className="@container/command">
       <div className="flex min-w-0 items-stretch border border-border-strong bg-raised @max-[30rem]/command:flex-col">
@@ -134,36 +212,197 @@ export function CommandLine({ command, label, testId, primaryCopy = false }: { c
           <span aria-hidden="true" className="mr-2 text-faint select-none">$</span>
           {command}
         </code>
-        <button
-          type="button"
-          data-variant={primaryCopy ? "primary" : undefined}
+        <Button
+          variant={primaryCopy ? "primary" : "secondary"}
           data-testid={testId ? `${testId}-copy` : undefined}
           aria-label={copied ? t("copied") : label}
-          onClick={() => {
-            void navigator.clipboard?.writeText(command).then(() => {
-              setCopied(true);
-              setTimeout(() => setCopied(false), 1500);
-            });
-          }}
+          onClick={() => copy(command)}
           className={cn(
             primaryCopy ? landingPrimary : landingSecondary,
-            "h-auto min-w-[11rem] shrink-0 justify-center rounded-none border-0 @max-[30rem]/command:h-9 @max-[30rem]/command:border-t @max-[30rem]/command:border-border-strong @min-[30rem]/command:border-l @min-[30rem]/command:border-border-strong",
+            "[&_svg]:size-3.5 h-auto min-w-[11rem] shrink-0 justify-center rounded-none border-0 @max-[30rem]/command:h-9 @max-[30rem]/command:border-t @max-[30rem]/command:border-border-strong @min-[30rem]/command:border-l @min-[30rem]/command:border-border-strong",
           )}
         >
-          {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+          {copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
           {copied ? t("copied") : label}
-        </button>
+        </Button>
       </div>
     </div>
   );
 }
 
+export function usePageMeta(title: string, description?: string) {
+  const { i18n: active } = useTranslation();
+  useDocumentTitle(title, { preserveTitleOnUnmount: false });
+  useEffect(() => {
+    document.documentElement.lang = active.language;
+    if (description) document.querySelector('meta[name="description"]')?.setAttribute("content", description);
+  }, [description, active.language]);
+}
+
 /**
- * A link to another public page, marked when it is the page shown. The mark is
- * semibold — the family has no 500 face — and an invisible semibold copy of
- * the label holds the link at its bold width, so the nav does not move when
- * the mark moves from one page to the next.
+ * Listeners that never block the reader's own gesture, shared so each stays one stable object
+ * (`useEventListener` re-attaches whenever its options object changes identity).
  */
+export const PASSIVE = { passive: true } as const;
+export const CAPTURE = { capture: true } as const;
+
+/**
+ * Arrive at the fragment in the address (`/pricing#waitlist` from the landing
+ * page, `/terms#contact` from any footer): the page was not there to scroll to
+ * yet, so scroll once the frame is up, and again once the webfonts settle —
+ * they swap in after that first scroll and move its target with them. The
+ * reader's own moving of the page (a wheel, a key, a touch, a press) ends the
+ * correction, and so does a newer fragment; a link can also change the
+ * fragment in place, which scrolls to the one it names.
+ *
+ * `fallback` names the section a fragment-less deep link should land on (the
+ * download page's old `?os=` links); the pages that only ever need the
+ * address's own fragment leave it out.
+ */
+function useHashScroll(fallback?: (hash: string) => string): void {
+  const map = useEventCallback((hash: string) => fallback?.(hash) ?? "");
+  const live = useRef(false);
+  const frame = useRef(0);
+
+  const start = useCallback(() => {
+    if (typeof location === "undefined" || typeof requestAnimationFrame === "undefined") return;
+    cancelAnimationFrame(frame.current);
+    live.current = true;
+    const hash = location.hash.slice(1);
+    const id = hash || map(hash);
+    if (!id) return;
+    const to = () => {
+      if (live.current && location.hash.slice(1) === hash) document.getElementById(id)?.scrollIntoView();
+    };
+    frame.current = requestAnimationFrame(to);
+    void document.fonts?.ready.then(() => {
+      if (live.current) to();
+    });
+  }, []);
+
+  useEffect(() => {
+    start();
+    return () => {
+      live.current = false;
+      cancelAnimationFrame(frame.current);
+    };
+  }, [start]);
+
+  const stop = useCallback(() => {
+    live.current = false;
+    cancelAnimationFrame(frame.current);
+  }, []);
+
+  useEventListener("hashchange", start);
+  useEventListener("pointerdown", stop, undefined, PASSIVE);
+  useEventListener("wheel", stop, undefined, PASSIVE);
+  useEventListener("touchstart", stop, undefined, PASSIVE);
+  useEventListener("keydown", stop, undefined, PASSIVE);
+}
+
+/** Answers stay mounted for search and no-script readers. */
+export function FaqAccordion({
+  items,
+  title,
+  description,
+  footer,
+  className,
+  cardClassName,
+  itemClassName,
+  triggerClassName,
+  panelClassName,
+  answerClassName,
+  value,
+  onValueChange,
+  testId,
+}: {
+  items: { q: string; a: ReactNode; value?: string; id?: string; testId?: string }[];
+  title?: ReactNode;
+  description?: ReactNode;
+  footer?: ReactNode;
+  className?: string;
+  cardClassName?: string;
+  itemClassName?: string;
+  triggerClassName?: string;
+  panelClassName?: string;
+  answerClassName?: string;
+  value?: (string | null)[];
+  onValueChange?: (value: (string | null)[]) => void;
+  testId?: string;
+}) {
+  return (
+    <Card data-testid={testId} className={cn("gap-0", className, cardClassName)}>
+      {(title || description) && (
+        <CardHeader className="border-b border-border">
+          {title && <CardTitle>{title}</CardTitle>}
+          {description && <CardDescription>{description}</CardDescription>}
+        </CardHeader>
+      )}
+      {/* The rows set their own inset (`triggerClassName`), so the card's body carries none. */}
+      <CardContent className="px-0">
+        <Accordion multiple={false} keepMounted value={value} onValueChange={onValueChange}>
+          {items.map((item) => (
+            <AccordionItem
+              key={item.value ?? item.q}
+              value={item.value ?? item.q}
+              id={item.id}
+              data-testid={item.testId ?? "faq-item"}
+              className={cn("group border-b border-border last:border-b-0", itemClassName)}
+            >
+              <AccordionTrigger className={triggerClassName}>
+                <span className="text-base leading-6 font-medium text-fg">{item.q}</span>
+              </AccordionTrigger>
+              <AccordionContent className={cn("p-0", panelClassName)}>
+                {typeof item.a === "string" ? <p className={cn("max-w-prose leading-6 text-muted", answerClassName ?? "text-base")}>{item.a}</p> : item.a}
+              </AccordionContent>
+            </AccordionItem>
+          ))}
+        </Accordion>
+      </CardContent>
+      {footer && <CardFooter className="border-t border-border px-0 pt-0">{footer}</CardFooter>}
+    </Card>
+  );
+}
+
+/**
+ * A value still to be supplied by the owner: `[IN CAPITALS]`. The notice shows one marked
+ * ({@link marked}); each is listed in `web/owner-placeholders.txt`, and a release refuses a
+ * web build that still holds one (`scripts/release-text-check.sh`).
+ */
+export const PLACEHOLDER = /\[[A-Z][A-Z ]*\]/;
+
+export function marked(text: string): ReactNode {
+  const parts = text.split(new RegExp(`(${PLACEHOLDER.source})`));
+  if (parts.length === 1) return text;
+  return parts.map((part, i) =>
+    i % 2 === 1 ? (
+      <mark key={i} data-placeholder="" className="bg-warn/25 px-0.5 font-mono text-warn-fg">
+        {part}
+      </mark>
+    ) : (
+      <Fragment key={i}>{part}</Fragment>
+    ),
+  );
+}
+
+export function Pair({ left, right }: { left: ReactNode; right: ReactNode }) {
+  return (
+    <div className="grid border-t border-border md:grid-cols-2">
+      {left}
+      <div className="max-md:border-t max-md:border-border md:border-l md:border-border">{right}</div>
+    </div>
+  );
+}
+
+export function Block({ title, items }: { title: string; items: string[] }) {
+  return (
+    <div className="flex min-w-0 flex-col gap-3 px-6 py-6 max-md:px-4">
+      <span className="text-sm leading-5 font-semibold text-fg">{title}</span>
+      <Points items={items} render={marked} />
+    </div>
+  );
+}
+
 function PageLink({ path, label, className, testId }: { path: string; label: string; className: string; testId?: string }) {
   const here = usePathname().replace(/\/+$/, "") === path;
   return (
@@ -176,79 +415,49 @@ function PageLink({ path, label, className, testId }: { path: string; label: str
   );
 }
 
-/** GitHub's mark (Octicons' mark-github, MIT), for the header's link to the client's source. */
-function GitHubMark({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 16 16" aria-hidden="true" className={className} fill="currentColor">
-      <path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z" />
-    </svg>
-  );
-}
+const iconControl = cn(
+  buttonVariants({ variant: "secondary" }),
+  "flex size-9 p-0 text-muted transition-colors hover:text-fg data-[popup-open]:bg-hover data-[popup-open]:text-fg",
+);
 
-/** Popup styling matching LanguageMenu's public look */
-const MENU_POPUP =
-  "popup-motion max-h-[min(var(--available-height),20rem)] min-w-[10rem] max-w-[20rem] overflow-y-auto border border-border-strong bg-bg py-1.5 outline-none";
-const MENU_ITEM =
-  "flex min-h-8 w-full cursor-pointer items-center gap-2 px-3 py-1 text-left text-sm text-fg outline-none pointer-coarse:min-h-11 data-[highlighted]:bg-hover";
-const MENU_TRIGGER =
-  "flex size-9 shrink-0 items-center justify-center border border-border-strong bg-bg text-muted transition-colors hover:bg-hover hover:text-fg data-[popup-open]:bg-hover data-[popup-open]:text-fg";
-
-/** One item in the header's account menu: its icon, then its words. */
-function MenuLink({ path, icon: Icon, children }: { path: string; icon: typeof LogIn; children: ReactNode }) {
+function MenuLink({ path, icon: Icon, children }: { path: string; icon: typeof SignInIcon; children: ReactNode }) {
   return (
-    <Menu.Item closeOnClick render={<a {...publicLink(path)} />} className={MENU_ITEM}>
+    <DropdownMenuItem render={<a {...publicLink(path)} />} className="gap-2 text-sm">
       <span className="flex size-3.5 shrink-0 items-center justify-center">
         <Icon className="size-3.5" />
       </span>
       <span>{children}</span>
-    </Menu.Item>
+    </DropdownMenuItem>
   );
 }
 
-/** The header's account menu: the way into the app, or sign-in and sign-up. */
 function AccountMenu({ signedIn }: { signedIn: boolean }) {
   const { t } = useTranslation();
   return (
-    <Menu.Root>
-      <Menu.Trigger
-        aria-label={signedIn ? t("Open app") : t("Sign in")}
-        title={signedIn ? t("Open app") : t("Sign in")}
-        className={MENU_TRIGGER}
-      >
-        <UserRound className="size-3.5" />
-      </Menu.Trigger>
-      {/* The portal stays mounted while the menu is closed, so the popup's
-          120ms exit motion is not cut off and the next open reuses its nodes. */}
-      <Menu.Portal keepMounted>
-        <Menu.Positioner side="bottom" align="end" sideOffset={4} className="z-50 outline-none">
-          <Menu.Popup className={MENU_POPUP}>
-            {signedIn ? (
-              <MenuLink path={APP_PATH} icon={LogIn}>
-                {t("Open app")}
-              </MenuLink>
-            ) : (
-              <>
-                <MenuLink path={SIGN_IN_PATH} icon={LogIn}>
-                  {t("Sign in")}
-                </MenuLink>
-                <MenuLink path={SIGN_UP_PATH} icon={UserPlus}>
-                  {t("Create a free account")}
-                </MenuLink>
-              </>
-            )}
-          </Menu.Popup>
-        </Menu.Positioner>
-      </Menu.Portal>
-    </Menu.Root>
+    <DropdownMenu>
+      <DropdownMenuTrigger aria-label={signedIn ? t("Open app") : t("Sign in")} title={signedIn ? t("Open app") : t("Sign in")} className={iconControl}>
+        <UserCircleIcon className="size-4" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent side="bottom" align="end" sideOffset={4}>
+        {signedIn ? (
+          <MenuLink path={APP_PATH} icon={SignInIcon}>
+            {t("Open app")}
+          </MenuLink>
+        ) : (
+          <>
+            <MenuLink path={SIGN_IN_PATH} icon={SignInIcon}>
+              {t("Sign in")}
+            </MenuLink>
+            <MenuLink path={SIGN_UP_PATH} icon={UserPlusIcon}>
+              {t("Create a free account")}
+            </MenuLink>
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
-/**
- * The public pages' header: the mark (home), the site's other pages (download,
- * pricing, security; from 768px, below which the footer has them), the
- * client's source on GitHub (from 640px), language and theme, and the way in
- * (or back into the app).
- */
 export function PublicHeader({ signedIn }: { signedIn: boolean }) {
   const { t } = useTranslation();
   const pages = [
@@ -275,17 +484,19 @@ export function PublicHeader({ signedIn }: { signedIn: boolean }) {
           ))}
         </nav>
         <span className="flex-1" />
-        <a
-          href={SOURCE_URL}
-          data-testid="header-source"
-          aria-label={t("Client source code")}
-          title={t("Client source code")}
-          className="flex size-9 shrink-0 items-center justify-center border border-border-strong bg-bg text-muted hover:bg-hover hover:text-fg max-sm:hidden"
-        >
-          <GitHubMark className="size-4" />
-        </a>
-        <PrefsControls />
-        <AccountMenu signedIn={signedIn} />
+        <div className="flex items-center gap-2">
+          <a
+            href={SOURCE_URL}
+            data-testid="header-source"
+            aria-label={t("Client source code")}
+            title={t("Client source code")}
+            className={cn(buttonVariants({ variant: "secondary" }), "flex size-9 p-0 text-muted transition-colors hover:text-fg [&_svg]:size-4 max-sm:hidden")}
+          >
+            <GithubLogoIcon weight="fill" aria-hidden="true" className="size-4" />
+          </a>
+          <PrefsControls />
+          <AccountMenu signedIn={signedIn} />
+        </div>
         <RegMark className="-bottom-[5px] -left-[5px]" />
         <RegMark className="-right-[5px] -bottom-[5px]" />
       </div>
@@ -296,49 +507,118 @@ export function PublicHeader({ signedIn }: { signedIn: boolean }) {
 /** The licences of the npm packages in this build, beside `index.html` in every build. */
 export const NOTICES_PATH = "/THIRD_PARTY_NOTICES.txt";
 
-/** Where the source of this web app (AGPL-3.0-only) and of the local program is. */
 export const SOURCE_URL = "https://github.com/getdroppen/droppen";
 
-/** Where to report a vulnerability, besides GitHub's private vulnerability reporting (SECURITY.md). */
 export const SECURITY_EMAIL = "security@droppen.app";
 
-/** The last line of every public page: the mark, the other public pages, the source and the licences. */
-export function FooterLine() {
-  const { t } = useTranslation();
+/** The privacy contact, for removals and requests about data (the owner's word, 2026-10-23). */
+export const PRIVACY_EMAIL = "privacy@droppen.app";
+
+export const PAGE_WIDE = "mx-auto w-full max-w-[72rem]";
+
+function FooterHeading({ children }: { children: ReactNode }) {
+  return <h4 className="font-mono text-xs font-semibold tracking-label uppercase text-fg">{children}</h4>;
+}
+
+const footerList = "mt-1.5 flex flex-col gap-2 max-sm:flex-row max-sm:flex-wrap max-sm:gap-x-4 max-sm:gap-y-1.5";
+
+function FooterList({ heading, children }: { heading: string; children: ReactNode }) {
   return (
-    <Section>
-      <div className="flex flex-wrap items-center gap-x-6 gap-y-3 px-6 py-5 max-md:px-4">
-        <span className="flex items-center gap-2 text-xs text-faint">
-          <BrandMark size={12} />© 2026 Droppen · www.droppen.app
-          {/* The app, where the hub keeps it on a host of its own (my.droppen.app): a link there from these pages. */}
+    <div className="max-sm:col-span-2">
+      <FooterHeading>{heading}</FooterHeading>
+      <ul className={footerList}>{children}</ul>
+    </div>
+  );
+}
+
+export function PublicFooter({ home = false }: { home?: boolean }) {
+  const { t } = useTranslation();
+  const item = "text-xs leading-5 text-muted transition-colors hover:text-fg";
+  return (
+    <Section rule={!home} seam={home ? false : "both"}>
+      {/* Wide, three columns stand beside the name. Narrower — a phone above all — they are
+          two or three lines of links each, and stacking them would make a page of its own:
+          they fold into two cells whose links wrap in a row, and the name stands over both. */}
+      <div
+        className={cn(
+          PAGE_WIDE,
+          "grid gap-x-9 gap-y-10 px-6 py-11 max-sm:px-6 max-sm:py-8 max-md:px-4 max-md:py-7",
+          "sm:grid-cols-2 lg:grid-cols-[2.1fr_repeat(3,1fr)]",
+          "max-sm:grid-cols-2 max-sm:gap-x-4 max-sm:gap-y-10",
+        )}
+      >
+        <div className="sm:max-lg:col-span-2 max-sm:col-span-2">
+          <a {...publicLink("/")} className="inline-flex items-center gap-2.5" aria-label="Droppen">
+            <BrandMark size={18} />
+            <span className="font-mono text-base font-medium text-fg">Droppen</span>
+          </a>
+          <p className="mt-3 max-w-[17em] text-xs leading-5 text-muted">{t("Your AI, from your phone. End-to-end encrypted, open-source client.")}</p>
+        </div>
+        <FooterList heading={t("Product")}>
+          <li><a {...(home ? { href: "#tour" } : publicLink("/#tour"))} className={item}>{t("Interface")}</a></li>
+          <li><a {...publicLink(DOWNLOAD_PATH)} data-testid="footer-download" className={item}>{t("Download Droppen")}</a></li>
+          <li><a {...publicLink(PRICING_PATH)} data-testid="footer-pricing" className={item}>{t("Pricing")}</a></li>
+          <li><a {...publicLink(SECURITY_PATH)} data-testid="footer-security" className={item}><span>{t("Security")}</span></a></li>
+        </FooterList>
+        <FooterList heading={t("Resources")}>
+          <li><a href={SOURCE_URL} data-testid="footer-source" className={item}>{t("Client source code")}</a></li>
+          <li><a {...(home ? { href: "#faq" } : publicLink("/#faq"))} className={item}>{t("FAQ")}</a></li>
+          <li><a {...publicLink(SECURITY_PATH)} className={item}>{t("Encryption design")}</a></li>
+        </FooterList>
+        <FooterList heading={t("Legal")}>
+          <li><a {...publicLink(PRIVACY_PATH)} data-testid="footer-privacy" className={item}><span>{t("Privacy notice")}</span></a></li>
+          <li><a {...publicLink(TERMS_PATH)} data-testid="footer-terms" className={item}><span>{t("Terms of Service")}</span></a></li>
+          <li><a href={NOTICES_PATH} data-testid="footer-licences" className={item}>{t("Third-party notices")}</a></li>
+          <li><a {...publicLink(`${TERMS_PATH}#contact`)} data-testid="footer-contact" className={item}>{t("Contact")}</a></li>
+        </FooterList>
+      </div>
+      <div className={cn(PAGE_WIDE, "flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-border px-6 py-4 text-xs text-faint max-md:px-4")}>
+        <span className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+          <span className="flex items-center gap-2"><BrandMark size={12} />© 2026 Droppen</span>
+          <span>AGPL-3.0-only</span>
           {appOrigin() && (
-            <>
-              {" · "}
-              <a href={appUrl("/")} data-testid="footer-app" className="text-faint underline-offset-4 hover:text-fg hover:underline">
-                {appHost()}
-              </a>
-            </>
+            <a href={appUrl("/")} data-testid="footer-app" className="underline-offset-4 hover:text-fg hover:underline">
+              {appHost()}
+            </a>
           )}
         </span>
-        <a {...publicLink(DOWNLOAD_PATH)} data-testid="footer-download" className="text-xs text-muted underline-offset-4 hover:text-fg hover:underline">
-          {t("Download Droppen")}
-        </a>
-        <PageLink path={PRICING_PATH} label={t("Pricing")} testId="footer-pricing" className="text-xs text-muted underline-offset-4 hover:text-fg hover:underline" />
-        <PageLink path={PRIVACY_PATH} label={t("Privacy notice")} testId="footer-privacy" className="text-xs text-muted underline-offset-4 hover:text-fg hover:underline" />
-        <PageLink path={SECURITY_PATH} label={t("Security")} testId="footer-security" className="text-xs text-muted underline-offset-4 hover:text-fg hover:underline" />
-        <PageLink path={TERMS_PATH} label={t("Terms of Service")} testId="footer-terms" className="text-xs text-muted underline-offset-4 hover:text-fg hover:underline" />
-        {/* Who to write to: the terms' contact part, its addresses for the account and for security. */}
-        <a {...publicLink(`${TERMS_PATH}#contact`)} data-testid="footer-contact" className="text-xs text-muted underline-offset-4 hover:text-fg hover:underline">
-          {t("Contact")}
-        </a>
-        <a href={SOURCE_URL} data-testid="footer-source" className="text-xs text-muted underline-offset-4 hover:text-fg hover:underline">
-          {t("Client source code")}
-        </a>
-        {/* Every build writes it (web/build/third-party-notices.mjs): the licences of the packages in this page. */}
-        <a href={NOTICES_PATH} data-testid="footer-licences" className="text-xs text-muted underline-offset-4 hover:text-fg hover:underline">
-          {t("Third-party notices")}
-        </a>
+        <a href="#top" className="ml-auto underline-offset-4 hover:text-fg hover:underline">{t("Back to top")}</a>
       </div>
     </Section>
+  );
+}
+
+export function PublicLayout({
+  testId,
+  signedIn = false,
+  scrollerRef,
+  mainTestId,
+  mainClassName,
+  mainData,
+  home = false,
+  hashFallback,
+  children,
+}: {
+  testId: string;
+  signedIn?: boolean;
+  scrollerRef?: Ref<HTMLDivElement>;
+  mainTestId?: string;
+  mainClassName?: string;
+  mainData?: Record<string, string | undefined>;
+  home?: boolean;
+  hashFallback?: (hash: string) => string;
+  children: ReactNode;
+}) {
+  useHashScroll(hashFallback);
+  return (
+    <div ref={scrollerRef} data-testid={testId} className="h-full w-full overflow-x-hidden overflow-y-auto bg-bg text-base [scrollbar-gutter:stable]">
+      <PublicHeader signedIn={signedIn} />
+      <div className="md:px-8">
+        <main id="top" data-testid={mainTestId} {...mainData} className={cn("mx-auto max-w-[1360px] md:border-x md:border-border", mainClassName)}>
+          {children}
+          <PublicFooter home={home} />
+        </main>
+      </div>
+    </div>
   );
 }

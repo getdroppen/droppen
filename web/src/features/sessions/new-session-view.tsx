@@ -23,9 +23,10 @@
  * it (`seedDeliveryPreview`).
  */
 import { useSearch } from "@tanstack/react-router";
-import { ChevronDown, ChevronLeft, Folder } from "lucide-react";
+import { CaretDownIcon, CaretLeftIcon, FolderIcon } from "@phosphor-icons/react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { useMediaQuery } from "usehooks-ts";
 import { useFeedSessions, useFeedSettings } from "@/app/global-feed";
 import { MachineLink, useMachineNavigate } from "@/app/machine-route";
 import { CapsLabel } from "@/components/ui/caps-label";
@@ -104,10 +105,6 @@ interface Starting {
   composer: { text: string; attachments: ComposerAttachment[] };
   /** The server took it: a session is on its way. */
   accepted: boolean;
-}
-
-function isWide(): boolean {
-  return typeof window !== "undefined" && !!window.matchMedia?.("(min-width: 768px)").matches;
 }
 
 /** The column the view is laid out in: the transcript's 48em measure, centred (docs/ui-spec.md §3). */
@@ -433,6 +430,8 @@ export function NewSessionView({
     if (intent.focus) row?.focus({ preventScroll: true });
   }, [cwd]);
 
+  const wide = useMediaQuery("(min-width: 768px)");
+
   const composerField = () => composerRegion.current?.querySelector?.<HTMLTextAreaElement>("[data-composer] textarea") ?? null;
 
   /** A row clicked or typed in: the pick, and on a desktop the message next. */
@@ -440,7 +439,7 @@ export function NewSessionView({
     setCwdPick(path);
     setBrowsing(false);
     // Not on a phone: there it would raise the keyboard over the list.
-    if (isWide()) composerField()?.focus();
+    if (wide) composerField()?.focus();
   };
 
   // ↑/↓ move the pick among the rows on screen: in the list as in any radio
@@ -498,7 +497,7 @@ export function NewSessionView({
               title={t("back")}
               className="flex size-9 shrink-0 items-center justify-center text-muted hover:bg-hover md:hidden"
             >
-              <ChevronLeft className="size-4" />
+              <CaretLeftIcon className="size-4" />
             </MachineLink>
           )}
           <span className="min-w-0 flex-1 truncate text-[13px] font-semibold max-md:text-[15px]">{t("new session")}</span>
@@ -580,7 +579,7 @@ export function NewSessionView({
             text={text}
             onText={setText}
             disabled={busy}
-            autoFocus={isWide()}
+            autoFocus={wide}
             onSubmit={submit}
             placeholder={`${t("what should the agent do?")} (${sendHint})`}
             chips={<>
@@ -900,9 +899,9 @@ function DirectoryChip({ cwd, onShow, disabled }: { cwd: string; onShow: () => v
       data-chip="directory"
       className="flex h-6 max-w-48 shrink-0 items-center gap-1 rounded pr-1 pl-1.5 font-mono text-2xs text-muted hover:bg-hover hover:text-fg disabled:opacity-40"
     >
-      <Folder className="size-3 shrink-0" />
+      <FolderIcon className="size-3 shrink-0" />
       <span className="truncate">{cwd ? basename(cwd) || cwd : t("working directory")}</span>
-      <ChevronDown className="size-2.5 shrink-0 text-faint" />
+      <CaretDownIcon className="size-2.5 shrink-0 text-faint" />
     </button>
   );
 }

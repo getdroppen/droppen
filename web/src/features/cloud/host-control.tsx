@@ -6,7 +6,7 @@
 
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Loader2 } from "lucide-react";
+import { CircleNotchIcon } from "@phosphor-icons/react";
 import { type Accept } from "@/lib/e2e";
 import { cn } from "@/lib/cn";
 import { RenewalsAhead } from "./renewal";
@@ -72,7 +72,7 @@ export function ControlConfirm({
       )}
       <div className="flex gap-2">
         <button type="button" className={danger} disabled={busy} onClick={onConfirm} data-testid="control-confirm-button">
-          {busy && <Loader2 className="size-3.5 animate-spin" />}
+          {busy && <CircleNotchIcon className="size-3.5 animate-spin" />}
           {admitted.length > 0 ? t("allow full access") : t("save and rotate its key")}
         </button>
         <button type="button" className={quiet} disabled={busy} onClick={onCancel}>
@@ -235,7 +235,7 @@ export function HostControl({
               disabled={busy || !upgraded || outdated || exposed.length > 0}
               onClick={() => (controlSaveStep({ admitted, shutOut }) === "confirm" ? setConfirming(true) : onSave(from))}
             >
-              {busy && <Loader2 className="size-3.5 animate-spin" />}
+              {busy && <CircleNotchIcon className="size-3.5 animate-spin" />}
               {t("save")}
             </button>
             <button type="button" className={quiet} disabled={busy} onClick={onCancel}>

@@ -1,11 +1,11 @@
 import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Download, Loader2, Share2 } from "lucide-react";
+import { CircleNotchIcon, DownloadSimpleIcon, ShareNetworkIcon } from "@phosphor-icons/react";
 import { CapsLabel } from "@/components/ui/caps-label";
 import { browserHints, type DeviceKind, detectKind, type EnvironmentHints } from "@/features/landing/detect";
-import { type Availability, AVAILABILITY, DOWNLOAD_PATH, DROPPEN_SITE_ORIGIN, INSTALL_COMMAND, WSL_SYSTEMD_URL } from "@/features/landing/get-droppen";
+import { type Availability, AVAILABILITY, DROPPEN_SITE_ORIGIN, INSTALL_COMMAND, WSL_SYSTEMD_URL } from "@/features/landing/get-droppen";
 import { fileFacts, fileLink, useLatestRelease } from "@/features/landing/release-files";
-import { publicHref } from "@/features/landing/route";
+import { DOWNLOAD_PATH, publicHref } from "@/features/landing/route";
 import { cn } from "@/lib/cn";
 import { appHost } from "@/lib/hub/hosts";
 import type { LatestRelease } from "@/lib/hub/releases";
@@ -130,7 +130,7 @@ function MacWay({ availability, release }: { availability: Availability; release
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         {/* The file itself when the hub named it, downloaded in place; else the release page. */}
         <a {...fileLink(dmg)} data-variant="primary" data-testid="first-host-download" className={cn(primary, "max-md:w-full")}>
-          <Download className="size-3.5" />
+          <DownloadSimpleIcon className="size-3.5" />
           {t("Download Droppen for Mac")}
         </a>
         <span data-testid="first-host-facts" className="font-mono text-2xs text-faint">
@@ -228,7 +228,7 @@ function PhoneWay({ link, share }: { link: string; share: boolean }) {
       <div className="flex flex-wrap gap-2">
         {share && !shareFailed && (
           <button type="button" data-variant="primary" data-testid="first-host-share" className={primary} onClick={shareIt}>
-            <Share2 className="size-3.5" />
+            <ShareNetworkIcon className="size-3.5" />
             {t("share link")}
           </button>
         )}
@@ -290,7 +290,7 @@ export function FirstHostCard({
         {(way === "mac" || way === "linux" || way === "phone") && (
           <div className="flex flex-col gap-2">
             <p data-testid="first-host-waiting" className="flex items-center gap-2 text-2xs leading-4 text-muted">
-              <Loader2 className="size-3 shrink-0 animate-spin text-faint" />
+              <CircleNotchIcon className="size-3 shrink-0 animate-spin text-faint" />
               {t("Keep this page open: it notices the new device by itself.")}
             </p>
             {pairWith &&

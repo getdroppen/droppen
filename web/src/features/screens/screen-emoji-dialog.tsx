@@ -1,4 +1,4 @@
-import { LayoutGrid } from "lucide-react";
+import { SquaresFourIcon } from "@phosphor-icons/react";
 import { useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useScreens, type ScreenInfo } from "@/app/screens";
@@ -83,7 +83,7 @@ export function ScreenEmojiDialog({ screen, onClose }: { screen: ScreenInfo; onC
               onClick={() => void save("")}
               className="flex h-7 items-center gap-1.5 rounded px-2 text-xs text-muted hover:bg-hover hover:text-fg disabled:opacity-40"
             >
-              <LayoutGrid className="size-3.5" />
+              <SquaresFourIcon className="size-3.5" />
               {t("restore default icon")}
             </button>
             <button

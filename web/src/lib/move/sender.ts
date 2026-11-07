@@ -10,7 +10,7 @@
  * everything here as it was.
  */
 import { DEVICE_KEYS_PREFIX, KEY_STORE_DB } from "@/lib/e2e/keystore";
-import { clearSession, loadSession } from "@/lib/hub/api";
+import { clearSession, LEGACY_KNOWN_CLIENT_KEY, loadSession } from "@/lib/hub/api";
 import { hubHttpOrigin } from "@/lib/hub/config";
 import { LOCAL_CACHE_DB, LOCAL_CACHE_STORE } from "@/lib/local-cache";
 import { seenKey } from "@/lib/hub/seen-store";
@@ -54,7 +54,6 @@ export async function takeSnapshot(env: MoveEnv, primary: { account: string; dev
 /** Where the legacy origin notes a move whose keys went but which did not finish ({@link MoveUnfinished}). */
 export const MOVE_OUT_KEY = "rh.hub.move.out";
 /** The tokens kept under the e-mail itself before they were hashed (`api.ts`): never moved, gone with the rest. */
-const LEGACY_KNOWN_CLIENT_PREFIX = "rh.hub.knownClient:";
 
 /** What this origin noted of a move that did not finish (`null`: none). */
 export function readMoveOut(storage: Pick<MoveStorage, "getItem">): MoveUnfinished | null {
@@ -100,7 +99,7 @@ export async function wipeHere(env: MoveEnv): Promise<string[]> {
     }
     await store.destroy(DESTROY_MS);
   }
-  for (const { key } of localEntries(env.storage, (name) => movesLocal(name) || name.startsWith(LEGACY_KNOWN_CLIENT_PREFIX) || name === MOVE_OUT_KEY)) {
+  for (const { key } of localEntries(env.storage, (name) => movesLocal(name) || name.startsWith(LEGACY_KNOWN_CLIENT_KEY) || name === MOVE_OUT_KEY)) {
     try {
       env.storage.removeItem(key);
     } catch (error) {

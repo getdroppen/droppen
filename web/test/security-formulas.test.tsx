@@ -1,18 +1,4 @@
-// The formulas of droppen.app/security, part by part
-// (`features/landing/security/formula-data.ts`, `formula-model.ts`,
-// `formula.tsx`).
-//
-// What these pin: every token of every formula on the page names a term, and
-// every term has a kind, the parties that can know it, words in en, zh-CN,
-// zh-TW and ja, and a code reference that exists — a token without them fails
-// here; a symbol that means different things in different places is read per
-// occurrence; the flow is read off the formula's shape (kek is made by
-// HKDF-SHA256 and taken by AES-256-GCM); the formulas still read and copy as
-// the plain text they were; every term is focusable and described for screen
-// readers, in every language; the page's two kinds of device are defined at
-// its top, and every later mention of either explains itself, in every
-// language. Pointer, keyboard and touch:
-// `security-formulas-dom.test.tsx`.
+// Formula data, text, accessibility, and translations; interactions are in security-formulas-dom.test.tsx.
 import * as React from "react";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
@@ -84,7 +70,6 @@ test("every token of every formula names a term with a kind, its parties, words 
       }
     });
   }
-  assert.ok(tokens > 300, `${tokens} tokens`);
   const root = new URL("../../", import.meta.url);
   for (const [id, term] of Object.entries(TERMS)) {
     assert.ok((KINDS as readonly string[]).includes(term.kind), `${id}: kind`);

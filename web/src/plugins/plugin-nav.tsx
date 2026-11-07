@@ -1,6 +1,6 @@
 import { localize } from "@droppen/plugin-sdk";
 import { Link } from "@tanstack/react-router";
-import { Puzzle } from "lucide-react";
+import { PuzzlePieceIcon } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
 import { RailHint } from "@/components/ui/rail-hint";
 import { PluginIcon } from "./boundary";
@@ -61,7 +61,7 @@ export function PluginNav({ className }: { className: string }) {
         }
       >
         <span data-signal="warn" className="relative flex items-center justify-center">
-          <Puzzle className="size-4 text-warn-fg" strokeWidth={1.5} />
+          <PuzzlePieceIcon className="size-4 text-warn-fg" />
           <span className="absolute -top-0.5 -right-0.5 size-[3px] bg-warn" />
         </span>
       </RailHint>

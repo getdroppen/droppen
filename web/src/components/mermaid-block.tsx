@@ -1,5 +1,6 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
+import { useDebounceValue } from "usehooks-ts";
 import { useObjectUrl } from "@/components/source-image";
 import {
   MERMAID_STABLE_MS,
@@ -52,7 +53,6 @@ export function MermaidBlock({ code, fallback }: { code: string; fallback: React
   const { t } = useTranslation();
   const theme = useDiagramTheme();
   const [showSource, setShowSource] = useState(false);
-  const [stableCode, setStableCode] = useState(code);
   const [drawn, setDrawn] = useState<Drawn | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   // Released (revoked) once no block draws it: on a newer picture, or unmount.
@@ -61,11 +61,7 @@ export function MermaidBlock({ code, fallback }: { code: string; fallback: React
   // A streaming fence changes on every token; only a version that has stood
   // still for a moment is worth handing to the engine. A finished message's
   // fence starts out stable, so it is drawn straight away.
-  useEffect(() => {
-    if (code === stableCode) return;
-    const timer = setTimeout(() => setStableCode(code), MERMAID_STABLE_MS);
-    return () => clearTimeout(timer);
-  }, [code, stableCode]);
+  const [stableCode] = useDebounceValue(code, MERMAID_STABLE_MS);
 
   useEffect(() => {
     if (stableCode.trim() === "") return;

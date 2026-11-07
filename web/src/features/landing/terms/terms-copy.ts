@@ -1,25 +1,9 @@
-/*
- * The words of the terms of service (`terms.tsx`), droppen.app/terms. As
- * everywhere (`src/i18n`), the keys are the English text, so English needs no
- * table; zh-CN is written as native copy, zh-TW and ja say the same things,
- * and `test/terms-page.test.tsx` holds the three to the page's keys. The
- * lines the page shares with the other public pages ("Terms of Service",
- * "Last updated {{date}}", "Your account", "Contact") are the landing
- * tables' (`pricing-copy.ts`).
- *
- * Plain words, no legalese: the voice of the privacy notice. Product words as
- * on the other public pages (`test/ui-wording.test.ts`): a device (设备 /
- * 裝置 / デバイス), a device that runs AI (可运行 AI 的设备 / 可執行 AI 的裝置
- * / AI を実行できるデバイス), "our servers", an account (账号 / 帳號 /
- * アカウント) — never a machine or a computer, and no relay. The plans'
- * numbers and the minimum age are interpolated, never written into a line.
- *
- * Its own chunk: loaded with the page only, never with the landing page.
- */
+
+import { registerCopy } from "../register-copy";
+import { columnOf } from "../copy-columns";
 
 type Bundle = Record<string, string>;
 
-/** Each line once: the English (the key), then zh-CN, zh-TW and ja, in the order the page says them. */
 const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: string])[] = [
   ["Terms of Service — Droppen", "服务条款 — Droppen", "服務條款 — Droppen", "利用規約 — Droppen"],
   ["What you can expect from us, and what we ask of you.", "我们承诺什么，也请你遵守什么", "我們承諾什麼，也請你遵守什麼", "私たちがお約束すること、お願いすること。"],
@@ -30,7 +14,6 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "この規約は、あなたと、droppen.app を運営する Droppen（以下「私たち」）との間の取り決めです。アカウントを作成するか、サービスを利用した時点で、この規約に同意したことになります。",
   ],
 
-  // The service
   ["The service", "服务", "服務", "サービス"],
   ["What these terms cover", "本条款适用于什么", "本條款適用於什麼", "この規約の対象"],
   ["What Droppen is", "Droppen 是什么", "Droppen 是什麼", "Droppen とは"],
@@ -66,7 +49,6 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "アカウントなしで自分のデバイスだけで使う「ローカルのみ」は、私たちのサービスを一切使いません。",
   ],
 
-  // Your account
   ["One person, one account", "一人一个账号", "一人一個帳號", "1 人に 1 アカウント"],
   ["Signing up", "注册", "註冊", "登録について"],
   [
@@ -107,7 +89,6 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "データを復号できるのは、あなたのデバイスとリカバリーワードだけです。すべて失うと、私たちを含め誰も復号できなくなります。",
   ],
 
-  // Your devices
   ["Your devices", "你的设备", "你的裝置", "あなたのデバイス"],
   ["Your devices, your AI tools", "你的设备，你的 AI 工具", "你的裝置，你的 AI 工具", "あなたのデバイス、あなたの AI ツール"],
   ["You are responsible for", "由你负责的", "由你負責的", "あなたの責任となるもの"],
@@ -143,7 +124,6 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "作業内容のバックアップは行いません。クラウドの暗号化コピーは、デバイスがオフラインの間に最近のセッションを読むためのもので、プランで決まった日数より長くオフラインのデバイスは、そのコピーが削除されます。大切なものは自分でコピーを残してください。",
   ],
 
-  // Acceptable use
   ["Acceptable use", "使用规范", "使用規範", "利用ルール"],
   ["Use it fairly", "合理使用", "合理使用", "節度を持って使う"],
   ["Don't", "请不要", "請不要", "禁止事項"],
@@ -185,7 +165,6 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "droppen.app に対してテストするときは、自分のアカウントだけを使い、他人のデータにアクセスしたり変更したりせず、他の人のサービスを遅くしないでください。",
   ],
 
-  // Plans
   ["Plans", "方案", "方案", "プラン"],
   ["Plans, and how they may change", "方案，以及它们可能怎么变", "方案，以及它們可能怎麼變", "プランと、その変更"],
   ["Today", "现在的方案", "現在的方案", "現在のプラン"],
@@ -222,7 +201,6 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
   ],
   ["See the plans", "查看各个方案", "查看各個方案", "プランを見る"],
 
-  // Availability
   ["Availability", "可用性", "可用性", "提供状況"],
   ["In beta, provided as is", "测试版，按现状提供", "測試版，依現狀提供", "ベータ版、現状のままでの提供"],
   ["What to expect", "请你知悉", "請你知悉", "ご理解いただきたいこと"],
@@ -264,7 +242,6 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "この規約は、法律上制限できない責任を制限するものではなく、消費者としてのあなたの権利を奪うものでもありません。",
   ],
 
-  // Ending
   ["Ending", "终止", "終止", "利用の終了"],
   ["Leaving, and deleting your account", "离开，以及删除账号", "離開，以及刪除帳號", "退会とアカウントの削除"],
   ["If you leave", "如果你要离开", "如果你要離開", "退会するとき"],
@@ -294,7 +271,6 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "私たちはセッションを読めないため、サーバーから見えるもの、つまりアカウントがどれだけ、いつ、どのように送っているかで判断します。",
   ],
 
-  // Legal
   ["Legal", "法律事项", "法律事項", "法的事項"],
   ["Changes, the law, and who we are", "条款变更、适用法律，以及我们是谁", "條款變更、準據法，以及我們是誰", "規約の変更、準拠法、運営者"],
   ["Changes to these terms", "条款变更", "條款變更", "規約の変更"],
@@ -324,7 +300,6 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "この規約はシンガポールの法律に準拠し、規約に関するすべての紛争はシンガポールの裁判所が管轄します。消費者の方は、お住まいの地域の法律による保護を引き続き受けられます。",
   ],
 
-  // Contact
   [
     "Questions about these terms, or a request about your account:",
     "对本条款有疑问，或有关于账号的请求，请写信到：",
@@ -340,15 +315,14 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
   ],
 ];
 
-const column = (i: 1 | 2 | 3): Bundle => Object.fromEntries(LINES.map((line) => [line[0], line[i]]));
+export const termsZhCN: Bundle = columnOf(LINES, 1);
+export const termsZhTW: Bundle = columnOf(LINES, 2);
+export const termsJa: Bundle = columnOf(LINES, 3);
 
-export const termsZhCN: Bundle = column(1);
-export const termsZhTW: Bundle = column(2);
-export const termsJa: Bundle = column(3);
-
-/** The page's tables, by language. */
 export const termsBundles: Record<"zh-CN" | "zh-TW" | "ja", Bundle> = {
   "zh-CN": termsZhCN,
   "zh-TW": termsZhTW,
   ja: termsJa,
 };
+
+registerCopy(termsBundles);

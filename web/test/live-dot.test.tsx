@@ -94,7 +94,7 @@ test("the dot takes the colour of the line it sits in, and lets a caller overrid
   assert.match(draw(<LiveDot />), /bg-current/);
   const green = draw(<LiveDot className="bg-ok" />);
   assert.match(green, /bg-ok/);
-  assert.doesNotMatch(green, /bg-current/, "tailwind-merge drops the default rather than stacking it");
+  assert.doesNotMatch(green, /bg-current/, "the class merge drops the default rather than stacking it");
 });
 
 test("the dot carries a caller's tooltip, which is the only text some of them have", () => {

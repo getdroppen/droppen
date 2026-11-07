@@ -20,19 +20,18 @@
  *   and the Markdown structure are exactly what they were.
  */
 import {
-  Bot,
-  Brain,
-  ChevronDown,
-  ChevronUp,
-  Info,
-  List,
-  Loader2,
-  Search,
-  User,
-  Wrench,
-  X,
-  type LucideIcon,
-} from "lucide-react";
+  BrainIcon,
+  CaretDownIcon,
+  CaretUpIcon,
+  CircleNotchIcon,
+  InfoIcon,
+  ListIcon,
+  MagnifyingGlassIcon,
+  RobotIcon,
+  UserIcon,
+  WrenchIcon,
+  XIcon,
+} from "@phosphor-icons/react";
 import {
   useCallback,
   useEffect,
@@ -43,10 +42,12 @@ import {
   type RefObject,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { useDebounceValue } from "usehooks-ts";
 import { errorText } from "@/api/errors";
 import type { components } from "@/api/schema";
 import { cn } from "@/lib/cn";
 import { formatInt, formatTime } from "@/lib/format";
+import type { IconComponent } from "@/lib/icon";
 import { isImeKeydown } from "@/lib/ime";
 import {
   highlightSegments,
@@ -494,13 +495,11 @@ export function useSessionSearch(host: SearchHost): SessionSearch {
   );
 
   // Search on a pause in typing.
+  const [paused] = useDebounceValue(committed, SEARCH_DEBOUNCE_MS);
   useEffect(() => {
     if (!open) return;
-    const handle = setTimeout(() => {
-      if (committed.trim() !== requestedRef.current) void runSearch(committed, "jump");
-    }, SEARCH_DEBOUNCE_MS);
-    return () => clearTimeout(handle);
-  }, [open, committed, runSearch]);
+    if (paused.trim() !== requestedRef.current) void runSearch(paused, "jump");
+  }, [open, paused, runSearch]);
 
   // The box is focused (and its text selected, so typing replaces the last
   // query) at once when it is already on screen, and by the effect below on
@@ -765,16 +764,16 @@ export function useSessionSearch(host: SearchHost): SessionSearch {
 
 function MatchIcon({ match }: { match: SearchMatch }) {
   const { t } = useTranslation();
-  const [Icon, label]: [LucideIcon, string] =
+  const [Icon, label]: [IconComponent, string] =
     match.kind === "tool_use" || match.kind === "tool_result"
-      ? [Wrench, t("tool")]
+      ? [WrenchIcon, t("tool")]
       : match.kind === "thinking"
-        ? [Brain, t("thinking")]
+        ? [BrainIcon, t("thinking")]
         : match.role === "user"
-          ? [User, t("user message")]
+          ? [UserIcon, t("user message")]
           : match.role === "system"
-            ? [Info, t("system message")]
-            : [Bot, t("agent message")];
+            ? [InfoIcon, t("system message")]
+            : [RobotIcon, t("agent message")];
   return (
     <span role="img" aria-label={label} title={label} className="mt-0.5 shrink-0 text-faint">
       <Icon aria-hidden className="size-3" />
@@ -813,7 +812,7 @@ export function SearchButton({ onClick }: { onClick: () => void }) {
       onClick={onClick}
       className={ICON_BUTTON}
     >
-      <Search className="size-3.5" />
+      <MagnifyingGlassIcon className="size-3.5" />
     </button>
   );
 }
@@ -842,7 +841,7 @@ export function SessionSearchBar({ search }: { search: SessionSearch }) {
   return (
     <div role="search" className="relative shrink-0 border-b border-border bg-panel px-2 py-1">
       <div className="flex min-w-0 items-center gap-1">
-        <Search aria-hidden className="size-3.5 shrink-0 text-faint" />
+        <MagnifyingGlassIcon aria-hidden className="size-3.5 shrink-0 text-faint" />
         <input
           ref={search.inputRef}
           data-session-search-input=""
@@ -873,7 +872,7 @@ export function SessionSearchBar({ search }: { search: SessionSearch }) {
           spellCheck={false}
           className="h-6 min-w-0 flex-1 bg-transparent font-mono text-xs text-fg outline-none placeholder:text-faint"
         />
-        {search.searching && <Loader2 aria-hidden className="size-3 shrink-0 animate-spin text-faint" />}
+        {search.searching && <CircleNotchIcon aria-hidden className="size-3 shrink-0 animate-spin text-faint" />}
         {counter && (
           <span
             aria-live="polite"
@@ -891,7 +890,7 @@ export function SessionSearchBar({ search }: { search: SessionSearch }) {
           onClick={() => search.step(1)}
           className={ICON_BUTTON}
         >
-          <ChevronUp className="size-3.5" />
+          <CaretUpIcon className="size-3.5" />
         </button>
         <button
           type="button"
@@ -901,7 +900,7 @@ export function SessionSearchBar({ search }: { search: SessionSearch }) {
           onClick={() => search.step(-1)}
           className={ICON_BUTTON}
         >
-          <ChevronDown className="size-3.5" />
+          <CaretDownIcon className="size-3.5" />
         </button>
         <button
           type="button"
@@ -912,7 +911,7 @@ export function SessionSearchBar({ search }: { search: SessionSearch }) {
           onClick={() => setListOpen((v) => !v)}
           className={cn(ICON_BUTTON, listOpen && "bg-hover text-fg")}
         >
-          <List className="size-3.5" />
+          <ListIcon className="size-3.5" />
         </button>
         <button
           type="button"
@@ -921,12 +920,12 @@ export function SessionSearchBar({ search }: { search: SessionSearch }) {
           onClick={search.close}
           className={ICON_BUTTON}
         >
-          <X className="size-3.5" />
+          <XIcon className="size-3.5" />
         </button>
       </div>
       {search.paging && (
         <div className="flex items-center gap-1.5 px-1 pt-0.5 font-mono text-2xs text-faint">
-          <Loader2 aria-hidden className="size-3 animate-spin" />
+          <CircleNotchIcon aria-hidden className="size-3 animate-spin" />
           <span className="min-w-0 truncate">{t("loading earlier messages…")}</span>
           {search.paging.total > 1 && (
             <span className="shrink-0 tabular-nums">

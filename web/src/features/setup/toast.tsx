@@ -6,9 +6,10 @@
  * module store so it outlives the guide's page when it navigates away, read
  * out politely, gone after a few seconds or on its ×.
  */
-import { X } from "lucide-react";
-import { useEffect, useSyncExternalStore } from "react";
+import { XIcon } from "@phosphor-icons/react";
+import { useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
+import { useTimeout } from "usehooks-ts";
 
 export interface SetupToast {
   id: number;
@@ -53,17 +54,19 @@ function subscribe(listener: () => void) {
   return () => void listeners.delete(listener);
 }
 
+/** The line's clock: keyed by its id, so a new line starts a new wait. */
+function ToastLifetime({ toast }: { toast: SetupToast }) {
+  useTimeout(() => dismissSetupToast(toast.id), toast.ms);
+  return null;
+}
+
 /** Where the line is drawn: once in the guide's window, once in the app's. */
 export function SetupToasts() {
   const { t } = useTranslation();
   const toast = useSyncExternalStore(subscribe, setupToastNow, () => null);
-  useEffect(() => {
-    if (!toast) return;
-    const timer = setTimeout(() => dismissSetupToast(toast.id), toast.ms);
-    return () => clearTimeout(timer);
-  }, [toast]);
   return (
     <div aria-live="polite" className="pointer-events-none fixed inset-x-0 bottom-16 z-50 flex justify-center px-4">
+      {toast && <ToastLifetime key={toast.id} toast={toast} />}
       {toast && (
         <div
           role="status"
@@ -78,7 +81,7 @@ export function SetupToasts() {
             onClick={() => dismissSetupToast(toast.id)}
             className="flex size-5 shrink-0 items-center justify-center text-bg/70 hover:text-bg"
           >
-            <X className="size-3" />
+            <XIcon className="size-3" />
           </button>
         </div>
       )}

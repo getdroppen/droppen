@@ -9,7 +9,7 @@
  * draws a {@link NeedsYou} and knows nothing of where the rows came from.
  */
 import { useTranslation } from "react-i18next";
-import { ArrowRight } from "lucide-react";
+import { ArrowRightIcon } from "@phosphor-icons/react";
 import { cn } from "@/lib/cn";
 import { formatRelative } from "@/lib/format";
 import { useTicker } from "@/lib/ticker";
@@ -146,7 +146,7 @@ function LedgerRow({
         )}
       >
         {kind === "asking" && !elsewhere ? t("answer") : t("open")}
-        <ArrowRight aria-hidden="true" className="size-3" />
+        <ArrowRightIcon aria-hidden="true" className="size-3" />
       </span>
     </button>
   );

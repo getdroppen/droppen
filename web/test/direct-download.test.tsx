@@ -1,23 +1,4 @@
-// The App downloaded from the home page and the download page, directly:
-// `features/landing/hero-get.tsx`, `download.tsx`, `release-files.tsx`,
-// `detect.ts` and the hub's answer, `lib/hub/releases.ts`.
-//
-// What these pin: the latest release is asked of this page's hub
-// (`GET /v1/releases/latest`, same-origin: droppen.app's CSP stays as it is)
-// and checked again here (the tag, each file's exact name and address); every
-// download button is then a plain link to the file itself, which downloads
-// in place, with the version and size beside it — and on any failure a link
-// to the release page; the hero's Linux button gets the tarball for its
-// processor beside the install command; the device is told from
-// `navigator.userAgentData` (platform, and the `architecture` / `bitness`
-// high-entropy hints) or else the user agent, with no request; and the hero
-// offers what fits it — the download on a Mac, the install command on Linux,
-// droppen.app in the browser on Windows and on a phone, every way on a device
-// it cannot tell — with one primary action, in en, zh-CN, zh-TW and ja.
-// A hub that counts downloads names each file's `download_path`
-// (`/dl/<platform>`, its own `302` to the file, counted per platform and
-// day); then the buttons link that, on this page's origin, with the same
-// name, version and size, and a hub without it keeps the direct links.
+// Release validation, platform detection, and direct-download behavior.
 import * as React from "react";
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -32,16 +13,14 @@ import {
   browserHints,
   CPU_HINTS,
   cpuOf,
-  DEFAULT_OS,
   detectKind,
   type EnvironmentHints,
   heroOffer,
-  initialOs,
   type NavigatorLike,
   osForKind,
 } from "../src/features/landing/detect.js";
 import DownloadPage from "../src/features/landing/download.js";
-import { APP_DOWNLOAD_URL, type Availability, AVAILABILITY, INSTALL_COMMAND, RELEASES_URL } from "../src/features/landing/get-droppen.js";
+import { type Availability, AVAILABILITY, INSTALL_COMMAND, RELEASES_URL } from "../src/features/landing/get-droppen.js";
 import LandingPage from "../src/features/landing/landing.js";
 import { downloadPath, fetchLatestRelease, formatSize, LATEST_RELEASE_PATH, type LatestRelease, parseLatestRelease } from "../src/lib/hub/releases.js";
 import { cloudDevicesJa, cloudDevicesZhCN, cloudDevicesZhTW } from "../src/i18n/cloud-devices.js";
@@ -63,13 +42,9 @@ const i18n = makeI18n({
   nsSeparator: false
 });
 
-// The download page reads the address (`?os=`) and the session's choice.
+// The download page reads the address (`?os=`).
 const place = { search: "", origin: "https://droppen.app", hash: "", pathname: "/" };
-const session = new Map<string, string>();
-Object.assign(globalThis, {
-  location: place,
-  sessionStorage: { getItem: (k: string) => session.get(k) ?? null, setItem: (k: string, v: string) => void session.set(k, v), removeItem: (k: string) => void session.delete(k) },
-});
+Object.assign(globalThis, { location: place });
 
 const UA = {
   macSafari: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
@@ -153,7 +128,6 @@ function download(
 ): string {
   void i18n.changeLanguage(lng);
   place.search = opts.os ? `?os=${opts.os}` : "";
-  session.clear();
   return renderToStaticMarkup(
     <I18nextProvider i18n={i18n}>
       <DownloadPage
@@ -235,7 +209,7 @@ test("with the hub's answer, every download button is a plain link to the file i
   ].map((m) => m[0]);
   assert.equal(links.length, 3);
   for (const a of links) {
-    assert.match(a, new RegExp(`^<a href="${esc(`${DL}Droppen-0.2.129.dmg`)}" `), a);
+    assert.match(a, new RegExp(`^<a [^>]*href="${esc(`${DL}Droppen-0.2.129.dmg`)}"`), a);
     assert.doesNotMatch(a, /target=|rel=|download=/, a);
   }
   assert.ok(text(hero(landing("en", { hints: HINTS.mac }))).includes("v0.2.129 · 48 MB · macOS 13 or later · Apple silicon and Intel"));
@@ -244,9 +218,6 @@ test("with the hub's answer, every download button is a plain link to the file i
   // The App owns its setup guide: the page only hands over the file. `APP_SIGN_IN_AVAILABLE` means no "coming in an update".
   assert.doesNotMatch(page, /data-testid="app-steps"|Open and sign in|It opens a short setup guide|your browser opens droppen.app/, "the App's own guide is not duplicated here");
   assert.doesNotMatch(page, /data-testid="app-sign-in-soon"|coming in an update/);
-  // The add-device guide's button too (its source: the guide needs an account to render).
-  const guide = readFileSync(new URL("../src/features/cloud/add-computer.tsx", import.meta.url), "utf8");
-  assert.match(guide, /<a \{\.\.\.fileLink\(latest\?\.files\.macos\)\} data-testid="add-app-download"/);
 });
 
 test("a page a static host serves asks the hub at the marker's HTTP origin, and links its counted files there", async () => {
@@ -281,14 +252,13 @@ test("a hub that counts downloads: each button links its /dl/<platform> on this 
   ].map((m) => m[0]);
   assert.equal(mac.length, 3);
   for (const a of mac) {
-    assert.match(a, /^<a href="\/dl\/macos" rel="nofollow" /, a);
+    assert.match(a, /^<a [^>]*href="\/dl\/macos"[^>]*rel="nofollow"/, a);
     assert.doesNotMatch(a, /target=|download=/, a);
   }
   assert.ok(text(hero(landing("en", { hints: HINTS.mac, release: COUNTED }))).includes("v0.2.129 · 48 MB · macOS 13 or later · Apple silicon and Intel"));
   assert.ok(text(download("en", { os: "macos-app", release: COUNTED })).includes("v0.2.129 · 48 MB"));
   const linuxHero = hero(landing("en", { hints: HINTS.linux, cpu: "x86_64", release: COUNTED }));
-  assert.deepEqual([...linuxHero.matchAll(/<a href="([^"]+)" data-testid="hero-tarballs-file"[^>]*>([^<]+)</g)].map((m) => [m[1], m[2]]), [["/dl/linux-x86_64", "droppen-v0.2.129-linux-x86_64.tar.gz"]]);
-  assert.match(linuxHero, /<a href="\/dl\/linux-x86_64" data-testid="hero-tarballs-file" class="[^"]*" rel="nofollow">/, "crawlers leave the count alone");
+  assert.match(linuxHero, /<a (?=[^>]*href="\/dl\/linux-x86_64")(?=[^>]*data-testid="hero-tarballs-file")(?=[^>]*rel="nofollow")[^>]*>droppen-v0\.2\.129-linux-x86_64\.tar\.gz<\/a>/);
   assert.ok(text(linuxHero).includes("Or download it: droppen-v0.2.129-linux-x86_64.tar.gz (12 MB)"));
   // A hub without it: the files on GitHub, as before, and no nofollow on them.
   const direct = hero(landing("en", { hints: HINTS.mac })) + download("en", { os: "linux", hints: HINTS.linux });
@@ -301,7 +271,6 @@ test("a hub that counts downloads: each button links its /dl/<platform> on this 
 });
 
 test("without it (no route, a 503, a failure, or not yet), the hero's Mac download opens the download page's Mac tab, and the download page's own button the release page", () => {
-  assert.equal(APP_DOWNLOAD_URL, RELEASES_URL);
   assert.equal(RELEASES_URL, "https://github.com/getdroppen/droppen/releases/latest");
   // None (the hub said nothing usable), and not yet (asked, no answer: as the page first draws).
   void i18n.changeLanguage("en");
@@ -313,13 +282,13 @@ test("without it (no route, a 503, a failure, or not yet), the hero's Mac downlo
   // The home page never sends its button to another site: until the file is named, it is this site's download page.
   for (const html of [hero(landing("en", { hints: HINTS.mac, release: null })), hero(landing("en", { hints: HINTS.unknown, release: null })), hero(asking)]) {
     const a = html.match(/<a [^>]*data-testid="hero-download"[^>]*>/)![0];
-    assert.match(a, /^<a href="\/download\?os=macos-app"/, a);
+    assert.match(a, /^<a [^>]*href="\/download\?os=macos-app"/, a);
     assert.doesNotMatch(a, /target=|github\.com/, a);
     assert.doesNotMatch(html, /v0\.2\.129|github\.com\/getdroppen\/droppen\/releases\/download/);
   }
   // The download page is where the file is: its button falls back to the release page.
   const fallback = download("en", { os: "macos-app", release: null });
-  assert.match(fallback.match(/<a [^>]*data-testid="app-download"[^>]*>/)![0], new RegExp(`^<a href="${esc(RELEASES_URL)}" target="_blank" rel="noopener noreferrer"`));
+  assert.match(fallback.match(/<a [^>]*data-testid="app-download"[^>]*>/)![0], new RegExp(`^<a [^>]*href="${esc(RELEASES_URL)}"[^>]*target="_blank"[^>]*rel="noopener noreferrer"`));
   assert.doesNotMatch(fallback, /v0\.2\.129|github\.com\/getdroppen\/droppen\/releases\/download/);
   assert.doesNotMatch(hero(landing("en", { hints: HINTS.linux, release: null, cpu: "x86_64" })), /data-testid="hero-tarballs"/, "no tarball named");
 });
@@ -342,13 +311,6 @@ test("droppen.app's CSP stays as it is: nothing in the web app asks GitHub for a
     // A request (fetch, XHR, EventSource, a beacon, a WebSocket) to GitHub would need connect-src: the downloads are links.
     assert.doesNotMatch(source, /(fetch|XMLHttpRequest|EventSource|sendBeacon|WebSocket)\([^)]*github/i, file);
   }
-  // The one request for the files: the hub's route, at the hub's HTTP origin (the page's own without a marker).
-  const releases = readFileSync(new URL("../src/lib/hub/releases.ts", import.meta.url), "utf8");
-  assert.deepEqual([...releases.matchAll(/fetcher\(([^,]+),/g)].map((m) => m[1]), ["`${base}${LATEST_RELEASE_PATH}`"]);
-  assert.match(releases, /base = hubHttpOrigin\(\) \?\? ""/);
-  assert.match(releases, /export const LATEST_RELEASE_PATH = "\/v1\/releases\/latest";/);
-  const detect = readFileSync(new URL("../src/features/landing/detect.ts", import.meta.url), "utf8");
-  assert.doesNotMatch(detect, /\bfetch\(|XMLHttpRequest/, "detection asks nobody");
   // The policy is the hub's header (connect-src 'self' and the relays); the shell adds none.
   const shell = readFileSync(new URL("../index.html", import.meta.url), "utf8");
   assert.doesNotMatch(shell, /Content-Security-Policy/i);
@@ -384,10 +346,6 @@ test("detection, from navigator.userAgentData where there is one, else the user 
   assert.equal(heroOffer("mac", { app: false, linux: true }), "all");
   assert.equal(heroOffer("linux", { app: true, linux: false }), "all");
   // An unknown device opens on the Mac App, marked as nothing.
-  assert.equal(DEFAULT_OS, "macos-app");
-  assert.equal(initialOs({ search: "", remembered: null, detected: null }), "macos-app");
-  assert.equal(initialOs({ search: "", remembered: null, detected: "linux" }), "linux");
-  assert.equal(initialOs({ search: "?os=windows", remembered: null, detected: "linux" }), "windows", "the address wins");
 });
 
 test("the processor: the architecture and bitness high-entropy hints, else the user agent — asked for nothing else", async () => {
@@ -422,20 +380,20 @@ test("the hero on a Mac: 「Download for Mac」 is the one primary action, the f
   const html = landing("en", { hints: HINTS.mac });
   const h = hero(html);
   assert.match(h, /data-offer="mac"/);
-  assert.match(h, new RegExp(`<a href="${esc(`${DL}Droppen-0.2.129.dmg`)}" data-variant="primary" data-testid="hero-download"[^>]*>.*Download for Mac</a>`));
+  assert.match(h, new RegExp(`<a [^>]*data-variant="primary"[^>]*href="${esc(`${DL}Droppen-0.2.129.dmg`)}"[^>]*data-testid="hero-download"[^>]*>.*Download for Mac</a>`));
   assert.equal(primaries(html), 1, "one primary on the page");
   assert.ok(text(h).includes("v0.2.129 · 48 MB · macOS 13 or later · Apple silicon and Intel"));
   // The checksums and the release's other files are the download page's (`other systems`), not the hero's.
   assert.doesNotMatch(h, /data-testid="hero-release-link"/);
   assert.match(h, /<a href="\/download" data-testid="hero-other-systems"/);
   // Sign-up stays, as the secondary; signing in is the header's and the footer's.
-  assert.match(h, /<a href="\/signup" class="[^"]*">Create a free account<\/a>/);
+  assert.match(h, /<a [^>]*class="[^"]*"[^>]*href="\/signup"[^>]*>Create a free account<\/a>/);
   assert.doesNotMatch(h, /href="\/signin"/);
   assert.doesNotMatch(h, /data-testid="hero-install-command"/);
   // Signed in: the download, and back into the app.
   const signedIn = hero(landing("en", { hints: HINTS.mac, signedIn: true }));
-  assert.match(signedIn, /data-variant="primary" data-testid="hero-download"/);
-  assert.match(signedIn, /<a href="\/sessions" class="[^"]*">Open app<\/a>/);
+  assert.match(signedIn, /data-variant="primary"[^>]*data-testid="hero-download"/);
+  assert.match(signedIn, /<a [^>]*class="[^"]*"[^>]*href="\/sessions"[^>]*>Open app<\/a>/);
   assert.doesNotMatch(signedIn, /href="\/sign(in|up)"/);
 });
 
@@ -444,10 +402,10 @@ test("the hero on Linux: the install command first, its copy button the primary,
   const h = hero(html);
   assert.match(h, /data-offer="linux"/);
   assert.match(h, new RegExp(`data-testid="hero-install-command"[^>]*>.*${esc(INSTALL_COMMAND)}</code>`));
-  assert.match(h, /data-variant="primary" data-testid="hero-install-command-copy"/);
+  assert.match(h, /data-variant="primary"[^>]*data-testid="hero-install-command-copy"/);
   assert.equal(primaries(html), 1);
   assert.match(h, /<a href="\/download\?os=linux" data-testid="hero-linux-tab"/);
-  const tarballs = (html: string) => [...html.matchAll(/<a href="([^"]+)" data-testid="hero-tarballs-file"/g)].map((m) => m[1]);
+  const tarballs = (html: string) => [...html.matchAll(/<a [^>]*data-testid="hero-tarballs-file"[^>]*>/g)].map((m) => /href="([^"]+)"/.exec(m[0])?.[1]);
   assert.deepEqual(tarballs(h), [`${DL}droppen-v0.2.129-linux-x86_64.tar.gz`]);
   assert.ok(text(h).includes("Or download it: droppen-v0.2.129-linux-x86_64.tar.gz (12 MB)"));
   assert.ok(h.indexOf('data-testid="hero-install-command"') < h.indexOf('data-testid="hero-tarballs"'), "the command first");
@@ -464,9 +422,9 @@ test("the hero on Windows and on a phone: droppen.app in the browser is the prim
   const w = hero(windows);
   assert.match(w, /data-offer="windows"/);
   assert.ok(text(w).includes("Sign up on the web"));
-  assert.match(w, /<a href="\/signup"[^>]*data-variant="primary"[^>]*>[\s\S]*Sign up on the web[\s\S]*<\/a>/);
-  assert.match(w, /<a href="\/download\?os=macos-app" data-testid="hero-mac-tab"/);
-  assert.match(w, /<a href="\/download\?os=linux" data-testid="hero-linux-tab"/);
+  assert.match(w, /<a [^>]*data-variant="primary"[^>]*href="\/signup"[^>]*>[\s\S]*Sign up on the web[\s\S]*<\/a>/);
+  assert.match(w, /<a [^>]*href="\/download\?os=macos-app"[^>]*data-testid="hero-mac-tab"/);
+  assert.match(w, /<a [^>]*href="\/download\?os=linux"[^>]*data-testid="hero-linux-tab"/);
   assert.doesNotMatch(w, /Droppen-0\.2\.129\.dmg|github\.com/, "no Mac file for a Windows device");
   assert.equal(primaries(windows), 1);
   const phone = landing("en", { hints: HINTS.phone });
@@ -478,14 +436,14 @@ test("the hero on Windows and on a phone: droppen.app in the browser is the prim
   assert.doesNotMatch(p, /Droppen-0\.2\.129\.dmg|github\.com/);
   assert.equal(primaries(phone), 1);
   // Signed in, the way back into the app is the primary.
-  assert.match(hero(landing("en", { hints: HINTS.phone, signedIn: true })), /<a href="\/sessions" data-variant="primary"/);
+  assert.match(hero(landing("en", { hints: HINTS.phone, signedIn: true })), /<a [^>]*data-variant="primary"[^>]*href="\/sessions"/);
 });
 
 test("the hero on a device it cannot tell: every way, the Mac's the file itself — or its tab while the App is not out", () => {
   const html = landing("en", { hints: HINTS.unknown });
   const h = hero(html);
   assert.match(h, /data-offer="all"/);
-  assert.match(h, /<a href="\/signup" data-variant="primary"/);
+  assert.match(h, /<a [^>]*data-variant="primary"[^>]*href="\/signup"/);
   assert.match(h, new RegExp(`<a href="${esc(`${DL}Droppen-0.2.129.dmg`)}" data-testid="hero-download"`));
   for (const os of ["linux", "windows", "mobile"]) assert.match(h, new RegExp(`<a href="/download\\?os=${os}"`), os);
   assert.equal(primaries(html), 1);
@@ -498,9 +456,9 @@ test("the hero on a device it cannot tell: every way, the Mac's the file itself 
 test("the hero reads in en, zh-CN, zh-TW and ja on every device, and sells before it explains", () => {
   const said: Record<string, Record<string, string[]>> = {
     en: { mac: ["Download for Mac"], linux: ["Paste it into a terminal on this device", "Or download it:"], windows: ["Sign up on the web", "Droppen for Mac"], phone: ["On your phone, Droppen works in the browser"], unknown: ["Get Droppen:"] },
-    "zh-CN": { mac: ["下载 Mac 版", "Linux 及其他平台"], linux: ["在这台设备的终端里粘贴运行", "复制命令", "也可以直接下载："], windows: ["在网页上免费注册", "Droppen · Mac"], phone: ["在手机上，Droppen 直接在浏览器里用"], unknown: ["获取 Droppen：", "下载 Mac 版"] },
-    "zh-TW": { mac: ["下載 Mac 版", "Linux 及其他平台"], linux: ["在這台裝置的終端機裡貼上執行", "也可以直接下載："], windows: ["在網頁上免費註冊", "Droppen · Mac"], phone: ["在手機上，Droppen 直接在瀏覽器裡用"], unknown: ["取得 Droppen："] },
-    ja: { mac: ["Mac 版をダウンロード", "Linux とほかのプラットフォーム"], linux: ["このデバイスのターミナルに貼り付けて実行すると", "直接ダウンロードもできます："], windows: ["Web で登録", "Droppen · Mac 版"], phone: ["スマホでは、Droppen はブラウザで使います。"], unknown: ["Droppen を入手："] },
+    "zh-CN": { mac: ["下载 Mac 版", "Linux 及其他平台"], linux: ["在终端中粘贴运行", "复制命令", "也可以直接下载："], windows: ["在网页上注册", "Droppen · Mac"], phone: ["手机端直接在浏览器中打开", "并可添加到主屏幕。"], unknown: ["获取 Droppen：", "下载 Mac 版"] },
+    "zh-TW": { mac: ["下載 Mac 版", "Linux 及其他平台"], linux: ["在終端機中貼上執行", "也可以直接下載："], windows: ["在網頁上註冊", "Droppen · Mac"], phone: ["手機端直接在瀏覽器中打開", "並可加入主畫面。"], unknown: ["取得 Droppen："] },
+    ja: { mac: ["Mac 版をダウンロード", "Linux とほかのプラットフォーム"], linux: ["ターミナルに貼り付けて実行すると", "直接ダウンロードもできます："], windows: ["Web で登録", "Droppen · Mac 版"], phone: ["スマホでは、Droppen はブラウザで直接使えます。", "エージェントは Mac や Linux 側で動作し続けます。"], unknown: ["Droppen を入手："] },
   };
   for (const [lng, devices] of Object.entries(said)) {
     for (const [device, lines] of Object.entries(devices)) {

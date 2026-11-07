@@ -14,8 +14,8 @@
  */
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { Menu } from "@base-ui-components/react/menu";
-import { ArrowRight, ChevronRight, Ellipsis, Globe, MonitorSmartphone, Server, Smartphone } from "lucide-react";
+import { Menu } from "@base-ui/react/menu";
+import { ArrowRightIcon, CaretRightIcon, DeviceMobileIcon, DevicesIcon, DotsThreeIcon, GlobeIcon, HardDrivesIcon } from "@phosphor-icons/react";
 import type { components } from "@/api/schema";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -276,7 +276,7 @@ export function RowMenu({ id, items }: { id: string; items: RowMenuItem[] }) {
         aria-label={t("more actions")}
         className="flex size-7 shrink-0 items-center justify-center border border-transparent text-muted hover:border-border-strong hover:text-fg data-[popup-open]:border-border-strong data-[popup-open]:text-fg pointer-coarse:size-9"
       >
-        <Ellipsis className="size-4" />
+        <DotsThreeIcon className="size-4" />
       </Menu.Trigger>
       <Menu.Portal>
         <Menu.Positioner side="bottom" align="end" sideOffset={4} collisionPadding={8} className="z-50 outline-none">
@@ -602,7 +602,7 @@ export function ReEnrollWarning({
   );
 }
 
-const ICONS = { computer: Server, phone: Smartphone, browser: Globe, browserOrPhone: MonitorSmartphone } as const;
+const ICONS = { computer: HardDrivesIcon, phone: DeviceMobileIcon, browser: GlobeIcon, browserOrPhone: DevicesIcon } as const;
 
 /**
  * One row of 「我的设备」: a fixed 56px line — name, state as a dot and a
@@ -820,7 +820,7 @@ export function DeviceRow({
             >
               {name}
             </span>
-            <ChevronRight aria-hidden="true" className="size-3 shrink-0 text-faint transition-transform group-open/details:rotate-90" />
+            <CaretRightIcon aria-hidden="true" className="size-3 shrink-0 text-faint transition-transform group-open/details:rotate-90" />
             <span data-testid="row-badges" className="hidden min-w-0 shrink flex-wrap items-center gap-1.5 overflow-hidden @min-[44rem]/devices:inline-flex">
               <RowBadges view={view} />
               {openWarnings && (
@@ -846,7 +846,7 @@ export function DeviceRow({
                 aria-label={view.presence === "online" || !view.hasCopy ? t("open") : t("read the copy")}
               >
                 <span className="hidden @min-[26rem]/devices:inline">{view.presence === "online" || !view.hasCopy ? t("open") : t("read the copy")}</span>
-                <ArrowRight aria-hidden="true" />
+                <ArrowRightIcon aria-hidden="true" />
               </Button>
             )}
           </span>

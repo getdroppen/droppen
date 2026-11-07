@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ChevronRight, Loader2 } from "lucide-react";
+import { CaretRightIcon, CircleNotchIcon } from "@phosphor-icons/react";
 import { BrandMark } from "@/components/brand-mark";
 import { ApiError } from "@/api/errors";
 import { cn } from "@/lib/cn";
@@ -308,7 +308,7 @@ export function FirstAccountForm({
       </label>
       {problem && <SetupProblemLine problem={problem} />}
       <button type="submit" disabled={busy || !filled} data-testid="setup-submit" data-variant="primary" className={look.button}>
-        {busy && <Loader2 className="size-3.5 animate-spin" />}
+        {busy && <CircleNotchIcon className="size-3.5 animate-spin" />}
         {busy ? t("creating account…") : t("create account and sign in")}
       </button>
     </form>
@@ -382,7 +382,7 @@ export function SetupPage({ owner, localOpenError = null }: { owner: boolean; lo
                 {/* Collapsed: the code is the way in from another device, and the way of last resort on this one. */}
                 <details className="group border-t border-border pt-3" data-testid="setup-with-code">
                   <summary className="flex cursor-pointer list-none items-start gap-1 text-2xs text-muted hover:text-fg [&::-webkit-details-marker]:hidden">
-                    <ChevronRight className="mt-0.5 size-3 shrink-0 transition-transform group-open:rotate-90" />
+                    <CaretRightIcon className="mt-0.5 size-3 shrink-0 transition-transform group-open:rotate-90" />
                     <span>
                       {t(
                         "Or create the first account with the one-time setup code this device's server keeps (`{{command}} setup-code` on this device shows it)",

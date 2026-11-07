@@ -1,4 +1,4 @@
-import { Loader2, TriangleAlert } from "lucide-react";
+import { CircleNotchIcon, WarningIcon } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
 import { restChipText, restTitle, restTone, type AccountRest } from "@/features/accounts/account-rest";
 import { cn } from "@/lib/cn";
@@ -35,7 +35,7 @@ export function RestChip({
       )}
       title={title ?? restTitle(rest, t)}
     >
-      {warning && <TriangleAlert className="size-3 shrink-0" />}
+      {warning && <WarningIcon className="size-3 shrink-0" />}
       <span className="min-w-0 truncate">{restChipText(rest, t)}</span>
       {onClear && (
         <button
@@ -45,7 +45,7 @@ export function RestChip({
           title={t("clear this rest so the account is used again")}
           className="-mr-1 shrink-0 rounded px-1 text-muted hover:bg-hover hover:text-fg disabled:opacity-40"
         >
-          {clearing ? <Loader2 className="inline size-3 animate-spin align-[-2px]" /> : t("clear")}
+          {clearing ? <CircleNotchIcon className="inline size-3 animate-spin align-[-2px]" /> : t("clear")}
         </button>
       )}
     </span>

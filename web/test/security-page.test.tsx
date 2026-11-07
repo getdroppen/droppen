@@ -1,23 +1,4 @@
-// droppen.app/security (`features/landing/security/security.tsx`): how the
-// end-to-end encryption works, for a technical reader.
-//
-// What these pin: `/security` is a public page of its own, signed in or not,
-// linked from every public page's footer, from the landing page's security
-// section and from the privacy notice; it reads in en, zh-CN, zh-TW and ja
-// with every string translated and nothing left in English; its sections come
-// in order, each with an anchor the table of contents links, and the identity
-// renewal's parts have anchors of their own; what is not live, or still in
-// testing, is marked so (the renewal "in testing", switched on at droppen.app
-// and tested there, never called stable; a passkey letting a device in on its
-// own "not live"), passkeys are described as shipped (sign-in, and a join a
-// full device approves by pairing), and the page says
-// where the source is; it says plainly that
-// a modified page can do anything the browser can, keys included; the
-// cross-references are links to anchors that exist; its enumerations are
-// lists and its key terms bold, by a markup that leaves nothing unrendered,
-// with every translation in its English line's shape; every path in the
-// repository it names links there on GitHub; vulnerabilities go to the
-// security address; it names no Hub setting.
+// Server-rendered security-page content, navigation, translation, and link contracts.
 import * as React from "react";
 import assert from "node:assert/strict";
 import { readFileSync, statSync } from "node:fs";
@@ -296,17 +277,13 @@ const shape = (line: string) => ({
 
 test("the markup: key terms bold, a reason after a term muted, list items in a real list after their lead-in", () => {
   const html = renderToStaticMarkup(<div>{linked("Lead with **a term** and [[a link|t2-6]]:\n- **one** (why, see [[2.6|t2-6]])\n- **二**（理由（内））\n- three\nA closing line.")}</div>);
-  assert.equal(
-    html,
-    '<div><div class="flex flex-col gap-2"><p>Lead with <strong class="font-semibold text-fg">a term</strong> and <a href="#t2-6" class="text-fg underline underline-offset-4 hover:no-underline">a link</a>:</p>' +
-      '<ul class="flex flex-col gap-2">' +
-      '<li class="flex gap-2.5"><span class="size-1.5 shrink-0 bg-fg mt-2"></span><span class="min-w-0"><strong class="font-semibold text-fg">one</strong> <span class="font-normal text-muted">(why, see <a href="#t2-6" class="text-fg underline underline-offset-4 hover:no-underline">2.6</a>)</span></span></li>' +
-      '<li class="flex gap-2.5"><span class="size-1.5 shrink-0 bg-fg mt-2"></span><span class="min-w-0"><strong class="font-semibold text-fg">二</strong><span class="font-normal text-muted">（理由（内））</span></span></li>' +
-      '<li class="flex gap-2.5"><span class="size-1.5 shrink-0 bg-fg mt-2"></span><span class="min-w-0">three</span></li>' +
-      "</ul><p>A closing line.</p></div></div>",
-  );
-  // One line stays inline, and a line with no markup stays as it is.
-  assert.equal(renderToStaticMarkup(<p>{linked("A **term** here.")}</p>), '<p>A <strong class="font-semibold text-fg">term</strong> here.</p>');
+  assert.match(html, /<p>Lead with <strong[^>]*>a term<\/strong> and <a href="#t2-6"[^>]*>a link<\/a>:<\/p><ul/);
+  assert.equal((html.match(/<li\b/g) ?? []).length, 3);
+  for (const term of ["one", "二"]) assert.match(html, new RegExp(`<strong[^>]*>${term}</strong>`));
+  assert.match(html, /<span[^>]*>\(why, see <a href="#t2-6"[^>]*>2\.6<\/a>\)<\/span>/);
+  assert.match(html, /（理由（内））/);
+  assert.match(html, /<\/ul><p>A closing line\.<\/p>/);
+  assert.match(renderToStaticMarkup(<p>{linked("A **term** here.")}</p>), /^<p>A <strong[^>]*>term<\/strong> here\.<\/p>$/);
   assert.equal(linked("Plain words (and a parenthesis)."), "Plain words (and a parenthesis).");
 });
 

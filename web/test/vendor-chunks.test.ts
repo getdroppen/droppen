@@ -59,29 +59,29 @@ const app = (icons: string[]) => ({
   "entry.js": [
     'import { createRoot } from "react-dom/client";',
     'import { jsx } from "react/jsx-runtime";',
-    'import { clsx } from "clsx";',
+    'import { cn } from "cn";',
     'import { useVirtualizer } from "@tanstack/react-virtual";',
-    `import { ${icons.join(", ")} } from "lucide-react";`,
-    `createRoot(document.body).render([${icons.map((i) => `jsx(${i}, { className: clsx("a") })`).join(", ")}]);`,
+    `import { ${icons.join(", ")} } from "@phosphor-icons/react";`,
+    `createRoot(document.body).render([${icons.map((i) => `jsx(${i}, { className: cn("a") })`).join(", ")}]);`,
     // An app build keeps no exports of its entry: only what it runs is bundled.
     'console.log(useVirtualizer, () => import("./settings.js"));',
     "",
   ].join("\n"),
   // Lazy only: a QR decoder and an icon of its own.
-  "settings.js": 'import jsQR from "jsqr";\nimport { X } from "lucide-react";\nexport default [jsQR, X];\n',
+  "settings.js": 'import jsQR from "jsqr";\nimport { XIcon } from "@phosphor-icons/react";\nexport default [jsQR, XIcon];\n',
 });
 
 test("vendor holds what the entry reaches statically, React its own chunk, and lazy-only code stays lazy", async () => {
-  const chunks = await bundle(app(["Check"]));
+  const chunks = await bundle(app(["CheckIcon"]));
   assert.deepEqual(bootNames(chunks), ["entry", "vendor", "vendor-react"]);
   for (const pkg of ["react", "react-dom", "scheduler"]) assert.deepEqual(holding(chunks, pkg), ["vendor-react"], pkg);
   assert.deepEqual(chunk(chunks, "vendor-react").imports, [], "vendor-react imports no other chunk");
-  assert.deepEqual(holding(chunks, "clsx"), ["vendor"]);
+  assert.deepEqual(holding(chunks, "cn"), ["vendor"]);
   assert.deepEqual(holding(chunks, "@tanstack/react-virtual"), ["vendor"]);
   assert.deepEqual(namesOf(chunks, chunk(chunks, "vendor").imports), ["vendor-react"]);
   assert.deepEqual(holding(chunks, "jsqr"), ["settings"], "a package only lazy code uses is not in vendor");
   // Icons and their renderer stay with the code that uses them.
-  assert.deepEqual(holding(chunks, "lucide-react"), ["entry", "settings"]);
+  assert.deepEqual(holding(chunks, "@phosphor-icons/react"), ["entry", "settings"]);
 });
 
 test("the CommonJS helpers go with React, even when another CommonJS package runs first", async () => {
@@ -97,8 +97,8 @@ test("the CommonJS helpers go with React, even when another CommonJS package run
 });
 
 test("a new icon leaves the vendor chunks' hashes alone", async () => {
-  const before = await bundle(app(["Check"]));
-  const after = await bundle(app(["Check", "Plus"]));
+  const before = await bundle(app(["CheckIcon"]));
+  const after = await bundle(app(["CheckIcon", "PlusIcon"]));
   for (const name of ["vendor", "vendor-react"]) assert.equal(chunk(after, name).fileName, chunk(before, name).fileName, name);
   assert.notEqual(chunk(after, "entry").fileName, chunk(before, "entry").fileName);
 });
@@ -111,7 +111,7 @@ test("a boot chunk with code of an on-demand package fails the build", async () 
 });
 
 test("so does one with an on-demand package's stylesheet, which renders no JS", async () => {
-  const eager = { "entry.js": 'import "katex/dist/katex.min.css";\nimport { clsx } from "clsx";\nconsole.log(clsx);\n' };
+  const eager = { "entry.js": 'import "katex/dist/katex.min.css";\nimport { cn } from "cn";\nconsole.log(cn);\n' };
   await assert.rejects(bundle(eager, { onDemand: ["katex"] }), /is a boot chunk, but holds code or CSS the app loads on demand: .*\/node_modules\/katex\/dist\/katex\.min\.css/);
   // Imported by a lazy module, it ships with that module's chunk.
   const lazy = { "entry.js": 'console.log(() => import("./math.js"));\n', "math.js": 'import "katex/dist/katex.min.css";\nexport default 1;\n' };
@@ -119,8 +119,8 @@ test("so does one with an on-demand package's stylesheet, which renders no JS", 
 });
 
 test("a vendor chunk importing anything but vendor-react fails the build", async () => {
-  // Lucide imports React: with React in `vendor`, `vendor-react` would import it.
-  const manualChunks = (id: string) => (id.includes("/node_modules/lucide-react/") ? "vendor-react" : id.includes("/node_modules/react/") ? "vendor" : undefined);
-  const files = { "entry.js": 'import { Check } from "lucide-react";\nconsole.log(Check);\n' };
+  // Phosphor imports React: with React in `vendor`, `vendor-react` would import it.
+  const manualChunks = (id: string) => (id.includes("/node_modules/@phosphor-icons/react/") ? "vendor-react" : id.includes("/node_modules/react/") ? "vendor" : undefined);
+  const files = { "entry.js": 'import { CheckIcon } from "@phosphor-icons/react";\nconsole.log(CheckIcon);\n' };
   await assert.rejects(bundle(files, { manualChunks }), /vendor-react-.*\.js imports .*vendor-.*\.js — a vendor chunk may import only vendor-react/);
 });

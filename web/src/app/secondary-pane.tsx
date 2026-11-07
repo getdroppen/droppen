@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { SourceIcon } from "@/components/source-icon";
-import { Bot, ChevronLeft, Folder, LayoutGrid, MessagesSquare, Plus, Sparkles, SquareTerminal, Terminal, X, Zap } from "lucide-react";
+import { RobotIcon, CaretLeftIcon, FolderIcon, SquaresFourIcon, ChatsCircleIcon, PlusIcon, SparkleIcon, TerminalWindowIcon, TerminalIcon, XIcon, LightningIcon } from "@phosphor-icons/react";
 import { Suspense, useCallback, useMemo, useState, type ReactNode } from "react";
 import { localize } from "@droppen/plugin-sdk";
 import { useTranslation } from "react-i18next";
@@ -60,7 +60,7 @@ function PickerShell({
           onClick={onBack}
           className="flex size-5 items-center justify-center rounded text-muted hover:bg-hover"
         >
-          <ChevronLeft className="size-3.5" />
+          <CaretLeftIcon className="size-3.5" />
         </button>
         <span className="flex-1 font-mono text-2xs font-semibold tracking-wider text-muted uppercase">{title}</span>
         {devices}
@@ -70,7 +70,7 @@ function PickerShell({
             onClick={onNew}
             className="flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-2xs text-accent hover:bg-hover"
           >
-            <Plus className="size-3" /> {tr("new")}
+            <PlusIcon className="size-3" /> {tr("new")}
           </button>
         )}
       </header>
@@ -196,7 +196,7 @@ function TerminalPickerPanel({
           onClick={() => onPick({ kind: "terminal", id: t.id })}
           className="flex w-full items-center gap-1.5 border-b border-border px-2.5 py-1.5 text-left hover:bg-hover"
         >
-          <SquareTerminal className="size-3.5 shrink-0 text-ok/70" />
+          <TerminalWindowIcon className="size-3.5 shrink-0 text-ok/70" />
           <span className="min-w-0 flex-1 truncate text-xs">{t.title}</span>
           <span className="shrink-0 font-mono text-2xs text-faint">{formatRelative(t.createdAt)}</span>
         </button>
@@ -234,11 +234,11 @@ function ChatPickerPanel({
         >
           <div className="flex items-center gap-1.5">
             {chat.kind === "claude" ? (
-              <Sparkles className="size-3 shrink-0 text-accent" />
+              <SparkleIcon className="size-3 shrink-0 text-accent" />
             ) : chat.kind === "codex" ? (
-              <Terminal className="size-3 shrink-0 text-muted" />
+              <TerminalIcon className="size-3 shrink-0 text-muted" />
             ) : (
-              <Bot className="size-3 shrink-0 text-muted" />
+              <RobotIcon className="size-3 shrink-0 text-muted" />
             )}
             <span className="min-w-0 flex-1 truncate text-xs">{chat.title}</span>
             <span className="ml-auto shrink-0 font-mono text-2xs text-faint">
@@ -313,7 +313,7 @@ function PanePicker({
             onClick={() => onPick({ kind: "files" })}
             className="flex items-center gap-2.5 border border-border bg-bg px-3 py-2.5 text-left hover:border-fg hover:bg-hover"
           >
-            <Folder className="size-4 shrink-0 text-muted" />
+            <FolderIcon className="size-4 shrink-0 text-muted" />
             <span><span className="block text-xs font-medium">{tr("Files")}</span><span className="block font-mono text-2xs text-faint">{tr("browse, preview and transfer files")}</span></span>
           </button>
           <button
@@ -321,7 +321,7 @@ function PanePicker({
             onClick={() => setLevel("session")}
             className="flex items-center gap-2.5 border border-border bg-bg px-3 py-2.5 text-left hover:border-fg hover:bg-hover"
           >
-            <MessagesSquare className="size-4 shrink-0 text-muted" />
+            <ChatsCircleIcon className="size-4 shrink-0 text-muted" />
             <span>
               <span className="block text-xs font-medium">{tr("Session")}</span>
               <span className="block font-mono text-2xs text-faint">{tr("claude / codex")}</span>
@@ -332,7 +332,7 @@ function PanePicker({
             onClick={() => setLevel("chat")}
             className="flex items-center gap-2.5 border border-border bg-bg px-3 py-2.5 text-left hover:border-fg hover:bg-hover"
           >
-            <Zap className="size-4 shrink-0 text-warn-fg/80" />
+            <LightningIcon className="size-4 shrink-0 text-warn-fg/80" />
             <span>
               <span className="block text-xs font-medium">{tr("Instant Chat")}</span>
               <span className="block truncate font-mono text-2xs text-faint">{tr("daily chat")}</span>
@@ -343,7 +343,7 @@ function PanePicker({
             onClick={() => setLevel("terminal")}
             className="flex items-center gap-2.5 border border-border bg-bg px-3 py-2.5 text-left hover:border-fg hover:bg-hover"
           >
-            <SquareTerminal className="size-4 shrink-0 text-ok/80" />
+            <TerminalWindowIcon className="size-4 shrink-0 text-ok/80" />
             <span>
               <span className="block text-xs font-medium">{tr("Terminal")}</span>
               <span className="block font-mono text-2xs text-faint">{tr("shell")}</span>
@@ -447,7 +447,7 @@ export function PaneLeafContent({
     return (
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <header className="flex h-8 shrink-0 items-center gap-2 border-b border-border bg-panel px-2">
-          <LayoutGrid className="size-3.5 shrink-0 text-faint" />
+          <SquaresFourIcon className="size-3.5 shrink-0 text-faint" />
           <span className="min-w-0 flex-1 truncate font-mono text-2xs text-muted">pick content for this pane</span>
           <PaneActions content={content} onSwitch={() => undefined} onClose={onClose} />
         </header>
@@ -494,7 +494,7 @@ function MissingDevicePane({
   return (
     <div data-pane-missing-device={machine} className="flex min-h-0 min-w-0 flex-1 flex-col">
       <header className="flex h-8 shrink-0 items-center gap-2 border-b border-border bg-panel px-2">
-        <LayoutGrid className="size-3.5 shrink-0 text-faint" />
+        <SquaresFourIcon className="size-3.5 shrink-0 text-faint" />
         <span className="min-w-0 flex-1 truncate font-mono text-2xs text-muted">{content.kind}</span>
         <PaneActions content={content} device={<DeviceChip machine={machine} />} onSwitch={onSwitch} onClose={onClose} />
       </header>
@@ -544,7 +544,7 @@ function PaneActions({
         onClick={onClose}
         className="flex size-5 shrink-0 items-center justify-center rounded text-muted hover:bg-hover hover:text-fg"
       >
-        <X className="size-3.5" />
+        <XIcon className="size-3.5" />
       </button>
     </>
   );
@@ -588,7 +588,7 @@ function PaneLeafBody({
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       {!sessionHeader && content.kind !== "files" && <header className="flex h-8 shrink-0 items-center gap-2 border-b border-border bg-panel px-2">
-        <LayoutGrid className="size-3.5 shrink-0 text-faint" />
+        <SquaresFourIcon className="size-3.5 shrink-0 text-faint" />
         <span className="min-w-0 flex-1 truncate font-mono text-2xs text-muted">
           {content.kind === "plugin" && <PluginPaneTitle content={content} />}
           {content.kind === "chat" && `chat · ${content.id.slice(0, 8)}`}

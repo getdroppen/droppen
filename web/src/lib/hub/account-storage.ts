@@ -6,11 +6,14 @@
  * Nothing here knows the account's state; `account.ts` does.
  */
 
-export const deviceKey = (account: string) => `rh.hub.device.${account}`;
+/** Where this browser notes an account's device id. */
+export const DEVICE_NOTE_PREFIX = "rh.hub.device.";
+export const deviceKey = (account: string) => `${DEVICE_NOTE_PREFIX}${account}`;
 /** The Web Lock moving the raw machine keys from before the keyring is done under (`CloudAccount.migrate`): the key store's, not one account's. */
 export const LEGACY_MIGRATION_LOCK = "rh-legacy-machine-keys";
 /** The signing key (hex) this browser's device id was registered with: what tells keys that changed under it. */
-export const deviceSignKey = (account: string) => `rh.hub.devicekey.${account}`;
+export const DEVICE_KEY_NOTE_PREFIX = "rh.hub.devicekey.";
+export const deviceSignKey = (account: string) => `${DEVICE_KEY_NOTE_PREFIX}${account}`;
 /** A device id this browser held but lost the keys of, until it is a device of the account again. */
 export const lostDeviceKey = (account: string) => `rh.hub.lost.${account}`;
 /** What the key store held instead of that device's keys, in a few words (shown with the notice). */

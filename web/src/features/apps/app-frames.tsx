@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useRouterState } from "@tanstack/react-router";
-import { Loader2 } from "lucide-react";
+import { CircleNotchIcon } from "@phosphor-icons/react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/cn";
@@ -15,7 +15,7 @@ function AppFrame({ id, title }: { id: string; title: string }) {
     <div className="relative flex size-full">
       {!loaded && (
         <div className="absolute inset-0 flex items-center justify-center gap-2 bg-bg">
-          <Loader2 className="size-4 animate-spin text-muted" />
+          <CircleNotchIcon className="size-4 animate-spin text-muted" />
           <span className="font-mono text-2xs text-muted">{t("starting {{name}}…", { name: title })}</span>
         </div>
       )}

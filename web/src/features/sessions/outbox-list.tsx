@@ -1,4 +1,4 @@
-import { Loader2, Play, RotateCw, X, Zap } from "lucide-react";
+import { CircleNotchIcon, PlayIcon, ArrowClockwiseIcon, XIcon, LightningIcon } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
 import { ReceiptBadge } from "./receipt-badge";
 import { outboxState, type OutgoingMessage } from "./send-receipts";
@@ -89,7 +89,7 @@ export function OutboxList({
                 title={t("check whether it arrived")}
                 onClick={onCheck} data-signal="warn" className="flex size-5 shrink-0 items-center justify-center rounded text-warn-fg hover:bg-hover disabled:opacity-40"
               >
-                {checking ? <Loader2 className="size-3 animate-spin" /> : <RotateCw className="size-3" />}
+                {checking ? <CircleNotchIcon className="size-3 animate-spin" /> : <ArrowClockwiseIcon className="size-3" />}
               </button>
             ) : state === "unsent" || state === "failed" ? (
               <button
@@ -101,17 +101,17 @@ export function OutboxList({
                 }
                 onClick={() => onResend(message)} data-signal="ok" className="flex size-5 shrink-0 items-center justify-center rounded text-ok hover:bg-hover"
               >
-                <Play className="size-3" />
+                <PlayIcon className="size-3" />
               </button>
             ) : isHead && steering ? (
-              <Loader2 className="size-3 shrink-0 animate-spin text-accent" />
+              <CircleNotchIcon className="size-3 shrink-0 animate-spin text-accent" />
             ) : isHead && headAction === "send" ? (
               <button
                 type="button"
                 title={t("send this queued message now")}
                 onClick={onSendHead} data-signal="ok" className="flex size-5 shrink-0 items-center justify-center rounded text-ok hover:bg-hover"
               >
-                <Play className="size-3" />
+                <PlayIcon className="size-3" />
               </button>
             ) : isHead && headAction === "steer" ? (
               <button
@@ -120,7 +120,7 @@ export function OutboxList({
                 onClick={onSteerHead}
                 className="flex size-5 shrink-0 items-center justify-center rounded text-accent hover:bg-hover"
               >
-                <Zap className="size-3" />
+                <LightningIcon className="size-3" />
               </button>
             ) : null}
             <button
@@ -128,7 +128,7 @@ export function OutboxList({
               title={t("remove from queue")}
               onClick={() => onRemove(message)} data-signal="failed" className="flex size-5 shrink-0 items-center justify-center rounded text-muted hover:bg-hover hover:text-danger"
             >
-              <X className="size-3" />
+              <XIcon className="size-3" />
             </button>
           </div>
         );

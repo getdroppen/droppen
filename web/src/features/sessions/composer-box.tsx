@@ -9,13 +9,13 @@
  * for differs, which the caller supplies: the chips, the placeholder, what
  * sending does and what the send button says.
  */
-import { Camera, FileText, ListPlus, Loader2, Paperclip, SendHorizontal, X } from "lucide-react";
+import { CameraIcon, FileTextIcon, ListPlusIcon, CircleNotchIcon, PaperclipIcon, PaperPlaneTiltIcon, XIcon } from "@phosphor-icons/react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { HostImage } from "@/components/host-file";
 import { authHeader, noteUnauthorized } from "@/lib/auth";
 import { cn } from "@/lib/cn";
-import { isImeKeydown, useImeComposition } from "@/lib/ime";
+import { isSendKeydown, useImeComposition } from "@/lib/ime";
 import { useMachineRuntime } from "@/lib/machines/context";
 import { autoGrowTextarea, useEnterSendsModifier } from "./composer-controls";
 
@@ -223,11 +223,11 @@ function AttachmentThumb({ attachment: a, onRemove }: { attachment: ComposerAtta
           title={a.error ?? a.name}
           className={cn("flex h-10 max-w-40 items-center gap-1.5 rounded border bg-panel px-2 font-mono text-2xs text-fg", frame)}
         >
-          <FileText className="size-3.5 shrink-0 text-muted" />
+          <FileTextIcon className="size-3.5 shrink-0 text-muted" />
           <span className="truncate">{a.name}</span>
         </span>
       )}
-      {a.status === "uploading" && <Loader2 className="absolute inset-0 m-auto size-4 animate-spin text-fg" />}
+      {a.status === "uploading" && <CircleNotchIcon className="absolute inset-0 m-auto size-4 animate-spin text-fg" />}
       <button
         type="button"
         title={t("remove attachment")}
@@ -235,7 +235,7 @@ function AttachmentThumb({ attachment: a, onRemove }: { attachment: ComposerAtta
         data-signal="danger"
         className="absolute -top-1 -right-1 hidden size-3.5 items-center justify-center bg-danger text-white group-hover:flex"
       >
-        <X className="size-2.5" />
+        <XIcon className="size-2.5" />
       </button>
     </span>
   );
@@ -347,12 +347,9 @@ export function ComposerBox({
           }
         }}
         onKeyDown={(e) => {
-          if (e.key !== "Enter" || isImeKeydown(e)) return;
-          const sendKey = enterSendsModifier ? e.metaKey || e.ctrlKey : !e.shiftKey;
-          if (sendKey) {
-            e.preventDefault();
-            onSubmit();
-          }
+          if (!isSendKeydown(e, enterSendsModifier)) return;
+          e.preventDefault();
+          onSubmit();
         }}
         rows={2}
         placeholder={placeholder}
@@ -380,7 +377,7 @@ export function ComposerBox({
               onClick={() => fileInputRef.current?.click()}
               className="flex size-6 shrink-0 items-center justify-center text-muted hover:bg-hover hover:text-fg disabled:pointer-events-none disabled:opacity-40"
             >
-              <Paperclip className="size-3.5" />
+              <PaperclipIcon className="size-3.5" />
             </button>
             {/* Phones only: accept="image/*" with no capture attribute makes
                 the OS offer the camera AND the photo library, where the
@@ -404,7 +401,7 @@ export function ComposerBox({
               onClick={() => imageInputRef.current?.click()}
               className="flex size-6 shrink-0 items-center justify-center text-muted hover:bg-hover hover:text-fg disabled:pointer-events-none disabled:opacity-40 md:hidden"
             >
-              <Camera className="size-3.5" />
+              <CameraIcon className="size-3.5" />
             </button>
           </>
         )}
@@ -419,11 +416,11 @@ export function ComposerBox({
           className="ml-auto flex size-6.5 shrink-0 items-center justify-center bg-fg text-bg hover:bg-fg/85 disabled:opacity-40"
         >
           {send.busy ? (
-            <Loader2 className="size-3.5 animate-spin" />
+            <CircleNotchIcon className="size-3.5 animate-spin" />
           ) : send.queues ? (
-            <ListPlus className="size-3.5" />
+            <ListPlusIcon className="size-3.5" />
           ) : (
-            <SendHorizontal className="size-3.5" />
+            <PaperPlaneTiltIcon className="size-3.5" />
           )}
         </button>
       </div>

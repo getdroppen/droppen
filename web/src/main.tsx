@@ -16,6 +16,7 @@ import { appUrl, moveOrigins, notInstallable, resolveHostMode, siteOrigin } from
 import { MOVE_PATH } from "./lib/move/types";
 import { frontPage } from "./features/landing/route";
 import { StrictMode } from "react";
+import { IconContext } from "@phosphor-icons/react";
 import { createRoot } from "react-dom/client";
 import { loadPage } from "./app/page-load";
 import { router } from "./app/router";
@@ -27,6 +28,7 @@ import { startKbNative } from "./lib/kb-native";
 import { startLocalOpen } from "./lib/auth";
 import { registerSw } from "./lib/sw-register";
 import { rootInLanguage } from "./i18n";
+import { ICON_CONTEXT } from "./lib/icon";
 import "./index.css";
 
 const queryClient = new QueryClient({
@@ -72,7 +74,15 @@ if (!isCloud() && !returning) {
 }
 // Whichever page this is, its first frame waits for the reader's language
 // (a chunk of its own, unless English): never English first (`i18n/index.ts`).
-const root = rootInLanguage(createRoot(document.getElementById("root")!));
+//
+// Every render below goes through this one root, so the icon weight is set
+// here once (`lib/icon.ts`) rather than in each of the branches: the public
+// pages, the move popup and the app all draw Phosphor icons, and a page
+// without a provider would still draw `regular`, but from the library's
+// default rather than from the app's own rule.
+const root = rootInLanguage(createRoot(document.getElementById("root")!), (children) => (
+  <IconContext.Provider value={ICON_CONTEXT}>{children}</IconContext.Provider>
+));
 if (returning) {
   registerSw();
   const answer = takeReturn();

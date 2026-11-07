@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { SourceIcon } from "@/components/source-icon";
-import { FolderSearch, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
+import { FolderSimpleIcon, CircleNotchIcon, PencilSimpleIcon, PlusIcon, TrashIcon } from "@phosphor-icons/react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { components } from "@/api/schema";
@@ -555,7 +555,7 @@ function TaskForm({ initial, onDone }: { initial?: ScheduledTask; onDone: () => 
               browsing ? "bg-hover text-fg" : "bg-bg text-muted",
             )}
           >
-            <FolderSearch className="size-3.5" />
+            <FolderSimpleIcon className="size-3.5" />
           </button>
         </div>
         {recentCwds.length > 0 && (
@@ -661,7 +661,7 @@ function TaskForm({ initial, onDone }: { initial?: ScheduledTask; onDone: () => 
           onClick={() => save.mutate()}
           data-variant="primary" className={SETTINGS_ACTION_PRIMARY}
         >
-          {save.isPending && <Loader2 className="size-3 animate-spin" />}
+          {save.isPending && <CircleNotchIcon className="size-3 animate-spin" />}
           {initial ? t("save") : t("add task")}
         </button>
         <button
@@ -755,7 +755,7 @@ function TaskRow({ task }: { task: ScheduledTask }) {
             editing ? "text-accent" : "text-muted hover:text-fg",
           )}
         >
-          <Pencil className="size-3.5" />
+          <PencilSimpleIcon className="size-3.5" />
         </button>
         {confirming ? (
           <>
@@ -782,7 +782,7 @@ function TaskRow({ task }: { task: ScheduledTask }) {
             aria-label={t("delete task")}
             onClick={() => setConfirming(true)} data-signal="failed" className="flex size-6 items-center justify-center rounded text-muted hover:bg-hover hover:text-danger"
           >
-            <Trash2 className="size-3.5" />
+            <TrashIcon className="size-3.5" />
           </button>
         )}
       </div>
@@ -849,7 +849,7 @@ export function ScheduleSection() {
             onClick={() => setAdding(true)}
             data-variant="primary" className={SETTINGS_ACTION_PRIMARY}
           >
-            <Plus className="size-3" />
+            <PlusIcon className="size-3" />
             {t("add scheduled task")}
           </button>
         )}

@@ -1,4 +1,4 @@
-import { ArrowRight, TriangleAlert } from "lucide-react";
+import { ArrowRightIcon, WarningIcon } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
 import type { components } from "@/api/schema";
 import { Markdown } from "@/components/markdown";
@@ -130,12 +130,12 @@ export function ModelFallbackNotice({
   const { t } = useTranslation();
   return (
     <div className={cn(rowClass, "flex flex-wrap items-center gap-1.5 font-mono text-2xs text-warn-fg")}>
-      <TriangleAlert className="size-3 shrink-0" />
+      <WarningIcon className="size-3 shrink-0" />
       <span className="shrink-0">{fallback.from === null ? t("switched to") : t("model fallback")}</span>
       {fallback.from !== null && (
         <>
           <span className="min-w-0 truncate text-faint line-through">{fallback.from}</span>
-          <ArrowRight className="size-3 shrink-0 text-faint" />
+          <ArrowRightIcon className="size-3 shrink-0 text-faint" />
         </>
       )}
       <span className="min-w-0 truncate font-bold">{fallback.to}</span>
@@ -159,7 +159,7 @@ export function SyntheticNotice({ item, rowClass }: { item: TranscriptItem; rowC
   return (
     <div className={cn(rowClass, "border-l-2 border-l-warn/60 bg-warn/5")}>
       <div data-signal="warn" className="mb-0.5 flex items-center gap-1.5 font-mono text-[10px] text-warn-fg">
-        <TriangleAlert className="size-3 shrink-0" />
+        <WarningIcon className="size-3 shrink-0" />
         <span>{t("from the CLI, not from the model")}</span>
       </div>
       <Markdown text={item.text} className="text-muted" />

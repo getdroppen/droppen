@@ -22,11 +22,14 @@ import type { Plugin, Rollup } from "vite";
  * it would be downloaded with the boot set; this way a new dependency of a
  * lazy view stays out of it without anyone listing it.
  *
- * Lucide (its icons, and the index that imports every one of them) is left to
- * Rollup too, so an icon lands in the app chunk, or in the lazy chunk that
- * alone uses it. In `vendor`, every icon the app starts to use would rehash
- * it; and the index there would take every icon with it, as a manual chunk
- * takes the modules it imports that no other manual chunk has.
+ * Phosphor (its icons, and the index that imports every one of them) is left
+ * to Rollup too, so an icon lands in the app chunk, or in the lazy chunk that
+ * alone uses it. The index is one JS file that imports each icon from its own
+ * module under `dist/csr/`, so an icon stays an independent module and Rollup
+ * keeps only those the bundle actually uses. In `vendor`, every icon the app
+ * starts to use would rehash it; and the index there would take every icon
+ * with it, as a manual chunk takes the modules it imports that no other
+ * manual chunk has.
  *
  * Deliberately coarse otherwise: finer library groups import each other, and a
  * cycle between chunks runs one before the other's exports exist (a finer
@@ -38,7 +41,7 @@ export function vendorChunk(id: string, meta: Rollup.ManualChunkMeta): string | 
   if (pkg?.startsWith("@xterm/")) return "vendor-xterm";
   if (!bootModules(meta).has(id)) return undefined;
   if (id === COMMONJS_HELPERS || (pkg !== null && REACT.has(pkg))) return "vendor-react";
-  if (pkg === null || pkg === "lucide-react") return undefined;
+  if (pkg === null || pkg === "@phosphor-icons/react") return undefined;
   return "vendor";
 }
 

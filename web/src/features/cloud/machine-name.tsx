@@ -18,7 +18,7 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { Check, Loader2, X } from "lucide-react";
+import { CheckIcon, CircleNotchIcon, XIcon } from "@phosphor-icons/react";
 import { hostRefusalText } from "@/api/errors";
 import { cn } from "@/lib/cn";
 import { type KeyStore, type MachineKey, namingKey } from "@/lib/e2e";
@@ -458,10 +458,10 @@ export function RenameMachineForm({
         className="h-9 min-w-0 flex-1 border border-border bg-bg px-2 font-mono text-xs text-fg placeholder:text-faint focus:border-fg focus:outline-none max-md:text-base"
       />
       <button type="submit" disabled={busy} title={t("save")} aria-label={t("save")} className={button}>
-        {busy ? <Loader2 className={cn(icon, "animate-spin")} /> : <Check className={icon} />}
+        {busy ? <CircleNotchIcon className={cn(icon, "animate-spin")} /> : <CheckIcon className={icon} />}
       </button>
       <button type="button" disabled={busy} title={t("back")} aria-label={t("back")} onClick={onDone} className={button}>
-        <X className={icon} />
+        <XIcon className={icon} />
       </button>
       {error && (
         <span role="alert" data-signal="failed" title={error} className="min-w-0 basis-full truncate font-mono text-2xs text-danger">

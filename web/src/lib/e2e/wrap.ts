@@ -384,18 +384,14 @@ export async function unwrapUnder(key: Uint8Array | CryptoKey, ctx: Uint8Array, 
   }
 }
 
-async function pairingMac(s: Uint8Array, fields: Uint8Array[]): Promise<Bytes> {
+/** The QR secret `s`'s MAC over a pairing delivery: `HMAC(s, "rh/v1 pair\0" ‖ (u32 len ‖ field)*)`. */
+export async function pairingTag(s: Uint8Array, fields: Uint8Array[]): Promise<Bytes> {
   const key = await crypto.subtle.importKey("raw", copy(s), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   const w = new Writer().raw(PAIR_LABEL);
   for (const f of fields) w.u32(f.length).raw(f);
   return new Uint8Array(await crypto.subtle.sign("HMAC", key, w.finish()));
 }
 
-/** The QR secret `s`'s MAC over a pairing delivery: `HMAC(s, "rh/v1 pair\0" ‖ (u32 len ‖ field)*)`. */
-export function pairingTag(s: Uint8Array, fields: Uint8Array[]): Promise<Bytes> {
-  return pairingMac(s, fields);
-}
-
 export async function verifyPairingTag(s: Uint8Array, fields: Uint8Array[], tag: Uint8Array): Promise<boolean> {
-  return equal(await pairingMac(s, fields), tag);
+  return equal(await pairingTag(s, fields), tag);
 }

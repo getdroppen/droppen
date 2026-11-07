@@ -1,4 +1,5 @@
 import i18n from "i18next";
+import type { ReactNode } from "react";
 import type { Root } from "react-dom/client";
 import { initReactI18next } from "react-i18next";
 import { languageLoader, rootAfter } from "./load";
@@ -106,9 +107,12 @@ const FIRST_FRAME_WAIT_MS = 3_000;
  * `root` (main.tsx's), drawing its first frame once the page's language
  * shows: in the reader's language from the start, never English first (or,
  * past {@link FIRST_FRAME_WAIT_MS}, English until it comes).
+ *
+ * `wrap` is the app's own context around every page it draws; it is applied
+ * at this one root so each page inherits it without repeating it.
  */
-export function rootInLanguage(root: Root): Root {
-  return rootAfter(root, languageShown(), FIRST_FRAME_WAIT_MS);
+export function rootInLanguage(root: Root, wrap?: (children: ReactNode) => ReactNode): Root {
+  return rootAfter(root, languageShown(), FIRST_FRAME_WAIT_MS, wrap);
 }
 
 const initial = resolveLanguage(storedLanguagePref());

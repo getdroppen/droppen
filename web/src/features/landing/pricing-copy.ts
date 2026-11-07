@@ -1,49 +1,25 @@
-/*
- * The words of the pricing page (`pricing.tsx`), its waitlist form
- * (`waitlist.tsx`), the privacy notice (`privacy.tsx`) and the public pages'
- * links to them and to the terms of service (`page-kit.tsx`; the terms'
- * own words are in `terms/terms-copy.ts`) — merged into the landing page's tables
- * (`copy.ts`), so the landing test holds them to the same rules: keys are the
- * English text, zh-CN is written as native copy first, zh-TW and ja say the
- * same things.
- *
- * The voice is a product manager's: what the reader gets first (their AI on
- * their phone, more devices, longer offline reading), then the terms. These
- * pages are the product's own words, so `test/ui-wording.test.ts` holds them
- * like the download page: a device is a 设备 / 裝置 / デバイス, the one the
- * page runs on 「这台设备」 / 「這台裝置」 / 「このデバイス」, never a computer
- * or a machine; no "relay", "host" or "entitlement" — "our servers", "devices
- * that run AI". Every number is interpolated from `pricing-plans.ts`, which
- * a test holds to the hub's plans; none is written into a sentence here.
- */
 
 type Bundle = Record<string, string>;
 
 export const pricingZhCN: Bundle = {
-  // The public pages' links
   "Pricing": "定价",
   "Privacy notice": "隐私说明",
   "Terms of Service": "服务条款",
   "How the encryption works, in detail": "加密是怎么做的：详细说明",
   "No code yet? Join the waitlist": "还没有邀请码？加入等候名单",
 
-  // Page
   "Droppen pricing — start free, Pro for ${{price}} a month": "Droppen 定价 — 免费起步，Pro 每月 ${{price}}",
   "Use Droppen on one device with no account, free with an invite, or Pro for more devices and longer offline reading. Every plan is end-to-end encrypted.":
-    "一台设备不用账号就能用；凭邀请码免费用；想要更多设备、更长的离线可读时间就选 Pro。每个方案都端到端加密。",
+    "单设备本地直接使用；凭邀请码免费使用；升级 Pro 方案解锁更多设备配额与更长离线历史缓存。所有方案均支持端到端加密。",
   "Use Droppen on one device with no account, free with an account, or Pro for more devices and longer offline reading. Every plan is end-to-end encrypted.":
-    "一台设备不用账号就能用；注册账号免费用；想要更多设备、更长的离线可读时间就选 Pro。每个方案都端到端加密。",
+    "单设备本地直接使用；注册账号免费使用；升级 Pro 方案解锁更多设备配额与更长离线历史缓存。所有方案均支持端到端加密。",
   "Start free. Go Pro when you need more.": "免费开始，需要更多时升级 Pro",
   "Prices in US dollars. Pro is not on sale yet, and nothing is charged before you choose to pay.": "价格以美元计。Pro 尚未开放购买；在你决定付款之前，不会产生任何费用。",
 
-  // The plans
   "End-to-end encrypted: we can't read your sessions, code or terminals": "端到端加密：我们无法读取你的会话、代码和终端",
-  "Local only": "仅本地",
-  "Recommended": "推荐",
   "forever": "永久免费",
-  "No account, nothing to sign up for": "无需账号，也不用注册",
+  "No account, nothing to sign up for": "无需注册账号，本地直接运行",
   "Free": "免费版",
-  "USD / month": "美元 / 月",
   "Sign-up is by invite for now": "目前凭邀请码注册",
   "Sign-up is closed for now": "目前暂停注册",
   "Sign up with an e-mail address": "使用邮箱注册",
@@ -51,29 +27,31 @@ export const pricingZhCN: Bundle = {
   "Waitlist": "等候名单",
   "or ${{price}} a year: save {{saving}}%": "或每年 ${{price}}，省 {{saving}}%",
 
-  // Compare
   "Compare": "对比",
   "included": "包含",
   "None": "无",
   "Devices that run AI": "可运行 AI 的设备",
   "All your devices": "设备总数",
   "Including phones and browsers": "含手机和浏览器",
-  "That device, and browsers on the same network": "该设备，以及同一网络中的浏览器",
+  "That device, and browsers on the same network": "该设备，以及同一局域网内的浏览器",
   "Offline days": "离线天数",
-  "Sessions your phone can read": "手机上可读的会话",
+  "Sessions your phone can read": "手机端可查阅的历史会话",
   "{{n}} days": "最近 {{n}} 天",
   "A month's transfer": "每月流量",
   "Through our servers": "经我们服务器转发",
   "{{n}} GB, then {{kb}} KB/s": "{{n}} GB，超出后限速至 {{kb}} KB/s",
   "{{n}} GB, then billed by use": "{{n}} GB，超出部分按量计费",
 
-  // Waitlist
   "Leave your address, and we'll write when it's your turn": "留下邮箱，轮到你时我们会发邮件通知你",
   "Leave your address, and we'll write when sign-up or Pro opens": "留下邮箱，开放注册或 Pro 开放购买时，我们会发邮件通知你",
   "Leave your address, and we'll write when Pro opens": "留下邮箱，Pro 开放时通知",
+  "One e-mail, when it opens: nothing else, and never more than 12 months.": "功能开放时仅发送一封通知邮件，绝无其他骚扰，记录至多保留 12 个月。",
+  "We'll write once, when sign-up opens or Pro does.": "注册开放或 Pro 开放时，我们只发一封邮件。",
+  "We'll write when it's your turn.": "轮到你的号码时，我们会发一封邮件。",
   "Plan": "方案",
   "${{price}} / month": "${{price}} / 月",
   "E-mail address": "邮箱地址",
+  "you@example.com": "you@example.com",
   "That does not look like an e-mail address. Check it and try again.": "这看起来不像邮箱地址，检查一下再试。",
   "Use an address you keep: throwaway mail providers are not accepted.": "请用你长期使用的邮箱：不接受一次性邮箱。",
   "Too many tries from your network. Try again in {{n}} min.": "你所在的网络尝试次数太多，请 {{n}} 分钟后再试。",
@@ -84,28 +62,26 @@ export const pricingZhCN: Bundle = {
   "We'll send nothing else. To be taken off the list, write to {{email}}.": "除此之外，我们不会发送任何邮件。如需退出名单，请发邮件至 {{email}}。",
   "Add another address": "再添加一个邮箱",
 
-  // Questions
   "FAQ": "常见问题",
   "What happens when I use up a month's transfer?": "每月流量额度用完后会怎样？",
   "Only what goes through our servers counts: what goes straight between your devices does not. On Free, past {{free}} GB that traffic slows to {{kb}} KB/s until the next month starts; terminals and reading still work, just more slowly. On Pro nothing slows down: what you use past {{pro}} GB is billed by use, at a price we will publish before payments open.":
-    "只有经我们服务器转发的流量才计入，设备之间直接传输的流量不计入。免费版每月转发流量超过 {{free}} GB 后，转发速度限制为 {{kb}} KB/s，直到下个月开始；终端和会话查看仍可使用，但速度较慢。Pro 不限速，超过 {{pro}} GB 的部分按量计费，单价将在开放付款前公布。",
+    "仅计算经我们服务器转发的数据，设备间直连传输的数据不计入。免费版在月度转发流量达到 {{free}} GB 后，速率将限制为 {{kb}} KB/s 直至下月刷新；终端与历史查阅功能保持可用。Pro 方案不限速，超出 {{pro}} GB 部分按量计费，费率将于开放付款前公布。",
   "What does “local only” mean?": "「仅本地」是什么意思？",
   "Droppen runs on your device with no account. You use it in a browser on that device, or on another device on the same network, and nothing goes through our servers. Sign in to Droppen when you want to reach your AI from your phone anywhere, and the sessions of all your devices in one list.":
-    "Droppen 在你的设备上运行，无需账号。在这台设备或同一网络中其他设备的浏览器上即可使用，任何内容都不经过我们的服务器。需要在外出时从手机使用 AI，或在同一个列表中查看所有设备的会话时，再登录 Droppen。",
+    "Droppen 完全在本地设备运行，无需注册任何云端账号。你可以在本地或同一局域网设备的浏览器中直接访问，通信不经过任何外部服务器。若需在外出时通过手机远程连接，或跨设备汇总会话列表，只需注册登录 Droppen 账号。",
   "Can I host it myself?": "可以自行部署吗？",
   "Local only runs entirely on your own devices and needs nothing from us. The Droppen client is open source under the AGPL-3.0, at github.com/getdroppen/droppen. Droppen Hub, the service at droppen.app that connects your devices, is not open source yet, so it cannot be self-hosted for now.":
-    "「仅本地」完全在你自己的设备上运行，不依赖我们的任何服务。Droppen 客户端以 AGPL-3.0 开源，源代码位于 github.com/getdroppen/droppen。连接各台设备的 Droppen Hub（即 droppen.app 背后的服务）尚未开源，因此目前还不能自行部署。",
+    "「仅本地」完全在你自己的设备上独立运行，无需依赖任何云端服务。Droppen 客户端以 AGPL-3.0 开源，源代码位于 github.com/getdroppen/droppen。用于设备互联的 Droppen Hub（即 droppen.app 服务端）尚未开源，因此目前暂不支持自行部署。",
   "When can I pay for Pro?": "何时可以付费开通 Pro？",
   "Not yet: payments are on their way. Until then Pro is by waitlist: join it and we'll e-mail you when Pro opens. Nothing is charged before you choose to pay, and prices are in US dollars.":
-    "目前尚未开放，付款功能正在准备中。在此之前，Pro 仅接受等候名单登记，开放购买时我们会发邮件通知你。在你决定付款之前，不会产生任何费用；价格以美元计。",
+    "支付功能正在筹备中。目前 Pro 方案支持通过等候名单预约登记，正式上线后将通过邮件第一时间通知。未主动确认付款前不会产生任何扣费，所有结算均以美元计价。",
   "What if a device stays offline for longer?": "设备长时间离线会怎样？",
   "On Free your phone can read a device's last {{free}} days of sessions while it is offline, on Pro its last {{pro}}. A device offline for longer than that has its encrypted copy in the cloud deleted: what is on the device itself is not affected, and its recent sessions are uploaded again once it is back online.":
-    "设备离线期间，免费版可在手机上查看它最近 {{free}} 天的会话，Pro 为 {{pro}} 天。离线超过这一期限，该设备在云端的加密副本会被删除；设备上的记录不受影响，重新上线后会自动再次上传最近的会话。",
+    "设备离线期间，免费版可在手机端查阅其最近 {{free}} 天已同步的历史会话，Pro 方案支持查阅 {{pro}} 天。离线时长超出该期限后，云端存储的加密快照将自动清除；本地原始数据不受影响，设备重新联网后将自动同步最新会话。",
   "Is my code safer on Pro?": "Pro 会让代码更安全吗？",
   "It is just as safe on every plan: all of them are end-to-end encrypted the same way, and we can't read your sessions, your code or your terminals on any. A plan only changes how much we keep and carry for you, never who can read it.":
-    "所有方案的安全性相同：都以同样的方式端到端加密，无论哪个方案，我们都无法读取你的会话、代码和终端。方案只决定我们替你保存和转发多少数据，不改变谁能读取这些数据。",
+    "所有方案的安全机制完全一致：均基于端到端加密架构，服务端无法读取你的任何会话、代码与终端通信。订阅方案仅决定数据保存时长与转发配额，绝不影响数据机密性。",
 
-  // Privacy notice
   "Privacy notice — Droppen": "隐私说明 — Droppen",
   "What we keep, and what we can't see.": "我们保存什么，又看不到什么",
   "Droppen is end-to-end encrypted, so there is little to tell: here is all of it.": "Droppen 是端到端加密的，所以要说明的不多，全在这里了。",
@@ -121,7 +97,6 @@ export const pricingZhCN: Bundle = {
   "Until you ask us to remove it, and never more than 12 months after you last joined: older entries are deleted automatically.":
     "保存到你要求删除为止，最长不超过你最后一次加入后的 12 个月：超过的记录会自动删除。",
   "To be taken off, write to {{email}} from that address and we will delete it.": "想退出，用那个邮箱写信到 {{email}}，我们会删除它。",
-  // Downloads (privacy notice)
   "Downloads":
     "下载",
   "If you download Droppen":
@@ -175,7 +150,6 @@ export const pricingZhCN: Bundle = {
     "邮箱从未验证、也从未添加过设备的账号，会在 {{days}} 天后删除。",
   "Contact": "联系我们",
   "Questions, or a request about your data:": "有疑问，或想处理你的数据，请写信到：",
-  // Deleting an account (privacy notice)
   "Deleting your account":
     "删除账号",
   "If you delete your account":
@@ -207,19 +181,16 @@ export const pricingZhTW: Bundle = {
 
   "Droppen pricing — start free, Pro for ${{price}} a month": "Droppen 價格 — 免費起步，Pro 每月 ${{price}}",
   "Use Droppen on one device with no account, free with an invite, or Pro for more devices and longer offline reading. Every plan is end-to-end encrypted.":
-    "一台裝置不用帳號就能用；憑邀請碼免費用；想要更多裝置、更長的離線可讀時間就選 Pro。每個方案都端對端加密。",
+    "單裝置本地直接使用；憑邀請碼免費使用；升級 Pro 方案解鎖更多裝置配額與更長離線快取。所有方案均支援端對端加密。",
   "Use Droppen on one device with no account, free with an account, or Pro for more devices and longer offline reading. Every plan is end-to-end encrypted.":
-    "一台裝置不用帳號就能用；註冊帳號免費用；想要更多裝置、更長的離線可讀時間就選 Pro。每個方案都端對端加密。",
+    "單裝置本地直接使用；註冊帳號免費使用；升級 Pro 方案解鎖更多裝置配額與更長離線快取。所有方案均支援端對端加密。",
   "Start free. Go Pro when you need more.": "免費開始，需要更多時升級 Pro",
   "Prices in US dollars. Pro is not on sale yet, and nothing is charged before you choose to pay.": "價格以美元計。Pro 尚未開放購買；在你決定付款之前，不會產生任何費用。",
 
   "End-to-end encrypted: we can't read your sessions, code or terminals": "端對端加密：我們無法讀取你的工作階段、程式碼和終端機",
-  "Local only": "僅本地",
-  "Recommended": "推薦",
   "forever": "永久免費",
   "No account, nothing to sign up for": "不需要帳號，也不用註冊",
   "Free": "免費版",
-  "USD / month": "美元 / 月",
   "Sign-up is by invite for now": "目前憑邀請碼註冊",
   "Sign-up is closed for now": "目前暫停註冊",
   "Sign up with an e-mail address": "使用電子郵件註冊",
@@ -245,9 +216,13 @@ export const pricingZhTW: Bundle = {
   "Leave your address, and we'll write when it's your turn": "留下電子郵件，輪到你時我們會寄信通知你",
   "Leave your address, and we'll write when sign-up or Pro opens": "留下電子郵件，開放註冊或 Pro 開放購買時，我們會寄信通知你",
   "Leave your address, and we'll write when Pro opens": "留下電子郵件，Pro 開放購買時我們會寄信通知你",
+  "One e-mail, when it opens: nothing else, and never more than 12 months.": "Pro 開放購買時寄一封信給你，僅此而已，信箱最多保留 12 個月。",
+  "We'll write once, when sign-up opens or Pro does.": "開放註冊或 Pro 開放購買時，我們只寄一封信。",
+  "We'll write when it's your turn.": "輪到你時，我們會寄一封信給你。",
   "Plan": "方案",
   "${{price}} / month": "${{price}} / 月",
   "E-mail address": "電子郵件地址",
+  "you@example.com": "you@example.com",
   "That does not look like an e-mail address. Check it and try again.": "這看起來不像電子郵件地址，檢查一下再試。",
   "Use an address you keep: throwaway mail providers are not accepted.": "請用你長期使用的信箱：不接受拋棄式信箱。",
   "Too many tries from your network. Try again in {{n}} min.": "你所在的網路嘗試次數太多，請 {{n}} 分鐘後再試。",
@@ -261,22 +236,22 @@ export const pricingZhTW: Bundle = {
   "FAQ": "常見問題",
   "What happens when I use up a month's transfer?": "每月流量額度用完後會怎樣？",
   "Only what goes through our servers counts: what goes straight between your devices does not. On Free, past {{free}} GB that traffic slows to {{kb}} KB/s until the next month starts; terminals and reading still work, just more slowly. On Pro nothing slows down: what you use past {{pro}} GB is billed by use, at a price we will publish before payments open.":
-    "只有經我們伺服器轉送的流量才計入，裝置之間直接傳輸的流量不計入。免費版每月轉送流量超過 {{free}} GB 後，轉送速度限制為 {{kb}} KB/s，直到下個月開始；終端機和工作階段查看仍可使用，但速度較慢。Pro 不限速，超過 {{pro}} GB 的部分按用量計費，單價將在開放付款前公布。",
+    "僅計算經我們伺服器轉送的數據，裝置間直連傳輸的數據不計入。免費版在月度轉送流量達到 {{free}} GB 後，速率將限制為 {{kb}} KB/s 直至下月刷新；終端機與歷史查閱功能保持可用。Pro 方案不限速，超出 {{pro}} GB 部分按量計費，費率將於開放付款前公布。",
   "What does “local only” mean?": "「僅本地」是什麼意思？",
   "Droppen runs on your device with no account. You use it in a browser on that device, or on another device on the same network, and nothing goes through our servers. Sign in to Droppen when you want to reach your AI from your phone anywhere, and the sessions of all your devices in one list.":
-    "Droppen 在你的裝置上執行，無需帳號。在這台裝置或同一網路中其他裝置的瀏覽器上即可使用，任何內容都不經過我們的伺服器。需要在外出時從手機使用 AI，或在同一個列表中查看所有裝置的工作階段時，再登入 Droppen。",
+    "Droppen 完全在本地裝置執行，無需註冊任何雲端帳號。你可以在本地或同一區域網路裝置的瀏覽器中直接存取，通訊不經過任何外部伺服器。若需在外出時透過手機遠端連線，或跨裝置彙總工作階段清單，只需註冊登入 Droppen 帳號。",
   "Can I host it myself?": "可以自行架設嗎？",
   "Local only runs entirely on your own devices and needs nothing from us. The Droppen client is open source under the AGPL-3.0, at github.com/getdroppen/droppen. Droppen Hub, the service at droppen.app that connects your devices, is not open source yet, so it cannot be self-hosted for now.":
-    "「僅本地」完全在你自己的裝置上執行，不依賴我們的任何服務。Droppen 用戶端以 AGPL-3.0 開源，原始碼位於 github.com/getdroppen/droppen。連接各台裝置的 Droppen Hub（即 droppen.app 背後的服務）尚未開源，因此目前還不能自行架設。",
+    "「僅本地」完全在你自己的裝置上獨立執行，無需依賴任何雲端服務。Droppen 用戶端以 AGPL-3.0 開源，原始碼位於 github.com/getdroppen/droppen。用於裝置互聯的 Droppen Hub（即 droppen.app 伺服端）尚未開源，因此目前暫不支援自行架設。",
   "When can I pay for Pro?": "何時可以付費開通 Pro？",
   "Not yet: payments are on their way. Until then Pro is by waitlist: join it and we'll e-mail you when Pro opens. Nothing is charged before you choose to pay, and prices are in US dollars.":
-    "目前尚未開放，付款功能正在準備中。在此之前，Pro 僅接受等候名單登記，開放購買時我們會寄信通知你。在你決定付款之前，不會產生任何費用；價格以美元計。",
+    "支付功能正在籌備中。目前 Pro 方案支援透過等候名單預約登記，正式上線後將透過郵件第一時間通知。未主動確認付款前不會產生任何扣費，所有結算均以美元計價。",
   "What if a device stays offline for longer?": "裝置長時間離線會怎樣？",
   "On Free your phone can read a device's last {{free}} days of sessions while it is offline, on Pro its last {{pro}}. A device offline for longer than that has its encrypted copy in the cloud deleted: what is on the device itself is not affected, and its recent sessions are uploaded again once it is back online.":
-    "裝置離線期間，免費版可在手機上查看它最近 {{free}} 天的工作階段，Pro 為 {{pro}} 天。離線超過這一期限，該裝置在雲端的加密副本會被刪除；裝置上的紀錄不受影響，重新上線後會自動再次上傳最近的工作階段。",
+    "裝置離線期間，免費版可在手機端查閱其最近 {{free}} 天已同步的歷史工作階段，Pro 方案支援查閱 {{pro}} 天。離線時長超出該期限後，雲端儲存的加密快照將自動清除；本地原始資料不受影響，裝置重新連線後將自動同步最新工作階段。",
   "Is my code safer on Pro?": "Pro 會讓程式碼更安全嗎？",
   "It is just as safe on every plan: all of them are end-to-end encrypted the same way, and we can't read your sessions, your code or your terminals on any. A plan only changes how much we keep and carry for you, never who can read it.":
-    "所有方案的安全性相同：都以同樣的方式端對端加密，無論哪個方案，我們都無法讀取你的工作階段、程式碼和終端機。方案只決定我們替你保存和轉送多少資料，不改變誰能讀取這些資料。",
+    "所有方案的安全機制完全一致：均基於端對端加密架構，伺服端無法讀取你的任何工作階段、程式碼與終端機通訊。訂閱方案僅決定資料保存時長與轉送配額，絕不影響資料機密性。",
 
   "Privacy notice — Droppen": "隱私權聲明 — Droppen",
   "What we keep, and what we can't see.": "我們保存什麼，又看不到什麼",
@@ -293,7 +268,6 @@ export const pricingZhTW: Bundle = {
   "Until you ask us to remove it, and never more than 12 months after you last joined: older entries are deleted automatically.":
     "保存到你要求刪除為止，最長不超過你最後一次加入後的 12 個月：超過的紀錄會自動刪除。",
   "To be taken off, write to {{email}} from that address and we will delete it.": "想退出，用那個信箱寫信到 {{email}}，我們會刪除它。",
-  // Downloads (privacy notice)
   "Downloads":
     "下載",
   "If you download Droppen":
@@ -347,7 +321,6 @@ export const pricingZhTW: Bundle = {
     "信箱從未驗證、也從未新增過裝置的帳號，會在 {{days}} 天後刪除。",
   "Contact": "聯絡我們",
   "Questions, or a request about your data:": "有疑問，或想處理你的資料，請寫信到：",
-  // Deleting an account (privacy notice)
   "Deleting your account":
     "刪除帳號",
   "If you delete your account":
@@ -387,12 +360,9 @@ export const pricingJa: Bundle = {
     "価格は米ドル建てです。Pro はまだ販売していません。ご自身で支払うと決めるまで、料金は一切かかりません。",
 
   "End-to-end encrypted: we can't read your sessions, code or terminals": "エンドツーエンド暗号化：セッション、コード、ターミナルは私たちにも読めません",
-  "Local only": "ローカルのみ",
-  "Recommended": "おすすめ",
   "forever": "ずっと無料",
   "No account, nothing to sign up for": "アカウント不要、登録もいりません",
   "Free": "無料",
-  "USD / month": "USD / 月",
   "Sign-up is by invite for now": "現在は招待コードで登録",
   "Sign-up is closed for now": "現在は新規登録を停止中",
   "Sign up with an e-mail address": "メールアドレスで登録",
@@ -418,9 +388,13 @@ export const pricingJa: Bundle = {
   "Leave your address, and we'll write when it's your turn": "メールアドレスを登録してください。順番が来たらメールでお知らせします",
   "Leave your address, and we'll write when sign-up or Pro opens": "メールアドレスを登録してください。新規登録の受付を再開したとき、または Pro の販売を始めたときにお知らせします",
   "Leave your address, and we'll write when Pro opens": "メールアドレスを登録してください。Pro の販売を始めたらお知らせします",
+  "One e-mail, when it opens: nothing else, and never more than 12 months.": "Pro の販売を始めたときに一度だけメールをお送りします。それだけです。アドレスは最長 12 か月で削除します。",
+  "We'll write once, when sign-up opens or Pro does.": "新規登録の受付を再開したとき、または Pro の販売を始めたときに一度だけメールをお送りします。",
+  "We'll write when it's your turn.": "順番が来たら一度だけメールをお送りします。",
   "Plan": "プラン",
   "${{price}} / month": "${{price}} / 月",
   "E-mail address": "メールアドレス",
+  "you@example.com": "you@example.com",
   "That does not look like an e-mail address. Check it and try again.": "メールアドレスの形式ではないようです。確認してもう一度お試しください。",
   "Use an address you keep: throwaway mail providers are not accepted.": "普段お使いのアドレスを入力してください。使い捨てメールは受け付けていません。",
   "Too many tries from your network. Try again in {{n}} min.": "このネットワークからの試行が多すぎます。{{n}} 分後にもう一度お試しください。",
@@ -466,7 +440,6 @@ export const pricingJa: Bundle = {
   "Until you ask us to remove it, and never more than 12 months after you last joined: older entries are deleted automatically.":
     "削除のご依頼をいただくまで保管しますが、最後に登録してから 12 か月を超えることはありません。それより古い記録は自動で削除されます。",
   "To be taken off, write to {{email}} from that address and we will delete it.": "削除をご希望の場合は、登録したアドレスから {{email}} までご連絡ください。削除いたします。",
-  // Downloads (privacy notice)
   "Downloads":
     "ダウンロード",
   "If you download Droppen":
@@ -520,7 +493,6 @@ export const pricingJa: Bundle = {
     "メールアドレスが一度も確認されず、デバイスも追加されなかったアカウントは、{{days}} 日後に削除されます。",
   "Contact": "お問い合わせ",
   "Questions, or a request about your data:": "ご質問やデータに関するご依頼は：",
-  // Deleting an account (privacy notice)
   "Deleting your account":
     "アカウントの削除",
   "If you delete your account":

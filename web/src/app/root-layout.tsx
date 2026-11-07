@@ -1,18 +1,19 @@
-import { Menu } from "@base-ui-components/react/menu";
+import { Menu } from "@base-ui/react/menu";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import {
-  Code,
-  FolderTree,
-  LayoutGrid,
-  MessagesSquare,
-  Plus,
-  Settings,
-  SquareTerminal,
-  X,
-  Zap,
-} from "lucide-react";
+  ChatsCircleIcon,
+  CodeIcon,
+  GearIcon,
+  LightningIcon,
+  PlusIcon,
+  SquaresFourIcon,
+  TerminalWindowIcon,
+  TreeViewIcon,
+  XIcon,
+} from "@phosphor-icons/react";
 import { useEffect, useMemo, useState } from "react";
+import { useMediaQuery } from "usehooks-ts";
 import type { components } from "@/api/schema";
 import {
   ContextMenu,
@@ -60,24 +61,20 @@ import { mq } from "@/lib/machines/query";
 
 /** The shell's own sections. Plugins' entries follow them, then Settings. */
 const NAV = [
-  { to: "/sessions", label: "Sessions", icon: MessagesSquare },
-  { to: "/chat", label: "Instant Chat", icon: Zap },
-  { to: "/terminals", label: "Terminals", icon: SquareTerminal },
-  { to: "/files", label: "Files", icon: FolderTree },
+  { to: "/sessions", label: "Sessions", icon: ChatsCircleIcon },
+  { to: "/chat", label: "Instant Chat", icon: LightningIcon },
+  { to: "/terminals", label: "Terminals", icon: TerminalWindowIcon },
+  { to: "/files", label: "Files", icon: TreeViewIcon },
 ] as const;
 
 function ThemeToggle() {
   const { t } = useTranslation();
   const [mode, setMode] = useState<ThemeMode>(storedThemeMode);
+  const prefersDark = useMediaQuery("(prefers-color-scheme: dark)");
 
   useEffect(() => {
     applyThemeMode(mode);
-    if (mode !== "auto") return;
-    const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    const follow = () => applyThemeMode("auto");
-    mq.addEventListener("change", follow);
-    return () => mq.removeEventListener("change", follow);
-  }, [mode]);
+  }, [mode, prefersDark]);
 
   const Icon = MODE_ICONS[mode];
   return (
@@ -93,7 +90,7 @@ function ThemeToggle() {
   );
 }
 
-const APP_ICONS = { vscode: Code } as const;
+const APP_ICONS = { vscode: CodeIcon } as const;
 
 type AppInfo = components["schemas"]["AppInfo"];
 
@@ -139,7 +136,7 @@ function AppsRail() {
               className="flex size-8 items-center justify-center text-muted hover:bg-hover hover:text-fg"
               activeProps={{ className: "!bg-fg !text-bg" }}
             >
-              <Code className="size-4" />
+              <CodeIcon className="size-4" />
             </Link>
             <button
               type="button"
@@ -150,7 +147,7 @@ function AppsRail() {
               }}
               data-signal="danger" className="absolute -top-0.5 -right-0.5 hidden size-3.5 items-center justify-center bg-danger text-white group-hover:flex"
             >
-              <X className="size-2.5" />
+              <XIcon className="size-2.5" />
             </button>
           </ContextMenuTrigger>
           <ContextMenuContent>
@@ -212,7 +209,7 @@ function RailNew({ routeMachine }: { routeMachine: MachineKey }) {
             create.isError ? "text-danger" : "text-muted",
           )}
         >
-          <Plus className="size-4" />
+          <PlusIcon className="size-4" />
         </Menu.Trigger>
         <Menu.Portal>
           <Menu.Positioner side="right" align="end" sideOffset={4} className="z-50 outline-none">
@@ -222,7 +219,7 @@ function RailNew({ routeMachine }: { routeMachine: MachineKey }) {
                 onClick={() => openNewSession()}
                 className="flex w-full cursor-pointer items-center gap-2 px-3 py-1 text-left font-mono text-2xs text-fg outline-none data-[highlighted]:bg-hover"
               >
-                <MessagesSquare className="size-3.5 text-muted" />
+                <ChatsCircleIcon className="size-3.5 text-muted" />
                 <span className="flex-1">{t("session")}</span>
                 <kbd className="font-mono text-[10px] text-faint">{newSessionKeys}</kbd>
               </Menu.Item>
@@ -231,7 +228,7 @@ function RailNew({ routeMachine }: { routeMachine: MachineKey }) {
                 onClick={createScreen}
                 className="flex w-full cursor-pointer items-center gap-2 px-3 py-1 text-left font-mono text-2xs text-fg outline-none data-[highlighted]:bg-hover"
               >
-                <LayoutGrid className="size-3.5 text-muted" />
+                <SquaresFourIcon className="size-3.5 text-muted" />
                 {t("screen")}
               </Menu.Item>
               {(Object.keys(APP_ICONS) as (keyof typeof APP_ICONS)[]).map((type) => {
@@ -360,20 +357,9 @@ function PaneHotkeys() {
   return null;
 }
 
-function useIsDesktop(): boolean {
-  const [desktop, setDesktop] = useState(() => window.matchMedia("(min-width: 768px)").matches);
-  useEffect(() => {
-    const mq = window.matchMedia("(min-width: 768px)");
-    const update = () => setDesktop(mq.matches);
-    mq.addEventListener("change", update);
-    return () => mq.removeEventListener("change", update);
-  }, []);
-  return desktop;
-}
-
 function PaneArea() {
   const panes = usePanes();
-  const desktop = useIsDesktop();
+  const desktop = useMediaQuery("(min-width: 768px)");
   // The routed view's device: what a pane beside it picks from until told otherwise.
   const routeMachine = useRouteMachine();
   // Splitting is a desktop feature: phones always render the routed view alone.
@@ -537,7 +523,7 @@ function RootLayoutInner() {
                 />
               }
             >
-              <Settings className="size-4" />
+              <GearIcon className="size-4" />
             </RailHint>
             <ScreensRail />
             <AppsRail />

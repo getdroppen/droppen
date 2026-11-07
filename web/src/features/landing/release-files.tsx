@@ -1,25 +1,14 @@
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, type MouseEvent, type ReactNode, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { fetchLatestRelease, formatSize, type LatestRelease, type ReleaseFile } from "@/lib/hub/releases";
+import { cn } from "@/lib/cn";
 import { LINUX_CPUS } from "./detect";
 import { RELEASES_URL } from "./get-droppen";
-
-/*
- * The download buttons' files (`lib/hub/releases.ts`): the latest release as
- * this page's hub names it, read once per page load. A button with its file
- * is a plain link to it, which downloads in place, with the version and the
- * size beside it — through the hub's counted `/dl/<platform>` when the hub
- * names one (`ReleaseFile.href`), else straight to GitHub; without it (no
- * answer yet, or none: a hub without the route, a 503, a network failure)
- * it is a link to the release page, in a new tab. Shared by the home page's
- * hero (`hero-get.tsx`), the download page (`download.tsx`) and the
- * add-device guide.
- */
+import { ButtonLink, QUIET_LINK } from "./page-kit";
 
 let asked: Promise<LatestRelease | null> | null = null;
 
-/** The latest release, asked of the hub once per page load (asked again on the next use after a failure). */
-export function loadLatestRelease(): Promise<LatestRelease | null> {
+function loadLatestRelease(): Promise<LatestRelease | null> {
   if (!asked) {
     asked = fetchLatestRelease().then((release) => {
       if (!release) asked = null;
@@ -29,60 +18,55 @@ export function loadLatestRelease(): Promise<LatestRelease | null> {
   return asked;
 }
 
-/**
- * The latest release: `undefined` while it is asked for, `null` when there
- * is none to be had. `given` (tests, previews) stands in for the hub: then
- * nothing is asked.
- */
-export function useLatestRelease(given?: LatestRelease | null): LatestRelease | null | undefined {
+export function useLatestRelease(given?: LatestRelease | null, ask = true): LatestRelease | null | undefined {
   const [release, setRelease] = useState<LatestRelease | null | undefined>(undefined);
   useEffect(() => {
-    if (given !== undefined) return;
+    if (!ask || given !== undefined) return;
     let live = true;
     void loadLatestRelease().then((value) => live && setRelease(value));
     return () => {
       live = false;
     };
-  }, [given]);
-  return given !== undefined ? given : release;
+  }, [ask, given]);
+  if (given !== undefined) return given;
+  return ask ? release : null;
 }
 
-/** Whether a file's link is the hub's counted `/dl/<platform>`, not the file on GitHub. */
-export function countedLink(file: ReleaseFile): boolean {
-  return file.href !== file.url;
-}
+const releasePageLink = { href: RELEASES_URL, target: "_blank", rel: "noopener noreferrer" } as const;
 
-/**
- * A download button's link: the file itself (in place; through the hub's
- * `/dl/` when it counts, `nofollow` so that crawlers leave the count alone,
- * as `/robots.txt` asks too), else the release page (a new tab).
- */
 export function fileLink(file: ReleaseFile | undefined): { href: string; target?: string; rel?: string } {
-  if (!file) return { href: RELEASES_URL, target: "_blank", rel: "noopener noreferrer" };
-  return countedLink(file) ? { href: file.href, rel: "nofollow" } : { href: file.href };
+  if (!file) return releasePageLink;
+  return file.href !== file.url ? { href: file.href, rel: "nofollow" } : { href: file.href };
 }
 
-/** `v0.2.129 · 48 MB`: the version and size of the file a button downloads. */
 export function fileFacts(release: LatestRelease, file: ReleaseFile): string {
   return `v${release.version} · ${formatSize(file.size)}`;
 }
 
-/**
- * The Linux tarballs, after the install command: the one for this
- * processor when it is known and built for, else both (with a word when the
- * processor has no build). Nothing until the hub names them: the release
- * page is linked beside the command already.
- */
-export function LinuxTarballs({
-  release,
-  cpu,
-  testId,
-  sayUnbuilt = true,
-}: {
+export function DownloadButton({ file, mark, label, testId, fallback, menu }: {
+  file?: ReleaseFile;
+  mark: ReactNode;
+  label: string;
+  testId: string;
+  fallback?: { href: string; onClick?: (event: MouseEvent<HTMLAnchorElement>) => void };
+  menu?: ReactNode;
+}) {
+  const link = file ? fileLink(file) : (fallback ?? releasePageLink);
+  return (
+    <div className={cn("inline-flex w-fit", menu ? "relative border border-fg bg-fg" : "items-center")}>
+      <ButtonLink {...link} variant="primary" data-testid={testId} className={cn("min-h-9", menu ? "border-0 bg-fg" : "border-fg")}>
+        {mark}
+        {label}
+      </ButtonLink>
+      {menu}
+    </div>
+  );
+}
+
+export function LinuxTarballs({ release, cpu, testId, sayUnbuilt = true }: {
   release: LatestRelease | null | undefined;
   cpu: string | null;
   testId: string;
-  /** Say when the processor has no build (off where the page says it already). */
   sayUnbuilt?: boolean;
 }) {
   const { t } = useTranslation();
@@ -98,16 +82,8 @@ export function LinuxTarballs({
       {files.map((file, i) => (
         <Fragment key={file.name}>
           {i > 0 && <span className="max-[360px]:hidden"> · </span>}
-          {/* A file's name is one token where the line is wide; below 360px each file takes its own row, so a long name has the full card width. */}
           <span className="whitespace-nowrap max-[360px]:block max-[360px]:whitespace-normal">
-            <a
-              href={file.href}
-              data-testid={`${testId}-file`}
-              className="text-muted underline underline-offset-4 hover:text-fg"
-              rel={countedLink(file) ? "nofollow" : undefined}
-            >
-              {file.name}
-            </a>{" "}
+            <a {...fileLink(file)} data-testid={`${testId}-file`} className={QUIET_LINK}>{file.name}</a>{" "}
             <span className="whitespace-nowrap">({formatSize(file.size)})</span>
           </span>
         </Fragment>

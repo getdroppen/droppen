@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "react-isokit/styles.css";
 
 /*
  * IBM Plex Sans and IBM Plex Sans SC, self-hosted (SIL OFL 1.1, see
@@ -77,6 +78,17 @@
 }
 @container (max-width: 759px) { .has-preview > .files-list { display: none; } }
 
+/* The landing hero's wall of agent marks (`agent-burst.tsx`): a wide window draws
+   twelve columns over four rows, a phone four over five, of cells three times as
+   wide — marks few enough that the lines stay visible around the hero's wash
+   instead of reading as texture under it. Tailwind's `sm` is 40rem, where the
+   phone's cells give way to the wide window's. */
+@media (width < 40rem) {
+  [data-burst] > div {
+    grid-template-columns: repeat(var(--burst-columns), minmax(0, 1fr)) !important;
+  }
+}
+
 @custom-variant dark (&:where(.dark, .dark *));
 
 /* "Drafting sheet" (docs/ui-spec.md): one ink on white
@@ -120,6 +132,17 @@
   /* Sources are told apart by their words, not by a tint. */
   --color-claude: #666666;
   --color-codex: #666666;
+
+  /* shadcn/ui's names for the same inks (`components/ui/*` from the registry
+     say `card`, `foreground`, `muted-foreground`). They are aliases, not a
+     second palette: a shadcn component dropped in from the registry picks up
+     this UI's surfaces without being rewritten, and the dark block below only
+     has to keep the five real tokens in step. */
+  --color-background: var(--color-bg);
+  --color-foreground: var(--color-fg);
+  --color-card: var(--color-bg);
+  --color-card-foreground: var(--color-fg);
+  --color-muted-foreground: var(--color-muted);
 
   --font-sans: "IBM Plex Sans", "IBM Plex Sans SC", ui-sans-serif, system-ui, -apple-system, "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
   --font-sans-text: "IBM Plex Sans", "IBM Plex Sans SC Text", ui-sans-serif, system-ui, -apple-system, "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
@@ -210,11 +233,12 @@
   }
 }
 
-/* lucide draws at stroke 2 by default; the drafting sheet uses 1.5. Only the
-   default is overridden, so an icon given its own strokeWidth keeps it. */
-svg.lucide[stroke-width="2"] {
-  stroke-width: 1.5;
-}
+/* Icons are Phosphor, and their weight is a prop rather than a CSS rule: each
+   icon bakes thin/light/regular/bold/fill/duotone outlines into its own path
+   and renders the one `weight` picks, so there is no stroke-width here to
+   narrow. `regular` is the default, and `src/lib/icon.ts` holds that
+   convention; `fill` and `bold` are chosen per call site because they know
+   why, so nothing here may rewrite them. */
 
 /* Registration marks on a framed document page (components/sheet.tsx): only
    once the column is narrower than its container, so there is a seam to mark.
@@ -296,13 +320,6 @@ svg.lucide[stroke-width="2"] {
   &:lang(zh) {
     word-break: keep-all;
   }
-}
-
-/* The pricing page's side gutters (`features/landing/pricing.tsx`): 45°
-   hairlines on the sheet's border colour, so the columns either side of the
-   centred content read as drafting paper rather than blank space. */
-@utility hatch-45 {
-  background-image: repeating-linear-gradient(45deg, var(--color-border) 0 1px, transparent 1px 12px);
 }
 
 html,
@@ -490,6 +507,22 @@ body {
 }
 .rh-search-flash {
   animation: rh-search-flash 1.4s ease-out;
+}
+
+/* The landing page's product tour (`features/landing/product-tour.tsx`): the
+   mark of the screen on show fills from its left end to its right over the
+   interval the tour waits before moving on. The component hands its `ROTATE_MS`
+   down as `--tour-rotate`, which is this animation's duration, so the bar and
+   the timer cannot disagree; it pauses the animation with the rotation and
+   drops it under `prefers-reduced-motion`. Width rather than a scaled transform: the
+   track is a 4px line and a scaled one scales its rounded cap with it. */
+@keyframes tour-fill {
+  from {
+    width: 0%;
+  }
+  to {
+    width: 100%;
+  }
 }
 
 /* Touch chrome. The grey flash mobile WebKit/Blink paint over every tapped
