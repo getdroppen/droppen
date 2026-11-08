@@ -18,7 +18,7 @@
  *   --theme <t>        light | dark | both (default both)
  *   --viewport <v>     desktop | mobile | both (default both)
  *   --channel <name>   Playwright browser channel, e.g. chrome (default: bundled Chromium)
- *   --fixture <f>      settings | devices | agents | new-chat | cloud-bar | session-opening | both (default both: every fixture)
+ *   --fixture <f>      settings | devices | agents | new-chat | cloud-bar | session-opening | no-copy | both (default both: every fixture)
  *   --url <url>        skip the fixture and audit a running page
  *   --check            exit 1 if any target invariant fails
  */
@@ -70,6 +70,7 @@ const runAgents = which === "both" || which === "agents";
 const runNewChat = which === "both" || which === "new-chat";
 const runCloudBar = which === "both" || which === "cloud-bar";
 const runSessionOpening = which === "both" || which === "session-opening";
+const runNoCopy = which === "both" || which === "no-copy";
 
 await fs.mkdir(out, { recursive: true });
 
@@ -1220,6 +1221,83 @@ async function auditSessionOpening(theme, view) {
   await page.close();
 }
 
+/** The reason a session with no copy here gives, by state, in every language the app ships (`offlineMessages`). */
+const NO_COPY_WORDS = {
+  en: { offline: "the device is offline, and there is no copy of this session here yet", "no-copy": "there is no copy of this session on this device yet" },
+  "zh-CN": { offline: "设备离线，本设备上还没有这个会话的副本", "no-copy": "这台设备上还没有这个会话的副本" },
+  "zh-TW": { offline: "裝置離線，本裝置上還沒有這個工作階段的副本", "no-copy": "這台裝置上還沒有這個工作階段的副本" },
+  ja: { offline: "デバイスはオフラインで、ここにはまだこのセッションのコピーがありません", "no-copy": "このデバイスにはまだこのセッションのコピーがありません" },
+};
+
+/**
+ * The foot of a session with no copy on this device yet
+ * (`?fixture=no-copy`): the session composer's box, read-only, the reason
+ * its placeholder — the device offline (the hub says so), or only the copy
+ * missing (online, or not said yet) — in every language the app ships.
+ * Checked: the words themselves, the box disabled, its 1px square frame, and
+ * the reason whole in the box at either width — on as many lines as it takes
+ * (a phone sets form text at 16px), none of them cut off: the words laid out
+ * in the textarea's font and width are no taller than the room inside its
+ * padding. Captured: `no-copy[-<lang>]-<theme>-<viewport>.png`, the fixture
+ * alone.
+ */
+async function auditNoCopy(theme, view) {
+  const page = await browser.newPage({
+    viewport: { width: view.width, height: view.height },
+    deviceScaleFactor: 1,
+    hasTouch: view.name === "mobile",
+    isMobile: view.name === "mobile",
+  });
+  const fail = (id, actual, expected) => failures.push({ theme, viewport: view.name, fixture: "no-copy", id, actual, expected });
+  for (const [lang, words] of Object.entries(NO_COPY_WORDS)) {
+    await page.goto(`${base}ui-audit/index.html?fixture=no-copy&lang=${lang}&theme=${theme}`);
+    await page.waitForSelector("[data-fixture-root] textarea");
+    await page.evaluate(() => document.fonts.ready);
+    await page.waitForTimeout(250);
+    const before = await page.evaluate(() => ({
+      rows: [...document.querySelectorAll("[data-audit-row]")].map((row) => {
+        const area = row.querySelector("textarea");
+        const box = row.querySelector("[data-composer]");
+        const cs = area ? getComputedStyle(area) : null;
+        const bs = box ? getComputedStyle(box) : null;
+        // The placeholder can be neither selected nor measured: the same words, laid out as the textarea lays them out.
+        let text = null;
+        if (area && cs) {
+          const probe = document.createElement("div");
+          const width = area.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+          Object.assign(probe.style, { position: "absolute", visibility: "hidden", width: `${width}px`, font: cs.font, lineHeight: cs.lineHeight, letterSpacing: cs.letterSpacing, whiteSpace: "pre-wrap", overflowWrap: "break-word" });
+          probe.textContent = area.placeholder;
+          document.body.append(probe);
+          const height = probe.getBoundingClientRect().height;
+          probe.remove();
+          const lineHeight = parseFloat(cs.lineHeight);
+          text = { lines: Math.round(height / lineHeight), height: +height.toFixed(1), room: +(area.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom)).toFixed(1), fontSize: cs.fontSize, width: +width.toFixed(1) };
+        }
+        return {
+          name: row.getAttribute("data-audit-row"),
+          placeholder: area?.placeholder ?? null,
+          disabled: area?.disabled ?? null,
+          text,
+          box: bs ? { borderW: bs.borderTopWidth, radius: bs.borderRadius, shadow: bs.boxShadow } : null,
+        };
+      }),
+      overflow: { doc: document.documentElement.scrollWidth, win: window.innerWidth },
+    }));
+    await page.locator("[data-fixture-root]").screenshot({ path: `${out}/no-copy${lang === "en" ? "" : `-${lang}`}-${theme}-${view.name}.png` });
+    results.push({ mode: "no-copy", lang, theme, viewport: view.name, before });
+    for (const [name, text] of Object.entries(words)) {
+      const row = before.rows.find((r) => r.name === name);
+      const where = { lang, state: name };
+      if (row?.placeholder !== text) fail("no-copy.words", { ...where, text: row?.placeholder ?? null }, text);
+      if (row?.disabled !== true) fail("no-copy.read-only", where, "a disabled composer");
+      if (!row?.box || row.box.borderW !== "1px" || parseFloat(row.box.radius) !== 0 || row.box.shadow !== "none") fail("no-copy.box", { ...where, box: row?.box ?? null }, "a 1px square frame, no shadow");
+      if (!row?.text || row.text.height > row.text.room + 0.5) fail("no-copy.whole", { ...where, text: row?.text ?? null }, "the reason whole in the box, no line cut off");
+    }
+    if (before.overflow.doc > before.overflow.win + 1) fail("no-copy.overflow", { lang, ...before.overflow }, "no horizontal overflow");
+  }
+  await page.close();
+}
+
 try {
   if (liveUrl) {
     for (const view of views) await auditLive(view);
@@ -1233,6 +1311,7 @@ try {
         if (runCloudBar) await auditCloudBar(theme, view);
         if (runCloudBar) await auditCatchUp(theme, view);
         if (runSessionOpening) await auditSessionOpening(theme, view);
+        if (runNoCopy) await auditNoCopy(theme, view);
       }
     }
   }

@@ -560,6 +560,27 @@ export interface StreamProgress {
   readonly episode: PageCount;
 }
 
+/**
+ * How far one subscription has caught up ({@link StreamSubscription.progress}):
+ * one session's share of {@link StreamProgress}, for whoever waits on that
+ * session alone.
+ *
+ * Its checkpoint download is counted in pages, for the same reason the
+ * machine's is: the signed manifest names every page, while the records after
+ * it come with no count (the hub sends the head only after the last of them),
+ * so how many records there are is not known until they have all arrived.
+ * They are counted as they arrive all the same, in {@link taken}: not to be
+ * shown, but so that a catch-up that is still moving can be told from one
+ * that stalled.
+ */
+export interface SubscriptionProgress {
+  readonly phase: StreamPhase;
+  /** The checkpoint download in flight on it (`null`: none). */
+  readonly pages: PageCount | null;
+  /** Records, checkpoints and checkpoint pages taken from the hub since it began: it only grows. */
+  readonly taken: number;
+}
+
 const NO_STREAMS: StreamCounts = { index: 0, status: 0, session: 0 };
 const NO_PAGES: PageCount = { done: 0, total: 0 };
 
@@ -589,6 +610,11 @@ export function sameProgress(a: StreamProgress, b: StreamProgress): boolean {
       a.downloadingSince === b.downloadingSince &&
       samePages(a.episode, b.episode))
   );
+}
+
+/** Whether `a` and `b` say the same thing of one subscription. */
+export function sameSubscriptionProgress(a: SubscriptionProgress, b: SubscriptionProgress): boolean {
+  return a.phase === b.phase && a.taken === b.taken && (a.pages === b.pages || (a.pages !== null && b.pages !== null && samePages(a.pages, b.pages)));
 }
 
 /**
@@ -722,18 +748,22 @@ export class StreamClient {
   }
 
   /**
-   * @internal A subscription changed phase, came or went, or a download's
-   * count moved: end the episode if nothing is being caught up on any more,
-   * and say so once the burst is over.
+   * @internal A subscription changed phase, came or went, took records, or a
+   * download's count moved: end the episode if nothing is being caught up on
+   * any more, and say so once the burst is over — the machine's progress and
+   * each subscription's ({@link StreamSubscription.onProgress}) in the same
+   * frame.
    */
   changed(): void {
     if (this.closed) return;
     if (this.downloads.size === 0 && !this.anyCatchingUp()) this.episode = { done: 0, total: 0 };
-    if (this.progressQueued || this.progressListeners.size === 0) return;
+    if (this.progressQueued || !this.anyListening()) return;
     this.progressQueued = true;
     (this.opts.progressFrame ?? nextFrame)(() => {
       this.progressQueued = false;
       if (this.closed) return;
+      for (const sub of [...this.subs]) sub.sayProgress();
+      if (this.progressListeners.size === 0) return;
       const now = this.progress;
       if (sameProgress(now, this.progressSaid)) return;
       this.progressSaid = now;
@@ -747,6 +777,13 @@ export class StreamClient {
     });
   }
 
+  /** Whether anybody hears of progress: of the machine's, or of one subscription's. */
+  private anyListening(): boolean {
+    if (this.progressListeners.size > 0) return true;
+    for (const sub of this.subs) if (sub.listened) return true;
+    return false;
+  }
+
   private anyCatchingUp(): boolean {
     for (const sub of this.subs) if (sub.phase === "catchingUp") return true;
     return false;
@@ -755,9 +792,10 @@ export class StreamClient {
   /**
    * @internal A checkpoint's `total` pages are about to be fetched: they
    * count in {@link progress} as each one opens (`page`), until `end` — which
-   * comes whether the download finished or failed.
+   * comes whether the download finished or failed. `count` is the download's
+   * own count, as it stands (what its subscription says of itself).
    */
-  download(total: number): { page(): void; end(): void } {
+  download(total: number): { readonly count: PageCount; page(): void; end(): void } {
     const d = { done: 0, total };
     if (this.downloads.size === 0) this.downloadsSince = Date.now();
     this.downloads.add(d);
@@ -765,6 +803,7 @@ export class StreamClient {
     this.changed();
     let over = false;
     return {
+      count: d,
       page: () => {
         if (over) return;
         d.done += 1;
@@ -969,6 +1008,13 @@ export class StreamSubscription<S> {
   private retryFrom: "confirmed" | "fresh" = "fresh";
   private readonly serial = new Serial();
   private readonly hexId: string;
+  /** The checkpoint download in flight on it: the client's count of it ({@link StreamClient.download}). */
+  private downloading: PageCount | null = null;
+  /** See {@link SubscriptionProgress.taken}. */
+  private taken = 0;
+  private readonly progressListeners = new Set<(progress: SubscriptionProgress) => void>();
+  /** What its listeners last heard. */
+  private progressSaid: SubscriptionProgress | null = null;
 
   constructor(
     private readonly client: StreamClient,
@@ -1004,6 +1050,43 @@ export class StreamSubscription<S> {
   /** What it follows, as its fold's format says (`null`: none of the copy's three kinds). */
   get kind(): CopyKind | null {
     return kindOf(this.fold.fmt);
+  }
+
+  /** How far it has caught up, now ({@link SubscriptionProgress}). */
+  get progress(): SubscriptionProgress {
+    return { phase: this.phase, pages: this.downloading ? { done: this.downloading.done, total: this.downloading.total } : null, taken: this.taken };
+  }
+
+  /**
+   * Hear when {@link progress} changes: said with the machine's
+   * (`StreamClient.onProgress`), in the same frame and as coalesced, and only
+   * when it says something new. Nothing more once it is closed.
+   */
+  onProgress(fn: (progress: SubscriptionProgress) => void): () => void {
+    if (this.closed) return () => undefined;
+    if (this.progressListeners.size === 0) this.progressSaid = this.progress;
+    this.progressListeners.add(fn);
+    return () => this.progressListeners.delete(fn);
+  }
+
+  /** @internal Whether anybody hears of its progress. */
+  get listened(): boolean {
+    return this.progressListeners.size > 0;
+  }
+
+  /** @internal The client's frame came: say the progress, if it changed since it was last said. */
+  sayProgress(): void {
+    if (this.closed || this.progressListeners.size === 0) return;
+    const now = this.progress;
+    if (this.progressSaid && sameSubscriptionProgress(now, this.progressSaid)) return;
+    this.progressSaid = now;
+    for (const fn of [...this.progressListeners]) {
+      try {
+        fn(now);
+      } catch {
+        // one listener failing must not starve the others
+      }
+    }
   }
 
   /** Whether it holds a state the machine signed for (one saved and still the machine's, or one read since). */
@@ -1046,6 +1129,7 @@ export class StreamSubscription<S> {
     clearTimeout(this.timer);
     this.timer = undefined;
     this.dropCh();
+    this.progressListeners.clear();
     this.client.forget(this as StreamSubscription<unknown>);
   }
 
@@ -1221,7 +1305,12 @@ export class StreamSubscription<S> {
           return await this.checkpoint(ch, frame.manifest);
         case "recs":
           if (!this.reader) throw new RecordError("outOfOrder", "records arrived with no starting point");
-          for (const record of frame.records) await this.reader.push(record);
+          for (const record of frame.records) {
+            await this.reader.push(record);
+            this.taken += 1;
+          }
+          // Nothing is folded until the head, but the catch-up is moving.
+          if (frame.records.length) this.client.changed();
           return;
         case "head":
           return await this.confirm(decodeSignedHead(frame.head));
@@ -1312,14 +1401,21 @@ export class StreamSubscription<S> {
       return;
     }
     // The slow part of a catch-up (up to 1024 pages, four at a time): counted
-    // page by page from here, so the page can say how far along it is.
+    // page by page from here, so the page can say how far along it is — the
+    // machine's count, and this stream's own.
+    this.taken += 1;
     const download = this.client.download(m.pages.length);
+    this.downloading = download.count;
     let pages: Bytes[];
     let next: LogReader;
     try {
       next = await this.client.keyed(await this.underCurrentKey(this.client.machineSignKey, (key) => readerFromManifest(key, m)));
-      pages = await this.client.pages(m, next, this.fold.fmt, download.page);
+      pages = await this.client.pages(m, next, this.fold.fmt, () => {
+        this.taken += 1;
+        download.page();
+      });
     } finally {
+      this.downloading = null;
       download.end();
     }
     // The machine renewed its key while the pages came: the manifest is held to the new one (refused, and asked for again).

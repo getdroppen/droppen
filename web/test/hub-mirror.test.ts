@@ -3,12 +3,15 @@
 // stands at, in one transaction; a copy read back is drawn at once and
 // followed from its own position; what is not this account's, or no longer
 // verifies, is never shown; and only the kept sessions stay on the device.
+// A session not on the device is waited for while its copy keeps coming —
+// with its progress said to whoever listens — and given up on once it stops
+// moving, or at a cap.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { HubCopySource } from "../src/lib/hub/copy-source.js";
+import { type CopyEvents, type CopyFollow, type CopyName, type CopySource, HubCopySource } from "../src/lib/hub/copy-source.js";
 import { decodeSignedHead, FMT_FEED_V1, FMT_INDEX_V1, FMT_STATUS_V1, fromHex, generateDeviceKeys, hex, indexStream, statusStream, streamId } from "../src/lib/e2e/index.js";
-import { isStoredCopy, MachineMirror, metaKey, MIRROR_SCHEMA, streamRecordKey } from "../src/lib/hub/mirror.js";
-import { copyWindow, type FeedCopy, type IndexState, StreamClient } from "../src/lib/hub/streams.js";
+import { isStoredCopy, MachineMirror, metaKey, MIRROR_SCHEMA, SESSION_WAIT_CAP_MS, SESSION_WAIT_MS, streamRecordKey } from "../src/lib/hub/mirror.js";
+import { copyWindow, type FeedCopy, type IndexState, StreamClient, type SubscriptionProgress } from "../src/lib/hub/streams.js";
 import { catchUp, FakeKv, FakeStreamLink, flush, makeMachine, type Machine, putCopy, readCopy, readOpened, StreamWriter, until } from "./stream-fixtures.js";
 
 const row = (id: string, updatedAt: string) => ({ source: "claude", id, title: `t ${id}`, updatedAt, cwd: "/w" });
@@ -216,6 +219,155 @@ test("a session with no copy on the device waits for the hub, and one the hub ha
   link.control({ t: "stream_synced", ch: sub.ch, stream: hex(sub.stream), next_seq: 0, exists: false });
   assert.equal(await none, null);
   await flush(2);
+  mirror.close();
+});
+
+/** A source whose sessions the test moves by hand: each follow, its progress, and what it was told to say. */
+class HandSource implements CopySource {
+  readonly keyed = true;
+  reachable = true;
+  readonly follows: { name: CopyName; events: CopyEvents<unknown>; progress: SubscriptionProgress; listeners: Set<() => void>; closed: boolean }[] = [];
+  ready() {
+    return Promise.resolve();
+  }
+  onKeys() {
+    return () => undefined;
+  }
+  async places(name: CopyName) {
+    return [name.kind === "session" ? `session/${name.source}/${name.id}` : name.kind];
+  }
+  async resume() {
+    return null;
+  }
+  follow<S>(name: CopyName, _places: readonly string[], _start: unknown, events: CopyEvents<S>): CopyFollow {
+    const f = { name, events: events as CopyEvents<unknown>, progress: { phase: "catchingUp", pages: null, taken: 0 } as SubscriptionProgress, listeners: new Set<() => void>(), closed: false };
+    this.follows.push(f);
+    return {
+      close: () => {
+        f.closed = true;
+        f.listeners.clear();
+      },
+      get progress() {
+        return f.progress;
+      },
+      onProgress: (fn) => {
+        f.listeners.add(fn);
+        return () => void f.listeners.delete(fn);
+      },
+    };
+  }
+  /** The open follow of session `id`. */
+  session(id: string) {
+    return this.follows.find((f) => f.name.kind === "session" && f.name.id === id && !f.closed);
+  }
+  /** Something arrived on `id`'s stream — said (as a frame says it), or not (a background tab has no frames). */
+  move(id: string, said = true, pages: SubscriptionProgress["pages"] = null) {
+    const f = this.session(id)!;
+    f.progress = { ...f.progress, pages, taken: f.progress.taken + 1 };
+    if (said) for (const fn of [...f.listeners]) fn();
+  }
+  close() {}
+}
+
+/** A mirror over a {@link HandSource}, in memory, started. */
+async function handWorld() {
+  const source = new HandSource();
+  const mirror = new MachineMirror({ account: "a-1", machine: "m-1", source, persist: false, sweep: false, followSessions: false });
+  await mirror.start();
+  return { source, mirror };
+}
+
+/** Let the mirror's promises run (with `setTimeout` faked, `until` would never wake). */
+const settle = async () => {
+  for (let i = 0; i < 10; i++) await new Promise((resolve) => setImmediate(resolve));
+};
+
+test("a session's progress is its follow's, and who listens hears its follow start, move and stop", async () => {
+  const { source, mirror } = await handWorld();
+  assert.equal(mirror.sessionProgress("claude", "big"), null, "not followed: nothing to say");
+  let heard = 0;
+  let elsewhere = 0;
+  const off = mirror.onSessionProgress("claude", "big", () => heard++);
+  mirror.onSessionProgress("claude", "else", () => elsewhere++);
+  const asked = mirror.session("claude", "big");
+  await settle();
+  assert.equal(heard, 1, "its follow started");
+  assert.deepEqual(mirror.sessionProgress("claude", "big"), { phase: "catchingUp", pages: null, taken: 0 });
+  source.move("big", true, { done: 3, total: 80 });
+  assert.equal(heard, 2);
+  assert.deepEqual(mirror.sessionProgress("claude", "big")?.pages, { done: 3, total: 80 });
+  assert.equal(elsewhere, 0, "another session hears nothing of this one");
+  // The copy is in: the wait is over at once.
+  source.session("big")!.events.onState({ state: { started: true, startIndex: 0, endIndex: 1, items: [{ kind: "user", text: "hi" }], fp: null, prefixFp: null }, at: { mark: "m", seq: 1, timeMs: 1 }, reset: true, bodies: [], freshestMs: 1 });
+  assert.deepEqual((await asked)?.state.items, [{ kind: "user", text: "hi" }]);
+  // Nothing keeps it followed (neither warm nor opened here): let go of.
+  mirror.setFollowSessions(true);
+  assert.equal(heard, 3, "its follow stopped");
+  assert.equal(mirror.sessionProgress("claude", "big"), null);
+  off();
+  mirror.setFollowSessions(false);
+  mirror.close();
+});
+
+test("a session not on the device is waited for while it moves: still at 12 s while pages keep coming, given up 8 s after the last", async (t) => {
+  const { source, mirror } = await handWorld();
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let answered: unknown = "waiting";
+  void mirror.session("claude", "big").then((copy) => (answered = copy));
+  await settle();
+  assert.ok(source.session("big"), "asked of the source");
+  // A page every half second, for twelve seconds: past the old 8 s give-up.
+  for (let ms = 0; ms < 12_000; ms += 500) {
+    source.move("big", true, { done: ms / 500, total: 250 });
+    t.mock.timers.tick(500);
+  }
+  await settle();
+  assert.equal(answered, "waiting", "still waiting at 12 s: pages keep coming");
+  // Then nothing: given up 8 s after the last page (at 11.5 s), not before.
+  t.mock.timers.tick(SESSION_WAIT_MS - 500 - 1);
+  await settle();
+  assert.equal(answered, "waiting");
+  t.mock.timers.tick(1);
+  await settle();
+  assert.equal(answered, null, "8 s with nothing arriving: no copy, for now");
+  mirror.close();
+});
+
+test("a background tab hears no progress, so the wait looks itself when its 8 s run out", async (t) => {
+  const { source, mirror } = await handWorld();
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let answered: unknown = "waiting";
+  void mirror.session("claude", "quiet").then((copy) => (answered = copy));
+  await settle();
+  t.mock.timers.tick(1_000);
+  source.move("quiet", false);
+  t.mock.timers.tick(SESSION_WAIT_MS - 1_000);
+  await settle();
+  assert.equal(answered, "waiting", "it moved in those 8 s, though nobody said so: it waits on");
+  t.mock.timers.tick(SESSION_WAIT_MS);
+  await settle();
+  assert.equal(answered, null, "and gives up after 8 s more with nothing");
+  mirror.close();
+});
+
+test("a stream that never stops moving is given up on at the cap all the same", async (t) => {
+  const { source, mirror } = await handWorld();
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let answered: unknown = "waiting";
+  void mirror.session("claude", "endless").then((copy) => (answered = copy));
+  await settle();
+  for (let ms = 0; ms < SESSION_WAIT_CAP_MS - 1_000; ms += 1_000) {
+    source.move("endless");
+    t.mock.timers.tick(1_000);
+  }
+  source.move("endless");
+  t.mock.timers.tick(999);
+  await settle();
+  assert.equal(answered, "waiting", "a moment before the cap, still moving: still waiting");
+  t.mock.timers.tick(1);
+  await settle();
+  assert.equal(answered, null, `at ${SESSION_WAIT_CAP_MS / 1000} s, moving or not: no copy, for now`);
+  assert.ok(source.session("endless"), "still followed: the copy replaces the empty one once it is in");
   mirror.close();
 });
 

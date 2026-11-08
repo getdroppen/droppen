@@ -23,7 +23,7 @@ pnpm ui-audit --fixture devices   # only the devices page
 Options:
 
 - `--out <dir>` (default `/tmp/droppen-ui-audit-<date>`)
-- `--fixture settings|devices|agents|new-chat|cloud-bar|session-opening|both` (default `both`)
+- `--fixture settings|devices|agents|new-chat|cloud-bar|session-opening|no-copy|both` (default `both`)
 - `--theme light|dark|both`, `--viewport desktop|mobile|both`
 - `--channel chrome` — use a system Chrome instead of the bundled Chromium
 - `--url <url>` — measure a running page instead of the fixture (no target
@@ -99,6 +99,15 @@ copy's pages; and nothing below the view. Outputs
 each other language, and, in English and zh-CN, one
 `session-opening-<state>[-zh-CN]-…` per stage, with the spinner held still;
 each stage's free space beside its line is in `measurements.json`.
+
+The `no-copy` fixture is the foot of a session with no copy on this device yet:
+the session composer's box, read-only, its placeholder the reason the offline
+copy gives — the device offline (only when the hub says so), or only the copy
+missing (online, or not said yet). In English, zh-CN, zh-TW and ja: the words
+themselves, the box disabled with its 1px square frame, and the reason whole
+in the box at either width, no line of it cut off (a phone sets form text at
+16px, and the longest take two lines there). Outputs `no-copy-<theme>-<viewport>.png` and
+`no-copy-<lang>-…` for each other language, the fixture alone.
 
 The fixture deliberately exercises the target state, so on a revision that
 still has the old controls these checks fail. That is the point: run it before

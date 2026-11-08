@@ -232,6 +232,12 @@ class Source implements OfflineSource {
   sessionNow(source: string, id: string) {
     return this.copies.get(`${source}/${id}`) ?? null;
   }
+  sessionProgress() {
+    return null;
+  }
+  onSessionProgress() {
+    return () => undefined;
+  }
   touch() {}
   onChange(_fn: (c: MirrorChange) => void) {
     return () => undefined;

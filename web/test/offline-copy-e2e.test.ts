@@ -1,8 +1,9 @@
 // The offline copy end to end, in-process: what an agent seals and signs,
 // read by the stream client over a hub link the test plays, folded and kept
 // by the mirror, and served by the offline transport to the app's own feed
-// reader — a session's window read-only, and the records the machine wrote
-// just before it went arriving as feed deltas.
+// reader — the feed saying its copy is coming until it is in, a session's
+// window read-only, and the records the machine wrote just before it went
+// arriving as feed deltas.
 import assert from "node:assert/strict";
 import test from "node:test";
 import { HubCopySource } from "../src/lib/hub/copy-source.js";
@@ -22,7 +23,7 @@ const opts: OfflineOptions = {
 const row = (id: string, updatedAt: string) => ({ source: "claude", id, title: `t ${id}`, updatedAt, cwd: "/w", scope: "owned", activity: "idle", status: "idle" });
 const item = (n: number) => ({ role: "user", kind: "text", text: `item ${n}` });
 
-test("sealed streams → mirror → offline transport → the app's feed reader", async () => {
+test("sealed streams → mirror → offline transport → the app's feed reader", async (t) => {
   const machine = await makeMachine();
   const link = new FakeStreamLink();
   const client = new StreamClient({ link, machineSignKey: machine.signPublic, epochs: machine.epochs, fetchPage: async () => new Uint8Array(), retryDelay: () => 0 });
@@ -56,29 +57,39 @@ test("sealed streams → mirror → offline transport → the app's feed reader"
   const hub = new FeedHub({ socketUrl: (p) => transport.socketUrl(p), openSocket: (u) => transport.openSocket(u), noteFailure: () => undefined, inflate: null });
   const frames: Record<string, unknown>[] = [];
   hub.start({ onFrame: (f) => frames.push(f), onOpen: () => undefined, onClose: () => undefined });
-  const got: Record<string, any>[] = [];
+  // A failure must not leave the hub's heartbeat holding the run open.
+  t.after(() => hub.stop());
+  const all: Record<string, any>[] = [];
   const channel = hub.open({ source: "claude", id: "a", limit: 100 })!;
-  channel.onmessage = (e) => got.push(e.data as Record<string, any>);
+  channel.onmessage = (e) => all.push(e.data as Record<string, any>);
   // Session "a" is among the warm ones (or opened now): its stream is asked for.
+  await until(() => link.subs().some((s) => hex(s.stream) === hex(session.stream)));
+  // Not on the device yet: until its snapshot, the feed says its copy is coming.
+  await until(() => all.length >= 1);
+  assert.deepEqual(all[0], { sub: channel.sub, type: "progress", stage: "copy" });
   const ch = await serve(session);
-  await until(() => got.length >= 1);
-  assert.equal(got[0]!.type, "snapshot");
-  assert.deepEqual(got[0]!.items.map((i: { text: string }) => i.text), ["item 0", "item 1", "item 2"]);
-  assert.equal(got[0]!.canSend, false);
-  assert.equal(got[0]!.sendBlockReason, "read-only copy");
-  assert.equal(got[0]!.sig, "offline:1");
+  /** The feed's frames past its progress. */
+  const got = () => all.filter((f) => f.type !== "progress");
+  await until(() => got().length >= 1);
+  const snapshot = got()[0]!;
+  assert.equal(snapshot.type, "snapshot");
+  assert.ok(all.slice(all.indexOf(snapshot)).every((f) => f.type !== "progress"), "and none of it after the snapshot");
+  assert.deepEqual(snapshot.items.map((i: { text: string }) => i.text), ["item 0", "item 1", "item 2"]);
+  assert.equal(snapshot.canSend, false);
+  assert.equal(snapshot.sendBlockReason, "read-only copy");
+  assert.equal(snapshot.sig, "offline:1");
   assert.ok(frames.some((f) => f.type === "sessions:snapshot"));
 
   // A record the machine wrote before it went, arriving now: item 2 rewritten, item 3 added.
   await session.append({ fromIndex: 2, items: [{ ...item(2), text: "item 2 (done)" }, item(3)], endIndex: 4, fp: "f4", prefixFp: "f1" });
   link.deliver({ type: "recs", ch, stream: session.stream, records: session.records.slice(1) });
   await flush(5);
-  assert.equal(got.length, 1, "nothing before the machine's head covers it");
+  assert.equal(got().length, 1, "nothing before the machine's head covers it");
   link.deliver({ type: "head", ch, head: await session.head() });
-  await until(() => got.length >= 2);
-  assert.deepEqual([got[1]!.type, got[1]!.fromIndex, got[1]!.endIndex, got[1]!.sig], ["delta", 2, 4, "offline:2"]);
-  assert.deepEqual(got[1]!.items.map((i: { text: string }) => i.text), ["item 2 (done)", "item 3"]);
-  hub.stop();
+  await until(() => got().length >= 2);
+  const delta = got()[1]!;
+  assert.deepEqual([delta.type, delta.fromIndex, delta.endIndex, delta.sig], ["delta", 2, 4, "offline:2"]);
+  assert.deepEqual(delta.items.map((i: { text: string }) => i.text), ["item 2 (done)", "item 3"]);
   mirror.close();
 });
 

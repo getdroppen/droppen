@@ -11,8 +11,9 @@
  * diagram), `?fixture=images` (the pictures messages draw; `&cloud=1` as a
  * page a hub serves), `?fixture=cloud-bar` (the cloud bar in each state of
  * its connection; `&states=catch-up`, the offline copy catching up from the
- * hub) or `?fixture=session-opening` (a session opening with nothing to show
- * yet, in each stage of its wait), plus `?theme=dark`.
+ * hub), `?fixture=session-opening` (a session opening with nothing to show
+ * yet, in each stage of its wait) or `?fixture=no-copy` (the foot of a
+ * session with no copy on this device yet, read-only), plus `?theme=dark`.
  * `web/src/index.css` excludes this directory from Tailwind's scan
  * (`@source not`), so nothing here can change the production stylesheet. That
  * also means every class below must already occur in `web/src`; the layout
@@ -54,6 +55,8 @@ import type { AcpAgentInfo } from "@/features/sessions/acp-agent";
 import type { FeedOpening } from "@/features/sessions/session-feed-pool";
 import { SessionOpening } from "@/features/sessions/session-opening";
 import type { AcpAgentPreset } from "@/features/sessions/acp-agent-presets";
+import { ComposerBox, type ComposerAttachments } from "@/features/sessions/composer-box";
+import { useTranslation } from "react-i18next";
 import { AcpDetailsBody, AcpTabView } from "@/features/settings/agents/acp-tab";
 import { AgentsTabStrip } from "@/features/settings/agents/agents-section";
 import { acpStatus, acpSignal, type AcpCheck } from "@/features/settings/agents/agents-tabs";
@@ -776,6 +779,59 @@ async function mountNewChat(): Promise<void> {
   );
 }
 
+/** Nothing attached, and nothing can be: a read-only composer's attachments. */
+const NO_ATTACHMENTS = { attachments: [], addFiles: noop, remove: noop, clear: noop, take: () => [], putBack: noop, anyUploading: false, anyFailed: false } as unknown as ComposerAttachments;
+
+/**
+ * The foot of a session with no copy on this device yet, as the session
+ * composer draws it (`features/sessions/composer.tsx`, without its chips):
+ * read-only, its placeholder the reason the offline copy gives
+ * (`features/cloud/hub-shell.ts`, `offlineMessages`) — the device offline,
+ * only when the hub says so, or else only the copy missing (the page still
+ * connecting to the device).
+ */
+function NoCopyFixture() {
+  const { t } = useTranslation();
+  const states: [string, string][] = [
+    ["offline", t("the device is offline, and there is no copy of this session here yet")],
+    ["no-copy", t("there is no copy of this session on this device yet")],
+  ];
+  return (
+    <div data-fixture-root="" className="flex flex-col gap-4 py-4">
+      {states.map(([name, reason]) => (
+        <section key={name} data-audit-row={name}>
+          <div className="mb-1 px-3 font-mono text-2xs text-muted">{name}</div>
+          <div className="pb-safe shrink-0 border-t border-border bg-panel">
+            <div className="px-3 pt-0 pb-3 max-md:px-2 max-md:pb-2">
+              <ComposerBox attachments={NO_ATTACHMENTS} text="" onText={noop} disabled placeholder={reason} onSubmit={noop} send={{ disabled: true, label: t("send"), busy: false }} />
+            </div>
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+/** The no-copy fixture, in `&lang=`, over a device that answers the composer's preferences. */
+async function mountNoCopy(): Promise<void> {
+  setShell("local", LOCAL);
+  openMachine(LOCAL, newChatDevice(false), {
+    info: constantStore({ key: LOCAL, name: "studio", state: "online" as const, since: 0, canManage: true, live: "live" as const }),
+    ensureLive: () => undefined,
+    hold: () => () => undefined,
+    dispose: () => undefined,
+  });
+  await applyLanguage((query.get("lang") as LanguagePref | null) ?? "en");
+  const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
+  createRoot(document.getElementById("root")!).render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <MachineProvider machine={LOCAL}>
+        <NoCopyFixture />
+      </MachineProvider>
+    </QueryClientProvider>,
+  );
+}
+
 // The agents, diagrams, images and session-opening fixtures' words go through
 // i18n (counts, "5 min ago", the diagram and picture controls' labels, what an
 // opening session waits for): English unless `&lang=` names another of the
@@ -784,6 +840,8 @@ if (fixture === "new-chat") {
   await mountNewChat();
 } else if (fixture === "cloud-bar") {
   await mountCloudBar();
+} else if (fixture === "no-copy") {
+  await mountNoCopy();
 } else {
   if (fixture === "agents" || fixture === "diagrams" || fixture === "hostile" || fixture === "images" || fixture === "session-opening")
     await applyLanguage((query.get("lang") as LanguagePref | null) ?? "en");

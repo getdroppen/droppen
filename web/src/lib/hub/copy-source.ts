@@ -51,6 +51,7 @@ import {
   type StreamFold,
   type StreamProgress,
   type StreamSubscription,
+  type SubscriptionProgress,
 } from "./streams";
 
 /** What {@link HubCopySource.following} asks of the account (`CloudAccount` is one). */
@@ -109,6 +110,17 @@ export interface CopyEvents<S> {
 
 export interface CopyFollow {
   close(): void;
+  /**
+   * How far its catch-up has come, now (`StreamSubscription.progress`): what
+   * a reader waiting on this one copy can be told while it comes. Only a
+   * session's follow on the hub says: the index and the status are followed
+   * under several names at once and show as the machine's
+   * (`HubCopySource.progress`), and the gateway's install catches up itself,
+   * handing over whole copies only.
+   */
+  readonly progress?: SubscriptionProgress;
+  /** Hear when {@link progress} changes (at most once a frame). Nothing more once it is closed. */
+  onProgress?(fn: (progress: SubscriptionProgress) => void): () => void;
 }
 
 export interface CopySource {
@@ -527,6 +539,10 @@ export class HubCopySource implements CopySource {
           release();
           sub.close();
         },
+        get progress() {
+          return sub.progress;
+        },
+        onProgress: (fn) => sub.onProgress(fn),
       };
     }
     // The index and the status are counted, never refused, as the names
