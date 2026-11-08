@@ -76,7 +76,7 @@ export const PERMISSION_DEFAULT: Record<"claude" | "codex", string> = {
 };
 
 /** Permission modes that drop the guard rails, drawn in the danger colour wherever they are picked. */
-export const DANGER_PERMISSIONS = new Set(["bypassPermissions", "full-access", "bypass-all"]);
+export const DANGER_PERMISSIONS = new Set(["bypassPermissions", "full-access", "danger-full-access", "bypass-all"]);
 
 /**
  * A mode adopted from somewhere other than the session's own pick.

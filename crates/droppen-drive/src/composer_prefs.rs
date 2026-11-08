@@ -55,7 +55,8 @@ pub const MAX_SESSION_ENTRIES: usize = 300;
 /// `web/src/features/sessions/composer-controls.tsx`: the composer draws these
 /// in the danger colour and will not adopt one for a session that did not pick
 /// it, and a message must not quietly make one a session's stored choice.
-const DANGEROUS_PERMISSIONS: [&str; 3] = ["bypassPermissions", "full-access", "bypass-all"];
+/// `danger-full-access` is codex's alias for `full-access` in `codex exec`.
+const DANGEROUS_PERMISSIONS: [&str; 4] = ["bypassPermissions", "full-access", "danger-full-access", "bypass-all"];
 
 /// Whether `permission` is one of [`DANGEROUS_PERMISSIONS`].
 fn is_dangerous(permission: &str) -> bool {
@@ -272,7 +273,8 @@ impl ComposerPrefsStore {
     /// so it is stamped with the moment it first appears.
     ///
     /// The one row is read and written on its own rather than by scanning the
-    /// scope: this runs on the message-send path.
+    /// scope: this runs on the message-send path. Only a row's *first* write
+    /// can grow the bucket, so the cap is applied only then.
     pub async fn pin_permission(&self, source: Source, rule: ModelRule, session_id: &str, permission: &str) -> Result<(), ComposerPrefsError> {
         let patch = ComposerChoice {
             permission: Optional(Some(permission.to_string())),
@@ -289,7 +291,11 @@ impl ComposerPrefsStore {
         if existing.as_ref().and_then(|choice| choice.permission.0.as_deref()).is_some() {
             return Ok(());
         }
+        let created = existing.is_none();
         self.write_permission(&local_key(source, session_id), existing, &patch);
+        if created {
+            self.evict_sessions().await;
+        }
         Ok(())
     }
 
@@ -310,8 +316,24 @@ impl ComposerPrefsStore {
         validate(rule, &patch)?;
         let _guard = self.write_lock.lock().await;
         let existing = self.session(source, session_id);
+        let created = existing.is_none();
         self.write_permission(&local_key(source, session_id), existing, &patch);
+        if created {
+            self.evict_sessions().await;
+        }
         Ok(())
+    }
+
+    /// Trim the session bucket to [`MAX_SESSION_ENTRIES`] after a row was added.
+    ///
+    /// Every active session now gets a row from its first send or start, not
+    /// only from a pick, so without this the bucket grew for the life of the
+    /// install. Deciding which rows are oldest needs the bucket; that is one
+    /// scope read per session created, not per message.
+    async fn evict_sessions(&self) {
+        let db = self.db();
+        let mut prefs = self.read_stored().await;
+        evict(&db, &mut prefs.sessions);
     }
 
     /// Merge one permission into one row, keeping its pick time and other fields.
@@ -583,12 +605,18 @@ mod tests {
         );
 
         // A dangerous value from a send never creates a row for a session that
-        // had none (the version-skew and stale-cache cases).
+        // had none (the version-skew and stale-cache cases), including codex's
+        // `danger-full-access` alias for `full-access`.
         store
             .pin_permission(Source::Claude, ModelRule::NAMED, "other", "bypassPermissions")
             .await
             .expect("pin");
+        store
+            .pin_permission(Source::Codex, ModelRule::NAMED, "other", "danger-full-access")
+            .await
+            .expect("pin");
         assert_eq!(store.session(Source::Claude, "other"), None);
+        assert_eq!(store.session(Source::Codex, "other"), None);
         assert_eq!(store.read().await.sessions.len(), 1, "no row is left behind");
     }
 
@@ -621,6 +649,40 @@ mod tests {
         assert_eq!(prefs.sessions["claude/abc"].permission.as_deref(), Some("plan"));
         assert!(prefs.sessions["claude/abc"].updated_at.as_deref().is_some(), "a new row is stamped");
         assert!(prefs.defaults.is_empty(), "and no default is invented from it");
+    }
+
+    /// Every active session now gets a row from its first send or start, not
+    /// only from a pick, so creating rows has to respect the cap too.
+    #[tokio::test]
+    async fn creating_rows_through_sends_evicts_them_down_to_the_cap() {
+        let (_dir, store) = store();
+        for n in 0..MAX_SESSION_ENTRIES + 5 {
+            let id = format!("{n:04}");
+            store.pin_permission(Source::Claude, ModelRule::NAMED, &id, "plan").await.expect("pin");
+        }
+        let prefs = store.read().await;
+        assert_eq!(prefs.sessions.len(), MAX_SESSION_ENTRIES, "the bucket is capped");
+        assert!(!prefs.sessions.contains_key("claude/0000"), "the oldest row went first");
+        assert!(
+            prefs.sessions.contains_key(&format!("claude/{:04}", MAX_SESSION_ENTRIES + 4)),
+            "the newest row stayed"
+        );
+    }
+
+    #[tokio::test]
+    async fn creating_rows_through_starts_evicts_them_down_to_the_cap() {
+        let (_dir, store) = store();
+        for n in 0..MAX_SESSION_ENTRIES + 5 {
+            let id = format!("{n:04}");
+            store.record_start_permission(Source::Codex, ModelRule::NAMED, &id, "read-only").await.expect("record");
+        }
+        let prefs = store.read().await;
+        assert_eq!(prefs.sessions.len(), MAX_SESSION_ENTRIES, "the bucket is capped");
+        assert!(!prefs.sessions.contains_key("codex/0000"), "the oldest row went first");
+        assert!(
+            prefs.sessions.contains_key(&format!("codex/{:04}", MAX_SESSION_ENTRIES + 4)),
+            "the newest row stayed"
+        );
     }
 
     /// The row's `updatedAt` is the pick time the composer orders a transcript

@@ -129,6 +129,12 @@ test("an observed full-access or bypass-all does not keep a codex session escala
     answer("codex", "B", { defaults: {}, sessions: {} }, { model: null, effort: null, permission: "bypass-all", at }),
     "auto",
   );
+  // `danger-full-access` is codex's other spelling of the same sandbox, and the
+  // server accepts it on a send.
+  assert.equal(
+    answer("codex", "B", { defaults: {}, sessions: {} }, { model: null, effort: null, permission: "danger-full-access", at }),
+    "auto",
+  );
 });
 
 test("a dangerous mode in the session's own row is still that session's pick", () => {
