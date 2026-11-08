@@ -18,7 +18,7 @@
  *   --theme <t>        light | dark | both (default both)
  *   --viewport <v>     desktop | mobile | both (default both)
  *   --channel <name>   Playwright browser channel, e.g. chrome (default: bundled Chromium)
- *   --fixture <f>      settings | devices | agents | both (default both: every fixture)
+ *   --fixture <f>      settings | devices | agents | new-chat | both (default both: every fixture)
  *   --url <url>        skip the fixture and audit a running page
  *   --check            exit 1 if any target invariant fails
  */
@@ -67,6 +67,7 @@ const which = flag("fixture", "both");
 const runSettings = which === "both" || which === "settings";
 const runDevices = which === "both" || which === "devices";
 const runAgents = which === "both" || which === "agents";
+const runNewChat = which === "both" || which === "new-chat";
 
 await fs.mkdir(out, { recursive: true });
 
@@ -560,6 +561,98 @@ async function auditDevices(theme, view) {
 }
 
 /**
+ * The instant-chat home (`features/chat/chat-home.tsx`, docs/ui-spec.md §3):
+ * the new-session layout — the question about the middle on a desktop, the
+ * composer pinned to the bottom on a phone, one 48rem column — with the
+ * backend switch above the composer and the warnings beside it. Four states
+ * are captured: claude selected, the api backend with no provider, the
+ * signed-out local login, and the desktop `/chat` beside the list. The api
+ * tab is clicked, because no query selects a backend.
+ */
+async function auditNewChat(theme, view) {
+  const page = await browser.newPage({
+    viewport: { width: view.width, height: view.height },
+    deviceScaleFactor: 1,
+    hasTouch: view.name === "mobile",
+    isMobile: view.name === "mobile",
+  });
+  const fail = (id, actual, expected) => failures.push({ theme, viewport: view.name, fixture: "new-chat", id, actual, expected });
+  const snapshots = {};
+  for (const state of ["claude", "api", "signed-out", "list"]) {
+    await page.goto(`${base}ui-audit/index.html?fixture=new-chat&state=${state}&theme=${theme}`);
+    await page.evaluate(() => document.fonts.ready);
+    // The form is drawn once the accounts' and composer's answers are in; the
+    // list, once its chats are.
+    await page.waitForSelector("textarea", { timeout: 5_000 });
+    await page.waitForFunction(() => (document.body.textContent ?? "").includes("Release notes for 0.6"), undefined, { timeout: 5_000 }).catch(() => undefined);
+    await page.waitForTimeout(200);
+    if (state === "api") {
+      await page.getByRole("tab", { name: "api" }).click();
+      await page.waitForTimeout(200);
+    }
+    snapshots[state] = await page.evaluate(() => {
+      const rect = (e) => {
+        if (!e) return null;
+        const r = e.getBoundingClientRect();
+        return { x: +r.x.toFixed(1), y: +r.y.toFixed(1), w: +r.width.toFixed(1), h: +r.height.toFixed(1) };
+      };
+      const cs = (e) => (e ? getComputedStyle(e) : null);
+      const composer = document.querySelector("[data-composer]");
+      const region = document.querySelector("[data-chat-new-composer]");
+      const column = document.querySelector("[data-chat-new-column]");
+      const tabs = document.querySelector('[role="tablist"]');
+      const send = document.querySelector('[data-variant="primary"]');
+      const warnings = [...document.querySelectorAll('[data-signal="warn"]')].map((e) => (e.textContent ?? "").trim());
+      return {
+        composer: composer
+          ? { rect: rect(composer), borderW: cs(composer).borderTopWidth, radius: cs(composer).borderRadius, shadow: cs(composer).boxShadow }
+          : null,
+        region: region ? { rect: rect(region) } : null,
+        column: column ? { rect: rect(column) } : null,
+        tabs: tabs ? { rect: rect(tabs), radius: cs(tabs).borderTopLeftRadius } : null,
+        send: send ? { rect: rect(send), bg: cs(send).backgroundColor, radius: cs(send).borderRadius } : null,
+        textarea: rect(document.querySelector("[data-composer] textarea")),
+        warnings,
+        overflow: { doc: document.documentElement.scrollWidth, win: window.innerWidth },
+      };
+    });
+    await page.screenshot({ path: `${out}/new-chat-${state}-${theme}-${view.name}.png` });
+  }
+  results.push({ mode: "new-chat", theme, viewport: view.name, snapshots });
+
+  const claude = snapshots.claude;
+  if (!claude.composer) fail("new-chat.composer", null, "the composer box");
+  else {
+    if (claude.composer.borderW !== "1px") fail("new-chat.composer-border", claude.composer.borderW, "1px");
+    if (parseFloat(claude.composer.radius) !== 0) fail("new-chat.composer-radius", claude.composer.radius, "0");
+    if (claude.composer.shadow !== "none") fail("new-chat.composer-shadow", claude.composer.shadow, "none");
+  }
+  if (!claude.textarea) fail("new-chat.textarea", null, "a textarea inside the composer");
+  if (!claude.tabs || Math.round(claude.tabs.rect.h) !== 32) fail("new-chat.segmented-height", claude.tabs?.rect.h, "32px");
+  if (parseFloat(claude.tabs?.radius ?? "1") !== 0) fail("new-chat.segmented-radius", claude.tabs?.radius, "0");
+  if (!claude.send || Math.round(claude.send.rect.w) !== 26 || Math.round(claude.send.rect.h) !== 26) {
+    fail("new-chat.send-size", claude.send?.rect, "26 x 26 px");
+  }
+  if (parseFloat(claude.send?.radius ?? "1") !== 0) fail("new-chat.send-radius", claude.send?.radius, "0");
+  if (claude.overflow.doc > claude.overflow.win + 1) fail("new-chat.overflow", claude.overflow, "no horizontal overflow");
+  if (view.name === "desktop") {
+    if (!claude.column || claude.column.rect.w > 768.5) fail("new-chat.column", claude.column?.rect, "<= 48rem");
+  } else {
+    // The composer region is the last thing in the view: its bottom is the viewport's.
+    if (!claude.region || Math.abs(claude.region.rect.y + claude.region.rect.h - view.height) > 1) {
+      fail("new-chat.pinned", claude.region?.rect, "the composer at the bottom of the view");
+    }
+  }
+  if (!snapshots.api.warnings.some((text) => /no API provider configured/.test(text))) {
+    fail("new-chat.api-warning", snapshots.api.warnings, "the no-provider warning on the api backend");
+  }
+  if (!snapshots["signed-out"].warnings.some((text) => /signed out/.test(text))) {
+    fail("new-chat.signed-out-warning", snapshots["signed-out"].warnings, "the signed-out local login warning");
+  }
+  await page.close();
+}
+
+/**
  * Settings › Agents & accounts (docs/ui-spec.md §3): text tabs, not a second
  * segmented strip; a card grid on the sheet's full width — three columns on a
  * desktop sheet, one on a phone — with the text kept to the 48rem column; the
@@ -662,6 +755,7 @@ try {
         if (runSettings) await auditSettings(theme, view);
         if (runDevices) await auditDevices(theme, view);
         if (runAgents) await auditAgents(theme, view);
+        if (runNewChat) await auditNewChat(theme, view);
       }
     }
   }

@@ -919,6 +919,8 @@ export const zhTW: Record<string, string> = {
   "your own codex login on this device was refused, so new sessions that name no account start on {{label}}; after `codex login`, run one chat or session on the local login to switch back": "這台裝置上你自己的 codex 登入被拒絕，沒有指定帳號的新工作階段會在 {{label}} 上啟動；執行 `codex login` 之後，在本地登入上跑一次聊天或工作階段即可切回來",
   "your own codex login on this device was refused, so this task runs on {{label}}; after `codex login`, run one chat or session on the local login to switch back": "這台裝置上你自己的 codex 登入被拒絕，這個任務會在 {{label}} 上執行；執行 `codex login` 之後，在本地登入上跑一次聊天或工作階段即可切回來",
   "choosing account…": "正在選擇帳號…",
+  // The new-chat form (`features/chat/chat-home.tsx`).
+  "What do you want to chat about?": "想聊點什麼？",
   // The desktop app's update, ready (`app/desktop-update.tsx`).
   "restart": "重啟",
   "no room beside the returned message's attachments (at most {{max}}), so these were taken out: {{names}}": "退回的訊息自帶的附件放回後已沒有空位（最多 {{max}} 個），以下附件已被移出：{{names}}",

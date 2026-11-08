@@ -1,7 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
-import { ChevronLeft, Loader2 } from "lucide-react";
+import { Bot, ChevronLeft, Sparkles, Terminal } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { MachineLink } from "@/app/machine-route";
+import { Notice } from "@/components/notice";
 import { Tabs, TabsList, TabsTab } from "@/components/ui/tabs";
 import { AccountPicker, localLoginHint } from "@/features/accounts/account-picker";
 import {
@@ -13,20 +15,24 @@ import {
   useStartRecheck,
   withoutAccount,
 } from "@/features/accounts/use-accounts";
+import { ComposerBox, useComposerAttachments } from "@/features/sessions/composer-box";
 import {
+  ComposerChoiceChips,
   ComposerSelect,
-  CliModelControls,
   useComposerChoice,
   useComposerStart,
 } from "@/features/sessions/composer-controls";
-import { isImeKeydown } from "@/lib/ime";
+import { SessionHeader } from "@/features/sessions/session-header";
 import { useCreateConversation } from "@/features/sessions/use-create-conversation";
 import type { NewConversation } from "@/features/sessions/new-session-flow";
+import { cn } from "@/lib/cn";
 import { useApi, useMachine } from "@/lib/machines/context";
 import { mq } from "@/lib/machines/query";
-import { MachineLink } from "@/app/machine-route";
 
 type Backend = "claude" | "codex" | "api";
+
+/** The column the view is laid out in: the transcript's 48em measure, centred (docs/ui-spec.md §3). */
+const COLUMN = "mx-auto w-full max-w-[48rem]";
 
 export function ChatHome() {
   const api = useApi();
@@ -139,116 +145,154 @@ export function ChatHome() {
     start.mutate(verdict === "unplaced" ? withoutAccount(request) : request);
   });
 
+  const attachments = useComposerAttachments();
+  // The explanation belongs to the backend switch, so it sits right beside it
+  // rather than apart as a stray line.
+  const where = backend === "api"
+    ? t("any openai-compatible endpoint (openrouter…)")
+    : t("runs on your {{backend}} subscription", { backend });
+  const waitingForAccount = leftToServer && (!startReady || sendQueued) && !start.isPending;
+  const title = (
+    <h2 className="text-[1.25rem] leading-[1.625rem] font-semibold tracking-[-0.02em] text-fg max-md:text-[1.125rem] max-md:leading-6">
+      {t("What do you want to chat about?")}
+    </h2>
+  );
+
   return (
-    <div className="flex flex-1 items-start justify-center overflow-y-auto p-4 md:items-center">
-      <div className="flex w-full max-w-md flex-col gap-2">
-        {/* Below md the layout shows this form alone; the way back to the
-            list is here, as on a chat's own page (`api-chat-view.tsx`). */}
-        <MachineLink
-          to="/chat"
-          title={t("back")}
-          className="flex size-6 shrink-0 items-center justify-center rounded text-muted hover:bg-hover md:hidden"
-        >
-          <ChevronLeft className="size-4" />
-        </MachineLink>
-        <div className="font-mono text-2xs font-semibold tracking-wider text-muted uppercase">
-          {t("new chat")}
-        </div>
-        <Tabs value={backend} onValueChange={(v) => setBackend(v as Backend)}>
-          <TabsList>
-            <TabsTab value="claude">claude</TabsTab>
-            <TabsTab value="codex">codex</TabsTab>
-            <TabsTab value="api">api</TabsTab>
-          </TabsList>
-        </Tabs>
-        <div className="font-mono text-2xs text-faint">
-          {backend === "api"
-            ? t("any openai-compatible endpoint (openrouter…)")
-            : t("runs on your {{backend}} subscription", { backend })}
-        </div>
-        {backend !== "api" ? (
-          <>
-            <div className="flex flex-wrap items-center gap-1.5">
-              <CliModelControls choice={choice} />
-              {/* A server that predates `accountId` on chats would ignore the pick. */}
-              {accounts.length > 0 && knowsStartRule(accountList, cliSource) && (
-                <AccountPicker
-                  accounts={accounts}
-                  value={accountValue || null}
-                  onSelect={(id) => setAccountChoice(id ?? "")}
-                  allowLocal
-                  provider={cliSource}
-                  disabled={start.isPending}
-                />
-              )}
-            </div>
-            {localSignedOut && (
-              <div data-signal="warn" data-local-signed-out="" className="font-mono text-2xs text-warn-fg">
-                {localLoginHint(cliSource, t)}
-                {accounts.length === 0 && (
-                  <>
-                    {" — "}
-                    {t("or add an account")}
-                    {" · "}
-                    <MachineLink to="/settings" className="underline hover:text-fg">
-                      {t("Settings")}
-                    </MachineLink>
-                  </>
-                )}
-                {noStandIn && <>{" — "}{t("and no account in auto-rotation is free to take its place")}</>}
-              </div>
-            )}
-          </>
-        ) : providerReady ? (
-          <div className="flex items-center gap-1.5">
-            {apiModels?.length ? (
-              <ComposerSelect
-                label={t("model")}
-                value={effectiveApiModel}
-                options={apiModels}
-                onChange={setApiModel}
-              />
-            ) : (
-              <input
-                value={effectiveApiModel}
-                onChange={(e) => setApiModel(e.target.value)}
-                placeholder={t("model id (e.g. openai/gpt-5.5)")}
-                className="h-6.5 w-full rounded border border-border bg-bg px-2 font-mono text-2xs text-fg placeholder:text-faint focus:border-fg focus:outline-none"
-              />
-            )}
-          </div>
-        ) : (
-          <div data-signal="warn" className="font-mono text-2xs text-warn-fg">
-            {t("no API provider configured —")}{" "}
-            <MachineLink to="/settings" className="text-accent hover:underline">
-              {t("set base URL and key in settings")}
-            </MachineLink>
-          </div>
-        )}
-        <textarea
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !isImeKeydown(e) && !e.shiftKey && canStart) {
-              e.preventDefault();
-              send();
-            }
-          }}
-          rows={4}
-          placeholder={t("say something…")}
-          className="w-full resize-y rounded border border-border bg-bg px-2 py-1.5 text-xs text-fg placeholder:text-faint focus:border-fg focus:outline-none"
-        />
-        {start.isError && <div data-signal="failed" className="font-mono text-2xs text-danger">{start.error.message}</div>}
-        <button
-          type="button"
-          disabled={!canStart || sendQueued}
-          onClick={send}
-          data-variant="primary" className="flex h-7 items-center justify-center gap-1.5 bg-fg text-xs font-medium text-bg hover:bg-fg/85 disabled:opacity-40"
-        >
-          {(start.isPending || sendQueued) && <Loader2 className="size-3 animate-spin" />}
-          {leftToServer && (!startReady || sendQueued) && !start.isPending ? t("choosing account…") : t("start chat")}
-        </button>
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <SessionHeader
+        titleRow={<>
+          <MachineLink
+            to="/chat"
+            title={t("back")}
+            className="flex size-9 shrink-0 items-center justify-center text-muted hover:bg-hover md:hidden"
+          >
+            <ChevronLeft className="size-4" />
+          </MachineLink>
+          <span className="min-w-0 flex-1 truncate text-[13px] font-semibold max-md:text-[15px]">{t("new chat")}</span>
+        </>}
+      />
+      {/* Desktop: the question, about the middle of the view, as a new session's. */}
+      <div aria-hidden="true" className="shrink-0 max-md:hidden" style={{ height: "max(1rem, calc(50% - 12rem))" }} />
+      <div data-chat-new-title="" className="shrink-0 px-4 pb-3 max-md:hidden">
+        <div className={COLUMN}>{title}</div>
       </div>
+      {/* The composer: under the question on a desktop, pinned to the bottom on a phone. */}
+      <div
+        data-chat-new-composer=""
+        className="pb-safe shrink-0 bg-panel px-4 max-md:order-last max-md:border-t max-md:border-border max-md:px-2 max-md:pt-2"
+      >
+        <div data-chat-new-column="" className={cn(COLUMN, "pb-3 max-md:pb-2")}>
+          <div className="mb-2 md:hidden">{title}</div>
+          {start.isError && <Notice signal="failed">{start.error.message}</Notice>}
+          {localSignedOut && (
+            <Notice signal="warn" local>
+              {localLoginHint(cliSource, t)}
+              {accounts.length === 0 && (
+                <>
+                  {" — "}
+                  {t("or add an account")}
+                  {" · "}
+                  <MachineLink to="/settings" className="underline hover:text-fg">
+                    {t("Settings")}
+                  </MachineLink>
+                </>
+              )}
+              {noStandIn && <>{" — "}{t("and no account in auto-rotation is free to take its place")}</>}
+            </Notice>
+          )}
+          {backend === "api" && !providerReady && (
+            <Notice signal="warn">
+              {t("no API provider configured —")}{" "}
+              <MachineLink to="/settings" className="text-accent hover:underline">
+                {t("set base URL and key in settings")}
+              </MachineLink>
+            </Notice>
+          )}
+          <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1">
+            <Tabs value={backend} onValueChange={(v) => setBackend(v as Backend)}>
+              <TabsList className="w-72 max-w-full">
+                <TabsTab value="claude" className="gap-1.5">
+                  <Sparkles className="size-3 shrink-0" />
+                  claude
+                </TabsTab>
+                <TabsTab value="codex" className="gap-1.5">
+                  <Terminal className="size-3 shrink-0" />
+                  codex
+                </TabsTab>
+                <TabsTab value="api" className="gap-1.5">
+                  <Bot className="size-3 shrink-0" />
+                  api
+                </TabsTab>
+              </TabsList>
+            </Tabs>
+            <span className="font-mono text-2xs text-muted">{where}</span>
+          </div>
+          {waitingForAccount && (
+            <div data-choosing-account="" className="mb-1.5 px-2.5 py-1 font-mono text-2xs text-faint">
+              {t("choosing account…")}
+            </div>
+          )}
+          <ComposerBox
+            attachments={attachments}
+            allowAttach={false}
+            text={text}
+            onText={setText}
+            onSubmit={send}
+            enterSends
+            placeholder={`${t("say something…")} (${t("Enter to send, Shift+Enter for newline")})`}
+            chips={
+              backend === "api" ? (
+                providerReady ? (
+                  apiModels?.length ? (
+                    <ComposerSelect
+                      ghost
+                      label={t("model")}
+                      value={effectiveApiModel}
+                      options={apiModels}
+                      onChange={setApiModel}
+                    />
+                  ) : (
+                    <input
+                      value={effectiveApiModel}
+                      onChange={(e) => setApiModel(e.target.value)}
+                      placeholder={t("model id (e.g. openai/gpt-5.5)")}
+                      aria-label={t("model")}
+                      className="h-6 w-44 max-w-full min-w-0 border border-border bg-bg px-1.5 font-mono text-2xs text-fg placeholder:text-faint focus:border-fg focus:outline-none"
+                    />
+                  )
+                ) : null
+              ) : (
+                <ComposerChoiceChips
+                  source={cliSource}
+                  choice={choice}
+                  permission={false}
+                  account={
+                    accounts.length > 0 && knowsStartRule(accountList, cliSource) ? (
+                      <AccountPicker
+                        ghost
+                        accounts={accounts}
+                        value={accountValue || null}
+                        onSelect={(id) => setAccountChoice(id ?? "")}
+                        allowLocal
+                        provider={cliSource}
+                        disabled={start.isPending}
+                      />
+                    ) : undefined
+                  }
+                />
+              )
+            }
+            send={{
+              disabled: !canStart || sendQueued,
+              label: waitingForAccount ? t("choosing account…") : t("start chat"),
+              busy: start.isPending || sendQueued,
+            }}
+          />
+        </div>
+      </div>
+      {/* Below the composer on a desktop, above it on a phone: the view's own space. */}
+      <div className="min-h-0 flex-1" />
     </div>
   );
 }

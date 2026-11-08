@@ -141,6 +141,9 @@ async function mount(node: React.ReactNode, queryOptions: Record<string, unknown
 const text = () => (container as FakeNode).textContent;
 const accountChip = () => first((n) => n.nodeName === "BUTTON" && n.getAttribute("aria-label") === "account");
 const notice = () => first((n) => n.hasAttribute("data-local-signed-out"));
+// The wait for the server's start answer, shown as its own line above the
+// composer (the send button itself is the composer's icon button).
+const choosingAccount = () => first((n) => n.hasAttribute("data-choosing-account"));
 const modelQueries = (sent: Sent[]) => sent.filter((s) => s.path === "/api/models").map((s) => new URLSearchParams(s.query).get("accountId"));
 
 test("an instant chat does not start on a signed-out local login: it shows, and lists models for, the first usable account", async (t) => {
@@ -549,7 +552,7 @@ test("switching the chat's backend while it waits for its answer drops the chat:
   await flush();
   const send = () => first((n) => n.getAttribute("data-variant") === "primary");
   propsOf(send()).onClick!();
-  await until("the hold", () => /choosing account/.test(send()?.textContent ?? ""));
+  await until("the hold", () => /choosing account/.test(choosingAccount()?.textContent ?? ""));
 
   propsWith(first((n) => n.nodeName === "BUTTON" && n.textContent === "codex"), "onValueChange").onValueChange!("codex");
   await flush();
@@ -634,7 +637,7 @@ test("emptying the chat's box while it is held calls it off; what was pressed is
   propsOf(box()).onChange!({ target: { value: "first" } });
   await flush();
   propsOf(send()).onClick!();
-  await until("the hold", () => /choosing account/.test(send()?.textContent ?? ""));
+  await until("the hold", () => /choosing account/.test(choosingAccount()?.textContent ?? ""));
   propsOf(box()).onChange!({ target: { value: "" } });
   await flush();
   propsOf(box()).onChange!({ target: { value: "y" } });
@@ -647,7 +650,7 @@ test("emptying the chat's box while it is held calls it off; what was pressed is
   propsOf(box()).onChange!({ target: { value: "as pressed" } });
   await flush();
   propsOf(send()).onClick!();
-  await until("the hold", () => /choosing account/.test(send()?.textContent ?? ""));
+  await until("the hold", () => /choosing account/.test(choosingAccount()?.textContent ?? ""));
   propsOf(box()).onChange!({ target: { value: "as pressed, then more" } });
   await flush();
   release();
