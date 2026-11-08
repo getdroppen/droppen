@@ -125,7 +125,13 @@ impl RemoteHandApp {
         // delay the listener.
         tokio::spawn({
             let roots = droppen_files::FileRoots::of(&paths);
-            async move { roots.sweep_uploads().await }
+            let paths = paths.clone();
+            async move {
+                roots.sweep_uploads().await;
+                // A chat delivery row whose uploads were just swept can show
+                // neither a thumbnail nor a chip; drop it with them.
+                droppen_sessions::chat_delivery::prune_missing(&paths);
+            }
         });
         let auth = droppen_auth::Auth::new(&paths, &instance, &auth_settings, false, Arc::new(NotifyTokens));
         let logins = logins();
@@ -939,9 +945,9 @@ mod tests {
     }
 
     /// What each CLI's sessions are offered for: only Claude Code stops to ask
-    /// questions, Claude Code runs its instant chats with every tool off, so
-    /// they take no attachments, and an ACP agent runs neither instant chats
-    /// nor scheduled tasks.
+    /// questions, both CLIs run instant chats that can read the attachments
+    /// they are sent (Claude Code through its one Read tool), and an ACP agent
+    /// runs neither instant chats nor scheduled tasks.
     #[test]
     fn every_provider_says_what_its_sessions_are_offered_for() {
         use droppen_provider::Capabilities;
@@ -958,16 +964,18 @@ mod tests {
             questions: true,
             chats: true,
             chat_attachments: true,
+            chat_inline_attachments: true,
             schedules: true,
         };
+        assert_eq!(providers.capabilities(Source::Claude), all);
         assert_eq!(
-            providers.capabilities(Source::Claude),
+            providers.capabilities(Source::Codex),
             Capabilities {
-                chat_attachments: false,
+                questions: false,
+                chat_inline_attachments: false,
                 ..all
             }
         );
-        assert_eq!(providers.capabilities(Source::Codex), Capabilities { questions: false, ..all });
         assert_eq!(providers.capabilities(Source::Acp), Capabilities::default());
     }
 

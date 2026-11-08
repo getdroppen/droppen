@@ -166,6 +166,40 @@ async fn an_older_page_of_the_transcript_can_be_paged_back_to() {
     probe.stop().await;
 }
 
+/// A user message that starts with a multi-byte character used to panic the
+/// transcript parser at a byte-2 slice. Every route that reads the transcript
+/// has to serve it.
+#[tokio::test]
+async fn a_leading_chinese_message_is_served_by_the_transcript_routes() {
+    let probe = Probe::start().await;
+    let workspace = probe.workspace();
+    let path = probe.seed_session(&probe.local_root(), SESSION_ID, &workspace);
+    let text = "所以结论呢我们应该怎么办".repeat(20);
+    let mut file = std::fs::OpenOptions::new().append(true).open(&path).expect("append");
+    writeln!(
+        file,
+        "{}",
+        json!({
+            "type": "user", "cwd": workspace, "timestamp": "2024-05-01T10:01:00.000Z",
+            "message": {"content": [{"type": "text", "text": text}]},
+        })
+    )
+    .expect("write");
+    drop(file);
+
+    let detail = probe.get_json(&format!("/api/sessions/claude/{SESSION_ID}")).await;
+    assert_eq!(detail["items"][1]["text"], text);
+
+    let (status, body) = probe.get(&format!("/api/sessions/claude/{SESSION_ID}/history?before=2")).await;
+    assert_eq!(status, 200, "{body}");
+    let page: Value = serde_json::from_str(&body).expect("json");
+    assert!(
+        page["items"].as_array().expect("items").iter().any(|item| item["text"] == text),
+        "the history page carries the message"
+    );
+    probe.stop().await;
+}
+
 #[tokio::test]
 async fn a_subagent_transcript_is_readable_through_its_task_call() {
     let probe = Probe::start().await;

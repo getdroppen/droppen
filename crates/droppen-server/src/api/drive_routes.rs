@@ -52,47 +52,47 @@ fn uploaded(drive: &Drive, name: &str) -> String {
     path.to_string_lossy().into_owned()
 }
 
-/// A message with an attachment to a Claude Code instant chat is refused:
-/// the chat runs with every tool off. So is one to a chat no provider runs,
-/// which the send block turns away before the chat check is reached.
+/// A message with an attachment to a chat no provider runs is refused by the
+/// send block before the chat check is reached. Both CLIs' chats read what a
+/// message attaches now (Claude Code through its one Read tool), so the
+/// "this chat cannot read attachments" arm is a guard with no provider behind
+/// it today; [`droppen_provider::ProviderRegistry::chat_refuses_attachments`]
+/// is pinned directly in the provider registry tests.
 #[tokio::test]
-async fn a_chat_that_cannot_read_an_attachment_refuses_one() {
-    let cases: [(fn(&mut droppen_provider::ProviderRegistry, &Arc<droppen_provider::InjectionRegistry>), &str); 2] = [
-        (crate::app::register_providers, "attachments are not supported in claude instant chats"),
-        (|_, _| {}, "no provider runs claude sessions"),
-    ];
-    for (register, expected) in cases {
-        let (_dir, drive) = drive_with(register);
-        let id = "11111111-2222-4333-8444-555555555555";
-        let project = droppen_provider_claude_code::claude_roots::ClaudeRoots::of(&drive.paths).managed_projects().join("-chats");
-        std::fs::create_dir_all(&project).expect("project");
-        let chats = chats_cwd(&drive.paths).to_string_lossy().into_owned();
-        let line = serde_json::json!({
-            "type": "user", "sessionId": id, "cwd": chats, "uuid": "u1", "timestamp": "2026-10-01T10:00:00Z",
-            "message": {"role": "user", "content": "hi"},
-        });
-        std::fs::write(project.join(format!("{id}.jsonl")), format!("{line}\n")).expect("transcript");
-        let state = DriveState {
-            drive: drive.clone(),
-            paths: drive.paths.clone(),
-            global: droppen_drive::feed::global::GlobalFeed::new(),
-            refresh: droppen_http::refresh::Refresh::new(droppen_drive::feed::global::GlobalFeed::new()),
-        };
-        let body = SendMessage {
-            text: "look".into(),
-            images: Optional(Some(vec![uploaded(&drive, "a.png")])),
-            files: Optional(None),
-            model: Optional(None),
-            effort: Optional(None),
-            permission: Optional(None),
-            account_id: None,
-            client_message_id: Optional(None),
-        };
-        let error = send_message(State(state), MaybeIdentity(None), ApiPath((Source::Claude, id.to_string())), ApiJson(body))
-            .await
-            .expect_err("refused");
-        assert_eq!((error.status().as_u16(), error.body()["error"].as_str()), (409, Some(expected)));
-    }
+async fn a_chat_no_provider_runs_refuses_an_attachment() {
+    let (_dir, drive) = drive_with(|_, _| {});
+    let id = "11111111-2222-4333-8444-555555555555";
+    let project = droppen_provider_claude_code::claude_roots::ClaudeRoots::of(&drive.paths).managed_projects().join("-chats");
+    std::fs::create_dir_all(&project).expect("project");
+    let chats = chats_cwd(&drive.paths).to_string_lossy().into_owned();
+    let line = serde_json::json!({
+        "type": "user", "sessionId": id, "cwd": chats, "uuid": "u1", "timestamp": "2026-10-01T10:00:00Z",
+        "message": {"role": "user", "content": "hi"},
+    });
+    std::fs::write(project.join(format!("{id}.jsonl")), format!("{line}\n")).expect("transcript");
+    let state = DriveState {
+        drive: drive.clone(),
+        paths: drive.paths.clone(),
+        global: droppen_drive::feed::global::GlobalFeed::new(),
+        refresh: droppen_http::refresh::Refresh::new(droppen_drive::feed::global::GlobalFeed::new()),
+    };
+    let body = SendMessage {
+        text: "look".into(),
+        images: Optional(Some(vec![uploaded(&drive, "a.png")])),
+        files: Optional(None),
+        model: Optional(None),
+        effort: Optional(None),
+        permission: Optional(None),
+        account_id: None,
+        client_message_id: Optional(None),
+    };
+    let error = send_message(State(state), MaybeIdentity(None), ApiPath((Source::Claude, id.to_string())), ApiJson(body))
+        .await
+        .expect_err("refused");
+    assert_eq!(
+        (error.status().as_u16(), error.body()["error"].as_str()),
+        (409, Some("no provider runs claude sessions"))
+    );
 }
 
 fn search(q: &str) -> SearchQuery {

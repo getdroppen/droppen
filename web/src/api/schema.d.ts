@@ -3390,6 +3390,17 @@ export interface components {
             backend: components["schemas"]["ChatKind"];
             /** @description Reasoning effort, for the CLI backends. */
             effort?: string;
+            /**
+             * @description Non-image attachment paths returned by `POST /api/uploads`, sent with
+             *     the first message exactly as `POST /api/sessions/new` takes them.
+             */
+            files?: string[];
+            /**
+             * @description Image paths returned by `POST /api/uploads`, sent with the first message
+             *     exactly as `POST /api/sessions/new` takes them. CLI backends only; the
+             *     API backend is text-only and refuses a body that carries any.
+             */
+            images?: string[];
             /** @description Model override. */
             model?: string;
             /**

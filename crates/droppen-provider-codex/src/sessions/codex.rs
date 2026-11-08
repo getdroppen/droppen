@@ -1347,6 +1347,52 @@ mod tests {
         );
     }
 
+    /// The shared attachment parser must not slice at byte 2 of a user
+    /// message: a leading CJK character or emoji is three or four bytes wide.
+    #[tokio::test]
+    async fn a_leading_multibyte_message_parses_without_panicking() {
+        for text in [
+            "所以结论呢我们应该怎么办",
+            "😀 emoji first",
+            "a你好世界 mixed",
+            "日本語のメッセージです、これはテストです",
+        ] {
+            let line = serde_json::json!({
+                "type": "response_item",
+                "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": text}]},
+            })
+            .to_string();
+            let (dir, path) = rollout(&[r#"{"type":"session_meta","payload":{"cwd":"/w","id":"x"}}"#, &line]);
+            let paths = Paths::new(dir.path().to_path_buf());
+            let items = parse_codex_transcript(&paths, &path).await.expect("parse");
+            assert!(items.iter().any(|item| item.text == text), "the message survives: {items:?}");
+            assert!(items.iter().all(|item| item.files.is_none()));
+        }
+    }
+
+    /// Opener-heavy text is scanned once, not from every opener.
+    #[tokio::test]
+    async fn opener_heavy_text_parses_within_a_time_bound() {
+        let text = vec!["----- BEGIN ATTACHED FILE: /u/a.txt -----"; 8_000].join("\n");
+        assert!(text.len() > 300_000);
+        let line = serde_json::json!({
+            "type": "response_item",
+            "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": text}]},
+        })
+        .to_string();
+        let (dir, path) = rollout(&[r#"{"type":"session_meta","payload":{"cwd":"/w","id":"x"}}"#, &line]);
+        let paths = Paths::new(dir.path().to_path_buf());
+        let started = std::time::Instant::now();
+        let items = parse_codex_transcript(&paths, &path).await.expect("parse");
+        assert!(items.iter().any(|item| item.text.starts_with("----- BEGIN ATTACHED FILE:")));
+        assert!(items.iter().all(|item| item.files.is_none()));
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(2),
+            "300 KB took {:?}",
+            started.elapsed()
+        );
+    }
+
     #[tokio::test]
     async fn status_comes_from_the_last_meaningful_tail_entry() {
         let (_dir, waiting) = rollout(&[r#"{"type":"event_msg","payload":{"type":"agent_message"}}"#]);

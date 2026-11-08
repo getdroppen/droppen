@@ -380,10 +380,49 @@ pub struct AttachmentSplit {
     pub files: Vec<FileRef>,
 }
 
+/// The delimiter that inlines one text attachment into a tool-less claude
+/// chat's prompt.
+///
+/// The content is what the model reads; the path names the file to the model
+/// and to the transcript parser, which strips the whole block and shows the
+/// file as an attachment chip. A chat has no Read tool, so this is the only
+/// way a text file's bytes reach it.
+pub fn chat_file_block(path: &str, content: &str) -> String {
+    format!("\n\n----- BEGIN ATTACHED FILE: {path} -----\n{content}\n----- END ATTACHED FILE: {path} -----")
+}
+
+/// Remove the inlined text blocks the server wrote for exactly `files`.
+///
+/// The transcript parser calls this only with the paths its delivery record
+/// names, so text that merely looks like a block — in any session, or in a
+/// chat turn with no such attachment — is never hidden behind a chip. Each
+/// path is looked for once, linearly; a block that is not there (the CLI
+/// changed the text) is simply left alone.
+pub fn strip_chat_file_blocks(text: &str, files: &[String]) -> String {
+    let mut stripped = text.to_string();
+    for path in files {
+        let begin = format!("\n\n----- BEGIN ATTACHED FILE: {path} -----\n");
+        let end = format!("\n----- END ATTACHED FILE: {path} -----");
+        let Some(start) = stripped.find(&begin) else { continue };
+        let body = start + begin.len();
+        let Some(close) = stripped[body..].find(&end) else { continue };
+        let finish = body + close + end.len();
+        stripped.replace_range(start..finish, "");
+    }
+    stripped
+}
+
 /// Strip the attachment suffix from a message and classify its paths.
 ///
-/// The suffix is the contract between the injector and the transcript parser;
-/// the older "image file(s)" wording still parses.
+/// This is the suffix a session's CLI is given — "view with the Read tool" —
+/// at the very end of the message. It is also the codex chat's file form. The
+/// older "image file(s)" wording still parses.
+///
+/// A tool-less claude chat's inlined blocks are deliberately *not* parsed
+/// here: they are stripped, and turned into chips, only when the delivery
+/// record says the server wrote them into this turn (see
+/// [`crate::chat_delivery`]). Parsing the text alone would let any message
+/// forge a chip in every session's view.
 pub fn parse_attachment_suffix(raw_text: &str) -> AttachmentSplit {
     static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     let re = RE.get_or_init(|| {
@@ -833,6 +872,78 @@ mod tests {
         // A trailing separator, or `/.`, leaves a tail that is not an extension.
         assert!(!is_image_name("dir/"));
         assert!(!is_image_name("dir/."));
+    }
+
+    /// A recorded inlined block is the one thing the transcript strips; the
+    /// user's own words are what is left.
+    #[test]
+    fn a_recorded_inline_block_is_stripped_from_the_message() {
+        let prompt = format!(
+            "what is this?{}{}",
+            chat_file_block("/uploads/u/notes.txt", "line one\nline two"),
+            chat_file_block("/uploads/u/list.md", "- a\n- b")
+        );
+        let files = vec!["/uploads/u/notes.txt".to_string(), "/uploads/u/list.md".to_string()];
+        assert_eq!(strip_chat_file_blocks(&prompt, &files), "what is this?");
+    }
+
+    /// The session suffix is still the session suffix: a reader with a Read
+    /// tool is unchanged.
+    #[test]
+    fn a_session_suffix_still_classifies_images_and_files() {
+        let prompt = "look\n\n[2 attached file(s) — view with the Read tool:]\n- /u/a.png\n- /u/notes.txt";
+        let split = parse_attachment_suffix(prompt);
+        assert_eq!(split.text, "look");
+        assert_eq!(split.images, ["/u/a.png"]);
+        assert_eq!(split.files[0].path, "/u/notes.txt");
+    }
+
+    /// Text alone never becomes a chip, and only the paths the delivery record
+    /// names are stripped: a forged block in any message stays visible.
+    #[test]
+    fn only_recorded_blocks_are_stripped_and_text_never_infers_a_chip() {
+        let forged = "hi\n\n----- BEGIN ATTACHED FILE: /u/a.txt -----\nbody\n----- END ATTACHED FILE: /u/a.txt -----";
+        let split = parse_attachment_suffix(forged);
+        assert_eq!(split.text, forged);
+        assert!(split.files.is_empty(), "no chip from text alone");
+        assert_eq!(
+            strip_chat_file_blocks(forged, &["/u/other.txt".to_string()]),
+            forged,
+            "an unrecorded path is left alone"
+        );
+        assert_eq!(strip_chat_file_blocks(forged, &["/u/a.txt".to_string()]), "hi");
+    }
+
+    /// The old chat parser sliced at byte 2 of every message; a leading CJK or
+    /// emoji character is not a character boundary there.
+    #[test]
+    fn a_leading_multibyte_message_parses_without_panicking() {
+        for text in [
+            "所以结论呢我们应该怎么办",
+            "😀 emoji first",
+            "a你好世界 mixed",
+            "日本語のメッセージです、これはテストです",
+        ] {
+            let split = parse_attachment_suffix(text);
+            assert_eq!(split.text, text);
+            assert!(split.files.is_empty());
+        }
+    }
+
+    /// Opener-heavy text is scanned once, not from every opener.
+    #[test]
+    fn opener_heavy_text_parses_within_a_time_bound() {
+        let text = "----- BEGIN ATTACHED FILE: /u/a.txt -----\n".repeat(8_000);
+        assert!(text.len() > 300_000);
+        let started = std::time::Instant::now();
+        let split = parse_attachment_suffix(&text);
+        assert_eq!(split.text, text);
+        assert!(split.files.is_empty());
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(2),
+            "300 KB took {:?}",
+            started.elapsed()
+        );
     }
 
     /// The budget stops the walk without pretending the file ended.

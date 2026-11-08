@@ -56,6 +56,9 @@ export type NewConversation = {
       accountId?: string | null;
       /** `"start"`: `accountId` is the one the start rule named (`placed: false`), not a pick. */
       accountFrom?: "start";
+      /** Paths `POST /api/uploads` answered, sent with the first message as a session's are. */
+      images?: string[];
+      files?: string[];
     }
 );
 
@@ -93,7 +96,12 @@ export function creationRequest(input: NewConversation, clientMessageId?: string
         ? { backend: input.source, ...(input.model ? { model: input.model } : {}) }
         : { ...common, backend: input.source,
             ...(input.accountId !== undefined ? { accountId: input.accountId } : {}),
-            ...(input.accountFrom ? { accountFrom: input.accountFrom } : {}) } };
+            ...(input.accountFrom ? { accountFrom: input.accountFrom } : {}),
+            // Omitted when empty, so a chat with nothing attached is the body
+            // an older server always took. The api backend never reaches here:
+            // its body carries no attachment fields at all.
+            ...(input.images?.length ? { images: input.images } : {}),
+            ...(input.files?.length ? { files: input.files } : {}) } };
 }
 
 export interface PendingCreatedSession {

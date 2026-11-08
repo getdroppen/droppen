@@ -356,6 +356,29 @@ pub const SCHEMA: &[&str] = &[
      ) STRICT;
      CREATE INDEX IF NOT EXISTS session_questions_by_session ON session_questions (session_id, created_ms);
      CREATE INDEX IF NOT EXISTS session_questions_by_state ON session_questions (state)",
+    // 11 — what one chat message attached, so its transcript entry can show a
+    // thumbnail and strip the inlined file bodies back into chips.
+    //
+    // A row is identified by the delivery's own queue id: a message retried
+    // under the same id replaces its row rather than adding one, which is what
+    // keeps the rows in step with the transcript. `text_hash` is of the exact
+    // text block written to the CLI; `at_ms` is when it was written, and the
+    // parser accepts a row only for an entry stamped at or after it. The index
+    // answers that per-entry lookup; the primary key answers the retry. Rows
+    // are pruned when their uploads are swept and when their chat is archived
+    // (the server's `chat_delivery`), so the table follows the transcripts it
+    // describes rather than growing for ever.
+    "CREATE TABLE IF NOT EXISTS chat_deliveries (
+         source      TEXT    NOT NULL,
+         session_id  TEXT    NOT NULL,
+         delivery_id TEXT    NOT NULL,
+         text_hash   TEXT    NOT NULL,
+         at_ms       INTEGER NOT NULL,
+         images      TEXT    NOT NULL,
+         files       TEXT    NOT NULL,
+         PRIMARY KEY (source, session_id, delivery_id)
+     ) STRICT, WITHOUT ROWID;
+     CREATE INDEX IF NOT EXISTS chat_deliveries_by_turn ON chat_deliveries (source, session_id, text_hash, at_ms)",
 ];
 
 /// Bring `conn` up to the newest step, and say nothing if it is already there.

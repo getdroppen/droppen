@@ -194,6 +194,15 @@ pub struct ChatNew {
     /// empty and sent to afterwards.
     #[serde(default, skip_serializing_if = "Optional::is_none")]
     pub text: Optional<String>,
+    /// Image paths returned by `POST /api/uploads`, sent with the first message
+    /// exactly as `POST /api/sessions/new` takes them. CLI backends only; the
+    /// API backend is text-only and refuses a body that carries any.
+    #[serde(default, skip_serializing_if = "Optional::is_none")]
+    pub images: Optional<Vec<String>>,
+    /// Non-image attachment paths returned by `POST /api/uploads`, sent with
+    /// the first message exactly as `POST /api/sessions/new` takes them.
+    #[serde(default, skip_serializing_if = "Optional::is_none")]
+    pub files: Optional<Vec<String>>,
     /// Model override.
     #[serde(default, skip_serializing_if = "Optional::is_none")]
     pub model: Optional<String>,
@@ -365,6 +374,12 @@ pub async fn new_chat(State(state): State<ChatsState>, ApiJson(body): ApiJson<Ch
     validate_new(&body)?;
 
     let Some(source) = body.backend.source() else {
+        // The API backend answers with a completion it builds itself: there is
+        // no CLI to hand a path to, and its provider call is text-only. Refuse
+        // rather than drop them, so a client that attached something is told.
+        if !body.images.0.as_deref().unwrap_or_default().is_empty() || !body.files.0.as_deref().unwrap_or_default().is_empty() {
+            return Err(ApiError::bad_request("attachments are not supported in api chats"));
+        }
         let chat = state
             .chats
             .create_api_chat(body.model.as_deref())
@@ -380,6 +395,18 @@ pub async fn new_chat(State(state): State<ChatsState>, ApiJson(body): ApiJson<Ch
     if text.trim().is_empty() {
         return Err(ApiError::bad_request("text is required for CLI chats"));
     }
+    // The same fence a session's first message passes: every path comes from
+    // `/api/uploads`, still exists, and is replaced by its resolved spelling.
+    let (images, files) = crate::attachments::resolve_attachments(
+        &state.paths,
+        body.images.0.unwrap_or_default(),
+        body.files.0.unwrap_or_default(),
+    )?;
+    // A chat that takes attachments as content (a claude chat, which has no
+    // tools) reads them and refuses what it cannot carry now.
+    if state.drive.providers.capabilities(source).chat_inline_attachments {
+        crate::attachments::validate_claude_chat_attachments(&state.paths, &images, &files).await?;
+    }
     let cwd = ensure_chats_cwd(&state.paths)
         .await
         .map_err(|_| ApiError::bad_request("cannot create chat"))?;
@@ -387,6 +414,8 @@ pub async fn new_chat(State(state): State<ChatsState>, ApiJson(body): ApiJson<Ch
         model: body.model.0,
         effort: body.effort.0,
         chat: true,
+        images,
+        files,
         // A chat is billed to the login picked for it, else whichever one the
         // user made the default.
         account: droppen_provider::AccountChoice::from_start_request(body.account_id, body.account_from.0),
@@ -717,6 +746,8 @@ mod tests {
         let body = |text: Option<&str>, model: Option<&str>, effort: Option<&str>| ChatNew {
             backend: ChatKind::Api,
             text: Optional(text.map(str::to_owned)),
+            images: Optional(None),
+            files: Optional(None),
             model: Optional(model.map(str::to_owned)),
             effort: Optional(effort.map(str::to_owned)),
             account_id: None,

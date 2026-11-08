@@ -264,6 +264,20 @@ pub(crate) struct Fingerprint {
     pub credential: Option<String>,
     /// The instant-chat persona and `--disallowedTools *`.
     pub chat: bool,
+    /// A tombstone for the intermediate build of the chat-attachment PR that
+    /// ran chats with `--tools Read`.
+    ///
+    /// Only an intermediate build of the chat-attachment work wrote this, and
+    /// only when true. It is kept serialised when true so a journal patch
+    /// (which round-trips the typed row) cannot erase it before adoption has
+    /// read it: `--tools Read` is bounded by the user's own CLI settings
+    /// rather than this server's uploads directory (an allow rule for `Read`,
+    /// or `bypassPermissions`, makes it unbounded), so a resident inherited
+    /// from that build must be replaced, never kept. A record from main or
+    /// from this build has it absent and is accepted; one with `true` is not.
+    /// False is not written, so every ordinary row stays the bytes it was.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub chat_reads: bool,
     /// Whether `--add-dir <uploads>` is on the command line.
     pub uploads: bool,
     /// Whether `--permission-prompt-tool stdio` and the plan-mode
@@ -320,6 +334,12 @@ impl Fingerprint {
             && self.account == live.account
             && self.credential == live.credential
             && self.chat == live.chat
+            // A chat never runs with a permission mode: the server ignores one
+            // in the body, and a process started with one by an earlier build
+            // is replaced rather than used.
+            && (!self.chat || live.permission.is_none())
+            // See the field: a chat from the intermediate build has Read.
+            && !live.chat_reads
             && (!self.uploads || live.uploads)
         // `questions` deliberately absent: see the field.
     }
@@ -410,6 +430,12 @@ impl Fingerprint {
         }
         if self.chat != live.chat {
             parts.push(if self.chat { "the chat persona" } else { "no chat persona" }.to_string());
+        }
+        if live.chat_reads {
+            parts.push("a chat with no tools rather than one with Read".to_string());
+        }
+        if self.chat && live.permission.is_some() {
+            parts.push("a chat with no permission mode".to_string());
         }
         if self.uploads && !live.uploads {
             parts.push("access to the uploads directory".to_string());
@@ -522,6 +548,17 @@ enum Cmd {
     },
 }
 
+/// What one chat delivery should record once its line has reached the CLI.
+///
+/// The queue id is the row's identity, so a retry overwrites rather than adds;
+/// `text` is the exact text block written, which the transcript parser hashes.
+struct DeliveryRecord {
+    id: String,
+    text: String,
+    images: Vec<String>,
+    files: Vec<String>,
+}
+
 /// One message waiting for its turn.
 struct Pending {
     /// What the queue routes name this message by.
@@ -534,6 +571,19 @@ struct Pending {
     id: String,
     /// The prompt as claude will see it, attachment suffix included.
     text: String,
+    /// Upload paths whose bytes become base64 image blocks in the stream-json
+    /// user line. A tool-less chat's only image delivery; empty for a session,
+    /// whose images are paths in [`Pending::text`] for Read.
+    images: Vec<String>,
+    /// Upload paths whose UTF-8 contents are inlined into the prompt at
+    /// delivery, each under [`droppen_sessions::util::chat_file_block`]. Empty
+    /// for a session, whose files are paths in [`Pending::text`] for Read.
+    ///
+    /// Paths rather than bytes: the journal holds these (a restart must deliver
+    /// the same message), and a message's images can be megabytes each. They
+    /// are re-fenced and re-read at delivery, so a swept upload fails the turn
+    /// instead of sending an empty block.
+    files: Vec<String>,
     /// The process this message needs, which may not be the one that is running.
     fingerprint: Fingerprint,
     /// How to start that process, for a message this server was handed.
@@ -580,15 +630,18 @@ impl Pending {
     /// A message this server has just been handed, under a fresh queue id.
     #[cfg(any(test, feature = "test-support"))]
     fn new(text: &str, recipe: Recipe) -> Pending {
-        Pending::with_id(new_uuid(), text, recipe)
+        Pending::with_id(new_uuid(), text, Vec::new(), Vec::new(), recipe)
     }
 
     /// The same, under a queue id the send path already chose — the one a
-    /// client's receipt follows; see [`droppen_provider::receipts`].
-    fn with_id(id: String, text: &str, recipe: Recipe) -> Pending {
+    /// client's receipt follows; see [`droppen_provider::receipts`] — with the
+    /// upload paths a chat delivers as blocks or inlines at turn time.
+    fn with_id(id: String, text: &str, images: Vec<String>, files: Vec<String>, recipe: Recipe) -> Pending {
         Pending {
             id,
             text: text.to_string(),
+            images,
+            files,
             fingerprint: recipe.fingerprint.clone(),
             recipe: Some(recipe),
             rotation_attempt: 0,
@@ -604,6 +657,8 @@ impl Pending {
         Queued {
             id: self.id.clone(),
             text: self.text.clone(),
+            images: self.images.clone(),
+            files: self.files.clone(),
             fingerprint: self.fingerprint.clone(),
             steered,
             rotation_attempt: self.rotation_attempt,
@@ -975,6 +1030,16 @@ pub(crate) struct Queued {
     pub(crate) id: String,
     /// The prompt as claude will see it, attachment suffix included.
     pub(crate) text: String,
+    /// Upload paths whose bytes become image blocks at delivery, re-fenced and
+    /// re-read then. Absent on every record written before chats carried
+    /// images, and on every session's message.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) images: Vec<String>,
+    /// Upload paths whose UTF-8 contents are inlined into the prompt at
+    /// delivery. Absent for sessions and for records written before chats
+    /// carried files.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) files: Vec<String>,
     /// The process this message needs, so a re-attached server can tell whether
     /// the resident it inherited may answer it at all.
     ///
@@ -1014,6 +1079,12 @@ pub(crate) struct Queued {
 /// written exactly as it always was.
 fn is_zero(value: &u8) -> bool {
     *value == 0
+}
+
+/// Whether a flag is off, so a row that never had it is written exactly as it
+/// always was — while a `true` survives every patch of the row.
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// What a Claude Code resident's driver writes into its run's row as it goes:
@@ -1111,13 +1182,16 @@ impl Provider for ClaudeCode {
     }
 
     /// claude stops to ask (`AskUserQuestion`), and the turn waits for the
-    /// answer. An instant chat runs with every tool disabled, so it cannot read
-    /// an attachment.
+    /// answer. An instant chat still runs with every tool disabled: its images
+    /// arrive as base64 content blocks in the stream-json user line and its
+    /// text files are inlined into the prompt, so nothing is read from disk by
+    /// the model.
     fn capabilities(&self) -> Capabilities {
         Capabilities {
             questions: true,
             chats: true,
-            chat_attachments: false,
+            chat_attachments: true,
+            chat_inline_attachments: true,
             schedules: true,
         }
     }
@@ -1345,7 +1419,16 @@ impl ClaudeCodeRuns {
     /// Posting and returning, as this once did, answered `200` while the message
     /// was still sitting in the driver's inbox, and a `SIGKILL` in that window
     /// lost a message the user had been told was accepted.
-    async fn deliver(self: &Arc<Self>, gate: &SpawnGate, id: &str, text: &str, recipe: Recipe, qid: Option<String>) -> Result<Delivery, InjectError> {
+    async fn deliver(
+        self: &Arc<Self>,
+        gate: &SpawnGate,
+        id: &str,
+        text: &str,
+        images: Vec<String>,
+        files: Vec<String>,
+        recipe: Recipe,
+        qid: Option<String>,
+    ) -> Result<Delivery, InjectError> {
         let qid = qid.unwrap_or_else(new_uuid);
         // Twice at most: the second pass is only for a driver that ended with
         // this message still in its inbox, and by the time that is known its
@@ -1358,8 +1441,10 @@ impl ClaudeCodeRuns {
             // take milliseconds, so a per-key lock map would cost more than it
             // saves.
             let mut permit = gate.permit().await;
-            let Some((queued, recorded)) = self.post_to_existing(id, &qid, text, &recipe) else {
-                self.clone().start_resident(id, Box::new(Pending::with_id(qid, text, recipe)), &mut permit).await?;
+            let Some((queued, recorded)) = self.post_to_existing(id, &qid, text, &images, &files, &recipe) else {
+                self.clone()
+                    .start_resident(id, Box::new(Pending::with_id(qid, text, images, files, recipe)), &mut permit)
+                    .await?;
                 return Ok(Delivery { queued: false });
             };
             // The message is in a driver's inbox, so the gap the gate guards is
@@ -1385,10 +1470,18 @@ impl ClaudeCodeRuns {
     /// `None` means "start one": either there was no entry, or the driver
     /// behind it has stopped reading — which is the moment between the process
     /// exiting and the driver clearing its own entry.
-    fn post_to_existing(&self, id: &str, qid: &str, text: &str, recipe: &Recipe) -> Option<(bool, tokio::sync::oneshot::Receiver<()>)> {
+    fn post_to_existing(
+        &self,
+        id: &str,
+        qid: &str,
+        text: &str,
+        images: &[String],
+        files: &[String],
+        recipe: &Recipe,
+    ) -> Option<(bool, tokio::sync::oneshot::Receiver<()>)> {
         let mut residents = self.residents.lock().expect("residents poisoned");
         let handle = residents.get(id)?;
-        let pending = Box::new(Pending::with_id(qid.to_string(), text, recipe.clone()));
+        let pending = Box::new(Pending::with_id(qid.to_string(), text, images.to_vec(), files.to_vec(), recipe.clone()));
         let (recorded, on_disk) = tokio::sync::oneshot::channel();
         if handle.tx.send(Cmd::Deliver { pending, recorded }).is_err() {
             // The driver is gone and its entry is debris. Clearing it here
@@ -1999,6 +2092,8 @@ fn inherited_queue(session: &str, queued: &[Queued], live: Option<&Fingerprint>)
             // keeps the message and gives it a handle.
             id: if message.id.is_empty() { new_uuid() } else { message.id.clone() },
             text: message.text.clone(),
+            images: message.images.clone(),
+            files: message.files.clone(),
             fingerprint: message.fingerprint.clone(),
             recipe: None,
             rotation_attempt: message.rotation_attempt,
@@ -3918,6 +4013,8 @@ impl Driver {
         let continuation = Pending {
             id: new_uuid(),
             text,
+            images: Vec::new(),
+            files: Vec::new(),
             fingerprint: recipe.fingerprint.clone(),
             recipe: Some(recipe.clone()),
             rotation_attempt: switches.saturating_add(1),
@@ -4054,6 +4151,8 @@ impl Driver {
                 self.queue.push_front(Pending {
                     id: new_uuid(),
                     text: rotation::resumed_prompt(&hold.label),
+                    images: Vec::new(),
+                    files: Vec::new(),
                     fingerprint,
                     recipe,
                     rotation_attempt: hold.switches,
@@ -4812,7 +4911,14 @@ impl Driver {
             self.anchor_absorb().await;
         }
         let pending = self.queue.remove(at).expect("the index came from this queue");
-        let message = user_line(&pending.text);
+        let (message, delivery) = match self.user_line_for(&pending).await {
+            Ok(prepared) => prepared,
+            Err(why) => {
+                self.receipt(&pending, ReceiptStatus::Failed);
+                self.fail_message(&why);
+                return QueueOutcome::Done;
+            }
+        };
         self.recorder.lifecycle(
             Stage::Steer,
             Some(&format!("{qid} was handed to claude ahead of the queue: {}", clip(&pending.text))),
@@ -4828,6 +4934,11 @@ impl Driver {
             return QueueOutcome::Unreachable;
         }
         tracing::info!(session = %self.id, qid, "a queued message was steered into the turn in flight");
+        // Only after the line went in. A failed steer returns above and leaves
+        // no row; the retry replaces the row under the same queue id.
+        if let Some(delivery) = &delivery {
+            self.record_delivery(delivery);
+        }
         // In claude's stdin is handed over, whatever turn it ends up running in.
         self.receipt(&pending, ReceiptStatus::Sent);
         // The same reason [`Driver::pump`] takes one: a message that fits the
@@ -5384,9 +5495,95 @@ impl Driver {
         self.publish();
     }
 
+    /// The stdin line for one message: its text plus whatever its chat
+    /// attachments become at this moment, and the delivery to record **after**
+    /// the line is written.
+    ///
+    /// A chat carries upload paths rather than bytes, so the bytes can be
+    /// megabytes each and the journal stays small. They are re-fenced and
+    /// re-read here, at the moment they go to the CLI: an upload swept since
+    /// the send fails the message with its own reason rather than sending an
+    /// empty block or a stale prompt.
+    async fn user_line_for(&self, pending: &Pending) -> Result<(String, Option<DeliveryRecord>), String> {
+        let paths = &self.runs.host.paths;
+        if pending.images.is_empty() && pending.files.is_empty() {
+            // A chat message with nothing attached still gets a delivery row:
+            // it is what tells the parser that this identical text had no
+            // attachments, rather than reaching back to an earlier one.
+            let delivery = pending.fingerprint.chat.then(|| DeliveryRecord {
+                id: pending.id.clone(),
+                text: pending.text.clone(),
+                images: Vec::new(),
+                files: Vec::new(),
+            });
+            return Ok((user_line(&pending.text), delivery));
+        }
+        let mut images = Vec::with_capacity(pending.images.len());
+        let mut image_total = 0u64;
+        for path in &pending.images {
+            let image = droppen_provider::chat_attachments::read_chat_image(paths, path)
+                .await
+                .map_err(|error| error.to_string())?;
+            image_total = image_total.saturating_add(image.raw_len);
+            if image_total > droppen_provider::chat_attachments::MAX_IMAGE_TOTAL_BYTES {
+                return Err(
+                    droppen_provider::chat_attachments::ChatAttachmentError::ImagesTooLarge {
+                        limit: droppen_provider::chat_attachments::MAX_IMAGE_TOTAL_BYTES,
+                    }
+                    .to_string(),
+                );
+            }
+            images.push((image.media_type, image.data));
+        }
+        let mut inlined = String::new();
+        let mut total = 0u64;
+        for path in &pending.files {
+            let content = droppen_provider::chat_attachments::read_chat_text_file(paths, path, &mut total)
+                .await
+                .map_err(|error| error.to_string())?;
+            inlined.push_str(&droppen_sessions::util::chat_file_block(path, &content));
+        }
+        let text = if inlined.is_empty() {
+            pending.text.clone()
+        } else {
+            format!("{}{inlined}", pending.text)
+        };
+        let delivery = pending.fingerprint.chat.then(|| DeliveryRecord {
+            id: pending.id.clone(),
+            text: text.clone(),
+            images: pending.images.clone(),
+            files: pending.files.clone(),
+        });
+        Ok((user_line_with_images(&text, &images), delivery))
+    }
+
+    /// Write the row the transcript parser reads for this delivery.
+    ///
+    /// Called only after the line reached the CLI: a write that failed leaves
+    /// no row, and a retry travels under the same queue id and replaces the
+    /// row a failed attempt might have written.
+    fn record_delivery(&self, delivery: &DeliveryRecord) {
+        droppen_sessions::chat_delivery::record(
+            &self.runs.host.paths,
+            Source::Claude,
+            &self.id,
+            &delivery.id,
+            &delivery.text,
+            &delivery.images,
+            &delivery.files,
+        );
+    }
+
     /// Write one message to claude's stdin and open a turn for it.
     async fn start_turn(&mut self, pending: Pending) {
-        let message = user_line(&pending.text);
+        let (message, delivery) = match self.user_line_for(&pending).await {
+            Ok(prepared) => prepared,
+            Err(why) => {
+                self.receipt(&pending, ReceiptStatus::Failed);
+                self.fail_message(&why);
+                return;
+            }
+        };
         let turn = Turn {
             run: self.open_turn(),
             at: self.link.at(),
@@ -5411,6 +5608,11 @@ impl Driver {
             self.receipt(&pending, ReceiptStatus::Failed);
             self.close_turn(&turn, InjectionRunState::Failed, Some(format!("cannot reach claude: {error}")));
             return;
+        }
+        // Only now, after the line really went in: a write that failed leaves
+        // no row, and a retry overwrites the row under the same queue id.
+        if let Some(delivery) = &delivery {
+            self.record_delivery(delivery);
         }
         self.receipt(&pending, ReceiptStatus::Sent);
         self.touch();
@@ -6563,10 +6765,28 @@ async fn newest_write(dir: &Path) -> Option<SystemTime> {
 /// chance to write a message claude parses differently depending on how it got
 /// there.
 fn user_line(text: &str) -> String {
+    user_line_with_images(text, &[])
+}
+
+/// The same with a chat's images as base64 content blocks, after the text.
+///
+/// This is how a tool-less chat receives an image: the block carries the bytes
+/// the model sees, and no path is named for a tool that does not exist. The
+/// CLI writes an `[Image #N]` marker into the text block for each one.
+fn user_line_with_images(text: &str, images: &[(&'static str, String)]) -> String {
+    let mut content = Vec::with_capacity(1 + images.len());
+    content.push(ContentBlock::Text { text });
+    for (media_type, data) in images {
+        content.push(ContentBlock::Image {
+            source: ImageSource {
+                kind: "base64",
+                media_type,
+                data,
+            },
+        });
+    }
     StdinLine::User {
-        message: UserMessage {
-            content: [TextBlock { text }],
-        },
+        message: UserMessage { content },
     }
     .line()
 }
@@ -6582,18 +6802,39 @@ enum StdinLine<'a> {
     ControlRequest { request_id: String, request: ControlRequest<'a> },
 }
 
-/// A user message with one text block.
+/// A user message: a text block, then any image blocks.
 #[derive(serde::Serialize)]
 #[serde(tag = "role", rename = "user")]
 struct UserMessage<'a> {
-    content: [TextBlock<'a>; 1],
+    content: Vec<ContentBlock<'a>>,
 }
 
-/// One text block of a message.
+/// One block of a message, tagged `type`.
 #[derive(serde::Serialize)]
-#[serde(tag = "type", rename = "text")]
-struct TextBlock<'a> {
-    text: &'a str,
+#[serde(tag = "type", rename_all = "snake_case")]
+enum ContentBlock<'a> {
+    /// The prompt's words.
+    Text {
+        /// The text.
+        text: &'a str,
+    },
+    /// A chat's image, as bytes the model sees.
+    Image {
+        /// Where the bytes come from and of what type.
+        source: ImageSource<'a>,
+    },
+}
+
+/// One image's inline source, in the API's own shape.
+#[derive(serde::Serialize)]
+struct ImageSource<'a> {
+    /// `"base64"`.
+    #[serde(rename = "type")]
+    kind: &'static str,
+    /// `image/png`, `image/jpeg`, `image/gif` or `image/webp`.
+    media_type: &'static str,
+    /// The standard base64 payload.
+    data: &'a str,
 }
 
 /// What a `control_request` asks, tagged `subtype`.
@@ -7207,6 +7448,7 @@ mod tests {
                 account: None,
                 credential: None,
                 chat: true,
+                chat_reads: false,
                 uploads: true,
                 questions: true,
             }),
@@ -7229,6 +7471,8 @@ mod tests {
         let queued = |id: &str, text: &str, steered: bool| Queued {
             id: id.to_string(),
             text: text.to_string(),
+            images: Vec::new(),
+            files: Vec::new(),
             fingerprint: live.clone(),
             steered,
             rotation_attempt: 0,
@@ -7254,6 +7498,8 @@ mod tests {
         let mismatch = Queued {
             id: "q-2".to_string(),
             text: "under another model".to_string(),
+            images: Vec::new(),
+            files: Vec::new(),
             fingerprint: Fingerprint {
                 model: Some("opus".into()),
                 ..Default::default()
@@ -7731,7 +7977,7 @@ done
 
         let delivery = harness
             .registry
-            .deliver(harness.providers.gate(), SESSION, "second", harness.recipe(Fingerprint::default()), None)
+            .deliver(harness.providers.gate(), SESSION, "second", Vec::new(), Vec::new(), harness.recipe(Fingerprint::default()), None)
             .await
             .expect("the running resident takes it");
         let record = harness.record();
@@ -9965,6 +10211,8 @@ done
         let waiting = Queued {
             id: "q-1".to_string(),
             text: "still waiting from before the restart".to_string(),
+            images: Vec::new(),
+            files: Vec::new(),
             fingerprint: Fingerprint {
                 model: Some("opus".into()),
                 account: Some("work".into()),
@@ -10164,6 +10412,8 @@ done
                 queued: vec![Queued {
                     id: "q-1".to_string(),
                     text: "queued under the name the composer sends".to_string(),
+                    images: Vec::new(),
+                    files: Vec::new(),
                     fingerprint: asked.clone(),
                     steered: false,
                     rotation_attempt: 0,
@@ -10243,6 +10493,8 @@ done
         let queued = |id: &str, text: &str| Queued {
             id: id.to_string(),
             text: text.to_string(),
+            images: Vec::new(),
+            files: Vec::new(),
             fingerprint: wanted.clone(),
             steered: false,
             rotation_attempt: 0,
@@ -10715,6 +10967,8 @@ done
         Queued {
             id: id.to_string(),
             text: text.to_string(),
+            images: Vec::new(),
+            files: Vec::new(),
             fingerprint: fingerprint.clone(),
             steered: false,
             rotation_attempt,
@@ -12091,7 +12345,7 @@ done
         let gate = harness.providers.gate();
 
         registry
-            .deliver(gate, OTHER, "first", harness.recipe(Fingerprint::default()), None)
+            .deliver(gate, OTHER, "first", Vec::new(), Vec::new(), harness.recipe(Fingerprint::default()), None)
             .await
             .expect("a resident starts");
         assert_eq!(
@@ -12102,7 +12356,7 @@ done
         assert!(registry.host.claim_held(Source::Claude, OTHER), "the driver holds the claim");
 
         registry
-            .deliver(gate, OTHER, "second", harness.recipe(Fingerprint::default()), None)
+            .deliver(gate, OTHER, "second", Vec::new(), Vec::new(), harness.recipe(Fingerprint::default()), None)
             .await
             .expect("the resident takes it");
         assert_eq!(registry.host.steps()[2..], [step("posted to the resident", false, Some(true))]);
@@ -12121,7 +12375,7 @@ done
         let registry = &harness.registry;
         let gate = harness.providers.gate();
         registry
-            .deliver(gate, OTHER, "first", harness.recipe(Fingerprint::default()), None)
+            .deliver(gate, OTHER, "first", Vec::new(), Vec::new(), harness.recipe(Fingerprint::default()), None)
             .await
             .expect("a resident starts");
 
@@ -12130,7 +12384,10 @@ done
             model: Some("another-model".to_string()),
             ..Fingerprint::default()
         };
-        registry.deliver(gate, OTHER, "second", harness.recipe(other_model), None).await.expect("taken");
+        registry
+            .deliver(gate, OTHER, "second", Vec::new(), Vec::new(), harness.recipe(other_model), None)
+            .await
+            .expect("taken");
         until("the replacement to answer", || harness.after().iter().any(|line| line.contains("second"))).await;
         assert_eq!(registry.host.steps()[3..], [step("claude started", false, Some(true))]);
 
@@ -12170,7 +12427,7 @@ done
         let gate = harness.providers.gate();
 
         registry
-            .deliver(gate, OTHER, "first", harness.recipe(Fingerprint::default()), None)
+            .deliver(gate, OTHER, "first", Vec::new(), Vec::new(), harness.recipe(Fingerprint::default()), None)
             .await
             .expect("a resident starts");
         until("the rename", || registry.host.steps().len() == 4).await;

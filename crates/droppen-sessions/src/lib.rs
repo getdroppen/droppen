@@ -17,6 +17,7 @@
 pub mod account;
 pub mod archive;
 pub mod attention;
+pub mod chat_delivery;
 pub mod children;
 pub mod context;
 pub mod delivery;

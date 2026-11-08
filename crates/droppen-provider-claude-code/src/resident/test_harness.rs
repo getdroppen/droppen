@@ -825,7 +825,7 @@ impl Harness {
             other => panic!("a fresh id is owned, got {other:?}"),
         };
         receipts.complete(&client, "{}", None, now);
-        self.post(Pending::with_id(qid.clone(), text, self.recipe(Fingerprint::default())));
+        self.post(Pending::with_id(qid.clone(), text, Vec::new(), Vec::new(), self.recipe(Fingerprint::default())));
         qid
     }
 

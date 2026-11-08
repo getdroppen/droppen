@@ -83,6 +83,12 @@ pub struct Capabilities {
     /// Its instant chats can read what is attached to a message. Only asked of
     /// a provider with `chats`.
     pub chat_attachments: bool,
+    /// Its instant chats take attachments as content, not as paths: images
+    /// travel as base64 image blocks and non-image files are inlined into the
+    /// prompt. Only a provider whose chats run with no tools at all (so a path
+    /// could never be read) needs this; false means the ordinary path-based
+    /// delivery. Only asked of a provider with `chats` and `chat_attachments`.
+    pub chat_inline_attachments: bool,
     /// Scheduled tasks can run on it.
     pub schedules: bool,
 }

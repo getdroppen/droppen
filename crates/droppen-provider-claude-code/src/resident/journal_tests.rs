@@ -58,6 +58,8 @@ fn a_run_is_recorded_until_it_finishes_and_no_longer() {
     let waiting = vec![Queued {
         id: "q-1".to_string(),
         text: "next please".to_string(),
+        images: Vec::new(),
+        files: Vec::new(),
         fingerprint: Default::default(),
         steered: false,
         rotation_attempt: 0,
@@ -245,3 +247,64 @@ r#"{"run_id":"run-claude-bare","source":"claude","session_id":"22222222-2222-422
 r#"{"run_id":"run-claude-bare","source":"claude","session_id":"66666666-6666-4666-8666-666666666666","cwd":null,"cli_pid":4343,"started_at":"2026-10-30T01:02:03.004Z","pid_token":null,"resident":true,"shim":"shim-claude-bare","fingerprint":{"model":"opus","resolved":"claude-opus-4","effort":null,"permission":null,"account":"acct-1","credential":null,"chat":false,"uploads":false,"questions":false},"turn_at":2048,"queued":[{"id":"q-9","text":"behind it","fingerprint":{"model":"haiku","resolved":null,"effort":null,"permission":null,"account":null,"credential":null,"chat":false,"uploads":false,"questions":false},"steered":false}],"hold":{"account":"acct-1","label":"Work","class":"session","scope":"all","untilMs":null,"switches":0,"continueFailed":true}}"#,
 r#"{"run_id":"run-claude-bare","source":"claude","session_id":"66666666-6666-4666-8666-666666666666","cwd":null,"cli_pid":4343,"started_at":"2026-10-30T01:02:03.004Z","pid_token":null,"resident":true,"shim":"shim-claude-bare","fingerprint":{"model":"opus","resolved":"claude-opus-4","effort":null,"permission":null,"account":"acct-1","credential":null,"chat":false,"uploads":false,"questions":false},"turn_at":null,"queued":[]}"#,
 ];
+
+/// A chat message's upload paths survive the journal and adoption, so a
+/// restart delivers the same image and inlined files rather than a prompt
+/// that lost them. Rows written before the fields existed read as empty and
+/// are written back exactly as they were.
+#[test]
+fn a_queued_chats_attachments_survive_the_journal_and_adoption() {
+    let image = "/uploads/u/a.png".to_string();
+    let file = "/uploads/u/notes.txt".to_string();
+    let queued = Queued {
+        id: "q-1".to_string(),
+        text: "look".to_string(),
+        images: vec![image.clone()],
+        files: vec![file.clone()],
+        fingerprint: Default::default(),
+        steered: false,
+        rotation_attempt: 0,
+        continuation: None,
+    };
+    let row = serde_json::to_value(&queued).expect("encode");
+    assert_eq!(row["images"], serde_json::json!([image]));
+    assert_eq!(row["files"], serde_json::json!([file]));
+    let read: Queued = serde_json::from_value(row).expect("decode");
+    let inherited = inherited_queue("s", &[read], Some(&Fingerprint::default()));
+    assert_eq!(inherited.queue.len(), 1);
+    assert_eq!(inherited.queue[0].images, [image]);
+    assert_eq!(inherited.queue[0].files, [file]);
+
+    let old: Queued = serde_json::from_str(r#"{"id":"q","text":"hi"}"#).expect("an old row");
+    assert!(old.images.is_empty() && old.files.is_empty());
+    let rewritten = serde_json::to_value(&old).expect("encode");
+    assert!(rewritten.get("images").is_none() && rewritten.get("files").is_none());
+}
+
+/// The Read-enabled build's tombstone must survive every write between the
+/// restart and the adoption that reads it: `mark_progress` round-trips the
+/// typed row, so a `skip_serializing` bit would be erased by the first patch.
+#[test]
+fn the_read_enabled_builds_tombstone_survives_a_row_patch() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = RunsFile::new(dir.path().join("runs.json"));
+    let mut run = record("run-1", "session-a", 4242);
+    run.payload.fingerprint = Some(Fingerprint {
+        chat: true,
+        chat_reads: true,
+        ..Default::default()
+    });
+    file.add(run);
+    file.mark_progress("run-1", Some(4096), &[]);
+    let runs = claude_runs(&file);
+    let fingerprint = runs[0].payload.fingerprint.as_ref().expect("a fingerprint");
+    assert!(fingerprint.chat_reads, "a patch erased the tombstone and the resident could keep Read");
+
+    // And a chat from main or this build writes no false at all.
+    let clean = Fingerprint {
+        chat: true,
+        ..Default::default()
+    };
+    let row = serde_json::to_value(&clean).expect("encode");
+    assert!(row.get("chat_reads").is_none());
+}

@@ -685,6 +685,7 @@ impl Provider for Codex {
             questions: false,
             chats: true,
             chat_attachments: true,
+            chat_inline_attachments: false,
             schedules: true,
         }
     }

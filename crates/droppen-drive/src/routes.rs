@@ -741,11 +741,19 @@ async fn deliver_message(
         return Err(ApiError::conflict(reason.unwrap_or_else(|| "cannot send".to_string())));
     }
 
-    // Some CLIs run an instant chat with every tool disabled, so it cannot read
-    // an attachment.
+    // A CLI whose chats cannot read an attachment (no tool to open one) is
+    // refused here. Both CLIs' chats can now: Claude Code runs its chats with
+    // Read as its only tool, and Codex takes images as input and non-images by
+    // path; the check stays as the guard for any provider added later.
     let chat = summary.cwd.as_ref().map(Path::new) == Some(chats_cwd(&drive.paths).as_path());
     if chat && drive.providers.chat_refuses_attachments(source) && !(images.is_empty() && attachments.is_empty()) {
-        return Err(ApiError::conflict("attachments are not supported in claude instant chats"));
+        return Err(ApiError::conflict("attachments are not supported in this instant chat"));
+    }
+    // A chat that takes attachments as content (a claude chat, which has no
+    // tools) is read now and refused if it cannot be delivered as base64
+    // blocks or inlined text.
+    if chat && drive.providers.capabilities(source).chat_inline_attachments {
+        super::attachments::validate_claude_chat_attachments(&drive.paths, &images, &attachments).await?;
     }
 
     // An agent blocked on a question is waiting for exactly this: what the
@@ -789,13 +797,19 @@ async fn deliver_message(
     }
 
     let requested_permission = body.permission.0.clone();
-    let options = SendOptions {
+    let mut options = SendOptions {
         chat,
         images,
         files: attachments,
         message_id: qid.clone(),
         ..send_options(body.model.0, body.effort.0, body.permission.0, body.account_id)
     };
+    // A chat is pinned server-side: whatever the body says, it is never
+    // restarted with a permission mode. The chat marker is the session's own
+    // working directory, not anything the client sent.
+    if chat {
+        options.permission = None;
+    }
     let sent = drive.providers.send_to_session(source, &id, summary.cwd.as_ref().map(String::as_str), &body.text, &options)
         .await
         .map_err(|error| spawn_refusal(error, "failed to start the CLI"))?;
@@ -807,13 +821,17 @@ async fn deliver_message(
     // can change it. The row is written only after the CLI took the message:
     // an answer delivered into a turn in flight (above) changed no process,
     // and a send that failed did not run with anything.
-    if let Some(permission) = requested_permission.as_deref() {
-        if let Err(error) = drive
-            .composer
-            .pin_permission(source, drive.providers.model_rule(source), &id, permission)
-            .await
-        {
-            tracing::warn!(session = %id, %error, "cannot fill the session's permission");
+    // A chat has no permission of its own to record: the mode in the body was
+    // dropped above, and a row here would only resurface in a later restore.
+    if !chat {
+        if let Some(permission) = requested_permission.as_deref() {
+            if let Err(error) = drive
+                .composer
+                .pin_permission(source, drive.providers.model_rule(source), &id, permission)
+                .await
+            {
+                tracing::warn!(session = %id, %error, "cannot fill the session's permission");
+            }
         }
     }
     Ok(SendMessageResult {
@@ -1100,12 +1118,11 @@ async fn settle_expired(
         .get(&format!("{source}/{id}"))
         .cloned()
         .unwrap_or_default();
-    let options = SendOptions {
-        model: choice.model.0,
-        effort: choice.effort.0,
-        permission: choice.permission.0,
-        ..SendOptions::default()
-    };
+    // An answer that has to become a message follows the same rule as a send:
+    // a chat is pinned server-side and is never restarted with a permission
+    // mode, whatever a stored composer row says.
+    let chat = summary.cwd.as_ref().map(Path::new) == Some(chats_cwd(&drive.paths).as_path());
+    let options = expired_answer_options(chat, choice);
     match drive.providers.send_to_session(source, id, summary.cwd.as_ref().map(String::as_str), &text, &options).await {
         Ok(_) => Ok(QuestionAnswerResult {
             question: question.wire(),
@@ -1115,6 +1132,22 @@ async fn settle_expired(
             store.rewind(&stored.request_id, QuestionState::Answered, QuestionState::Expired, questions::now_ms());
             Err(spawn_refusal(error, "failed to start the CLI"))
         }
+    }
+}
+
+/// The options an expired question's answer travels under, once it has to
+/// become a message.
+///
+/// A chat's `chat` marker must be set here like anywhere else — the provider
+/// chooses inline content blocks over paths by it — and its permission mode
+/// is dropped whatever a stored composer row says. A session keeps both.
+fn expired_answer_options(chat: bool, choice: ComposerChoice) -> SendOptions {
+    SendOptions {
+        chat,
+        model: choice.model.0,
+        effort: choice.effort.0,
+        permission: if chat { None } else { choice.permission.0 },
+        ..SendOptions::default()
     }
 }
 
@@ -1424,6 +1457,8 @@ pub async fn archive_session(State(state): State<DriveState>, ApiPath((source, i
     // server's to do for a session it did not make.
     writable_session(drive, source, &id).await?;
     drive.providers.archive(source, &id).await.map_err(ApiError::conflict)?;
+    // A chat's delivery rows have nothing left to annotate once it is hidden.
+    droppen_sessions::chat_delivery::prune_session(&drive.paths, source, &id);
     // An archived session leaves the list, so nothing is named to wait for.
     state.global.request_refresh(None);
     Ok(Json(SendResult { accepted: true }))
@@ -2428,6 +2463,23 @@ mod tests {
         named.images = Optional(None);
         let error = new_session(State(state.clone()), ApiJson(named)).await.expect_err("no such directory");
         assert_eq!(refused(error).0, 400, "answered afresh, not with the recorded refusal");
+    }
+
+    /// An expired question whose answer becomes a message carries the chat
+    /// marker, and a chat never carries the stored permission mode.
+    #[test]
+    fn an_expired_answers_options_pin_a_chat_and_leave_a_session_alone() {
+        let choice = || ComposerChoice {
+            permission: Optional(Some("bypassPermissions".into())),
+            ..ComposerChoice::default()
+        };
+        let chat = expired_answer_options(true, choice());
+        assert!(chat.chat);
+        assert_eq!(chat.permission, None, "a chat is never restarted with a permission mode");
+
+        let session = expired_answer_options(false, choice());
+        assert!(!session.chat);
+        assert_eq!(session.permission.as_deref(), Some("bypassPermissions"), "sessions keep their mode");
     }
 
     #[test]

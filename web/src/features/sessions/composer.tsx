@@ -137,7 +137,7 @@ export function Composer({
   drafts: DraftStore;
   /** Computed once by the caller, which also draws the panel that lists them. */
   subtasks: LiveSubtask[];
-  /** Instant chat: tools are disabled server-side, so hide the permission pick. */
+  /** Instant chat: the server runs it under the chat persona with one tool and a fixed sandbox, so hide the permission pick. */
   chat?: boolean;
   /** Re-read session state after a queue route changed it. */
   onQueueChanged: () => void;
@@ -198,8 +198,9 @@ export function Composer({
   );
 
   const [queue, setQueue, queueRef] = usePersistedQueue(session);
-  // claude instant chats run without tools, so they cannot read attachments.
-  const allowAttach = !(chat && source === "claude");
+  // Both CLIs' instant chats can read what a message attaches: claude runs
+  // its chats with Read as the only tool, and codex takes images as input and
+  // files by path. There is no chat left to hide the attach controls from.
   const attachmentState = useComposerAttachments();
   const attachments = attachmentState.attachments;
   // Enter pressed while an upload is still in flight: send as soon as it lands.
@@ -643,9 +644,13 @@ export function Composer({
         </div>
       )}
       <div className="px-3 pt-0 pb-3 max-md:px-2 max-md:pb-2">
+        {chat && source === "claude" && (
+          <p data-attachment-hint="" className="mb-1 px-2.5 font-mono text-2xs text-faint">
+            {t("claude chats take PNG/JPEG/GIF/WebP images up to 5 MB and UTF-8 text files up to 100 KB — other files are refused")}
+          </p>
+        )}
         <ComposerBox
           attachments={attachmentState}
-          allowAttach={allowAttach}
           text={text}
           onText={setText}
           onTextLive={setTextState}
