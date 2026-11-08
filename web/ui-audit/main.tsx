@@ -10,7 +10,8 @@
  * `?fixture=hostile` (the reviewer's worst-case fences beside one normal
  * diagram), `?fixture=images` (the pictures messages draw; `&cloud=1` as a
  * page a hub serves) or `?fixture=cloud-bar` (the cloud bar in each state of
- * its connection), plus `?theme=dark`.
+ * its connection; `&states=catch-up`, the offline copy catching up from the
+ * hub), plus `?theme=dark`.
  * `web/src/index.css` excludes this directory from Tailwind's scan
  * (`@source not`), so nothing here can change the production stylesheet. That
  * also means every class below must already occur in `web/src`; the layout
@@ -36,12 +37,14 @@ import { SelectField } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTab } from "@/components/ui/tabs";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { BAR_STRIP, type BarLabel, ConnectionLabel, MachineSwitcher, OfflineNotice, PathIndicator, RefusalNotice, SignOutButton } from "@/features/cloud/cloud-bar";
+import { BAR_STRIP, BarCatchUp, BarCatchUpLine, type BarLabel, ConnectionLabel, MachineSwitcher, OfflineNotice, PathIndicator, RefusalNotice, SignOutButton } from "@/features/cloud/cloud-bar";
+import type { CatchUpSource } from "@/features/cloud/context";
 import type { HubShell } from "@/features/cloud/hub-shell";
 import { BarMachineName } from "@/features/cloud/machine-name";
 import { AccountButton, DevicesButton } from "@/features/cloud/my-devices";
 import { DeviceDot } from "@/features/machines/device-picker";
 import type { ChannelRefusal, ConnectStep } from "@/lib/hub/machine";
+import { NO_PROGRESS, type StreamProgress } from "@/lib/hub/streams";
 import { setCurrentShell } from "@/lib/machines/registry";
 import type { AppShell, MachineInfo } from "@/lib/machines/runtime";
 import { DeviceRow, type DeviceRowView } from "@/features/cloud/device-row";
@@ -507,7 +510,62 @@ const CLOUD_BAR_STATES: ReadonlyArray<
   ["live", { label: "e2e" }],
 ];
 
+/**
+ * `&states=catch-up`: the offline copy catching up from the hub, drawn as the
+ * states above are (the switcher, the same shell and router): in the notice
+ * under the strip (the device is offline, or keeps failing, so the notice is
+ * up) and, with no notice (the device is being connected to, or no copy is on
+ * this device yet), in the strip after the connection's words or on a line of
+ * its own under it: the session list alone, sessions 3/7, and sessions 3/7
+ * with a big checkpoint download 42 % of the way (17 of 40 pages, running for
+ * 5 s) — the longest. With the longest relay city, and beside a two-digit
+ * retry countdown, which must stay whole.
+ */
+const counts = (index: number, status: number, session: number) => ({ index, status, session });
+const CATCH_UP_INDEX: StreamProgress = { ...NO_PROGRESS, catchingUp: counts(1, 0, 0), synced: counts(0, 1, 0) };
+const CATCH_UP_SESSIONS: StreamProgress = { ...NO_PROGRESS, catchingUp: counts(0, 0, 4), synced: counts(1, 1, 3) };
+const CATCH_UP_PAGES: StreamProgress = { ...CATCH_UP_SESSIONS, pages: { done: 17, total: 40 }, downloadingSince: loadedAt - 5_000, episode: { done: 17, total: 40 } };
+const still = (progress: StreamProgress): CatchUpSource => ({ progress, onProgress: () => noop });
+type CatchUpView = { label: BarLabel; dot: "online" | "offline"; step?: ConnectStep; retryAt?: number; notice: boolean; catchUp: StreamProgress };
+const CATCH_UP_STATES: ReadonlyArray<readonly [name: string, view: CatchUpView]> = [
+  ["catch-up-index", { label: "offline", dot: "offline", notice: true, catchUp: CATCH_UP_INDEX }],
+  ["catch-up-sessions", { label: "offline", dot: "offline", notice: true, catchUp: CATCH_UP_SESSIONS }],
+  ["catch-up-pages", { label: "offline", dot: "offline", notice: true, catchUp: CATCH_UP_PAGES }],
+  ["catch-up-bar-index", { label: "connecting", dot: "online", step: { kind: "handshake" }, notice: false, catchUp: CATCH_UP_INDEX }],
+  ["catch-up-bar-sessions", { label: "connecting", dot: "online", step: { kind: "presence" }, notice: false, catchUp: CATCH_UP_SESSIONS }],
+  ["catch-up-bar-pages", { label: "connecting", dot: "online", step: { kind: "relay", city: "san-francisco" }, notice: false, catchUp: CATCH_UP_PAGES }],
+  ["catch-up-retry", { label: "deviceRetry", dot: "online", retryAt: loadedAt + 16_000, notice: false, catchUp: CATCH_UP_PAGES }],
+];
+
+function CatchUpFixture() {
+  return (
+    <div data-fixture-root="" className="flex flex-col gap-4 py-4">
+      {CATCH_UP_STATES.map(([name, view]) => (
+        <section key={name} data-audit-row={name}>
+          <div className="mb-1 px-3 font-mono text-2xs text-muted">{name}</div>
+          <div data-catch-up-shot="">
+            <div data-cloud-bar="" className={BAR_STRIP}>
+              <DeviceDot state={view.dot} />
+              <BarMachineName machine="studio-mac" mirror={null} />
+              <MachineSwitcher shell={BAR_SHELL as unknown as HubShell} current="studio-mac" />
+              <ConnectionLabel label={view.label} step={view.step} retryAt={view.retryAt} link={{ wake: noop }} controller={{ poke: noop }} />
+              {!view.notice && <BarCatchUp source={still(view.catchUp)} />}
+              <span className="flex-1" />
+              <DevicesButton />
+              <AccountButton />
+              <SignOutButton onClick={noop} />
+            </div>
+            {!view.notice && <BarCatchUpLine source={still(view.catchUp)} />}
+            {view.notice && <OfflineNotice freshestMs={COPY_AS_OF} catchUp={still(view.catchUp)} />}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
+
 function CloudBarFixture() {
+  if (query.get("states") === "catch-up") return <CatchUpFixture />;
   return (
     <div data-fixture-root="" className="flex flex-col gap-4 py-4">
       {CLOUD_BAR_STATES.map(([name, view]) => (

@@ -2,10 +2,10 @@
  * The hooks the cloud screens read the page's cloud state with: the hub
  * link's state and presence, a machine's channel and copy (whether a
  * view shows the copy is `features/machines/copy-mode.ts`, which every mode
- * reads). What there is to read — the account, the link, every machine's
- * channel and copy — is droppen.app's shell (`hub-shell.ts`, `hubShell()`),
- * `null` in local mode, which is how the cloud components render nothing
- * there.
+ * reads), and how far that copy has caught up from the hub. What there is to
+ * read — the account, the link, every machine's channel and copy — is
+ * droppen.app's shell (`hub-shell.ts`, `hubShell()`), `null` in local mode,
+ * which is how the cloud components render nothing there.
  */
 import { useMemo, useSyncExternalStore } from "react";
 import { type AgentKeyState, agentKeyState, onAgentKeyState } from "@/lib/hub/deliver";
@@ -14,6 +14,7 @@ import type { HubLink, LinkState, PresenceState } from "@/lib/hub/link";
 import type { ConnectStep, MachineChannel, MachineStatus } from "@/lib/hub/machine";
 import type { MachineMirror } from "@/lib/hub/mirror";
 import type { RelayPool } from "@/lib/hub/relays";
+import { isCatchingUp, NO_PROGRESS, sameProgress, type StreamProgress } from "@/lib/hub/streams";
 import type { MachineKey } from "@/lib/machines/key";
 import { hubOnly, onHubOnly } from "@/lib/transport/p2p";
 import { hubShell } from "@/features/machines/shells";
@@ -149,6 +150,46 @@ export function useCopyView(mirror: MachineMirror | null | undefined): CopyView 
       return off;
     },
     () => viewOf(mirror),
+  );
+}
+
+/** A machine's copy source, as the catch-up is read from it (`HubCopySource` is one: `HubMachine.source`). */
+export interface CatchUpSource {
+  readonly progress: StreamProgress;
+  onProgress(fn: () => void): () => void;
+}
+
+const caughtUp = new WeakMap<CatchUpSource, StreamProgress>();
+
+function progressOf(source: CatchUpSource | null | undefined): StreamProgress {
+  if (!source) return NO_PROGRESS;
+  const next = source.progress;
+  const held = caughtUp.get(source);
+  if (held && sameProgress(held, next)) return held;
+  caughtUp.set(source, next);
+  return next;
+}
+
+/**
+ * How far one machine's copy has caught up from the hub
+ * (`StreamClient.progress`): its streams by phase and kind, and the
+ * checkpoint pages being fetched. The source is the machine's own
+ * (`HubMachine.source`), so the counts are that machine's.
+ */
+export function useCatchUp(source: CatchUpSource | null | undefined): StreamProgress {
+  return useSyncExternalStore(
+    (notify) => (source ? source.onProgress(notify) : () => undefined),
+    () => progressOf(source),
+    () => NO_PROGRESS,
+  );
+}
+
+/** Whether anything of the machine's copy is being caught up on (`isCatchingUp`): re-renders only when that flips, not on every page. */
+export function useCatchingUp(source: CatchUpSource | null | undefined): boolean {
+  return useSyncExternalStore(
+    (notify) => (source ? source.onProgress(notify) : () => undefined),
+    () => (source ? isCatchingUp(source.progress) : false),
+    () => false,
   );
 }
 

@@ -480,6 +480,12 @@ export interface StreamClientOptions {
    */
   onMissingKey?: () => void;
   missingKeyEveryMs?: number;
+  /**
+   * When a burst of {@link StreamClient.onProgress} changes is said: `fn` runs
+   * once for all of them (default: the next animation frame, or a microtask
+   * where there are no frames).
+   */
+  progressFrame?: (fn: () => void) => void;
 }
 
 /** 0, then 1 s doubling to a minute: a stream that keeps breaking is not hammered. */
@@ -502,6 +508,109 @@ export interface StreamEvents<S> {
   /** Something went wrong and the stream is starting over (diagnostics). */
   onError?(error: unknown): void;
 }
+
+/**
+ * What a subscription is doing ({@link StreamSubscription.phase}): waiting
+ * for a `ch` (the link is down, or the subscription is still being set up),
+ * waiting out a restart's backoff (`retrying`), catching up on its `ch`
+ * (`SUB` sent, the hub's `stream_synced` not heard yet), or `synced` and on
+ * the live tail.
+ */
+export type StreamPhase = "waiting" | "retrying" | "catchingUp" | "synced";
+
+/** How many of a client's subscriptions are in one phase, by what they follow (the fold's format says). */
+export interface StreamCounts {
+  readonly index: number;
+  readonly status: number;
+  readonly session: number;
+}
+
+/** Checkpoint pages: opened, and named by their manifests. */
+export interface PageCount {
+  readonly done: number;
+  readonly total: number;
+}
+
+/**
+ * How far one machine's streams have caught up ({@link StreamClient.progress}).
+ *
+ * It counts streams, and checkpoint pages, and nothing finer. The hub sends a
+ * stream's head only after every record it catches up on, so until the head
+ * nobody knows how many records there are; and a record is one of the
+ * agent's write batches (a few seconds of a session), not a message, whose
+ * items fold in only once the head arrives. A stream is either caught up or
+ * not, and a checkpoint's signed manifest names every page it has: those
+ * are the counts that are true while they are shown.
+ */
+export interface StreamProgress {
+  readonly waiting: StreamCounts;
+  readonly retrying: StreamCounts;
+  readonly catchingUp: StreamCounts;
+  readonly synced: StreamCounts;
+  /** Across the checkpoint downloads in flight now. */
+  readonly pages: PageCount;
+  /** When the downloads in flight began (ms; `null`: none in flight). */
+  readonly downloadingSince: number | null;
+  /**
+   * Across every download of this catch-up: since the client last had
+   * nothing catching up and nothing downloading, so a second download adds to
+   * the first rather than starting the count over. Pages a failed download
+   * will never fetch leave the total; a total that grows is not hidden.
+   */
+  readonly episode: PageCount;
+}
+
+const NO_STREAMS: StreamCounts = { index: 0, status: 0, session: 0 };
+const NO_PAGES: PageCount = { done: 0, total: 0 };
+
+/** Nothing followed, nothing downloading. */
+export const NO_PROGRESS: StreamProgress = {
+  waiting: NO_STREAMS,
+  retrying: NO_STREAMS,
+  catchingUp: NO_STREAMS,
+  synced: NO_STREAMS,
+  pages: NO_PAGES,
+  downloadingSince: null,
+  episode: NO_PAGES,
+};
+
+const sameCounts = (a: StreamCounts, b: StreamCounts) => a.index === b.index && a.status === b.status && a.session === b.session;
+const samePages = (a: PageCount, b: PageCount) => a.done === b.done && a.total === b.total;
+
+/** Whether `a` and `b` say the same thing. */
+export function sameProgress(a: StreamProgress, b: StreamProgress): boolean {
+  return (
+    a === b ||
+    (sameCounts(a.waiting, b.waiting) &&
+      sameCounts(a.retrying, b.retrying) &&
+      sameCounts(a.catchingUp, b.catchingUp) &&
+      sameCounts(a.synced, b.synced) &&
+      samePages(a.pages, b.pages) &&
+      a.downloadingSince === b.downloadingSince &&
+      samePages(a.episode, b.episode))
+  );
+}
+
+/**
+ * Whether anything is being caught up on: a subscription on its `ch` before
+ * the hub said it is synced, or a checkpoint's pages being fetched. One
+ * waiting out a backoff is not: it is not getting anywhere, and it must not
+ * keep a "catching up" on screen for as long as it keeps failing.
+ */
+export function isCatchingUp(p: StreamProgress): boolean {
+  return p.catchingUp.index + p.catchingUp.status + p.catchingUp.session > 0 || p.downloadingSince !== null;
+}
+
+/** What a stream of format `fmt` is a copy of (`null`: none of the three). */
+function kindOf(fmt: number): CopyKind | null {
+  return fmt === FMT_INDEX_V1 ? "index" : fmt === FMT_STATUS_V1 ? "status" : fmt === FMT_FEED_V1 ? "session" : null;
+}
+
+/** The next animation frame (none in a background tab, where nothing is drawn either), else a microtask. */
+const nextFrame = (fn: () => void): void => {
+  if (typeof requestAnimationFrame === "function") requestAnimationFrame(() => fn());
+  else queueMicrotask(fn);
+};
 
 /** Where a saved copy stands: the signed head at its position, and its state there. */
 export interface SavedStream<S> {
@@ -528,6 +637,16 @@ export class StreamClient {
   private signKey: Bytes;
   private resyncing: Promise<void> | null = null;
   private resyncedAt = Number.NEGATIVE_INFINITY;
+  /** Checkpoint downloads in flight ({@link download}), and since when there have been any. */
+  private readonly downloads = new Set<{ done: number; total: number }>();
+  private downloadsSince: number | null = null;
+  /** Pages over this catch-up ({@link StreamProgress.episode}). */
+  private episode: { done: number; total: number } = { done: 0, total: 0 };
+  private readonly progressListeners = new Set<(progress: StreamProgress) => void>();
+  private progressQueued = false;
+  /** What listeners last heard: a burst that ends where it began says nothing. */
+  private progressSaid: StreamProgress = NO_PROGRESS;
+  private closed = false;
 
   constructor(readonly opts: StreamClientOptions) {
     this.signKey = copy(opts.machineSignKey);
@@ -549,6 +668,7 @@ export class StreamClient {
   subscribe<S>(stream: Bytes, fold: StreamFold<S>, events: StreamEvents<S> = {}, saved: SavedStream<S> | null = null): StreamSubscription<S> {
     const sub = new StreamSubscription<S>(this, stream, fold, events);
     this.subs.add(sub as StreamSubscription<unknown>);
+    this.changed();
     sub.start(saved);
     return sub;
   }
@@ -556,12 +676,111 @@ export class StreamClient {
   /** @internal */
   forget(sub: StreamSubscription<unknown>): void {
     this.subs.delete(sub);
+    this.changed();
   }
 
   /** Stop every subscription and stop listening to the link. */
   close(): void {
     for (const sub of [...this.subs]) sub.close();
     for (const off of this.offs) off();
+    this.closed = true;
+    this.progressListeners.clear();
+  }
+
+  /**
+   * How far this machine's streams have caught up, now: every subscription
+   * by its phase and kind, and the checkpoint pages being fetched. A client
+   * is one machine's (`HubCopySource` makes one per machine), so this is
+   * that machine's alone.
+   */
+  get progress(): StreamProgress {
+    const counts = { waiting: { ...NO_STREAMS }, retrying: { ...NO_STREAMS }, catchingUp: { ...NO_STREAMS }, synced: { ...NO_STREAMS } };
+    for (const sub of this.subs) {
+      const kind = sub.kind;
+      if (kind) counts[sub.phase][kind] += 1;
+    }
+    let done = 0;
+    let total = 0;
+    for (const d of this.downloads) {
+      done += d.done;
+      total += d.total;
+    }
+    return { ...counts, pages: { done, total }, downloadingSince: this.downloadsSince, episode: { ...this.episode } };
+  }
+
+  /**
+   * Hear when {@link progress} changes. Said at most once a frame however
+   * many changes the frame saw (`progressFrame`): a checkpoint of a thousand
+   * pages is not a thousand renders. A burst that ends where it began says
+   * nothing.
+   */
+  onProgress(fn: (progress: StreamProgress) => void): () => void {
+    if (this.closed) return () => undefined;
+    if (this.progressListeners.size === 0) this.progressSaid = this.progress;
+    this.progressListeners.add(fn);
+    return () => this.progressListeners.delete(fn);
+  }
+
+  /**
+   * @internal A subscription changed phase, came or went, or a download's
+   * count moved: end the episode if nothing is being caught up on any more,
+   * and say so once the burst is over.
+   */
+  changed(): void {
+    if (this.closed) return;
+    if (this.downloads.size === 0 && !this.anyCatchingUp()) this.episode = { done: 0, total: 0 };
+    if (this.progressQueued || this.progressListeners.size === 0) return;
+    this.progressQueued = true;
+    (this.opts.progressFrame ?? nextFrame)(() => {
+      this.progressQueued = false;
+      if (this.closed) return;
+      const now = this.progress;
+      if (sameProgress(now, this.progressSaid)) return;
+      this.progressSaid = now;
+      for (const fn of [...this.progressListeners]) {
+        try {
+          fn(now);
+        } catch {
+          // one listener failing must not starve the others
+        }
+      }
+    });
+  }
+
+  private anyCatchingUp(): boolean {
+    for (const sub of this.subs) if (sub.phase === "catchingUp") return true;
+    return false;
+  }
+
+  /**
+   * @internal A checkpoint's `total` pages are about to be fetched: they
+   * count in {@link progress} as each one opens (`page`), until `end` — which
+   * comes whether the download finished or failed.
+   */
+  download(total: number): { page(): void; end(): void } {
+    const d = { done: 0, total };
+    if (this.downloads.size === 0) this.downloadsSince = Date.now();
+    this.downloads.add(d);
+    this.episode = { done: this.episode.done, total: this.episode.total + total };
+    this.changed();
+    let over = false;
+    return {
+      page: () => {
+        if (over) return;
+        d.done += 1;
+        this.episode = { done: this.episode.done + 1, total: this.episode.total };
+        this.changed();
+      },
+      end: () => {
+        if (over) return;
+        over = true;
+        this.downloads.delete(d);
+        if (this.downloads.size === 0) this.downloadsSince = null;
+        // What it fetched stays counted; what it never will (it failed) is not owed any more.
+        this.episode = { done: this.episode.done, total: this.episode.total - (d.total - d.done) };
+        this.changed();
+      },
+    };
   }
 
   /**
@@ -704,8 +923,9 @@ export class StreamClient {
    * since the newest state is the one a reader looks at), each checked
    * against the manifest's hash, opened under its own epoch's key, and held
    * to `fmt` — the manifest carries no format, each page says its own.
+   * `onPage` hears of each one opened (what {@link progress} counts).
    */
-  async pages(m: Manifest, reader: LogReader, fmt: number): Promise<Bytes[]> {
+  async pages(m: Manifest, reader: LogReader, fmt: number, onPage?: () => void): Promise<Bytes[]> {
     const stream = m.head.head.stream;
     const out: Bytes[] = new Array(m.pages.length);
     const order = m.pages.map((_, i) => i).reverse();
@@ -718,6 +938,7 @@ export class StreamClient {
           const page = await openManifestPage(key, m, i, encoded);
           if (page.fmt !== fmt) throw new RecordError("malformed", `page ${i} is format ${page.fmt} on a stream of format ${fmt}`);
           out[i] = page.body;
+          onPage?.();
         }),
       ),
     );
@@ -771,6 +992,18 @@ export class StreamSubscription<S> {
   /** Whether the hub has said the catch-up on the current `ch` is over. */
   get isSynced(): boolean {
     return this.synced;
+  }
+
+  /** What it is doing now ({@link StreamPhase}); the client says when it changes (`StreamClient.onProgress`). */
+  get phase(): StreamPhase {
+    if (this.timer !== undefined) return "retrying";
+    if (this.ch === null) return "waiting";
+    return this.synced ? "synced" : "catchingUp";
+  }
+
+  /** What it follows, as its fold's format says (`null`: none of the copy's three kinds). */
+  get kind(): CopyKind | null {
+    return kindOf(this.fold.fmt);
   }
 
   /** Whether it holds a state the machine signed for (one saved and still the machine's, or one read since). */
@@ -832,6 +1065,7 @@ export class StreamSubscription<S> {
       if (this.closed || this.ch !== ch) return;
       if (message.t === "stream_synced") {
         this.synced = true;
+        this.client.changed();
         this.events.onSynced?.(message.exists !== false);
         return;
       }
@@ -868,6 +1102,7 @@ export class StreamSubscription<S> {
     this.synced = false;
     this.client.opts.link.sendControl({ t: "stream_unsub", ch });
     this.client.opts.link.release(ch);
+    this.client.changed();
   }
 
   /** `SUB` on a fresh `ch` from where the reader stands, if the link is up (else on its next open). */
@@ -878,6 +1113,7 @@ export class StreamSubscription<S> {
     const ch = link.reserve((frame) => this.route(ch, frame));
     this.ch = ch;
     this.synced = false;
+    this.client.changed();
     link.send({ type: "sub", ch, stream: this.stream, fromSeq: this.reader.confirmed });
   }
 
@@ -904,6 +1140,7 @@ export class StreamSubscription<S> {
     if (this.timer === undefined) return;
     clearTimeout(this.timer);
     this.timer = undefined;
+    this.client.changed();
     this.failures = 0;
     const from = this.retryFrom;
     void this.serial.run(() => this.restart(from));
@@ -935,6 +1172,7 @@ export class StreamSubscription<S> {
       if (this.timer !== undefined) {
         clearTimeout(this.timer);
         this.timer = undefined;
+        this.client.changed();
         this.failures = 0;
         await this.restart(this.retryFrom);
       }
@@ -947,8 +1185,10 @@ export class StreamSubscription<S> {
     const wait = Math.max(atLeastMs, (this.client.opts.retryDelay ?? streamRetryDelay)(this.failures++));
     this.timer = setTimeout(() => {
       this.timer = undefined;
+      this.client.changed();
       void this.serial.run(() => this.restart(from));
     }, wait);
+    this.client.changed();
   }
 
   private route(ch: number, frame: Frame): void {
@@ -957,6 +1197,7 @@ export class StreamSubscription<S> {
       if (this.ch === ch) {
         this.ch = null;
         this.synced = false;
+        this.client.changed();
       }
       return;
     }
@@ -1070,8 +1311,17 @@ export class StreamSubscription<S> {
     ) {
       return;
     }
-    const next = await this.client.keyed(await this.underCurrentKey(this.client.machineSignKey, (key) => readerFromManifest(key, m)));
-    const pages = await this.client.pages(m, next, this.fold.fmt);
+    // The slow part of a catch-up (up to 1024 pages, four at a time): counted
+    // page by page from here, so the page can say how far along it is.
+    const download = this.client.download(m.pages.length);
+    let pages: Bytes[];
+    let next: LogReader;
+    try {
+      next = await this.client.keyed(await this.underCurrentKey(this.client.machineSignKey, (key) => readerFromManifest(key, m)));
+      pages = await this.client.pages(m, next, this.fold.fmt, download.page);
+    } finally {
+      download.end();
+    }
     // The machine renewed its key while the pages came: the manifest is held to the new one (refused, and asked for again).
     if (!equal(next.machineKey, this.client.machineSignKey)) throw new RecordError("badHead", "the machine renewed its key while its manifest was read");
     let state = this.fold.empty();
