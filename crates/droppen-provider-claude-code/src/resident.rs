@@ -548,6 +548,17 @@ enum Cmd {
     },
 }
 
+/// What one chat delivery should record once its line has reached the CLI.
+///
+/// The queue id is the row's identity, so a retry overwrites rather than adds;
+/// `text` is the exact text block written, which the transcript parser hashes.
+struct DeliveryRecord {
+    id: String,
+    text: String,
+    images: Vec<String>,
+    files: Vec<String>,
+}
+
 /// One message waiting for its turn.
 struct Pending {
     /// What the queue routes name this message by.
@@ -4900,8 +4911,8 @@ impl Driver {
             self.anchor_absorb().await;
         }
         let pending = self.queue.remove(at).expect("the index came from this queue");
-        let message = match self.user_line_for(&pending).await {
-            Ok(message) => message,
+        let (message, delivery) = match self.user_line_for(&pending).await {
+            Ok(prepared) => prepared,
             Err(why) => {
                 self.receipt(&pending, ReceiptStatus::Failed);
                 self.fail_message(&why);
@@ -4923,6 +4934,11 @@ impl Driver {
             return QueueOutcome::Unreachable;
         }
         tracing::info!(session = %self.id, qid, "a queued message was steered into the turn in flight");
+        // Only after the line went in. A failed steer returns above and leaves
+        // no row; the retry replaces the row under the same queue id.
+        if let Some(delivery) = &delivery {
+            self.record_delivery(delivery);
+        }
         // In claude's stdin is handed over, whatever turn it ends up running in.
         self.receipt(&pending, ReceiptStatus::Sent);
         // The same reason [`Driver::pump`] takes one: a message that fits the
@@ -5480,23 +5496,27 @@ impl Driver {
     }
 
     /// The stdin line for one message: its text plus whatever its chat
-    /// attachments become at this moment.
+    /// attachments become at this moment, and the delivery to record **after**
+    /// the line is written.
     ///
     /// A chat carries upload paths rather than bytes, so the bytes can be
     /// megabytes each and the journal stays small. They are re-fenced and
     /// re-read here, at the moment they go to the CLI: an upload swept since
     /// the send fails the message with its own reason rather than sending an
     /// empty block or a stale prompt.
-    async fn user_line_for(&self, pending: &Pending) -> Result<String, String> {
+    async fn user_line_for(&self, pending: &Pending) -> Result<(String, Option<DeliveryRecord>), String> {
         let paths = &self.runs.host.paths;
         if pending.images.is_empty() && pending.files.is_empty() {
             // A chat message with nothing attached still gets a delivery row:
-            // occurrences are matched against the transcript's message order,
-            // and a missing row would shift every later identical text.
-            if pending.fingerprint.chat {
-                droppen_sessions::chat_delivery::record(paths, Source::Claude, &self.id, &pending.text, &[], &[]);
-            }
-            return Ok(user_line(&pending.text));
+            // it is what tells the parser that this identical text had no
+            // attachments, rather than reaching back to an earlier one.
+            let delivery = pending.fingerprint.chat.then(|| DeliveryRecord {
+                id: pending.id.clone(),
+                text: pending.text.clone(),
+                images: Vec::new(),
+                files: Vec::new(),
+            });
+            return Ok((user_line(&pending.text), delivery));
         }
         let mut images = Vec::with_capacity(pending.images.len());
         let mut image_total = 0u64;
@@ -5528,17 +5548,36 @@ impl Driver {
         } else {
             format!("{}{inlined}", pending.text)
         };
-        // Recorded before the write, while the paths are still here: the
-        // transcript parser uses it for the thumbnail and the file chips, and
-        // text alone must never make either.
-        droppen_sessions::chat_delivery::record(paths, Source::Claude, &self.id, &text, &pending.images, &pending.files);
-        Ok(user_line_with_images(&text, &images))
+        let delivery = pending.fingerprint.chat.then(|| DeliveryRecord {
+            id: pending.id.clone(),
+            text: text.clone(),
+            images: pending.images.clone(),
+            files: pending.files.clone(),
+        });
+        Ok((user_line_with_images(&text, &images), delivery))
+    }
+
+    /// Write the row the transcript parser reads for this delivery.
+    ///
+    /// Called only after the line reached the CLI: a write that failed leaves
+    /// no row, and a retry travels under the same queue id and replaces the
+    /// row a failed attempt might have written.
+    fn record_delivery(&self, delivery: &DeliveryRecord) {
+        droppen_sessions::chat_delivery::record(
+            &self.runs.host.paths,
+            Source::Claude,
+            &self.id,
+            &delivery.id,
+            &delivery.text,
+            &delivery.images,
+            &delivery.files,
+        );
     }
 
     /// Write one message to claude's stdin and open a turn for it.
     async fn start_turn(&mut self, pending: Pending) {
-        let message = match self.user_line_for(&pending).await {
-            Ok(message) => message,
+        let (message, delivery) = match self.user_line_for(&pending).await {
+            Ok(prepared) => prepared,
             Err(why) => {
                 self.receipt(&pending, ReceiptStatus::Failed);
                 self.fail_message(&why);
@@ -5569,6 +5608,11 @@ impl Driver {
             self.receipt(&pending, ReceiptStatus::Failed);
             self.close_turn(&turn, InjectionRunState::Failed, Some(format!("cannot reach claude: {error}")));
             return;
+        }
+        // Only now, after the line really went in: a write that failed leaves
+        // no row, and a retry overwrites the row under the same queue id.
+        if let Some(delivery) = &delivery {
+            self.record_delivery(delivery);
         }
         self.receipt(&pending, ReceiptStatus::Sent);
         self.touch();

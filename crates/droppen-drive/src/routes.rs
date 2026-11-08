@@ -1457,6 +1457,8 @@ pub async fn archive_session(State(state): State<DriveState>, ApiPath((source, i
     // server's to do for a session it did not make.
     writable_session(drive, source, &id).await?;
     drive.providers.archive(source, &id).await.map_err(ApiError::conflict)?;
+    // A chat's delivery rows have nothing left to annotate once it is hidden.
+    droppen_sessions::chat_delivery::prune_session(&drive.paths, source, &id);
     // An archived session leaves the list, so nothing is named to wait for.
     state.global.request_refresh(None);
     Ok(Json(SendResult { accepted: true }))

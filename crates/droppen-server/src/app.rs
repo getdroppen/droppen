@@ -125,7 +125,13 @@ impl RemoteHandApp {
         // delay the listener.
         tokio::spawn({
             let roots = droppen_files::FileRoots::of(&paths);
-            async move { roots.sweep_uploads().await }
+            let paths = paths.clone();
+            async move {
+                roots.sweep_uploads().await;
+                // A chat delivery row whose uploads were just swept can show
+                // neither a thumbnail nor a chip; drop it with them.
+                droppen_sessions::chat_delivery::prune_missing(&paths);
+            }
         });
         let auth = droppen_auth::Auth::new(&paths, &instance, &auth_settings, false, Arc::new(NotifyTokens));
         let logins = logins();

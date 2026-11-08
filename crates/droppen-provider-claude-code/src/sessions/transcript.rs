@@ -418,7 +418,7 @@ fn queued_command_line(
     }
     // The queue also carries slash commands and, defensively, notification text
     // under some other mode; `claude_user_item` already classifies all of those.
-    let delivery = deliveries.and_then(|deliveries| deliveries.lookup(&queued.text));
+    let delivery = deliveries.and_then(|deliveries| deliveries.lookup(&queued.text, timestamp));
     claude_user_item(&queued.text, timestamp, delivery.as_ref())
 }
 
@@ -1015,7 +1015,7 @@ pub async fn parse_claude_transcript(paths: &droppen_instance::paths::Paths, fil
             let delivery = if joined.is_empty() {
                 None
             } else {
-                deliveries.as_mut().and_then(|deliveries| deliveries.lookup(&joined))
+                deliveries.as_mut().and_then(|deliveries| deliveries.lookup(&joined, timestamp))
             };
             let results = blocks
                 .iter()
@@ -1467,12 +1467,13 @@ mod tests {
             &paths,
             Source::Claude,
             "session",
+            "q-1",
             &format!("look{block}"),
             &[upload.to_string_lossy().into_owned()],
             &[notes.to_string_lossy().into_owned()],
         );
         let line = serde_json::json!({
-            "type": "user", "cwd": chats.to_string_lossy(), "timestamp": "2026-10-01T10:00:00Z",
+            "type": "user", "cwd": chats.to_string_lossy(), "timestamp": "2999-01-01T00:00:00.000Z",
             "message": {"role": "user", "content": [
                 {"type": "text", "text": format!("[Image #1] look{block}")},
                 {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "cG5nLWJ5dGVz"}},
@@ -1558,6 +1559,36 @@ mod tests {
             "300 KB took {:?}",
             started.elapsed()
         );
+    }
+
+    /// A delivery row is read only for a transcript anchored in the chats
+    /// directory: a session elsewhere never touches the chat table.
+    #[tokio::test]
+    async fn a_chat_delivery_is_never_read_outside_the_chats_directory() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let paths = droppen_instance::paths::Paths::new(dir.path().to_path_buf());
+        let upload = paths.uploads_dir().join("u/a.png");
+        std::fs::create_dir_all(upload.parent().expect("parent")).expect("uploads dir");
+        std::fs::write(&upload, b"png-bytes").expect("upload");
+        droppen_sessions::chat_delivery::record(
+            &paths,
+            Source::Claude,
+            "session",
+            "q-1",
+            "look",
+            &[upload.to_string_lossy().into_owned()],
+            &[],
+        );
+        let line = serde_json::json!({
+            "type": "user", "cwd": "/w", "timestamp": "2999-01-01T00:00:00.000Z",
+            "message": {"role": "user", "content": "look"},
+        });
+        let path = dir.path().join("session.jsonl");
+        std::fs::write(&path, format!("{line}\n")).expect("transcript");
+        let items = parse_claude_transcript(&paths, &path, false).await.expect("parse");
+        assert_eq!(items[0].text, "look");
+        assert!(items[0].images.is_none(), "an ordinary session never reads chat rows");
+        assert!(items[0].files.is_none());
     }
 
     /// A steer may carry a pasted image, which the CLI records as an inline

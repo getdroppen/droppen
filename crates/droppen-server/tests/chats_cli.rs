@@ -228,6 +228,40 @@ async fn a_claude_chat_hands_its_attachments_to_the_cli_as_blocks() {
     probe.stop().await;
 }
 
+/// A chat message with nothing attached still records a delivery row: it is
+/// what stops a later identical text from reaching back to an earlier
+/// message's image. The row is written after the line reaches the CLI.
+#[tokio::test]
+async fn a_text_only_chat_message_records_an_empty_delivery() {
+    let probe = support::Probe::start().await;
+    let anchor = probe.data_dir().join("chats");
+    probe
+        .send_ok("POST", "/api/chats/new", json!({"backend": "claude", "text": "hi"}), 200)
+        .await;
+    support::wait_for_prompt_lines(&anchor, 1).await;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let rows: (i64, String, String) = {
+            let conn = rusqlite::Connection::open(probe.instance_db()).expect("instance db");
+            conn.query_row(
+                "SELECT count(*), coalesce(max(images), ''), coalesce(max(files), '') FROM chat_deliveries",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("deliveries")
+        };
+        if rows.0 > 0 {
+            assert_eq!(rows.0, 1, "one message, one row");
+            assert_eq!(rows.1, "[]", "no images");
+            assert_eq!(rows.2, "[]", "no files");
+            break;
+        }
+        assert!(Instant::now() < deadline, "no empty delivery row was recorded");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    probe.stop().await;
+}
+
 /// A chat send records no composer permission row: the body's mode is dropped,
 /// so nothing can resurface it for a later resume.
 #[tokio::test]
@@ -345,6 +379,57 @@ async fn a_queued_message_whose_upload_was_swept_is_not_sent() {
         support::prompt_lines(&anchor).len(),
         1,
         "a swept upload must not be written to the CLI"
+    );
+    probe.stop().await;
+}
+
+/// Delivery follows no link: an upload swapped for a symlink to a file outside
+/// uploads after the send is refused, not read.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_queued_message_whose_upload_became_a_symlink_is_not_sent() {
+    let probe = support::Probe::start().await;
+    let anchor = probe.data_dir().join("chats");
+    support::plan_held_cli(&anchor);
+    let created = probe
+        .send_ok("POST", "/api/chats/new", json!({"backend": "claude", "text": "first"}), 200)
+        .await;
+    let id = created["id"].as_str().expect("the chat id").to_string();
+    probe.wait_for_spawn(&anchor).await;
+    support::wait_for_prompt_lines(&anchor, 1).await;
+    seed_claude_chat(&probe, &id, &anchor);
+    wait_for_chat(&probe, &id).await;
+
+    let uploaded = probe.upload("linked.txt", b"the real upload").await;
+    let path = uploaded["path"].as_str().expect("the file path").to_string();
+    probe
+        .send_ok(
+            "POST",
+            &format!("/api/sessions/claude/{id}/message"),
+            json!({"text": "second", "files": [path]}),
+            200,
+        )
+        .await;
+    let outside = probe.home.join("outside.txt");
+    std::fs::write(&outside, b"outside the uploads directory").expect("outside file");
+    std::fs::remove_file(&path).expect("remove the upload");
+    std::os::unix::fs::symlink(&outside, &path).expect("swap in a symlink");
+    support::release_turn(&anchor);
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let detail = probe.get_json(&format!("/api/sessions/claude/{id}")).await;
+        if detail["summary"]["resident"]["phase"] == "idle" && support::prompt_lines(&anchor).len() == 1 {
+            break;
+        }
+        assert!(Instant::now() < deadline, "the linked message never settled: {detail}");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(
+        support::prompt_lines(&anchor).len(),
+        1,
+        "a symlinked upload must not be read through"
     );
     probe.stop().await;
 }
