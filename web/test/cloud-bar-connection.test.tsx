@@ -2,7 +2,9 @@
 // (`features/cloud/cloud-bar.tsx`): which step a channel being opened is on,
 // and — between tries, of the hub link or of the channel — that it cannot
 // reach it and when it tries again, counting down; the countdown is the
-// "retry now" button too. Every new string is in every shipped language.
+// "retry now" button too. A refusal gets a short label of its own (the notice
+// under the bar says it in full). Every new string is in every shipped
+// language.
 //
 // The words are drawn with `react-dom/server`; the countdown and the button
 // need a real DOM (jsdom), a clock the test moves, and a click.
@@ -75,35 +77,50 @@ test("the countdown rounds up and never says 0 s while a try is still waited for
 });
 
 // The words are short enough to show whole at 390 px beside a short device
-// name, in every language: the UI audit's cloud-bar fixture measures that.
+// name and the device switcher, in every language: the UI audit's cloud-bar
+// fixture measures that.
 test("the bar's words for each state, in English, Chinese and Japanese", () => {
   const now = Date.now();
   const say = (node: React.ReactElement, lng = "en") => draw(node, lng).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
-  assert.equal(say(<ConnectionLabel label="hub" />), "connecting to the hub…");
-  assert.equal(say(<ConnectionLabel label="hubRetry" retryAt={now + 12_000} />), "no hub · retry in 12 s");
+  assert.equal(say(<ConnectionLabel label="hub" />), "reaching the hub…");
+  assert.equal(say(<ConnectionLabel label="hubRetry" retryAt={now + 12_000} />), "no hub · retry 12 s");
   assert.equal(say(<ConnectionLabel label="connecting" step={{ kind: "presence" }} />), "finding the device…");
   assert.equal(say(<ConnectionLabel label="connecting" step={{ kind: "relay", city: null }} />), "reaching a relay…");
-  assert.equal(say(<ConnectionLabel label="connecting" step={{ kind: "relay", city: "tokyo" }} />), "via Tokyo relay…");
-  assert.equal(say(<ConnectionLabel label="connecting" step={{ kind: "relay", city: "san-francisco" }} />), "via San Francisco relay…");
+  assert.equal(say(<ConnectionLabel label="connecting" step={{ kind: "relay", city: "tokyo" }} />), "Tokyo relay…");
+  assert.equal(say(<ConnectionLabel label="connecting" step={{ kind: "relay", city: "san-francisco" }} />), "San Francisco relay…");
   assert.equal(say(<ConnectionLabel label="connecting" step={{ kind: "handshake" }} />), "handshake…");
   assert.equal(say(<ConnectionLabel label="connecting" />), "connecting…", "between steps");
-  assert.equal(say(<ConnectionLabel label="deviceRetry" retryAt={now + 7_400} />), "no answer · retry in 8 s");
+  assert.equal(say(<ConnectionLabel label="deviceRetry" retryAt={now + 7_400} />), "no reply · retry 8 s");
   assert.equal(say(<ConnectionLabel label="offline" />), "device offline", "as before");
+  // A refusal's short label: the notice under the bar says it in full, and so does the device switcher.
+  assert.equal(say(<ConnectionLabel label="refused" />), "refuses this browser");
+  assert.equal(say(<ConnectionLabel label="unconfirmed" />), "confirmation pending");
+  assert.equal(say(<ConnectionLabel label="unsaved" />), "access not saved");
+  assert.match(draw(<ConnectionLabel label="refused" />), /data-signal="warn"/);
   assert.equal(draw(<ConnectionLabel label="e2e" />), "", "live: no words, the path indicator says it");
 
+  assert.equal(say(<ConnectionLabel label="hub" />, "zh-CN"), "正在连接云端…");
   assert.equal(say(<ConnectionLabel label="hubRetry" retryAt={now + 12_000} />, "zh-CN"), "连不上云端 · 12 秒后重试");
   assert.equal(say(<ConnectionLabel label="connecting" step={{ kind: "presence" }} />, "zh-CN"), "正在查找设备…");
   assert.equal(say(<ConnectionLabel label="connecting" step={{ kind: "relay", city: "tokyo" }} />, "zh-CN"), "正在连接东京中继…");
   assert.equal(say(<ConnectionLabel label="connecting" step={{ kind: "relay", city: null }} />, "zh-CN"), "正在连接中继…");
   assert.equal(say(<ConnectionLabel label="connecting" step={{ kind: "handshake" }} />, "zh-CN"), "握手中…");
   assert.equal(say(<ConnectionLabel label="deviceRetry" retryAt={now + 7_400} />, "zh-CN"), "连不上设备 · 8 秒后重试");
+  assert.equal(say(<ConnectionLabel label="refused" />, "zh-CN"), "不接受这个浏览器");
+  assert.equal(say(<ConnectionLabel label="unconfirmed" />, "zh-CN"), "等待确认");
+  assert.equal(say(<ConnectionLabel label="unsaved" />, "zh-CN"), "存不下连接记录");
 
-  assert.equal(say(<ConnectionLabel label="hubRetry" retryAt={now + 12_000} />, "ja"), "ハブ未接続 · 12 秒後に再試行");
-  assert.equal(say(<ConnectionLabel label="connecting" step={{ kind: "relay", city: "san-francisco" }} />, "ja"), "サンフランシスコの中継経由…");
-  assert.equal(say(<ConnectionLabel label="deviceRetry" retryAt={now + 15_600} />, "ja"), "応答なし · 16 秒後に再試行");
+  assert.equal(say(<ConnectionLabel label="hubRetry" retryAt={now + 12_000} />, "ja"), "ハブ不通 · 12 秒で再試行");
+  assert.equal(say(<ConnectionLabel label="connecting" step={{ kind: "relay", city: "san-francisco" }} />, "ja"), "サンフランシスコの中継…");
+  assert.equal(say(<ConnectionLabel label="deviceRetry" retryAt={now + 15_600} />, "ja"), "応答なし · 16 秒で再試行");
+  assert.equal(say(<ConnectionLabel label="refused" />, "ja"), "操作を受け付けません");
+  assert.equal(say(<ConnectionLabel label="unconfirmed" />, "ja"), "確認待ち");
+  assert.equal(say(<ConnectionLabel label="unsaved" />, "ja"), "記録を保存できません");
 
-  const html = draw(<ConnectionLabel label="deviceRetry" retryAt={now + 8_000} />);
-  assert.match(html, /<button type="button" data-testid="retry-now"[^>]*aria-label="retry now"/, "a real button, named for what it does");
+  const html = draw(<ConnectionLabel label="deviceRetry" retryAt={now + 7_400} />);
+  assert.match(html, /<button type="button" data-testid="retry-now"[^>]*aria-label="retry now · next try in 8 s"/, "a real button, named for what it does and when the try comes");
+  assert.match(html, /title="retry now · next try in 8 s"/);
+  assert.match(draw(<ConnectionLabel label="deviceRetry" retryAt={now + 7_400} />, "zh-CN"), /aria-label="立即重试 · 8 秒后自动重试"/);
   assert.doesNotMatch(html, /outline-none/, "with the page's own focus ring");
   assert.doesNotMatch(draw(<ConnectionLabel label="connecting" step={{ kind: "handshake" }} />), /<button/, "nothing to retry while a try is under way");
   assert.match(draw(<ConnectionLabel label="offline" />), /data-signal="offline"/);
@@ -111,14 +128,18 @@ test("the bar's words for each state, in English, Chinese and Japanese", () => {
 
 test("every new string is in every shipped language", () => {
   const keys = [
+    "reaching the hub…",
     "no hub",
-    "no answer",
+    "no reply",
     "finding the device…",
-    "via {{city}} relay…",
+    "{{city}} relay…",
     "reaching a relay…",
     "handshake…",
-    "retry in {{n}} s",
-    "retry now",
+    "retry {{n}} s",
+    "retry now · next try in {{n}} s",
+    "refuses this browser",
+    "confirmation pending",
+    "access not saved",
   ];
   for (const [lang, table] of Object.entries({ "zh-CN": zhCN, "zh-TW": zhTW, ja })) {
     for (const key of keys) {
@@ -164,7 +185,8 @@ test("the countdown ticks down once a second, on the second, and stays at 1 s un
   await tick(1);
   await tick(1_000);
   await tick(5_000);
-  assert.deepEqual(shown, ["retry in 3 s", "retry in 3 s", "retry in 2 s", "retry in 2 s", "retry in 1 s", "retry in 1 s", "retry in 1 s"]);
+  assert.deepEqual(shown, ["retry 3 s", "retry 3 s", "retry 2 s", "retry 2 s", "retry 1 s", "retry 1 s", "retry 1 s"]);
+  assert.equal(button()!.getAttribute("aria-label"), "retry now · next try in 1 s", "its name counts down with it");
 });
 
 test("\"retry now\" tries at once: the hub link's wake while the hub cannot be reached, the channel's poke while the device cannot", async () => {
@@ -175,7 +197,7 @@ test("\"retry now\" tries at once: the hub link's wake while the hub cannot be r
   const click = async () => {
     const b = button();
     assert.ok(b, "the button is there");
-    assert.equal(b.getAttribute("aria-label"), "retry now");
+    assert.match(b.getAttribute("aria-label") ?? "", /^retry now · next try in [1-9]\d* s$/);
     await act(async () => void b.dispatchEvent(new window.MouseEvent("click", { bubbles: true, cancelable: true })));
   };
 

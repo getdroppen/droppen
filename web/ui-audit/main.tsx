@@ -36,11 +36,14 @@ import { SelectField } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTab } from "@/components/ui/tabs";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { BAR_STRIP, type BarLabel, ConnectionLabel, OfflineNotice, PathIndicator, SignOutButton } from "@/features/cloud/cloud-bar";
+import { BAR_STRIP, type BarLabel, ConnectionLabel, MachineSwitcher, OfflineNotice, PathIndicator, RefusalNotice, SignOutButton } from "@/features/cloud/cloud-bar";
+import type { HubShell } from "@/features/cloud/hub-shell";
 import { BarMachineName } from "@/features/cloud/machine-name";
 import { AccountButton, DevicesButton } from "@/features/cloud/my-devices";
 import { DeviceDot } from "@/features/machines/device-picker";
-import type { ConnectStep } from "@/lib/hub/machine";
+import type { ChannelRefusal, ConnectStep } from "@/lib/hub/machine";
+import { setCurrentShell } from "@/lib/machines/registry";
+import type { AppShell, MachineInfo } from "@/lib/machines/runtime";
 import { DeviceRow, type DeviceRowView } from "@/features/cloud/device-row";
 import { SectionHead } from "@/features/cloud/ui";
 import type { AcpAgentInfo } from "@/features/sessions/acp-agent";
@@ -457,17 +460,38 @@ function HostileFixture() {
 /**
  * The cloud bar (`features/cloud/cloud-bar.tsx`) in each state of the page's
  * way to the device, one strip per state as the app draws it: the real dot,
- * name, connection words (`ConnectionLabel`), path indicator and buttons on
- * the bar's own strip (`BAR_STRIP`), with the offline copy's notice under it
- * where the app shows one. Each state is drawn at its widest: both countdowns
- * have two digits (12 s and 16 s from the load), and a relay step names the
- * longest relay city as well as Tokyo, since at 390 px every one of them must
- * show whole beside a short device name.
+ * name, device switcher (`MachineSwitcher`, drawn as for an account with two
+ * devices, under a router of its own), connection words (`ConnectionLabel`),
+ * path indicator and buttons on the bar's own strip (`BAR_STRIP`), with the
+ * offline copy's notice, or the refusal's, under it where the app shows one.
+ * Each state is drawn at its widest: both countdowns have two digits (12 s
+ * and 16 s from the load), and a relay step names the longest relay city as
+ * well as Tokyo, since at 390 px every one of them must show whole beside a
+ * short device name and the switcher.
  */
 const loadedAt = Date.now();
 const COPY_AS_OF = Date.UTC(2026, 10, 8, 9, 30);
 const TOKYO = { id: "nrt-1", city: "tokyo", region: "nrt", origin: "wss://nrt-1.relay.example", state: "up", load: 0.1 };
-const CLOUD_BAR_STATES: ReadonlyArray<readonly [name: string, view: { label: BarLabel; step?: ConnectStep; retryAt?: number; notice?: boolean }]> = [
+const BAR_MACHINES: readonly MachineInfo[] = [
+  { key: "studio-mac", name: "studio-mac", state: "online", since: 0, canManage: true, live: "copy" },
+  { key: "macbook-air", name: "macbook-air", state: "online", since: 0, canManage: true, live: "copy" },
+];
+const barMachines = constantStore(BAR_MACHINES);
+/** What the switcher reads of droppen.app's shell: the account's devices, and the account (its hints). */
+const BAR_SHELL = {
+  kind: "hub" as const,
+  home: "studio-mac",
+  account: { account: "fixture-account", isAdmin: true },
+  machines: () => barMachines,
+  runtime: () => {
+    throw new Error("the cloud-bar fixture opens no device");
+  },
+  machine: () => null,
+  setMain: noop,
+};
+const CLOUD_BAR_STATES: ReadonlyArray<
+  readonly [name: string, view: { label: BarLabel; step?: ConnectStep; retryAt?: number; notice?: boolean; refusal?: ChannelRefusal }]
+> = [
   ["hub", { label: "hub" }],
   ["hub-retry", { label: "hubRetry", retryAt: loadedAt + 12_000, notice: true }],
   ["presence", { label: "connecting", step: { kind: "presence" } }],
@@ -477,6 +501,9 @@ const CLOUD_BAR_STATES: ReadonlyArray<readonly [name: string, view: { label: Bar
   ["connecting", { label: "connecting" }],
   ["device-retry", { label: "deviceRetry", retryAt: loadedAt + 16_000, notice: true }],
   ["offline", { label: "offline", notice: true }],
+  ["refused", { label: "refused", refusal: { kind: "notAccepted", by: "hub", why: null } }],
+  ["unconfirmed", { label: "unconfirmed", refusal: { kind: "unconfirmed" } }],
+  ["unsaved", { label: "unsaved", refusal: { kind: "unsaved" } }],
   ["live", { label: "e2e" }],
 ];
 
@@ -489,6 +516,7 @@ function CloudBarFixture() {
           <div data-cloud-bar="" className={BAR_STRIP}>
             <DeviceDot state={view.label === "offline" ? "offline" : "online"} />
             <BarMachineName machine="studio-mac" mirror={null} />
+            <MachineSwitcher shell={BAR_SHELL as unknown as HubShell} current="studio-mac" />
             <ConnectionLabel label={view.label} step={view.step} retryAt={view.retryAt} link={{ wake: noop }} controller={{ poke: noop }} />
             {view.label === "e2e" && (
               <PathIndicator
@@ -503,10 +531,22 @@ function CloudBarFixture() {
             <SignOutButton onClick={noop} />
           </div>
           {view.notice && <OfflineNotice freshestMs={COPY_AS_OF} />}
+          {view.refusal && <RefusalNotice refusal={view.refusal} limited={view.refusal.kind === "notAccepted"} others={["macbook-air"]} onDevices={noop} />}
         </section>
       ))}
     </div>
   );
+}
+
+/** The cloud bar's states, under a router (the switcher navigates) and with the shell it reads in the registry's slot. */
+async function mountCloudBar(): Promise<void> {
+  setCurrentShell(BAR_SHELL as unknown as AppShell);
+  await applyLanguage((query.get("lang") as LanguagePref | null) ?? "en");
+  const router = await import("@tanstack/react-router");
+  const rootRoute = router.createRootRoute({ component: CloudBarFixture });
+  const routes = router.createRouter({ routeTree: rootRoute, history: router.createMemoryHistory({ initialEntries: ["/"] }) });
+  await routes.load();
+  createRoot(document.getElementById("root")!).render(<router.RouterProvider router={routes} />);
 }
 
 const NEW_CHAT_ACCOUNT = "11111111-1111-4111-8111-111111111111";
@@ -645,8 +685,10 @@ async function mountNewChat(): Promise<void> {
 // `&lang=` names another of the app's languages.
 if (fixture === "new-chat") {
   await mountNewChat();
+} else if (fixture === "cloud-bar") {
+  await mountCloudBar();
 } else {
-  if (fixture === "agents" || fixture === "diagrams" || fixture === "hostile" || fixture === "images" || fixture === "cloud-bar")
+  if (fixture === "agents" || fixture === "diagrams" || fixture === "hostile" || fixture === "images")
     await applyLanguage((query.get("lang") as LanguagePref | null) ?? "en");
   if (fixture === "images") {
     // Cloud mode is the hub's marker in the shell (`lib/hub/config.ts`),
@@ -671,8 +713,6 @@ if (fixture === "new-chat") {
       <HostileFixture />
     ) : fixture === "images" ? (
       <ImagesFixture />
-    ) : fixture === "cloud-bar" ? (
-      <CloudBarFixture />
     ) : (
       <SettingsFixture />
     ),

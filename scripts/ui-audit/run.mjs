@@ -822,9 +822,10 @@ async function auditAgents(theme, view) {
 
 /**
  * The cloud bar (`features/cloud/cloud-bar.tsx`) in each state of its
- * connection, in every language the app ships: one 28px strip; every state's
- * words and the device's name whole, with no ellipsis, at a phone's width as
- * on a desktop (the fixture draws each state at its widest: two-digit
+ * connection, in every language the app ships: one 28px strip, with the
+ * device switcher drawn (an account of two devices, as most are); every
+ * state's words and the device's name whole, with no ellipsis, at a phone's
+ * width as on a desktop (the fixture draws each state at its widest: two-digit
  * countdowns, the longest relay city); between tries, a countdown that is a
  * real button with a name and the 2px focus ring, never "0 s", and whole in
  * the strip before the buttons; while a channel is opened, the step in words;
@@ -836,22 +837,25 @@ async function auditAgents(theme, view) {
 const CLOUD_BAR_LANGS = ["en", "zh-CN", "zh-TW", "ja"];
 /** The English words the bar says for each fixture state. */
 const CLOUD_BAR_WORDS = {
-  hub: "connecting to the hub…",
+  hub: "reaching the hub…",
   "hub-retry": "no hub",
   presence: "finding the device…",
-  relay: "via Tokyo relay…",
-  "relay-long": "via San Francisco relay…",
+  relay: "Tokyo relay…",
+  "relay-long": "San Francisco relay…",
   handshake: "handshake…",
   connecting: "connecting…",
-  "device-retry": "no answer",
+  "device-retry": "no reply",
   offline: "device offline",
+  refused: "refuses this browser",
+  unconfirmed: "confirmation pending",
+  unsaved: "access not saved",
 };
 /** The countdown in each language: a whole number of seconds, at least 1. */
 const CLOUD_BAR_COUNTDOWN = {
-  en: /^retry in [1-9]\d* s$/,
+  en: /^retry [1-9]\d* s$/,
   "zh-CN": /^[1-9]\d* 秒后重试$/,
   "zh-TW": /^[1-9]\d* 秒後重試$/,
-  ja: /^[1-9]\d* 秒後に再試行$/,
+  ja: /^[1-9]\d* 秒で再試行$/,
 };
 
 async function auditCloudBar(theme, view) {
@@ -891,6 +895,7 @@ async function auditCloudBar(theme, view) {
             name: section.dataset.auditRow,
             bar: rect(bar),
             device: cut(bar?.querySelector('[data-testid="bar-machine-name"]')),
+            switcher: rect(bar?.querySelector('[data-testid="machine-switcher"]')),
             label: label ? { kind: label.dataset.connection, rect: rect(label), text: (words?.textContent ?? "").trim(), words: cut(words) } : null,
             // What the strip has left over: nothing had to give way while it is above 0.
             free: +(bar?.querySelector(":scope > .flex-1")?.getBoundingClientRect().width ?? 0).toFixed(1),
@@ -912,6 +917,11 @@ async function auditCloudBar(theme, view) {
   for (const lang of CLOUD_BAR_LANGS) {
     await page.goto(`${base}ui-audit/index.html?fixture=cloud-bar&lang=${lang}&theme=${theme}`);
     await page.evaluate(() => document.fonts.ready);
+    // Every state in one image: the page as tall as the fixture, since the
+    // body is fixed and nothing below the fold paints. Only the width lays
+    // the strip out.
+    const tall = await page.evaluate(() => Math.ceil(document.querySelector("[data-fixture-root]")?.getBoundingClientRect().height ?? 0));
+    if (tall > view.height) await page.setViewportSize({ width: view.width, height: tall });
     await page.waitForTimeout(250);
     const before = await snapshot();
     await page.screenshot({ path: `${out}/cloud-bar${lang === "en" ? "" : `-${lang}`}-${theme}-${view.name}.png` });
@@ -935,6 +945,7 @@ async function auditCloudBar(theme, view) {
     for (const state of before.states) {
       const where = { lang, state: state.name };
       if (Math.round(state.bar?.h ?? 0) !== 28) fail("cloud-bar.height", { ...where, h: state.bar?.h }, "a 28px strip");
+      if (!state.switcher || state.switcher.w < 1) fail("cloud-bar.switcher", { ...where, switcher: state.switcher }, "the device switcher drawn, as for an account of two devices");
       if (state.device?.truncated) fail("cloud-bar.name-truncated", { ...where, ...state.device }, "the device's name whole, no ellipsis");
       if (state.name === "live") {
         if (state.label) fail("cloud-bar.live-words", { ...where, label: state.label }, "no words while live");

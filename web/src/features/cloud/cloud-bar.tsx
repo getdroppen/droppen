@@ -204,7 +204,7 @@ export function SignOutButton({ onClick }: { onClick: () => void }) {
 /** What the strip says while the channel is being opened: the step it is on (`MachineChannel.step`), or plainly "connecting…" between them. */
 function connectingText(t: TFunction, step: ConnectStep | null): string {
   if (step?.kind === "presence") return t("finding the device…");
-  if (step?.kind === "relay") return step.city ? t("via {{city}} relay…", { city: cityName(t, step.city) }) : t("reaching a relay…");
+  if (step?.kind === "relay") return step.city ? t("{{city}} relay…", { city: cityName(t, step.city) }) : t("reaching a relay…");
   if (step?.kind === "handshake") return t("handshake…");
   return t("connecting…");
 }
@@ -212,10 +212,12 @@ function connectingText(t: TFunction, step: ConnectStep | null): string {
 /**
  * The strip's words for `label` (`barState`): short enough that at a phone's
  * width (390 px) every state, its countdown included, shows whole beside a
- * short device name in every language, rather than both truncating — the UI
- * audit's cloud-bar fixture measures that, with a relay city as long as
- * San Francisco. "no answer" is how a try ended, beside "device offline",
- * which is the hub's word, so nothing is tried.
+ * short device name and the device switcher in every language, rather than
+ * both truncating — the UI audit's cloud-bar fixture measures that, with a
+ * relay city as long as San Francisco. "no reply" is how a try ended, beside
+ * "device offline", which is the hub's word, so nothing is tried. A refusal
+ * gets a short label of its own here: its full sentence is the notice under
+ * the strip (`RefusalNotice`), and the device switcher's (`switcherNote`).
  * While a try is waited for (`retryAt`), the countdown to it follows, and is
  * also the way to try now: the hub link's `wake`, or the channel's
  * controller's `poke`. Open and live needs no words: every path is
@@ -238,15 +240,15 @@ export function ConnectionLabel({
 }) {
   const { t } = useTranslation();
   const text = {
-    hub: t("connecting to the hub…"),
+    hub: t("reaching the hub…"),
     hubRetry: t("no hub"),
     offline: t("device offline"),
     e2e: null,
     connecting: connectingText(t, step),
-    deviceRetry: t("no answer"),
-    refused: t("this device does not accept control from this browser"),
-    unconfirmed: t("waiting for another of your devices to confirm"),
-    unsaved: t("this device could not save who connects to it"),
+    deviceRetry: t("no reply"),
+    refused: t("refuses this browser"),
+    unconfirmed: t("confirmation pending"),
+    unsaved: t("access not saved"),
   }[label];
   if (text === null) return null;
   const refusal = label === "refused" || label === "unconfirmed" || label === "unsaved";
@@ -275,10 +277,12 @@ export function secondsUntil(at: number, now: number): number {
 
 /**
  * The countdown to the next try, which is also the button that makes it now.
- * It ticks once a second, on the second of what is left (so the number
- * changes when it should), and only this button re-renders, not the bar: as
- * with `LivePathIndicator`, a repaint of the whole strip for each tick is work
- * nobody reads.
+ * It says "retry 16 s" — the seconds to the try, in as few words as fit
+ * beside the switcher on a phone — and its name says both what it does and
+ * when the try comes by itself. It ticks once a second, on the second of what
+ * is left (so the number changes when it should), and only this button
+ * re-renders, not the bar: as with `LivePathIndicator`, a repaint of the
+ * whole strip for each tick is work nobody reads.
  */
 function RetryCountdown({ at, onRetry }: { at: number; onRetry: () => void }) {
   const { t } = useTranslation();
@@ -294,16 +298,18 @@ function RetryCountdown({ at, onRetry }: { at: number; onRetry: () => void }) {
     tick();
     return () => clearTimeout(timer);
   }, [at]);
+  const n = secondsUntil(at, now);
+  const name = t("retry now · next try in {{n}} s", { n });
   return (
     <button
       type="button"
       data-testid="retry-now"
       onClick={onRetry}
-      aria-label={t("retry now")}
-      title={t("retry now")}
+      aria-label={name}
+      title={name}
       className="flex h-5 shrink-0 items-center whitespace-nowrap text-muted tabular-nums underline-offset-2 hover:text-fg hover:underline"
     >
-      {t("retry in {{n}} s", { n: secondsUntil(at, now) })}
+      {t("retry {{n}} s", { n })}
     </button>
   );
 }
