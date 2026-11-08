@@ -55,7 +55,7 @@ import { type Bytes, bytes, copy, equal, fromUtf8, hex, indexedDbKeyStore, type 
 import { cacheSealed, cacheTransact } from "@/lib/local-cache";
 import type { CopyFollow, CopyMark, CopyName, CopySource } from "./copy-source";
 import { deviceKey, forgetDeviceKey } from "./device-key";
-import type { FeedCopy, IndexState, StatusState } from "./streams";
+import type { FeedCopy, IndexState, StatusState, SubscriptionProgress } from "./streams";
 
 export { namesOf } from "./copy-source";
 
@@ -69,8 +69,21 @@ export const KEPT_OPENED = 20;
 export const WARM_SESSIONS = 5;
 /** Of the sessions opened in this page, how many stay followed at once. */
 export const FOLLOWED_OPENED = 8;
-/** How long a reader asking for a session waits for a copy that is not on the device yet. */
+/**
+ * How long a reader asking for a session that is not on the device yet waits
+ * for the next of its records or pages from the source: a wait for the copy
+ * to stop moving, not for a time (see {@link MachineMirror.session}).
+ */
 export const SESSION_WAIT_MS = 8000;
+/**
+ * The longest that reader waits however much is still arriving: a minute.
+ * A session's checkpoint is up to 1024 pages, four at a time — at the pace a
+ * big session's 250 take in about 15 s, about a minute for the biggest — and
+ * a stream that keeps moving without ever getting there (a download that
+ * fails near its end, and starts over) still ends. Given up, the reader is
+ * shown no copy, and the copy replaces that once it is in.
+ */
+export const SESSION_WAIT_CAP_MS = 60_000;
 
 /** The slice of an `IDBObjectStore` the mirror uses (what `cacheTransact` hands out). */
 export interface KvRequest<T> {
@@ -626,7 +639,9 @@ export interface MirrorOptions {
   now?: () => number;
   /** How far a save trails the state it saves: index and status, sessions. */
   saveDelayMs?: { small: number; session: number };
+  /** How long a session not on the device is waited for with nothing arriving (default {@link SESSION_WAIT_MS}), and at most (default {@link SESSION_WAIT_CAP_MS}). */
   sessionWaitMs?: number;
+  sessionWaitCapMs?: number;
   /**
    * Whether the warm sessions and the last few opened are followed (default
    * yes); off, only the index, the status and a session somebody is asking
@@ -655,6 +670,8 @@ export class MachineMirror {
   /** Sessions opened on this device, most recent first (this page's, merged with the stored list). */
   private opened: OpenedRef[] = [];
   private readonly listeners = new Set<(change: MirrorChange) => void>();
+  /** Who hears of a session's progress ({@link onSessionProgress}), by session (`source/id`): whichever slot and follow it has. */
+  private readonly progressListeners = new Map<string, Set<() => void>>();
   private closed = false;
   private readonly transact: Transact;
   private readonly seal: MirrorSeal;
@@ -896,6 +913,7 @@ export class MachineMirror {
       slot.saveTimer = undefined;
       this.sessions.delete(key);
       this.wake(slot);
+      if (followed) this.progressed(key);
       const next = this.sessionSlot(slot.source, slot.id);
       if (!next) continue;
       if (this.opened.some((o) => o.source === slot.source && o.id === slot.id)) {
@@ -1063,7 +1081,7 @@ export class MachineMirror {
 
   private startFollowing(slot: SessionSlot): void {
     if (slot.sub || slot.missing || this.closed) return;
-    slot.sub = this.follow(slot, (change) => {
+    const sub = this.follow(slot, (change) => {
       this.wake(slot);
       // A heartbeat moves no item.
       if (!change.reset && change.bodies.length === 0) return;
@@ -1073,10 +1091,90 @@ export class MachineMirror {
       }, null);
       this.emit({ kind: "session", key: slot.key, fromIndex: change.reset ? null : (fromIndex ?? slot.state?.endIndex ?? 0) });
     });
+    slot.sub = sub;
+    if (!sub) return;
+    // Its listeners go with it when it is closed.
+    sub.onProgress?.(() => this.progressed(slot.key));
+    this.progressed(slot.key);
   }
 
   private wake(slot: SessionSlot): void {
     for (const fn of [...slot.waiters]) fn();
+  }
+
+  /**
+   * How far a session's copy has caught up from its source, now: its
+   * stream's phase and the checkpoint pages it is fetching. `null` while it
+   * is not followed (or its source cannot tell). With no copy of it on the
+   * device ({@link sessionNow} `null`), this is what a reader waiting for it
+   * can be told.
+   */
+  sessionProgress(source: string, id: string): SubscriptionProgress | null {
+    return this.sessions.get(`${source}/${id}`)?.sub?.progress ?? null;
+  }
+
+  /** Hear when {@link sessionProgress} changes: the session's follow started or stopped, or moved (at most once a frame). */
+  onSessionProgress(source: string, id: string, fn: () => void): () => void {
+    const key = `${source}/${id}`;
+    let heard = this.progressListeners.get(key);
+    if (!heard) this.progressListeners.set(key, (heard = new Set()));
+    heard.add(fn);
+    return () => {
+      heard.delete(fn);
+      if (heard.size === 0 && this.progressListeners.get(key) === heard) this.progressListeners.delete(key);
+    };
+  }
+
+  private progressed(key: string): void {
+    for (const fn of [...(this.progressListeners.get(key) ?? [])]) {
+      try {
+        fn();
+      } catch {
+        // one listener failing must not starve the others
+      }
+    }
+  }
+
+  /**
+   * Wait for the first state of `slot`, which is not on the device, from the
+   * source — or for its word that there is none (both {@link wake} it).
+   *
+   * A big session comes as a checkpoint of a few hundred pages and the
+   * records after it, which can take longer than any one wait worth making
+   * for a small one. So the wait is for the copy to stop moving: every
+   * record, checkpoint or page taken ({@link SubscriptionProgress.taken})
+   * starts `stallMs` over, and only `stallMs` with nothing arriving ends it —
+   * or `capMs` in all. It hears the progress as it moves, and looks again
+   * itself when `stallMs` runs out, as a background tab hears nothing (it
+   * has no frames): there, a stall is noticed `stallMs` late at most.
+   */
+  private waitFor(slot: SessionSlot, stallMs: number, capMs: number): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const taken = () => slot.sub?.progress?.taken ?? 0;
+      let seen = taken();
+      let stall = setTimeout(stalled, stallMs);
+      const cap = setTimeout(finish, capMs);
+      const off = this.onSessionProgress(slot.source, slot.id, moved);
+      function moved(): boolean {
+        const now = taken();
+        if (now === seen) return false;
+        seen = now;
+        clearTimeout(stall);
+        stall = setTimeout(stalled, stallMs);
+        return true;
+      }
+      function stalled() {
+        if (!moved()) finish();
+      }
+      function finish() {
+        clearTimeout(stall);
+        clearTimeout(cap);
+        off();
+        slot.waiters.delete(finish);
+        resolve();
+      }
+      slot.waiters.add(finish);
+    });
   }
 
   /** The copy of a session if one is in memory now. */
@@ -1087,8 +1185,10 @@ export class MachineMirror {
 
   /**
    * A session's copy: read back from the device at once if it is there, and
-   * followed from there (or fetched from the hub, waiting up to `waitMs` for
-   * the first state). `null` when there is none to be had.
+   * followed from there — or fetched from the hub, waiting for the first
+   * state while it keeps coming: until `waitMs` pass with nothing arriving,
+   * or {@link SESSION_WAIT_CAP_MS} in all ({@link waitFor}). `null` when
+   * there is none to be had (yet).
    */
   async session(source: string, id: string, waitMs = this.opts.sessionWaitMs ?? SESSION_WAIT_MS): Promise<SessionCopy | null> {
     let slot = this.sessionSlot(source, id);
@@ -1105,16 +1205,7 @@ export class MachineMirror {
     // and if the session is being followed (there may be no room for it).
     const linkUp = this.opts.source?.reachable === true;
     if (!slot.state && !slot.missing && slot.sub && !slot.synced && linkUp) {
-      await new Promise<void>((resolve) => {
-        const timer = setTimeout(finish, waitMs);
-        const waiting = slot!;
-        function finish() {
-          clearTimeout(timer);
-          waiting.waiters.delete(finish);
-          resolve();
-        }
-        waiting.waiters.add(finish);
-      });
+      await this.waitFor(slot, waitMs, this.opts.sessionWaitCapMs ?? SESSION_WAIT_CAP_MS);
     }
     return this.sessionNow(source, id);
   }
@@ -1165,9 +1256,11 @@ export class MachineMirror {
     const opened = new Set(this.opened.map((o) => `${o.source}/${o.id}`));
     for (const [key, slot] of this.sessions) {
       if (want.has(key) || slot.waiters.size > 0) continue;
+      const followed = slot.sub !== null;
       slot.sub?.close();
       slot.sub = null;
       slot.synced = false;
+      if (followed) this.progressed(key);
       // Not followed and not one of the kept: its copy (if any) is on the
       // device, and memory holds only what may be shown next.
       if (slot.settled && !opened.has(key) && slot.saveTimer === undefined) this.sessions.delete(key);
@@ -1322,5 +1415,6 @@ export class MachineMirror {
     }
     for (const slot of this.sessions.values()) this.wake(slot);
     this.listeners.clear();
+    this.progressListeners.clear();
   }
 }

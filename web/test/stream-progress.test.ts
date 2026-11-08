@@ -3,7 +3,10 @@
 // catching up on it, synced, or waiting out a backoff — counted by kind; a
 // checkpoint's pages counted as they open, and over the whole catch-up; the
 // events coalesced, so a burst is one; and the copy source's pass-through,
-// which copes with a client made only once the machine's keys arrive.
+// which copes with a client made only once the machine's keys arrive. And
+// one subscription's own (`StreamSubscription.progress`): its download's
+// pages and the records it takes, said in the same frames, and a session's
+// follow handing it on.
 import assert from "node:assert/strict";
 import test from "node:test";
 import { type Bytes, FMT_FEED_V1, FMT_INDEX_V1, FMT_STATUS_V1, hex, indexStream, type MachineKey, statusStream, streamId } from "../src/lib/e2e/index.js";
@@ -17,6 +20,7 @@ import {
   StreamClient,
   type StreamClientOptions,
   type StreamProgress,
+  type SubscriptionProgress,
 } from "../src/lib/hub/streams.js";
 import { FakeStreamLink, flush, type Machine, makeMachine, StreamWriter, until } from "./stream-fixtures.js";
 
@@ -265,6 +269,122 @@ test("a burst of changes is one event, said when the frame comes; one that ends 
   assert.equal(frames.length, 1);
   frames.shift()!();
   assert.equal(heard.length, 2, "the counts are as they were");
+  c.close();
+});
+
+test("one subscription says how far it alone has come: its checkpoint's pages as they open, the records after them, and a link drop", async () => {
+  const machine = await makeMachine();
+  const link = new FakeStreamLink();
+  const stream = await streamId(machine.mk, "claude", "s-one");
+  const writer = await StreamWriter.open(machine, stream, FMT_FEED_V1);
+  for (const [from, to] of [[0, 2], [2, 4], [4, 6]] as const) await writer.append(feed(from, to));
+  const cp = await writer.manifest([{ fromIndex: 0, items: items(0, 2), endIndex: 2 }, { fromIndex: 2, items: items(2, 4), endIndex: 4 }, feed(4, 6)]);
+  // Two records after the checkpoint: no count of them is known until the head.
+  await writer.append(feed(6, 7));
+  await writer.append(feed(7, 8));
+  const gates: (() => void)[] = [];
+  const c = client(machine, link, {
+    pageConcurrency: 1,
+    fetchPage: async (_stream, page) => {
+      await new Promise<void>((resolve) => gates.push(resolve));
+      return cp.pages.get(hex(page))!;
+    },
+  });
+  // Another session over the same client: what it does is not this one's.
+  const other = c.subscribe(await streamId(machine.mk, "claude", "s-other"), feedFold);
+  const sub = c.subscribe(stream, feedFold);
+  assert.deepEqual(sub.progress, { phase: "waiting", pages: null, taken: 0 });
+  const heard: SubscriptionProgress[] = [];
+  sub.onProgress((p) => heard.push(p));
+  await until(() => heard.at(-1)?.phase === "catchingUp");
+
+  link.deliver({ type: "checkpoint", ch: subFor(link, stream).ch, stream, uptoSeq: cp.upto, manifest: cp.manifest });
+  await until(() => gates.length === 1);
+  assert.deepEqual(sub.progress.pages, { done: 0, total: 3 }, "the manifest names its three pages");
+  assert.equal(other.progress.pages, null, "the other session is downloading nothing");
+  for (let i = 1; i <= 3; i++) {
+    await until(() => gates.length === 1);
+    gates.shift()!();
+    await until(() => sub.progress.pages?.done === i || sub.progress.pages === null);
+  }
+  await until(() => sub.progress.pages === null);
+  assert.deepEqual(sub.progress, { phase: "catchingUp", pages: null, taken: 4 }, "the download over: the manifest and its three pages taken");
+
+  link.deliver({ type: "recs", ch: subFor(link, stream).ch, stream, records: writer.records.slice(cp.upto) });
+  await until(() => heard.at(-1)?.taken === 6);
+  assert.equal(sub.progress.pages, null, "records are taken, not counted against a total");
+  const pages = heard.map((p) => p.pages?.done ?? null);
+  assert.deepEqual(
+    pages.filter((d, i) => i === 0 || d !== pages[i - 1]),
+    [null, 0, 1, 2, 3, null],
+    "each page heard as it opened, then the download gone",
+  );
+
+  link.drop();
+  assert.equal(sub.progress.phase, "waiting", "the link went with its ch");
+  await until(() => heard.at(-1)?.phase === "waiting");
+  assert.equal(heard.at(-1)!.taken, 6, "what it took stays counted");
+  link.reopen();
+  await until(() => heard.at(-1)?.phase === "catchingUp");
+  assert.equal(other.progress.taken, 0);
+
+  const said = heard.length;
+  sub.close();
+  c.subscribe(await streamId(machine.mk, "claude", "s-third"), feedFold);
+  await flush(5);
+  assert.equal(heard.length, said, "closed: nothing more");
+  c.close();
+});
+
+test("a subscription's progress is said in the machine's frame, once for a burst, and only when it moved", async () => {
+  const machine = await makeMachine();
+  const link = new FakeStreamLink();
+  const frames: (() => void)[] = [];
+  const stream = await streamId(machine.mk, "claude", "s-burst");
+  const writer = await StreamWriter.open(machine, stream, FMT_FEED_V1);
+  for (let i = 0; i < 12; i++) await writer.append(feed(i, i + 1));
+  const c = client(machine, link, { progressFrame: (fn) => frames.push(fn) });
+  const sub = c.subscribe(stream, feedFold);
+  const still = c.subscribe(await streamId(machine.mk, "claude", "s-still"), feedFold);
+  const heard: SubscriptionProgress[] = [];
+  const stillHeard: SubscriptionProgress[] = [];
+  sub.onProgress((p) => heard.push(p));
+  still.onProgress((p) => stillHeard.push(p));
+  await until(() => link.subs().length === 2);
+  assert.equal(frames.length, 1, "no machine-wide listener, yet a frame is asked for: the subscriptions' listeners");
+  frames.shift()!();
+  assert.deepEqual([heard.at(-1)?.phase, stillHeard.at(-1)?.phase], ["catchingUp", "catchingUp"]);
+
+  // Twelve records in three frames from the hub, between two of the page's frames: one event.
+  for (const at of [0, 4, 8]) link.deliver({ type: "recs", ch: subFor(link, stream).ch, stream, records: writer.records.slice(at, at + 4) });
+  await until(() => sub.progress.taken === 12);
+  const before = heard.length;
+  frames.shift()!();
+  assert.equal(heard.length, before + 1);
+  assert.equal(heard.at(-1)!.taken, 12);
+  assert.equal(stillHeard.length, 1, "the other subscription did not move: it hears nothing");
+  c.close();
+});
+
+test("the copy source hands a session's follow its progress through; the index's says none", async () => {
+  const machine = await makeMachine();
+  const link = new FakeStreamLink();
+  const c = client(machine, link);
+  const source = HubCopySource.over({ mk: machine.mk, client: c });
+  const name = { kind: "session" as const, source: "claude", id: "s-1" };
+  const follow = source.follow(name, await source.places(name), { at: 0, from: null }, { onState: () => undefined })!;
+  let heard = 0;
+  follow.onProgress!(() => heard++);
+  await until(() => follow.progress?.phase === "catchingUp" && heard > 0);
+  const writer = await StreamWriter.open(machine, await streamId(machine.mk, "claude", "s-1"), FMT_FEED_V1);
+  await writer.append(feed(0, 2));
+  link.deliver({ type: "recs", ch: subFor(link, writer.stream).ch, stream: writer.stream, records: writer.records });
+  await until(() => follow.progress?.taken === 1);
+  const index = source.follow({ kind: "index" }, await source.places({ kind: "index" }), { at: 0, from: null }, { onState: () => undefined })!;
+  assert.equal(index.progress, undefined, "followed under several names: it shows as the machine's");
+  assert.equal(index.onProgress, undefined);
+  follow.close();
+  index.close();
   c.close();
 });
 

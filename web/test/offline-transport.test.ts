@@ -13,10 +13,11 @@ import {
   type OfflineOptions,
   type OfflineSource,
   offlineTransport,
+  PROGRESS_EVERY_MS,
   RefusedSocket,
 } from "../src/lib/transport/offline.js";
 import type { MirrorChange, SessionCopy } from "../src/lib/hub/mirror.js";
-import type { FeedCopy, StatusState } from "../src/lib/hub/streams.js";
+import type { FeedCopy, StatusState, SubscriptionProgress } from "../src/lib/hub/streams.js";
 import { snapshotOf } from "../src/features/sessions/session-feed-pool.js";
 import { flush, until } from "./stream-fixtures.js";
 
@@ -48,6 +49,11 @@ class FakeSource implements OfflineSource {
     mkEpoch: 0,
   };
   copies = new Map<string, SessionCopy>([["claude/a", copyOf(250, 7)]]);
+  /** Sessions still on their way from the hub: `session()` answers when the test says. */
+  pending = new Map<string, Promise<SessionCopy | null>>();
+  /** Each followed session's progress, as the test sets it (`progress`). */
+  progressOf = new Map<string, SubscriptionProgress>();
+  progressListeners = new Map<string, Set<() => void>>();
   touched: string[] = [];
   listeners = new Set<(c: MirrorChange) => void>();
   whenLoaded = async () => undefined;
@@ -61,10 +67,24 @@ class FakeSource implements OfflineSource {
     return { state: this.statusState };
   }
   async session(source: string, id: string) {
-    return this.copies.get(`${source}/${id}`) ?? null;
+    return (await this.pending.get(`${source}/${id}`)) ?? this.copies.get(`${source}/${id}`) ?? null;
   }
   sessionNow(source: string, id: string) {
     return this.copies.get(`${source}/${id}`) ?? null;
+  }
+  sessionProgress(source: string, id: string) {
+    return this.progressOf.get(`${source}/${id}`) ?? null;
+  }
+  onSessionProgress(source: string, id: string, fn: () => void) {
+    const key = `${source}/${id}`;
+    if (!this.progressListeners.has(key)) this.progressListeners.set(key, new Set());
+    this.progressListeners.get(key)!.add(fn);
+    return () => void this.progressListeners.get(key)!.delete(fn);
+  }
+  /** A session's follow moved (as the mirror says it, at most once a frame). */
+  progress(key: string, progress: SubscriptionProgress) {
+    this.progressOf.set(key, progress);
+    for (const fn of [...(this.progressListeners.get(key) ?? [])]) fn();
   }
   touch(source: string, id: string) {
     this.touched.push(`${source}/${id}`);
@@ -262,6 +282,90 @@ test("the feed socket: hello first, then settings and the list; a sub is a read-
   m.socket.close();
   await until(() => m.isClosed());
   assert.equal(source.listeners.size, 0, "a closed socket stops listening to the copy");
+});
+
+test("a feed whose session is not on the device says how its copy is coming: at once, then at most four times a second, until its snapshot", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 100_000 });
+  // `until` waits on `setTimeout`, faked here: the socket's promises are let run with `setImmediate`.
+  const settle = async () => {
+    for (let i = 0; i < 10; i++) await new Promise((resolve) => setImmediate(resolve));
+  };
+  const source = new FakeSource();
+  let arrive!: (copy: SessionCopy | null) => void;
+  source.pending.set("codex/b", new Promise((resolve) => (arrive = resolve)));
+  const m = mux(source);
+  await settle();
+  const pages = (done: number, total: number): SubscriptionProgress => ({ phase: "catchingUp", pages: { done, total }, taken: done + 1 });
+
+  m.socket.send(JSON.stringify({ type: "sub", feeds: [{ sub: 5, source: "codex", id: "b", limit: 100 }] }));
+  await settle();
+  assert.deepEqual(m.of(5), [], "nothing until the session is known not to be on the device");
+  // Followed, with nothing read back from the device: the first frame at once, on the feed's own `sub`.
+  source.progress("codex/b", { phase: "catchingUp", pages: null, taken: 0 });
+  assert.deepEqual(m.of(5), [{ sub: 5, type: "progress", stage: "copy" }]);
+
+  // A checkpoint's pages as they open: held within a quarter second of the last frame, then sent as they stand.
+  source.progress("codex/b", pages(0, 2000));
+  source.progress("codex/b", pages(1, 2000));
+  assert.equal(m.of(5).length, 1, "held");
+  t.mock.timers.tick(PROGRESS_EVERY_MS);
+  assert.deepEqual(m.of(5).at(-1), { sub: 5, type: "progress", stage: "copy", done: 1, total: 2000 });
+  // A page every millisecond for two seconds: eight frames, not two thousand.
+  const before = m.of(5).length;
+  for (let done = 2; done < 2002; done++) {
+    source.progress("codex/b", pages(done, 2000));
+    t.mock.timers.tick(1);
+  }
+  const burst = m.of(5).slice(before);
+  assert.equal(burst.length, 8, "four a second");
+  assert.ok(burst.every((f, i) => i === 0 || f.done > burst[i - 1]!.done), "each one as things stood when it went");
+
+  // The download over, the records after it coming: no count to show, and the same frame is not sent twice.
+  t.mock.timers.tick(PROGRESS_EVERY_MS);
+  source.progress("codex/b", { phase: "catchingUp", pages: null, taken: 3000 });
+  assert.deepEqual(m.of(5).at(-1), { sub: 5, type: "progress", stage: "copy" }, "pages only while a checkpoint is being fetched");
+  const said = m.of(5).length;
+  for (let taken = 3001; taken < 3010; taken++) {
+    t.mock.timers.tick(PROGRESS_EVERY_MS);
+    source.progress("codex/b", { phase: "catchingUp", pages: null, taken });
+  }
+  assert.equal(m.of(5).length, said, "records move nothing the frame says");
+
+  // One more change still held when the snapshot goes: the snapshot ends it, and nothing comes after.
+  source.progress("codex/b", pages(0, 4));
+  source.progress("codex/b", pages(1, 4));
+  arrive(null);
+  await settle();
+  const snapshot = m.of(5).at(-1)!;
+  assert.equal(snapshot.type, "snapshot");
+  assert.equal(snapshotOf(snapshot)?.sendBlockReason, "offline: no copy");
+  source.progress("codex/b", pages(2, 4));
+  t.mock.timers.tick(10_000);
+  assert.equal(m.of(5).at(-1), snapshot, "nothing of it after the snapshot");
+  assert.equal(source.progressListeners.get("codex/b")?.size, 0, "and nobody listening any more");
+
+  // A session that is on the device says nothing of the kind, followed as it may be.
+  source.progressOf.set("claude/a", { phase: "catchingUp", pages: { done: 1, total: 9 }, taken: 2 });
+  m.socket.send(JSON.stringify({ type: "sub", feeds: [{ sub: 6, source: "claude", id: "a", limit: 100 }] }));
+  await settle();
+  source.progress("claude/a", { phase: "catchingUp", pages: { done: 2, total: 9 }, taken: 3 });
+  t.mock.timers.tick(1_000);
+  assert.deepEqual(m.of(6).map((f) => f.type), ["snapshot"]);
+
+  // A feed let go of while its copy is still coming: nothing more for it either.
+  let late!: (copy: SessionCopy | null) => void;
+  source.pending.set("codex/b", new Promise((resolve) => (late = resolve)));
+  source.progressOf.delete("codex/b");
+  m.socket.send(JSON.stringify({ type: "sub", feeds: [{ sub: 7, source: "codex", id: "b", limit: 100 }] }));
+  await settle();
+  source.progress("codex/b", pages(0, 4));
+  source.progress("codex/b", pages(1, 4));
+  m.socket.send(JSON.stringify({ type: "unsub", subs: [7] }));
+  t.mock.timers.tick(1_000);
+  late(null);
+  await settle();
+  assert.deepEqual(m.of(7), [{ sub: 7, type: "progress", stage: "copy", done: 0, total: 4 }]);
+  m.socket.close();
 });
 
 test("terminal sockets close without ever opening", async () => {

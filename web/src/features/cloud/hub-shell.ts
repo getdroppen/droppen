@@ -87,18 +87,28 @@ export function endHubShell(): void {
   setRenewalRunner(null);
 }
 
-/** What the offline copy says in the app, in the page's language at the moment it is said. */
-const offlineMessages: OfflineOptions["messages"] = {
-  get readOnly() {
-    return i18next.t("the device is offline — this is a read-only copy");
-  },
-  get noCopy() {
-    return i18next.t("the device is offline, and there is no copy of this session here yet");
-  },
-  get unavailable() {
-    return i18next.t("the device is offline — this needs it to be online");
-  },
-};
+/**
+ * What a machine's offline copy says in the app, in the page's language at
+ * the moment it is said. A session with no copy here says the device is
+ * offline only when the hub says so (`presence`): while it is online, or the
+ * hub has not said yet, the page is still connecting to it, and what is
+ * missing is the copy, not the device.
+ */
+export function offlineMessages(presence: () => PresenceState): OfflineOptions["messages"] {
+  return {
+    get readOnly() {
+      return i18next.t("the device is offline — this is a read-only copy");
+    },
+    get noCopy() {
+      return presence() === "offline"
+        ? i18next.t("the device is offline, and there is no copy of this session here yet")
+        : i18next.t("there is no copy of this session on this device yet");
+    },
+    get unavailable() {
+      return i18next.t("the device is offline — this needs it to be online");
+    },
+  };
+}
 
 /** How often the info's round trip may change; a change of path shows at once (as the bar's indicator). */
 const PATH_EVERY_MS = 5_000;
@@ -252,7 +262,7 @@ export class HubMachine implements MachineDriver {
     // on this device, which draws at once.
     const offline = offlineTransport(this.mirror, {
       user: `cloud:${account.deviceId}`,
-      messages: offlineMessages,
+      messages: offlineMessages(() => this.presence()),
       machineOnline: () => this.presence() === "online",
     });
     this.transport = new SwitchingTransport({ live: tunnelTransport(countingOpener(this.channel, this.pipes)), offline }, "offline", {

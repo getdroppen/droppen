@@ -20,7 +20,10 @@
  *   built like the server's, or — when the window the page holds is this
  *   copy's — a resume), `resync`, `ping`; and whatever the copy learns from
  *   the hub afterwards (records the machine wrote just before it went) goes
- *   out as `sessions:delta`, feed deltas and `state` frames.
+ *   out as `sessions:delta`, feed deltas and `state` frames. A feed whose
+ *   session is not on the device yet says how its copy is coming from the
+ *   hub until its snapshot: `{sub, type: "progress", stage: "copy"}`, with
+ *   `done` and `total` pages while a checkpoint is being fetched.
  * - Terminal sockets close at once: they need the machine.
  *
  * Fingerprints: the copy holds the agent's `fp` (of every item it has) and
@@ -31,7 +34,7 @@
  */
 import type { components } from "@/api/schema";
 import type { SessionCopy, MirrorChange } from "@/lib/hub/mirror";
-import type { FeedCopy, StatusState } from "@/lib/hub/streams";
+import type { FeedCopy, StatusState, SubscriptionProgress } from "@/lib/hub/streams";
 import { DEFAULT_LIMIT, firstUnreadIn, MAX_LIMIT, readMarkOf, searchCopy, validateQuery } from "./offline-search";
 import type { SocketLike, Transport } from "@/lib/transport";
 
@@ -46,6 +49,9 @@ export interface OfflineSource {
   readonly status: { state: StatusState | null } | null;
   session(source: string, id: string): Promise<SessionCopy | null>;
   sessionNow(source: string, id: string): SessionCopy | null;
+  /** How far a session's copy has caught up from the hub, while it is followed (`null`: it is not). */
+  sessionProgress(source: string, id: string): SubscriptionProgress | null;
+  onSessionProgress(source: string, id: string, fn: () => void): () => void;
   touch(source: string, id: string): void;
   onChange(fn: (change: MirrorChange) => void): () => void;
 }
@@ -70,6 +76,12 @@ export const PAGE_SIZE = 200;
 const MIN_LIMIT = 20;
 /** `RESUME_OVERLAP`: a resume re-sends the last few items the client holds. */
 export const RESUME_OVERLAP = 3;
+/**
+ * A feed's `progress` frames are at most one per this (about four a second),
+ * however fast its pages come: enough for a count to be seen moving, and a
+ * checkpoint of a thousand pages is not a thousand renders.
+ */
+export const PROGRESS_EVERY_MS = 250;
 
 function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -364,6 +376,10 @@ interface Channel {
   rowJson: string;
   /** The `sendBlockReason` it was last sent. */
   reason: string;
+  /** Its last `progress` frame (as sent), when it went, and the one waiting for {@link PROGRESS_EVERY_MS} to pass. */
+  progressSaid: string;
+  progressAt: number;
+  progressTimer: ReturnType<typeof setTimeout> | undefined;
 }
 
 /**
@@ -439,7 +455,11 @@ export class OfflineMuxSocket implements SocketLike {
         for (const feed of Array.isArray(m.feeds) ? m.feeds : []) this.subscribe(feed as Record<string, unknown>);
         return;
       case "unsub":
-        for (const sub of Array.isArray(m.subs) ? m.subs : []) if (typeof sub === "number") this.channels.delete(sub);
+        for (const sub of Array.isArray(m.subs) ? m.subs : []) {
+          if (typeof sub !== "number") continue;
+          clearTimeout(this.channels.get(sub)?.progressTimer);
+          this.channels.delete(sub);
+        }
         return;
       case "resync":
         if (typeof m.sub === "number") void this.resync(m.sub, m.since, m.fp);
@@ -454,6 +474,7 @@ export class OfflineMuxSocket implements SocketLike {
     this.readyState = CLOSED;
     this.off?.();
     this.off = null;
+    for (const channel of this.channels.values()) clearTimeout(channel.progressTimer);
     this.channels.clear();
     queueMicrotask(() => this.onclose?.({}));
   }
@@ -470,7 +491,18 @@ export class OfflineMuxSocket implements SocketLike {
       queueMicrotask(() => this.emit({ sub, type: "closed", reason: "invalid" }));
       return;
     }
-    const channel: Channel = { sub, source: feed.source, id: feed.id, open: false, endIndex: 0, rowJson: "", reason: "" };
+    const channel: Channel = {
+      sub,
+      source: feed.source,
+      id: feed.id,
+      open: false,
+      endIndex: 0,
+      rowJson: "",
+      reason: "",
+      progressSaid: "",
+      progressAt: Number.NEGATIVE_INFINITY,
+      progressTimer: undefined,
+    };
     this.channels.set(sub, channel);
     const limit = typeof feed.limit === "number" ? Math.min(PAGE_SIZE, Math.max(MIN_LIMIT, Math.floor(feed.limit))) : PAGE_SIZE;
     void this.opening(channel, limit, feed.since, feed.fp);
@@ -479,7 +511,19 @@ export class OfflineMuxSocket implements SocketLike {
   private async opening(channel: Channel, limit: number, since: unknown, fp: unknown): Promise<void> {
     this.source.touch(channel.source, channel.id);
     await this.source.whenLoaded();
-    const copy = await this.source.session(channel.source, channel.id);
+    // A session not on the device may take a while to come from the hub
+    // (a big one is a checkpoint of hundreds of pages): the feed says how it
+    // is coming until there is a snapshot to send, and no longer.
+    const off = this.source.onSessionProgress(channel.source, channel.id, () => this.sayProgress(channel));
+    let copy: SessionCopy | null;
+    try {
+      this.sayProgress(channel);
+      copy = await this.source.session(channel.source, channel.id);
+    } finally {
+      off();
+      clearTimeout(channel.progressTimer);
+      channel.progressTimer = undefined;
+    }
     if (this.channels.get(channel.sub) !== channel) return;
     const row = rowOf(this.source, this.opts, channel.source, channel.id);
     if (!row) {
@@ -502,6 +546,35 @@ export class OfflineMuxSocket implements SocketLike {
       return;
     }
     this.emit({ sub: channel.sub, type: "snapshot", sig: offlineSig(copy?.seq ?? 0), ...offlineState(row, reason), ...windowFields(state, limit) });
+  }
+
+  /**
+   * A feed's `progress` frame, while its session is not on the device and
+   * its copy is coming from the hub: the first at once, then one for each
+   * change, at most one per {@link PROGRESS_EVERY_MS} (a change meanwhile
+   * goes out when that has passed, as things stand then). It counts pages
+   * only while a checkpoint is being fetched: the records after one come with
+   * no count to show (`SubscriptionProgress`).
+   */
+  private sayProgress(channel: Channel): void {
+    if (channel.open || channel.progressTimer !== undefined || this.channels.get(channel.sub) !== channel) return;
+    const wait = channel.progressAt + PROGRESS_EVERY_MS - Date.now();
+    if (wait > 0) {
+      channel.progressTimer = setTimeout(() => {
+        channel.progressTimer = undefined;
+        this.sayProgress(channel);
+      }, wait);
+      return;
+    }
+    const progress = this.source.sessionProgress(channel.source, channel.id);
+    // Followed with nothing read back from the device: known not to be on it.
+    if (!progress || this.source.sessionNow(channel.source, channel.id)) return;
+    const frame = { sub: channel.sub, type: "progress", stage: "copy", ...(progress.pages ? { done: progress.pages.done, total: progress.pages.total } : {}) };
+    const text = JSON.stringify(frame);
+    if (text === channel.progressSaid) return;
+    channel.progressSaid = text;
+    channel.progressAt = Date.now();
+    this.emit(frame);
   }
 
   private async resync(sub: number, since: unknown, fp: unknown): Promise<void> {

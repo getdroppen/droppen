@@ -18,8 +18,10 @@ import { mq } from "../src/lib/machines/query.js";
 import { hubShell, setHubShell } from "../src/features/machines/shells.js";
 import { renewalRunner, setRenewalRunner } from "../src/lib/hub/renewal.js";
 import { homeMachine, homeMachineStore, isOpen, openMachines, perMachine, runtimeFor, shellKind, transportFor } from "../src/lib/machines/registry.js";
-import { MemoryKeyStore } from "../src/lib/e2e/index.js";
-import { FakeKv, FakeStreamLink, flush, type Machine, makeMachine, until } from "./stream-fixtures.js";
+import { FMT_INDEX_V1, hex, indexStream, MemoryKeyStore, streamId } from "../src/lib/e2e/index.js";
+import zhCN from "../src/i18n/lang-zh-CN.js";
+import i18next from "i18next";
+import { FakeKv, FakeStreamLink, flush, type Machine, makeMachine, StreamWriter, until } from "./stream-fixtures.js";
 import { MemoryStorage } from "./storage.js";
 
 const storage = new MemoryStorage();
@@ -1091,4 +1093,42 @@ test("leaving the account ends the shell, its slot and the renewal runner togeth
     setHubShell(null);
     setRenewalRunner(null);
   }
+});
+
+test("a session with no copy here says the device is offline only when the hub says so: online or still connecting, it is the copy that is missing", async (t) => {
+  await i18next.init({ lng: "en", resources: { "zh-CN": { translation: zhCN } }, keySeparator: false, nsSeparator: false, interpolation: { escapeValue: false } });
+  t.after(() => i18next.changeLanguage("en"));
+  const { shell, link, machines } = await keyedWorld(["m-1"], new FakeKv());
+  shell.start();
+  t.after(() => shell.stop());
+  const machine = machines.get("m-1")!;
+  // The copy lists the session; its own stream the hub has not got.
+  const index = await StreamWriter.open(machine, await indexStream(machine.mk), FMT_INDEX_V1);
+  await index.append({ upserts: [{ source: "claude", id: "s-1", title: "t", updatedAt: "2026-11-09T00:00:00.000Z", cwd: "/w" }], removed: [] });
+  const subOf = (stream: Uint8Array) => link.subs().filter((s) => hex(s.stream) === hex(stream)).at(-1);
+  await until(() => subOf(index.stream) !== undefined);
+  const sub = subOf(index.stream)!;
+  link.deliver({ type: "recs", ch: sub.ch, stream: index.stream, records: index.records });
+  link.deliver({ type: "head", ch: sub.ch, head: await index.head() });
+  link.control({ t: "stream_synced", ch: sub.ch, stream: hex(index.stream), next_seq: index.seq, exists: true });
+  const m = shell.machine("m-1")!;
+  await until(() => m.mirror.row("claude", "s-1") !== undefined);
+  const reason = async () => {
+    const res = await m.transport.fetch(new Request("http://page/api/sessions/claude/s-1"));
+    return ((await res.json()) as { sendBlockReason: string }).sendBlockReason;
+  };
+  const first = reason();
+  const session = await streamId(machine.mk, "claude", "s-1");
+  await until(() => subOf(session) !== undefined);
+  link.control({ t: "stream_synced", ch: subOf(session)!.ch, stream: hex(session), next_seq: 0, exists: false });
+
+  assert.equal(await first, "the device is offline, and there is no copy of this session here yet", "the hub says it is offline");
+  link.presence.set("m-1", { state: "online" });
+  assert.equal(await reason(), "there is no copy of this session on this device yet", "online: the page is still connecting to it");
+  link.presence.delete("m-1");
+  assert.equal(await reason(), "there is no copy of this session on this device yet", "not said yet (the hub link connecting): not called offline");
+  await i18next.changeLanguage("zh-CN");
+  assert.equal(await reason(), "这台设备上还没有这个会话的副本");
+  link.presence.set("m-1", { state: "offline" });
+  assert.equal(await reason(), "设备离线，本设备上还没有这个会话的副本");
 });
