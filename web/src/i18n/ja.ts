@@ -100,6 +100,7 @@ export const ja: Record<string, string> = {
   "open original": "元の画像を開く",
   "image": "画像",
   "open link": "リンクを開く",
+  "load image": "画像を読み込む",
   "image could not be loaded": "画像を読み込めませんでした",
   "pick a chat": "チャットを選択",
   "daily chat": "日常会話",

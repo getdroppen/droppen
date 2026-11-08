@@ -26,16 +26,16 @@ function FileLink({ path, children }: { path: string; children: React.ReactNode 
 
 /**
  * Whether an image is the content of a link (`[![badge](…)](…)`), where a
- * thumbnail button would fight the link for the click and a fallback card's
- * own anchor would be nested inside it.
+ * thumbnail button would fight the link for the click and a card's own
+ * anchor or button would be nested inside it.
  */
 const InLink = createContext(false);
 
 /**
  * A picture the agent put in its reply: a bounded thumbnail that opens full
- * size, from the host, through the GitHub proxy or straight from the web —
- * see `lib/image-source.ts` for which. Only `![]()` gets here; a plain link to
- * an image file stays a link.
+ * size, from the host, through the GitHub proxy or straight from the web once
+ * the reader asks for it — see `lib/image-source.ts` for which. Only `![]()`
+ * gets here; a plain link to an image file stays a link.
  */
 function MarkdownImage({ src, alt }: { src?: string; alt: string }) {
   const inLink = useContext(InLink);

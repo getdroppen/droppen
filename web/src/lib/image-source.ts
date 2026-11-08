@@ -10,8 +10,12 @@ import { localFilePath } from "@/lib/fs-url";
  *    host's `gh` instead. The server's `media::parse_github_url` is the
  *    authority on what it accepts; {@link isGithubFileUrl} only has to agree
  *    with it closely enough that a URL it sends there is one the server takes.
- *  * `direct` — any other `http(s)` image, loaded by the browser itself, with
- *    no referrer so the third party is not told which transcript it is in.
+ *  * `direct` — any other `http(s)` image, loaded by the browser itself and
+ *    only when the reader asks for it: the URL is the agent's choice, and
+ *    fetching it on sight would hand the server it names whatever the URL
+ *    carries as soon as the reply is on screen (`components/image-lightbox.tsx`).
+ *    It loads with no referrer, so the third party is not told which
+ *    transcript it is in either.
  */
 export type ImageSource =
   | { kind: "host"; path: string }

@@ -100,6 +100,7 @@ export const zhCN: Record<string, string> = {
   "open original": "打开原图",
   "image": "图片",
   "open link": "打开链接",
+  "load image": "加载图片",
   "image could not be loaded": "图片加载失败",
   "pick a chat": "选择聊天",
   "daily chat": "日常对话",

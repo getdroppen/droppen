@@ -1,8 +1,9 @@
 /**
  * The pieces a picture needs when it does not come from the host's disk: a
  * private GitHub file fetched through the server's `gh` proxy, the object URL
- * that draws it, and the card that stands in for any picture that cannot be
- * drawn at all. `components/image-lightbox.tsx` puts them together.
+ * that draws it, the card that stands in for any picture that cannot be drawn
+ * at all, and the one that holds a picture from the web until the reader asks
+ * for it. `components/image-lightbox.tsx` puts them together.
  *
  * The proxy is called with the typed client rather than put in an `<img src>`:
  * an `<img>` cannot send the `Authorization` header, so a URL would need a
@@ -13,7 +14,7 @@
  */
 import { useQuery } from "@tanstack/react-query";
 import type { TFunction } from "i18next";
-import { ImageOff } from "lucide-react";
+import { ImageIcon, ImageOff } from "lucide-react";
 import { useEffect, useReducer } from "react";
 import { useTranslation } from "react-i18next";
 import { blobErrorText } from "@/components/blob-transfers";
@@ -140,6 +141,10 @@ export function useObjectUrl(blob: Blob | undefined): string | undefined {
   return url;
 }
 
+/** The frame both cards below are drawn in. */
+const CARD =
+  "inline-flex max-w-full items-center gap-1.5 rounded border border-border bg-raised px-2 py-1 align-middle text-2xs text-muted";
+
 /**
  * What stands in for a picture that cannot be drawn: the agent's alt text, a
  * short reason when there is one, and the link itself so the user can try it
@@ -161,14 +166,7 @@ export function ImageFallback({
 }) {
   const { t } = useTranslation();
   return (
-    <span
-      data-image-fallback=""
-      title={reason ?? undefined}
-      className={cn(
-        "inline-flex max-w-full items-center gap-1.5 rounded border border-border bg-raised px-2 py-1 align-middle text-2xs text-muted",
-        className,
-      )}
-    >
+    <span data-image-fallback="" title={reason ?? undefined} className={cn(CARD, className)}>
       <ImageOff aria-hidden className="size-3.5 shrink-0 text-faint" />
       <span className="min-w-0 truncate">{alt || t("image")}</span>
       {reason && <span className="min-w-0 truncate text-faint">{reason}</span>}
@@ -179,6 +177,61 @@ export function ImageFallback({
       )}
     </span>
   );
+}
+
+/**
+ * What stands in for a picture from the web until the reader asks for it: the
+ * agent's alt text, the host the picture would come from, a button that loads
+ * it, and the link. The host is there so the reader can see whose server the
+ * click would reach before making it; the whole URL is the card's title.
+ *
+ * Phrasing content like {@link ImageFallback}, in the same frame.
+ */
+export function ImageOnRequest({
+  url,
+  alt,
+  onLoad,
+  href,
+}: {
+  url: string;
+  alt: string;
+  /** Null where loading cannot work or cannot be offered: see `DirectLightboxImage`. */
+  onLoad: (() => void) | null;
+  /** Null inside a link, where a second anchor would be nested in the first. */
+  href: string | null;
+}) {
+  const { t } = useTranslation();
+  return (
+    <span data-image-on-request="" title={url} className={CARD}>
+      <ImageIcon aria-hidden className="size-3.5 shrink-0 text-faint" />
+      <span className="min-w-0 truncate">{alt || t("image")}</span>
+      <span className="min-w-0 truncate font-mono text-faint">{hostOf(url)}</span>
+      {onLoad && (
+        <button type="button" onClick={onLoad} className="shrink-0 text-accent hover:underline">
+          {t("load image")}
+        </button>
+      )}
+      {onLoad && href && (
+        <span aria-hidden className="text-faint">
+          ·
+        </span>
+      )}
+      {href && (
+        <a href={href} target="_blank" rel="noreferrer" className="shrink-0 text-accent hover:underline">
+          {t("open link")}
+        </a>
+      )}
+    </span>
+  );
+}
+
+/** `url`'s host, port included, as the card names it; the URL itself when it does not parse. */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
 }
 
 /**
