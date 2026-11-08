@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Loader2 } from "lucide-react";
+import { ChevronLeft, Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Tabs, TabsList, TabsTab } from "@/components/ui/tabs";
@@ -142,6 +142,15 @@ export function ChatHome() {
   return (
     <div className="flex flex-1 items-start justify-center overflow-y-auto p-4 md:items-center">
       <div className="flex w-full max-w-md flex-col gap-2">
+        {/* Below md the layout shows this form alone; the way back to the
+            list is here, as on a chat's own page (`api-chat-view.tsx`). */}
+        <MachineLink
+          to="/chat"
+          title={t("back")}
+          className="flex size-6 shrink-0 items-center justify-center rounded text-muted hover:bg-hover md:hidden"
+        >
+          <ChevronLeft className="size-4" />
+        </MachineLink>
         <div className="font-mono text-2xs font-semibold tracking-wider text-muted uppercase">
           {t("new chat")}
         </div>

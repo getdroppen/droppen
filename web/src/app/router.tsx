@@ -167,6 +167,18 @@ const chatIndexRoute = createRoute({
   component: ChatHome,
 });
 
+/**
+ * The new-chat form as a page of its own: below `md` the chat layout shows
+ * one column, and the panel's 「+」 has to open the form rather than the list
+ * it is already on (`features/chat/chat-layout.tsx`). `/chat` keeps the form
+ * as its index, so desktop is unchanged.
+ */
+const chatNewRoute = createRoute({
+  getParentRoute: () => chatRoute,
+  path: "new",
+  component: ChatHome,
+});
+
 const chatClaudeRoute = createRoute({
   getParentRoute: () => chatRoute,
   path: "claude/$id",
@@ -331,6 +343,12 @@ const machineChatIndexRoute = createRoute({
   component: ChatHome,
 });
 
+const machineChatNewRoute = createRoute({
+  getParentRoute: () => machineChatRoute,
+  path: "new",
+  component: ChatHome,
+});
+
 const machineChatClaudeRoute = createRoute({
   getParentRoute: () => machineChatRoute,
   path: "claude/$id",
@@ -382,7 +400,7 @@ const routeTree = rootRoute.addChildren([
   setupRoute,
   welcomeRoute,
   sessionsRoute.addChildren([sessionsIndexRoute, sessionNewRoute, sessionDetailRoute, sessionAgentRoute]),
-  chatRoute.addChildren([chatIndexRoute, chatClaudeRoute, chatCodexRoute, chatApiRoute]),
+  chatRoute.addChildren([chatIndexRoute, chatNewRoute, chatClaudeRoute, chatCodexRoute, chatApiRoute]),
   terminalsRoute,
   filesRoute,
   settingsRoute,
@@ -394,7 +412,7 @@ const routeTree = rootRoute.addChildren([
   machineRoute.addChildren([
     machineIndexRoute,
     machineSessionsRoute.addChildren([machineSessionsIndexRoute, machineSessionNewRoute, machineSessionDetailRoute, machineSessionAgentRoute]),
-    machineChatRoute.addChildren([machineChatIndexRoute, machineChatClaudeRoute, machineChatCodexRoute, machineChatApiRoute]),
+    machineChatRoute.addChildren([machineChatIndexRoute, machineChatNewRoute, machineChatClaudeRoute, machineChatCodexRoute, machineChatApiRoute]),
     machineTerminalsRoute,
     machineFilesRoute,
     machineSettingsRoute,

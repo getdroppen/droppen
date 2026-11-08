@@ -54,7 +54,7 @@ export function ChatLayout() {
           title={t("Instant Chat")}
           extra={
             <MachineLink
-              to="/chat"
+              to="/chat/new"
               title={t("new chat")}
               className="flex size-5 items-center justify-center rounded text-muted hover:bg-hover hover:text-fg"
             >
@@ -107,7 +107,12 @@ export function ChatLayout() {
             </div>
           ))}
           {chats && chats.length === 0 && (
-            <div className="p-3 font-mono text-2xs text-faint">{t("no chats yet — start one →")}</div>
+            // A link on every width: on a phone it is the only way from the
+            // empty list to the form, and on desktop it opens the same form
+            // the content column already shows.
+            <MachineLink to="/chat/new" className="block p-3 font-mono text-2xs text-faint">
+              {t("no chats yet — start one →")}
+            </MachineLink>
           )}
         </div>
       </Panel>
