@@ -75,6 +75,22 @@ export const PERMISSION_DEFAULT: Record<"claude" | "codex", string> = {
   codex: "auto",
 };
 
+/** Permission modes that drop the guard rails, drawn in the danger colour wherever they are picked. */
+export const DANGER_PERMISSIONS = new Set(["bypassPermissions", "full-access", "bypass-all"]);
+
+/**
+ * A mode adopted from somewhere other than the session's own pick.
+ *
+ * A dangerous mode is returned only when the session itself stored it (#563):
+ * the bug this fixes escalated sessions by sending them a bypass they never
+ * picked, so their transcripts now record `permissionMode: bypassPermissions`.
+ * Adopting that reading back would make the escalation permanent; it has to
+ * fall through to the CLI default instead.
+ */
+function unlessDangerous(value: string | null | undefined): string | undefined {
+  return value && !DANGER_PERMISSIONS.has(value) ? value : undefined;
+}
+
 /**
  * The permission an existing session's composer shows and sends.
  *
@@ -85,6 +101,12 @@ export const PERMISSION_DEFAULT: Record<"claude" | "codex", string> = {
  * its transcript says the last turn ran under, then this device's older
  * session-scoped pick. A new session (`existing: false`) does start from the
  * latest pick, as it always has.
+ *
+ * Only the session's own stored pick may be a dangerous mode. A dangerous
+ * `observed` or legacy value is ignored and the answer falls through to the
+ * CLI default: the sessions the bug escalated have `bypassPermissions` in
+ * their transcripts but never picked it, so those readings must not keep them
+ * there.
  *
  * A value the CLI's current option set no longer offers — an older stored mode,
  * or a transcript reading the composer cannot send — falls back to the CLI
@@ -99,7 +121,7 @@ export function resolvePermission(input: {
   cli: CliSource;
 }): string {
   const chosen = input.existing
-    ? (input.stored ?? input.observed ?? input.legacy)
+    ? (input.stored ?? unlessDangerous(input.observed) ?? unlessDangerous(input.legacy))
     : (input.sourceDefault ?? input.legacy);
   return chosen && PERMISSION_OPTIONS[input.cli].includes(chosen) ? chosen : PERMISSION_DEFAULT[input.cli];
 }
@@ -695,9 +717,6 @@ export function ModelSelect({
     />
   );
 }
-
-/** Permission modes that drop the guard rails, drawn in the danger colour wherever they are picked. */
-export const DANGER_PERMISSIONS = new Set(["bypassPermissions", "full-access", "bypass-all"]);
 
 /**
  * The composer's own pickers, in the order the toolbar has them: model,
