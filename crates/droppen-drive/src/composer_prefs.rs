@@ -49,6 +49,20 @@ use droppen_base::time::iso8601;
 /// year is not worth carrying through that for the life of the install.
 pub const MAX_SESSION_ENTRIES: usize = 300;
 
+/// Modes that drop a CLI's guard rails.
+///
+/// Kept in step with `DANGER_PERMISSIONS` in
+/// `web/src/features/sessions/composer-controls.tsx`: the composer draws these
+/// in the danger colour and will not adopt one for a session that did not pick
+/// it, and a message must not quietly make one a session's stored choice.
+/// `danger-full-access` is codex's alias for `full-access` in `codex exec`.
+const DANGEROUS_PERMISSIONS: [&str; 4] = ["bypassPermissions", "full-access", "danger-full-access", "bypass-all"];
+
+/// Whether `permission` is one of [`DANGEROUS_PERMISSIONS`].
+fn is_dangerous(permission: &str) -> bool {
+    DANGEROUS_PERMISSIONS.contains(&permission)
+}
+
 /// The row the per-source defaults live in.
 ///
 /// It cannot collide with a session's row: every one of those is
@@ -236,16 +250,100 @@ impl ComposerPrefsStore {
             // now happens only past the cap rather than on every pick. The rows
             // it drops are named, so a session someone else is picking for at
             // the same moment is not caught up in it.
-            let before: Vec<String> = prefs.sessions.keys().cloned().collect();
-            evict_oldest(&mut prefs.sessions);
-            for key in before {
-                if !prefs.sessions.contains_key(&key) {
-                    db.kv_remove(scope::COMPOSER, &key);
-                }
-            }
+            evict(&db, &mut prefs.sessions);
         }
 
         Ok(prefs.to_public())
+    }
+
+    /// Fill a session's missing permission from a message that was just sent.
+    ///
+    /// This is not a pick: the request may carry a value inherited from an
+    /// older client's source default or from a stale cache, so it must not be
+    /// able to change a session's stored choice. A row that already names a
+    /// permission — an explicit pick or the mode the session started with — is
+    /// left alone, and a dangerous mode is never stored this way at all. Only
+    /// [`Self::update`] (an explicit pick in that session) may change a
+    /// permission or store a dangerous one; [`Self::record_start_permission`]
+    /// stores the explicit choice a new session was started with.
+    ///
+    /// The default row is deliberately untouched — this records a run, it is
+    /// not a pick, and a message must not change what the next brand-new
+    /// session starts from. A row created here has no earlier pick of its own,
+    /// so it is stamped with the moment it first appears.
+    ///
+    /// The one row is read and written on its own rather than by scanning the
+    /// scope: this runs on the message-send path. Only a row's *first* write
+    /// can grow the bucket, so the cap is applied only then.
+    pub async fn pin_permission(&self, source: Source, rule: ModelRule, session_id: &str, permission: &str) -> Result<(), ComposerPrefsError> {
+        let patch = ComposerChoice {
+            permission: Optional(Some(permission.to_string())),
+            ..Default::default()
+        };
+        validate(rule, &patch)?;
+        if is_dangerous(permission) {
+            // A dangerous mode this session did not pick may be the very
+            // escalation #563 caused; it never becomes the session's choice.
+            return Ok(());
+        }
+        let _guard = self.write_lock.lock().await;
+        let existing = self.session(source, session_id);
+        if existing.as_ref().and_then(|choice| choice.permission.0.as_deref()).is_some() {
+            return Ok(());
+        }
+        let created = existing.is_none();
+        self.write_permission(&local_key(source, session_id), existing, &patch);
+        if created {
+            self.evict_sessions().await;
+        }
+        Ok(())
+    }
+
+    /// Record the permission a new session was explicitly started with.
+    ///
+    /// The new-session screen shows this choice, danger styling included,
+    /// before anything is sent, and a scheduled task's mode is its own
+    /// configuration. It is therefore an explicit choice — unlike a value a
+    /// later message may carry — and a dangerous one is stored as such. Only
+    /// called for a session this server just created, so there is no earlier
+    /// pick to preserve; if a row already exists (a replay of the same start)
+    /// its other fields and `updatedAt` are kept.
+    pub async fn record_start_permission(&self, source: Source, rule: ModelRule, session_id: &str, permission: &str) -> Result<(), ComposerPrefsError> {
+        let patch = ComposerChoice {
+            permission: Optional(Some(permission.to_string())),
+            ..Default::default()
+        };
+        validate(rule, &patch)?;
+        let _guard = self.write_lock.lock().await;
+        let existing = self.session(source, session_id);
+        let created = existing.is_none();
+        self.write_permission(&local_key(source, session_id), existing, &patch);
+        if created {
+            self.evict_sessions().await;
+        }
+        Ok(())
+    }
+
+    /// Trim the session bucket to [`MAX_SESSION_ENTRIES`] after a row was added.
+    ///
+    /// Every active session now gets a row from its first send or start, not
+    /// only from a pick, so without this the bucket grew for the life of the
+    /// install. Deciding which rows are oldest needs the bucket; that is one
+    /// scope read per session created, not per message.
+    async fn evict_sessions(&self) {
+        let db = self.db();
+        let mut prefs = self.read_stored().await;
+        evict(&db, &mut prefs.sessions);
+    }
+
+    /// Merge one permission into one row, keeping its pick time and other fields.
+    fn write_permission(&self, key: &str, existing: Option<ComposerChoice>, patch: &ComposerChoice) {
+        let stamp = existing
+            .as_ref()
+            .and_then(|choice| choice.updated_at.0.clone())
+            .unwrap_or_else(|| iso8601(std::time::SystemTime::now()));
+        let merged = merge(existing.as_ref(), patch, &stamp);
+        write_row(&self.db(), key, &merged);
     }
 }
 
@@ -257,6 +355,17 @@ fn write_row(db: &Db, key: &str, value: &impl Serialize) {
     match serde_json::to_string(value) {
         Ok(encoded) => db.kv_set(scope::COMPOSER, key, &encoded),
         Err(error) => tracing::warn!(key, %error, "cannot encode a composer preference"),
+    }
+}
+
+/// Drop the least recently written entries down to the cap, and their rows.
+fn evict(db: &Db, sessions: &mut BTreeMap<String, ComposerChoice>) {
+    let before: Vec<String> = sessions.keys().cloned().collect();
+    evict_oldest(sessions);
+    for key in before {
+        if !sessions.contains_key(&key) {
+            db.kv_remove(scope::COMPOSER, &key);
+        }
     }
 }
 
@@ -430,5 +539,178 @@ mod tests {
             sessions.contains_key(&format!("claude/{:04}", MAX_SESSION_ENTRIES + 4)),
             "the newest stayed"
         );
+    }
+
+    fn permission(value: &str) -> ComposerChoice {
+        ComposerChoice {
+            permission: Optional(Some(value.to_string())),
+            ..Default::default()
+        }
+    }
+
+    /// #563: an existing permission is a pick's to change. A message carrying
+    /// another value — a stale device's bypass, or what an older build
+    /// inherited — replaces nothing, and a dangerous value never becomes a
+    /// session's stored choice through a send.
+    #[tokio::test]
+    async fn a_send_never_changes_an_existing_permission_or_stores_a_dangerous_one() {
+        let (_dir, store) = store();
+        store
+            .update(Source::Claude, ModelRule::NAMED, Some("abc"), &permission("bypassPermissions"))
+            .await
+            .expect("pick");
+        // The user narrows it in the same session: an explicit pick may change it.
+        store
+            .update(Source::Claude, ModelRule::NAMED, Some("abc"), &permission("plan"))
+            .await
+            .expect("pick");
+        // A stale device now sends the value it still has. The row stays plan.
+        store
+            .pin_permission(Source::Claude, ModelRule::NAMED, "abc", "bypassPermissions")
+            .await
+            .expect("pin");
+        assert_eq!(
+            store.session(Source::Claude, "abc").unwrap().permission.as_deref(),
+            Some("plan"),
+            "a send must not put the stale bypass back over the pick"
+        );
+        // Nor does a safe value from a send replace the stored choice.
+        store.pin_permission(Source::Claude, ModelRule::NAMED, "abc", "acceptEdits").await.expect("pin");
+        assert_eq!(store.session(Source::Claude, "abc").unwrap().permission.as_deref(), Some("plan"));
+        // The default is a pick's, not a send's.
+        assert_eq!(store.read().await.defaults["claude"].permission.as_deref(), Some("plan"));
+    }
+
+    /// A send fills a missing permission — that is how a session learned what
+    /// it ran under starts keeping it — but a dangerous value is never stored
+    /// this way.
+    #[tokio::test]
+    async fn a_send_fills_only_a_missing_permission_and_only_a_safe_mode() {
+        let (_dir, store) = store();
+        // A row that picked a model only: the send fills the permission and
+        // leaves the model and effort alone.
+        store
+            .update(Source::Claude, ModelRule::NAMED, Some("abc"), &choice(Some("opus"), Some("high")))
+            .await
+            .expect("update");
+        store.pin_permission(Source::Claude, ModelRule::NAMED, "abc", "read-only").await.expect("pin");
+        let row = store.session(Source::Claude, "abc").expect("row");
+        assert_eq!(row.permission.as_deref(), Some("read-only"));
+        assert_eq!(row.model.as_deref(), Some("opus"));
+        assert_eq!(row.effort.as_deref(), Some("high"));
+        assert_eq!(
+            store.read().await.defaults["claude"].permission.0,
+            None,
+            "a send writes no default"
+        );
+
+        // A dangerous value from a send never creates a row for a session that
+        // had none (the version-skew and stale-cache cases), including codex's
+        // `danger-full-access` alias for `full-access`.
+        store
+            .pin_permission(Source::Claude, ModelRule::NAMED, "other", "bypassPermissions")
+            .await
+            .expect("pin");
+        store
+            .pin_permission(Source::Codex, ModelRule::NAMED, "other", "danger-full-access")
+            .await
+            .expect("pin");
+        assert_eq!(store.session(Source::Claude, "other"), None);
+        assert_eq!(store.session(Source::Codex, "other"), None);
+        assert_eq!(store.read().await.sessions.len(), 1, "no row is left behind");
+    }
+
+    /// The permission a session is *started* with is explicit — the new-session
+    /// screen shows it, danger styling included — so it is recorded as such.
+    #[tokio::test]
+    async fn a_start_records_its_permission_dangerous_included() {
+        let (_dir, store) = store();
+        store
+            .record_start_permission(Source::Claude, ModelRule::NAMED, "started", "bypassPermissions")
+            .await
+            .expect("record");
+        let row = store.session(Source::Claude, "started").expect("row");
+        assert_eq!(row.permission.as_deref(), Some("bypassPermissions"));
+        assert!(row.updated_at.as_deref().is_some(), "a new row is stamped");
+        assert!(store.read().await.defaults.is_empty(), "a start writes no default");
+
+        store
+            .record_start_permission(Source::Codex, ModelRule::NAMED, "started", "read-only")
+            .await
+            .expect("record");
+        assert_eq!(store.session(Source::Codex, "started").unwrap().permission.as_deref(), Some("read-only"));
+    }
+
+    #[tokio::test]
+    async fn a_send_fills_a_session_with_no_row() {
+        let (_dir, store) = store();
+        store.pin_permission(Source::Claude, ModelRule::NAMED, "abc", "plan").await.expect("pin");
+        let prefs = store.read().await;
+        assert_eq!(prefs.sessions["claude/abc"].permission.as_deref(), Some("plan"));
+        assert!(prefs.sessions["claude/abc"].updated_at.as_deref().is_some(), "a new row is stamped");
+        assert!(prefs.defaults.is_empty(), "and no default is invented from it");
+    }
+
+    /// Every active session now gets a row from its first send or start, not
+    /// only from a pick, so creating rows has to respect the cap too.
+    #[tokio::test]
+    async fn creating_rows_through_sends_evicts_them_down_to_the_cap() {
+        let (_dir, store) = store();
+        for n in 0..MAX_SESSION_ENTRIES + 5 {
+            let id = format!("{n:04}");
+            store.pin_permission(Source::Claude, ModelRule::NAMED, &id, "plan").await.expect("pin");
+        }
+        let prefs = store.read().await;
+        assert_eq!(prefs.sessions.len(), MAX_SESSION_ENTRIES, "the bucket is capped");
+        assert!(!prefs.sessions.contains_key("claude/0000"), "the oldest row went first");
+        assert!(
+            prefs.sessions.contains_key(&format!("claude/{:04}", MAX_SESSION_ENTRIES + 4)),
+            "the newest row stayed"
+        );
+    }
+
+    #[tokio::test]
+    async fn creating_rows_through_starts_evicts_them_down_to_the_cap() {
+        let (_dir, store) = store();
+        for n in 0..MAX_SESSION_ENTRIES + 5 {
+            let id = format!("{n:04}");
+            store.record_start_permission(Source::Codex, ModelRule::NAMED, &id, "read-only").await.expect("record");
+        }
+        let prefs = store.read().await;
+        assert_eq!(prefs.sessions.len(), MAX_SESSION_ENTRIES, "the bucket is capped");
+        assert!(!prefs.sessions.contains_key("codex/0000"), "the oldest row went first");
+        assert!(
+            prefs.sessions.contains_key(&format!("codex/{:04}", MAX_SESSION_ENTRIES + 4)),
+            "the newest row stayed"
+        );
+    }
+
+    /// The row's `updatedAt` is the pick time the composer orders a transcript
+    /// against. Pinning records a run, not a pick, and must not make an older
+    /// model pick look newer than the turn that ran with it.
+    #[tokio::test]
+    async fn pinning_does_not_restamp_the_row_it_writes_to() {
+        let (_dir, store) = store();
+        let picked = store
+            .update(Source::Claude, ModelRule::NAMED, Some("abc"), &choice(Some("opus"), None))
+            .await
+            .expect("update");
+        let picked_at = picked.sessions["claude/abc"].updated_at.0.clone();
+        store.pin_permission(Source::Claude, ModelRule::NAMED, "abc", "plan").await.expect("pin");
+        let prefs = store.read().await;
+        assert_eq!(prefs.sessions["claude/abc"].updated_at.0, picked_at);
+    }
+
+    #[tokio::test]
+    async fn a_permission_that_could_read_as_a_flag_is_refused_by_a_pin() {
+        let (_dir, store) = store();
+        assert!(store.pin_permission(Source::Claude, ModelRule::NAMED, "abc", "--sandbox").await.is_err());
+        assert!(
+            store
+                .record_start_permission(Source::Claude, ModelRule::NAMED, "abc", "--sandbox")
+                .await
+                .is_err()
+        );
+        assert!(store.read().await.sessions.is_empty(), "and it leaves no row behind");
     }
 }

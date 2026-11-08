@@ -391,6 +391,153 @@ async fn a_composer_choice_becomes_both_a_session_entry_and_a_source_default() {
     probe.stop().await;
 }
 
+/// #563: a message sent with a permission pins it to that session. A pick in
+/// another session later moves the source default, and must not reach it.
+#[tokio::test]
+async fn a_send_pins_its_permission_to_the_session_and_not_the_default() {
+    let probe = Probe::start().await;
+    let workspace = probe.workspace();
+    probe.seed_session(&probe.managed_root(), SESSION_ID, &workspace);
+
+    probe
+        .send_ok(
+            "POST",
+            &format!("/api/sessions/claude/{SESSION_ID}/message"),
+            json!({"text": "go", "permission": "plan"}),
+            200,
+        )
+        .await;
+    let spawn = probe.wait_for_spawn(&workspace).await;
+    assert_eq!(spawn.flag("--permission-mode"), Some("plan"), "the CLI ran with what was sent");
+
+    let prefs = probe.get_json("/api/composer-prefs").await;
+    assert_eq!(
+        prefs["sessions"].get(&format!("claude/{SESSION_ID}")).and_then(|row| row["permission"].as_str()),
+        Some("plan"),
+        "the session now has a mode of its own: {prefs}"
+    );
+    assert_eq!(prefs["defaults"]["claude"]["permission"], Value::Null, "a message is not a pick");
+
+    // Another session's pick writes the default it always wrote, and leaves the
+    // pinned session exactly where it was.
+    probe
+        .send_ok("PUT", "/api/composer-prefs/claude/another", json!({"permission": "bypassPermissions"}), 200)
+        .await;
+    let prefs = probe.get_json("/api/composer-prefs").await;
+    assert_eq!(prefs["defaults"]["claude"]["permission"], "bypassPermissions");
+    assert_eq!(
+        prefs["sessions"].get(&format!("claude/{SESSION_ID}")).and_then(|row| row["permission"].as_str()),
+        Some("plan"),
+        "the bypass picked elsewhere never becomes this session's: {prefs}"
+    );
+
+    probe.wait_for_injection("claude", SESSION_ID).await;
+    probe.stop().await;
+}
+
+/// A session created with a permission owns it from the first message,
+/// without turning it into the default. The new-session screen showed the
+/// choice, danger styling included, so a dangerous mode is stored as such.
+#[tokio::test]
+async fn a_new_session_with_a_dangerous_permission_records_it_on_that_session() {
+    let probe = Probe::start().await;
+    let workspace = probe.workspace();
+
+    let id = probe
+        .send_ok(
+            "POST",
+            "/api/sessions/new",
+            json!({"source": "claude", "cwd": workspace.to_string_lossy(), "text": "start", "permission": "bypassPermissions"}),
+            200,
+        )
+        .await["id"]
+        .as_str()
+        .expect("id")
+        .to_string();
+    probe.wait_for_spawn(&workspace).await;
+
+    let prefs = probe.get_json("/api/composer-prefs").await;
+    assert_eq!(
+        prefs["sessions"].get(&format!("claude/{id}")).and_then(|row| row["permission"].as_str()),
+        Some("bypassPermissions"),
+        "the new session's own row holds what it started with: {prefs}"
+    );
+    assert_eq!(prefs["defaults"]["claude"], Value::Null, "and no source default was invented from it");
+
+    probe.stop().await;
+}
+
+/// A send runs with what it carries, but it does not get to replace the mode
+/// the user picked in that session (a stale device, or an older build, may
+/// send something else).
+#[tokio::test]
+async fn a_send_never_overwrites_a_sessions_stored_permission() {
+    let probe = Probe::start().await;
+    let workspace = probe.workspace();
+    probe.seed_session(&probe.managed_root(), SESSION_ID, &workspace);
+    probe
+        .send_ok(
+            "PUT",
+            &format!("/api/composer-prefs/claude/{SESSION_ID}"),
+            json!({"permission": "plan"}),
+            200,
+        )
+        .await;
+
+    probe
+        .send_ok(
+            "POST",
+            &format!("/api/sessions/claude/{SESSION_ID}/message"),
+            json!({"text": "go", "permission": "acceptEdits"}),
+            200,
+        )
+        .await;
+    let spawn = probe.wait_for_spawn(&workspace).await;
+    assert_eq!(spawn.flag("--permission-mode"), Some("acceptEdits"), "the message ran with what it carried");
+    let prefs = probe.get_json("/api/composer-prefs").await;
+    assert_eq!(
+        prefs["sessions"].get(&format!("claude/{SESSION_ID}")).and_then(|row| row["permission"].as_str()),
+        Some("plan"),
+        "the pick is still the session's own: {prefs}"
+    );
+
+    probe.wait_for_injection("claude", SESSION_ID).await;
+    probe.stop().await;
+}
+
+/// A dangerous mode a message carries — the value the bug put in every
+/// session's next send — is never stored as the session's choice.
+#[tokio::test]
+async fn a_dangerous_permission_in_a_send_is_not_stored() {
+    let probe = Probe::start().await;
+    let workspace = probe.workspace();
+    probe.seed_session(&probe.managed_root(), SESSION_ID, &workspace);
+
+    probe
+        .send_ok(
+            "POST",
+            &format!("/api/sessions/claude/{SESSION_ID}/message"),
+            json!({"text": "go", "permission": "bypassPermissions"}),
+            200,
+        )
+        .await;
+    let spawn = probe.wait_for_spawn(&workspace).await;
+    assert_eq!(
+        spawn.flag("--permission-mode"),
+        Some("bypassPermissions"),
+        "the message itself ran with what was sent"
+    );
+    let prefs = probe.get_json("/api/composer-prefs").await;
+    assert!(
+        prefs["sessions"].get(&format!("claude/{SESSION_ID}")).is_none(),
+        "a send does not make a dangerous mode the session's choice: {prefs}"
+    );
+    assert_eq!(prefs["defaults"]["claude"], Value::Null, "nor the default's");
+
+    probe.wait_for_injection("claude", SESSION_ID).await;
+    probe.stop().await;
+}
+
 #[tokio::test]
 async fn a_malformed_request_is_a_400_with_a_json_error() {
     let probe = Probe::start().await;
@@ -590,6 +737,38 @@ async fn the_detail_reports_context_occupancy_against_the_models_own_window() {
         "fresh input, cache reads and cache writes all occupy the window"
     );
     assert_eq!(detail["contextWindow"], 1_000_000, "a fable model is a long-context one");
+
+    probe.stop().await;
+}
+
+/// #563: the detail tells the composer the mode the session's last turn ran
+/// under, so a session with no pick of its own does not have to borrow one.
+#[tokio::test]
+async fn the_detail_reports_the_permission_the_last_turn_ran_under() {
+    let probe = Probe::start().await;
+    let path = probe.seed_session(&probe.local_root(), SESSION_ID, &probe.workspace());
+    support::append_line(
+        &path,
+        &json!({
+            "type": "user",
+            "timestamp": "2026-08-27T09:59:59.000Z",
+            "permissionMode": "plan",
+            "message": {"role": "user", "content": [{"type": "text", "text": "go"}]},
+        })
+        .to_string(),
+    );
+    support::append_line(
+        &path,
+        &json!({
+            "type": "assistant",
+            "timestamp": "2026-08-27T10:00:00.000Z",
+            "message": {"role": "assistant", "model": "claude-fable-5", "content": [{"type": "text", "text": "done"}]},
+        })
+        .to_string(),
+    );
+
+    let detail = probe.get_json(&format!("/api/sessions/claude/{SESSION_ID}")).await;
+    assert_eq!(detail["cliChoice"]["permission"], "plan", "{detail}");
 
     probe.stop().await;
 }

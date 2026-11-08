@@ -1567,7 +1567,7 @@
         "type": "string"
       },
       "CliChoice": {
-        "description": "The model/effort a session actually ran with, per its own transcript.",
+        "description": "The model/effort/permission a session actually ran with, per its own\ntranscript.",
         "nullable": true,
         "properties": {
           "at": {
@@ -1584,11 +1584,17 @@
             "description": "Model id.",
             "nullable": true,
             "type": "string"
+          },
+          "permission": {
+            "description": "Permission mode the turn ran under, when the transcript records it.",
+            "nullable": true,
+            "type": "string"
           }
         },
         "required": [
           "model",
           "effort",
+          "permission",
           "at"
         ],
         "type": "object"

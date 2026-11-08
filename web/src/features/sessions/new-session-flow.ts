@@ -1,3 +1,7 @@
+import type { components } from "@/api/schema";
+
+type ComposerPrefs = components["schemas"]["ComposerPrefs"];
+
 export type SessionSource = "claude" | "codex" | "acp";
 
 /** The CLIs an instant chat runs on; the ACP agent has no chats. */
@@ -134,4 +138,26 @@ export function creationAttempt(
 ): CreationAttempt {
   const key = JSON.stringify(creationRequest(input).body);
   return previous?.key === key ? previous : { key, clientMessageId: mint() };
+}
+
+/**
+ * The composer-prefs document with a just-started session holding `permission`.
+ *
+ * The server records the same row before it answers the start; putting it in
+ * this page's cache as well means the new session's composer shows — and sends
+ * — the mode it was started with immediately, instead of the CLI default for as
+ * long as a refetch takes. A dangerous mode is included: the new-session screen
+ * showed it before the start was sent.
+ */
+export function withStartedPermission(
+  doc: ComposerPrefs | undefined,
+  source: SessionSource,
+  id: string,
+  permission: string,
+): ComposerPrefs {
+  const key = `${source}/${id}`;
+  return {
+    defaults: doc?.defaults ?? {},
+    sessions: { ...(doc?.sessions ?? {}), [key]: { ...(doc?.sessions[key] ?? {}), permission } },
+  };
 }

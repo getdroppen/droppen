@@ -3502,7 +3502,10 @@ export interface components {
          * @enum {string|null}
          */
         ClaudeRoot: "local" | "managed" | null;
-        /** @description The model/effort a session actually ran with, per its own transcript. */
+        /**
+         * @description The model/effort/permission a session actually ran with, per its own
+         *     transcript.
+         */
         CliChoice: {
             /** @description Timestamp of the transcript entry the reading came from. */
             at: string | null;
@@ -3510,6 +3513,8 @@ export interface components {
             effort: string | null;
             /** @description Model id. */
             model: string | null;
+            /** @description Permission mode the turn ran under, when the transcript records it. */
+            permission: string | null;
         } | null;
         /** @description This computer's Droppen account, as far as it knows it. */
         CloudAccount: {
