@@ -184,6 +184,7 @@ impl Transcripts for FakeReader {
             Some(CliChoice {
                 model: Nullable(Some(model)),
                 effort: Nullable(None),
+                permission: Nullable(None),
                 at: Nullable(None),
             })
         })

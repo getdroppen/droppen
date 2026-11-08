@@ -900,23 +900,55 @@ impl UsageFold for ClaudeUsage {
     }
 }
 
-/// The model/effort a session last ran with, read from its transcript tail.
+/// The model/effort/permission a session last ran with, read from its
+/// transcript tail.
 pub async fn read_cli_choice(file_path: &Path) -> Option<droppen_sessions::CliChoice> {
     // Claude writes model+effort on every assistant entry, so a small tail is enough.
-    droppen_sessions::CliChoice::read_tail(file_path, 128 * 1024, |entry| {
-        if entry.get("type").and_then(Value::as_str) != Some("assistant") || entry.get("isSidechain") == Some(&Value::Bool(true)) {
-            return None;
-        }
-        let model = entry
-            .get("message")
-            .and_then(Value::as_object)
-            .and_then(|message| message.get("model"))
-            .and_then(Value::as_str)
-            .map(str::to_owned);
-        let effort = entry.get("effort").and_then(Value::as_str).map(str::to_owned);
-        (model.is_some() || effort.is_some()).then_some((model, effort))
-    })
+    droppen_sessions::CliChoice::read_tail(
+        file_path,
+        128 * 1024,
+        |entry| {
+            if entry.get("type").and_then(Value::as_str) != Some("assistant") || entry.get("isSidechain") == Some(&Value::Bool(true)) {
+                return None;
+            }
+            let model = entry
+                .get("message")
+                .and_then(Value::as_object)
+                .and_then(|message| message.get("model"))
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            let effort = entry.get("effort").and_then(Value::as_str).map(str::to_owned);
+            (model.is_some() || effort.is_some()).then_some((model, effort))
+        },
+        user_permission,
+    )
     .await
+}
+
+/// The mode the last user turn ran under, if the transcript records it.
+///
+/// Current Claude Code writes `permissionMode` on every real user entry — a
+/// prompt, not a tool result and not a system reminder. The newest such entry
+/// settles the reading even when it has no `permissionMode`: an older CLI
+/// recorded it only on the session's first prompt, and copying that value would
+/// let a mode the session later narrowed away come back with the next message.
+/// A subagent's own entries are its context, not this session's mode.
+fn user_permission(entry: &serde_json::Map<String, Value>) -> Option<Option<String>> {
+    if entry.get("type").and_then(Value::as_str) != Some("user")
+        || entry.get("isSidechain") == Some(&Value::Bool(true))
+        || entry.get("isMeta") == Some(&Value::Bool(true))
+    {
+        return None;
+    }
+    let is_prompt = match entry.get("message").and_then(Value::as_object).and_then(|message| message.get("content")) {
+        Some(Value::String(text)) => !text.trim().is_empty(),
+        Some(Value::Array(blocks)) => blocks.iter().any(|block| block.get("type").and_then(Value::as_str) == Some("text")),
+        _ => false,
+    };
+    if !is_prompt {
+        return None;
+    }
+    Some(entry.get("permissionMode").and_then(Value::as_str).map(str::to_owned))
 }
 
 /// Claude's occupancy: the last main-chain assistant entry that carries a usage.
@@ -1007,6 +1039,45 @@ mod tests {
             writeln!(file, "{line}").expect("write");
         }
         (dir, path)
+    }
+
+    /// #563: the composer needs the mode the last turn actually ran under, so
+    /// an existing session with no pick of its own does not fall back to
+    /// whatever another session picked. Claude records it on user entries; tool
+    /// results and injected reminders are user entries too and say nothing.
+    #[tokio::test]
+    async fn the_last_user_turns_permission_mode_is_read_from_the_transcript() {
+        let (_dir, path) = session(&[
+            r#"{"type":"user","timestamp":"2026-01-01T00:00:00.000Z","permissionMode":"bypassPermissions","message":{"content":[{"type":"text","text":"go"}]}}"#,
+            r#"{"type":"assistant","timestamp":"2026-01-01T00:00:01.000Z","message":{"model":"claude-opus-5"},"effort":"high"}"#,
+            r#"{"type":"user","timestamp":"2026-01-01T00:00:02.000Z","message":{"content":[{"type":"tool_result","tool_use_id":"t","content":"ok"}]}}"#,
+            r#"{"type":"user","timestamp":"2026-01-01T00:00:03.000Z","permissionMode":"plan","message":{"content":[{"type":"text","text":"narrow it"}]}}"#,
+            r#"{"type":"assistant","timestamp":"2026-01-01T00:00:04.000Z","message":{"model":"claude-opus-5"},"effort":"high"}"#,
+            // Injected context, not something the user sent.
+            r#"{"type":"user","isMeta":true,"timestamp":"2026-01-01T00:00:05.000Z","permissionMode":"bypassPermissions","message":{"content":[{"type":"text","text":"<system-reminder>x</system-reminder>"}]}}"#,
+            // A subagent's own turn is its context, not this session's mode.
+            r#"{"type":"user","isSidechain":true,"timestamp":"2026-01-01T00:00:06.000Z","permissionMode":"bypassPermissions","message":{"content":[{"type":"text","text":"subagent"}]}}"#,
+        ]);
+        let choice = read_cli_choice(&path).await.expect("choice");
+        assert_eq!(choice.permission.0.as_deref(), Some("plan"), "the newest real user turn's mode");
+        assert_eq!((choice.model.0.as_deref(), choice.effort.0.as_deref()), (Some("claude-opus-5"), Some("high")));
+        assert_eq!(choice.at.0.as_deref(), Some("2026-01-01T00:00:04.000Z"));
+    }
+
+    /// A CLI build that recorded the mode only on the first prompt leaves the
+    /// newer turns without it. That older mode may be broader than what the
+    /// session last ran, so it must not stand in.
+    #[tokio::test]
+    async fn an_older_recorded_mode_does_not_stand_in_for_a_newer_turn_without_one() {
+        let (_dir, path) = session(&[
+            r#"{"type":"user","timestamp":"2026-01-01T00:00:00.000Z","permissionMode":"bypassPermissions","message":{"content":[{"type":"text","text":"go"}]}}"#,
+            r#"{"type":"assistant","timestamp":"2026-01-01T00:00:01.000Z","message":{"model":"claude-opus-5"}}"#,
+            r#"{"type":"user","timestamp":"2026-01-01T00:00:02.000Z","message":{"content":[{"type":"text","text":"again"}]}}"#,
+            r#"{"type":"assistant","timestamp":"2026-01-01T00:00:03.000Z","message":{"model":"claude-opus-5"}}"#,
+        ]);
+        let choice = read_cli_choice(&path).await.expect("choice");
+        assert_eq!(choice.permission.0, None);
+        assert_eq!(choice.model.0.as_deref(), Some("claude-opus-5"), "the model reading is unchanged");
     }
 
     #[tokio::test]

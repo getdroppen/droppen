@@ -236,16 +236,52 @@ impl ComposerPrefsStore {
             // now happens only past the cap rather than on every pick. The rows
             // it drops are named, so a session someone else is picking for at
             // the same moment is not caught up in it.
-            let before: Vec<String> = prefs.sessions.keys().cloned().collect();
-            evict_oldest(&mut prefs.sessions);
-            for key in before {
-                if !prefs.sessions.contains_key(&key) {
-                    db.kv_remove(scope::COMPOSER, &key);
-                }
-            }
+            evict(&db, &mut prefs.sessions);
         }
 
         Ok(prefs.to_public())
+    }
+
+    /// Remember the permission a session itself ran with, in its own row.
+    ///
+    /// The send routes call this with the permission they just handed a CLI, so
+    /// an existing session keeps its own mode whatever another session picks
+    /// afterwards: new sessions inherit the latest pick, an existing one never
+    /// inherits anything it did not send. The default row is deliberately
+    /// untouched — this records a run, it is not a pick, and a message must not
+    /// change what the next brand-new session starts from.
+    ///
+    /// `updatedAt` is left as it was, unlike [`Self::update`]. The composer
+    /// orders the stored pick against the transcript by that stamp, across all
+    /// three fields, so stamping it here on every message would make an old
+    /// model pick look newer than the turn that just ran. A row created here
+    /// has no earlier pick of its own, so it is stamped with the moment it
+    /// first appears (which also keeps it from being evicted first).
+    pub async fn pin_permission(&self, source: Source, rule: ModelRule, session_id: &str, permission: &str) -> Result<(), ComposerPrefsError> {
+        let patch = ComposerChoice {
+            permission: Optional(Some(permission.to_string())),
+            ..Default::default()
+        };
+        validate(rule, &patch)?;
+        let _guard = self.write_lock.lock().await;
+        let db = self.db();
+        let key = local_key(source, session_id);
+        let mut prefs = self.read_stored().await;
+        if prefs.sessions.get(&key).and_then(|choice| choice.permission.0.as_deref()) == Some(permission) {
+            // The common case: every message from the composer carries the
+            // permission the previous one did.
+            return Ok(());
+        }
+        let stamp = prefs
+            .sessions
+            .get(&key)
+            .and_then(|choice| choice.updated_at.0.clone())
+            .unwrap_or_else(|| iso8601(std::time::SystemTime::now()));
+        let merged = merge(prefs.sessions.get(&key), &patch, &stamp);
+        write_row(&db, &key, &merged);
+        prefs.sessions.insert(key, merged);
+        evict(&db, &mut prefs.sessions);
+        Ok(())
     }
 }
 
@@ -257,6 +293,17 @@ fn write_row(db: &Db, key: &str, value: &impl Serialize) {
     match serde_json::to_string(value) {
         Ok(encoded) => db.kv_set(scope::COMPOSER, key, &encoded),
         Err(error) => tracing::warn!(key, %error, "cannot encode a composer preference"),
+    }
+}
+
+/// Drop the least recently written entries down to the cap, and their rows.
+fn evict(db: &Db, sessions: &mut BTreeMap<String, ComposerChoice>) {
+    let before: Vec<String> = sessions.keys().cloned().collect();
+    evict_oldest(sessions);
+    for key in before {
+        if !sessions.contains_key(&key) {
+            db.kv_remove(scope::COMPOSER, &key);
+        }
     }
 }
 
@@ -430,5 +477,90 @@ mod tests {
             sessions.contains_key(&format!("claude/{:04}", MAX_SESSION_ENTRIES + 4)),
             "the newest stayed"
         );
+    }
+
+    fn permission(value: &str) -> ComposerChoice {
+        ComposerChoice {
+            permission: Optional(Some(value.to_string())),
+            ..Default::default()
+        }
+    }
+
+    /// #563: a message pins the permission it ran with to its own session, and
+    /// nothing else moves — not the default another pick set, not the row's
+    /// model or effort.
+    #[tokio::test]
+    async fn a_pinned_permission_is_the_sessions_own_and_leaves_the_default_alone() {
+        let (_dir, store) = store();
+        store
+            .update(Source::Claude, ModelRule::NAMED, Some("abc"), &choice(Some("opus"), Some("high")))
+            .await
+            .expect("update");
+        // Another session's pick moves the source default to bypass: exactly the
+        // pick that used to reach every session without one.
+        let other = store
+            .update(Source::Claude, ModelRule::NAMED, Some("other"), &permission("bypassPermissions"))
+            .await
+            .expect("update");
+        assert_eq!(other.defaults["claude"].permission.as_deref(), Some("bypassPermissions"));
+
+        store
+            .pin_permission(Source::Claude, ModelRule::NAMED, "abc", "plan")
+            .await
+            .expect("pin");
+        let prefs = store.read().await;
+        let row = &prefs.sessions["claude/abc"];
+        assert_eq!(row.permission.as_deref(), Some("plan"));
+        assert_eq!(row.model.as_deref(), Some("opus"), "the model pick survives");
+        assert_eq!(row.effort.as_deref(), Some("high"), "the effort pick survives");
+        assert_eq!(
+            prefs.defaults["claude"].permission.as_deref(),
+            Some("bypassPermissions"),
+            "a message is not a pick: the next new session still starts from the pick"
+        );
+        assert_eq!(prefs.sessions["claude/other"].permission.as_deref(), Some("bypassPermissions"));
+
+        // A later send with a different permission updates the session only.
+        store
+            .pin_permission(Source::Claude, ModelRule::NAMED, "abc", "acceptEdits")
+            .await
+            .expect("pin");
+        let prefs = store.read().await;
+        assert_eq!(prefs.sessions["claude/abc"].permission.as_deref(), Some("acceptEdits"));
+        assert_eq!(prefs.defaults["claude"].permission.as_deref(), Some("bypassPermissions"));
+        assert_eq!(store.session(Source::Claude, "abc").unwrap().permission.as_deref(), Some("acceptEdits"));
+    }
+
+    #[tokio::test]
+    async fn pinning_a_session_with_no_row_creates_only_that_row() {
+        let (_dir, store) = store();
+        store.pin_permission(Source::Claude, ModelRule::NAMED, "abc", "read-only").await.expect("pin");
+        let prefs = store.read().await;
+        assert_eq!(prefs.sessions["claude/abc"].permission.as_deref(), Some("read-only"));
+        assert!(prefs.sessions["claude/abc"].updated_at.as_deref().is_some(), "a new row is stamped");
+        assert!(prefs.defaults.is_empty(), "and no default is invented from it");
+    }
+
+    /// The row's `updatedAt` is the pick time the composer orders a transcript
+    /// against. Pinning records a run, not a pick, and must not make an older
+    /// model pick look newer than the turn that ran with it.
+    #[tokio::test]
+    async fn pinning_does_not_restamp_the_row_it_writes_to() {
+        let (_dir, store) = store();
+        let picked = store
+            .update(Source::Claude, ModelRule::NAMED, Some("abc"), &choice(Some("opus"), None))
+            .await
+            .expect("update");
+        let picked_at = picked.sessions["claude/abc"].updated_at.0.clone();
+        store.pin_permission(Source::Claude, ModelRule::NAMED, "abc", "plan").await.expect("pin");
+        let prefs = store.read().await;
+        assert_eq!(prefs.sessions["claude/abc"].updated_at.0, picked_at);
+    }
+
+    #[tokio::test]
+    async fn a_permission_that_could_read_as_a_flag_is_refused_by_a_pin() {
+        let (_dir, store) = store();
+        assert!(store.pin_permission(Source::Claude, ModelRule::NAMED, "abc", "--sandbox").await.is_err());
+        assert!(store.read().await.sessions.is_empty(), "and it leaves no row behind");
     }
 }

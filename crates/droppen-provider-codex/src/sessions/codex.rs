@@ -1047,20 +1047,63 @@ pub async fn find_codex_session(paths: &Paths, id: &str) -> Option<SessionSummar
     summaries.pop()
 }
 
-/// The model/effort a Codex session last ran with.
+/// The model/effort/permission a Codex session last ran with.
 ///
 /// Port of `codexChoice` in the former TypeScript server's `session-choice.ts`.
 pub async fn read_codex_cli_choice(file_path: &Path) -> Option<CliChoice> {
-    CliChoice::read_tail(file_path, CHOICE_TAIL_BYTES, |entry| {
-        if entry.get("type").and_then(Value::as_str) != Some("turn_context") {
-            return None;
-        }
-        let payload = entry.get("payload").and_then(Value::as_object)?;
-        let model = payload.get("model").and_then(Value::as_str).map(str::to_owned);
-        let effort = payload.get("effort").and_then(Value::as_str).map(str::to_owned);
-        (model.is_some() || effort.is_some()).then_some((model, effort))
-    })
+    CliChoice::read_tail(
+        file_path,
+        CHOICE_TAIL_BYTES,
+        |entry| {
+            let payload = turn_payload(entry)?;
+            let model = payload.get("model").and_then(Value::as_str).map(str::to_owned);
+            let effort = payload.get("effort").and_then(Value::as_str).map(str::to_owned);
+            (model.is_some() || effort.is_some()).then_some((model, effort))
+        },
+        |entry| {
+            let payload = turn_payload(entry)?;
+            Some(permission_of_turn(payload))
+        },
+    )
     .await
+}
+
+/// A `turn_context`'s payload, which is where one codex turn says how it ran.
+fn turn_payload(entry: &serde_json::Map<String, Value>) -> Option<&serde_json::Map<String, Value>> {
+    if entry.get("type").and_then(Value::as_str) != Some("turn_context") {
+        return None;
+    }
+    entry.get("payload").and_then(Value::as_object)
+}
+
+/// The droppen permission mode a `turn_context` describes, if it describes one.
+///
+/// Codex records the effective policy per turn: `sandbox_policy` is the file
+/// and network envelope, and droppen's modes are exactly those envelopes with
+/// approvals never asked (every headless `codex exec` droppen starts asks
+/// none). A turn that says anything else is not a run this server can claim a
+/// mode for, and the caller settles on "unrecorded" rather than reaching for an
+/// older turn.
+///
+/// `bypass-all` and `full-access` are the same envelope on the wire
+/// (`danger-full-access`, approvals never), so a `bypass-all` run reads back as
+/// `full-access`. Neither is broader than the other — both drop the sandbox and
+/// every prompt — so the next message runs exactly as the last one did.
+fn permission_of_turn(payload: &serde_json::Map<String, Value>) -> Option<String> {
+    if payload.get("approval_policy").and_then(Value::as_str) != Some("never") {
+        return None;
+    }
+    let sandbox = payload.get("sandbox_policy")?;
+    let kind = sandbox.get("type").and_then(Value::as_str).or_else(|| sandbox.as_str())?;
+    Some(
+        match kind {
+            "workspace-write" => "auto",
+            "read-only" => "read-only",
+            "danger-full-access" => "full-access",
+            _ => return None,
+        }
+        .to_string(),
+    )
 }
 
 /// Codex JSONL -> normalized transcript items.
@@ -1390,13 +1433,49 @@ mod tests {
     #[tokio::test]
     async fn the_cli_choice_comes_from_the_newest_turn_context() {
         let (_dir, path) = rollout(&[
-            r#"{"type":"turn_context","timestamp":"2026-05-09T16:00:00.000Z","payload":{"model":"gpt-5.4","effort":"low"}}"#,
-            r#"{"type":"turn_context","timestamp":"2026-05-09T17:00:00.000Z","payload":{"model":"gpt-5.5","effort":"high"}}"#,
+            r#"{"type":"turn_context","timestamp":"2026-05-09T16:00:00.000Z","payload":{"model":"gpt-5.4","effort":"low","approval_policy":"never","sandbox_policy":{"type":"read-only"}}}"#,
+            r#"{"type":"turn_context","timestamp":"2026-05-09T17:00:00.000Z","payload":{"model":"gpt-5.5","effort":"high","approval_policy":"never","sandbox_policy":{"type":"danger-full-access"}}}"#,
         ]);
         let choice = read_codex_cli_choice(&path).await.expect("choice");
         assert_eq!(choice.model.as_ref().map(String::as_str), Some("gpt-5.5"));
         assert_eq!(choice.effort.as_ref().map(String::as_str), Some("high"));
+        assert_eq!(
+            choice.permission.as_ref().map(String::as_str),
+            Some("full-access"),
+            "the sandbox the newest turn ran in"
+        );
         assert_eq!(choice.at.as_ref().map(String::as_str), Some("2026-05-09T17:00:00.000Z"));
+    }
+
+    /// Each droppen mode round-trips to the policy codex records for it, and a
+    /// turn that would ask for approvals (or ran an envelope droppen does not
+    /// map) settles as "no reading" rather than as an older turn's mode.
+    #[tokio::test]
+    async fn a_turn_that_asked_for_approvals_records_no_permission_reading() {
+        for (policy, expected) in [
+            (r#"{"type":"workspace-write"}"#, Some("auto")),
+            (r#"{"type":"read-only"}"#, Some("read-only")),
+            (r#"{"type":"danger-full-access"}"#, Some("full-access")),
+            (r#""workspace-write""#, Some("auto")),
+            (r#"{"type":"custom"}"#, None),
+        ] {
+            let payload = format!(r#"{{"model":"gpt-5.5","approval_policy":"never","sandbox_policy":{policy}}}"#);
+            let line = format!(r#"{{"type":"turn_context","timestamp":"2026-05-09T17:00:00.000Z","payload":{payload}}}"#);
+            let (_dir, path) = rollout(&[&line]);
+            let choice = read_codex_cli_choice(&path).await.expect("choice");
+            assert_eq!(choice.permission.as_ref().map(String::as_str), expected, "{policy}");
+        }
+
+        let (_dir, path) = rollout(&[
+            r#"{"type":"turn_context","timestamp":"2026-05-09T16:00:00.000Z","payload":{"model":"gpt-5.4","approval_policy":"never","sandbox_policy":{"type":"read-only"}}}"#,
+            r#"{"type":"turn_context","timestamp":"2026-05-09T17:00:00.000Z","payload":{"model":"gpt-5.5","approval_policy":"on-request","sandbox_policy":{"type":"workspace-write"}}}"#,
+        ]);
+        let choice = read_codex_cli_choice(&path).await.expect("choice");
+        assert_eq!(
+            choice.permission.as_ref().map(String::as_str),
+            None,
+            "an interactive session's mode is not proof of what a headless droppen run would do"
+        );
     }
 
     /// Codex names the model once per turn, in the `turn_context` that opens it,

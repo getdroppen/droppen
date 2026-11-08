@@ -296,6 +296,21 @@ async fn fire(state: &ScheduleState, task: ScheduledTask) {
     match state.drive.providers.start_new_session(task.source, &cwd, &task.prompt, &options).await {
         Ok(id) => {
             tracing::info!(task = %task.name, source = %task.source, session = %id, "a scheduled task started a session");
+            // The session started with the task's mode, so that mode is the
+            // session's own from now on: opening it in a composer must not show
+            // (or send) the latest pick from some other session (#563). The
+            // route that starts sessions by hand pins it in `start_session`; a
+            // fired task starts the CLI itself, so it pins here.
+            if let Some(permission) = options.permission.as_deref() {
+                if let Err(error) = state
+                    .drive
+                    .composer
+                    .pin_permission(task.source, state.drive.providers.model_rule(task.source), &id, permission)
+                    .await
+                {
+                    tracing::warn!(session = %id, %error, "cannot pin the scheduled session's permission");
+                }
+            }
             record(&paths, &task.id, |stored| {
                 stored.last_run_at = Nullable(Some(at.clone()));
                 stored.last_status = Nullable(Some(TaskStatus::Ok));

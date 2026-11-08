@@ -725,41 +725,67 @@ pub enum InjectionRunState {
     Failed,
 }
 
-/// The model/effort a session actually ran with, per its own transcript.
+/// The model/effort/permission a session actually ran with, per its own
+/// transcript.
 #[derive(Debug, Clone, Serialize, Deserialize, Schematic)]
 pub struct CliChoice {
     /// Model id.
     pub model: Nullable<String>,
     /// Reasoning effort.
     pub effort: Nullable<String>,
+    /// Permission mode the turn ran under, when the transcript records it.
+    pub permission: Nullable<String>,
     /// Timestamp of the transcript entry the reading came from.
     pub at: Nullable<String>,
 }
 
 impl CliChoice {
-    /// The newest model/effort pair a transcript's tail names.
+    /// The newest model/effort pair and permission mode a transcript's tail
+    /// names.
     ///
     /// Both CLIs record the pair once per turn — Claude on every assistant
     /// entry, Codex in the `turn_context` that opens one — so the newest entry
     /// that names either is what the session is set to run. `extract` reads one
     /// entry and returns its pair, or `None` when the entry says nothing about
     /// them.
+    ///
+    /// `permission_of` returns `None` for an entry that says nothing about the
+    /// mode, `Some(None)` for the newest entry that would carry it but did not,
+    /// and `Some(Some(mode))` for a reading. The scan stops at the first
+    /// settled answer, so a transcript from a CLI that recorded the mode only
+    /// on its first turn cannot contribute a stale — possibly broader — mode.
     pub async fn read_tail(
         path: &Path,
         tail_bytes: u64,
         extract: impl Fn(&serde_json::Map<String, serde_json::Value>) -> Option<(Option<String>, Option<String>)>,
+        permission_of: impl Fn(&serde_json::Map<String, serde_json::Value>) -> Option<Option<String>>,
     ) -> Option<Self> {
         let lines = util::read_tail_lines(path, tail_bytes).await.ok()?;
+        let mut pair = None;
+        let mut permission: Option<Option<String>> = None;
         for line in lines.iter().rev() {
             let Some(entry) = util::try_parse(line) else { continue };
-            let Some((model, effort)) = extract(&entry) else { continue };
-            return Some(Self {
-                model: Nullable(model),
-                effort: Nullable(effort),
-                at: Nullable(entry.get("timestamp").and_then(serde_json::Value::as_str).map(str::to_owned)),
-            });
+            if pair.is_none() {
+                if let Some((model, effort)) = extract(&entry) {
+                    let at = entry.get("timestamp").and_then(serde_json::Value::as_str).map(str::to_owned);
+                    pair = Some((model, effort, at));
+                }
+            }
+            if permission.is_none() {
+                permission = permission_of(&entry);
+            }
+            if pair.is_some() && permission.is_some() {
+                break;
+            }
         }
-        None
+        let (model, effort, at) = pair.unwrap_or((None, None, None));
+        let permission = permission.flatten();
+        (model.is_some() || effort.is_some() || permission.is_some()).then(|| Self {
+            model: Nullable(model),
+            effort: Nullable(effort),
+            permission: Nullable(permission),
+            at: Nullable(at),
+        })
     }
 
     /// The choice with its model named as the session's process runs it or the
@@ -1092,13 +1118,14 @@ mod tests {
         let recorded = CliChoice {
             model: Nullable(Some("deepseek-v4.1-flash".into())),
             effort: Nullable(Some("high".into())),
+            permission: Nullable(Some("plan".into())),
             at: Nullable(Some("2026-10-31T00:00:00.000Z".into())),
         };
         let run = recorded.clone().run_by(Some("deepseek-v4.1-flash[1m]"));
         assert_eq!(run.model.0.as_deref(), Some("deepseek-v4.1-flash[1m]"));
         assert_eq!(
-            (run.effort.0.as_deref(), run.at.0.as_deref()),
-            (Some("high"), Some("2026-10-31T00:00:00.000Z")),
+            (run.effort.0.as_deref(), run.permission.0.as_deref(), run.at.0.as_deref()),
+            (Some("high"), Some("plan"), Some("2026-10-31T00:00:00.000Z")),
             "the rest is the transcript's"
         );
         assert_eq!(
@@ -1107,6 +1134,63 @@ mod tests {
             "a process of another model says nothing about this one"
         );
         assert_eq!(recorded.run_by(None).model.0.as_deref(), Some("deepseek-v4.1-flash"));
+    }
+
+    /// The mode is read from the newest turn that has an opinion on it, and a
+    /// turn that records none settles the question: an older entry's mode may
+    /// be one the session narrowed away from.
+    #[tokio::test]
+    async fn only_the_newest_permission_reading_counts() {
+        use std::io::Write;
+
+        async fn choice_of(lines: &[&str]) -> CliChoice {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let path = dir.path().join("t.jsonl");
+            let mut file = std::fs::File::create(&path).expect("create");
+            for line in lines {
+                writeln!(file, "{line}").expect("write");
+            }
+            CliChoice::read_tail(
+                &path,
+                64 * 1024,
+                |entry| {
+                    if entry.get("type").and_then(serde_json::Value::as_str) != Some("assistant") {
+                        return None;
+                    }
+                    Some((
+                        entry.get("message").and_then(|message| message.get("model")).and_then(serde_json::Value::as_str).map(str::to_owned),
+                        entry.get("effort").and_then(serde_json::Value::as_str).map(str::to_owned),
+                    ))
+                },
+                |entry| {
+                    if entry.get("type").and_then(serde_json::Value::as_str) != Some("user") {
+                        return None;
+                    }
+                    Some(entry.get("permissionMode").and_then(serde_json::Value::as_str).map(str::to_owned))
+                },
+            )
+            .await
+            .expect("choice")
+        }
+
+        let newest = choice_of(&[
+            r#"{"type":"user","timestamp":"1","permissionMode":"bypassPermissions","message":{"content":[{"type":"text","text":"go"}]}}"#,
+            r#"{"type":"assistant","timestamp":"2","message":{"model":"opus"},"effort":"high"}"#,
+            r#"{"type":"user","timestamp":"3","permissionMode":"plan","message":{"content":[{"type":"text","text":"again"}]}}"#,
+        ])
+        .await;
+        assert_eq!(newest.permission.0.as_deref(), Some("plan"));
+        assert_eq!((newest.model.0.as_deref(), newest.effort.0.as_deref()), (Some("opus"), Some("high")));
+
+        // The same transcript from a CLI that stopped recording the field after
+        // its first turn: the old `bypassPermissions` must not stand in.
+        let stale = choice_of(&[
+            r#"{"type":"user","timestamp":"1","permissionMode":"bypassPermissions","message":{"content":[{"type":"text","text":"go"}]}}"#,
+            r#"{"type":"assistant","timestamp":"2","message":{"model":"opus"},"effort":"high"}"#,
+            r#"{"type":"user","timestamp":"3","message":{"content":[{"type":"text","text":"again"}]}}"#,
+        ])
+        .await;
+        assert_eq!(stale.permission.0, None);
     }
 
     /// A row with nothing driving it, so the transcript heuristic is all there is.

@@ -76,6 +76,35 @@ export const PERMISSION_DEFAULT: Record<"claude" | "codex", string> = {
 };
 
 /**
+ * The permission an existing session's composer shows and sends.
+ *
+ * Unlike model and effort there is no source default to fall back to here: that
+ * default is the latest pick from *some* session, and applying it to one the
+ * user never picked for is how `bypassPermissions` chosen in one session became
+ * every session's (#563). The order is the session's own stored pick, then what
+ * its transcript says the last turn ran under, then this device's older
+ * session-scoped pick. A new session (`existing: false`) does start from the
+ * latest pick, as it always has.
+ *
+ * A value the CLI's current option set no longer offers — an older stored mode,
+ * or a transcript reading the composer cannot send — falls back to the CLI
+ * default, exactly as before.
+ */
+export function resolvePermission(input: {
+  existing: boolean;
+  stored?: string | null;
+  observed?: string | null;
+  sourceDefault?: string | null;
+  legacy?: string;
+  cli: CliSource;
+}): string {
+  const chosen = input.existing
+    ? (input.stored ?? input.observed ?? input.legacy)
+    : (input.sourceDefault ?? input.legacy);
+  return chosen && PERMISSION_OPTIONS[input.cli].includes(chosen) ? chosen : PERMISSION_DEFAULT[input.cli];
+}
+
+/**
  * Server-stored UI prefs (settings page + composer shortcut), shared across
  * devices. The pre-sync localStorage value bridges until the query resolves.
  */
@@ -428,15 +457,15 @@ export function useComposerChoice(
   });
 
   // Kept by the machine they were chosen for (`rh.composer.…` on the local machine).
+  const legacyScoped = (field: "model" | "effort" | "permission"): string | undefined =>
+    readMachineItem(localStorage, machine, `composer.${field}.${source}${scope ? `.${scope}` : ""}`) ?? undefined;
   const legacy = (field: "model" | "effort" | "permission"): string | undefined =>
-    readMachineItem(localStorage, machine, `composer.${field}.${source}${scope ? `.${scope}` : ""}`) ??
-    readMachineItem(localStorage, machine, `composer.${field}.${source}`) ??
-    undefined;
+    legacyScoped(field) ?? readMachineItem(localStorage, machine, `composer.${field}.${source}`) ?? undefined;
   const entry = prefsKey ? prefs?.sessions[prefsKey] : undefined;
   const sourceDefault = prefs?.defaults[source];
   const cliIsFresher = !!cliChoice?.at && (!entry?.updatedAt || cliChoice.at > entry.updatedAt);
-  const pick = (field: "model" | "effort" | "permission"): string | undefined => {
-    const actual = field === "permission" ? null : (cliChoice?.[field] ?? null);
+  const pick = (field: "model" | "effort"): string | undefined => {
+    const actual = cliChoice?.[field] ?? null;
     if (actual && (cliIsFresher || entry?.[field] === undefined)) return actual;
     return entry?.[field] ?? sourceDefault?.[field] ?? legacy(field);
   };
@@ -487,11 +516,17 @@ export function useComposerChoice(
   const activeEffort: string | null = effortOptions.includes(storedEffort)
     ? storedEffort
     : defaultEffortOf(activeModel, effortOptions);
-  const storedPermission = pick("permission") ?? "";
-  // Stored values from an older option set fall back to the safe default.
-  const activePermission = PERMISSION_OPTIONS[cli].includes(storedPermission)
-    ? storedPermission
-    : PERMISSION_DEFAULT[cli];
+  // The one field an existing session never inherits from the source default:
+  // its own pick, what it last ran with, then the CLI's default (see
+  // `resolvePermission`).
+  const activePermission = resolvePermission({
+    existing: !!scope,
+    stored: entry?.permission,
+    observed: cliChoice?.permission,
+    sourceDefault: sourceDefault?.permission,
+    legacy: legacyScoped("permission"),
+    cli,
+  });
 
   const pickModel = (id: string) => {
     const next = models.find((m) => m.id === id);

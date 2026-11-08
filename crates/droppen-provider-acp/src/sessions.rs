@@ -650,6 +650,8 @@ pub async fn read_cli_choice(file_path: &Path) -> Option<droppen_sessions::CliCh
         Some(droppen_sessions::CliChoice {
             model: Nullable(field("model")),
             effort: Nullable(field("effort")),
+            // An ACP agent chooses its own permissions; there is no mode here.
+            permission: Nullable(None),
             at: Nullable(field("timestamp")),
         })
     })
