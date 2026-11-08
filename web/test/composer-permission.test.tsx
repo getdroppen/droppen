@@ -25,6 +25,7 @@ const { LOCAL } = await import("../src/lib/machines/key.js");
 const { mq } = await import("../src/lib/machines/query.js");
 const { machineStorageKey } = await import("../src/lib/machines/storage.js");
 const { useComposerChoice } = await import("../src/features/sessions/composer-controls.js");
+const { withStartedPermission } = await import("../src/features/sessions/new-session-flow.js");
 
 type Source = "claude" | "codex";
 type Choice = {
@@ -173,4 +174,27 @@ test("a permission the composer cannot offer falls back to the CLI default", () 
     answer("claude", "B", { defaults: {}, sessions: {} }, { model: null, effort: null, permission: "default", at }),
     "acceptEdits",
   );
+});
+
+test("a successful start puts its permission in this page's composer cache at once", () => {
+  // What `useCreateConversation` writes before the new session opens: the row
+  // the server recorded, so the composer does not show the safe default while
+  // a refetch is in flight.
+  const doc = withStartedPermission(
+    { defaults: { claude: { permission: "bypassPermissions", updatedAt: at } }, sessions: {} },
+    "claude",
+    "started-1",
+    "bypassPermissions",
+  );
+  assert.equal(doc.sessions["claude/started-1"]?.permission, "bypassPermissions");
+  assert.equal(doc.defaults.claude?.permission, "bypassPermissions", "the defaults are left alone");
+
+  const existing = withStartedPermission(
+    { defaults: {}, sessions: { "claude/started-1": { model: "opus", permission: "plan" } } },
+    "claude",
+    "started-1",
+    "bypassPermissions",
+  );
+  assert.equal(existing.sessions["claude/started-1"]?.model, "opus", "the row's other fields survive");
+  assert.equal(existing.sessions["claude/started-1"]?.permission, "bypassPermissions");
 });

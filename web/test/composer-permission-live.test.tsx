@@ -98,6 +98,7 @@ test("a session started in bypass asks for the row it has not seen, so the next 
     sessions: { "claude/started-1": { permission: "bypassPermissions" } },
   };
   const page = await draw("claude", "started-1", cached, server);
+  await until("the fetched row to replace the safe default", () => page.shown() === "bypassPermissions");
   assert.equal(page.shown(), "bypassPermissions");
   assert.ok(page.reads.length >= 1, "the missing row was asked for");
   page.root.unmount();
@@ -113,6 +114,7 @@ test("opening a session a scheduled task started fetches the mode it recorded", 
     sessions: { "codex/scheduled-1": { permission: "bypass-all" } },
   };
   const page = await draw("codex", "scheduled-1", cached, server);
+  await until("the scheduled session's row", () => page.shown() === "bypass-all");
   assert.equal(page.shown(), "bypass-all");
   assert.ok(page.reads.length >= 1, "the scheduled session's row was asked for");
   page.root.unmount();

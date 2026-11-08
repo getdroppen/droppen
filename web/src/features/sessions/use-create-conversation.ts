@@ -1,13 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError } from "@/api/errors";
+import type { components } from "@/api/schema";
 import { useGlobalFeedSelector, type GlobalFeedState } from "@/app/global-feed";
 import { stashPendingMessage } from "@/features/chat/pending-message";
-import { canCreateConversation, creationAttempt, creationRequest, resolveCreatedSession, type CreationAttempt, type NewConversation, type SessionSource } from "./new-session-flow";
+import { canCreateConversation, creationAttempt, creationRequest, resolveCreatedSession, withStartedPermission, type CreationAttempt, type NewConversation, type SessionSource } from "./new-session-flow";
 import { newClientMessageId } from "./send-receipts";
 import { useApi, useMachine } from "@/lib/machines/context";
 import { useMachineNavigate } from "@/app/machine-route";
 import { mq } from "@/lib/machines/query";
+
+type ComposerPrefs = components["schemas"]["ComposerPrefs"];
 
 /** What the server accepted: the request as it was sent, the id it answered, and the message id it went under. */
 export interface AcceptedConversation {
@@ -100,6 +103,18 @@ export function useCreateConversation(
       // Started: the next start is a new session.
       attempt.current = null;
       onAttempt.current?.(null);
+      // The server recorded the start's permission on the session's own row;
+      // put the same row in this page's cache before the session opens, so its
+      // composer shows — and sends — that mode rather than the CLI default
+      // while its first prefs refetch is still in flight.
+      if (submitted.kind === "session") {
+        const { source, permission } = submitted;
+        if (permission) {
+          queryClient.setQueryData<ComposerPrefs>(mq(machine, "composer-prefs"), (old) =>
+            withStartedPermission(old, source, id, permission),
+          );
+        }
+      }
       if (submitted.kind === "chat") void queryClient.invalidateQueries({ queryKey: mq(machine, "chats") });
       if (submitted.source === "api") {
         stashPendingMessage(machine, id, submitted.text.trim());
