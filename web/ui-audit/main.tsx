@@ -461,6 +461,17 @@ function newChatDevice(signedOut: boolean): Transport {
   };
   return {
     fetch: async (request: Request) => {
+      // The chat form uploads through the real composer, so the fixture answers
+      // the same route the composer does — with a synthetic path under uploads.
+      if (new URL(request.url).pathname === "/api/uploads" && request.method === "POST") {
+        const file = (await request.formData()).get("file") as File;
+        return Response.json({
+          path: `/home/studio/.local/share/remote-hand/uploads/fixture/${file.name}`,
+          name: file.name,
+          sizeBytes: file.size,
+          isImage: file.type.startsWith("image/"),
+        });
+      }
       const answer = answers[new URL(request.url).pathname];
       return answer === undefined ? Response.json({ error: "not here" }, { status: 404 }) : Response.json(answer);
     },

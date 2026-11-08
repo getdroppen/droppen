@@ -564,10 +564,12 @@ async function auditDevices(theme, view) {
  * The instant-chat home (`features/chat/chat-home.tsx`, docs/ui-spec.md §3):
  * the new-session layout — the question about the middle on a desktop, the
  * composer pinned to the bottom on a phone, one 48rem column — with the
- * backend switch above the composer and the warnings beside it. Four states
+ * backend switch above the composer and the warnings beside it. Five states
  * are captured: claude selected, the api backend with no provider, the
- * signed-out local login, and the desktop `/chat` beside the list. The api
- * tab is clicked, because no query selects a backend.
+ * signed-out local login, the desktop `/chat` beside the list, and claude
+ * with one picture and one file attached (uploaded into the fixture through
+ * the composer's own file inputs). The api tab is clicked, because no query
+ * selects a backend.
  */
 async function auditNewChat(theme, view) {
   const page = await browser.newPage({
@@ -578,7 +580,7 @@ async function auditNewChat(theme, view) {
   });
   const fail = (id, actual, expected) => failures.push({ theme, viewport: view.name, fixture: "new-chat", id, actual, expected });
   const snapshots = {};
-  for (const state of ["claude", "api", "signed-out", "list"]) {
+  for (const state of ["claude", "api", "signed-out", "list", "attached"]) {
     await page.goto(`${base}ui-audit/index.html?fixture=new-chat&state=${state}&theme=${theme}`);
     await page.evaluate(() => document.fonts.ready);
     // The form is drawn once the accounts' and composer's answers are in; the
@@ -589,6 +591,37 @@ async function auditNewChat(theme, view) {
     if (state === "api") {
       await page.getByRole("tab", { name: "api" }).click();
       await page.waitForTimeout(200);
+    }
+    if (state === "attached") {
+      // The composer's own inputs, the way a picker would fill them: one text
+      // file and one picture drawn in the page (a synthetic photo, no asset).
+      await page.evaluate(async () => {
+        const attach = (input, file) => {
+          const transfer = new DataTransfer();
+          transfer.items.add(file);
+          input.files = transfer.files;
+          input.dispatchEvent(new Event("change", { bubbles: true }));
+        };
+        const inputs = [...document.querySelectorAll("[data-composer] input[type=file]")];
+        const canvas = document.createElement("canvas");
+        canvas.width = 96;
+        canvas.height = 96;
+        const ctx = canvas.getContext("2d");
+        const gradient = ctx.createLinearGradient(0, 0, 96, 96);
+        gradient.addColorStop(0, "#7aa7ff");
+        gradient.addColorStop(1, "#1b3a67");
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, 96, 96);
+        ctx.fillStyle = "#fff";
+        ctx.font = "600 14px sans-serif";
+        ctx.fillText("chart", 24, 54);
+        const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+        attach(inputs[0], new File(["release notes\n"], "release-notes.txt", { type: "text/plain" }));
+        attach(inputs[1], new File([blob], "chart.png", { type: "image/png" }));
+      });
+      await page.waitForSelector('[data-attachment="image"]', { timeout: 5_000 });
+      await page.waitForSelector('[data-attachment="file"]', { timeout: 5_000 });
+      await page.waitForTimeout(250);
     }
     snapshots[state] = await page.evaluate(() => {
       const rect = (e) => {
@@ -612,6 +645,7 @@ async function auditNewChat(theme, view) {
         tabs: tabs ? { rect: rect(tabs), radius: cs(tabs).borderTopLeftRadius } : null,
         send: send ? { rect: rect(send), bg: cs(send).backgroundColor, radius: cs(send).borderRadius } : null,
         textarea: rect(document.querySelector("[data-composer] textarea")),
+        attachments: [...document.querySelectorAll("[data-attachment]")].map((e) => e.getAttribute("data-attachment")),
         warnings,
         overflow: { doc: document.documentElement.scrollWidth, win: window.innerWidth },
       };
@@ -648,6 +682,13 @@ async function auditNewChat(theme, view) {
   }
   if (!snapshots["signed-out"].warnings.some((text) => /signed out/.test(text))) {
     fail("new-chat.signed-out-warning", snapshots["signed-out"].warnings, "the signed-out local login warning");
+  }
+  // The attachments are the session composer's own chips, one of each kind,
+  // and the untouched states have none.
+  const attached = [...(snapshots.attached?.attachments ?? [])].sort().join(",");
+  if (attached !== "file,image") fail("new-chat.attachments", snapshots.attached?.attachments, "one file and one image chip");
+  if ((snapshots.claude.attachments ?? []).length !== 0) {
+    fail("new-chat.no-attachments", snapshots.claude.attachments, "no chips before anything is attached");
   }
   await page.close();
 }

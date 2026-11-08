@@ -262,8 +262,20 @@ pub(crate) struct Fingerprint {
     /// `None` for the local login, which has no stored credential at all: that
     /// fingerprint is exactly what it was.
     pub credential: Option<String>,
-    /// The instant-chat persona and `--disallowedTools *`.
+    /// The instant-chat persona and its one tool (`--tools Read`).
     pub chat: bool,
+    /// Whether a chat was started with the Read tool available.
+    ///
+    /// Written down and compared one-way, like [`Fingerprint::uploads`], and
+    /// for the same reason: `--tools Read` only ever *widens* what a chat can
+    /// do, so a process that has it can take a message that does not use it,
+    /// while a chat resident inherited across an upgrade — started when chats
+    /// disabled every tool — cannot read the attachment a message carries.
+    /// Every spawn after this field existed records it for a chat; the first
+    /// message is what makes an older resident restart. Off is not written, so
+    /// every session's row stays the bytes it always was.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub chat_reads: bool,
     /// Whether `--add-dir <uploads>` is on the command line.
     pub uploads: bool,
     /// Whether `--permission-prompt-tool stdio` and the plan-mode
@@ -320,6 +332,7 @@ impl Fingerprint {
             && self.account == live.account
             && self.credential == live.credential
             && self.chat == live.chat
+            && (!self.chat_reads || live.chat_reads)
             && (!self.uploads || live.uploads)
         // `questions` deliberately absent: see the field.
     }
@@ -410,6 +423,9 @@ impl Fingerprint {
         }
         if self.chat != live.chat {
             parts.push(if self.chat { "the chat persona" } else { "no chat persona" }.to_string());
+        }
+        if self.chat_reads && !live.chat_reads {
+            parts.push("the Read tool a chat reads attachments with".to_string());
         }
         if self.uploads && !live.uploads {
             parts.push("access to the uploads directory".to_string());
@@ -1016,6 +1032,12 @@ fn is_zero(value: &u8) -> bool {
     *value == 0
 }
 
+/// Whether a flag is off, so a row that never had the capability is written
+/// exactly as it always was — and reads back as off.
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 /// What a Claude Code resident's driver writes into its run's row as it goes:
 /// each a change to the one row, in one transaction ([`runs::RunsFile`]).
 pub(crate) trait ClaudeJournal {
@@ -1111,13 +1133,14 @@ impl Provider for ClaudeCode {
     }
 
     /// claude stops to ask (`AskUserQuestion`), and the turn waits for the
-    /// answer. An instant chat runs with every tool disabled, so it cannot read
-    /// an attachment.
+    /// answer. An instant chat runs with one tool — Read — which is what an
+    /// attachment's path in the prompt is viewed with, exactly as a session's
+    /// is; nothing else is available to it.
     fn capabilities(&self) -> Capabilities {
         Capabilities {
             questions: true,
             chats: true,
-            chat_attachments: false,
+            chat_attachments: true,
             schedules: true,
         }
     }
@@ -7207,11 +7230,13 @@ mod tests {
                 account: None,
                 credential: None,
                 chat: true,
+                chat_reads: true,
                 uploads: true,
                 questions: true,
             }),
             "model opus rather than haiku (answering as claude-haiku-4-5), effort high rather than none, \
-             the local login rather than the work account, the chat persona, access to the uploads directory",
+             the local login rather than the work account, the chat persona, \
+             the Read tool a chat reads attachments with, access to the uploads directory",
             "and every setting that needs its own process is named, in one line"
         );
     }

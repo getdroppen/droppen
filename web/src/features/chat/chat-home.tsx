@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Bot, ChevronLeft, Sparkles, Terminal } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { MachineLink } from "@/app/machine-route";
 import { Notice } from "@/components/notice";
@@ -15,7 +15,13 @@ import {
   useStartRecheck,
   withoutAccount,
 } from "@/features/accounts/use-accounts";
-import { ComposerBox, useComposerAttachments } from "@/features/sessions/composer-box";
+import {
+  attachmentPaths,
+  ComposerBox,
+  MAX_ATTACHMENTS,
+  useComposerAttachments,
+  type ComposerAttachment,
+} from "@/features/sessions/composer-box";
 import {
   ComposerChoiceChips,
   ComposerSelect,
@@ -85,8 +91,23 @@ export function ChatHome() {
   });
   const effectiveApiModel = apiModel || provider?.model || "";
 
+  // The same composer state a session's new-session view uses: each file is
+  // uploaded the moment it is pasted, dropped or picked, and send waits for
+  // the uploads rather than sending without them.
+  const attachments = useComposerAttachments();
+  // The api backend's provider call takes text parts only, so it has no attach
+  // control at all; a switch to it clears what is in the box and says so.
+  const [apiCleared, setApiCleared] = useState<string[]>([]);
+  // Attachments put back after a refused start that did not fit beside the
+  // ones added since, named until the next press (as a session's are).
+  const [noRoom, setNoRoom] = useState<string[]>([]);
+  // A message with attachments and no words sends the same sentence a
+  // session's composer sends, rather than refusing an empty prompt.
+  const attachedMessage = t("Please look at the attached file(s).");
+  const message = text.trim() || (attachments.attachments.length > 0 ? attachedMessage : "");
+
   const chatInput: NewConversation = (
-    { kind: "chat", source: backend, text, providerReady: !!providerReady,
+    { kind: "chat", source: backend, text: backend === "api" ? text.trim() : message, providerReady: !!providerReady,
       model: backend === "api" ? effectiveApiModel : choice.activeModel.id, effort: choice.activeEffort,
       ...(backend === "api"
         ? {}
@@ -98,9 +119,12 @@ export function ChatHome() {
             : {}) });
   // What went out leaves the box; what was typed after the press stays.
   const start = useCreateConversation(chatInput, ({ submitted }) => setText((now) => (now === submitted.text ? "" : now)));
-  // The message as it was when send was pressed: what goes out once it can,
-  // whatever is typed meanwhile. Emptying the box calls it off.
-  const [pressed, setPressed] = useState<string | null>(null);
+  // The message as it was when send was pressed — its words and the keys of
+  // the attachments it carries: what goes out once it can, whatever is typed
+  // or added meanwhile. Emptying the box calls it off.
+  const [pressed, setPressed] = useState<{ text: string; keys: string[] } | null>(null);
+  // What a refused start put back, kept until it is no longer needed.
+  const heldBack = useRef<ComposerAttachment[]>([]);
   const sendQueued = pressed !== null;
   const recheck = useStartRecheck(startQuery);
   const setBackend = (next: Backend) => {
@@ -110,6 +134,17 @@ export function ChatHome() {
     // And a chat pressed for one CLI is not sent to another once its answer lands.
     setPressed(null);
     recheck.cancel();
+    // The api backend takes text only: nothing can be attached to it, so what
+    // is attached is taken out, visibly rather than silently.
+    if (next === "api") {
+      const names = attachments.attachments.map((a) => a.name);
+      if (names.length) {
+        attachments.clear();
+        setApiCleared(names);
+      }
+    } else {
+      setApiCleared([]);
+    }
   };
   // Left to the server, a chat waits for its answer to what is asked now: the
   // login and model shown are that answer's.
@@ -120,32 +155,60 @@ export function ChatHome() {
   // first, and the chat goes out on it — within a few re-asks and a few
   // seconds; past those, with no account, for the server to place
   // (`useStartRecheck`). A pick made meanwhile is sent as the pick.
+  //
+  // Attachments are the session composer's contract: the press takes the keys
+  // it carried, waits for their uploads, and goes out with their paths. A
+  // refusal puts them back; a failed upload stops the send until it is removed.
   const send = () => {
-    if (canStart) setPressed(text);
+    setNoRoom([]);
+    if (canStart && !attachments.anyFailed) setPressed({ text, keys: attachments.attachments.map((a) => a.key) });
   };
   useEffect(() => {
     if (pressed === null) return;
-    // Anything that would not let it start now — the box emptied, above all —
+    const keys = pressed.keys;
+    const held = attachments.attachments.filter((a) => keys.includes(a.key));
+    // Anything that would not let it start now — the box emptied of the words
+    // it was pressed with, an attachment taken out or failed, no answer yet —
     // calls it off.
-    if (!start.canStart) {
+    const textCleared = !!pressed.text.trim() && !text.trim();
+    if (!start.canStart || textCleared || held.length < keys.length || held.some((a) => a.status === "error")) {
       setPressed(null);
       recheck.cancel();
       return;
     }
-    const request = { ...chatInput, text: pressed };
-    if (!leftToServer) {
-      setPressed(null);
+    // Uploads are already racing; it goes out the moment they land.
+    if (held.some((a) => a.status === "uploading")) return;
+    let unplaced = false;
+    if (leftToServer) {
+      const verdict = recheck.check();
+      if (verdict === "wait") return;
+      unplaced = verdict === "unplaced";
+    } else {
       recheck.cancel();
-      start.mutate(request);
-      return;
     }
-    const verdict = recheck.check();
-    if (verdict === "wait") return;
     setPressed(null);
-    start.mutate(verdict === "unplaced" ? withoutAccount(request) : request);
+    const { images, files } = attachmentPaths(held);
+    const request = {
+      ...chatInput,
+      text: pressed.text.trim() || attachedMessage,
+      ...(images.length ? { images } : {}),
+      ...(files.length ? { files } : {}),
+    };
+    // What went out leaves the composer; what was typed or added after the
+    // press stays.
+    heldBack.current = held;
+    attachments.take(keys);
+    start.mutate(unplaced ? withoutAccount(request) : request, {
+      // Refused: nothing started, so the attachments go back where they were,
+      // in front of anything added since.
+      onError: () => {
+        const dropped = attachments.putBack(heldBack.current);
+        heldBack.current = [];
+        if (dropped.length) setNoRoom(dropped.map((a) => a.name));
+      },
+    });
   });
 
-  const attachments = useComposerAttachments();
   // The explanation belongs to the backend switch, so it sits right beside it
   // rather than apart as a stray line.
   const where = backend === "api"
@@ -185,6 +248,24 @@ export function ChatHome() {
         <div data-chat-new-column="" className={cn(COLUMN, "pb-3 max-md:pb-2")}>
           <div className="mb-2 md:hidden">{title}</div>
           {start.isError && <Notice signal="failed">{start.error.message}</Notice>}
+          {noRoom.length > 0 && (
+            <Notice signal="warn">
+              <span data-attachments-dropped="">
+                {t("no room beside the returned message's attachments (at most {{max}}), so these were taken out: {{names}}", {
+                  max: MAX_ATTACHMENTS,
+                  names: noRoom.join(", "),
+                })}
+              </span>
+            </Notice>
+          )}
+          {attachments.anyFailed && (
+            <Notice signal="failed">
+              {attachments.attachments.find((a) => a.error)?.error ?? t("upload failed")} — {t("remove the failed attachment to send")}
+            </Notice>
+          )}
+          {apiCleared.length > 0 && (
+            <Notice signal="warn">{t("api chats take text only — the attachments were removed")}</Notice>
+          )}
           {localSignedOut && (
             <Notice signal="warn" local>
               {localLoginHint(cliSource, t)}
@@ -235,7 +316,7 @@ export function ChatHome() {
           )}
           <ComposerBox
             attachments={attachments}
-            allowAttach={false}
+            allowAttach={backend !== "api"}
             text={text}
             onText={setText}
             onSubmit={send}
@@ -284,7 +365,7 @@ export function ChatHome() {
               )
             }
             send={{
-              disabled: !canStart || sendQueued,
+              disabled: !canStart || sendQueued || attachments.anyFailed,
               label: waitingForAccount ? t("choosing account…") : t("start chat"),
               busy: start.isPending || sendQueued,
             }}

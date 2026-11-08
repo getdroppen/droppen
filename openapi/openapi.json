@@ -1352,6 +1352,20 @@
             "description": "Reasoning effort, for the CLI backends.",
             "type": "string"
           },
+          "files": {
+            "description": "Non-image attachment paths returned by `POST /api/uploads`, sent with\nthe first message exactly as `POST /api/sessions/new` takes them.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "images": {
+            "description": "Image paths returned by `POST /api/uploads`, sent with the first message\nexactly as `POST /api/sessions/new` takes them. CLI backends only; the\nAPI backend is text-only and refuses a body that carries any.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "model": {
             "description": "Model override.",
             "type": "string"

@@ -748,7 +748,7 @@ export function ComposerChoiceChips({
 }: {
   source: Source;
   choice: ReturnType<typeof useComposerChoice>;
-  /** Instant chats run without tools: no permission to pick. */
+  /** Instant chats run under a fixed sandbox and persona: no permission to pick. */
   permission?: boolean;
   account?: ReactNode;
 }) {

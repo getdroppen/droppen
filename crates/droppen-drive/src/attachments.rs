@@ -7,6 +7,19 @@ use gotcha::axum::http::StatusCode;
 /// The `error` of a `409` for an attachment that is not there any more.
 pub(crate) const ATTACHMENT_MISSING: &str = "attachment_missing";
 
+/// How many attachments one message carries at most.
+///
+/// The composer's own cap (`MAX_ATTACHMENTS` in `composer-box.tsx`, 20), made
+/// the server's too: the two message routes and the two chat routes all take
+/// the field, and a client that bypasses the composer must be refused in the
+/// same words rather than hand a CLI a prompt with a hundred paths in it.
+pub(crate) const MAX_ATTACHMENTS: usize = 20;
+
+/// The refusal of a message carrying more than [`MAX_ATTACHMENTS`].
+fn too_many() -> ApiError {
+    ApiError::bad_request(format!("too many attachments (at most {MAX_ATTACHMENTS})"))
+}
+
 /// The refusal of an attachment that `/api/uploads` handed out and that is no
 /// longer on this device: swept with the rest of the old uploads, or deleted.
 fn attachment_missing() -> ApiError {
@@ -39,6 +52,9 @@ pub(crate) fn resolve_attachments(paths: &Paths, images: Vec<String>, files: Vec
     if images.is_empty() && files.is_empty() {
         return Ok((images, files));
     }
+    if images.len() + files.len() > MAX_ATTACHMENTS {
+        return Err(too_many());
+    }
     let uploads = std::fs::canonicalize(paths.uploads_dir()).ok();
     let roots = droppen_files::FileRoots::of(paths);
     let resolve = |requested: Vec<String>| -> Result<Vec<String>, ApiError> {
@@ -64,6 +80,33 @@ pub(crate) fn resolve_attachments(paths: &Paths, images: Vec<String>, files: Vec
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The cap counts images and files together, and is checked before any
+    /// path is resolved: a client cannot learn which of its paths exist by
+    /// sending one too many.
+    #[test]
+    fn more_attachments_than_the_composer_allows_are_refused() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let paths = Paths::new(home.path().to_path_buf());
+        let uploads = paths.uploads_dir();
+        std::fs::create_dir_all(uploads.join("abc")).expect("uploads dir");
+        std::fs::write(uploads.join("abc/a.png"), b"x").expect("upload");
+        std::fs::write(uploads.join("abc/a.txt"), b"x").expect("upload");
+        let image = uploads.join("abc/a.png").to_string_lossy().into_owned();
+        let file = uploads.join("abc/a.txt").to_string_lossy().into_owned();
+
+        // Twenty, the composer's own cap, is fine — images and files together.
+        let at_cap = resolve_attachments(&paths, vec![image.clone(); 18], vec![file.clone(); 2]).expect("twenty attachments");
+        assert_eq!((at_cap.0.len(), at_cap.1.len()), (18, 2));
+
+        // One more is refused before any path is resolved: nothing can be
+        // learned about a path by sending a body that is over the cap.
+        let refused = resolve_attachments(&paths, vec![image; 19], vec![file; 2]).expect_err("twenty-one attachments");
+        assert_eq!(refused.status(), gotcha::axum::http::StatusCode::BAD_REQUEST);
+        assert_eq!(refused.body()["error"], "too many attachments (at most 20)");
+        let unknown = resolve_attachments(&paths, vec!["/etc/passwd".to_string(); 21], vec![]).expect_err("over the cap");
+        assert_eq!(unknown.body()["error"], "too many attachments (at most 20)");
+    }
 
     /// The refusal, byte for byte: clients act on `error` and show `hint`.
     #[test]

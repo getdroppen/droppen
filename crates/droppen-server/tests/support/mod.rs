@@ -501,6 +501,24 @@ impl Probe {
         value
     }
 
+    /// `POST /api/uploads` with a one-field multipart body, asserting `200`
+    /// and returning the `Attachment` the route answered — the path a message
+    /// then attaches, exactly as the composer gets it.
+    pub async fn upload(&self, filename: &str, content: &[u8]) -> Value {
+        let body = format!(
+            "--boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\n\r\n"
+        );
+        let mut multipart = body.into_bytes();
+        multipart.extend_from_slice(content);
+        multipart.extend_from_slice(b"\r\n--boundary--\r\n");
+        let (status, response) = self
+            .server
+            .request("POST", "/api/uploads", &[("Content-Type", "multipart/form-data; boundary=boundary")], &multipart)
+            .await;
+        assert_eq!(status, 200, "POST /api/uploads -> {status}: {response}");
+        parse(&response)
+    }
+
     // ------------------------------------------------------------------ layout
 
     pub fn data_dir(&self) -> PathBuf {

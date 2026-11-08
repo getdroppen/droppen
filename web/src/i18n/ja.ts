@@ -922,6 +922,7 @@ export const ja: Record<string, string> = {
   "choosing account…": "アカウントを選んでいます…",
   // The new-chat form (`features/chat/chat-home.tsx`).
   "What do you want to chat about?": "何について話しますか？",
+  "api chats take text only — the attachments were removed": "api チャットはテキストのみです — 添付ファイルは削除されました",
   // The desktop app's update, ready (`app/desktop-update.tsx`).
   "restart": "再起動",
   "no room beside the returned message's attachments (at most {{max}}), so these were taken out: {{names}}": "戻されたメッセージの添付を戻すと空きがなくなったため（最大 {{max}} 個）、次の添付を外しました：{{names}}",

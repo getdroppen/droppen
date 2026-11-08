@@ -921,6 +921,7 @@ export const zhTW: Record<string, string> = {
   "choosing account…": "正在選擇帳號…",
   // The new-chat form (`features/chat/chat-home.tsx`).
   "What do you want to chat about?": "想聊點什麼？",
+  "api chats take text only — the attachments were removed": "api 聊天只接受文字——已移除附件",
   // The desktop app's update, ready (`app/desktop-update.tsx`).
   "restart": "重啟",
   "no room beside the returned message's attachments (at most {{max}}), so these were taken out: {{names}}": "退回的訊息自帶的附件放回後已沒有空位（最多 {{max}} 個），以下附件已被移出：{{names}}",

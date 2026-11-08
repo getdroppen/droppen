@@ -741,11 +741,13 @@ async fn deliver_message(
         return Err(ApiError::conflict(reason.unwrap_or_else(|| "cannot send".to_string())));
     }
 
-    // Some CLIs run an instant chat with every tool disabled, so it cannot read
-    // an attachment.
+    // A CLI whose chats cannot read an attachment (no tool to open one) is
+    // refused here. Both CLIs' chats can now: Claude Code runs its chats with
+    // Read as its only tool, and Codex takes images as input and non-images by
+    // path; the check stays as the guard for any provider added later.
     let chat = summary.cwd.as_ref().map(Path::new) == Some(chats_cwd(&drive.paths).as_path());
     if chat && drive.providers.chat_refuses_attachments(source) && !(images.is_empty() && attachments.is_empty()) {
-        return Err(ApiError::conflict("attachments are not supported in claude instant chats"));
+        return Err(ApiError::conflict("attachments are not supported in this instant chat"));
     }
 
     // An agent blocked on a question is waiting for exactly this: what the

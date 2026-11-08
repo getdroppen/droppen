@@ -939,9 +939,9 @@ mod tests {
     }
 
     /// What each CLI's sessions are offered for: only Claude Code stops to ask
-    /// questions, Claude Code runs its instant chats with every tool off, so
-    /// they take no attachments, and an ACP agent runs neither instant chats
-    /// nor scheduled tasks.
+    /// questions, both CLIs run instant chats that can read the attachments
+    /// they are sent (Claude Code through its one Read tool), and an ACP agent
+    /// runs neither instant chats nor scheduled tasks.
     #[test]
     fn every_provider_says_what_its_sessions_are_offered_for() {
         use droppen_provider::Capabilities;
@@ -960,13 +960,7 @@ mod tests {
             chat_attachments: true,
             schedules: true,
         };
-        assert_eq!(
-            providers.capabilities(Source::Claude),
-            Capabilities {
-                chat_attachments: false,
-                ..all
-            }
-        );
+        assert_eq!(providers.capabilities(Source::Claude), all);
         assert_eq!(providers.capabilities(Source::Codex), Capabilities { questions: false, ..all });
         assert_eq!(providers.capabilities(Source::Acp), Capabilities::default());
     }

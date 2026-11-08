@@ -18,7 +18,9 @@ use droppen_sessions::delivery::SessionQuestion;
 pub const CHAT_SYSTEM_PROMPT: &str = concat!(
     "You are a friendly general-purpose assistant in a casual chat app. ",
     "This is not a coding tool: have a normal conversation, answer in the user's language, ",
-    "and keep answers conversational. You have no tools; never claim to read files or run commands."
+    "and keep answers conversational. The only files you may read are the ones the user ",
+    "attaches; use the Read tool for them where one is available, and never run commands, ",
+    "change files, or claim to read anything the user did not attach."
 );
 
 /// Where a resident runs, with a fallback that is somewhere and not anywhere.

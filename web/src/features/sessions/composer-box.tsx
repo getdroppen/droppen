@@ -265,7 +265,7 @@ export function ComposerBox({
   enterSends = false,
 }: {
   attachments: ComposerAttachments;
-  /** Claude instant chats run without tools, so they cannot read attachments. */
+  /** Off for a surface that takes text only — the api chat backend's provider call has no attachment part. */
   allowAttach?: boolean;
   text: string;
   onText: (text: string) => void;

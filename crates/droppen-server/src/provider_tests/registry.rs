@@ -182,19 +182,20 @@ fn a_source_no_provider_runs_is_refused() {
     assert_eq!(claude.send_block(&row("acp", Some("fake"))).as_deref(), Some("no provider runs acp sessions"));
 }
 
-/// An instant chat turns attachments away when its CLI's chats cannot read
-/// them (Claude Code's), and when no provider runs its source. Codex's chats
-/// read them, and ACP runs no instant chats to refuse them in.
+/// An instant chat turns attachments away when no provider runs its source,
+/// and when a provider runs chats that cannot read them (none of the CLIs does
+/// now: Claude Code reads them with its one Read tool, Codex with its own
+/// input). ACP runs no instant chats, so it has none to refuse.
 #[test]
 fn a_chat_refuses_the_attachments_its_cli_cannot_read() {
     let home = tempfile::tempdir().expect("tempdir");
     let providers = providers(home.path());
-    assert!(providers.chat_refuses_attachments(Source::Claude));
+    assert!(!providers.chat_refuses_attachments(Source::Claude));
     assert!(!providers.chat_refuses_attachments(Source::Codex));
     assert!(!providers.chat_refuses_attachments(Source::Acp));
     let other = tempfile::tempdir().expect("tempdir");
     let claude = providers_from(other.path(), claude_only);
-    assert!(claude.chat_refuses_attachments(Source::Claude));
+    assert!(!claude.chat_refuses_attachments(Source::Claude));
     assert!(claude.chat_refuses_attachments(Source::Codex), "no provider runs codex here");
     assert!(claude.chat_refuses_attachments(Source::Acp), "no provider runs acp here");
 }
