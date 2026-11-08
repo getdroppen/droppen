@@ -978,6 +978,90 @@ async function auditCloudBar(theme, view) {
   await page.close();
 }
 
+/**
+ * The cloud bar while the offline copy catches up from the hub
+ * (`?fixture=cloud-bar&states=catch-up`): the words, whole, in the offline
+ * notice at every width (after the copy's time at desktop width, on a line of
+ * their own at a phone's); after the connection's words in the strip when
+ * there is no notice, at desktop width only (a phone has no room left
+ * there); the strip still 28px; and the retry countdown beside it still
+ * whole. In English and Chinese. Captured: the whole fixture and each state's
+ * strip with its notice, per language.
+ */
+async function auditCatchUp(theme, view) {
+  const page = await browser.newPage({
+    viewport: { width: view.width, height: view.height },
+    deviceScaleFactor: 1,
+    hasTouch: view.name === "mobile",
+    isMobile: view.name === "mobile",
+  });
+  const fail = (id, actual, expected) => failures.push({ theme, viewport: view.name, fixture: "cloud-bar-catch-up", id, actual, expected });
+  const snapshot = () =>
+    page.evaluate(() => {
+      const rect = (e) => {
+        if (!e) return null;
+        const r = e.getBoundingClientRect();
+        return { x: +r.x.toFixed(1), y: +r.y.toFixed(1), w: +r.width.toFixed(1), h: +r.height.toFixed(1), right: +r.right.toFixed(1) };
+      };
+      return [...document.querySelectorAll("[data-audit-row]")].map((section) => {
+        const bar = section.querySelector("[data-cloud-bar]");
+        const notice = section.querySelector('[data-testid="offline-notice"]');
+        // The notice has the words in its line at desktop width and on a line of their own below it: the one drawn.
+        const words = [...section.querySelectorAll('[data-testid="catch-up"]')].find((e) => e.getBoundingClientRect().width > 0) ?? null;
+        // What clips the words: the notice's line, or the strip's own truncating span.
+        const clip = words?.closest(".truncate");
+        const button = bar?.querySelector('[data-testid="retry-now"]');
+        return {
+          name: section.dataset.auditRow,
+          bar: rect(bar),
+          where: words ? (notice?.contains(words) ? "notice" : "bar") : null,
+          text: (words?.textContent ?? "").trim(),
+          title: words?.getAttribute("title") ?? null,
+          words: rect(words),
+          clip: rect(clip),
+          button: button ? { text: (button.textContent ?? "").trim(), rect: rect(button) } : null,
+          next: rect(bar?.querySelector('[data-testid="my-devices"]')),
+        };
+      });
+    });
+  const expected = {
+    en: { index: "updating from the hub · session list", sessions: "updating from the hub · sessions 3/7", pages: "updating from the hub · sessions 3/7 · 42%" },
+    "zh-CN": { index: "正在从云端更新 · 会话列表", sessions: "正在从云端更新 · 会话 3/7", pages: "正在从云端更新 · 会话 3/7 · 42%" },
+  };
+  for (const lang of ["en", "zh-CN"]) {
+    await page.goto(`${base}ui-audit/index.html?fixture=cloud-bar&states=catch-up&lang=${lang}&theme=${theme}`);
+    await page.evaluate(() => document.fonts.ready);
+    await page.waitForTimeout(250);
+    const states = await snapshot();
+    const tag = lang === "en" ? "" : `-${lang}`;
+    await page.screenshot({ path: `${out}/cloud-bar-catch-up${tag}-${theme}-${view.name}.png` });
+    for (const state of states) {
+      await page.locator(`[data-audit-row="${state.name}"] [data-catch-up-shot]`).screenshot({ path: `${out}/cloud-bar-${state.name}${tag}-${theme}-${view.name}.png` });
+    }
+    results.push({ mode: "cloud-bar-catch-up", lang, theme, viewport: view.name, states });
+    for (const state of states) {
+      if (Math.round(state.bar?.h ?? 0) !== 28) fail("catch-up.height", { lang, state: state.name, h: state.bar?.h }, "a 28px strip");
+      const kind = state.name.endsWith("index") ? "index" : state.name.endsWith("sessions") ? "sessions" : "pages";
+      const inBar = state.name.includes("-bar-") || state.name === "catch-up-retry";
+      const shown = state.words && state.words.w > 0;
+      if (inBar && view.name === "mobile") {
+        if (shown) fail("catch-up.phone-bar", { lang, state: state.name, words: state.words }, "no catch-up in the strip at a phone's width");
+      } else {
+        if (!shown || state.where !== (inBar ? "bar" : "notice")) fail("catch-up.where", { lang, state: state.name, where: state.where, words: state.words }, inBar ? "in the strip" : "in the offline notice");
+        else if (state.text !== expected[lang][kind]) fail("catch-up.words", { lang, state: state.name, text: state.text }, expected[lang][kind]);
+        else if (state.clip && state.words.right > state.clip.right + 0.5) fail("catch-up.whole", { lang, state: state.name, words: state.words, clip: state.clip }, "the words whole, not cut off");
+        if (shown && kind !== "index" && !state.title) fail("catch-up.title", { lang, state: state.name }, "a tooltip saying what the counts are");
+      }
+      if (state.name === "catch-up-retry") {
+        const b = state.button;
+        const inside = b && b.rect.w >= 1 && b.rect.x >= (state.bar?.x ?? 0) - 0.5 && b.rect.right <= Math.min(state.next?.x ?? Infinity, view.width) + 0.5;
+        if (!inside) fail("catch-up.countdown-visible", { lang, button: b, next: state.next }, "the whole countdown in the strip, beside the catch-up");
+      }
+    }
+  }
+  await page.close();
+}
+
 try {
   if (liveUrl) {
     for (const view of views) await auditLive(view);
@@ -989,6 +1073,7 @@ try {
         if (runAgents) await auditAgents(theme, view);
         if (runNewChat) await auditNewChat(theme, view);
         if (runCloudBar) await auditCloudBar(theme, view);
+        if (runCloudBar) await auditCatchUp(theme, view);
       }
     }
   }

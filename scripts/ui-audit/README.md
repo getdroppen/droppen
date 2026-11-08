@@ -72,6 +72,14 @@ and stays whole inside the strip. Outputs `cloud-bar-<theme>-<viewport>.png`
 (every state, as tall as the fixture) and `cloud-bar-<lang>-…` for each other
 language, one `cloud-bar-<state>-…` per state and `cloud-bar-focus-…`; each
 state's free space in the strip is in `measurements.json`.
+Its catch-up states (`&states=catch-up`: the offline copy catching up from the
+hub — the session list, sessions 3/7, and sessions 3/7 · 42 % — in the offline
+notice and in the strip) check the words in English and Chinese, that they are
+whole in the notice at every width (after the copy's time at desktop width, on
+a line of their own at phone width), that the strip carries them only at
+desktop width, and that the retry countdown beside them stays whole. Outputs
+`cloud-bar-catch-up-…`, `cloud-bar-catch-up-zh-CN-…` and one
+`cloud-bar-catch-up-<state>-…` (with `-zh-CN`) per state.
 
 The fixture deliberately exercises the target state, so on a revision that
 still has the old controls these checks fail. That is the point: run it before

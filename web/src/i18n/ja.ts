@@ -789,6 +789,12 @@ export const ja: Record<string, string> = {
   "offline copy · as of {{time}}": "オフラインコピー · {{time}} 時点",
   "offline copy": "オフラインコピー",
   "read-only: sending and terminals need the device online": "読み取り専用：送信とターミナルにはデバイスがオンラインである必要があります",
+  // The offline copy catching up from the hub: sessions, not messages (cloud-bar.tsx, `catchUpText`).
+  "updating from the hub": "ハブから更新中",
+  "session list": "セッション一覧",
+  "sessions {{done}}/{{total}}": "セッション {{done}}/{{total}}",
+  "recent sessions kept on this device: {{done}} of {{total}} up to date": "このデバイスに保存している最近のセッション：{{total}} 件中 {{done}} 件が最新",
+  "{{done}} of {{total}} pieces fetched": "{{total}} 個中 {{done}} 個を取得済み",
   "the device is offline — this is a read-only copy": "デバイスはオフラインです — これは読み取り専用のコピーです",
   "the device is offline, and there is no copy of this session here yet": "デバイスはオフラインで、ここにはまだこのセッションのコピーがありません",
   "the device is offline — this needs it to be online": "デバイスはオフラインです — この操作にはデバイスがオンラインである必要があります",

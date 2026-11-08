@@ -788,6 +788,12 @@ export const zhTW: Record<string, string> = {
   "offline copy · as of {{time}}": "離線副本 · 截至 {{time}}",
   "offline copy": "離線副本",
   "read-only: sending and terminals need the device online": "唯讀：傳送訊息和終端機需要裝置在線",
+  // The offline copy catching up from the hub: sessions, not messages (cloud-bar.tsx, `catchUpText`).
+  "updating from the hub": "正在從雲端更新",
+  "session list": "工作階段清單",
+  "sessions {{done}}/{{total}}": "工作階段 {{done}}/{{total}}",
+  "recent sessions kept on this device: {{done}} of {{total}} up to date": "本裝置保留的最近工作階段：{{total}} 個中 {{done}} 個已是最新",
+  "{{done}} of {{total}} pieces fetched": "{{total}} 塊中已取回 {{done}} 塊",
   "the device is offline — this is a read-only copy": "裝置離線 — 這是唯讀副本",
   "the device is offline, and there is no copy of this session here yet": "裝置離線，本裝置上還沒有這個工作階段的副本",
   "the device is offline — this needs it to be online": "裝置離線 — 這項操作需要裝置在線",

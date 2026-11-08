@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { useNavigate } from "@tanstack/react-router";
@@ -11,13 +11,17 @@ import type { PathStats } from "@/lib/e2e";
 import type { PresenceState, LinkState } from "@/lib/hub/link";
 import type { ChannelRefusal, ChannelRoute, ConnectStep, MachineChannel, MachineStatus } from "@/lib/hub/machine";
 import type { RelayPool } from "@/lib/hub/relays";
+import { isCatchingUp, type StreamProgress } from "@/lib/hub/streams";
 import type { MachineKey } from "@/lib/machines/key";
 import type { MachineInfo } from "@/lib/machines/runtime";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import type { CloudMode } from "@/lib/transport/switching";
 import {
+  type CatchUpSource,
   type CopyView,
   useAgentKeyState,
+  useCatchingUp,
+  useCatchUp,
   useChannelStatus,
   useChannelStep,
   useCopyView,
@@ -55,8 +59,9 @@ import { useHomeMachine } from "@/lib/machines/context";
  *
  * When the machine cannot be reached the app shows its offline copy
  * (`lib/transport/offline.ts`), read-only, and a notice under the strip says so
- * and how old the copy is. Only a device with no copy at all is covered
- * ("no offline copy yet") until the machine is back.
+ * and how old the copy is — and, while the copy takes a while to catch up from
+ * the hub, how far it has got (`catchUpText`). Only a device with no copy at
+ * all is covered ("no offline copy yet") until the machine is back.
  */
 export function CloudBar() {
   const shell = hubShell();
@@ -138,6 +143,7 @@ function Bar({ shell, machine }: { shell: HubShell; machine: HubMachine }) {
   const step = useChannelStep(machine.channel);
   const refusal = machine.channel.refusal;
   const state = barState({ link, presence, channel, mode, copy, refusal: refusal?.kind ?? null, linkRetryAt, channelRetryAt });
+  const catchUp = useCatchUpShown(machine.source, { mode, link });
   // A full cloud storage: the hub took no more of this machine's copy after its last write (§3.8).
   const storage = storageView(me?.plan, me?.view?.machines ?? []);
   const storageFull = storage?.level === "full" ? { stoppedMs: me?.view?.machines.find((m) => m.id === machine.key)?.copy?.lastWriteMs ?? storage.lastWriteMs } : null;
@@ -155,6 +161,7 @@ function Bar({ shell, machine }: { shell: HubShell; machine: HubMachine }) {
           link={shell.link}
           controller={machine.controller}
         />
+        {catchUp && !state.notice && <BarCatchUp source={machine.source} />}
         {state.label === "e2e" && <LivePathIndicator channel={machine.channel} relays={shell.relays} />}
         <span className="flex-1" />
         <CompatBadge compact />
@@ -174,7 +181,7 @@ function Bar({ shell, machine }: { shell: HubShell; machine: HubMachine }) {
           onDevices={() => openMyDevices()}
         />
       )}
-      {state.notice && <OfflineNotice freshestMs={copy.freshestMs} storageFull={storageFull} />}
+      {state.notice && <OfflineNotice freshestMs={copy.freshestMs} storageFull={storageFull} catchUp={catchUp ? machine.source : null} />}
       {state.cover && <NoCopyCover onDevices={() => openMyDevices()} />}
       <BlobTransfers labelOf={(from) => (from && from !== machine.key ? (machines.find((m) => m.key === from)?.name ?? from) : null)} />
     </>
@@ -311,6 +318,161 @@ function RetryCountdown({ at, onRetry }: { at: number; onRetry: () => void }) {
     >
       {t("retry {{n}} s", { n })}
     </button>
+  );
+}
+
+/** A catch-up is said only once it has gone on this long (ms): a plain resume, caught up in a moment, says nothing. */
+export const CATCH_UP_DELAY_MS = 800;
+/** Once said, it stays at least this long (ms), so it does not blink. */
+export const CATCH_UP_MIN_MS = 600;
+/** A download is big enough for its percentage with this many pages in the catch-up… */
+export const BIG_DOWNLOAD_PAGES = 8;
+/** …or once its pages have been coming for this long (ms). */
+export const BIG_DOWNLOAD_MS = 1_500;
+
+/** What the page says about the copy catching up, and the tooltip that says what its counts are. */
+export interface CatchUpLine {
+  text: string;
+  title: string | null;
+}
+
+/**
+ * What the page says while the machine's offline copy catches up from the
+ * hub (`StreamClient.progress`), or `null` while nothing is: "updating from
+ * the hub", then what — the session list while only the index catches up, or
+ * "sessions 3/7" while sessions do (3 caught up of the 7 followed now: the
+ * recent sessions this device keeps, which may grow as the index brings in
+ * newer ones) — and the share of a checkpoint's pages fetched while a
+ * download big enough to matter runs ("· 42%").
+ *
+ * Sessions, not messages: no count of messages is true while it is shown.
+ * The hub sends a stream's head only after every record it catches up on, so
+ * there is no total until the catch-up is over; and a record is one of the
+ * agent's write batches (a few seconds of a session), not a message, whose
+ * items show only once the head arrives. A session's stream is either caught
+ * up or not, and a checkpoint's signed manifest names all of its pages.
+ *
+ * The percentage counts every page of the catch-up so far (`episode`), so a
+ * second download carries on from the first instead of starting at 0 %; when
+ * a total really grows, the percentage drops rather than pretending.
+ */
+export function catchUpText(progress: StreamProgress, t: TFunction, now = Date.now()): CatchUpLine | null {
+  if (!isCatchingUp(progress)) return null;
+  const { catchingUp, synced, waiting, retrying, episode, downloadingSince } = progress;
+  const parts = [t("updating from the hub")];
+  const titles: string[] = [];
+  if (catchingUp.session > 0) {
+    const counts = { done: synced.session, total: waiting.session + retrying.session + catchingUp.session + synced.session };
+    parts.push(t("sessions {{done}}/{{total}}", counts));
+    titles.push(t("recent sessions kept on this device: {{done}} of {{total}} up to date", counts));
+  } else if (catchingUp.index > 0) {
+    parts.push(t("session list"));
+  }
+  const big = episode.total >= BIG_DOWNLOAD_PAGES || (downloadingSince !== null && now - downloadingSince >= BIG_DOWNLOAD_MS);
+  if (downloadingSince !== null && episode.total > 0 && big) {
+    parts.push(`${Math.floor((100 * episode.done) / episode.total)}%`);
+    titles.push(t("{{done}} of {{total}} pieces fetched", { done: episode.done, total: episode.total }));
+  }
+  return { text: parts.join(" · "), title: titles.length ? titles.join(" · ") : null };
+}
+
+/**
+ * `active`, once it has held for `delayMs`, and kept true for at least
+ * `minMs` once it is: what lets the bar say a catch-up only when there is
+ * one worth saying, and not blink when it ends just after.
+ */
+export function useShownAfter(active: boolean, delayMs = CATCH_UP_DELAY_MS, minMs = CATCH_UP_MIN_MS): boolean {
+  const [shown, setShown] = useState(false);
+  const shownAt = useRef(0);
+  useEffect(() => {
+    if (active === shown) return;
+    if (active) {
+      const timer = setTimeout(() => {
+        shownAt.current = Date.now();
+        setShown(true);
+      }, delayMs);
+      return () => clearTimeout(timer);
+    }
+    const timer = setTimeout(() => setShown(false), Math.max(0, minMs - (Date.now() - shownAt.current)));
+    return () => clearTimeout(timer);
+  }, [active, shown, delayMs, minMs]);
+  return shown;
+}
+
+/**
+ * Whether the bar says how far the copy of the machine in view has caught up:
+ * only while the page shows that copy (`mode` offline) over an open hub link,
+ * and something of it is being caught up on (a stream before the hub's
+ * `stream_synced`, or a checkpoint's pages) — never live, where the copy is
+ * not what is shown, and never with the link down, which the bar's own words
+ * say. A stream waiting out a backoff does not count, so one that keeps
+ * failing cannot keep it on screen. Said after `CATCH_UP_DELAY_MS`, kept for
+ * `CATCH_UP_MIN_MS` (`useShownAfter`), but gone at once with the link or
+ * into live.
+ */
+export function useCatchUpShown(source: CatchUpSource | null | undefined, page: { mode: CloudMode; link: LinkState }): boolean {
+  const eligible = page.mode === "offline" && page.link === "open";
+  const busy = useCatchingUp(source);
+  return useShownAfter(eligible && busy) && eligible;
+}
+
+/** The catch-up's words: tabular, so a count that moves does not shift what follows it. */
+export function CatchUpWords({ line }: { line: CatchUpLine }) {
+  return (
+    <span data-testid="catch-up" title={line.title ?? undefined} className="tabular-nums">
+      {line.text}
+    </span>
+  );
+}
+
+/**
+ * The catch-up's words for `source`, kept current on their own: a
+ * checkpoint's pages move the count many times a second, and only this span
+ * re-renders for it, not the bar (as with `RetryCountdown`). Once the
+ * catch-up is over it keeps its last words for as long as the bar keeps it up
+ * (`CATCH_UP_MIN_MS`). `children` places the words (with whatever leads into
+ * them), and is not called while there are none.
+ */
+export function CatchUpNote({ source, children = (words) => words }: { source: CatchUpSource; children?: (words: ReactNode) => ReactNode }) {
+  const { t } = useTranslation();
+  const progress = useCatchUp(source);
+  const [, redraw] = useState(0);
+  // A small download earns its percentage by lasting: draw again when it has.
+  const since = progress.downloadingSince;
+  useEffect(() => {
+    if (since === null) return;
+    const left = since + BIG_DOWNLOAD_MS - Date.now();
+    if (left <= 0) return;
+    const timer = setTimeout(() => redraw((n) => n + 1), left);
+    return () => clearTimeout(timer);
+  }, [since]);
+  const line = catchUpText(progress, t);
+  // The last words said for this source (another machine's are not this one's).
+  const [last, setLast] = useState<{ source: CatchUpSource; line: CatchUpLine } | null>(null);
+  if (line && (last?.source !== source || line.text !== last.line.text || line.title !== last.line.title)) setLast({ source, line });
+  const shown = line ?? (last?.source === source ? last.line : null);
+  return shown ? children(<CatchUpWords line={shown} />) : null;
+}
+
+/**
+ * The catch-up in the strip, after the connection's words, when there is no
+ * offline notice to carry it (the device is online and being connected to,
+ * or turns this browser away; or no copy of it is on this device yet). It
+ * is the first thing to give way: it
+ * shrinks before the device's name and the connection's words, and the
+ * retry countdown never does; below the shell's desktop width there is no
+ * room for it at all. Its dot sits as close as the one before a countdown.
+ */
+export function BarCatchUp({ source }: { source: CatchUpSource }) {
+  return (
+    <CatchUpNote source={source}>
+      {(words) => (
+        <span data-catch-up="bar" className="-ml-1 flex min-w-0 shrink-[999] items-center gap-1 text-faint max-md:hidden">
+          <span aria-hidden="true">·</span>
+          <span className="truncate">{words}</span>
+        </span>
+      )}
+    </CatchUpNote>
   );
 }
 
@@ -601,8 +763,23 @@ export function RefusalNotice({ refusal, limited, others, onDevices }: { refusal
  * The strip under the bar while the app shows the offline copy: how old it
  * is, and that it is read-only — and, with the account's cloud storage full,
  * a line saying the copy stopped there (relay-and-plans §3.8).
+ *
+ * While the copy catches up from the hub (`catchUp`, the machine's source,
+ * given once `useCatchUpShown` says so) how far it has got follows the time
+ * it is as of: it is that time the catch-up moves on, so the time changing
+ * when it is over is all the "done" there is. Below the shell's desktop
+ * width the time alone fills the line (it is cut there already), so the
+ * catch-up takes a line of its own under it, as a full storage does.
  */
-export function OfflineNotice({ freshestMs, storageFull = null }: { freshestMs: number | null; storageFull?: { stoppedMs: number | null } | null }) {
+export function OfflineNotice({
+  freshestMs,
+  storageFull = null,
+  catchUp = null,
+}: {
+  freshestMs: number | null;
+  storageFull?: { stoppedMs: number | null } | null;
+  catchUp?: CatchUpSource | null;
+}) {
   const { t } = useTranslation();
   const iso = freshestMs === null ? null : new Date(freshestMs).toISOString();
   return (
@@ -617,10 +794,29 @@ export function OfflineNotice({ freshestMs, storageFull = null }: { freshestMs: 
           <span className="font-mono text-fg" title={iso ? formatExactTime(iso) : undefined}>
             {iso ? t("offline copy · as of {{time}}", { time: formatTime(iso) }) : t("offline copy")}
           </span>
+          {catchUp && (
+            <CatchUpNote source={catchUp}>
+              {(words) => (
+                <span data-catch-up="notice" className="font-mono max-md:hidden">
+                  <span className="text-faint"> · </span>
+                  {words}
+                </span>
+              )}
+            </CatchUpNote>
+          )}
           <span className="text-faint"> · </span>
           {t("read-only: sending and terminals need the device online")}
         </span>
       </span>
+      {catchUp && (
+        <CatchUpNote source={catchUp}>
+          {(words) => (
+            <span data-catch-up="notice" className="truncate pl-5 font-mono text-2xs text-muted md:hidden">
+              {words}
+            </span>
+          )}
+        </CatchUpNote>
+      )}
       {storageFull && (
         <span data-testid="offline-notice-storage" className="truncate pl-5 text-2xs text-danger">
           {storageFullText(storageFull.stoppedMs, t)}

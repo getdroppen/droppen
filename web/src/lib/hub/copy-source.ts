@@ -40,7 +40,18 @@ import {
   statusStream,
   streamId,
 } from "@/lib/e2e";
-import { copyFolds, type NamedStream, NewestStream, type SavedStream, StreamClient, type StreamClientOptions, type StreamFold, type StreamSubscription } from "./streams";
+import {
+  copyFolds,
+  type NamedStream,
+  NewestStream,
+  NO_PROGRESS,
+  type SavedStream,
+  StreamClient,
+  type StreamClientOptions,
+  type StreamFold,
+  type StreamProgress,
+  type StreamSubscription,
+} from "./streams";
 
 /** What {@link HubCopySource.following} asks of the account (`CloudAccount` is one). */
 export interface CopyAccount {
@@ -420,6 +431,35 @@ export class HubCopySource implements CopySource {
     return () => {
       this.keyListeners.delete(first);
       offEpochs?.();
+    };
+  }
+
+  /** How far the machine's streams have caught up (`StreamClient.progress`); nothing, until there are keys to follow them with. */
+  get progress(): StreamProgress {
+    return this.keys?.client.progress ?? NO_PROGRESS;
+  }
+
+  /**
+   * Hear when {@link progress} changes (`StreamClient.onProgress`). The
+   * client is made only once the machine's first keys arrive, maybe long
+   * after the page asked: a listener added before then is put on it then,
+   * and told at once, since there is something to count from then on.
+   */
+  onProgress(fn: () => void): () => void {
+    let off: (() => void) | null = null;
+    const attach = (): boolean => {
+      if (off || !this.keys) return false;
+      off = this.keys.client.onProgress(() => fn());
+      return true;
+    };
+    const first = () => {
+      if (attach()) fn();
+    };
+    attach();
+    this.keyListeners.add(first);
+    return () => {
+      this.keyListeners.delete(first);
+      off?.();
     };
   }
 
