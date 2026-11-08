@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { useNavigate } from "@tanstack/react-router";
 import { Check, ChevronsUpDown, CloudOff, KeyRound, LayoutGrid, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -8,7 +9,7 @@ import { cn } from "@/lib/cn";
 import { formatExactTime, formatTime } from "@/lib/format";
 import type { PathStats } from "@/lib/e2e";
 import type { PresenceState, LinkState } from "@/lib/hub/link";
-import type { ChannelRefusal, ChannelRoute, MachineChannel, MachineStatus } from "@/lib/hub/machine";
+import type { ChannelRefusal, ChannelRoute, ConnectStep, MachineChannel, MachineStatus } from "@/lib/hub/machine";
 import type { RelayPool } from "@/lib/hub/relays";
 import type { MachineKey } from "@/lib/machines/key";
 import type { MachineInfo } from "@/lib/machines/runtime";
@@ -18,11 +19,13 @@ import {
   type CopyView,
   useAgentKeyState,
   useChannelStatus,
+  useChannelStep,
   useCopyView,
   useHubOnly,
   useLinkState,
   useMachinePresence,
   useRelayPool,
+  useRetryAt,
 } from "./context";
 import { useCloudMode } from "@/features/machines/copy-mode";
 import { DeviceDot } from "@/features/machines/device-picker";
@@ -44,9 +47,11 @@ import { useHomeMachine } from "@/lib/machines/context";
 
 /**
  * In cloud mode, a thin strip above the app: which machine it is about,
- * whether that machine is online, how this page reaches it, a switch to any
- * other machine of the account (no reload: `hub-shell.ts`), and the one way
- * to 「我的设备」 (`my-devices.tsx`). Renders nothing in local mode.
+ * whether that machine is online, how this page reaches it — or, until it
+ * does, what the page is doing about it: the step it is on, or when it tries
+ * again (`barState`, `ConnectionLabel`) — a switch to any other machine of
+ * the account (no reload: `hub-shell.ts`), and the one way to 「我的设备」
+ * (`my-devices.tsx`). Renders nothing in local mode.
  *
  * When the machine cannot be reached the app shows its offline copy
  * (`lib/transport/offline.ts`), read-only, and a notice under the strip says so
@@ -67,7 +72,17 @@ export function CloudBar() {
   return <Bar shell={shell} machine={machine} />;
 }
 
-/** What the strip says about the page's way to the machine. */
+/**
+ * What the strip says about the page's way to the machine (`label`): nothing
+ * in words while the channel is live (`e2e`, the path indicator says how);
+ * otherwise what the page is doing — connecting to the hub (`hub`), or
+ * waiting out the hub link's backoff (`hubRetry`); opening the channel
+ * (`connecting`, which the bar says by step), or waiting out its backoff
+ * after a try that failed (`deviceRetry`) — or why it is not: the hub says
+ * the device is offline (`offline`, so nothing is tried), or the device turns
+ * this browser away (`refused`, `unconfirmed`, `unsaved`). For the two that
+ * wait, `retryAt` is when the next try is.
+ */
 export function barState(input: {
   link: LinkState;
   presence: PresenceState | null;
@@ -76,8 +91,12 @@ export function barState(input: {
   copy: CopyView;
   /** How the device last refused this browser's channel, if it did (`MachineChannel.refusal`). */
   refusal?: ChannelRefusal["kind"] | null;
-}): { label: "hub" | "offline" | "e2e" | "connecting" | "refused" | "unconfirmed" | "unsaved"; notice: boolean; cover: boolean } {
-  const { link, presence, channel, mode, copy, refusal = null } = input;
+  /** When the hub link tries again, while it waits out a backoff (`HubLink.retryAt`). */
+  linkRetryAt?: number | null;
+  /** When the channel is tried again, while that waits out a backoff (`ModeController.retryAt`). */
+  channelRetryAt?: number | null;
+}): { label: BarLabel; retryAt: number | null; notice: boolean; cover: boolean } {
+  const { link, presence, channel, mode, copy, refusal = null, linkRetryAt = null, channelRetryAt = null } = input;
   const online = presence === "online";
   // A live channel needs no words, whatever the hub's connection is doing: it
   // goes through a relay (relay-and-plans §2.9).
@@ -85,17 +104,24 @@ export function barState(input: {
   // Online and answering, but not taking this browser: say why, rather than
   // "connecting…" on every retry (the refusal outlives them).
   const refused = !live && link === "open" && online && refusal !== null;
-  const label = live ? "e2e" : link !== "open" ? "hub" : !online ? "offline" : refused ? (refusal === "notAccepted" ? "refused" : refusal === "unsaved" ? "unsaved" : "unconfirmed") : "connecting";
+  const why = refusal === "notAccepted" ? "refused" : refusal === "unsaved" ? "unsaved" : "unconfirmed";
+  // Between tries, say when the next one is; a try under way (a pipe may
+  // start one before the backoff is out) is said by its step instead.
+  const waiting = channel !== "connecting" && channelRetryAt !== null;
+  const label: BarLabel = live ? "e2e" : link !== "open" ? (linkRetryAt !== null ? "hubRetry" : "hub") : !online ? "offline" : refused ? why : waiting ? "deviceRetry" : "connecting";
   // The machine is out of reach (the hub says so, or the channel keeps
   // failing) — rather than merely still being connected to, or reached and
   // refusing this browser (which `RefusalNotice` explains instead).
   const unreachable = (link === "open" && presence !== null && !online) || channel === "offline" || (channel === "error" && !refused) || (link !== "open" && mode === "offline");
   return {
     label,
+    retryAt: label === "hubRetry" ? linkRetryAt : label === "deviceRetry" ? channelRetryAt : null,
     notice: mode === "offline" && copy.hasCopy && unreachable,
     cover: mode === "offline" && copy.loaded && !copy.hasCopy && link === "open" && presence !== null && !online,
   };
 }
+
+export type BarLabel = "hub" | "hubRetry" | "offline" | "e2e" | "connecting" | "deviceRetry" | "refused" | "unconfirmed" | "unsaved";
 
 function Bar({ shell, machine }: { shell: HubShell; machine: HubMachine }) {
   const { t } = useTranslation();
@@ -107,56 +133,34 @@ function Bar({ shell, machine }: { shell: HubShell; machine: HubMachine }) {
   const keyState = useAgentKeyState(machine.key);
   const me = useMe(shell.account, shell.link);
   const machines = useShellMachines();
+  const linkRetryAt = useRetryAt(shell.link);
+  const channelRetryAt = useRetryAt(machine.controller);
+  const step = useChannelStep(machine.channel);
   const refusal = machine.channel.refusal;
-  const state = barState({ link, presence, channel, mode, copy, refusal: refusal?.kind ?? null });
+  const state = barState({ link, presence, channel, mode, copy, refusal: refusal?.kind ?? null, linkRetryAt, channelRetryAt });
   // A full cloud storage: the hub took no more of this machine's copy after its last write (§3.8).
   const storage = storageView(me?.plan, me?.view?.machines ?? []);
   const storageFull = storage?.level === "full" ? { stoppedMs: me?.view?.machines.find((m) => m.id === machine.key)?.copy?.lastWriteMs ?? storage.lastWriteMs } : null;
-  // Open and live needs no words: every path is end-to-end encrypted, so the
-  // strip only says which path it is and how fast (`LivePathIndicator`).
-  const label = {
-    hub: t("connecting to the hub…"),
-    offline: t("device offline"),
-    e2e: null,
-    connecting: t("connecting…"),
-    refused: t("this device does not accept control from this browser"),
-    unconfirmed: t("waiting for another of your devices to confirm"),
-    unsaved: t("this device could not save who connects to it"),
-  }[state.label];
   const refusalShown = state.label === "refused" || state.label === "unconfirmed" || state.label === "unsaved";
   return (
     <>
-      <div data-cloud-bar="" className="flex h-7 shrink-0 items-center gap-2 border-b border-border bg-bg px-3 font-mono text-2xs">
+      <div data-cloud-bar="" className={BAR_STRIP}>
         <DeviceDot state={presence ?? "offline"} title={presence ? undefined : t("unknown")} />
         <BarMachineName machine={machine.key} mirror={machine.mirror} />
         <MachineSwitcher shell={shell} current={machine.key} />
-        {label && (
-          <span
-            data-signal={state.label === "offline" ? "offline" : refusalShown ? "warn" : undefined}
-            className={cn("flex items-center gap-1 truncate", state.label === "offline" ? "text-danger" : refusalShown ? "text-warn-fg" : "text-faint")}
-          >
-            {label}
-          </span>
-        )}
+        <ConnectionLabel
+          label={state.label}
+          step={channel === "connecting" ? step : null}
+          retryAt={state.retryAt}
+          link={shell.link}
+          controller={machine.controller}
+        />
         {state.label === "e2e" && <LivePathIndicator channel={machine.channel} relays={shell.relays} />}
         <span className="flex-1" />
         <CompatBadge compact />
         <DevicesButton />
         <AccountButton />
-        <SignOutChoice>
-          {(ask) => (
-            <button
-              type="button"
-              data-testid="cloud-bar-sign-out"
-              onClick={ask}
-              className="flex h-5 items-center gap-1 px-1.5 text-muted hover:bg-hover hover:text-fg"
-              title={t("sign out")}
-              aria-label={t("sign out")}
-            >
-              <LogOut className="size-3" />
-            </button>
-          )}
-        </SignOutChoice>
+        <SignOutChoice>{(ask) => <SignOutButton onClick={ask} />}</SignOutChoice>
       </div>
       <AccountAlerts account={shell.account} link={shell.link} where="bar" onRemovePasskey={removePasskeyThere} onReview={() => openAccount()} />
       <PushMovedNotice />
@@ -174,6 +178,130 @@ function Bar({ shell, machine }: { shell: HubShell; machine: HubMachine }) {
       {state.cover && <NoCopyCover onDevices={() => openMyDevices()} />}
       <BlobTransfers labelOf={(from) => (from && from !== machine.key ? (machines.find((m) => m.key === from)?.name ?? from) : null)} />
     </>
+  );
+}
+
+/** The strip itself: one 28px line of 11px mono (the ui-audit fixture draws it with this too). */
+export const BAR_STRIP = "flex h-7 shrink-0 items-center gap-2 border-b border-border bg-bg px-3 font-mono text-2xs";
+
+/** The bar's sign-out icon; `onClick` asks first (`SignOutChoice`). */
+export function SignOutButton({ onClick }: { onClick: () => void }) {
+  const { t } = useTranslation();
+  return (
+    <button
+      type="button"
+      data-testid="cloud-bar-sign-out"
+      onClick={onClick}
+      className="flex h-5 items-center gap-1 px-1.5 text-muted hover:bg-hover hover:text-fg"
+      title={t("sign out")}
+      aria-label={t("sign out")}
+    >
+      <LogOut className="size-3" />
+    </button>
+  );
+}
+
+/** What the strip says while the channel is being opened: the step it is on (`MachineChannel.step`), or plainly "connecting…" between them. */
+function connectingText(t: TFunction, step: ConnectStep | null): string {
+  if (step?.kind === "presence") return t("finding the device…");
+  if (step?.kind === "relay") return step.city ? t("reaching the {{city}} relay…", { city: cityName(t, step.city) }) : t("reaching a relay…");
+  if (step?.kind === "handshake") return t("handshake…");
+  return t("connecting…");
+}
+
+/**
+ * The strip's words for `label` (`barState`): short, since at a phone's width
+ * they share what the buttons leave with the device's name (both truncate);
+ * "unreachable" stands beside "offline", which is the hub's word, not a try's.
+ * While a try is waited for (`retryAt`), the countdown to it follows, and is
+ * also the way to try now: the hub link's `wake`, or the channel's
+ * controller's `poke`. Open and live needs no words: every path is
+ * end-to-end encrypted, so the strip only says which path it is and how fast
+ * (`LivePathIndicator`).
+ */
+export function ConnectionLabel({
+  label,
+  step = null,
+  retryAt = null,
+  link,
+  controller,
+}: {
+  label: BarLabel;
+  /** What the channel being opened waits on, for `connecting`. */
+  step?: ConnectStep | null;
+  retryAt?: number | null;
+  link?: { wake(): void } | null;
+  controller?: { poke(): void } | null;
+}) {
+  const { t } = useTranslation();
+  const text = {
+    hub: t("connecting to the hub…"),
+    hubRetry: t("hub unreachable"),
+    offline: t("device offline"),
+    e2e: null,
+    connecting: connectingText(t, step),
+    deviceRetry: t("device unreachable"),
+    refused: t("this device does not accept control from this browser"),
+    unconfirmed: t("waiting for another of your devices to confirm"),
+    unsaved: t("this device could not save who connects to it"),
+  }[label];
+  if (text === null) return null;
+  const refusal = label === "refused" || label === "unconfirmed" || label === "unsaved";
+  const retry = label === "hubRetry" ? () => link?.wake() : () => controller?.poke();
+  return (
+    <span
+      data-connection={label}
+      data-signal={label === "offline" ? "offline" : refusal ? "warn" : undefined}
+      className={cn("flex min-w-0 items-center gap-1", label === "offline" ? "text-danger" : refusal ? "text-warn-fg" : "text-faint")}
+    >
+      <span className="truncate">{text}</span>
+      {retryAt !== null && (
+        <>
+          <span aria-hidden="true">·</span>
+          <RetryCountdown at={retryAt} onRetry={retry} />
+        </>
+      )}
+    </span>
+  );
+}
+
+/** Whole seconds until `at`, rounded up and never 0: a try still waited for is at least "1 s" away. */
+export function secondsUntil(at: number, now: number): number {
+  return Math.max(1, Math.ceil((at - now) / 1000));
+}
+
+/**
+ * The countdown to the next try, which is also the button that makes it now.
+ * It ticks once a second, on the second of what is left (so the number
+ * changes when it should), and only this button re-renders, not the bar: as
+ * with `LivePathIndicator`, a repaint of the whole strip for each tick is work
+ * nobody reads.
+ */
+function RetryCountdown({ at, onRetry }: { at: number; onRetry: () => void }) {
+  const { t } = useTranslation();
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const tick = () => {
+      const current = Date.now();
+      setNow(current);
+      const left = at - current;
+      if (left > 0) timer = setTimeout(tick, left % 1000 || 1000);
+    };
+    tick();
+    return () => clearTimeout(timer);
+  }, [at]);
+  return (
+    <button
+      type="button"
+      data-testid="retry-now"
+      onClick={onRetry}
+      aria-label={t("retry now")}
+      title={t("retry now")}
+      className="flex h-5 shrink-0 items-center whitespace-nowrap text-muted tabular-nums underline-offset-2 hover:text-fg hover:underline"
+    >
+      {t("retry in {{n}} s", { n: secondsUntil(at, now) })}
+    </button>
   );
 }
 
@@ -230,7 +358,8 @@ export interface PathIndicatorProps {
  * latest round trip, coloured by how fast it is. No words: which relay,
  * chosen how, or the hub, is in the hover card (and the `aria-label`), with
  * "Change relay…". Nothing about encryption: every path is end-to-end
- * encrypted.
+ * encrypted. The bar shows it only while the channel is live; until then it
+ * says in words what the page is doing (`ConnectionLabel`).
  */
 export function PathIndicator({ paths, route = null, notice = null, noDirect = false, onChangeRelay }: PathIndicatorProps) {
   const { t } = useTranslation();

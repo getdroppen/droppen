@@ -10,7 +10,8 @@
 // far later than due (this page's timers held in a background tab) gives the
 // connection one more interval instead of dropping it for a silence nobody
 // was there to hear. The relay link (`lib/hub/relay-link.ts`) takes a late
-// beat the same way.
+// beat the same way. Between tries, the link says when the next one is (the
+// bar's countdown).
 import assert from "node:assert/strict";
 import test from "node:test";
 import { decodeFrame, encodeFrame, type Frame, generateDeviceKeys } from "../src/lib/e2e/index.js";
@@ -254,6 +255,38 @@ test("a link that is down reconnects the moment the page comes back, not at the 
   const tookMs = Date.now() - woke;
   assert.ok(tookMs < 500, `signed in again ${tookMs} ms after the page came back`);
   assert.equal(sockets.length, 4);
+});
+
+test("while the link waits out its backoff it says when the next try is, and nothing while it tries, is open, or is stopped", async (t) => {
+  let offline = false;
+  const clock = 1_000_000;
+  // random 0.5: each wait is half the backoff (0.5 s doubling), on a clock that stands still.
+  const { link, sockets } = await linkWith(t, { heartbeatMs: 60_000, silenceMs: 120_000, random: () => 0.5, now: () => clock }, (s) => (s.unreachable = offline));
+  const heard: (number | null)[] = [];
+  link.onRetry((at) => heard.push(at));
+  assert.equal(link.retryAt, null, "open: nothing to wait for");
+
+  offline = true;
+  sockets[0]!.onclose?.({ code: 1006 });
+  assert.equal(link.state, "closed");
+  assert.equal(link.retryAt, clock + 250, "the first wait");
+  await until(() => sockets.length === 2 && link.retryAt !== null, "the second wait");
+  assert.equal(link.retryAt, clock + 500, "doubled after a try that failed");
+  assert.deepEqual(heard, [clock + 250, null, clock + 500], "nothing waited for while the try ran");
+
+  // Back online, and the person (or the page coming back) asks for it now.
+  offline = false;
+  link.wake();
+  assert.equal(link.retryAt, null, "a wake tries at once");
+  assert.equal(link.state, "connecting");
+  await link.waitOpen(5_000);
+  assert.equal(link.retryAt, null);
+
+  offline = true;
+  sockets.at(-1)!.onclose?.({ code: 1006 });
+  assert.equal(link.retryAt, clock + 250, "the wake started the backoff over");
+  link.stop();
+  assert.equal(link.retryAt, null, "a stopped link tries nothing");
 });
 
 /** A relay socket: lets the device in, and answers pings while `answering`. */

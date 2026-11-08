@@ -192,6 +192,8 @@ export interface ModeControllerOptions {
    * whose timer the phone held while it slept.
    */
   resume?: (fn: () => void) => () => void;
+  /** The page's clock, for {@link ModeController.retryAt} (default `Date.now`). */
+  now?: () => number;
 }
 
 /** 2 s doubling to 30 s. */
@@ -205,15 +207,23 @@ export const channelRetryMs = (attempt: number) => Math.min(2000 * 2 ** attempt,
  * opening the channel, backing off — and tries at once whenever the hub says
  * anything new of the machines, the link signs in, or the page comes back
  * ({@link ModeControllerOptions.resume}): a channel that would not open (no
- * relay could carry it, say) is never given up on.
+ * relay could carry it, say) is never given up on. While it waits out a
+ * backoff, {@link retryAt} says when the next try is, and {@link poke} makes
+ * it now (the bar's "retry now").
  */
 export class ModeController {
+  /**
+   * When the channel is tried again (the page's clock, ms), while the
+   * controller waits out a backoff after a try that failed; `null` otherwise.
+   */
+  retryAt: number | null = null;
   private downTimer: ReturnType<typeof setTimeout> | undefined;
   private retryTimer: ReturnType<typeof setTimeout> | undefined;
   private trying = false;
   private attempts = 0;
   private offs: (() => void)[] = [];
   private stopped = false;
+  private readonly retryListeners = new Set<(at: number | null) => void>();
 
   constructor(private readonly opts: ModeControllerOptions) {}
 
@@ -224,8 +234,7 @@ export class ModeController {
       this.opts.link.onPresence(() => {
         // The machine came back (or went): try straight away, not at the end of a backoff.
         this.attempts = 0;
-        clearTimeout(this.retryTimer);
-        this.retryTimer = undefined;
+        this.cancelRetry();
         this.evaluate();
       }),
       this.opts.channel.onStatus(evaluate),
@@ -234,11 +243,16 @@ export class ModeController {
     this.evaluate();
   }
 
-  /** Look again now (the machine became wanted): a channel attempt starts at once rather than after a backoff. */
+  /** Hear {@link retryAt} change: a backoff starts, or ends in a try. */
+  onRetry(fn: (at: number | null) => void): () => void {
+    this.retryListeners.add(fn);
+    return () => this.retryListeners.delete(fn);
+  }
+
+  /** Look again now (the machine became wanted, or the person asked): a channel attempt starts at once rather than after a backoff. */
   poke(): void {
     this.attempts = 0;
-    clearTimeout(this.retryTimer);
-    this.retryTimer = undefined;
+    this.cancelRetry();
     this.evaluate();
   }
 
@@ -252,7 +266,20 @@ export class ModeController {
     this.stopped = true;
     for (const off of this.offs) off();
     clearTimeout(this.downTimer);
+    this.cancelRetry();
+  }
+
+  /** No retry waiting any more: it is made now, or not at all. */
+  private cancelRetry(): void {
     clearTimeout(this.retryTimer);
+    this.retryTimer = undefined;
+    this.setRetryAt(null);
+  }
+
+  private setRetryAt(at: number | null): void {
+    if (this.retryAt === at) return;
+    this.retryAt = at;
+    for (const fn of [...this.retryListeners]) fn(at);
   }
 
   private presence(): PresenceState | null {
@@ -309,8 +336,10 @@ export class ModeController {
         const wait = (this.opts.retryMs ?? channelRetryMs)(this.attempts++);
         this.retryTimer = setTimeout(() => {
           this.retryTimer = undefined;
+          this.setRetryAt(null);
           this.evaluate();
         }, wait);
+        this.setRetryAt((this.opts.now ?? Date.now)() + wait);
       },
     );
   }

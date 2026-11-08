@@ -8,8 +8,9 @@
  * signed-out|list`, the instant-chat home in the real chat layout),
  * `?fixture=diagrams` (a transcript of the diagram types messages draw),
  * `?fixture=hostile` (the reviewer's worst-case fences beside one normal
- * diagram) or `?fixture=images` (the pictures messages draw; `&cloud=1` as a
- * page a hub serves), plus `?theme=dark`.
+ * diagram), `?fixture=images` (the pictures messages draw; `&cloud=1` as a
+ * page a hub serves) or `?fixture=cloud-bar` (the cloud bar in each state of
+ * its connection), plus `?theme=dark`.
  * `web/src/index.css` excludes this directory from Tailwind's scan
  * (`@source not`), so nothing here can change the production stylesheet. That
  * also means every class below must already occur in `web/src`; the layout
@@ -35,6 +36,11 @@ import { SelectField } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTab } from "@/components/ui/tabs";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { BAR_STRIP, type BarLabel, ConnectionLabel, OfflineNotice, PathIndicator, SignOutButton } from "@/features/cloud/cloud-bar";
+import { BarMachineName } from "@/features/cloud/machine-name";
+import { AccountButton, DevicesButton } from "@/features/cloud/my-devices";
+import { DeviceDot } from "@/features/machines/device-picker";
+import type { ConnectStep } from "@/lib/hub/machine";
 import { DeviceRow, type DeviceRowView } from "@/features/cloud/device-row";
 import { SectionHead } from "@/features/cloud/ui";
 import type { AcpAgentInfo } from "@/features/sessions/acp-agent";
@@ -448,6 +454,55 @@ function HostileFixture() {
   );
 }
 
+/**
+ * The cloud bar (`features/cloud/cloud-bar.tsx`) in each state of the page's
+ * way to the device, one strip per state as the app draws it: the real dot,
+ * name, connection words (`ConnectionLabel`), path indicator and buttons on
+ * the bar's own strip (`BAR_STRIP`), with the offline copy's notice under it
+ * where the app shows one. The countdowns are 12 s and 8 s from the load.
+ */
+const loadedAt = Date.now();
+const COPY_AS_OF = Date.UTC(2026, 10, 8, 9, 30);
+const TOKYO = { id: "nrt-1", city: "tokyo", region: "nrt", origin: "wss://nrt-1.relay.example", state: "up", load: 0.1 };
+const CLOUD_BAR_STATES: ReadonlyArray<readonly [name: string, view: { label: BarLabel; step?: ConnectStep; retryAt?: number; notice?: boolean }]> = [
+  ["hub", { label: "hub" }],
+  ["hub-retry", { label: "hubRetry", retryAt: loadedAt + 12_000, notice: true }],
+  ["presence", { label: "connecting", step: { kind: "presence" } }],
+  ["relay", { label: "connecting", step: { kind: "relay", city: "tokyo" } }],
+  ["handshake", { label: "connecting", step: { kind: "handshake" } }],
+  ["device-retry", { label: "deviceRetry", retryAt: loadedAt + 8_000, notice: true }],
+  ["live", { label: "e2e" }],
+];
+
+function CloudBarFixture() {
+  return (
+    <div data-fixture-root="" className="flex flex-col gap-4 py-4">
+      {CLOUD_BAR_STATES.map(([name, view]) => (
+        <section key={name} data-audit-row={name}>
+          <div className="mb-1 px-3 font-mono text-2xs text-muted">{name}</div>
+          <div data-cloud-bar="" className={BAR_STRIP}>
+            <DeviceDot state="online" />
+            <BarMachineName machine="studio-mac" mirror={null} />
+            <ConnectionLabel label={view.label} step={view.step} retryAt={view.retryAt} link={{ wake: noop }} controller={{ poke: noop }} />
+            {view.label === "e2e" && (
+              <PathIndicator
+                paths={{ direct: false, relayRttMs: 38.4, directRttMs: null, ups: 0, downs: 0, resent: 0, duplicates: 0 }}
+                route={{ kind: "relay", relay: TOKYO, mode: "auto" }}
+                onChangeRelay={noop}
+              />
+            )}
+            <span className="flex-1" />
+            <DevicesButton />
+            <AccountButton />
+            <SignOutButton onClick={noop} />
+          </div>
+          {view.notice && <OfflineNotice freshestMs={COPY_AS_OF} />}
+        </section>
+      ))}
+    </div>
+  );
+}
+
 const NEW_CHAT_ACCOUNT = "11111111-1111-4111-8111-111111111111";
 const newChatChats = [
   { kind: "claude", id: "chat-1", title: "Release notes for 0.6", model: "claude-sonnet-5", updatedAt: minutesAgo(12) },
@@ -585,7 +640,7 @@ async function mountNewChat(): Promise<void> {
 if (fixture === "new-chat") {
   await mountNewChat();
 } else {
-  if (fixture === "agents" || fixture === "diagrams" || fixture === "hostile" || fixture === "images")
+  if (fixture === "agents" || fixture === "diagrams" || fixture === "hostile" || fixture === "images" || fixture === "cloud-bar")
     await applyLanguage((query.get("lang") as LanguagePref | null) ?? "en");
   if (fixture === "images") {
     // Cloud mode is the hub's marker in the shell (`lib/hub/config.ts`),
@@ -610,6 +665,8 @@ if (fixture === "new-chat") {
       <HostileFixture />
     ) : fixture === "images" ? (
       <ImagesFixture />
+    ) : fixture === "cloud-bar" ? (
+      <CloudBarFixture />
     ) : (
       <SettingsFixture />
     ),

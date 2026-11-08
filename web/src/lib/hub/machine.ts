@@ -13,8 +13,8 @@
  * machine is comes from what the hub says on the connection signed in now:
  * after a reconnect or a pause the channel waits for that, and "blocked" is
  * only ever said on it (see `carrier`), never on what the page heard before —
- * otherwise the try fails as {@link ChannelPending}, and the bar keeps saying
- * "connecting" while the page tries again. An open
+ * otherwise the try fails as {@link ChannelPending}, and the bar says the
+ * page cannot reach the device yet and when it tries again. An open
  * channel is never moved between the hub and a relay (only a draining relay
  * or "reconnect now" moves it): the next one is placed afresh.
  *
@@ -86,6 +86,16 @@ import { type RelayEntry, type RelayPool, RelayRefused } from "./relays";
 import type { RelayLink } from "./relay-link";
 
 export type MachineStatus = "idle" | "connecting" | "open" | "offline" | "error";
+
+/**
+ * Where a channel being opened is ({@link MachineChannel.step}), one per
+ * thing it waits on: `presence` — for the hub to say where the machine is,
+ * after the link (re)connected or the page came back ({@link PRESENCE_WAIT_MS});
+ * `relay` — for a relay: the list, a ticket, the machine signing in there, the
+ * connection to it (`city` once one is chosen); `handshake` — for the agent's
+ * answer to the hello, on whichever carrier it went.
+ */
+export type ConnectStep = { kind: "presence" } | { kind: "relay"; city: string | null } | { kind: "handshake" };
 
 /**
  * Why the device would not take a channel, when that is how the last try
@@ -174,8 +184,8 @@ export class ChannelBlocked extends Error {
 /**
  * No channel yet, and nothing to say it cannot open: the hub has not said
  * where the machine is since the link (re)connected or the page came back
- * ({@link PRESENCE_WAIT_MS}). Not {@link ChannelBlocked}: the bar keeps saying
- * "connecting", and the next try (the hub's word on the machine starts one)
+ * ({@link PRESENCE_WAIT_MS}). Not {@link ChannelBlocked}: the bar says when
+ * the page tries again, and the next try (the hub's word on the machine starts one)
  * places the channel on what it says.
  */
 export class ChannelPending extends Error {
@@ -223,6 +233,10 @@ interface Carried {
   route: ChannelRoute;
   link: RelayLink | null;
 }
+
+/** Where a try to open a channel is: `connect` says it as {@link MachineChannel.step}; a move says nothing. */
+type StepReport = (step: ConnectStep) => void;
+const quiet: StepReport = () => undefined;
 
 /** How long a new relay gets to have the machine signed in on it. */
 const ATTACH_WAIT_MS = 1500;
@@ -397,6 +411,12 @@ export class MachineChannel implements PipeOpener {
   route: ChannelRoute | null = null;
   /** Why the channel cannot open now, when that is the reason. */
   blocked: ChannelBlocked["kind"] | null = null;
+  /**
+   * What the channel being opened waits on now, while it is `connecting`
+   * (see {@link ConnectStep}); `null` between those waits and otherwise. A
+   * move of an open channel ({@link move}) does not say: the page is live.
+   */
+  step: ConnectStep | null = null;
   private driver: ChannelDriver | null = null;
   /**
    * Drivers whose `close` has reached them (the carrier went away, or the
@@ -421,6 +441,7 @@ export class MachineChannel implements PipeOpener {
   private readonly listeners = new Set<(status: MachineStatus) => void>();
   private readonly pathListeners = new Set<(paths: PathStats | null) => void>();
   private readonly openListeners = new Set<() => void>();
+  private readonly stepListeners = new Set<(step: ConnectStep | null) => void>();
 
   constructor(
     readonly link: HubLink,
@@ -447,6 +468,18 @@ export class MachineChannel implements PipeOpener {
   onPaths(fn: (paths: PathStats | null) => void): () => void {
     this.pathListeners.add(fn);
     return () => this.pathListeners.delete(fn);
+  }
+
+  /** Hear {@link step} change while a channel is being opened. */
+  onStep(fn: (step: ConnectStep | null) => void): () => void {
+    this.stepListeners.add(fn);
+    return () => this.stepListeners.delete(fn);
+  }
+
+  private setStep(step: ConnectStep | null): void {
+    if (this.step === step) return;
+    this.step = step;
+    for (const fn of [...this.stepListeners]) fn(step);
   }
 
   /** The open channel's direct-path manager, if it has one (diagnostics). */
@@ -597,25 +630,33 @@ export class MachineChannel implements PipeOpener {
    * failures (while the phone slept or was offline, say) tried after all —
    * before saying no relay can carry it; and it says that only on presence
    * heard now ({@link ChannelPending} otherwise).
+   *
+   * What it waits on is said to `report` as it goes (the `presence` and
+   * `relay` steps).
    */
-  private async carrier(skip: Set<string>, again = false, waited = new Set<string>()): Promise<Carried> {
+  private async carrier(skip: Set<string>, again = false, waited = new Set<string>(), report: StepReport = quiet): Promise<Carried> {
     const pool = this.options.relays;
     const presence = () => this.link.presence.get(this.machine);
-    if (pool && !this.link.presenceFresh) await this.link.waitPresence(PRESENCE_WAIT_MS);
+    if (pool && !this.link.presenceFresh) {
+      report({ kind: "presence" });
+      await this.link.waitPresence(PRESENCE_WAIT_MS);
+    }
     const hub = async (): Promise<Carried> => {
       if (this.link.carriesChannels) return { carrier: this.link, route: { kind: "hub" }, link: null };
-      if (pool && !again && (pool.ageMs() > DIRECTORY_FRESH_MS || pool.benched().length > 0)) return this.carrier(skip, true, waited);
+      if (pool && !again && (pool.ageMs() > DIRECTORY_FRESH_MS || pool.benched().length > 0)) return this.carrier(skip, true, waited, report);
       if (pool && !this.link.presenceFresh) throw new ChannelPending();
       throw this.blockedNow();
     };
     // An agent from before relays signs in on none.
     if (presence()?.relays === false) return hub();
+    if (pool) report({ kind: "relay", city: null });
     const dir = pool ? await pool.ready(again ? DIRECTORY_FRESH_MS : undefined) : null;
     if (!pool || !dir || dir.relays.length === 0) return hub();
     const via = () => presence()?.via.map((v) => v.relay) ?? [];
     const benched = again;
     let choice = pool.choose(this.machine, skip, new Set(via()), { benched });
     if (!choice) return hub();
+    report({ kind: "relay", city: choice.relay.city });
     if (!via().includes(choice.relay.id)) {
       // A ticket puts it in the account's set; the hub tells the agent, which signs in there.
       let ticketed = true;
@@ -639,6 +680,7 @@ export class MachineChannel implements PipeOpener {
         const fallback = pool.choose(this.machine, new Set([...skip, ...dir.relays.filter((r) => !on.has(r.id)).map((r) => r.id)]), undefined, { benched });
         if (!fallback) return hub();
         choice = fallback;
+        report({ kind: "relay", city: choice.relay.city });
       }
     }
     let link: RelayLink;
@@ -648,7 +690,7 @@ export class MachineChannel implements PipeOpener {
       // It failed (counted: a manual choice gives way after three); this channel goes elsewhere.
       if (skip.has(choice.relay.id)) return hub();
       skip.add(choice.relay.id);
-      return this.carrier(skip, again, waited);
+      return this.carrier(skip, again, waited, report);
     }
     return {
       carrier: link,
@@ -684,7 +726,8 @@ export class MachineChannel implements PipeOpener {
     this.setStatus("connecting");
     try {
       await this.link.waitOpen();
-      const opened = await this.openChannel(new Set());
+      const opened = await this.openChannel(new Set(), (step) => this.setStep(step));
+      this.setStep(null);
       this.blocked = null;
       this.install(opened);
       this.setStatus("open");
@@ -692,6 +735,7 @@ export class MachineChannel implements PipeOpener {
       this.checkKey();
       return opened.driver;
     } catch (error) {
+      this.setStep(null);
       this.blocked = error instanceof ChannelBlocked ? error.kind : null;
       // A timeout or a lost link after an earlier refusal is not that refusal any more.
       if (!this.refusedThisTry) this.refusal = null;
@@ -718,8 +762,8 @@ export class MachineChannel implements PipeOpener {
     });
   }
 
-  /** A channel to the machine — handshake, driver, direct path — not installed yet. */
-  private async openChannel(exclude: ReadonlySet<string>): Promise<OpenedChannel> {
+  /** A channel to the machine — handshake, driver, direct path — not installed yet; what it waits on is said to `report`. */
+  private async openChannel(exclude: ReadonlySet<string>, report: StepReport = quiet): Promise<OpenedChannel> {
     const skip = new Set(exclude);
     this.lastRefusal = null;
     this.refusedThisTry = false;
@@ -736,7 +780,8 @@ export class MachineChannel implements PipeOpener {
       if (!chain.machine(this.machine)) await this.account.sync();
       // Only a device that manages the account vouches for the chain head; the hub refuses anyone else's (as `ChainFollower` does).
       if (this.account.isAdmin) this.link.attest(await this.account.attestation());
-      const { carrier, route, link: relayLink } = await this.carrier(skip);
+      const { carrier, route, link: relayLink } = await this.carrier(skip, false, new Set(), report);
+      report({ kind: "handshake" });
       const relay = route.kind === "relay" ? route.relay.id : null;
       const queue = new FrameQueue();
       let routeTo = (f: Frame) => queue.push(f);

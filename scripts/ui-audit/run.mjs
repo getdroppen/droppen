@@ -18,7 +18,7 @@
  *   --theme <t>        light | dark | both (default both)
  *   --viewport <v>     desktop | mobile | both (default both)
  *   --channel <name>   Playwright browser channel, e.g. chrome (default: bundled Chromium)
- *   --fixture <f>      settings | devices | agents | new-chat | both (default both: every fixture)
+ *   --fixture <f>      settings | devices | agents | new-chat | cloud-bar | both (default both: every fixture)
  *   --url <url>        skip the fixture and audit a running page
  *   --check            exit 1 if any target invariant fails
  */
@@ -68,6 +68,7 @@ const runSettings = which === "both" || which === "settings";
 const runDevices = which === "both" || which === "devices";
 const runAgents = which === "both" || which === "agents";
 const runNewChat = which === "both" || which === "new-chat";
+const runCloudBar = which === "both" || which === "cloud-bar";
 
 await fs.mkdir(out, { recursive: true });
 
@@ -819,6 +820,117 @@ async function auditAgents(theme, view) {
   await page.close();
 }
 
+/**
+ * The cloud bar (`features/cloud/cloud-bar.tsx`) in each state of its
+ * connection: one 28px strip; between tries, a countdown that is a real
+ * button with a name and the 2px focus ring, never "0 s", and never pushed
+ * out of the strip at a phone's width (the words before it truncate instead);
+ * while a channel is opened, the step in words; live, the path indicator and
+ * no words. Captured: the whole fixture, each state's strip on its own, the
+ * focused countdown, and the fixture in Chinese.
+ */
+async function auditCloudBar(theme, view) {
+  const page = await browser.newPage({
+    viewport: { width: view.width, height: view.height },
+    deviceScaleFactor: 1,
+    hasTouch: view.name === "mobile",
+    isMobile: view.name === "mobile",
+  });
+  const fail = (id, actual, expected) => failures.push({ theme, viewport: view.name, fixture: "cloud-bar", id, actual, expected });
+  const snapshot = () =>
+    page.evaluate(() => {
+      const rect = (e) => {
+        if (!e) return null;
+        const r = e.getBoundingClientRect();
+        return { x: +r.x.toFixed(1), y: +r.y.toFixed(1), w: +r.width.toFixed(1), h: +r.height.toFixed(1), right: +r.right.toFixed(1) };
+      };
+      const visible = (e) => e && e.getBoundingClientRect().width > 0;
+      return {
+        states: [...document.querySelectorAll("[data-audit-row]")].map((section) => {
+          const bar = section.querySelector("[data-cloud-bar]");
+          const label = bar?.querySelector("[data-connection]");
+          const words = label?.querySelector(".truncate");
+          const button = bar?.querySelector('[data-testid="retry-now"]');
+          const next = bar?.querySelector('[data-testid="my-devices"]');
+          return {
+            name: section.dataset.auditRow,
+            bar: rect(bar),
+            label: label ? { kind: label.dataset.connection, rect: rect(label), text: (words?.textContent ?? "").trim(), truncated: words ? words.scrollWidth > words.clientWidth + 1 : false } : null,
+            path: bar?.querySelector("[data-path]")?.getAttribute("data-path") ?? null,
+            button: button
+              ? { tag: button.tagName, type: button.getAttribute("type"), name: button.getAttribute("aria-label"), text: (button.textContent ?? "").trim(), rect: rect(button) }
+              : null,
+            next: rect(next),
+          };
+        }),
+        overflow: { doc: document.documentElement.scrollWidth, win: window.innerWidth },
+        invalid: [...document.querySelectorAll("[data-cloud-bar] button")]
+          .filter(visible)
+          .map((e) => ({ text: (e.textContent ?? "").trim(), radius: getComputedStyle(e).borderRadius, shadow: getComputedStyle(e).boxShadow }))
+          .filter((x) => parseFloat(x.radius) > 0 || (x.shadow !== "none" && !x.shadow.includes("inset"))),
+      };
+    });
+
+  await page.goto(`${base}ui-audit/index.html?fixture=cloud-bar&theme=${theme}`);
+  await page.evaluate(() => document.fonts.ready);
+  await page.waitForTimeout(250);
+  const before = await snapshot();
+  await page.screenshot({ path: `${out}/cloud-bar-${theme}-${view.name}.png` });
+  for (const state of before.states) {
+    await page.locator(`[data-audit-row="${state.name}"] [data-cloud-bar]`).screenshot({ path: `${out}/cloud-bar-${state.name}-${theme}-${view.name}.png` });
+  }
+  // Keyboard focus on the countdown, as a keyboard user gets it.
+  const retry = page.locator('[data-audit-row="device-retry"] [data-testid="retry-now"]');
+  await retry.focus();
+  const focus = await retry.evaluate((e) => {
+    const s = getComputedStyle(e);
+    return { focusVisible: e.matches(":focus-visible"), width: s.outlineWidth, style: s.outlineStyle, color: s.outlineColor, offset: s.outlineOffset };
+  });
+  await page.locator('[data-audit-row="device-retry"] [data-cloud-bar]').screenshot({ path: `${out}/cloud-bar-focus-${theme}-${view.name}.png` });
+  results.push({ mode: "cloud-bar", theme, viewport: view.name, before, focus });
+
+  const words = { presence: "finding the device…", relay: "reaching the Tokyo relay…", handshake: "handshake…" };
+  for (const state of before.states) {
+    if (Math.round(state.bar?.h ?? 0) !== 28) fail("cloud-bar.height", { state: state.name, h: state.bar?.h }, "a 28px strip");
+    if (state.name === "live") {
+      if (state.label) fail("cloud-bar.live-words", state.label, "no words while live");
+      if (state.path !== "relay") fail("cloud-bar.live-path", state.path, "the path indicator");
+      continue;
+    }
+    if (!state.label) {
+      fail("cloud-bar.label", state.name, "words for the state");
+      continue;
+    }
+    if (words[state.name] && state.label.text !== words[state.name]) fail("cloud-bar.step", { state: state.name, text: state.label.text }, words[state.name]);
+    const waits = state.name === "hub-retry" || state.name === "device-retry";
+    if (!waits) {
+      if (state.button) fail("cloud-bar.no-retry", state.name, "no countdown while a try is under way");
+      continue;
+    }
+    const b = state.button;
+    if (!b || b.tag !== "BUTTON" || b.type !== "button" || !b.name) fail("cloud-bar.retry-button", { state: state.name, button: b }, "a <button type=button> with an aria-label");
+    if (!b) continue;
+    if (!/^retry in [1-9]\d* s$/.test(b.text)) fail("cloud-bar.countdown", { state: state.name, text: b.text }, "retry in N s, N >= 1");
+    const inside = b.rect.x >= (state.bar?.x ?? 0) - 0.5 && b.rect.right <= Math.min(state.next?.x ?? Infinity, view.width) + 0.5;
+    if (!inside || b.rect.w < 1) fail("cloud-bar.countdown-visible", { state: state.name, button: b.rect, next: state.next }, "the whole countdown in the strip, before the buttons");
+  }
+  if (!focus.focusVisible || focus.style === "none" || parseFloat(focus.width) < 2) fail("cloud-bar.focus", focus, "2px visible outline on the countdown");
+  if (before.overflow.doc > before.overflow.win + 1) fail("cloud-bar.overflow", before.overflow, "no horizontal overflow");
+  if (before.invalid.length) fail("cloud-bar.radius-shadow", before.invalid, "no radius, no drop shadow");
+
+  // And in Chinese, where the words are narrower and the countdown reads first.
+  await page.goto(`${base}ui-audit/index.html?fixture=cloud-bar&lang=zh-CN&theme=${theme}`);
+  await page.evaluate(() => document.fonts.ready);
+  await page.waitForTimeout(250);
+  const zh = await snapshot();
+  await page.screenshot({ path: `${out}/cloud-bar-zh-CN-${theme}-${view.name}.png` });
+  results.push({ mode: "cloud-bar", lang: "zh-CN", theme, viewport: view.name, before: zh });
+  for (const state of zh.states) {
+    if (state.button && !/^[1-9]\d* 秒后重试$/.test(state.button.text)) fail("cloud-bar.zh-countdown", { state: state.name, text: state.button.text }, "N 秒后重试, N >= 1");
+  }
+  await page.close();
+}
+
 try {
   if (liveUrl) {
     for (const view of views) await auditLive(view);
@@ -829,6 +941,7 @@ try {
         if (runDevices) await auditDevices(theme, view);
         if (runAgents) await auditAgents(theme, view);
         if (runNewChat) await auditNewChat(theme, view);
+        if (runCloudBar) await auditCloudBar(theme, view);
       }
     }
   }
