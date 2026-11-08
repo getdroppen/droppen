@@ -858,6 +858,140 @@ const CLOUD_BAR_COUNTDOWN = {
   ja: /^[1-9]\d* 秒で再試行$/,
 };
 
+/**
+ * What the cloud-bar fixture's page draws, state by state (`[data-audit-row]`):
+ * the strip and its parts — the device's name and the words, each with
+ * whether it is cut short; the switcher; the countdown; the strip's free
+ * space — and, for the catch-up states, the catch-up's words wherever they are
+ * drawn (in the offline notice, in the strip, or on a line of their own under
+ * it) with the box that would cut them.
+ */
+function cloudBarSnapshot(page) {
+  return page.evaluate(() => {
+    const rect = (e) => {
+      if (!e) return null;
+      const r = e.getBoundingClientRect();
+      return { x: +r.x.toFixed(1), y: +r.y.toFixed(1), w: +r.width.toFixed(1), h: +r.height.toFixed(1), right: +r.right.toFixed(1) };
+    };
+    // Cut short by its box: an ellipsis (`truncate`) or a clip. The text's
+    // own width (a range over it) and the box's scroll width both say so.
+    const cut = (e) => {
+      if (!e) return null;
+      const range = document.createRange();
+      range.selectNodeContents(e);
+      const natural = range.getBoundingClientRect().width;
+      const shown = e.getBoundingClientRect().width;
+      return { natural: +natural.toFixed(1), shown: +shown.toFixed(1), truncated: e.scrollWidth > e.clientWidth || natural > shown + 0.5 };
+    };
+    const visible = (e) => e && e.getBoundingClientRect().width > 0;
+    return {
+      states: [...document.querySelectorAll("[data-audit-row]")].map((section) => {
+        const bar = section.querySelector("[data-cloud-bar]");
+        const label = bar?.querySelector("[data-connection]");
+        const words = label?.querySelector(".truncate");
+        const button = bar?.querySelector('[data-testid="retry-now"]');
+        const next = bar?.querySelector('[data-testid="my-devices"]');
+        // The catch-up's words: the notice has them in its line at desktop width and on a line of their own below it,
+        // the strip after its words at desktop width and on a line under it below that — the one drawn.
+        const catchUp = [...section.querySelectorAll('[data-testid="catch-up"]')].find(visible) ?? null;
+        const clip = catchUp?.closest(".truncate") ?? null;
+        const box = catchUp?.closest("[data-catch-up]") ?? null;
+        const spacer = bar?.querySelector(":scope > .flex-1");
+        // What the words' line has left after them: in the strip, its spacer; on a line of their own, up to its padding; in
+        // the notice's line, up to its end (the read-only sentence after them gives way first).
+        const after = () => {
+          const end = catchUp.getBoundingClientRect().right;
+          if (box?.dataset.catchUp === "bar") return spacer?.getBoundingClientRect().width ?? 0;
+          if (box?.dataset.catchUp === "line") return box.getBoundingClientRect().right - parseFloat(getComputedStyle(box).paddingRight) - end;
+          return (clip?.getBoundingClientRect().right ?? end) - end;
+        };
+        return {
+          name: section.dataset.auditRow,
+          bar: rect(bar),
+          device: cut(bar?.querySelector('[data-testid="bar-machine-name"]')),
+          switcher: rect(bar?.querySelector('[data-testid="machine-switcher"]')),
+          label: label ? { kind: label.dataset.connection, rect: rect(label), text: (words?.textContent ?? "").trim(), words: cut(words) } : null,
+          // What the strip has left over: nothing had to give way while it is above 0.
+          free: +(bar?.querySelector(":scope > .flex-1")?.getBoundingClientRect().width ?? 0).toFixed(1),
+          path: bar?.querySelector("[data-path]")?.getAttribute("data-path") ?? null,
+          button: button
+            ? { tag: button.tagName, type: button.getAttribute("type"), name: button.getAttribute("aria-label"), text: (button.textContent ?? "").trim(), rect: rect(button) }
+            : null,
+          next: rect(next),
+          catchUp: catchUp
+            ? {
+                where: box?.getAttribute("data-catch-up") ?? null,
+                text: (catchUp.textContent ?? "").trim(),
+                title: catchUp.getAttribute("title"),
+                rect: rect(catchUp),
+                clip: rect(clip),
+                // A line of its own, or the strip's span: nothing else in its box, so the box must not be cut either.
+                cut: clip && clip.textContent.trim() === (catchUp.textContent ?? "").trim() ? cut(clip) : null,
+                free: +after().toFixed(1),
+              }
+            : null,
+        };
+      }),
+      overflow: { doc: document.documentElement.scrollWidth, win: window.innerWidth },
+      invalid: [...document.querySelectorAll("[data-cloud-bar] button")]
+        .filter(visible)
+        .map((e) => ({ text: (e.textContent ?? "").trim(), radius: getComputedStyle(e).borderRadius, shadow: getComputedStyle(e).boxShadow }))
+        .filter((x) => parseFloat(x.radius) > 0 || (x.shadow !== "none" && !x.shadow.includes("inset"))),
+    };
+  });
+}
+
+/**
+ * The checks every state of the strip passes, whatever else it shows: 28px;
+ * the switcher drawn; the device's name and the state's words whole; live,
+ * the path indicator and no words; a countdown only between tries (`-retry`
+ * states), a real button, its words in the language, whole in the strip
+ * before the buttons.
+ */
+function checkCloudBarState(state, where, view, fail) {
+  if (Math.round(state.bar?.h ?? 0) !== 28) fail("cloud-bar.height", { ...where, h: state.bar?.h }, "a 28px strip");
+  if (!state.switcher || state.switcher.w < 1) fail("cloud-bar.switcher", { ...where, switcher: state.switcher }, "the device switcher drawn, as for an account of two devices");
+  if (state.device?.truncated) fail("cloud-bar.name-truncated", { ...where, ...state.device }, "the device's name whole, no ellipsis");
+  if (state.name === "live") {
+    if (state.label) fail("cloud-bar.live-words", { ...where, label: state.label }, "no words while live");
+    if (state.path !== "relay") fail("cloud-bar.live-path", { ...where, path: state.path }, "the path indicator");
+    return;
+  }
+  if (!state.label) {
+    fail("cloud-bar.label", where, "words for the state");
+    return;
+  }
+  if (state.label.words?.truncated) fail("cloud-bar.words-truncated", { ...where, text: state.label.text, ...state.label.words }, "the state's words whole, no ellipsis");
+  if (where.lang === "en" && CLOUD_BAR_WORDS[state.name] && state.label.text !== CLOUD_BAR_WORDS[state.name]) {
+    fail("cloud-bar.words", { ...where, text: state.label.text }, CLOUD_BAR_WORDS[state.name]);
+  }
+  const waits = /(^|-)retry$/.test(state.name);
+  if (!waits) {
+    if (state.button) fail("cloud-bar.no-retry", where, "no countdown while a try is under way");
+    return;
+  }
+  const b = state.button;
+  if (!b || b.tag !== "BUTTON" || b.type !== "button" || !b.name) fail("cloud-bar.retry-button", { ...where, button: b }, "a <button type=button> with an aria-label");
+  if (!b) return;
+  if (!CLOUD_BAR_COUNTDOWN[where.lang].test(b.text)) fail("cloud-bar.countdown", { ...where, text: b.text }, `${CLOUD_BAR_COUNTDOWN[where.lang]}`);
+  const inside = b.rect.x >= (state.bar?.x ?? 0) - 0.5 && b.rect.right <= Math.min(state.next?.x ?? Infinity, view.width) + 0.5;
+  if (!inside || b.rect.w < 1) fail("cloud-bar.countdown-visible", { ...where, button: b.rect, next: state.next }, "the whole countdown in the strip, before the buttons");
+}
+
+/** Load the cloud-bar fixture (`states`: another set of its states) in `lang`, as tall as it is, and measure it. */
+async function loadCloudBar(page, view, theme, lang, states = null) {
+  await page.goto(`${base}ui-audit/index.html?fixture=cloud-bar${states ? `&states=${states}` : ""}&lang=${lang}&theme=${theme}`);
+  await page.evaluate(() => document.fonts.ready);
+  if (states) await page.waitForSelector("[data-fixture-root]");
+  // Every state in one image: the page as tall as the fixture, since the
+  // body is fixed and nothing below the fold paints. Only the width lays
+  // the strip out.
+  const tall = await page.evaluate(() => Math.ceil(document.querySelector("[data-fixture-root]")?.getBoundingClientRect().height ?? 0));
+  if (tall > view.height) await page.setViewportSize({ width: view.width, height: tall });
+  await page.waitForTimeout(250);
+  return cloudBarSnapshot(page);
+}
+
 async function auditCloudBar(theme, view) {
   const page = await browser.newPage({
     viewport: { width: view.width, height: view.height },
@@ -866,64 +1000,9 @@ async function auditCloudBar(theme, view) {
     isMobile: view.name === "mobile",
   });
   const fail = (id, actual, expected) => failures.push({ theme, viewport: view.name, fixture: "cloud-bar", id, actual, expected });
-  const snapshot = () =>
-    page.evaluate(() => {
-      const rect = (e) => {
-        if (!e) return null;
-        const r = e.getBoundingClientRect();
-        return { x: +r.x.toFixed(1), y: +r.y.toFixed(1), w: +r.width.toFixed(1), h: +r.height.toFixed(1), right: +r.right.toFixed(1) };
-      };
-      // Cut short by its box: an ellipsis (`truncate`) or a clip. The text's
-      // own width (a range over it) and the box's scroll width both say so.
-      const cut = (e) => {
-        if (!e) return null;
-        const range = document.createRange();
-        range.selectNodeContents(e);
-        const natural = range.getBoundingClientRect().width;
-        const shown = e.getBoundingClientRect().width;
-        return { natural: +natural.toFixed(1), shown: +shown.toFixed(1), truncated: e.scrollWidth > e.clientWidth || natural > shown + 0.5 };
-      };
-      const visible = (e) => e && e.getBoundingClientRect().width > 0;
-      return {
-        states: [...document.querySelectorAll("[data-audit-row]")].map((section) => {
-          const bar = section.querySelector("[data-cloud-bar]");
-          const label = bar?.querySelector("[data-connection]");
-          const words = label?.querySelector(".truncate");
-          const button = bar?.querySelector('[data-testid="retry-now"]');
-          const next = bar?.querySelector('[data-testid="my-devices"]');
-          return {
-            name: section.dataset.auditRow,
-            bar: rect(bar),
-            device: cut(bar?.querySelector('[data-testid="bar-machine-name"]')),
-            switcher: rect(bar?.querySelector('[data-testid="machine-switcher"]')),
-            label: label ? { kind: label.dataset.connection, rect: rect(label), text: (words?.textContent ?? "").trim(), words: cut(words) } : null,
-            // What the strip has left over: nothing had to give way while it is above 0.
-            free: +(bar?.querySelector(":scope > .flex-1")?.getBoundingClientRect().width ?? 0).toFixed(1),
-            path: bar?.querySelector("[data-path]")?.getAttribute("data-path") ?? null,
-            button: button
-              ? { tag: button.tagName, type: button.getAttribute("type"), name: button.getAttribute("aria-label"), text: (button.textContent ?? "").trim(), rect: rect(button) }
-              : null,
-            next: rect(next),
-          };
-        }),
-        overflow: { doc: document.documentElement.scrollWidth, win: window.innerWidth },
-        invalid: [...document.querySelectorAll("[data-cloud-bar] button")]
-          .filter(visible)
-          .map((e) => ({ text: (e.textContent ?? "").trim(), radius: getComputedStyle(e).borderRadius, shadow: getComputedStyle(e).boxShadow }))
-          .filter((x) => parseFloat(x.radius) > 0 || (x.shadow !== "none" && !x.shadow.includes("inset"))),
-      };
-    });
 
   for (const lang of CLOUD_BAR_LANGS) {
-    await page.goto(`${base}ui-audit/index.html?fixture=cloud-bar&lang=${lang}&theme=${theme}`);
-    await page.evaluate(() => document.fonts.ready);
-    // Every state in one image: the page as tall as the fixture, since the
-    // body is fixed and nothing below the fold paints. Only the width lays
-    // the strip out.
-    const tall = await page.evaluate(() => Math.ceil(document.querySelector("[data-fixture-root]")?.getBoundingClientRect().height ?? 0));
-    if (tall > view.height) await page.setViewportSize({ width: view.width, height: tall });
-    await page.waitForTimeout(250);
-    const before = await snapshot();
+    const before = await loadCloudBar(page, view, theme, lang);
     await page.screenshot({ path: `${out}/cloud-bar${lang === "en" ? "" : `-${lang}`}-${theme}-${view.name}.png` });
     let focus = null;
     if (lang === "en") {
@@ -942,51 +1021,33 @@ async function auditCloudBar(theme, view) {
     }
     results.push({ mode: "cloud-bar", lang, theme, viewport: view.name, before, focus });
 
-    for (const state of before.states) {
-      const where = { lang, state: state.name };
-      if (Math.round(state.bar?.h ?? 0) !== 28) fail("cloud-bar.height", { ...where, h: state.bar?.h }, "a 28px strip");
-      if (!state.switcher || state.switcher.w < 1) fail("cloud-bar.switcher", { ...where, switcher: state.switcher }, "the device switcher drawn, as for an account of two devices");
-      if (state.device?.truncated) fail("cloud-bar.name-truncated", { ...where, ...state.device }, "the device's name whole, no ellipsis");
-      if (state.name === "live") {
-        if (state.label) fail("cloud-bar.live-words", { ...where, label: state.label }, "no words while live");
-        if (state.path !== "relay") fail("cloud-bar.live-path", { ...where, path: state.path }, "the path indicator");
-        continue;
-      }
-      if (!state.label) {
-        fail("cloud-bar.label", where, "words for the state");
-        continue;
-      }
-      if (state.label.words?.truncated) fail("cloud-bar.words-truncated", { ...where, text: state.label.text, ...state.label.words }, "the state's words whole, no ellipsis");
-      if (lang === "en" && CLOUD_BAR_WORDS[state.name] && state.label.text !== CLOUD_BAR_WORDS[state.name]) {
-        fail("cloud-bar.words", { ...where, text: state.label.text }, CLOUD_BAR_WORDS[state.name]);
-      }
-      const waits = state.name === "hub-retry" || state.name === "device-retry";
-      if (!waits) {
-        if (state.button) fail("cloud-bar.no-retry", where, "no countdown while a try is under way");
-        continue;
-      }
-      const b = state.button;
-      if (!b || b.tag !== "BUTTON" || b.type !== "button" || !b.name) fail("cloud-bar.retry-button", { ...where, button: b }, "a <button type=button> with an aria-label");
-      if (!b) continue;
-      if (!CLOUD_BAR_COUNTDOWN[lang].test(b.text)) fail("cloud-bar.countdown", { ...where, text: b.text }, `${CLOUD_BAR_COUNTDOWN[lang]}`);
-      const inside = b.rect.x >= (state.bar?.x ?? 0) - 0.5 && b.rect.right <= Math.min(state.next?.x ?? Infinity, view.width) + 0.5;
-      if (!inside || b.rect.w < 1) fail("cloud-bar.countdown-visible", { ...where, button: b.rect, next: state.next }, "the whole countdown in the strip, before the buttons");
-    }
+    for (const state of before.states) checkCloudBarState(state, { lang, state: state.name }, view, fail);
     if (before.overflow.doc > before.overflow.win + 1) fail("cloud-bar.overflow", { lang, ...before.overflow }, "no horizontal overflow");
     if (before.invalid.length) fail("cloud-bar.radius-shadow", { lang, invalid: before.invalid }, "no radius, no drop shadow");
   }
   await page.close();
 }
 
+/** The catch-up's words for each kind of catch-up state, in every language the app ships. */
+const CATCH_UP_WORDS = {
+  en: { index: "updating from hub · session list", sessions: "updating from hub · sessions 3/7", pages: "updating from hub · sessions 3/7 · 42%" },
+  "zh-CN": { index: "正在从云端更新 · 会话列表", sessions: "正在从云端更新 · 会话 3/7", pages: "正在从云端更新 · 会话 3/7 · 42%" },
+  "zh-TW": { index: "正在從雲端更新 · 工作階段清單", sessions: "正在從雲端更新 · 工作階段 3/7", pages: "正在從雲端更新 · 工作階段 3/7 · 42%" },
+  ja: { index: "ハブから更新中 · セッション一覧", sessions: "ハブから更新中 · セッション 3/7", pages: "ハブから更新中 · セッション 3/7 · 42%" },
+};
+
 /**
  * The cloud bar while the offline copy catches up from the hub
- * (`?fixture=cloud-bar&states=catch-up`): the words, whole, in the offline
- * notice at every width (after the copy's time at desktop width, on a line of
- * their own at a phone's); after the connection's words in the strip when
- * there is no notice, at desktop width only (a phone has no room left
- * there); the strip still 28px; and the retry countdown beside it still
- * whole. In English and Chinese. Captured: the whole fixture and each state's
- * strip with its notice, per language.
+ * (`?fixture=cloud-bar&states=catch-up`), drawn as the connection's states
+ * are (the switcher, two devices) and held to the same checks, in every
+ * language the app ships — and its words whole, with no ellipsis, at a
+ * phone's width as on a desktop: in the offline notice after the copy's time
+ * at desktop width and on a line of their own at a phone's; with no notice,
+ * after the strip's words at desktop width and on a line of their own under
+ * the strip at a phone's (where the strip's words leave them no room); the
+ * retry countdown beside them whole. Captured: the whole fixture in each
+ * language, and in English and Chinese each state's strip with what is under
+ * it. Each state's words' free space in their line is in measurements.json.
  */
 async function auditCatchUp(theme, view) {
   const page = await browser.newPage({
@@ -996,68 +1057,33 @@ async function auditCatchUp(theme, view) {
     isMobile: view.name === "mobile",
   });
   const fail = (id, actual, expected) => failures.push({ theme, viewport: view.name, fixture: "cloud-bar-catch-up", id, actual, expected });
-  const snapshot = () =>
-    page.evaluate(() => {
-      const rect = (e) => {
-        if (!e) return null;
-        const r = e.getBoundingClientRect();
-        return { x: +r.x.toFixed(1), y: +r.y.toFixed(1), w: +r.width.toFixed(1), h: +r.height.toFixed(1), right: +r.right.toFixed(1) };
-      };
-      return [...document.querySelectorAll("[data-audit-row]")].map((section) => {
-        const bar = section.querySelector("[data-cloud-bar]");
-        const notice = section.querySelector('[data-testid="offline-notice"]');
-        // The notice has the words in its line at desktop width and on a line of their own below it: the one drawn.
-        const words = [...section.querySelectorAll('[data-testid="catch-up"]')].find((e) => e.getBoundingClientRect().width > 0) ?? null;
-        // What clips the words: the notice's line, or the strip's own truncating span.
-        const clip = words?.closest(".truncate");
-        const button = bar?.querySelector('[data-testid="retry-now"]');
-        return {
-          name: section.dataset.auditRow,
-          bar: rect(bar),
-          where: words ? (notice?.contains(words) ? "notice" : "bar") : null,
-          text: (words?.textContent ?? "").trim(),
-          title: words?.getAttribute("title") ?? null,
-          words: rect(words),
-          clip: rect(clip),
-          button: button ? { text: (button.textContent ?? "").trim(), rect: rect(button) } : null,
-          next: rect(bar?.querySelector('[data-testid="my-devices"]')),
-        };
-      });
-    });
-  const expected = {
-    en: { index: "updating from the hub · session list", sessions: "updating from the hub · sessions 3/7", pages: "updating from the hub · sessions 3/7 · 42%" },
-    "zh-CN": { index: "正在从云端更新 · 会话列表", sessions: "正在从云端更新 · 会话 3/7", pages: "正在从云端更新 · 会话 3/7 · 42%" },
-  };
-  for (const lang of ["en", "zh-CN"]) {
-    await page.goto(`${base}ui-audit/index.html?fixture=cloud-bar&states=catch-up&lang=${lang}&theme=${theme}`);
-    await page.evaluate(() => document.fonts.ready);
-    await page.waitForTimeout(250);
-    const states = await snapshot();
+  for (const lang of CLOUD_BAR_LANGS) {
+    const before = await loadCloudBar(page, view, theme, lang, "catch-up");
     const tag = lang === "en" ? "" : `-${lang}`;
     await page.screenshot({ path: `${out}/cloud-bar-catch-up${tag}-${theme}-${view.name}.png` });
-    for (const state of states) {
-      await page.locator(`[data-audit-row="${state.name}"] [data-catch-up-shot]`).screenshot({ path: `${out}/cloud-bar-${state.name}${tag}-${theme}-${view.name}.png` });
+    if (lang === "en" || lang === "zh-CN") {
+      for (const state of before.states) {
+        await page.locator(`[data-audit-row="${state.name}"] [data-catch-up-shot]`).screenshot({ path: `${out}/cloud-bar-${state.name}${tag}-${theme}-${view.name}.png` });
+      }
     }
-    results.push({ mode: "cloud-bar-catch-up", lang, theme, viewport: view.name, states });
-    for (const state of states) {
-      if (Math.round(state.bar?.h ?? 0) !== 28) fail("catch-up.height", { lang, state: state.name, h: state.bar?.h }, "a 28px strip");
+    results.push({ mode: "cloud-bar-catch-up", lang, theme, viewport: view.name, before });
+    for (const state of before.states) {
+      const where = { lang, state: state.name };
+      checkCloudBarState(state, where, view, fail);
       const kind = state.name.endsWith("index") ? "index" : state.name.endsWith("sessions") ? "sessions" : "pages";
-      const inBar = state.name.includes("-bar-") || state.name === "catch-up-retry";
-      const shown = state.words && state.words.w > 0;
-      if (inBar && view.name === "mobile") {
-        if (shown) fail("catch-up.phone-bar", { lang, state: state.name, words: state.words }, "no catch-up in the strip at a phone's width");
-      } else {
-        if (!shown || state.where !== (inBar ? "bar" : "notice")) fail("catch-up.where", { lang, state: state.name, where: state.where, words: state.words }, inBar ? "in the strip" : "in the offline notice");
-        else if (state.text !== expected[lang][kind]) fail("catch-up.words", { lang, state: state.name, text: state.text }, expected[lang][kind]);
-        else if (state.clip && state.words.right > state.clip.right + 0.5) fail("catch-up.whole", { lang, state: state.name, words: state.words, clip: state.clip }, "the words whole, not cut off");
-        if (shown && kind !== "index" && !state.title) fail("catch-up.title", { lang, state: state.name }, "a tooltip saying what the counts are");
+      const noticed = !state.name.includes("-bar-") && state.name !== "catch-up-retry";
+      const expectedWhere = noticed ? "notice" : view.name === "mobile" ? "line" : "bar";
+      const c = state.catchUp;
+      if (!c || c.where !== expectedWhere) {
+        fail("catch-up.where", { ...where, where: c?.where ?? null }, expectedWhere);
+        continue;
       }
-      if (state.name === "catch-up-retry") {
-        const b = state.button;
-        const inside = b && b.rect.w >= 1 && b.rect.x >= (state.bar?.x ?? 0) - 0.5 && b.rect.right <= Math.min(state.next?.x ?? Infinity, view.width) + 0.5;
-        if (!inside) fail("catch-up.countdown-visible", { lang, button: b, next: state.next }, "the whole countdown in the strip, beside the catch-up");
-      }
+      if (c.text !== CATCH_UP_WORDS[lang][kind]) fail("catch-up.words", { ...where, text: c.text }, CATCH_UP_WORDS[lang][kind]);
+      const whole = c.clip && c.rect.x >= c.clip.x - 0.5 && c.rect.right <= c.clip.right + 0.5 && !c.cut?.truncated;
+      if (!whole) fail("catch-up.truncated", { ...where, text: c.text, words: c.rect, clip: c.clip, cut: c.cut }, "the catch-up's words whole, no ellipsis");
+      if (kind !== "index" && !c.title) fail("catch-up.title", where, "a tooltip saying what the counts are");
     }
+    if (before.overflow.doc > before.overflow.win + 1) fail("catch-up.overflow", { lang, ...before.overflow }, "no horizontal overflow");
   }
   await page.close();
 }

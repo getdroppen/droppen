@@ -169,6 +169,7 @@ function Bar({ shell, machine }: { shell: HubShell; machine: HubMachine }) {
         <AccountButton />
         <SignOutChoice>{(ask) => <SignOutButton onClick={ask} />}</SignOutChoice>
       </div>
+      {catchUp && !state.notice && <BarCatchUpLine source={machine.source} />}
       <AccountAlerts account={shell.account} link={shell.link} where="bar" onRemovePasskey={removePasskeyThere} onReview={() => openAccount()} />
       <PushMovedNotice />
       {keyState === "behind" && <OldKeyNotice onRetry={() => machine.recheckKey(true)} />}
@@ -339,11 +340,13 @@ export interface CatchUpLine {
 /**
  * What the page says while the machine's offline copy catches up from the
  * hub (`StreamClient.progress`), or `null` while nothing is: "updating from
- * the hub", then what — the session list while only the index catches up, or
+ * hub", then what — the session list while only the index catches up, or
  * "sessions 3/7" while sessions do (3 caught up of the 7 followed now: the
  * recent sessions this device keeps, which may grow as the index brings in
  * newer ones) — and the share of a checkpoint's pages fetched while a
- * download big enough to matter runs ("· 42%").
+ * download big enough to matter runs ("· 42%"). Short, as the strip's own
+ * words are, and whole wherever it is put; what the counts are is in the
+ * tooltip.
  *
  * Sessions, not messages: no count of messages is true while it is shown.
  * The hub sends a stream's head only after every record it catches up on, so
@@ -359,7 +362,7 @@ export interface CatchUpLine {
 export function catchUpText(progress: StreamProgress, t: TFunction, now = Date.now()): CatchUpLine | null {
   if (!isCatchingUp(progress)) return null;
   const { catchingUp, synced, waiting, retrying, episode, downloadingSince } = progress;
-  const parts = [t("updating from the hub")];
+  const parts = [t("updating from hub")];
   const titles: string[] = [];
   if (catchingUp.session > 0) {
     const counts = { done: synced.session, total: waiting.session + retrying.session + catchingUp.session + synced.session };
@@ -457,20 +460,41 @@ export function CatchUpNote({ source, children = (words) => words }: { source: C
 /**
  * The catch-up in the strip, after the connection's words, when there is no
  * offline notice to carry it (the device is online and being connected to,
- * or turns this browser away; or no copy of it is on this device yet). It
- * is the first thing to give way: it
- * shrinks before the device's name and the connection's words, and the
- * retry countdown never does; below the shell's desktop width there is no
- * room for it at all. Its dot sits as close as the one before a countdown.
+ * or turns this browser away; or no copy of it is on this device yet). Only
+ * where the strip has room for it beside the longest connection words and
+ * countdown (1024 px and up); narrower, it is a line of its own under the
+ * strip (`BarCatchUpLine`) — at a phone's width the strip's own words leave
+ * it a few pixels at most. Should a long device name still crowd it, it is
+ * the first thing to give way, before the name and the connection's words,
+ * and the retry countdown never does. Its dot sits as close as the one
+ * before a countdown.
  */
 export function BarCatchUp({ source }: { source: CatchUpSource }) {
   return (
     <CatchUpNote source={source}>
       {(words) => (
-        <span data-catch-up="bar" className="-ml-1 flex min-w-0 shrink-[999] items-center gap-1 text-faint max-md:hidden">
+        <span data-catch-up="bar" className="-ml-1 flex min-w-0 shrink-[999] items-center gap-1 text-faint max-lg:hidden">
           <span aria-hidden="true">·</span>
           <span className="truncate">{words}</span>
         </span>
+      )}
+    </CatchUpNote>
+  );
+}
+
+/**
+ * The catch-up as a line of its own under the strip, below 1024 px, where
+ * `BarCatchUp` has no room: lined up with the device's name above it (a gap
+ * the dot's width), whole, as the offline notice's own line is.
+ */
+export function BarCatchUpLine({ source }: { source: CatchUpSource }) {
+  return (
+    <CatchUpNote source={source}>
+      {(words) => (
+        <div data-catch-up="line" className="flex shrink-0 items-center gap-2 border-b border-border bg-bg px-3 py-1 font-mono text-2xs text-muted lg:hidden">
+          <span aria-hidden="true" className="size-[7px] shrink-0" />
+          <span className="min-w-0 truncate">{words}</span>
+        </div>
       )}
     </CatchUpNote>
   );

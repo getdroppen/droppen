@@ -789,7 +789,7 @@ export const zhCN: Record<string, string> = {
   "offline copy": "离线副本",
   "read-only: sending and terminals need the device online": "只读：发消息和终端需要设备在线",
   // The offline copy catching up from the hub: sessions, not messages (cloud-bar.tsx, `catchUpText`).
-  "updating from the hub": "正在从云端更新",
+  "updating from hub": "正在从云端更新",
   "session list": "会话列表",
   "sessions {{done}}/{{total}}": "会话 {{done}}/{{total}}",
   "recent sessions kept on this device: {{done}} of {{total}} up to date": "本设备保留的最近会话：{{total}} 个中 {{done}} 个已是最新",

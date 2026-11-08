@@ -37,7 +37,7 @@ import { SelectField } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTab } from "@/components/ui/tabs";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { BAR_STRIP, BarCatchUp, type BarLabel, ConnectionLabel, MachineSwitcher, OfflineNotice, PathIndicator, RefusalNotice, SignOutButton } from "@/features/cloud/cloud-bar";
+import { BAR_STRIP, BarCatchUp, BarCatchUpLine, type BarLabel, ConnectionLabel, MachineSwitcher, OfflineNotice, PathIndicator, RefusalNotice, SignOutButton } from "@/features/cloud/cloud-bar";
 import type { CatchUpSource } from "@/features/cloud/context";
 import type { HubShell } from "@/features/cloud/hub-shell";
 import { BarMachineName } from "@/features/cloud/machine-name";
@@ -511,14 +511,15 @@ const CLOUD_BAR_STATES: ReadonlyArray<
 ];
 
 /**
- * `&states=catch-up`: the offline copy catching up from the hub, in the
- * notice under the strip (the device is offline, or keeps failing, so the
- * notice is up) and in the strip after the connection's words (the device is
- * being connected to, or no copy is on this device yet): the session list
- * alone, sessions 3/7, and sessions 3/7 with a big checkpoint download 42 %
- * of the way (17 of 40 pages, running for 5 s); and in the strip beside the
- * retry countdown (no copy on this device yet, so no notice), which must
- * stay whole.
+ * `&states=catch-up`: the offline copy catching up from the hub, drawn as the
+ * states above are (the switcher, the same shell and router): in the notice
+ * under the strip (the device is offline, or keeps failing, so the notice is
+ * up) and, with no notice (the device is being connected to, or no copy is on
+ * this device yet), in the strip after the connection's words or on a line of
+ * its own under it: the session list alone, sessions 3/7, and sessions 3/7
+ * with a big checkpoint download 42 % of the way (17 of 40 pages, running for
+ * 5 s) — the longest. With the longest relay city, and beside a two-digit
+ * retry countdown, which must stay whole.
  */
 const counts = (index: number, status: number, session: number) => ({ index, status, session });
 const CATCH_UP_INDEX: StreamProgress = { ...NO_PROGRESS, catchingUp: counts(1, 0, 0), synced: counts(0, 1, 0) };
@@ -531,9 +532,9 @@ const CATCH_UP_STATES: ReadonlyArray<readonly [name: string, view: CatchUpView]>
   ["catch-up-sessions", { label: "offline", dot: "offline", notice: true, catchUp: CATCH_UP_SESSIONS }],
   ["catch-up-pages", { label: "offline", dot: "offline", notice: true, catchUp: CATCH_UP_PAGES }],
   ["catch-up-bar-index", { label: "connecting", dot: "online", step: { kind: "handshake" }, notice: false, catchUp: CATCH_UP_INDEX }],
-  ["catch-up-bar-sessions", { label: "connecting", dot: "online", step: { kind: "handshake" }, notice: false, catchUp: CATCH_UP_SESSIONS }],
-  ["catch-up-bar-pages", { label: "connecting", dot: "online", step: { kind: "handshake" }, notice: false, catchUp: CATCH_UP_PAGES }],
-  ["catch-up-retry", { label: "deviceRetry", dot: "online", retryAt: loadedAt + 8_000, notice: false, catchUp: CATCH_UP_PAGES }],
+  ["catch-up-bar-sessions", { label: "connecting", dot: "online", step: { kind: "presence" }, notice: false, catchUp: CATCH_UP_SESSIONS }],
+  ["catch-up-bar-pages", { label: "connecting", dot: "online", step: { kind: "relay", city: "san-francisco" }, notice: false, catchUp: CATCH_UP_PAGES }],
+  ["catch-up-retry", { label: "deviceRetry", dot: "online", retryAt: loadedAt + 16_000, notice: false, catchUp: CATCH_UP_PAGES }],
 ];
 
 function CatchUpFixture() {
@@ -546,6 +547,7 @@ function CatchUpFixture() {
             <div data-cloud-bar="" className={BAR_STRIP}>
               <DeviceDot state={view.dot} />
               <BarMachineName machine="studio-mac" mirror={null} />
+              <MachineSwitcher shell={BAR_SHELL as unknown as HubShell} current="studio-mac" />
               <ConnectionLabel label={view.label} step={view.step} retryAt={view.retryAt} link={{ wake: noop }} controller={{ poke: noop }} />
               {!view.notice && <BarCatchUp source={still(view.catchUp)} />}
               <span className="flex-1" />
@@ -553,6 +555,7 @@ function CatchUpFixture() {
               <AccountButton />
               <SignOutButton onClick={noop} />
             </div>
+            {!view.notice && <BarCatchUpLine source={still(view.catchUp)} />}
             {view.notice && <OfflineNotice freshestMs={COPY_AS_OF} catchUp={still(view.catchUp)} />}
           </div>
         </section>

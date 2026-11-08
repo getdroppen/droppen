@@ -72,14 +72,19 @@ and stays whole inside the strip. Outputs `cloud-bar-<theme>-<viewport>.png`
 (every state, as tall as the fixture) and `cloud-bar-<lang>-…` for each other
 language, one `cloud-bar-<state>-…` per state and `cloud-bar-focus-…`; each
 state's free space in the strip is in `measurements.json`.
+
 Its catch-up states (`&states=catch-up`: the offline copy catching up from the
-hub — the session list, sessions 3/7, and sessions 3/7 · 42 % — in the offline
-notice and in the strip) check the words in English and Chinese, that they are
-whole in the notice at every width (after the copy's time at desktop width, on
-a line of their own at phone width), that the strip carries them only at
-desktop width, and that the retry countdown beside them stays whole. Outputs
-`cloud-bar-catch-up-…`, `cloud-bar-catch-up-zh-CN-…` and one
-`cloud-bar-catch-up-<state>-…` (with `-zh-CN`) per state.
+hub — the session list, sessions 3/7, and sessions 3/7 · 42 %, the longest —
+drawn the same way and held to the same checks) add, in the same four
+languages: the catch-up's words themselves, whole (no ellipsis) at either
+width, where they belong — in the offline notice after the copy's time at
+desktop width and on a line of their own at phone width; with no notice, in
+the strip after its words at desktop width and on a line of their own under
+the strip at phone width — with a tooltip for the counts, and the retry
+countdown beside them whole. Outputs `cloud-bar-catch-up-<theme>-<viewport>.png`
+and `cloud-bar-catch-up-<lang>-…` for each other language, and, in English and
+zh-CN, one `cloud-bar-catch-up-<state>[-zh-CN]-…` per state with what is under
+the strip; each state's free space after the words is in `measurements.json`.
 
 The fixture deliberately exercises the target state, so on a revision that
 still has the old controls these checks fail. That is the point: run it before

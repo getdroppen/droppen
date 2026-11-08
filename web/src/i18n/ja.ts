@@ -790,7 +790,7 @@ export const ja: Record<string, string> = {
   "offline copy": "オフラインコピー",
   "read-only: sending and terminals need the device online": "読み取り専用：送信とターミナルにはデバイスがオンラインである必要があります",
   // The offline copy catching up from the hub: sessions, not messages (cloud-bar.tsx, `catchUpText`).
-  "updating from the hub": "ハブから更新中",
+  "updating from hub": "ハブから更新中",
   "session list": "セッション一覧",
   "sessions {{done}}/{{total}}": "セッション {{done}}/{{total}}",
   "recent sessions kept on this device: {{done}} of {{total}} up to date": "このデバイスに保存している最近のセッション：{{total}} 件中 {{done}} 件が最新",

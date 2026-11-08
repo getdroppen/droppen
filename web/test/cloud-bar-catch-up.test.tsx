@@ -5,7 +5,9 @@
 // for a moment and then stay a moment, under a clock the test moves; that they
 // are never said live, with the hub link down, or for a stream that only
 // waits out a backoff; and where they go: after the copy's time in the
-// offline notice, or after the connection's words in the strip.
+// offline notice, or after the connection's words in the strip — each with a
+// line of its own for where there is no room (CSS picks; the UI audit
+// measures that they show whole at 390 px).
 //
 // `import * as React` because the test directory is outside the tsconfig's
 // `include`, so tsx compiles JSX here with the classic runtime.
@@ -23,7 +25,7 @@ after(() => {
 const { act } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { I18nextProvider } = await import("react-i18next");
-const { BarCatchUp, BIG_DOWNLOAD_MS, CATCH_UP_DELAY_MS, CATCH_UP_MIN_MS, catchUpText, OfflineNotice, useCatchUpShown, useShownAfter } = await import("../src/features/cloud/cloud-bar.js");
+const { BarCatchUp, BarCatchUpLine, BIG_DOWNLOAD_MS, CATCH_UP_DELAY_MS, CATCH_UP_MIN_MS, catchUpText, OfflineNotice, useCatchUpShown, useShownAfter } = await import("../src/features/cloud/cloud-bar.js");
 const { NO_PROGRESS } = await import("../src/lib/hub/streams.js");
 const { ja } = await import("../src/i18n/ja.js");
 const { zhCN } = await import("../src/i18n/zh-CN.js");
@@ -66,37 +68,37 @@ test("nothing is said while nothing is being caught up on: all synced, only wait
 });
 
 test("the session list while only the index catches up; sessions x/y once sessions do", () => {
-  assert.deepEqual(catchUpText(INDEX, en, NOW), { text: "updating from the hub · session list", title: null });
+  assert.deepEqual(catchUpText(INDEX, en, NOW), { text: "updating from hub · session list", title: null });
   assert.equal(catchUpText(INDEX, zh, NOW)?.text, "正在从云端更新 · 会话列表");
 
   const sessions = catchUpText(SESSIONS, en, NOW);
-  assert.equal(sessions?.text, "updating from the hub · sessions 3/7");
+  assert.equal(sessions?.text, "updating from hub · sessions 3/7");
   assert.equal(sessions?.title, "recent sessions kept on this device: 3 of 7 up to date", "the tooltip says what the 7 is");
   assert.equal(catchUpText(SESSIONS, zh, NOW)?.text, "正在从云端更新 · 会话 3/7");
   assert.equal(catchUpText(SESSIONS, zh, NOW)?.title, "本设备保留的最近会话：7 个中 3 个已是最新");
 
   // y is every session followed now, a failing or waiting one too; the index catching up as well does not hide the count.
   const mixed = progress({ catchingUp: counts(1, 0, 2), waiting: counts(0, 0, 1), retrying: counts(0, 0, 1), synced: counts(0, 1, 3) });
-  assert.equal(catchUpText(mixed, en, NOW)?.text, "updating from the hub · sessions 3/7");
+  assert.equal(catchUpText(mixed, en, NOW)?.text, "updating from hub · sessions 3/7");
   // Only the status catching up: nothing more to name.
-  assert.equal(catchUpText(progress({ catchingUp: counts(0, 1, 0), synced: counts(1, 0, 2) }), en, NOW)?.text, "updating from the hub");
+  assert.equal(catchUpText(progress({ catchingUp: counts(0, 1, 0), synced: counts(1, 0, 2) }), en, NOW)?.text, "updating from hub");
 });
 
 test("a percentage while a big download runs: big by its pages or by how long it takes, counted over the whole catch-up", () => {
   const big = catchUpText(downloading(SESSIONS, 17, 40), en, NOW);
-  assert.equal(big?.text, "updating from the hub · sessions 3/7 · 42%", "17 of 40 pages: rounded down, never ahead of itself");
+  assert.equal(big?.text, "updating from hub · sessions 3/7 · 42%", "17 of 40 pages: rounded down, never ahead of itself");
   assert.equal(big?.title, "recent sessions kept on this device: 3 of 7 up to date · 17 of 40 pieces fetched");
   assert.equal(catchUpText(downloading(SESSIONS, 17, 40), zh, NOW)?.text, "正在从云端更新 · 会话 3/7 · 42%");
   assert.equal(catchUpText(downloading(SESSIONS, 17, 40), zh, NOW)?.title, "本设备保留的最近会话：7 个中 3 个已是最新 · 40 块中已取回 17 块");
-  assert.equal(catchUpText(downloading(INDEX, 4, 10), en, NOW)?.text, "updating from the hub · session list · 40%");
+  assert.equal(catchUpText(downloading(INDEX, 4, 10), en, NOW)?.text, "updating from hub · session list · 40%");
 
   // A small one says no percentage, until it has run for a while.
-  assert.equal(catchUpText(downloading(SESSIONS, 1, 3, 500), en, NOW)?.text, "updating from the hub · sessions 3/7");
-  assert.equal(catchUpText(downloading(SESSIONS, 1, 3, BIG_DOWNLOAD_MS), en, NOW)?.text, "updating from the hub · sessions 3/7 · 33%");
+  assert.equal(catchUpText(downloading(SESSIONS, 1, 3, 500), en, NOW)?.text, "updating from hub · sessions 3/7");
+  assert.equal(catchUpText(downloading(SESSIONS, 1, 3, BIG_DOWNLOAD_MS), en, NOW)?.text, "updating from hub · sessions 3/7 · 33%");
   // Pages counted, but no download running now: no percentage.
-  assert.equal(catchUpText({ ...SESSIONS, episode: { done: 20, total: 40 } }, en, NOW)?.text, "updating from the hub · sessions 3/7");
+  assert.equal(catchUpText({ ...SESSIONS, episode: { done: 20, total: 40 } }, en, NOW)?.text, "updating from hub · sessions 3/7");
   // A download on a synced stream (a live checkpoint) is a catch-up too.
-  assert.equal(catchUpText(downloading(progress({ synced: counts(1, 1, 7) }), 10, 20), en, NOW)?.text, "updating from the hub · 50%");
+  assert.equal(catchUpText(downloading(progress({ synced: counts(1, 1, 7) }), 10, 20), en, NOW)?.text, "updating from hub · 50%");
   // A total that really grows is not hidden: the share drops.
   assert.equal(catchUpText({ ...downloading(SESSIONS, 20, 40), episode: { done: 20, total: 40 } }, en, NOW)?.text.endsWith("· 50%"), true);
   assert.equal(catchUpText({ ...downloading(SESSIONS, 0, 20), episode: { done: 20, total: 60 } }, en, NOW)?.text.endsWith("· 33%"), true);
@@ -104,7 +106,7 @@ test("a percentage while a big download runs: big by its pages or by how long it
 
 test("every new string is in every shipped language", () => {
   const keys = [
-    "updating from the hub",
+    "updating from hub",
     "session list",
     "sessions {{done}}/{{total}}",
     "recent sessions kept on this device: {{done}} of {{total}} up to date",
@@ -118,8 +120,8 @@ test("every new string is in every shipped language", () => {
     }
   }
   // "The hub" is 云端 in Chinese, as in 「连不上云端」.
-  assert.ok(zhCN["updating from the hub"]!.includes("云端"));
-  assert.ok(zhTW["updating from the hub"]!.includes("雲端"));
+  assert.ok(zhCN["updating from hub"]!.includes("云端"));
+  assert.ok(zhTW["updating from hub"]!.includes("雲端"));
 });
 
 // ---------------------------------------------------------------------------
@@ -262,39 +264,56 @@ test("in the offline notice, after the copy's time; the count and the percentage
   await mount(<OfflineNotice freshestMs={Date.UTC(2026, 10, 8, 9, 30)} catchUp={src} />);
   const notice = container.querySelector('[data-testid="offline-notice"]')!;
   // In the time's line at desktop width, and on a line of its own at a phone's (CSS picks one).
-  assert.deepEqual(words(), ["updating from the hub · sessions 3/7", "updating from the hub · sessions 3/7"]);
-  assert.ok(notice.textContent!.indexOf("as of") < notice.textContent!.indexOf("updating from the hub"), "after the time it moves on");
-  assert.ok(notice.textContent!.indexOf("updating from the hub") < notice.textContent!.indexOf("read-only"));
+  assert.deepEqual(words(), ["updating from hub · sessions 3/7", "updating from hub · sessions 3/7"]);
+  assert.ok(notice.textContent!.indexOf("as of") < notice.textContent!.indexOf("updating from hub"), "after the time it moves on");
+  assert.ok(notice.textContent!.indexOf("updating from hub") < notice.textContent!.indexOf("read-only"));
   assert.equal(container.querySelector('[data-testid="catch-up"]')!.getAttribute("title"), "recent sessions kept on this device: 3 of 7 up to date");
 
   await src.set(progress({ catchingUp: counts(0, 0, 3), synced: counts(1, 1, 4) }));
-  assert.equal(words()[0], "updating from the hub · sessions 4/7");
+  assert.equal(words()[0], "updating from hub · sessions 4/7");
   // A small download: its percentage once it has run for a while.
   await src.set({ ...progress({ catchingUp: counts(0, 0, 3), synced: counts(1, 1, 4) }), pages: { done: 1, total: 3 }, downloadingSince: Date.now(), episode: { done: 1, total: 3 } });
-  assert.equal(words()[0], "updating from the hub · sessions 4/7");
+  assert.equal(words()[0], "updating from hub · sessions 4/7");
   await tick(BIG_DOWNLOAD_MS);
-  assert.equal(words()[0], "updating from the hub · sessions 4/7 · 33%", "drawn again when it has lasted, with no page to prompt it");
+  assert.equal(words()[0], "updating from hub · sessions 4/7 · 33%", "drawn again when it has lasted, with no page to prompt it");
 
   // Over, while the bar still keeps it up for its minimum: the last words, not nothing.
   await src.set(progress({ synced: counts(1, 1, 7) }));
-  assert.equal(words()[0], "updating from the hub · sessions 4/7 · 33%");
+  assert.equal(words()[0], "updating from hub · sessions 4/7 · 33%");
 
   // Without a catch-up to say, the notice is as it was.
   await mount(<OfflineNotice freshestMs={Date.UTC(2026, 10, 8, 9, 30)} />);
   assert.deepEqual(words(), []);
 });
 
-test("in the strip after the connection's words when there is no notice; nothing at all while there are no words", async () => {
+test("with no notice: in the strip after the connection's words where it has room, else on a line of its own under it; nothing at all while there are no words", async () => {
   void i18n.changeLanguage("zh-CN");
-  await mount(<BarCatchUp source={source(downloading(SESSIONS, 17, 40, 5_000))} />);
+  const busy = source(downloading(SESSIONS, 17, 40, 5_000));
+  await mount(
+    <>
+      <BarCatchUp source={busy} />
+      <BarCatchUpLine source={busy} />
+    </>,
+  );
   const bar = container.querySelector('[data-catch-up="bar"]');
   assert.ok(bar, "in the strip");
   assert.equal(bar.textContent, "·正在从云端更新 · 会话 3/7 · 42%");
-  assert.match(bar.className, /max-md:hidden/, "no room for it at a phone's width");
+  assert.match(bar.className, /max-lg:hidden/, "only where the strip has room for it beside its longest words");
   assert.match(bar.className, /shrink-\[999\]/, "the first thing in the strip to give way, before the retry countdown");
-  // Another machine's source with nothing to say: not the last machine's words, and no lone dot.
-  await mount(<BarCatchUp source={source(NO_PROGRESS)} />);
-  assert.ok(container.querySelector('[data-catch-up="bar"]') === null, "nothing drawn");
+  const line = container.querySelector('[data-catch-up="line"]');
+  assert.ok(line, "and a line of its own under the strip");
+  assert.equal(line.textContent, "正在从云端更新 · 会话 3/7 · 42%");
+  assert.match(line.className, /lg:hidden/, "where the strip has no room");
+  assert.doesNotMatch(line.className, /max-lg:hidden/);
+  // Another machine's source with nothing to say: not the last machine's words, and no lone dot or empty line.
+  const idle = source(NO_PROGRESS);
+  await mount(
+    <>
+      <BarCatchUp source={idle} />
+      <BarCatchUpLine source={idle} />
+    </>,
+  );
+  assert.ok(container.querySelector("[data-catch-up]") === null, "nothing drawn");
   assert.equal(container.textContent, "");
   void i18n.changeLanguage("en");
 });
