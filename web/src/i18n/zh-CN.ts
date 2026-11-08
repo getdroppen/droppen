@@ -756,10 +756,11 @@ export const zhCN: Record<string, string> = {
   "connecting to the hub…": "正在连接云端…",
   "device offline": "设备离线",
   // The bar while the page cannot reach the device yet: the step, or when it tries again (cloud-bar.tsx).
-  "hub unreachable": "连不上云端",
-  "device unreachable": "连不上设备",
+  // Each fits whole at 390 px beside a short device name (the UI audit's cloud-bar fixture).
+  "no hub": "连不上云端",
+  "no answer": "连不上设备",
   "finding the device…": "正在查找设备…",
-  "reaching the {{city}} relay…": "正在连接{{city}}中继…",
+  "via {{city}} relay…": "正在连接{{city}}中继…",
   "reaching a relay…": "正在连接中继…",
   "handshake…": "握手中…",
   "retry in {{n}} s": "{{n}} 秒后重试",

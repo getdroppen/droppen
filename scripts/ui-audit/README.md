@@ -59,12 +59,16 @@ frame, 16px card padding, a card at least 88px tall, a hover that changes the
 frame and underlines the name, no row-wide background fill on hover, and — at
 phone width — one column of 56px rows with no card frame.
 
-The `cloud-bar` fixture adds, for each state of the cloud bar's connection: a
-28px strip; words for every state but live, which shows the path indicator;
-the connecting steps in words; and, between tries, a countdown that is a
-`<button>` with an `aria-label` and the 2px focus ring, never says "0 s", and
-stays whole inside the strip at phone width. Outputs `cloud-bar-<theme>-<viewport>.png`,
-one `cloud-bar-<state>-…` per state, `cloud-bar-focus-…` and `cloud-bar-zh-CN-…`.
+The `cloud-bar` fixture adds, for each state of the cloud bar's connection, in
+English, zh-CN, zh-TW and ja: a 28px strip; words for every state but live,
+which shows the path indicator; the English words themselves; neither the
+words nor the device's name truncated (no ellipsis) at either width, each
+state drawn at its widest (two-digit countdowns, the longest relay city); and,
+between tries, a countdown that is a `<button>` with an `aria-label` and the
+2px focus ring, never says "0 s", and stays whole inside the strip. Outputs
+`cloud-bar-<theme>-<viewport>.png` and `cloud-bar-<lang>-…` for each other
+language, one `cloud-bar-<state>-…` per state and `cloud-bar-focus-…`; each
+state's free space in the strip is in `measurements.json`.
 
 The fixture deliberately exercises the target state, so on a revision that
 still has the old controls these checks fail. That is the point: run it before

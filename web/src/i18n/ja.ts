@@ -757,10 +757,11 @@ export const ja: Record<string, string> = {
   "connecting to the hub…": "ハブに接続中…",
   "device offline": "デバイスはオフライン",
   // The bar while the page cannot reach the device yet: the step, or when it tries again (cloud-bar.tsx).
-  "hub unreachable": "ハブに接続できません",
-  "device unreachable": "デバイスに接続できません",
+  // Each fits whole at 390 px beside a short device name (the UI audit's cloud-bar fixture).
+  "no hub": "ハブ未接続",
+  "no answer": "応答なし",
   "finding the device…": "デバイスを探しています…",
-  "reaching the {{city}} relay…": "{{city}}の中継に接続中…",
+  "via {{city}} relay…": "{{city}}の中継経由…",
   "reaching a relay…": "中継に接続中…",
   "handshake…": "ハンドシェイク中…",
   "retry in {{n}} s": "{{n}} 秒後に再試行",

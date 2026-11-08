@@ -756,10 +756,11 @@ export const zhTW: Record<string, string> = {
   "connecting to the hub…": "正在連線雲端…",
   "device offline": "裝置離線",
   // The bar while the page cannot reach the device yet: the step, or when it tries again (cloud-bar.tsx).
-  "hub unreachable": "連不上雲端",
-  "device unreachable": "連不上裝置",
+  // Each fits whole at 390 px beside a short device name (the UI audit's cloud-bar fixture).
+  "no hub": "連不上雲端",
+  "no answer": "連不上裝置",
   "finding the device…": "正在尋找裝置…",
-  "reaching the {{city}} relay…": "正在連線{{city}}中繼…",
+  "via {{city}} relay…": "正在連線{{city}}中繼…",
   "reaching a relay…": "正在連線中繼…",
   "handshake…": "交握中…",
   "retry in {{n}} s": "{{n}} 秒後重試",

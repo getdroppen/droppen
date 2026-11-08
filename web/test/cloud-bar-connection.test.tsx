@@ -32,7 +32,11 @@ const { makeI18n, pageDraw } = await import("./render.js");
 
 const i18n = makeI18n({
   lng: "en",
-  resources: { en: { translation: {} }, "zh-CN": { translation: { ...cloudDevicesZhCN, ...zhCN } } },
+  resources: {
+    en: { translation: {} },
+    "zh-CN": { translation: { ...cloudDevicesZhCN, ...zhCN } },
+    ja: { translation: { ...cloudDevicesJa, ...ja } },
+  },
   keySeparator: false,
   nsSeparator: false,
 });
@@ -70,17 +74,20 @@ test("the countdown rounds up and never says 0 s while a try is still waited for
   assert.equal(secondsUntil(12_000, 15_000), 1, "overdue (timers held in a background tab): still 1 s");
 });
 
-test("the bar's words for each state, in English and Chinese", () => {
+// The words are short enough to show whole at 390 px beside a short device
+// name, in every language: the UI audit's cloud-bar fixture measures that.
+test("the bar's words for each state, in English, Chinese and Japanese", () => {
   const now = Date.now();
   const say = (node: React.ReactElement, lng = "en") => draw(node, lng).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
   assert.equal(say(<ConnectionLabel label="hub" />), "connecting to the hub…");
-  assert.equal(say(<ConnectionLabel label="hubRetry" retryAt={now + 12_000} />), "hub unreachable · retry in 12 s");
+  assert.equal(say(<ConnectionLabel label="hubRetry" retryAt={now + 12_000} />), "no hub · retry in 12 s");
   assert.equal(say(<ConnectionLabel label="connecting" step={{ kind: "presence" }} />), "finding the device…");
   assert.equal(say(<ConnectionLabel label="connecting" step={{ kind: "relay", city: null }} />), "reaching a relay…");
-  assert.equal(say(<ConnectionLabel label="connecting" step={{ kind: "relay", city: "tokyo" }} />), "reaching the Tokyo relay…");
+  assert.equal(say(<ConnectionLabel label="connecting" step={{ kind: "relay", city: "tokyo" }} />), "via Tokyo relay…");
+  assert.equal(say(<ConnectionLabel label="connecting" step={{ kind: "relay", city: "san-francisco" }} />), "via San Francisco relay…");
   assert.equal(say(<ConnectionLabel label="connecting" step={{ kind: "handshake" }} />), "handshake…");
   assert.equal(say(<ConnectionLabel label="connecting" />), "connecting…", "between steps");
-  assert.equal(say(<ConnectionLabel label="deviceRetry" retryAt={now + 7_400} />), "device unreachable · retry in 8 s");
+  assert.equal(say(<ConnectionLabel label="deviceRetry" retryAt={now + 7_400} />), "no answer · retry in 8 s");
   assert.equal(say(<ConnectionLabel label="offline" />), "device offline", "as before");
   assert.equal(draw(<ConnectionLabel label="e2e" />), "", "live: no words, the path indicator says it");
 
@@ -91,6 +98,10 @@ test("the bar's words for each state, in English and Chinese", () => {
   assert.equal(say(<ConnectionLabel label="connecting" step={{ kind: "handshake" }} />, "zh-CN"), "握手中…");
   assert.equal(say(<ConnectionLabel label="deviceRetry" retryAt={now + 7_400} />, "zh-CN"), "连不上设备 · 8 秒后重试");
 
+  assert.equal(say(<ConnectionLabel label="hubRetry" retryAt={now + 12_000} />, "ja"), "ハブ未接続 · 12 秒後に再試行");
+  assert.equal(say(<ConnectionLabel label="connecting" step={{ kind: "relay", city: "san-francisco" }} />, "ja"), "サンフランシスコの中継経由…");
+  assert.equal(say(<ConnectionLabel label="deviceRetry" retryAt={now + 15_600} />, "ja"), "応答なし · 16 秒後に再試行");
+
   const html = draw(<ConnectionLabel label="deviceRetry" retryAt={now + 8_000} />);
   assert.match(html, /<button type="button" data-testid="retry-now"[^>]*aria-label="retry now"/, "a real button, named for what it does");
   assert.doesNotMatch(html, /outline-none/, "with the page's own focus ring");
@@ -100,10 +111,10 @@ test("the bar's words for each state, in English and Chinese", () => {
 
 test("every new string is in every shipped language", () => {
   const keys = [
-    "hub unreachable",
-    "device unreachable",
+    "no hub",
+    "no answer",
     "finding the device…",
-    "reaching the {{city}} relay…",
+    "via {{city}} relay…",
     "reaching a relay…",
     "handshake…",
     "retry in {{n}} s",

@@ -204,15 +204,18 @@ export function SignOutButton({ onClick }: { onClick: () => void }) {
 /** What the strip says while the channel is being opened: the step it is on (`MachineChannel.step`), or plainly "connecting…" between them. */
 function connectingText(t: TFunction, step: ConnectStep | null): string {
   if (step?.kind === "presence") return t("finding the device…");
-  if (step?.kind === "relay") return step.city ? t("reaching the {{city}} relay…", { city: cityName(t, step.city) }) : t("reaching a relay…");
+  if (step?.kind === "relay") return step.city ? t("via {{city}} relay…", { city: cityName(t, step.city) }) : t("reaching a relay…");
   if (step?.kind === "handshake") return t("handshake…");
   return t("connecting…");
 }
 
 /**
- * The strip's words for `label` (`barState`): short, since at a phone's width
- * they share what the buttons leave with the device's name (both truncate);
- * "unreachable" stands beside "offline", which is the hub's word, not a try's.
+ * The strip's words for `label` (`barState`): short enough that at a phone's
+ * width (390 px) every state, its countdown included, shows whole beside a
+ * short device name in every language, rather than both truncating — the UI
+ * audit's cloud-bar fixture measures that, with a relay city as long as
+ * San Francisco. "no answer" is how a try ended, beside "device offline",
+ * which is the hub's word, so nothing is tried.
  * While a try is waited for (`retryAt`), the countdown to it follows, and is
  * also the way to try now: the hub link's `wake`, or the channel's
  * controller's `poke`. Open and live needs no words: every path is
@@ -236,11 +239,11 @@ export function ConnectionLabel({
   const { t } = useTranslation();
   const text = {
     hub: t("connecting to the hub…"),
-    hubRetry: t("hub unreachable"),
+    hubRetry: t("no hub"),
     offline: t("device offline"),
     e2e: null,
     connecting: connectingText(t, step),
-    deviceRetry: t("device unreachable"),
+    deviceRetry: t("no answer"),
     refused: t("this device does not accept control from this browser"),
     unconfirmed: t("waiting for another of your devices to confirm"),
     unsaved: t("this device could not save who connects to it"),

@@ -459,7 +459,10 @@ function HostileFixture() {
  * way to the device, one strip per state as the app draws it: the real dot,
  * name, connection words (`ConnectionLabel`), path indicator and buttons on
  * the bar's own strip (`BAR_STRIP`), with the offline copy's notice under it
- * where the app shows one. The countdowns are 12 s and 8 s from the load.
+ * where the app shows one. Each state is drawn at its widest: both countdowns
+ * have two digits (12 s and 16 s from the load), and a relay step names the
+ * longest relay city as well as Tokyo, since at 390 px every one of them must
+ * show whole beside a short device name.
  */
 const loadedAt = Date.now();
 const COPY_AS_OF = Date.UTC(2026, 10, 8, 9, 30);
@@ -469,8 +472,11 @@ const CLOUD_BAR_STATES: ReadonlyArray<readonly [name: string, view: { label: Bar
   ["hub-retry", { label: "hubRetry", retryAt: loadedAt + 12_000, notice: true }],
   ["presence", { label: "connecting", step: { kind: "presence" } }],
   ["relay", { label: "connecting", step: { kind: "relay", city: "tokyo" } }],
+  ["relay-long", { label: "connecting", step: { kind: "relay", city: "san-francisco" } }],
   ["handshake", { label: "connecting", step: { kind: "handshake" } }],
-  ["device-retry", { label: "deviceRetry", retryAt: loadedAt + 8_000, notice: true }],
+  ["connecting", { label: "connecting" }],
+  ["device-retry", { label: "deviceRetry", retryAt: loadedAt + 16_000, notice: true }],
+  ["offline", { label: "offline", notice: true }],
   ["live", { label: "e2e" }],
 ];
 
@@ -481,7 +487,7 @@ function CloudBarFixture() {
         <section key={name} data-audit-row={name}>
           <div className="mb-1 px-3 font-mono text-2xs text-muted">{name}</div>
           <div data-cloud-bar="" className={BAR_STRIP}>
-            <DeviceDot state="online" />
+            <DeviceDot state={view.label === "offline" ? "offline" : "online"} />
             <BarMachineName machine="studio-mac" mirror={null} />
             <ConnectionLabel label={view.label} step={view.step} retryAt={view.retryAt} link={{ wake: noop }} controller={{ poke: noop }} />
             {view.label === "e2e" && (
