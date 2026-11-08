@@ -387,3 +387,153 @@ test("disposing the pool (its machine closed) stops every feed: sockets closed, 
   await new Promise((resolve) => setTimeout(resolve, 20));
   assert.equal(sockets.length, 2, "nothing reconnects after");
 });
+
+// ---------------------------------------------------------------------------
+// What an opening feed is waiting for (`FeedView.opening`), which the view says
+// under its spinner: the socket connecting, the server's answer, the offline
+// copy's download from the hub, or another try after `closed`.
+
+/** A feed on screen, and every view its store has handed out since. */
+async function opened(t: TestContext, extra: Partial<FeedPoolDeps> = {}) {
+  const { sockets, deps } = harness();
+  const pool = poolFor(t, { ...deps, ...extra }, { cached: 8, idleSockets: 3, idleMs: 60_000 });
+  const feed = pool.feed("claude", "a");
+  const views: ReturnType<typeof feed.getView>[] = [];
+  feed.subscribe(() => views.push(feed.getView()));
+  pool.acquire(feed, pin());
+  await flush();
+  return { sockets, feed, views, opening: () => feed.getView().opening };
+}
+
+test("an opening feed says it is connecting, then waits for the server's answer, and its window ends the wait", async (t) => {
+  const { sockets, opening } = await opened(t);
+  assert.deepEqual(opening(), { stage: "connecting" }, "the socket is not open yet");
+  sockets[0]!.open();
+  assert.deepEqual(opening(), { stage: "loading" }, "asked, and nothing has answered");
+  sockets[0]!.frame(snapshot("a", 3));
+  assert.equal(opening(), null, "a window is nothing to wait for");
+});
+
+test("a feed drawn from the device copy says no opening, and its resuming delta keeps it so", async (t) => {
+  const { sockets, deps } = harness();
+  const copy = { ...snapshot("a", 3), type: undefined } as unknown as import("../src/features/sessions/session-feed-pool.js").FeedState;
+  const pool = poolFor(t, { ...deps, persist: { load: async () => copy, save: () => undefined } }, { cached: 8, idleSockets: 3, idleMs: 60_000 });
+  const feed = pool.feed("claude", "a");
+  pool.acquire(feed, pin());
+  await flush();
+  assert.equal(feed.getView().opening, null, "the copy is drawn, so nothing is said over it");
+  sockets[0]!.open();
+  assert.equal(feed.getView().opening, null);
+  sockets[0]!.frame({ type: "delta", sig: "a:2", fromIndex: 3, items: [], endIndex: 3, totalItems: 3, prefixFp: "a-fp" });
+  assert.equal(feed.getView().opening, null);
+});
+
+test("a shared-socket channel already open when it is handed over waits for the answer at once", async (t) => {
+  const channel = new FakeSocket("channel");
+  channel.readyState = 1;
+  const { opening } = await opened(t, { openFeed: () => channel });
+  assert.deepEqual(opening(), { stage: "loading" });
+});
+
+test("the offline copy's progress frames say its download, with the pages or without", async (t) => {
+  const { sockets, opening } = await opened(t);
+  sockets[0]!.open();
+  sockets[0]!.frame({ type: "progress", stage: "copy" });
+  assert.deepEqual(opening(), { stage: "copy" }, "fetching, with no download running yet");
+  sockets[0]!.frame({ type: "progress", stage: "copy", done: 12, total: 256 });
+  assert.deepEqual(opening(), { stage: "copy", done: 12, total: 256 });
+  sockets[0]!.frame({ type: "progress", stage: "copy", done: 300, total: 256 });
+  assert.deepEqual(opening(), { stage: "copy", done: 256, total: 256 }, "never past the total");
+  sockets[0]!.frame({ type: "progress", stage: "copy", done: 3 });
+  assert.deepEqual(opening(), { stage: "copy" }, "a count with no total is no bar");
+  sockets[0]!.frame({ type: "progress", stage: "copy", done: 1.5, total: "9" });
+  assert.deepEqual(opening(), { stage: "copy" }, "numbers that are not whole counts are dropped");
+  sockets[0]!.frame(snapshot("a", 3));
+  assert.equal(opening(), null);
+});
+
+test("a server's read progress is the loading stage, in bytes; a stage this page does not know is ignored", async (t) => {
+  const { sockets, opening, views } = await opened(t);
+  sockets[0]!.open();
+  sockets[0]!.frame({ type: "progress", stage: "read", done: 40_000_000, total: 127_000_000 });
+  assert.deepEqual(opening(), { stage: "loading", done: 40_000_000, total: 127_000_000 });
+  const seen = views.length;
+  sockets[0]!.frame({ type: "progress", stage: "index", done: 1, total: 2 });
+  sockets[0]!.frame({ type: "progress" });
+  assert.equal(views.length, seen, "nothing changed, so no view was woken");
+  assert.deepEqual(opening(), { stage: "loading", done: 40_000_000, total: 127_000_000 });
+});
+
+test("an opening that changes wakes the view, and one said again with the same numbers does not", async (t) => {
+  const { sockets, views } = await opened(t);
+  sockets[0]!.open();
+  const before = views.length;
+  for (const done of [1, 1, 2, 2]) sockets[0]!.frame({ type: "progress", stage: "copy", done, total: 10 });
+  assert.deepEqual(
+    views.slice(before).map((view) => view.opening),
+    [
+      { stage: "copy", done: 1, total: 10 },
+      { stage: "copy", done: 2, total: 10 },
+    ],
+    "one view per change, none for a frame that repeats itself",
+  );
+});
+
+test("a pooled feed with a window that reconnects says nothing of it", async (t) => {
+  const { sockets, feed, views } = await opened(t);
+  sockets[0]!.open();
+  sockets[0]!.frame(snapshot("a", 3));
+  const before = views.length;
+  sockets[0]!.drop();
+  await new Promise((resolve) => setTimeout(resolve, 600));
+  assert.equal(sockets.length, 2, "reconnected");
+  sockets[1]!.open();
+  sockets[1]!.frame({ type: "progress", stage: "copy", done: 1, total: 2 });
+  assert.equal(feed.getView().opening, null);
+  assert.ok(views.slice(before).every((view) => view.opening === null), "no view saw an opening");
+});
+
+test("closed with nothing on screen is retrying, through every attempt, until a window arrives", async (t) => {
+  const { sockets, opening } = await opened(t);
+  sockets[0]!.open();
+  sockets[0]!.frame({ type: "closed" });
+  assert.deepEqual(opening(), { stage: "retrying" });
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+  assert.equal(sockets.length, 2, "asked again after the backoff");
+  assert.deepEqual(opening(), { stage: "retrying" }, "the same wait while it connects");
+  sockets[1]!.open();
+  assert.deepEqual(opening(), { stage: "retrying" }, "and while it waits for the answer");
+  sockets[1]!.frame({ type: "progress", stage: "copy" });
+  assert.deepEqual(opening(), { stage: "copy" }, "a download says more than the retry");
+  sockets[1]!.frame(snapshot("a", 3));
+  assert.equal(opening(), null);
+});
+
+test("a refusal for want of room is no retry: the feed connects on a socket of its own", async (t) => {
+  const channel = new FakeSocket("channel");
+  const { sockets, opening } = await opened(t, { openFeed: () => channel });
+  channel.open();
+  channel.frame({ type: "closed", reason: "limit" });
+  assert.deepEqual(opening(), { stage: "connecting" });
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+  assert.equal(sockets.length, 1);
+  assert.deepEqual(opening(), { stage: "connecting" });
+  sockets[0]!.open();
+  assert.deepEqual(opening(), { stage: "loading" });
+});
+
+test("a session refused for good waits for nothing: the view says it is not found", async (t) => {
+  const { sockets, feed, opening } = await opened(t);
+  sockets[0]!.open();
+  sockets[0]!.frame({ type: "closed", reason: "invalid" });
+  assert.equal(feed.getView().connection, "gone");
+  assert.equal(opening(), null);
+});
+
+test("closed over a window on screen keeps the window and says no opening", async (t) => {
+  const { sockets, opening } = await opened(t);
+  sockets[0]!.open();
+  sockets[0]!.frame(snapshot("a", 3));
+  sockets[0]!.frame({ type: "closed" });
+  assert.equal(opening(), null);
+});

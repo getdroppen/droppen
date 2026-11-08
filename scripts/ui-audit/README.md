@@ -23,7 +23,7 @@ pnpm ui-audit --fixture devices   # only the devices page
 Options:
 
 - `--out <dir>` (default `/tmp/droppen-ui-audit-<date>`)
-- `--fixture settings|devices|both` (default `both`)
+- `--fixture settings|devices|agents|new-chat|cloud-bar|session-opening|both` (default `both`)
 - `--theme light|dark|both`, `--viewport desktop|mobile|both`
 - `--channel chrome` — use a system Chrome instead of the bundled Chromium
 - `--url <url>` — measure a running page instead of the fixture (no target
@@ -85,6 +85,20 @@ countdown beside them whole. Outputs `cloud-bar-catch-up-<theme>-<viewport>.png`
 and `cloud-bar-catch-up-<lang>-…` for each other language, and, in English and
 zh-CN, one `cloud-bar-catch-up-<state>[-zh-CN]-…` per state with what is under
 the strip; each state's free space after the words is in `measurements.json`.
+
+The `session-opening` fixture (a session being opened with nothing to show
+yet, `features/sessions/session-opening.tsx`: connecting, waiting for the
+server's answer, the offline copy downloading from the hub with its pages and
+without, retrying after `closed`) adds, in English, zh-CN, zh-TW and ja: the
+spinner in the middle of the view, where it always was; one line under it
+saying the stage's words (checked word for word in every language), mono at
+11px, whole (no ellipsis, no clip) inside the view's 24px padding at either
+width; the thin bar, 2px and square, filled to its share, only for the
+copy's pages; and nothing below the view. Outputs
+`session-opening-<theme>-<viewport>.png` and `session-opening-<lang>-…` for
+each other language, and, in English and zh-CN, one
+`session-opening-<state>[-zh-CN]-…` per stage, with the spinner held still;
+each stage's free space beside its line is in `measurements.json`.
 
 The fixture deliberately exercises the target state, so on a revision that
 still has the old controls these checks fail. That is the point: run it before

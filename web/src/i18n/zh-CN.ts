@@ -747,6 +747,12 @@ export const zhCN: Record<string, string> = {
   "send as your answer": "作为回答发送",
   // The activity bar while the agent thinks (turn-status.tsx).
   "thinking…": "思考中…",
+  // A session opening with nothing to show yet, under the spinner (session-opening.tsx); "connecting…" is below.
+  // Each fits whole at 390 px (the UI audit's session-opening fixture).
+  "loading session…": "读取会话…",
+  "from hub…": "从云端下载…",
+  "from hub · {{done}}/{{total}}": "从云端下载 · {{done}}/{{total}}",
+  "cannot open · retrying": "打不开会话 · 重试中",
   // Cloud mode (features/cloud).
   "done": "完成",
   "continue": "继续",

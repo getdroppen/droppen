@@ -66,12 +66,59 @@ export type FeedState = Omit<Detail, "itemsChanged" | "reset"> &
  */
 export type FeedConnection = "live" | "reconnecting" | "gone" | "cached";
 
+/**
+ * What a feed with no window yet is waiting for, which the view says under its
+ * spinner (`session-opening.tsx`).
+ *
+ * - `connecting`: the socket, or the page's shared one, is not open yet.
+ * - `loading`: the subscription is out and nothing has answered it. The
+ *   device's server reads even a 127 MB transcript in under half a second, so
+ *   nearly all of this wait is the snapshot travelling back, which no count
+ *   describes: there are no numbers here, unless a server says how far its
+ *   own read has got (a `progress` frame at stage `read`, in bytes).
+ * - `copy`: the offline copy is fetching the session from the hub. `done` and
+ *   `total` count its checkpoint pages, and are there only while a download
+ *   runs.
+ * - `retrying`: the server answered `closed`, and the feed is backing off
+ *   before it asks again (see {@link CLOSED_FRAMES_BEFORE_GONE}).
+ */
+export type OpeningStage = "connecting" | "loading" | "copy" | "retrying";
+
+export interface FeedOpening {
+  stage: OpeningStage;
+  done?: number;
+  total?: number;
+}
+
 /** Everything a view renders from a feed; replaced, never mutated. */
 export interface FeedView {
   data: FeedState | null;
   connection: FeedConnection;
   isLoadingEarlier: boolean;
   historyError: string | null;
+  /** What the feed is waiting for while `data` is `null`; always `null` once there is a window. */
+  opening: FeedOpening | null;
+}
+
+/** Whether two openings say the same: a `progress` frame repeats itself with the same numbers. */
+function sameOpening(a: FeedOpening | null, b: FeedOpening | null): boolean {
+  if (a === b) return true;
+  return a !== null && b !== null && a.stage === b.stage && a.done === b.done && a.total === b.total;
+}
+
+/**
+ * A `progress` frame as what the feed is waiting for, or `null` for a stage
+ * this page does not know, which is left unsaid. The numbers come as a pair
+ * or not at all: a count with no total is nothing a bar can be drawn from.
+ */
+export function progressOf(m: Record<string, unknown>): FeedOpening | null {
+  const stage = m.stage === "copy" ? "copy" : m.stage === "read" ? "loading" : null;
+  if (!stage) return null;
+  const { done, total } = m;
+  if (Number.isInteger(done) && Number.isInteger(total) && (total as number) > 0 && (done as number) >= 0) {
+    return { stage, done: Math.min(done as number, total as number), total: total as number };
+  }
+  return { stage };
 }
 
 /**
@@ -246,6 +293,11 @@ interface Run {
   // time, so only a snapshot proves the session is really there.
   closedFrames: number;
   lastWasClosedFrame: boolean;
+  // Whether the server has said `closed` to this session since its last
+  // window, which makes every attempt until the next one a retry. A refusal
+  // for want of room on the shared socket is not one: the feed goes on at
+  // once, over a socket of its own.
+  retrying: boolean;
   timer: ReturnType<typeof setTimeout> | undefined;
   // One resync in flight per socket: every delta that misses while it is out
   // is covered by its answer, which is cut from the server's latest read.
@@ -263,7 +315,7 @@ export interface PinSource {
 export class SessionFeed {
   readonly key: string;
   readonly drafts: DraftStore = createDraftStore();
-  private view: FeedView = { data: null, connection: "live", isLoadingEarlier: false, historyError: null };
+  private view: FeedView = { data: null, connection: "live", isLoadingEarlier: false, historyError: null, opening: null };
   private readonly listeners = new Set<() => void>();
   private readonly viewers = new Set<PinSource>();
   private run: Run | null = null;
@@ -319,11 +371,18 @@ export class SessionFeed {
 
   private patch(next: Partial<FeedView>): void {
     const merged = { ...this.view, ...next };
+    // A window ends every wait, so a feed that has one never wakes its view to
+    // say what it is waiting for: a pooled socket that reconnects under a
+    // transcript on screen is no opening.
+    if (merged.data) merged.opening = null;
+    // The same numbers said again are the same object, and no news.
+    if (sameOpening(merged.opening, this.view.opening)) merged.opening = this.view.opening;
     if (
       merged.data === this.view.data &&
       merged.connection === this.view.connection &&
       merged.isLoadingEarlier === this.view.isLoadingEarlier &&
-      merged.historyError === this.view.historyError
+      merged.historyError === this.view.historyError &&
+      merged.opening === this.view.opening
     ) {
       return;
     }
@@ -411,7 +470,8 @@ export class SessionFeed {
     // from before would otherwise flash on the way back.
     this.drafts.clear();
     this.loadingEarlier = false;
-    this.patch({ isLoadingEarlier: false });
+    // Nothing is being waited for with no socket; the next attach says what it waits on.
+    this.patch({ isLoadingEarlier: false, opening: null });
   }
 
   /**
@@ -436,6 +496,7 @@ export class SessionFeed {
       retry: 0,
       closedFrames: 0,
       lastWasClosedFrame: false,
+      retrying: false,
       timer: undefined,
       resyncPending: false,
       refused: false,
@@ -450,6 +511,10 @@ export class SessionFeed {
 
   private connect(run: Run): void {
     if (run.stopped) return;
+    // Each attempt starts by connecting, except once the server has answered
+    // `closed`: every attempt until a window arrives is then one more try at
+    // a session it would not open, and is said as such.
+    this.patch({ opening: { stage: run.retrying ? "retrying" : "connecting" } });
     // The device copy is what lets this attach resume rather than re-download
     // a page, so a read still in flight is worth the few milliseconds' wait.
     if (this.hydrating) {
@@ -505,6 +570,8 @@ export class SessionFeed {
     ws.onopen = () => {
       run.retry = 0;
       run.resyncPending = false;
+      // The subscription goes out with the open: what is left is its answer.
+      if (!run.stopped) this.patch({ opening: { stage: run.retrying ? "retrying" : "loading" } });
     };
     // A shared-socket channel can be open by the time it is handed over; an
     // open this feed never hears of is a retry streak it never resets.
@@ -567,9 +634,11 @@ export class SessionFeed {
       // before its tail, so replace the window instead of mixing versions.
       // (A reconnect the server could resume is answered with a delta.)
       run.resyncPending = false;
+      // A window, so nothing is waited for any more (`patch` clears `opening`).
       this.setData(() => snapshot);
       // The session answered, so whatever the last few frames said is spent.
       run.closedFrames = 0;
+      run.retrying = false;
       this.patch({ historyError: null, connection: "live" });
     } else if (m.type === "reset") {
       run.resyncPending = false;
@@ -580,7 +649,8 @@ export class SessionFeed {
       // A resumed attach opens with a delta rather than a snapshot, and is
       // just as much proof that the session is there.
       run.closedFrames = 0;
-      this.patch({ connection: "live" });
+      run.retrying = false;
+      this.patch({ connection: "live", opening: null });
       this.setData((prev) => {
         if (!prev) return prev;
         const grown = applyTranscriptDelta(prev, delta);
@@ -612,6 +682,15 @@ export class SessionFeed {
       // think in flight out of it (`stream-draft.ts`): nothing in a draft
       // waits on the transcript, so it goes in the moment it arrives.
       this.drafts.receive(thinkingOf(m));
+    } else if (m.type === "progress") {
+      // How far the far end has got with the window this feed waits for: the
+      // offline copy fetching it from the hub (`copy`, in checkpoint pages),
+      // or a server's read of the transcript (`read`, in bytes). Repeated as
+      // the numbers move, a few times a second at most. A server or a copy
+      // from before these frames sends none, and the stage the feed set
+      // itself stands; a stage this page does not know changes nothing.
+      const opening = progressOf(m);
+      if (opening) this.patch({ opening });
     } else if (m.type === "closed") {
       // NOT a terminal state. The server broadcasts this to every feed when
       // it restarts to install its own update, so treating it as "the
@@ -631,7 +710,15 @@ export class SessionFeed {
       } else if (reason === "limit") {
         this.ownSocket = true;
       }
-      this.patch({ connection: run.closedFrames >= CLOSED_FRAMES_BEFORE_GONE ? "gone" : "reconnecting" });
+      if (reason !== "limit") run.retrying = true;
+      // With nothing on screen this is the wait the reader sits through
+      // before "session not found" (a backoff of 1 + 2 + 4 + 8 s), so it is
+      // said; the connection's own retries are the cloud bar's to say.
+      const gone = run.closedFrames >= CLOSED_FRAMES_BEFORE_GONE;
+      this.patch({
+        connection: gone ? "gone" : "reconnecting",
+        opening: gone ? null : { stage: run.retrying ? "retrying" : "connecting" },
+      });
       run.ws?.close();
     }
   }
