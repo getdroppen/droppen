@@ -18,7 +18,7 @@
  *   --theme <t>        light | dark | both (default both)
  *   --viewport <v>     desktop | mobile | both (default both)
  *   --channel <name>   Playwright browser channel, e.g. chrome (default: bundled Chromium)
- *   --fixture <f>      settings | devices | agents | new-chat | both (default both: every fixture)
+ *   --fixture <f>      settings | devices | agents | new-chat | cloud-bar | both (default both: every fixture)
  *   --url <url>        skip the fixture and audit a running page
  *   --check            exit 1 if any target invariant fails
  */
@@ -68,6 +68,7 @@ const runSettings = which === "both" || which === "settings";
 const runDevices = which === "both" || which === "devices";
 const runAgents = which === "both" || which === "agents";
 const runNewChat = which === "both" || which === "new-chat";
+const runCloudBar = which === "both" || which === "cloud-bar";
 
 await fs.mkdir(out, { recursive: true });
 
@@ -819,6 +820,164 @@ async function auditAgents(theme, view) {
   await page.close();
 }
 
+/**
+ * The cloud bar (`features/cloud/cloud-bar.tsx`) in each state of its
+ * connection, in every language the app ships: one 28px strip, with the
+ * device switcher drawn (an account of two devices, as most are); every
+ * state's words and the device's name whole, with no ellipsis, at a phone's
+ * width as on a desktop (the fixture draws each state at its widest: two-digit
+ * countdowns, the longest relay city); between tries, a countdown that is a
+ * real button with a name and the 2px focus ring, never "0 s", and whole in
+ * the strip before the buttons; while a channel is opened, the step in words;
+ * live, the path indicator and no words. Captured: the whole fixture in each
+ * language, and in English each state's strip on its own and the focused
+ * countdown. Each state's free space (the strip's spacer) is in
+ * measurements.json.
+ */
+const CLOUD_BAR_LANGS = ["en", "zh-CN", "zh-TW", "ja"];
+/** The English words the bar says for each fixture state. */
+const CLOUD_BAR_WORDS = {
+  hub: "reaching the hub…",
+  "hub-retry": "no hub",
+  presence: "finding the device…",
+  relay: "Tokyo relay…",
+  "relay-long": "San Francisco relay…",
+  handshake: "handshake…",
+  connecting: "connecting…",
+  "device-retry": "no reply",
+  offline: "device offline",
+  refused: "refuses this browser",
+  unconfirmed: "confirmation pending",
+  unsaved: "access not saved",
+};
+/** The countdown in each language: a whole number of seconds, at least 1. */
+const CLOUD_BAR_COUNTDOWN = {
+  en: /^retry [1-9]\d* s$/,
+  "zh-CN": /^[1-9]\d* 秒后重试$/,
+  "zh-TW": /^[1-9]\d* 秒後重試$/,
+  ja: /^[1-9]\d* 秒で再試行$/,
+};
+
+async function auditCloudBar(theme, view) {
+  const page = await browser.newPage({
+    viewport: { width: view.width, height: view.height },
+    deviceScaleFactor: 1,
+    hasTouch: view.name === "mobile",
+    isMobile: view.name === "mobile",
+  });
+  const fail = (id, actual, expected) => failures.push({ theme, viewport: view.name, fixture: "cloud-bar", id, actual, expected });
+  const snapshot = () =>
+    page.evaluate(() => {
+      const rect = (e) => {
+        if (!e) return null;
+        const r = e.getBoundingClientRect();
+        return { x: +r.x.toFixed(1), y: +r.y.toFixed(1), w: +r.width.toFixed(1), h: +r.height.toFixed(1), right: +r.right.toFixed(1) };
+      };
+      // Cut short by its box: an ellipsis (`truncate`) or a clip. The text's
+      // own width (a range over it) and the box's scroll width both say so.
+      const cut = (e) => {
+        if (!e) return null;
+        const range = document.createRange();
+        range.selectNodeContents(e);
+        const natural = range.getBoundingClientRect().width;
+        const shown = e.getBoundingClientRect().width;
+        return { natural: +natural.toFixed(1), shown: +shown.toFixed(1), truncated: e.scrollWidth > e.clientWidth || natural > shown + 0.5 };
+      };
+      const visible = (e) => e && e.getBoundingClientRect().width > 0;
+      return {
+        states: [...document.querySelectorAll("[data-audit-row]")].map((section) => {
+          const bar = section.querySelector("[data-cloud-bar]");
+          const label = bar?.querySelector("[data-connection]");
+          const words = label?.querySelector(".truncate");
+          const button = bar?.querySelector('[data-testid="retry-now"]');
+          const next = bar?.querySelector('[data-testid="my-devices"]');
+          return {
+            name: section.dataset.auditRow,
+            bar: rect(bar),
+            device: cut(bar?.querySelector('[data-testid="bar-machine-name"]')),
+            switcher: rect(bar?.querySelector('[data-testid="machine-switcher"]')),
+            label: label ? { kind: label.dataset.connection, rect: rect(label), text: (words?.textContent ?? "").trim(), words: cut(words) } : null,
+            // What the strip has left over: nothing had to give way while it is above 0.
+            free: +(bar?.querySelector(":scope > .flex-1")?.getBoundingClientRect().width ?? 0).toFixed(1),
+            path: bar?.querySelector("[data-path]")?.getAttribute("data-path") ?? null,
+            button: button
+              ? { tag: button.tagName, type: button.getAttribute("type"), name: button.getAttribute("aria-label"), text: (button.textContent ?? "").trim(), rect: rect(button) }
+              : null,
+            next: rect(next),
+          };
+        }),
+        overflow: { doc: document.documentElement.scrollWidth, win: window.innerWidth },
+        invalid: [...document.querySelectorAll("[data-cloud-bar] button")]
+          .filter(visible)
+          .map((e) => ({ text: (e.textContent ?? "").trim(), radius: getComputedStyle(e).borderRadius, shadow: getComputedStyle(e).boxShadow }))
+          .filter((x) => parseFloat(x.radius) > 0 || (x.shadow !== "none" && !x.shadow.includes("inset"))),
+      };
+    });
+
+  for (const lang of CLOUD_BAR_LANGS) {
+    await page.goto(`${base}ui-audit/index.html?fixture=cloud-bar&lang=${lang}&theme=${theme}`);
+    await page.evaluate(() => document.fonts.ready);
+    // Every state in one image: the page as tall as the fixture, since the
+    // body is fixed and nothing below the fold paints. Only the width lays
+    // the strip out.
+    const tall = await page.evaluate(() => Math.ceil(document.querySelector("[data-fixture-root]")?.getBoundingClientRect().height ?? 0));
+    if (tall > view.height) await page.setViewportSize({ width: view.width, height: tall });
+    await page.waitForTimeout(250);
+    const before = await snapshot();
+    await page.screenshot({ path: `${out}/cloud-bar${lang === "en" ? "" : `-${lang}`}-${theme}-${view.name}.png` });
+    let focus = null;
+    if (lang === "en") {
+      for (const state of before.states) {
+        await page.locator(`[data-audit-row="${state.name}"] [data-cloud-bar]`).screenshot({ path: `${out}/cloud-bar-${state.name}-${theme}-${view.name}.png` });
+      }
+      // Keyboard focus on the countdown, as a keyboard user gets it.
+      const retry = page.locator('[data-audit-row="device-retry"] [data-testid="retry-now"]');
+      await retry.focus();
+      focus = await retry.evaluate((e) => {
+        const s = getComputedStyle(e);
+        return { focusVisible: e.matches(":focus-visible"), width: s.outlineWidth, style: s.outlineStyle, color: s.outlineColor, offset: s.outlineOffset };
+      });
+      await page.locator('[data-audit-row="device-retry"] [data-cloud-bar]').screenshot({ path: `${out}/cloud-bar-focus-${theme}-${view.name}.png` });
+      if (!focus.focusVisible || focus.style === "none" || parseFloat(focus.width) < 2) fail("cloud-bar.focus", focus, "2px visible outline on the countdown");
+    }
+    results.push({ mode: "cloud-bar", lang, theme, viewport: view.name, before, focus });
+
+    for (const state of before.states) {
+      const where = { lang, state: state.name };
+      if (Math.round(state.bar?.h ?? 0) !== 28) fail("cloud-bar.height", { ...where, h: state.bar?.h }, "a 28px strip");
+      if (!state.switcher || state.switcher.w < 1) fail("cloud-bar.switcher", { ...where, switcher: state.switcher }, "the device switcher drawn, as for an account of two devices");
+      if (state.device?.truncated) fail("cloud-bar.name-truncated", { ...where, ...state.device }, "the device's name whole, no ellipsis");
+      if (state.name === "live") {
+        if (state.label) fail("cloud-bar.live-words", { ...where, label: state.label }, "no words while live");
+        if (state.path !== "relay") fail("cloud-bar.live-path", { ...where, path: state.path }, "the path indicator");
+        continue;
+      }
+      if (!state.label) {
+        fail("cloud-bar.label", where, "words for the state");
+        continue;
+      }
+      if (state.label.words?.truncated) fail("cloud-bar.words-truncated", { ...where, text: state.label.text, ...state.label.words }, "the state's words whole, no ellipsis");
+      if (lang === "en" && CLOUD_BAR_WORDS[state.name] && state.label.text !== CLOUD_BAR_WORDS[state.name]) {
+        fail("cloud-bar.words", { ...where, text: state.label.text }, CLOUD_BAR_WORDS[state.name]);
+      }
+      const waits = state.name === "hub-retry" || state.name === "device-retry";
+      if (!waits) {
+        if (state.button) fail("cloud-bar.no-retry", where, "no countdown while a try is under way");
+        continue;
+      }
+      const b = state.button;
+      if (!b || b.tag !== "BUTTON" || b.type !== "button" || !b.name) fail("cloud-bar.retry-button", { ...where, button: b }, "a <button type=button> with an aria-label");
+      if (!b) continue;
+      if (!CLOUD_BAR_COUNTDOWN[lang].test(b.text)) fail("cloud-bar.countdown", { ...where, text: b.text }, `${CLOUD_BAR_COUNTDOWN[lang]}`);
+      const inside = b.rect.x >= (state.bar?.x ?? 0) - 0.5 && b.rect.right <= Math.min(state.next?.x ?? Infinity, view.width) + 0.5;
+      if (!inside || b.rect.w < 1) fail("cloud-bar.countdown-visible", { ...where, button: b.rect, next: state.next }, "the whole countdown in the strip, before the buttons");
+    }
+    if (before.overflow.doc > before.overflow.win + 1) fail("cloud-bar.overflow", { lang, ...before.overflow }, "no horizontal overflow");
+    if (before.invalid.length) fail("cloud-bar.radius-shadow", { lang, invalid: before.invalid }, "no radius, no drop shadow");
+  }
+  await page.close();
+}
+
 try {
   if (liveUrl) {
     for (const view of views) await auditLive(view);
@@ -829,6 +988,7 @@ try {
         if (runDevices) await auditDevices(theme, view);
         if (runAgents) await auditAgents(theme, view);
         if (runNewChat) await auditNewChat(theme, view);
+        if (runCloudBar) await auditCloudBar(theme, view);
       }
     }
   }

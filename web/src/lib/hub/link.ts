@@ -29,6 +29,8 @@
  * socket with 1012, and the page should not notice more than a blip. Every
  * channel on a connection that went away is told so (a synthetic `close`
  * with {@link LINK_LOST}); channels re-handshake on the next connection.
+ * While it waits out a backoff, {@link HubLink.retryAt} says when the next
+ * try is, so the bar can say it rather than "connecting" all along.
  *
  * It pings every {@link HEARTBEAT_MS}, which the hub answers, and a
  * connection that has brought nothing at all for {@link SILENCE_MS} is taken
@@ -137,6 +139,12 @@ export class HubLink extends SocketLink<LinkState> {
    * signs in (a deploy may have turned relaying back on) or the page reloads.
    */
   carriesChannels = true;
+  /**
+   * When the next connection is tried (the page's clock, ms), while the link
+   * waits out its backoff; `null` while a connection is being made, is open,
+   * or the link is stopped.
+   */
+  retryAt: number | null = null;
 
   private stopped = true;
   private backoff = BACKOFF_MIN;
@@ -154,6 +162,7 @@ export class HubLink extends SocketLink<LinkState> {
   private readonly presenceListeners = new Set<Listener<Map<string, MachinePresence>>>();
   private readonly controlListeners = new Set<Listener<Record<string, unknown>>>();
   private readonly chainListeners = new Set<Listener<Uint8Array[]>>();
+  private readonly retryListeners = new Set<Listener<number | null>>();
 
   constructor(private readonly opts: LinkOptions) {
     super();
@@ -169,8 +178,21 @@ export class HubLink extends SocketLink<LinkState> {
     this.stopped = true;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
+    this.setRetryAt(null);
     this.socket?.close(1000, "bye");
     this.dropConnection();
+  }
+
+  /** Hear {@link retryAt} change: a backoff starts, or ends in a try. */
+  onRetry(fn: Listener<number | null>): () => void {
+    this.retryListeners.add(fn);
+    return () => this.retryListeners.delete(fn);
+  }
+
+  private setRetryAt(at: number | null): void {
+    if (this.retryAt === at) return;
+    this.retryAt = at;
+    for (const fn of [...this.retryListeners]) fn(at);
   }
 
   onPresence(fn: Listener<Map<string, MachinePresence>>): () => void {
@@ -301,6 +323,7 @@ export class HubLink extends SocketLink<LinkState> {
 
   private connect(): void {
     if (this.stopped) return;
+    this.setRetryAt(null);
     this.setState("connecting");
     const make = this.opts.makeSocket ?? ((url: string) => new WebSocket(url) as unknown as SocketLike);
     let socket: SocketLike;
@@ -471,5 +494,6 @@ export class HubLink extends SocketLink<LinkState> {
       this.reconnectTimer = null;
       this.connect();
     }, wait);
+    this.setRetryAt(this.now() + wait);
   }
 }

@@ -11,7 +11,7 @@ import { useMemo, useSyncExternalStore } from "react";
 import { type AgentKeyState, agentKeyState, onAgentKeyState } from "@/lib/hub/deliver";
 import type { CloudAccount } from "@/lib/hub/account";
 import type { HubLink, LinkState, PresenceState } from "@/lib/hub/link";
-import type { MachineChannel, MachineStatus } from "@/lib/hub/machine";
+import type { ConnectStep, MachineChannel, MachineStatus } from "@/lib/hub/machine";
 import type { MachineMirror } from "@/lib/hub/mirror";
 import type { RelayPool } from "@/lib/hub/relays";
 import type { MachineKey } from "@/lib/machines/key";
@@ -87,6 +87,28 @@ export function useChannelStatus(channel: MachineChannel | null | undefined): Ma
   return useSyncExternalStore(
     (notify) => (channel ? channel.onStatus(notify) : () => undefined),
     () => channel?.status ?? "idle",
+  );
+}
+
+/** What the channel being opened waits on now (`MachineChannel.step`). */
+export function useChannelStep(channel: MachineChannel | null | undefined): ConnectStep | null {
+  return useSyncExternalStore(
+    (notify) => (channel ? channel.onStep(notify) : () => undefined),
+    () => channel?.step ?? null,
+    () => null,
+  );
+}
+
+/**
+ * When the next try is due (ms) while the hub link (`HubLink.retryAt`) or a
+ * machine's channel (`ModeController.retryAt`) waits out a backoff; `null`
+ * otherwise. It changes when a backoff starts or ends, not as it runs down.
+ */
+export function useRetryAt(source: { readonly retryAt: number | null; onRetry(fn: () => void): () => void } | null | undefined): number | null {
+  return useSyncExternalStore(
+    (notify) => (source ? source.onRetry(notify) : () => undefined),
+    () => source?.retryAt ?? null,
+    () => null,
   );
 }
 

@@ -753,8 +753,22 @@ export const zhCN: Record<string, string> = {
   "switch device": "切换设备",
   "connecting…": "连接中…",
   "e-mail": "邮箱",
-  "connecting to the hub…": "正在连接云端…",
   "device offline": "设备离线",
+  // The bar while the page cannot reach the device yet: the step, or when it tries again (cloud-bar.tsx).
+  // Each fits whole at 390 px beside a short device name and the device switcher (the UI audit's cloud-bar fixture).
+  "reaching the hub…": "正在连接云端…",
+  "no hub": "连不上云端",
+  "no reply": "连不上设备",
+  "finding the device…": "正在查找设备…",
+  "{{city}} relay…": "正在连接{{city}}中继…",
+  "reaching a relay…": "正在连接中继…",
+  "handshake…": "握手中…",
+  "retry {{n}} s": "{{n}} 秒后重试",
+  "retry now · next try in {{n}} s": "立即重试 · {{n}} 秒后自动重试",
+  // The bar's own short words for a refusal; the notice under it, and the device switcher, say it in full.
+  "refuses this browser": "不接受这个浏览器",
+  "confirmation pending": "等待确认",
+  "access not saved": "存不下连接记录",
   "end-to-end encrypted": "端到端加密",
   "wrong e-mail or password": "邮箱或密码错误",
   "What is Droppen?": "了解 Droppen",

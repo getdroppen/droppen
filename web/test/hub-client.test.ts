@@ -54,7 +54,7 @@ import { CloudAccount } from "../src/lib/hub/account.js";
 import { deliverMachineKey, linkCourier, mailMachineKey } from "../src/lib/hub/deliver.js";
 import { HubLink, LINK_LOST } from "../src/lib/hub/link.js";
 import { SHORT_LIVED_LIMIT } from "../src/lib/transport/p2p.js";
-import { AGENT_UNSAVED, MachineChannel } from "../src/lib/hub/machine.js";
+import { AGENT_UNSAVED, type ConnectStep, MachineChannel } from "../src/lib/hub/machine.js";
 import { type RelayDirectory, type RelayEntry, RelayPool } from "../src/lib/hub/relays.js";
 import { RelayLink } from "../src/lib/hub/relay-link.js";
 import { tunnelTransport } from "../src/lib/transport/tunnel.js";
@@ -923,6 +923,49 @@ test("with no relay to carry it, the channel opens on the hub: none listed, an a
   t.after(() => bare.close());
   await bare.ensure();
   assert.equal(bare.route?.kind, "hub");
+});
+
+test("a channel being opened says what it waits on: the hub's word on the device, a relay (by city), the handshake; nothing once it is open, nor for a move", async (t) => {
+  const { account, hub, relay, link } = await linked(t);
+  // The hub restarts and, signed in again, says nothing of the machines yet.
+  hub.presenceOnSignIn = false;
+  hub.live.close(1012);
+  await until(() => hub.sockets.length === 2 && link.state === "open");
+  assert.equal(link.presenceFresh, false);
+
+  const pool = relayPool(account, relay);
+  t.after(() => pool.stop());
+  const channel = new MachineChannel(link, account, "m-1", { relays: pool });
+  t.after(() => channel.close());
+  const steps: (ConnectStep | null)[] = [];
+  channel.onStep((step) => steps.push(step));
+  const opened = channel.ensure();
+  await until(() => channel.step !== null);
+  assert.deepEqual([channel.status, channel.step], ["connecting", { kind: "presence" }], "waiting for the hub to say where the device is");
+  hub.announce();
+  await within(opened, "the channel through the relay");
+  assert.equal(channel.route?.kind, "relay");
+  assert.deepEqual(steps, [{ kind: "presence" }, { kind: "relay", city: null }, { kind: "relay", city: "singapore" }, { kind: "handshake" }, null]);
+  assert.equal(channel.step, null, "open: no step");
+
+  // Moving an open channel is not a connection being made: the page is live meanwhile.
+  steps.length = 0;
+  assert.equal(await channel.move(), true);
+  assert.deepEqual(steps, []);
+
+  // On the hub: only the handshake; and a try that fails says nothing after it.
+  const bare = new MachineChannel(link, account, "m-1");
+  t.after(() => bare.close());
+  const bareSteps: (ConnectStep | null)[] = [];
+  bare.onStep((step) => bareSteps.push(step));
+  await bare.ensure();
+  assert.deepEqual(bareSteps, [{ kind: "handshake" }, null]);
+  bare.close();
+  bareSteps.length = 0;
+  hub.refuseOpens = "not this one";
+  await assert.rejects(bare.ensure());
+  assert.deepEqual(bareSteps, [{ kind: "handshake" }, null]);
+  assert.equal(bare.step, null);
 });
 
 test("a device that does not manage the account vouches for nothing when it opens a channel", async (t) => {

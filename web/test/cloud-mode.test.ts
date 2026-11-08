@@ -3,7 +3,8 @@
 // request and socket to the side the page is on and closes the other side's
 // sockets on a switch; the controller goes live the moment the channel opens,
 // back to the copy only after the channel has stayed down, and keeps trying
-// the channel while the machine is online.
+// the channel while the machine is online — saying, between tries, when the
+// next one is (the bar's countdown).
 import assert from "node:assert/strict";
 import test from "node:test";
 import { type CloudMode, ModeController, SwitchingTransport } from "../src/lib/transport/switching.js";
@@ -244,6 +245,53 @@ test("a channel that would not open is tried again the moment the page comes bac
   assert.equal(channel.ensures, 2);
   c.stop();
   assert.equal(resumed.size, 0, "a stopped controller no longer listens for the page coming back");
+});
+
+test("while a channel that would not open waits out its backoff, the controller says when the next try is; a poke tries now", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const pass = async (ms: number) => {
+    for (let i = 0; i < ms; i++) {
+      t.mock.timers.tick(1);
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+  };
+  const link = new FakeLink();
+  const channel = new FakeChannel();
+  const transport = new SwitchingTransport({ live: stub("live"), offline: stub("offline") }, "offline");
+  const clock = 50_000;
+  const c = new ModeController({ link, channel, machine: "m-1", transport, retryMs: (attempt) => 1000 * 2 ** attempt, now: () => clock, resume: () => () => undefined });
+  const heard: (number | null)[] = [];
+  c.onRetry((at) => heard.push(at));
+  channel.outcome = "fail";
+  link.setPresence("online");
+  c.start();
+  assert.equal(c.retryAt, null, "a try under way: nothing waited for");
+  await pass(1);
+  assert.equal(c.retryAt, clock + 1000, "it failed: the next try is 1 s away");
+  await pass(999);
+  assert.equal(channel.ensures, 1, "and not before");
+  await pass(1);
+  assert.equal(channel.ensures, 2);
+  assert.equal(c.retryAt, null, "trying again: nothing waited for");
+  await pass(1);
+  assert.equal(c.retryAt, clock + 2000, "doubled");
+  assert.deepEqual(heard, [clock + 1000, null, clock + 2000]);
+
+  // "Retry now": a try at once, and the backoff starts over.
+  c.poke();
+  assert.equal(channel.ensures, 3);
+  assert.equal(c.retryAt, null);
+  await pass(1);
+  assert.equal(c.retryAt, clock + 1000);
+  // The hub's word on the machine is a try at once too.
+  link.setPresence("online");
+  assert.equal(channel.ensures, 4);
+  assert.equal(c.retryAt, null);
+  await pass(1);
+  c.stop();
+  assert.equal(c.retryAt, null, "a stopped controller waits for nothing");
+  await pass(5_000);
+  assert.equal(channel.ensures, 4);
 });
 
 test("a machine the hub has said nothing about yet is tried, not given up on", async () => {
