@@ -23,7 +23,7 @@ pnpm ui-audit --fixture devices   # only the devices page
 Options:
 
 - `--out <dir>` (default `/tmp/droppen-ui-audit-<date>`)
-- `--fixture settings|devices|agents|new-chat|cloud-bar|session-opening|no-copy|both` (default `both`)
+- `--fixture settings|devices|agents|new-chat|cloud-bar|session-opening|no-copy|session-from-copy|both` (default `both`)
 - `--theme light|dark|both`, `--viewport desktop|mobile|both`
 - `--channel chrome` — use a system Chrome instead of the bundled Chromium
 - `--url <url>` — measure a running page instead of the fixture (no target
@@ -108,6 +108,17 @@ themselves, the box disabled with its 1px square frame, and the reason whole
 in the box at either width, no line of it cut off (a phone sets form text at
 16px, and the longest take two lines there). Outputs `no-copy-<theme>-<viewport>.png` and
 `no-copy-<lang>-…` for each other language, the fixture alone.
+
+The `session-from-copy` fixture (droppen.app on the machine itself opening a
+session from the device's copy of it, `features/sessions/feed-from-copy.ts`:
+the real session view, routed as the app routes it, while the machine has not
+answered yet) adds, in English and zh-CN: the copy's transcript drawn from its
+first item to its last; over it the banner that says it is the copy saved on
+this device, in its existing words, mono at 11px and whole (no ellipsis, no
+clip) at either width; no loading line anywhere; and under it the composer
+waiting for the machine's state, its box editable and saying it is loading
+the session (#571's words), its send button disabled. Outputs
+`session-from-copy[-zh-CN]-<theme>-<viewport>.png`.
 
 The fixture deliberately exercises the target state, so on a revision that
 still has the old controls these checks fail. That is the point: run it before

@@ -12,8 +12,10 @@
  * page a hub serves), `?fixture=cloud-bar` (the cloud bar in each state of
  * its connection; `&states=catch-up`, the offline copy catching up from the
  * hub), `?fixture=session-opening` (a session opening with nothing to show
- * yet, in each stage of its wait) or `?fixture=no-copy` (the foot of a
- * session with no copy on this device yet, read-only), plus `?theme=dark`.
+ * yet, in each stage of its wait), `?fixture=no-copy` (the foot of a session
+ * with no copy on this device yet, read-only) or `?fixture=session-from-copy`
+ * (the real session view on droppen.app, drawn from the device's copy of the
+ * session while the machine is asked for it), plus `?theme=dark`.
  * `web/src/index.css` excludes this directory from Tailwind's scan
  * (`@source not`), so nothing here can change the production stylesheet. That
  * also means every class below must already occur in `web/src`; the layout
@@ -54,6 +56,8 @@ import { SectionHead } from "@/features/cloud/ui";
 import type { AcpAgentInfo } from "@/features/sessions/acp-agent";
 import type { FeedOpening } from "@/features/sessions/session-feed-pool";
 import { SessionOpening } from "@/features/sessions/session-opening";
+import { SessionDetail } from "@/features/sessions/session-detail";
+import type { FeedCopy } from "@/lib/hub/streams";
 import type { AcpAgentPreset } from "@/features/sessions/acp-agent-presets";
 import { ComposerBox, type ComposerAttachments } from "@/features/sessions/composer-box";
 import { useTranslation } from "react-i18next";
@@ -832,6 +836,127 @@ async function mountNoCopy(): Promise<void> {
   );
 }
 
+/**
+ * droppen.app on the machine itself (`live`) opening a session its feed pool
+ * does not hold, with a copy of it on this device: the real session view,
+ * routed as the app routes it, drawn from the copy at once
+ * (`features/sessions/feed-from-copy.ts`) under the banner that says so, its
+ * composer waiting for the machine's state before it sends anything. The
+ * machine never answers here, so both stay. The copy is a stand-in for
+ * the machine's offline copy (`MachineMirror`) holding one session, already
+ * verified; the device answers the view's own reads with synthetic data only.
+ */
+const COPY_MACHINE = "studio-mac";
+const COPY_SESSION = "7c1e2a90-5b3d-4f6e-9a21-0d8c4b7e3f15";
+const copyItem = (n: number, role: "user" | "assistant", kind: "text" | "tool_use" | "tool_result", text: string, more: Record<string, unknown> = {}) => ({
+  role,
+  kind,
+  text,
+  detail: null,
+  isError: false,
+  meta: null,
+  question: null,
+  timestamp: new Date(Date.UTC(2026, 10, 8, 9, 12 + n)).toISOString(),
+  toolName: null,
+  truncated: false,
+  ...more,
+});
+const COPY_ITEMS = [
+  copyItem(0, "user", "text", "The relay drops idle sockets after a minute. Find where that timeout is set, and make it follow the heartbeat instead."),
+  copyItem(1, "assistant", "tool_use", "idle_timeout", { toolName: "Grep", toolUseId: "t-1", detail: "rg -n idle_timeout crates/droppen-relay", model: "claude-sonnet-5" }),
+  copyItem(2, "user", "tool_result", "3 matches", { resultOf: "t-1", detail: "crates/droppen-relay/src/conn.rs:42:const IDLE_TIMEOUT: Duration = Duration::from_secs(60);\ncrates/droppen-relay/src/conn.rs:118:        if last.elapsed() > IDLE_TIMEOUT {\ncrates/droppen-relay/src/conn.rs:131:    idle_timeout: IDLE_TIMEOUT," }),
+  copyItem(3, "assistant", "text", "It is a constant in `conn.rs`: a socket that has said nothing for 60 s is closed, whatever the heartbeat is set to. The heartbeat is every 30 s, so one lost ping is enough to drop a healthy connection.\n\nI will derive it from the heartbeat: three missed beats.", { model: "claude-sonnet-5" }),
+  copyItem(4, "assistant", "tool_use", "crates/droppen-relay/src/conn.rs", { toolName: "Edit", toolUseId: "t-2", model: "claude-sonnet-5" }),
+  copyItem(5, "user", "tool_result", "The file crates/droppen-relay/src/conn.rs has been updated.", { resultOf: "t-2" }),
+  copyItem(6, "assistant", "text", "Done. `IDLE_TIMEOUT` is now `3 * HEARTBEAT`, so a socket is let go only after three beats go unanswered, and the test that pinned 60 s now pins the multiple.", { model: "claude-sonnet-5" }),
+];
+const COPY_ROW = {
+  source: "claude", id: COPY_SESSION, title: "Make the relay's idle timeout follow the heartbeat", cwd: "/home/studio/droppen", filePath: "/home/studio/.claude/projects/droppen/7c1e2a90.jsonl",
+  gitBranch: "main", repoKey: null, createdAt: "2026-11-08T09:12:00Z", updatedAt: "2026-11-08T09:19:00Z", sizeBytes: 48_213, scope: "owned",
+  status: "idle", activity: "idle", attentionAt: null, unread: false, unreadCount: 0, resident: null,
+};
+const COPY_STATE: FeedCopy = { started: true, startIndex: 0, endIndex: COPY_ITEMS.length, items: COPY_ITEMS as FeedCopy["items"], fp: "fixture-fp", prefixFp: "fixture-prefix" };
+const isCopied = (source: string, id: string) => source === "claude" && id === COPY_SESSION;
+/** What the feed reads of the machine's offline copy (`MachineMirror`): the list's row and the session's copy. */
+const SESSION_COPY = {
+  row: (source: string, id: string) => (isCopied(source, id) ? COPY_ROW : undefined),
+  sessionNow: (source: string, id: string) => (isCopied(source, id) ? { source, id, state: COPY_STATE, seq: 12, freshestMs: COPY_AS_OF } : null),
+  whenLoaded: async () => undefined,
+  sessionHeld: async (source: string, id: string) => SESSION_COPY.sessionNow(source, id),
+};
+const COPY_INFO: MachineInfo = { key: COPY_MACHINE, name: COPY_MACHINE, state: "online", since: 0, canManage: true, live: "live" };
+/** droppen.app's shell as the feed reads it: the machine, its copy, and that the page is on the machine itself. */
+const COPY_SHELL = {
+  kind: "hub" as const,
+  home: COPY_MACHINE,
+  account: { account: "fixture-account", isAdmin: true },
+  machines: () => constantStore<readonly MachineInfo[]>([COPY_INFO]),
+  runtime: () => {
+    throw new Error("the session-from-copy fixture has one device, opened by hand");
+  },
+  machine: (key: string | null | undefined) => (key === COPY_MACHINE ? { mirror: SESSION_COPY, transport: { current: "live" } } : null),
+  setMain: noop,
+};
+
+/** The device behind the view: its reads answered with synthetic data, its sockets never open (the machine is still being asked). */
+function copyDevice(): Transport {
+  const answers: Record<string, unknown> = {
+    "/api/prefs": { composerSend: "enter", sessionGrouping: "flat", transcriptStyle: "flat", fontSize: "default", language: "en" },
+    "/api/composer-prefs": { defaults: {}, sessions: {} },
+    "/api/models": { models: [{ id: "sonnet", label: null, efforts: ["low", "medium", "high"], defaultEffort: "medium" }], source: "cache" },
+    "/api/accounts": { accounts: [], defaultAccountId: null, defaultCodexAccountId: null },
+    "/api/stats/quota": { accounts: [], claude: null, codex: null },
+  };
+  return {
+    fetch: async (request: Request) => {
+      const answer = answers[new URL(request.url).pathname];
+      return answer === undefined ? Response.json({ error: "not here" }, { status: 404 }) : Response.json(answer);
+    },
+    socketUrl: async (path: string) => path,
+    openSocket: () => ({ readyState: 0, binaryType: "blob", send() {}, close() {}, onopen: null, onmessage: null, onclose: null }),
+  };
+}
+
+async function mountSessionFromCopy(): Promise<void> {
+  openMachine(COPY_MACHINE, copyDevice(), {
+    info: constantStore(COPY_INFO),
+    ensureLive: noop,
+    hold: () => noop,
+    dispose: noop,
+  });
+  setShell("hub", COPY_MACHINE);
+  setCurrentShell(COPY_SHELL as unknown as AppShell);
+  try {
+    localStorage.clear();
+  } catch {
+    // storage unavailable: the fixture still draws
+  }
+  await applyLanguage((query.get("lang") as LanguagePref | null) ?? "en");
+
+  const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
+  const router = await import("@tanstack/react-router");
+  const rootRoute = router.createRootRoute({ component: () => <router.Outlet /> });
+  const detailRoute = router.createRoute({ getParentRoute: () => rootRoute, path: "sessions/$source/$id", component: SessionDetail });
+  const listRoute = router.createRoute({ getParentRoute: () => rootRoute, path: "sessions", component: () => null });
+  const routes = router.createRouter({
+    routeTree: rootRoute.addChildren([detailRoute, listRoute]),
+    history: router.createMemoryHistory({ initialEntries: [`/sessions/claude/${COPY_SESSION}`] }),
+  });
+  await routes.load();
+
+  createRoot(document.getElementById("root")!).render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <MachineProvider machine={COPY_MACHINE}>
+        <GlobalFeedProvider>
+          <div data-fixture-root="" data-session-view="" className="flex h-full min-h-0 min-w-0 flex-col">
+            <router.RouterProvider router={routes} />
+          </div>
+        </GlobalFeedProvider>
+      </MachineProvider>
+    </QueryClientProvider>,
+  );
+}
+
 // The agents, diagrams, images and session-opening fixtures' words go through
 // i18n (counts, "5 min ago", the diagram and picture controls' labels, what an
 // opening session waits for): English unless `&lang=` names another of the
@@ -842,6 +967,8 @@ if (fixture === "new-chat") {
   await mountCloudBar();
 } else if (fixture === "no-copy") {
   await mountNoCopy();
+} else if (fixture === "session-from-copy") {
+  await mountSessionFromCopy();
 } else {
   if (fixture === "agents" || fixture === "diagrams" || fixture === "hostile" || fixture === "images" || fixture === "session-opening")
     await applyLanguage((query.get("lang") as LanguagePref | null) ?? "en");

@@ -3,6 +3,7 @@ import { authStatus, currentUser } from "@/lib/auth";
 import { isCloud } from "@/lib/hub/config";
 import { cacheClear, cacheTransact } from "@/lib/local-cache";
 import type { FeedPersist, FeedState } from "@/features/sessions/session-feed-pool";
+import { copyFeedNow, copyFeedRead } from "@/features/sessions/feed-from-copy";
 import { nextFeedIndex, orphanFeedKeys, readCopy, COPY_SCHEMA, feedCopyKey, type CopyRecord } from "@/features/sessions/feed-copy";
 import { LOCAL, type MachineKey } from "@/lib/machines/key";
 import { machineCacheKey } from "@/lib/machines/storage";
@@ -23,11 +24,17 @@ type SessionSummary = components["schemas"]["SessionSummary"];
  * Not in cloud mode. There the page draws from the machine's offline copy
  * (`lib/hub/mirror.ts`) — per machine, verified against what the machine
  * signed — and this copy would only keep a second copy of every transcript.
- * Nor, in the local app, for another device its gateway shows (S1-7): that
- * device's copy is the local install's, and the page keeps nothing of it.
+ * Its windows are read from that copy instead, and never written
+ * (`feed-from-copy.ts`). Nor, in the local app, for another device its gateway
+ * shows (S1-7): that device's copy is the local install's, and the page keeps
+ * nothing of it.
  */
 
-/** Whether `machine`'s list and windows are kept on this device: only the local app's own server's. */
+/**
+ * Whether `machine`'s list and windows are kept on this device: only the local
+ * app's own server's. In cloud mode a machine's windows are read, but never
+ * written, from its offline copy (`feed-from-copy.ts`).
+ */
 function keptHere(machine: MachineKey): boolean {
   return !isCloud() && machine === LOCAL;
 }
@@ -62,12 +69,16 @@ async function load<T>(key: string): Promise<T | null> {
   return null;
 }
 
-/** The last few windows of `machine`'s sessions read on this device (`key` is a session's `source/id`). */
+/**
+ * The last few windows of `machine`'s sessions read on this device (`key` is a
+ * session's `source/id`); in cloud mode, the windows its offline copy holds.
+ */
 export function devicePersistFor(machine: MachineKey): FeedPersist {
   const index = machineCacheKey(machine, FEEDS_INDEX);
   return {
+    peek: (key) => (keptHere(machine) ? null : copyFeedNow(machine, key)),
     load: (key) =>
-      (!keptHere(machine) ? Promise.resolve(null) : load<FeedState>(machineCacheKey(machine, feedCopyKey(key)))).then((data) =>
+      (keptHere(machine) ? load<FeedState>(machineCacheKey(machine, feedCopyKey(key))) : copyFeedRead(machine, key)).then((data) =>
         data && typeof data === "object" && Array.isArray(data.items) && data.summary ? data : null,
       ),
     save(key, data) {

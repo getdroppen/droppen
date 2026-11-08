@@ -1184,6 +1184,22 @@ export class MachineMirror {
   }
 
   /**
+   * The copy of a session this device holds: in memory, or read back from the
+   * device and held to the machine's signature as every copy read back is.
+   * Never waits for the hub and never follows the session for it — what a page
+   * on the machine itself draws while the machine is asked. `null` when there
+   * is none here.
+   */
+  async sessionHeld(source: string, id: string): Promise<SessionCopy | null> {
+    const now = this.sessionNow(source, id);
+    if (now) return now;
+    const slot = this.sessionSlot(source, id);
+    if (!slot) return null;
+    await slot.loaded;
+    return this.sessionNow(source, id);
+  }
+
+  /**
    * A session's copy: read back from the device at once if it is there, and
    * followed from there — or fetched from the hub, waiting for the first
    * state while it keeps coming: until `waitMs` pass with nothing arriving,

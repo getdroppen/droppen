@@ -18,7 +18,7 @@
  *   --theme <t>        light | dark | both (default both)
  *   --viewport <v>     desktop | mobile | both (default both)
  *   --channel <name>   Playwright browser channel, e.g. chrome (default: bundled Chromium)
- *   --fixture <f>      settings | devices | agents | new-chat | cloud-bar | session-opening | no-copy | both (default both: every fixture)
+ *   --fixture <f>      settings | devices | agents | new-chat | cloud-bar | session-opening | no-copy | session-from-copy | both (default both: every fixture)
  *   --url <url>        skip the fixture and audit a running page
  *   --check            exit 1 if any target invariant fails
  */
@@ -71,6 +71,7 @@ const runNewChat = which === "both" || which === "new-chat";
 const runCloudBar = which === "both" || which === "cloud-bar";
 const runSessionOpening = which === "both" || which === "session-opening";
 const runNoCopy = which === "both" || which === "no-copy";
+const runSessionFromCopy = which === "both" || which === "session-from-copy";
 
 await fs.mkdir(out, { recursive: true });
 
@@ -1298,6 +1299,97 @@ async function auditNoCopy(theme, view) {
   await page.close();
 }
 
+/** The banner over a session drawn from the device's copy, in the two languages its screenshots are taken in. */
+const COPY_BANNER_WORDS = {
+  en: "showing the copy saved on this device — updating…",
+  "zh-CN": "正在显示这台设备上保存的副本 — 更新中…",
+};
+/** What the composer says while it waits for the machine's state, which it needs before it sends anything (#571's words). */
+const COPY_COMPOSER_WORDS = { en: "loading session…", "zh-CN": "读取会话…" };
+/** The session the fixture draws from its copy: its first and last items' words. */
+const COPY_FIRST_WORDS = "The relay drops idle sockets after a minute.";
+const COPY_LAST_WORDS = "three beats go unanswered";
+
+/**
+ * droppen.app on the machine itself, opening a session from the device's copy
+ * (`?fixture=session-from-copy`): the real session view drawn at once, the
+ * transcript from its first item to its last, under the banner that says it
+ * is the copy saved on this device — its existing words, mono at 11px, whole
+ * (no ellipsis, no clip) at a phone's width as on a desktop — and no loading
+ * line anywhere. Under it the composer waits for the machine's state: the
+ * text editable, the send button disabled, and the box saying it is loading
+ * the session, not that the session is busy. Captured in English and Chinese.
+ */
+async function auditSessionFromCopy(theme, view) {
+  const page = await browser.newPage({
+    viewport: { width: view.width, height: view.height },
+    deviceScaleFactor: 1,
+    hasTouch: view.name === "mobile",
+    isMobile: view.name === "mobile",
+  });
+  const fail = (id, actual, expected) => failures.push({ theme, viewport: view.name, fixture: "session-from-copy", id, actual, expected });
+  for (const lang of Object.keys(COPY_BANNER_WORDS)) {
+    await page.goto(`${base}ui-audit/index.html?fixture=session-from-copy&lang=${lang}&theme=${theme}`);
+    await page.evaluate(() => document.fonts.ready);
+    await page.waitForSelector('[data-session-view] [data-signal="reconnecting"]');
+    await page.waitForFunction((words) => document.body.innerText.includes(words), COPY_LAST_WORDS);
+    await page.waitForTimeout(250);
+    const state = await page.evaluate(() => {
+      const rect = (e) => {
+        if (!e) return null;
+        const r = e.getBoundingClientRect();
+        return { x: +r.x.toFixed(1), y: +r.y.toFixed(1), w: +r.width.toFixed(1), h: +r.height.toFixed(1) };
+      };
+      const banner = document.querySelector('[data-session-view] [data-signal="reconnecting"]');
+      let words = null;
+      if (banner) {
+        const s = getComputedStyle(banner);
+        const range = document.createRange();
+        range.selectNodeContents(banner);
+        const natural = range.getBoundingClientRect();
+        const box = banner.getBoundingClientRect();
+        words = {
+          text: (banner.textContent ?? "").trim(),
+          rect: rect(banner),
+          size: s.fontSize,
+          font: s.fontFamily,
+          cut: banner.scrollWidth > banner.clientWidth || natural.right > box.right - parseFloat(s.paddingRight) + 0.5,
+          lines: Math.round(natural.height / parseFloat(s.lineHeight)),
+        };
+      }
+      const box = document.querySelector("[data-session-view] textarea");
+      const send = document.querySelector('[data-session-view] button[data-variant="primary"]');
+      return {
+        banner: words,
+        composer: box ? { placeholder: box.getAttribute("placeholder"), editable: !box.disabled, send: send ? !send.disabled : null } : null,
+        opening: document.querySelectorAll("[data-session-opening]").length,
+        text: document.body.innerText,
+        overflow: { doc: document.documentElement.scrollWidth, win: window.innerWidth },
+      };
+    });
+    const tag = lang === "en" ? "" : `-${lang}`;
+    await page.screenshot({ path: `${out}/session-from-copy${tag}-${theme}-${view.name}.png`, animations: "disabled" });
+    const { text, ...measured } = state;
+    results.push({ mode: "session-from-copy", lang, theme, viewport: view.name, ...measured });
+    const where = { lang };
+    if (!state.banner) {
+      fail("session-from-copy.banner", where, "the banner over a transcript drawn from the copy");
+    } else {
+      if (state.banner.text !== COPY_BANNER_WORDS[lang]) fail("session-from-copy.words", { ...where, text: state.banner.text }, COPY_BANNER_WORDS[lang]);
+      if (state.banner.size !== "11px" || !/mono/i.test(state.banner.font)) fail("session-from-copy.type", { ...where, size: state.banner.size, font: state.banner.font }, "mono 11px (text-2xs)");
+      if (state.banner.cut) fail("session-from-copy.truncated", { ...where, banner: state.banner }, "the banner's words whole");
+    }
+    if (!text.includes(COPY_FIRST_WORDS) || !text.includes(COPY_LAST_WORDS)) fail("session-from-copy.transcript", where, "the copy's transcript drawn, first item to last");
+    const c = state.composer;
+    if (!c || c.placeholder !== COPY_COMPOSER_WORDS[lang] || !c.editable || c.send !== false) {
+      fail("session-from-copy.composer", { ...where, composer: c }, `an editable box saying "${COPY_COMPOSER_WORDS[lang]}", its send button disabled`);
+    }
+    if (state.opening > 0) fail("session-from-copy.opening", { ...where, opening: state.opening }, "no loading line over a drawn transcript");
+    if (state.overflow.doc > state.overflow.win + 1) fail("session-from-copy.overflow", { ...where, ...state.overflow }, "no horizontal overflow");
+  }
+  await page.close();
+}
+
 try {
   if (liveUrl) {
     for (const view of views) await auditLive(view);
@@ -1312,6 +1404,7 @@ try {
         if (runCloudBar) await auditCatchUp(theme, view);
         if (runSessionOpening) await auditSessionOpening(theme, view);
         if (runNoCopy) await auditNoCopy(theme, view);
+        if (runSessionFromCopy) await auditSessionFromCopy(theme, view);
       }
     }
   }

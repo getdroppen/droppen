@@ -66,7 +66,8 @@ interface SessionFeedResult {
  */
 const sessionFeedsFor = perMachine((machine: MachineKey) =>
   createSessionFeedPool({
-    // The last few windows read, kept on the device for the next cold start.
+    // The last few windows read, kept on the device for the next cold start;
+    // in cloud mode, read from the machine's offline copy.
     persist: devicePersistFor(machine),
     // On the machine's one socket where its server can carry it there, which
     // saves every session switch a connection of its own; see `app/feed-hub.ts`.
@@ -75,6 +76,9 @@ const sessionFeedsFor = perMachine((machine: MachineKey) =>
     // (`lib/machines`) as it is at each attempt.
     socketUrl: (path) => transportFor(machine).socketUrl(path),
     openSocket: (url) => transportFor(machine).openSocket(url),
+    // Cloud mode's switch between the machine and its copy closes the feeds'
+    // sockets; they go back through the new side at once.
+    onSwitch: (fn) => transportFor(machine).onChange?.(fn) ?? (() => undefined),
     noteFailure: (streak) => noteWsFailure(streak, machine),
     async fetchHistory(source, id, query) {
       const res = await apiFor(machine).GET("/api/sessions/{source}/{id}/history", {
