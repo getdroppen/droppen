@@ -1,10 +1,18 @@
 import { Download, ExternalLink, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { DownloadLink, HostImage, useTransportEpoch } from "@/components/host-file";
-import { ImageFallback, ImagePending, mediaErrorText, useGithubImage, useObjectUrl } from "@/components/source-image";
+import {
+  ImageFallback,
+  ImageOnRequest,
+  ImagePending,
+  mediaErrorText,
+  useGithubImage,
+  useObjectUrl,
+} from "@/components/source-image";
 import { cn } from "@/lib/cn";
+import { isCloud } from "@/lib/hub/config";
 import { imageFileName, type ImageSource } from "@/lib/image-source";
 
 /** Draws the picture, wherever it comes from, at the size it is asked for; `onFail` with why, when that is known. */
@@ -33,9 +41,12 @@ function stop(e: React.MouseEvent) {
  *  * a GitHub file is fetched once through the server's `gh` proxy and drawn
  *    from a `blob:` URL by both the thumbnail and the overlay (see
  *    `components/source-image.tsx`), which is also what the save button saves;
- *  * anything else is the agent's own URL, loaded by the browser with no
- *    referrer. A cross-origin `download` is ignored by browsers, so it offers
- *    "open original" rather than a save button that would only navigate.
+ *  * anything else is the agent's own URL, which the page does not fetch
+ *    until the reader asks: until then it is an {@link ImageOnRequest} card
+ *    naming the host it would come from (`DirectLightboxImage` says why).
+ *    Once asked for, it is loaded by the browser with no referrer. A
+ *    cross-origin `download` is ignored by browsers, so it offers "open
+ *    original" rather than a save button that would only navigate.
  *
  * A picture that cannot be drawn becomes an {@link ImageFallback} instead of
  * the browser's broken-image glyph. `zoom={false}` draws the picture alone,
@@ -83,16 +94,85 @@ export function LightboxImage({
       />
     );
   }
+  return <DirectLightboxImage url={source.url} alt={alt} caption={caption} thumbClassName={thumbClassName} zoom={zoom} />;
+}
+
+/**
+ * The `direct` pictures the reader has asked for, by URL. Kept here rather than
+ * in the card's state because the transcript is virtualised: a row scrolled
+ * out and back in is a new component, and it must not ask again. Never stored:
+ * a reload starts from nothing, and there is no "always" for a host, because
+ * the next URL on that host may carry something the last one did not.
+ */
+const requested = new Set<string>();
+const requestListeners = new Set<() => void>();
+
+/** Load the picture at `url` wherever the page draws it, until the page goes. Exported for the tests. */
+export function requestImage(url: string) {
+  if (requested.has(url)) return;
+  requested.add(url);
+  for (const listener of requestListeners) listener();
+}
+
+function subscribeRequests(listener: () => void) {
+  requestListeners.add(listener);
+  return () => void requestListeners.delete(listener);
+}
+
+/** Whether the reader has asked for `url`; every copy of the picture on the page follows the one clicked. */
+function useRequested(url: string): boolean {
+  const asked = () => requested.has(url);
+  return useSyncExternalStore(subscribeRequests, asked, asked);
+}
+
+/**
+ * A picture from the web, drawn only once the reader asks for it. Its URL is
+ * whatever the agent wrote, and an `<img>` fetches as soon as it is on screen,
+ * so drawing it on sight would send whatever the URL carries to a server the
+ * reader never chose, just by opening the conversation. Until the reader asks,
+ * the card names the host instead; after, the picture is drawn exactly as any
+ * other.
+ *
+ * Inside a link (`zoom={false}`) the card has neither its button nor its
+ * anchor, which would be nested in the link's own; the link still opens.
+ *
+ * A page a hub serves (`isCloud()`) runs under the hub's policy,
+ * `img-src 'self' data: blob:` (`web/build/cloud-mode.ts`, and `sw.js` for
+ * the offline shell), which refuses every picture from elsewhere: there the
+ * button could only lead to the failure card, so the card offers the link
+ * alone. A local server's page sends no `img-src`, and that is the page the
+ * desktop app shows too: its window loads the web app from the server on
+ * 127.0.0.1, and the policy in `tauri.conf.json` covers only its bundled
+ * start-up page.
+ */
+function DirectLightboxImage({
+  url,
+  alt,
+  caption,
+  thumbClassName,
+  zoom,
+}: {
+  url: string;
+  alt: string;
+  caption?: string;
+  thumbClassName?: string;
+  zoom: boolean;
+}) {
+  const asked = useRequested(url);
+  if (!asked) {
+    const offer = zoom && !isCloud();
+    return <ImageOnRequest url={url} alt={alt} href={zoom ? url : null} onLoad={offer ? () => requestImage(url) : null} />;
+  }
   return (
     <Lightbox
       alt={alt}
       caption={caption}
       thumbClassName={thumbClassName}
       zoom={zoom}
-      original={source.url}
+      original={url}
       draw={({ className, thumb, onFail }) => (
         <img
-          src={source.url}
+          src={url}
           alt={alt}
           className={className}
           loading={thumb ? "lazy" : undefined}

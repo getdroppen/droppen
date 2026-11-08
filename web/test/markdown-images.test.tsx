@@ -9,9 +9,16 @@
 // What is pinned here: which of the three sources a `src` is drawn from (the
 // host's file route, the server's `gh` proxy, or the web directly), that the
 // proxy's answer is what the `<img>` draws, that a picture that cannot be drawn
-// becomes a card with its alt text and link, and what the full-size overlay
-// offers. `react-dom/server` rather than a DOM, like the other render tests:
-// there is no click to simulate, so the overlay is rendered on its own.
+// becomes a card with its alt text and link, that a picture from the web is a
+// card naming its host until the reader asks for it (and none of its `<img>`
+// before), and what the full-size overlay offers. `react-dom/server` rather
+// than a DOM, like the other render tests: there is no click to simulate, so
+// the overlay is rendered on its own and the reader's request is made with
+// `requestImage`, which is what the card's button calls
+// (`markdown-images-dom.test.tsx` clicks it).
+//
+// The requests are the page's for as long as it is open, so each test that
+// makes one uses a URL of its own.
 //
 // `import * as React` because the test directory is outside the tsconfig's
 // `include`, so tsx compiles JSX here with the classic runtime.
@@ -22,7 +29,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nextProvider } from "react-i18next";
 import { Markdown } from "../src/components/markdown.js";
-import { LightboxOverlay } from "../src/components/image-lightbox.js";
+import { LightboxOverlay, requestImage } from "../src/components/image-lightbox.js";
 import { githubImageKey, MediaFetchError } from "../src/components/source-image.js";
 import { imageFileName, imageSource, isGithubFileUrl } from "../src/lib/image-source.js";
 import { localFilePath } from "../src/lib/fs-url.js";
@@ -109,6 +116,7 @@ test("a GitHub image draws the proxy's bytes, not the URL the browser cannot ope
   assert.match(html, /<img src="blob:[^"]+" alt="侧边栏 macOS 浅色 修改前后" class="max-h-60 /);
   assert.doesNotMatch(html, /<img src="https:\/\/github\.com/);
   assert.match(html, /<span class="block max-w-full truncate text-2xs text-muted">侧边栏 macOS 浅色 修改前后<\/span>/, "alt as caption");
+  assert.doesNotMatch(html, /data-image-on-request|load image/, "the proxy's bytes are the host's to fetch, so drawn on sight");
 });
 
 test("a GitHub image still on its way holds its place", () => {
@@ -133,21 +141,79 @@ test("a proxy refusal becomes a card with the reason and the link, not a broken 
   assert.doesNotMatch(html, /<img|<button/);
 });
 
-test("other web images load directly, lazily and without a referrer", () => {
-  const html = draw(<Markdown text="![License](https://img.shields.io/badge/license-MIT-111111)" />);
-  assert.match(html, /<img src="https:\/\/img\.shields\.io\/badge\/license-MIT-111111"[^>]*loading="lazy"[^>]*referrerPolicy="no-referrer"/i);
-  assert.match(html, /<button/);
+test("a web image is not fetched until the reader asks: a card names its host instead", () => {
+  const url = "https://images.example.com:8443/chart.png?q=report";
+  const html = draw(<Markdown text={`before ![quarterly chart](${url}) after`} />);
+  assert.doesNotMatch(html, /<img/, "nothing on the page fetches it");
+  assert.match(html, /<p[^>]*>before <span data-image-on-request="" title="https:\/\/images\.example\.com:8443\/chart\.png\?q=report"/, "phrasing content in the paragraph");
+  assert.match(html, />quarterly chart</);
+  assert.match(html, /<span class="[^"]*font-mono text-faint">images\.example\.com:8443<\/span>/, "the host, port included");
+  assert.match(html, /<button type="button"[^>]*>load image<\/button>/);
+  assert.match(html, /<a href="https:\/\/images\.example\.com:8443\/chart\.png\?q=report" target="_blank" rel="noreferrer"[^>]*>open link<\/a>/);
+  assert.doesNotMatch(html, /cursor-zoom-in/, "no thumbnail to open yet");
+});
+
+test("a web image with no alt text is called an image on its card", () => {
+  const html = draw(<Markdown text="![](https://images.example.com/untitled.png)" />);
+  assert.doesNotMatch(html, /<img/);
+  assert.match(html, /<span class="min-w-0 truncate">image<\/span>/);
+});
+
+test("once asked for, a web image loads lazily and without a referrer, and stays asked for when drawn again", () => {
+  const url = "https://img.shields.io/badge/license-MIT-111111";
+  const text = `![License](${url})`;
+  assert.doesNotMatch(draw(<Markdown text={text} />), /<img/);
+  requestImage(url);
+  // Each draw is a fresh mount: a row the virtualised transcript scrolled
+  // out and back in, or the same picture in another message.
+  for (const html of [draw(<Markdown text={text} />), draw(<Markdown text={`again: ${text}`} />)]) {
+    assert.match(html, /<img src="https:\/\/img\.shields\.io\/badge\/license-MIT-111111"[^>]*loading="lazy"[^>]*referrerPolicy="no-referrer"/i);
+    assert.match(html, /<button type="button" title="License"[^>]*cursor-zoom-in/, "the thumbnail that opens full size, as before");
+    assert.doesNotMatch(html, /data-image-on-request|load image/);
+  }
+  const other = draw(<Markdown text="![License](https://img.shields.io/badge/license-MIT-222222)" />);
+  assert.doesNotMatch(other, /<img/, "the request is for that URL, not its host");
+  assert.match(other, />load image</);
+});
+
+test("on a page a hub serves, the card offers the link alone: the page's policy refuses the picture", () => {
+  // Cloud mode is the hub's `<meta name="droppen-hub">` in the shell (`lib/hub/config.ts`).
+  const before = globalThis.document;
+  globalThis.document = {
+    querySelector: (selector: string) => (selector === 'meta[name="droppen-hub"]' ? { getAttribute: () => "wss://hub.example" } : null),
+  } as unknown as Document;
+  try {
+    const html = draw(<Markdown text="![shot](https://images.example.com/cloud.png)" />);
+    assert.match(html, /data-image-on-request/);
+    assert.match(html, />images\.example\.com</);
+    assert.match(html, /<a href="https:\/\/images\.example\.com\/cloud\.png" target="_blank" rel="noreferrer"[^>]*>open link<\/a>/);
+    assert.doesNotMatch(html, /<button|load image|<img/);
+  } finally {
+    globalThis.document = before;
+  }
 });
 
 test("host images use the ticketed file route", () => {
   const html = draw(<Markdown text="![plot](/Users/me/plot.png) ![b](file:///Users/me/b.png)" />);
   assert.match(html, /<img src="\/api\/fs\/download\?path=%2FUsers%2Fme%2Fplot\.png&amp;inline=true"/);
   assert.match(html, /<img src="\/api\/fs\/download\?path=%2FUsers%2Fme%2Fb\.png&amp;inline=true"/);
+  assert.doesNotMatch(html, /data-image-on-request|load image/, "drawn on sight, as before");
 });
 
-test("an image inside a link is drawn alone, so the link keeps the click", () => {
+test("an image inside a link is a card without a button or an anchor, so the link keeps the click", () => {
   const html = draw(<Markdown text="[![Stars](https://img.shields.io/github/stars/o/r)](https://github.com/o/r)" />);
-  assert.match(html, /<a href="https:\/\/github\.com\/o\/r"[^>]*><img src="https:\/\/img\.shields\.io/);
+  assert.match(html, /<a href="https:\/\/github\.com\/o\/r"[^>]*><span data-image-on-request=""/);
+  assert.match(html, />Stars</);
+  assert.match(html, />img\.shields\.io</);
+  assert.doesNotMatch(html, /<img|<button|load image|open link/);
+  assert.equal(html.match(/<a /g)?.length, 1, "no anchor inside the link");
+});
+
+test("an image inside a link, once asked for elsewhere, is drawn alone", () => {
+  const url = "https://img.shields.io/github/forks/o/r";
+  requestImage(url);
+  const html = draw(<Markdown text={`[![Forks](${url})](https://github.com/o/r)`} />);
+  assert.match(html, /<a href="https:\/\/github\.com\/o\/r"[^>]*><img src="https:\/\/img\.shields\.io\/github\/forks\/o\/r"/);
   assert.doesNotMatch(html, /<button/);
 });
 

@@ -6,9 +6,10 @@
  * `?fixture=settings` (default), `?fixture=devices`, `?fixture=agents`
  * (`&view=cards|details|empty`), `?fixture=new-chat` (`&state=claude|api|
  * signed-out|list`, the instant-chat home in the real chat layout),
- * `?fixture=diagrams` (a transcript of the diagram types messages draw) or
+ * `?fixture=diagrams` (a transcript of the diagram types messages draw),
  * `?fixture=hostile` (the reviewer's worst-case fences beside one normal
- * diagram), plus `?theme=dark`.
+ * diagram) or `?fixture=images` (the pictures messages draw; `&cloud=1` as a
+ * page a hub serves), plus `?theme=dark`.
  * `web/src/index.css` excludes this directory from Tailwind's scan
  * (`@source not`), so nothing here can change the production stylesheet. That
  * also means every class below must already occur in `web/src`; the layout
@@ -24,6 +25,7 @@ import { LOCAL } from "@/lib/machines/key";
 import { openMachine, setShell } from "@/lib/machines/registry";
 import { constantStore } from "@/lib/machines/store";
 import type { Transport } from "@/lib/transport/types";
+import { requestImage } from "@/components/image-lightbox";
 import { DiagramRendering, Markdown } from "@/components/markdown";
 import { MermaidBlock } from "@/components/mermaid-block";
 import { Button } from "@/components/ui/button";
@@ -363,6 +365,35 @@ function DiagramsFixture() {
 }
 
 /**
+ * The pictures a transcript message draws, through the real `<Markdown>`: one
+ * from the web the reader has not asked for (its card, which this page never
+ * fetches), the same kind once asked for (a picture this server serves, asked
+ * for before the first paint), one inside a link, and a src nothing can draw
+ * (the failure card the first one is drawn like).
+ */
+const LOADED_IMAGE = `${location.origin}/og.png`;
+const IMAGES: ReadonlyArray<readonly [name: string, text: string]> = [
+  ["web image, not asked for", "The quarterly chart: ![quarterly chart](https://images.example.com/chart.png?q=report)"],
+  ["web image, after load image", `The cover: ![Droppen cover](${LOADED_IMAGE})`],
+  ["web image inside a link", "[![build](https://img.shields.io/badge/build-passing-111111)](https://github.com/getdroppen/droppen) is green."],
+  ["src nothing can draw", "See ![architecture](docs/arch.png) in the repository."],
+];
+
+function ImagesFixture() {
+  return (
+    <div data-fixture-root="" className="@container/settings mx-auto max-w-3xl p-4">
+      <header className="mb-3 flex h-8 items-center border-b border-border text-[13px] font-semibold">Transcript</header>
+      {IMAGES.map(([name, text]) => (
+        <section key={name} data-audit-row={name} className="border-b border-border py-3">
+          <div className="mb-1 font-mono text-2xs text-muted">{name}</div>
+          <Markdown text={text} />
+        </section>
+      ))}
+    </div>
+  );
+}
+
+/**
  * The fences from the security review's reproduction (`/tmp/pele-eval/rv/`),
  * plus one normal diagram. They are rendered through the real `MermaidBlock`
  * (the transcript's diagram block) rather than through Markdown, so a
@@ -548,14 +579,26 @@ async function mountNewChat(): Promise<void> {
   );
 }
 
-// The agents and diagrams fixtures' words go through i18n (counts, "5 min
-// ago", the diagram controls' labels): English unless `&lang=` names another
-// of the app's languages.
+// The agents, diagrams and images fixtures' words go through i18n (counts, "5
+// min ago", the diagram and picture controls' labels): English unless
+// `&lang=` names another of the app's languages.
 if (fixture === "new-chat") {
   await mountNewChat();
 } else {
-  if (fixture === "agents" || fixture === "diagrams" || fixture === "hostile")
+  if (fixture === "agents" || fixture === "diagrams" || fixture === "hostile" || fixture === "images")
     await applyLanguage((query.get("lang") as LanguagePref | null) ?? "en");
+  if (fixture === "images") {
+    // Cloud mode is the hub's marker in the shell (`lib/hub/config.ts`),
+    // where no picture from elsewhere is ever asked for.
+    if (query.get("cloud")) {
+      const marker = document.createElement("meta");
+      marker.name = "droppen-hub";
+      marker.content = "wss://hub.example";
+      document.head.prepend(marker);
+    } else {
+      requestImage(LOADED_IMAGE);
+    }
+  }
   createRoot(document.getElementById("root")!).render(
     fixture === "devices" ? (
       <DevicesFixture />
@@ -565,6 +608,8 @@ if (fixture === "new-chat") {
       <DiagramsFixture />
     ) : fixture === "hostile" ? (
       <HostileFixture />
+    ) : fixture === "images" ? (
+      <ImagesFixture />
     ) : (
       <SettingsFixture />
     ),

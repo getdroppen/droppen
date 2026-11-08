@@ -100,6 +100,7 @@ export const zhTW: Record<string, string> = {
   "open original": "開啟原圖",
   "image": "圖片",
   "open link": "開啟連結",
+  "load image": "載入圖片",
   "image could not be loaded": "圖片載入失敗",
   "pick a chat": "選擇聊天",
   "daily chat": "日常對話",
