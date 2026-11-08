@@ -24,7 +24,6 @@ import { ApiError, errorText } from "@/api/errors";
 import { LiveDot } from "@/components/live-dot";
 import { DiagramRendering, drawsDiagrams, MathRendering } from "@/components/markdown";
 import { Badge } from "@/components/ui/badge";
-import { Spinner } from "@/components/ui/spinner";
 import { SessionHeader } from "@/features/sessions/session-header";
 import { cloudParts } from "@/app/cloud-parts";
 import { SessionActionsMenu } from "@/features/sessions/session-actions-menu";
@@ -84,6 +83,7 @@ import { sessionKey } from "@/lib/machines/key";
 import { mq } from "@/lib/machines/query";
 import { Composer } from "@/features/sessions/composer";
 import { SessionMetaChip, sessionMetaFacts } from "@/features/sessions/session-meta";
+import { SessionOpening } from "@/features/sessions/session-opening";
 import { type Source, useSessionFeed } from "@/features/sessions/use-session-feed";
 import { BubbleRun } from "@/features/sessions/bubble-run";
 import {
@@ -214,8 +214,9 @@ export function SessionDetailInner({
   const machine = useMachine();
   const session = useSessionRef(source, id);
   const CopyWindowNotice = cloudParts()?.CopyWindowNotice;
+  const info = useInfoOf(machine);
   // Another device's session in the local app, from its copy (S1-7): read-only here.
-  const readOnly = useInfoOf(machine).readOnly === true;
+  const readOnly = info.readOnly === true;
   // A transcript open is the machine itself in use: live, not only its copy.
   useEnsureLive();
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -246,7 +247,7 @@ export function SessionDetailInner({
   const [jumpShown, setJumpShown] = useState(false);
   const [unread, setUnread] = useState(0);
 
-  const { data, drafts, isError, connection, loadEarlier, isLoadingEarlier, historyError, refreshState } =
+  const { data, drafts, isError, connection, opening, loadEarlier, isLoadingEarlier, historyError, refreshState } =
     useSessionFeed(source, id, stickToBottom);
   // Messages this tab sent that the transcript has not shown yet.
   const pendingSends = usePendingDeliveries(sessionKey(session));
@@ -664,7 +665,7 @@ export function SessionDetailInner({
             paneActions={paneActions}
           />
         )}
-        {isPending ? <Spinner className="flex-1" /> : (
+        {isPending ? <SessionOpening opening={opening} live={info.live} /> : (
           <div data-signal="failed" className="flex flex-1 items-center justify-center font-mono text-xs text-danger">
             {t("session not found")}
           </div>

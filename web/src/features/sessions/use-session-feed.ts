@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useMemo, useSyncExternalStore, type RefObject } from "react";
 import type { components } from "@/api/schema";
 import type { TranscriptHistoryPage } from "@/features/sessions/session-feed-state";
-import { createSessionFeedPool, type FeedConnection, type FeedState } from "@/features/sessions/session-feed-pool";
+import { createSessionFeedPool, type FeedConnection, type FeedOpening, type FeedState } from "@/features/sessions/session-feed-pool";
 import type { DraftStore } from "@/features/sessions/stream-draft";
 import { feedHubFor } from "@/app/global-feed";
 import { devicePersistFor } from "@/features/sessions/feed-persist";
@@ -32,6 +32,13 @@ interface SessionFeedResult {
   isError: boolean;
   /** Live, retrying, or the server has kept saying the session is not there. */
   connection: FeedConnection;
+  /**
+   * What the feed waits for while there is nothing to show (`data` is
+   * `null`): connecting, the server's answer, the offline copy's download
+   * from the hub, or another try at a session the server said `closed` to.
+   * `null` once there is a window. Said under the spinner (`SessionOpening`).
+   */
+  opening: FeedOpening | null;
   loadEarlier: () => Promise<void>;
   isLoadingEarlier: boolean;
   historyError: string | null;
@@ -104,7 +111,7 @@ export function useSessionFeed(
   // from its kept window on the very first frame, with no spinner between.
   const feed = useMemo(() => sessionFeeds.feed(source, id), [sessionFeeds, source, id]);
   useEffect(() => sessionFeeds.acquire(feed, pinnedRef), [sessionFeeds, feed, pinnedRef]);
-  const { data, connection, isLoadingEarlier, historyError } = useSyncExternalStore(
+  const { data, connection, isLoadingEarlier, historyError, opening } = useSyncExternalStore(
     feed.subscribe,
     feed.getView,
     feed.getView,
@@ -120,6 +127,7 @@ export function useSessionFeed(
     // so in a banner instead of replacing the page with "session not found".
     isError: connection === "gone" && data === null,
     connection,
+    opening,
     loadEarlier,
     isLoadingEarlier,
     historyError,

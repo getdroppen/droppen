@@ -9,9 +9,10 @@
  * `?fixture=diagrams` (a transcript of the diagram types messages draw),
  * `?fixture=hostile` (the reviewer's worst-case fences beside one normal
  * diagram), `?fixture=images` (the pictures messages draw; `&cloud=1` as a
- * page a hub serves) or `?fixture=cloud-bar` (the cloud bar in each state of
+ * page a hub serves), `?fixture=cloud-bar` (the cloud bar in each state of
  * its connection; `&states=catch-up`, the offline copy catching up from the
- * hub), plus `?theme=dark`.
+ * hub) or `?fixture=session-opening` (a session opening with nothing to show
+ * yet, in each stage of its wait), plus `?theme=dark`.
  * `web/src/index.css` excludes this directory from Tailwind's scan
  * (`@source not`), so nothing here can change the production stylesheet. That
  * also means every class below must already occur in `web/src`; the layout
@@ -50,6 +51,8 @@ import type { AppShell, MachineInfo } from "@/lib/machines/runtime";
 import { DeviceRow, type DeviceRowView } from "@/features/cloud/device-row";
 import { SectionHead } from "@/features/cloud/ui";
 import type { AcpAgentInfo } from "@/features/sessions/acp-agent";
+import type { FeedOpening } from "@/features/sessions/session-feed-pool";
+import { SessionOpening } from "@/features/sessions/session-opening";
 import type { AcpAgentPreset } from "@/features/sessions/acp-agent-presets";
 import { AcpDetailsBody, AcpTabView } from "@/features/settings/agents/acp-tab";
 import { AgentsTabStrip } from "@/features/settings/agents/agents-section";
@@ -607,6 +610,41 @@ async function mountCloudBar(): Promise<void> {
   createRoot(document.getElementById("root")!).render(<router.RouterProvider router={routes} />);
 }
 
+/**
+ * A session being opened with nothing to show yet
+ * (`features/sessions/session-opening.tsx`), in each stage of its wait, as the
+ * session view draws it in place of the transcript: connecting, waiting for
+ * the server's answer, the offline copy downloading from the hub (with its
+ * pages and bar, drawn wide at 128/256, and before a download runs) and
+ * retrying after `closed`. The line is said once the wait has gone on for
+ * `OPENING_DELAY_MS`, so the audit waits for it.
+ */
+const SESSION_OPENING_STATES: ReadonlyArray<readonly [name: string, opening: FeedOpening]> = [
+  ["connecting", { stage: "connecting" }],
+  ["loading", { stage: "loading" }],
+  ["copy-pages", { stage: "copy", done: 128, total: 256 }],
+  ["copy", { stage: "copy" }],
+  ["retrying", { stage: "retrying" }],
+];
+
+function SessionOpeningFixture() {
+  return (
+    <div data-fixture-root="" className="flex flex-col gap-4 py-4">
+      {SESSION_OPENING_STATES.map(([name, opening]) => (
+        <section key={name} data-audit-row={name}>
+          <div className="mb-1 px-3 font-mono text-2xs text-muted">{name}</div>
+          <div data-session-view="" className="flex h-28 border-y border-border">
+            {/* The session view's own pending branch (`session-detail.tsx`). */}
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+              <SessionOpening opening={opening} live="live" />
+            </div>
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
+
 const NEW_CHAT_ACCOUNT = "11111111-1111-4111-8111-111111111111";
 const newChatChats = [
   { kind: "claude", id: "chat-1", title: "Release notes for 0.6", model: "claude-sonnet-5", updatedAt: minutesAgo(12) },
@@ -738,15 +776,16 @@ async function mountNewChat(): Promise<void> {
   );
 }
 
-// The agents, diagrams and images fixtures' words go through i18n (counts, "5
-// min ago", the diagram and picture controls' labels): English unless
-// `&lang=` names another of the app's languages.
+// The agents, diagrams, images and session-opening fixtures' words go through
+// i18n (counts, "5 min ago", the diagram and picture controls' labels, what an
+// opening session waits for): English unless `&lang=` names another of the
+// app's languages.
 if (fixture === "new-chat") {
   await mountNewChat();
 } else if (fixture === "cloud-bar") {
   await mountCloudBar();
 } else {
-  if (fixture === "agents" || fixture === "diagrams" || fixture === "hostile" || fixture === "images")
+  if (fixture === "agents" || fixture === "diagrams" || fixture === "hostile" || fixture === "images" || fixture === "session-opening")
     await applyLanguage((query.get("lang") as LanguagePref | null) ?? "en");
   if (fixture === "images") {
     // Cloud mode is the hub's marker in the shell (`lib/hub/config.ts`),
@@ -771,6 +810,8 @@ if (fixture === "new-chat") {
       <HostileFixture />
     ) : fixture === "images" ? (
       <ImagesFixture />
+    ) : fixture === "session-opening" ? (
+      <SessionOpeningFixture />
     ) : (
       <SettingsFixture />
     ),

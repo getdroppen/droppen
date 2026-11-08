@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { BlobTransfers } from "@/components/blob-transfers";
 import { cn } from "@/lib/cn";
 import { formatExactTime, formatTime } from "@/lib/format";
+import { useShownAfter } from "@/lib/use-shown-after";
 import type { PathStats } from "@/lib/e2e";
 import type { PresenceState, LinkState } from "@/lib/hub/link";
 import type { ChannelRefusal, ChannelRoute, ConnectStep, MachineChannel, MachineStatus } from "@/lib/hub/machine";
@@ -380,29 +381,6 @@ export function catchUpText(progress: StreamProgress, t: TFunction, now = Date.n
 }
 
 /**
- * `active`, once it has held for `delayMs`, and kept true for at least
- * `minMs` once it is: what lets the bar say a catch-up only when there is
- * one worth saying, and not blink when it ends just after.
- */
-export function useShownAfter(active: boolean, delayMs = CATCH_UP_DELAY_MS, minMs = CATCH_UP_MIN_MS): boolean {
-  const [shown, setShown] = useState(false);
-  const shownAt = useRef(0);
-  useEffect(() => {
-    if (active === shown) return;
-    if (active) {
-      const timer = setTimeout(() => {
-        shownAt.current = Date.now();
-        setShown(true);
-      }, delayMs);
-      return () => clearTimeout(timer);
-    }
-    const timer = setTimeout(() => setShown(false), Math.max(0, minMs - (Date.now() - shownAt.current)));
-    return () => clearTimeout(timer);
-  }, [active, shown, delayMs, minMs]);
-  return shown;
-}
-
-/**
  * Whether the bar says how far the copy of the machine in view has caught up:
  * only while the page shows that copy (`mode` offline) over an open hub link,
  * and something of it is being caught up on (a stream before the hub's
@@ -416,7 +394,7 @@ export function useShownAfter(active: boolean, delayMs = CATCH_UP_DELAY_MS, minM
 export function useCatchUpShown(source: CatchUpSource | null | undefined, page: { mode: CloudMode; link: LinkState }): boolean {
   const eligible = page.mode === "offline" && page.link === "open";
   const busy = useCatchingUp(source);
-  return useShownAfter(eligible && busy) && eligible;
+  return useShownAfter(eligible && busy, CATCH_UP_DELAY_MS, CATCH_UP_MIN_MS) && eligible;
 }
 
 /** The catch-up's words: tabular, so a count that moves does not shift what follows it. */

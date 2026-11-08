@@ -747,6 +747,12 @@ export const zhTW: Record<string, string> = {
   "send as your answer": "作為回答傳送",
   // The activity bar while the agent thinks (turn-status.tsx).
   "thinking…": "思考中…",
+  // A session opening with nothing to show yet, under the spinner (session-opening.tsx); "connecting…" is below.
+  // Each fits whole at 390 px (the UI audit's session-opening fixture).
+  "loading session…": "讀取工作階段…",
+  "from hub…": "從雲端下載…",
+  "from hub · {{done}}/{{total}}": "從雲端下載 · {{done}}/{{total}}",
+  "cannot open · retrying": "無法開啟工作階段 · 重試中",
   // Cloud mode (features/cloud).
   "done": "完成",
   "continue": "繼續",

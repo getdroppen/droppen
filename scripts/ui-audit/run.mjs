@@ -18,7 +18,7 @@
  *   --theme <t>        light | dark | both (default both)
  *   --viewport <v>     desktop | mobile | both (default both)
  *   --channel <name>   Playwright browser channel, e.g. chrome (default: bundled Chromium)
- *   --fixture <f>      settings | devices | agents | new-chat | cloud-bar | both (default both: every fixture)
+ *   --fixture <f>      settings | devices | agents | new-chat | cloud-bar | session-opening | both (default both: every fixture)
  *   --url <url>        skip the fixture and audit a running page
  *   --check            exit 1 if any target invariant fails
  */
@@ -69,6 +69,7 @@ const runDevices = which === "both" || which === "devices";
 const runAgents = which === "both" || which === "agents";
 const runNewChat = which === "both" || which === "new-chat";
 const runCloudBar = which === "both" || which === "cloud-bar";
+const runSessionOpening = which === "both" || which === "session-opening";
 
 await fs.mkdir(out, { recursive: true });
 
@@ -1088,6 +1089,137 @@ async function auditCatchUp(theme, view) {
   await page.close();
 }
 
+/** The line under the spinner for each stage of the session-opening fixture, in every language the app ships. */
+const SESSION_OPENING_WORDS = {
+  en: { connecting: "connecting…", loading: "loading session…", "copy-pages": "from hub · 128/256", copy: "from hub…", retrying: "cannot open · retrying" },
+  "zh-CN": { connecting: "连接中…", loading: "读取会话…", "copy-pages": "从云端下载 · 128/256", copy: "从云端下载…", retrying: "打不开会话 · 重试中" },
+  "zh-TW": { connecting: "連線中…", loading: "讀取工作階段…", "copy-pages": "從雲端下載 · 128/256", copy: "從雲端下載…", retrying: "無法開啟工作階段 · 重試中" },
+  ja: { connecting: "接続中…", loading: "セッションを読み込み中…", "copy-pages": "ハブから取得 · 128/256", copy: "ハブから取得中…", retrying: "セッションを開けません · 再試行中" },
+};
+
+/**
+ * What the session-opening fixture draws, stage by stage (`[data-audit-row]`):
+ * the view, its spinner, the line under it — its words, type, and the room
+ * the view's padding leaves beside it — and the bar.
+ */
+function sessionOpeningSnapshot(page) {
+  return page.evaluate(() => {
+    const rect = (e) => {
+      if (!e) return null;
+      const r = e.getBoundingClientRect();
+      return { x: +r.x.toFixed(1), y: +r.y.toFixed(1), w: +r.width.toFixed(1), h: +r.height.toFixed(1), right: +r.right.toFixed(1) };
+    };
+    return {
+      states: [...document.querySelectorAll("[data-audit-row]")].map((section) => {
+        const opening = section.querySelector("[data-session-opening]");
+        const line = section.querySelector("[data-opening-line]");
+        const bar = section.querySelector("[data-opening-bar]");
+        // The room the line has: the view, inside its own padding.
+        const box = opening?.getBoundingClientRect();
+        const pad = opening ? parseFloat(getComputedStyle(opening).paddingLeft) : 0;
+        const room = box ? { left: box.left + pad, right: box.right - pad } : null;
+        let words = null;
+        if (line && room) {
+          const r = line.getBoundingClientRect();
+          const range = document.createRange();
+          range.selectNodeContents(line);
+          const natural = range.getBoundingClientRect().width;
+          const s = getComputedStyle(line);
+          words = {
+            text: (line.textContent ?? "").trim(),
+            rect: rect(line),
+            size: s.fontSize,
+            font: s.fontFamily,
+            // Cut short (an ellipsis or a clip) or out of the view's padded box.
+            cut: line.scrollWidth > line.clientWidth || natural > r.width + 0.5,
+            inside: r.left >= room.left - 0.5 && r.right <= room.right + 0.5,
+            free: +(room.right - room.left - r.width).toFixed(1),
+          };
+        }
+        return {
+          name: section.dataset.auditRow,
+          stage: opening?.getAttribute("data-session-opening") ?? null,
+          view: rect(section.querySelector("[data-session-view]")),
+          spinner: rect(opening?.querySelector("svg")),
+          words,
+          bar: bar ? { rect: rect(bar), radius: getComputedStyle(bar).borderRadius, fill: rect(bar.firstElementChild) } : null,
+        };
+      }),
+      overflow: { doc: document.documentElement.scrollWidth, win: window.innerWidth },
+    };
+  });
+}
+
+/**
+ * A session opening with nothing to show yet (`?fixture=session-opening`), in
+ * each stage of its wait, in every language the app ships: the spinner where
+ * it always was, in the middle of the view; under it, one line in mono at
+ * 11px saying the stage's words, whole (no ellipsis, no clip) inside the
+ * view's padding at a phone's width as on a desktop; and the thin bar, 2px
+ * tall and square, only where there is a total (the copy's pages), filled to
+ * its share. Captured: the whole fixture in each language, and in English
+ * and Chinese each stage's view on its own (the spinner held still). Each
+ * stage's free space beside its line is in measurements.json.
+ */
+async function auditSessionOpening(theme, view) {
+  const page = await browser.newPage({
+    viewport: { width: view.width, height: view.height },
+    deviceScaleFactor: 1,
+    hasTouch: view.name === "mobile",
+    isMobile: view.name === "mobile",
+  });
+  const fail = (id, actual, expected) => failures.push({ theme, viewport: view.name, fixture: "session-opening", id, actual, expected });
+  for (const lang of CLOUD_BAR_LANGS) {
+    await page.setViewportSize({ width: view.width, height: view.height });
+    await page.goto(`${base}ui-audit/index.html?fixture=session-opening&lang=${lang}&theme=${theme}`);
+    await page.evaluate(() => document.fonts.ready);
+    await page.waitForSelector("[data-fixture-root]");
+    // The line is said only once the wait has gone on for a moment (`OPENING_DELAY_MS`).
+    await page.waitForFunction(() => document.querySelectorAll("[data-opening-line]").length === document.querySelectorAll("[data-audit-row]").length);
+    const tall = await page.evaluate(() => Math.ceil(document.querySelector("[data-fixture-root]")?.getBoundingClientRect().height ?? 0));
+    if (tall > view.height) await page.setViewportSize({ width: view.width, height: tall });
+    await page.waitForTimeout(250);
+    const before = await sessionOpeningSnapshot(page);
+    const tag = lang === "en" ? "" : `-${lang}`;
+    await page.screenshot({ path: `${out}/session-opening${tag}-${theme}-${view.name}.png`, animations: "disabled" });
+    if (lang === "en" || lang === "zh-CN") {
+      for (const state of before.states) {
+        await page.locator(`[data-audit-row="${state.name}"] [data-session-view]`).screenshot({ path: `${out}/session-opening-${state.name}${tag}-${theme}-${view.name}.png`, animations: "disabled" });
+      }
+    }
+    results.push({ mode: "session-opening", lang, theme, viewport: view.name, before });
+    for (const state of before.states) {
+      const where = { lang, state: state.name };
+      const stage = state.name.startsWith("copy") ? "copy" : state.name;
+      if (state.stage !== stage) fail("session-opening.stage", { ...where, stage: state.stage }, stage);
+      // The spinner in the middle of the view, the line or none: it does not move when the words come.
+      const centred = state.spinner && state.view
+        && Math.abs(state.spinner.x + state.spinner.w / 2 - (state.view.x + state.view.w / 2)) <= 1
+        && Math.abs(state.spinner.y + state.spinner.h / 2 - (state.view.y + state.view.h / 2)) <= 1;
+      if (!centred) fail("session-opening.spinner", { ...where, spinner: state.spinner, view: state.view }, "the spinner in the middle of the view");
+      const w = state.words;
+      if (!w) {
+        fail("session-opening.line", where, "a line under the spinner");
+        continue;
+      }
+      if (w.text !== SESSION_OPENING_WORDS[lang][state.name]) fail("session-opening.words", { ...where, text: w.text }, SESSION_OPENING_WORDS[lang][state.name]);
+      if (w.size !== "11px" || !/mono/i.test(w.font)) fail("session-opening.type", { ...where, size: w.size, font: w.font }, "mono 11px (text-2xs)");
+      if (w.cut || !w.inside) fail("session-opening.truncated", { ...where, text: w.text, words: w.rect, free: w.free }, "the line whole, inside the view's padding");
+      const bottom = Math.max(w.rect.y + w.rect.h, state.bar ? state.bar.rect.y + state.bar.rect.h : 0);
+      if (state.view && bottom > state.view.y + state.view.h + 0.5) fail("session-opening.below", { ...where, bottom, view: state.view }, "the line and the bar inside the view");
+      if (state.name === "copy-pages") {
+        const b = state.bar;
+        if (!b || Math.round(b.rect.h) !== 2 || parseFloat(b.radius) > 0) fail("session-opening.bar", { ...where, bar: b }, "a 2px square bar");
+        else if (Math.abs(b.fill.w - b.rect.w / 2) > 0.5) fail("session-opening.bar-fill", { ...where, bar: b }, "filled to 128 of 256");
+      } else if (state.bar) {
+        fail("session-opening.no-bar", { ...where, bar: state.bar }, "no bar without a total");
+      }
+    }
+    if (before.overflow.doc > before.overflow.win + 1) fail("session-opening.overflow", { lang, ...before.overflow }, "no horizontal overflow");
+  }
+  await page.close();
+}
+
 try {
   if (liveUrl) {
     for (const view of views) await auditLive(view);
@@ -1100,6 +1232,7 @@ try {
         if (runNewChat) await auditNewChat(theme, view);
         if (runCloudBar) await auditCloudBar(theme, view);
         if (runCloudBar) await auditCatchUp(theme, view);
+        if (runSessionOpening) await auditSessionOpening(theme, view);
       }
     }
   }

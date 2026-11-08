@@ -748,6 +748,12 @@ export const ja: Record<string, string> = {
   "send as your answer": "回答として送信",
   // The activity bar while the agent thinks (turn-status.tsx).
   "thinking…": "思考中…",
+  // A session opening with nothing to show yet, under the spinner (session-opening.tsx); "connecting…" is below.
+  // Each fits whole at 390 px (the UI audit's session-opening fixture).
+  "loading session…": "セッションを読み込み中…",
+  "from hub…": "ハブから取得中…",
+  "from hub · {{done}}/{{total}}": "ハブから取得 · {{done}}/{{total}}",
+  "cannot open · retrying": "セッションを開けません · 再試行中",
   // Cloud mode (features/cloud).
   "done": "完了",
   "continue": "続ける",

@@ -25,7 +25,8 @@ after(() => {
 const { act } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { I18nextProvider } = await import("react-i18next");
-const { BarCatchUp, BarCatchUpLine, BIG_DOWNLOAD_MS, CATCH_UP_DELAY_MS, CATCH_UP_MIN_MS, catchUpText, OfflineNotice, useCatchUpShown, useShownAfter } = await import("../src/features/cloud/cloud-bar.js");
+const { BarCatchUp, BarCatchUpLine, BIG_DOWNLOAD_MS, CATCH_UP_DELAY_MS, CATCH_UP_MIN_MS, catchUpText, OfflineNotice, useCatchUpShown } = await import("../src/features/cloud/cloud-bar.js");
+const { useShownAfter } = await import("../src/lib/use-shown-after.js");
 const { NO_PROGRESS } = await import("../src/lib/hub/streams.js");
 const { ja } = await import("../src/i18n/ja.js");
 const { zhCN } = await import("../src/i18n/zh-CN.js");
@@ -143,7 +144,7 @@ const tick = (ms: number) => act(async () => mock.timers.tick(ms));
 const shown = () => container.querySelector("[data-shown]")?.getAttribute("data-shown");
 
 function Delayed({ active }: { active: boolean }) {
-  return <span data-shown={String(useShownAfter(active))} />;
+  return <span data-shown={String(useShownAfter(active, CATCH_UP_DELAY_MS, CATCH_UP_MIN_MS))} />;
 }
 
 test("said only once it has held for a moment, and kept a moment once said", async () => {
