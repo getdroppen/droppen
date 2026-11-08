@@ -149,6 +149,21 @@ test("a dangerous mode from this device's old per-session key is ignored", () =>
   }
 });
 
+test("an existing session never reads the source-wide legacy key", () => {
+  // `composer.permission.claude` is the source default from before the server
+  // store, so it is another session's business, like `defaults`. Only a new
+  // session may bridge from it; the session-scoped key above is the one an
+  // existing session may use.
+  const key = machineStorageKey(LOCAL, "composer.permission.claude");
+  localStorage.setItem(key, "plan");
+  try {
+    assert.equal(answer("claude", "B", { defaults: {}, sessions: {} }), "acceptEdits");
+    assert.equal(answer("claude", undefined, { defaults: {}, sessions: {} }), "plan");
+  } finally {
+    localStorage.removeItem(key);
+  }
+});
+
 test("a permission the composer cannot offer falls back to the CLI default", () => {
   const doc: Prefs = { defaults: {}, sessions: { "claude/B": { permission: "some-old-mode" } } };
   assert.equal(answer("claude", "B", doc), "acceptEdits");

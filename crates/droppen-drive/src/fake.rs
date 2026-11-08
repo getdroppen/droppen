@@ -269,8 +269,16 @@ impl Run for FakeProvider {
         Box::pin(std::future::ready(Err(InjectError::message("the fake provider starts nothing"))))
     }
 
-    fn start<'a>(&'a self, _gate: &'a SpawnGate, _at: StartAt<'a>) -> BoxFuture<'a, Result<String, InjectError>> {
-        Box::pin(std::future::ready(Err(InjectError::message("the fake provider starts nothing"))))
+    fn start<'a>(&'a self, _gate: &'a SpawnGate, at: StartAt<'a>) -> BoxFuture<'a, Result<String, InjectError>> {
+        Box::pin(async move {
+            // A test that needs a start to succeed leaves `fake-start-ok` in the
+            // directory the session would run in; its contents are the id. The
+            // default stays "starts nothing".
+            match tokio::fs::read_to_string(Path::new(at.cwd).join("fake-start-ok")).await {
+                Ok(id) if !id.trim().is_empty() => Ok(id.trim().to_string()),
+                _ => Err(InjectError::message("the fake provider starts nothing")),
+            }
+        })
     }
 
     fn injection(&self, _id: &str) -> Option<Injection> {

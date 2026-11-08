@@ -434,12 +434,12 @@ export function useComposerChoice(
   const acp = source === "acp";
   const cli: CliSource = acp ? "codex" : source;
 
-  const { data: prefs } = useQuery({
+  const { data: prefs, refetch: refetchPrefs } = useQuery({
     queryKey: mq(machine, "composer-prefs"),
     queryFn: async () => (await api.GET("/api/composer-prefs")).data,
-    // Written through this cache by the one control that changes it, so the
-    // only thing a refetch can bring is another device's choice — not worth a
-    // request on every session switch.
+    // Written through this cache by the one control that changes it. The other
+    // writer is the server's own pin for a session started with a permission;
+    // the missing-row effect below fetches that when it matters.
     staleTime: 5 * 60_000,
   });
 
@@ -485,6 +485,20 @@ export function useComposerChoice(
     legacyScoped(field) ?? readMachineItem(localStorage, machine, `composer.${field}.${source}`) ?? undefined;
   const entry = prefsKey ? prefs?.sessions[prefsKey] : undefined;
   const sourceDefault = prefs?.defaults[source];
+  // The server writes a session's row when it starts that session with a
+  // permission (the new-session route) or when a scheduled task starts it.
+  // This cache can predate either: the new-session pick just refreshed the
+  // defaults, and a scheduled session was never on this page before. Ask once
+  // per session for the row this cache does not have — otherwise a start in
+  // bypass would show, and send, the safe default on its second message.
+  // Guarded by the session key rather than by `updatedAt`, because the fresh
+  // default-updating write is exactly the case that must not suppress it.
+  const askedForSession = useRef<string | null>(null);
+  useEffect(() => {
+    if (!prefsKey || prefs === undefined || entry !== undefined || askedForSession.current === prefsKey) return;
+    askedForSession.current = prefsKey;
+    void refetchPrefs();
+  }, [prefsKey, prefs, entry, refetchPrefs]);
   const cliIsFresher = !!cliChoice?.at && (!entry?.updatedAt || cliChoice.at > entry.updatedAt);
   const pick = (field: "model" | "effort"): string | undefined => {
     const actual = cliChoice?.[field] ?? null;

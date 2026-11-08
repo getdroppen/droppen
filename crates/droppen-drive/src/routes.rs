@@ -604,16 +604,17 @@ async fn start_session(state: DriveState, body: NewSession, qid: Option<String>)
     // The mode this session started under is its own from now on. A pick in
     // another session moves only the source default, which an existing session
     // never reads; recording it here keeps that true even for a client that
-    // does not pin it itself (#563).
+    // does not pin it itself (#563). This is the start's explicit choice, so a
+    // dangerous mode is stored as such.
     if let Some(permission) = options.permission.as_deref() {
         if let Err(error) = drive
             .composer
-            .pin_permission(body.source, drive.providers.model_rule(body.source), &id, permission)
+            .record_start_permission(body.source, drive.providers.model_rule(body.source), &id, permission)
             .await
         {
             // The process is already running: a preference row that could not
             // be written is not a reason to tell the client the start failed.
-            tracing::warn!(session = %id, %error, "cannot pin the new session's permission");
+            tracing::warn!(session = %id, %error, "cannot record the new session's permission");
         }
     }
     // The sidebar has to show the new session before its first transcript line
@@ -798,17 +799,21 @@ async fn deliver_message(
     let sent = drive.providers.send_to_session(source, &id, summary.cwd.as_ref().map(String::as_str), &body.text, &options)
         .await
         .map_err(|error| spawn_refusal(error, "failed to start the CLI"))?;
-    // This session now has a mode of its own, whatever any other session picks
-    // later. The row is written only after the CLI took the message: an answer
-    // delivered into a turn in flight (above) changed no process, and a send
-    // that failed did not run with anything.
+    // A session that had no mode of its own gets the one this message ran
+    // with — unless that mode is dangerous, which a message may carry from a
+    // stale cache or an older build and must never turn into the session's
+    // choice. An existing permission (a pick, or the mode the session started
+    // with) is never overwritten here; only an explicit pick in the session
+    // can change it. The row is written only after the CLI took the message:
+    // an answer delivered into a turn in flight (above) changed no process,
+    // and a send that failed did not run with anything.
     if let Some(permission) = requested_permission.as_deref() {
         if let Err(error) = drive
             .composer
             .pin_permission(source, drive.providers.model_rule(source), &id, permission)
             .await
         {
-            tracing::warn!(session = %id, %error, "cannot pin the session's permission");
+            tracing::warn!(session = %id, %error, "cannot fill the session's permission");
         }
     }
     Ok(SendMessageResult {

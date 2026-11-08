@@ -435,10 +435,11 @@ async fn a_send_pins_its_permission_to_the_session_and_not_the_default() {
     probe.stop().await;
 }
 
-/// The same guarantee at the other end: a session created with a permission
-/// owns it from the first message, without turning it into the default.
+/// A session created with a permission owns it from the first message,
+/// without turning it into the default. The new-session screen showed the
+/// choice, danger styling included, so a dangerous mode is stored as such.
 #[tokio::test]
-async fn a_new_session_with_a_permission_pins_it_to_that_session() {
+async fn a_new_session_with_a_dangerous_permission_records_it_on_that_session() {
     let probe = Probe::start().await;
     let workspace = probe.workspace();
 
@@ -446,7 +447,7 @@ async fn a_new_session_with_a_permission_pins_it_to_that_session() {
         .send_ok(
             "POST",
             "/api/sessions/new",
-            json!({"source": "claude", "cwd": workspace.to_string_lossy(), "text": "start", "permission": "dontAsk"}),
+            json!({"source": "claude", "cwd": workspace.to_string_lossy(), "text": "start", "permission": "bypassPermissions"}),
             200,
         )
         .await["id"]
@@ -458,11 +459,82 @@ async fn a_new_session_with_a_permission_pins_it_to_that_session() {
     let prefs = probe.get_json("/api/composer-prefs").await;
     assert_eq!(
         prefs["sessions"].get(&format!("claude/{id}")).and_then(|row| row["permission"].as_str()),
-        Some("dontAsk"),
+        Some("bypassPermissions"),
         "the new session's own row holds what it started with: {prefs}"
     );
     assert_eq!(prefs["defaults"]["claude"], Value::Null, "and no source default was invented from it");
 
+    probe.stop().await;
+}
+
+/// A send runs with what it carries, but it does not get to replace the mode
+/// the user picked in that session (a stale device, or an older build, may
+/// send something else).
+#[tokio::test]
+async fn a_send_never_overwrites_a_sessions_stored_permission() {
+    let probe = Probe::start().await;
+    let workspace = probe.workspace();
+    probe.seed_session(&probe.managed_root(), SESSION_ID, &workspace);
+    probe
+        .send_ok(
+            "PUT",
+            &format!("/api/composer-prefs/claude/{SESSION_ID}"),
+            json!({"permission": "plan"}),
+            200,
+        )
+        .await;
+
+    probe
+        .send_ok(
+            "POST",
+            &format!("/api/sessions/claude/{SESSION_ID}/message"),
+            json!({"text": "go", "permission": "acceptEdits"}),
+            200,
+        )
+        .await;
+    let spawn = probe.wait_for_spawn(&workspace).await;
+    assert_eq!(spawn.flag("--permission-mode"), Some("acceptEdits"), "the message ran with what it carried");
+    let prefs = probe.get_json("/api/composer-prefs").await;
+    assert_eq!(
+        prefs["sessions"].get(&format!("claude/{SESSION_ID}")).and_then(|row| row["permission"].as_str()),
+        Some("plan"),
+        "the pick is still the session's own: {prefs}"
+    );
+
+    probe.wait_for_injection("claude", SESSION_ID).await;
+    probe.stop().await;
+}
+
+/// A dangerous mode a message carries — the value the bug put in every
+/// session's next send — is never stored as the session's choice.
+#[tokio::test]
+async fn a_dangerous_permission_in_a_send_is_not_stored() {
+    let probe = Probe::start().await;
+    let workspace = probe.workspace();
+    probe.seed_session(&probe.managed_root(), SESSION_ID, &workspace);
+
+    probe
+        .send_ok(
+            "POST",
+            &format!("/api/sessions/claude/{SESSION_ID}/message"),
+            json!({"text": "go", "permission": "bypassPermissions"}),
+            200,
+        )
+        .await;
+    let spawn = probe.wait_for_spawn(&workspace).await;
+    assert_eq!(
+        spawn.flag("--permission-mode"),
+        Some("bypassPermissions"),
+        "the message itself ran with what was sent"
+    );
+    let prefs = probe.get_json("/api/composer-prefs").await;
+    assert!(
+        prefs["sessions"].get(&format!("claude/{SESSION_ID}")).is_none(),
+        "a send does not make a dangerous mode the session's choice: {prefs}"
+    );
+    assert_eq!(prefs["defaults"]["claude"], Value::Null, "nor the default's");
+
+    probe.wait_for_injection("claude", SESSION_ID).await;
     probe.stop().await;
 }
 

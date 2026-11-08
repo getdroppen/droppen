@@ -296,19 +296,21 @@ async fn fire(state: &ScheduleState, task: ScheduledTask) {
     match state.drive.providers.start_new_session(task.source, &cwd, &task.prompt, &options).await {
         Ok(id) => {
             tracing::info!(task = %task.name, source = %task.source, session = %id, "a scheduled task started a session");
-            // The session started with the task's mode, so that mode is the
-            // session's own from now on: opening it in a composer must not show
-            // (or send) the latest pick from some other session (#563). The
-            // route that starts sessions by hand pins it in `start_session`; a
-            // fired task starts the CLI itself, so it pins here.
+            // The session started with the task's configured mode, which is an
+            // explicit choice, so that mode is the session's own from now on:
+            // opening it in a composer must not show (or send) the latest pick
+            // from some other session (#563). The route that starts sessions by
+            // hand records it in `start_session`; a fired task starts the CLI
+            // itself, so it records here. A dangerous task mode is stored as
+            // such — the settings screen chose it for these runs.
             if let Some(permission) = options.permission.as_deref() {
                 if let Err(error) = state
                     .drive
                     .composer
-                    .pin_permission(task.source, state.drive.providers.model_rule(task.source), &id, permission)
+                    .record_start_permission(task.source, state.drive.providers.model_rule(task.source), &id, permission)
                     .await
                 {
-                    tracing::warn!(session = %id, %error, "cannot pin the scheduled session's permission");
+                    tracing::warn!(session = %id, %error, "cannot record the scheduled session's permission");
                 }
             }
             record(&paths, &task.id, |stored| {
@@ -437,6 +439,39 @@ mod tests {
             last_error: Nullable(None),
             last_session_id: Nullable(None),
         }
+    }
+
+    /// #563: a session a scheduled task starts has the task's configured mode
+    /// as its own. The composer opening it later reads that row, so `fire` has
+    /// to record it — the mode may be dangerous and only an explicit start may
+    /// store one.
+    #[tokio::test]
+    async fn a_fired_task_records_the_permission_it_started_with() {
+        use std::sync::Arc;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (paths, drive) = crate::fake::drive(dir.path());
+        let cwd = dir.path().join("workspace");
+        std::fs::create_dir_all(&cwd).expect("workspace");
+        // The fake provider starts a session only when this test asks it to:
+        // the file names the id the start answers with.
+        std::fs::write(cwd.join("fake-start-ok"), "scheduled-1").expect("start marker");
+        let state = ScheduleState {
+            paths: paths.clone(),
+            drive: drive.clone(),
+            global: crate::feed::global::GlobalFeed::new(),
+            cancel: tokio_util::sync::CancellationToken::new(),
+        };
+        let mut task = task("0 * * * *", true);
+        task.cwd = cwd.to_string_lossy().into_owned();
+        task.skip_if_busy = false;
+        task.permission = Nullable(Some("bypassPermissions".into()));
+
+        fire(&state, task).await;
+
+        let row = drive.composer.session(Source::Claude, "scheduled-1").expect("the session's row");
+        assert_eq!(row.permission.as_deref(), Some("bypassPermissions"), "the task's mode is the session's");
+        assert!(drive.composer.read().await.defaults.is_empty(), "and it is not a source default");
     }
 
     #[test]

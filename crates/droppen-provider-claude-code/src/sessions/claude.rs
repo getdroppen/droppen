@@ -928,24 +928,34 @@ pub async fn read_cli_choice(file_path: &Path) -> Option<droppen_sessions::CliCh
 /// The mode the last user turn ran under, if the transcript records it.
 ///
 /// Current Claude Code writes `permissionMode` on every real user entry — a
-/// prompt, not a tool result and not a system reminder. The newest such entry
-/// settles the reading even when it has no `permissionMode`: an older CLI
-/// recorded it only on the session's first prompt, and copying that value would
-/// let a mode the session later narrowed away come back with the next message.
-/// A subagent's own entries are its context, not this session's mode.
+/// prompt, not a tool result, not a system reminder, not the transcript of an
+/// interruption or a compaction. The newest such entry settles the reading
+/// even when it has no `permissionMode`: an older CLI recorded it only on the
+/// session's first prompt, and copying that value would let a mode the session
+/// later narrowed away come back with the next message. A subagent's own
+/// entries are its context, not this session's mode.
 fn user_permission(entry: &serde_json::Map<String, Value>) -> Option<Option<String>> {
     if entry.get("type").and_then(Value::as_str) != Some("user")
         || entry.get("isSidechain") == Some(&Value::Bool(true))
         || entry.get("isMeta") == Some(&Value::Bool(true))
+        || entry.get("isCompactSummary") == Some(&Value::Bool(true))
     {
         return None;
     }
-    let is_prompt = match entry.get("message").and_then(Value::as_object).and_then(|message| message.get("content")) {
-        Some(Value::String(text)) => !text.trim().is_empty(),
-        Some(Value::Array(blocks)) => blocks.iter().any(|block| block.get("type").and_then(Value::as_str) == Some("text")),
-        _ => false,
+    let prompt = match entry.get("message").and_then(Value::as_object).and_then(|message| message.get("content")) {
+        Some(Value::String(text)) => text.clone(),
+        Some(Value::Array(blocks)) => blocks
+            .iter()
+            .filter(|block| block.get("type").and_then(Value::as_str) == Some("text"))
+            .filter_map(|block| block.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => return None,
     };
-    if !is_prompt {
+    let prompt = prompt.trim();
+    // A stop leaves this as a user entry; it is the CLI's own record of the
+    // interrupt, not a turn that ran under any mode.
+    if prompt.is_empty() || prompt.starts_with("[Request interrupted by user") {
         return None;
     }
     Some(entry.get("permissionMode").and_then(Value::as_str).map(str::to_owned))
@@ -1044,7 +1054,8 @@ mod tests {
     /// #563: the composer needs the mode the last turn actually ran under, so
     /// an existing session with no pick of its own does not fall back to
     /// whatever another session picked. Claude records it on user entries; tool
-    /// results and injected reminders are user entries too and say nothing.
+    /// results, injected reminders, interrupts and compactions are user entries
+    /// too and say nothing.
     #[tokio::test]
     async fn the_last_user_turns_permission_mode_is_read_from_the_transcript() {
         let (_dir, path) = session(&[
@@ -1057,6 +1068,14 @@ mod tests {
             r#"{"type":"user","isMeta":true,"timestamp":"2026-01-01T00:00:05.000Z","permissionMode":"bypassPermissions","message":{"content":[{"type":"text","text":"<system-reminder>x</system-reminder>"}]}}"#,
             // A subagent's own turn is its context, not this session's mode.
             r#"{"type":"user","isSidechain":true,"timestamp":"2026-01-01T00:00:06.000Z","permissionMode":"bypassPermissions","message":{"content":[{"type":"text","text":"subagent"}]}}"#,
+            // A tool result from the turn the user's plan started: a user entry,
+            // but not a prompt, even when an older build stamps a mode on it.
+            r#"{"type":"user","timestamp":"2026-01-01T00:00:07.000Z","permissionMode":"bypassPermissions","message":{"content":[{"type":"tool_result","tool_use_id":"u","content":"done"}]}}"#,
+            // A stop leaves a user entry with no mode; it is the CLI's record
+            // of the interrupt, not a turn.
+            r#"{"type":"user","timestamp":"2026-01-01T00:00:08.000Z","message":{"content":[{"type":"text","text":"[Request interrupted by user for tool use]"}]}}"#,
+            // And a compaction rewrites the context as a user entry.
+            r#"{"type":"user","isCompactSummary":true,"timestamp":"2026-01-01T00:00:09.000Z","permissionMode":"bypassPermissions","message":{"content":"This session is being continued from a previous conversation"}}"#,
         ]);
         let choice = read_cli_choice(&path).await.expect("choice");
         assert_eq!(choice.permission.0.as_deref(), Some("plan"), "the newest real user turn's mode");
