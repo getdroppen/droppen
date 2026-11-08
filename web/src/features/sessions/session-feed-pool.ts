@@ -171,10 +171,18 @@ export const PERSIST_ITEMS = 60;
 /**
  * A copy of the last few windows kept on the device, so that a cold start — a
  * reload, the installed app opened again — draws the transcript before the
- * network has said anything, and resumes it from there.
+ * network has said anything, and resumes it from there. In cloud mode it is
+ * the machine's offline copy instead, read and never written
+ * (`feed-persist.ts`).
  */
 export interface FeedPersist {
   load(key: string): Promise<FeedState | null>;
+  /**
+   * The copy when it is already in memory, so that the feed's very first frame
+   * draws it rather than a spinner; `null` sends the feed to {@link load}. A
+   * copy only ever read from storage has none.
+   */
+  peek?(key: string): FeedState | null;
   save(key: string, data: FeedState): void;
 }
 
@@ -222,6 +230,12 @@ export interface FeedPoolDeps {
   ): Promise<{ page?: TranscriptHistoryPage; status: number; error?: string }>;
   /** `GET /api/sessions/{source}/{id}` with `after`/`sig`, for its state fields. */
   fetchState(source: string, id: string, held: { after: number; sig: string }): Promise<Partial<FeedState> | null>;
+  /**
+   * Hear when where the machine is reached changes under the feeds (cloud
+   * mode: the machine and its offline copy, `Transport.onChange`). The switch
+   * closes every socket the other side opened, which is no failure of theirs.
+   */
+  onSwitch?(fn: () => void): () => void;
   now?: () => number;
 }
 
@@ -337,7 +351,12 @@ export class SessionFeed {
   ) {
     this.key = `${source}/${id}`;
     const persist = deps.persist;
-    if (persist) {
+    const held = persist?.peek?.(this.key) ?? null;
+    if (held) {
+      // In memory already: the view's first frame is the transcript, and the
+      // first attach resumes from it without waiting for anything.
+      this.view = { ...this.view, data: held, connection: "cached" };
+    } else if (persist) {
       // Bounded: the copy is worth a moment's wait, never a transcript that
       // does not connect because the device's storage stopped answering. A
       // copy that turns up later is not used — by then the socket is asking
@@ -548,9 +567,32 @@ export class SessionFeed {
         if (run.stopped) return;
         run.retry += 1;
         this.deps.noteFailure(run.retry);
-        run.timer = setTimeout(() => this.connect(run), Math.min(500 * 2 ** (run.retry - 1), 8000));
+        this.retryIn(run, Math.min(500 * 2 ** (run.retry - 1), 8000));
       },
     );
+  }
+
+  /** Go back for the session in `ms`: the one reconnect a run waits for at a time. */
+  private retryIn(run: Run, ms: number): void {
+    run.timer = setTimeout(() => {
+      run.timer = undefined;
+      this.connect(run);
+    }, ms);
+  }
+
+  /**
+   * Where the machine is reached changed under this feed (cloud mode: the
+   * machine and its offline copy), and the switch closed its socket. That was
+   * no failure, and whatever the old side said says nothing of the new one, so
+   * a reconnect it is waiting out a backoff for goes now.
+   */
+  retryNow(): void {
+    const run = this.run;
+    if (!run || run.stopped || run.timer === undefined) return;
+    clearTimeout(run.timer);
+    run.timer = undefined;
+    run.retry = 0;
+    this.connect(run);
   }
 
   private requestResync(run: Run, held: TranscriptWindow | null): void {
@@ -621,7 +663,7 @@ export class SessionFeed {
         delay = Math.min(500 * 2 ** (run.retry - 1), 8000);
       }
       run.lastWasClosedFrame = false;
-      run.timer = setTimeout(() => this.connect(run), delay);
+      this.retryIn(run, delay);
     };
   }
 
@@ -854,6 +896,15 @@ export function createSessionFeedPool(
     }
   };
 
+  // A switch closes the sockets as it happens and they say so a moment later
+  // (`lib/transport/switching.ts`): by the next task every feed it left on
+  // screen is waiting out a backoff, which it goes back from at once.
+  const offSwitch = deps.onSwitch?.(() => {
+    setTimeout(() => {
+      for (const feed of feeds.values()) feed.retryNow();
+    }, 0);
+  });
+
   return {
     feed(source, id) {
       const key = `${source}/${id}`;
@@ -884,6 +935,7 @@ export function createSessionFeedPool(
     },
     held: () => [...feeds.values()],
     dispose() {
+      offSwitch?.();
       for (const feed of feeds.values()) feed.stop();
       feeds.clear();
     },
