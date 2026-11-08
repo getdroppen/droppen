@@ -30,6 +30,7 @@ import { useFeedSessions, useFeedSettings } from "@/app/global-feed";
 import { MachineLink, useMachineNavigate } from "@/app/machine-route";
 import { CapsLabel } from "@/components/ui/caps-label";
 import { Input } from "@/components/ui/input";
+import { Notice } from "@/components/notice";
 import { LiveDot } from "@/components/live-dot";
 import { AccountPicker, localLoginHint } from "@/features/accounts/account-picker";
 import {
@@ -662,26 +663,6 @@ export function NewSessionView({
           )}
         </div>
       </div>
-    </div>
-  );
-}
-
-/**
- * A line over the composer that something is in the way, with its state edge:
- * red for what stops the start, amber for what it should know (`local`: the
- * local login is signed out).
- */
-function Notice({ signal, local = false, children }: { signal: "offline" | "failed" | "warn"; local?: boolean; children: ReactNode }) {
-  return (
-    <div
-      data-signal={signal}
-      data-local-signed-out={local ? "" : undefined}
-      className={cn(
-        "mb-1.5 px-2.5 py-1 font-mono text-2xs whitespace-pre-wrap",
-        signal === "warn" ? "text-warn-fg shadow-[inset_2px_0_0_var(--color-warn)]" : "text-danger shadow-[inset_2px_0_0_var(--color-danger)]",
-      )}
-    >
-      {children}
     </div>
   );
 }

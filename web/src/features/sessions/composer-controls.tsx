@@ -791,26 +791,6 @@ export function ComposerChoiceChips({
   );
 }
 
-/** The same CLI model/effort controls on both conversation creation surfaces. */
-export function CliModelControls({ choice }: { choice: ReturnType<typeof useComposerChoice> }) {
-  const { t } = useTranslation();
-  return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      <ModelSelect
-        models={choice.models}
-        value={choice.activeModel.id}
-        customId={choice.customModel}
-        onChange={choice.pickModel}
-        className="h-6.5 min-w-0 max-w-full"
-      />
-      {choice.activeEffort !== null && (
-        <ComposerSelect className="h-6.5 min-w-0 max-w-full" label={t("effort")} value={choice.activeEffort} options={choice.effortOptions} onChange={choice.setEffort} />
-      )}
-      <ModelSourceHint fallback={choice.modelsAreFallback} hidden={choice.modelsHidden} />
-    </div>
-  );
-}
-
 /**
  * A mark beside the model picker when the list it offers is the static guess,
  * or leaves out `hidden` of an ACP agent's models: ones whose ids look like a

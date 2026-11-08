@@ -4,9 +4,11 @@
  * in step with `features/settings/`, `features/cloud/` and `components/ui/`.
  *
  * `?fixture=settings` (default), `?fixture=devices`, `?fixture=agents`
- * (`&view=cards|details|empty`), `?fixture=diagrams` (a transcript of the
- * diagram types messages draw) or `?fixture=hostile` (the reviewer's
- * worst-case fences beside one normal diagram), plus `?theme=dark`.
+ * (`&view=cards|details|empty`), `?fixture=new-chat` (`&state=claude|api|
+ * signed-out|list`, the instant-chat home in the real chat layout),
+ * `?fixture=diagrams` (a transcript of the diagram types messages draw) or
+ * `?fixture=hostile` (the reviewer's worst-case fences beside one normal
+ * diagram), plus `?theme=dark`.
  * `web/src/index.css` excludes this directory from Tailwind's scan
  * (`@source not`), so nothing here can change the production stylesheet. That
  * also means every class below must already occur in `web/src`; the layout
@@ -14,6 +16,14 @@
  */
 import "@/index.css";
 import { createRoot } from "react-dom/client";
+import { GlobalFeedProvider } from "@/app/global-feed";
+import { ChatHome } from "@/features/chat/chat-home";
+import { ChatLayout } from "@/features/chat/chat-layout";
+import { MachineProvider } from "@/lib/machines/context";
+import { LOCAL } from "@/lib/machines/key";
+import { openMachine, setShell } from "@/lib/machines/registry";
+import { constantStore } from "@/lib/machines/store";
+import type { Transport } from "@/lib/transport/types";
 import { DiagramRendering, Markdown } from "@/components/markdown";
 import { MermaidBlock } from "@/components/mermaid-block";
 import { Button } from "@/components/ui/button";
@@ -407,21 +417,131 @@ function HostileFixture() {
   );
 }
 
+const NEW_CHAT_ACCOUNT = "11111111-1111-4111-8111-111111111111";
+const newChatChats = [
+  { kind: "claude", id: "chat-1", title: "Release notes for 0.6", model: "claude-sonnet-5", updatedAt: minutesAgo(12) },
+  { kind: "codex", id: "chat-2", title: "Why the relay drops idle sockets", model: "gpt-5.5", updatedAt: minutesAgo(95) },
+  { kind: "api", id: "chat-3", title: "Draft the changelog", model: "openai/gpt-5.5", updatedAt: minutesAgo(60 * 26) },
+];
+
+/** A device answering the new-chat form's routes with synthetic data only. */
+function newChatDevice(signedOut: boolean): Transport {
+  const authRest = {
+    scope: "all", class: "auth", untilAt: null, reason: "the fixture's login expired", observedAt: "2026-10-19T05:11:15Z",
+  };
+  const answers: Record<string, unknown> = {
+    "/api/accounts": {
+      accounts: signedOut
+        ? []
+        : [{
+            id: NEW_CHAT_ACCOUNT, label: "work", kind: "oauth_token", provider: "claude", usageEnabled: false,
+            rotation: true, rest: [], createdAt: "2026-10-01T00:00:00Z", updatedAt: "2026-10-01T00:00:00Z",
+          }],
+      defaultAccountId: null,
+      defaultCodexAccountId: null,
+      local: {
+        claude: { state: signedOut ? "signed_out" : "unknown", rest: signedOut ? [authRest] : [], isDefault: false },
+        codex: { state: "unknown", rest: [], isDefault: false },
+      },
+    },
+    ...(signedOut ? {} : { "/api/accounts/start": { accountId: NEW_CHAT_ACCOUNT, reason: "default", model: "fable", placed: true } }),
+    "/api/models": {
+      models: [
+        { id: "fable", label: null, efforts: ["low", "medium", "high"], defaultEffort: "medium" },
+        { id: "sonnet", label: null, efforts: ["low", "medium", "high"], defaultEffort: "medium" },
+      ],
+      source: "cache",
+    },
+    "/api/composer-prefs": { defaults: {}, sessions: {} },
+    "/api/prefs": { composerSend: "enter", sessionGrouping: "flat", transcriptStyle: "flat", fontSize: "default", language: "en" },
+    "/api/stats/quota": { accounts: [], claude: null, codex: null },
+    // Deliberately unconfigured: the api backend's warning is one of the states.
+    "/api/chat-provider": { baseUrl: "", hasKey: false, model: "" },
+    "/api/chats": { chats: newChatChats },
+  };
+  return {
+    fetch: async (request: Request) => {
+      const answer = answers[new URL(request.url).pathname];
+      return answer === undefined ? Response.json({ error: "not here" }, { status: 404 }) : Response.json(answer);
+    },
+    socketUrl: async (path: string) => path,
+    openSocket: () => ({ readyState: 0, binaryType: "blob", send() {}, close() {}, onopen: null, onmessage: null, onclose: null }),
+  };
+}
+
+/**
+ * The instant-chat home, in the real chat layout: the list beside it on a
+ * desktop, the form alone on a phone (`/chat/new`), as the app routes it.
+ * `state` picks the account situation; `&state=api` starts on claude and the
+ * audit clicks the api tab, which no query can select.
+ */
+async function mountNewChat(): Promise<void> {
+  const state = query.get("state") ?? "claude";
+  setShell("local", LOCAL);
+  openMachine(LOCAL, newChatDevice(state === "signed-out"), {
+    info: constantStore({ key: LOCAL, name: "studio", state: "online" as const, since: 0, canManage: true, live: "live" as const }),
+    ensureLive: () => undefined,
+    hold: () => () => undefined,
+    dispose: () => undefined,
+  });
+  try {
+    localStorage.clear();
+  } catch {
+    // storage unavailable: the fixture still draws
+  }
+  await applyLanguage("en");
+
+  const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
+  const router = await import("@tanstack/react-router");
+  const rootRoute = router.createRootRoute({ component: () => <router.Outlet /> });
+  const chatRoute = router.createRoute({ getParentRoute: () => rootRoute, path: "chat", component: ChatLayout });
+  const homeRoute = router.createRoute({ getParentRoute: () => chatRoute, path: "/", component: ChatHome });
+  const newRoute = router.createRoute({ getParentRoute: () => chatRoute, path: "new", component: ChatHome });
+  const detail = (path: string) => router.createRoute({ getParentRoute: () => chatRoute, path, component: () => null });
+  const settingsRoute = router.createRoute({ getParentRoute: () => rootRoute, path: "settings", component: () => null });
+  // Below md the list is the page at /chat, and the form has its own address.
+  const wide = window.matchMedia("(min-width: 768px)").matches;
+  const routes = router.createRouter({
+    routeTree: rootRoute.addChildren([
+      chatRoute.addChildren([homeRoute, newRoute, detail("claude/$id"), detail("codex/$id"), detail("api/$id")]),
+      settingsRoute,
+    ]),
+    history: router.createMemoryHistory({ initialEntries: [wide ? "/chat" : "/chat/new"] }),
+  });
+  await routes.load();
+
+  createRoot(document.getElementById("root")!).render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <MachineProvider machine={LOCAL}>
+        <GlobalFeedProvider>
+          <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col md:flex-row">
+            <router.RouterProvider router={routes} />
+          </div>
+        </GlobalFeedProvider>
+      </MachineProvider>
+    </QueryClientProvider>,
+  );
+}
+
 // The agents and diagrams fixtures' words go through i18n (counts, "5 min
 // ago", the diagram controls' labels): English unless `&lang=` names another
 // of the app's languages.
-if (fixture === "agents" || fixture === "diagrams" || fixture === "hostile")
-  await applyLanguage((query.get("lang") as LanguagePref | null) ?? "en");
-createRoot(document.getElementById("root")!).render(
-  fixture === "devices" ? (
-    <DevicesFixture />
-  ) : fixture === "agents" ? (
-    <AgentsFixture />
-  ) : fixture === "diagrams" ? (
-    <DiagramsFixture />
-  ) : fixture === "hostile" ? (
-    <HostileFixture />
-  ) : (
-    <SettingsFixture />
-  ),
-);
+if (fixture === "new-chat") {
+  await mountNewChat();
+} else {
+  if (fixture === "agents" || fixture === "diagrams" || fixture === "hostile")
+    await applyLanguage((query.get("lang") as LanguagePref | null) ?? "en");
+  createRoot(document.getElementById("root")!).render(
+    fixture === "devices" ? (
+      <DevicesFixture />
+    ) : fixture === "agents" ? (
+      <AgentsFixture />
+    ) : fixture === "diagrams" ? (
+      <DiagramsFixture />
+    ) : fixture === "hostile" ? (
+      <HostileFixture />
+    ) : (
+      <SettingsFixture />
+    ),
+  );
+}

@@ -262,6 +262,7 @@ export function ComposerBox({
   chips,
   send,
   autoFocus = false,
+  enterSends = false,
 }: {
   attachments: ComposerAttachments;
   /** Claude instant chats run without tools, so they cannot read attachments. */
@@ -285,6 +286,13 @@ export function ComposerBox({
     queues?: boolean;
   };
   autoFocus?: boolean;
+  /**
+   * Enter sends whatever the reader's send-key preference says, and with
+   * nothing to send it is left to the field (a newline), as the instant-chat
+   * form has always behaved. A session's composer follows the preference
+   * instead.
+   */
+  enterSends?: boolean;
 }) {
   const { t } = useTranslation();
   const enterSendsModifier = useEnterSendsModifier();
@@ -348,11 +356,13 @@ export function ComposerBox({
         }}
         onKeyDown={(e) => {
           if (e.key !== "Enter" || isImeKeydown(e)) return;
-          const sendKey = enterSendsModifier ? e.metaKey || e.ctrlKey : !e.shiftKey;
-          if (sendKey) {
-            e.preventDefault();
-            onSubmit();
-          }
+          const sendKey = enterSends ? !e.shiftKey : enterSendsModifier ? e.metaKey || e.ctrlKey : !e.shiftKey;
+          if (!sendKey) return;
+          // Nothing to send: the instant-chat form leaves the key to the field
+          // (a newline); a session's composer swallows it, as it always has.
+          if (enterSends && send.disabled) return;
+          e.preventDefault();
+          onSubmit();
         }}
         rows={2}
         placeholder={placeholder}

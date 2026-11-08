@@ -920,6 +920,8 @@ export const ja: Record<string, string> = {
   "your own codex login on this device was refused, so new sessions that name no account start on {{label}}; after `codex login`, run one chat or session on the local login to switch back": "このデバイスでのあなた自身の codex ログインが拒否されたため、アカウントを指定しない新しいセッションは {{label}} で開始されます。`codex login` の後、ローカルログインでチャットかセッションを一度実行すると元に戻ります",
   "your own codex login on this device was refused, so this task runs on {{label}}; after `codex login`, run one chat or session on the local login to switch back": "このデバイスでのあなた自身の codex ログインが拒否されたため、このタスクは {{label}} で実行されます。`codex login` の後、ローカルログインでチャットかセッションを一度実行すると元に戻ります",
   "choosing account…": "アカウントを選んでいます…",
+  // The new-chat form (`features/chat/chat-home.tsx`).
+  "What do you want to chat about?": "何について話しますか？",
   // The desktop app's update, ready (`app/desktop-update.tsx`).
   "restart": "再起動",
   "no room beside the returned message's attachments (at most {{max}}), so these were taken out: {{names}}": "戻されたメッセージの添付を戻すと空きがなくなったため（最大 {{max}} 個）、次の添付を外しました：{{names}}",
