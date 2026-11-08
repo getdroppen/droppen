@@ -280,3 +280,31 @@ fn a_queued_chats_attachments_survive_the_journal_and_adoption() {
     let rewritten = serde_json::to_value(&old).expect("encode");
     assert!(rewritten.get("images").is_none() && rewritten.get("files").is_none());
 }
+
+/// The Read-enabled build's tombstone must survive every write between the
+/// restart and the adoption that reads it: `mark_progress` round-trips the
+/// typed row, so a `skip_serializing` bit would be erased by the first patch.
+#[test]
+fn the_read_enabled_builds_tombstone_survives_a_row_patch() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = RunsFile::new(dir.path().join("runs.json"));
+    let mut run = record("run-1", "session-a", 4242);
+    run.payload.fingerprint = Some(Fingerprint {
+        chat: true,
+        chat_reads: true,
+        ..Default::default()
+    });
+    file.add(run);
+    file.mark_progress("run-1", Some(4096), &[]);
+    let runs = claude_runs(&file);
+    let fingerprint = runs[0].payload.fingerprint.as_ref().expect("a fingerprint");
+    assert!(fingerprint.chat_reads, "a patch erased the tombstone and the resident could keep Read");
+
+    // And a chat from main or this build writes no false at all.
+    let clean = Fingerprint {
+        chat: true,
+        ..Default::default()
+    };
+    let row = serde_json::to_value(&clean).expect("encode");
+    assert!(row.get("chat_reads").is_none());
+}

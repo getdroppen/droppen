@@ -228,6 +228,34 @@ async fn a_claude_chat_hands_its_attachments_to_the_cli_as_blocks() {
     probe.stop().await;
 }
 
+/// A chat send records no composer permission row: the body's mode is dropped,
+/// so nothing can resurface it for a later resume.
+#[tokio::test]
+async fn a_chat_send_records_no_permission_row() {
+    let probe = support::Probe::start().await;
+    let anchor = probe.data_dir().join("chats");
+    let created = probe
+        .send_ok("POST", "/api/chats/new", json!({"backend": "claude", "text": "hi"}), 200)
+        .await;
+    let id = created["id"].as_str().expect("the chat id").to_string();
+    seed_claude_chat(&probe, &id, &anchor);
+    wait_for_chat(&probe, &id).await;
+    probe
+        .send_ok(
+            "POST",
+            &format!("/api/sessions/claude/{id}/message"),
+            json!({"text": "next", "permission": "acceptEdits"}),
+            200,
+        )
+        .await;
+    let prefs = probe.get_json("/api/composer-prefs").await;
+    assert!(
+        prefs["sessions"].get(format!("claude/{id}")).is_none(),
+        "a chat recorded a permission row: {prefs}"
+    );
+    probe.stop().await;
+}
+
 /// A message queued behind a held turn is delivered with its image when the
 /// turn ends: the bytes are read at delivery, from the upload, not at send.
 #[tokio::test]
@@ -268,6 +296,56 @@ async fn a_queued_chat_message_delivers_its_image_when_the_turn_ends() {
     let sent = droppen_provider::chat_attachments::image_bytes(content[1]["source"]["data"].as_str().expect("data"))
         .expect("base64");
     assert_eq!(sent, png);
+    probe.stop().await;
+}
+
+/// Delivery re-runs the fence and the read: an upload swept while its message
+/// waited behind a turn fails the turn instead of being written as an empty
+/// block or read from wherever the path now points.
+#[tokio::test]
+async fn a_queued_message_whose_upload_was_swept_is_not_sent() {
+    let probe = support::Probe::start().await;
+    let anchor = probe.data_dir().join("chats");
+    support::plan_held_cli(&anchor);
+    let created = probe
+        .send_ok("POST", "/api/chats/new", json!({"backend": "claude", "text": "first"}), 200)
+        .await;
+    let id = created["id"].as_str().expect("the chat id").to_string();
+    probe.wait_for_spawn(&anchor).await;
+    support::wait_for_prompt_lines(&anchor, 1).await;
+    seed_claude_chat(&probe, &id, &anchor);
+    wait_for_chat(&probe, &id).await;
+
+    let uploaded = probe.upload("swept.png", &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 1]).await;
+    let path = uploaded["path"].as_str().expect("the image path").to_string();
+    probe
+        .send_ok(
+            "POST",
+            &format!("/api/sessions/claude/{id}/message"),
+            json!({"text": "second", "images": [path]}),
+            200,
+        )
+        .await;
+    // The queue holds the paths, not the bytes; the upload goes away first.
+    std::fs::remove_file(&path).expect("sweep the upload");
+    support::release_turn(&anchor);
+
+    // Wait for the held turn to end and the queued one to be refused.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let detail = probe.get_json(&format!("/api/sessions/claude/{id}")).await;
+        if detail["summary"]["resident"]["phase"] == "idle" && support::prompt_lines(&anchor).len() == 1 {
+            break;
+        }
+        assert!(Instant::now() < deadline, "the swept message never settled: {detail}");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(
+        support::prompt_lines(&anchor).len(),
+        1,
+        "a swept upload must not be written to the CLI"
+    );
     probe.stop().await;
 }
 
@@ -428,6 +506,46 @@ async fn a_chat_refuses_attachments_the_session_routes_refuse() {
     assert_eq!(
         refused(&body),
         "huge.png is too large for a claude chat (images are at most 5 MB)"
+    );
+
+    // Text files together over the message cap: three 80 KB files, each under
+    // the per-file cap, exceed the 200 KB total.
+    let mut texts = Vec::new();
+    for index in 0..3 {
+        let path = probe.upload(&format!("notes-{index}.txt"), &vec![b'a'; 80 * 1024]).await["path"]
+            .as_str()
+            .expect("the text path")
+            .to_string();
+        texts.push(path);
+    }
+    let (status, body) = probe
+        .send("POST", "/api/chats/new", json!({"backend": "claude", "text": "hi", "files": texts}))
+        .await;
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(
+        refused(&body),
+        "the attached text files are too large together for a claude chat (at most 200 KB)"
+    );
+
+    // Images together over the message cap: five 4.1 MB images, each under the
+    // per-image cap, exceed the 20 MB total (and the base64 line's limit).
+    let mut images = Vec::new();
+    for index in 0..5 {
+        let mut bytes = vec![0u8; 4 * 1024 * 1024 + 100 * 1024];
+        bytes[..8].copy_from_slice(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]);
+        let path = probe.upload(&format!("big-{index}.png"), &bytes).await["path"]
+            .as_str()
+            .expect("the image path")
+            .to_string();
+        images.push(path);
+    }
+    let (status, body) = probe
+        .send("POST", "/api/chats/new", json!({"backend": "claude", "text": "hi", "images": images}))
+        .await;
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(
+        refused(&body),
+        "the attached images are too large together for a claude chat (at most 20 MB)"
     );
 
     // The API backend answers with its own text-only call: an attachment is

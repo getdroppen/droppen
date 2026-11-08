@@ -1122,12 +1122,7 @@ async fn settle_expired(
     // a chat is pinned server-side and is never restarted with a permission
     // mode, whatever a stored composer row says.
     let chat = summary.cwd.as_ref().map(Path::new) == Some(chats_cwd(&drive.paths).as_path());
-    let options = SendOptions {
-        model: choice.model.0,
-        effort: choice.effort.0,
-        permission: if chat { None } else { choice.permission.0 },
-        ..SendOptions::default()
-    };
+    let options = expired_answer_options(chat, choice);
     match drive.providers.send_to_session(source, id, summary.cwd.as_ref().map(String::as_str), &text, &options).await {
         Ok(_) => Ok(QuestionAnswerResult {
             question: question.wire(),
@@ -1137,6 +1132,22 @@ async fn settle_expired(
             store.rewind(&stored.request_id, QuestionState::Answered, QuestionState::Expired, questions::now_ms());
             Err(spawn_refusal(error, "failed to start the CLI"))
         }
+    }
+}
+
+/// The options an expired question's answer travels under, once it has to
+/// become a message.
+///
+/// A chat's `chat` marker must be set here like anywhere else — the provider
+/// chooses inline content blocks over paths by it — and its permission mode
+/// is dropped whatever a stored composer row says. A session keeps both.
+fn expired_answer_options(chat: bool, choice: ComposerChoice) -> SendOptions {
+    SendOptions {
+        chat,
+        model: choice.model.0,
+        effort: choice.effort.0,
+        permission: if chat { None } else { choice.permission.0 },
+        ..SendOptions::default()
     }
 }
 
@@ -2450,6 +2461,23 @@ mod tests {
         named.images = Optional(None);
         let error = new_session(State(state.clone()), ApiJson(named)).await.expect_err("no such directory");
         assert_eq!(refused(error).0, 400, "answered afresh, not with the recorded refusal");
+    }
+
+    /// An expired question whose answer becomes a message carries the chat
+    /// marker, and a chat never carries the stored permission mode.
+    #[test]
+    fn an_expired_answers_options_pin_a_chat_and_leave_a_session_alone() {
+        let choice = || ComposerChoice {
+            permission: Optional(Some("bypassPermissions".into())),
+            ..ComposerChoice::default()
+        };
+        let chat = expired_answer_options(true, choice());
+        assert!(chat.chat);
+        assert_eq!(chat.permission, None, "a chat is never restarted with a permission mode");
+
+        let session = expired_answer_options(false, choice());
+        assert!(!session.chat);
+        assert_eq!(session.permission.as_deref(), Some("bypassPermissions"), "sessions keep their mode");
     }
 
     #[test]

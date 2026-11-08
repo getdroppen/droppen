@@ -12,8 +12,9 @@ use std::path::{Path, PathBuf};
 use futures_util::future::BoxFuture;
 use serde_json::{Map, Value};
 
-use droppen_instance::paths::Paths;
+use droppen_sessions::chat_delivery::{ChatDeliveries, DeliveredAttachments};
 use droppen_sessions::sidecars::{AgentEntry, SubagentMeta, Subagents};
+use droppen_sessions::{chats_cwd, Source};
 use super::claude::tool_display::{display_claude_tool_result, display_claude_tool_use};
 use droppen_sessions::tool_display::{extract_questions, shorten_tool_name};
 use droppen_sessions::util::{
@@ -403,7 +404,11 @@ impl QueuedMessage {
 /// its own task-notifications through the same queue and does write attachments
 /// for them; those carry `commandMode: "task-notification"` and are the one
 /// thing here that must stay invisible.
-fn queued_command_line(entry: &Json, paths: &Paths, timestamp: Option<&str>) -> Option<UserLine> {
+fn queued_command_line(
+    entry: &Json,
+    deliveries: Option<&mut ChatDeliveries>,
+    timestamp: Option<&str>,
+) -> Option<UserLine> {
     let queued = QueuedMessage::from_entry(entry)?;
     // Another agent's report rides the same queue with the same mode; its
     // `origin` is what says it is not the user. See `peer_message_item`.
@@ -413,43 +418,8 @@ fn queued_command_line(entry: &Json, paths: &Paths, timestamp: Option<&str>) -> 
     }
     // The queue also carries slash commands and, defensively, notification text
     // under some other mode; `claude_user_item` already classifies all of those.
-    claude_user_item(&queued.text, timestamp, &queued_command_images(entry, paths))
-}
-
-/// The images of a steered chat message, mapped back to their uploads.
-///
-/// A chat's image block carries no path — the prompt names none — so the
-/// transcript is the only record of it. [`images_in_blocks`] finds the upload
-/// by content, which is what lets the steer show a thumbnail like any other
-/// message.
-fn queued_command_images(entry: &Json, paths: &Paths) -> Vec<String> {
-    let Some(Value::Array(blocks)) = entry.get("attachment").and_then(|attachment| attachment.get("prompt")) else {
-        return Vec::new();
-    };
-    let blocks: Vec<Json> = blocks.iter().filter_map(Value::as_object).cloned().collect();
-    images_in_blocks(&blocks, paths)
-}
-
-/// The upload paths behind the `image` blocks in `blocks`, in order, deduped.
-fn images_in_blocks(blocks: &[Json], paths: &Paths) -> Vec<String> {
-    let mut images: Vec<String> = Vec::new();
-    for block in blocks {
-        if block.get("type").and_then(Value::as_str) != Some("image") {
-            continue;
-        }
-        let Some(data) = block.get("source").and_then(|source| source.get("data")).and_then(Value::as_str) else {
-            continue;
-        };
-        let Some(bytes) = droppen_provider::chat_attachments::image_bytes(data) else {
-            continue;
-        };
-        if let Some(path) = droppen_provider::chat_attachments::upload_path_for_image(paths, &bytes) {
-            if !images.contains(&path) {
-                images.push(path);
-            }
-        }
-    }
-    images
+    let delivery = deliveries.and_then(|deliveries| deliveries.lookup(&queued.text));
+    claude_user_item(&queued.text, timestamp, delivery.as_ref())
 }
 
 /// The words of a person's message the CLI folded into a running turn, when
@@ -484,7 +454,7 @@ pub(crate) fn absorbed_prompt(entry: &Value) -> Option<String> {
 /// User entries carry several kinds of machine chatter (slash-command metadata,
 /// task notifications, interrupt markers, attached-image suffixes). Turn them
 /// into quiet system lines / thumbnails instead of raw XML walls.
-fn claude_user_item(raw_text: &str, timestamp: Option<&str>, images: &[String]) -> Option<UserLine> {
+fn claude_user_item(raw_text: &str, timestamp: Option<&str>, delivery: Option<&DeliveredAttachments>) -> Option<UserLine> {
     static COMMAND: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     static COMMAND_STDOUT: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     static INTERRUPT: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
@@ -529,10 +499,26 @@ fn claude_user_item(raw_text: &str, timestamp: Option<&str>, images: &[String]) 
         return Some(UserLine::Item(Box::new(task_notification_item(text, timestamp))));
     }
     let mut item = TranscriptItem::user_text(raw_text, timestamp);
-    // A chat sends its images as blocks and names no path, so the suffix has
-    // none. The blocks themselves found the uploads; show them as thumbnails.
-    if item.images.is_none() && !images.is_empty() {
-        item.images = Some(images.to_vec());
+    // Only a delivery record turns a chat's blocks into a thumbnail and its
+    // inlined text into file chips. Text alone never does, so a message cannot
+    // forge either in any session's view.
+    if let Some(delivery) = delivery {
+        item.text = droppen_sessions::util::strip_chat_file_blocks(&item.text, &delivery.files);
+        if !delivery.images.is_empty() {
+            item.images = Some(delivery.images.clone());
+        }
+        if !delivery.files.is_empty() {
+            item.files = Some(
+                delivery
+                    .files
+                    .iter()
+                    .map(|path| droppen_sessions::util::FileRef {
+                        name: Path::new(path).file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default(),
+                        path: path.clone(),
+                    })
+                    .collect(),
+            );
+        }
     }
     Some(UserLine::Item(Box::new(item)))
 }
@@ -881,6 +867,12 @@ pub async fn parse_claude_transcript(paths: &droppen_instance::paths::Paths, fil
     let mut tool_paths: HashMap<String, String> = HashMap::new();
     // Session cwd resolves relative file mentions in assistant output.
     let mut cwd: Option<String> = None;
+    // A chat turn's attachment links are read from the delivery rows the
+    // driver wrote; an ordinary session never constructs this, so parsing one
+    // does no database work at all.
+    let session_id = file_path.file_stem().map(|stem| stem.to_string_lossy().into_owned()).unwrap_or_default();
+    let mut deliveries: Option<ChatDeliveries> = None;
+    let mut deliveries_ready = false;
 
     while let Some(line) = lines.next_line().await? {
         if line.trim().is_empty() {
@@ -892,6 +884,14 @@ pub async fn parse_claude_transcript(paths: &droppen_instance::paths::Paths, fil
         }
         if cwd.is_none() {
             cwd = entry.get("cwd").and_then(Value::as_str).map(str::to_owned);
+        }
+        if !deliveries_ready {
+            if let Some(cwd) = cwd.as_deref() {
+                deliveries_ready = true;
+                if !sidechain && Path::new(cwd) == chats_cwd(paths) {
+                    deliveries = Some(ChatDeliveries::new(paths, Source::Claude, &session_id));
+                }
+            }
         }
         let timestamp = entry.get("timestamp").and_then(Value::as_str).map(str::to_owned);
         let timestamp = timestamp.as_deref();
@@ -1003,9 +1003,20 @@ pub async fn parse_claude_transcript(paths: &droppen_instance::paths::Paths, fil
                 continue;
             }
             let blocks = content_blocks(entry.get("message"));
-            // A chat's images arrive as base64 blocks and name no upload; map
-            // them back by content for the thumbnail.
-            let entry_images = images_in_blocks(&blocks, paths);
+            // A chat turn's attachment links come from the delivery record the
+            // driver wrote, keyed by this exact text. The text alone never
+            // makes a thumbnail or a chip.
+            let joined = blocks
+                .iter()
+                .filter(|block| block.get("type").and_then(Value::as_str) == Some("text"))
+                .map(block_text)
+                .collect::<Vec<_>>()
+                .join("\n");
+            let delivery = if joined.is_empty() {
+                None
+            } else {
+                deliveries.as_mut().and_then(|deliveries| deliveries.lookup(&joined))
+            };
             let results = blocks
                 .iter()
                 .filter(|block| block.get("type").and_then(Value::as_str) == Some("tool_result"))
@@ -1014,7 +1025,7 @@ pub async fn parse_claude_transcript(paths: &droppen_instance::paths::Paths, fil
             let patch = (results == 1).then(|| structured_patch(&entry)).flatten();
             for block in blocks {
                 match block.get("type").and_then(Value::as_str) {
-                    Some("text") => match claude_user_item(&block_text(&block), timestamp, &entry_images) {
+                    Some("text") => match claude_user_item(&block_text(&block), timestamp, delivery.as_ref()) {
                         Some(UserLine::Item(item)) => items.push(*item),
                         Some(UserLine::CommandOutput(body)) => {
                             if let Some(item) = attach_command_output(&mut items, &body, timestamp) {
@@ -1052,7 +1063,7 @@ pub async fn parse_claude_transcript(paths: &droppen_instance::paths::Paths, fil
             // Almost every attachment is a reminder the CLI wrote to itself, but
             // one shape — a queued command absorbed into a running turn — is the
             // only record of something the user said. See `queued_command_line`.
-            match queued_command_line(&entry, paths, timestamp) {
+            match queued_command_line(&entry, deliveries.as_mut(), timestamp) {
                 Some(UserLine::Item(item)) => items.push(*item),
                 Some(UserLine::CommandOutput(body)) => {
                     if let Some(item) = attach_command_output(&mut items, &body, timestamp) {
@@ -1438,23 +1449,115 @@ mod tests {
         assert_eq!(users[0].text, "所以结论呢？");
     }
 
-    /// A chat's image arrives as a base64 block and names no path. The reader
-    /// maps it back to its upload by content, so the message shows the same
-    /// thumbnail a session's does — and never the bytes.
+    /// A chat's delivery record — not the image block and not the text — is
+    /// what draws the thumbnail and strips the inlined file block into a chip.
+    /// The CLI's leading image marker is tolerated when matching the text.
     #[tokio::test]
-    async fn a_chat_image_block_finds_its_upload_for_the_thumbnail() {
-        let (dir, path) = write_jsonl(&[
-            r#"{"type":"user","cwd":"/w","timestamp":"2026-10-01T10:00:00Z","message":{"role":"user","content":[{"type":"text","text":"[Image #1] look at this"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"cG5nLWJ5dGVz"}}]}}"#,
-        ]);
+    async fn a_chats_delivery_record_draws_the_thumbnail_and_strips_inlined_files() {
+        let dir = tempfile::tempdir().expect("tempdir");
         let paths = droppen_instance::paths::Paths::new(dir.path().to_path_buf());
+        let chats = droppen_sessions::chats_cwd(&paths);
         let upload = paths.uploads_dir().join("u/a.png");
+        let notes = paths.uploads_dir().join("u/notes.txt");
         std::fs::create_dir_all(upload.parent().expect("parent")).expect("uploads dir");
         std::fs::write(&upload, b"png-bytes").expect("upload");
+        let block = droppen_sessions::util::chat_file_block(&notes.to_string_lossy(), "the notes");
+        // What the server sent (no CLI marker) and what the CLI recorded (one).
+        droppen_sessions::chat_delivery::record(
+            &paths,
+            Source::Claude,
+            "session",
+            &format!("look{block}"),
+            &[upload.to_string_lossy().into_owned()],
+            &[notes.to_string_lossy().into_owned()],
+        );
+        let line = serde_json::json!({
+            "type": "user", "cwd": chats.to_string_lossy(), "timestamp": "2026-10-01T10:00:00Z",
+            "message": {"role": "user", "content": [
+                {"type": "text", "text": format!("[Image #1] look{block}")},
+                {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "cG5nLWJ5dGVz"}},
+            ]},
+        });
+        let path = dir.path().join("session.jsonl");
+        std::fs::write(&path, format!("{line}\n")).expect("transcript");
+
         let items = parse_claude_transcript(&paths, &path, false).await.expect("parse");
         assert_eq!(items.len(), 1);
-        assert_eq!(items[0].text, "[Image #1] look at this");
+        assert_eq!(items[0].text, "[Image #1] look", "the inlined block is stripped");
         assert_eq!(items[0].images.as_deref(), Some([upload.to_string_lossy().into_owned()].as_slice()));
-        assert!(!items[0].text.contains("cG5n"), "base64 payload never reaches the transcript");
+        let files = items[0].files.as_ref().expect("a file chip");
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, notes.to_string_lossy());
+        assert_eq!(files[0].name, "notes.txt");
+        assert!(!items[0].text.contains("the notes"), "the file body is not shown as the message");
+    }
+
+    /// Nothing in a session's own text can become a chip: there is no delivery
+    /// record, and the inline delimiter is never parsed from text alone.
+    #[tokio::test]
+    async fn a_forged_inline_block_in_a_session_stays_visible() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let paths = droppen_instance::paths::Paths::new(dir.path().to_path_buf());
+        let block = droppen_sessions::util::chat_file_block("/uploads/u/a.txt", "hidden");
+        let text = format!("hi{block}");
+        let line = serde_json::json!({
+            "type": "user", "cwd": "/w", "timestamp": "2026-10-01T10:00:00Z",
+            "message": {"role": "user", "content": text},
+        });
+        let path = dir.path().join("session.jsonl");
+        std::fs::write(&path, format!("{line}\n")).expect("transcript");
+        let items = parse_claude_transcript(&paths, &path, false).await.expect("parse");
+        assert_eq!(items[0].text, text);
+        assert!(items[0].files.is_none(), "text alone never makes a chip");
+    }
+
+    /// A leading CJK character or emoji is not a byte boundary at index 2; the
+    /// transcript parser must never slice there.
+    #[tokio::test]
+    async fn a_leading_multibyte_message_parses_without_panicking() {
+        for text in [
+            "所以结论呢我们应该怎么办",
+            "😀 emoji first",
+            "a你好世界 mixed",
+            "日本語のメッセージです、これはテストです",
+        ] {
+            let line = serde_json::json!({
+                "type": "user", "cwd": "/w", "timestamp": "2026-10-01T10:00:00Z",
+                "message": {"role": "user", "content": text},
+            })
+            .to_string();
+            let (dir, path) = write_jsonl(&[&line]);
+            let paths = droppen_instance::paths::Paths::new(dir.path().to_path_buf());
+            let items = parse_claude_transcript(&paths, &path, false).await.expect("parse");
+            assert_eq!(items[0].text, text);
+            assert!(items[0].files.is_none());
+        }
+    }
+
+    /// Opener-heavy text is scanned once, with no time spent retrying every
+    /// opener; 300 KB is milliseconds, not seconds.
+    #[tokio::test]
+    async fn opener_heavy_text_parses_within_a_time_bound() {
+        let text = vec!["----- BEGIN ATTACHED FILE: /u/a.txt -----"; 8_000].join("\n");
+        assert!(text.len() > 300_000);
+        let line = serde_json::json!({
+            "type": "user", "cwd": "/w", "timestamp": "2026-10-01T10:00:00Z",
+            "message": {"role": "user", "content": text},
+        })
+        .to_string();
+        let (dir, path) = write_jsonl(&[&line]);
+        let paths = droppen_instance::paths::Paths::new(dir.path().to_path_buf());
+        let started = std::time::Instant::now();
+        let items = parse_claude_transcript(&paths, &path, false).await.expect("parse");
+        // The row itself is clipped for display, so only its shape is asserted;
+        // the point is that the parse finishes at all, and in linear time.
+        assert!(items[0].text.starts_with("----- BEGIN ATTACHED FILE:"));
+        assert!(items[0].files.is_none());
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(2),
+            "300 KB took {:?}",
+            started.elapsed()
+        );
     }
 
     /// A steer may carry a pasted image, which the CLI records as an inline

@@ -45,10 +45,20 @@ pub(crate) async fn validate_claude_chat_attachments(
     images: &[String],
     files: &[String],
 ) -> Result<(), ApiError> {
+    let mut image_total = 0u64;
     for path in images {
-        droppen_provider::chat_attachments::read_chat_image(paths, path)
+        let image = droppen_provider::chat_attachments::read_chat_image(paths, path)
             .await
             .map_err(chat_attachment_refusal)?;
+        image_total = image_total.saturating_add(image.raw_len);
+        if image_total > droppen_provider::chat_attachments::MAX_IMAGE_TOTAL_BYTES {
+            return Err(ApiError::bad_request(
+                droppen_provider::chat_attachments::ChatAttachmentError::ImagesTooLarge {
+                    limit: droppen_provider::chat_attachments::MAX_IMAGE_TOTAL_BYTES,
+                }
+                .to_string(),
+            ));
+        }
     }
     let mut total = 0u64;
     for path in files {

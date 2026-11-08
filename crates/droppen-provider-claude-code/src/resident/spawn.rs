@@ -535,6 +535,33 @@ mod tests {
         assert!(with_claude_attachments("hello", &options).starts_with("hello\n\n[1 attached file(s)"));
     }
 
+    /// A chat's prompt text names no upload path at all: the paths travel
+    /// beside it and become blocks at delivery. A session keeps its path+Read
+    /// delivery exactly as it was.
+    #[test]
+    fn a_chat_prompt_names_no_upload_path() {
+        let attached = SendOptions {
+            chat: true,
+            images: vec!["/uploads/a.png".into()],
+            files: vec!["/uploads/a.txt".into()],
+            ..options()
+        };
+        let (prompt, images, files) = claude_prompt_and_attachments("look", &attached);
+        assert_eq!(prompt, "look");
+        assert!(!prompt.contains("/uploads"), "no path for the model to read: {prompt}");
+        assert_eq!(images, ["/uploads/a.png"]);
+        assert_eq!(files, ["/uploads/a.txt"]);
+
+        let session = SendOptions {
+            images: vec!["/uploads/a.png".into()],
+            files: vec!["/uploads/a.txt".into()],
+            ..options()
+        };
+        let (prompt, images, files) = claude_prompt_and_attachments("look", &session);
+        assert!(prompt.contains("/uploads/a.png") && prompt.contains("/uploads/a.txt"));
+        assert!(images.is_empty() && files.is_empty(), "a session's paths stay in the prompt");
+    }
+
     #[test]
     fn chat_flags_replace_the_persona_and_disable_every_tool() {
         let mut options = options();

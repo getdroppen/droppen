@@ -14,10 +14,13 @@
 //!
 //! Everything is re-fenced when it is read: a path is accepted only when its
 //! lexical spelling and its canonical target are both inside
-//! [`Paths::uploads_dir`], and only when it is still a regular file. The send
-//! routes run the same reads to refuse a bad attachment with a `400`; the
-//! driver runs them again at delivery so a queue that outlived the upload
-//! fails loudly rather than sending an empty prompt.
+//! [`Paths::uploads_dir`], and the handle is then opened `O_NOFOLLOW |
+//! O_NONBLOCK` on a blocking thread, proven to be a regular file with one
+//! link, and read through `take(cap + 1)` — so a symlink, FIFO, hardlink or a
+//! file that grew after the check is refused rather than followed, hung on or
+//! read whole. The send routes run the same reads to refuse a bad attachment
+//! with a `400`; the driver runs them again at delivery so a queue that
+//! outlived the upload fails loudly rather than sending an empty prompt.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -27,6 +30,12 @@ use droppen_instance::paths::Paths;
 
 /// The largest image a claude chat sends, in bytes after reading.
 pub const MAX_IMAGE_BYTES: u64 = 5 * 1024 * 1024;
+/// The largest total of image bytes one message carries.
+///
+/// Twenty megabytes of image bytes become about 26.7 MB of base64 in a single
+/// stdin line; with the text and JSON framing that stays under the CLI's 32 MB
+/// request limit with headroom. Larger messages are refused rather than built.
+pub const MAX_IMAGE_TOTAL_BYTES: u64 = 20 * 1024 * 1024;
 /// The largest single text file a claude chat inlines.
 pub const MAX_TEXT_FILE_BYTES: u64 = 100 * 1024;
 /// The largest total of inlined text one message carries.
@@ -39,6 +48,8 @@ pub struct ChatImage {
     pub media_type: &'static str,
     /// The whole file, standard base64.
     pub data: String,
+    /// The file's size before base64, for the per-message total.
+    pub raw_len: u64,
 }
 
 /// Why a chat attachment could not be read.
@@ -67,6 +78,17 @@ pub enum ChatAttachmentError {
         /// The cap that was passed.
         limit: u64,
     },
+    /// The message's images together are over [`MAX_IMAGE_TOTAL_BYTES`].
+    ImagesTooLarge {
+        /// The cap that was passed.
+        limit: u64,
+    },
+    /// A file with more than one link: a hardlink made inside uploads could
+    /// otherwise point at a file that is not an upload at all.
+    HardLinked {
+        /// The upload's file name.
+        name: String,
+    },
     /// Not one of the four image types the API takes.
     UnsupportedImage {
         /// The upload's file name.
@@ -93,6 +115,10 @@ impl std::fmt::Display for ChatAttachmentError {
             Self::TextTooLarge { limit } => {
                 write!(f, "the attached text files are too large together for a claude chat (at most {} KB)", limit / 1024)
             }
+            Self::ImagesTooLarge { limit } => {
+                write!(f, "the attached images are too large together for a claude chat (at most {} MB)", limit / (1024 * 1024))
+            }
+            Self::HardLinked { name } => write!(f, "{name} is hard-linked to a file outside the uploads directory"),
             Self::UnsupportedImage { name } => {
                 write!(f, "{name} is not an image a claude chat can take (PNG, JPEG, GIF or WebP)")
             }
@@ -106,37 +132,6 @@ impl std::error::Error for ChatAttachmentError {}
 /// Decode the base64 payload of an `image` content block.
 pub fn image_bytes(data: &str) -> Option<Vec<u8>> {
     base64::engine::general_purpose::STANDARD.decode(data).ok()
-}
-
-/// The upload whose bytes are exactly `bytes`, when one still exists.
-///
-/// A chat's image block carries no path — the prompt names none, so the model
-/// cannot be pointed at anything — and the transcript is the only place the
-/// image survives. The reader maps it back to the upload it came from by
-/// content, which is what lets the transcript draw the same thumbnail a
-/// session shows. An upload swept since the turn leaves no thumbnail; the
-/// CLI's own `[Image #N]` marker remains.
-pub fn upload_path_for_image(paths: &Paths, bytes: &[u8]) -> Option<String> {
-    let uploads = paths.uploads_dir();
-    let directories = std::fs::read_dir(&uploads).ok()?;
-    for directory in directories.flatten() {
-        let Ok(entries) = std::fs::read_dir(directory.path()) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let Ok(meta) = std::fs::metadata(&path) else {
-                continue;
-            };
-            if !meta.is_file() || meta.len() != bytes.len() as u64 {
-                continue;
-            }
-            if std::fs::read(&path).is_ok_and(|candidate| candidate == bytes) {
-                return Some(path.to_string_lossy().into_owned());
-            }
-        }
-    }
-    None
 }
 
 /// The media type of `bytes`, when it is one the API takes.
@@ -205,23 +200,98 @@ fn name_of(requested: &str) -> String {
         .unwrap_or_else(|| requested.to_string())
 }
 
+/// Which cap a read is under.
+#[derive(Debug, Clone, Copy)]
+enum Cap {
+    /// [`MAX_IMAGE_BYTES`].
+    Image,
+    /// [`MAX_TEXT_FILE_BYTES`].
+    File,
+}
+
+impl Cap {
+    fn limit(self) -> u64 {
+        match self {
+            Self::Image => MAX_IMAGE_BYTES,
+            Self::File => MAX_TEXT_FILE_BYTES,
+        }
+    }
+
+    fn too_large(self, requested: &str) -> ChatAttachmentError {
+        match self {
+            Self::Image => ChatAttachmentError::ImageTooLarge {
+                name: name_of(requested),
+                limit: MAX_IMAGE_BYTES,
+            },
+            Self::File => ChatAttachmentError::FileTooLarge {
+                name: name_of(requested),
+                limit: MAX_TEXT_FILE_BYTES,
+            },
+        }
+    }
+}
+
+/// Open and read one fenced upload, off the async runtime.
+///
+/// The path is re-fenced first. The open itself is what closes the race the
+/// fence leaves: `O_NOFOLLOW` refuses a final component swapped for a symlink,
+/// `O_NONBLOCK` means a FIFO cannot hang the driver, `fstat` on that very
+/// handle proves it is a regular, singly-linked file under the cap, and the
+/// read is through `take(cap + 1)` so a file that grows after the check is cut
+/// off instead of read whole.
+async fn read_fenced(paths: Paths, requested: String, cap: Cap) -> Result<Vec<u8>, ChatAttachmentError> {
+    let limit = cap.limit();
+    let job = move || -> Result<Vec<u8>, ChatAttachmentError> {
+        let path = fenced_upload(&paths, &requested)?;
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC);
+        }
+        let mut file = options.open(&path).map_err(|_| ChatAttachmentError::Missing)?;
+        let meta = file.metadata().map_err(|_| ChatAttachmentError::Missing)?;
+        if !meta.is_file() {
+            return Err(ChatAttachmentError::Missing);
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if meta.nlink() > 1 {
+                return Err(ChatAttachmentError::HardLinked { name: name_of(&requested) });
+            }
+        }
+        if meta.len() > limit {
+            return Err(cap.too_large(&requested));
+        }
+        let mut bytes = Vec::new();
+        use std::io::Read as _;
+        file.take(limit + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|_| ChatAttachmentError::Missing)?;
+        if bytes.len() as u64 > limit {
+            return Err(cap.too_large(&requested));
+        }
+        Ok(bytes)
+    };
+    match tokio::task::spawn_blocking(job).await {
+        Ok(result) => result,
+        Err(_) => Err(ChatAttachmentError::Missing),
+    }
+}
+
 /// Read one image from uploads, ready to become an `image` content block.
 pub async fn read_chat_image(paths: &Paths, requested: &str) -> Result<ChatImage, ChatAttachmentError> {
-    let path = fenced_upload(paths, requested)?;
-    let meta = tokio::fs::metadata(&path).await.map_err(|_| ChatAttachmentError::Missing)?;
-    if meta.len() > MAX_IMAGE_BYTES {
-        return Err(ChatAttachmentError::ImageTooLarge {
-            name: name_of(requested),
-            limit: MAX_IMAGE_BYTES,
-        });
-    }
-    let bytes = tokio::fs::read(&path).await.map_err(|_| ChatAttachmentError::Missing)?;
+    let bytes = read_fenced(paths.clone(), requested.to_string(), Cap::Image).await?;
     let media_type = image_media_type(&bytes).ok_or_else(|| ChatAttachmentError::UnsupportedImage {
         name: name_of(requested),
     })?;
+    let raw_len = bytes.len() as u64;
     Ok(ChatImage {
         media_type,
         data: base64::engine::general_purpose::STANDARD.encode(bytes),
+        raw_len,
     })
 }
 
@@ -232,21 +302,13 @@ pub async fn read_chat_text_file(
     requested: &str,
     total: &mut u64,
 ) -> Result<String, ChatAttachmentError> {
-    let path = fenced_upload(paths, requested)?;
-    let meta = tokio::fs::metadata(&path).await.map_err(|_| ChatAttachmentError::Missing)?;
-    if meta.len() > MAX_TEXT_FILE_BYTES {
-        return Err(ChatAttachmentError::FileTooLarge {
-            name: name_of(requested),
-            limit: MAX_TEXT_FILE_BYTES,
-        });
-    }
-    *total = total.saturating_add(meta.len());
+    let bytes = read_fenced(paths.clone(), requested.to_string(), Cap::File).await?;
+    *total = total.saturating_add(bytes.len() as u64);
     if *total > MAX_TEXT_TOTAL_BYTES {
         return Err(ChatAttachmentError::TextTooLarge {
             limit: MAX_TEXT_TOTAL_BYTES,
         });
     }
-    let bytes = tokio::fs::read(&path).await.map_err(|_| ChatAttachmentError::Missing)?;
     String::from_utf8(bytes).map_err(|_| ChatAttachmentError::NotText {
         name: name_of(requested),
     })
@@ -286,24 +348,56 @@ mod tests {
         let path = upload(&paths, "a.png", &png);
         let image = read_chat_image(&paths, &path).await.expect("an upload");
         assert_eq!(image.media_type, "image/png");
+        assert_eq!(image.raw_len, png.len() as u64);
         assert_eq!(
             base64::engine::general_purpose::STANDARD.decode(&image.data).expect("base64"),
             png
         );
     }
 
-    /// The transcript maps a chat's image block back to its upload by content,
-    /// which is how the chat view draws a thumbnail without a path in the
-    /// prompt.
-    #[test]
-    fn an_image_block_finds_its_upload_by_its_bytes() {
+    /// A delivery re-reads an upload that may have been swept since the send;
+    /// it is refused with the reason the composer shows, not read as empty.
+    #[tokio::test]
+    async fn a_swept_upload_is_refused_at_delivery() {
         let home = tempfile::tempdir().expect("tempdir");
         let paths = paths(home.path());
-        let png = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 9, 9];
-        let path = upload(&paths, "a.png", &png);
-        assert_eq!(upload_path_for_image(&paths, &png), Some(path));
-        assert_eq!(upload_path_for_image(&paths, &png[..8]), None, "a different length is not it");
-        assert_eq!(upload_path_for_image(&paths, b"nothing"), None);
+        std::fs::create_dir_all(paths.uploads_dir().join("abc")).expect("uploads dir");
+        let gone = paths.uploads_dir().join("abc/gone.txt").to_string_lossy().into_owned();
+        let error = read_chat_text_file(&paths, &gone, &mut 0).await.expect_err("swept");
+        assert_eq!(error, ChatAttachmentError::Missing);
+        let gone_image = paths.uploads_dir().join("abc/gone.png").to_string_lossy().into_owned();
+        let error = read_chat_image(&paths, &gone_image).await.expect_err("swept");
+        assert_eq!(error, ChatAttachmentError::Missing);
+    }
+
+    /// A FIFO swapped in after the send must not hang the driver: the open is
+    /// non-blocking and the handle is proven to be a regular file.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_fifo_is_refused_without_blocking() {
+        use std::ffi::CString;
+        let home = tempfile::tempdir().expect("tempdir");
+        let paths = paths(home.path());
+        let fifo = paths.uploads_dir().join("abc/fifo.txt");
+        std::fs::create_dir_all(fifo.parent().expect("parent")).expect("uploads dir");
+        let raw = CString::new(fifo.to_string_lossy().as_bytes()).expect("path");
+        assert_eq!(unsafe { libc::mkfifo(raw.as_ptr(), 0o600) }, 0, "mkfifo");
+        let error = read_chat_text_file(&paths, &fifo.to_string_lossy(), &mut 0).await.expect_err("fifo");
+        assert_eq!(error, ChatAttachmentError::Missing);
+    }
+
+    /// A hardlink made inside uploads could name a file that is not an upload;
+    /// it is refused by the link count of the opened handle.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_hardlinked_upload_is_refused() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let paths = paths(home.path());
+        let first = upload(&paths, "a.txt", b"hello");
+        let second = paths.uploads_dir().join("abc/b.txt");
+        std::fs::hard_link(&first, &second).expect("hardlink");
+        let error = read_chat_text_file(&paths, &second.to_string_lossy(), &mut 0).await.expect_err("hardlink");
+        assert!(matches!(error, ChatAttachmentError::HardLinked { .. }), "{error:?}");
     }
 
     #[tokio::test]

@@ -267,14 +267,16 @@ pub(crate) struct Fingerprint {
     /// A tombstone for the intermediate build of the chat-attachment PR that
     /// ran chats with `--tools Read`.
     ///
-    /// Never written by this build; read only so a resident inherited from
-    /// that build is replaced instead of kept. `--tools Read` is bounded by
-    /// the user's own CLI settings rather than this server's uploads directory
-    /// (an allow rule for `Read`, or `bypassPermissions`, makes it unbounded),
-    /// so such a process must never serve another chat message. A record from
-    /// main or from this build reads as `false` and is accepted; one from the
-    /// intermediate build reads as `true` and is not.
-    #[serde(default, skip_serializing)]
+    /// Only an intermediate build of the chat-attachment work wrote this, and
+    /// only when true. It is kept serialised when true so a journal patch
+    /// (which round-trips the typed row) cannot erase it before adoption has
+    /// read it: `--tools Read` is bounded by the user's own CLI settings
+    /// rather than this server's uploads directory (an allow rule for `Read`,
+    /// or `bypassPermissions`, makes it unbounded), so a resident inherited
+    /// from that build must be replaced, never kept. A record from main or
+    /// from this build has it absent and is accepted; one with `true` is not.
+    /// False is not written, so every ordinary row stays the bytes it was.
+    #[serde(default, skip_serializing_if = "is_false")]
     pub chat_reads: bool,
     /// Whether `--add-dir <uploads>` is on the command line.
     pub uploads: bool,
@@ -1066,6 +1068,12 @@ pub(crate) struct Queued {
 /// written exactly as it always was.
 fn is_zero(value: &u8) -> bool {
     *value == 0
+}
+
+/// Whether a flag is off, so a row that never had it is written exactly as it
+/// always was — while a `true` survives every patch of the row.
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// What a Claude Code resident's driver writes into its run's row as it goes:
@@ -5480,15 +5488,31 @@ impl Driver {
     /// the send fails the message with its own reason rather than sending an
     /// empty block or a stale prompt.
     async fn user_line_for(&self, pending: &Pending) -> Result<String, String> {
+        let paths = &self.runs.host.paths;
         if pending.images.is_empty() && pending.files.is_empty() {
+            // A chat message with nothing attached still gets a delivery row:
+            // occurrences are matched against the transcript's message order,
+            // and a missing row would shift every later identical text.
+            if pending.fingerprint.chat {
+                droppen_sessions::chat_delivery::record(paths, Source::Claude, &self.id, &pending.text, &[], &[]);
+            }
             return Ok(user_line(&pending.text));
         }
-        let paths = &self.runs.host.paths;
         let mut images = Vec::with_capacity(pending.images.len());
+        let mut image_total = 0u64;
         for path in &pending.images {
             let image = droppen_provider::chat_attachments::read_chat_image(paths, path)
                 .await
                 .map_err(|error| error.to_string())?;
+            image_total = image_total.saturating_add(image.raw_len);
+            if image_total > droppen_provider::chat_attachments::MAX_IMAGE_TOTAL_BYTES {
+                return Err(
+                    droppen_provider::chat_attachments::ChatAttachmentError::ImagesTooLarge {
+                        limit: droppen_provider::chat_attachments::MAX_IMAGE_TOTAL_BYTES,
+                    }
+                    .to_string(),
+                );
+            }
             images.push((image.media_type, image.data));
         }
         let mut inlined = String::new();
@@ -5504,6 +5528,10 @@ impl Driver {
         } else {
             format!("{}{inlined}", pending.text)
         };
+        // Recorded before the write, while the paths are still here: the
+        // transcript parser uses it for the thumbnail and the file chips, and
+        // text alone must never make either.
+        droppen_sessions::chat_delivery::record(paths, Source::Claude, &self.id, &text, &pending.images, &pending.files);
         Ok(user_line_with_images(&text, &images))
     }
 
